@@ -583,23 +583,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lua-src"
-version = "551.0.2"
-dependencies = [
- "cc",
-]
-
-[[package]]
-name = "luajit-src"
-version = "210.7.3+1ee778a"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "869665372263eb337b14f480cfb864b89f12eade4eb42cb415f71517b4a67572"
-dependencies = [
- "cc",
- "which",
-]
-
-[[package]]
 name = "md-5"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -625,6 +608,7 @@ dependencies = [
  "either",
  "libc",
  "mlua-sys",
+ "mlua_derive",
  "num-traits",
  "parking_lot",
  "rustc-hash",
@@ -639,9 +623,18 @@ dependencies = [
  "cc",
  "cfg-if",
  "libc",
- "lua-src",
- "luajit-src",
  "pkg-config",
+]
+
+[[package]]
+name = "mlua_derive"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87de1e4bdfaa4bb99d8c1449d8a34b0f19e649ef68eb5d4e8dbf1e9ec6f4a084"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

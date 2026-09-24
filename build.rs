@@ -4,6 +4,7 @@
 use std::process::Command;
 
 fn main() {
+    lua();
     lpeg();
     // `date` is the one clock available without pulling a crate into the
     // build script; the epoch is the fallback where it is not.
@@ -64,8 +65,34 @@ fn source_digest() -> u64 {
     hash
 }
 
+/// Lua 5.3 with satex's unknown value made untestable (vendor/lua/SATEX.patch).
+/// `mlua` runs in `module` mode and links this build, since a `[patch]` on a
+/// Lua crate does not survive publishing.
+fn lua() {
+    let dir = std::path::Path::new("vendor/lua");
+    let skip = ["lua.c", "luac.c"];
+    let mut build = cc::Build::new();
+    build.include(dir).warnings(false);
+    let target = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    match target.as_str() {
+        "macos" | "ios" => build.define("LUA_USE_MACOSX", None),
+        "windows" => &mut build,
+        _ => build.define("LUA_USE_LINUX", None),
+    };
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .expect("vendor/lua")
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "c"))
+        .filter(|p| !skip.iter().any(|s| p.file_name().is_some_and(|n| n == *s)))
+        .collect();
+    files.sort();
+    build.files(files).compile("lua53");
+    println!("cargo:rerun-if-changed=vendor/lua");
+}
+
 /// LPeg, which LuaTeX builds in, compiled against the Lua 5.3 headers of
-/// the vendored Lua `mlua` links.
+/// the Lua built above.
 fn lpeg() {
     let dir = std::path::Path::new("vendor/lpeg");
     let files = ["lpcap.c", "lpcode.c", "lpcset.c", "lpprint.c", "lptree.c", "lpvm.c"];

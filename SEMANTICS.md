@@ -210,7 +210,7 @@ and pdfTeX adds `\expanded`. Everything else is executed by the stomach.
     value. A field LuaTeX does not have is nil. A value SaTeX does not know (a token field, the clock, a
     `status` field, …) is the unknown value. Arithmetic, concatenation,
     length and indexing of it give it again. Lua is patched
-    (`vendor/lua-src/SATEX.patch`) so that a truth test (`if`, `while`,
+    (`vendor/lua/SATEX.patch`) so that a truth test (`if`, `while`,
     `and`, `or`, `not`), `==`, `rawequal`, `<`, use as a table key, a `for`
     bound, `type`, `tostring`, `table.concat` or a library argument check
     of it stops the run. Passing it to the engine stops the run, and so do

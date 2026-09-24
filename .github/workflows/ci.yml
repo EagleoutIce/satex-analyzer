@@ -11,6 +11,10 @@ jobs:
     # engine-dependent tests need; installing one with apt takes minutes.
     container: texlive/texlive:latest
     steps:
+      # Lua and LPeg are compiled from C; the TeX Live image has no compiler.
+      - name: Install a C toolchain
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential
+
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable

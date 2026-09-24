@@ -22,6 +22,10 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
+      # Lua and LPeg are compiled from C; the TeX Live image has no compiler.
+      - name: Install a C toolchain
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential
+
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
