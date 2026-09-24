@@ -1,0 +1,60 @@
+name: Wiki
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - README.md
+      - SEMANTICS.md
+      - doc/wiki/**
+      - doc/chktex-coverage.md
+      - .github/workflows/wiki.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki
+  cancel-in-progress: true
+
+jobs:
+  wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The wiki is its own git repository. GitHub creates it with the first
+      # page, so create one by hand once before this job can push.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: wiki
+
+      - name: Sync the pages
+        run: |
+          find wiki -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp README.md wiki/Home.md
+          cp SEMANTICS.md wiki/Semantics.md
+          cp doc/chktex-coverage.md wiki/Chktex-Coverage.md
+          for f in doc/wiki/*.md; do
+            name=$(basename "$f" .md)
+            cp "$f" "wiki/$(echo "${name^}")".md
+          done
+
+      # Each sync is one parentless commit, force-pushed, so the wiki never
+      # accumulates history that repeats the main repository's.
+      - name: Push
+        working-directory: wiki
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          branch=$(git rev-parse --abbrev-ref HEAD)
+          if git diff --quiet HEAD -- . && [ -z "$(git status --porcelain)" ]; then
+            echo "Wiki is up to date."
+            exit 0
+          fi
+          git checkout --orphan sync
+          git add -A
+          git commit -m "Sync wiki from ${GITHUB_SHA::7}"
+          git push --force origin "sync:${branch}"

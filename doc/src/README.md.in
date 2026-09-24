@@ -6,7 +6,7 @@ An abstract interpreter for (La)TeX and related engines with the ability to expa
 Instead, SaTeX can lint your documents to find various issues (including quick-fixes and the identification of unused or missing macros), slice your document, analyze its performance, jump to definitions,  explore package options and their consequences.
 
 Please consult the documentation published at
-<https://eagleoutice.github.io/satex/> with details on the assumed [concrete TeX/eTeX semantics][concrete semantics], the [linting rules](https://eagleoutice.github.io/satex/wiki/lints), all supported [queries](https://eagleoutice.github.io/satex/wiki/queries) and the
+<https://eagleoutice.github.io/satex-analyzer/> with details on the assumed [concrete TeX/eTeX semantics][concrete semantics], the [linting rules](https://eagleoutice.github.io/satex-analyzer/wiki/lints), all supported [queries](https://eagleoutice.github.io/satex-analyzer/wiki/queries) and the
 [configuration][config].
 
 Please note that the first run(s) of `satex` may be slow because it reads, interprets, and caches the (La)TeX kernel and the packages it requires for the first time. Subsequent runs are faster because they use the cache.
@@ -221,5 +221,5 @@ There are various preexisting analysis approaches for TeX, albeit none offer ful
 - [ChkTeX](https://www.nongnu.org/chktex/) is a token-level linter for typographic and style mistakes (it does not expand macros).
 
 
-[concrete semantics]: https://eagleoutice.github.io/satex/SEMANTICS
-[config]: https://eagleoutice.github.io/satex/wiki/configuration
+[concrete semantics]: https://eagleoutice.github.io/satex-analyzer/SEMANTICS
+[config]: https://eagleoutice.github.io/satex-analyzer/wiki/configuration

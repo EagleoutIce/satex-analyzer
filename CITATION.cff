@@ -9,8 +9,8 @@ authors:
     affiliation: Ulm University
 version: 0.1.0
 license: MIT
-repository-code: "https://github.com/EagleoutIce/satex"
-url: "https://eagleoutice.github.io/satex/"
+repository-code: "https://github.com/EagleoutIce/satex-analyzer"
+url: "https://eagleoutice.github.io/satex-analyzer/"
 keywords:
   - LaTeX
   - TeX

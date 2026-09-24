@@ -7,11 +7,11 @@
 //! as labels, citations and environments, and the places it could not decide.
 //! Values it cannot know stay unknown, undecided conditionals are analyzed on
 //! every path, and budgets bound every run.  The semantics are specified in
-//! [`SEMANTICS.md`](https://eagleoutice.github.io/satex/SEMANTICS).
+//! [`SEMANTICS.md`](https://eagleoutice.github.io/satex-analyzer/SEMANTICS).
 //!
 //! The `satex` command-line tool is the main interface (`lint`, `explain`,
 //! `slice`, `query`, `summary`, `lsp`, …); see the
-//! [documentation](https://eagleoutice.github.io/satex/).  As a library:
+//! [documentation](https://eagleoutice.github.io/satex-analyzer/).  As a library:
 //!
 //! ```no_run
 //! use satex::config::Config;
