@@ -301,8 +301,11 @@ fn queries_list() -> Result<String, String> {
         ));
     }
     let mut out = String::new();
-    for name in String::from_utf8_lossy(&output.stdout).lines() {
-        let _ = writeln!(out, "- `{name}`");
+    for name in String::from_utf8_lossy(&output.stdout).lines().map(str::trim) {
+        // The listing's header row is not a query.
+        if !name.is_empty() && name != "name" {
+            let _ = writeln!(out, "- [{name}](#{name})");
+        }
     }
     Ok(out)
 }

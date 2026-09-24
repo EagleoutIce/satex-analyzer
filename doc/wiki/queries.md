@@ -4,26 +4,25 @@
 
 `satex query NAME -f FILE` runs a query and prints its records. `satex query --list` names them all. Every query takes `--filter EXPR` (e.g. `'tag=macro and arity>0'`) and `--format json`/`csv`. The examples analyze `samples/paper.tex`.
 
-- `name              `
-- `definitions       `
-- `expansions        `
-- `dependencies      `
-- `occurrences       `
-- `recursion         `
-- `calls             `
-- `dependency-graph  `
-- `trace             `
-- `files             `
-- `diagnostics       `
-- `distribution      `
-- `catcodes          `
-- `side-effects      `
-- `project           `
-- `plugins           `
-- `produces          `
-- `gaps              `
-- `pgfkeys           `
-- `options           `
+- [definitions](#definitions)
+- [expansions](#expansions)
+- [dependencies](#dependencies)
+- [occurrences](#occurrences)
+- [recursion](#recursion)
+- [calls](#calls)
+- [dependency-graph](#dependency-graph)
+- [trace](#trace)
+- [files](#files)
+- [diagnostics](#diagnostics)
+- [distribution](#distribution)
+- [catcodes](#catcodes)
+- [side-effects](#side-effects)
+- [project](#project)
+- [plugins](#plugins)
+- [produces](#produces)
+- [gaps](#gaps)
+- [pgfkeys](#pgfkeys)
+- [options](#options)
 
 ## definitions
 

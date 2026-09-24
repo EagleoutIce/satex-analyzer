@@ -26,10 +26,15 @@ jobs:
 
       # The wiki is its own git repository. GitHub creates it with the first
       # page, so create one by hand once before this job can push.
-      - uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository }}.wiki
-          path: wiki
+      - name: Clone the wiki
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          url="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git"
+          git clone --depth=1 "$url" wiki || {
+            echo "::error::No wiki repository yet. Create the first page in the wiki tab once."
+            exit 1
+          }
 
       - name: Sync the pages
         run: |
@@ -39,7 +44,10 @@ jobs:
           cp doc/chktex-coverage.md wiki/Chktex-Coverage.md
           for f in doc/wiki/*.md; do
             name=$(basename "$f" .md)
-            cp "$f" "wiki/$(echo "${name^}")".md
+            case "$name" in
+              _*) cp "$f" "wiki/$name.md" ;;
+              *) cp "$f" "wiki/${name^}.md" ;;
+            esac
           done
 
       # Each sync is one parentless commit, force-pushed, so the wiki never
