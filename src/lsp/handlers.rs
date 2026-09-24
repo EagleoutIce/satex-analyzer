@@ -9,9 +9,9 @@
 use std::sync::OnceLock;
 
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionResponse, GotoDefinitionResponse, Hover,
-    HoverContents, InsertTextFormat, Location, MarkupContent, MarkupKind, Position, Range,
-    SymbolInformation, SymbolKind, Uri,
+    CompletionItem, CompletionItemKind, CompletionResponse, DocumentHighlight, DocumentHighlightKind,
+    GotoDefinitionResponse, Hover, HoverContents, InsertTextFormat, Location, MarkupContent, MarkupKind,
+    Position, PrepareRenameResponse, Range, SymbolInformation, SymbolKind, TextEdit, Uri, WorkspaceEdit,
 };
 use regex::Regex;
 use serde_json::Value as Json;
@@ -186,17 +186,47 @@ pub fn hover(analysis: &Analysis, doc: &Text, position: Position) -> Option<Hove
 }
 
 /// `textDocument/definition`: every definition site [`query::explain`]
-/// knows for the name under the cursor.
+/// knows for the control sequence under the cursor, or the `\label`,
+/// `\bibitem` or bibliography entry a key names.
 pub fn definition(analysis: &Analysis, doc: &Text, position: Position) -> Option<GotoDefinitionResponse> {
     let pos = to_pos(doc, position);
     let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
-    if !is_command {
-        return None;
-    }
-    let (records, _) = query::explain(analysis, &[name], true).ok()?;
     let sources = Sources::default();
+    let records = if is_command {
+        query::explain(analysis, &[name], true).ok()?.0
+    } else {
+        query::run(analysis, Query::Occurrences, &Filter::Always)
+            .into_iter()
+            .filter(|r| {
+                r.get("key").and_then(Json::as_str) == Some(name.as_str())
+                    && r.get("kind").and_then(Json::as_str).is_some_and(|k| matches!(k, "label" | "bibitem" | "entry"))
+            })
+            .collect()
+    };
     let locations: Vec<Location> = records.iter().filter_map(|r| record_location(r, &sources)).collect();
     (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
+}
+
+/// Every expansion (and, with `declarations`, definition) of a control
+/// sequence, or every occurrence of a label/citation/environment key.
+fn sites(analysis: &Analysis, name: &str, is_command: bool, declarations: bool) -> Vec<Record> {
+    let named = |record: &Record, field: &str, want: &str| record.get(field).and_then(Json::as_str) == Some(want);
+    if !is_command {
+        return query::run(analysis, Query::Occurrences, &Filter::Always)
+            .into_iter()
+            .filter(|r| named(r, "key", name))
+            .collect();
+    }
+    let target = format!("\\{name}");
+    let mut kinds = vec![Query::Expansions];
+    if declarations {
+        kinds.push(Query::Definitions);
+    }
+    kinds
+        .into_iter()
+        .flat_map(|q| query::run(analysis, q, &Filter::Always))
+        .filter(|r| named(r, "name", &target))
+        .collect()
 }
 
 /// `textDocument/references`: every expansion of a control sequence, or
@@ -205,29 +235,135 @@ pub fn references(analysis: &Analysis, doc: &Text, position: Position, declarati
     let pos = to_pos(doc, position);
     let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
     let sources = Sources::default();
-    let mut locations = Vec::new();
-    if is_command {
-        let target = format!("\\{name}");
-        for record in query::run(analysis, Query::Expansions, &Filter::Always) {
-            if record.get("name").and_then(Json::as_str) == Some(target.as_str()) {
-                locations.extend(record_location(&record, &sources));
-            }
+    let locations: Vec<Location> =
+        sites(analysis, &name, is_command, declarations).iter().filter_map(|r| record_location(r, &sources)).collect();
+    (!locations.is_empty()).then_some(locations)
+}
+
+/// The span of the name a site record points at: `\name` without its
+/// backslash, or the key after the first `{` at or past the recorded column.
+fn site_range(record: &Record, sources: &Sources, name: &str, is_command: bool) -> Option<(String, Range)> {
+    let path = record.get("path").and_then(Json::as_str)?;
+    let line = record.get("line").and_then(Json::as_u64)? as u32;
+    let col = record.get("col").and_then(Json::as_u64).unwrap_or(1) as u32;
+    let text = sources.get(path)?;
+    let text_line = text.line(line);
+    let from = char_byte(text_line, col.saturating_sub(1));
+    let needle = if is_command { format!("\\{name}") } else { name.to_string() };
+    let mut search = from;
+    if !is_command {
+        search += text_line[from..].find('{').map_or(0, |i| i + 1);
+    }
+    let found = text_line[search..].match_indices(&needle).map(|(i, _)| search + i).find(|&at| {
+        let after = text_line[at + needle.len()..].chars().next();
+        !(is_command && name.chars().all(|c| c.is_ascii_alphabetic() || c == '@') && after.is_some_and(|c| c.is_ascii_alphabetic() || c == '@'))
+    })?;
+    let first = text_line[..found].chars().count() as u32 + 1 + u32::from(is_command);
+    let width = name.chars().count() as u32;
+    let range = Range {
+        start: to_lsp(&text, Pos::new(line, first)),
+        end: to_lsp(&text, Pos::new(line, first + width)),
+    };
+    Some((path.to_string(), range))
+}
+
+/// `textDocument/documentHighlight`: this file's spans of the name under
+/// the cursor, definitions included.
+pub fn highlights(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Option<Vec<DocumentHighlight>> {
+    let pos = to_pos(doc, position);
+    let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
+    let sources = Sources::default();
+    let out: Vec<DocumentHighlight> = sites(analysis, &name, is_command, true)
+        .iter()
+        .filter_map(|r| site_range(r, &sources, &name, is_command))
+        .filter(|(p, _)| p == path)
+        .map(|(_, range)| DocumentHighlight { range, kind: Some(DocumentHighlightKind::TEXT) })
+        .collect();
+    (!out.is_empty()).then_some(out)
+}
+
+/// Every span a rename of the name under the cursor would touch.  `None`
+/// when a site lies in a file satex may not edit (a package, the kernel),
+/// since renaming only part of a name would break it.
+fn rename_sites(analysis: &Analysis, doc: &Text, position: Position) -> Option<(String, bool, Vec<(String, Range)>)> {
+    let pos = to_pos(doc, position);
+    let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
+    let sources = Sources::default();
+    let mut spans = Vec::new();
+    for record in sites(analysis, &name, is_command, true) {
+        let (path, range) = site_range(&record, &sources, &name, is_command)?;
+        if !crate::lint::fix::editable(analysis, &path) {
+            return None;
         }
-        if declarations {
-            for record in query::run(analysis, Query::Definitions, &Filter::Always) {
-                if record.get("name").and_then(Json::as_str) == Some(target.as_str()) {
-                    locations.extend(record_location(&record, &sources));
-                }
-            }
-        }
+        spans.push((path, range));
+    }
+    (!spans.is_empty()).then_some((name, is_command, spans))
+}
+
+/// `textDocument/prepareRename`: the span under the cursor and its name.
+pub fn prepare_rename(analysis: &Analysis, doc: &Text, position: Position) -> Option<PrepareRenameResponse> {
+    let (name, _, spans) = rename_sites(analysis, doc, position)?;
+    let range = spans.iter().map(|(_, r)| *r).find(|r| {
+        (r.start.line, r.start.character) <= (position.line, position.character)
+            && (position.line, position.character) <= (r.end.line, r.end.character)
+    })?;
+    Some(PrepareRenameResponse::RangeWithPlaceholder { range, placeholder: name })
+}
+
+/// `textDocument/rename`: every definition and use of the name, in every
+/// editable file, replaced by `new_name`.
+pub fn rename(analysis: &Analysis, doc: &Text, position: Position, new_name: &str) -> Result<WorkspaceEdit, String> {
+    let (_, is_command, spans) =
+        rename_sites(analysis, doc, position).ok_or("nothing renamable here, or a definition lies outside the project")?;
+    let new_name = if is_command { new_name.trim_start_matches('\\') } else { new_name };
+    let valid = if is_command {
+        !new_name.is_empty() && new_name.chars().all(|c| c.is_ascii_alphabetic() || c == '@')
     } else {
-        for record in query::run(analysis, Query::Occurrences, &Filter::Always) {
-            if record.get("key").and_then(Json::as_str) == Some(name.as_str()) {
-                locations.extend(record_location(&record, &sources));
+        !new_name.is_empty() && !new_name.chars().any(|c| c.is_whitespace() || matches!(c, '{' | '}' | ',' | '%' | '\\'))
+    };
+    if !valid {
+        return Err(format!("`{new_name}` is not a valid name here"));
+    }
+    let mut changes: std::collections::HashMap<Uri, Vec<TextEdit>> = std::collections::HashMap::new();
+    for (path, range) in spans {
+        changes.entry(path_uri(&path)).or_default().push(TextEdit { range, new_text: new_name.to_string() });
+    }
+    Ok(WorkspaceEdit { changes: Some(changes), ..Default::default() })
+}
+
+/// `workspace/symbol`: the document's own macro definitions, sections,
+/// labels and environments whose name contains `query`, case-insensitively.
+#[allow(deprecated)]
+pub fn workspace_symbols(analysis: &Analysis, query_text: &str) -> Vec<SymbolInformation> {
+    let needle = query_text.to_lowercase();
+    let sources = Sources::default();
+    let mut out = Vec::new();
+    let mut add = |record: &Record, name: &str, kind: SymbolKind| {
+        if !name.is_empty() && name.to_lowercase().contains(&needle) {
+            if let Some(location) = record_location(record, &sources) {
+                out.push(SymbolInformation { name: name.to_string(), kind, tags: None, deprecated: None, location, container_name: None });
+            }
+        }
+    };
+    for record in query::run(analysis, Query::Occurrences, &Filter::Always) {
+        let kind = match record.get("kind").and_then(Json::as_str) {
+            Some("section") => SymbolKind::NAMESPACE,
+            Some("label") => SymbolKind::CONSTANT,
+            Some("begin-environment") => SymbolKind::MODULE,
+            _ => continue,
+        };
+        if let Some(key) = record.get("key").and_then(Json::as_str) {
+            add(&record, key, kind);
+        }
+    }
+    for record in query::run(analysis, Query::Definitions, &Filter::Always) {
+        if record.get("origin").and_then(Json::as_str) == Some("document") {
+            if let Some(name) = record.get("name").and_then(Json::as_str) {
+                add(&record, name, SymbolKind::FUNCTION);
             }
         }
     }
-    (!locations.is_empty()).then_some(locations)
+    out
 }
 
 /// `textDocument/completion`: [`query::scope`] after a bare `\`, environment

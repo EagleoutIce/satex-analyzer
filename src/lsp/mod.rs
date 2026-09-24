@@ -32,8 +32,8 @@ use lsp_types::{
     CodeActionParams, CodeActionProviderCapability, CompletionOptions, CompletionParams,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     DidSaveTextDocumentParams, DocumentSymbolParams, ExecuteCommandOptions, ExecuteCommandParams,
-    GotoDefinitionParams, Hover, HoverParams, HoverProviderCapability, Location, OneOf, Position,
-    PublishDiagnosticsParams, ReferenceParams, ServerCapabilities, TextDocumentSyncCapability,
+    DocumentHighlightParams, GotoDefinitionParams, Hover, HoverParams, HoverProviderCapability, Location, OneOf, Position,
+    PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams, ServerCapabilities, TextDocumentSyncCapability,
     TextDocumentSyncKind, Uri,
 };
 use serde_json::Value as Json;
@@ -79,6 +79,12 @@ fn server_capabilities() -> ServerCapabilities {
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
+        rename_provider: Some(OneOf::Right(RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec!["\\".into(), "{".into()]),
             ..Default::default()
@@ -183,6 +189,30 @@ fn dispatch(engine_tx: &Sender<EngineMsg>, req: Request) -> Result<Json, String>
             let symbols = ask(engine_tx, |reply| EngineMsg::DocumentSymbol(p.text_document.uri, reply))?;
             Ok(serde_json::to_value(symbols).unwrap())
         }
+        "textDocument/documentHighlight" => {
+            let p: DocumentHighlightParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let uri = p.text_document_position_params.text_document.uri;
+            let pos = p.text_document_position_params.position;
+            let out = ask(engine_tx, |reply| EngineMsg::Highlight(uri, pos, reply))?;
+            Ok(serde_json::to_value(out).unwrap())
+        }
+        "textDocument/prepareRename" => {
+            let p: lsp_types::TextDocumentPositionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let out = ask(engine_tx, |reply| EngineMsg::PrepareRename(p.text_document.uri, p.position, reply))?;
+            Ok(serde_json::to_value(out).unwrap())
+        }
+        "textDocument/rename" => {
+            let p: RenameParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let uri = p.text_document_position.text_document.uri;
+            let pos = p.text_document_position.position;
+            let edit = ask(engine_tx, |reply| EngineMsg::Rename(uri, pos, p.new_name, reply))??;
+            Ok(serde_json::to_value(edit).unwrap())
+        }
+        "workspace/symbol" => {
+            let p: lsp_types::WorkspaceSymbolParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let symbols = ask(engine_tx, |reply| EngineMsg::WorkspaceSymbol(p.query, reply))?;
+            Ok(serde_json::to_value(symbols).unwrap())
+        }
         "textDocument/codeAction" => {
             let p: CodeActionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let actions = ask(engine_tx, |reply| EngineMsg::CodeAction(p.text_document.uri, reply))?;
@@ -244,6 +274,10 @@ enum EngineMsg {
     References(Uri, Position, bool, Sender<Option<Vec<Location>>>),
     Completion(Uri, Position, Sender<lsp_types::CompletionResponse>),
     DocumentSymbol(Uri, Sender<Option<lsp_types::DocumentSymbolResponse>>),
+    Highlight(Uri, Position, Sender<Option<Vec<lsp_types::DocumentHighlight>>>),
+    PrepareRename(Uri, Position, Sender<Option<lsp_types::PrepareRenameResponse>>),
+    Rename(Uri, Position, String, Sender<Result<lsp_types::WorkspaceEdit, String>>),
+    WorkspaceSymbol(String, Sender<Vec<lsp_types::SymbolInformation>>),
     CodeAction(Uri, Sender<Vec<Json>>),
     ExecuteCommand(Json, Sender<Result<Vec<Json>, String>>),
     Shutdown,
@@ -335,6 +369,33 @@ fn engine_loop(
                     .flatten(),
                     None => None,
                 };
+                let _ = reply.send(result);
+            }
+            EngineMsg::Highlight(uri, pos, reply) => {
+                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
+                let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result = with_doc(&docs, &uri, |analysis, text| handlers::highlights(analysis, text, &path, pos));
+                let _ = reply.send(result.flatten());
+            }
+            EngineMsg::PrepareRename(uri, pos, reply) => {
+                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
+                let result = with_doc(&docs, &uri, |analysis, text| handlers::prepare_rename(analysis, text, pos));
+                let _ = reply.send(result.flatten());
+            }
+            EngineMsg::Rename(uri, pos, new_name, reply) => {
+                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
+                let result = with_doc(&docs, &uri, |analysis, text| handlers::rename(analysis, text, pos, &new_name))
+                    .unwrap_or_else(|| Err("document is not open".to_string()));
+                let _ = reply.send(result);
+            }
+            EngineMsg::WorkspaceSymbol(query, reply) => {
+                let uri = docs.keys().next().cloned();
+                if let Some(uri) = &uri {
+                    ensure_analyzed(&mut docs, &mut actions, uri, &cfg, &diagnostics_tx, &mut dirty);
+                }
+                let result = uri
+                    .and_then(|u| with_doc(&docs, &u, |analysis, _| handlers::workspace_symbols(analysis, &query)))
+                    .unwrap_or_default();
                 let _ = reply.send(result);
             }
             EngineMsg::CodeAction(uri, reply) => {

@@ -181,6 +181,63 @@ fn stdio_session_drives_the_feature_set() {
         "completion did not offer `greet`: {items:?}"
     );
 
+    let definition_id = server.request(
+        "textDocument/definition",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 3 } }),
+    );
+    let definition = server.response(definition_id);
+    let definition = definition["result"].as_array().cloned().unwrap_or_default();
+    assert!(
+        definition.iter().any(|l| l["uri"].as_str().is_some_and(|u| u.ends_with("greet.tex"))),
+        "definition did not point at greet.tex: {definition:?}"
+    );
+
+    let references_id = server.request(
+        "textDocument/references",
+        json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": 1, "character": 3 },
+            "context": { "includeDeclaration": true }
+        }),
+    );
+    let references = server.response(references_id);
+    assert!(
+        references["result"].as_array().is_some_and(|r| !r.is_empty()),
+        "references found no use of `\\greet`: {references:?}"
+    );
+
+    let highlight_id = server.request(
+        "textDocument/documentHighlight",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 3 } }),
+    );
+    let highlight = server.response(highlight_id);
+    assert!(
+        highlight["result"].as_array().is_some_and(|h| h.len() >= 2),
+        "highlight missed the definition or the use: {highlight:?}"
+    );
+
+    let rename_id = server.request(
+        "textDocument/rename",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 3 }, "newName": "hello" }),
+    );
+    let rename = server.response(rename_id);
+    let edits = rename["result"]["changes"][uri.as_str()].as_array().cloned().unwrap_or_default();
+    assert!(
+        edits.len() >= 2 && edits.iter().all(|e| e["newText"] == json!("hello")),
+        "rename did not edit both sites: {rename:?}"
+    );
+    assert!(
+        edits.iter().any(|e| e["range"] == json!({ "start": { "line": 1, "character": 1 }, "end": { "line": 1, "character": 6 } })),
+        "rename range missed the use of `\\greet`: {edits:?}"
+    );
+
+    let workspace_id = server.request("workspace/symbol", json!({ "query": "gre" }));
+    let workspace = server.response(workspace_id);
+    assert!(
+        workspace["result"].as_array().is_some_and(|s| s.iter().any(|s| s["name"] == json!("\\greet"))),
+        "workspace/symbol did not find `\\greet`: {workspace:?}"
+    );
+
     let symbols_id = server.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": uri } }));
     let symbols = server.response(symbols_id);
     let symbols = symbols["result"].as_array().cloned().unwrap_or_default();

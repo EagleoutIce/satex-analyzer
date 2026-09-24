@@ -76,7 +76,12 @@ fn lua() {
     let target = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     match target.as_str() {
         "macos" | "ios" => build.define("LUA_USE_MACOSX", None),
-        "windows" => &mut build,
+        "windows" => {
+            if std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|e| e == "msvc") {
+                println!("cargo:rustc-link-arg-bins=/FORCE:MULTIPLE");
+            }
+            &mut build
+        }
         _ => build.define("LUA_USE_LINUX", None),
     };
     let mut files: Vec<_> = std::fs::read_dir(dir)
