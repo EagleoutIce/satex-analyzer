@@ -1,0 +1,80 @@
+\documentclass[11pt]{article}
+
+\newif\ifdraft
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{mypackage}
+
+% Standard single-argument macros.
+\newcommand{\highlight}[1]{\textbf{#1}}
+\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+
+\def\WeirdMore super #1\; { #1 }
+
+\def\Weird key: #1, value: #2, magic: #3\;{%
+  \texttt{key: #1, value: #2, magic: #3}%
+  \typeout{key: #1, value: #2, magic: #3}%
+  \WeirdMore
+}
+
+\csname ifdraft\endcsname\else
+% Directly recursive; found by the `recursion` query.
+\newcommand{\repeat}[1]{#1\repeat{#1}}
+\fi
+\begin{document}
+
+\def\DocName{Document}
+\title{A Sample \DocName{} for sa\TeX}
+\author{satex Test Suite}
+\maketitle
+
+\section{Introduction}
+\label{sec:intro}
+\ifdraft
+This document exercises \highlight{satex}, a static analyser for \LaTeX{}.
+See \autoref{sec:method} for the methodology and \autoref{sec:results} for
+the results.
+\fi
+
+\section{Methodology}
+\label{sec:method}
+
+We define the loss function as follows.
+
+\begin{equation}
+  \label{eq:loss}
+  \mathcal{L} = \sum_{i=1}^{N} \norm{x_i - \hat{x}_i}^2
+\end{equation}
+
+\begin{figure}[ht]
+  \centering
+  \rule{0.4\linewidth}{0.3pt}
+  \caption{Placeholder figure for the satex sample.}
+  \label{fig:main}
+\end{figure}
+
+\section{Results}
+\label{sec:results}
+
+\autoref{eq:loss} defines the objective; \autoref{fig:main} illustrates the
+model architecture.  A summary of results appears in \autoref{tab:results}.
+
+\begin{table}[ht]
+  \centering
+  \caption{Summary of results.}
+  \label{tab:results}
+  \begin{tabular}{lc}
+    Method & Score \\ \hline
+    Ours   & 0.92  \\
+  \end{tabular}
+\end{table}
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+\highlight{satex} correctly analyses this document.
+See \autoref{sec:intro} for motivation and \autoref{sec:results} for
+the quantitative evaluation.
+
+\end{document}

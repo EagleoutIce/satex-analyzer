@@ -1,0 +1,32 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{mypackage}[2024/01/01 v1.0 Sample package for satex]
+
+\RequirePackage{xcolor}
+
+\newif\ifmy@draft
+\newif\ifmy@wide
+
+\DeclareOption{draft}{\my@drafttrue}
+\DeclareOption{final}{\my@draftfalse}
+\DeclareOption{wide}{\my@widetrue}
+\DeclareOption*{\PackageWarning{mypackage}{Unknown option '\CurrentOption'}}
+\ProcessOptions\relax
+
+\newcounter{myitem}
+\newlength{\my@indent}
+\setlength{\my@indent}{1.5em}
+
+\newcommand{\mybox}[1]{\fbox{#1}}
+\newcommand{\myemph}[2]{\textit{#1}:\space#2}
+
+\ifmy@draft
+  \newcommand{\mymode}{draft}
+\else
+  \newcommand{\mymode}{final}
+\fi
+
+% Mutually recursive pair.
+\newcommand{\myping}[1]{\mypong{#1}}
+\newcommand{\mypong}[1]{\myping{#1}}
+
+\newenvironment{mybanner}[1][plain]{\begin{center}\textbf{#1}}{\end{center}}

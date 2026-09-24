@@ -1,0 +1,16 @@
+\documentclass{article}
+\usepackage{pgfkeys}
+\newif\ifdraft
+\pgfkeys{
+  /demo/.is family, /demo,
+  width/.initial=2cm,
+  color/.style={fill=#1, draw=#1}, color/.default=red,
+  draft/.is if=draft,
+  mode/.is choice,
+  mode/fast/.code={\def\demomode{fast}},
+  mode/safe/.code={\def\demomode{safe}},
+  label/.code 2 args={\def\demolabel{#1: #2}},
+}
+\begin{document}
+\pgfkeys{/demo/mode=fast, /demo/draft}
+\end{document}

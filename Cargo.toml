@@ -1,0 +1,83 @@
+[package]
+name = "satex-analyzer"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Static analyzer for TeX/LaTeX: lints, explains, slices and caches documents by interpreting the real kernel"
+license = "MIT"
+authors = ["Florian Sihler <florian.sihler@uni-ulm.de>"]
+repository = "https://github.com/EagleoutIce/satex"
+homepage = "https://eagleoutice.github.io/satex/"
+documentation = "https://eagleoutice.github.io/satex/"
+readme = "README.md"
+keywords = ["latex", "tex", "linter", "static-analysis", "lsp"]
+categories = ["command-line-utilities", "development-tools", "text-processing"]
+exclude = ["samples/", "doc/architecture.tex", ".github/", "scripts/"]
+
+[features]
+doc = []
+
+[[bin]]
+name = "satex"
+path = "src/main.rs"
+test = false  # no unit tests of its own; tests/ drives the binary
+
+[[bin]]
+name = "satex-doc"
+path = "src/bin/satex-doc.rs"
+test = false
+required-features = ["doc"]
+
+[[test]]
+name = "docs"
+required-features = ["doc"]
+
+[lib]
+name = "satex"
+path = "src/lib.rs"
+doctest = false
+
+[dependencies]
+anstream = "1"
+anstyle = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+regex = "1"
+postcard = { version = "1.1.3", default-features = false, features = ["alloc"] }
+serde_yaml_ng = "0.10.0"
+terminal_size = "0.4.4"
+which = "8.0.6"
+dirs = "7.0.0"
+walkdir = "2.5.0"
+glob = "0.3.4"
+unicode-width = "0.2.2"
+petgraph = "0.8.3"
+time = { version = "0.3.55", features = ["local-offset"] }
+ignore = "0.4.33"
+bytesize = { version = "2.7.0", features = ["serde"] }
+lsp-server = "0.10"
+lsp-types = "0.97"
+crossbeam-channel = "0.5"
+ttf-parser = "0.25.1"
+mlua = { version = "0.12.1", features = ["lua53", "vendored"] }
+md-5 = "0.11"
+percent-encoding = "2"
+
+[dev-dependencies]
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+
+[[bench]]
+name = "analysis"
+harness = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[build-dependencies]
+cc = "1.4.7"
+
+# Lua 5.3 with satex's unknown value made untestable (vendor/lua-src/SATEX.patch).
+[patch.crates-io]
+lua-src = { path = "vendor/lua-src" }

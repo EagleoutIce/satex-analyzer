@@ -1,0 +1,4 @@
+# latexmk drives the sample document with pdflatex; satex reads $pdf_mode to
+# learn which engine's primitives exist.
+$pdf_mode = 1;
+$pdflatex = 'pdflatex -interaction=nonstopmode %O %S';

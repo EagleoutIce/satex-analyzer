@@ -1,0 +1,137 @@
+# satex configuration. Merged from the global config, then every satex.yaml
+# from the filesystem root down to the input file's directory, then --config PATH, then --set. 
+# `satex --version` can be used to list the files actually merged for a run.
+
+load_packages: true       # follow \usepackage and \RequirePackage
+load_classes: true        # follow \documentclass and \LoadClass
+load_inputs: true         # follow \input and \include
+skip_packages: []         # packages to leave unread
+search_paths: []          # searched before the installation
+paths:                    # kpathsea variables' fallback list: tried after the
+                          # environment and the project's latexmkrc/Makefile
+  texinputs: []           # TEXINPUTS; a trailing // recurses, as in kpathsea
+  bibinputs: []           # BIBINPUTS
+  bstinputs: []           # BSTINPUTS
+  tfmfonts: []            # TFMFONTS
+  encfonts: []            # ENCFONTS
+at_letter: false          # start with @ a letter, as .sty files do
+lint_off: [analysis-imprecision]  # rule codes that never fire; a profile fills this in
+report_public_definitions: true  # unused-definition also flags a public name
+# profile: package          # forces one instead of detecting it from the input
+
+# Sensible defaults per kind of input, chosen automatically by the input's
+# extension and, failing that, what it starts with (\ProvidesPackage,
+# \documentclass, ...); --profile NAME or profile: above overrides the
+# choice.  Each block is a partial config, merged over everything above.
+profiles:
+  document: {}            # a LaTeX document: every default above already fits it
+  package:                 # a .sty, read as its own author sees it
+    at_letter: true
+    report_public_definitions: false  # a public name is the package's own interface
+    lint_off: [analysis-imprecision, unused-label, microtype-available, build-shell-escape-missing,
+               build-shell-escape-unneeded, build-engine-mismatch,
+               build-bibliography-disabled, build-bibliography-unneeded,
+               build-missing-custom-dependency, build-unused-custom-dependency,
+               build-command-placeholders, build-engine-options]
+  class:                    # a .cls; the same defaults as a package
+    at_letter: true
+    report_public_definitions: false
+    lint_off: [analysis-imprecision, unused-label, microtype-available, build-shell-escape-missing,
+               build-shell-escape-unneeded, build-engine-mismatch,
+               build-bibliography-disabled, build-bibliography-unneeded,
+               build-missing-custom-dependency, build-unused-custom-dependency,
+               build-command-placeholders, build-engine-options]
+  literate:                 # a .dtx/.ins; unpacks to a package or class
+    at_letter: true
+    report_public_definitions: false
+    lint_off: [analysis-imprecision, unused-label, microtype-available, build-shell-escape-missing,
+               build-shell-escape-unneeded, build-engine-mismatch,
+               build-bibliography-disabled, build-bibliography-unneeded,
+               build-missing-custom-dependency, build-unused-custom-dependency,
+               build-command-placeholders, build-engine-options]
+  plain:                     # plain TeX: no LaTeX packages, classes or labels
+    load_packages: false
+    load_classes: false
+    lint_off: [analysis-imprecision, unused-label, microtype-available]
+
+# Detected when left out: engine from the build files, provider from the
+# locator on PATH, platform from this machine, output from $pdf_mode.
+# engine: pdftex          # tex, pdftex, luatex, xetex
+# kernel: latex2e        # latex2e, or context (experimental)
+# provider: texlive       # texlive, miktex, tectonic
+# platform: linux         # linux, macos, windows
+# output: pdf             # pdf, dvi, ps, html
+# texlive_root: /usr/local/texlive
+# texlive_year: 2026
+texmf_roots: []           # trees to search instead of kpsewhich's
+use_kpsewhich: true       # may run kpsewhich to find them
+use_fallback_roots: true  # may fall back to well-known install paths
+
+load_format: true         # interpret the installation's latex.ltx
+cache: true               # keep the interpreted kernel between runs
+# cache_dir: ~/.cache/satex   # else $SATEX_CACHE, else the platform default
+cache_index:              # package caches; `satex cache build` prepares the
+                          # packages listed (none by default; this list is ours)
+  packages: [tikz, pgfplots, xcolor, graphicx, hyperref, amsmath, siunitx, babel,
+             fontspec, biblatex, xparse, forest, tcolorbox, listings]
+  engines: []             # empty: the engine in effect
+  class: article          # the class they are loaded after
+  auto: true              # every run stores the packages it reads
+# preload: preamble.tex     # a preamble to read as this project's format, the
+                            # way mylatexformat dumps one; a %& line or -fmt=
+                            # in the build configuration names it otherwise
+
+opaque_conditionals: []   # conditionals to leave undecided, both arms analyzed
+expand_in_reports: []     # macros to expand when reporting a value, e.g. today
+
+# Commands that record an occurrence, by kind, and the environments whose body
+# is read as text rather than as code.
+# Primitives the primitive-tex-command rule reports, with what to suggest
+# instead; an empty value suggests nothing.  Entries add to what it knows.
+latex_alternatives: {}
+
+log_gaps: true            # append what a run could not follow to the gap log
+report_gaps: true         # and print it
+# gaps_log: ~/.cache/satex/gaps.ndjson
+
+
+shell_escape: restricted  # none, restricted or full, as the engine was started
+interaction: nonstopmode  # the engine's -interaction: batchmode … errorstopmode
+
+plugins:
+  magic: true             # read % !TeX and % arara: lines
+  tools: true             # infer biber, makeindex and the rest
+  preload: true           # honor %& lines and -fmt=
+  discovery: true         # walk the project, skipping what .gitignore excludes
+
+trace: false              # record the execution trace
+timings: false            # measure where the time goes
+record_arguments: false   # keep the argument tokens of every call
+
+# Limits: the termination argument. Reaching one stops that part of the run
+# and records a diagnostic. Raising one costs time, never accuracy.
+limits:
+  memory: 4GiB            # what one run may hold at once; 0 lifts the limit
+  threads: 0              # threads for the project walk; the interpreter runs on one
+  cache_size: 1GiB        # package caches kept, least recently used evicted; 0 for no bound
+  steps: 900000000        # tokens the document may digest
+  format_steps: 1000000000  # tokens latex.ltx may digest (built once, then cached)
+  file_depth: 64          # how deep \input and \usepackage may nest
+  expansion_depth: 24     # how often a macro may re-enter itself
+  site_expansions: 16384   # how often one call site may expand without reading on
+  seconds: 300            # wall-clock limit per run, 0 for none
+  stall_tokens: 50000000  # tokens without reading the file before a loop is dropped
+  branch_depth: 8         # nesting of undecided conditions
+  join_tokens: 65536      # tokens the arms of one may read before they meet
+  meaning_splits: 1       # path nesting up to which a name joined to several meanings splits per meaning
+  widen_after: 3          # rounds a loop head reanalyzes a grown state before widening it
+  meaning_set: 5          # meanings a join keeps as a set before the meaning is unknown
+  value_set: 5            # values a join keeps for a count or dimension before only the interval
+  expansion_tokens: 1048576   # tokens one expansion or argument may span
+  conditional_tokens: 1048576 # tokens one conditional may skip over
+  held_tokens: 4000000    # tokens waiting to be read
+  expansion_stack: 4000   # token lists open at once: expansions, arguments, files
+  save_stack: 2000000     # assignments a group may have to undo (~200 MB)
+  vertices: 400000        # graph nodes recorded
+  facts: 400000           # definitions, uses and occurrences recorded
+  trace: 200000           # trace events recorded

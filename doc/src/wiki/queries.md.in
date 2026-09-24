@@ -1,0 +1,222 @@
+<!-- generated from doc/src/wiki/queries.md.in by satex-doc; do not edit -->
+
+# Queries
+
+`satex query NAME -f FILE` runs a query and prints its records. `satex query --list` names them all. Every query takes `--filter EXPR` (e.g. `'tag=macro and arity>0'`) and `--format json`/`csv`. The examples analyze `samples/paper.tex`.
+
+{{queries}}
+
+## definitions
+
+Every name the document or its packages define. `origin` is `document` for files in the main file's directory tree, `library` otherwise. `package` names the package or class.
+
+{{run(6): satex query definitions -f samples/paper.tex --filter 'tag=macro and arity>0'}}
+
+## expansions
+
+Every macro call, with how many times it was expanded.
+
+{{run(6): satex query expansions -f samples/paper.tex --filter 'name=\newcommand'}}
+
+## dependencies
+
+The files, packages and classes the document reads, and what loaded each. Lua modules loaded by `\directlua` chunks appear with kind `lua`. `texlive` names each file's TeX Live package (see [configuration](configuration.md#tex-live-packages-depp)).
+
+{{run(6): satex query dependencies -f samples/paper.tex --filter 'kind=package'}}
+
+## occurrences
+
+Package and class identification banners, passed options, and other one-off events.
+
+{{run(6): satex query occurrences -f samples/paper.tex --filter 'kind=identification'}}
+
+## recursion
+
+Macros that call themselves, directly or through another macro.
+
+{{run(6): satex query recursion -f samples/paper.tex}}
+
+## calls
+
+The call graph: which control sequences a macro's replacement text invokes.
+
+{{run(6): satex query calls -f samples/paper.tex --filter 'name=\maketitle'}}
+
+## dependency-graph
+
+The dependency graph as records. `satex dependencies` renders it as DOT or JSON.
+
+{{run(6): satex query dependency-graph -f samples/paper.tex}}
+
+## trace
+
+Every step: which macro expanded, which primitive ran, what changed. Use `satex trace`. `satex query trace` is empty unless `trace: true` is set.
+
+{{run(6): satex trace -f samples/paper.tex}}
+
+`--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded.
+
+{{run(6): satex trace -f samples/paper.tex --lines 10:11}}
+
+## files
+
+Every file read while analyzing the document, in the order it was opened.
+
+{{run(6): satex query files -f samples/paper.tex}}
+
+## diagnostics
+
+Everything SaTeX noticed while interpreting the document: widened conditionals, extra `\else`, and the rest of the internal diagnostics distinct from the lint rules.
+
+{{run(6): satex query diagnostics -f samples/paper.tex}}
+
+## distribution
+
+The detected TeX installation: provider, version, and the texmf trees searched.
+
+{{run(6): satex query distribution -f samples/paper.tex}}
+
+## catcodes
+
+Explicit category code assignments (`\catcode`) the document makes. `samples/paper.tex` does not change any, so this query returns nothing for it:
+
+{{run: satex query catcodes -f samples/paper.tex}}
+
+## side-effects
+
+Definitions and assignments a macro makes as a side effect of being called, rather than through `\def` or `\newcommand` directly at that point.
+
+{{run(6): satex query side-effects -f samples/paper.tex}}
+
+## project
+
+The document class, engine, and build configuration SaTeX detected or was told to assume.
+
+{{run(6): satex query project -f samples/paper.tex}}
+
+## plugins
+
+The provider, platform, engine, output target, and build system plugins chose for this run, and why.
+
+{{run(6): satex query plugins -f samples/paper.tex}}
+
+## pgfkeys
+
+The pgfkeys keys defined at the end of the run and what each does (`initial`, `code`, `code args`, `is family`, `is choice`, `is if`). `--prefix PATH` narrows to one path, e.g. `/tikz/pingu`.
+
+{{run(6): satex query pgfkeys -f samples/keys.tex}}
+
+## gaps
+
+What the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `log_gaps` use the same list.
+
+{{run(6): satex query gaps -f samples/mypackage.sty}}
+
+## options
+
+`--for NAME` lists the keys an environment's or command's optional argument accepts. SaTeX follows what the command's code calls until it reaches a key-setting call (keyval, xkeyval, pgfkeys, l3keys, or a package's own copy such as enumitem's) and lists the keys of the family it used. An optional argument that takes no keys (enumerate's label template) is reported as `positional`.
+
+This needs call arguments recorded (`record_arguments`). `query options` and `--for` in a [request](#json-requests) turn that on.
+
+`mybanner` in `samples/mypackage.sty` takes an optional argument but reads it directly (`[plain]`, no keys), so it comes back `positional`:
+
+{{run(6): satex query options --for mybanner -f samples/mypackage.sty}}
+
+## produces
+
+Where a piece of text can come from, with or without expansion. `--text` is a literal, case-sensitive substring. `kind` says how: `source` (literal in a file. `tag` `comment` if commented out), `macro body` (at the definition), `value` (a register, counter or length. Dimensions in points), `occurrence` (a label, section title, …), `metadata` (`\title`, `\author`, `\date`), or `expansion` (a call the run expanded).
+
+{{run(8): satex query produces -f samples/paper.tex --text 1.5em}}
+
+Only the places that stand behind an expansion, for a text the document never writes out:
+
+{{run(6): satex query produces -f samples/paper.tex --text Introduction --filter 'kind!=source'}}
+
+# Explain
+
+`satex explain NAME…` shows what a control sequence means: where it is defined, what it takes, what it does. Without `-f` it explains against the smallest LaTeX document.
+
+{{run(10): satex explain '\itshape'}}
+
+## Several definitions
+
+If the preamble meaning differs from the one at the end of the run, both are shown. `--all` lists every definition with its place.
+
+## Contexts
+
+A name can mean different things in different places: `\item` outside a list is the kernel's error, inside `enumerate` it starts an item. Each definition records the environments open where it was made, and `explain` shows one record per distinct meaning. `context` says where it holds (`"outside environments"`, `"in enumerate, itemize"`, …).
+
+A name without its own redefinitions can still behave differently by context. `error` is the error a real use raised there, or, without a real use, what running the command in that context raises.
+
+## Signatures
+
+`signature` spells what a command reads, one letter per argument, in the notation of LaTeX's `\NewDocumentCommand` (usrguide):
+
+| key | reads |
+|---|---|
+| `m` | a mandatory argument: a braced group or one token |
+| `o` | an optional `[…]` argument, absent when no `[` follows |
+| `O{default}` | an optional `[…]` argument with the default it takes when left out |
+| `s` | an optional star `*` |
+| `t⟨c⟩` | an optional token `⟨c⟩` |
+| `r⟨a⟩⟨b⟩`, `R⟨a⟩⟨b⟩{default}` | a mandatory argument delimited by `⟨a⟩…⟨b⟩` |
+| `d⟨a⟩⟨b⟩`, `D⟨a⟩⟨b⟩{default}` | an optional argument delimited by `⟨a⟩…⟨b⟩` |
+| `u⟨tokens⟩` | everything up to `⟨tokens⟩` |
+| `v` | verbatim text |
+| `e{…}`, `E{…}{…}` | embellishments such as `^` and `_` |
+| `+`, `!`, `>{…}` | before a letter: may contain `\par`, no spaces before it, a processor applied to it |
+| `…` | the probe could not decide the rest |
+
+`effective` writes a call: `\section*?[1]{2}` is `som` (optional star, optional argument, mandatory argument). `[default]` shows a default. `takes` is the least and most arguments a call reads.
+
+SaTeX finds a signature by running the command on probe input and watching what it reads (SEMANTICS § 13, "What a command takes").
+
+## Locations
+
+`--at WHERE` asks for the meaning at one place instead of the default preamble/document view (a suffix on the name would be ambiguous, since `@` is a letter in LaTeX's internal names):
+
+* `--at preamble` — the meaning right before `\begin{document}`.
+* `--at document` — the meaning at the end of the run.
+* `--at 302` — the meaning at line 302 of the main file.
+* `--at somefile.tex:302` — the meaning at line 302 of `somefile.tex`, a file the run read.
+* `--at after:enumitem` — the meaning right after the `enumitem` package finished contributing what it defines.
+
+In a [request](#json-requests), an `explain` entry takes the same place as `"at"`.
+
+{{run(8): satex explain '\itshape' --at preamble}}
+
+# Slice
+
+`satex slice NAME…` keeps what a name, environment or label depends on (`--forward`: what depends on it) and prints it as a compilable LaTeX document. `--list` or `--format json`/`csv`/`markdown` prints the records instead.
+
+The criterion is a name, `--at [FILE:]LINE:COL`, or `--where EXPR` over the `occurrences`/`definitions` records, e.g. `--where 'kind=begin-environment and key=figure'` for every figure.
+
+{{run(6): satex slice -f samples/paper.tex '\ifdraft'}}
+
+{{run(6): satex slice -f samples/paper.tex --where 'kind=begin-environment and key=figure'}}
+
+`--out DIR` writes the slice as a standalone project: the main file plus the local packages, classes, graphics and bibliographies it needs, paths preserved.
+
+# Controls
+
+`satex controls NAME…` shows what a switch, package option or conditional governs. With several names, the `for` column says which. Without a name it lists the switches and options in effect (`--all` includes the kernel's and packages'). That analyzes the document's own switches as undecided and is slower. The kernel's and the packages' switches keep their values.
+
+{{run(8): satex controls my@draft my@wide -f samples/mypackage.sty}}
+
+# JSON requests
+
+`satex query --request FILE` (`-` for stdin) runs several queries on one analysis and prints one JSON answer per query. The request is a JSON object:
+
+* `file` — the document to analyze. Falls back to `-f` when omitted.
+* `config` — optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load_packages": false}`.
+* `queries` — an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, or `options`, with their own arguments:
+  * `explain`: `names` (array), `all` (bool).
+  * `controls`: `names` (array), `all` (bool).
+  * `slice`: `names` (array), `at` (`"[FILE:]LINE:COL"`), `forward` (bool).
+  * `options`: `name`.
+
+Each answer is `{"type": …, "records": […]}`, or `{"type": …, "error": …}` for a query that named something wrong — one bad query in the batch does not stop the rest of it.
+
+{{file: doc/src/wiki/request-example.json}}
+
+{{run(20): satex query --request doc/src/wiki/request-example.json}}

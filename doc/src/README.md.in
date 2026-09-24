@@ -1,0 +1,225 @@
+<!-- generated from doc/src/README.md.in by satex-doc; do not edit -->
+
+# SaTeX - Static Analysis for (La)TeX and Friends
+
+An abstract interpreter for (La)TeX and related engines with the ability to expands macros, execute primitives, track dynamic catcode changes, recursion, and more. While SaTeX is context and path-sensitive, it does not typeset the document.
+Instead, SaTeX can lint your documents to find various issues (including quick-fixes and the identification of unused or missing macros), slice your document, analyze its performance, jump to definitions,  explore package options and their consequences.
+
+Please consult the documentation published at
+<https://eagleoutice.github.io/satex/> with details on the assumed [concrete TeX/eTeX semantics][concrete semantics], the [linting rules](https://eagleoutice.github.io/satex/wiki/lints), all supported [queries](https://eagleoutice.github.io/satex/wiki/queries) and the
+[configuration][config].
+
+Please note that the first run(s) of `satex` may be slow because it reads, interprets, and caches the (La)TeX kernel and the packages it requires for the first time. Subsequent runs are faster because they use the cache.
+
+----
+
+_SaTeX_ is actively developed by *Florian Sihler* (contact me at: <florian.sihler@uni-ulm.de>) under the [MIT License](LICENSE). I am very happy about every contribution (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+
+The development and initial Rust codebase is strongly assisted by Claude Code (based on detailed architecture descriptions, TeX semantics, and [flowR](https://flowr-analysis.github.io/flowr/)). Please consider it to be still *work in progress*.
+Yet, please avoid AI-only contributions. Humans are still considered responsible for the code submitted.
+
+----
+
+## Install
+
+Prebuilt binaries for Linux, macOS and Windows (x86-64 and ARM64) are attached to every [release](../../releases). With Rust installed, `cargo install satex-analyzer` installs the `satex` command. To build from source:
+
+```sh
+cargo build --release
+./target/release/satex --help
+```
+
+Current version: {{version}}. `satex --version` also lists the plugins included in this build and the configuration in effect:
+
+{{run(12): satex --version}}
+
+## Linting
+
+Provides context-sensitive diagnostics like undefined names, duplicates, dead code, and misused conditionals.
+
+{{run(8): satex lint -f samples/paper.tex}}
+
+<details>
+<summary> List all rules alongside a description with <code>--rules</code> </summary>
+
+{{run: satex lint --rules}}
+
+</details>
+<details>
+<summary>Explain one rule with <code>--explain</code></summary>
+
+{{run: satex lint --explain unguarded-recursion}}
+
+</details>
+
+Findings marked `[fix]` are repaired by `satex lint --fix`, those marked `[unsafe fix]` by `--fix --unsafe-fixes` (these could theoretically change the resulting document).
+You can use `--diff` to show the specific edits. See [quick-fixes](doc/wiki/lints.md#quick-fixes).
+
+For CI, output formats include `--format github` (GitHub Actions annotations) and `--format sarif` (code scanning).
+
+<details>
+<summary>Show the GitHub Actions with <code>--format github</code></summary>
+
+{{run(6): satex lint -f samples/paper.tex --format github}}
+
+</details>
+
+## Comprehension
+
+SaTeX can support you in understanding existing documents and their macros.
+
+### Explaining Macros
+
+With `explain` you can ask SaTeX what a specific macro does.
+`explain` may list multiple meanings of a macro if they differ (e.g. in the LaTeX document).
+Use `--all` to obtain lists every definition and `--at` to ask at a specific place in the document: `preamble`, `document`, `LINE`, `FILE:LINE` or `after:PACKAGE`.
+
+<details>
+<summary>Explain the <code>\usepackage</code> macro</summary>
+
+{{run: satex explain -f samples/paper.tex '\usepackage'}}
+</details>
+
+<details>
+<summary>Explain a user-defined macro <code>--at</code> document</summary>
+
+{{run: satex explain -f samples/paper.tex '\norm'}}
+
+</details>
+
+See the [explain section](doc/wiki/queries.md#explain) of the queries page, and [signatures](doc/wiki/queries.md#signatures) for what the signature keys mean.
+
+### Document Summaries
+
+A document summary shows the commands, dependencies, and metadata of a document. 
+
+<details>
+<summary>What the document contains with <code>summary</code></summary>
+
+{{run(8): satex summary -f samples/paper.tex}}
+
+### Explore Package Options and Feature Flags
+
+The `controls` command shows the switches and options a package or class defines, and what each governs. You can also use `query options` to see what keys an environment's optional argument takes.
+
+</details>
+<details>
+<summary>Switches and options, and what each one governs, with <code>controls</code></summary>
+
+{{run(4): satex controls -f samples/paper.tex}}
+
+</details>
+<details>
+<summary>The keys an environment's optional argument takes with <code>query options</code></summary>
+
+{{run(6): satex query options -f samples/paper.tex --for itemize}}
+
+</details>
+<details>
+<summary>Slice the document around a name, position or query with <code>slice</code></summary>
+
+A compilable document by default. `--where EXPR` slices to every occurrence or definition a query accepts (`--where 'kind=begin-environment and key=figure'` for every figure), `--list` prints the matching records instead, and `--out DIR` writes the slice out as its own small project.
+
+{{run(6): satex slice -f samples/paper.tex '\ifdraft'}}
+
+</details>
+<details>
+<summary>What is visible at a position, for completion, with <code>scope</code></summary>
+
+{{run(3): satex scope -f samples/paper.tex --at 20:1}}
+
+</details>
+
+## Performance
+
+Shows what a build costs: which packages and files dominate, and what to do about it.
+
+{{run(6): satex lint -f samples/paper.tex --filter 'category=performance'}}
+
+`--timings` breaks the time down per phase and file, `--stats` sums up counts and wall time. Both measure the run itself and change between runs.
+The kernel and the packages are interpreted once and cached. `satex cache build` prepares the packages in `cache_index` ahead of time.
+
+<details>
+<summary>The cached kernel with <code>cache</code></summary>
+
+{{run(4): satex cache}}
+
+</details>
+
+## Queries
+
+Obtain structured facts for further use. See the [queries wiki page](doc/wiki/queries.md) for more details.
+
+The commands a document defines itself, without packages and without internal `@` names:
+
+{{run(8): satex query definitions -f samples/paper.tex --filter 'origin=document and not package~. and not name~@'}}
+
+<details>
+<summary>List all queries with <code>--list</code></summary>
+
+{{run: satex query --list}}
+
+</details>
+
+<details>
+<summary>Several queries over one analysis with <code>--request</code></summary>
+
+{{file: doc/src/wiki/request-example.json}}
+
+`satex query --request FILE` (or `-` for stdin) answers each in order, as one JSON array. A `config` object overrides settings as `--set` does.
+
+</details>
+<details>
+<summary>Every step of the run with <code>trace</code></summary>
+
+{{run(5): satex trace -f samples/paper.tex}}
+
+</details>
+<details>
+<summary>The token stream with <code>tokens</code></summary>
+
+{{run(5): satex tokens -f samples/paper.tex}}
+
+</details>
+
+Every command prints text by default. You can use `--format json`, `csv` or `markdown` whenever it prints rows. Some formats like `github`, `sarif` and `lsp` may be specific to commands like `lint`.
+
+## Editor integration
+
+`satex lsp` runs a Language Server: diagnostics, hover, definitions, references, completion, document symbols and quick fixes, all backed by the commands above. Stdio by default, `--port`/`--host` for TCP. See the [LSP wiki page](doc/wiki/lsp.md) for the protocol details and Neovim/VS Code setup.
+
+## Configuration
+
+SaTeX merges its built-in defaults, your global `~/.config/satex/satex.yaml`, every `satex.yaml` from the filesystem root down to the document, `--config FILE`, and `--set PATH=VALUE`, each overriding the one before. `satex --version` lists what was used. Plugins detect the installation, engine, output and build system (latexmk, make, l3build, …). TeX, e-TeX, pdfTeX and LaTeX2e are modelled in full. XeTeX, LuaTeX and ConTeXt are experimental. See the [configuration wiki page](doc/wiki/configuration.md).
+
+## How it works
+
+SaTeX has no abstract syntax tree in the classical sense and it not syntax-guided. When analyzing TeX a token's meaning depends on category codes and on what earlier macros performed, so the token stream only exists while the document runs. 
+SaTeX follows an expansion-guided approach instead using TeX's  machine (mouth, gullet, stomach, save stack).
+
+Concretely:
+
+- **State.** Meanings of control sequences, category codes, register values
+  and the save stack, are tracked during the analysis. A value SaTeX cannot decide during resolution is `unknown`, (which propagates).
+- **Transfer.** Every primitive has the effect associated with the [concrete TeX/eTeX semantics][concrete semantics]. 
+- **Branching.** We analyze every branch of a conditional if the test is not deterministic. This also applies transitively to macro-expansions.
+- **Termination.** We widen (potentially unbounded) recursive expansion based on the budgets in [`limits`][config]. 
+
+## Gaps
+
+Use `satex query gaps -f <document>` to get details on noted issues SaTeX has with analyzing the document (and its dependencies).
+
+## Related Work
+
+There are various preexisting analysis approaches for TeX, albeit none offer full support for macro expansion, catcode manipulations, build-systems, and the like. However, based on your need, you may find the following useful:
+
+- [Featherweight TeX](https://doi.org/10.1007/978-3-642-19440-5_26) is a formal model of TeX's macro system, aimed at parser correctness (rather than analyzing real documents).
+- [Tylax](https://github.com/scipenai/tylax) converts between LaTeX and Typst with support for basic macro expansion.
+- [unravel](https://ctan.org/pkg/unravel) steps through TeX's expansion as a debugger, but runs one concrete execution for this.
+- [TexLab](https://github.com/latex-lsp/texlab) is a language server that gives editor features from a syntax tree, without expanding macros.
+- [unified-latex](https://github.com/siefkenj/unified-latex) parses LaTeX into a syntax tree for transformation, and does not expand macros in general.
+- [ChkTeX](https://www.nongnu.org/chktex/) is a token-level linter for typographic and style mistakes (it does not expand macros).
+
+
+[concrete semantics]: https://eagleoutice.github.io/satex/SEMANTICS
+[config]: https://eagleoutice.github.io/satex/wiki/configuration

@@ -1,0 +1,231 @@
+<!-- generated from doc/src/wiki/lints.md.in by satex-doc; do not edit -->
+
+# Lint rules
+
+`satex lint` checks the input file with every rule below. `--all` also checks the packages and classes it loads. `--rules` lists the codes, `--explain CODE` prints one rule's explanation.
+
+## Quick-fixes
+
+A finding's `fix` says what to do. Where that is mechanical it carries the edits, e.g. removing a `\usepackage` line or one name in `\usepackage{a,b,c}`, a `\label{…}`, or turning `\newcommand` into `\renewcommand`. The text output marks them `[fix]` or `[unsafe fix]`:
+
+* **safe** fixes keep the document's meaning: a duplicate `\usepackage`, a definition replaced before it is read, `\renewcommand` of an undefined name;
+* **unsafe** fixes change it and deserve a look: removing a package that may have side effects, an unused label, `\newcommand` turned into `\renewcommand`.
+
+`--fix` applies the safe fixes, `--unsafe-fixes` adds the unsafe ones, `--diff` prints the edits instead of writing them. Only project files change. Overlapping fixes wait for the next round. The document is re-analyzed after each round, up to eight.
+
+{{run: satex lint --diff --unsafe-fixes -f samples/paper.tex}}
+
+`--format json` gives each fix as `applicability` and `edits` (`path`, 1-based `start`/`end`, `replacement`), `--format sarif` as `fixes`, `--format lsp` as diagnostics with `quickfix` code actions.
+
+## Suppressing findings
+
+A comment in the document silences findings. Without codes it silences every rule, with codes (comma-separated) only those. `lint_off` in `satex.yaml` turns a rule off everywhere.
+
+* `% satex-disable-next-line CODE,…` — the next line.
+* `% satex-disable-line CODE,…` — at the end of a line, that line.
+* `% satex-disable CODE,…` … `% satex-enable CODE,…` — a region.
+* `% satex-disable-file CODE,…` — the whole file.
+
+They apply to every output format and to `--fix`. An unknown code is reported as `unknown-suppress-code`.
+
+{{rules}}
+
+## correctness
+
+### `undefined-glossary-entry`
+
+{{run: satex lint --explain undefined-glossary-entry}}
+
+### `shell-escape`
+
+{{run: satex lint --explain shell-escape}}
+
+### `missing-graphic`
+
+{{run: satex lint --explain missing-graphic}}
+
+### `expl3-signature-mismatch`
+
+{{run: satex lint --explain expl3-signature-mismatch}}
+
+### `unguarded-recursion`
+
+{{run: satex lint --explain unguarded-recursion}}
+
+### `undefined-control-sequence`
+
+{{run: satex lint --explain undefined-control-sequence}}
+
+### `undefined-environment`
+
+{{run: satex lint --explain undefined-environment}}
+
+### `unresolved-file`
+
+{{run: satex lint --explain unresolved-file}}
+
+### `option-clash`
+
+{{run: satex lint --explain option-clash}}
+
+### `already-defined`
+
+{{run: satex lint --explain already-defined}}
+
+### `not-defined`
+
+{{run: satex lint --explain not-defined}}
+
+### `undefined-reference`
+
+{{run: satex lint --explain undefined-reference}}
+
+### `duplicate-label`
+
+{{run: satex lint --explain duplicate-label}}
+
+### `catcode-escapes-group`
+
+{{run: satex lint --explain catcode-escapes-group}}
+
+### `expl-syntax-left-on`
+
+{{run: satex lint --explain expl-syntax-left-on}}
+
+### `missing-dependency`
+
+{{run: satex lint --explain missing-dependency}}
+
+### `undefined-citation`
+
+{{run: satex lint --explain undefined-citation}}
+
+### `duplicate-bibliography-entry`
+
+{{run: satex lint --explain duplicate-bibliography-entry}}
+
+### `unbalanced-pdf-content`
+
+{{run: satex lint --explain unbalanced-pdf-content}}
+
+### `undefined-optional-content`
+
+{{run: satex lint --explain undefined-optional-content}}
+
+## style
+
+### `dead-definition`
+
+{{run: satex lint --explain dead-definition}}
+
+### `unused-label`
+
+{{run: satex lint --explain unused-label}}
+
+### `group-local-definition`
+
+{{run: satex lint --explain group-local-definition}}
+
+### `primitive-tex-command`
+
+{{run: satex lint --explain primitive-tex-command}}
+
+### `unused-definition`
+
+{{run: satex lint --explain unused-definition}}
+
+### `stray-space`
+
+{{run: satex lint --explain stray-space}}
+
+### `unknown-suppress-code`
+
+{{run: satex lint --explain unknown-suppress-code}}
+
+### `unused-bibitem`
+
+{{run: satex lint --explain unused-bibitem}}
+
+### `ot1-font-encoding`
+
+{{run: satex lint --explain ot1-font-encoding}}
+
+### `computer-modern-in-t1`
+
+{{run: satex lint --explain computer-modern-in-t1}}
+
+### `microtype-available`
+
+{{run: satex lint --explain microtype-available}}
+
+## performance
+
+### `duplicate-package`
+
+{{run: satex lint --explain duplicate-package}}
+
+### `unused-package`
+
+{{run: satex lint --explain unused-package}}
+
+### `recursive-macro`
+
+{{run: satex lint --explain recursive-macro}}
+
+### `package-after-preamble`
+
+{{run: satex lint --explain package-after-preamble}}
+
+### `unused-dependency`
+
+{{run: satex lint --explain unused-dependency}}
+
+### `preamble-cost`
+
+{{run: satex lint --explain preamble-cost}}
+
+## precision
+
+### `analysis-imprecision`
+
+{{run: satex lint --explain analysis-imprecision}}
+
+## build
+
+These rules compare the build configuration (`latexmkrc`, `% arara:` lines) with what the document needs: shell escape for a `\write18`, the engine its primitives require, PDF output, a bibliography, a glossary. SaTeX reads latexmkrc's plain `$name = value;` assignments, `set_tex_cmds(…)` and `add_cus_dep(…)` without running Perl. Option meanings follow latexmk(1).
+
+### `build-shell-escape-missing`
+
+{{run: satex lint --explain build-shell-escape-missing}}
+
+### `build-shell-escape-unneeded`
+
+{{run: satex lint --explain build-shell-escape-unneeded}}
+
+### `build-engine-mismatch`
+
+{{run: satex lint --explain build-engine-mismatch}}
+
+### `build-bibliography-disabled`
+
+{{run: satex lint --explain build-bibliography-disabled}}
+
+### `build-bibliography-unneeded`
+
+{{run: satex lint --explain build-bibliography-unneeded}}
+
+### `build-missing-custom-dependency`
+
+{{run: satex lint --explain build-missing-custom-dependency}}
+
+### `build-unused-custom-dependency`
+
+{{run: satex lint --explain build-unused-custom-dependency}}
+
+### `build-command-placeholders`
+
+{{run: satex lint --explain build-command-placeholders}}
+
+### `build-engine-options`
+
+{{run: satex lint --explain build-engine-options}}

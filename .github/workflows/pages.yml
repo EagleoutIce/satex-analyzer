@@ -1,0 +1,55 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    container: texlive/texlive:latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # The generated pages come from the binary itself, so they are built
+      # from the same run that checks them.
+      - name: Generate the documentation
+        run: |
+          cargo build --release
+          cargo run --release --features doc --bin satex-doc
+
+      - name: Collect the site
+        run: |
+          mkdir -p site
+          cp README.md site/index.md
+          cp SEMANTICS.md site/
+          cp -r doc/wiki site/wiki
+          cp doc/chktex-coverage.md site/
+          cat > site/_config.yml <<'YAML'
+          theme: jekyll-theme-cayman
+          title: satex
+          description: An abstract interpreter for TeX and LaTeX
+          YAML
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4

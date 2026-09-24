@@ -1,0 +1,6 @@
+# Configuration for the sample documents: read the packages they name, but not
+# article.cls, and keep the budgets small so the samples stay quick.
+load_packages: true
+load_classes: true
+load_inputs: true
+max_steps: 20000000

@@ -1,0 +1,160 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    name: Check the tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches Cargo.toml
+        run: |
+          CRATE=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          test "v$CRATE" = "${{ github.ref_name }}" || { echo "tag ${{ github.ref_name }} but Cargo.toml says $CRATE"; exit 1; }
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+          - target: x86_64-apple-darwin
+            runner: macos-13
+          - target: aarch64-apple-darwin
+            runner: macos-14
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (aarch64-linux only)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cargo install cross
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build release
+        run: |
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+        shell: bash
+
+      - name: Strip binary (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          BINARY="target/${{ matrix.target }}/release/satex"
+          strip "$BINARY" || true
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION="${{ github.ref_name }}"
+          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BINARY="target/${{ matrix.target }}/release/satex"
+          PACKAGE="satex-${VERSION}-${{ matrix.target }}"
+          mkdir -p "$PACKAGE"
+          cp "$BINARY" "$PACKAGE/"
+          cp README.md "$PACKAGE/" || true
+          cp SEMANTICS.md "$PACKAGE/" || true
+          cp LICENSE "$PACKAGE/" || true
+          tar -czf "$PACKAGE.tar.gz" "$PACKAGE"
+          rm -rf "$PACKAGE"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $VERSION = "${{ steps.version.outputs.version }}"
+          $BINARY = "target/${{ matrix.target }}/release/satex.exe"
+          $PACKAGE = "satex-${VERSION}-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path "$PACKAGE" -Force
+          Copy-Item "$BINARY" "$PACKAGE/"
+          Copy-Item "README.md" "$PACKAGE/" -ErrorAction SilentlyContinue
+          Copy-Item "SEMANTICS.md" "$PACKAGE/" -ErrorAction SilentlyContinue
+          Copy-Item "LICENSE" "$PACKAGE/" -ErrorAction SilentlyContinue
+          Compress-Archive -Path "$PACKAGE" -DestinationPath "${PACKAGE}.zip"
+          Remove-Item -Recurse "$PACKAGE"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: satex-${{ matrix.target }}
+          path: |
+            satex-*-${{ matrix.target }}.tar.gz
+            satex-*-${{ matrix.target }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS
+
+      - name: Release notes
+        id: notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -f "doc/release-notes/$VERSION.md" ]; then
+            echo "path=doc/release-notes/$VERSION.md" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          body_path: ${{ steps.notes.outputs.path }}
+          generate_release_notes: ${{ steps.notes.outputs.path == '' }}
+
+  crate:
+    name: Publish to crates.io
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --locked

@@ -1,0 +1,8 @@
+{
+  "file": "samples/mypackage.sty",
+  "queries": [
+    {"type": "explain", "names": ["\\mybox"]},
+    {"type": "controls", "names": ["my@draft"]},
+    {"type": "options", "name": "mybanner"}
+  ]
+}

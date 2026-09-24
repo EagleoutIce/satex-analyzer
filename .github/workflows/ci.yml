@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # The TeX Live image already holds a full installation, which the
+    # engine-dependent tests need; installing one with apt takes minutes.
+    container: texlive/texlive:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build, test and lint
+        run: |
+          cargo build --release
+          cargo test --release --features doc --no-fail-fast
+          cargo clippy --all-targets -- -D warnings

@@ -1,0 +1,248 @@
+diff -ru /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lapi.c lua-5.3.6/lapi.c
+--- /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lapi.c	2026-09-24 12:54:16.299251094 +0200
++++ lua-5.3.6/lapi.c	2026-09-24 12:54:29.179923076 +0200
+@@ -295,6 +295,7 @@
+ LUA_API int lua_rawequal (lua_State *L, int index1, int index2) {
+   StkId o1 = index2addr(L, index1);
+   StkId o2 = index2addr(L, index2);
++  if (satex_isunknown(o1) || satex_isunknown(o2)) satex_unknown(L);
+   return (isvalid(o1) && isvalid(o2)) ? luaV_rawequalobj(o1, o2) : 0;
+ }
+ 
+@@ -366,7 +367,7 @@
+ 
+ LUA_API int lua_toboolean (lua_State *L, int idx) {
+   const TValue *o = index2addr(L, idx);
+-  return !l_isfalse(o);
++  return !l_isfalseL(L, o);
+ }
+ 
+ 
+@@ -649,6 +650,7 @@
+   lua_lock(L);
+   t = index2addr(L, idx);
+   api_check(L, ttistable(t), "table expected");
++  if (satex_isunknown(L->top - 1)) satex_unknown(L);
+   setobj2s(L, L->top - 1, luaH_get(hvalue(t), L->top - 1));
+   lua_unlock(L);
+   return ttnov(L->top - 1);
+@@ -805,6 +807,7 @@
+   api_checknelems(L, 2);
+   o = index2addr(L, idx);
+   api_check(L, ttistable(o), "table expected");
++  if (satex_isunknown(L->top - 2)) satex_unknown(L);
+   slot = luaH_set(L, hvalue(o), L->top - 2);
+   setobj2t(L, slot, L->top - 1);
+   invalidateTMcache(hvalue(o));
+@@ -1126,6 +1129,7 @@
+   lua_lock(L);
+   t = index2addr(L, idx);
+   api_check(L, ttistable(t), "table expected");
++  if (satex_isunknown(L->top - 1)) satex_unknown(L);
+   more = luaH_next(L, hvalue(t), L->top - 1);
+   if (more) {
+     api_incr_top(L);
+diff -ru /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lauxlib.c lua-5.3.6/lauxlib.c
+--- /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lauxlib.c	2026-09-24 12:54:16.299353267 +0200
++++ lua-5.3.6/lauxlib.c	2026-09-24 12:54:29.180152429 +0200
+@@ -161,7 +161,15 @@
+ ** =======================================================
+ */
+ 
++/* satex: an argument that is the unknown value fails as unknown. */
++static void satex_checkarg (lua_State *L, int arg) {
++  if (lua_type(L, arg) == LUA_TLIGHTUSERDATA &&
++      lua_touserdata(L, arg) == (void *)&satex_unknown_tag)
++    luaL_error(L, "satex: unknown");
++}
++
+ LUALIB_API int luaL_argerror (lua_State *L, int arg, const char *extramsg) {
++  satex_checkarg(L, arg);
+   lua_Debug ar;
+   if (!lua_getstack(L, 0, &ar))  /* no stack frame? */
+     return luaL_error(L, "bad argument #%d (%s)", arg, extramsg);
+@@ -180,6 +188,7 @@
+ 
+ 
+ static int typeerror (lua_State *L, int arg, const char *tname) {
++  satex_checkarg(L, arg);
+   const char *msg;
+   const char *typearg;  /* name for the type of the actual argument */
+   if (luaL_getmetafield(L, arg, "__name") == LUA_TSTRING)
+@@ -808,6 +817,7 @@
+ 
+ 
+ LUALIB_API const char *luaL_tolstring (lua_State *L, int idx, size_t *len) {
++  satex_checkarg(L, idx);
+   if (luaL_callmeta(L, idx, "__tostring")) {  /* metafield? */
+     if (!lua_isstring(L, -1))
+       luaL_error(L, "'__tostring' must return a string");
+diff -ru /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lauxlib.h lua-5.3.6/lauxlib.h
+--- /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lauxlib.h	2026-09-24 12:54:16.299377342 +0200
++++ lua-5.3.6/lauxlib.h	2026-09-24 12:54:29.180218334 +0200
+@@ -124,6 +124,7 @@
+ #define luaL_checkstring(L,n)	(luaL_checklstring(L, (n), NULL))
+ #define luaL_optstring(L,n,d)	(luaL_optlstring(L, (n), (d), NULL))
+ 
++extern char satex_unknown_tag;
+ #define luaL_typename(L,i)	lua_typename(L, lua_type(L,(i)))
+ 
+ #define luaL_dofile(L, fn) \
+diff -ru /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lbaselib.c lua-5.3.6/lbaselib.c
+--- /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lbaselib.c	2026-09-24 12:54:16.299395466 +0200
++++ lua-5.3.6/lbaselib.c	2026-09-24 12:54:29.180281363 +0200
+@@ -199,6 +199,9 @@
+ 
+ 
+ static int luaB_type (lua_State *L) {
++  if (lua_type(L, 1) == LUA_TLIGHTUSERDATA &&
++      lua_touserdata(L, 1) == (void *)&satex_unknown_tag)
++    return luaL_error(L, "satex: unknown");
+   int t = lua_type(L, 1);
+   luaL_argcheck(L, t != LUA_TNONE, 1, "value expected");
+   lua_pushstring(L, lua_typename(L, t));
+diff -ru /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/ldebug.c lua-5.3.6/ldebug.c
+--- /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/ldebug.c	2026-09-24 12:54:16.299517978 +0200
++++ lua-5.3.6/ldebug.c	2026-09-24 12:54:16.323538642 +0200
+@@ -650,6 +650,13 @@
+ }
+ 
+ 
++char satex_unknown_tag;
++
++l_noret satex_unknown (lua_State *L) {
++  luaG_runerror(L, "satex: unknown");
++}
++
++
+ l_noret luaG_runerror (lua_State *L, const char *fmt, ...) {
+   CallInfo *ci = L->ci;
+   const char *msg;
+diff -ru /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lobject.h lua-5.3.6/lobject.h
+--- /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lobject.h	2026-09-24 12:54:16.299865625 +0200
++++ lua-5.3.6/lobject.h	2026-09-24 12:54:16.323154947 +0200
+@@ -180,6 +180,15 @@
+ 
+ #define l_isfalse(o)	(ttisnil(o) || (ttisboolean(o) && bvalue(o) == 0))
+ 
++/* satex: the unknown value is the light userdata pointing at
++** 'satex_unknown_tag'.  Testing it, comparing it, using it as a key or
++** asking its type raises "satex: unknown" (see satex's lua_run.rs). */
++extern char satex_unknown_tag;
++#define satex_isunknown(o) \
++  (ttislightuserdata(o) && pvalue(o) == (void *)&satex_unknown_tag)
++LUAI_FUNC l_noret satex_unknown (struct lua_State *L);
++#define l_isfalseL(L,o)	(satex_isunknown(o) ? (satex_unknown(L), 0) : l_isfalse(o))
++
+ 
+ #define iscollectable(o)	(rttype(o) & BIT_ISCOLLECTABLE)
+ 
+diff -ru /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/ltablib.c lua-5.3.6/ltablib.c
+--- /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/ltablib.c	2026-09-24 12:54:16.300185569 +0200
++++ lua-5.3.6/ltablib.c	2026-09-24 12:54:29.180332720 +0200
+@@ -163,6 +163,9 @@
+ 
+ static void addfield (lua_State *L, luaL_Buffer *b, lua_Integer i) {
+   lua_geti(L, 1, i);
++  if (lua_type(L, -1) == LUA_TLIGHTUSERDATA &&
++      lua_touserdata(L, -1) == (void *)&satex_unknown_tag)
++    luaL_error(L, "satex: unknown");
+   if (!lua_isstring(L, -1))
+     luaL_error(L, "invalid value (%s) at index %d in table for 'concat'",
+                   luaL_typename(L, -1), i);
+diff -ru /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/ltm.c lua-5.3.6/ltm.c
+--- /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/ltm.c	2026-09-24 12:54:16.300200447 +0200
++++ lua-5.3.6/ltm.c	2026-09-24 12:54:16.323980497 +0200
+@@ -160,6 +160,6 @@
+   if (!luaT_callbinTM(L, p1, p2, L->top, event))
+     return -1;  /* no metamethod */
+   else
+-    return !l_isfalse(L->top);
++    return !l_isfalseL(L, L->top);
+ }
+ 
+diff -ru /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lvm.c lua-5.3.6/lvm.c
+--- /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lvm.c	2026-09-24 12:54:16.300390426 +0200
++++ lua-5.3.6/lvm.c	2026-09-24 12:54:37.652078252 +0200
+@@ -406,6 +406,8 @@
+ */
+ int luaV_equalobj (lua_State *L, const TValue *t1, const TValue *t2) {
+   const TValue *tm;
++  if (L != NULL && (satex_isunknown(t1) || satex_isunknown(t2)))
++    satex_unknown(L);
+   if (ttype(t1) != ttype(t2)) {  /* not the same variant? */
+     if (ttnov(t1) != ttnov(t2) || ttnov(t1) != LUA_TNUMBER)
+       return 0;  /* only numbers can be equal with different variants */
+@@ -446,7 +448,7 @@
+   if (tm == NULL)  /* no TM? */
+     return 0;  /* objects are different */
+   luaT_callTM(L, tm, t1, t2, L->top, 1);  /* call TM */
+-  return !l_isfalse(L->top);
++  return !l_isfalseL(L, L->top);
+ }
+ 
+ 
+@@ -668,7 +670,7 @@
+       break;
+     }
+     case OP_LE: case OP_LT: case OP_EQ: {
+-      int res = !l_isfalse(L->top - 1);
++      int res = !l_isfalseL(L, L->top - 1);
+       L->top--;
+       if (ci->callstatus & CIST_LEQ) {  /* "<=" using "<" instead? */
+         lua_assert(op == OP_LE);
+@@ -1056,7 +1058,7 @@
+       }
+       vmcase(OP_NOT) {
+         TValue *rb = RB(i);
+-        int res = l_isfalse(rb);  /* next assignment may change this value */
++        int res = l_isfalseL(L, rb);  /* next assignment may change this value */
+         setbvalue(ra, res);
+         vmbreak;
+       }
+@@ -1111,7 +1113,7 @@
+         vmbreak;
+       }
+       vmcase(OP_TEST) {
+-        if (GETARG_C(i) ? l_isfalse(ra) : !l_isfalse(ra))
++        if (GETARG_C(i) ? l_isfalseL(L, ra) : !l_isfalseL(L, ra))
+             ci->u.l.savedpc++;
+           else
+           donextjump(ci);
+@@ -1119,7 +1121,7 @@
+       }
+       vmcase(OP_TESTSET) {
+         TValue *rb = RB(i);
+-        if (GETARG_C(i) ? l_isfalse(rb) : !l_isfalse(rb))
++        if (GETARG_C(i) ? l_isfalseL(L, rb) : !l_isfalseL(L, rb))
+           ci->u.l.savedpc++;
+         else {
+           setobjs2s(L, ra, rb);
+@@ -1217,6 +1219,8 @@
+         TValue *pstep = ra + 2;
+         lua_Integer ilimit;
+         int stopnow;
++        if (satex_isunknown(init) || satex_isunknown(plimit) || satex_isunknown(pstep))
++          satex_unknown(L);
+         if (ttisinteger(init) && ttisinteger(pstep) &&
+             forlimit(plimit, &ilimit, ivalue(pstep), &stopnow)) {
+           /* all values are integer */
+diff -ru /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lvm.h lua-5.3.6/lvm.h
+--- /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lvm.h	2026-09-24 12:54:16.300409472 +0200
++++ lua-5.3.6/lvm.h	2026-09-24 12:54:16.332713026 +0200
+@@ -65,6 +65,7 @@
+ ** standard implementation for 'gettable'
+ */
+ #define luaV_gettable(L,t,k,v) { const TValue *slot; \
++  if (satex_isunknown(k)) satex_unknown(L); \
+   if (luaV_fastget(L,t,k,slot,luaH_get)) { setobj2s(L, v, slot); } \
+   else luaV_finishget(L,t,k,v,slot); }
+ 
+@@ -88,6 +89,7 @@
+ 
+ 
+ #define luaV_settable(L,t,k,v) { const TValue *slot; \
++  if (satex_isunknown(k)) satex_unknown(L); \
+   if (!luaV_fastset(L,t,k,slot,luaH_get,v)) \
+     luaV_finishset(L,t,k,v,slot); }
+ 
