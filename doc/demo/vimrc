@@ -1,0 +1,32 @@
+vim9script
+set nocompatible
+set runtimepath^=$SATEX_LSP_PLUGIN
+set termguicolors background=dark
+filetype plugin indent on
+syntax on
+set noswapfile nobackup nowritebackup noundofile viminfo=
+set number signcolumn=yes updatetime=300 noshowmode noruler laststatus=0
+
+highlight Normal guibg=#1e1e2e guifg=#cdd6f4
+highlight Pmenu guibg=#313244 guifg=#cdd6f4
+highlight PmenuSel guibg=#45475a guifg=#cdd6f4
+highlight NormalFloat guibg=#313244 guifg=#cdd6f4
+highlight SignColumn guibg=#1e1e2e
+highlight LineNr guifg=#6c7086
+highlight ErrorMsg guibg=NONE guifg=#f38ba8 gui=bold
+highlight WarningMsg guibg=NONE guifg=#f9e2af
+highlight Question guifg=#89b4fa
+highlight SpellBad guisp=#f38ba8 gui=undercurl guifg=NONE guibg=NONE
+highlight SpellCap guisp=#f9e2af gui=undercurl guifg=NONE guibg=NONE
+highlight SpellRare guisp=#89b4fa gui=undercurl guifg=NONE guibg=NONE
+
+def SetupLsp()
+  if !exists('*g:LspOptionsSet')
+    echoerr 'yegappan/lsp not found: set SATEX_LSP_PLUGIN to its checkout'
+    return
+  endif
+  g:LspOptionsSet({showDiagOnStatusLine: false, autoHighlightDiags: true, showDiagWithVirtualText: false})
+  g:LspAddServer([{name: 'satex', filetype: ['tex', 'plaintex'], path: 'satex', args: ['lsp', '--set', 'load_classes=true', '--set', 'load_packages=true']}])
+enddef
+autocmd VimEnter * SetupLsp()
+nnoremap K <Cmd>LspHover<CR>
