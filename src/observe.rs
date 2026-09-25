@@ -817,3 +817,96 @@ pub fn version_record(m: &mut Machine, name: &str, meaning: &crate::tex::Meaning
     let key = file.strip_suffix(".sty").or_else(|| file.strip_suffix(".cls")).unwrap_or(file).to_string();
     m.occurrence(OccKind::Identification, key, Some(info), span);
 }
+
+/// A number typeset, while letters may still follow it.
+#[derive(Default)]
+struct Run {
+    number: String,
+    unit: String,
+    span: Span,
+    number_end: Span,
+    unit_span: Span,
+    via: Option<crate::tex::Sym>,
+    within: std::rc::Rc<[crate::tex::FileId]>,
+}
+
+/// The number and unit tracker's state, held by the [`Machine`].
+#[derive(Default)]
+pub struct Quantities {
+    run: Option<Run>,
+    /// `H2O` is a word, not a quantity.
+    after_letter: bool,
+}
+
+/// A character typeset outside package code: a digit run and the letters set
+/// right after it become a [`crate::facts::Quantity`].  A space token ends
+/// the run, so `2 ms` is not one.
+pub fn typeset(m: &mut Machine, c: char, span: Span) {
+    if m.package().is_some() || m.reading_format() {
+        m.quantity = Quantities::default();
+        return;
+    }
+    let after_letter = std::mem::replace(&mut m.quantity.after_letter, c.is_alphabetic());
+    let mut run = m.quantity.run.take();
+    if c.is_ascii_digit() {
+        match run.as_mut() {
+            Some(q) if q.unit.is_empty() => {
+                q.number.push(c);
+                q.number_end = span;
+            }
+            _ => {
+                flush(m, run.take());
+                run = (!after_letter).then(|| Run {
+                    number: c.to_string(),
+                    span,
+                    number_end: span,
+                    unit_span: span,
+                    within: m.within_files(),
+                    ..Run::default()
+                });
+            }
+        }
+    } else if matches!(c, '.' | ',') {
+        match run.as_mut() {
+            Some(q) if q.unit.is_empty() && !q.number.ends_with(['.', ',']) => q.number.push(c),
+            _ => {
+                flush(m, run.take());
+            }
+        }
+    } else if (c.is_alphabetic() || c == '%' || c == '\u{b0}') && run.is_some() {
+        let via = m.file_call.map(|(sym, _)| sym);
+        if let Some(q) = run.as_mut() {
+            if q.unit.is_empty() {
+                q.unit_span = span;
+                q.via = via;
+            }
+            q.unit.push(c);
+        }
+    } else {
+        flush(m, run.take());
+    }
+    m.quantity.run = run;
+}
+
+/// `\sum_{i=1}^{N}` sets a `1` and an `N`, not one newton.
+pub fn text_break(m: &mut Machine) {
+    let run = m.quantity.run.take();
+    m.quantity.after_letter = false;
+    flush(m, run);
+}
+
+fn flush(m: &mut Machine, run: Option<Run>) {
+    let Some(q) = run else { return };
+    if q.unit.is_empty() || m.out.facts.quantities.len() >= m.cfg.limits.facts {
+        return;
+    }
+    m.out.facts.quantities.push(crate::facts::Quantity {
+        number: q.number,
+        unit: q.unit,
+        span: q.span,
+        number_end: q.number_end,
+        unit_span: q.unit_span,
+        via: q.via,
+        within: q.within,
+    });
+}

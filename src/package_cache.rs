@@ -983,6 +983,7 @@ impl Machine<'_> {
             // Bookkeeping of the output, not state the run depends on.
             diag_seen: _,
             diag_floor: _,
+            quantity: _,
         } = self;
         Rest {
             input,

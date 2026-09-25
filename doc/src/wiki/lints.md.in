@@ -158,6 +158,10 @@ They apply to every output format and to `--fix`. An unknown code is reported as
 
 {{run: satex lint --explain microtype-available}}
 
+### `hand-set-quantity`
+
+{{run: satex lint --explain hand-set-quantity}}
+
 ## performance
 
 ### `duplicate-package`

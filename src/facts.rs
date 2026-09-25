@@ -170,6 +170,24 @@ pub struct Occurrence {
     pub certain: bool,
 }
 
+/// A number and the letters set right after it, as the run typeset them
+/// (tex.web § 1034: both are characters of one word).
+#[derive(Clone)]
+pub struct Quantity {
+    pub number: String,
+    pub unit: String,
+    /// The first digit.
+    pub span: Span,
+    /// The last digit.
+    pub number_end: Span,
+    /// The first character of the unit.
+    pub unit_span: Span,
+    /// The control sequence the file called where the unit was set.
+    pub via: Option<Sym>,
+    /// The files the macro bodies running at the number live in.
+    pub within: Rc<[FileId]>,
+}
+
 /// How sure the interpreter is about what it saw; [`Diagnostic::severity`]
 /// carries it, from a plain note up to an imprecision the analysis had to
 /// make.
@@ -241,6 +259,8 @@ pub struct Facts {
     pub spaces: std::collections::HashMap<Span, crate::mode::Modes>,
     /// Every conditional the run evaluated outside package code.
     pub conditionals: Vec<Conditional>,
+    /// Numbers with letters set right after them, outside package code.
+    pub quantities: Vec<Quantity>,
 }
 
 /// A conditional the run evaluated (tex.web §§ 487-510), merged over every

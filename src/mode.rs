@@ -723,7 +723,12 @@ impl Machine<'_> {
     fn scan_material(&mut self, material: Material, span: Span) {
         match material {
             Material::Char => match self.scan_number() {
-                Some(c) if c >= 0 => self.append_char(c as u32),
+                Some(c) if c >= 0 => {
+                    if let Some(ch) = u32::try_from(c).ok().and_then(char::from_u32) {
+                        self.note_text(ch, span);
+                    }
+                    self.append_char(c as u32)
+                }
                 _ => self.append_item(Item::Unknown),
             },
             // tex.web § 1110: `\unhbox` and `\unvbox` empty the register,

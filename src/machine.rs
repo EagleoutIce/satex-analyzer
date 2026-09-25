@@ -517,6 +517,7 @@ pub struct Machine<'a> {
     pinned: std::collections::HashSet<Sym>,
     /// The macro whose replacement text is currently being read.
     within: Vec<(Sym, NodeId)>,
+    pub(crate) quantity: crate::observe::Quantities,
     /// The macro whose expansion the last token read came from; a list
     /// pushed or given back while it is processed keeps it.  `None`: a file.
     source: Option<Sym>,
@@ -915,6 +916,7 @@ impl<'a> Machine<'a> {
             runaway: false,
             cds: Vec::new(),
             within: Vec::new(),
+            quantity: crate::observe::Quantities::default(),
             source: None,
             packages: Vec::new(),
             expanding: Vec::new(),
@@ -1089,6 +1091,7 @@ impl<'a> Machine<'a> {
             eof_seen: false,
         });
         m.run();
+        crate::observe::text_break(&mut m);
         m.out.timings.enter_file(id);
         m.out.timings.leave_file();
         m.out.timings.start(Phase::Hooks);
@@ -2414,11 +2417,28 @@ will look undefined",
 
     /// A character typeset at `span`, kept when a trace range asks what its
     /// lines produce.
-    fn note_text(&mut self, c: char, span: Span) {
+    pub(crate) fn note_text(&mut self, c: char, span: Span) {
         const LIMIT: usize = 1 << 16;
+        crate::observe::typeset(self, c, span);
         if self.cfg.trace && self.cfg.trace_lines.is_some() && self.out.typeset.len() < LIMIT && !self.reading_format() && self.in_trace_range(span) {
             self.out.typeset.push(c);
         }
+    }
+
+    /// The files the macro bodies now being read live in.
+    pub(crate) fn within_files(&self) -> Rc<[FileId]> {
+        /// Macro bodies looked through for them.
+        const DEPTH: usize = 16;
+        let mut files: Vec<FileId> = Vec::new();
+        for (sym, _) in self.within.iter().rev().take(DEPTH) {
+            let Meaning::Macro(m) = self.env.meaning(*sym) else { continue };
+            if let Some(file) = m.replacement_text.first().map(|t| t.span.file)
+                && !files.contains(&file)
+            {
+                files.push(file);
+            }
+        }
+        files.into()
     }
 
     /// [`Machine::record`] with a detail, only built when the trace is kept so
@@ -3267,10 +3287,14 @@ will look undefined",
             }
             Some(Catcode::End) => {
                 self.end_word();
+                crate::observe::text_break(self);
                 self.close_group(GroupKind::Simple, token.span);
                 self.record(Step::CloseGroup, Sym(0), token.span);
             }
-            Some(Catcode::Math) => self.math_shift_token(token),
+            Some(Catcode::Math) => {
+                crate::observe::text_break(self);
+                self.math_shift_token(token)
+            }
             // tex.web § 1043: a space in horizontal mode is glue.
             Some(Catcode::Space) => {
                 self.note_text(' ', token.span);
@@ -3300,7 +3324,10 @@ will look undefined",
             None if token.cs().is_some_and(|sym| matches!(self.env.meaning(sym), Meaning::Unknown)) => {
                 self.widen_mode()
             }
-            _ => self.end_word(),
+            _ => {
+                crate::observe::text_break(self);
+                self.end_word()
+            }
         }
     }
 
@@ -3692,7 +3719,12 @@ will look undefined",
                 if matches!(kind, crate::tex::RegKind::Char | crate::tex::RegKind::Box) {
                     if !self.horizontal_material(Token::new(Tok::Cs(sym), span)) {
                         match self.env.value(sym).as_int().and_then(|c| u32::try_from(c).ok()) {
-                            Some(c) => self.append_char(c),
+                            Some(c) => {
+                                if let Some(ch) = char::from_u32(c) {
+                                    self.note_text(ch, span);
+                                }
+                                self.append_char(c)
+                            }
                             None => self.append_item(crate::mode::Item::Unknown),
                         }
                     }
@@ -4832,6 +4864,7 @@ expansion stopped",
         self.conds = state.conds;
         self.within = state.within;
         self.packages = state.packages;
+        self.quantity = crate::observe::Quantities::default();
         self.held_tokens = state.held_tokens;
         self.section = state.section;
         self.call_shape = state.call_shape;

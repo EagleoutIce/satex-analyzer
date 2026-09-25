@@ -449,3 +449,29 @@ fn unknown_suppress_code_is_a_warning() {
     assert_eq!(records[0]["severity"], "warning");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn hand_set_quantity_becomes_a_siunitx_call() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\nA delay of 2ms and growth of 5\\%.\n\\end{document}\n";
+    let fixed = fix("hand-set-quantity", source, "hand-set-quantity", true);
+    check(
+        &fixed,
+        "\\documentclass{article}\n\\usepackage{siunitx}\n\\begin{document}\nA delay of \\qty{2}{\\milli\\second} and growth of \\qty{5}{\\percent}.\n\\end{document}\n",
+    );
+}
+
+#[test]
+fn hand_set_quantity_rewrites_a_macro_that_holds_the_unit() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\begin{document}\nA delay of \\(3\\ms\\).\n\\end{document}\n";
+    let fixed = fix("hand-set-quantity-macro", source, "hand-set-quantity", true);
+    check(
+        &fixed,
+        "\\documentclass{article}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\usepackage{siunitx}\n\\begin{document}\nA delay of \\(\\qty{3}{\\milli\\second}\\).\n\\end{document}\n",
+    );
+}

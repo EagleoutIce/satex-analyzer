@@ -12,6 +12,7 @@ mod shared;
 pub mod style;
 pub mod suppress;
 pub mod typography;
+pub mod units;
 
 use serde_json::json;
 
@@ -27,6 +28,7 @@ fn all() -> impl Iterator<Item = &'static Rule> {
         .chain(pdf::RULES)
         .chain(style::RULES)
         .chain(typography::RULES)
+        .chain(units::RULES)
         .chain(performance::RULES)
         .chain(precision::RULES)
         .chain(build::RULES)

@@ -114,6 +114,7 @@ They apply to every output format and to `--fix`. An unknown code is reported as
 | `build-unused-custom-dependency` | style | info | a latexmk custom dependency that nothing in the document triggers |
 | `computer-modern-in-t1` | style | info | T1 text in Computer Modern relies on cm-super for scalable fonts |
 | `dead-definition` | style | info | a definition is replaced before anything uses it |
+| `hand-set-quantity` | style | info | a number and its unit are set by hand where siunitx would set them |
 | `microtype-available` | style | info | the engine can protrude characters and expand fonts, but microtype is not loaded |
 | `ot1-font-encoding` | style | info | accented letters are built with \accent because the text is set in OT1 |
 | `primitive-tex-command` | style | info | a plain TeX primitive is used where LaTeX has its own interface |
@@ -613,6 +614,31 @@ fires when both are still off at the end of the run.  XeTeX only
 protrudes, and DVI output supports neither, so the rule stays silent there.
 
 Fix by loading `\usepackage{microtype}`.
+```
+
+### `hand-set-quantity`
+
+```text
+$ satex lint --explain hand-set-quantity
+hand-set-quantity  style / info
+a number and its unit are set by hand where siunitx would set them
+
+`2ms` sets the number and the unit as one word, so the line may break between
+them and the unit is italic in math mode.  `2\,\mathrm{ms}` puts the space in
+by hand, which fixes neither the unit's own spacing nor the decimal marker, and
+a `\newcommand` that holds the unit only hides the same markup.  The SI
+brochure (9th ed., § 5.4.3) asks for a non-breaking space between a value and
+its unit, and for the unit in an upright font.  siunitx does all of it:
+`\qty{2}{\milli\second}` (`\SI` before version 3).
+
+The rule reads what the run typeset, not the source: a digit run followed by
+letters, with no space token between them.  The unit has to be an SI symbol or
+one of the units the SI accepts (brochure, tables 1-4 and § 4.1), the number
+has to start a word, and the quantity has to be set by the document rather than
+handed to a package's own command, so a document that already formats its units
+with siunitx, units or physics is left alone.
+
+Fix by loading `\usepackage{siunitx}` and writing `\qty{⟨number⟩}{⟨unit⟩}`.
 ```
 
 ## performance

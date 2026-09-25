@@ -656,7 +656,7 @@ impl Default for Profiles {
             package: package.clone(),
             class: package.clone(),
             literate: package,
-            plain: parse("load_packages: false\nload_classes: false\nlint_off: [analysis-imprecision, unused-label, microtype-available]\n"),
+            plain: parse("load_packages: false\nload_classes: false\nlint_off: [analysis-imprecision, unused-label, microtype-available, hand-set-quantity]\n"),
         }
     }
 }

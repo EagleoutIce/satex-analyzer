@@ -546,6 +546,73 @@ impl<'a> Edits<'a> {
             .filter(|renamed| self.defined(renamed))
     }
 
+    /// The source a quantity was set from, up to where the observed unit
+    /// text is complete.  `via` is the control sequence the file called
+    /// where the unit was set.
+    pub fn quantity(
+        &self,
+        span: Span,
+        number: &str,
+        unit: &str,
+        via: Option<&str>,
+        replacement: &str,
+    ) -> Option<Vec<Edit>> {
+        /// Lexemes a unit may take before the source is given up on.
+        const STEPS: usize = 8;
+        let (path, text) = self.text(span.file)?;
+        let start = Pos::of(span);
+        let mut scan = Scan::at(&text, start, self.cats(span.file))?;
+        let mut digits = String::new();
+        loop {
+            let Some(Tok::Chr(c, Catcode::Other)) = scan.peek().map(|l| l.tok) else { break };
+            if !(c.is_ascii_digit() || (matches!(c, '.' | ',') && !digits.is_empty())) {
+                break;
+            }
+            digits.push(c);
+            scan.advance();
+        }
+        if digits != number {
+            return None;
+        }
+        let mut seen = String::new();
+        let mut end = None;
+        for _ in 0..STEPS {
+            if seen == unit {
+                break;
+            }
+            let lexeme = scan.advance()?;
+            match lexeme.tok {
+                Tok::Chr(c, Catcode::Letter | Catcode::Other) => seen.push(c),
+                Tok::Chr(_, Catcode::Active) => {}
+                Tok::Cs(_) => {
+                    let name = scan.name(&lexeme)?.to_string();
+                    if matches!(scan.peek().map(|l| l.tok), Some(Tok::Chr(_, Catcode::Begin))) {
+                        let group = scan.group()?;
+                        for inner in &group.inner {
+                            match inner.tok {
+                                Tok::Chr(c, Catcode::Letter | Catcode::Other) => seen.push(c),
+                                _ => return None,
+                            }
+                        }
+                        end = Some(group.end);
+                        continue;
+                    }
+                    if name == "%" {
+                        seen.push('%');
+                    } else if via == Some(name.as_str()) {
+                        seen = unit.to_string();
+                    }
+                }
+                _ => return None,
+            }
+            end = Some(lexeme.end);
+        }
+        if seen != unit {
+            return None;
+        }
+        Some(vec![Edit { path, start, end: end?, replacement: replacement.to_string() }])
+    }
+
     /// Delete a command whose one argument reads `key`: `\label{sec:x}`.
     pub fn delete_command(&self, span: Span, key: &str) -> Option<Vec<Edit>> {
         let (path, text, mut scan, cs) = self.command(span)?;

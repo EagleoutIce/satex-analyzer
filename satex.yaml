@@ -52,7 +52,7 @@ profiles:
   plain:                     # plain TeX: no LaTeX packages, classes or labels
     load_packages: false
     load_classes: false
-    lint_off: [analysis-imprecision, unused-label, microtype-available]
+    lint_off: [analysis-imprecision, unused-label, microtype-available, hand-set-quantity]
 
 # Detected when left out: engine from the build files, provider from the
 # locator on PATH, platform from this machine, output from $pdf_mode.
