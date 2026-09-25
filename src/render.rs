@@ -7,6 +7,7 @@ use anstyle::{AnsiColor, Color, Style};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use serde_json::Value as Json;
 
+use crate::machine::Step;
 use crate::query::Record;
 
 const BOLD: Style = Style::new().bold();
@@ -36,6 +37,19 @@ fn severity_style(value: &str) -> Style {
     }
 }
 
+/// The color of a trace step, in the terminal's own palette.
+pub(crate) fn step_style(step: Step) -> Style {
+    match step {
+        Step::Expand => fg(AnsiColor::Cyan),
+        Step::Execute => fg(AnsiColor::Blue),
+        Step::Define | Step::Assign => fg(AnsiColor::Green),
+        Step::OpenGroup | Step::CloseGroup => fg(AnsiColor::Magenta),
+        Step::Condition | Step::Branch => fg(AnsiColor::Yellow),
+        Step::OpenFile | Step::CloseFile => DIM,
+        Step::Widen | Step::Undefined => fg(AnsiColor::Red),
+    }
+}
+
 fn column_style(column: &str) -> Style {
     match column {
         "name" | "callee" | "key" | "subject" | "package" | "class" | "for" => NAME,
@@ -44,7 +58,7 @@ fn column_style(column: &str) -> Style {
     }
 }
 
-fn hyperlink(text: &str, target: &str, links: Links) -> String {
+pub(crate) fn hyperlink(text: &str, target: &str, links: Links) -> String {
     if !links.0 || target.is_empty() {
         return text.to_string();
     }
@@ -98,7 +112,11 @@ fn cell(column: &str, record: &Record, links: Links) -> (String, String) {
     if text.is_empty() {
         return (text.clone(), text);
     }
-    let style = if column == "severity" { severity_style(&text) } else { column_style(column) };
+    let style = match column {
+        "severity" => severity_style(&text),
+        "step" => Step::named(&text).map_or_else(Style::new, step_style),
+        _ => column_style(column),
+    };
     let shown = match column {
         "file" => hyperlink(&text, &location(record), links),
         // The documentation cell carries the link, so the reference it points
@@ -325,7 +343,11 @@ pub fn fields(records: &[Record], links: Links) -> String {
                 },
                 _ => record.get(column).map(plain).unwrap_or_default(),
             };
-            let style = if column == "severity" { severity_style(&text) } else { column_style(column) };
+            let style = match column {
+        "severity" => severity_style(&text),
+        "step" => Step::named(&text).map_or_else(Style::new, step_style),
+        _ => column_style(column),
+    };
             for (line, part) in wrap(&text, room).into_iter().enumerate() {
                 let shown = match (column, line) {
                     ("file", 0) => hyperlink(&part, &location(record), links),
@@ -1090,7 +1112,7 @@ fn linked_file(path: &str, links: Links) -> String {
     }
 }
 
-fn file_url(path: &str) -> String {
+pub(crate) fn file_url(path: &str) -> String {
     let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
     format!("file://{}", absolute.display())
 }

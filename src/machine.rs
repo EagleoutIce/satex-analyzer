@@ -56,6 +56,26 @@ pub enum Step {
 }
 
 impl Step {
+    pub const ALL: [Step; 12] = [
+        Step::Expand,
+        Step::Execute,
+        Step::Define,
+        Step::Assign,
+        Step::OpenGroup,
+        Step::CloseGroup,
+        Step::Condition,
+        Step::Branch,
+        Step::OpenFile,
+        Step::CloseFile,
+        Step::Widen,
+        Step::Undefined,
+    ];
+
+    /// The step a record's `step` field names.
+    pub fn named(name: &str) -> Option<Step> {
+        Step::ALL.into_iter().find(|s| s.as_str() == name)
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Step::Expand => "expand",
@@ -177,6 +197,8 @@ pub struct Analysis {
     pub timings: Timings,
     pub facts: Facts,
     pub trace: Vec<Event>,
+    /// The characters typeset from the lines a filtered trace covers.
+    pub typeset: String,
     pub steps: u64,
     pub exhausted: bool,
     /// Final sizes of the interpreter's working sets.
@@ -849,6 +871,7 @@ impl<'a> Machine<'a> {
                 timings: Timings::new(cfg.timings),
                 facts: Facts::default(),
                 trace: Vec::new(),
+                typeset: String::new(),
                 steps: 0,
                 exhausted: false,
                 journal_size: 0,
@@ -2325,20 +2348,37 @@ will look undefined",
         self.record_with(kind, name, span, || None::<&str>);
     }
 
+    /// The file a trace's line and position range refers to.
+    fn is_trace_file(&self, file: FileId) -> bool {
+        match &self.cfg.trace_file {
+            None => file == self.out.main_file,
+            Some(name) => self.out.files.get(file as usize).is_some_and(|f| crate::config::names_file(&f.path, name)),
+        }
+    }
+
     /// Whether `--lines`/`--steps` keep an event at `span`: a line range
     /// keeps the main file's tokens on those lines and everything the calls
     /// there do, in macro bodies and in the files they read.
     fn in_trace_range(&self, span: Span) -> bool {
         let steps = self.cfg.trace_steps.is_none_or(|(a, b)| (a..=b).contains(&self.out.steps));
         let lines = self.cfg.trace_lines.is_none_or(|(a, b)| {
-            let main = |s: &Span| s.file == self.out.main_file;
+            let main = |s: &Span| self.is_trace_file(s.file);
             let anchor = match self.last_file == Some(span.file) && main(&span) {
                 true => Some(span),
                 false => self.file_calls.iter().filter_map(|(_, call)| *call).chain(self.file_call).map(|(_, s)| s).find(main),
             };
-            anchor.is_some_and(|s| (a..=b).contains(&s.line))
+            anchor.is_some_and(|s| (a..=b).contains(&s.line) && (s.line > a || s.col >= self.cfg.trace_col) && (s.line < b || s.col <= self.cfg.trace_end_col))
         });
         steps && lines
+    }
+
+    /// A character typeset at `span`, kept when a trace range asks what its
+    /// lines produce.
+    fn note_text(&mut self, c: char, span: Span) {
+        const LIMIT: usize = 1 << 16;
+        if self.cfg.trace && self.cfg.trace_lines.is_some() && self.out.typeset.len() < LIMIT && !self.reading_format() && self.in_trace_range(span) {
+            self.out.typeset.push(c);
+        }
     }
 
     /// [`Machine::record`] with a detail, only built when the trace is kept so
@@ -3191,6 +3231,7 @@ will look undefined",
             Some(Catcode::Math) => self.math_shift_token(token),
             // tex.web § 1043: a space in horizontal mode is glue.
             Some(Catcode::Space) => {
+                self.note_text(' ', token.span);
                 if self.packages.is_empty() {
                     let modes = self.out.facts.spaces.entry(token.span).or_default();
                     *modes = modes.union(self.mode);
@@ -3204,6 +3245,9 @@ will look undefined",
             // material.
             Some(Catcode::Letter | Catcode::Other) => {
                 if !self.horizontal_material(token) {
+                    if let Some(c) = self.typeset_code(token).and_then(char::from_u32) {
+                        self.note_text(c, token.span);
+                    }
                     match self.typeset_code(token) {
                         Some(c) => self.append_char(c),
                         None => self.append_item(crate::mode::Item::Unknown),

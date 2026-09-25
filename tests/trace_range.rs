@@ -77,3 +77,130 @@ fn a_malformed_range_is_an_error() {
         assert!(String::from_utf8_lossy(&output.stderr).contains("range"), "{range:?}");
     }
 }
+
+/// `trace --interactive`, fed `input` on stdin: `(line, name)` of every
+/// event header printed.
+fn stepped(dir: &std::path::Path, input: &str) -> Vec<(u64, String)> {
+    stepped_with(dir, &[], input)
+}
+
+fn stepped_with(dir: &std::path::Path, args: &[&str], input: &str) -> Vec<(u64, String)> {
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_satex"))
+        .args(["--no-config", "--no-classes", "--no-packages", "trace", "-i", "-f"])
+        .arg(dir.join("main.tex"))
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let out = String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap();
+    out.lines()
+        .filter(|l| l.starts_with('['))
+        .filter_map(|l| {
+            let mut words = l.split_whitespace().skip(2);
+            let name = words.next()?.to_string();
+            let line = words.next()?.rsplit(':').nth(1)?.parse().ok()?;
+            Some((line, name))
+        })
+        .collect()
+}
+
+#[test]
+fn interactive_l_goes_to_the_next_main_file_line() {
+    let dir = document("line");
+    let all = stepped(&dir, "");
+    assert!(all.iter().any(|(l, n)| *l == 3 && n == "\\b"), "{all:?}");
+    let steps = stepped(&dir, "\nl\nl\nq\n");
+    let main_lines: Vec<u64> = steps.iter().map(|(l, _)| *l).collect();
+    // Enter reaches the second event, each `l` then leaves the line it is on.
+    assert_eq!(steps.len(), 4, "{steps:?}");
+    assert!(main_lines[2] != main_lines[1] && main_lines[3] != main_lines[2], "{steps:?}");
+}
+
+#[test]
+fn interactive_s_skips_to_a_line() {
+    let dir = document("skip");
+    let steps = stepped(&dir, "s 3\nq\n");
+    assert_eq!(steps.first().map(|(l, _)| *l), Some(1), "{steps:?}");
+    assert_eq!(steps.get(1), Some(&(3, "\\b".to_string())), "{steps:?}");
+    // A line past the end runs the trace out.
+    assert_eq!(stepped(&dir, "s 99\nq\n").len(), 1);
+}
+
+#[test]
+fn interactive_o_steps_over_a_call() {
+    let dir = std::env::temp_dir().join(format!("satex-trace-range-over-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.tex"), "\\def\\a{\\relax}\n\\def\\b{\\a\\relax}\n\\b\n\\a\n").unwrap();
+    let into = stepped(&dir, "s 3\n\nq\n");
+    assert_eq!(into.get(2), Some(&(2, "\\a".to_string())), "{into:?}");
+    // Over `\b` skips `\a` and `\relax` from its body and lands on line 4.
+    let over = stepped(&dir, "s 3\no\nq\n");
+    assert_eq!(over.get(1), Some(&(3, "\\b".to_string())), "{over:?}");
+    assert_eq!(over.get(2), Some(&(4, "\\a".to_string())), "{over:?}");
+}
+
+#[test]
+fn ranges_can_name_a_file() {
+    let dir = document("file");
+    // `child.tex` holds line 1 only; `\x` on line 5 of main.tex reads it.
+    let rows = |args: &[&str]| events(&dir, args);
+    let in_child = rows(&["--lines", "child.tex:1:1"]);
+    assert!(in_child.iter().any(|(n, f, l)| n == "\\def" && f == "child.tex" && *l == 1), "{in_child:?}");
+    assert!(in_child.iter().all(|(_, f, _)| f == "child.tex"), "{in_child:?}");
+    // Without the extension, and as positions.
+    assert_eq!(rows(&["--lines", "child:1:1"]), in_child);
+    let from = rows(&["--from", "child.tex:1", "--to", "child.tex:1"]);
+    assert_eq!(from, in_child);
+    // Two files in one range are an error.
+    let output = trace(&dir, &["--from", "child.tex:1", "--to", "main.tex:3"]);
+    assert!(!output.status.success());
+}
+
+#[test]
+fn interactive_l_and_s_follow_the_named_file() {
+    let dir = document("ifile");
+    let steps = stepped_with(&dir, &["--from", "child.tex:1"], "l\nq\n");
+    assert!(!steps.is_empty(), "{steps:?}");
+}
+
+#[test]
+fn trace_shows_only_the_documents_own_files_unless_asked() {
+    let dir = document("internal");
+    let files = |extra: &[&str]| -> std::collections::BTreeSet<String> {
+        events(&dir, extra).into_iter().map(|(_, f, _)| f).collect()
+    };
+    let own = files(&[]);
+    assert!(own.iter().all(|f| f == "main.tex" || f == "child.tex"), "{own:?}");
+    assert!(files(&["--include-internal"]).contains("latex.ltx"));
+}
+
+#[test]
+fn interactive_reports_skipped_internal_steps_and_the_output_of_a_range() {
+    let dir = std::env::temp_dir().join(format!("satex-trace-range-out-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.tex"), "\\documentclass{article}\n\\def\\a{world}\nhello \\a\n").unwrap();
+    let text = |args: &[&str]| -> String {
+        use std::io::Write;
+        let mut child = Command::new(env!("CARGO_BIN_EXE_satex"))
+            .args(["--no-config", "--no-classes", "--no-packages", "trace", "-i", "-f"])
+            .arg(dir.join("main.tex"))
+            .args(args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(b"c\n").unwrap();
+        String::from_utf8(child.wait_with_output().unwrap().stdout).unwrap()
+    };
+    let hidden = text(&[]);
+    assert!(hidden.contains("internal steps skipped (use --include-internal)"), "{hidden}");
+    assert!(hidden.contains("-- end of the trace"), "{hidden}");
+    // No range, no output line; a range gets the text its lines typeset.
+    assert!(!hidden.contains("output:"), "{hidden}");
+    let ranged = text(&["--from", "3"]);
+    assert!(ranged.contains("output:\nhello world"), "{ranged}");
+    assert!(!text(&["--include-internal"]).contains("internal steps skipped"));
+}

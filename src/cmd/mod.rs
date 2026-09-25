@@ -193,12 +193,28 @@ pub enum Command {
         /// Filter expression, for example `tag=switch and package~^my`.
         #[arg(long, value_name = "EXPR")]
         filter: Option<String>,
-        /// Only these lines of the main file, with everything their calls do.
-        #[arg(long, value_name = "FROM:TO")]
+        /// Only these lines of the main file (or of `FILE:`), with everything
+        /// their calls do.
+        #[arg(long, value_name = "[FILE:]FROM:TO")]
         lines: Option<String>,
         /// Only these steps of the run.
         #[arg(long, value_name = "FROM:TO")]
         steps: Option<String>,
+        /// Start at this position, `[FILE:]LINE[:COL]`; the main file without FILE.
+        #[arg(long, value_name = "LINE[:COL]")]
+        from: Option<String>,
+        /// End at this position, `[FILE:]LINE[:COL]`.
+        #[arg(long, value_name = "LINE[:COL]")]
+        to: Option<String>,
+        /// Step through the trace one event at a time, showing each macro's
+        /// definition, arguments and the tokens it inserts.  Enter steps,
+        /// `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits.
+        #[arg(short, long)]
+        interactive: bool,
+        /// Also trace what happens in packages, classes and the kernel; by
+        /// default only the files of the document itself are shown.
+        #[arg(long)]
+        include_internal: bool,
     },
     /// The interpreted LaTeX2e kernel and the package caches.  Without a
     /// further command, prints their status.
@@ -277,6 +293,7 @@ impl Command {
     /// keeping every argument costs real memory on a large document).
     pub fn wants_arguments(&self) -> bool {
         matches!(self, Command::Query { name: Some(n), request: None, .. } if n == "options")
+            || matches!(self, Command::Trace { interactive: true, .. })
     }
 
     /// `lint --fix` or `--diff`: the output is a diff or the findings left
@@ -343,7 +360,10 @@ impl Command {
                 *list,
                 out,
             ),
-            Command::Trace { filter, .. } => query::trace(context, filter.as_deref()),
+            Command::Trace { filter, interactive, from, to, lines, include_internal, .. } => {
+                let file = trace_file(&[from.as_deref(), to.as_deref(), lines.as_deref()])?;
+                query::trace(context, filter.as_deref(), *interactive, *include_internal, file.as_deref(), out)
+            }
             Command::Lint { filter, all, rules, explain, fix, unsafe_fixes, diff } => {
                 let fixing = lint::Fixing { fix: *fix, unsafe_fixes: *unsafe_fixes, diff: *diff };
                 lint::run(context, filter.as_deref(), *all, *rules, explain.as_deref(), fixing, out)
@@ -399,4 +419,31 @@ pub fn parse_place(text: &str) -> Result<crate::query::At, String> {
     };
     let (line, col) = parse_position(rest)?;
     Ok(crate::query::At { file, line, col })
+}
+
+/// Splits a leading `FILE:` off a trace position or range: the parts before
+/// the first empty or all-digit one.  `sub/a.tex:12:3` is `(sub/a.tex, 12:3)`;
+/// `12:3` and `40:` name no file.
+pub fn split_file(text: &str) -> (Option<String>, &str) {
+    let parts: Vec<&str> = text.split(':').collect();
+    let n = parts.iter().take_while(|p| !p.is_empty() && !p.chars().all(|c| c.is_ascii_digit())).count();
+    if n == 0 || n == parts.len() {
+        return (None, text);
+    }
+    let rest = parts[..n].iter().map(|p| p.len() + 1).sum::<usize>();
+    (Some(parts[..n].join(":")), &text[rest..])
+}
+
+/// The one file `--from`, `--to` and `--lines` agree on, if they name any.
+pub fn trace_file(specs: &[Option<&str>]) -> Result<Option<String>, String> {
+    let mut found: Option<String> = None;
+    for spec in specs.iter().flatten() {
+        if let (Some(file), _) = split_file(spec) {
+            match &found {
+                Some(other) if *other != file => return Err(format!("trace ranges name two files: {other} and {file}")),
+                _ => found = Some(file),
+            }
+        }
+    }
+    Ok(found)
 }

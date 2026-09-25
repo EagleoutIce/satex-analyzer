@@ -365,8 +365,29 @@ fn configure(cli: &Cli, source: Option<&str>) -> Result<(Config, Vec<PathBuf>), 
     }
     cfg.verbose = cli.verbose;
     cfg.trace |= cli.command.as_ref().is_some_and(Command::wants_trace);
-    if let Some(Command::Trace { lines, steps, .. }) = &cli.command {
-        cfg.trace_lines = lines.as_deref().map(range).transpose()?.map(|(a, b)| (a.min(u32::MAX.into()) as u32, b.min(u32::MAX.into()) as u32));
+    if let Some(Command::Trace { lines, steps, from, to, .. }) = &cli.command {
+        cfg.trace_file = satex::cmd::trace_file(&[from.as_deref(), to.as_deref(), lines.as_deref()])?;
+        if let Some(from) = from {
+            let (_, from) = satex::cmd::split_file(from);
+            let (line, col) = from.split_once(':').unwrap_or((from, "0"));
+            let bad = || format!("`{from}` is no position: use LINE or LINE:COL");
+            let line: u32 = line.trim().parse().map_err(|_| bad())?;
+            cfg.trace_col = col.trim().parse().map_err(|_| bad())?;
+            cfg.trace_lines = Some((line, u32::MAX));
+        }
+        if let Some(to) = to {
+            let (_, to) = satex::cmd::split_file(to);
+            let (line, col) = to.split_once(':').unwrap_or((to, ""));
+            let bad = || format!("`{to}` is no position: use LINE or LINE:COL");
+            let line: u32 = line.trim().parse().map_err(|_| bad())?;
+            if !col.trim().is_empty() {
+                cfg.trace_end_col = col.trim().parse().map_err(|_| bad())?;
+            }
+            cfg.trace_lines = Some((cfg.trace_lines.map_or(0, |(a, _)| a), line));
+        }
+        if lines.is_some() {
+            cfg.trace_lines = lines.as_deref().map(|l| range(satex::cmd::split_file(l).1)).transpose()?.map(|(a, b)| (a.min(u32::MAX.into()) as u32, b.min(u32::MAX.into()) as u32));
+        }
         cfg.trace_steps = steps.as_deref().map(range).transpose()?;
     }
     cfg.record_arguments |= cli.command.as_ref().is_some_and(Command::wants_arguments);

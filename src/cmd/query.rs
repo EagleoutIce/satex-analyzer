@@ -59,9 +59,222 @@ pub fn run(
     Ok(Output::Records(query::run(context.analysis, query, &filter)))
 }
 
-pub fn trace(context: &Context, filter: Option<&str>) -> Result<Output, String> {
-    Ok(Output::Records(query::run(context.analysis, Query::Trace, &parse_filter(filter)?)))
+pub fn trace(context: &Context, filter: Option<&str>, interactive: bool, internal: bool, file: Option<&str>, out: &mut impl Write) -> Result<Output, String> {
+    if interactive {
+        step_through(context.analysis, file, internal, context.links, out);
+        return Ok(Output::Done);
+    }
+    let analysis = context.analysis;
+    let mut records = query::run(analysis, Query::Trace, &parse_filter(filter)?);
+    if !internal {
+        records.retain(|r| {
+            let event = r.get("index").and_then(Json::as_u64).and_then(|i| analysis.trace.get(i as usize));
+            event.is_some_and(|e| user_code(analysis, e))
+        });
+    }
+    Ok(Output::Records(records))
 }
+
+/// Whether a trace event belongs to the document's own files, and is no
+/// bookkeeping on an internal register (`\^^Bcount188`, named by a control
+/// character) the kernel's allocators keep.
+fn user_code(analysis: &crate::machine::Analysis, event: &crate::machine::Event) -> bool {
+    query::origin(analysis, event.span.file) == "document"
+        && !analysis.interner.name(event.name).starts_with(|c: char| c.is_control())
+}
+
+/// `trace --interactive`: one event at a time, with the macro's definition,
+/// the arguments it took and the tokens the call put back in the stream.
+fn step_through(analysis: &crate::machine::Analysis, file: Option<&str>, internal: bool, links: crate::render::Links, out: &mut impl Write) {
+    use crate::facts::MeaningKind;
+    use crate::machine::Step;
+    use crate::tex::detokenize;
+    let show = |toks: &[crate::tex::Token]| detokenize(toks, &analysis.interner);
+    let total = analysis.trace.len();
+    let ansi = matches!(anstream::stdout().current_choice(), anstream::ColorChoice::Always | anstream::ColorChoice::AlwaysAnsi);
+    let bold = anstyle::Style::new().bold();
+    let mut stdin = std::io::stdin().lock();
+    let mut sources: std::collections::HashMap<String, Option<Vec<String>>> = Default::default();
+    let mut run_on = false;
+    // The events the default view hides since the last one shown.
+    let mut hidden: Option<(u32, u32)> = None;
+    let gray = anstyle::Style::new().dimmed();
+    let flush = |hidden: &mut Option<(u32, u32)>, out: &mut dyn Write| {
+        if let Some((from, to)) = hidden.take() {
+            let (on, off) = if ansi { (format!("{gray}"), format!("{gray:#}")) } else { Default::default() };
+            let _ = writeln!(
+                out,
+                "{on}[{}/{total}] -> [{}/{total}]  {} internal steps skipped (use --include-internal){off}",
+                from + 1,
+                to + 1,
+                to - from + 1
+            );
+        }
+    };
+    // What the last command skips: the events inside a call, or up to a line
+    // of the main file.
+    enum Skip {
+        Over(u16),
+        NextLine(u32),
+        ToLine(u32),
+    }
+    let mut skip: Option<Skip> = None;
+    let mut here = 0;
+    for event in &analysis.trace {
+        let main = event.span.line > 0
+            && match file {
+                Some(name) => crate::config::names_file(analysis.file_name(event.span.file), name),
+                None => event.span.file == analysis.main_file,
+            };
+        if !internal && !user_code(analysis, event) {
+            hidden = Some(hidden.map_or((event.index, event.index), |(from, _)| (from, event.index)));
+            continue;
+        }
+        let skipped = match skip {
+            Some(Skip::Over(depth)) => event.depth > depth,
+            Some(Skip::NextLine(line)) => !(main && event.span.line != line),
+            Some(Skip::ToLine(line)) => !(main && event.span.line >= line),
+            None => false,
+        };
+        if skipped {
+            continue;
+        }
+        skip = None;
+        if main {
+            here = event.span.line;
+        }
+        let name = analysis.interner.cs(event.name);
+        flush(&mut hidden, out);
+        let file = analysis.short_name(event.span.file);
+        let linked = crate::render::hyperlink(&name, &crate::render::file_url(analysis.file_name(event.span.file)), links);
+        let shown = if ansi { format!("{bold}{linked}{bold:#}") } else { name.to_string() };
+        let step = event.kind.as_str();
+        let style = crate::render::step_style(event.kind);
+        let step = if ansi { format!("{style}{step}{style:#}") } else { step.to_string() };
+        let _ = writeln!(
+            out,
+            "[{}/{total}] {step} {shown}  {file}:{}:{}  depth {}",
+            event.index + 1,
+            event.span.line,
+            event.span.col,
+            event.depth
+        );
+        if let Some((head, tail)) = window(&mut sources, analysis.file_name(event.span.file), event.span.line, event.span.col, name.chars().count()) {
+            let gray = anstyle::Style::new().dimmed();
+            let (on, off) = if ansi { (format!("{gray}"), format!("{gray:#}")) } else { Default::default() };
+            let lead = format!("l.{} ", event.span.line);
+            let pad = " ".repeat(lead.chars().count() + head.chars().count());
+            let _ = writeln!(out, "  {on}{lead}{head}{off}");
+            let _ = writeln!(out, "  {on}{pad}{tail}{off}");
+        }
+        if let Some(detail) = &event.detail {
+            let _ = writeln!(out, "  took: {detail}");
+        }
+        let defined = |node| analysis.facts.defs.iter().find(|d| d.node == node);
+        match event.kind {
+            Step::Expand => {
+                let call = analysis.facts.expansions.iter().find(|e| e.span == event.span && e.name == event.name);
+                if let Some(call) = call {
+                    let def = match call.meaning {
+                        MeaningKind::Macro(n) => defined(n),
+                        _ => None,
+                    };
+                    if let Some(def) = def {
+                        let _ = writeln!(
+                            out,
+                            "  because: {} defined by {} at {}:{}",
+                            name,
+                            analysis.interner.cs(def.by),
+                            analysis.short_name(def.span.file),
+                            def.span.line
+                        );
+                        if let Some(m) = &def.mac {
+                            let _ = writeln!(out, "  macro:   {name}{} -> {}", m.parameter_text.render(&analysis.interner), show(&m.replacement_text));
+                            let args: Vec<Vec<_>> = call.arguments.iter().map(|a| a.to_vec()).collect();
+                            if !args.is_empty() {
+                                let joined: Vec<String> = args.iter().map(|a| format!("{{{}}}", show(a))).collect();
+                                let _ = writeln!(out, "  args:    {}", joined.join(" "));
+                            }
+                            if let Some(body) = crate::machine::substitute(m, &args, usize::MAX) {
+                                let _ = writeln!(out, "  inserts: {}", show(&body));
+                            }
+                        }
+                    } else {
+                        let _ = writeln!(out, "  because: {name} is {}", call.meaning.as_str());
+                    }
+                }
+            }
+            Step::Define | Step::Assign => {
+                if let Some(def) = analysis.facts.defs.iter().find(|d| d.span == event.span && d.name == event.name) {
+                    let body = def.mac.as_ref().map(|m| show(&m.replacement_text)).unwrap_or_default();
+                    let _ = writeln!(out, "  now:     {name} := {body}  ({} scope)", if def.global { "global" } else { "local" });
+                }
+            }
+            Step::Branch => {
+                let _ = writeln!(out, "  because: the test decided the {} arm", event.detail.as_deref().unwrap_or("undecided"));
+            }
+            _ => {}
+        }
+        if run_on {
+            continue;
+        }
+        let _ = write!(out, "  [e]nter call, step [o]ver call, goto next [l]ine, [s]kip to <LINE>, [c]ontinue,  [q]uit\n> ");
+        let _ = out.flush();
+        let mut line = String::new();
+        let read = std::io::BufRead::read_line(&mut stdin, &mut line);
+        if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            let _ = writeln!(out);
+        } else if ansi {
+            // Wipe the legend and the typed key: only the latest one shows.
+            let _ = write!(out, "\x1b[2A\r\x1b[J");
+        }
+        match read {
+            Ok(0) | Err(_) => run_on = true,
+            Ok(_) => match line.trim() {
+                "q" => return,
+                "c" => run_on = true,
+                "o" => skip = Some(Skip::Over(event.depth)),
+                "l" => skip = Some(Skip::NextLine(here)),
+                other => {
+                    if let Some(line) = other.strip_prefix('s').and_then(|n| n.trim().parse().ok()) {
+                        skip = Some(Skip::ToLine(line));
+                    }
+                }
+            },
+        }
+    }
+    flush(&mut hidden, out);
+    let _ = writeln!(out, "-- end of the trace: {total} events --");
+    let text = analysis.typeset.split_whitespace().collect::<Vec<_>>().join(" ");
+    if !text.is_empty() {
+        let (on, off) = if ansi { (format!("{bold}"), format!("{bold:#}")) } else { Default::default() };
+        let _ = writeln!(out, "{on}output:{off}\n{text}");
+    }
+}
+
+/// What TeX shows of an error's place: the source line up to the end of the
+/// token at `col` (1-based, `width` characters), and the rest of the line.
+/// Long lines are cut around the token.
+fn window(
+    cache: &mut std::collections::HashMap<String, Option<Vec<String>>>,
+    path: &str,
+    line: u32,
+    col: u32,
+    width: usize,
+) -> Option<(String, String)> {
+    let lines = cache
+        .entry(path.to_string())
+        .or_insert_with(|| std::fs::read_to_string(path).ok().map(|t| t.lines().map(str::to_string).collect()))
+        .as_ref()?;
+    let text: Vec<char> = lines.get(line.checked_sub(1)? as usize)?.chars().collect();
+    let end = (col as usize).saturating_sub(1).saturating_add(width).min(text.len());
+    let (from, to) = (end.saturating_sub(50), (end + 50).min(text.len()));
+    let cut = |a: usize, b: usize| text[a..b].iter().collect::<String>();
+    let head = format!("{}{}", if from > 0 { "…" } else { "" }, cut(from, end));
+    let tail = format!("{}{}", cut(end, to), if to < text.len() { "…" } else { "" });
+    Some((head, tail))
+}
+
 
 /// `satex query --request`: every query a JSON request names, run against
 /// one analysis, printed as a JSON array of answers in the same order.  See

@@ -355,6 +355,13 @@ pub struct Config {
     pub trace: bool,
     /// Record only these lines of the main file, and what their calls do.
     pub trace_lines: Option<(u32, u32)>,
+    /// Within the first traced line, skip what stands left of this column.
+    pub trace_col: u32,
+    /// The file `trace_lines` and `trace_col` refer to, by a trailing part of
+    /// its path (`sub/a` or `a.tex`); the main file when unset.
+    pub trace_file: Option<String>,
+    /// Within the last traced line, skip what stands right of this column.
+    pub trace_end_col: u32,
     /// Record only these steps of the run.
     pub trace_steps: Option<(u64, u64)>,
     pub timings: bool,
@@ -411,6 +418,9 @@ impl Default for Config {
             verbose: 0,
             trace: false,
             trace_lines: None,
+            trace_col: 0,
+            trace_file: None,
+            trace_end_col: u32::MAX,
             trace_steps: None,
             timings: false,
             opaque_conditionals: Vec::new(),
@@ -923,4 +933,11 @@ mod tests {
         assert_eq!(files, vec![dir.join("satex.yaml")]);
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// Whether `path` is the file `name` names: a trailing part of the path,
+/// with or without the `.tex` extension.
+pub fn names_file(path: &str, name: &str) -> bool {
+    let path = std::path::Path::new(path);
+    path.ends_with(name) || path.ends_with(format!("{name}.tex"))
 }
