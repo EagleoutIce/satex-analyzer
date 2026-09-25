@@ -62,9 +62,9 @@ const SITE: &str = "<site>";
 const TAGS: [VertexTag; 5] = [
     VertexTag::Value,
     VertexTag::Use,
-    VertexTag::FunctionCall,
+    VertexTag::MacroCall,
     VertexTag::VariableDefinition,
-    VertexTag::FunctionDefinition,
+    VertexTag::MacroDefinition,
 ];
 const STATUSES: [LoadStatus; 7] = [
     LoadStatus::Read,

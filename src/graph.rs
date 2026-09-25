@@ -11,15 +11,15 @@ use crate::tex::{Interner, Span, Sym};
 type ReadEdge = (NodeId, NodeId, NodeId, Option<NodeId>);
 
 /// What kind of program point a [`Vertex`] stands for: a value, a use, a
-/// function call, or the definition of a variable or function.
+/// macro call, or the definition of a variable or macro.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum VertexTag {
     Value,
     Use,
-    FunctionCall,
+    MacroCall,
     VariableDefinition,
-    FunctionDefinition,
+    MacroDefinition,
 }
 
 impl VertexTag {
@@ -27,9 +27,9 @@ impl VertexTag {
         match self {
             VertexTag::Value => "value",
             VertexTag::Use => "use",
-            VertexTag::FunctionCall => "function-call",
+            VertexTag::MacroCall => "macro-call",
             VertexTag::VariableDefinition => "variable-definition",
-            VertexTag::FunctionDefinition => "function-definition",
+            VertexTag::MacroDefinition => "macro-definition",
         }
     }
 }
@@ -136,6 +136,9 @@ pub struct DependencyGraph {
     /// A definition vertex stands for its site in every expansion that runs
     /// it, so what reads the definition reads the call that made it now.
     made_by: HashMap<NodeId, NodeId>,
+    /// How many times each name has been defined so far, counting every run of a
+    /// definition site.
+    defs_of: HashMap<Sym, u32>,
     /// The call read from a file whose expansion is running, if any: what
     /// it reads is read on behalf of that call.
     pub reader: Option<NodeId>,
@@ -176,6 +179,22 @@ impl Vertex {
         }
     }
 }
+
+/// What keeps a slice from following every edge: a last vertex, and the file
+/// whose calls a body vertex answers to.
+pub struct SliceBound {
+    pub limit: NodeId,
+    pub home: Option<crate::tex::FileId>,
+}
+
+impl Default for SliceBound {
+    fn default() -> Self {
+        SliceBound { limit: NodeId::MAX, home: None }
+    }
+}
+
+/// Definitions after which a name counts as scratch state.
+const SCRATCH_DEFS: u32 = 16;
 
 impl DependencyGraph {
     pub fn push(&mut self, tag: VertexTag, name: Sym, span: Span, within: Option<NodeId>, cds: Vec<ControlDep>) -> NodeId {
@@ -337,6 +356,9 @@ impl DependencyGraph {
             // this call, one before it to the one before.
             log.edges.push((def, call, EdgeKind::default(), None));
         }
+        if let Some(v) = self.vertices.get(def as usize) {
+            *self.defs_of.entry(v.name).or_default() += 1;
+        }
         self.made_by.insert(def, call);
     }
 
@@ -357,6 +379,7 @@ impl DependencyGraph {
             && !mention
             && let Some(&call) = self.made_by.get(&to)
             && call != reader
+            && self.defs_of.get(&self.vertices[to as usize].name).copied().unwrap_or(0) < SCRATCH_DEFS
         {
             self.add_edge(reader, call, EdgeKind::SIDE_EFFECT_ON_CALL);
         }
@@ -445,26 +468,83 @@ impl DependencyGraph {
 
     /// Backward: what the criteria depend on.  Forward: what depends on them.
     /// The two are exact transposes because they walk the same relation.
+    /// Vertices past `limit` are not followed.  A body vertex stands for every
+    /// expansion of its macro, so its edges reach calls that ran after the
+    /// criterion and cannot have influenced it.
     pub fn slice(&self, criteria: &[NodeId], kinds: EdgeKind, forward: bool) -> Vec<NodeId> {
+        self.slice_until(criteria, kinds, forward, &SliceBound::default())
+    }
+
+    /// The names the run defines over and over, like `\toks@` or `\reserved@a`:
+    /// a definition of one is only ever read soon after it is made.
+    fn scratch_names(&self) -> std::collections::HashSet<Sym> {
+        self.defs_of.iter().filter(|&(_, &n)| n >= SCRATCH_DEFS).map(|(&name, _)| name).collect()
+    }
+
+    /// As [`DependencyGraph::slice`], within `bound`.
+    pub fn slice_until(
+        &self,
+        criteria: &[NodeId],
+        kinds: EdgeKind,
+        forward: bool,
+        bound: &SliceBound,
+    ) -> Vec<NodeId> {
         let transposed = forward.then(|| self.transposed());
-        let mut seen = vec![false; self.vertices.len()];
-        let mut stack: Vec<NodeId> = criteria.to_vec();
-        let mut out = Vec::new();
-        while let Some(node) = stack.pop() {
+        let mut seen = std::collections::HashSet::new();
+        let mut kept = vec![false; self.vertices.len()];
+        // Each vertex travels with the call of the home file it was reached
+        // from: a body vertex stands for every expansion, and only the call
+        // this one came through made what it defines.
+        let scratch = self.scratch_names();
+        let is_scratch = |id: NodeId| scratch.contains(&self.vertices[id as usize].name);
+        let file_of = |id: NodeId| self.vertices[id as usize].span.file;
+        let mut stack: Vec<(NodeId, Option<NodeId>)> = criteria.iter().map(|&c| (c, None)).collect();
+        while let Some((node, entry)) = stack.pop() {
             let index = node as usize;
-            if index >= seen.len() || seen[index] {
+            if index >= kept.len() || node > bound.limit || !seen.insert((node, entry)) {
                 continue;
             }
-            seen[index] = true;
-            out.push(node);
+            kept[index] = true;
+            let at_home = |id: NodeId| bound.home.is_some_and(|h| self.vertices[id as usize].span.file == h);
             let next = match &transposed {
                 Some(incoming) => &incoming[index],
                 None => self.outgoing(node),
             };
-            stack.extend(next.iter().filter(|(_, k)| k.intersects(kinds)).map(|(other, _)| *other));
+            for (other, kind) in next.iter().filter(|(_, k)| k.intersects(kinds)) {
+                let made_by = kind.intersects(EdgeKind(EdgeKind::DEFINED_BY.0 | EdgeKind::SIDE_EFFECT_ON_CALL.0));
+                if !forward
+                    && made_by
+                    && !at_home(node)
+                    && at_home(*other)
+                    && self.vertices[*other as usize].tag == VertexTag::MacroCall
+                    && entry.is_some_and(|e| e != *other)
+                {
+                    continue;
+                }
+                // Scratch state is rewritten all the time, so what one file
+                // reads of it says nothing about the file that wrote it last.
+                // An edge that touches the file being sliced is its own, and
+                // may be the only way to what wrote it (`\DeclareOption`).
+                if !forward
+                    && kind.intersects(EdgeKind::READS)
+                    && (is_scratch(node) || is_scratch(*other))
+                    && file_of(node) != file_of(*other)
+                    && !at_home(node)
+                    && !at_home(*other)
+                {
+                    continue;
+                }
+                // Only an expansion runs a call's body: what a home vertex reads
+                // was made by whichever call made it.
+                let entry = match (at_home(node), kind.intersects(EdgeKind::EXPANDS)) {
+                    (true, true) => Some(node),
+                    (true, false) => None,
+                    (false, _) => entry,
+                };
+                stack.push((*other, entry));
+            }
         }
-        out.sort_unstable();
-        out
+        (0..kept.len() as NodeId).filter(|&id| kept[id as usize]).collect()
     }
 
     pub fn to_dot(&self, it: &Interner, files: &[String]) -> String {
@@ -472,8 +552,8 @@ impl DependencyGraph {
         for (i, v) in self.vertices.iter().enumerate() {
             let (shape, color) = match v.tag {
                 VertexTag::VariableDefinition => ("box", "#1f77b4"),
-                VertexTag::FunctionDefinition => ("box3d", "#2ca02c"),
-                VertexTag::FunctionCall => ("ellipse", "#d62728"),
+                VertexTag::MacroDefinition => ("box3d", "#2ca02c"),
+                VertexTag::MacroCall => ("ellipse", "#d62728"),
                 VertexTag::Use => ("ellipse", "#7f7f7f"),
                 VertexTag::Value => ("note", "#9467bd"),
             };

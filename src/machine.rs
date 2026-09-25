@@ -2648,7 +2648,7 @@ will look undefined",
         let mac = meaning.as_macro().cloned();
         if let Some(m) = &mac {
             let body =
-                self.out.graph.push(VertexTag::FunctionDefinition, name, span, within, self.cds.clone());
+                self.out.graph.push(VertexTag::MacroDefinition, name, span, within, self.cds.clone());
             self.out.graph.edge(node, body, EdgeKind::DEFINED_BY);
             let replacement = m.replacement_text.clone();
             self.record_calls(name, &replacement);
@@ -3737,7 +3737,7 @@ will look undefined",
 
     fn expand_macro(&mut self, sym: Sym, m: Rc<MacroDef>, span: Span) {
         let node = self.out.graph.push(
-            VertexTag::FunctionCall,
+            VertexTag::MacroCall,
             sym,
             span,
             self.within.last().map(|(_, n)| *n),

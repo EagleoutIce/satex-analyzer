@@ -293,7 +293,7 @@ fn dependency_graph_links_a_call_to_its_definition() {
         .graph
         .vertices
         .iter()
-        .position(|v| v.tag == VertexTag::FunctionCall && analysis.interner.name(v.name) == "greet")
+        .position(|v| v.tag == VertexTag::MacroCall && analysis.interner.name(v.name) == "greet")
         .expect("a call vertex");
     let edges = analysis.graph.outgoing(call as u32);
     assert!(edges.iter().any(|(_, kind)| kind.intersects(EdgeKind::READS)));

@@ -121,11 +121,11 @@ The dependency graph as records. `satex dependencies` renders it as DOT or JSON.
 ```text
 $ satex query dependency-graph -f samples/paper.tex
 tag                  name      file                            
-function-call        \docume…  paper.tex                       @ paper.tex:1:1
+macro-call           \docume…  paper.tex                       @ paper.tex:1:1
 variable-definition  \docume…  latex.ltx                       @ latex.ltx:18618:3
-function-definition  \docume…  latex.ltx                       @ latex.ltx:18618:3
+macro-definition     \docume…  latex.ltx                       @ latex.ltx:18618:3
 variable-definition  \usepac…  latex.ltx                       @ latex.ltx:18619:25
-function-definition  \usepac…  latex.ltx                       @ latex.ltx:18619:25
+macro-definition     \usepac…  latex.ltx                       @ latex.ltx:18619:25
 … 38892 more lines omitted
 ```
 

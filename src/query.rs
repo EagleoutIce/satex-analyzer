@@ -881,10 +881,40 @@ pub fn slice_matching(analysis: &Analysis, filter: &Filter, direction: Direction
     slice_from(analysis, criteria, direction)
 }
 
-fn slice_from(analysis: &Analysis, criteria: Vec<NodeId>, direction: Direction) -> Vec<Record> {
+/// The last vertex a backward slice may reach: the one before the first
+/// construct of the main file that follows every criterion.  No limit when a
+/// criterion lies outside the main file.
+fn slice_limit(analysis: &Analysis, criteria: &[NodeId]) -> NodeId {
+    let main = analysis.main_file;
+    let spans: Vec<_> = criteria.iter().filter_map(|&id| analysis.graph.vertex(id)).map(|v| v.span).collect();
+    if spans.is_empty() || spans.len() != criteria.len() || spans.iter().any(|s| s.file != main) {
+        return NodeId::MAX;
+    }
+    // Whole lines: what stands after a criterion on its line is part of the same statement.
+    let last = spans.iter().map(|s| s.line).max().unwrap_or(0);
     analysis
         .graph
-        .slice(&criteria, SLICE_EDGES, direction == Direction::Forward)
+        .vertices
+        .iter()
+        .position(|v| v.span.file == main && v.span.line > last)
+        .map_or(NodeId::MAX, |first| (first as NodeId).saturating_sub(1))
+}
+
+/// A backward slice from `nodes` that answers a body vertex to its own call.
+fn backward(analysis: &Analysis, nodes: &[NodeId], limit: NodeId) -> Vec<NodeId> {
+    let bound = crate::graph::SliceBound { limit, home: Some(analysis.main_file) };
+    analysis.graph.slice_until(nodes, SLICE_EDGES, false, &bound)
+}
+
+fn slice_from(analysis: &Analysis, criteria: Vec<NodeId>, direction: Direction) -> Vec<Record> {
+    let forward = direction == Direction::Forward;
+    let bound = crate::graph::SliceBound {
+        limit: if forward { NodeId::MAX } else { slice_limit(analysis, &criteria) },
+        home: (!forward).then_some(analysis.main_file),
+    };
+    analysis
+        .graph
+        .slice_until(&criteria, SLICE_EDGES, forward, &bound)
         .into_iter()
         .filter_map(|id| {
             let vertex = analysis.graph.vertex(id)?;
@@ -919,7 +949,28 @@ pub fn reconstruct(analysis: &Analysis, slice: &[Record], source: &str) -> Strin
     let mut texts: BTreeMap<FileId, Vec<String>> = BTreeMap::new();
     texts.insert(analysis.main_file, source.lines().map(str::to_string).collect());
     let frame = frame(analysis, &texts[&analysis.main_file]);
-    nodes.extend(analysis.graph.slice(&frame.nodes, SLICE_EDGES, false));
+    // The frame reads what the whole run wrote (`\begin{document}` reads the
+    // `.aux` file), and so does an environment's end: what stands after the
+    // slice is kept out of what they pull in.
+    let reach = |ids: &mut dyn Iterator<Item = NodeId>| {
+        let main = analysis.main_file;
+        let last = ids
+            .filter_map(|id| analysis.graph.vertex(id))
+            .filter(|v| v.span.file == main && !frame.ends.contains(&v.span.line))
+            .map(|v| v.span.line)
+            .max();
+        match last {
+            Some(last) => analysis
+                .graph
+                .vertices
+                .iter()
+                .position(|v| v.span.file == main && v.span.line > last)
+                .map_or(NodeId::MAX, |first| (first as NodeId).saturating_sub(1)),
+            None => NodeId::MAX,
+        }
+    };
+    let limit = reach(&mut nodes.iter().chain(&frame.nodes).copied());
+    nodes.extend(backward(analysis, &frame.nodes, limit));
     let mut framing: BTreeMap<FileId, BTreeSet<u32>> = BTreeMap::new();
     framing.entry(analysis.main_file).or_default().extend(frame.lines.iter().copied());
     let lines = loop {
@@ -937,7 +988,9 @@ pub fn reconstruct(analysis: &Analysis, slice: &[Record], source: &str) -> Strin
         for (file, line) in groups.into_iter().chain(conditionals) {
             framing.entry(file).or_default().insert(line);
         }
-        nodes.extend(analysis.graph.slice(&extra, SLICE_EDGES, false));
+        let limit = reach(&mut nodes.iter().chain(&extra).copied());
+        nodes.extend(extra.iter().copied());
+        nodes.extend(backward(analysis, &extra, limit));
     };
     // Sorted by where the line belongs in the main file: a line of the main
     // file by its own number, a line of an `\input` file by the position
