@@ -502,9 +502,10 @@ fn overview_text(cfg: &Config, layers: &[PathBuf]) -> String {
     let rows = plugin_rows();
     let total: usize = rows.iter().map(|(_, items)| items.len()).sum();
     let mut out = format!(
-        "satex {}{commit}, built {}\n\n{}\n",
+        "satex {}{commit}, built {}\n{}\n\n{}\n",
         env!("CARGO_PKG_VERSION"),
         env!("SATEX_BUILD_TIME"),
+        env!("CARGO_PKG_REPOSITORY"),
         render::heading(&format!("plugins: {total} in {} kinds", rows.len()))
     );
     let width = rows.iter().map(|(kind, _)| kind.as_str().len()).max().unwrap_or(0);
@@ -542,6 +543,7 @@ fn overview_json(cfg: &Config, project: &satex::project::Project, layers: &[Path
         "version": env!("CARGO_PKG_VERSION"),
         "commit": if commit.is_empty() { None } else { Some(commit) },
         "built": env!("SATEX_BUILD_TIME"),
+        "repository": env!("CARGO_PKG_REPOSITORY"),
         "plugin_count": plugins.values().filter_map(|items| items.as_array()).map(Vec::len).sum::<usize>(),
         "plugins": plugins,
         "discovery": discovery_list(cfg),

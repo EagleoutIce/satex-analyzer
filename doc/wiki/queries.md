@@ -343,7 +343,7 @@ A name without its own redefinitions can still behave differently by context. `e
 
 ## Signatures
 
-`signature` spells what a command reads, one letter per argument, in the notation of LaTeX's `\NewDocumentCommand` (usrguide):
+`signature` spells what a command reads, one letter per argument, in the notation of LaTeX's `\NewDocumentCommand` ([usrguide](https://ctan.org/pkg/usrguide)):
 
 | key | reads |
 |---|---|

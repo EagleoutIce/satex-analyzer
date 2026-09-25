@@ -447,6 +447,14 @@ fn expansions(analysis: &Analysis) -> Vec<Record> {
             let mut record = place(analysis, use_.span);
             record.insert("name".into(), json!(analysis.interner.cs(use_.name)));
             record.insert("meaning".into(), json!(use_.meaning.as_str()));
+            // The `node` of the definition this call resolved to.
+            record.insert(
+                "definition".into(),
+                match use_.meaning {
+                    crate::facts::MeaningKind::Macro(def) => json!(def),
+                    _ => Json::Null,
+                },
+            );
             record.insert("package".into(), symbol(analysis, use_.package));
             record.insert("within".into(), symbol(analysis, use_.within));
             record.insert("node".into(), json!(use_.node));

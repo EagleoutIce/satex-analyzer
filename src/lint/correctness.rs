@@ -54,7 +54,7 @@ Fix by adding the file, or by producing the format the driver reads.",
         severity: Severity::Warning,
         summary: "an expl3 function takes other arguments than its name says",
         explanation: "\
-An expl3 name carries its signature after the colon (interface3, \"Naming
+An expl3 name carries its signature after the colon ([interface3](https://ctan.org/pkg/expl3), \"Naming
 conventions\"): one letter per argument, `N` a single token, `n` a braced
 group, and so on.  What the function really consumes (the calls the run saw,
 or, for one defined in the document, running it on probe input) takes a

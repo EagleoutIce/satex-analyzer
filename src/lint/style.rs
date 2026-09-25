@@ -88,13 +88,13 @@ Fix by deleting it if it is dead.",
         explanation: "\
 Inside a macro's replacement text, TeX turns the end of a line into a space
 token unless a control word already skipped it, or a `%` swallowed the rest
-of the line (tex.web § 347).  This is the classic missing `%`: an extra
+of the line ([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) § 347).  This is the classic missing `%`: an extra
 space nobody wrote, which shows up wherever the macro is used.
 
 A body wrapped start-to-end in the kernel's own `\\@bsphack…\\@esphack` pair is
 exempt, since that pair keeps whatever is inside it from reaching the page.
 The finding follows the modes the run was in each time it read that space
-(tex.web § 1043: a space is glue only in horizontal mode): it says the
+([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) § 1043: a space is glue only in horizontal mode): it says the
 macro *inserts* a space when every reading was in horizontal mode, that it
 *may* when some might have been, and nothing when none was or the space
 was never read as material (an argument delimiter, a `\\write`).
@@ -136,7 +136,7 @@ fn stray_space(report: &mut Report) {
             continue;
         }
         // Two space tokens never sit next to each other in a replacement
-        // text (tex.web § 347), so each has real material beside it.
+        // text ([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) § 347), so each has real material beside it.
         for tok in body.iter() {
             if tok.is_space() && line_end_space(report, tok.span) {
                 let modes = analysis.facts.spaces.get(&tok.span).copied().unwrap_or_default();

@@ -872,6 +872,10 @@ fn defines_line(root: &crate::query::Node) -> Option<String> {
         .map(|(tag, names)| {
             let count = names.len();
             let word = concept(tag);
+            // Usage tags are recorded already plural.
+            if matches!(word, "labels" | "references" | "citations" | "environments used") {
+                return format!("{count} {word}");
+            }
             // `plural`'s plain "+s" reads wrong for the two tags that need
             // more than that.
             let irregular = match word {

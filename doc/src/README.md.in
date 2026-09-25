@@ -35,6 +35,13 @@ Current version: {{version}}. `satex --version` also lists the plugins included 
 
 {{run(12): satex --version}}
 
+<details>
+<summary>Full satex <code>--help</code> output</summary>
+
+{{run: satex --help}}
+
+</details>
+
 ## Linting
 
 Provides context-sensitive diagnostics like undefined names, duplicates, dead code, and misused conditionals.

@@ -20,7 +20,7 @@ pub static RULES: &[Rule] = &[
         explanation: "\
 OT1, LaTeX's default text encoding, has no accented letters: the encoding
 builds each one with the `\\accent` primitive (ot1enc.def; fntguide § 5).  TeX
-does not hyphenate a word that contains an `\\accent` (The TeXbook, appendix H),
+does not hyphenate a word that contains an `\\accent` ([The TeXbook](https://ctan.org/pkg/texbook), appendix H),
 and the PDF's text layer holds an accent and a letter instead of the character,
 which breaks search and copy.  T1 has the accented letters as glyphs, and the
 same encoding file then turns them into single characters.

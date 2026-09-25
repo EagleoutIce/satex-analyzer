@@ -1401,9 +1401,9 @@ impl<'a> Machine<'a> {
                 Err(reason) => {
                     let name = source.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
                     if self.cfg.verbose >= 1 {
-                        eprintln!("satex: building kernel cache from {name}: {reason}");
+                        eprintln!("satex: building kernel cache from {name}: {reason} (this may take a couple of minutes)");
                     } else {
-                        eprintln!("satex: building kernel cache from {name}");
+                        eprintln!("satex: building kernel cache from {name} (this may take a couple of minutes)");
                     }
                 }
                 Ok(cached) => {

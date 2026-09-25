@@ -182,7 +182,7 @@ $ satex lint --explain expl3-signature-mismatch
 expl3-signature-mismatch  correctness / warning
 an expl3 function takes other arguments than its name says
 
-An expl3 name carries its signature after the colon (interface3, "Naming
+An expl3 name carries its signature after the colon ([interface3](https://ctan.org/pkg/expl3), "Naming
 conventions"): one letter per argument, `N` a single token, `n` a braced
 group, and so on.  What the function really consumes (the calls the run saw,
 or, for one defined in the document, running it on probe input) takes a
@@ -519,13 +519,13 @@ a macro body picked up a space from an unescaped line end
 
 Inside a macro's replacement text, TeX turns the end of a line into a space
 token unless a control word already skipped it, or a `%` swallowed the rest
-of the line (tex.web § 347).  This is the classic missing `%`: an extra
+of the line ([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) § 347).  This is the classic missing `%`: an extra
 space nobody wrote, which shows up wherever the macro is used.
 
 A body wrapped start-to-end in the kernel's own `\@bsphack…\@esphack` pair is
 exempt, since that pair keeps whatever is inside it from reaching the page.
 The finding follows the modes the run was in each time it read that space
-(tex.web § 1043: a space is glue only in horizontal mode): it says the
+([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) § 1043: a space is glue only in horizontal mode): it says the
 macro *inserts* a space when every reading was in horizontal mode, that it
 *may* when some might have been, and nothing when none was or the space
 was never read as material (an argument delimiter, a `\write`).
@@ -571,7 +571,7 @@ accented letters are built with \accent because the text is set in OT1
 
 OT1, LaTeX's default text encoding, has no accented letters: the encoding
 builds each one with the `\accent` primitive (ot1enc.def; fntguide § 5).  TeX
-does not hyphenate a word that contains an `\accent` (The TeXbook, appendix H),
+does not hyphenate a word that contains an `\accent` ([The TeXbook](https://ctan.org/pkg/texbook), appendix H),
 and the PDF's text layer holds an accent and a letter instead of the character,
 which breaks search and copy.  T1 has the accented letters as glyphs, and the
 same encoding file then turns them into single characters.

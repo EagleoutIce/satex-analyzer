@@ -5,11 +5,11 @@ claim here is a claim about the engines, not about `satex`; where `satex`
 deliberately departs from them, the departure is marked **[abstraction]** and
 justified.
 
-Sources: *TeXbook* (Knuth, *The TeXbook*, cited by chapter — it has no
-numbered sections), *tex.web* (Knuth, *TeX: The Program*, cited by module
-number), *TeX by Topic* (Eijkhout), *etex_man* (the ε-TeX manual), *clsguide*
-and *usrguide* (LaTeX Project), *expl3* (the interface documentation),
-*texdimens* (Burnol), and `latex.ltx` itself.
+Sources: [*TeXbook*][texbook] (Knuth, *The TeXbook*, cited by chapter — it has no
+numbered sections), [*tex.web*][tex.web] (Knuth, *TeX: The Program*, cited by module
+number), [*TeX by Topic*][tex-by-topic] (Eijkhout), [*etex_man*][etex_man] (the ε-TeX manual), [*clsguide*][clsguide]
+and [*usrguide*][usrguide] (LaTeX Project), [*expl3*][expl3] (the interface documentation),
+[*texdimens*][texdimens] (Burnol), and [`latex.ltx`][latex.ltx] itself.
 
 ---
 
@@ -17,7 +17,7 @@ and *usrguide* (LaTeX Project), *expl3* (the interface documentation),
 
 TeX reads in three stages. The **mouth** turns characters into tokens, the
 **gullet** expands expandable tokens, and the **stomach** executes everything
-else. (*TeXbook* ch. 7; *TeX by Topic* ch. 1–2.)
+else. ([*TeXbook*][texbook] ch. 7; [*TeX by Topic*][tex-by-topic] ch. 1–2.)
 
 `satex` implements the same three stages. It does not implement the fourth,
 typesetting: no boxes, glue setting or page builder. Everything that only
@@ -26,31 +26,31 @@ affects typeset output is a no-operation.
 A run starts in the interaction mode `interaction:` in `satex.yaml` names,
 as the engine's `-interaction` would set it (`nonstopmode` by default, as
 unattended builds run). In `\batchmode` and `\nonstopmode` a `\read` from
-the terminal is a fatal error that ends the job (*tex.web* § 484); LaTeX's
+the terminal is a fatal error that ends the job ([*tex.web*][tex.web] § 484); LaTeX's
 prompt for a missing file (`\@missingfileerror`) is such a read.
 
 ## 2. Category codes
 
 Every character carries one of 16 category codes, and the code is fixed at the
-moment the character is tokenized, not when the token is used. (*TeXbook* ch. 7;
-*tex.web* § 232.)
+moment the character is tokenized, not when the token is used. ([*TeXbook*][texbook] ch. 7;
+[*tex.web*][tex.web] § 232.)
 
 * A run without a format starts from INITEX's table: letters 11, `\` 0,
   `%` 14, `^^@` 9, `^^M` 5, space 10, `^^?` 15, every other character 12
-  (tab too). A LaTeX format hands the document `latex.ltx`'s table.
-  (*tex.web* § 232.)
+  (tab too). A LaTeX format hands the document [`latex.ltx`][latex.ltx]'s table.
+  ([*tex.web*][tex.web] § 232.)
 * `\catcode` is a **local** assignment: it is undone by the closing brace of
-  the group it was made in. (*TeXbook* ch. 20.)
+  the group it was made in. ([*TeXbook*][texbook] ch. 20.)
 * `^^X`, where `X` has a code below 128, denotes the character whose code
   differs from `X`'s in bit 6; `^^XY` with two lower-case hex digits denotes
-  that code directly. Above 127 no substitution happens. (*tex.web* § 352.)
+  that code directly. Above 127 no substitution happens. ([*tex.web*][tex.web] § 352.)
 * `\makeatletter` sets `@` to category 11, `\makeatother` to 12.
-  (*clsguide* § 2.)
+  ([*clsguide*][clsguide] § 2.)
 * `\ExplSyntaxOn` sets tab and space to ignored (9), `"` and `|` to other
   (12), `:` and `_` to letter (11), `^` to superscript (7), `~` to space (10),
   and `\endlinechar` to 32. Because 32 is ignored, an end of line contributes
   nothing while expl3 syntax is in force — a blank line makes no `\par`.
-  (`expl3-code.tex`.)
+  ([`expl3-code.tex`][expl3-code].)
 
 ## 3. The line reader
 
@@ -58,7 +58,7 @@ TeX strips trailing spaces from each input line and appends the character
 `\endlinechar` (13 by default, category 5); if `\endlinechar` is outside
 0–255 nothing is appended and the line yields no end-of-line token at all.
 The last line of a file is a line even without a final newline, and gets the
-`\endlinechar` like any other (tex.web § 31).
+`\endlinechar` like any other ([tex.web][tex.web] § 31).
 
 Reading then runs a three-state machine — new line `N`, skipping blanks `S`,
 middle of line `M`. With the appended character in category 5, state `N`
@@ -68,7 +68,7 @@ like any character of that category: in category 10 (after
 code 32 in state `M` and nothing in `N` or `S`. A comment character discards the rest
 of the line and moves to state `N`. State `S` is entered after any control
 word — including a one-letter one — and after the control space `\ `, but
-after no other control symbol. (*TeXbook* ch. 8; *tex.web* § 303–306, § 240.)
+after no other control symbol. ([*TeXbook*][texbook] ch. 8; [*tex.web*][tex.web] § 303–306, § 240.)
 
 A CRLF pair is one line ending, not two. **[abstraction]** TeX proper reads a
 file line by line and never sees the line terminator; `satex` reads a
@@ -80,23 +80,23 @@ as they would on any other platform.
 A token is either a control sequence or a (character, category code) pair.
 Two character tokens are equal when both components agree; two control
 sequence tokens when their names agree. Source position is not part of a
-token. (*TeXbook* ch. 7.)
+token. ([*TeXbook*][texbook] ch. 7.)
 
 A category-10 character read from the input becomes a space token of character
-code 32 whatever the source character was. (*tex.web* § 347.)
+code 32 whatever the source character was. ([*tex.web*][tex.web] § 347.)
 
 ## 5. Meanings
 
 Every control sequence has a *meaning*: a primitive, a macro, a character
 (`\chardef`, or `\let` to a character token), a register, or undefined.
 `\let\a\b` copies the *current* meaning of `\b` into `\a`: the two are
-`\ifx`-equal until either is redefined. (*TeXbook* ch. 20.) A copy of a
+`\ifx`-equal until either is redefined. ([*TeXbook*][texbook] ch. 20.) A copy of a
 primitive is that primitive: `\let\e\escapechar` makes `\e=-1` set
 `\escapechar`, `\meaning\e` prints `\escapechar`, and `\ifx` tells copies of
-two different primitives apart. (*tex.web* § 1221, § 507.)
+two different primitives apart. ([*tex.web*][tex.web] § 1221, § 507.)
 
 `\futurelet\a\b\c` assigns the meaning of `\c` to `\a` and leaves both `\b`
-and `\c` in the input. (*TeXbook* ch. 20.)
+and `\c` in the input. ([*TeXbook*][texbook] ch. 20.)
 
 ## 6. Macro definition
 
@@ -110,31 +110,31 @@ and `\c` in the input. (*TeXbook* ch. 20.)
   character in the input: `\def\every#1#{\csname every#1\endcsname}`.
   The `{` is a delimiter like any other, so with no parameter before it
   (`\def\m#{\detokenize}`) a call must be followed by `{`, which the call
-  consumes and the replacement text puts back. (*TeXbook* ch. 20;
-  *tex.web* § 476.)
+  consumes and the replacement text puts back. ([*TeXbook*][texbook] ch. 20;
+  [*tex.web*][tex.web] § 476.)
 * In the replacement text, `#n` is replaced by the *n*th argument and `##`
-  stands for a single `#`. (*TeXbook* ch. 20.)
+  stands for a single `#`. ([*TeXbook*][texbook] ch. 20.)
 * `\gdef` and `\xdef` are global; `\edef` and `\xdef` expand the replacement
-  text at definition time. (*TeXbook* ch. 20.) What `\the` and `\unexpanded`
+  text at definition time. ([*TeXbook*][texbook] ch. 20.) What `\the` and `\unexpanded`
   contribute to it is stored as it stands: a `#` among those tokens is a
-  character, not a parameter. (*tex.web* § 478.) The replacement text is
+  character, not a parameter. ([*tex.web*][tex.web] § 478.) The replacement text is
   scanned while it is expanded and ends at the `}` that balances the braces
   expansion leaves, so `\edef\a{\iffalse}\fi b}` is `b`. pdfTeX's
-  `\expanded` reads its text the same way. (*tex.web* § 473, § 477.)
+  `\expanded` reads its text the same way. ([*tex.web*][tex.web] § 473, § 477.)
 * `\long`, `\outer` and `\protected` are prefixes that apply to the next
-  definition. (*TeXbook* ch. 20; *etex_man* for `\protected`.)
+  definition. ([*TeXbook*][texbook] ch. 20; [*etex_man*][etex_man] for `\protected`.)
 
 ## 7. Argument matching
 
 * An **undelimited** argument is the next token, or, if that token begins a
   group, the whole group with one level of braces removed. Leading spaces are
-  skipped. (*TeXbook* ch. 20.)
+  skipped. ([*TeXbook*][texbook] ch. 20.)
 * A **delimited** argument does *not* skip leading spaces.
 * Without `\long`, a `\par` token in any argument is a runaway-argument
-  error; `\long` permits it. (*TeXbook* ch. 20.)
+  error; `\long` permits it. ([*TeXbook*][texbook] ch. 20.)
 * A **delimited** argument runs to the next occurrence of its delimiter at
   brace level 0; if the collected text is wholly enclosed in one pair of
-  braces, that pair is removed. (*TeXbook* ch. 20.)
+  braces, that pair is removed. ([*TeXbook*][texbook] ch. 20.)
 
 ## 8. The gullet
 
@@ -144,7 +144,7 @@ Expandable: macros, conditionals, `\csname`, `\expandafter`, `\noexpand`,
 `\firstmark`, `\botmark`, `\splitfirstmark`, `\splitbotmark`; ε-TeX adds
 `\detokenize`, `\unexpanded`, `\scantokens`, `\unless` and `\eTeXrevision`,
 and pdfTeX adds `\expanded`. Everything else is executed by the stomach.
-(*TeX by Topic*, "Ordinary expansion"; *etex_man* § 3.)
+([*TeX by Topic*][tex-by-topic], "Ordinary expansion"; [*etex_man*][etex_man] § 3.)
 
 * `\expandafter⟨t1⟩⟨t2⟩` expands `⟨t2⟩` once and then puts `⟨t1⟩` back in
   front of the result.
@@ -152,34 +152,34 @@ and pdfTeX adds `\expanded`. Everything else is executed by the stomach.
   read of it treats an expandable `⟨t⟩` as `\relax` (the stomach does nothing
   with it) and `\ifx` gives it a meaning equal to no other token's, so
   `\expandafter\ifx\noexpand\a\a` is false for any macro `\a`, protected or
-  not. (*tex.web* § 358, § 367.)
+  not. ([*tex.web*][tex.web] § 358, § 367.)
 * `\read⟨n⟩to⟨cs⟩` appends the current `\endlinechar` to each line it
   reads and reads further lines until the braces balance; a read at the end
   of the file gives `\par` and closes the stream, and only then is `\ifeof`
-  true. (*tex.web* § 482–486.)
+  true. ([*tex.web*][tex.web] § 482–486.)
 * `\detokenize` and `\meaning` write a control sequence as the escape
   character and its name, followed by a space when the name has more than one
   character or its one character has category letter *now* — `\_ ` under
-  expl3's catcodes, `\_` outside them. (*tex.web* § 262.)
+  expl3's catcodes, `\_` outside them. ([*tex.web*][tex.web] § 262.)
 * `\csname⟨tokens⟩\endcsname` builds a control sequence from the expansion of
   `⟨tokens⟩`, which must be character tokens; their category codes are
   irrelevant, only the character codes count. If the name was undefined it
   becomes `\relax`, **locally**, and is thereafter defined — which changes
-  later `\ifdefined` and `\@ifundefined` results. (*TeXbook* ch. 7;
-  *tex.web* § 372.)
+  later `\ifdefined` and `\@ifundefined` results. ([*TeXbook*][texbook] ch. 7;
+  [*tex.web*][tex.web] § 372.)
 * LuaTeX's `\begincsname` builds a name the same way but leaves an undefined
   one undefined and expands to nothing then; `\lastnamedcs` is the name the
   last `\csname`, `\begincsname` or `\ifcsname` built. (*LuaTeX manual*.)
 * `\scantokens` writes its text to a pseudo file, a line wherever
   `\newlinechar` stands, and reads it back as a file is read: character by
   character under the category codes in force then, so a catcode change
-  inside the text governs the rest of it, even on the same line. (*etex.ch*
+  inside the text governs the rest of it, even on the same line. ([*etex.ch*][etex.ch]
   `pseudo_input`.)
 * LuaTeX's `\scantextokens` reads its text as `\scantokens` does, but its last
   line gets no `\endlinechar` and no `\everyeof`. Its end is not the end of
   a file, so a definition or argument goes on past it. (*LuaTeX manual*.)
 * A line gets the `\endlinechar` in force when TeX starts reading it, which is
-  once the previous line has been used up. (*tex.web* § 362.)
+  once the previous line has been used up. ([*tex.web*][tex.web] § 362.)
 * Lua runs in one real Lua 5.3 state a run (LuaTeX's Lua): a `\directlua`
   chunk, the modules it `require`s or `dofile`s (found by SaTeX's resolver and
   recorded as loads), and the function a `token.set_lua` command calls
@@ -240,33 +240,33 @@ and pdfTeX adds `\expanded`. Everything else is executed by the stomach.
 `\if…⟨test⟩⟨true text⟩\else⟨false text⟩\fi`. Conditionals are expanded in the
 gullet; the branch that is not taken is skipped without expansion, so a `\def`
 inside it does not happen. `\ifcase⟨number⟩` selects among `\or`-separated
-cases and falls back to `\else`. (*TeXbook* ch. 20.)
+cases and falls back to `\else`. ([*TeXbook*][texbook] ch. 20.)
 
 While skipping, TeX recognizes conditionals, `\or`, `\else` and `\fi` by
 their **meaning**, not their name, so `\let\myif\iftrue` affects the nesting
 count and a `\csname if…\endcsname` does not. Braces are not tracked while
 skipping: grouping and conditional nesting are independent.
-(*TeX by Topic*, "Incorrect matching".) A file that ends while TeX is
+([*TeX by Topic*][tex-by-topic], "Incorrect matching".) A file that ends while TeX is
 skipping ends the skip with an inserted `\fi` ("Incomplete \if…").
-(*tex.web* § 336.)
+([*tex.web*][tex.web] § 336.)
 
 `\if` and `\ifcat` expand until two unexpandable tokens remain; an
 unexpandable control sequence counts as character code 256 for `\if` and
 category 16 for `\ifcat`, so all control sequences compare equal to each
-other. (*TeX by Topic*.) A token behind `\noexpand` is not expanded, and
+other. ([*TeX by Topic*][tex-by-topic].) A token behind `\noexpand` is not expanded, and
 an active character there counts as itself; any other active character is
-taken by its meaning, as a control sequence is (*tex.web* § 506).
+taken by its meaning, as a control sequence is ([*tex.web*][tex.web] § 506).
 
 A conditional is on the condition stack while its test is read. A conditional
 that the test itself starts and leaves open (`\if e\ifx AB x\else y\fi …`)
 sits above it: the next `\else` or `\fi` belongs to the inner one, and when
 the outer one skips its false text, the inner `\fi` it passes ends the inner
-conditional and an inner `\else` is passed over. (*tex.web* § 498, § 500.)
+conditional and an inner `\else` is passed over. ([*tex.web*][tex.web] § 498, § 500.)
 
 Decidable when the operands are known: `\iftrue`, `\iffalse`, `\ifx`,
 `\ifdefined`, `\ifcsname`, `\if`, `\ifcat`, `\ifnum`, `\ifdim`, `\ifodd`.
 Mode-dependent: `\ifvmode`, `\ifhmode`, `\ifmmode`, `\ifinner` follow
-the mode (*tex.web* §§ 211, 1045–1200). A run starts in vertical mode;
+the mode ([*tex.web*][tex.web] §§ 211, 1045–1200). A run starts in vertical mode;
 horizontal material (a letter or other character, `\char`, a `\chardef`
 character, `\indent`, `\noindent`, `\unhbox`, `\vrule`, `\hskip` and the
 `\hfil` family, `\accent`, `\discretionary`, `\-`, control space,
@@ -285,7 +285,7 @@ answers alike. Where the set matters to what a token does (a paragraph start
 with a non-empty `\everypar`, vertical material under a redefined `\par`),
 the run splits into one path per mode. Alignment cells and rows share one
 mode set (restricted horizontal or internal vertical), `\left` may make a
-display inner, and the output routine never runs. Box registers are tracked by kind (*tex.web* §§ 1077–1110): a register is
+display inner, and the output routine never runs. Box registers are tracked by kind ([*tex.web*][tex.web] §§ 1077–1110): a register is
 void until `\setbox` fills it when its box ends (so the box's own text still
 sees the old contents), locally or with `\global` globally; `\box` and
 `\unhbox`/`\unvbox` empty it in place without a save-stack entry, `\copy`
@@ -297,7 +297,7 @@ unknown otherwise (a box with material is typesetting). `\ifeof` follows the
 streams.
 `\currentiftype` and `\currentifbranch` follow the condition stack;
 `\lastnodetype` is -1 until anything may have been put on a list.
-(*etex_man* for `\ifdefined`, `\ifcsname`, `\unless`.)
+([*etex_man*][etex_man] for `\ifdefined`, `\ifcsname`, `\unless`.)
 
 **[abstraction]** When the test is not decidable, `satex` analyzes every arm
 and merges the resulting environments: a name defined in one arm becomes
@@ -314,43 +314,43 @@ and `$$`…`$$`), by `\left`…`\right`, by a box constructor (`\hbox`, `\vbox`,
 `\vtop`, `\vcenter`), by an alignment entry, and by the output routine and
 inserts. Each records its kind on the save stack, and a closer of the wrong
 kind is an error: `}` ends only a simple group, `\endgroup` only a semi-simple
-one. (*tex.web* § 269 (`saved_group_code`), § 1063, § 1145; *The TeXbook*,
+one. ([*tex.web*][tex.web] § 269 (`saved_group_code`), § 1063, § 1145; *The TeXbook*,
 ch. 24.)
 
 Every non-global assignment is undone when the group closes.
 `\aftergroup⟨token⟩` keeps the token back and inserts it just after the group
-ends, in the order the `\aftergroup`s were given. (*tex.web* § 326.) `\global` sets the
+ends, in the order the `\aftergroup`s were given. ([*tex.web*][tex.web] § 326.) `\global` sets the
 value at the outermost level; the save-stack entries already pushed for that
 name are not removed, they are discarded instead of restored when the group
 ends — which is why alternating local and global assignments to one name make
-the save stack grow. (*tex.web* § 279, § 283; *TeX by Topic*, "Save size".)
+the save stack grow. ([*tex.web*][tex.web] § 279, § 283; [*TeX by Topic*][tex-by-topic], "Save size".)
 
 Some assignments ignore grouping entirely: `\globaldefs` forces every
 assignment global when positive and makes `\global` a no-op when negative, and
 font assignments, `\hyphenation`, `\patterns` and the box dimensions
-`\ht`/`\dp`/`\wd` are always global. (*TeX by Topic*, "Local and global
+`\ht`/`\dp`/`\wd` are always global. ([*TeX by Topic*][tex-by-topic], "Local and global
 assignments".)
 
 `\usepackage` and `\input` do **not** open a group: a package would be unable
 to define anything if they did. `\makeatletter` around a package file is a
-category code change, which LaTeX undoes explicitly. (*clsguide* § 2.)
+category code change, which LaTeX undoes explicitly. ([*clsguide*][clsguide] § 2.)
 
 ## 11. Base types
 
 TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue⟩ and
-⟨token list⟩. (*TeXbook* ch. 10, § 449.)
+⟨token list⟩. ([*TeXbook*][texbook] ch. 10, § 449.)
 
 * A dimension is a signed integer of scaled points, `1pt = 65536sp`, with
-  magnitude at most 2³⁰ − 1. (*TeXbook* ch. 10.)
+  magnitude at most 2³⁰ − 1. ([*TeXbook*][texbook] ch. 10.)
 * Unit ratios, as exact fractions of a point: `pc` 12⁄1, `in` 7227⁄100,
   `bp` 7227⁄7200, `cm` 7227⁄254, `mm` 7227⁄2540, `dd` 1238⁄1157,
   `cc` 14856⁄1157, `nd` 685⁄642, `nc` 1370⁄107, `sp` 1⁄65536.
 * `⟨decimal⟩⟨unit⟩` is `trunc_toward_zero(round_ties_away(65536·decimal) ·
   ratio)`: the decimal is rounded to scaled points first, then the unit
   conversion is truncated. So `0.1pt` is 6554sp and `1in` is 4736286sp.
-  (*texdimens*.)
+  ([*texdimens*][texdimens].)
 * Glue is a width plus stretch and shrink, each with an order of infinity:
-  finite, `fil`, `fill`, `filll`. (*TeXbook* ch. 12.)
+  finite, `fil`, `fill`, `filll`. ([*TeXbook*][texbook] ch. 12.)
 * `\numexpr` and `\dimexpr` evaluate `+ - * /` with `*` and `/` binding
   tighter than `+` and `-`, left to right within one precedence level, and
   allow parenthesised subexpressions. Division rounds to nearest, ties away
@@ -362,9 +362,9 @@ TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue�
   expression and is absorbed; otherwise it ends at the first token that cannot
   continue it, and that token is not absorbed. An overflow anywhere
   (beyond 2^31-1, or `\maxdimen` for dimensions and glue) makes the whole
-  expression 0 with "Arithmetic overflow". (*etex_man* § 3.5, *etex.ch*
+  expression 0 with "Arithmetic overflow". ([*etex_man*][etex_man] § 3.5, [*etex.ch*][etex.ch]
   `scan_expr`.)
-  Precisely (*etex.ch*): an operand beyond its level's bound (2³¹−1 for
+  Precisely ([*etex.ch*][etex.ch]): an operand beyond its level's bound (2³¹−1 for
   numbers and for the factor of `*` or `/`, `\maxdimen` for dimensions
   and each glue component) is an error; `+`/`-` is `add_or_sub`, `*`
   `mult_integers` or `nx_plus_y`, `/` `quotient` and `*`…`/` `fract`
@@ -374,7 +374,7 @@ TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue�
   (`\glueexpr 1pt plus 2fil - 3pt plus 1fill` is `-2pt plus 1fill`); an
   expression of one glue is not normalized, so `\gluestretchorder` of
   `\glueexpr 0pt plus 0fil` is 1.
-* Register arithmetic (*tex.web* §§ 105-106, 1236-1240) is on 32-bit
+* Register arithmetic ([*tex.web*][tex.web] §§ 105-106, 1236-1240) is on 32-bit
   integers. `\advance` of a count or a dimension has **no** overflow
   check and wraps (`2147483647+1` is −2³¹; a dimension may pass
   `\maxdimen`, up to 2³¹−1sp); glue widths and amounts wrap alike, and
@@ -395,9 +395,9 @@ TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue�
   ignores the fraction. `fil`, `fill`, `filll` (more `l`s stay `filll`)
   scale no unit.
 * `em` and `ex` are `\fontdimen6` and `\fontdimen5` of the current font
-  (*tex.web* § 455), known when its metrics are.
+  ([*tex.web*][tex.web] § 455), known when its metrics are.
 * A number with no digits is 0 ("Missing number, treated as zero",
-  *tex.web* § 446); a token of unknown meaning where a number is expected
+  [*tex.web*][tex.web] § 446); a token of unknown meaning where a number is expected
   makes it unknown.
 
 ### Fonts
@@ -406,7 +406,7 @@ TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue�
   name like `\input` does, and the space that ends it is consumed. `at`
   outside (0, 2048pt) becomes 10pt, and `scaled` outside 1..32768 becomes
   1000. A font already loaded with the same name and size (or the same
-  request) is shared, so `\ifx` sees one font. (*tex.web* §§ 526,
+  request) is shared, so `\ifx` sees one font. ([*tex.web*][tex.web] §§ 526,
   1257–1260.)
 * Metrics come from the TFM file, found beside the document or under the
   trees' `fonts/tfm` (through `ls-R`). `\fontdimen`, `\fontcharwd…ic`,
@@ -449,7 +449,7 @@ TeX's internal quantities are ⟨number⟩, ⟨dimen⟩, ⟨glue⟩, ⟨muglue�
 
 ## 12. The LaTeX2e layer
 
-`satex` reads the installation's own `latex.ltx`, class and package files, so
+`satex` reads the installation's own [`latex.ltx`][latex.ltx], class and package files, so
 the kernel is not assumed and nothing about it is stubbed: `\newcommand`,
 `\newenvironment`, `\NewDocumentCommand`, `\newcounter`, `\newlength`,
 `\newif`, `\DeclareOption`, `\ProcessOptions`, `\define@key` and the rest run
@@ -466,11 +466,11 @@ off the defining command's spelling:
   counter's storage prefix (`\c@` in a stock kernel) is learned by probing
   `\value` with a made-up name once, rather than assumed.
 * **switch**: the name starts `if` and now means `\iftrue` or `\iffalse`,
-  `\newif`'s own effect (*TeXbook* App. B, `plain.tex`).
+  `\newif`'s own effect ([*TeXbook*][texbook] App. B, [`plain.tex`][plain]).
 * **environment**: `\⟨x⟩` and `\end⟨x⟩` were defined at the same source
   position, `\newenvironment`'s own effect.
 * **option**: a macro was stored as `\ds@⟨option⟩`, the kernel's own
-  bookkeeping for a declared option (*clsguide* § 4.4–4.5); `\ProcessOptions`
+  bookkeeping for a declared option ([*clsguide*][clsguide] § 4.4–4.5); `\ProcessOptions`
   runs the declared options in declaration order against what the package
   and the class were given, `\ProcessOptions*` in the given order instead.
 * **key**: a macro was stored under a key-store convention `\define@key`,
@@ -522,7 +522,7 @@ from: one whose real definition is `\protected` (the expl3 definition
 functions `\cs_new:Npn`, `\cs_set_eq:NN`, `\cs_generate_variant:Nn`,
 `\prg_new_conditional:Npnn`, `\keys_define:nn`, the ltcmd declarations, the
 lthooks setters) is copied, not run, by an `\edef` body, `\expanded`,
-`\message` and `\write` (*etex_man* § 3.4).
+`\message` and `\write` ([*etex_man*][etex_man] § 3.4).
 
 ## 13. expl3
 
@@ -531,7 +531,7 @@ An expl3 *function* is `\⟨module⟩_⟨description⟩:⟨signature⟩`, or
 `\⟨scope⟩_⟨module⟩_⟨description⟩_⟨type⟩` and has no colon. The signature gives
 the number of arguments: one per letter of `N n c V v o x e f T F`, and an
 empty signature means none. A signature containing `p` (a parameter text),
-`w` (unspecified) or `D` gives no reliable arity. (*expl3* § 3.2.6, § 4.)
+`w` (unspecified) or `D` gives no reliable arity. ([*expl3*][expl3] § 3.2.6, § 4.)
 
 `satex` uses this rule to step over any expl3 function correctly, including
 ones it does not model.
@@ -547,7 +547,7 @@ itself, which the command then did not consume. Nothing it does is recorded.
 The probe input is `⟨p⟩`, what is known to be taken so far, followed by
 `{X}{X}…`; `n` is how much of that the command consumes. The run also notes:
 
-- where a parameter text was not matched (tex.web § 398, "doesn't match its
+- where a parameter text was not matched ([tex.web][tex.web] § 398, "doesn't match its
   definition"): required text such as the `x` of `\def\a x#1`, or a delimited
   argument that ran out of input before its delimiter (§ 392), or the `{` of
   `#{`. This is learned wherever it happens — in the command's own parameter
@@ -556,7 +556,7 @@ The probe input is `⟨p⟩`, what is known to be taken so far, followed by
 - which characters a probe character, taken by `\let` or `\futurelet`, is
   compared with by `\ifx` (what the command looks for there);
 - which keywords and quantities TeX's scanners read at a probe character
-  (The TeXbook, chapter 24): `to`, `plus`, `=`; ⟨number⟩, ⟨dimen⟩, ⟨glue⟩.
+  ([The TeXbook][texbook], chapter 24): `to`, `plus`, `=`; ⟨number⟩, ⟨dimen⟩, ⟨glue⟩.
 
 At `⟨p⟩`, in order: a star is taken when `⟨p⟩*…` consumes exactly `n + 1`
 and is wanted to the same effect after it (or, where nothing was wanted, the
@@ -698,7 +698,7 @@ on, and it never invents a meaning.
   of one a join left one of several macros without parameters, a token
   that stands for one of their texts. Signs that come from such a name
   whose every text is signs make the number unknown and are read past.
-  A box's size is its list's natural size (tex.web §§ 649, 668) while
+  A box's size is its list's natural size ([tex.web][tex.web] §§ 649, 668) while
   every item on the list is known: characters by their TFM metrics with
   kerns and `=:` ligatures (§§ 1034-1040), interword glue by the space
   factor (§§ 1041-1044), kerns, glue, rules, boxes, and whatsits, marks and
@@ -707,7 +707,7 @@ on, and it never invents a meaning.
   Anything else, such as math, alignments, paragraphs, other ligatures and
   native fonts, leaves the size unknown.
   `\ht`/`\dp` of an `\hbox` and `\wd` of a `\vbox` of unknown size
-  are at least zero (tex.web §§ 649, 668), and a known factor times a
+  are at least zero ([tex.web][tex.web] §§ 649, 668), and a known factor times a
   dimension in an interval keeps the interval.
   The digits of an unknown number (`\the`,
   `\number`, `\romannumeral` of an unknown quantity) are unknown text to a
@@ -747,13 +747,13 @@ on, and it never invents a meaning.
   path (`\iftrue`, `\iffalse`, or a switch already joined) is an undecided
   switch after the join, still a conditional, so its `\else` and `\fi` match
   it. `\endinput` on a path ends the file for that path.
-* **File end inside a scan** (*tex.web* §§ 336–339): a file or `\scantokens`
+* **File end inside a scan** ([*tex.web*][tex.web] §§ 336–339): a file or `\scantokens`
   pseudo file that ends while a definition or text is scanned ends it (the
   inserted `}`), while conditional text is skipped ends the skip (`\fi`),
   and while macro arguments are matched abandons the call; each is a
   `file-ended` warning. `\everyeof` is read first, when an `\input` file
   or pseudo file ends, so a scan can find its delimiter there (expl3's
-  `\file_get:nnN`). (*etex.ch* § 362.) The token `\noexpand` reads is read with the scanner
+  `\file_get:nnN`). ([*etex.ch*][etex.ch] § 362.) The token `\noexpand` reads is read with the scanner
   normal, so `\everyeof{\noexpand}` still lets a scan run past the end.
 
 Two limits are incompleteness rather than over-approximation, because a sound
@@ -787,9 +787,9 @@ finding that depends on such a point says so.
 A cache never changes an answer: a run that starts from one reports exactly
 what the run that wrote it did.
 
-* The **kernel cache** holds the meanings and catcodes `latex.ltx` leaves. It
+* The **kernel cache** holds the meanings and catcodes [`latex.ltx`][latex.ltx] leaves. It
   is keyed on the installation, the engine, the preloaded format and the
-  interpreter's source, and rejected when `latex.ltx` changed.
+  interpreter's source, and rejected when [`latex.ltx`][latex.ltx] changed.
 * A **package cache** holds what one `\usepackage` or `\documentclass` of
   the document did, and the *read set* it did it from: every meaning and
   register value the package consulted before assigning it. Hooks, options
@@ -827,3 +827,16 @@ what the run that wrote it did.
   run's counters, and its registers are renumbered to match. **[abstraction]**
   A register number the package keeps as plain text, other than as a printed
   register such as `\count24`, is not renumbered.
+
+[texbook]: https://ctan.org/pkg/texbook
+[tex.web]: https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web
+[tex-by-topic]: https://ctan.org/pkg/texbytopic
+[etex_man]: https://mirrors.ctan.org/systems/e-tex/v2.6/doc/etex_man.pdf
+[clsguide]: https://ctan.org/pkg/clsguide
+[usrguide]: https://ctan.org/pkg/usrguide
+[expl3]: https://ctan.org/pkg/expl3
+[texdimens]: https://ctan.org/pkg/texdimens
+[expl3-code]: https://github.com/latex3/latex3/blob/main/l3kernel/expl3-code.tex
+[plain]: https://ctan.org/pkg/plain
+[etex.ch]: https://mirrors.ctan.org/systems/e-tex/v2.6/etex.ch
+[latex.ltx]: https://github.com/latex3/latex2e/blob/develop/base/ltkernel.dtx
