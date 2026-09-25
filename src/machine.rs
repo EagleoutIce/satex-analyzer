@@ -2250,11 +2250,8 @@ will look undefined",
     }
 
     /// Give a register a value: a definition of that register at this point.
-    ///
-    /// It reads the definitions already in force, because a register has to
-    /// exist before it can be assigned (`\setcounter` on an undeclared
-    /// counter is an error) and because `\advance`, `\addtolength` and
-    /// `\stepcounter` build the new value out of the old one.
+    /// The value does not depend on the one it held, so a scratch register
+    /// written here does not drag in whatever wrote it last.
     pub fn assign(&mut self, name: Sym, value: crate::value::Value, global: bool, span: Span) {
         self.assign_through(name, name, value, global, span);
     }
@@ -2263,6 +2260,24 @@ will look undefined",
     /// after `\skipdef\gap=44` sets `\skip44`, and the vertex keeps the
     /// name the source used.
     pub fn assign_through(&mut self, via: Sym, name: Sym, value: crate::value::Value, global: bool, span: Span) {
+        self.assign_with(via, name, value, global, span, false);
+    }
+
+    /// An assignment built out of the old value: `\advance`, `\multiply`,
+    /// `\divide`.  It reads the definitions in force.
+    pub fn assign_from_old(&mut self, via: Sym, name: Sym, value: crate::value::Value, global: bool, span: Span) {
+        self.assign_with(via, name, value, global, span, true);
+    }
+
+    fn assign_with(
+        &mut self,
+        via: Sym,
+        name: Sym,
+        value: crate::value::Value,
+        global: bool,
+        span: Span,
+        derived: bool,
+    ) {
         // An assignment a macro makes on behalf of a register the file named
         // (`\setlength{\gap}` running `\gap#2`) happens at that call.
         let span = match self.file_call {
@@ -2288,8 +2303,10 @@ will look undefined",
         };
         self.env.track_reads(tracking);
         self.env.note_read(name, crate::env::ReadKind::Kept);
-        let defs = binding.defs.clone();
-        self.link_reads(node, name, &defs);
+        if derived {
+            let defs = binding.defs.clone();
+            self.link_reads(node, name, &defs);
+        }
         // A global assignment made while expanding outlives the expansion.
         if let (true, Some(caller)) = (global, within) {
             self.out.graph.edge(node, caller, EdgeKind::SIDE_EFFECT_ON_CALL);

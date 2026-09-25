@@ -2372,7 +2372,7 @@ impl Machine<'_> {
         let value = value::trap_zero_glue(value);
         let global = self.prefixes.global;
         self.prefixes = Default::default();
-        self.assign_through(via, target, value, global, span);
+        self.assign_from_old(via, target, value, global, span);
     }
 
     /// The register an assignment or `\advance` names, with the kind of
