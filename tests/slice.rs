@@ -365,7 +365,7 @@ fn a_position_can_name_a_file_the_run_read() {
     std::fs::write(&main, &source).unwrap();
     let cfg = Config { load_inputs: true, ..bare() };
     let analysis = Machine::analyze(&source, Some(&main), &cfg);
-    let place = At { file: Some("part.tex".into()), line: 2, col: 1 };
+    let place = At { file: Some("part.tex".into()), line: 2, col: 1, end: None };
     let found = marks(&slice_at(&analysis, &[], Some(place), Direction::Backward));
     assert_holds(&found, &["\\other@2"], &["\\shared@1"]);
     let _ = std::fs::remove_dir_all(&directory);
@@ -374,7 +374,7 @@ fn a_position_can_name_a_file_the_run_read() {
 #[test]
 fn a_position_in_a_file_the_run_never_read_names_nothing() {
     let analysis = analyze("\\def\\foo{A}\n\\foo\n");
-    let place = At { file: Some("nowhere.tex".into()), line: 1, col: 1 };
+    let place = At { file: Some("nowhere.tex".into()), line: 1, col: 1, end: None };
     assert!(slice_at(&analysis, &[], Some(place), Direction::Backward).is_empty());
 }
 
@@ -383,12 +383,17 @@ fn a_position_parses_with_and_without_a_file() {
     assert_eq!(satex::cmd::parse_place("3:7"), Ok(At::here(3, 7)));
     assert_eq!(
         satex::cmd::parse_place("part.tex:3:7"),
-        Ok(At { file: Some("part.tex".into()), line: 3, col: 7 })
+        Ok(At { file: Some("part.tex".into()), line: 3, col: 7, end: None })
     );
     assert_eq!(
         satex::cmd::parse_place("/a/b/part.tex:3:7"),
-        Ok(At { file: Some("/a/b/part.tex".into()), line: 3, col: 7 })
+        Ok(At { file: Some("/a/b/part.tex".into()), line: 3, col: 7, end: None })
     );
+    assert_eq!(
+        satex::cmd::parse_place("part-a.tex:45:1-48"),
+        Ok(At { file: Some("part-a.tex".into()), line: 45, col: 1, end: Some((48, u32::MAX)) })
+    );
+    assert_eq!(satex::cmd::parse_place("4:2-5:3").map(|at| at.end), Ok(Some((5, 3))));
     assert!(satex::cmd::parse_place("3").is_err());
     assert!(satex::cmd::parse_place("part.tex:x:7").is_err());
 }
@@ -647,4 +652,12 @@ fn a_macro_from_a_package_is_sliced_back_to_the_package() {
         "the reconstruction loads the package rather than copying lines out of it:\n{text}"
     );
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn place_range_start_column_optional() {
+    let at = satex::cmd::parse_place("45-48").unwrap();
+    assert_eq!((at.line, at.col, at.end), (45, 1, Some((48, u32::MAX))));
+    let at = satex::cmd::parse_place("p.tex:45-48").unwrap();
+    assert_eq!((at.file.as_deref(), at.line, at.col), (Some("p.tex"), 45, 1));
 }

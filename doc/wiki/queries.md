@@ -393,7 +393,7 @@ $ satex explain '\itshape' --at preamble
 
 `satex slice NAME…` keeps what a name, environment or label depends on (`--forward`: what depends on it) and prints it as a compilable LaTeX document. `--list` or `--format json`/`csv`/`markdown` prints the records instead.
 
-The criterion is a name, `--at [FILE:]LINE:COL`, or `--where EXPR` over the `occurrences`/`definitions` records, e.g. `--where 'kind=begin-environment and key=figure'` for every figure.
+The criterion is a name, `--at [FILE:]LINE:COL[-LINE[:COL]]` (a range, to the end of the last line without a column), or `--where EXPR` over the `occurrences`/`definitions` records, e.g. `--where 'kind=begin-environment and key=figure'` for every figure.
 
 ```text
 $ satex slice -f samples/paper.tex '\ifdraft'

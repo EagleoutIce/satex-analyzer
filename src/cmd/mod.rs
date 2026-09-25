@@ -115,8 +115,9 @@ pub enum Command {
     },
     /// Control sequences visible at a position, for completion.
     Scope {
-        /// Position in the main file as LINE:COL; omit for end of document.
-        #[arg(long, value_name = "LINE:COL")]
+        /// Position as `[FILE:]LINE:COL`, the main file without FILE; omit for
+        /// the end of the document.
+        #[arg(long, value_name = "[FILE:]LINE:COL")]
         at: Option<String>,
         /// Filter expression, for example `tag=switch and package~^my`.
         #[arg(long, value_name = "EXPR")]
@@ -411,14 +412,38 @@ pub fn parse_position(text: &str) -> Result<(u32, u32), String> {
 }
 
 /// `LINE:COL`, or `FILE:LINE:COL` for a position in a file the run read
-/// rather than in the main one.
+/// rather than in the main one.  A trailing `-LINE[:COL]` makes it a range
+/// that runs to that column, or to the end of that line.
 pub fn parse_place(text: &str) -> Result<crate::query::At, String> {
-    let (file, rest) = match text.rsplit_once(':').and_then(|(head, _)| head.rsplit_once(':')) {
-        Some((file, _)) if !file.is_empty() => (Some(file.to_string()), &text[file.len() + 1..]),
+    let (text, end) = match text.rfind('-') {
+        Some(dash) => match parse_end(&text[dash + 1..]) {
+            Some(end) => (&text[..dash], Some(end)),
+            None => (text, None),
+        },
+        None => (text, None),
+    };
+    // With a range the start may be a bare line: `LINE`, `FILE:LINE`, or with a column.
+    let numeric = |t: &str| t.trim().parse::<u32>().is_ok();
+    let parts: Vec<&str> = text.rsplitn(3, ':').collect();
+    let (file, rest) = match parts.as_slice() {
+        [col, line, file] if numeric(col) && numeric(line) => {
+            (Some(file.to_string()), &text[file.len() + 1..])
+        }
+        [_, file] if end.is_some() && !numeric(file) => (Some(file.to_string()), &text[file.len() + 1..]),
         _ => (None, text),
     };
-    let (line, col) = parse_position(rest)?;
-    Ok(crate::query::At { file, line, col })
+    let (line, col) = match (end, rest.contains(':')) {
+        (Some(_), false) => (rest.trim().parse().map_err(|_| "line must be a number")?, 1),
+        _ => parse_position(rest)?,
+    };
+    Ok(crate::query::At { file, line, col, end })
+}
+
+fn parse_end(text: &str) -> Option<(u32, u32)> {
+    match text.split_once(':') {
+        Some((line, col)) => Some((line.trim().parse().ok()?, col.trim().parse().ok()?)),
+        None => Some((text.trim().parse().ok()?, u32::MAX)),
+    }
 }
 
 /// Splits a leading `FILE:` off a trace position or range: the parts before

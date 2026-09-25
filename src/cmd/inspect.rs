@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use super::{parse_filter, parse_place, parse_position, Context, Format, Output};
+use super::{parse_filter, parse_place, Context, Format, Output};
 use crate::query;
 
 pub fn scope(
@@ -10,7 +10,11 @@ pub fn scope(
     filter: Option<&str>,
     all: bool,
 ) -> Result<Output, String> {
-    let position = at.map(parse_position).transpose()?;
+    let place = at.map(parse_place).transpose()?;
+    let position = match &place {
+        Some(place) => Some((place.file(context.analysis).ok_or_else(|| format!("no file {place} was read"))?, place.line, place.col)),
+        None => None,
+    };
     let filter = parse_filter(filter)?;
     Ok(Output::Records(
         query::scope(context.analysis, position, all)

@@ -426,7 +426,7 @@ fn command_items(analysis: &Analysis, pos: Pos) -> Vec<CompletionItem> {
             Some((name, min))
         })
         .collect();
-    query::scope(analysis, Some((pos.line, pos.col)), false)
+    query::scope(analysis, Some((analysis.main_file, pos.line, pos.col)), false)
         .into_iter()
         .filter_map(|record| {
             let name = record.get("name")?.as_str()?.to_string();

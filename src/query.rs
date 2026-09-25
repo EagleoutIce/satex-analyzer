@@ -770,22 +770,25 @@ pub struct At {
     pub file: Option<String>,
     pub line: u32,
     pub col: u32,
+    /// The end of a range, inclusive: `LINE:COL`, with `u32::MAX` as the
+    /// column when only a line was given, meaning the end of that line.
+    pub end: Option<(u32, u32)>,
 }
 
 impl At {
     pub fn here(line: u32, col: u32) -> At {
-        At { file: None, line, col }
+        At { file: None, line, col, end: None }
     }
 
     /// The file the position is in.  The run records a file under the path
     /// it resolved it to, which may be relative or absolute, so either name
     /// may be the longer one and a common tail is enough to identify it.
-    fn file(&self, analysis: &Analysis) -> Option<FileId> {
+    pub fn file(&self, analysis: &Analysis) -> Option<FileId> {
         let Some(wanted) = &self.file else { return Some(analysis.main_file) };
         let wanted = std::path::Path::new(wanted);
         (0..analysis.files.len() as FileId).find(|&id| {
             let path = std::path::Path::new(analysis.file_name(id));
-            path.ends_with(wanted) || wanted.ends_with(path)
+            path.ends_with(wanted) || wanted.ends_with(path) || crate::config::names_file(analysis.file_name(id), &wanted.to_string_lossy())
         })
     }
 }
@@ -800,6 +803,11 @@ impl std::fmt::Display for At {
             (Some(file), None) => write!(f, "{file}:{}", self.line),
             (None, Some(col)) => write!(f, "{}:{col}", self.line),
             (None, None) => write!(f, "{}", self.line),
+        }?;
+        match self.end {
+            Some((line, u32::MAX)) => write!(f, "-{line}"),
+            Some((line, col)) => write!(f, "-{line}:{col}"),
+            None => Ok(()),
         }
     }
 }
@@ -838,6 +846,16 @@ fn resolve(analysis: &Analysis, names: &[String], at: Option<&At>) -> Vec<NodeId
 /// construct there rather than nothing.
 fn at_position(analysis: &Analysis, at: &At) -> Vec<NodeId> {
     let Some(file) = at.file(analysis) else { return Vec::new() };
+    if let Some(end) = at.end {
+        let start = (at.line, at.col);
+        return (0..analysis.graph.vertices.len())
+            .filter(|&id| {
+                let span = analysis.graph.vertices[id].span;
+                span.file == file && (span.line, span.col) >= start && (span.line, span.col) <= end
+            })
+            .map(|id| id as NodeId)
+            .collect();
+    }
     let on_line = || {
         analysis
             .graph
@@ -1866,12 +1884,12 @@ fn origin_of(analysis: &Analysis, package: Option<Sym>, file: FileId) -> (u8, Js
 /// tag whitelist does not recognize as a name a document would look up
 /// (registers and the like, which crowd out the useful hundred with the
 /// tens of thousands the kernel allocates for its own bookkeeping).
-pub fn scope(analysis: &Analysis, before: Option<(u32, u32)>, all: bool) -> Vec<Record> {
+pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool) -> Vec<Record> {
     let mut latest: BTreeMap<Sym, &crate::facts::Definition> = BTreeMap::new();
     for def in &analysis.facts.defs {
         let visible = match before {
             None => true,
-            Some((line, col)) => analysis.visible_at(def.span, line, col),
+            Some((file, line, col)) => analysis.visible_in(def.span, file, line, col),
         };
         if visible {
             latest.insert(def.name, def);
@@ -2491,13 +2509,13 @@ pub fn parse_explain_at(loc: &str) -> Result<ExplainAt, String> {
         "preamble" => Some(ExplainAt::Preamble),
         _ if loc.starts_with("after:") && loc.len() > 6 => Some(ExplainAt::After(loc["after:".len()..].to_string())),
         _ if !loc.is_empty() && loc.chars().all(|c| c.is_ascii_digit()) => {
-            loc.parse().ok().map(|line| ExplainAt::At(At { file: None, line, col: u32::MAX }))
+            loc.parse().ok().map(|line| ExplainAt::At(At { file: None, line, col: u32::MAX, end: None }))
         }
         _ => loc.rsplit_once(':').and_then(|(file, line)| {
             (!file.is_empty())
                 .then(|| line.parse().ok())
                 .flatten()
-                .map(|line| ExplainAt::At(At { file: Some(file.to_string()), line, col: u32::MAX }))
+                .map(|line| ExplainAt::At(At { file: Some(file.to_string()), line, col: u32::MAX, end: None }))
         }),
     };
     at.ok_or_else(|| format!("`{loc}` is no place: use preamble, document, LINE, FILE:LINE or after:PACKAGE"))

@@ -302,7 +302,7 @@ fn dependency_graph_links_a_call_to_its_definition() {
 #[test]
 fn scope_respects_position() {
     let analysis = analyze_kernel("\\newcommand{\\early}{1}\n\\newcommand{\\late}{2}\n");
-    let visible = query::scope(&analysis, Some((2, 1)), false);
+    let visible = query::scope(&analysis, Some((analysis.main_file, 2, 1)), false);
     let names: Vec<&str> = visible.iter().map(|r| r["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"\\early"));
     assert!(!names.contains(&"\\late"));

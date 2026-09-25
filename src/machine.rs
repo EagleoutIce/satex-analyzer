@@ -278,12 +278,30 @@ impl Analysis {
 
     /// Is a definition made at `span` in scope at `line:col` of the main file?
     pub fn visible_at(&self, span: Span, line: u32, col: u32) -> bool {
-        if span.file == self.main_file {
-            return span.before(line, col);
+        self.visible_in(span, self.main_file, line, col)
+    }
+
+    /// Is a definition made at `span` in scope at `line:col` of `file`?  Both
+    /// climb to the file they share: a position in a subfile sees what its
+    /// `\input` call saw, and a definition in a file read from a call sits
+    /// where that call does.
+    pub fn visible_in(&self, span: Span, file: FileId, line: u32, col: u32) -> bool {
+        let entry = |id: FileId| self.entry.get(id as usize).copied().flatten();
+        let (mut file, mut line, mut col) = (file, line, col);
+        loop {
+            if span.file == file {
+                return span.before(line, col);
+            }
+            match entry(file) {
+                Some(call) if file != self.main_file => (file, line, col) = (call.file, call.line, call.col),
+                _ => break,
+            }
         }
-        match self.entry.get(span.file as usize).copied().flatten() {
-            Some(entry) => entry.before(line, col),
-            None => false,
+        // The definition's file is no ancestor of the position: it stands
+        // where the call that read it does.
+        match entry(span.file) {
+            Some(call) if span.file != self.main_file => self.visible_in(call, file, line, col),
+            _ => false,
         }
     }
 
