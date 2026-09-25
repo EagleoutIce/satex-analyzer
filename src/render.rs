@@ -134,6 +134,7 @@ const GUTTER: usize = 2;
 fn terminal_width() -> usize {
     terminal_size::terminal_size()
         .map(|(terminal_size::Width(columns), _)| columns as usize)
+        .or_else(|| std::env::var("COLUMNS").ok()?.parse().ok())
         .filter(|columns| *columns > MIN_COLUMN)
         .unwrap_or(DEFAULT_WIDTH)
 }
@@ -444,11 +445,38 @@ fn split_at_width(text: &str, limit: usize) -> (&str, &str) {
     (text, "")
 }
 
+/// Columns that repeat another or say least, in the order a narrow terminal
+/// gives them up.
+const DROP_FIRST: [&str; 10] =
+    ["subject", "arity", "takes", "package", "class", "by", "redefined", "context", "uses", "reference"];
+
+/// The width free text is squeezed to before a column is dropped instead.
+const READABLE: usize = 24;
+
+/// Drops [`DROP_FIRST`] columns, one at a time, until the rest fit with the
+/// free-text columns cut to [`READABLE`].
+fn drop_for_width(records: &[Record], present: &mut Vec<&'static str>, budget: usize) {
+    let natural = |column: &str| {
+        let cells = records.iter().filter_map(|r| r.get(column)).map(|v| width(&plain(v)));
+        let widest = cells.max().unwrap_or(0).max(width(column));
+        if SHRINK_FIRST.contains(&column) || column == "message" { widest.min(READABLE) } else { widest }
+    };
+    for column in DROP_FIRST {
+        let total: usize = present.iter().map(|c| natural(c) + GUTTER).sum();
+        if total <= budget {
+            return;
+        }
+        present.retain(|c| *c != column);
+    }
+}
+
 pub fn table(records: &[Record], links: Links) -> String {
     if records.is_empty() {
         return String::new();
     }
-    let present = shown_columns(records, links);
+    let mut present = shown_columns(records, links);
+    let position_width = records.iter().map(|record| width(&position(record))).max().unwrap_or(0);
+    drop_for_width(records, &mut present, terminal_width().saturating_sub(position_width));
     let rows: Vec<Vec<(String, String)>> =
         records.iter().map(|r| present.iter().map(|c| cell(c, r, links)).collect()).collect();
 
@@ -980,12 +1008,23 @@ pub fn timings(analysis: &crate::machine::Analysis, links: Links) -> String {
         !repeat
     });
     let name_width = rows.iter().map(|(name, _)| width(name)).max().unwrap_or(0);
-    let fixed = name_width + TIME_WIDTH + TOKENS_WIDTH + 3 * GUTTER;
-    let path_width = terminal_width().saturating_sub(fixed).max(MIN_COLUMN);
+    // Indent, name, time, tokens and the gutters between them, as the row is printed.
+    let fixed = 2 + name_width + 1 + TIME_WIDTH + 2 + TOKENS_WIDTH + 2;
+    let path_room = terminal_width().saturating_sub(fixed);
 
     let _ = writeln!(out, "{}", heading("file"));
     for (name, node) in &rows {
         let pad = name_width - width(name);
+        let path_width = if node.path.is_empty() {
+            0
+        } else if node.tokens == 0 {
+            path_room.saturating_sub(width(why_empty(node)) + 3)
+        } else if node.cached {
+            path_room.saturating_sub(" (from its cache)".len())
+        } else {
+            path_room
+        }
+        .max(MIN_COLUMN);
         let path = if node.path.is_empty() {
             let reason = why_empty(node);
             if reason.is_empty() { note(node) } else { reason.to_string() }
