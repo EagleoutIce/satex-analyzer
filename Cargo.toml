@@ -2,7 +2,7 @@
 name = "satex-analyzer"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 description = "Static analyzer for TeX/LaTeX: lints, explains, slices and caches documents by interpreting the real kernel"
 license = "MIT"
 authors = ["Florian Sihler <florian.sihler@uni-ulm.de>"]

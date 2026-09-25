@@ -169,6 +169,10 @@ pub fn prune_caches(dir: &Path, package_encoding: u32, bound: u64) -> Pruned {
         if std::fs::remove_file(path).is_ok() {
             pruned.files += 1;
             pruned.bytes += bytes;
+            if let Some(lock) = StoreLock::try_take(path) {
+                let _ = std::fs::remove_file(lock_for(path));
+                drop(lock);
+            }
         }
     };
     let mut live: std::collections::HashSet<String> = [INTERPRETER.to_string()].into();
@@ -198,6 +202,22 @@ pub fn prune_caches(dir: &Path, package_encoding: u32, bound: u64) -> Pruned {
         }
     }
     pruned
+}
+
+/// Held while this process writes `target`: another instance doing the same
+/// finds it taken and can skip. Released on drop or process death.
+pub(crate) struct StoreLock(#[allow(dead_code)] std::fs::File);
+
+impl StoreLock {
+    pub(crate) fn try_take(target: &Path) -> Option<StoreLock> {
+        let file = std::fs::File::options().create(true).append(true).open(lock_for(target)).ok()?;
+        file.try_lock().ok()?;
+        Some(StoreLock(file))
+    }
+}
+
+fn lock_for(target: &Path) -> PathBuf {
+    target.with_extension("lock")
 }
 
 /// Mark a cache as just used, for [`prune_caches`]' least-recently-used order.
@@ -316,6 +336,7 @@ impl Format {
         let bytes = postcard::to_allocvec(self)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         let target = cache_file(dir, source, engine, preload);
+        let Some(_lock) = StoreLock::try_take(&target) else { return Ok(()) };
         let temporary = temporary_for(&target);
         std::fs::write(&temporary, bytes)?;
         std::fs::rename(temporary, target)?;

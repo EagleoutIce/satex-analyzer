@@ -2046,6 +2046,10 @@ impl Machine<'_> {
         if std::fs::create_dir_all(dir).is_err() {
             return;
         }
+        let Some(_lock) = crate::format::StoreLock::try_take(&rec.cache) else {
+            self.out.package_caches.push((rec.name.clone(), rec.cache.display().to_string(), "not stored: another instance is storing it".into()));
+            return;
+        };
         let mut file = read(&rec.cache).unwrap_or(CacheFile { version: ENCODING_VERSION, trees: Vec::new() });
         let tree = match rec.tree.filter(|t| *t < file.trees.len()) {
             Some(t) => t,
