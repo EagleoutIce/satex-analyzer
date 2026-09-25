@@ -232,8 +232,8 @@ static PREAMBLE_COST: Rule = Rule {
     severity: Severity::Info,
     summary: "what the preamble costs on every build",
     explanation: "\
-Files read and tokens digested before `\\begin{document}`.  This work repeats on
-every compilation.
+The packages the document asks for and the files read before
+`\\begin{document}`.  This work repeats on every compilation.
 
 Fix by precompiling the preamble into a format with `mylatexformat` or
 `precompiled preamble` support in your editor, which skips it entirely.",
@@ -253,9 +253,8 @@ fn preamble_cost(report: &mut Report) {
         span,
         "",
         format!(
-            "{direct} packages requested directly, {} files read, {} tokens digested",
-            analysis.files.len(),
-            analysis.steps
+            "{direct} packages requested directly, {} files read",
+            analysis.preamble_files.unwrap_or(analysis.files.len()),
         ),
         Some("precompile the preamble into a format to skip this on every build".into()),
     );

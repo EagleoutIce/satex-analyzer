@@ -770,7 +770,10 @@ fn default(given: &Watch, plain: &Watch, at: usize) -> Option<String> {
     let same = |b: &&Bound| b.mac == slot.mac && b.param == slot.param;
     let nth = given.bound[..found].iter().filter(same).count();
     let left_out = plain.bound.iter().filter(same).nth(nth)?;
-    // An empty default is no text to show: `o` says as much.
+    // No text to show: an empty default, or the marker ltcmd hands a
+    // left-out `o` (`\NoValue` since the 2026-06-01 kernel).
     let text = left_out.text.as_deref()?;
-    (left_out.positions.is_empty() && !text.trim().is_empty()).then(|| text.trim_end().to_string())
+    let marker = matches!(text.trim(), r"\NoValue" | r"\c_novalue_tl");
+    (left_out.positions.is_empty() && !text.trim().is_empty() && !marker)
+        .then(|| text.trim_end().to_string())
 }

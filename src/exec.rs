@@ -43,6 +43,8 @@ impl Machine<'_> {
                 | Primitive::Write
                 | Primitive::Command(_)
                 | Primitive::Unmodeled
+                | Primitive::AlignMark
+                | Primitive::AlignTab
                 | Primitive::Lua(_)
         ) || matches!(p, Primitive::Mode(cmd) if cmd != crate::builtins::ModeCmd::Par)
         {
@@ -391,7 +393,7 @@ impl Machine<'_> {
             // A primitive of the engine whose effect satex does not
             // interpret.  It does nothing here, and the run says so, so that
             // what an analysis could not follow is on the record.
-            P::Unmodeled => {
+            P::Unmodeled | P::AlignMark | P::AlignTab => {
                 self.note_gap("unmodeled-primitive", by, span);
                 self.widen_mode();
             }
@@ -406,8 +408,15 @@ impl Machine<'_> {
         }
     }
 
+    /// Whether a definition's scan reads `sym` as `#`: LuaTeX does so for
+    /// a token meaning `\alignmark`, `\let` alias and all.
+    pub fn means_align_mark(&self, sym: Sym) -> bool {
+        self.out.plugins.engine.has_luatex()
+            && matches!(self.env.meaning(sym), Meaning::Primitive(Primitive::AlignMark))
+    }
+
     pub fn make_macro(&self, parameter_text: ParameterText, arg_spec: Option<ArgSpec>, body: Vec<Token>) -> Meaning {
-        let mut replacement = crate::tex::parameterize(body);
+        let mut replacement = crate::tex::parameterize(body, |sym| self.means_align_mark(sym));
         // `\def\a#1#{…}`: the `{` that ended the parameter text belongs to the
         // replacement text as well (tex.web § 476).
         if parameter_text.brace_end {
@@ -470,7 +479,7 @@ impl Machine<'_> {
                 Some(t) => pattern.push(t),
             }
         }
-        let parameter_text = ParameterText::from_tokens(&pattern);
+        let parameter_text = ParameterText::from_tokens(&pattern, |sym| self.means_align_mark(sym));
         // tex.web § 477: an `\edef` body is scanned while it is expanded, and
         // ends at the `}` that balances what expansion leaves.  A conditional
         // satex cannot decide there takes its true arm, as in any text an

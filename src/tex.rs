@@ -586,23 +586,26 @@ pub fn text_of(toks: &[Token], it: &Interner) -> String {
 }
 
 /// Turn `#1` into placeholder and `##` into literal `#` (The TeXbook, ch. 20).
-pub fn parameterize(tokens: Vec<Token>) -> Vec<Token> {
-    if !tokens.iter().any(|t| t.is_cat(Catcode::Param)) {
+/// `mark` says which control sequences stand for `#` here: none but the
+/// character in TeX, a token meaning `\alignmark` as well in LuaTeX.
+pub fn parameterize(tokens: Vec<Token>, mark: impl Fn(Sym) -> bool) -> Vec<Token> {
+    let param = |t: &Token| t.is_cat(Catcode::Param) || t.cs().is_some_and(&mark);
+    if !tokens.iter().any(param) {
         return tokens;
     }
     let mut out = Vec::with_capacity(tokens.len());
     let mut i = 0;
     while i < tokens.len() {
         let token = tokens[i];
-        if token.is_cat(Catcode::Param) {
-            match tokens.get(i + 1).map(|t| t.tok) {
-                Some(Tok::Chr(d, _)) if d.is_ascii_digit() && d != '0' => {
-                    out.push(Token::new(Tok::Param(d as u8 - b'0'), token.span));
+        if param(&token) {
+            match tokens.get(i + 1) {
+                Some(next) if param(next) => {
+                    out.push(token);
                     i += 2;
                     continue;
                 }
-                Some(Tok::Chr(_, Catcode::Param)) => {
-                    out.push(token);
+                Some(Token { tok: Tok::Chr(d, _), .. }) if d.is_ascii_digit() && *d != '0' => {
+                    out.push(Token::new(Tok::Param(*d as u8 - b'0'), token.span));
                     i += 2;
                     continue;
                 }
@@ -1087,14 +1090,16 @@ pub struct ParameterText {
 }
 
 impl ParameterText {
-    pub fn from_tokens(toks: &[Token]) -> ParameterText {
+    /// `mark` says which control sequences stand for `#` here, as in
+    /// [`parameterize`].
+    pub fn from_tokens(toks: &[Token], mark: impl Fn(Sym) -> bool) -> ParameterText {
         let mut items = Vec::new();
         let mut arity = 0;
         let mut brace_end = false;
         let mut i = 0;
         while i < toks.len() {
             let t = toks[i];
-            if t.is_cat(Catcode::Param) {
+            if t.is_cat(Catcode::Param) || t.cs().is_some_and(&mark) {
                 match toks.get(i + 1).map(|n| n.tok) {
                     Some(Tok::Chr(d, _)) if d.is_ascii_digit() && d != '0' => {
                         arity = arity.max(d as u8 - b'0');

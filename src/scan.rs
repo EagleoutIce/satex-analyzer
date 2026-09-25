@@ -327,8 +327,12 @@ impl Machine<'_> {
                 Tok::Cs(sym) => sym == self.unknown_digits || sym == self.unknown_more,
                 _ => false,
             };
-            if digits && radix == DECIMAL {
-                any |= token.tok != Tok::Cs(self.unknown_more);
+            // Unknown text after a digit may be more digits, so it is read
+            // on with them and makes the number unknown; it may also be
+            // empty, so it is no digit of its own.
+            let maybe = !digits && any && self.is_unknown(token);
+            if (digits || maybe) && radix == DECIMAL {
+                any |= !maybe && token.tok != Tok::Cs(self.unknown_more);
                 unknown = true;
                 next = self.next_x_token();
                 continue;

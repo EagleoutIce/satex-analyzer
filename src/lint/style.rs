@@ -349,9 +349,9 @@ fn unused_definition(report: &mut Report) {
     let analysis = report.analysis;
     let used: BTreeSet<Sym> = analysis.facts.expansions.iter().map(|e| e.name).collect();
     let defs: Vec<_> = analysis.facts.defs.clone();
-    let report_public = analysis.settings.report_public_definitions;
+    let rule = &analysis.settings.lints.unused_definition;
     let ignore: Vec<regex::Regex> =
-        analysis.settings.unused_definition_ignore.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
+        rule.ignore.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
     // A name one call defines for another it defines, whose text calls it
     // (ltcmd's `\fd code`, `\newcommand`'s `\\fe`), is that name's
     // implementation: the other is the one reported.
@@ -373,7 +373,7 @@ fn unused_definition(report: &mut Report) {
             continue;
         }
         let name = report.cs(def.name);
-        if (!analysis.settings.report_pgf_keys && is_pgf_key(&name)) || (!report_public && !looks_private(&name)) || ignore.iter().any(|re| re.is_match(&name)) {
+        if (!rule.pgf_keys && is_pgf_key(&name)) || (!rule.report_public && !looks_private(&name)) || ignore.iter().any(|re| re.is_match(&name)) {
             continue;
         }
         let edits = report.edits().delete_definition(def);

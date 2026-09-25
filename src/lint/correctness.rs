@@ -105,8 +105,8 @@ correcting the spelling.",
 Running the document reaches `\\errmessage`, which every LaTeX error
 (`\\PackageError`, `\\msg_error:nn`, the kernel's own) ends in: a real run
 stops there.  A more specific rule that explains the same error reports it
-instead.  When the error sits in a conditional arm satex could not decide, it
-is a warning.
+instead.  An error reached only on a path satex could not decide, or after it
+lost track of the mode, is not one a real run need reach, and is not reported.
 
 Fix what the message says.",
         run: raised_errors,
@@ -330,15 +330,15 @@ fn undefined_control_sequences(report: &mut Report) {
     }
 }
 
-/// Every `\errmessage` the run reached, once per place and text.
+/// Every `\errmessage` a real run reaches, once per place and text, placed
+/// at the request that read the file raising it.
 fn raised_errors(report: &mut Report) {
     let analysis = report.analysis();
     let mut seen = std::collections::HashSet::new();
     for o in &analysis.facts.occurrences {
-        if !crate::lint::shared::is_error(analysis, o) || !seen.insert((o.span, o.key.as_str())) {
+        if !crate::lint::shared::is_error(analysis, o) || !o.certain || !seen.insert((o.span, o.key.as_str())) {
             continue;
         }
-        // Raised while a package was read: at the request that read it.
         let mut span = o.span;
         let mut via = None;
         for _ in 0..64 {
@@ -349,19 +349,14 @@ fn raised_errors(report: &mut Report) {
             via = Some(load.name.clone());
             span = load.span;
         }
-        let undecided = !o.certain;
         // The headline: what follows the first empty line is help.
         let headline = o.key.split("\n\n").next().unwrap_or_default();
         let text = headline.split_whitespace().collect::<Vec<_>>().join(" ");
-        let (severity, message) = match undecided {
-            false => (Severity::Error, text),
-            true => (Severity::Warning, format!("{text} (on a path satex could not decide, or after it lost track of the mode)")),
-        };
         let message = match via {
-            Some(name) => format!("reading {name}: {message}"),
-            None => message,
+            Some(name) => format!("reading {name}: {text}"),
+            None => text,
         };
-        report.add_as(severity, span, "", message, None);
+        report.add(span, "", message, None);
     }
 }
 

@@ -24,8 +24,8 @@ $ satex lint --diff --unsafe-fixes -f samples/paper.tex
 -\usepackage{graphicx}
  \usepackage{hyperref}
  \usepackage{mypackage}
- 
-@@ -10,18 +9,12 @@
+ \input{preamble.tex}
+@@ -11,18 +10,12 @@
  \newcommand{\highlight}[1]{\textbf{#1}}
  \newcommand{\norm}[1]{\left\lVert#1\right\rVert}
  
@@ -46,7 +46,7 @@ $ satex lint --diff --unsafe-fixes -f samples/paper.tex
  \begin{document}
  
  \def\DocName{Document}
-@@ -38,7 +31,6 @@
+@@ -39,7 +32,6 @@
  \fi
  
  \section{Methodology}
@@ -54,14 +54,19 @@ $ satex lint --diff --unsafe-fixes -f samples/paper.tex
  
  We define the loss function as follows.
  
-@@ -71,7 +63,6 @@
+@@ -72,7 +64,6 @@
  \end{table}
  
  \section{Conclusion}
 -\label{sec:conclusion}
  
- \highlight{satex} correctly analyses this document.
+ \highlight{satex} correctly analyzes this document.
  See \autoref{sec:intro} for motivation and \autoref{sec:results} for
+--- a/samples/preamble.tex
++++ b/samples/preamble.tex
+@@ -1,1 +0,0 @@
+-\def\hello{world}
+\ No newline at end of file
 ```
 
 `--format json` gives each fix as `applicability` and `edits` (`path`, 1-based `start`/`end`, `replacement`), `--format sarif` as `fixes`, `--format lsp` as diagnostics with `quickfix` code actions.
@@ -721,8 +726,8 @@ $ satex lint --explain preamble-cost
 preamble-cost  performance / info
 what the preamble costs on every build
 
-Files read and tokens digested before `\begin{document}`.  This work repeats on
-every compilation.
+The packages the document asks for and the files read before
+`\begin{document}`.  This work repeats on every compilation.
 
 Fix by precompiling the preamble into a format with `mylatexformat` or
 `precompiled preamble` support in your editor, which skips it entirely.

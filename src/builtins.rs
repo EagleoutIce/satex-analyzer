@@ -752,6 +752,12 @@ pub enum Primitive {
     /// TeXbook, ch. 20), so answering `\relax` would deny every engine
     /// primitive this interpreter leaves alone.
     Unmodeled,
+    /// LuaTeX's `\alignmark` and `\aligntab`, which stand for `#` and `&`
+    /// where a definition or an alignment is scanned (LuaTeX manual,
+    /// "Macros"): meanings of their own, so `\ifx` tells them apart, and
+    /// unmodeled otherwise.
+    AlignMark,
+    AlignTab,
     /// TeX's glue, muglue and token-list parameters (tex.web §§ 224, 230).
     GlueParameter { mu: bool },
     TokensParameter,
@@ -1000,6 +1006,8 @@ pub fn expandable(p: Primitive) -> bool {
             | P::Pdf(_)
             | P::End
             | P::Unmodeled
+            | P::AlignMark
+            | P::AlignTab
             | P::GlueParameter { .. }
             | P::TokensParameter
             | P::LastItem(_)
@@ -1436,7 +1444,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
             "Umathunderdelimiterbgap", "Umathunderdelimitervgap", "Umiddle", "Unosubscript",
             "Unosuperscript", "Uoverdelimiter", "Uright", "Uroot", "Uskewed", "Uskewedwithdelims",
             "Ustack", "Ustartdisplaymath", "Ustartmath", "Ustopdisplaymath", "Ustopmath",
-            "Usubscript", "Usuperscript", "Uunderdelimiter", "Uvextensible", "alignmark", "aligntab", "automaticdiscretionary", "bodydir", "bodydirection", "boundary",
+            "Usubscript", "Usuperscript", "Uunderdelimiter", "Uvextensible", "automaticdiscretionary", "bodydir", "bodydirection", "boundary",
             "boxdir", "boxdirection", "clearmarks", "crampeddisplaystyle", "crampedscriptscriptstyle", "crampedscriptstyle",
             "crampedtextstyle", "deferred", "dviextension", "dvifeedback", "dvivariable", "eTeXVersion", "eTeXglueshrinkorder",
             "eTeXgluestretchorder", "eTeXminorversion", "endlocalcontrol", "etoksapp", "etokspre",
@@ -1456,6 +1464,8 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         ] {
             put(it, n, P::Unmodeled);
         }
+        put(it, "alignmark", P::AlignMark);
+        put(it, "aligntab", P::AlignTab);
         // LuaTeX manual, "Images": `\saveimageresource` is pdfTeX's
         // `\pdfximage` under its engine-neutral name, with the same syntax.
         // LuaTeX manual, "Fonts": fonts by their number, and pdfTeX's

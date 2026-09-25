@@ -362,10 +362,11 @@ pub fn workspace_symbols(analysis: &Analysis, query_text: &str) -> Vec<SymbolInf
     let sources = Sources::default();
     let mut out = Vec::new();
     let mut add = |record: &Record, name: &str, kind: SymbolKind| {
-        if !name.is_empty() && name.to_lowercase().contains(&needle) {
-            if let Some(location) = record_location(record, &sources) {
-                out.push(SymbolInformation { name: name.to_string(), kind, tags: None, deprecated: None, location, container_name: None });
-            }
+        if !name.is_empty()
+            && name.to_lowercase().contains(&needle)
+            && let Some(location) = record_location(record, &sources)
+        {
+            out.push(SymbolInformation { name: name.to_string(), kind, tags: None, deprecated: None, location, container_name: None });
         }
     };
     for record in query::run(analysis, Query::Occurrences, &Filter::Always) {
@@ -380,10 +381,10 @@ pub fn workspace_symbols(analysis: &Analysis, query_text: &str) -> Vec<SymbolInf
         }
     }
     for record in query::run(analysis, Query::Definitions, &Filter::Always) {
-        if record.get("origin").and_then(Json::as_str) == Some("document") {
-            if let Some(name) = record.get("name").and_then(Json::as_str) {
-                add(&record, name, SymbolKind::FUNCTION);
-            }
+        if record.get("origin").and_then(Json::as_str) == Some("document")
+            && let Some(name) = record.get("name").and_then(Json::as_str)
+        {
+            add(&record, name, SymbolKind::FUNCTION);
         }
     }
     out

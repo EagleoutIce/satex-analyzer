@@ -176,6 +176,9 @@ pub struct Analysis {
     /// Group depth at `\begin{document}`, the baseline for "this definition
     /// is local to a group".
     pub document_depth: Option<u16>,
+    /// How many files had been read at `\begin{document}`: the preamble's
+    /// share of the build.
+    pub preamble_files: Option<usize>,
     /// For each file, the position in the main file at which its contents
     /// become visible.  A definition in a loaded file is in scope from there.
     pub entry: Vec<Option<Span>>,
@@ -887,6 +890,7 @@ impl<'a> Machine<'a> {
                     index_cached: false,
                 },
                 document_depth: None,
+                preamble_files: None,
                 entry: Vec::new(),
                 format: None,
                 env: Env::default(),
@@ -2894,7 +2898,7 @@ will look undefined",
                     package: self.package(),
                     node,
                     mac: mac.clone(),
-                    depth: self.env.depth() as u16,
+                    depth: self.env.group_level() as u16,
                     global,
                     redefines,
                     certain,
@@ -5230,7 +5234,7 @@ expansion stopped",
                     std::iter::once(i).chain(group.iter().copied()).map(|k| paths[k].env.clone()).collect();
                 if envs.iter().all(|e| crate::env::Env::same_groups(&envs[0], e)) {
                     self.work += envs.len() as u64;
-                    let mut merged = std::mem::replace(&mut paths[i].state.wild, Wild::default());
+                    let mut merged = std::mem::take(&mut paths[i].state.wild);
                     let (mut mode, mut list, mut material) = (paths[i].state.mode, paths[i].state.list, paths[i].state.material);
                     let mut natural = paths[i].state.natural;
                     for &k in &group {

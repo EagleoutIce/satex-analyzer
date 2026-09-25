@@ -195,7 +195,8 @@ pub fn environment_opened(m: &mut Machine, outer: Option<String>, span: Span) {
         }
         // `\@execute@begin@hook` closes the group `\begin` opened, so the
         // body is read one level out.
-        m.out.document_depth = Some(m.env.depth().saturating_sub(1) as u16);
+        m.out.document_depth = Some(m.env.group_level().saturating_sub(1) as u16);
+        m.out.preamble_files = Some(m.out.files.len());
         m.out.preamble = Some(Box::new((m.env.snapshot(), m.catcodes.clone())));
     } else {
         // `document` itself is not on the stack: `document_depth` already

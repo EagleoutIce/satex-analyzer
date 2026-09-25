@@ -14,7 +14,10 @@ thread_local! {
 pub fn read_to_string(path: &Path) -> std::io::Result<String> {
     match FILES.with(|files| files.borrow().get(path).cloned()) {
         Some(text) => Ok(text),
-        None => std::fs::read_to_string(path),
+        None => {
+            let bytes = std::fs::read(path)?;
+            Ok(String::from_utf8(bytes).unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect()))
+        }
     }
 }
 

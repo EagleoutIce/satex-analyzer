@@ -563,8 +563,7 @@ impl<'a> Edits<'a> {
         let start = Pos::of(span);
         let mut scan = Scan::at(&text, start, self.cats(span.file))?;
         let mut digits = String::new();
-        loop {
-            let Some(Tok::Chr(c, Catcode::Other)) = scan.peek().map(|l| l.tok) else { break };
+        while let Some(Tok::Chr(c, Catcode::Other)) = scan.peek().map(|l| l.tok) {
             if !(c.is_ascii_digit() || (matches!(c, '.' | ',') && !digits.is_empty())) {
                 break;
             }

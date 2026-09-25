@@ -395,7 +395,7 @@ mod tests {
             Token::new(Tok::Param(1), Span::new(1, 2, 5)),
         ];
         let mac = MacroDef {
-            parameter_text: ParameterText::from_tokens(&body),
+            parameter_text: ParameterText::from_tokens(&body, |_| false),
             arg_spec: Some(ArgSpec {
                 items: vec![crate::tex::ArgType::Optional(Some("d".into())), crate::tex::ArgType::Mandatory],
                 raw: "O{d}m".into(),

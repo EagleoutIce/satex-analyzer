@@ -67,6 +67,33 @@ fn bin() -> String {
         .map_or_else(|| "satex".to_string(), |bin| bin.display().to_string())
 }
 
+/// The file recording which installation the checked-in output was generated
+/// from.
+const STAMP: &str = "doc/src/.installation";
+
+/// What the samples' output depends on besides satex itself: the kernel and
+/// the packages they load, which every TeX Live has its own versions of.
+/// `satex summary` reports the first line, the loaded files the rest.
+fn installation(bin: &str) -> Result<String, String> {
+    let out = Command::new(bin)
+        .args(["summary", "--all", "-f", "samples/paper.tex"])
+        .output()
+        .map_err(|e| format!("running `satex summary`: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let kernel = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("installation "))
+        .ok_or("`satex summary` reported no installation")?;
+    let files: Vec<&str> = text.lines().filter(|line| line.contains("/texmf")).collect();
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in files.concat().bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    let kernel = kernel.split(", ").take(2).collect::<Vec<_>>().join(", ");
+    Ok(format!("{kernel}, files {hash:016x}\n"))
+}
+
 fn run(check: bool) -> Result<(), String> {
     let bin = bin();
     if !Path::new(&bin).exists() {
@@ -76,6 +103,15 @@ fn run(check: bool) -> Result<(), String> {
     // rather than cached, so the generated text would differ from the next
     // run's.  One warm-up run settles it.
     let _ = Command::new(&bin).args(["cache", "-f", "samples/paper.tex"]).output();
+    // Kernel line numbers, package versions and installed paths all reach the
+    // generated text, so output from another TeX Live says nothing about
+    // whether the checked-in files follow their templates.
+    let here = installation(&bin)?;
+    let generated_with = fs::read_to_string(STAMP).unwrap_or_default();
+    if check && !generated_with.is_empty() && generated_with != here {
+        println!("skipping: generated with {}, this installation is {}", generated_with.trim(), here.trim());
+        return Ok(());
+    }
     let mut stale = Vec::new();
     let mut written = Vec::new();
     for (src, dst) in TEMPLATES {
@@ -98,6 +134,10 @@ fn run(check: bool) -> Result<(), String> {
         } else {
             Err(format!("out of date, run `satex-doc`: {}", stale.join(", ")))
         };
+    }
+    if fs::read_to_string(STAMP).unwrap_or_default() != here {
+        fs::write(STAMP, &here).map_err(|e| format!("{STAMP}: {e}"))?;
+        written.push(STAMP);
     }
     for path in &written {
         println!("wrote {path}");
@@ -181,13 +221,11 @@ fn run_command(command: &str, limit: Option<usize>) -> Result<String, String> {
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // `satex 0.1.0, built ⟨time⟩`: the time changes with every build, so
-    // the generated text would never be up to date.
     let mut lines: Vec<&str> = stdout
         .lines()
-        .map(|line| match (line.starts_with("satex "), line.find(", built ")) {
-            (true, Some(at)) => &line[..at],
-            _ => line,
+        .map(|line| match line.starts_with("satex ") {
+            true => line.find(" (").or_else(|| line.find(", built ")).map_or(line, |at| &line[..at]),
+            false => line,
         })
         .collect();
     let omitted = match limit {

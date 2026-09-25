@@ -257,16 +257,19 @@ pub fn markdown(records: &[Record]) -> String {
 
 /// One block per record instead of one row, with nothing cut to fit: the
 /// detail views, whose fields are too wide for a table.
+/// A record with the contexts it holds in, each with the error raised there.
+type Grouped = (Record, Vec<(String, Option<String>)>);
+
 /// Records that differ only in the context they hold in and the error they
 /// raise there, as one record and its contexts.
-fn by_context(records: &[Record]) -> Vec<(Record, Vec<(String, Option<String>)>)> {
+fn by_context(records: &[Record]) -> Vec<Grouped> {
     let shared = |r: &Record| {
         let mut r = r.clone();
         let context = r.remove("context").map(|v| plain(&v));
         let error = r.remove("error").map(|v| plain(&v));
         (r, context, error)
     };
-    let mut groups: Vec<(Record, Vec<(String, Option<String>)>)> = Vec::new();
+    let mut groups: Vec<Grouped> = Vec::new();
     for record in records {
         let (rest, context, error) = shared(record);
         match (groups.last_mut(), context) {

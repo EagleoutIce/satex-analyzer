@@ -536,6 +536,12 @@ impl Env {
         self.marks.len()
     }
 
+    /// The group level TeX would report: analyzing an undecided arm pushes a
+    /// mark of its own, which a real run never opens.
+    pub fn group_level(&self) -> usize {
+        self.marks.len() - self.floors.len()
+    }
+
     /// Local or global assignment.  A global one survives every enclosing
     /// group, exactly as TeX's does.
     pub fn set(&mut self, sym: Sym, binding: Binding, global: bool) {

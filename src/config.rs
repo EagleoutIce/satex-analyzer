@@ -6,10 +6,6 @@ use serde::{Deserialize, Serialize};
 /// own files declare with `\newif` and the like.
 pub const EVERY_SWITCH: &str = "*";
 
-fn default_true() -> bool {
-    true
-}
-
 /// What bounds the analysis: reaching one stops that part of the run and
 /// records an [`Imprecision`](crate::facts::Severity::Imprecision), so no
 /// input can make satex loop or run out of memory.
@@ -126,8 +122,8 @@ impl Default for Limits {
             // pgfmath's parser over more unknown text.
             meaning_splits: 1,
             widen_after: 3,
-            meaning_set: 5,
-            value_set: 5,
+            meaning_set: 8,
+            value_set: 8,
             // A `Token` is 16 bytes, so a million of them is 16 MiB: enough
             // for any argument an expansion really writes, and far below
             // `memory`.
@@ -331,19 +327,9 @@ pub struct Config {
     /// anything with no build of its own to check).
     #[serde(default)]
     pub lint_off: Vec<String>,
-    /// Whether `unused-definition` also reports a name with no `@` and no
-    /// expl3-style `module_function:signature` in it: a package or class
-    /// turns this off, since such a name is its public interface, which the
-    /// caller — not this run — is the one to use it.
-    #[serde(default = "default_true")]
-    pub report_public_definitions: bool,
-    /// Regexes on a macro's name (as written, with the backslash) that
-    /// `unused-definition` never reports.
+    /// `lints:` in `satex.yaml`: what a single rule reads, under its code.
     #[serde(default)]
-    pub unused_definition_ignore: Vec<String>,
-    /// Whether `unused-definition` also reports a pgf key nothing uses.
-    #[serde(default)]
-    pub report_pgf_keys: bool,
+    pub lints: Lints,
     /// The profile in force: `--profile`, `profile:` here, or
     /// [`Profile::detect`], in that order — [`Config::apply_profile`]
     /// settles one for every run, so this is `Some` by the time analysis
@@ -419,9 +405,7 @@ impl Default for Config {
             output: None,
             at_letter: false,
             lint_off: vec!["analysis-imprecision".to_string()],
-            report_public_definitions: true,
-            unused_definition_ignore: Vec::new(),
-            report_pgf_keys: false,
+            lints: Lints::default(),
             profile: None,
             profiles: Profiles::default(),
             verbose: 0,
@@ -645,7 +629,7 @@ impl Default for Profiles {
         }
         let package = parse(
             "at_letter: true\n\
-             report_public_definitions: false\n\
+             lints: {unused-definition: {report_public: false}}\n\
              lint_off: [analysis-imprecision, unused-label, microtype-available, build-shell-escape-missing, \
              build-shell-escape-unneeded, build-engine-mismatch, build-bibliography-disabled, \
              build-bibliography-unneeded, build-missing-custom-dependency, \
@@ -658,6 +642,34 @@ impl Default for Profiles {
             literate: package,
             plain: parse("load_packages: false\nload_classes: false\nlint_off: [analysis-imprecision, unused-label, microtype-available, hand-set-quantity]\n"),
         }
+    }
+}
+
+/// `lints:` in `satex.yaml`: what one rule reads, under its own code.
+/// `lint_off`, which every rule obeys, stays a general setting.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct Lints {
+    pub unused_definition: UnusedDefinition,
+}
+
+/// `lints.unused-definition:` in `satex.yaml`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UnusedDefinition {
+    /// Whether the rule also reports a name with no `@` and no expl3-style
+    /// `module_function:signature`: a package's public interface, which the
+    /// caller, not this run, is the one to use.
+    pub report_public: bool,
+    /// Regexes on the name as written; a match is never reported.
+    pub ignore: Vec<String>,
+    /// Whether the rule also reports a pgf key nothing uses.
+    pub pgf_keys: bool,
+}
+
+impl Default for UnusedDefinition {
+    fn default() -> UnusedDefinition {
+        UnusedDefinition { report_public: true, ignore: Vec::new(), pgf_keys: false }
     }
 }
 
@@ -879,6 +891,13 @@ fn merge_value(base: &mut serde_yaml_ng::Value, incoming: &serde_yaml_ng::Value)
     }
 }
 
+/// Whether `path` is the file `name` names: a trailing part of the path,
+/// with or without the `.tex` extension.
+pub fn names_file(path: &str, name: &str) -> bool {
+    let path = std::path::Path::new(path);
+    path.ends_with(name) || path.ends_with(format!("{name}.tex"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -942,11 +961,4 @@ mod tests {
         assert_eq!(files, vec![dir.join("satex.yaml")]);
         let _ = std::fs::remove_dir_all(&dir);
     }
-}
-
-/// Whether `path` is the file `name` names: a trailing part of the path,
-/// with or without the `.tex` extension.
-pub fn names_file(path: &str, name: &str) -> bool {
-    let path = std::path::Path::new(path);
-    path.ends_with(name) || path.ends_with(format!("{name}.tex"))
 }

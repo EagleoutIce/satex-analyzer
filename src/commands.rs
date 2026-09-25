@@ -262,7 +262,7 @@ impl Machine<'_> {
             L::InputLineNo => self.input_line().map(|line| Value::Int(line.into())),
             L::EtexVersion => int(ETEX_VERSION),
             L::PdftexVersion => int(PDFTEX_VERSION),
-            L::GroupLevel => int(self.env.depth() as i64),
+            L::GroupLevel => int(self.env.group_level() as i64),
             L::GroupType => match (self.env.group_kind(), self.env.nest()) {
                 (None, _) => int(0),
                 (Some(_), Some(nest)) => nest.code.map(|code| Value::Int(code.into())),

@@ -129,13 +129,13 @@ profile: package            # forces one instead of detecting it; --profile wins
 profiles:
   package:                  # merged over the settings above when this profile applies
     at_letter: true
-    report_public_definitions: false
+    lints: {unused-definition: {report_public: false}}
     lint_off: [unused-label, microtype-available, build-engine-mismatch]
 ```
 
-`report_public_definitions: false` (the package and class profiles' default) keeps `unused-definition` for a name that reads as the package's own internals — `@` in it, or an expl3 `module_function:signature` — but not for one with neither, since that is the package's public interface and the caller, not this run, is the one to use it.
+A rule with settings of its own reads them under `lints`, keyed by the rule's code. `lints.unused-definition.report_public: false` (the package and class profiles' default) keeps `unused-definition` for a name that reads as the package's own internals — `@` in it, or an expl3 `module_function:signature` — but not for one with neither, since that is the package's public interface and the caller, not this run, is the one to use it.
 
-`unused_definition_ignore` takes regexes on the name as written (`\\my@hook`); a match is never reported. `report_pgf_keys: true` also reports a pgf key nothing uses; off by default, since the user sets keys.
+`lints.unused-definition.ignore` takes regexes on the name as written (`\\my@hook`); a match is never reported. `lints.unused-definition.pgf_keys: true` also reports a pgf key nothing uses; off by default, since the user sets keys.
 
 ## Search paths
 
