@@ -275,10 +275,12 @@ fn primitive_tex_command(report: &mut Report) {
                     Fix::new(format!("use {}", interface(analysis, sym)), Applicability::Unsafe, edits)
                 }),
             ),
+            None if alternative.is_empty() => {
+                (format!("{name} is plain TeX, and LaTeX has no interface of its own for it"), None)
+            }
             None => (
                 format!("{name} is plain TeX; LaTeX has its own interface for this"),
-                (!alternative.is_empty())
-                    .then(|| Fix::new(format!("use {alternative}"), Applicability::Unsafe, None)),
+                Some(Fix::new(format!("use {alternative}"), Applicability::Unsafe, None)),
             ),
         };
         match fix {

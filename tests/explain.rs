@@ -246,7 +246,7 @@ fn paper_usepackage_preamble_and_document() {
     let directory = std::env::temp_dir().join(format!("satex-explain-paper-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let samples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("samples");
-    for file in ["paper.tex", "mypackage.sty"] {
+    for file in ["paper.tex", "mypackage.sty", "preamble.tex"] {
         std::fs::copy(samples.join(file), directory.join(file)).unwrap();
     }
     let path = directory.join("paper.tex");
