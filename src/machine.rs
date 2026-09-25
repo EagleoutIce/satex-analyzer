@@ -642,6 +642,10 @@ pub struct Machine<'a> {
     /// The last control sequence taken straight from a file, and where it
     /// stood: the call everything its expansion does is part of.
     pub file_call: Option<(Sym, Span)>,
+    /// The last control sequence run whose token stands in a project file,
+    /// a macro body of the project's included: where its own text put what
+    /// the call `file_call` does.
+    project_site: Option<Span>,
     /// The file call each open file was pushed under: when the file ends,
     /// the call that read it is the file call again.
     file_calls: Vec<(FileId, Option<(Sym, Span)>)>,
@@ -966,6 +970,7 @@ impl<'a> Machine<'a> {
             last_file: None,
             recent_file_spans: Vec::new(),
             file_call: None,
+            project_site: None,
             file_calls: Vec::new(),
             written_lines: Vec::new(),
             name_reads: Vec::new(),
@@ -2506,6 +2511,7 @@ will look undefined",
     pub fn occurrence_context(&self) -> crate::observe::OccContext {
         crate::observe::OccContext {
             package: self.package(),
+            expanded: self.project_site,
             within: self.within.last().map(|(_, node)| *node),
             cds: self.cds.clone(),
             section: self.section.clone(),
@@ -2537,6 +2543,7 @@ will look undefined",
             key,
             detail,
             span,
+            expanded: context.expanded.filter(|e| *e != span),
             package: context.package,
             node,
             section: context.section.clone(),
@@ -3613,6 +3620,9 @@ will look undefined",
     }
 
     fn do_control_sequence(&mut self, sym: Sym, span: Span) {
+        if self.project_file(span.file) {
+            self.project_site = Some(span);
+        }
         // A control sequence read straight from a file starts a new call; one
         // that came out of a macro body is part of the call already running.
         if self.last_file == Some(span.file) {

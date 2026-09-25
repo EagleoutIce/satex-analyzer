@@ -500,6 +500,7 @@ fn occurrences(analysis: &Analysis) -> Vec<Record> {
             record.insert("kind".into(), json!(occ.kind.as_str()));
             record.insert("key".into(), json!(occ.key));
             record.insert("detail".into(), json!(occ.detail));
+            record.insert("expanded".into(), occ.expanded.map_or(Json::Null, |s| Json::Object(place(analysis, s))));
             record.insert("section".into(), json!(occ.section));
             record.insert("package".into(), symbol(analysis, occ.package));
             record.insert("node".into(), json!(occ.node));

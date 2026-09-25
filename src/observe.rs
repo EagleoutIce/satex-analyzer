@@ -23,6 +23,7 @@ pub fn csname(m: &mut Machine, name: &str, span: Span) {
 #[derive(Clone)]
 pub struct OccContext {
     pub package: Option<crate::tex::Sym>,
+    pub expanded: Option<Span>,
     pub within: Option<crate::env::NodeId>,
     pub cds: Vec<crate::graph::ControlDep>,
     pub section: Option<std::rc::Rc<str>>,

@@ -159,6 +159,8 @@ pub struct Occurrence {
     pub key: String,
     pub detail: Option<String>,
     pub span: Span,
+    /// `span` is the call the file made, expanded the full target
+    pub expanded: Option<Span>,
     pub package: Option<Sym>,
     pub node: NodeId,
     /// The sectioning unit this stands in, or `None` before the first one.
