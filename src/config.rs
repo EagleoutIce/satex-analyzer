@@ -337,6 +337,13 @@ pub struct Config {
     /// caller — not this run — is the one to use it.
     #[serde(default = "default_true")]
     pub report_public_definitions: bool,
+    /// Regexes on a macro's name (as written, with the backslash) that
+    /// `unused-definition` never reports.
+    #[serde(default)]
+    pub unused_definition_ignore: Vec<String>,
+    /// Whether `unused-definition` also reports a pgf key nothing uses.
+    #[serde(default)]
+    pub report_pgf_keys: bool,
     /// The profile in force: `--profile`, `profile:` here, or
     /// [`Profile::detect`], in that order — [`Config::apply_profile`]
     /// settles one for every run, so this is `Some` by the time analysis
@@ -413,6 +420,8 @@ impl Default for Config {
             at_letter: false,
             lint_off: vec!["analysis-imprecision".to_string()],
             report_public_definitions: true,
+            unused_definition_ignore: Vec::new(),
+            report_pgf_keys: false,
             profile: None,
             profiles: Profiles::default(),
             verbose: 0,

@@ -30,6 +30,8 @@ paths:                    # kpathsea variables' fallback list: tried after the
 at_letter: false          # start with @ a letter, as .sty files do
 lint_off: [analysis-imprecision]  # rule codes that never fire; a profile fills this in
 report_public_definitions: true  # unused-definition also flags a public name
+unused_definition_ignore: []     # regexes on macro names unused-definition skips
+report_pgf_keys: false           # unused-definition also flags an unused pgf key
 # profile: package          # forces one instead of detecting it from the input
 
 # Sensible defaults per kind of input, chosen automatically by the input's
@@ -272,6 +274,8 @@ profiles:
 ```
 
 `report_public_definitions: false` (the package and class profiles' default) keeps `unused-definition` for a name that reads as the package's own internals — `@` in it, or an expl3 `module_function:signature` — but not for one with neither, since that is the package's public interface and the caller, not this run, is the one to use it.
+
+`unused_definition_ignore` takes regexes on the name as written (`\\my@hook`); a match is never reported. `report_pgf_keys: true` also reports a pgf key nothing uses; off by default, since the user sets keys.
 
 ## Search paths
 
