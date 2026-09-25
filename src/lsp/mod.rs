@@ -349,8 +349,9 @@ fn engine_loop(
             }
             EngineMsg::References(uri, pos, decls, reply) => {
                 ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
+                let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
                 let result =
-                    with_doc(&docs, &uri, |analysis, text| handlers::references(analysis, text, pos, decls));
+                    with_doc(&docs, &uri, |analysis, text| handlers::references(analysis, text, &path, pos, decls));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::Completion(uri, pos, reply) => {
@@ -379,12 +380,14 @@ fn engine_loop(
             }
             EngineMsg::PrepareRename(uri, pos, reply) => {
                 ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
-                let result = with_doc(&docs, &uri, |analysis, text| handlers::prepare_rename(analysis, text, pos));
+                let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result = with_doc(&docs, &uri, |analysis, text| handlers::prepare_rename(analysis, text, &path, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::Rename(uri, pos, new_name, reply) => {
                 ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
-                let result = with_doc(&docs, &uri, |analysis, text| handlers::rename(analysis, text, pos, &new_name))
+                let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result = with_doc(&docs, &uri, |analysis, text| handlers::rename(analysis, text, &path, pos, &new_name))
                     .unwrap_or_else(|| Err("document is not open".to_string()));
                 let _ = reply.send(result);
             }

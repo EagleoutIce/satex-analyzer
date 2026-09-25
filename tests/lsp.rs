@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 // Without a format the catcodes are INITEX's (tex.web § 232); prepended with
 // no newline so line/column positions below stay on their original lines.
 const FIXTURE: &str =
-    "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 \\def\\greet#1{Hello, #1!}\n\\greet{world}\n";
+    "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 \\def\\greet#1{Hello, #1!}\n\\greet{world}\n\\def\\unused{\\greet{x}}\n\\let\\alias\\greet\n";
 
 struct Server {
     child: Child,
@@ -223,9 +223,26 @@ fn stdio_session_drives_the_feature_set() {
     let rename = server.response(rename_id);
     let edits = rename["result"]["changes"][uri.as_str()].as_array().cloned().unwrap_or_default();
     assert!(
-        edits.len() >= 2 && edits.iter().all(|e| e["newText"] == json!("hello")),
+        edits.len() >= 3 && edits.iter().all(|e| e["newText"] == json!("hello")),
         "rename did not edit both sites: {rename:?}"
     );
+    assert!(
+        edits.iter().any(|e| e["range"]["start"]["line"] == json!(2)),
+        "rename missed the use in an unexpanded body: {rename:?}"
+    );
+    assert!(
+        edits.iter().any(|e| e["range"]["start"]["line"] == json!(3) && e["range"]["start"]["character"] == json!(11)),
+        "rename missed the name `\\let` copies: {rename:?}"
+    );
+
+    // `\hello` is free, `\alias` is not: renaming onto a name the document
+    // already holds would change what it means.
+    let clash_id = server.request(
+        "textDocument/rename",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 3 }, "newName": "alias" }),
+    );
+    let clash = server.response(clash_id);
+    assert!(clash["error"]["message"].as_str().is_some_and(|m| m.contains("already defined")), "{clash:?}");
     assert!(
         edits.iter().any(|e| e["range"] == json!({ "start": { "line": 1, "character": 1 }, "end": { "line": 1, "character": 6 } })),
         "rename range missed the use of `\\greet`: {edits:?}"

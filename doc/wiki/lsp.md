@@ -23,7 +23,10 @@ A document is re-analyzed `lsp.debounce_ms` after its last edit. Requests wait f
 | References | `textDocument/references` | `satex query expansions`/`occurrences` |
 | Completion | `textDocument/completion` | `satex scope`, plus label/citation/environment keys from `occurrences` |
 | Document symbols | `textDocument/documentSymbol` | sections, labels and document-defined names |
+| Rename | `textDocument/prepareRename`, `textDocument/rename` | `satex query definitions`/`expansions`/`occurrences` |
 | Run any query | `workspace/executeCommand` (`satex/query`) | `satex query --request` |
+
+Rename moves every name one declaration made from one key. `\newcounter{step}` allocates `\c@step`, `\thestep`, `\p@step`, `\cl@step` and `\theHstep`, so renaming the counter rewrites the key inside all of them, in `\stepcounter{step}` and in `\thestep`. `\newenvironment{note}` defines `\note` and `\endnote`, so its key, `\begin{note}` and `\end{note}` move together. A name `\csname` builds is rewritten where the file spells it out character for character. The rename is refused, with the site named, when a name it would build is already defined, when a definition or use lies in a file satex may not edit, or when a name is built while the document runs and no site spells it.
 
 Completion looks at the text before the cursor: after `\` it offers the commands in scope there, with a snippet for their arguments. Inside `\begin{` environment names. Inside a reference or citation argument the document's labels or keys.
 

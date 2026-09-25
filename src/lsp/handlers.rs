@@ -60,10 +60,15 @@ fn word_re() -> &'static Regex {
 /// leading `\`) and whether it had one.  `None` off the end of every match
 /// on the line.
 pub fn word_at(line: &str, col: u32) -> Option<(String, bool)> {
+    word_span(line, col).map(|(name, is_command, _)| (name, is_command))
+}
+
+/// The same, with the 1-based column the match starts at.
+pub fn word_span(line: &str, col: u32) -> Option<(String, bool, u32)> {
     let target = char_byte(line, col.saturating_sub(1));
     word_re().find_iter(line).find(|m| m.start() <= target && target <= m.end()).map(|m| {
         let text = m.as_str();
-        (text.trim_start_matches('\\').to_string(), text.starts_with('\\'))
+        (text.trim_start_matches('\\').to_string(), text.starts_with('\\'), line[..m.start()].chars().count() as u32 + 1)
     })
 }
 
@@ -165,7 +170,7 @@ pub fn hover(analysis: &Analysis, doc: &Text, position: Position) -> Option<Hove
             None => markdown.push_str(&format!("### `\\{name}`\n\n")),
         }
         if let Some(sig) = record.get("signature").and_then(Json::as_str) {
-            markdown.push_str(&format!("`{sig}`\n\n"));
+            markdown.push_str(&format!("signature: `{sig}`\n\n"));
         }
         if let Some(effective) = record.get("effective").and_then(Json::as_str) {
             markdown.push_str(&format!("{effective}\n\n"));
@@ -192,17 +197,23 @@ pub fn definition(analysis: &Analysis, doc: &Text, position: Position) -> Option
     let pos = to_pos(doc, position);
     let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
     let sources = Sources::default();
-    let records = if is_command {
-        query::explain(analysis, &[name], true).ok()?.0
+    let mut records = if is_command {
+        query::explain(analysis, std::slice::from_ref(&name), true).ok()?.0
     } else {
-        query::run(analysis, Query::Occurrences, &Filter::Always)
+        let keys: Vec<Record> = query::run(analysis, Query::Occurrences, &Filter::Always)
             .into_iter()
             .filter(|r| {
                 r.get("key").and_then(Json::as_str) == Some(name.as_str())
-                    && r.get("kind").and_then(Json::as_str).is_some_and(|k| matches!(k, "label" | "bibitem" | "entry"))
+                    && r.get("kind").and_then(Json::as_str).is_some_and(|k| matches!(k, "label" | "bibitem" | "entry" | "key"))
             })
-            .collect()
+            .collect();
+        // An environment name is defined as a control sequence.
+        if keys.is_empty() { query::explain(analysis, std::slice::from_ref(&name), true).ok()?.0 } else { keys }
     };
+    // A key declared through a macro of the project has two places: the
+    // call in the file and the text the macro expanded to.
+    let expanded: Vec<Record> = records.iter().filter_map(|r| r.get("expanded").and_then(Json::as_object).cloned()).collect();
+    records.extend(expanded);
     let locations: Vec<Location> = records.iter().filter_map(|r| record_location(r, &sources)).collect();
     (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
 }
@@ -229,14 +240,45 @@ fn sites(analysis: &Analysis, name: &str, is_command: bool, declarations: bool) 
         .collect()
 }
 
+/// The sites of the name under the cursor that share its meaning: the
+/// definition the cursor is on or resolves to, and the calls that resolved
+/// to that same definition.  A redefinition or a same-named macro of another
+/// binding is left out.  Falls back to every site of the name when the cursor
+/// is on none of them.
+fn bound_sites(
+    analysis: &Analysis,
+    path: &str,
+    position: Position,
+    name: &str,
+    is_command: bool,
+    declarations: bool,
+) -> Vec<Record> {
+    let all = sites(analysis, name, is_command, declarations);
+    if !is_command {
+        return all;
+    }
+    let binding = |r: &Record| r.get("definition").or_else(|| r.get("node")).and_then(Json::as_u64);
+    let sources = Sources::default();
+    let here = (position.line, position.character);
+    let at_cursor = sites(analysis, name, is_command, true).into_iter().find_map(|r| {
+        let (p, range) = site_range(&r, &sources, name, is_command)?;
+        let inside = (range.start.line, range.start.character) <= here && here <= (range.end.line, range.end.character);
+        (p == path && inside).then(|| binding(&r)).flatten()
+    });
+    match at_cursor {
+        Some(id) => all.into_iter().filter(|r| binding(r) == Some(id)).collect(),
+        None => all,
+    }
+}
+
 /// `textDocument/references`: every expansion of a control sequence, or
 /// every occurrence of a label/citation/environment key, under the cursor.
-pub fn references(analysis: &Analysis, doc: &Text, position: Position, declarations: bool) -> Option<Vec<Location>> {
+pub fn references(analysis: &Analysis, doc: &Text, path: &str, position: Position, declarations: bool) -> Option<Vec<Location>> {
     let pos = to_pos(doc, position);
     let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
     let sources = Sources::default();
     let locations: Vec<Location> =
-        sites(analysis, &name, is_command, declarations).iter().filter_map(|r| record_location(r, &sources)).collect();
+        bound_sites(analysis, path, position, &name, is_command, declarations).iter().filter_map(|r| record_location(r, &sources)).collect();
     (!locations.is_empty()).then_some(locations)
 }
 
@@ -273,7 +315,7 @@ pub fn highlights(analysis: &Analysis, doc: &Text, path: &str, position: Positio
     let pos = to_pos(doc, position);
     let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
     let sources = Sources::default();
-    let out: Vec<DocumentHighlight> = sites(analysis, &name, is_command, true)
+    let out: Vec<DocumentHighlight> = bound_sites(analysis, path, position, &name, is_command, true)
         .iter()
         .filter_map(|r| site_range(r, &sources, &name, is_command))
         .filter(|(p, _)| p == path)
@@ -282,51 +324,32 @@ pub fn highlights(analysis: &Analysis, doc: &Text, path: &str, position: Positio
     (!out.is_empty()).then_some(out)
 }
 
-/// Every span a rename of the name under the cursor would touch.  `None`
-/// when a site lies in a file satex may not edit (a package, the kernel),
-/// since renaming only part of a name would break it.
-fn rename_sites(analysis: &Analysis, doc: &Text, position: Position) -> Option<(String, bool, Vec<(String, Range)>)> {
+/// The rename the name under the cursor asks for, against the files as
+/// they stand.
+fn rename_plan(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Result<crate::rename::Plan, String> {
     let pos = to_pos(doc, position);
-    let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
-    let sources = Sources::default();
-    let mut spans = Vec::new();
-    for record in sites(analysis, &name, is_command, true) {
-        let (path, range) = site_range(&record, &sources, &name, is_command)?;
-        if !crate::lint::fix::editable(analysis, &path) {
-            return None;
-        }
-        spans.push((path, range));
-    }
-    (!spans.is_empty()).then_some((name, is_command, spans))
+    let (name, is_command, col) = word_span(doc.line(pos.line), pos.col).ok_or("nothing renamable here")?;
+    crate::rename::plan(analysis, &Sources::default(), path, Pos::new(pos.line, col), &name, is_command)
 }
 
 /// `textDocument/prepareRename`: the span under the cursor and its name.
-pub fn prepare_rename(analysis: &Analysis, doc: &Text, position: Position) -> Option<PrepareRenameResponse> {
-    let (name, _, spans) = rename_sites(analysis, doc, position)?;
-    let range = spans.iter().map(|(_, r)| *r).find(|r| {
-        (r.start.line, r.start.character) <= (position.line, position.character)
-            && (position.line, position.character) <= (r.end.line, r.end.character)
-    })?;
-    Some(PrepareRenameResponse::RangeWithPlaceholder { range, placeholder: name })
+pub fn prepare_rename(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Option<PrepareRenameResponse> {
+    let plan = rename_plan(analysis, doc, path, position).ok()?;
+    let site = plan.at(path, to_pos(doc, position))?;
+    let range = Range { start: to_lsp(doc, site.start), end: to_lsp(doc, site.end) };
+    Some(PrepareRenameResponse::RangeWithPlaceholder { range, placeholder: plan.key.clone() })
 }
 
-/// `textDocument/rename`: every definition and use of the name, in every
-/// editable file, replaced by `new_name`.
-pub fn rename(analysis: &Analysis, doc: &Text, position: Position, new_name: &str) -> Result<WorkspaceEdit, String> {
-    let (_, is_command, spans) =
-        rename_sites(analysis, doc, position).ok_or("nothing renamable here, or a definition lies outside the project")?;
-    let new_name = if is_command { new_name.trim_start_matches('\\') } else { new_name };
-    let valid = if is_command {
-        !new_name.is_empty() && new_name.chars().all(|c| c.is_ascii_alphabetic() || c == '@')
-    } else {
-        !new_name.is_empty() && !new_name.chars().any(|c| c.is_whitespace() || matches!(c, '{' | '}' | ',' | '%' | '\\'))
-    };
-    if !valid {
-        return Err(format!("`{new_name}` is not a valid name here"));
-    }
+/// `textDocument/rename`: the name under the cursor, every name its
+/// declaration built with it, and every site that spells it.
+pub fn rename(analysis: &Analysis, doc: &Text, path: &str, position: Position, new_name: &str) -> Result<WorkspaceEdit, String> {
+    let plan = rename_plan(analysis, doc, path, position)?;
+    let sources = Sources::default();
     let mut changes: std::collections::HashMap<Uri, Vec<TextEdit>> = std::collections::HashMap::new();
-    for (path, range) in spans {
-        changes.entry(path_uri(&path)).or_default().push(TextEdit { range, new_text: new_name.to_string() });
+    for edit in crate::rename::edits(&plan, analysis, new_name)? {
+        let text = sources.get(&edit.path).ok_or_else(|| format!("{} cannot be read", edit.path))?;
+        let range = Range { start: to_lsp(&text, edit.start), end: to_lsp(&text, edit.end) };
+        changes.entry(path_uri(&edit.path)).or_default().push(TextEdit { range, new_text: edit.replacement });
     }
     Ok(WorkspaceEdit { changes: Some(changes), ..Default::default() })
 }
