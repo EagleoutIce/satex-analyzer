@@ -1,0 +1,49 @@
+#!/bin/sh
+# What should never reach a commit: conflict markers, a debugging `dbg!`, and
+# code rustfmt would rewrite.
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+# -z keeps a path with a space in it whole, which --name-only alone does not;
+# the newlines are only there so grep and read can work line by line.
+staged=$(git diff --cached --name-only --diff-filter=ACM -z | tr '\0' '\n')
+if [ -z "$staged" ]; then
+    exit 0
+fi
+
+# What `git grep --cached` reports for the paths read from stdin, one at a time
+# so a path with a space in it stays one pathspec.
+grep_staged() {
+    pattern=$1
+    while IFS= read -r file; do
+        [ -n "$file" ] || continue
+        git grep --cached -n -E "$pattern" -- "$file" || true
+    done
+}
+
+fail=0
+
+markers=$(printf '%s\n' "$staged" | grep_staged '^(<<<<<<< |>>>>>>> |=======$)')
+if [ -n "$markers" ]; then
+    echo "pre-commit: merge conflict markers are staged:" >&2
+    printf '%s\n' "$markers" >&2
+    fail=1
+fi
+
+rust=$(printf '%s\n' "$staged" | grep -E '\.rs$' || true)
+if [ -n "$rust" ]; then
+    debug=$(printf '%s\n' "$rust" | grep_staged '(^|[^a-zA-Z_])dbg!\(')
+    if [ -n "$debug" ]; then
+        echo "pre-commit: a debugging \`dbg!\` is staged:" >&2
+        printf '%s\n' "$debug" >&2
+        fail=1
+    fi
+    if ! cargo fmt --all --check >/dev/null 2>&1; then
+        echo "pre-commit: rustfmt would rewrite the tree; run \`cargo fmt --all\`" >&2
+        fail=1
+    fi
+fi
+
+exit $fail

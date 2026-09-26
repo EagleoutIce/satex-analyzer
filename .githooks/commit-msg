@@ -1,0 +1,11 @@
+#!/bin/sh
+# `git commit --no-verify` skips this.
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+if "$root/scripts/commit-msg-lint.sh" "$1"; then
+    exit 0
+fi
+
+printf '\nFix it with:\n\n  git commit --edit --file=%s\n\n' "$1" >&2
+exit 1

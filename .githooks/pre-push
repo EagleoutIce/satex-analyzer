@@ -1,0 +1,41 @@
+#!/bin/sh
+# The checks CI would fail on that run in seconds here: the messages of the
+# commits being pushed, the formatting, and clippy.  The tests are CI's job;
+# they take minutes.
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+# git feeds one `<local ref> <local sha> <remote ref> <remote sha>` line per ref
+# pushed, with an all-zero sha for a ref that is being deleted or created.
+all_zero() {
+    case "$1" in
+        *[!0]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+while read -r _ local_sha _ remote_sha; do
+    if all_zero "$local_sha"; then
+        continue
+    fi
+    if all_zero "$remote_sha"; then
+        # A new branch: the commits it carries that no remote has yet.
+        range=$(git rev-list --max-count=50 "$local_sha" --not --remotes)
+    else
+        range=$(git rev-list "$remote_sha..$local_sha")
+    fi
+    for commit in $range; do
+        if ! git log -1 --pretty=%B "$commit" | ./scripts/commit-msg-lint.sh -; then
+            echo "pre-push: $(git log -1 --pretty='%h %s' "$commit")" >&2
+            exit 1
+        fi
+    done
+done
+
+echo "pre-push: checking the formatting..."
+cargo fmt --all --check
+
+echo "pre-push: running clippy..."
+cargo clippy --locked --all-targets --all-features -- -D warnings
