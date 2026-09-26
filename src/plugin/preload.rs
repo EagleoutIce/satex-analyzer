@@ -39,10 +39,7 @@ pub fn from_command(command: &str) -> Option<String> {
 /// hand ends at `\dump` (The TeXbook, appendix A); a preamble with neither
 /// ends where the document body begins.
 pub fn dumped_part(text: &str) -> &str {
-    let end = ["\\endofdump", "\\dump", "\\begin{document}"]
-        .iter()
-        .filter_map(|marker| text.find(marker))
-        .min();
+    let end = ["\\endofdump", "\\dump", "\\begin{document}"].iter().filter_map(|marker| text.find(marker)).min();
     match end {
         Some(at) => &text[..at],
         None => text,
@@ -52,20 +49,14 @@ pub fn dumped_part(text: &str) -> &str {
 impl Preload {
     /// The format this run should start from: what the source asks for, else
     /// what the build configuration passes to the engine.
-    pub fn detect(
-        text: &str,
-        engine_command: Option<&str>,
-        base: &Path,
-        found: &super::Discovery,
-    ) -> Option<Preload> {
+    pub fn detect(text: &str, engine_command: Option<&str>, base: &Path, found: &super::Discovery) -> Option<Preload> {
         let (name, how) = match requested(text) {
             Some(name) => (name, "%& line"),
             None => (from_command(engine_command?)?, "build configuration"),
         };
         // The stock formats are what satex already interprets from
         // `latex.ltx`; only a format of the project's own needs its source.
-        if matches!(name.as_str(), "latex" | "pdflatex" | "lualatex" | "xelatex" | "tex" | "pdftex")
-        {
+        if matches!(name.as_str(), "latex" | "pdflatex" | "lualatex" | "xelatex" | "tex" | "pdftex") {
             return None;
         }
         // The dumped preamble is a file of the project named after the

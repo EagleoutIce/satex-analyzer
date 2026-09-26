@@ -157,25 +157,13 @@ fn fingerprint(analysis: &Analysis) -> Vec<String> {
                 }),
                 d.certain
             ) + " = "
-                + &d.mac.as_ref().map_or(String::new(), |m| {
-                    satex::tex::detokenize(&m.replacement_text, &analysis.interner)
-                })
+                + &d.mac
+                    .as_ref()
+                    .map_or(String::new(), |m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
         })
         .collect();
-    out.extend(
-        analysis
-            .facts
-            .occurrences
-            .iter()
-            .map(|o| format!("occ {} {}", o.kind.as_str(), o.key)),
-    );
-    out.extend(
-        analysis
-            .facts
-            .loads
-            .iter()
-            .map(|l| format!("load {} {}", l.kind.as_str(), l.name)),
-    );
+    out.extend(analysis.facts.occurrences.iter().map(|o| format!("occ {} {}", o.kind.as_str(), o.key)));
+    out.extend(analysis.facts.loads.iter().map(|l| format!("load {} {}", l.kind.as_str(), l.name)));
     out.sort();
     out
 }

@@ -192,18 +192,14 @@ impl Machine<'_> {
     /// § 410: `int_val` … `tok_val`), with `RegKind` naming the level.
     pub fn internal_level(&self, meaning: &Meaning) -> Option<RegKind> {
         let level = |kind: RegKind| match kind {
-            RegKind::Box | RegKind::Read | RegKind::Write | RegKind::Char | RegKind::MathChar => {
-                RegKind::Count
-            }
+            RegKind::Box | RegKind::Read | RegKind::Write | RegKind::Char | RegKind::MathChar => RegKind::Count,
             other => other,
         };
         match meaning {
             Meaning::Register(kind, _) => Some(level(*kind)),
             Meaning::Primitive(p) => match p {
                 Primitive::Register(kind) | Primitive::Expr(kind) => Some(level(*kind)),
-                Primitive::IntegerParameter
-                | Primitive::CatcodeAssign
-                | Primitive::CharCode(_) => Some(RegKind::Count),
+                Primitive::IntegerParameter | Primitive::CatcodeAssign | Primitive::CharCode(_) => Some(RegKind::Count),
                 Primitive::DimenParameter => Some(RegKind::Dimen),
                 other => Machine::extra_level(*other),
             },
@@ -231,7 +227,12 @@ impl Machine<'_> {
             matches!(self.env.meaning(sym), Meaning::Register(..))
                 || matches!(
                     self.env.meaning(sym).prim(),
-                    Some(Primitive::Register(_) | Primitive::IntegerParameter | Primitive::DimenParameter | Primitive::Expr(_))
+                    Some(
+                        Primitive::Register(_)
+                            | Primitive::IntegerParameter
+                            | Primitive::DimenParameter
+                            | Primitive::Expr(_)
+                    )
                 )
         });
         self.abs = None;
@@ -361,7 +362,8 @@ impl Machine<'_> {
     /// tex.web § 446: "Missing number, treated as zero".
     fn missing_number(&mut self, at: Option<Token>) -> Option<i64> {
         let span = at.map(|t| t.span).unwrap_or_default();
-        let seen = at.map_or_else(|| "the end of the input".into(), |t| crate::tex::detokenize(&[t], &self.out.interner));
+        let seen =
+            at.map_or_else(|| "the end of the input".into(), |t| crate::tex::detokenize(&[t], &self.out.interner));
         self.diagnose(
             crate::facts::Severity::Warning,
             "missing-number",
@@ -381,7 +383,7 @@ impl Machine<'_> {
         self.scanning_value(|m| m.scan_dimen_with(true, false, None).0)
     }
 
-        /// `scan_dimen(mu, inf, shortcut)`: with `shortcut` the integer part is
+    /// `scan_dimen(mu, inf, shortcut)`: with `shortcut` the integer part is
     /// already known.  Returns the value and, when `inf`, its order of
     /// infinity.
     fn scan_dimen_with(&mut self, mu: bool, inf: bool, shortcut: Option<Option<i64>>) -> (Option<Scaled>, u8) {
@@ -432,9 +434,7 @@ impl Machine<'_> {
                     }
                     None => {
                         let (mut integer, backed_up) = self.scan_int_from(token);
-                        if backed_up
-                            && let Some(point) = self.next_token()
-                        {
+                        if backed_up && let Some(point) = self.next_token() {
                             if matches!(point.tok, Tok::Chr('.' | ',', Catcode::Other)) {
                                 let digits = self.scan_fraction();
                                 fraction = digits.unwrap_or(0);
@@ -489,7 +489,9 @@ impl Machine<'_> {
     /// A token whose meaning is unknown: it may stand for any text.
     fn is_unknown(&mut self, token: Token) -> bool {
         let sym = token.cs().or_else(|| self.active_cs(token));
-        sym.is_some_and(|sym| sym == self.unknown_digits || sym == self.unknown_more || matches!(self.env.meaning(sym), Meaning::Unknown))
+        sym.is_some_and(|sym| {
+            sym == self.unknown_digits || sym == self.unknown_more || matches!(self.env.meaning(sym), Meaning::Unknown)
+        })
     }
 
     /// tex.web §§ 453-458: the ⟨unit of measure⟩, applied to
@@ -854,9 +856,9 @@ impl Machine<'_> {
                         Some(t) if t.is_char('/') && t.is_cat(Catcode::Other) => ExprOp::Div,
                         other => {
                             if let Some(t) = other {
-                                let relax = t.cs().is_some_and(|sym| {
-                                    matches!(self.env.meaning(sym).prim(), Some(Primitive::Relax))
-                                });
+                                let relax = t
+                                    .cs()
+                                    .is_some_and(|sym| matches!(self.env.meaning(sym).prim(), Some(Primitive::Relax)));
                                 let close = t.is_char(')') && t.is_cat(Catcode::Other);
                                 if stack.is_empty() {
                                     if !relax {
@@ -879,14 +881,20 @@ impl Machine<'_> {
                     let lv = level(l);
                     let limit = if lv == 0 || s > ExprOp::Sub { INFINITY } else { MAX_DIMEN };
                     let out = |x: i64| x.abs() > limit;
-                    if out(f.width) || (lv >= 2 && s <= ExprOp::Sub && (out(f.stretch.amount) || out(f.shrink.amount))) {
+                    if out(f.width) || (lv >= 2 && s <= ExprOp::Sub && (out(f.stretch.amount) || out(f.shrink.amount)))
+                    {
                         arith = true;
                         f = zero;
                     }
                     fa = settle(
-                        Num::lift(&[&fa], members, unbounded(), false, |v| (v[0].abs() <= limit).then_some(v[0]), |v| {
-                            (v[0].abs() <= limit).then_some(v[0])
-                        }),
+                        Num::lift(
+                            &[&fa],
+                            members,
+                            unbounded(),
+                            false,
+                            |v| (v[0].abs() <= limit).then_some(v[0]),
+                            |v| (v[0].abs() <= limit).then_some(v[0]),
+                        ),
                         members,
                         &mut err,
                     );
@@ -915,21 +923,38 @@ impl Machine<'_> {
                         }
                         ExprOp::Mult => {
                             t = each(t, &mut |x| num_error(mult_and_add(x, f.width, 0, max)));
-                            let lifted = Num::lift(&[&ta, &fa], members, (-max, max), false, |v| mult_and_add(v[0], v[1], 0, max), |v| {
-                                Some(v[0] * v[1])
-                            });
+                            let lifted = Num::lift(
+                                &[&ta, &fa],
+                                members,
+                                (-max, max),
+                                false,
+                                |v| mult_and_add(v[0], v[1], 0, max),
+                                |v| Some(v[0] * v[1]),
+                            );
                             ta = settle(lifted, members, &mut err);
                         }
                         ExprOp::Div => {
                             t = each(t, &mut |x| num_error(quotient(x, f.width)));
-                            let lifted = Num::lift(&[&ta, &fa], members, unbounded(), false, |v| quotient(v[0], v[1]), |v| quotient(v[0], v[1]));
+                            let lifted = Num::lift(
+                                &[&ta, &fa],
+                                members,
+                                unbounded(),
+                                false,
+                                |v| quotient(v[0], v[1]),
+                                |v| quotient(v[0], v[1]),
+                            );
                             ta = settle(lifted, members, &mut err);
                         }
                         ExprOp::Scale => {
                             t = each(t, &mut |x| num_error(fract(x, n, f.width, max)));
-                            let lifted = Num::lift(&[&ta, &na, &fa], members, (-max, max), false, |v| fract(v[0], v[1], v[2], max), |v| {
-                                fract_ideal(v[0], v[1], v[2])
-                            });
+                            let lifted = Num::lift(
+                                &[&ta, &na, &fa],
+                                members,
+                                (-max, max),
+                                false,
+                                |v| fract(v[0], v[1], v[2], max),
+                                |v| fract_ideal(v[0], v[1], v[2]),
+                            );
                             ta = settle(lifted, members, &mut err);
                         }
                         ExprOp::Add | ExprOp::Sub => {}
@@ -946,9 +971,14 @@ impl Machine<'_> {
                         } else {
                             let max = if lv == 0 { INFINITY } else { MAX_DIMEN };
                             e.width = num_error(add_or_sub(e.width, t.width, max, sub));
-                            let lifted = Num::lift(&[&ea, &ta], members, (-max, max), false, |v| add_or_sub(v[0], v[1], max, sub), |v| {
-                                Some(if sub { v[0] - v[1] } else { v[0] + v[1] })
-                            });
+                            let lifted = Num::lift(
+                                &[&ea, &ta],
+                                members,
+                                (-max, max),
+                                false,
+                                |v| add_or_sub(v[0], v[1], max, sub),
+                                |v| Some(if sub { v[0] - v[1] } else { v[0] + v[1] }),
+                            );
                             ea = settle(lifted, members, &mut err);
                             if lv >= 2 {
                                 // e-TeX's quirk: a higher order replaces a
@@ -977,7 +1007,12 @@ impl Machine<'_> {
             }
         };
         if arith && !unknown {
-            self.diagnose(crate::facts::Severity::Warning, "arithmetic-overflow", Span::default(), "arithmetic overflow".into());
+            self.diagnose(
+                crate::facts::Severity::Warning,
+                "arithmetic-overflow",
+                Span::default(),
+                "arithmetic overflow".into(),
+            );
         }
         let dimen = match kind {
             RegKind::Count => false,
@@ -1002,7 +1037,8 @@ mod tests {
     use super::*;
     use crate::value::{WORD_MAX, WORD_MIN, mult_and_add, wrap, x_over_n};
 
-    const EDGES: [i64; 14] = [0, 1, -1, 7, -7, 1 << 15, 46341, 65536, MAX_DIMEN, -MAX_DIMEN, WORD_MAX, WORD_MIN, WORD_MIN + 1, 1 << 30];
+    const EDGES: [i64; 14] =
+        [0, 1, -1, 7, -7, 1 << 15, 46341, 65536, MAX_DIMEN, -MAX_DIMEN, WORD_MAX, WORD_MIN, WORD_MIN + 1, 1 << 30];
 
     /// Intervals around TeX's edge values, as ranges and as sets.
     fn boxes() -> Vec<(Num, Vec<i64>)> {
@@ -1024,7 +1060,8 @@ mod tests {
     fn sound(args: &[&(Num, Vec<i64>)], got: &(Option<Num>, bool), exact: &dyn Fn(&[i64]) -> Option<i64>) {
         let mut combos = vec![Vec::new()];
         for (_, xs) in args {
-            combos = combos.iter().flat_map(|c: &Vec<i64>| xs.iter().map(move |&x| [c.clone(), vec![x]].concat())).collect();
+            combos =
+                combos.iter().flat_map(|c: &Vec<i64>| xs.iter().map(move |&x| [c.clone(), vec![x]].concat())).collect();
         }
         for c in combos {
             match exact(&c) {
@@ -1044,7 +1081,10 @@ mod tests {
         for a in &bs {
             for b in &bs {
                 let two = [a, b];
-                let lift2 = |range, wrap_: bool, exact: &dyn Fn(&[i64]) -> Option<i64>, ideal: &dyn Fn(&[i64]) -> Option<i64>| {
+                let lift2 = |range,
+                             wrap_: bool,
+                             exact: &dyn Fn(&[i64]) -> Option<i64>,
+                             ideal: &dyn Fn(&[i64]) -> Option<i64>| {
                     let got = Num::lift(&[&a.0, &b.0], 64, range, wrap_, exact, ideal);
                     sound(&two, &got, exact);
                 };
@@ -1072,7 +1112,9 @@ mod tests {
             for b in &few {
                 for d in &few {
                     let exact = |v: &[i64]| fract(v[0], v[1], v[2], MAX_DIMEN);
-                    let got = Num::lift(&[&a.0, &b.0, &d.0], 64, (-MAX_DIMEN, MAX_DIMEN), false, exact, |v| fract_ideal(v[0], v[1], v[2]));
+                    let got = Num::lift(&[&a.0, &b.0, &d.0], 64, (-MAX_DIMEN, MAX_DIMEN), false, exact, |v| {
+                        fract_ideal(v[0], v[1], v[2])
+                    });
                     sound(&[a, b, d], &got, &exact);
                 }
             }

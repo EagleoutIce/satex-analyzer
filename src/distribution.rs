@@ -9,16 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::format::{default_cache_dir, digest, stamp};
 use crate::plugin::{Platform, Provider};
 
-const TEXMF_VARIABLES: [&str; 8] = [
-    "TEXMFHOME",
-    "TEXMFCONFIG",
-    "TEXMFVAR",
-    "TEXMFLOCAL",
-    "TEXMFSYSCONFIG",
-    "TEXMFSYSVAR",
-    "TEXMFDIST",
-    "TEXMFMAIN",
-];
+const TEXMF_VARIABLES: [&str; 8] =
+    ["TEXMFHOME", "TEXMFCONFIG", "TEXMFVAR", "TEXMFLOCAL", "TEXMFSYSCONFIG", "TEXMFSYSVAR", "TEXMFDIST", "TEXMFMAIN"];
 
 /// How the TeX installation's roots were found: configured in `satex.yaml`,
 /// reported by `kpsewhich`, guessed at a well-known path, or not found at
@@ -116,19 +108,13 @@ impl Trees {
 /// the roots [`discover`] would pick, cheap enough for `satex --version` to
 /// call on every run.
 pub fn locate(request: &Request) -> (Vec<PathBuf>, Discovery) {
-    let cache = request
-        .cache
-        .then(|| request.cache_dir.clone().or_else(default_cache_dir))
-        .flatten();
+    let cache = request.cache.then(|| request.cache_dir.clone().or_else(default_cache_dir)).flatten();
     roots_for(request, cache.as_deref())
 }
 
 /// Find the trees for `request`, reusing the index when the roots repeat.
 pub fn discover(request: &Request) -> Trees {
-    let cache = request
-        .cache
-        .then(|| request.cache_dir.clone().or_else(default_cache_dir))
-        .flatten();
+    let cache = request.cache.then(|| request.cache_dir.clone().or_else(default_cache_dir)).flatten();
     let (roots, discovery) = roots_for(request, cache.as_deref());
     let (index, index_cached) = index_for(&roots, cache.as_deref());
     let index_cache = cache.as_deref().map(|dir| index_cache_file(dir, &roots));
@@ -164,7 +150,8 @@ fn roots_for(request: &Request, cache: Option<&Path>) -> Roots {
         }
     }
     if request.use_kpsewhich
-        && let Some(provider) = request.provider {
+        && let Some(provider) = request.provider
+    {
         let roots = kpse_roots(provider.locator(), cache, &request.kpse_env);
         if !roots.is_empty() {
             return (roots, Discovery::Kpsewhich);
@@ -181,9 +168,10 @@ fn roots_for(request: &Request, cache: Option<&Path>) -> Roots {
 fn fallback_roots(year: Option<u32>, platform: Platform) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(personal) = platform.home_tree()
-        && personal.is_dir() {
-            roots.push(personal);
-        }
+        && personal.is_dir()
+    {
+        roots.push(personal);
+    }
     for pattern in platform.roots() {
         let Ok(matches) = glob::glob(pattern) else { continue };
         // A pattern matches one directory per installed version: the wanted
@@ -229,8 +217,7 @@ struct CachedIndex {
 const INDEX_VERSION: u32 = 1;
 
 fn index_cache_file(dir: &Path, roots: &[PathBuf]) -> PathBuf {
-    let joined: Vec<u8> =
-        roots.iter().flat_map(|r| r.as_os_str().as_encoded_bytes().to_vec()).collect();
+    let joined: Vec<u8> = roots.iter().flat_map(|r| r.as_os_str().as_encoded_bytes().to_vec()).collect();
     let tree = roots.first().map_or_else(|| "tree".to_string(), |r| crate::format::tree_name(r));
     dir.join(format!("index-{tree}-v{INDEX_VERSION}-{:08x}.postcard", digest(&joined)))
 }
@@ -274,15 +261,17 @@ fn write_cached_index(dir: &Path, roots: &[PathBuf], index: &HashMap<String, Pat
 /// runs: indexing a full TeX Live is far more work than reading it back.
 fn index_for(roots: &[PathBuf], cache: Option<&Path>) -> (Index, bool) {
     if let Ok(entries) = cache_entries().lock()
-        && let Some((_, index)) = entries.iter().find(|(known, _)| known == roots) {
-            return (index.clone(), true);
-        }
+        && let Some((_, index)) = entries.iter().find(|(known, _)| known == roots)
+    {
+        return (index.clone(), true);
+    }
     if let Some(dir) = cache
-        && let Some(index) = read_cached_index(dir, roots) {
-            let index: Index = Arc::new(index);
-            remember(cache_entries(), roots, &index);
-            return (index, true);
-        }
+        && let Some(index) = read_cached_index(dir, roots)
+    {
+        let index: Index = Arc::new(index);
+        remember(cache_entries(), roots, &index);
+        return (index, true);
+    }
     let mut index = HashMap::new();
     // Later roots must not shadow earlier ones, so they are read in order and
     // only fill in names that are still missing.
@@ -469,9 +458,7 @@ pub(crate) fn probed(
         return probe.answer;
     }
     let answer = ask();
-    if let (Some(file), Some((path, (size, modified))), false) =
-        (&file, &stamped, answer.is_empty())
-    {
+    if let (Some(file), Some((path, (size, modified))), false) = (&file, &stamped, answer.is_empty()) {
         let probe = CachedProbe {
             version: PROBE_VERSION,
             program: path.display().to_string(),

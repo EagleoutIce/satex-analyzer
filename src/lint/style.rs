@@ -2,11 +2,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::builtins::{OccKind, Primitive};
 use crate::facts::CsnameRole;
+use crate::lint::fix::{Applicability, Fix};
+use crate::lint::shared::labels;
+use crate::lint::{Category, Report, Rule, Severity};
 use crate::machine::Analysis;
 use crate::mode::Modes;
-use crate::lint::fix::{Applicability, Fix};
-use crate::lint::{Category, Report, Rule, Severity};
-use crate::lint::shared::labels;
 use crate::tex::{Span, Sym, Tok, Token};
 
 pub static RULES: &[Rule] = &[
@@ -128,7 +128,10 @@ fn stray_space(report: &mut Report) {
     let defs: Vec<_> = analysis.facts.defs.clone();
     for def in defs {
         let Some(mac) = def.mac.clone() else { continue };
-        if def.package.is_some() || !used.contains(&def.name) || !crate::lint::shared::written_definition(analysis, &def) {
+        if def.package.is_some()
+            || !used.contains(&def.name)
+            || !crate::lint::shared::written_definition(analysis, &def)
+        {
             continue;
         }
         let body = &mac.replacement_text;
@@ -161,13 +164,8 @@ fn stray_space(report: &mut Report) {
 
 fn unused_label(report: &mut Report) {
     let analysis = report.analysis;
-    let referenced: BTreeSet<&str> = analysis
-        .facts
-        .occurrences
-        .iter()
-        .filter(|o| o.kind == OccKind::Ref)
-        .map(|o| o.key.as_str())
-        .collect();
+    let referenced: BTreeSet<&str> =
+        analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Ref).map(|o| o.key.as_str()).collect();
     let unused: Vec<(Span, String)> = labels(analysis)
         .into_iter()
         .filter(|(key, _)| !referenced.contains(key))
@@ -312,10 +310,8 @@ fn csname_alternative(analysis: &Analysis, role: CsnameRole) -> (&'static str, O
         CsnameRole::LetTo => ("lets a control sequence to one named by text", &["letcs"]),
         CsnameRole::Test => ("tests whether a control sequence is undefined", &["ifcsundef", "@ifundefined"]),
     };
-    let found = candidates
-        .iter()
-        .filter_map(|name| analysis.interner.lookup(name))
-        .find(|sym| analysis.env.is_defined(*sym));
+    let found =
+        candidates.iter().filter_map(|name| analysis.interner.lookup(name)).find(|sym| analysis.env.is_defined(*sym));
     (purpose, found)
 }
 
@@ -350,8 +346,7 @@ fn unused_definition(report: &mut Report) {
     let used: BTreeSet<Sym> = analysis.facts.expansions.iter().map(|e| e.name).collect();
     let defs: Vec<_> = analysis.facts.defs.clone();
     let rule = &analysis.settings.lints.unused_definition;
-    let ignore: Vec<regex::Regex> =
-        rule.ignore.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
+    let ignore: Vec<regex::Regex> = rule.ignore.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
     // A name one call defines for another it defines, whose text calls it
     // (ltcmd's `\fd code`, `\newcommand`'s `\\fe`), is that name's
     // implementation: the other is the one reported.
@@ -373,7 +368,10 @@ fn unused_definition(report: &mut Report) {
             continue;
         }
         let name = report.cs(def.name);
-        if (!rule.pgf_keys && is_pgf_key(&name)) || (!rule.report_public && !looks_private(&name)) || ignore.iter().any(|re| re.is_match(&name)) {
+        if (!rule.pgf_keys && is_pgf_key(&name))
+            || (!rule.report_public && !looks_private(&name))
+            || ignore.iter().any(|re| re.is_match(&name))
+        {
             continue;
         }
         let edits = report.edits().delete_definition(def);
@@ -385,7 +383,6 @@ fn unused_definition(report: &mut Report) {
         );
     }
 }
-
 
 fn dead_definition(report: &mut Report) {
     let analysis = report.analysis;

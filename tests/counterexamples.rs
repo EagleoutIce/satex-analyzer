@@ -47,7 +47,6 @@ fn last_body(analysis: &Analysis, name: &str) -> String {
         .unwrap_or_default()
 }
 
-
 /// tex.web §§ 461-475: a `\skip` register's value is a ⟨glue⟩, scanned
 /// without needing braces. `pdftex`: `\the\skip0` after
 /// `\skip0=1pt plus 2pt` is `1.0pt plus 2.0pt`.
@@ -61,9 +60,7 @@ fn unbraced_skip_register_is_scanned_as_glue() {
 /// assignment is complete. `pdftex`: `\seen` ends up `5`.
 #[test]
 fn afterassignment_runs_after_the_assignment_completes() {
-    let analysis = analyze(
-        r"\count0=0 \def\mark{\xdef\seen{\the\count0}} \afterassignment\mark\count0=5",
-    );
+    let analysis = analyze(r"\count0=0 \def\mark{\xdef\seen{\the\count0}} \afterassignment\mark\count0=5");
     assert_eq!(body(&analysis, "seen"), "5");
 }
 
@@ -108,8 +105,7 @@ fn uppercase_is_not_expandable_inside_edef() {
 #[ignore = "interleaved \\edef scanning conflicts with analyzing both arms of \
             an undecided conditional"]
 fn par_is_forbidden_in_a_non_long_macro_argument() {
-    let analysis =
-        analyze(r"\def\eat#1{GOT:[#1]}\edef\result{\eat{a\par b}}");
+    let analysis = analyze(r"\def\eat#1{GOT:[#1]}\edef\result{\eat{a\par b}}");
     assert_eq!(body(&analysis, "result"), r"\par b");
 }
 
@@ -128,8 +124,7 @@ fn count_register_arithmetic_wraps_at_32_bits() {
 /// `\meaning\altTilde` read `macro:->TILDE`.
 #[test]
 fn let_of_an_active_character_copies_its_bound_meaning() {
-    let analysis =
-        analyze(r"\catcode`\~=13 \def~{TILDE} \let\altTilde~ \edef\altmeaning{\meaning\altTilde}");
+    let analysis = analyze(r"\catcode`\~=13 \def~{TILDE} \let\altTilde~ \edef\altmeaning{\meaning\altTilde}");
     assert_eq!(body(&analysis, "altmeaning"), "macro:->TILDE");
 }
 
@@ -143,14 +138,12 @@ fn meaning_of_a_letter_says_the_letter() {
     assert_eq!(body(&analysis, "am"), "the letter X");
 }
 
-
 /// tex.web § 367: `\expandafter t1 t2` expands `t2` exactly one step and
 /// reinserts `t1`; chained `\expandafter`s nest that rule recursively, so
 /// only the token right after the *last* `\expandafter` gets expanded.
 #[test]
 fn expandafter_chain_expands_only_the_last_token() {
-    let analysis =
-        analyze(r"\def\a{A}\def\b{B}\expandafter\def\expandafter\c\expandafter{\a\b}");
+    let analysis = analyze(r"\def\a{A}\def\b{B}\expandafter\def\expandafter\c\expandafter{\a\b}");
     assert_eq!(body(&analysis, "c"), "A\\b ");
 }
 
@@ -178,8 +171,7 @@ fn let_skips_the_optional_equals_and_space() {
 /// arm, so the `\else` branch runs.
 #[test]
 fn ifcase_with_a_negative_selector_runs_the_else_branch() {
-    let analysis =
-        analyze(r"\ifcase-1 \def\seen{A}\or\def\seen{B}\else\def\seen{C}\fi");
+    let analysis = analyze(r"\ifcase-1 \def\seen{A}\or\def\seen{B}\else\def\seen{C}\fi");
     assert_eq!(body(&analysis, "seen"), "C");
 }
 
@@ -197,9 +189,7 @@ fn csname_builds_its_name_from_expansion() {
 /// register (pdftex -ini confirms `\newcount` is undefined without a format).
 #[test]
 fn global_register_assignment_survives_its_group() {
-    let analysis = analyze(
-        r"\countdef\mycount=5 \mycount=0 {\global\mycount=5 } \edef\v{\the\mycount}",
-    );
+    let analysis = analyze(r"\countdef\mycount=5 \mycount=0 {\global\mycount=5 } \edef\v{\the\mycount}");
     assert_eq!(body(&analysis, "v"), "5");
 }
 
@@ -224,8 +214,7 @@ fn the_of_a_toks_register_is_verbatim() {
 /// eTeX manual § 3.2: `\unless\ifnum...` negates the conditional's result.
 #[test]
 fn unless_negates_the_following_conditional() {
-    let analysis =
-        analyze(r"\unless\ifnum1>2 \def\seen{A}\else\def\seen{B}\fi");
+    let analysis = analyze(r"\unless\ifnum1>2 \def\seen{A}\else\def\seen{B}\fi");
     assert_eq!(body(&analysis, "seen"), "A");
 }
 
@@ -498,10 +487,16 @@ fn expansion_and_conditionals_agree_with_the_engine() {
     agrees(&[
         (r"\def\a{A}\def\b{B}\edef\v{\noexpand\a\noexpand\b}", "\\a \\b "),
         (r"\def\a{A}\def\b{B}\edef\v{\string\a\noexpand\b}", "\\a\\b "),
-        (r"\def\a{A}\def\b{B}\expandafter\expandafter\expandafter\def\expandafter\expandafter\expandafter\v\expandafter\expandafter\expandafter{\a\b}", "A\\b "),
+        (
+            r"\def\a{A}\def\b{B}\expandafter\expandafter\expandafter\def\expandafter\expandafter\expandafter\v\expandafter\expandafter\expandafter{\a\b}",
+            "A\\b ",
+        ),
         (r"\def\name{foo}\expandafter\def\csname\name\endcsname{BAR}\edef\v{\meaning\foo}", "macro:->BAR"),
         (r"\expandafter\let\csname qq\endcsname=\relax \edef\v{\meaning\qq}", "\\relax"),
-        (r"\def\name{foo}\expandafter\def\csname\name\endcsname{BAR}\edef\v{[\ifcsname foo\endcsname Y\else N\fi][\ifcsname zzz\endcsname Y\else N\fi]}", "[Y][N]"),
+        (
+            r"\def\name{foo}\expandafter\def\csname\name\endcsname{BAR}\edef\v{[\ifcsname foo\endcsname Y\else N\fi][\ifcsname zzz\endcsname Y\else N\fi]}",
+            "[Y][N]",
+        ),
         (r"\edef\v{[\ifnum1<2 \ifnum2<3 AA\else AB\fi\else B\fi]}", "[AA]"),
         (r"\edef\v{[\iftrue\iffalse A\else B\fi\else C\fi]}", "[B]"),
         (r"\edef\v{[\ifcase2 z\or o\or t\or th\else e\fi]}", "[t]"),
@@ -549,9 +544,8 @@ fn document(source: &str) -> Analysis {
 
 /// The findings for the document itself, as `code name` pairs.
 fn findings(analysis: &Analysis) -> Vec<String> {
-    let field = |f: &satex::query::Record, key: &str| {
-        f.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string()
-    };
+    let field =
+        |f: &satex::query::Record, key: &str| f.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string();
     satex::lint::lint(analysis)
         .iter()
         .filter(|f| field(f, "origin") == "document")

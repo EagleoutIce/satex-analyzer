@@ -56,11 +56,7 @@ impl DeppConfig {
     }
 }
 
-fn package_of(
-    path: &str,
-    rules: &[regex::Regex],
-    renames: &BTreeMap<String, String>,
-) -> Option<String> {
+fn package_of(path: &str, rules: &[regex::Regex], renames: &BTreeMap<String, String>) -> Option<String> {
     let path = path.replace('\\', "/");
     let dir = Path::new(&path).parent()?.to_str()?.to_string();
     let found = rules.iter().find_map(|rule| {
@@ -171,10 +167,8 @@ impl Depp {
             }
         }
 
-        let base = Path::new(analysis.file_name(analysis.main_file))
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_default();
+        let base =
+            Path::new(analysis.file_name(analysis.main_file)).parent().map(Path::to_path_buf).unwrap_or_default();
         let jobname = Path::new(analysis.file_name(analysis.main_file))
             .file_stem()
             .and_then(|s| s.to_str())
@@ -203,10 +197,7 @@ impl Depp {
         if self.file.is_none() {
             return Vec::new();
         }
-        self.needed
-            .iter()
-            .filter(|n| !self.declared.iter().any(|d| d.package == n.package))
-            .collect()
+        self.needed.iter().filter(|n| !self.declared.iter().any(|d| d.package == n.package)).collect()
     }
 
     /// In the dependency file, and nothing the run reads comes from it.

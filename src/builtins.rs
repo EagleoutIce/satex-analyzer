@@ -169,13 +169,28 @@ impl XeQuery {
     pub fn operands(self) -> (bool, usize, bool) {
         use XeQuery as Q;
         match self {
-            Q::FontType | Q::FirstFontChar | Q::LastFontChar | Q::CountGlyphs | Q::CountVariations
-            | Q::CountFeatures | Q::OtCountScripts => (true, 0, false),
-            Q::Variation | Q::VariationMin | Q::VariationMax | Q::VariationDefault | Q::FeatureCode
-            | Q::CountSelectors | Q::IsExclusiveFeature | Q::OtCountLanguages | Q::OtScriptTag
-            | Q::VariationName | Q::FeatureName | Q::GlyphName => (true, 1, false),
-            Q::SelectorCode | Q::IsDefaultSelector | Q::OtCountFeatures | Q::OtLanguageTag
-            | Q::SelectorName => (true, 2, false),
+            Q::FontType
+            | Q::FirstFontChar
+            | Q::LastFontChar
+            | Q::CountGlyphs
+            | Q::CountVariations
+            | Q::CountFeatures
+            | Q::OtCountScripts => (true, 0, false),
+            Q::Variation
+            | Q::VariationMin
+            | Q::VariationMax
+            | Q::VariationDefault
+            | Q::FeatureCode
+            | Q::CountSelectors
+            | Q::IsExclusiveFeature
+            | Q::OtCountLanguages
+            | Q::OtScriptTag
+            | Q::VariationName
+            | Q::FeatureName
+            | Q::GlyphName => (true, 1, false),
+            Q::SelectorCode | Q::IsDefaultSelector | Q::OtCountFeatures | Q::OtLanguageTag | Q::SelectorName => {
+                (true, 2, false)
+            }
             Q::OtFeatureTag => (true, 3, false),
             Q::FindVariationByName | Q::FindFeatureByName => (true, 0, true),
             Q::FindSelectorByName => (true, 1, true),
@@ -189,10 +204,19 @@ impl XeQuery {
     pub fn tfm_answer(self) -> i64 {
         use XeQuery as Q;
         match self {
-            Q::FeatureCode | Q::CountSelectors | Q::SelectorCode | Q::IsExclusiveFeature
-            | Q::IsDefaultSelector | Q::FindVariationByName | Q::FindFeatureByName
-            | Q::FindSelectorByName | Q::OtCountLanguages | Q::OtCountFeatures | Q::OtScriptTag
-            | Q::OtLanguageTag | Q::OtFeatureTag => -1,
+            Q::FeatureCode
+            | Q::CountSelectors
+            | Q::SelectorCode
+            | Q::IsExclusiveFeature
+            | Q::IsDefaultSelector
+            | Q::FindVariationByName
+            | Q::FindFeatureByName
+            | Q::FindSelectorByName
+            | Q::OtCountLanguages
+            | Q::OtCountFeatures
+            | Q::OtScriptTag
+            | Q::OtLanguageTag
+            | Q::OtFeatureTag => -1,
             _ => 0,
         }
     }
@@ -245,7 +269,9 @@ pub enum Syntax {
     Dimen,
     /// `\abovewithdelims` and relatives: two delimiters, then for
     /// `\abovewithdelims` a dimension (tex.web § 1178).
-    Delimiters { dimen: bool },
+    Delimiters {
+        dimen: bool,
+    },
     /// `\batchmode` … `\errorstopmode`: they set `\interactionmode`
     /// (tex.web § 1264).
     Interaction(u8),
@@ -275,7 +301,9 @@ pub enum Syntax {
     /// `\textfont⟨number⟩⟨optional =⟩⟨font⟩` (tex.web § 1234).
     FamilyFont,
     /// `\letterspacefont⟨cs⟩⟨font⟩⟨number⟩`, `\pdfcopyfont⟨cs⟩⟨font⟩`.
-    CopyFont { amount: bool },
+    CopyFont {
+        amount: bool,
+    },
     /// `\pdffontexpand⟨font⟩⟨stretch⟩⟨shrink⟩⟨step⟩[autoexpand]`.
     FontExpand,
     /// `\readline⟨number⟩to⟨cs⟩` (etex_man § 3.2).
@@ -295,7 +323,9 @@ pub enum Syntax {
     /// XeTeX's `\XeTeXlinebreaklocale⟨file name⟩` and relatives.
     FileName,
     /// `\Umathchardef⟨cs⟩=⟨class⟩⟨family⟩⟨slot⟩`, `\Umathcharnumdef⟨cs⟩=⟨n⟩`.
-    UMathCharDef { num: bool },
+    UMathCharDef {
+        num: bool,
+    },
     /// This many numbers.
     Numbers(u8),
     /// LuaTeX's `\setfontid⟨number⟩`: selects the font of that number.
@@ -354,7 +384,9 @@ pub enum Convert {
     Xetex(XeQuery),
     /// `\Uchar⟨number⟩`: the character, of category 12 (10 for a space);
     /// XeTeX's `\Ucharcat⟨number⟩⟨number⟩`: of the category given.
-    Uchar { catcode: bool },
+    Uchar {
+        catcode: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
@@ -645,8 +677,14 @@ pub enum Typeset {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum Primitive {
-    Def { global: bool, expand: bool },
-    Let { global: bool, future: bool },
+    Def {
+        global: bool,
+        expand: bool,
+    },
+    Let {
+        global: bool,
+        future: bool,
+    },
     Prefix(Prefix),
 
     ExpandAfter,
@@ -657,7 +695,10 @@ pub enum Primitive {
     /// satex's own marker where skipping for a conditional begun in another
     /// file reached this file's text: the path that skips on as TeX does,
     /// `nested` levels deep, and the one that ended the skip there.
-    SkipCrossing { nested: u8, to_fi: bool },
+    SkipCrossing {
+        nested: u8,
+        to_fi: bool,
+    },
     Csname,
     /// LuaTeX's `\begincsname`: `\csname` that leaves an undefined name
     /// undefined and expands to nothing then.
@@ -676,7 +717,9 @@ pub enum Primitive {
     /// under the category codes now in force (eTeX manual § 3.9).
     /// LuaTeX's `\scantextokens` (`text`) appends no `\endlinechar` to the
     /// last line and no `\everyeof` (LuaTeX manual, "\scantextokens").
-    ScanTokens { text: bool },
+    ScanTokens {
+        text: bool,
+    },
     /// `\use:n` and its relatives: read that many arguments and leave them in
     /// the input, where the expansion carries on over them (interface3,
     /// "Selecting tokens").
@@ -719,10 +762,11 @@ pub enum Primitive {
     Load(LoadKind),
     Endinput,
 
-
     End,
 
-    Message { error: bool },
+    Message {
+        error: bool,
+    },
     /// `\write⟨number⟩{…}`; stream 18 is the shell (TeX Live, "Shell escape").
     Write,
     /// `\numexpr`, `\dimexpr`, `\glueexpr`, `\muexpr` (eTeX manual § 3.5).
@@ -759,7 +803,9 @@ pub enum Primitive {
     AlignMark,
     AlignTab,
     /// TeX's glue, muglue and token-list parameters (tex.web §§ 224, 230).
-    GlueParameter { mu: bool },
+    GlueParameter {
+        mu: bool,
+    },
     TokensParameter,
     LastItem(LastItem),
     Special(Special),
@@ -767,7 +813,10 @@ pub enum Primitive {
     /// A control sequence Lua defined with `token.set_lua`: it calls
     /// function `id` of `lua.get_functions_table()`; `protected` ones are
     /// not expanded.
-    LuaCall { id: u32, protected: bool },
+    LuaCall {
+        id: u32,
+        protected: bool,
+    },
     /// A font identifier (tex.web § 1257): the font it selects, numbered in
     /// the order the fonts were loaded, `\nullfont` being 0.
     FontIdent(u32),
@@ -922,9 +971,7 @@ pub fn takes(p: Primitive) -> (u8, Option<u8>) {
         P::Def { .. } => (2, None),
         P::Let { .. } => (2, Some(2)),
         P::Message { .. } => (1, Some(1)),
-        P::Write | P::Expr(_) | P::Lua(LuaOp::Direct | LuaOp::Late | LuaOp::Escape) => {
-            (1, Some(1))
-        }
+        P::Write | P::Expr(_) | P::Lua(LuaOp::Direct | LuaOp::Late | LuaOp::Escape) => (1, Some(1)),
         P::Docstrip(DocstripOp::Generate | DocstripOp::UseDir | DocstripOp::BatchInput) => (1, Some(1)),
         P::Docstrip(DocstripOp::GenerateFile) => (3, Some(3)),
         P::Docstrip(DocstripOp::Setting { arguments }) => (arguments, Some(arguments)),
@@ -965,10 +1012,7 @@ pub fn gullet(p: Primitive) -> bool {
 /// models: the kernel is free to redefine the former, as latex.ltx does
 /// `\end`, and satex must not put it back.
 pub fn engine_primitive(p: Primitive) -> bool {
-    matches!(
-        reference(p),
-        "tex.web" | "The TeXbook, chapter 20" | "The eTeX manual" | "The LuaTeX reference manual"
-    )
+    matches!(reference(p), "tex.web" | "The TeXbook, chapter 20" | "The eTeX manual" | "The LuaTeX reference manual")
 }
 
 pub fn expandable(p: Primitive) -> bool {
@@ -1147,14 +1191,22 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "unless", P::Unless);
 
     for (n, k) in [
-        ("count", RegKind::Count), ("dimen", RegKind::Dimen), ("skip", RegKind::Skip),
-        ("muskip", RegKind::MuSkip), ("toks", RegKind::Toks), ("box", RegKind::Box),
+        ("count", RegKind::Count),
+        ("dimen", RegKind::Dimen),
+        ("skip", RegKind::Skip),
+        ("muskip", RegKind::MuSkip),
+        ("toks", RegKind::Toks),
+        ("box", RegKind::Box),
     ] {
         put(it, n, P::Register(k));
     }
     for (n, k) in [
-        ("countdef", RegKind::Count), ("dimendef", RegKind::Dimen), ("skipdef", RegKind::Skip),
-        ("toksdef", RegKind::Toks), ("chardef", RegKind::Char), ("mathchardef", RegKind::MathChar),
+        ("countdef", RegKind::Count),
+        ("dimendef", RegKind::Dimen),
+        ("skipdef", RegKind::Skip),
+        ("toksdef", RegKind::Toks),
+        ("chardef", RegKind::Char),
+        ("mathchardef", RegKind::MathChar),
     ] {
         put(it, n, P::RegisterDef(k));
     }
@@ -1173,29 +1225,91 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     }
     // Integer parameters of TeX82 (TeXbook, appendix B).
     for n in [
-        "adjdemerits", "binoppenalty", "brokenpenalty", "deadcycles",
-        "defaulthyphenchar", "defaultskewchar", "delimiterfactor", "displaywidowpenalty",
-        "doublehyphendemerits", "exhyphenpenalty", "fam", "finalhyphendemerits",
-        "floatingpenalty", "globaldefs", "hangafter", "holdinginserts", "insertpenalties", "lefthyphenmin", "righthyphenmin", "linepenalty", "looseness",
-        "mag", "maxdeadcycles", "outputpenalty", "pausing", "postdisplaypenalty",
-        "predisplaypenalty", "pretolerance", "prevgraf", "relpenalty", "showboxbreadth",
-        "showboxdepth", "spacefactor", "tracingstacklevels", "uchyph",
+        "adjdemerits",
+        "binoppenalty",
+        "brokenpenalty",
+        "deadcycles",
+        "defaulthyphenchar",
+        "defaultskewchar",
+        "delimiterfactor",
+        "displaywidowpenalty",
+        "doublehyphendemerits",
+        "exhyphenpenalty",
+        "fam",
+        "finalhyphendemerits",
+        "floatingpenalty",
+        "globaldefs",
+        "hangafter",
+        "holdinginserts",
+        "insertpenalties",
+        "lefthyphenmin",
+        "righthyphenmin",
+        "linepenalty",
+        "looseness",
+        "mag",
+        "maxdeadcycles",
+        "outputpenalty",
+        "pausing",
+        "postdisplaypenalty",
+        "predisplaypenalty",
+        "pretolerance",
+        "prevgraf",
+        "relpenalty",
+        "showboxbreadth",
+        "showboxdepth",
+        "spacefactor",
+        "tracingstacklevels",
+        "uchyph",
     ] {
         put(it, n, P::IntegerParameter);
     }
     for n in [
-        "boxmaxdepth", "delimitershortfall", "displayindent", "displaywidth",
-        "emergencystretch", "hangindent", "hfuzz", "vfuzz", "hoffset", "voffset",
-        "lineskiplimit", "mathsurround", "maxdepth", "nulldelimiterspace", "overfullrule",
-        "pagegoal", "pagetotal", "pagestretch", "pagefilstretch", "pagefillstretch",
-        "pagefilllstretch", "pageshrink", "pagedepth", "predisplaysize", "prevdepth",
-        "scriptspace", "splitmaxdepth", ] {
+        "boxmaxdepth",
+        "delimitershortfall",
+        "displayindent",
+        "displaywidth",
+        "emergencystretch",
+        "hangindent",
+        "hfuzz",
+        "vfuzz",
+        "hoffset",
+        "voffset",
+        "lineskiplimit",
+        "mathsurround",
+        "maxdepth",
+        "nulldelimiterspace",
+        "overfullrule",
+        "pagegoal",
+        "pagetotal",
+        "pagestretch",
+        "pagefilstretch",
+        "pagefillstretch",
+        "pagefilllstretch",
+        "pageshrink",
+        "pagedepth",
+        "predisplaysize",
+        "prevdepth",
+        "scriptspace",
+        "splitmaxdepth",
+    ] {
         put(it, n, P::DimenParameter);
     }
     for n in [
-        "escapechar", "endlinechar", "newlinechar", "tolerance", "hbadness", "vbadness",
-        "time", "day", "month", "year",
-        "language", "hyphenpenalty", "clubpenalty", "widowpenalty", "interlinepenalty",
+        "escapechar",
+        "endlinechar",
+        "newlinechar",
+        "tolerance",
+        "hbadness",
+        "vbadness",
+        "time",
+        "day",
+        "month",
+        "year",
+        "language",
+        "hyphenpenalty",
+        "clubpenalty",
+        "widowpenalty",
+        "interlinepenalty",
     ] {
         put(it, n, P::IntegerParameter);
     }
@@ -1227,9 +1341,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     ] {
         put(it, n, P::Typeset(scan));
     }
-    for n in [
-        "unpenalty", "unkern", "unskip",
-    ] {
+    for n in ["unpenalty", "unkern", "unskip"] {
         put(it, n, P::Typeset(Typeset::Plain));
     }
 
@@ -1256,19 +1368,42 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         // pdfTeX's own integer and dimension parameters, and the kerning
         // codes only it has (pdftex manual, "Primitives").
         for n in [
-            "pdfmajorversion", "pdfimageresolution", "pdfpkresolution", "pdfimagehicolor",
-            "pdfimageapplygamma", "pdfgamma", "pdfimagegamma", "pdfinfoomitdate",
-            "pdfomitcharset", "pdfsuppressptexinfo", "pdfnobuiltintounicode",
-            "pdfptexuseunderscore", "pdfappendkern", "pdfprependkern", "pdfpagebox",
-            "pdftracingfonts", "pdfinclusioncopyfonts", "pdfretval", "pdflastannot",
-            "pdflastobj", "pdflastxform", "pdflastximage", "pdflastximagepages",
+            "pdfmajorversion",
+            "pdfimageresolution",
+            "pdfpkresolution",
+            "pdfimagehicolor",
+            "pdfimageapplygamma",
+            "pdfgamma",
+            "pdfimagegamma",
+            "pdfinfoomitdate",
+            "pdfomitcharset",
+            "pdfsuppressptexinfo",
+            "pdfnobuiltintounicode",
+            "pdfptexuseunderscore",
+            "pdfappendkern",
+            "pdfprependkern",
+            "pdfpagebox",
+            "pdftracingfonts",
+            "pdfinclusioncopyfonts",
+            "pdfretval",
+            "pdflastannot",
+            "pdflastobj",
+            "pdflastxform",
+            "pdflastximage",
+            "pdflastximagepages",
             "pdflastlink",
         ] {
             put(it, n, P::IntegerParameter);
         }
         for n in [
-            "pdfdestmargin", "pdflinkmargin", "pdfthreadmargin", "pdfpxdimen",
-            "pdfignoreddimen", "pdfeachlineheight", "pdfeachlinedepth", "pdffirstlineheight",
+            "pdfdestmargin",
+            "pdflinkmargin",
+            "pdfthreadmargin",
+            "pdfpxdimen",
+            "pdfignoreddimen",
+            "pdfeachlineheight",
+            "pdfeachlinedepth",
+            "pdffirstlineheight",
             "pdflastlinedepth",
         ] {
             put(it, n, P::DimenParameter);
@@ -1318,9 +1453,16 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "XeTeXversion", P::LastItem(LastItem::XetexVersion));
         put(it, "XeTeXrevision", P::Convert(Convert::XetexRevision));
         for n in [
-            "XeTeXdashbreakstate", "XeTeXgenerateactualtext", "XeTeXhyphenatablelength",
-            "XeTeXinputnormalization", "XeTeXinterchartokenstate", "XeTeXinterwordspaceshaping",
-            "XeTeXlinebreakpenalty", "XeTeXprotrudechars", "XeTeXtracingfonts", "XeTeXupwardsmode",
+            "XeTeXdashbreakstate",
+            "XeTeXgenerateactualtext",
+            "XeTeXhyphenatablelength",
+            "XeTeXinputnormalization",
+            "XeTeXinterchartokenstate",
+            "XeTeXinterwordspaceshaping",
+            "XeTeXlinebreakpenalty",
+            "XeTeXprotrudechars",
+            "XeTeXtracingfonts",
+            "XeTeXupwardsmode",
             "XeTeXuseglyphmetrics",
         ] {
             put(it, n, P::IntegerParameter);
@@ -1337,28 +1479,41 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "XeTeXinterchartoks", P::Special(Special::InterCharToks));
         use XeQuery as Q;
         for (n, q) in [
-            ("XeTeXfonttype", Q::FontType), ("XeTeXfirstfontchar", Q::FirstFontChar),
-            ("XeTeXlastfontchar", Q::LastFontChar), ("XeTeXcountglyphs", Q::CountGlyphs),
-            ("XeTeXcountvariations", Q::CountVariations), ("XeTeXcountfeatures", Q::CountFeatures),
-            ("XeTeXvariation", Q::Variation), ("XeTeXvariationmin", Q::VariationMin),
-            ("XeTeXvariationmax", Q::VariationMax), ("XeTeXvariationdefault", Q::VariationDefault),
-            ("XeTeXfeaturecode", Q::FeatureCode), ("XeTeXcountselectors", Q::CountSelectors),
-            ("XeTeXselectorcode", Q::SelectorCode), ("XeTeXisexclusivefeature", Q::IsExclusiveFeature),
+            ("XeTeXfonttype", Q::FontType),
+            ("XeTeXfirstfontchar", Q::FirstFontChar),
+            ("XeTeXlastfontchar", Q::LastFontChar),
+            ("XeTeXcountglyphs", Q::CountGlyphs),
+            ("XeTeXcountvariations", Q::CountVariations),
+            ("XeTeXcountfeatures", Q::CountFeatures),
+            ("XeTeXvariation", Q::Variation),
+            ("XeTeXvariationmin", Q::VariationMin),
+            ("XeTeXvariationmax", Q::VariationMax),
+            ("XeTeXvariationdefault", Q::VariationDefault),
+            ("XeTeXfeaturecode", Q::FeatureCode),
+            ("XeTeXcountselectors", Q::CountSelectors),
+            ("XeTeXselectorcode", Q::SelectorCode),
+            ("XeTeXisexclusivefeature", Q::IsExclusiveFeature),
             ("XeTeXisdefaultselector", Q::IsDefaultSelector),
             ("XeTeXfindvariationbyname", Q::FindVariationByName),
             ("XeTeXfindfeaturebyname", Q::FindFeatureByName),
             ("XeTeXfindselectorbyname", Q::FindSelectorByName),
-            ("XeTeXOTcountscripts", Q::OtCountScripts), ("XeTeXOTcountlanguages", Q::OtCountLanguages),
-            ("XeTeXOTcountfeatures", Q::OtCountFeatures), ("XeTeXOTscripttag", Q::OtScriptTag),
-            ("XeTeXOTlanguagetag", Q::OtLanguageTag), ("XeTeXOTfeaturetag", Q::OtFeatureTag),
-            ("XeTeXcharglyph", Q::CharGlyph), ("XeTeXglyphindex", Q::GlyphIndex),
+            ("XeTeXOTcountscripts", Q::OtCountScripts),
+            ("XeTeXOTcountlanguages", Q::OtCountLanguages),
+            ("XeTeXOTcountfeatures", Q::OtCountFeatures),
+            ("XeTeXOTscripttag", Q::OtScriptTag),
+            ("XeTeXOTlanguagetag", Q::OtLanguageTag),
+            ("XeTeXOTfeaturetag", Q::OtFeatureTag),
+            ("XeTeXcharglyph", Q::CharGlyph),
+            ("XeTeXglyphindex", Q::GlyphIndex),
             ("XeTeXglyphbounds", Q::GlyphBounds),
         ] {
             put(it, n, P::LastItem(LastItem::Xetex(q)));
         }
         for (n, q) in [
-            ("XeTeXvariationname", Q::VariationName), ("XeTeXfeaturename", Q::FeatureName),
-            ("XeTeXglyphname", Q::GlyphName), ("XeTeXselectorname", Q::SelectorName),
+            ("XeTeXvariationname", Q::VariationName),
+            ("XeTeXfeaturename", Q::FeatureName),
+            ("XeTeXglyphname", Q::GlyphName),
+            ("XeTeXselectorname", Q::SelectorName),
         ] {
             put(it, n, P::Convert(Convert::Xetex(q)));
         }
@@ -1385,10 +1540,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         }
         // Each of these takes a ⟨number⟩ naming a Lua function or a bytecode
         // register (LuaTeX manual, "Lua related primitives").
-        for n in [
-            "luafunction",
-            "lateluafunction", "luafunctioncall", "luabytecode", "luabytecodecall",
-        ] {
+        for n in ["luafunction", "lateluafunction", "luafunctioncall", "luabytecode", "luabytecodecall"] {
             put(it, n, P::IntegerParameter);
         }
         // `\attribute` is a numbered register and `\attributedef` names one,
@@ -1405,62 +1557,217 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         // LuaTeX manual, "TeX and LuaTeX primitives" — node attributes,
         // directions, Unicode math, hyphenation control and the rest.
         for n in [
-            "Udelimiterover", "Udelimiterunder", "Uhextensible", "Uleft", "Umathaxis",
-            "Umathbinbinspacing", "Umathbinclosespacing", "Umathbininnerspacing",
-            "Umathbinopenspacing", "Umathbinopspacing", "Umathbinordspacing",
-            "Umathbinpunctspacing", "Umathbinrelspacing", "Umathcharclass", "Umathcharfam",
-            "Umathcharslot", "Umathclosebinspacing", "Umathcloseclosespacing",
-            "Umathcloseinnerspacing", "Umathcloseopenspacing", "Umathcloseopspacing",
-            "Umathcloseordspacing", "Umathclosepunctspacing", "Umathcloserelspacing",
-            "Umathconnectoroverlapmin", "Umathfractiondelsize", "Umathfractiondenomdown",
-            "Umathfractiondenomvgap", "Umathfractionnumup", "Umathfractionnumvgap",
-            "Umathfractionrule", "Umathinnerbinspacing", "Umathinnerclosespacing",
-            "Umathinnerinnerspacing", "Umathinneropenspacing", "Umathinneropspacing",
-            "Umathinnerordspacing", "Umathinnerpunctspacing", "Umathinnerrelspacing",
-            "Umathlimitabovebgap", "Umathlimitabovekern", "Umathlimitabovevgap",
-            "Umathlimitbelowbgap", "Umathlimitbelowkern", "Umathlimitbelowvgap",
-            "Umathnolimitsubfactor", "Umathnolimitsupfactor", "Umathopbinspacing",
-            "Umathopclosespacing", "Umathopenbinspacing", "Umathopenclosespacing",
-            "Umathopeninnerspacing", "Umathopenopenspacing", "Umathopenopspacing",
-            "Umathopenordspacing", "Umathopenpunctspacing", "Umathopenrelspacing",
-            "Umathoperatorsize", "Umathopinnerspacing", "Umathopopenspacing", "Umathopopspacing",
-            "Umathopordspacing", "Umathoppunctspacing", "Umathoprelspacing", "Umathordbinspacing",
-            "Umathordclosespacing", "Umathordinnerspacing", "Umathordopenspacing",
-            "Umathordopspacing", "Umathordordspacing", "Umathordpunctspacing",
-            "Umathordrelspacing", "Umathoverbarkern", "Umathoverbarrule", "Umathoverbarvgap",
-            "Umathoverdelimiterbgap", "Umathoverdelimitervgap", "Umathpunctbinspacing",
-            "Umathpunctclosespacing", "Umathpunctinnerspacing", "Umathpunctopenspacing",
-            "Umathpunctopspacing", "Umathpunctordspacing", "Umathpunctpunctspacing",
-            "Umathpunctrelspacing", "Umathquad", "Umathradicaldegreeafter",
-            "Umathradicaldegreebefore", "Umathradicaldegreeraise", "Umathradicalkern",
-            "Umathradicalrule", "Umathradicalvgap", "Umathrelbinspacing", "Umathrelclosespacing",
-            "Umathrelinnerspacing", "Umathrelopenspacing", "Umathrelopspacing",
-            "Umathrelordspacing", "Umathrelpunctspacing", "Umathrelrelspacing",
-            "Umathskewedfractionhgap", "Umathskewedfractionvgap", "Umathspaceafterscript",
-            "Umathstackdenomdown", "Umathstacknumup", "Umathstackvgap", "Umathsubshiftdown",
-            "Umathsubshiftdrop", "Umathsubsupshiftdown", "Umathsubsupvgap", "Umathsubtopmax",
-            "Umathsupbottommin", "Umathsupshiftdrop", "Umathsupshiftup", "Umathsupsubbottommax",
-            "Umathunderbarkern", "Umathunderbarrule", "Umathunderbarvgap",
-            "Umathunderdelimiterbgap", "Umathunderdelimitervgap", "Umiddle", "Unosubscript",
-            "Unosuperscript", "Uoverdelimiter", "Uright", "Uroot", "Uskewed", "Uskewedwithdelims",
-            "Ustack", "Ustartdisplaymath", "Ustartmath", "Ustopdisplaymath", "Ustopmath",
-            "Usubscript", "Usuperscript", "Uunderdelimiter", "Uvextensible", "automaticdiscretionary", "bodydir", "bodydirection", "boundary",
-            "boxdir", "boxdirection", "clearmarks", "crampeddisplaystyle", "crampedscriptscriptstyle", "crampedscriptstyle",
-            "crampedtextstyle", "deferred", "dviextension", "dvifeedback", "dvivariable", "eTeXVersion", "eTeXglueshrinkorder",
-            "eTeXgluestretchorder", "eTeXminorversion", "endlocalcontrol", "etoksapp", "etokspre",
+            "Udelimiterover",
+            "Udelimiterunder",
+            "Uhextensible",
+            "Uleft",
+            "Umathaxis",
+            "Umathbinbinspacing",
+            "Umathbinclosespacing",
+            "Umathbininnerspacing",
+            "Umathbinopenspacing",
+            "Umathbinopspacing",
+            "Umathbinordspacing",
+            "Umathbinpunctspacing",
+            "Umathbinrelspacing",
+            "Umathcharclass",
+            "Umathcharfam",
+            "Umathcharslot",
+            "Umathclosebinspacing",
+            "Umathcloseclosespacing",
+            "Umathcloseinnerspacing",
+            "Umathcloseopenspacing",
+            "Umathcloseopspacing",
+            "Umathcloseordspacing",
+            "Umathclosepunctspacing",
+            "Umathcloserelspacing",
+            "Umathconnectoroverlapmin",
+            "Umathfractiondelsize",
+            "Umathfractiondenomdown",
+            "Umathfractiondenomvgap",
+            "Umathfractionnumup",
+            "Umathfractionnumvgap",
+            "Umathfractionrule",
+            "Umathinnerbinspacing",
+            "Umathinnerclosespacing",
+            "Umathinnerinnerspacing",
+            "Umathinneropenspacing",
+            "Umathinneropspacing",
+            "Umathinnerordspacing",
+            "Umathinnerpunctspacing",
+            "Umathinnerrelspacing",
+            "Umathlimitabovebgap",
+            "Umathlimitabovekern",
+            "Umathlimitabovevgap",
+            "Umathlimitbelowbgap",
+            "Umathlimitbelowkern",
+            "Umathlimitbelowvgap",
+            "Umathnolimitsubfactor",
+            "Umathnolimitsupfactor",
+            "Umathopbinspacing",
+            "Umathopclosespacing",
+            "Umathopenbinspacing",
+            "Umathopenclosespacing",
+            "Umathopeninnerspacing",
+            "Umathopenopenspacing",
+            "Umathopenopspacing",
+            "Umathopenordspacing",
+            "Umathopenpunctspacing",
+            "Umathopenrelspacing",
+            "Umathoperatorsize",
+            "Umathopinnerspacing",
+            "Umathopopenspacing",
+            "Umathopopspacing",
+            "Umathopordspacing",
+            "Umathoppunctspacing",
+            "Umathoprelspacing",
+            "Umathordbinspacing",
+            "Umathordclosespacing",
+            "Umathordinnerspacing",
+            "Umathordopenspacing",
+            "Umathordopspacing",
+            "Umathordordspacing",
+            "Umathordpunctspacing",
+            "Umathordrelspacing",
+            "Umathoverbarkern",
+            "Umathoverbarrule",
+            "Umathoverbarvgap",
+            "Umathoverdelimiterbgap",
+            "Umathoverdelimitervgap",
+            "Umathpunctbinspacing",
+            "Umathpunctclosespacing",
+            "Umathpunctinnerspacing",
+            "Umathpunctopenspacing",
+            "Umathpunctopspacing",
+            "Umathpunctordspacing",
+            "Umathpunctpunctspacing",
+            "Umathpunctrelspacing",
+            "Umathquad",
+            "Umathradicaldegreeafter",
+            "Umathradicaldegreebefore",
+            "Umathradicaldegreeraise",
+            "Umathradicalkern",
+            "Umathradicalrule",
+            "Umathradicalvgap",
+            "Umathrelbinspacing",
+            "Umathrelclosespacing",
+            "Umathrelinnerspacing",
+            "Umathrelopenspacing",
+            "Umathrelopspacing",
+            "Umathrelordspacing",
+            "Umathrelpunctspacing",
+            "Umathrelrelspacing",
+            "Umathskewedfractionhgap",
+            "Umathskewedfractionvgap",
+            "Umathspaceafterscript",
+            "Umathstackdenomdown",
+            "Umathstacknumup",
+            "Umathstackvgap",
+            "Umathsubshiftdown",
+            "Umathsubshiftdrop",
+            "Umathsubsupshiftdown",
+            "Umathsubsupvgap",
+            "Umathsubtopmax",
+            "Umathsupbottommin",
+            "Umathsupshiftdrop",
+            "Umathsupshiftup",
+            "Umathsupsubbottommax",
+            "Umathunderbarkern",
+            "Umathunderbarrule",
+            "Umathunderbarvgap",
+            "Umathunderdelimiterbgap",
+            "Umathunderdelimitervgap",
+            "Umiddle",
+            "Unosubscript",
+            "Unosuperscript",
+            "Uoverdelimiter",
+            "Uright",
+            "Uroot",
+            "Uskewed",
+            "Uskewedwithdelims",
+            "Ustack",
+            "Ustartdisplaymath",
+            "Ustartmath",
+            "Ustopdisplaymath",
+            "Ustopmath",
+            "Usubscript",
+            "Usuperscript",
+            "Uunderdelimiter",
+            "Uvextensible",
+            "automaticdiscretionary",
+            "bodydir",
+            "bodydirection",
+            "boundary",
+            "boxdir",
+            "boxdirection",
+            "clearmarks",
+            "crampeddisplaystyle",
+            "crampedscriptscriptstyle",
+            "crampedscriptstyle",
+            "crampedtextstyle",
+            "deferred",
+            "dviextension",
+            "dvifeedback",
+            "dvivariable",
+            "eTeXVersion",
+            "eTeXglueshrinkorder",
+            "eTeXgluestretchorder",
+            "eTeXminorversion",
+            "endlocalcontrol",
+            "etoksapp",
+            "etokspre",
             "explicitdiscretionary",
-            "formatname", "gleaders", "gtoksapp", "gtokspre", "hjcode",
-            "hpack", "hyphenationmin", "ifcondition", "immediateassigned",
-            "immediateassignment", "insertht", "lastsavedboxresourceindex",
-            "lastsavedimageresourceindex", "lastsavedimageresourcepages", "lastxpos", "lastypos",
-            "leftghost", "letcharcode", "linedir", "linedirection", "localleftbox", "localrightbox", "luatexbanner", "luatexrevision",
-            "mathdir", "mathdirection",
+            "formatname",
+            "gleaders",
+            "gtoksapp",
+            "gtokspre",
+            "hjcode",
+            "hpack",
+            "hyphenationmin",
+            "ifcondition",
+            "immediateassigned",
+            "immediateassignment",
+            "insertht",
+            "lastsavedboxresourceindex",
+            "lastsavedimageresourceindex",
+            "lastsavedimageresourcepages",
+            "lastxpos",
+            "lastypos",
+            "leftghost",
+            "letcharcode",
+            "linedir",
+            "linedirection",
+            "localleftbox",
+            "localrightbox",
+            "luatexbanner",
+            "luatexrevision",
+            "mathdir",
+            "mathdirection",
             "mathoption",
             "mathstyle",
-            "nohrule", "novrule", "pagedir", "pagedirection", "pardir",
-            "pardirection", "pdffeedback", "pdfvariable", "protrusionboundary", "rightghost", "saveboxresource", "savepos", "textdir", "textdirection", "toksapp",
-            "tokspre", "tpack", "useboxresource", "useimageresource",
-            "vpack", "wordboundary", "xtoksapp", "xtokspre",
+            "nohrule",
+            "novrule",
+            "pagedir",
+            "pagedirection",
+            "pardir",
+            "pardirection",
+            "pdffeedback",
+            "pdfvariable",
+            "protrusionboundary",
+            "rightghost",
+            "saveboxresource",
+            "savepos",
+            "textdir",
+            "textdirection",
+            "toksapp",
+            "tokspre",
+            "tpack",
+            "useboxresource",
+            "useimageresource",
+            "vpack",
+            "wordboundary",
+            "xtoksapp",
+            "xtokspre",
         ] {
             put(it, n, P::Unmodeled);
         }
@@ -1475,10 +1782,72 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "ifabsdim", P::If(Cond::AbsDim));
         // LuaTeX manual, "TeX and LuaTeX primitives": its own integer,
         // dimension and glue parameters.
-        for n in ["automatichyphenpenalty", "explicithyphenpenalty", "exceptionpenalty", "hyphenpenaltymode", "automatichyphenmode", "compoundhyphenmode", "breakafterdirmode", "discretionaryligaturemode", "draftmode", "firstvalidlanguage", "fixupboxesmode", "glyphdimensionsmode", "hyphenationbounds", "localbrokenpenalty", "localinterlinepenalty", "mathdefaultsmode", "mathdelimitersmode", "mathdisplayskipmode", "mathemptydisplaymode", "matheqnogapstep", "mathflattenmode", "mathitalicsmode", "mathnolimitsmode", "mathpenaltiesmode", "mathrulesfam", "mathrulesmode", "mathrulethicknessmode", "mathscriptboxmode", "mathscriptcharmode", "mathscriptsmode", "mathsurroundmode", "matheqdirmode", "nokerns", "noligs", "nospaces", "outputbox", "predisplaygapfactor", "prebinoppenalty", "prerelpenalty", "prehyphenchar", "posthyphenchar", "preexhyphenchar", "postexhyphenchar", "exhyphenchar", "shapemode", "suppressifcsnameerror", "suppresslongerror", "suppressmathparerror", "suppressoutererror", "suppressprimitiveerror", "variablefam", "tracingfonts", "luacopyinputnodes"] {
+        for n in [
+            "automatichyphenpenalty",
+            "explicithyphenpenalty",
+            "exceptionpenalty",
+            "hyphenpenaltymode",
+            "automatichyphenmode",
+            "compoundhyphenmode",
+            "breakafterdirmode",
+            "discretionaryligaturemode",
+            "draftmode",
+            "firstvalidlanguage",
+            "fixupboxesmode",
+            "glyphdimensionsmode",
+            "hyphenationbounds",
+            "localbrokenpenalty",
+            "localinterlinepenalty",
+            "mathdefaultsmode",
+            "mathdelimitersmode",
+            "mathdisplayskipmode",
+            "mathemptydisplaymode",
+            "matheqnogapstep",
+            "mathflattenmode",
+            "mathitalicsmode",
+            "mathnolimitsmode",
+            "mathpenaltiesmode",
+            "mathrulesfam",
+            "mathrulesmode",
+            "mathrulethicknessmode",
+            "mathscriptboxmode",
+            "mathscriptcharmode",
+            "mathscriptsmode",
+            "mathsurroundmode",
+            "matheqdirmode",
+            "nokerns",
+            "noligs",
+            "nospaces",
+            "outputbox",
+            "predisplaygapfactor",
+            "prebinoppenalty",
+            "prerelpenalty",
+            "prehyphenchar",
+            "posthyphenchar",
+            "preexhyphenchar",
+            "postexhyphenchar",
+            "exhyphenchar",
+            "shapemode",
+            "suppressifcsnameerror",
+            "suppresslongerror",
+            "suppressmathparerror",
+            "suppressoutererror",
+            "suppressprimitiveerror",
+            "variablefam",
+            "tracingfonts",
+            "luacopyinputnodes",
+        ] {
             put(it, n, P::IntegerParameter);
         }
-        for n in ["pageheight", "pagewidth", "pxdimen", "pagebottomoffset", "pagetopoffset", "pageleftoffset", "pagerightoffset"] {
+        for n in [
+            "pageheight",
+            "pagewidth",
+            "pxdimen",
+            "pagebottomoffset",
+            "pagetopoffset",
+            "pageleftoffset",
+            "pagerightoffset",
+        ] {
             put(it, n, P::DimenParameter);
         }
         put(it, "mathsurroundskip", P::GlueParameter { mu: false });
@@ -1867,8 +2236,15 @@ pub fn docstrip_meanings(it: &mut Interner) -> Vec<(Sym, Meaning)> {
         put(it, n, D::Setting { arguments: 1 });
     }
     for n in [
-        "keepsilent", "showprogress", "askforoverwritetrue", "askforoverwritefalse",
-        "askonceonly", "nopreamble", "nopostamble", "defaultpreamble", "defaultpostamble",
+        "keepsilent",
+        "showprogress",
+        "askforoverwritetrue",
+        "askforoverwritefalse",
+        "askonceonly",
+        "nopreamble",
+        "nopostamble",
+        "defaultpreamble",
+        "defaultpostamble",
         "ifToplevel",
     ] {
         put(it, n, D::Setting { arguments: 0 });

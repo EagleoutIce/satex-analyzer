@@ -36,9 +36,9 @@ fn latex(source: &str) -> Option<Analysis> {
 
 #[test]
 fn end_naming_the_wrong_environment_is_reported() {
-    let Some(analysis) = latex(
-        r"\documentclass{article}\begin{document}\begin{itemize}\item one\end{enumerate}\end{document}",
-    ) else {
+    let Some(analysis) =
+        latex(r"\documentclass{article}\begin{document}\begin{itemize}\item one\end{enumerate}\end{document}")
+    else {
         return;
     };
     let found = findings(&analysis, "environment-mismatch");
@@ -53,7 +53,10 @@ fn a_solo_end_is_reported() {
         return;
     };
     let found = findings(&analysis, "environment-mismatch");
-    assert!(found.iter().any(|f| f.contains(r"\begin{document}") && f.contains(r"ended by \end{itemize}")), "{found:?}");
+    assert!(
+        found.iter().any(|f| f.contains(r"\begin{document}") && f.contains(r"ended by \end{itemize}")),
+        "{found:?}"
+    );
 }
 
 #[test]
@@ -68,9 +71,7 @@ fn an_environment_never_closed_is_reported() {
 
 #[test]
 fn properly_nested_environments_are_not_reported() {
-    let analysis = analyze(
-        r"\begin{document}\begin{itemize}\item one\end{itemize}\end{document}",
-    );
+    let analysis = analyze(r"\begin{document}\begin{itemize}\item one\end{itemize}\end{document}");
     assert!(findings(&analysis, "environment-mismatch").is_empty());
 }
 

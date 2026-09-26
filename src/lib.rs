@@ -32,9 +32,9 @@
 //! [`config::Config`] holds every setting of `satex.yaml`.
 
 pub mod budget;
-pub mod commands;
 pub mod builtins;
 pub mod cmd;
+pub mod commands;
 pub mod config;
 pub mod distribution;
 pub mod env;
@@ -49,17 +49,17 @@ pub mod lsp;
 pub mod machine;
 pub mod mode;
 pub mod observe;
+pub mod otf;
 pub mod overlay;
 pub mod paths;
-pub mod probe;
 pub mod plugin;
+pub mod probe;
 pub mod project;
 pub mod query;
 pub mod rename;
 pub mod render;
 pub mod scan;
 pub mod tex;
-pub mod otf;
 pub mod tfm;
 pub mod timing;
 pub mod value;

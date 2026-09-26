@@ -75,5 +75,12 @@ harness = false
 lto = "thin"
 codegen-units = 1
 
+# What CI tests with: optimized, without the link-time work that 36 test
+# binaries pay for and only the shipped binary profits from.
+[profile.ci]
+inherits = "release"
+lto = false
+codegen-units = 16
+
 [build-dependencies]
 cc = "1.4.7"

@@ -32,9 +32,15 @@ fn bundle(name: &str) -> PathBuf {
          %<*package>\n\\ProvidesPackage{demo}\n\\newcommand\\demo{x}\n%</package>\n\
          %<*other>\n\\newcommand\\notdemo{y}\n%</other>\n",
     );
-    write("src/demo.ins", "\\input docstrip\n\\generate{\\file{demo.sty}{\\from{demo.dtx}{package}}}\n\\endbatchfile\n");
+    write(
+        "src/demo.ins",
+        "\\input docstrip\n\\generate{\\file{demo.sty}{\\from{demo.dtx}{package}}}\n\\endbatchfile\n",
+    );
     write("demo-doc.tex", "\\documentclass{article}\n\\usepackage{demo}\n\\begin{document}\n\\demo\n\\end{document}\n");
-    write("testfiles/basic.lvt", "\\documentclass{article}\n\\usepackage{demo}\n\\begin{document}\\demo\\end{document}\n");
+    write(
+        "testfiles/basic.lvt",
+        "\\documentclass{article}\n\\usepackage{demo}\n\\begin{document}\\demo\\end{document}\n",
+    );
     dir
 }
 
@@ -56,9 +62,7 @@ fn the_package_under_development_is_read_from_its_dtx() {
     let load = analysis.facts.loads.iter().find(|l| l.name == "demo").expect("demo is loaded");
     assert_eq!(load.status, LoadStatus::Read);
     assert!(load.path.as_deref().is_some_and(|p| p.ends_with("demo.dtx")), "{:?}", load.path);
-    let defined = |name: &str| {
-        analysis.interner.lookup(name).is_some_and(|sym| analysis.env.is_defined(sym))
-    };
+    let defined = |name: &str| analysis.interner.lookup(name).is_some_and(|sym| analysis.env.is_defined(sym));
     assert!(defined("demo"), "the `package` guard is extracted");
     assert!(!defined("notdemo"), "the `other` guard is not what demo.ins generates");
     let _ = std::fs::remove_dir_all(&dir);

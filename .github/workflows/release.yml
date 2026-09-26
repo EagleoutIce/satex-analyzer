@@ -13,7 +13,7 @@ jobs:
     name: Check the tag
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Tag matches Cargo.toml
         run: |
           CRATE=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
@@ -38,7 +38,7 @@ jobs:
             runner: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -116,7 +116,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: actions/download-artifact@v4
         with:
@@ -151,7 +151,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth

@@ -1,0 +1,7 @@
+# The width the code is already written to; 100 would rewrap most of it.
+max_width = 120
+# Keep a call, struct literal or chain on one line whenever it fits, which is
+# how this code reads: no width of its own per construct, just `max_width`.
+use_small_heuristics = "Max"
+# Pinned, so the formatting does not move when the edition's style does.
+style_edition = "2024"

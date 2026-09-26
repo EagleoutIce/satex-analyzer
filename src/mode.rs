@@ -87,7 +87,8 @@ impl Modes {
 
     /// The names of the set's modes, as `\showlists` prints them (tex.web § 211).
     pub fn names(self) -> Vec<&'static str> {
-        const NAMES: [&str; 6] = ["vertical", "internal vertical", "horizontal", "restricted horizontal", "display math", "math"];
+        const NAMES: [&str; 6] =
+            ["vertical", "internal vertical", "horizontal", "restricted horizontal", "display math", "math"];
         (0..6).filter(|bit| self.0 & (1 << bit) != 0).map(|bit| NAMES[bit]).collect()
     }
 }
@@ -226,7 +227,11 @@ pub(crate) enum Item {
     Glue(Option<Scaled>, Option<crate::value::Glue>),
     /// A `\vrule`: its width, and the height and depth it gives, `None`
     /// where running (tex.web § 463).
-    Rule { width: Option<Scaled>, height: Option<Option<Scaled>>, depth: Option<Option<Scaled>> },
+    Rule {
+        width: Option<Scaled>,
+        height: Option<Option<Scaled>>,
+        depth: Option<Option<Scaled>>,
+    },
     Box([Option<Scaled>; 3]),
     Unknown,
 }
@@ -338,7 +343,10 @@ impl Machine<'_> {
         if vertical.is_empty() {
             return false;
         }
-        if vertical != self.mode && self.every("everypar").is_none_or(|t| !t.is_empty()) && self.split_mode(token, vertical) {
+        if vertical != self.mode
+            && self.every("everypar").is_none_or(|t| !t.is_empty())
+            && self.split_mode(token, vertical)
+        {
             return true;
         }
         self.unread(token);
@@ -394,7 +402,9 @@ impl Machine<'_> {
     pub(crate) fn normal_paragraph(&mut self, certain: bool) {
         let engine = |m: &mut Self, key: &str| m.intern(&format!("\u{4}{key}"));
         let mut resets = Vec::new();
-        for (name, default) in [("looseness", Value::Int(0)), ("hangindent", Value::Dimen(0)), ("hangafter", Value::Int(1))] {
+        for (name, default) in
+            [("looseness", Value::Int(0)), ("hangindent", Value::Dimen(0)), ("hangafter", Value::Int(1))]
+        {
             resets.push((self.intern(name), default));
         }
         for key in ["parshape", "interlinepenalties.count"] {
@@ -804,9 +814,9 @@ impl Machine<'_> {
                     let fetched = self.fetch_box(n, true);
                     return self.box_end(context, fetched, dims);
                 }
-                Meaning::Primitive(Primitive::Mode(ModeCmd::Horizontal(Material::Rule) | ModeCmd::Vertical(Material::Rule)))
-                    if context == BoxContext::Leaders =>
-                {
+                Meaning::Primitive(Primitive::Mode(
+                    ModeCmd::Horizontal(Material::Rule) | ModeCmd::Vertical(Material::Rule),
+                )) if context == BoxContext::Leaders => {
                     self.scan_rule_spec();
                     return;
                 }
@@ -958,7 +968,9 @@ impl Machine<'_> {
                 n.last = Last::Glue(w, spec);
                 Some(n)
             }
-            Item::Rule { width: Some(w), height, depth } if horizontal && height.is_none_or(|h| h.is_some()) && depth.is_none_or(|d| d.is_some()) => {
+            Item::Rule { width: Some(w), height, depth }
+                if horizontal && height.is_none_or(|h| h.is_some()) && depth.is_none_or(|d| d.is_some()) =>
+            {
                 n.along += w;
                 n.space_factor = Some(1000);
                 n.height = n.height.max(height.flatten().unwrap_or(0));
@@ -1011,7 +1023,9 @@ impl Machine<'_> {
             if control || sf == 1000 {
                 return normal;
             }
-            if sf >= 2000 && let Some(x) = xspace_skip {
+            if sf >= 2000
+                && let Some(x) = xspace_skip
+            {
                 return x;
             }
             let mut g = normal;
@@ -1052,7 +1066,9 @@ impl Machine<'_> {
                 | ModeCmd::QuitVMode,
             )
             | Primitive::Typeset(Typeset::Number | Typeset::Dimen) => return,
-            Primitive::Pdf(PdfOp::Literal | PdfOp::Special | PdfOp::Object | PdfOp::Resources) | Primitive::Write => Item::Zero,
+            Primitive::Pdf(PdfOp::Literal | PdfOp::Special | PdfOp::Object | PdfOp::Resources) | Primitive::Write => {
+                Item::Zero
+            }
             // What a command appends has no size, except for math material
             // and images and forms placed as boxes (tex.web § 1058, the
             // pdfTeX, XeTeX and LuaTeX manuals).
@@ -1081,7 +1097,8 @@ impl Machine<'_> {
         self.material = true;
         let Some(mut n) = self.natural else { return };
         let font = (self.mode == Modes::RESTRICTED_HORIZONTAL).then(|| self.current_font()).flatten();
-        let Some((font, metrics, size)) = font.and_then(|f| Some((f, self.font_metrics(f)?, self.font_size(f)?))) else {
+        let Some((font, metrics, size)) = font.and_then(|f| Some((f, self.font_metrics(f)?, self.font_size(f)?)))
+        else {
             self.natural = None;
             return;
         };
@@ -1173,7 +1190,6 @@ impl Machine<'_> {
             (Removed::Penalty, _) => Some(Value::Int(0)),
         }
     }
-
 }
 
 impl Machine<'_> {
@@ -1204,7 +1220,11 @@ impl Machine<'_> {
 
     /// Whether `sym` is one of the markers for unknown text.
     pub(crate) fn is_unknown_marker(&self, sym: Sym) -> bool {
-        sym == self.unknown || sym == self.unknown_rest || sym == self.unknown_digits || sym == self.unknown_more || self.is_unknown_name(sym)
+        sym == self.unknown
+            || sym == self.unknown_rest
+            || sym == self.unknown_digits
+            || sym == self.unknown_more
+            || self.is_unknown_name(sym)
     }
 
     /// Whether text holds the unknown marker, so that what is made of it is
@@ -1364,7 +1384,11 @@ impl Machine<'_> {
             BoxState::Void => {}
             state => {
                 let key = self.intern(&format!("\u{4}box.{which}.{n}"));
-                let value = if state == BoxState::Unknown { Value::Unknown } else { value.map_or(Value::Unknown, Value::Dimen) };
+                let value = if state == BoxState::Unknown {
+                    Value::Unknown
+                } else {
+                    value.map_or(Value::Unknown, Value::Dimen)
+                };
                 self.env.set_value_in_place(key, value);
             }
         }

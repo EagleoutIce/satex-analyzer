@@ -4,8 +4,8 @@ use std::fmt::Write as _;
 use std::path::Path;
 
 use anstyle::{AnsiColor, Color, Style};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use serde_json::Value as Json;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::machine::Step;
 use crate::query::Record;
@@ -100,10 +100,46 @@ fn location(record: &Record) -> String {
 }
 
 const COLUMNS: [&str; 40] = [
-    "index", "id", "step", "severity", "category", "code", "kind", "status", "tag", "name",
-    "callee", "key", "subject", "for", "when", "context", "redefined", "effective", "error", "signature", "parameters", "arity",
-    "takes", "uses", "count", "value", "default", "governs", "package", "class", "by", "detail",
-    "fix", "message", "documentation", "expands", "body", "reference", "root", "file",
+    "index",
+    "id",
+    "step",
+    "severity",
+    "category",
+    "code",
+    "kind",
+    "status",
+    "tag",
+    "name",
+    "callee",
+    "key",
+    "subject",
+    "for",
+    "when",
+    "context",
+    "redefined",
+    "effective",
+    "error",
+    "signature",
+    "parameters",
+    "arity",
+    "takes",
+    "uses",
+    "count",
+    "value",
+    "default",
+    "governs",
+    "package",
+    "class",
+    "by",
+    "detail",
+    "fix",
+    "message",
+    "documentation",
+    "expands",
+    "body",
+    "reference",
+    "root",
+    "file",
 ];
 
 fn cell(column: &str, record: &Record, links: Links) -> (String, String) {
@@ -218,19 +254,12 @@ fn shown_columns(records: &[Record], links: Links) -> Vec<&'static str> {
 pub fn csv(records: &[Record]) -> String {
     let present = present_columns(records);
     let escape = |text: &str| {
-        if text.contains([',', '"', '\n']) {
-            format!("\"{}\"", text.replace('"', "\"\""))
-        } else {
-            text.to_string()
-        }
+        if text.contains([',', '"', '\n']) { format!("\"{}\"", text.replace('"', "\"\"")) } else { text.to_string() }
     };
     let mut out = present.join(",");
     out.push('\n');
     for record in records {
-        let row: Vec<String> = present
-            .iter()
-            .map(|c| escape(&record.get(*c).map(plain).unwrap_or_default()))
-            .collect();
+        let row: Vec<String> = present.iter().map(|c| escape(&record.get(*c).map(plain).unwrap_or_default())).collect();
         out.push_str(&row.join(","));
         out.push('\n');
     }
@@ -246,10 +275,8 @@ pub fn markdown(records: &[Record]) -> String {
     let mut out = format!("| {} |\n", present.join(" | "));
     out.push_str(&format!("|{}\n", present.iter().map(|_| " --- |").collect::<String>()));
     for record in records {
-        let row: Vec<String> = present
-            .iter()
-            .map(|c| record.get(*c).map(plain).unwrap_or_default().replace('|', "\\|"))
-            .collect();
+        let row: Vec<String> =
+            present.iter().map(|c| record.get(*c).map(plain).unwrap_or_default().replace('|', "\\|")).collect();
         out.push_str(&format!("| {} |\n", row.join(" | ")));
     }
     out
@@ -273,7 +300,9 @@ fn by_context(records: &[Record]) -> Vec<Grouped> {
     for record in records {
         let (rest, context, error) = shared(record);
         match (groups.last_mut(), context) {
-            (Some((first, contexts)), Some(context)) if !contexts.is_empty() && *first == rest => contexts.push((context, error)),
+            (Some((first, contexts)), Some(context)) if !contexts.is_empty() && *first == rest => {
+                contexts.push((context, error))
+            }
             (_, Some(context)) => groups.push((rest, vec![(context, error)])),
             (_, None) => groups.push((record.clone(), Vec::new())),
         }
@@ -313,7 +342,9 @@ pub fn fields(records: &[Record], links: Links) -> String {
             // side by side.
             .filter(|c| *c != "arity")
             .filter(|c| !(links.0 && *c == "reference"))
-            .filter(|c| record.get(*c).is_some_and(|v| !plain(v).is_empty()) || (*c == "context" && !contexts.is_empty()))
+            .filter(|c| {
+                record.get(*c).is_some_and(|v| !plain(v).is_empty()) || (*c == "context" && !contexts.is_empty())
+            })
             .collect();
         let label = present.iter().map(|c| width(c)).max().unwrap_or(0);
         let indent = 2 + label + 2;
@@ -348,10 +379,10 @@ pub fn fields(records: &[Record], links: Links) -> String {
                 _ => record.get(column).map(plain).unwrap_or_default(),
             };
             let style = match column {
-        "severity" => severity_style(&text),
-        "step" => Step::named(&text).map_or_else(Style::new, step_style),
-        _ => column_style(column),
-    };
+                "severity" => severity_style(&text),
+                "step" => Step::named(&text).map_or_else(Style::new, step_style),
+                _ => column_style(column),
+            };
             for (line, part) in wrap(&text, room).into_iter().enumerate() {
                 let shown = match (column, line) {
                     ("file", 0) => hyperlink(&part, &location(record), links),
@@ -376,9 +407,7 @@ pub fn fields(records: &[Record], links: Links) -> String {
 /// name for a file that is not on this machine.
 fn path_of(record: &Record) -> String {
     let path = match record.get("path").and_then(Json::as_str) {
-        Some(path) => std::fs::canonicalize(path)
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| path.to_string()),
+        Some(path) => std::fs::canonicalize(path).map(|p| p.display().to_string()).unwrap_or_else(|_| path.to_string()),
         None => record.get("file").map(plain).unwrap_or_default(),
     };
     match record.get("line").and_then(Json::as_u64).filter(|line| *line > 0) {
@@ -489,11 +518,7 @@ pub fn table(records: &[Record], links: Links) -> String {
             *slot = (*slot).max(width(text));
         }
     }
-    let suffix = records
-        .iter()
-        .map(|record| width(&position(record)))
-        .max()
-        .unwrap_or(0);
+    let suffix = records.iter().map(|record| width(&position(record))).max().unwrap_or(0);
     fit(&present, &mut widths, terminal_width().saturating_sub(suffix));
 
     let mut out = String::new();
@@ -681,12 +706,7 @@ fn position(record: &Record) -> String {
     }
 }
 
-pub fn summary(
-    analysis: &crate::machine::Analysis,
-    root: &crate::query::Node,
-    detail: Detail,
-    links: Links,
-) -> String {
+pub fn summary(analysis: &crate::machine::Analysis, root: &crate::query::Node, detail: Detail, links: Links) -> String {
     let identity = crate::query::identity(analysis);
     let mut out = String::new();
     let _ = writeln!(out, "{}", heading(&root.name));
@@ -701,25 +721,14 @@ pub fn summary(
     for entry in &analysis.metadata {
         let _ = writeln!(out, "  {} {}", label(entry.field), entry.text);
     }
-    let _ = writeln!(
-        out,
-        "  {} {} {}",
-        label("engine"),
-        identity.engine,
-        label(&format!("({})", identity.engine_source))
-    );
+    let _ =
+        writeln!(out, "  {} {} {}", label("engine"), identity.engine, label(&format!("({})", identity.engine_source)));
     for (kind, value, source) in analysis.plugins.rows() {
         if kind == crate::plugin::Kind::Engine {
             continue;
         }
         let room = terminal_width().saturating_sub(kind.as_str().len() + source.len() + 8);
-        let _ = writeln!(
-            out,
-            "  {} {} {}",
-            label(kind.as_str()),
-            elide(&value, room),
-            label(&format!("({source})"))
-        );
+        let _ = writeln!(out, "  {} {} {}", label(kind.as_str()), elide(&value, room), label(&format!("({source})")));
     }
     let _ = writeln!(out, "  {} {}", label("installation"), analysis.distribution.describe());
     if let Some(format) = &analysis.format {
@@ -736,10 +745,10 @@ pub fn summary(
         out,
         "  {} {}",
         label("config"),
-        analysis.config.as_ref().map_or_else(
-            || "built-in defaults".to_string(),
-            |path| linked_file(&path.display().to_string(), links)
-        )
+        analysis
+            .config
+            .as_ref()
+            .map_or_else(|| "built-in defaults".to_string(), |path| linked_file(&path.display().to_string(), links))
     );
     let caches: Vec<String> = [
         analysis.format.as_ref().and_then(|f| f.cache.clone()),
@@ -767,14 +776,18 @@ pub fn summary(
         };
         let parts: Vec<String> = [
             ("cached", group(&|s| s == "cached", &|n, _| n.to_string())),
-            ("partly cached", group(&|s| s.contains("% cached"), &|n, s| {
-                format!("{n} {}", s.split(" cached").next().unwrap_or(s))
-            })),
+            (
+                "partly cached",
+                group(&|s| s.contains("% cached"), &|n, s| format!("{n} {}", s.split(" cached").next().unwrap_or(s))),
+            ),
             ("stored", group(&|s| s == "stored", &|n, _| n.to_string())),
             ("stale", group(&|s| s.starts_with("stale"), &|n, s| format!("{n} ({})", s.trim_start_matches("stale: ")))),
-            ("not stored", group(&|s| s.starts_with("not stored"), &|n, s| {
-                format!("{n} ({})", s.trim_start_matches("not stored: "))
-            })),
+            (
+                "not stored",
+                group(&|s| s.starts_with("not stored"), &|n, s| {
+                    format!("{n} ({})", s.trim_start_matches("not stored: "))
+                }),
+            ),
         ]
         .into_iter()
         .filter(|(_, names)| !names.is_empty())
@@ -782,13 +795,7 @@ pub fn summary(
         .collect();
         let _ = writeln!(out, "  {} {}", label("package caches"), parts.join("; "));
     }
-    let _ = writeln!(
-        out,
-        "  {} {} files, {} tokens",
-        label("read"),
-        analysis.files.len(),
-        analysis.steps
-    );
+    let _ = writeln!(out, "  {} {} files, {} tokens", label("read"), analysis.files.len(), analysis.steps);
     if let Some(defines) = defines_line(root) {
         let _ = writeln!(out, "  {} {defines}", label("defines"));
     }
@@ -820,18 +827,10 @@ impl Detail {
     }
 }
 
-fn node(
-    out: &mut String,
-    node: &crate::query::Node,
-    prefix: &str,
-    last: bool,
-    depth: usize,
-    detail: Detail,
-) {
+fn node(out: &mut String, node: &crate::query::Node, prefix: &str, last: bool, depth: usize, detail: Detail) {
     let branch = if last { "└─ " } else { "├─ " };
     let hidden = node.children.len();
-    let options =
-        if node.options.is_empty() { String::new() } else { format!("[{}]", node.options.join(",")) };
+    let options = if node.options.is_empty() { String::new() } else { format!("[{}]", node.options.join(",")) };
     let status = if node.status == "read" { String::new() } else { format!(" {}", label(node.status)) };
     let _ = writeln!(
         out,
@@ -940,13 +939,8 @@ fn contents(out: &mut String, node: &crate::query::Node, prefix: &str, detail: D
         let shown: Vec<&str> = names.iter().take(SHOWN).map(String::as_str).collect();
         let rest = names.len().saturating_sub(shown.len());
         let more = if rest > 0 { format!(" +{rest}") } else { String::new() };
-        let _ = writeln!(
-            out,
-            "{prefix}{} {}{}",
-            label(&format!("{tag}({})", names.len())),
-            shown.join(" "),
-            label(&more)
-        );
+        let _ =
+            writeln!(out, "{prefix}{} {}{}", label(&format!("{tag}({})", names.len())), shown.join(" "), label(&more));
     }
     if !node.catcodes.is_empty() {
         let _ = writeln!(out, "{prefix}{} {}", label("catcodes"), node.catcodes.join(" "));
@@ -978,17 +972,10 @@ pub fn timings(analysis: &crate::machine::Analysis, links: Links) -> String {
                 }
                 None => detail("no format"),
             },
-            crate::timing::Phase::Document => {
-                detail(&format!("{} files read", analysis.files.len()))
-            }
+            crate::timing::Phase::Document => detail(&format!("{} files read", analysis.files.len())),
             crate::timing::Phase::Hooks => String::new(),
         };
-        let _ = writeln!(
-            out,
-            "  {:<10} {:>8.1} ms{note}",
-            phase.as_str(),
-            elapsed.as_secs_f64() * 1000.0
-        );
+        let _ = writeln!(out, "  {:<10} {:>8.1} ms{note}", phase.as_str(), elapsed.as_secs_f64() * 1000.0);
     }
 
     let root = crate::query::summary(analysis);
@@ -1042,18 +1029,9 @@ pub fn timings(analysis: &crate::machine::Analysis, links: Links) -> String {
         } else {
             tail(&node.path, path_width)
         };
-        let shown = if node.path.is_empty() {
-            label(&path)
-        } else {
-            label(&hyperlink(&path, &file_url(&node.path), links))
-        };
-        let _ = writeln!(
-            out,
-            "  {name}{:pad$} {:>8.1} ms  {:>9} tokens  {shown}",
-            "",
-            node.millis,
-            node.tokens
-        );
+        let shown =
+            if node.path.is_empty() { label(&path) } else { label(&hyperlink(&path, &file_url(&node.path), links)) };
+        let _ = writeln!(out, "  {name}{:pad$} {:>8.1} ms  {:>9} tokens  {shown}", "", node.millis, node.tokens);
     }
     if !again.is_empty() {
         again.sort_unstable();
@@ -1068,11 +1046,7 @@ fn detail(text: &str) -> String {
 }
 
 fn marker(cached: bool, hit: &str, miss: &'static str) -> String {
-    if cached {
-        format!("{CACHED}{hit}{CACHED:#}{DIM}")
-    } else {
-        miss.to_string()
-    }
+    if cached { format!("{CACHED}{hit}{CACHED:#}{DIM}") } else { miss.to_string() }
 }
 
 fn flatten<'a>(
@@ -1088,11 +1062,7 @@ fn flatten<'a>(
         format!("{prefix}{}{}", if last { "└─ " } else { "├─ " }, node.name)
     };
     rows.push((name, node));
-    let inner = if root {
-        String::new()
-    } else {
-        format!("{prefix}{}", if last { "   " } else { "│  " })
-    };
+    let inner = if root { String::new() } else { format!("{prefix}{}", if last { "   " } else { "│  " }) };
     // A file read once is listed once: the repeats that follow, in any order,
     // are gathered into the row of the first of them.
     let mut shown: Vec<usize> = Vec::new();
@@ -1151,11 +1121,7 @@ fn tail(text: &str, limit: usize) -> String {
 /// takes links; the whole path otherwise.
 fn linked_file(path: &str, links: Links) -> String {
     let name = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path);
-    if links.0 {
-        hyperlink(name, &file_url(path), links)
-    } else {
-        path.to_string()
-    }
+    if links.0 { hyperlink(name, &file_url(path), links) } else { path.to_string() }
 }
 
 pub(crate) fn file_url(path: &str) -> String {
@@ -1187,8 +1153,7 @@ pub fn github(records: &[Record]) -> String {
 
 pub fn sarif(records: &[Record], version: &str) -> String {
     let rules: Vec<serde_json::Value> = {
-        let mut codes: Vec<String> =
-            records.iter().map(|r| plain(r.get("code").unwrap_or(&Json::Null))).collect();
+        let mut codes: Vec<String> = records.iter().map(|r| plain(r.get("code").unwrap_or(&Json::Null))).collect();
         codes.sort();
         codes.dedup();
         codes.into_iter().map(|code| serde_json::json!({ "id": code })).collect()
@@ -1293,10 +1258,8 @@ pub fn lsp(records: &[Record]) -> String {
     let sources = crate::lint::fix::Sources::default();
     let position = |path: &str, line: u64, col: u64| -> Json {
         let pos = crate::lint::fix::Pos::new(line.max(1) as u32, col.max(1) as u32);
-        let (line, character) = sources
-            .get(path)
-            .and_then(|text| text.utf16(pos))
-            .unwrap_or((pos.line - 1, pos.col - 1));
+        let (line, character) =
+            sources.get(path).and_then(|text| text.utf16(pos)).unwrap_or((pos.line - 1, pos.col - 1));
         serde_json::json!({ "line": line, "character": character })
     };
     let uri = |path: &str| file_url(path);
@@ -1366,8 +1329,7 @@ pub fn lsp(records: &[Record]) -> String {
 pub fn gaps(analysis: &crate::machine::Analysis) -> String {
     /// Enough to show the causes that matter without burying the answer.
     const SHOWN: usize = 5;
-    let records =
-        crate::query::run(analysis, crate::query::Query::Gaps, &crate::query::Filter::Always);
+    let records = crate::query::run(analysis, crate::query::Query::Gaps, &crate::query::Filter::Always);
     if records.is_empty() {
         return String::new();
     }
@@ -1406,7 +1368,6 @@ pub fn good(text: &str) -> String {
     format!("{GOOD}{text}{GOOD:#}")
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1434,12 +1395,8 @@ mod tests {
 
     #[test]
     fn defines_line_counts_each_tag_separately_and_generically() {
-        let node = node_with(&[
-            ("macro", &["a", "b"]),
-            ("environment", &["e"]),
-            ("switch", &["s"]),
-            ("bespoke", &["x"]),
-        ]);
+        let node =
+            node_with(&[("macro", &["a", "b"]), ("environment", &["e"]), ("switch", &["s"]), ("bespoke", &["x"])]);
         let line = defines_line(&node).unwrap();
         assert!(line.contains("2 commands"), "{line}");
         assert!(line.contains("1 environment"), "{line}");
@@ -1512,5 +1469,4 @@ mod tests {
         assert!(out.contains(&long_message[long_message.len() - 10..]));
         assert!(out.contains("1 error, 1 warning, 1 suggestion, 1 performance note, 1 precision note"));
     }
-
 }

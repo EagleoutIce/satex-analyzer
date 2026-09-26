@@ -18,10 +18,7 @@ pub fn written_definition(analysis: &Analysis, def: &crate::facts::Definition) -
     if in_load {
         return false;
     }
-    matches!(
-        analysis.env.meaning(def.by).prim(),
-        None | Some(P::Def { .. })
-    )
+    matches!(analysis.env.meaning(def.by).prim(), None | Some(P::Def { .. }))
 }
 
 /// Whether the message was raised by `\\errmessage`, under whatever name
@@ -69,4 +66,3 @@ pub fn document_start(analysis: &Analysis) -> Option<Span> {
         .find(|o| o.kind == OccKind::BeginEnvironment && o.key == "document")
         .map(|o| o.span)
 }
-

@@ -72,7 +72,10 @@ enum Component {
     /// has no separate default beyond the distribution trees the resolver
     /// already searches, so this contributes no extra directory of its own.
     Default,
-    Dir { path: PathBuf, recursive: bool },
+    Dir {
+        path: PathBuf,
+        recursive: bool,
+    },
 }
 
 /// Splits a kpathsea path value on [`SEPARATOR`], reading a leading `!!`

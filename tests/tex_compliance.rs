@@ -8,7 +8,8 @@
 use satex::config::Config;
 use satex::machine::{Analysis, Machine};
 
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 \\catcode`\\ =10 \\catcode`\\%=14\n";
+const PRELUDE: &str =
+    "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 \\catcode`\\ =10 \\catcode`\\%=14\n";
 
 fn analyze(source: &str) -> Analysis {
     let cfg = Config {
@@ -44,10 +45,7 @@ fn bodies(analysis: &Analysis, name: &str) -> Vec<(String, bool)> {
 /// The texts of `\R`, whitespace removed so that `\detokenize` spacing
 /// conventions do not matter.
 fn r(source: &str) -> Vec<String> {
-    bodies(&analyze(source), "R")
-        .into_iter()
-        .map(|(t, _)| t.split_whitespace().collect())
-        .collect()
+    bodies(&analyze(source), "R").into_iter().map(|(t, _)| t.split_whitespace().collect()).collect()
 }
 
 /// The last certain text of `\R`, whitespace removed.
@@ -66,10 +64,8 @@ fn probe() {
         let (name, body) = section.split_once('\n').unwrap();
         let a = analyze(body);
         let b = bodies(&a, "R");
-        let b: Vec<String> = b
-            .iter()
-            .map(|(t, c)| format!("{}{}", if *c { "" } else { "?" }, t.replace(' ', "_")))
-            .collect();
+        let b: Vec<String> =
+            b.iter().map(|(t, c)| format!("{}{}", if *c { "" } else { "?" }, t.replace(' ', "_"))).collect();
         println!("SATEX {name}: {} steps={} exh={}", b.join(" | "), a.steps, a.exhausted);
     }
 }
@@ -104,7 +100,10 @@ fn numexpr_rounds_half_away_from_zero() {
 
 #[test]
 fn dimexpr_and_glueexpr_print_like_tex() {
-    check(r"\edef\R{\the\dimexpr 1pt*3/4\relax,\the\glueexpr 1pt plus 2fil minus 1fill\relax}", "0.75pt,1.0pt plus 2.0fil minus 1.0fill");
+    check(
+        r"\edef\R{\the\dimexpr 1pt*3/4\relax,\the\glueexpr 1pt plus 2fil minus 1fill\relax}",
+        "0.75pt,1.0pt plus 2.0fil minus 1.0fill",
+    );
 }
 
 #[test]
@@ -178,7 +177,10 @@ fn expanded_protected_and_unexpanded() {
 
 #[test]
 fn dimension_units_convert_like_tex() {
-    check(r"\dimen0=1dd\dimen1=1cc\dimen2=1sp\dimen3=1pc\dimen4=1mm\edef\R{\the\dimen0,\the\dimen1,\the\dimen2,\the\dimen3,\the\dimen4}", "1.07pt,12.8401pt,0.00002pt,12.0pt,2.84526pt");
+    check(
+        r"\dimen0=1dd\dimen1=1cc\dimen2=1sp\dimen3=1pc\dimen4=1mm\edef\R{\the\dimen0,\the\dimen1,\the\dimen2,\the\dimen3,\the\dimen4}",
+        "1.07pt,12.8401pt,0.00002pt,12.0pt,2.84526pt",
+    );
     check(r"\dimen0=16384pt \edef\R{\the\dimen0}", "16383.99998pt");
     check(r"\count0=-7 \divide\count0 2 \edef\R{\the\count0}", "-3");
 }
@@ -212,7 +214,10 @@ fn read_and_readline_from_a_file() {
 fn undecidable_conditionals_keep_both_arms() {
     includes_all(r"\ifnum\pdfelapsedtime>0 \def\R{T}\else\def\R{F}\fi", &["T", "F"]);
     includes_all(r"\ifnum\numexpr\pdfuniformdeviate3*2\relax=4 \def\R{T}\else\def\R{F}\fi", &["T", "F"]);
-    includes_all(r"\count1=0 \ifnum\pdfuniformdeviate2=0 \count1=5 \fi\ifnum\count1=5 \def\R{T}\else\def\R{F}\fi", &["T", "F"]);
+    includes_all(
+        r"\count1=0 \ifnum\pdfuniformdeviate2=0 \count1=5 \fi\ifnum\count1=5 \def\R{T}\else\def\R{F}\fi",
+        &["T", "F"],
+    );
     includes_all(r"\count1=\pdfuniformdeviate 10\relax \ifnum\count1>4 \def\R{T}\else\def\R{F}\fi", &["T", "F"]);
 }
 
@@ -302,7 +307,9 @@ fn endinput_on_one_path_is_not_certain() {
 /// The name is unknown, so neither `\x` nor `\y` is known to be undefined.
 #[test]
 fn csname_from_joined_macro_keeps_both_names() {
-    assert!(!last_certain(r"\ifnum\pdfuniformdeviate2=0 \def\n{x}\else\def\n{y}\fi\expandafter\def\csname\n\endcsname{Q}\edef\R{\ifdefined\x X\fi\ifdefined\y Y\fi}"));
+    assert!(!last_certain(
+        r"\ifnum\pdfuniformdeviate2=0 \def\n{x}\else\def\n{y}\fi\expandafter\def\csname\n\endcsname{Q}\edef\R{\ifdefined\x X\fi\ifdefined\y Y\fi}"
+    ));
 }
 
 #[test]

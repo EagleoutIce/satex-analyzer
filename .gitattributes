@@ -1,1 +1,9 @@
 vendor/** linguist-vendored
+
+# Written by `satex-doc` from doc/src/wiki/*.in; edit the template, not these.
+# Listed one by one, so a hand-written page is never marked generated: the
+# only other pages here are the wiki's own _Sidebar.md and _Footer.md.
+doc/wiki/configuration.md linguist-generated=true
+doc/wiki/lints.md linguist-generated=true
+doc/wiki/lsp.md linguist-generated=true
+doc/wiki/queries.md linguist-generated=true

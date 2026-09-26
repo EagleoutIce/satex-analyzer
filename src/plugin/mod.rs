@@ -82,8 +82,7 @@ pub enum Kernel {
 
 impl Kernel {
     /// Every kernel satex knows, for `--version`.
-    pub const ALL: &'static [Kernel] =
-        &[Kernel::Latex, Kernel::Plain, Kernel::Context, Kernel::None];
+    pub const ALL: &'static [Kernel] = &[Kernel::Latex, Kernel::Plain, Kernel::Context, Kernel::None];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -175,10 +174,8 @@ impl Plugins {
             None => {
                 let detected = cfg.use_kpsewhich.then(Provider::detect).flatten();
                 note(Kind::Provider, if detected.is_some() { "detected" } else { "none found" });
-                let cache = cfg
-                    .cache
-                    .then(|| cfg.cache_dir.clone().or_else(crate::format::default_cache_dir))
-                    .flatten();
+                let cache =
+                    cfg.cache.then(|| cfg.cache_dir.clone().or_else(crate::format::default_cache_dir)).flatten();
                 let version = detected.and_then(|p| p.version(cache.as_deref()));
                 (detected, version)
             }
@@ -284,11 +281,8 @@ impl Plugins {
     /// program — the engine they ask for.
     pub fn read_magic(&mut self, source: &str) {
         self.magic = magic::scan(source);
-        let Some(program) = self
-            .magic
-            .iter()
-            .find(|m| m.key.eq_ignore_ascii_case("TeX program"))
-            .map(|m| m.value.clone())
+        let Some(program) =
+            self.magic.iter().find(|m| m.key.eq_ignore_ascii_case("TeX program")).map(|m| m.value.clone())
         else {
             return;
         };
@@ -330,9 +324,7 @@ impl Plugins {
             .find(|m| m.key.eq_ignore_ascii_case("TeX program"))
             .map(|m| m.value.trim().to_ascii_lowercase());
         let (kernel, how) = match named.as_deref() {
-            Some("context" | "contextjit" | "luametatex" | "mtxrun") => {
-                (Kernel::Context, "magic comment")
-            }
+            Some("context" | "contextjit" | "luametatex" | "mtxrun") => (Kernel::Context, "magic comment"),
             _ => match Kernel::detect(source) {
                 Some(kernel) => (kernel, "read from the source"),
                 None => return,
@@ -354,11 +346,8 @@ impl Plugins {
     ) {
         if let Some(path) = configured {
             let name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("format");
-            self.preload = Some(Preload {
-                name: name.to_string(),
-                how: "configured",
-                source: Some(path.to_path_buf()),
-            });
+            self.preload =
+                Some(Preload { name: name.to_string(), how: "configured", source: Some(path.to_path_buf()) });
             return;
         }
         let command = project.setting(self.engine.program()).map(str::to_string);
@@ -411,11 +400,7 @@ impl Plugins {
         let mut rows = vec![
             (Kind::Provider, provider, source(Kind::Provider)),
             (Kind::Platform, self.platform.as_str().to_string(), source(Kind::Platform)),
-            (
-                Kind::Engine,
-                format!("{} ({} primitives)", self.program, self.engine.as_str()),
-                source(Kind::Engine),
-            ),
+            (Kind::Engine, format!("{} ({} primitives)", self.program, self.engine.as_str()), source(Kind::Engine)),
             (
                 Kind::Kernel,
                 match self.kernel.is_experimental() {
@@ -455,11 +440,7 @@ impl Plugins {
                 if self.magic.is_empty() {
                     "none".into()
                 } else {
-                    self.magic
-                        .iter()
-                        .map(|m| format!("{} = {}", m.key, m.value))
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    self.magic.iter().map(|m| format!("{} = {}", m.key, m.value)).collect::<Vec<_>>().join(", ")
                 },
                 "read from the source",
             ),

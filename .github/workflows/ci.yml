@@ -1,33 +1,72 @@
 name: CI
 
+# A pull request used to run twice, once for the push and once for itself.
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
 
+# A new push replaces the run of the same branch; main keeps its runs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # The TeX Live image already holds a full installation, which the
     # engine-dependent tests need; installing one with apt takes minutes.
     container: texlive/texlive:latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [cache, slow, rest]
     steps:
       # Lua and LPeg are compiled from C; the TeX Live image has no compiler.
       - name: Install a C toolchain
         run: apt-get update && apt-get install -y --no-install-recommends build-essential
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # One cache for every shard: they build the same dependencies.
+          shared-key: test
+          save-if: ${{ matrix.shard == 'rest' }}
+
+      - name: Test
+        run: bash scripts/ci-test.sh ${{ matrix.shard }}
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      # Pinned: `-D warnings` on a floating toolchain fails the day clippy
+      # grows a lint, on a commit that changed nothing.
+      - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      # Before the cache, so a formatting slip is reported in seconds.
+      - name: Format
+        run: cargo fmt --all --check
 
-      - name: Build, test and lint
-        run: |
-          cargo build --release
-          cargo test --release --features doc --no-fail-fast
-          cargo clippy --all-targets -- -D warnings
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: lint
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings

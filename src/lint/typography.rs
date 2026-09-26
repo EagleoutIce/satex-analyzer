@@ -4,8 +4,8 @@
 
 use crate::builtins::OccKind;
 use crate::config::Engine;
-use crate::lint::shared::document_start;
 use crate::lint::fix::{Applicability, Fix};
+use crate::lint::shared::document_start;
 use crate::lint::{Category, Report, Rule, Severity};
 use crate::machine::Analysis;
 use crate::plugin::Output;
@@ -68,9 +68,7 @@ Fix by loading `\\usepackage{microtype}`.",
 fn macro_text(analysis: &Analysis, name: &str) -> Option<String> {
     let sym = analysis.interner.lookup(name)?;
     match analysis.env.meaning(sym) {
-        Meaning::Macro(m) if m.arity() == 0 => {
-            Some(crate::tex::text_of(&m.replacement_text, &analysis.interner))
-        }
+        Meaning::Macro(m) if m.arity() == 0 => Some(crate::tex::text_of(&m.replacement_text, &analysis.interner)),
         _ => None,
     }
 }
@@ -90,9 +88,7 @@ fn ot1_font_encoding(report: &mut Report) {
         return;
     }
     let occurrences = &analysis.facts.occurrences;
-    let Some(start) = occurrences
-        .iter()
-        .position(|o| o.kind == OccKind::BeginEnvironment && o.key == "document")
+    let Some(start) = occurrences.iter().position(|o| o.kind == OccKind::BeginEnvironment && o.key == "document")
     else {
         return;
     };
@@ -128,8 +124,7 @@ fn ot1_font_encoding(report: &mut Report) {
 
 fn computer_modern_in_t1(report: &mut Report) {
     let analysis = report.analysis;
-    if encoding(analysis).as_deref() != Some("T1")
-        || macro_text(analysis, "rmdefault").as_deref() != Some(KERNEL_ROMAN)
+    if encoding(analysis).as_deref() != Some("T1") || macro_text(analysis, "rmdefault").as_deref() != Some(KERNEL_ROMAN)
     {
         return;
     }
@@ -138,8 +133,7 @@ fn computer_modern_in_t1(report: &mut Report) {
     report.add_fix(
         span,
         "T1",
-        "T1 text in Computer Modern is set in the EC fonts, which are scalable only when cm-super is installed"
-            .into(),
+        "T1 text in Computer Modern is set in the EC fonts, which are scalable only when cm-super is installed".into(),
         Fix::new("load \\usepackage{lmodern}, or install cm-super", Applicability::Unsafe, edits),
     );
 }
@@ -156,9 +150,7 @@ fn microtype_available(report: &mut Report) {
         Engine::LuaTeX => ["protrudechars", "adjustspacing"],
         _ => ["pdfprotrudechars", "pdfadjustspacing"],
     };
-    let off = |name: &str| {
-        analysis.interner.lookup(name).is_none_or(|sym| analysis.env.value(sym).as_int() == Some(0))
-    };
+    let off = |name: &str| analysis.interner.lookup(name).is_none_or(|sym| analysis.env.value(sym).as_int() == Some(0));
     if !(off(protrude) && off(adjust)) {
         return;
     }

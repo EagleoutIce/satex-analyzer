@@ -1,9 +1,9 @@
 use std::io::Write;
 use std::path::Path;
 
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
-use super::{parse_filter, Context, Output};
+use super::{Context, Output, parse_filter};
 use crate::config::Config;
 use crate::machine::Machine;
 use crate::query::{self, Query, Record};
@@ -59,7 +59,14 @@ pub fn run(
     Ok(Output::Records(query::run(context.analysis, query, &filter)))
 }
 
-pub fn trace(context: &Context, filter: Option<&str>, interactive: bool, internal: bool, file: Option<&str>, out: &mut impl Write) -> Result<Output, String> {
+pub fn trace(
+    context: &Context,
+    filter: Option<&str>,
+    interactive: bool,
+    internal: bool,
+    file: Option<&str>,
+    out: &mut impl Write,
+) -> Result<Output, String> {
     if interactive {
         step_through(context.analysis, file, internal, context.links, out);
         return Ok(Output::Done);
@@ -85,13 +92,22 @@ fn user_code(analysis: &crate::machine::Analysis, event: &crate::machine::Event)
 
 /// `trace --interactive`: one event at a time, with the macro's definition,
 /// the arguments it took and the tokens the call put back in the stream.
-fn step_through(analysis: &crate::machine::Analysis, file: Option<&str>, internal: bool, links: crate::render::Links, out: &mut impl Write) {
+fn step_through(
+    analysis: &crate::machine::Analysis,
+    file: Option<&str>,
+    internal: bool,
+    links: crate::render::Links,
+    out: &mut impl Write,
+) {
     use crate::facts::MeaningKind;
     use crate::machine::Step;
     use crate::tex::detokenize;
     let show = |toks: &[crate::tex::Token]| detokenize(toks, &analysis.interner);
     let total = analysis.trace.len();
-    let ansi = matches!(anstream::stdout().current_choice(), anstream::ColorChoice::Always | anstream::ColorChoice::AlwaysAnsi);
+    let ansi = matches!(
+        anstream::stdout().current_choice(),
+        anstream::ColorChoice::Always | anstream::ColorChoice::AlwaysAnsi
+    );
     let bold = anstyle::Style::new().bold();
     let mut stdin = std::io::stdin().lock();
     let mut sources: std::collections::HashMap<String, Option<Vec<String>>> = Default::default();
@@ -146,7 +162,8 @@ fn step_through(analysis: &crate::machine::Analysis, file: Option<&str>, interna
         let name = analysis.interner.cs(event.name);
         flush(&mut hidden, out);
         let file = analysis.short_name(event.span.file);
-        let linked = crate::render::hyperlink(&name, &crate::render::file_url(analysis.file_name(event.span.file)), links);
+        let linked =
+            crate::render::hyperlink(&name, &crate::render::file_url(analysis.file_name(event.span.file)), links);
         let shown = if ansi { format!("{bold}{linked}{bold:#}") } else { name.to_string() };
         let step = event.kind.as_str();
         let style = crate::render::step_style(event.kind);
@@ -159,7 +176,13 @@ fn step_through(analysis: &crate::machine::Analysis, file: Option<&str>, interna
             event.span.col,
             event.depth
         );
-        if let Some((head, tail)) = window(&mut sources, analysis.file_name(event.span.file), event.span.line, event.span.col, name.chars().count()) {
+        if let Some((head, tail)) = window(
+            &mut sources,
+            analysis.file_name(event.span.file),
+            event.span.line,
+            event.span.col,
+            name.chars().count(),
+        ) {
             let gray = anstyle::Style::new().dimmed();
             let (on, off) = if ansi { (format!("{gray}"), format!("{gray:#}")) } else { Default::default() };
             let lead = format!("l.{} ", event.span.line);
@@ -189,7 +212,12 @@ fn step_through(analysis: &crate::machine::Analysis, file: Option<&str>, interna
                             def.span.line
                         );
                         if let Some(m) = &def.mac {
-                            let _ = writeln!(out, "  macro:   {name}{} -> {}", m.parameter_text.render(&analysis.interner), show(&m.replacement_text));
+                            let _ = writeln!(
+                                out,
+                                "  macro:   {name}{} -> {}",
+                                m.parameter_text.render(&analysis.interner),
+                                show(&m.replacement_text)
+                            );
                             let args: Vec<Vec<_>> = call.arguments.iter().map(|a| a.to_vec()).collect();
                             if !args.is_empty() {
                                 let joined: Vec<String> = args.iter().map(|a| format!("{{{}}}", show(a))).collect();
@@ -207,18 +235,29 @@ fn step_through(analysis: &crate::machine::Analysis, file: Option<&str>, interna
             Step::Define | Step::Assign => {
                 if let Some(def) = analysis.facts.defs.iter().find(|d| d.span == event.span && d.name == event.name) {
                     let body = def.mac.as_ref().map(|m| show(&m.replacement_text)).unwrap_or_default();
-                    let _ = writeln!(out, "  now:     {name} := {body}  ({} scope)", if def.global { "global" } else { "local" });
+                    let _ = writeln!(
+                        out,
+                        "  now:     {name} := {body}  ({} scope)",
+                        if def.global { "global" } else { "local" }
+                    );
                 }
             }
             Step::Branch => {
-                let _ = writeln!(out, "  because: the test decided the {} arm", event.detail.as_deref().unwrap_or("undecided"));
+                let _ = writeln!(
+                    out,
+                    "  because: the test decided the {} arm",
+                    event.detail.as_deref().unwrap_or("undecided")
+                );
             }
             _ => {}
         }
         if run_on {
             continue;
         }
-        let _ = write!(out, "  [e]nter call, step [o]ver call, goto next [l]ine, [s]kip to <LINE>, [c]ontinue,  [q]uit\n> ");
+        let _ = write!(
+            out,
+            "  [e]nter call, step [o]ver call, goto next [l]ine, [s]kip to <LINE>, [c]ontinue,  [q]uit\n> "
+        );
         let _ = out.flush();
         let mut line = String::new();
         let read = std::io::BufRead::read_line(&mut stdin, &mut line);
@@ -275,7 +314,6 @@ fn window(
     Some((head, tail))
 }
 
-
 /// `satex query --request`: every query a JSON request names, run against
 /// one analysis, printed as a JSON array of answers in the same order.  See
 /// `doc/wiki/queries.md` for the request shape and examples.
@@ -296,11 +334,7 @@ pub fn run_request(
 /// read from a file: `satex lsp`'s `workspace/executeCommand` runs a
 /// request an editor sent as an object, with no file of its own to read it
 /// from.
-pub fn run_request_value(
-    body: &Json,
-    cfg: &Config,
-    cli_file: Option<&Path>,
-) -> Result<Vec<Json>, String> {
+pub fn run_request_value(body: &Json, cfg: &Config, cli_file: Option<&Path>) -> Result<Vec<Json>, String> {
     let mut cfg = cfg.clone();
     if let Some(overrides) = body.get("config").and_then(Json::as_object) {
         for (path, value) in overrides {
@@ -313,8 +347,7 @@ pub fn run_request_value(
         .map(std::path::PathBuf::from)
         .or_else(|| cli_file.map(Path::to_path_buf))
         .ok_or("the request names no `file`, and none was given with -f")?;
-    let source =
-        std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let source = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
     let queries = body.get("queries").and_then(Json::as_array).cloned().unwrap_or_default();
     if queries.is_empty() {
         return Err("the request has no `queries` to run".into());
@@ -356,9 +389,7 @@ fn answer(analysis: &crate::machine::Analysis, source: &str, entry: &Json) -> Js
     let error = |message: String| json!({ "type": kind, "error": message });
     let strings = |key: &str| -> Vec<String> {
         match entry.get(key) {
-            Some(Json::Array(items)) => {
-                items.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
-            }
+            Some(Json::Array(items)) => items.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
             Some(Json::String(s)) => vec![s.clone()],
             _ => Vec::new(),
         }
@@ -407,8 +438,7 @@ fn answer(analysis: &crate::machine::Analysis, source: &str, entry: &Json) -> Js
             if names.is_empty() && at.is_none() {
                 return error("`slice` needs `names` or `at`".into());
             }
-            let direction =
-                if flag("forward") { query::Direction::Forward } else { query::Direction::Backward };
+            let direction = if flag("forward") { query::Direction::Forward } else { query::Direction::Backward };
             query::slice(analysis, &names, at.as_ref(), direction)
         }
         "options" => match entry.get("name").and_then(Json::as_str) {

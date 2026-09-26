@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::env::{Binding, Env};
 use crate::builtins::LoadKind;
+use crate::env::{Binding, Env};
 use crate::tex::{Interner, Meaning, Sym};
 use crate::value::Value;
 
@@ -40,12 +40,7 @@ pub struct Format {
 
 pub(crate) fn stamp(path: &Path) -> Option<(u64, u64)> {
     let meta = std::fs::metadata(path).ok()?;
-    let modified = meta
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
+    let modified = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
     Some((meta.len(), modified))
 }
 
@@ -116,8 +111,7 @@ pub(crate) fn prune_family(dir: &Path, family: &str, interpreter: &str) {
         .filter(|entry| {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            name.ends_with(".postcard")
-                && name.strip_prefix(family).is_some_and(|rest| !rest.starts_with(interpreter))
+            name.ends_with(".postcard") && name.strip_prefix(family).is_some_and(|rest| !rest.starts_with(interpreter))
         })
         .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
         .collect();
@@ -234,9 +228,7 @@ pub fn tree_name(source: &Path) -> String {
         .filter_map(|c| c.as_os_str().to_str())
         .find(|part| part.len() == 4 && part.chars().all(|c| c.is_ascii_digit()))
         .map(str::to_string)
-        .unwrap_or_else(|| {
-            source.file_stem().and_then(|s| s.to_str()).unwrap_or("format").to_string()
-        })
+        .unwrap_or_else(|| source.file_stem().and_then(|s| s.to_str()).unwrap_or("format").to_string())
 }
 
 /// A temporary file beside `target`, unique to this process and thread, to
@@ -315,8 +307,7 @@ impl Format {
             std::io::ErrorKind::NotFound => "none built yet for this satex build and engine".to_string(),
             _ => format!("{}: {e}", path.display()),
         })?;
-        let format: Format =
-            postcard::from_bytes(&bytes).map_err(|e| format!("cannot decode the cache: {e}"))?;
+        let format: Format = postcard::from_bytes(&bytes).map_err(|e| format!("cannot decode the cache: {e}"))?;
         let (size, modified) = stamp(source).ok_or("the format source has no metadata")?;
         if format.size != size || format.modified != modified {
             return Err("latex.ltx changed".into());
@@ -325,16 +316,9 @@ impl Format {
         Ok(format)
     }
 
-    pub fn store(
-        &self,
-        dir: &Path,
-        source: &Path,
-        engine: &str,
-        preload: u64,
-    ) -> std::io::Result<()> {
+    pub fn store(&self, dir: &Path, source: &Path, engine: &str, preload: u64) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
-        let bytes = postcard::to_allocvec(self)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        let bytes = postcard::to_allocvec(self).map_err(|e| std::io::Error::other(e.to_string()))?;
         let target = cache_file(dir, source, engine, preload);
         let Some(_lock) = StoreLock::try_take(&target) else { return Ok(()) };
         let temporary = temporary_for(&target);
@@ -357,7 +341,6 @@ impl Format {
         self.catcodes
     }
 
-
     pub fn definitions(&self) -> usize {
         self.bindings.len()
     }
@@ -375,7 +358,6 @@ impl Format {
     pub(crate) fn wild(&self) -> &crate::machine::Wild {
         &self.wild
     }
-
 }
 
 #[cfg(test)]

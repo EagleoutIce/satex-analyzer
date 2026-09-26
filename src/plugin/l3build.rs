@@ -232,11 +232,7 @@ impl L3build {
             let Ok(text) = std::fs::read_to_string(&ins) else { continue };
             for generated in crate::literate::generated(&text) {
                 let from = source.join(&generated.from);
-                let from = if from.is_file() {
-                    from
-                } else {
-                    ins.with_file_name(&generated.from)
-                };
+                let from = if from.is_file() { from } else { ins.with_file_name(&generated.from) };
                 if !from.is_file() {
                     continue;
                 }
@@ -291,10 +287,9 @@ impl L3build {
         let typeset = file.as_ref().is_some_and(|file| self.documents().contains(file));
         let program = match typeset {
             true => self.string("typesetexe")?.to_string(),
-            false => self
-                .string("stdengine")
-                .map(str::to_string)
-                .or_else(|| self.list("checkengines").into_iter().next())?,
+            false => {
+                self.string("stdengine").map(str::to_string).or_else(|| self.list("checkengines").into_iter().next())?
+            }
         };
         Engine::from_program(program.split_whitespace().next()?)
     }
@@ -330,8 +325,7 @@ fn normalize(path: &Path) -> PathBuf {
 
 /// l3build's own defaults, where the installation keeps them.
 fn defaults_file() -> Option<PathBuf> {
-    let output =
-        std::process::Command::new("kpsewhich").arg("l3build-variables.lua").output().ok()?;
+    let output = std::process::Command::new("kpsewhich").arg("l3build-variables.lua").output().ok()?;
     let path = String::from_utf8(output.stdout).ok()?.trim().to_string();
     (!path.is_empty()).then(|| PathBuf::from(path))
 }
@@ -340,8 +334,11 @@ type Evaluated = (BTreeMap<String, (Var, bool)>, Option<String>);
 
 fn evaluate(root: &Path, defaults: Option<&Path>) -> Option<Evaluated> {
     let texlua = which::which("texlua").ok()?;
-    let script = std::env::temp_dir()
-        .join(format!("satex-l3build-{}-{:?}.lua", std::process::id(), std::thread::current().id()));
+    let script = std::env::temp_dir().join(format!(
+        "satex-l3build-{}-{:?}.lua",
+        std::process::id(),
+        std::thread::current().id()
+    ));
     std::fs::write(&script, EVALUATOR).ok()?;
     let defaults = defaults.map(|p| p.display().to_string()).unwrap_or_default();
     let output = std::process::Command::new(texlua)
@@ -405,16 +402,10 @@ pub fn assignments(text: &str, known: &BTreeMap<String, Var>) -> BTreeMap<String
         let is_name = |t: &str| t.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_');
         let statement_start =
             at == 0 || !matches!(tokens[at - 1].as_str(), "." | ":" | "local" | "," | "(" | "=" | "..");
-        if depth == 0
-            && statement_start
-            && is_name(&tokens[at])
-            && tokens.get(at + 1).is_some_and(|t| t == "=")
-        {
+        if depth == 0 && statement_start && is_name(&tokens[at]) && tokens.get(at + 1).is_some_and(|t| t == "=") {
             let name = tokens[at].clone();
             let mut next = at + 2;
-            let lookup = |key: &str, vars: &BTreeMap<String, Var>| {
-                vars.get(key).or_else(|| known.get(key)).cloned()
-            };
+            let lookup = |key: &str, vars: &BTreeMap<String, Var>| vars.get(key).or_else(|| known.get(key)).cloned();
             match expression(&tokens, &mut next, &|key| lookup(key, &vars)) {
                 Some(value) => {
                     vars.insert(name, value);
@@ -533,7 +524,10 @@ mod tests {
     #[test]
     fn reads_defaults_the_way_l3build_writes_them() {
         let known = assignments("maindir = \"src\"\n", &BTreeMap::new());
-        let vars = assignments("maindir = maindir or \".\"\nsupportdir = supportdir or maindir .. \"/support\"\ncheckengines = checkengines or {\"pdftex\", \"xetex\"}\n", &known);
+        let vars = assignments(
+            "maindir = maindir or \".\"\nsupportdir = supportdir or maindir .. \"/support\"\ncheckengines = checkengines or {\"pdftex\", \"xetex\"}\n",
+            &known,
+        );
         assert_eq!(vars.get("maindir"), Some(&Var::Str("src".into())));
         assert_eq!(vars.get("supportdir"), Some(&Var::Str("src/support".into())));
         assert_eq!(vars.get("checkengines"), Some(&Var::List(vec!["pdftex".into(), "xetex".into()])));

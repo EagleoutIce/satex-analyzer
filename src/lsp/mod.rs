@@ -26,15 +26,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crossbeam_channel::{select, Receiver, RecvTimeoutError, Sender};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, select};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::{
-    CodeActionParams, CodeActionProviderCapability, CompletionOptions, CompletionParams,
-    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, DocumentSymbolParams, ExecuteCommandOptions, ExecuteCommandParams,
-    DocumentHighlightParams, GotoDefinitionParams, Hover, HoverParams, HoverProviderCapability, Location, OneOf, Position,
-    PublishDiagnosticsParams, ReferenceParams, RenameOptions, RenameParams, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Uri,
+    CodeActionParams, CodeActionProviderCapability, CompletionOptions, CompletionParams, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentHighlightParams,
+    DocumentSymbolParams, ExecuteCommandOptions, ExecuteCommandParams, GotoDefinitionParams, Hover, HoverParams,
+    HoverProviderCapability, Location, OneOf, Position, PublishDiagnosticsParams, ReferenceParams, RenameOptions,
+    RenameParams, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
 };
 use serde_json::Value as Json;
 
@@ -52,9 +51,7 @@ pub fn serve(cfg: Config, root: PathBuf) -> Result<(), String> {
         Some(port) => Connection::listen((cfg.lsp.host.as_str(), port)).map_err(|e| e.to_string())?,
         None => Connection::stdio(),
     };
-    connection
-        .initialize(serde_json::to_value(server_capabilities()).unwrap())
-        .map_err(|e| e.to_string())?;
+    connection.initialize(serde_json::to_value(server_capabilities()).unwrap()).map_err(|e| e.to_string())?;
 
     let (engine_tx, engine_rx) = crossbeam_channel::unbounded::<EngineMsg>();
     let (diagnostics_tx, diagnostics_rx) = crossbeam_channel::unbounded::<PublishDiagnosticsParams>();
@@ -136,9 +133,7 @@ fn handle_request(connection: &Connection, engine_tx: &Sender<EngineMsg>, req: R
     let outcome = dispatch(engine_tx, req);
     let response = match outcome {
         Ok(value) => Response::new_ok(id, value),
-        Err(message) => {
-            Response::new_err(id, ErrorCode::InternalError as i32, format!("{method}: {message}"))
-        }
+        Err(message) => Response::new_err(id, ErrorCode::InternalError as i32, format!("{method}: {message}")),
     };
     let _ = connection.sender.send(Message::Response(response));
 }
@@ -223,11 +218,7 @@ fn dispatch(engine_tx: &Sender<EngineMsg>, req: Request) -> Result<Json, String>
             if p.command != EXECUTE_COMMAND {
                 return Err(format!("unknown command `{}`; this server only runs `{EXECUTE_COMMAND}`", p.command));
             }
-            let body = p
-                .arguments
-                .into_iter()
-                .next()
-                .ok_or("expected one argument: a `satex query --request` body")?;
+            let body = p.arguments.into_iter().next().ok_or("expected one argument: a `satex query --request` body")?;
             ask(engine_tx, |reply| EngineMsg::ExecuteCommand(body, reply))?.map(Json::Array)
         }
         other => Err(format!("method not found: {other}")),
@@ -236,13 +227,11 @@ fn dispatch(engine_tx: &Sender<EngineMsg>, req: Request) -> Result<Json, String>
 
 fn handle_notification(engine_tx: &Sender<EngineMsg>, not: Notification) {
     let sent = match not.method.as_str() {
-        "textDocument/didOpen" => serde_json::from_value::<DidOpenTextDocumentParams>(not.params).ok().and_then(
-            |p| {
-                let uri = p.text_document.uri;
-                let path = handlers::uri_to_path(&uri)?;
-                Some(EngineMsg::Open(uri, path, p.text_document.text))
-            },
-        ),
+        "textDocument/didOpen" => serde_json::from_value::<DidOpenTextDocumentParams>(not.params).ok().and_then(|p| {
+            let uri = p.text_document.uri;
+            let path = handlers::uri_to_path(&uri)?;
+            Some(EngineMsg::Open(uri, path, p.text_document.text))
+        }),
         // Full sync only (see `server_capabilities`): the whole text
         // arrives in the one change, so the latest one wins.
         "textDocument/didChange" => {
@@ -364,8 +353,7 @@ fn engine_loop(
                 let path = docs.get(&uri).map(|d| d.path.display().to_string());
                 let result = match path {
                     Some(path) => with_doc(&docs, &uri, |analysis, text| {
-                        handlers::document_symbols(analysis, &path, text)
-                            .map(lsp_types::DocumentSymbolResponse::Flat)
+                        handlers::document_symbols(analysis, &path, text).map(lsp_types::DocumentSymbolResponse::Flat)
                     })
                     .flatten(),
                     None => None,
@@ -381,14 +369,16 @@ fn engine_loop(
             EngineMsg::PrepareRename(uri, pos, reply) => {
                 ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
                 let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc(&docs, &uri, |analysis, text| handlers::prepare_rename(analysis, text, &path, pos));
+                let result =
+                    with_doc(&docs, &uri, |analysis, text| handlers::prepare_rename(analysis, text, &path, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::Rename(uri, pos, new_name, reply) => {
                 ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
                 let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc(&docs, &uri, |analysis, text| handlers::rename(analysis, text, &path, pos, &new_name))
-                    .unwrap_or_else(|| Err("document is not open".to_string()));
+                let result =
+                    with_doc(&docs, &uri, |analysis, text| handlers::rename(analysis, text, &path, pos, &new_name))
+                        .unwrap_or_else(|| Err("document is not open".to_string()));
                 let _ = reply.send(result);
             }
             EngineMsg::WorkspaceSymbol(query, reply) => {
@@ -461,11 +451,8 @@ fn analyze(
         let Some(group_uri) = group.get("uri").and_then(Json::as_str).and_then(|s| s.parse::<Uri>().ok()) else {
             continue;
         };
-        let diagnostics = group
-            .get("diagnostics")
-            .cloned()
-            .and_then(|d| serde_json::from_value(d).ok())
-            .unwrap_or_default();
+        let diagnostics =
+            group.get("diagnostics").cloned().and_then(|d| serde_json::from_value(d).ok()).unwrap_or_default();
         let code_actions = group.get("codeActions").and_then(|a| a.as_array()).cloned().unwrap_or_default();
         actions.insert(group_uri.clone(), code_actions);
         let _ = diagnostics_tx.send(PublishDiagnosticsParams { uri: group_uri, diagnostics, version: None });

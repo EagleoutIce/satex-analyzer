@@ -65,7 +65,9 @@ pub mod codec {
     fn sym_out(sym: Sym) -> Out {
         MODE.with(|m| match &mut *m.borrow_mut() {
             None | Some(Mode::Decode { .. }) => Out::Plain,
-            Some(Mode::Hash { names, .. }) => Out::Text(names.get(sym.0 as usize).cloned().unwrap_or_else(|| Rc::from(""))),
+            Some(Mode::Hash { names, .. }) => {
+                Out::Text(names.get(sym.0 as usize).cloned().unwrap_or_else(|| Rc::from("")))
+            }
             Some(Mode::Encode { syms, sym_order, .. }) => {
                 let next = syms.len() as u32;
                 Out::Index(*syms.entry(sym.0).or_insert_with(|| {
@@ -79,7 +81,9 @@ pub mod codec {
     fn file_out(file: FileId) -> Out {
         MODE.with(|m| match &mut *m.borrow_mut() {
             None | Some(Mode::Decode { .. }) => Out::Plain,
-            Some(Mode::Hash { files, .. }) => Out::Text(files.get(file as usize).cloned().unwrap_or_else(|| Rc::from(format!("#{file}")))),
+            Some(Mode::Hash { files, .. }) => {
+                Out::Text(files.get(file as usize).cloned().unwrap_or_else(|| Rc::from(format!("#{file}"))))
+            }
             Some(Mode::Encode { files, file_order, .. }) => {
                 let next = files.len() as u32;
                 Out::Index(*files.entry(file).or_insert_with(|| {
@@ -188,7 +192,8 @@ pub fn may_equal_unknown_char(a: u32, b: u32) -> bool {
         let other = if a == one { b } else { a };
         return other == one || other == unknown || char::from_u32(other).is_some_and(|c| c.is_ascii_digit());
     }
-    let digit = |c: u32| c == unknown || char::from_u32(c).is_some_and(|c| c.is_ascii_digit() || "-ivxlcdm".contains(c));
+    let digit =
+        |c: u32| c == unknown || char::from_u32(c).is_some_and(|c| c.is_ascii_digit() || "-ivxlcdm".contains(c));
     (a == unknown || b == unknown) && digit(a) && digit(b)
 }
 
@@ -316,9 +321,22 @@ impl Catcode {
     pub fn from_u8(n: u8) -> Option<Catcode> {
         use Catcode::*;
         Some(match n {
-            0 => Escape, 1 => Begin, 2 => End, 3 => Math, 4 => Tab, 5 => Eol,
-            6 => Param, 7 => Sup, 8 => Sub, 9 => Ignored, 10 => Space,
-            11 => Letter, 12 => Other, 13 => Active, 14 => Comment, 15 => Invalid,
+            0 => Escape,
+            1 => Begin,
+            2 => End,
+            3 => Math,
+            4 => Tab,
+            5 => Eol,
+            6 => Param,
+            7 => Sup,
+            8 => Sub,
+            9 => Ignored,
+            10 => Space,
+            11 => Letter,
+            12 => Other,
+            13 => Active,
+            14 => Comment,
+            15 => Invalid,
             _ => return None,
         })
     }
@@ -341,7 +359,9 @@ pub struct CatcodeTable {
 
 impl PartialEq for CatcodeTable {
     fn eq(&self, other: &Self) -> bool {
-        self.ascii == other.ascii && self.wide_default == other.wide_default && (Rc::ptr_eq(&self.wide, &other.wide) || self.wide == other.wide)
+        self.ascii == other.ascii
+            && self.wide_default == other.wide_default
+            && (Rc::ptr_eq(&self.wide, &other.wide) || self.wide == other.wide)
     }
 }
 
@@ -390,11 +410,7 @@ impl CatcodeTable {
 
     pub fn get(&self, c: char) -> Catcode {
         let n = c as u32;
-        if n < 256 {
-            self.ascii[n as usize]
-        } else {
-            *self.wide.get(&c).unwrap_or(&self.wide_default)
-        }
+        if n < 256 { self.ascii[n as usize] } else { *self.wide.get(&c).unwrap_or(&self.wide_default) }
     }
 
     pub fn set(&mut self, c: char, cat: Catcode) {
@@ -412,9 +428,10 @@ impl CatcodeTable {
         let mut out = Vec::new();
         for (code, cat) in self.ascii.iter().enumerate() {
             if other.ascii[code] != *cat
-                && let Some(c) = char::from_u32(code as u32) {
-                    out.push((c, *cat as u8));
-                }
+                && let Some(c) = char::from_u32(code as u32)
+            {
+                out.push((c, *cat as u8));
+            }
         }
         for (c, cat) in self.wide.iter() {
             if other.get(*c) != *cat {
@@ -435,7 +452,6 @@ impl CatcodeTable {
     pub fn at_letter(&mut self, yes: bool) {
         self.set('@', if yes { Catcode::Letter } else { Catcode::Other });
     }
-
 }
 
 /// The value half of a [`Token`]: a control sequence, a character with its
@@ -656,10 +672,7 @@ pub fn comment_start(line: &str) -> Option<usize> {
 }
 
 pub fn comma_split(s: &str) -> Vec<String> {
-    s.split(',')
-        .map(|p| p.trim().to_string())
-        .filter(|p| !p.is_empty())
-        .collect()
+    s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -858,16 +871,14 @@ impl Mouth {
         let a = self.src.get(at + 2).copied()?;
         let hex = |x: char| x.is_ascii_digit() || ('a'..='f').contains(&x);
         if hex(a)
-            && let Some(b) = self.src.get(at + 3).copied().filter(|b| hex(*b)) {
-                let value = (a.to_digit(16)? * 16 + b.to_digit(16)?) as u8;
-                return Some((value as char, 4));
-            }
+            && let Some(b) = self.src.get(at + 3).copied().filter(|b| hex(*b))
+        {
+            let value = (a.to_digit(16)? * 16 + b.to_digit(16)?) as u8;
+            return Some((value as char, 4));
+        }
         const FLIP: u32 = 0x40;
         let n = a as u32;
-        (n < 0x80)
-            .then(|| char::from_u32(if n < FLIP { n + FLIP } else { n - FLIP }))
-            .flatten()
-            .map(|c| (c, 3))
+        (n < 0x80).then(|| char::from_u32(if n < FLIP { n + FLIP } else { n - FLIP })).flatten().map(|c| (c, 3))
     }
 
     /// Whether only spaces, which `input_ln` drops (tex.web § 31), stand
@@ -925,8 +936,7 @@ impl Mouth {
             None => self.bump()?,
         };
         if cats.get(first) != Catcode::Letter {
-            self.state =
-                if cats.get(first) == Catcode::Space { LineState::Skipping } else { LineState::Middle };
+            self.state = if cats.get(first) == Catcode::Space { LineState::Skipping } else { LineState::Middle };
             let mut buf = [0u8; 4];
             return Some(it.intern(first.encode_utf8(&mut buf)));
         }
@@ -966,12 +976,7 @@ impl Mouth {
     }
 
     /// `end_line` is appended to each line; if not `Eol`, produces that category instead.
-    pub fn next_with(
-        &mut self,
-        cats: &CatcodeTable,
-        it: &mut Interner,
-        end_line: EndLineChar,
-    ) -> Option<Token> {
+    pub fn next_with(&mut self, cats: &CatcodeTable, it: &mut Interner, end_line: EndLineChar) -> Option<Token> {
         loop {
             if self.force_eof.is_some_and(|line| self.line > line) {
                 return None;
@@ -1037,18 +1042,18 @@ impl Mouth {
                         }
                     }
                     match self.state {
-                    LineState::New => {
-                        self.state = LineState::New;
-                        return Some(Token::new(Tok::Cs(it.intern("par")), span));
-                    }
-                    LineState::Middle => {
-                        self.state = LineState::New;
-                        return Some(Token::new(Tok::Chr(' ', Catcode::Space), span));
-                    }
-                    LineState::Skipping => {
-                        self.state = LineState::New;
-                        continue;
-                    }
+                        LineState::New => {
+                            self.state = LineState::New;
+                            return Some(Token::new(Tok::Cs(it.intern("par")), span));
+                        }
+                        LineState::Middle => {
+                            self.state = LineState::New;
+                            return Some(Token::new(Tok::Chr(' ', Catcode::Space), span));
+                        }
+                        LineState::Skipping => {
+                            self.state = LineState::New;
+                            continue;
+                        }
                     }
                 }
                 Catcode::Space => match self.state {
@@ -1151,7 +1156,12 @@ pub enum ArgType {
     Optional(Option<String>),
     Star,
     TokenFlag(char),
-    Delimited { open: char, close: char, required: bool, default: Option<String> },
+    Delimited {
+        open: char,
+        close: char,
+        required: bool,
+        default: Option<String>,
+    },
     Embellishment(String),
     /// `u{…}`: everything up to the delimiter, a `#n` a `\def` delimits.
     Until(String),
@@ -1159,7 +1169,10 @@ pub enum ArgType {
     Literal(String),
     /// A keyword TeX's scanners accept here, with the quantity it takes:
     /// `\hbox to ⟨dimen⟩`, `\hskip … plus ⟨dimen⟩`, the `=` of `\count0=`.
-    Keyword { word: String, value: Option<String> },
+    Keyword {
+        word: String,
+        value: Option<String>,
+    },
     /// A quantity TeX scans here: `number`, `dimen`, `glue`, …
     Quantity(String),
 }

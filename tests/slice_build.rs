@@ -203,19 +203,13 @@ fn check(case: &Case) -> Option<String> {
     }
     let got = value(&after, case.probe);
     if wanted.is_some() && got != wanted.as_deref() {
-        return Some(format!(
-            "{}: the probe prints {got:?} instead of {wanted:?}\n--- slice\n{text}",
-            case.name
-        ));
+        return Some(format!("{}: the probe prints {got:?} instead of {wanted:?}\n--- slice\n{text}", case.name));
     }
     if let Some(start) = case.text {
         let want = before.text.as_deref().and_then(|t| line_with(t, start)).map(str::to_string);
         let got = after.text.as_deref().and_then(|t| line_with(t, start)).map(str::to_string);
         if want.is_some() && want != got {
-            return Some(format!(
-                "{}: the PDF says {got:?} instead of {want:?}\n--- slice\n{text}",
-                case.name
-            ));
+            return Some(format!("{}: the PDF says {got:?} instead of {want:?}\n--- slice\n{text}", case.name));
         }
     }
     let _ = std::fs::remove_dir_all(&root);
@@ -227,7 +221,13 @@ fn run_all(cases: &[Case]) {
         return;
     }
     let failures: Vec<String> = cases.iter().filter_map(check).collect();
-    assert!(failures.is_empty(), "{} of {} slices misbehave:\n\n{}", failures.len(), cases.len(), failures.join("\n\n"));
+    assert!(
+        failures.is_empty(),
+        "{} of {} slices misbehave:\n\n{}",
+        failures.len(),
+        cases.len(),
+        failures.join("\n\n")
+    );
 }
 
 // --- plain TeX and its extensions ----------------------------------------
@@ -309,8 +309,10 @@ const PLAIN_BEGINGROUP: &str = r"\def\unused{U}
 \bye
 ";
 
+// `\lastpenalty` is 0 at the start of the page, so the engine takes the
+// `\else` arm, while satex, which does not model the page, keeps both arms.
 const PLAIN_UNDECIDED: &str = r"\def\unused{U}
-\ifnum\time>600
+\ifnum\lastpenalty>0
   \def\when{late}
 \else
   \def\when{early}
@@ -491,11 +493,7 @@ fn document_slices_run_like_the_original() {
             ..Case::new("latex-environment-name", "pdflatex", LATEX_MACROS, 11)
         },
         Case::new("latex-counters", "pdflatex", LATEX_COUNTERS, 10),
-        Case {
-            text: Some("See"),
-            passes: 2,
-            ..Case::new("latex-refs", "pdflatex", LATEX_REFS, 8)
-        },
+        Case { text: Some("See"), passes: 2, ..Case::new("latex-refs", "pdflatex", LATEX_REFS, 8) },
         Case::new("latex-conditionals", "pdflatex", LATEX_CONDITIONALS, 10),
         Case::new("expl3", "pdflatex", EXPL3, 10),
         Case::new("tikz", "pdflatex", TIKZ, 8),
@@ -506,11 +504,7 @@ fn document_slices_run_like_the_original() {
         },
         Case::new("latex-body-expl", "pdflatex", LATEX_BODY_EXPL, 9),
         Case::new("latex-undecided", "pdflatex", LATEX_UNDECIDED, 9),
-        Case {
-            names: &["\\shown"],
-            probe: "",
-            ..Case::new("latex-name-only", "pdflatex", LATEX_MACROS, 0)
-        },
+        Case { names: &["\\shown"], probe: "", ..Case::new("latex-name-only", "pdflatex", LATEX_MACROS, 0) },
     ]);
 }
 

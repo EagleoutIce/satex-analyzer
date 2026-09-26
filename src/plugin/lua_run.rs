@@ -20,15 +20,15 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use mlua::{
-    AnyUserData, HookTriggers, IntoLuaMulti, Lua as State, LuaOptions, MetaMethod, MultiValue,
-    StdLib, Table, UserData, UserDataMethods, Value as LV, VmState,
+    AnyUserData, HookTriggers, IntoLuaMulti, Lua as State, LuaOptions, MetaMethod, MultiValue, StdLib, Table, UserData,
+    UserDataMethods, Value as LV, VmState,
 };
 
-use mlua::chunk::ChunkMode;
 use crate::builtins::{LoadKind, Primitive};
 use crate::machine::Machine;
 use crate::tex::{Catcode, Meaning, RegKind, Span, Tok, Token};
 use crate::value::Value;
+use mlua::chunk::ChunkMode;
 
 use super::lua::{Module, Print};
 
@@ -205,13 +205,29 @@ fn new_state(memory: u64) -> R<State> {
     })?;
     lua.set_named_registry_value(FUNCTIONS, lua.create_table()?)?;
     let unknown_mt = lua.create_table()?;
-    for mm in [MetaMethod::Call, MetaMethod::NewIndex, MetaMethod::Lt, MetaMethod::Le, MetaMethod::Eq, MetaMethod::ToString] {
+    for mm in
+        [MetaMethod::Call, MetaMethod::NewIndex, MetaMethod::Lt, MetaMethod::Le, MetaMethod::Eq, MetaMethod::ToString]
+    {
         unknown_mt.set(mm.name(), lua.create_function(|lua, _: MultiValue| -> R<()> { unknown(lua) })?)?;
     }
     for mm in [
-        MetaMethod::Index, MetaMethod::Add, MetaMethod::Sub, MetaMethod::Mul, MetaMethod::Div, MetaMethod::Mod,
-        MetaMethod::Pow, MetaMethod::Unm, MetaMethod::IDiv, MetaMethod::BAnd, MetaMethod::BOr, MetaMethod::BXor,
-        MetaMethod::BNot, MetaMethod::Shl, MetaMethod::Shr, MetaMethod::Concat, MetaMethod::Len,
+        MetaMethod::Index,
+        MetaMethod::Add,
+        MetaMethod::Sub,
+        MetaMethod::Mul,
+        MetaMethod::Div,
+        MetaMethod::Mod,
+        MetaMethod::Pow,
+        MetaMethod::Unm,
+        MetaMethod::IDiv,
+        MetaMethod::BAnd,
+        MetaMethod::BOr,
+        MetaMethod::BXor,
+        MetaMethod::BNot,
+        MetaMethod::Shl,
+        MetaMethod::Shr,
+        MetaMethod::Concat,
+        MetaMethod::Len,
     ] {
         unknown_mt.set(mm.name(), lua.create_function(|lua, _: MultiValue| marker(lua))?)?;
     }
@@ -241,14 +257,12 @@ fn new_state(memory: u64) -> R<State> {
         "tainted",
         lua.create_function(|lua, name: LV| {
             Ok(lua.app_data_ref::<Shared>().is_some_and(|s| {
-                s.all.get() || matches!(&name, LV::String(n) if n.to_str().is_ok_and(|n| s.tainted.borrow().contains(&*n)))
+                s.all.get()
+                    || matches!(&name, LV::String(n) if n.to_str().is_ok_and(|n| s.tainted.borrow().contains(&*n)))
             }))
         })?,
     )?;
-    satex.set(
-        "is_token",
-        lua.create_function(|_, v: LV| Ok(matches!(v, LV::UserData(ud) if ud.is::<LTok>())))?,
-    )?;
+    satex.set("is_token", lua.create_function(|_, v: LV| Ok(matches!(v, LV::UserData(ud) if ud.is::<LTok>())))?)?;
     satex.set("functions", lua.named_registry_value::<Table>(FUNCTIONS)?)?;
     let commands = lua.create_table()?;
     for (k, name) in COMMANDS.iter().enumerate() {
@@ -301,7 +315,10 @@ fn globals(text: &str) -> Option<Vec<String>> {
         let before = |j: usize| (j > 0).then(|| t[j - 1].as_str());
         // The first name of a list `a, b =`.
         let mut first = k;
-        while before(first) == Some(",") && first >= 2 && t[first - 2].chars().next().is_some_and(|c| c.is_alphabetic() || c == '_') {
+        while before(first) == Some(",")
+            && first >= 2
+            && t[first - 2].chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+        {
             first -= 2;
         }
         let assigned = t.get(k + 1).is_some_and(|n| n == "=" || n == "," || n == ".")
@@ -368,7 +385,8 @@ fn enter(
         shared.failed.replace(false)
     };
     m.lua.depth += 1;
-    let run = RefCell::new(Run { m, span, out: Vec::new(), files: Vec::new(), stopped: Vec::new(), captured: Vec::new() });
+    let run =
+        RefCell::new(Run { m, span, out: Vec::new(), files: Vec::new(), stopped: Vec::new(), captured: Vec::new() });
     let result = lua.scope(|scope| {
         let d = scope.create_function(|lua, mut args: MultiValue| {
             let Some(LV::Integer(k)) = args.pop_front() else { return unknown(lua) };
@@ -439,7 +457,9 @@ fn enter(
 
 /// Runs a `\directlua` chunk.
 pub(super) fn chunk(m: &mut Machine, code: &str, span: Span) -> Option<Vec<Token>> {
-    enter(m, span, Some(code.to_string()), None, |lua| lua.load(code).set_name("=[\\directlua]").set_mode(ChunkMode::Text).exec())
+    enter(m, span, Some(code.to_string()), None, |lua| {
+        lua.load(code).set_name("=[\\directlua]").set_mode(ChunkMode::Text).exec()
+    })
 }
 
 /// Calls the function at `id` in `lua.get_functions_table()`, as a
@@ -496,7 +516,6 @@ fn int(lua: &State, v: &LV) -> R<i64> {
     }
 }
 
-
 fn known<T>(lua: &State, v: Option<T>) -> R<T> {
     match v {
         Some(v) => Ok(v),
@@ -515,7 +534,6 @@ fn token_of(v: &LV) -> Option<Token> {
     }
 }
 
-
 fn char_of(lua: &State, code: i64) -> R<char> {
     known(lua, u32::try_from(code).ok().and_then(char::from_u32))
 }
@@ -523,7 +541,9 @@ fn char_of(lua: &State, code: i64) -> R<char> {
 /// A category a character token can have on its own.
 fn plain_catcode(lua: &State, cat: i64) -> R<Catcode> {
     match u8::try_from(cat).ok().and_then(Catcode::from_u8) {
-        Some(Catcode::Escape | Catcode::Eol | Catcode::Ignored | Catcode::Active | Catcode::Comment | Catcode::Invalid)
+        Some(
+            Catcode::Escape | Catcode::Eol | Catcode::Ignored | Catcode::Active | Catcode::Comment | Catcode::Invalid,
+        )
         | None => unknown(lua),
         Some(cat) => Ok(cat),
     }
@@ -539,28 +559,163 @@ fn flags(lua: &State, args: &MultiValue, from: usize) -> R<Vec<String>> {
 /// LuaTeX's command names, numbered as `token.commands()` numbers them
 /// (LuaTeX 1.x); a character's command is its category code.
 const COMMANDS: &[&str] = &[
-    "relax", "left_brace", "right_brace", "math_shift", "tab_mark", "car_ret", "mac_param", "sup_mark",
-    "sub_mark", "endv", "spacer", "letter", "other_char", "par_end", "stop", "delim_num", "char_num",
-    "math_char_num", "mark", "node", "xray", "make_box", "hmove", "vmove", "un_hbox", "un_vbox",
-    "remove_item", "hskip", "vskip", "mskip", "kern", "mkern", "leader_ship", "halign", "valign", "no_align",
-    "vrule", "hrule", "novrule", "nohrule", "insert", "vadjust", "ignore_spaces", "after_assignment",
-    "after_group", "partoken_name", "break_penalty", "start_par", "ital_corr", "accent", "math_accent",
-    "discretionary", "eq_no", "left_right", "math_comp", "limit_switch", "above", "math_style", "math_choice",
-    "non_script", "vcenter", "case_shift", "message", "normal", "extension", "option", "lua_function_call",
-    "lua_bytecode_call", "lua_call", "in_stream", "begin_group", "end_group", "omit", "ex_space", "boundary",
-    "radical", "super_sub_script", "no_super_sub_script", "math_shift_cs", "end_cs_name", "char_ghost",
-    "assign_local_box", "char_given", "math_given", "xmath_given", "last_item", "toks_register",
-    "assign_toks", "assign_int", "assign_attr", "assign_dimen", "assign_glue", "assign_mu_glue",
-    "assign_font_dimen", "assign_font_int", "assign_hang_indent", "set_aux", "set_prev_graf",
-    "set_page_dimen", "set_page_int", "set_box_dimen", "set_tex_shape", "set_etex_shape", "def_char_code",
-    "def_del_code", "extdef_math_code", "extdef_del_code", "def_family", "set_math_param", "set_font",
-    "def_font", "register", "assign_box_direction", "assign_box_dir", "assign_direction", "assign_dir",
-    "combinetoks", "advance", "multiply", "divide", "prefix", "let", "shorthand_def", "def_lua_call",
-    "read_to_cs", "def", "set_box", "hyph_data", "set_interaction", "letterspace_font", "expand_font",
-    "copy_font", "set_font_id", "undefined_cs", "expand_after", "no_expand", "input", "lua_expandable_call",
-    "lua_local_call", "if_test", "fi_or_else", "cs_name", "convert", "variable", "feedback", "the",
-    "top_bot_mark", "call", "long_call", "outer_call", "long_outer_call", "end_template", "dont_expand",
-    "glue_ref", "shape_ref", "box_ref", "data",
+    "relax",
+    "left_brace",
+    "right_brace",
+    "math_shift",
+    "tab_mark",
+    "car_ret",
+    "mac_param",
+    "sup_mark",
+    "sub_mark",
+    "endv",
+    "spacer",
+    "letter",
+    "other_char",
+    "par_end",
+    "stop",
+    "delim_num",
+    "char_num",
+    "math_char_num",
+    "mark",
+    "node",
+    "xray",
+    "make_box",
+    "hmove",
+    "vmove",
+    "un_hbox",
+    "un_vbox",
+    "remove_item",
+    "hskip",
+    "vskip",
+    "mskip",
+    "kern",
+    "mkern",
+    "leader_ship",
+    "halign",
+    "valign",
+    "no_align",
+    "vrule",
+    "hrule",
+    "novrule",
+    "nohrule",
+    "insert",
+    "vadjust",
+    "ignore_spaces",
+    "after_assignment",
+    "after_group",
+    "partoken_name",
+    "break_penalty",
+    "start_par",
+    "ital_corr",
+    "accent",
+    "math_accent",
+    "discretionary",
+    "eq_no",
+    "left_right",
+    "math_comp",
+    "limit_switch",
+    "above",
+    "math_style",
+    "math_choice",
+    "non_script",
+    "vcenter",
+    "case_shift",
+    "message",
+    "normal",
+    "extension",
+    "option",
+    "lua_function_call",
+    "lua_bytecode_call",
+    "lua_call",
+    "in_stream",
+    "begin_group",
+    "end_group",
+    "omit",
+    "ex_space",
+    "boundary",
+    "radical",
+    "super_sub_script",
+    "no_super_sub_script",
+    "math_shift_cs",
+    "end_cs_name",
+    "char_ghost",
+    "assign_local_box",
+    "char_given",
+    "math_given",
+    "xmath_given",
+    "last_item",
+    "toks_register",
+    "assign_toks",
+    "assign_int",
+    "assign_attr",
+    "assign_dimen",
+    "assign_glue",
+    "assign_mu_glue",
+    "assign_font_dimen",
+    "assign_font_int",
+    "assign_hang_indent",
+    "set_aux",
+    "set_prev_graf",
+    "set_page_dimen",
+    "set_page_int",
+    "set_box_dimen",
+    "set_tex_shape",
+    "set_etex_shape",
+    "def_char_code",
+    "def_del_code",
+    "extdef_math_code",
+    "extdef_del_code",
+    "def_family",
+    "set_math_param",
+    "set_font",
+    "def_font",
+    "register",
+    "assign_box_direction",
+    "assign_box_dir",
+    "assign_direction",
+    "assign_dir",
+    "combinetoks",
+    "advance",
+    "multiply",
+    "divide",
+    "prefix",
+    "let",
+    "shorthand_def",
+    "def_lua_call",
+    "read_to_cs",
+    "def",
+    "set_box",
+    "hyph_data",
+    "set_interaction",
+    "letterspace_font",
+    "expand_font",
+    "copy_font",
+    "set_font_id",
+    "undefined_cs",
+    "expand_after",
+    "no_expand",
+    "input",
+    "lua_expandable_call",
+    "lua_local_call",
+    "if_test",
+    "fi_or_else",
+    "cs_name",
+    "convert",
+    "variable",
+    "feedback",
+    "the",
+    "top_bot_mark",
+    "call",
+    "long_call",
+    "outer_call",
+    "long_outer_call",
+    "end_template",
+    "dont_expand",
+    "glue_ref",
+    "shape_ref",
+    "box_ref",
+    "data",
 ];
 
 fn command(name: &str) -> i64 {
@@ -644,8 +799,18 @@ fn field<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) -> R
             None => ret(lua, marker(lua)?),
         },
         "index" => match (cmd, mode) {
-            ("assign_int" | "assign_dimen" | "assign_skip" | "assign_mu_skip" | "assign_toks" | "char_given"
-            | "math_given" | "lua_call" | "lua_expandable_call", Some(n)) => ret(lua, n),
+            (
+                "assign_int"
+                | "assign_dimen"
+                | "assign_skip"
+                | "assign_mu_skip"
+                | "assign_toks"
+                | "char_given"
+                | "math_given"
+                | "lua_call"
+                | "lua_expandable_call",
+                Some(n),
+            ) => ret(lua, n),
             ("undefined_cs" | "letter" | "other_char" | "spacer", _) => ret(lua, LV::Nil),
             _ => ret(lua, marker(lua)?),
         },
@@ -1121,7 +1286,8 @@ fn luatex_engine<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, _: MultiValue)
         return unknown(lua);
     }
     let roots = run.m.resolver_mut().distribution().roots.clone();
-    let text = roots.iter().find_map(|root| std::fs::read_to_string(root.join("web2c/fmtutil.cnf")).ok()).unwrap_or_default();
+    let text =
+        roots.iter().find_map(|root| std::fs::read_to_string(root.join("web2c/fmtutil.cnf")).ok()).unwrap_or_default();
     let engine = text.lines().find_map(|line| {
         let mut fields = line.split_whitespace();
         (fields.next() == Some("lualatex")).then(|| fields.next()).flatten().map(str::to_string)

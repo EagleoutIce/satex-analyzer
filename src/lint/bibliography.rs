@@ -72,10 +72,9 @@ fn bibliography(analysis: &Analysis) -> Bibliography {
     let mut read = BTreeSet::new();
     for occurrence in &analysis.facts.occurrences {
         match occurrence.kind {
-            OccKind::BibItem => declared
-                .entry(occurrence.key.clone())
-                .or_default()
-                .push(Declared::Item(occurrence.span)),
+            OccKind::BibItem => {
+                declared.entry(occurrence.key.clone()).or_default().push(Declared::Item(occurrence.span))
+            }
             OccKind::Bibliography => {
                 let Some(path) = crate::plugin::bib::resolve(analysis, &occurrence.key) else {
                     complete = false;
@@ -164,13 +163,8 @@ fn duplicate_bibliography_entry(report: &mut Report) {
 
 fn unused_bibitem(report: &mut Report) {
     let analysis = report.analysis;
-    let cited: BTreeSet<&str> = analysis
-        .facts
-        .occurrences
-        .iter()
-        .filter(|o| o.kind == OccKind::Cite)
-        .map(|o| o.key.as_str())
-        .collect();
+    let cited: BTreeSet<&str> =
+        analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Cite).map(|o| o.key.as_str()).collect();
     if cited.contains(EVERY_ENTRY) {
         return;
     }

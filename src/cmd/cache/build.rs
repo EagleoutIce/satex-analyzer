@@ -134,11 +134,7 @@ pub fn prepare(
     preamble: Option<&Path>,
     progress: &mut dyn FnMut(&str),
 ) -> Result<Vec<Prepared>, String> {
-    let directory = cfg
-        .cache_dir
-        .clone()
-        .or_else(crate::format::default_cache_dir)
-        .ok_or("no cache directory")?;
+    let directory = cfg.cache_dir.clone().or_else(crate::format::default_cache_dir).ok_or("no cache directory")?;
     let base = directory.join("index");
     std::fs::create_dir_all(&base).map_err(|e| format!("{}: {e}", base.display()))?;
     let packages: &[String] = match preamble {

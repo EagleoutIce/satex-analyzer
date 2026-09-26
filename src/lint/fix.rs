@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::rc::Rc;
 
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use crate::builtins::{LoadKind, Primitive};
 use crate::facts::{CsnameRole, Definition, Load};
@@ -335,7 +335,13 @@ impl Scan {
         if matches!(token.tok, Tok::Chr(_, Catcode::End)) {
             return None;
         }
-        Some(Group { start: token.start, end: token.end, inner_start: token.start, inner_end: token.end, inner: vec![token] })
+        Some(Group {
+            start: token.start,
+            end: token.end,
+            inner_start: token.start,
+            inner_end: token.end,
+            inner: vec![token],
+        })
     }
 
     fn until(&mut self, open: Lexeme, closes: impl Fn(Tok, u32) -> bool) -> Option<Group> {
@@ -344,7 +350,13 @@ impl Scan {
         loop {
             let lexeme = self.advance()?;
             if closes(lexeme.tok, depth) {
-                return Some(Group { start: open.start, end: lexeme.end, inner_start: open.end, inner_end: lexeme.start, inner });
+                return Some(Group {
+                    start: open.start,
+                    end: lexeme.end,
+                    inner_start: open.end,
+                    inner_end: lexeme.start,
+                    inner,
+                });
             }
             match lexeme.tok {
                 Tok::Chr(_, Catcode::Begin) => depth += 1,
@@ -771,8 +783,7 @@ impl<'a> Edits<'a> {
         let end = match scan.peek() {
             Some(next) if next.start.line == endcsname.end.line => next.start,
             _ => {
-                let rest: String =
-                    text.line(endcsname.end.line).chars().skip(endcsname.end.col as usize - 1).collect();
+                let rest: String = text.line(endcsname.end.line).chars().skip(endcsname.end.col as usize - 1).collect();
                 let blank = rest.chars().take_while(|c| cats_space(*c)).count();
                 if !rest[rest.char_indices().nth(blank).map_or(rest.len(), |(i, _)| i)..].starts_with('%') {
                     replacement.push('%');
@@ -866,6 +877,10 @@ fn whole_lines(text: &Text, path: &str, start: Pos, end: Pos) -> Option<Edit> {
 
 /// Delete a command: its lines when it has them to itself, else just it.
 fn removal(text: &Text, path: &str, start: Pos, end: Pos) -> Edit {
-    whole_lines(text, path, start, end)
-        .unwrap_or_else(|| Edit { path: path.to_string(), start, end, replacement: String::new() })
+    whole_lines(text, path, start, end).unwrap_or_else(|| Edit {
+        path: path.to_string(),
+        start,
+        end,
+        replacement: String::new(),
+    })
 }

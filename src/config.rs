@@ -640,7 +640,9 @@ impl Default for Profiles {
             package: package.clone(),
             class: package.clone(),
             literate: package,
-            plain: parse("load_packages: false\nload_classes: false\nlint_off: [analysis-imprecision, unused-label, microtype-available, hand-set-quantity]\n"),
+            plain: parse(
+                "load_packages: false\nload_classes: false\nlint_off: [analysis-imprecision, unused-label, microtype-available, hand-set-quantity]\n",
+            ),
         }
     }
 }
@@ -714,9 +716,7 @@ impl Config {
             year: self.texlive_year,
             use_kpsewhich: self.use_kpsewhich,
             probe_fallback: self.use_fallback_roots,
-            provider: self.provider.or_else(|| {
-                self.use_kpsewhich.then(crate::plugin::Provider::detect).flatten()
-            }),
+            provider: self.provider.or_else(|| self.use_kpsewhich.then(crate::plugin::Provider::detect).flatten()),
             platform: self.platform.unwrap_or_else(crate::plugin::Platform::current),
             cache: self.cache,
             cache_dir: self.cache_dir.clone(),
@@ -810,8 +810,7 @@ impl Config {
         let mut value = serde_yaml_ng::to_value(&*self).map_err(|e| e.to_string())?;
         merge_value(&mut value, &overlay);
         let source = self.source.take();
-        *self =
-            serde_yaml_ng::from_value(value).map_err(|e| format!("profiles.{}: {e}", profile.as_str()))?;
+        *self = serde_yaml_ng::from_value(value).map_err(|e| format!("profiles.{}: {e}", profile.as_str()))?;
         self.source = source;
         self.profile = Some(profile);
         Ok(())
@@ -822,8 +821,7 @@ impl Config {
     /// `discover_layers` finds on its own, a file named this way is meant
     /// to exist: `Err` when it cannot be read or does not fit `Config`.
     pub fn merge(&mut self, path: &Path) -> Result<(), String> {
-        let text =
-            std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let incoming: serde_yaml_ng::Value =
             serde_yaml_ng::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         let mut value = serde_yaml_ng::to_value(&*self).map_err(|e| e.to_string())?;
@@ -873,9 +871,7 @@ fn merge_value(base: &mut serde_yaml_ng::Value, incoming: &serde_yaml_ng::Value)
             && let Some(stripped) = name.strip_suffix('+')
         {
             let target = Value::String(stripped.to_string());
-            if let (Some(Value::Sequence(existing)), Value::Sequence(added)) =
-                (base_map.get_mut(&target), value)
-            {
+            if let (Some(Value::Sequence(existing)), Value::Sequence(added)) = (base_map.get_mut(&target), value) {
                 existing.extend(added.clone());
             } else {
                 base_map.insert(target, value.clone());

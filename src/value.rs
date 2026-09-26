@@ -123,7 +123,10 @@ pub enum Value {
     /// what a join, arithmetic on such a value, or a typesetting result
     /// leaves.  Read as a number it is unknown ([`crate::env::Env::value`]
     /// reads it so); a test that looks at it decides by the interval.
-    Range { dimen: bool, num: Num },
+    Range {
+        dimen: bool,
+        num: Num,
+    },
 }
 
 /// How many values a [`Num`] lists before it is only an interval, unless
@@ -193,7 +196,14 @@ impl Num {
     /// argument on a sign-constant part); `None` for a pair means TeX's
     /// arithmetic error, which leaves the register as it was (`keep`);
     /// `max` bounds the kind.
-    pub fn apply(&self, other: &Num, keep: &Num, max: i64, members: usize, op: impl Fn(i64, i64) -> Option<i64>) -> Num {
+    pub fn apply(
+        &self,
+        other: &Num,
+        keep: &Num,
+        max: i64,
+        members: usize,
+        op: impl Fn(i64, i64) -> Option<i64>,
+    ) -> Num {
         if let (Some(a), Some(b)) = (&self.set, &other.set)
             && a.len() * b.len() <= 64
         {
@@ -385,7 +395,9 @@ impl PartialEq for Value {
             (Value::Int(a), Value::Int(b)) => a == b,
             (Value::Dimen(a), Value::Dimen(b)) => a == b,
             (Value::Glue(a), Value::Glue(b)) | (Value::MuGlue(a), Value::MuGlue(b)) => a == b,
-            (Value::Toks(a), Value::Toks(b)) => a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.tok == y.tok),
+            (Value::Toks(a), Value::Toks(b)) => {
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.tok == y.tok)
+            }
             (Value::Range { dimen: x, num: a }, Value::Range { dimen: y, num: b }) => x == y && a == b,
             _ => false,
         }
@@ -551,10 +563,7 @@ fn signs(s: &str) -> (i64, &str) {
 /// Font-relative units (`em`, `ex`) and `\fill` are not decidable statically.
 pub fn parse_dimen(s: &str) -> Option<Scaled> {
     let (sign, rest) = signs(s.trim());
-    let digits: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == ',')
-        .collect();
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.' || *c == ',').collect();
     let unit = rest[digits.len()..].trim().to_ascii_lowercase();
     let (num, den) = decimal(&digits)?;
     let &(_, ratio_n, ratio_d) = UNITS.iter().find(|(u, _, _)| unit.starts_with(u))?;
@@ -605,9 +614,7 @@ pub fn parse_glue(s: &str) -> Option<Glue> {
     for (key, slot) in [("plus", 0), ("minus", 1)] {
         let Some(i) = lower.find(key) else { continue };
         let tail = &rest[i + key.len()..];
-        let end = lower[i + key.len()..]
-            .find(if key == "plus" { "minus" } else { "plus" })
-            .unwrap_or(tail.len());
+        let end = lower[i + key.len()..].find(if key == "plus" { "minus" } else { "plus" }).unwrap_or(tail.len());
         let part = parse_stretch(&tail[..end])?;
         if slot == 0 {
             glue.stretch = part;
@@ -724,11 +731,7 @@ fn factor(l: &mut ExprLexer, dimen: bool) -> Option<i64> {
     if text.is_empty() {
         return None;
     }
-    if dimen {
-        parse_dimen(text).or_else(|| parse_int(text).map(|n| n * UNIT))
-    } else {
-        parse_int(text)
-    }
+    if dimen { parse_dimen(text).or_else(|| parse_int(text).map(|n| n * UNIT)) } else { parse_int(text) }
 }
 
 #[cfg(test)]

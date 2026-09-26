@@ -63,20 +63,22 @@ fn directive<'a>(content: &'a str, prefix: &str) -> Option<&'a str> {
 /// Parse a magic comment line into (key, value) if it matches a known pattern.
 fn parse_magic_comment(content: &str) -> Option<(String, String)> {
     if let Some(rest) = directive(content, "!TeX ")
-        && let Some((key, value)) = rest.split_once('=') {
-            // TeXShop's `TS-program` is TeXworks' `program`.
-            let key = key.trim();
-            let key = if key.eq_ignore_ascii_case("TS-program") { "program" } else { key };
-            let value = value.trim();
-            return Some((format!("TeX {}", key), value.to_string()));
-        }
+        && let Some((key, value)) = rest.split_once('=')
+    {
+        // TeXShop's `TS-program` is TeXworks' `program`.
+        let key = key.trim();
+        let key = if key.eq_ignore_ascii_case("TS-program") { "program" } else { key };
+        let value = value.trim();
+        return Some((format!("TeX {}", key), value.to_string()));
+    }
 
     if let Some(rest) = directive(content, "!BIB ")
-        && let Some((key, value)) = rest.split_once('=') {
-            let key = key.trim();
-            let value = value.trim();
-            return Some((format!("BIB {}", key), value.to_string()));
-        }
+        && let Some((key, value)) = rest.split_once('=')
+    {
+        let key = key.trim();
+        let value = value.trim();
+        return Some((format!("BIB {}", key), value.to_string()));
+    }
 
     if let Some(directive) = content.strip_prefix("arara:") {
         let directive = directive.trim();

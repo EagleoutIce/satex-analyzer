@@ -130,7 +130,8 @@ fn within(name: &str, args: &[String]) -> Option<(String, String, String)> {
                 .map(|(at, _)| at)
                 .find(|&at| {
                     let (before, after) = (&name[..at], &name[at + a.len()..]);
-                    !before.ends_with(|c: char| c.is_alphanumeric()) && !after.starts_with(|c: char| c.is_alphanumeric())
+                    !before.ends_with(|c: char| c.is_alphanumeric())
+                        && !after.starts_with(|c: char| c.is_alphanumeric())
                 })
                 .map(|at| (a.clone(), name[..at].to_string(), name[at + a.len()..].to_string()))
         })
@@ -325,7 +326,15 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
         // Text, not a command: the element contents of an XML file.
         let text = m.text_of(tokens);
         let args = text.split(['<', '>']).skip(2).step_by(2).map(|t| t.trim().to_string()).collect();
-        m.written_lines.push(WrittenLine { head: String::new(), args, keys: Vec::new(), parts: std::rc::Rc::from([]), defined: Vec::new(), span, context });
+        m.written_lines.push(WrittenLine {
+            head: String::new(),
+            args,
+            keys: Vec::new(),
+            parts: std::rc::Rc::from([]),
+            defined: Vec::new(),
+            span,
+            context,
+        });
         return;
     };
     let mut args = Vec::new();
@@ -480,7 +489,9 @@ pub fn relate(m: &mut Machine) {
     for (i, line) in lines.iter().enumerate().filter(|(i, l)| !declaring.contains(i) && !l.head.is_empty()) {
         for read in reads.iter().filter(|r| r.span == line.span) {
             let name = m.name(read.name).to_string();
-            if let Some((key, prefix, suffix)) = within(&name, &line.keys).filter(|(_, p, s)| !p.is_empty() || !s.is_empty()) {
+            if let Some((key, prefix, suffix)) =
+                within(&name, &line.keys).filter(|(_, p, s)| !p.is_empty() || !s.is_empty())
+            {
                 let at = shape(&mut shapes, &prefix, &suffix);
                 shapes[at].3.get_or_insert_with(|| line.head.clone());
                 if !named.iter().any(|n| n.1 == key && n.2 == i) {
@@ -541,7 +552,8 @@ pub fn relate(m: &mut Machine) {
         .filter(|o| o.kind == OccKind::Ref)
         .map(|o| (o.kind, o.key.clone(), o.span))
         .collect();
-    let written_at: std::collections::HashSet<(String, Span)> = declared.iter().map(|(_, k, i)| (k.clone(), lines[*i].span)).collect();
+    let written_at: std::collections::HashSet<(String, Span)> =
+        declared.iter().map(|(_, k, i)| (k.clone(), lines[*i].span)).collect();
     for (at, key, i) in declared {
         let line = &lines[i];
         let shape = (shapes[at].0.clone(), shapes[at].1.clone());
@@ -610,11 +622,12 @@ pub fn relate(m: &mut Machine) {
         if written_at.contains(&(key.clone(), *span)) || related {
             continue;
         }
-        let kind = if first_shapes.contains(&(key.clone(), shape.clone())) && first.get(key).is_some_and(|f| f.0 == *span) {
-            OccKind::Key
-        } else {
-            OccKind::KeyUse
-        };
+        let kind =
+            if first_shapes.contains(&(key.clone(), shape.clone())) && first.get(key).is_some_and(|f| f.0 == *span) {
+                OccKind::Key
+            } else {
+                OccKind::KeyUse
+            };
         if seen.insert((kind, key.clone(), *span)) {
             let head = m.name(*call).to_string();
             m.occurrence_in(kind, key.clone(), Some(head), *span, context);
@@ -704,10 +717,8 @@ pub fn image(m: &mut Machine, name: &str, span: Span) {
     }
     let at = m.file_call.map_or(span, |(_, at)| at);
     let base = m.base().to_path_buf();
-    let found = m
-        .resolver_mut()
-        .resolve(name, crate::builtins::LoadKind::Input, &base)
-        .map(|p| p.display().to_string());
+    let found =
+        m.resolver_mut().resolve(name, crate::builtins::LoadKind::Input, &base).map(|p| p.display().to_string());
     m.occurrence(OccKind::Graphics, name.to_string(), found, at);
 }
 
@@ -782,9 +793,7 @@ fn characters(tokens: &[Token]) -> String {
     tokens
         .iter()
         .filter_map(|t| match t.tok {
-            Tok::Chr(c, cat) if !matches!(cat, Catcode::Begin | Catcode::End | Catcode::Active) => {
-                Some(c)
-            }
+            Tok::Chr(c, cat) if !matches!(cat, Catcode::Begin | Catcode::End | Catcode::Active) => Some(c),
             _ => None,
         })
         .collect()

@@ -72,16 +72,11 @@ fn a_literal_only_a_package_writes_is_found_in_the_package() {
     let (analysis, source) = sample();
     // `\setlength{\my@indent}{1.5em}` stands in tests/fixtures/project/mypackage.sty alone.
     let found = query::produces(&analysis, &source, "1.5em");
-    let package: Vec<&Record> = found
-        .iter()
-        .filter(|r| field(r, "kind") == "source" && field(r, "file") == "mypackage.sty")
-        .collect();
+    let package: Vec<&Record> =
+        found.iter().filter(|r| field(r, "kind") == "source" && field(r, "file") == "mypackage.sty").collect();
     assert_eq!(package.len(), 1, "{package:?}");
     assert_eq!(field(package[0], "tag"), "package");
-    assert!(
-        !found.iter().any(|r| field(r, "file") == "paper.tex"),
-        "the document itself never writes 1.5em"
-    );
+    assert!(!found.iter().any(|r| field(r, "file") == "paper.tex"), "the document itself never writes 1.5em");
 }
 
 #[test]

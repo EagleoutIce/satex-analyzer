@@ -112,8 +112,5 @@ fn a_document_s_unused_definition_is_reported_regardless() {
     let source = "\\documentclass{article}\n\\newcommand\\unused{x}\n\\begin{document}\\end{document}\n";
     let analysis = analyze_as(Profile::Document, source, "demo.tex");
     let findings = satex::lint::lint(&analysis);
-    assert!(
-        findings.iter().any(|r| r["code"] == "unused-definition" && r["origin"] == "document"),
-        "{findings:?}"
-    );
+    assert!(findings.iter().any(|r| r["code"] == "unused-definition" && r["origin"] == "document"), "{findings:?}");
 }

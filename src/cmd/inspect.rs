@@ -1,26 +1,22 @@
 use std::io::Write;
 use std::path::Path;
 
-use super::{parse_filter, parse_place, Context, Format, Output};
+use super::{Context, Format, Output, parse_filter, parse_place};
 use crate::query;
 
-pub fn scope(
-    context: &Context,
-    at: Option<&str>,
-    filter: Option<&str>,
-    all: bool,
-) -> Result<Output, String> {
+pub fn scope(context: &Context, at: Option<&str>, filter: Option<&str>, all: bool) -> Result<Output, String> {
     let place = at.map(parse_place).transpose()?;
     let position = match &place {
-        Some(place) => Some((place.file(context.analysis).ok_or_else(|| format!("no file {place} was read"))?, place.line, place.col)),
+        Some(place) => Some((
+            place.file(context.analysis).ok_or_else(|| format!("no file {place} was read"))?,
+            place.line,
+            place.col,
+        )),
         None => None,
     };
     let filter = parse_filter(filter)?;
     Ok(Output::Records(
-        query::scope(context.analysis, position, all)
-            .into_iter()
-            .filter(|record| filter.accepts(record))
-            .collect(),
+        query::scope(context.analysis, position, all).into_iter().filter(|record| filter.accepts(record)).collect(),
     ))
 }
 
@@ -53,8 +49,7 @@ pub fn slice(
     if names.is_empty() && position.is_none() && filter.is_none() {
         return Err("give a name to slice on, --at [FILE:]LINE:COL, or --where EXPR".into());
     }
-    let direction =
-        if query.forward { query::Direction::Forward } else { query::Direction::Backward };
+    let direction = if query.forward { query::Direction::Forward } else { query::Direction::Backward };
     let records = match &filter {
         Some(filter) => query::slice_matching(context.analysis, filter, direction),
         None => query::slice(context.analysis, names, position.as_ref(), direction),
@@ -66,10 +61,7 @@ pub fn slice(
             (true, None, Some(_)) => format!("`--where {}`", query.where_.unwrap_or_default()),
             (true, None, None) => "the criterion".into(),
         };
-        return Ok(Output::Partial(
-            records,
-            format!("{what} names nothing the run reached, so the slice is empty"),
-        ));
+        return Ok(Output::Partial(records, format!("{what} names nothing the run reached, so the slice is empty")));
     }
     if let Some(dir) = out_dir {
         return write_project(context, &records, dir, out);
@@ -134,10 +126,9 @@ pub fn controls(context: &Context, names: &[String], all: bool) -> Result<Output
     };
     query::in_document_order(context.analysis, &mut records);
     Ok(match (names.is_empty(), all) {
-        (true, false) => Output::Partial(
-            records,
-            "`--all` adds the switches and options the kernel and the packages bring".into(),
-        ),
+        (true, false) => {
+            Output::Partial(records, "`--all` adds the switches and options the kernel and the packages bring".into())
+        }
         _ => Output::Records(records),
     })
 }

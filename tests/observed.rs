@@ -45,10 +45,7 @@ fn findings(analysis: &Analysis, code: &str) -> Vec<(String, Option<String>)> {
         .into_iter()
         .filter(|record| record["code"] == code)
         .map(|record| {
-            (
-                record["message"].as_str().unwrap_or_default().to_string(),
-                record["fix"].as_str().map(str::to_string),
-            )
+            (record["message"].as_str().unwrap_or_default().to_string(), record["fix"].as_str().map(str::to_string))
         })
         .collect()
 }
@@ -304,14 +301,11 @@ fn ocg_p_layers_are_balanced() {
 
 #[test]
 fn content_stream_operators_skip_strings_and_dictionaries() {
-    use satex::plugin::pdf::{operators, Operator};
+    use satex::plugin::pdf::{Operator, operators};
     let ops = operators("q (a Q in a string) Tj /Span << /ActualText (EMC) >> BDC /OC /l1 BDC EMC EMC Q % Q\n");
     let names: Vec<&str> = ops.iter().map(Operator::name).collect();
     assert_eq!(names, ["q", "BDC", "BDC", "EMC", "EMC", "Q"]);
-    assert_eq!(
-        ops[2],
-        Operator::BeginMarked { operator: "BDC", optional_content: Some("l1".into()) }
-    );
+    assert_eq!(ops[2], Operator::BeginMarked { operator: "BDC", optional_content: Some("l1".into()) });
 }
 
 #[test]

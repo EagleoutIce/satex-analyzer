@@ -136,21 +136,13 @@ impl Project {
         self.files
             .iter()
             .map(|file| {
-                let name = file
-                    .path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or_default();
+                let name = file.path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
                 match file.settings.as_slice() {
                     [] => format!("{name} ({})", file.tool),
                     settings => format!(
                         "{name} ({}: {})",
                         file.tool,
-                        settings
-                            .iter()
-                            .map(|(k, v)| format!("{k}={v}"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
+                        settings.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(", ")
                     ),
                 }
             })
@@ -222,8 +214,7 @@ fn latexmkrc_paths(path: &Path) -> Vec<(String, String)> {
                 add_kpse_path(&mut out, &variable, value);
             }
         } else if let Some(rest) = line.strip_prefix("ensure_path") {
-            let Some(inner) =
-                rest.trim_start().strip_prefix('(').and_then(|s| s.rsplit_once(')')).map(|(s, _)| s)
+            let Some(inner) = rest.trim_start().strip_prefix('(').and_then(|s| s.rsplit_once(')')).map(|(s, _)| s)
             else {
                 continue;
             };
@@ -271,8 +262,7 @@ mod tests {
     fn latexmkrc_selects_the_engine() {
         let dir = std::env::temp_dir().join("satex-project-test");
         let _ = std::fs::create_dir_all(&dir);
-        std::fs::write(dir.join("latexmkrc"), "$pdf_mode = 4;\n$lualatex = 'lualatex %O %S';\n")
-            .unwrap();
+        std::fs::write(dir.join("latexmkrc"), "$pdf_mode = 4;\n$lualatex = 'lualatex %O %S';\n").unwrap();
         let project = Project::discover(&dir);
         assert_eq!(project.files.len(), 1);
         assert_eq!(project.files[0].tool, "latexmk");

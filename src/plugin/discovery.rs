@@ -32,15 +32,8 @@ pub struct Discovery {
 const MAX_DEPTH: usize = 4;
 
 /// The build configurations satex recognizes beside a document.
-const BUILD_FILES: [&str; 7] = [
-    "latexmkrc",
-    ".latexmkrc",
-    "Makefile",
-    "justfile",
-    "arara.yaml",
-    "tectonic.toml",
-    super::l3build::FILE,
-];
+const BUILD_FILES: [&str; 7] =
+    ["latexmkrc", ".latexmkrc", "Makefile", "justfile", "arara.yaml", "tectonic.toml", super::l3build::FILE];
 
 pub fn scan(root: &Path) -> Discovery {
     scan_with(root, 1)
@@ -97,8 +90,7 @@ fn classify(path: &Path) -> Option<Found> {
                 .find(|magic| magic.key.eq_ignore_ascii_case("TeX root"))
                 .map(|magic| path.with_file_name(magic.value.trim()))
                 .filter(|root| root.is_file());
-            let kind =
-                if head.contains("\\documentclass") { Kind::Document } else { Kind::Input };
+            let kind = if head.contains("\\documentclass") { Kind::Document } else { Kind::Input };
             Some(Found { kind, path: path.to_path_buf(), declares_root })
         }
         Some("cls") => found(Kind::Class),
@@ -145,8 +137,7 @@ pub fn scan_with(root: &Path, threads: usize) -> Discovery {
             .collect(),
     };
 
-    let mut found =
-        Discovery { root: root.to_path_buf(), respects_ignores: true, ..Discovery::default() };
+    let mut found = Discovery { root: root.to_path_buf(), respects_ignores: true, ..Discovery::default() };
     for file in files {
         found.declared_root = found.declared_root.take().or(file.declares_root);
         let list = match file.kind {
@@ -198,12 +189,7 @@ impl Discovery {
         let folder = self.root.file_name().and_then(|s| s.to_str()).unwrap_or_default();
         let rank = |path: &PathBuf| {
             let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
-            (
-                path.components().count(),
-                u8::from(stem != "main"),
-                u8::from(stem != folder),
-                path.clone(),
-            )
+            (path.components().count(), u8::from(stem != "main"), u8::from(stem != folder), path.clone())
         };
         self.documents
             .iter()

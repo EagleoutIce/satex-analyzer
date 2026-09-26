@@ -75,7 +75,11 @@ fn compiles(dir: &Path) {
         .status()
         .expect("pdflatex runs");
     let log = std::fs::read_to_string(dir.join("doc.log")).unwrap_or_default();
-    assert!(status.success(), "pdflatex failed:\n{}", log.lines().filter(|l| l.starts_with('!')).collect::<Vec<_>>().join("\n"));
+    assert!(
+        status.success(),
+        "pdflatex failed:\n{}",
+        log.lines().filter(|l| l.starts_with('!')).collect::<Vec<_>>().join("\n")
+    );
 }
 
 fn check(fixed: &Fixed, expected: &str) {
@@ -91,9 +95,14 @@ fn duplicate_package_drops_the_name_from_a_list() {
     if !installed() {
         return;
     }
-    let source = format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage{{amsmath,graphicx,amssymb}}\n{BODY}");
+    let source = format!(
+        "\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage{{amsmath,graphicx,amssymb}}\n{BODY}"
+    );
     let fixed = fix("duplicate-list", &source, "duplicate-package", false);
-    check(&fixed, &format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage{{amsmath,amssymb}}\n{BODY}"));
+    check(
+        &fixed,
+        &format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage{{amsmath,amssymb}}\n{BODY}"),
+    );
 }
 
 #[test]
@@ -101,7 +110,8 @@ fn duplicate_package_deletes_a_line_of_its_own() {
     if !installed() {
         return;
     }
-    let source = format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n  \\usepackage{{graphicx}} % again\n{BODY}");
+    let source =
+        format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n  \\usepackage{{graphicx}} % again\n{BODY}");
     let fixed = fix("duplicate-line", &source, "duplicate-package", false);
     check(&fixed, &format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n{BODY}"));
 }
@@ -127,7 +137,8 @@ fn option_clash_moves_the_options_to_the_first_load() {
         return;
     }
     // The second load is then a plain duplicate, which the next round deletes.
-    let source = format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage[draft]{{graphicx}}\n{BODY}");
+    let source =
+        format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage[draft]{{graphicx}}\n{BODY}");
     let dir = project("option-clash", &[("doc.tex", &source)]);
     let path = dir.join("doc.tex");
     let cfg = Config { load_classes: true, ..Config::default() };
@@ -160,7 +171,10 @@ fn already_defined_becomes_renewcommand() {
     }
     let source = "\\documentclass{article}\n\\newcommand{\\foo}{a}\n\\newcommand{\\foo}{b}\n\\begin{document}\n\\foo\n\\end{document}\n".to_string();
     let fixed = fix("already-defined", &source, "already-defined", true);
-    check(&fixed, "\\documentclass{article}\n\\newcommand{\\foo}{a}\n\\renewcommand{\\foo}{b}\n\\begin{document}\n\\foo\n\\end{document}\n");
+    check(
+        &fixed,
+        "\\documentclass{article}\n\\newcommand{\\foo}{a}\n\\renewcommand{\\foo}{b}\n\\begin{document}\n\\foo\n\\end{document}\n",
+    );
 }
 
 #[test]
@@ -208,7 +222,8 @@ fn dead_definition_before_a_def_is_a_safe_deletion() {
     if !installed() {
         return;
     }
-    let source = "\\documentclass{article}\n\\def\\x#1{[#1]}\n\\def\\x#1{(#1)}\n\\begin{document}\n\\x{a}\n\\end{document}\n";
+    let source =
+        "\\documentclass{article}\n\\def\\x#1{[#1]}\n\\def\\x#1{(#1)}\n\\begin{document}\n\\x{a}\n\\end{document}\n";
     let fixed = fix("dead-definition", source, "dead-definition", false);
     check(&fixed, "\\documentclass{article}\n\\def\\x#1{(#1)}\n\\begin{document}\n\\x{a}\n\\end{document}\n");
 }

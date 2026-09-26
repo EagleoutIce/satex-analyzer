@@ -185,16 +185,9 @@ fn expand(directive: &str) -> Result<String, String> {
         return run_command(command.trim(), None);
     }
     if let Some(rest) = directive.strip_prefix("run(") {
-        let (count, command) =
-            rest.split_once(')').ok_or_else(|| format!("bad directive: {{{{{directive}}}}}"))?;
-        let count: usize = count
-            .trim()
-            .parse()
-            .map_err(|_| format!("bad line count in: {{{{{directive}}}}}"))?;
-        let command = command
-            .trim()
-            .strip_prefix(':')
-            .ok_or_else(|| format!("bad directive: {{{{{directive}}}}}"))?;
+        let (count, command) = rest.split_once(')').ok_or_else(|| format!("bad directive: {{{{{directive}}}}}"))?;
+        let count: usize = count.trim().parse().map_err(|_| format!("bad line count in: {{{{{directive}}}}}"))?;
+        let command = command.trim().strip_prefix(':').ok_or_else(|| format!("bad directive: {{{{{directive}}}}}"))?;
         return run_command(command.trim(), Some(count));
     }
     Err(format!("unknown directive: {{{{{directive}}}}}"))
@@ -209,10 +202,7 @@ fn run_command(command: &str, limit: Option<usize>) -> Result<String, String> {
     if first != "satex" {
         return Err(format!("command must start with `satex`: {command}"));
     }
-    let output = Command::new(bin())
-        .args(args)
-        .output()
-        .map_err(|e| format!("running `{command}`: {e}"))?;
+    let output = Command::new(bin()).args(args).output().map_err(|e| format!("running `{command}`: {e}"))?;
     if !output.status.success() {
         return Err(format!(
             "`{command}` exited with {}: {}",
@@ -349,10 +339,8 @@ fn queries_list() -> Result<String, String> {
 }
 
 fn version() -> Result<String, String> {
-    let output = Command::new(bin())
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("running `satex --version`: {e}"))?;
+    let output =
+        Command::new(bin()).arg("--version").output().map_err(|e| format!("running `satex --version`: {e}"))?;
     if !output.status.success() {
         return Err("`satex --version` failed".to_string());
     }

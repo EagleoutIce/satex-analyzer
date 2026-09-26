@@ -159,9 +159,7 @@ pub fn code_view(src: &str, guards: &Guards) -> String {
                             // `@@` the extracted code spells out
                             // (docstrip.dtx, `\moduleOption`).
                             Some('@') => {
-                                module = guard
-                                    .strip_prefix("@@=")
-                                    .map(|rest| split_guard(rest).0.trim().to_string())
+                                module = guard.strip_prefix("@@=").map(|rest| split_guard(rest).0.trim().to_string())
                             }
                             // `+` and `-` are the older modifiers for a guard
                             // that covers one line; `-` inverts the test.
@@ -347,10 +345,7 @@ mod tests {
     #[test]
     fn modules_are_spelled_out() {
         let view = code_view("%<@@=foo>\n\\cs_new:Npn \\@@_bar:n #1 { \\__@@_baz:n {#1} }\n", &Guards::AllButDriver);
-        assert_eq!(
-            view.lines().nth(1),
-            Some("\\cs_new:Npn \\__foo_bar:n #1 { \\__foo_baz:n {#1} }")
-        );
+        assert_eq!(view.lines().nth(1), Some("\\cs_new:Npn \\__foo_bar:n #1 { \\__foo_baz:n {#1} }"));
     }
 
     #[test]
@@ -363,9 +358,13 @@ mod tests {
 
     #[test]
     fn a_batch_file_names_what_it_generates() {
-        let list = generated("\\file{a.sty}{\\from{a.dtx}{package}\\from{b.dtx}{extra}}\\file{c.tex}{\\from{a.dtx}{driver}}");
+        let list =
+            generated("\\file{a.sty}{\\from{a.dtx}{package}\\from{b.dtx}{extra}}\\file{c.tex}{\\from{a.dtx}{driver}}");
         assert_eq!(list.len(), 3);
-        assert_eq!((list[0].file.as_str(), list[0].from.as_str(), list[0].guards.as_str()), ("a.sty", "a.dtx", "package"));
+        assert_eq!(
+            (list[0].file.as_str(), list[0].from.as_str(), list[0].guards.as_str()),
+            ("a.sty", "a.dtx", "package")
+        );
         assert_eq!(list[1].guards, "extra");
         assert_eq!(list[2].file, "c.tex");
     }

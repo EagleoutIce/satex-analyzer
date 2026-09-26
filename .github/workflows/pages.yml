@@ -23,7 +23,7 @@ jobs:
       - name: Install a C toolchain
         run: apt-get update && apt-get install -y --no-install-recommends build-essential
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

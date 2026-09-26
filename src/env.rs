@@ -3,8 +3,8 @@
 
 use std::collections::HashMap;
 
-use crate::tex::{Catcode, CatcodeTable, Meaning, Sym, Token, Span};
 use crate::mode::Nest;
+use crate::tex::{Catcode, CatcodeTable, Meaning, Span, Sym, Token};
 use crate::value::Value;
 
 pub type NodeId = u32;
@@ -516,9 +516,7 @@ impl Env {
     pub fn meaning_count(&self) -> usize {
         self.slots
             .iter()
-            .filter(|slot| {
-                slot.as_ref().is_some_and(|binding| !matches!(binding.meaning, Meaning::Undefined))
-            })
+            .filter(|slot| slot.as_ref().is_some_and(|binding| !matches!(binding.meaning, Meaning::Undefined)))
             .count()
     }
 
@@ -754,12 +752,7 @@ impl Env {
     }
 
     /// Capture assignments since mark, then rollback (self-contained arm analysis).
-    pub fn capture_and_rollback(
-        &mut self,
-        mark: usize,
-        depth: usize,
-        catcodes: &mut CatcodeTable,
-    ) -> Captured {
+    pub fn capture_and_rollback(&mut self, mark: usize, depth: usize, catcodes: &mut CatcodeTable) -> Captured {
         self.floors.pop();
         self.marks.truncate(depth);
         let mark = mark.min(self.journal.len());
@@ -850,12 +843,7 @@ impl Env {
             let i = *sym as usize;
             slots.entry(*sym).or_insert_with(|| (self.slots[i].clone(), self.level[i]));
         }
-        PathEnv {
-            slots,
-            journal: self.journal.clone(),
-            marks: self.marks.clone(),
-            floors: self.floors.clone(),
-        }
+        PathEnv { slots, journal: self.journal.clone(), marks: self.marks.clone(), floors: self.floors.clone() }
     }
 
     /// Back to the bindings `fork` saw.
@@ -929,8 +917,7 @@ impl Env {
 
     /// Whether two paths stand in the same groups, which a join needs.
     pub fn same_groups(a: &PathEnv, b: &PathEnv) -> bool {
-        a.marks.len() == b.marks.len()
-            && a.marks.iter().zip(&b.marks).all(|(x, y)| x.kind == y.kind)
+        a.marks.len() == b.marks.len() && a.marks.iter().zip(&b.marks).all(|(x, y)| x.kind == y.kind)
     }
 
     /// What a path has learned of a name that holds one of several
@@ -1024,9 +1011,7 @@ impl Default for SetLimits {
 pub fn same_slot(a: &Option<Binding>, b: &Option<Binding>) -> bool {
     match (a, b) {
         (None, None) => true,
-        (Some(x), Some(y)) => {
-            same_meaning(x, y) && same_value(&x.value, &y.value) && x.certain == y.certain
-        }
+        (Some(x), Some(y)) => same_meaning(x, y) && same_value(&x.value, &y.value) && x.certain == y.certain,
         _ => false,
     }
 }
@@ -1065,7 +1050,9 @@ pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits) 
     if value_grows {
         // A bound that still moves goes to the end of the kind's range.
         joined.value = match (xv, yv) {
-            (Some((a, p)), Some((b, q))) if a == b => Value::Range { dimen: a, num: p.widen(&p.join(&q, sets.values), a) },
+            (Some((a, p)), Some((b, q))) if a == b => {
+                Value::Range { dimen: a, num: p.widen(&p.join(&q, sets.values), a) }
+            }
             _ => Value::Unknown,
         };
     }
@@ -1120,14 +1107,7 @@ fn join(a: Option<Binding>, b: Option<Binding>, sets: SetLimits) -> Option<Bindi
                 (false, false, Some(set)) if set.len() <= sets.meanings => (Meaning::Unknown, Some(set.into())),
                 (false, false, _) => (Meaning::Unknown, None),
             };
-            Some(Binding {
-                meaning,
-                may,
-                value,
-                defs,
-                certain: x.certain && y.certain,
-                global: x.global && y.global,
-            })
+            Some(Binding { meaning, may, value, defs, certain: x.certain && y.certain, global: x.global && y.global })
         }
     }
 }
@@ -1145,6 +1125,8 @@ pub fn copied_text(meaning: &Meaning) -> Option<&std::rc::Rc<[Token]>> {
         && !m.protected
         && !m.outer
         && !text.is_empty()
-        && text.iter().all(|t| matches!(t.tok, crate::tex::Tok::Chr(_, cat) if !matches!(cat, Catcode::Active | Catcode::Param)));
+        && text
+            .iter()
+            .all(|t| matches!(t.tok, crate::tex::Tok::Chr(_, cat) if !matches!(cat, Catcode::Active | Catcode::Param)));
     plain.then_some(text)
 }

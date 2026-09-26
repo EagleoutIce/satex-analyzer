@@ -134,10 +134,7 @@ See \ref{sec:one} and \ref{sec:missing}.
 \end{document}",
     );
     assert_eq!(keys(&analysis, OccKind::Label), vec!["sec:one".to_string()]);
-    assert_eq!(
-        keys(&analysis, OccKind::Ref),
-        vec!["sec:one".to_string(), "sec:missing".to_string()]
-    );
+    assert_eq!(keys(&analysis, OccKind::Ref), vec!["sec:one".to_string(), "sec:missing".to_string()]);
     assert!(codes(&analysis).contains(&"undefined-reference".to_string()));
 }
 
@@ -170,8 +167,7 @@ fn package_options_are_recorded_and_a_clash_is_reported() {
     );
     let codes = codes(&analysis);
     assert!(
-        codes.contains(&"option-clash".to_string())
-            || codes.contains(&"duplicate-package".to_string()),
+        codes.contains(&"option-clash".to_string()) || codes.contains(&"duplicate-package".to_string()),
         "{codes:?}"
     );
 }
@@ -369,10 +365,7 @@ fn the_file_and_package_hooks_fire_around_a_load() {
 \usepackage{color}
 \begin{document}\afterload\end{document}",
     );
-    assert_eq!(
-        marks(&analysis),
-        ["mark package-before", "mark file-before", "mark file-after", "mark package-after"]
-    );
+    assert_eq!(marks(&analysis), ["mark package-before", "mark file-before", "mark file-after", "mark package-after"]);
     assert!(defined(&analysis, "afterload"));
 }
 
@@ -450,21 +443,11 @@ fn the_document_body_is_not_bounded_by_the_argument_budget() {
 /// `\pdfstringdef` makes of `\title`, `\author` and `\date`.  Every
 /// expectation below is what pdflatex wrote for the same source.
 fn metadata(analysis: &Analysis, field: &str) -> String {
-    analysis
-        .metadata
-        .iter()
-        .find(|entry| entry.field == field)
-        .map(|entry| entry.text.clone())
-        .unwrap_or_default()
+    analysis.metadata.iter().find(|entry| entry.field == field).map(|entry| entry.text.clone()).unwrap_or_default()
 }
 
 fn metadata_source(analysis: &Analysis, field: &str) -> String {
-    analysis
-        .metadata
-        .iter()
-        .find(|entry| entry.field == field)
-        .map(|entry| entry.source.clone())
-        .unwrap_or_default()
+    analysis.metadata.iter().find(|entry| entry.field == field).map(|entry| entry.source.clone()).unwrap_or_default()
 }
 
 #[test]
@@ -584,8 +567,7 @@ fn the_sample_document_keeps_what_it_already_analyzed() {
             .is_some_and(|sym| !matches!(analysis.env.meaning(sym), satex::tex::Meaning::Undefined))
     };
     // Kernel and class commands the document uses.
-    for name in ["textbf", "emph", "section", "label", "ref", "item", "title", "author", "caption"]
-    {
+    for name in ["textbf", "emph", "section", "label", "ref", "item", "title", "author", "caption"] {
         assert!(defined(name), "\\{name} must be known");
     }
     // Every label the document writes is recorded.
@@ -606,9 +588,8 @@ fn the_sample_document_keeps_what_it_already_analyzed() {
     // A document that compiles has nothing undefined and no dangling
     // reference: both were false findings once, so both are pinned.
     let findings = satex::lint::lint(&analysis);
-    let code_of = |record: &satex::query::Record| {
-        record.get("code").and_then(|c| c.as_str()).unwrap_or_default().to_string()
-    };
+    let code_of =
+        |record: &satex::query::Record| record.get("code").and_then(|c| c.as_str()).unwrap_or_default().to_string();
     for code in ["undefined-control-sequence", "undefined-reference"] {
         let from_document = |record: &satex::query::Record| {
             record.get("file").and_then(|f| f.as_str()).unwrap_or_default() == "paper.tex"
@@ -616,9 +597,7 @@ fn the_sample_document_keeps_what_it_already_analyzed() {
         let raised: Vec<String> = findings
             .iter()
             .filter(|record| code_of(record) == code && from_document(record))
-            .map(|record| {
-                record.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_string()
-            })
+            .map(|record| record.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_string())
             .collect();
         assert!(raised.is_empty(), "tests/fixtures/project/paper.tex must raise no {code}: {raised:?}");
     }
@@ -716,7 +695,10 @@ fn verbatim_bodies_are_read_line_by_line_with_an_active_end_of_line() {
 \\begin{Verbatim}\n\\def\\bad{}\n\\end{Verbatim}\n{\\obeylines\\gdef\\r{a\nb}}\n\\def\\after{}\n\\end{document}\n",
     );
     let saved = body(&analysis, "FV@SV@V");
-    assert!(saved.ends_with("\\FV@ProcessLine {a  b}\\advance \\c@FancyVerbLine \\@ne \\FV@ProcessLine { \\c%}"), "{saved}");
+    assert!(
+        saved.ends_with("\\FV@ProcessLine {a  b}\\advance \\c@FancyVerbLine \\@ne \\FV@ProcessLine { \\c%}"),
+        "{saved}"
+    );
     assert_eq!(body(&analysis, "r"), "a\rb");
     assert!(!defined(&analysis, "bad"));
     assert!(defined(&analysis, "after"));

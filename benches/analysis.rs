@@ -1,8 +1,7 @@
-
 use std::hint::black_box;
 use std::time::Duration;
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use satex::config::Config;
 use satex::machine::Machine;
@@ -46,9 +45,7 @@ fn package(macros: usize) -> String {
 ",
     );
     for i in 0..macros {
-        source.push_str(&format!(
-            "\\newcommand{{\\bench@m{i}}}[2][x]{{#1:#2}}\n\\def\\bench@d{i}#1,#2.{{(#1|#2)}}\n"
-        ));
+        source.push_str(&format!("\\newcommand{{\\bench@m{i}}}[2][x]{{#1:#2}}\n\\def\\bench@d{i}#1,#2.{{(#1|#2)}}\n"));
     }
     source.push_str("\\makeatother\n");
     source
@@ -112,16 +109,11 @@ fn querying(c: &mut Criterion) {
     group.bench_function("definitions", |b| {
         b.iter(|| black_box(query::run(&analysis, Query::Definitions, &Filter::Always).len()))
     });
-    group.bench_function("filtered", |b| {
-        b.iter(|| black_box(query::run(&analysis, Query::Definitions, &filter).len()))
-    });
+    group
+        .bench_function("filtered", |b| b.iter(|| black_box(query::run(&analysis, Query::Definitions, &filter).len())));
     group.bench_function("lint", |b| b.iter(|| black_box(satex::lint::lint(&analysis).len())));
     group.bench_function("slice", |b| {
-        b.iter(|| {
-            black_box(
-                query::slice(&analysis, &["hl".to_string()], None, query::Direction::Backward).len(),
-            )
-        })
+        b.iter(|| black_box(query::slice(&analysis, &["hl".to_string()], None, query::Direction::Backward).len()))
     });
     group.bench_function("summary", |b| b.iter(|| black_box(query::summary(&analysis).children.len())));
     group.finish();
