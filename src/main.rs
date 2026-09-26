@@ -158,17 +158,19 @@ fn run() -> Result<(), String> {
 
     if cli.version || cli.command.is_none() {
         if !matches!(cli.format, Format::Text | Format::Json) {
-            return Err(format!(
-                "`--format {}` does not apply to `--version`; try text or json",
-                cli.format.as_str()
-            ));
+            return Err(format!("`--format {}` does not apply to `--version`; try text or json", cli.format.as_str()));
         }
         let (cfg, layers) = configure(&cli, None)?;
         let mut out = anstream::stdout().lock();
         let text = match cli.format {
             Format::Json => format!(
                 "{}\n",
-                serde_json::to_string_pretty(&overview_json(&cfg, &satex::project::Project::discover(&base_dir(cli.file.as_deref())), &layers)).map_err(|e| e.to_string())?
+                serde_json::to_string_pretty(&overview_json(
+                    &cfg,
+                    &satex::project::Project::discover(&base_dir(cli.file.as_deref())),
+                    &layers
+                ))
+                .map_err(|e| e.to_string())?
             ),
             _ => overview_text(&cfg, &layers),
         };
@@ -256,8 +258,7 @@ fn run() -> Result<(), String> {
     // `lint` already says what the analysis could not follow,
     // in a form that fits its own findings; the generic footer would only
     // repeat that in a second, unrelated shape.
-    let owns_gaps = (cli.format.is_text() && matches!(output, Output::Lint(_)))
-        || cli.command().fixes();
+    let owns_gaps = (cli.format.is_text() && matches!(output, Output::Lint(_))) || cli.command().fixes();
     match output {
         Output::Done => {}
         Output::Records(records) => {
@@ -347,9 +348,8 @@ fn configure(cli: &Cli, source: Option<&str>) -> Result<(Config, Vec<PathBuf>), 
         layers.push(path.clone());
     }
     for assignment in &cli.set {
-        let (path, value) = assignment
-            .split_once('=')
-            .ok_or_else(|| format!("--set {assignment}: expected PATH=VALUE"))?;
+        let (path, value) =
+            assignment.split_once('=').ok_or_else(|| format!("--set {assignment}: expected PATH=VALUE"))?;
         cfg.set(path.trim(), value)?;
     }
     cfg.load_packages &= !cli.no_packages;
@@ -386,7 +386,11 @@ fn configure(cli: &Cli, source: Option<&str>) -> Result<(Config, Vec<PathBuf>), 
             cfg.trace_lines = Some((cfg.trace_lines.map_or(0, |(a, _)| a), line));
         }
         if lines.is_some() {
-            cfg.trace_lines = lines.as_deref().map(|l| range(satex::cmd::split_file(l).1)).transpose()?.map(|(a, b)| (a.min(u32::MAX.into()) as u32, b.min(u32::MAX.into()) as u32));
+            cfg.trace_lines = lines
+                .as_deref()
+                .map(|l| range(satex::cmd::split_file(l).1))
+                .transpose()?
+                .map(|(a, b)| (a.min(u32::MAX.into()) as u32, b.min(u32::MAX.into()) as u32));
         }
         cfg.trace_steps = steps.as_deref().map(range).transpose()?;
     }
@@ -402,18 +406,12 @@ fn configure(cli: &Cli, source: Option<&str>) -> Result<(Config, Vec<PathBuf>), 
 /// Every plugin kind this build offers and what it can detect, shared by the
 /// text and json forms of `satex --version`.
 fn plugin_rows() -> Vec<(satex::plugin::Kind, Vec<String>)> {
-    use satex::plugin::{tool::Tool, Format as OutputFormat, Kind, Output, Platform, Provider};
+    use satex::plugin::{Format as OutputFormat, Kind, Output, Platform, Provider, tool::Tool};
     vec![
         (Kind::Provider, Provider::ALL.iter().map(|p| p.as_str().to_string()).collect()),
         (Kind::Platform, Platform::ALL.iter().map(|p| p.as_str().to_string()).collect()),
-        (
-            Kind::Engine,
-            satex::config::Engine::ALL.iter().map(|e| e.as_str().to_string()).collect(),
-        ),
-        (
-            Kind::Kernel,
-            satex::plugin::Kernel::ALL.iter().map(|k| k.as_str().to_string()).collect(),
-        ),
+        (Kind::Engine, satex::config::Engine::ALL.iter().map(|e| e.as_str().to_string()).collect()),
+        (Kind::Kernel, satex::plugin::Kernel::ALL.iter().map(|k| k.as_str().to_string()).collect()),
         (Kind::Output, Output::ALL.iter().map(|o| o.as_str().to_string()).collect()),
         (Kind::BuildSystem, {
             let mut systems: Vec<String> =
@@ -424,15 +422,9 @@ fn plugin_rows() -> Vec<(satex::plugin::Kind, Vec<String>)> {
             systems
         }),
         (Kind::Tool, Tool::all().iter().map(|t| t.as_str().to_string()).collect()),
-        (
-            Kind::Magic,
-            ["% !TeX", "% !BIB", "% arara:"].iter().map(|m| m.to_string()).collect(),
-        ),
+        (Kind::Magic, ["% !TeX", "% !BIB", "% arara:"].iter().map(|m| m.to_string()).collect()),
         (Kind::Format, OutputFormat::ALL.iter().map(|f| f.as_str().to_string()).collect()),
-        (
-            Kind::Preload,
-            ["%& line", "-fmt=", "configured"].iter().map(|m| m.to_string()).collect(),
-        ),
+        (Kind::Preload, ["%& line", "-fmt=", "configured"].iter().map(|m| m.to_string()).collect()),
         (Kind::Depp, vec!["depp".to_string(), "DEPENDS.txt".to_string()]),
     ]
 }
@@ -484,7 +476,12 @@ fn environment_text(cfg: &Config, project: &satex::project::Project) -> String {
             continue;
         }
         let dirs = effective.dirs.len();
-        let value = format!("{} ({}, {dirs} {})", effective.raw, effective.source.as_str(), if dirs == 1 { "dir" } else { "dirs" });
+        let value = format!(
+            "{} ({}, {dirs} {})",
+            effective.raw,
+            effective.source.as_str(),
+            if dirs == 1 { "dir" } else { "dirs" }
+        );
         row(&mut out, effective.variable, &value);
     }
     if !unset.is_empty() {
@@ -535,10 +532,8 @@ fn overview_text(cfg: &Config, layers: &[PathBuf]) -> String {
 /// The same as [`overview_text`], structured for `--format json`.
 fn overview_json(cfg: &Config, project: &satex::project::Project, layers: &[PathBuf]) -> serde_json::Value {
     let commit = env!("SATEX_COMMIT");
-    let plugins: serde_json::Map<String, serde_json::Value> = plugin_rows()
-        .into_iter()
-        .map(|(kind, items)| (kind.as_str().to_string(), serde_json::json!(items)))
-        .collect();
+    let plugins: serde_json::Map<String, serde_json::Value> =
+        plugin_rows().into_iter().map(|(kind, items)| (kind.as_str().to_string(), serde_json::json!(items))).collect();
     serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
         "commit": if commit.is_empty() { None } else { Some(commit) },
@@ -570,10 +565,8 @@ fn log_gaps(analysis: &Analysis, cfg: &Config) {
     if records.is_empty() {
         return;
     }
-    let Some(path) = cfg
-        .gaps_log
-        .clone()
-        .or_else(|| satex::format::default_cache_dir().map(|dir| dir.join("gaps.ndjson")))
+    let Some(path) =
+        cfg.gaps_log.clone().or_else(|| satex::format::default_cache_dir().map(|dir| dir.join("gaps.ndjson")))
     else {
         return;
     };
@@ -589,9 +582,7 @@ fn log_gaps(analysis: &Analysis, cfg: &Config) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    if let Ok(mut file) =
-        std::fs::OpenOptions::new().create(true).append(true).open(&path)
-    {
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(text.as_bytes());
     }
 }
@@ -679,7 +670,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         for name in files {
-            std::fs::write(dir.join(name), "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n").unwrap();
+            std::fs::write(dir.join(name), "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n")
+                .unwrap();
         }
         dir
     }

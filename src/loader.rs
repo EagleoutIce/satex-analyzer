@@ -1,4 +1,3 @@
-
 use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -32,19 +31,10 @@ pub struct Resolver {
 
 impl Resolver {
     pub fn new(local: Vec<PathBuf>, request: Request) -> Self {
-        Self {
-            local,
-            request,
-            trees: OnceCell::new(),
-            cache: HashMap::new(),
-            unpacked: Default::default(),
-        }
+        Self { local, request, trees: OnceCell::new(), cache: HashMap::new(), unpacked: Default::default() }
     }
 
-    pub fn with_unpacked(
-        mut self,
-        unpacked: std::collections::BTreeMap<String, (PathBuf, Vec<String>)>,
-    ) -> Self {
+    pub fn with_unpacked(mut self, unpacked: std::collections::BTreeMap<String, (PathBuf, Vec<String>)>) -> Self {
         self.unpacked = unpacked;
         self
     }

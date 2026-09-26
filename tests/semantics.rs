@@ -1,4 +1,3 @@
-
 use satex::builtins::OccKind;
 use satex::config::Config;
 use satex::facts::MeaningKind;
@@ -171,13 +170,8 @@ fn counters_and_lengths_hold_values() {
 #[test]
 fn labels_and_references_are_recorded() {
     let analysis = analyze_kernel(r"\section{One}\label{sec:one}See \ref{sec:one} and \ref{missing}.");
-    let labels: Vec<&str> = analysis
-        .facts
-        .occurrences
-        .iter()
-        .filter(|o| o.kind == OccKind::Label)
-        .map(|o| o.key.as_str())
-        .collect();
+    let labels: Vec<&str> =
+        analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Label).map(|o| o.key.as_str()).collect();
     assert_eq!(labels, ["sec:one"]);
     let lints = satex::lint::lint(&analysis);
     assert!(lints.iter().any(|l| l["code"] == "undefined-reference"));
@@ -185,7 +179,8 @@ fn labels_and_references_are_recorded() {
 
 #[test]
 fn recursion_is_found() {
-    let analysis = analyze_kernel(r"\newcommand{\qloop}[1]{#1\qloop{#1}}\newcommand{\ping}{\pong}\newcommand{\pong}{\ping}");
+    let analysis =
+        analyze_kernel(r"\newcommand{\qloop}[1]{#1\qloop{#1}}\newcommand{\ping}{\pong}\newcommand{\pong}{\ping}");
     let found = query::run(&analysis, Query::Recursion, &Filter::Always);
     let names: Vec<&str> = found.iter().map(|r| r["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"\\qloop"));
@@ -201,12 +196,13 @@ fn recursion_terminates_without_exhausting_the_budget() {
 #[test]
 fn undefined_control_sequences_are_reported() {
     let analysis = analyze(r"\thisdoesnotexist");
-    assert!(analysis
-        .facts
-        .expansions
-        .iter()
-        .any(|e| e.meaning == MeaningKind::Undefined
-            && analysis.interner.name(e.name) == "thisdoesnotexist"));
+    assert!(
+        analysis
+            .facts
+            .expansions
+            .iter()
+            .any(|e| e.meaning == MeaningKind::Undefined && analysis.interner.name(e.name) == "thisdoesnotexist")
+    );
 }
 
 #[test]
@@ -274,11 +270,7 @@ fn a_global_definition_is_a_side_effect_of_the_expansion() {
         .iter()
         .enumerate()
         .filter(|(id, _)| {
-            analysis
-                .graph
-                .outgoing(*id as u32)
-                .iter()
-                .any(|(_, kind)| kind.intersects(EdgeKind::SIDE_EFFECT_ON_CALL))
+            analysis.graph.outgoing(*id as u32).iter().any(|(_, kind)| kind.intersects(EdgeKind::SIDE_EFFECT_ON_CALL))
         })
         .map(|(_, vertex)| analysis.interner.name(vertex.name).to_string())
         .collect::<Vec<_>>();
@@ -327,10 +319,7 @@ fn scope_never_shows_an_empty_or_unprintable_name() {
     for record in &visible {
         let name = record["name"].as_str().expect("name is a string");
         assert!(!name.trim_start_matches('\\').is_empty(), "empty name: {record:?}");
-        assert!(
-            name.chars().all(|c| !c.is_control()),
-            "unprintable name: {name:?}"
-        );
+        assert!(name.chars().all(|c| !c.is_control()), "unprintable name: {name:?}");
     }
 }
 
@@ -346,9 +335,8 @@ fn scope_puts_the_document_before_the_kernel() {
 
 #[test]
 fn scope_hides_internal_names_unless_all() {
-    let analysis = analyze_kernel(
-        "\\makeatletter\\newcommand{\\my@internal}{1}\\makeatother\\newcommand{\\myvisible}{2}\n",
-    );
+    let analysis =
+        analyze_kernel("\\makeatletter\\newcommand{\\my@internal}{1}\\makeatother\\newcommand{\\myvisible}{2}\n");
     let hidden = query::scope(&analysis, None, false);
     assert!(!hidden.iter().any(|r| r["name"] == "\\my@internal"));
     assert!(hidden.iter().any(|r| r["name"] == "\\myvisible"));
@@ -370,13 +358,14 @@ fn expl3_functions_carry_their_arity_in_the_signature() {
 
 #[test]
 fn an_unmodeled_expl3_function_consumes_its_arguments() {
-    let analysis = analyze(
-        r"\ExplSyntaxOn \seq_map_inline:Nn \l_tmpa_seq { #1 } \def\after{here} \ExplSyntaxOff",
-    );
+    let analysis = analyze(r"\ExplSyntaxOn \seq_map_inline:Nn \l_tmpa_seq { #1 } \def\after{here} \ExplSyntaxOff");
     assert_eq!(body(&analysis, "after"), "here", "the call did not swallow what follows it");
     assert!(
-        !analysis.facts.expansions.iter().any(|e| e.meaning == MeaningKind::Undefined
-            && analysis.interner.name(e.name) == "seq_map_inline:Nn"),
+        !analysis
+            .facts
+            .expansions
+            .iter()
+            .any(|e| e.meaning == MeaningKind::Undefined && analysis.interner.name(e.name) == "seq_map_inline:Nn"),
         "an expl3 kernel function is not an undefined control sequence"
     );
 }
@@ -408,7 +397,7 @@ fn plain_tex_primitives_are_known() {
 
 #[test]
 fn dimensions_use_scaled_points() {
-    use satex::value::{parse_dimen, UNIT};
+    use satex::value::{UNIT, parse_dimen};
     assert_eq!(parse_dimen("1pt"), Some(UNIT));
     assert_eq!(parse_dimen("1in"), Some(4_736_286));
     assert_eq!(parse_dimen("1bp"), Some(65_781));
@@ -458,8 +447,7 @@ fn document_commands_take_the_full_argument_specification() {
 
 fn sliced(analysis: &Analysis, names: &[&str], forward: bool) -> Vec<String> {
     let criteria: Vec<String> = names.iter().map(|n| n.to_string()).collect();
-    let direction =
-        if forward { satex::query::Direction::Forward } else { satex::query::Direction::Backward };
+    let direction = if forward { satex::query::Direction::Forward } else { satex::query::Direction::Backward };
     query::slice(analysis, &criteria, None, direction)
         .into_iter()
         .map(|record| record["name"].as_str().unwrap_or_default().to_string())
@@ -495,13 +483,8 @@ fn a_slice_follows_control_dependencies() {
 #[test]
 fn a_conditional_without_an_else_keeps_the_earlier_definition() {
     let analysis = analyze("\\def\\a{1}\n\\ifnum\\pdfuniformdeviate2=0 \\def\\a{2}\\fi\n\\a\n");
-    let definitions: Vec<u32> = analysis
-        .facts
-        .defs
-        .iter()
-        .filter(|d| analysis.interner.name(d.name) == "a")
-        .map(|d| d.span.line)
-        .collect();
+    let definitions: Vec<u32> =
+        analysis.facts.defs.iter().filter(|d| analysis.interner.name(d.name) == "a").map(|d| d.span.line).collect();
     assert_eq!(definitions, vec![1, 2], "the conditional definition does not replace the first");
     let names = sliced(&analysis, &["\\a"], false);
     assert!(names.contains(&"\\ifnum".to_string()), "got {names:?}");
@@ -627,9 +610,7 @@ fn edef_runs_the_gullet_primitives() {
 
 #[test]
 fn edef_keeps_what_noexpand_and_protected_shield() {
-    let analysis = analyze(
-        r"\def\id#1{[#1]}\protected\def\p{q}\edef\a{\noexpand\id{x}}\edef\b{\p}",
-    );
+    let analysis = analyze(r"\def\id#1{[#1]}\protected\def\p{q}\edef\a{\noexpand\id{x}}\edef\b{\p}");
     assert_eq!(body(&analysis, "a"), r"\id {x}");
     assert_eq!(body(&analysis, "b"), "\\p ");
 }
@@ -648,15 +629,15 @@ fn csname_expands_while_it_reads_the_name() {
 
 #[test]
 fn let_takes_the_space_after_one_optional_space() {
-    let analysis = analyze("\\def\\:{\\let\\spce= } \\: \\ifx\\spce\\relax\\def\\seen{relax}\\else\\def\\seen{space}\\fi");
+    let analysis =
+        analyze("\\def\\:{\\let\\spce= } \\: \\ifx\\spce\\relax\\def\\seen{relax}\\else\\def\\seen{space}\\fi");
     assert_eq!(body(&analysis, "seen"), "space");
 }
 
 #[test]
 fn ifcat_sees_through_noexpand() {
-    let analysis = analyze(
-        r"\def\test#1{\ifcat\noexpand~\noexpand#1\def\seen{active}\else\def\seen{control}\fi}\test\relax",
-    );
+    let analysis =
+        analyze(r"\def\test#1{\ifcat\noexpand~\noexpand#1\def\seen{active}\else\def\seen{control}\fi}\test\relax");
     assert_eq!(body(&analysis, "seen"), "control");
 }
 
@@ -671,13 +652,7 @@ fn depth_of(analysis: &Analysis, name: &str) -> Option<u16> {
 }
 
 fn diagnosed(analysis: &Analysis, code: &str) -> Vec<String> {
-    analysis
-        .facts
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == code)
-        .map(|d| d.message.clone())
-        .collect()
+    analysis.facts.diagnostics.iter().filter(|d| d.code == code).map(|d| d.message.clone()).collect()
 }
 
 #[test]
@@ -719,9 +694,7 @@ fn display_math_is_one_group() {
 fn aftergroup_reinserts_its_tokens_when_the_group_ends() {
     // tex.web § 326 saves the token; § 282 puts the saved tokens back in the
     // order they were given.
-    let analysis = analyze(
-        r"\begingroup\aftergroup\gdef\aftergroup\tt\aftergroup{\aftergroup2\aftergroup}\endgroup",
-    );
+    let analysis = analyze(r"\begingroup\aftergroup\gdef\aftergroup\tt\aftergroup{\aftergroup2\aftergroup}\endgroup");
     assert_eq!(body(&analysis, "tt"), "2");
     assert!(definition(&analysis, "tt").is_some_and(|d| d.global));
 }
@@ -817,11 +790,7 @@ fn a_switch_asked_about_governs_both_arms() {
         opaque_conditionals: vec!["ifdraft".into()],
         ..Config::default()
     };
-    let analysis = Machine::analyze(
-        r"\newif\ifdraft\csname ifdraft\endcsname\def\a{}\else\def\b{}\fi",
-        None,
-        &cfg,
-    );
+    let analysis = Machine::analyze(r"\newif\ifdraft\csname ifdraft\endcsname\def\a{}\else\def\b{}\fi", None, &cfg);
     let defined = names(&analysis);
     assert!(defined.iter().any(|n| n == "a"), "then arm: {defined:?}");
     assert!(defined.iter().any(|n| n == "b"), "else arm: {defined:?}");
@@ -838,7 +807,11 @@ fn every_switch_means_the_documents_own() {
     if which::which("kpsewhich").is_err() {
         return;
     }
-    let cfg = Config { load_classes: true, opaque_conditionals: vec![satex::config::EVERY_SWITCH.into()], ..Config::default() };
+    let cfg = Config {
+        load_classes: true,
+        opaque_conditionals: vec![satex::config::EVERY_SWITCH.into()],
+        ..Config::default()
+    };
     let analysis = Machine::analyze(
         r"\documentclass{article}
 \newif\ifdraft
@@ -1094,10 +1067,7 @@ fn glue_is_scanned_with_its_keywords_and_orders() {
     // etex: `1.0pt plus 1.0fill minus 2.0fill`, then negated, then coerced
     let set = r"\skip3=1pt plus 1fil l minus 2 fill ";
     assert_eq!(out(&format!(r"{set}\edef\out{{\the\skip3}}")), "1.0pt plus 1.0fill minus 2.0fill");
-    assert_eq!(
-        out(&format!(r"{set}\skip4=-\skip3 \edef\out{{\the\skip4}}")),
-        "-1.0pt plus -1.0fill minus -2.0fill"
-    );
+    assert_eq!(out(&format!(r"{set}\skip4=-\skip3 \edef\out{{\the\skip4}}")), "-1.0pt plus -1.0fill minus -2.0fill");
     assert_eq!(out(&format!(r"{set}\dimen0=\skip3 \edef\out{{\the\dimen0}}")), "1.0pt");
     assert_eq!(out(r"\count1=5 \skip7=\count1 sp \edef\out{\the\skip7}"), "0.00008pt");
 }
@@ -1157,7 +1127,9 @@ fn a_font_table_is_extended_only_past_its_end() {
     // etex: `0.00018pt,0.0pt,42` — cmr10 has 7 parameters; the font loaded
     // last grows to 9, the new ones starting at zero.
     assert_eq!(
-        out(r"\font\w=cmr10 at 7sp \fontdimen9\w=12sp \hyphenchar\w=42 \edef\out{\the\fontdimen9\w,\the\fontdimen8\w,\the\hyphenchar\w}"),
+        out(
+            r"\font\w=cmr10 at 7sp \fontdimen9\w=12sp \hyphenchar\w=42 \edef\out{\the\fontdimen9\w,\the\fontdimen8\w,\the\hyphenchar\w}"
+        ),
         "0.00018pt,0.0pt,42"
     );
 }
@@ -1166,7 +1138,9 @@ fn a_font_table_is_extended_only_past_its_end() {
 fn pdftex_string_utilities_compute_their_result() {
     // pdftex: `-101,415A,AJ` and the MD5 of `abc`
     assert_eq!(
-        out(r"\edef\out{\pdfstrcmp{abc}{abd}\pdfstrcmp{\relax}{\relax}\pdfstrcmp{b}{a},\pdfescapehex{AZ},\pdfunescapehex{414a}}"),
+        out(
+            r"\edef\out{\pdfstrcmp{abc}{abd}\pdfstrcmp{\relax}{\relax}\pdfstrcmp{b}{a},\pdfescapehex{AZ},\pdfunescapehex{414a}}"
+        ),
         "-101,415A,AJ"
     );
     assert_eq!(out(r"\edef\out{\pdfmdfivesum{abc}}"), "900150983CD24FB0D6963F7D28E17F72");
@@ -1176,11 +1150,15 @@ fn pdftex_string_utilities_compute_their_result() {
 fn parshape_and_penalty_arrays_are_read_back() {
     // etex: `2,2.0pt,3.0pt,3.0pt,3.0pt,4.0pt` and `3,102,103`
     assert_eq!(
-        out(r"\parshape 2 1pt 2pt 3pt 4pt \edef\out{\the\parshape,\the\parshapelength 1,\the\parshapeindent 2,\the\parshapedimen 3,\the\parshapedimen 7,\the\parshapelength 5}"),
+        out(
+            r"\parshape 2 1pt 2pt 3pt 4pt \edef\out{\the\parshape,\the\parshapelength 1,\the\parshapeindent 2,\the\parshapedimen 3,\the\parshapedimen 7,\the\parshapelength 5}"
+        ),
         "2,2.0pt,3.0pt,3.0pt,3.0pt,4.0pt"
     );
     assert_eq!(
-        out(r"\interlinepenalties 3 101 102 103 \edef\out{\the\interlinepenalties0,\the\interlinepenalties2,\the\interlinepenalties9}"),
+        out(
+            r"\interlinepenalties 3 101 102 103 \edef\out{\the\interlinepenalties0,\the\interlinepenalties2,\the\interlinepenalties9}"
+        ),
         "3,102,103"
     );
 }
@@ -1262,10 +1240,7 @@ fn edef_stores_what_the_and_unexpanded_give_without_parameters() {
     // etex: `macro:#1->##1a#1`: tex.web § 478 appends those tokens past the
     // parameter scan, so their `#` stays a character (expl3's
     // `\tl_put_right:Nn` builds token lists of code that way).
-    assert_eq!(
-        out(r"\toks0{#1}\edef\y#1{\the\toks0\unexpanded{a}#1}\edef\out{\meaning\y}"),
-        "macro:#1->##1a#1"
-    );
+    assert_eq!(out(r"\toks0{#1}\edef\y#1{\the\toks0\unexpanded{a}#1}\edef\out{\meaning\y}"), "macro:#1->##1a#1");
 }
 
 #[test]
@@ -1284,10 +1259,7 @@ fn a_copy_of_a_primitive_is_that_primitive() {
 #[test]
 fn an_expression_expands_to_find_its_operators() {
     // etex: `3|21`: e-TeX reads the next non-blank non-call token.
-    assert_eq!(
-        out(r"\def\a{(4-1)}\edef\out{\number\numexpr\a\relax|\number\numexpr 2*\a*\a+\a\relax}"),
-        "3|21"
-    );
+    assert_eq!(out(r"\def\a{(4-1)}\edef\out{\number\numexpr\a\relax|\number\numexpr 2*\a*\a+\a\relax}"), "3|21");
 }
 
 #[test]
@@ -1309,7 +1281,9 @@ fn a_conditional_its_test_opened_ends_first() {
     // the first `\fi` skipped is its own (tex.web § 500); expl3's
     // `\__fp_parse_exponent:N` tests `\if:w e \if:w E …\fi:`.
     assert_eq!(
-        out(r"\edef\out{\if e\ifx AB x\else y\fi T\else F\fi|\if y\ifx AB x\else y\fi T\else F\fi|\if x\ifx AA x\else y\fi T\else F\fi}"),
+        out(
+            r"\edef\out{\if e\ifx AB x\else y\fi T\else F\fi|\if y\ifx AB x\else y\fi T\else F\fi|\if x\ifx AA x\else y\fi T\else F\fi}"
+        ),
         "F|T|F"
     );
 }
@@ -1386,7 +1360,8 @@ fn errmessage_takes_only_its_message() {
 fn the_format_is_read_in_vertical_mode() {
     // pdflatex: latex.ltx typesets nothing, so its `\par` finds vertical
     // mode (tex.web § 211); `\ifhmode` in the preamble is false too.
-    let analysis = analyze_kernel(r"\ifnum\pdfuniformdeviate2=0 \def\a{v}\else\def\a{x}\fi\ifhmode\def\b{h}\else\def\b{v}\fi");
+    let analysis =
+        analyze_kernel(r"\ifnum\pdfuniformdeviate2=0 \def\a{v}\else\def\a{x}\fi\ifhmode\def\b{h}\else\def\b{v}\fi");
     assert_eq!(body(&analysis, "a"), "v");
     assert_eq!(body(&analysis, "b"), "v");
 }

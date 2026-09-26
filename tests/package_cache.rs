@@ -10,11 +10,8 @@ fn project(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("satex-package-cache-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temporary directory");
-    std::fs::write(
-        dir.join("inner.sty"),
-        "\\ProvidesPackage{inner}[2020/01/01 v1]\n\\def\\innermacro#1{[#1]}\n",
-    )
-    .expect("inner.sty");
+    std::fs::write(dir.join("inner.sty"), "\\ProvidesPackage{inner}[2020/01/01 v1]\n\\def\\innermacro#1{[#1]}\n")
+        .expect("inner.sty");
     std::fs::write(
         dir.join("outer.sty"),
         "\\ProvidesPackage{outer}[2020/01/01 v1]\n\\RequirePackage{inner}\n\
@@ -78,16 +75,13 @@ fn preamble(lines: &str) -> String {
 /// Whether the package came from its cache (`Some(true)`) or was read and
 /// stored (`Some(false)`).
 fn served(analysis: &Analysis, package: &str) -> Option<bool> {
-    analysis
-        .package_caches
-        .iter()
-        .rev()
-        .find(|(name, ..)| name == package)
-        .and_then(|(.., state)| match state.as_str() {
+    analysis.package_caches.iter().rev().find(|(name, ..)| name == package).and_then(|(.., state)| {
+        match state.as_str() {
             "cached" => Some(true),
             "stored" => Some(false),
             _ => None,
-        })
+        }
+    })
 }
 
 /// Everything a query or lint reads, rendered so two runs compare.
@@ -95,9 +89,13 @@ fn facts(analysis: &Analysis) -> Vec<String> {
     let mut out = vec![format!("{:?}", definitions(analysis)), format!("{:?}", diagnostics(analysis))];
     out.push(format!("{:?}", loads(analysis)));
     out.extend(analysis.facts.occurrences.iter().map(|o| format!("{:?} {} {:?}", o.kind, o.key, o.span)));
-    out.extend(analysis.facts.expansions.iter().map(|e| {
-        format!("{} {:?} {} {}", analysis.interner.name(e.name), e.span, e.meaning.as_str(), e.count)
-    }));
+    out.extend(
+        analysis
+            .facts
+            .expansions
+            .iter()
+            .map(|e| format!("{} {:?} {} {}", analysis.interner.name(e.name), e.span, e.meaning.as_str(), e.count)),
+    );
     out.push(format!("{} vertices, {} edges", analysis.graph.len(), analysis.graph.edge_count()));
     out.push(serde_json::to_string(&satex::lint::lint(analysis)).unwrap_or_default());
     out
@@ -156,7 +154,10 @@ fn same_facts(a: &Analysis, b: &Analysis) {
             eprintln!("warm only {e}");
         }
         let lints = |a: &Analysis| -> std::collections::BTreeSet<String> {
-            satex::lint::lint(a).iter().map(|r| format!("{} {} {} {}", r["code"], r["file"], r["line"], r["message"])).collect()
+            satex::lint::lint(a)
+                .iter()
+                .map(|r| format!("{} {} {} {}", r["code"], r["file"], r["line"], r["message"]))
+                .collect()
         };
         let (x, y) = (lints(a), lints(b));
         for e in x.difference(&y).take(10) {
@@ -175,7 +176,11 @@ fn same_facts(a: &Analysis, b: &Analysis) {
         if x != y {
             if std::env::var_os("SATEX_FACTS_CONTEXT").is_some() {
                 for j in k.saturating_sub(4)..(k + 3).min(a.len()) {
-                    eprintln!("{j} cold {} | warm {}", a[j].chars().take(160).collect::<String>(), b[j].chars().take(160).collect::<String>());
+                    eprintln!(
+                        "{j} cold {} | warm {}",
+                        a[j].chars().take(160).collect::<String>(),
+                        b[j].chars().take(160).collect::<String>()
+                    );
                 }
             }
             let at = x.chars().zip(y.chars()).take_while(|(p, q)| p == q).count();
@@ -198,7 +203,13 @@ fn a_second_run_replays_the_package_and_reports_the_same() {
     let dir = project("replay");
     let first = run(&dir, DOCUMENT);
     let second = run(&dir, DOCUMENT);
-    assert_eq!(served(&first, "outer"), Some(false), "the first run stores the cache: {:?} {:?}", loads(&first), diagnostics(&first));
+    assert_eq!(
+        served(&first, "outer"),
+        Some(false),
+        "the first run stores the cache: {:?} {:?}",
+        loads(&first),
+        diagnostics(&first)
+    );
     assert_eq!(served(&second, "outer"), Some(true), "the second run reads it: {:?}", second.package_caches);
     assert_eq!(definitions(&first), definitions(&second));
     assert_eq!(diagnostics(&first), diagnostics(&second));
@@ -324,14 +335,21 @@ fn cache_build_builds_what_is_missing_and_refresh_rebuilds() {
     cfg.cache_index.auto = false;
     let states = |refresh| -> Vec<String> {
         let mut lines = Vec::new();
-        let prepared = satex::cmd::cache::build::prepare(&cfg, refresh, &[], &[], None, &mut |line| lines.push(line.to_string()))
-            .expect("prepared");
+        let prepared =
+            satex::cmd::cache::build::prepare(&cfg, refresh, &[], &[], None, &mut |line| lines.push(line.to_string()))
+                .expect("prepared");
         assert!(lines[0].starts_with("plan:"), "the plan comes first: {lines:?}");
         assert!(lines.iter().any(|l| l.starts_with("[2/2] outer")), "then each item: {lines:?}");
         prepared
             .into_iter()
             .filter(|p| p.package != "kernel")
-            .map(|p| if p.outcome == "failed" { format!("{} failed: {:?} {}", p.package, p.reason, p.state) } else { format!("{} {}", p.package, p.outcome) })
+            .map(|p| {
+                if p.outcome == "failed" {
+                    format!("{} failed: {:?} {}", p.package, p.reason, p.state)
+                } else {
+                    format!("{} {}", p.package, p.outcome)
+                }
+            })
             .collect()
     };
     assert_eq!(states(false), ["outer built"]);
@@ -370,7 +388,8 @@ fn a_register_the_package_allocates_is_allocated_again_after_other_allocations()
     // The kernel is cached first, as `satex cache build` does: a run that
     // interprets latex.ltx itself leaves a state no later run starts from.
     run_latex(&dir, "\\relax\n", true);
-    let first = run_latex(&dir, "\\documentclass{article}\n\\usepackage{outer}\n\\begin{document}\\end{document}\n", true);
+    let first =
+        run_latex(&dir, "\\documentclass{article}\n\\usepackage{outer}\n\\begin{document}\\end{document}\n", true);
     let other = "\\documentclass{article}\n\\newcount\\mine\\newcount\\yours\n\\usepackage{outer}\n\\begin{document}\\end{document}\n";
     let warm = run_latex(&dir, other, true);
     assert_eq!(served(&warm, "outer"), Some(true), "{:?}", warm.package_caches);
@@ -420,7 +439,12 @@ fn after_edit(name: &str, base: &[String], edited: &[String], hit: &[&str], miss
         assert_eq!(served(&warm, package), Some(true), "{package} is served after {name}: {:?}", warm.package_caches);
     }
     for package in miss {
-        assert_ne!(served(&warm, package), Some(true), "{package} is read again after {name}: {:?}", warm.package_caches);
+        assert_ne!(
+            served(&warm, package),
+            Some(true),
+            "{package} is read again after {name}: {:?}",
+            warm.package_caches
+        );
     }
     let cold = run_cold(&dir, &source);
     same_facts(&cold, &warm);
@@ -491,10 +515,14 @@ fn text_of(analysis: &Analysis, name: &str) -> Option<String> {
     let sym = analysis.interner.lookup(name)?;
     let meaning = analysis.env.meaning(sym);
     let text = &meaning.as_macro()?.replacement_text;
-    Some(text.iter().filter_map(|t| match t.tok {
-        satex::tex::Tok::Chr(c, _) => Some(c),
-        _ => None,
-    }).collect())
+    Some(
+        text.iter()
+            .filter_map(|t| match t.tok {
+                satex::tex::Tok::Chr(c, _) => Some(c),
+                _ => None,
+            })
+            .collect(),
+    )
 }
 
 /// A package that appends to a list with `\xdef\list{\list,…}` copies the
@@ -506,9 +534,16 @@ fn a_list_the_package_appends_to_unread_keeps_it_served() {
         return;
     }
     let dir = project("copy-through");
-    std::fs::write(dir.join("appender.sty"), "\\ProvidesPackage{appender}\n\\xdef\\biglist{\\biglist,appender}\n\\def\\appended{}\n")
-        .expect("appender.sty");
-    let doc = |list: &str| format!("\\documentclass{{article}}\n\\gdef\\biglist{{{list}}}\n\\usepackage{{appender}}\n\\begin{{document}}\\end{{document}}\n");
+    std::fs::write(
+        dir.join("appender.sty"),
+        "\\ProvidesPackage{appender}\n\\xdef\\biglist{\\biglist,appender}\n\\def\\appended{}\n",
+    )
+    .expect("appender.sty");
+    let doc = |list: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\gdef\\biglist{{{list}}}\n\\usepackage{{appender}}\n\\begin{{document}}\\end{{document}}\n"
+        )
+    };
     run_latex(&dir, "\\relax\n", true);
     run_latex(&dir, &doc("a"), true);
     let source = doc("b,c");
@@ -534,7 +569,11 @@ fn a_list_the_package_inspects_before_appending_makes_it_miss() {
          \\xdef\\biglist{\\biglist,inspector}\n",
     )
     .expect("inspector.sty");
-    let doc = |list: &str| format!("\\documentclass{{article}}\n\\gdef\\biglist{{{list}}}\n\\usepackage{{inspector}}\n\\begin{{document}}\\end{{document}}\n");
+    let doc = |list: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\gdef\\biglist{{{list}}}\n\\usepackage{{inspector}}\n\\begin{{document}}\\end{{document}}\n"
+        )
+    };
     run_latex(&dir, "\\relax\n", true);
     run_latex(&dir, &doc("a"), true);
     let source = doc("b");

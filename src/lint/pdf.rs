@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use crate::builtins::OccKind;
 use crate::lint::{Category, Report, Rule, Severity};
 use crate::machine::Analysis;
-use crate::plugin::pdf::{classify, names, operators, Operator, Payload};
+use crate::plugin::pdf::{Operator, Payload, classify, names, operators};
 use crate::tex::Span;
 
 pub static RULES: &[Rule] = &[
@@ -96,11 +96,7 @@ fn unbalanced_pdf_content(report: &mut Report) {
         }
     }
     for (operator, span) in open {
-        findings.push((
-            span,
-            operator.name(),
-            format!("{} is never closed by {}", operator.name(), operator.closer()),
-        ));
+        findings.push((span, operator.name(), format!("{} is never closed by {}", operator.name(), operator.closer())));
     }
     for (span, name, message) in findings {
         let fix = format!("balance {name} within the same group");

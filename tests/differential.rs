@@ -17,11 +17,7 @@ enum Verdict {
 }
 
 const CLASSES: [(Verdict, &str, &str); 5] = [
-    (
-        Verdict::UndefinedControlSequence,
-        "! Undefined control sequence",
-        "undefined-control-sequence",
-    ),
+    (Verdict::UndefinedControlSequence, "! Undefined control sequence", "undefined-control-sequence"),
     (Verdict::AlreadyDefined, "already defined", "already-defined"),
     (Verdict::UndefinedEnvironment, "! LaTeX Error: Environment", "undefined-environment"),
     (Verdict::NotDefined, " undefined.", "not-defined"),
@@ -70,10 +66,8 @@ fn satex_verdict(source: &str, name: &str) -> Verdict {
         .filter(|record| record["origin"] == "document")
         .filter_map(|record| {
             let line = record["line"].as_u64().unwrap_or(0);
-            let verdict = CLASSES
-                .iter()
-                .find(|(_, _, code)| record["code"] == *code)
-                .map(|(verdict, _, _)| *verdict)?;
+            let verdict =
+                CLASSES.iter().find(|(_, _, code)| record["code"] == *code).map(|(verdict, _, _)| *verdict)?;
             Some((line, verdict))
         })
         .min_by_key(|(line, _)| *line)

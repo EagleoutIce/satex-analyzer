@@ -66,10 +66,7 @@ fn set_paths_texinputs_reaches_a_configured_directory() {
     let dir = fixture("set");
     let mut cfg = Config { load_classes: true, ..Config::default() };
     cfg.set("paths.texinputs", "[\"./libs//\"]").unwrap();
-    assert!(
-        resolves_foolocal(&dir, &cfg),
-        "--set paths.texinputs=[./libs//] should reach libs/sub/foolocal.sty"
-    );
+    assert!(resolves_foolocal(&dir, &cfg), "--set paths.texinputs=[./libs//] should reach libs/sub/foolocal.sty");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

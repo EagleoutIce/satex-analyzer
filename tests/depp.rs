@@ -15,7 +15,8 @@ fn project(name: &str, depends: &str) -> (PathBuf, Analysis) {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("DEPENDS.txt"), depends).unwrap();
     let path = dir.join("doc.tex");
-    let source = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\includegraphics{x}\n\\end{document}\n";
+    let source =
+        "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\includegraphics{x}\n\\end{document}\n";
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &Config::default());
     (dir, analysis)

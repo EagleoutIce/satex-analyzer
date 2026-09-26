@@ -61,12 +61,7 @@ fn fastrand() -> u64 {
 }
 
 fn assert_clean(run: &Run, args: &[&str]) {
-    assert!(
-        !run.stderr.to_lowercase().contains("panicked"),
-        "`satex {}` panicked:\n{}",
-        args.join(" "),
-        run.stderr
-    );
+    assert!(!run.stderr.to_lowercase().contains("panicked"), "`satex {}` panicked:\n{}", args.join(" "), run.stderr);
 }
 
 const FILE: [&str; 2] = ["-f", "tests/fixtures/project/paper.tex"];
@@ -117,7 +112,13 @@ fn cache_clear_and_prune_survive_with_no_installation() {
     for args in [&["cache", "clear"][..], &["cache", "prune"]] {
         let out = run(args);
         assert_clean(&out, args);
-        assert!(out.status.success(), "`satex {}` failed:\nstdout: {}\nstderr: {}", args.join(" "), out.stdout, out.stderr);
+        assert!(
+            out.status.success(),
+            "`satex {}` failed:\nstdout: {}\nstderr: {}",
+            args.join(" "),
+            out.stdout,
+            out.stderr
+        );
     }
 }
 

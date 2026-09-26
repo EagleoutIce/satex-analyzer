@@ -22,11 +22,7 @@ fn analyze(source: &str) -> Analysis {
 }
 
 fn definition<'a>(analysis: &'a Analysis, name: &str) -> Option<&'a satex::facts::Definition> {
-    analysis
-        .facts
-        .defs
-        .iter()
-        .find(|d| analysis.interner.name(d.name) == name)
+    analysis.facts.defs.iter().find(|d| analysis.interner.name(d.name) == name)
 }
 
 fn body(analysis: &Analysis, name: &str) -> String {
@@ -152,11 +148,7 @@ fn ifcat_compares_categories_not_characters() {
     let analysis = analyze(r"\ifcat ab\def\seen{yes}\else\def\seen{no}\fi");
     assert_eq!(body(&analysis, "seen"), "yes", "a and b are both letters");
     let differ = analyze(r"\ifcat a1\def\seen{yes}\else\def\seen{no}\fi");
-    assert_eq!(
-        body(&differ, "seen"),
-        "no",
-        "a letter and a digit differ in category"
-    );
+    assert_eq!(body(&differ, "seen"), "no", "a letter and a digit differ in category");
 }
 
 #[test]
@@ -183,8 +175,7 @@ fn ifcsname_tests_a_built_name_without_defining_it() {
 
 #[test]
 fn ifcsname_is_true_for_a_defined_name() {
-    let analysis =
-        analyze(r"\def\marker{x}\ifcsname marker\endcsname\def\seen{yes}\else\def\seen{no}\fi");
+    let analysis = analyze(r"\def\marker{x}\ifcsname marker\endcsname\def\seen{yes}\else\def\seen{no}\fi");
     assert_eq!(body(&analysis, "seen"), "yes");
 }
 
@@ -197,9 +188,8 @@ fn unless_ifnum_negates_the_test() {
 
 #[test]
 fn nested_conditionals_select_independently() {
-    let analysis = analyze(
-        r"\iftrue\ifnum 2>1 \def\seen{inner-yes}\else\def\seen{inner-no}\fi\else\def\seen{outer-no}\fi",
-    );
+    let analysis =
+        analyze(r"\iftrue\ifnum 2>1 \def\seen{inner-yes}\else\def\seen{inner-no}\fi\else\def\seen{outer-no}\fi");
     assert_eq!(body(&analysis, "seen"), "inner-yes");
 }
 
@@ -232,9 +222,7 @@ fn chained_expandafter_reaches_further_into_the_expansion() {
     // Each extra \expandafter defers one more already-read token, moving the
     // one-step expansion of \a's own body (\b) past \noexpand instead of
     // being shielded by it, so \b is free to expand too.
-    let analysis = analyze(
-        r"\def\a{\b}\def\b{final}\edef\out{\expandafter\expandafter\expandafter\noexpand\a}",
-    );
+    let analysis = analyze(r"\def\a{\b}\def\b{final}\edef\out{\expandafter\expandafter\expandafter\noexpand\a}");
     assert_eq!(body(&analysis, "out"), "final");
 }
 
@@ -247,8 +235,7 @@ fn noexpand_keeps_an_undefined_control_sequence_from_being_reported() {
             .facts
             .expansions
             .iter()
-            .any(|e| e.meaning == satex::facts::MeaningKind::Undefined
-                && analysis.interner.name(e.name) == "nosuch"),
+            .any(|e| e.meaning == satex::facts::MeaningKind::Undefined && analysis.interner.name(e.name) == "nosuch"),
         "\\noexpand keeps the token from being obeyed, so it is never looked up"
     );
 }
@@ -373,8 +360,7 @@ fn doubled_hash_produces_one_hash_in_the_inner_macro() {
 
 #[test]
 fn nine_parameters_are_all_reachable() {
-    let analysis =
-        analyze(r"\def\nine#1#2#3#4#5#6#7#8#9{#9#8#7#6#5#4#3#2#1}\edef\a{\nine abcdefghi}");
+    let analysis = analyze(r"\def\nine#1#2#3#4#5#6#7#8#9{#9#8#7#6#5#4#3#2#1}\edef\a{\nine abcdefghi}");
     assert_eq!(body(&analysis, "a"), "ihgfedcba");
 }
 
@@ -408,17 +394,14 @@ fn let_assigns_a_characters_meaning() {
 
 #[test]
 fn let_assigns_a_primitives_meaning() {
-    let analysis =
-        analyze(r"\let\myrelax\relax\ifx\myrelax\relax\def\seen{yes}\else\def\seen{no}\fi");
+    let analysis = analyze(r"\let\myrelax\relax\ifx\myrelax\relax\def\seen{yes}\else\def\seen{no}\fi");
     assert_eq!(body(&analysis, "seen"), "yes");
 }
 
 #[test]
 fn futurelet_gives_a_name_the_second_upcoming_tokens_meaning() {
     // The TeXbook, ch. 20: \futurelet\x\t\u sets \x to the meaning of \u.
-    let analysis = analyze(
-        r"\def\a{X}\def\b{Y}\futurelet\next\a\b\ifx\next\b\def\seen{yes}\else\def\seen{no}\fi",
-    );
+    let analysis = analyze(r"\def\a{X}\def\b{Y}\futurelet\next\a\b\ifx\next\b\def\seen{yes}\else\def\seen{no}\fi");
     assert_eq!(body(&analysis, "seen"), "yes");
 }
 
@@ -432,8 +415,7 @@ fn a_count_register_is_addressed_by_number() {
 
 #[test]
 fn a_dimen_register_accepts_a_unit() {
-    let analysis =
-        analyze(r"\dimen0=1in \ifdim\dimen0=72.26999pt\def\seen{yes}\else\def\seen{no}\fi");
+    let analysis = analyze(r"\dimen0=1in \ifdim\dimen0=72.26999pt\def\seen{yes}\else\def\seen{no}\fi");
     assert_eq!(body(&analysis, "seen"), "yes");
 }
 
@@ -467,23 +449,20 @@ fn toksdef_names_a_toks_register() {
 
 #[test]
 fn advance_adds_to_a_named_count_register() {
-    let analysis =
-        analyze(r"\countdef\mycount=1 \mycount=10 \advance\mycount by 5 \edef\a{\the\mycount}");
+    let analysis = analyze(r"\countdef\mycount=1 \mycount=10 \advance\mycount by 5 \edef\a{\the\mycount}");
     assert_eq!(body(&analysis, "a"), "15");
 }
 
 #[test]
 fn multiply_scales_a_named_count_register() {
-    let analysis =
-        analyze(r"\countdef\mycount=1 \mycount=6 \multiply\mycount by 7 \edef\a{\the\mycount}");
+    let analysis = analyze(r"\countdef\mycount=1 \mycount=6 \multiply\mycount by 7 \edef\a{\the\mycount}");
     assert_eq!(body(&analysis, "a"), "42");
 }
 
 #[test]
 fn divide_truncates_toward_zero() {
     // tex.web § 1239: integer division truncates.
-    let analysis =
-        analyze(r"\countdef\mycount=1 \mycount=-7 \divide\mycount by 2 \edef\a{\the\mycount}");
+    let analysis = analyze(r"\countdef\mycount=1 \mycount=-7 \divide\mycount by 2 \edef\a{\the\mycount}");
     assert_eq!(body(&analysis, "a"), "-3");
 }
 
@@ -509,8 +488,7 @@ fn dimexpr_computes_in_scaled_points() {
 
 #[test]
 fn glueexpr_computes_like_dimexpr_on_its_natural_width() {
-    let analysis =
-        analyze(r"\ifdim\glueexpr 2pt+3pt\relax=5pt \def\seen{yes}\else\def\seen{no}\fi");
+    let analysis = analyze(r"\ifdim\glueexpr 2pt+3pt\relax=5pt \def\seen{yes}\else\def\seen{no}\fi");
     assert_eq!(body(&analysis, "seen"), "yes");
 }
 
@@ -549,8 +527,7 @@ fn a_local_assignment_is_rolled_back_when_its_group_ends() {
 
 #[test]
 fn a_global_assignment_survives_its_group() {
-    let analysis =
-        analyze(r"\countdef\mycount=1 \mycount=1 {\global\mycount=2 }\edef\a{\the\mycount}");
+    let analysis = analyze(r"\countdef\mycount=1 \mycount=1 {\global\mycount=2 }\edef\a{\the\mycount}");
     assert_eq!(body(&analysis, "a"), "2");
 }
 
@@ -582,15 +559,10 @@ fn an_active_character_can_be_defined_like_a_macro() {
 #[test]
 fn a_catcode_change_inside_a_group_is_undone() {
     let before = analyze(r"\edef\a{\the\catcode`\@}");
-    assert_eq!(
-        body(&before, "a"),
-        "12",
-        "@ is an \"other\" character by default"
-    );
+    assert_eq!(body(&before, "a"), "12", "@ is an \"other\" character by default");
     let analysis = analyze(r"{\catcode`\@=11 }\edef\a{\the\catcode`\@}");
     assert_eq!(body(&analysis, "a"), "12");
 }
-
 
 #[test]
 fn unexpanded_shields_its_argument_inside_edef() {
@@ -605,11 +577,7 @@ fn a_plain_macros_argument_may_not_contain_par() {
     // argument; tex.web § 1035 signals a runaway argument.
     let analysis = analyze(r"\def\x#1{[#1]}\x{a\par b}");
     assert!(
-        analysis
-            .facts
-            .diagnostics
-            .iter()
-            .any(|d| d.code == "runaway-argument"),
+        analysis.facts.diagnostics.iter().any(|d| d.code == "runaway-argument"),
         "no diagnostic was raised for \\par inside a non-\\long argument"
     );
 }
@@ -661,8 +629,7 @@ fn analyze_with(engine: Engine, source: &str) -> Analysis {
 fn directlua_consumes_its_body_instead_of_reading_it_as_tex() {
     // The braces around Lua are the primitive's argument, not a TeX group
     // (LuaTeX manual, "Lua related primitives").
-    let analysis =
-        analyze_with(Engine::LuaTeX, r"\directlua{tex.print('x') \relax}\def\after{reached}");
+    let analysis = analyze_with(Engine::LuaTeX, r"\directlua{tex.print('x') \relax}\def\after{reached}");
     assert!(defined(&analysis, "after"));
     let lua: Vec<&str> = analysis
         .facts
@@ -722,10 +689,7 @@ const CONTEXT_SAMPLE: &str = r"% !TeX program = context
 
 /// Where the installed engines live, if there are any.
 fn engine_binary(name: &str) -> Option<std::path::PathBuf> {
-    let which = std::process::Command::new("kpsewhich")
-        .arg("--var-value=SELFAUTOLOC")
-        .output()
-        .ok()?;
+    let which = std::process::Command::new("kpsewhich").arg("--var-value=SELFAUTOLOC").output().ok()?;
     let directory = std::path::PathBuf::from(String::from_utf8(which.stdout).ok()?.trim());
     let binary = directory.join(name);
     binary.is_file().then_some(binary)
@@ -807,9 +771,7 @@ fn an_implicit_group_runs_its_aftergroup_tokens() {
     // `\bgroup` and `\egroup` are `\let` to the braces (The TeXbook, ch. 24),
     // so a group opened through a macro still ends where `\egroup` does and
     // still releases what `\aftergroup` saved (tex.web § 326).
-    let analysis = analyze(
-        r"\def\bg{\bgroup}\def\afterA{done}\bg\def\inner{1}\aftergroup\afterA\egroup",
-    );
+    let analysis = analyze(r"\def\bg{\bgroup}\def\afterA{done}\bg\def\inner{1}\aftergroup\afterA\egroup");
     assert_eq!(body(&analysis, "inner"), "1");
     assert_eq!(body(&analysis, "afterA"), "done");
 }
@@ -818,8 +780,7 @@ fn an_implicit_group_runs_its_aftergroup_tokens() {
 fn aftergroup_can_assemble_a_definition_token_by_token() {
     // The classic trick: each token is saved on its own and they arrive in
     // order once the group closes, so the definition is made outside it.
-    let analysis =
-        analyze(r"{\aftergroup\def\aftergroup\later\aftergroup{\aftergroup L\aftergroup}}");
+    let analysis = analyze(r"{\aftergroup\def\aftergroup\later\aftergroup{\aftergroup L\aftergroup}}");
     assert_eq!(body(&analysis, "later"), "L");
 }
 
@@ -827,9 +788,7 @@ fn aftergroup_can_assemble_a_definition_token_by_token() {
 fn a_tripled_expandafter_reaches_the_third_token() {
     // `\expandafter\expandafter\expandafter` expands the token two places
     // ahead, which is how a macro's meaning reaches a `\def` body.
-    let analysis = analyze(
-        r"\def\a{A}\expandafter\expandafter\expandafter\def\expandafter\x\expandafter{\a}",
-    );
+    let analysis = analyze(r"\def\a{A}\expandafter\expandafter\expandafter\def\expandafter\x\expandafter{\a}");
     assert_eq!(body(&analysis, "x"), "A");
 }
 
@@ -843,8 +802,16 @@ fn noexpand_shields_a_name_built_by_csname() {
 
 #[test]
 fn every_evaluated_conditional_is_a_fact() {
-    let a = analyze("\\count1=1\n\\ifnum\\count1=1\n\\def\\a{}\n\\else\n\\def\\b{}\n\\fi\n\\ifcase\\count1 x\\or y\\or z\\fi\n\\ifx\\undefinedthing\\relax\\fi\n\\ifnum\\count1=2 \\else\\fi\n");
-    let at = |line: u32| a.facts.conditionals.iter().find(|c| c.at.line == line).unwrap_or_else(|| panic!("no conditional on line {line}"));
+    let a = analyze(
+        "\\count1=1\n\\ifnum\\count1=1\n\\def\\a{}\n\\else\n\\def\\b{}\n\\fi\n\\ifcase\\count1 x\\or y\\or z\\fi\n\\ifx\\undefinedthing\\relax\\fi\n\\ifnum\\count1=2 \\else\\fi\n",
+    );
+    let at = |line: u32| {
+        a.facts
+            .conditionals
+            .iter()
+            .find(|c| c.at.line == line)
+            .unwrap_or_else(|| panic!("no conditional on line {line}"))
+    };
     let first = at(2);
     assert_eq!((first.taken.clone(), first.undecided), (vec![Some(0)], false));
     assert_eq!(first.arms.iter().map(|s| s.line).collect::<Vec<_>>(), [4]);

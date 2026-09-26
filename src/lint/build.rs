@@ -179,12 +179,8 @@ struct Latexmkrc {
 
 /// The engine command variables latexmk knows (latexmk(1), `$pdflatex` and
 /// its siblings), each with the engine it runs.
-const COMMANDS: [(&str, Engine); 4] = [
-    ("pdflatex", Engine::PdfTeX),
-    ("lualatex", Engine::LuaTeX),
-    ("xelatex", Engine::XeTeX),
-    ("latex", Engine::PdfTeX),
-];
+const COMMANDS: [(&str, Engine); 4] =
+    [("pdflatex", Engine::PdfTeX), ("lualatex", Engine::LuaTeX), ("xelatex", Engine::XeTeX), ("latex", Engine::PdfTeX)];
 
 /// The options that let `\write18` through (pdftex(1), `-shell-escape`,
 /// `-enable-write18`).
@@ -193,12 +189,8 @@ const SHELL_ESCAPE: [&str; 4] = ["-shell-escape", "--shell-escape", "-enable-wri
 impl Latexmkrc {
     fn read(path: &Path) -> Option<Latexmkrc> {
         let text = std::fs::read_to_string(path).ok()?;
-        let mut rc = Latexmkrc {
-            path: path.to_path_buf(),
-            settings: Vec::new(),
-            tex_cmds: None,
-            dependencies: Vec::new(),
-        };
+        let mut rc =
+            Latexmkrc { path: path.to_path_buf(), settings: Vec::new(), tex_cmds: None, dependencies: Vec::new() };
         for (number, raw) in text.lines().enumerate() {
             let line = number as u32 + 1;
             let code = perl_code(raw).trim();
@@ -212,9 +204,10 @@ impl Latexmkrc {
                 let value = arguments.first().cloned().unwrap_or_default();
                 rc.tex_cmds = Some(Setting { line, key: "set_tex_cmds".into(), value });
             } else if let Some(arguments) = call(code, "add_cus_dep")
-                && let [from, to, ..] = arguments.as_slice() {
-                    rc.dependencies.push(CustomDependency { line, from: from.clone(), to: to.clone() });
-                }
+                && let [from, to, ..] = arguments.as_slice()
+            {
+                rc.dependencies.push(CustomDependency { line, from: from.clone(), to: to.clone() });
+            }
         }
         Some(rc)
     }
@@ -248,9 +241,7 @@ impl Latexmkrc {
     /// Whether the command for `name` lets `\write18` through, and the line
     /// that says so.
     fn shell_escape(&self, name: &str) -> Option<u32> {
-        let allows = |setting: &Setting| {
-            setting.value.split_whitespace().any(|word| SHELL_ESCAPE.contains(&word))
-        };
+        let allows = |setting: &Setting| setting.value.split_whitespace().any(|word| SHELL_ESCAPE.contains(&word));
         if let Some(setting) = self.setting(name).filter(|s| allows(s)) {
             return Some(setting.line);
         }
@@ -346,9 +337,11 @@ fn used(analysis: &Analysis, kinds: &[OccKind]) -> bool {
 
 /// Whether the document writes lines to a file with one of `extensions`.
 fn writes(analysis: &Analysis, extensions: &[&str]) -> bool {
-    analysis.facts.written_files.iter().any(|file| {
-        Path::new(file).extension().and_then(|e| e.to_str()).is_some_and(|e| extensions.contains(&e))
-    })
+    analysis
+        .facts
+        .written_files
+        .iter()
+        .any(|file| Path::new(file).extension().and_then(|e| e.to_str()).is_some_and(|e| extensions.contains(&e)))
 }
 
 fn file_name(path: &Path) -> String {
@@ -383,7 +376,10 @@ fn shell_escape_missing(report: &mut Report) {
                 Path::new(&main),
                 directive.line,
                 &directive.rule,
-                format!("the document runs programs through \\write18, but `% arara: {}` has no `shell: yes`", directive.rule),
+                format!(
+                    "the document runs programs through \\write18, but `% arara: {}` has no `shell: yes`",
+                    directive.rule
+                ),
                 Some(format!("% arara: {}: {{ shell: yes }}", directive.rule)),
             );
         }
@@ -500,7 +496,13 @@ fn engine_mismatch(report: &mut Report) {
     }
     for directive in &arara {
         let engine = directive.engine().unwrap_or(Engine::PdfTeX);
-        builds.push((PathBuf::from(&main), directive.line, format!("% arara: {}", directive.rule), engine, directive.rule != "latex"));
+        builds.push((
+            PathBuf::from(&main),
+            directive.line,
+            format!("% arara: {}", directive.rule),
+            engine,
+            directive.rule != "latex",
+        ));
     }
     for (path, line, what, engine, pdf) in builds {
         if let Some((wanted, program)) = &named
@@ -519,7 +521,11 @@ fn engine_mismatch(report: &mut Report) {
                 &path,
                 line,
                 what.as_str(),
-                format!("`{what}` runs {}, but the document uses \\{name}, which only {} has", engine.as_str(), wanted.as_str()),
+                format!(
+                    "`{what}` runs {}, but the document uses \\{name}, which only {} has",
+                    engine.as_str(),
+                    wanted.as_str()
+                ),
                 None,
             );
         }
@@ -613,7 +619,9 @@ fn unused_custom_dependency(report: &mut Report) {
     for rc in latexmkrcs(analysis) {
         let directory = rc.path.parent().map(Path::to_path_buf).unwrap_or_default();
         for dependency in &rc.dependencies {
-            if writes(analysis, &[dependency.from.trim_start_matches('.')]) || has_extension(&directory, &dependency.from) {
+            if writes(analysis, &[dependency.from.trim_start_matches('.')])
+                || has_extension(&directory, &dependency.from)
+            {
                 continue;
             }
             report.add_in(
@@ -687,7 +695,9 @@ fn engine_options(report: &mut Report) {
             let Some(setting) = setting else { continue };
             let words: Vec<&str> = setting.value.split_whitespace().collect();
             let has = |prefixes: &[&str]| {
-                words.iter().any(|w| prefixes.iter().any(|p| w.trim_start_matches('-') == p.trim_start_matches('-') || w.starts_with(p)))
+                words.iter().any(|w| {
+                    prefixes.iter().any(|p| w.trim_start_matches('-') == p.trim_start_matches('-') || w.starts_with(p))
+                })
             };
             let mut missing = Vec::new();
             if !has(&["-file-line-error"]) {

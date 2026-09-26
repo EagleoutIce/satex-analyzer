@@ -9,13 +9,13 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use crate::builtins::{CodeTable, Cond, Convert, FontParam, LastItem, Primitive, Special, Syntax};
 use crate::builtins::DefMode;
+use crate::builtins::{CodeTable, Cond, Convert, FontParam, LastItem, Primitive, Special, Syntax};
 use crate::env::GroupKind;
 use crate::machine::{CondLimit, Machine};
 use crate::mode::group;
 use crate::tex::{Catcode, Meaning, RegKind, Span, Sym, Tok, Token};
-use crate::value::{Scaled, Value, UNIT};
+use crate::value::{Scaled, UNIT, Value};
 
 /// Keeps the font tables and the other engine state out of the namespace
 /// control sequences live in, as the register names are kept out of it.
@@ -262,7 +262,7 @@ impl Machine<'_> {
             L::InputLineNo => self.input_line().map(|line| Value::Int(line.into())),
             L::EtexVersion => int(ETEX_VERSION),
             L::PdftexVersion => int(PDFTEX_VERSION),
-            L::GroupLevel => int(self.env.depth() as i64),
+            L::GroupLevel => int(self.env.group_level() as i64),
             L::GroupType => match (self.env.group_kind(), self.env.nest()) {
                 (None, _) => int(0),
                 (Some(_), Some(nest)) => nest.code.map(|code| Value::Int(code.into())),
@@ -293,11 +293,8 @@ impl Machine<'_> {
             }
             L::GlueStretch | L::GlueShrink | L::GlueStretchOrder | L::GlueShrinkOrder => {
                 let glue = self.scan_glue_spec(false)?;
-                let part = if matches!(item, L::GlueStretch | L::GlueStretchOrder) {
-                    glue.stretch
-                } else {
-                    glue.shrink
-                };
+                let part =
+                    if matches!(item, L::GlueStretch | L::GlueStretchOrder) { glue.stretch } else { glue.shrink };
                 Some(match item {
                     L::GlueStretch | L::GlueShrink => Value::Dimen(part.amount),
                     _ => Value::Int(part.order.into()),
@@ -1163,7 +1160,8 @@ impl Machine<'_> {
                 }
             }
             Syntax::MathAccent => {
-                while ["fixed", "bottom", "top", "both", "overlay", "nooverflow"].iter().any(|k| self.scan_keyword(k)) {}
+                while ["fixed", "bottom", "top", "both", "overlay", "nooverflow"].iter().any(|k| self.scan_keyword(k)) {
+                }
                 for _ in 0..3 {
                     self.scan_int();
                 }
@@ -1293,7 +1291,6 @@ impl Machine<'_> {
         }
     }
 
-
     /// tex.web § 1160 (`scan_delimiter`): a character, or `\delimiter` and
     /// its 27-bit code.
     fn scan_delimiter(&mut self) {
@@ -1409,10 +1406,7 @@ impl Machine<'_> {
             },
             C::Uchar { catcode } => return self.uchar(catcode, span),
             C::FontName => self.scan_font_ident().and_then(|f| self.font_name_known(f)),
-            C::PdfFontSize => self
-                .scan_font_ident()
-                .and_then(|f| self.font_size(f))
-                .map(crate::value::render_dimen),
+            C::PdfFontSize => self.scan_font_ident().and_then(|f| self.font_size(f)).map(crate::value::render_dimen),
             C::PdfFontName | C::PdfFontObjNum => {
                 self.scan_font_ident();
                 None
@@ -1445,19 +1439,30 @@ impl Machine<'_> {
             })(),
             C::EscapeString => (|| {
                 let text = self.expanded_text()?;
-                Some(text.bytes().map(|b| match b {
-                    b'(' | b')' | b'\\' => format!("\\{}", b as char),
-                    0x21..=0x7e => (b as char).to_string(),
-                    _ => format!("\\{b:03o}"),
-                }).collect())
+                Some(
+                    text.bytes()
+                        .map(|b| match b {
+                            b'(' | b')' | b'\\' => format!("\\{}", b as char),
+                            0x21..=0x7e => (b as char).to_string(),
+                            _ => format!("\\{b:03o}"),
+                        })
+                        .collect(),
+                )
             })(),
             C::EscapeName => (|| {
                 let text = self.expanded_text()?;
-                Some(text.bytes().filter(|b| *b != 0).map(|b| match b {
-                    b'#' | b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%' => format!("#{b:02X}"),
-                    0x21..=0x7e => (b as char).to_string(),
-                    _ => format!("#{b:02X}"),
-                }).collect())
+                Some(
+                    text.bytes()
+                        .filter(|b| *b != 0)
+                        .map(|b| match b {
+                            b'#' | b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%' => {
+                                format!("#{b:02X}")
+                            }
+                            0x21..=0x7e => (b as char).to_string(),
+                            _ => format!("#{b:02X}"),
+                        })
+                        .collect(),
+                )
             })(),
             C::FileSize | C::FileModDate => {
                 // web2c drops the quotes a name may carry, and a file the
@@ -1493,7 +1498,9 @@ impl Machine<'_> {
                     Some(text) => Some(text.into_bytes()),
                     None => None,
                 };
-                bytes.map(|b| <md5::Md5 as md5::Digest>::digest(&b).iter().map(|x| format!("{x:02X}")).collect::<String>())
+                bytes.map(|b| {
+                    <md5::Md5 as md5::Digest>::digest(&b).iter().map(|x| format!("{x:02X}")).collect::<String>()
+                })
             }
             C::Match => {
                 self.scan_keyword("icase");
@@ -1544,7 +1551,17 @@ impl Machine<'_> {
         let c = code.and_then(|c| u32::try_from(c).ok()).and_then(char::from_u32);
         let cat = cat.and_then(|k| u8::try_from(k).ok()).and_then(Catcode::from_u8);
         match (c, cat) {
-            (Some(c), Some(cat)) if !matches!(cat, Catcode::Escape | Catcode::Eol | Catcode::Ignored | Catcode::Active | Catcode::Comment | Catcode::Invalid) => {
+            (Some(c), Some(cat))
+                if !matches!(
+                    cat,
+                    Catcode::Escape
+                        | Catcode::Eol
+                        | Catcode::Ignored
+                        | Catcode::Active
+                        | Catcode::Comment
+                        | Catcode::Invalid
+                ) =>
+            {
                 vec![Token::new(Tok::Chr(c, cat), span)]
             }
             _ => vec![self.unknown_token(span)],
@@ -1657,5 +1674,4 @@ impl Machine<'_> {
         };
         Some(vec![Token::new(Tok::Cs(cs), span)])
     }
-
 }

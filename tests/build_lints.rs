@@ -119,8 +119,7 @@ fn pdfoutput_contradicting_pdf_mode_is_found() {
     assert!(!found.iter().any(|f| f.starts_with("build-engine-mismatch")), "{found:?}");
 }
 
-const BIBLIOGRAPHY: &str =
-    "\\documentclass{article}\n\\begin{document}\n\\cite{k}\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
+const BIBLIOGRAPHY: &str = "\\documentclass{article}\n\\begin{document}\n\\cite{k}\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
 
 #[test]
 fn a_bibliography_needs_bibtex_or_biber_to_run() {

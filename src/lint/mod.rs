@@ -1,9 +1,9 @@
 //! Lint rules: each carries its documentation and implementation.
 
+pub mod apply;
 pub mod bibliography;
 pub mod build;
 pub mod correctness;
-pub mod apply;
 pub mod fix;
 pub mod pdf;
 pub mod performance;
@@ -12,6 +12,7 @@ mod shared;
 pub mod style;
 pub mod suppress;
 pub mod typography;
+pub mod units;
 
 use serde_json::json;
 
@@ -27,6 +28,7 @@ fn all() -> impl Iterator<Item = &'static Rule> {
         .chain(pdf::RULES)
         .chain(style::RULES)
         .chain(typography::RULES)
+        .chain(units::RULES)
         .chain(performance::RULES)
         .chain(precision::RULES)
         .chain(build::RULES)
@@ -111,14 +113,7 @@ impl<'a> Report<'a> {
 
     /// The same finding at a lower severity: a defect that the run never
     /// reaches cannot break the build.
-    pub fn add_as(
-        &mut self,
-        severity: Severity,
-        span: Span,
-        name: &str,
-        message: String,
-        fix: Option<String>,
-    ) {
+    pub fn add_as(&mut self, severity: Severity, span: Span, name: &str, message: String, fix: Option<String>) {
         self.push(severity, span, name, message, fix, None);
     }
 
@@ -150,10 +145,7 @@ impl<'a> Report<'a> {
         record.insert("category".into(), json!(self.rule.category.as_str()));
         record.insert("severity".into(), json!(severity.as_str()));
         record.insert("name".into(), json!(name));
-        record.insert(
-            "origin".into(),
-            json!(crate::query::origin(self.analysis, span.file)),
-        );
+        record.insert("origin".into(), json!(crate::query::origin(self.analysis, span.file)));
         record.insert("message".into(), json!(message));
         record.insert("fix".into(), json!(fix));
         if let Some((applicability, edits)) = edits {
@@ -230,8 +222,8 @@ static PREAMBLE_COST: Rule = Rule {
     severity: Severity::Info,
     summary: "what the preamble costs on every build",
     explanation: "\
-Files read and tokens digested before `\\begin{document}`.  This work repeats on
-every compilation.
+The packages the document asks for and the files read before
+`\\begin{document}`.  This work repeats on every compilation.
 
 Fix by precompiling the preamble into a format with `mylatexformat` or
 `precompiled preamble` support in your editor, which skips it entirely.",
@@ -240,20 +232,15 @@ Fix by precompiling the preamble into a format with `mylatexformat` or
 
 fn preamble_cost(report: &mut Report) {
     let analysis = report.analysis;
-    let direct = analysis
-        .facts
-        .loads
-        .iter()
-        .filter(|l| l.kind.is_package() && l.span.file == analysis.main_file)
-        .count();
+    let direct =
+        analysis.facts.loads.iter().filter(|l| l.kind.is_package() && l.span.file == analysis.main_file).count();
     let span = document_start(analysis).unwrap_or_default();
     report.add(
         span,
         "",
         format!(
-            "{direct} packages requested directly, {} files read, {} tokens digested",
-            analysis.files.len(),
-            analysis.steps
+            "{direct} packages requested directly, {} files read",
+            analysis.preamble_files.unwrap_or(analysis.files.len()),
         ),
         Some("precompile the preamble into a format to skip this on every build".into()),
     );

@@ -130,7 +130,8 @@ fn within(name: &str, args: &[String]) -> Option<(String, String, String)> {
                 .map(|(at, _)| at)
                 .find(|&at| {
                     let (before, after) = (&name[..at], &name[at + a.len()..]);
-                    !before.ends_with(|c: char| c.is_alphanumeric()) && !after.starts_with(|c: char| c.is_alphanumeric())
+                    !before.ends_with(|c: char| c.is_alphanumeric())
+                        && !after.starts_with(|c: char| c.is_alphanumeric())
                 })
                 .map(|at| (a.clone(), name[..at].to_string(), name[at + a.len()..].to_string()))
         })
@@ -195,7 +196,8 @@ pub fn environment_opened(m: &mut Machine, outer: Option<String>, span: Span) {
         }
         // `\@execute@begin@hook` closes the group `\begin` opened, so the
         // body is read one level out.
-        m.out.document_depth = Some(m.env.depth().saturating_sub(1) as u16);
+        m.out.document_depth = Some(m.env.group_level().saturating_sub(1) as u16);
+        m.out.preamble_files = Some(m.out.files.len());
         m.out.preamble = Some(Box::new((m.env.snapshot(), m.catcodes.clone())));
     } else {
         // `document` itself is not on the stack: `document_depth` already
@@ -324,7 +326,15 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
         // Text, not a command: the element contents of an XML file.
         let text = m.text_of(tokens);
         let args = text.split(['<', '>']).skip(2).step_by(2).map(|t| t.trim().to_string()).collect();
-        m.written_lines.push(WrittenLine { head: String::new(), args, keys: Vec::new(), parts: std::rc::Rc::from([]), defined: Vec::new(), span, context });
+        m.written_lines.push(WrittenLine {
+            head: String::new(),
+            args,
+            keys: Vec::new(),
+            parts: std::rc::Rc::from([]),
+            defined: Vec::new(),
+            span,
+            context,
+        });
         return;
     };
     let mut args = Vec::new();
@@ -479,7 +489,9 @@ pub fn relate(m: &mut Machine) {
     for (i, line) in lines.iter().enumerate().filter(|(i, l)| !declaring.contains(i) && !l.head.is_empty()) {
         for read in reads.iter().filter(|r| r.span == line.span) {
             let name = m.name(read.name).to_string();
-            if let Some((key, prefix, suffix)) = within(&name, &line.keys).filter(|(_, p, s)| !p.is_empty() || !s.is_empty()) {
+            if let Some((key, prefix, suffix)) =
+                within(&name, &line.keys).filter(|(_, p, s)| !p.is_empty() || !s.is_empty())
+            {
                 let at = shape(&mut shapes, &prefix, &suffix);
                 shapes[at].3.get_or_insert_with(|| line.head.clone());
                 if !named.iter().any(|n| n.1 == key && n.2 == i) {
@@ -540,7 +552,8 @@ pub fn relate(m: &mut Machine) {
         .filter(|o| o.kind == OccKind::Ref)
         .map(|o| (o.kind, o.key.clone(), o.span))
         .collect();
-    let written_at: std::collections::HashSet<(String, Span)> = declared.iter().map(|(_, k, i)| (k.clone(), lines[*i].span)).collect();
+    let written_at: std::collections::HashSet<(String, Span)> =
+        declared.iter().map(|(_, k, i)| (k.clone(), lines[*i].span)).collect();
     for (at, key, i) in declared {
         let line = &lines[i];
         let shape = (shapes[at].0.clone(), shapes[at].1.clone());
@@ -609,11 +622,12 @@ pub fn relate(m: &mut Machine) {
         if written_at.contains(&(key.clone(), *span)) || related {
             continue;
         }
-        let kind = if first_shapes.contains(&(key.clone(), shape.clone())) && first.get(key).is_some_and(|f| f.0 == *span) {
-            OccKind::Key
-        } else {
-            OccKind::KeyUse
-        };
+        let kind =
+            if first_shapes.contains(&(key.clone(), shape.clone())) && first.get(key).is_some_and(|f| f.0 == *span) {
+                OccKind::Key
+            } else {
+                OccKind::KeyUse
+            };
         if seen.insert((kind, key.clone(), *span)) {
             let head = m.name(*call).to_string();
             m.occurrence_in(kind, key.clone(), Some(head), *span, context);
@@ -703,10 +717,8 @@ pub fn image(m: &mut Machine, name: &str, span: Span) {
     }
     let at = m.file_call.map_or(span, |(_, at)| at);
     let base = m.base().to_path_buf();
-    let found = m
-        .resolver_mut()
-        .resolve(name, crate::builtins::LoadKind::Input, &base)
-        .map(|p| p.display().to_string());
+    let found =
+        m.resolver_mut().resolve(name, crate::builtins::LoadKind::Input, &base).map(|p| p.display().to_string());
     m.occurrence(OccKind::Graphics, name.to_string(), found, at);
 }
 
@@ -781,9 +793,7 @@ fn characters(tokens: &[Token]) -> String {
     tokens
         .iter()
         .filter_map(|t| match t.tok {
-            Tok::Chr(c, cat) if !matches!(cat, Catcode::Begin | Catcode::End | Catcode::Active) => {
-                Some(c)
-            }
+            Tok::Chr(c, cat) if !matches!(cat, Catcode::Begin | Catcode::End | Catcode::Active) => Some(c),
             _ => None,
         })
         .collect()
@@ -816,4 +826,97 @@ pub fn version_record(m: &mut Machine, name: &str, meaning: &crate::tex::Meaning
     m.record_identification(&info);
     let key = file.strip_suffix(".sty").or_else(|| file.strip_suffix(".cls")).unwrap_or(file).to_string();
     m.occurrence(OccKind::Identification, key, Some(info), span);
+}
+
+/// A number typeset, while letters may still follow it.
+#[derive(Default)]
+struct Run {
+    number: String,
+    unit: String,
+    span: Span,
+    number_end: Span,
+    unit_span: Span,
+    via: Option<crate::tex::Sym>,
+    within: std::rc::Rc<[crate::tex::FileId]>,
+}
+
+/// The number and unit tracker's state, held by the [`Machine`].
+#[derive(Default)]
+pub struct Quantities {
+    run: Option<Run>,
+    /// `H2O` is a word, not a quantity.
+    after_letter: bool,
+}
+
+/// A character typeset outside package code: a digit run and the letters set
+/// right after it become a [`crate::facts::Quantity`].  A space token ends
+/// the run, so `2 ms` is not one.
+pub fn typeset(m: &mut Machine, c: char, span: Span) {
+    if m.package().is_some() || m.reading_format() {
+        m.quantity = Quantities::default();
+        return;
+    }
+    let after_letter = std::mem::replace(&mut m.quantity.after_letter, c.is_alphabetic());
+    let mut run = m.quantity.run.take();
+    if c.is_ascii_digit() {
+        match run.as_mut() {
+            Some(q) if q.unit.is_empty() => {
+                q.number.push(c);
+                q.number_end = span;
+            }
+            _ => {
+                flush(m, run.take());
+                run = (!after_letter).then(|| Run {
+                    number: c.to_string(),
+                    span,
+                    number_end: span,
+                    unit_span: span,
+                    within: m.within_files(),
+                    ..Run::default()
+                });
+            }
+        }
+    } else if matches!(c, '.' | ',') {
+        match run.as_mut() {
+            Some(q) if q.unit.is_empty() && !q.number.ends_with(['.', ',']) => q.number.push(c),
+            _ => {
+                flush(m, run.take());
+            }
+        }
+    } else if (c.is_alphabetic() || c == '%' || c == '\u{b0}') && run.is_some() {
+        let via = m.file_call.map(|(sym, _)| sym);
+        if let Some(q) = run.as_mut() {
+            if q.unit.is_empty() {
+                q.unit_span = span;
+                q.via = via;
+            }
+            q.unit.push(c);
+        }
+    } else {
+        flush(m, run.take());
+    }
+    m.quantity.run = run;
+}
+
+/// `\sum_{i=1}^{N}` sets a `1` and an `N`, not one newton.
+pub fn text_break(m: &mut Machine) {
+    let run = m.quantity.run.take();
+    m.quantity.after_letter = false;
+    flush(m, run);
+}
+
+fn flush(m: &mut Machine, run: Option<Run>) {
+    let Some(q) = run else { return };
+    if q.unit.is_empty() || m.out.facts.quantities.len() >= m.cfg.limits.facts {
+        return;
+    }
+    m.out.facts.quantities.push(crate::facts::Quantity {
+        number: q.number,
+        unit: q.unit,
+        span: q.span,
+        number_end: q.number_end,
+        unit_span: q.unit_span,
+        via: q.via,
+        within: q.within,
+    });
 }

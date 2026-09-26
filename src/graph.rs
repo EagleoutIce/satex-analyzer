@@ -172,11 +172,7 @@ impl Vertex {
     /// How the name should be written: `\foo` for a control sequence, the
     /// bare text for a key.
     pub fn render(&self, it: &Interner) -> String {
-        if self.key {
-            it.name(self.name).to_string()
-        } else {
-            it.cs(self.name)
-        }
+        if self.key { it.name(self.name).to_string() } else { it.cs(self.name) }
     }
 }
 
@@ -197,16 +193,38 @@ impl Default for SliceBound {
 const SCRATCH_DEFS: u32 = 16;
 
 impl DependencyGraph {
-    pub fn push(&mut self, tag: VertexTag, name: Sym, span: Span, within: Option<NodeId>, cds: Vec<ControlDep>) -> NodeId {
+    pub fn push(
+        &mut self,
+        tag: VertexTag,
+        name: Sym,
+        span: Span,
+        within: Option<NodeId>,
+        cds: Vec<ControlDep>,
+    ) -> NodeId {
         self.push_named(tag, name, false, span, within, cds)
     }
 
     /// A vertex whose name is a key rather than a control sequence.
-    pub fn push_key(&mut self, tag: VertexTag, name: Sym, span: Span, within: Option<NodeId>, cds: Vec<ControlDep>) -> NodeId {
+    pub fn push_key(
+        &mut self,
+        tag: VertexTag,
+        name: Sym,
+        span: Span,
+        within: Option<NodeId>,
+        cds: Vec<ControlDep>,
+    ) -> NodeId {
         self.push_named(tag, name, true, span, within, cds)
     }
 
-    fn push_named(&mut self, tag: VertexTag, name: Sym, key: bool, span: Span, within: Option<NodeId>, cds: Vec<ControlDep>) -> NodeId {
+    fn push_named(
+        &mut self,
+        tag: VertexTag,
+        name: Sym,
+        key: bool,
+        span: Span,
+        within: Option<NodeId>,
+        cds: Vec<ControlDep>,
+    ) -> NodeId {
         let id = self.push_site(tag, name, key, span, within, cds);
         self.touch(id);
         id
@@ -274,13 +292,20 @@ impl DependencyGraph {
         &self.made_by
     }
 
-    fn push_site(&mut self, tag: VertexTag, name: Sym, key: bool, span: Span, within: Option<NodeId>, cds: Vec<ControlDep>) -> NodeId {
+    fn push_site(
+        &mut self,
+        tag: VertexTag,
+        name: Sym,
+        key: bool,
+        span: Span,
+        within: Option<NodeId>,
+        cds: Vec<ControlDep>,
+    ) -> NodeId {
         if let Some(&id) = self.sites.get(&(span, name, tag)) {
             let vertex = &mut self.vertices[id as usize];
             if vertex.cds != cds {
                 if cds.len() > 16 {
-                    let keep: std::collections::HashSet<(NodeId, bool)> =
-                        cds.iter().map(|c| (c.on, c.taken)).collect();
+                    let keep: std::collections::HashSet<(NodeId, bool)> = cds.iter().map(|c| (c.on, c.taken)).collect();
                     vertex.cds.retain(|c| keep.contains(&(c.on, c.taken)));
                 } else {
                     vertex.cds.retain(|c| cds.contains(c));
@@ -423,9 +448,10 @@ impl DependencyGraph {
             }
             return;
         }
-        let index = self.wide.entry(from).or_insert_with(|| {
-            slot.iter().enumerate().map(|(i, (t, _))| (*t, i as u32)).rev().collect()
-        });
+        let index = self
+            .wide
+            .entry(from)
+            .or_insert_with(|| slot.iter().enumerate().map(|(i, (t, _))| (*t, i as u32)).rev().collect());
         match index.get(&to) {
             Some(&i) => slot[i as usize].1 |= kind,
             None => {
@@ -482,13 +508,7 @@ impl DependencyGraph {
     }
 
     /// As [`DependencyGraph::slice`], within `bound`.
-    pub fn slice_until(
-        &self,
-        criteria: &[NodeId],
-        kinds: EdgeKind,
-        forward: bool,
-        bound: &SliceBound,
-    ) -> Vec<NodeId> {
+    pub fn slice_until(&self, criteria: &[NodeId], kinds: EdgeKind, forward: bool, bound: &SliceBound) -> Vec<NodeId> {
         let transposed = forward.then(|| self.transposed());
         let mut seen = std::collections::HashSet::new();
         let mut kept = vec![false; self.vertices.len()];
@@ -603,9 +623,7 @@ impl DependencyGraph {
             .iter()
             .enumerate()
             .flat_map(|(from, ts)| {
-                ts.iter().map(move |(to, k)| {
-                    serde_json::json!({ "from": from, "to": to, "types": k.names() })
-                })
+                ts.iter().map(move |(to, k)| serde_json::json!({ "from": from, "to": to, "types": k.names() }))
             })
             .collect();
         serde_json::json!({ "vertices": vertices, "edges": edges })
@@ -723,9 +741,7 @@ impl CallGraph {
         }
         petgraph::algo::tarjan_scc(&graph)
             .into_iter()
-            .map(|component| {
-                component.into_iter().map(|node| self.nodes[node.index()]).collect()
-            })
+            .map(|component| component.into_iter().map(|node| self.nodes[node.index()]).collect())
             .collect()
     }
 
@@ -738,9 +754,10 @@ impl CallGraph {
                     out.push((s, comp.clone()));
                 }
             } else if let Some(i) = self.get(comp[0])
-                && self.edges[i].contains(&i) {
-                    out.push((comp[0], comp));
-                }
+                && self.edges[i].contains(&i)
+            {
+                out.push((comp[0], comp));
+            }
         }
         out
     }

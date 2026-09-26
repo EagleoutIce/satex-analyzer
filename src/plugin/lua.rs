@@ -61,12 +61,7 @@ pub fn primitive(m: &mut Machine, op: LuaOp, by: Sym, span: Span) {
         LuaOp::Direct | LuaOp::Late => {
             let code = chunk_text(m);
             let late = op == LuaOp::Late;
-            m.occurrence(
-                OccKind::Lua,
-                code.trim().to_string(),
-                late.then(|| "latelua".to_string()),
-                span,
-            );
+            m.occurrence(OccKind::Lua, code.trim().to_string(), late.then(|| "latelua".to_string()), span);
             // `\latelua` runs at shipout, and what it prints then goes into
             // the page, not into the input satex reads.
             if late {
@@ -144,9 +139,7 @@ fn store(m: &mut Machine, n: i64, table: &CatcodeTable) {
         .into_iter()
         .filter_map(|(c, code)| Catcode::from_u8(code).map(|cat| Token::new(Tok::Chr(c, cat), Span::default())))
         .collect();
-    let mut binding = crate::env::Binding::builtin(crate::tex::Meaning::Primitive(
-        crate::builtins::Primitive::Relax,
-    ));
+    let mut binding = crate::env::Binding::builtin(crate::tex::Meaning::Primitive(crate::builtins::Primitive::Relax));
     binding.value = Value::Toks(Rc::from(deltas));
     m.env.set(slot, binding, true);
 }
@@ -173,10 +166,7 @@ pub fn current_table(m: &mut Machine) -> i64 {
 /// `\luatexversion` of the installed engine, as `luatex --version` states
 /// it: version 1.24.0 is 124.
 pub fn engine_version(cfg: &crate::config::Config) -> Option<i64> {
-    let cache = cfg
-        .cache
-        .then(|| cfg.cache_dir.clone().or_else(crate::format::default_cache_dir))
-        .flatten();
+    let cache = cfg.cache.then(|| cfg.cache_dir.clone().or_else(crate::format::default_cache_dir)).flatten();
     let answer = crate::distribution::probed("luatex", "version", cache.as_deref(), || {
         let Ok(output) = std::process::Command::new("luatex").arg("--version").output() else {
             return Vec::new();
@@ -263,14 +253,8 @@ pub(super) fn load(m: &mut Machine, module: &Module, span: Span) -> Option<(Path
     let path = find(m, module, span);
     let status = if path.is_some() { LoadStatus::Read } else { LoadStatus::NotFollowed };
     let file = path.as_ref().map(|path| m.register_file(path.display().to_string(), LoadKind::Lua));
-    let load_depth = m
-        .out
-        .facts
-        .loads
-        .iter()
-        .rev()
-        .find(|load| load.file == Some(span.file))
-        .map_or(0, |load| load.depth + 1);
+    let load_depth =
+        m.out.facts.loads.iter().rev().find(|load| load.file == Some(span.file)).map_or(0, |load| load.depth + 1);
     let by = m.package();
     m.out.facts.loads.push(Load {
         name: module.name.clone(),
@@ -312,7 +296,8 @@ fn unfinished(m: &mut Machine, code: &str, span: Span, depth: usize) {
 /// The names the part `rest` of Lua text `code` that did not run defines
 /// through the token library may mean anything.
 pub(super) fn undefine(m: &mut Machine, code: &str, rest: &str) {
-    let named: HashSet<String> = lex(rest).into_iter().filter_map(|t| t.strip_prefix('"').map(str::to_string)).collect();
+    let named: HashSet<String> =
+        lex(rest).into_iter().filter_map(|t| t.strip_prefix('"').map(str::to_string)).collect();
     for name in Chunk::read(code).defines.into_iter().filter(|n| named.contains(n)) {
         let sym = m.intern(&name);
         m.env.set(sym, crate::env::Binding::builtin(crate::tex::Meaning::Unknown), true);
@@ -443,7 +428,11 @@ fn defined_names(tokens: &[String]) -> Vec<String> {
     loop {
         let mut found = false;
         for at in 0..tokens.len().saturating_sub(3) {
-            if tokens[at] != "function" || tokens[at + 2] != "(" || !is_name(&tokens[at + 1]) || !is_name(&tokens[at + 3]) {
+            if tokens[at] != "function"
+                || tokens[at + 2] != "("
+                || !is_name(&tokens[at + 1])
+                || !is_name(&tokens[at + 3])
+            {
                 continue;
             }
             let (function, parameter) = (&tokens[at + 1], &tokens[at + 3]);
@@ -451,7 +440,9 @@ fn defined_names(tokens: &[String]) -> Vec<String> {
                 continue;
             }
             let Some(end) = block_end(tokens, at) else { continue };
-            if (at + 1..end).any(|j| defining_call(tokens, j, &definers).is_some_and(|arg| tokens.get(arg) == Some(parameter))) {
+            if (at + 1..end)
+                .any(|j| defining_call(tokens, j, &definers).is_some_and(|arg| tokens.get(arg) == Some(parameter)))
+            {
                 definers.insert(function.clone());
                 found = true;
             }
@@ -608,7 +599,6 @@ fn skip_long(chars: &[char], at: usize, level: usize) -> usize {
     }
     chars.len()
 }
-
 
 #[cfg(test)]
 mod tests {

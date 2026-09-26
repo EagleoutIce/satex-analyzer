@@ -10,10 +10,15 @@ use crate::tex::{Span, Sym};
 /// definition the document wrote.
 pub fn written_definition(analysis: &Analysis, def: &crate::facts::Definition) -> bool {
     use crate::builtins::Primitive as P;
-    matches!(
-        analysis.env.meaning(def.by).prim(),
-        None | Some(P::Def { .. })
-    )
+    // Made inside a `\usepackage`/`\documentclass` call, so made by the
+    // loading machinery: the `\ver@` stamp, the option lists, the hooks.
+    let in_load = analysis.facts.loads.iter().any(|load| {
+        load.span.file == def.span.file && load.span.line == def.span.line && load.span.col <= def.span.col
+    });
+    if in_load {
+        return false;
+    }
+    matches!(analysis.env.meaning(def.by).prim(), None | Some(P::Def { .. }))
 }
 
 /// Whether the message was raised by `\\errmessage`, under whatever name

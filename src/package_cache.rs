@@ -59,13 +59,8 @@ const MAX_TREES: usize = 8;
 const MAIN: &str = "<main>";
 const SITE: &str = "<site>";
 
-const TAGS: [VertexTag; 5] = [
-    VertexTag::Value,
-    VertexTag::Use,
-    VertexTag::MacroCall,
-    VertexTag::VariableDefinition,
-    VertexTag::MacroDefinition,
-];
+const TAGS: [VertexTag; 5] =
+    [VertexTag::Value, VertexTag::Use, VertexTag::MacroCall, VertexTag::VariableDefinition, VertexTag::MacroDefinition];
 const STATUSES: [LoadStatus; 7] = [
     LoadStatus::Read,
     LoadStatus::NotFollowed,
@@ -75,8 +70,7 @@ const STATUSES: [LoadStatus; 7] = [
     LoadStatus::NotFound,
     LoadStatus::Unreadable,
 ];
-const SEVERITIES: [Severity; 4] =
-    [Severity::Info, Severity::Warning, Severity::Imprecision, Severity::Unsupported];
+const SEVERITIES: [Severity; 4] = [Severity::Info, Severity::Warning, Severity::Imprecision, Severity::Unsupported];
 const REGISTERS: [RegKind; 10] = [
     RegKind::Count,
     RegKind::Dimen,
@@ -125,7 +119,6 @@ impl Fnv {
         self.write(&bytes);
     }
 }
-
 
 /// A vertex a segment refers to: one of the segment's table, or one of the
 /// definitions a name had before the load, which a replay finds by the name.
@@ -248,7 +241,6 @@ struct Reads {
     /// copies met.
     copies: Vec<(Sym, u32, i64)>,
 }
-
 
 /// The small state a checkpoint leaves that changes on almost every line.
 #[derive(Serialize, Deserialize, Default)]
@@ -519,8 +511,7 @@ pub(super) struct Recorder {
 }
 
 fn family(name: &str) -> String {
-    let safe: String =
-        name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
+    let safe: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
     format!("package-{safe}-v{ENCODING_VERSION}-")
 }
 
@@ -629,7 +620,6 @@ const DEFS: u8 = 32;
 const COPY: u8 = 64;
 const SHAPE: u8 = 128;
 
-
 /// The codec mode that writes names and paths out in full.
 fn hash_mode(m: &Machine) -> Mode {
     let files = (0..m.out.files.len())
@@ -670,7 +660,8 @@ fn relocate_text(text: &str, relocate: &dyn Fn(RegKind, i64) -> i64) -> String {
     while let Some(at) = rest.find('\\') {
         out.push_str(&rest[..=at]);
         rest = &rest[at + 1..];
-        let Some(kind) = REGISTERS[..6].iter().copied().filter(|k| rest.starts_with(k.as_str())).max_by_key(|k| k.as_str().len())
+        let Some(kind) =
+            REGISTERS[..6].iter().copied().filter(|k| rest.starts_with(k.as_str())).max_by_key(|k| k.as_str().len())
         else {
             continue;
         };
@@ -699,8 +690,6 @@ fn storage_register(name: &str) -> Option<(RegKind, i64)> {
         Some((*kind, digits.parse().ok()?))
     })
 }
-
-
 
 impl Machine<'_> {
     /// Whether the file being pushed can be served from, or recorded into,
@@ -779,13 +768,8 @@ impl Machine<'_> {
             pinned.sort();
             hash.put(&pinned);
             parts.push(("pinned names".into(), std::mem::replace(&mut hash, Fnv::new()).0));
-            let open: Vec<(Sym, u16)> = self
-                .expanding
-                .iter()
-                .enumerate()
-                .filter(|(_, n)| **n > 0)
-                .map(|(i, n)| (Sym(i as u32), *n))
-                .collect();
+            let open: Vec<(Sym, u16)> =
+                self.expanding.iter().enumerate().filter(|(_, n)| **n > 0).map(|(i, n)| (Sym(i as u32), *n)).collect();
             hash.put(&open);
             parts.push(("open expansions".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             // The expansions the load happens inside, which the package's
@@ -805,11 +789,8 @@ impl Machine<'_> {
             // The conditionals the load stands in, decided ones, as latex.ltx
             // reads a package from the arm of `\IfFileExists`: what the
             // package's own `\else` or `\fi` would meet.
-            let conds: Vec<(u8, Option<i8>, Span)> = self
-                .conds
-                .iter()
-                .map(|c| (c.limit as u8, c.kind, span_out(c.at, site)))
-                .collect();
+            let conds: Vec<(u8, Option<i8>, Span)> =
+                self.conds.iter().map(|c| (c.limit as u8, c.kind, span_out(c.at, site))).collect();
             hash.put(&conds);
             parts.push(("the conditionals open".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             // Whether the counter namespace is known yet decides whether the
@@ -821,13 +802,16 @@ impl Machine<'_> {
         digest
     }
 
-
     /// What selects a package's tree: the state every segment of it takes
     /// for granted, apart from what the segments' reads check.
     fn root_state(&self, site: Span, path: &str) -> Vec<(String, u64)> {
         let mut parts = self.fixed_state(site);
         let mut hash = Fnv::new();
-        hash.put(&(CatcodeTable::latex().diff(&self.catcodes), self.catcodes.diff(&CatcodeTable::latex()), self.end_line.0));
+        hash.put(&(
+            CatcodeTable::latex().diff(&self.catcodes),
+            self.catcodes.diff(&CatcodeTable::latex()),
+            self.end_line.0,
+        ));
         parts.push(("category codes".into(), hash.0));
         let mut hash = Fnv::new();
         hash.put(&(path, crate::format::stamp(Path::new(path))));
@@ -850,7 +834,9 @@ impl Machine<'_> {
         }
         let graph = &self.out.graph;
         let counters = ALLOCATION_COUNTERS
-            .map(|n| (n as u8, self.register_sym_peek(n).and_then(|sym| self.env.get(sym)).and_then(|b| b.value.as_int())))
+            .map(|n| {
+                (n as u8, self.register_sym_peek(n).and_then(|sym| self.env.get(sym)).and_then(|b| b.value.as_int()))
+            })
             .collect();
         Before {
             slots,
@@ -866,7 +852,6 @@ impl Machine<'_> {
             recent_file_spans: self.recent_file_spans.clone(),
         }
     }
-
 
     /// Where the interpreter has to be back at for a checkpoint.  Every
     /// field of the machine is named here, with what a package cache does
@@ -983,6 +968,7 @@ impl Machine<'_> {
             // Bookkeeping of the output, not state the run depends on.
             diag_seen: _,
             diag_floor: _,
+            quantity: _,
         } = self;
         Rest {
             input,
@@ -1005,7 +991,10 @@ impl Machine<'_> {
             split_at: split_at.len(),
             packages: packages.len(),
             file_depth: *file_depth,
-            aux: (line_defined.is_some(), written_lines.len() + name_reads.len() + stream_files.len() + key_names.len()),
+            aux: (
+                line_defined.is_some(),
+                written_lines.len() + name_reads.len() + stream_files.len() + key_names.len(),
+            ),
             pinned: pinned.len(),
             docstrip: *docstrip,
             budget: *budget,
@@ -1191,7 +1180,8 @@ impl Machine<'_> {
         // not exist here, and are looked up, never interned.
         let local: Vec<Sym> = (0..node.names.len() as u32).map(Sym).collect();
         let files = self.lookup_files(&node.paths);
-        let (decoded, _) = codec::with(Mode::Decode { syms: local, files }, || postcard::from_bytes::<Reads>(&node.reads));
+        let (decoded, _) =
+            codec::with(Mode::Decode { syms: local, files }, || postcard::from_bytes::<Reads>(&node.reads));
         let reads = decoded.map_err(|e| format!("cannot decode it: {e}"))?;
         let here = |sym: Sym| node.names.get(sym.0 as usize).and_then(|n| self.out.interner.lookup(n));
         for (code, sym) in &reads.gaps {
@@ -1204,7 +1194,8 @@ impl Machine<'_> {
             for (sym, kinds, digest) in &reads.bindings {
                 let sym = here(*sym);
                 let binding = sym.and_then(|sym| self.env.get(sym));
-                let alias = sym.and_then(|sym| self.env.aliases.get(&sym)).map(|a| self.out.interner.name(*a).to_string());
+                let alias =
+                    sym.and_then(|sym| self.env.aliases.get(&sym)).map(|a| self.out.interner.name(*a).to_string());
                 if binding_digest(binding, alias.as_deref(), *kinds) != *digest {
                     let name = sym.map_or_else(|| "a name".to_string(), |sym| self.out.interner.cs(sym));
                     return Some(format!("{name} differs"));
@@ -1312,7 +1303,8 @@ impl Machine<'_> {
         // The texts the segment copied through, as this run has them where
         // the segment begins.
         let mut origs: HashMap<Sym, Rc<[Token]>> = HashMap::new();
-        let spliced = st.bindings.iter().filter(|(_, b, _)| b.as_ref().is_some_and(|b| b.splice.is_some())).map(|(sym, ..)| *sym);
+        let spliced =
+            st.bindings.iter().filter(|(_, b, _)| b.as_ref().is_some_and(|b| b.splice.is_some())).map(|(sym, ..)| *sym);
         for sym in spliced.chain(st.definitions.iter().filter(|d| d.splice.is_some()).map(|d| d.name)) {
             let text = self.env.slot(sym).and_then(|b| crate::env::copied_text(&b.meaning)).cloned()?;
             origs.insert(sym, text);
@@ -1335,7 +1327,8 @@ impl Machine<'_> {
         let mut ids: Vec<Option<NodeId>> = vec![None; st.vertices.len()];
         let reached: HashSet<u32> = st.reached.iter().map(|(i, _)| *i).collect();
         for (i, reader) in &st.reached {
-            let reader = reader.and_then(|r| self.resolve_vertex(&st, &mut ids, &reached, before, site, r, 0).first().copied());
+            let reader =
+                reader.and_then(|r| self.resolve_vertex(&st, &mut ids, &reached, before, site, r, 0).first().copied());
             let charged = std::mem::replace(&mut self.out.graph.reader, reader);
             self.resolve_vertex(&st, &mut ids, &reached, before, site, VRef::Table(*i), 0);
             self.out.graph.reader = charged;
@@ -1354,7 +1347,8 @@ impl Machine<'_> {
                 continue;
             }
             if kind.intersects(EdgeKind::READS) {
-                let reader = reader.and_then(|r| self.resolve_vertex(&st, &mut ids, &reached, before, site, r, 0).first().copied());
+                let reader = reader
+                    .and_then(|r| self.resolve_vertex(&st, &mut ids, &reached, before, site, r, 0).first().copied());
                 let charged = std::mem::replace(&mut self.out.graph.reader, reader);
                 for f in &froms {
                     for t in &tos {
@@ -1438,7 +1432,8 @@ impl Machine<'_> {
                 }
                 _ => d.mac.clone(),
             };
-            let Some(node_id) = self.resolve_vertex(&st, &mut ids, &reached, before, site, d.node, 0).first().copied() else {
+            let Some(node_id) = self.resolve_vertex(&st, &mut ids, &reached, before, site, d.node, 0).first().copied()
+            else {
                 continue;
             };
             let span = span_in(d.span, site);
@@ -1463,7 +1458,11 @@ impl Machine<'_> {
                 depth: d.depth,
                 global: d.global,
                 redefines: if d.relative {
-                    before.slots.get(d.name.0 as usize).and_then(|b| b.as_ref()).is_some_and(|b| b.meaning != Meaning::Undefined)
+                    before
+                        .slots
+                        .get(d.name.0 as usize)
+                        .and_then(|b| b.as_ref())
+                        .is_some_and(|b| b.meaning != Meaning::Undefined)
                 } else {
                     d.redefines
                 },
@@ -1520,7 +1519,8 @@ impl Machine<'_> {
         }
         let base_loads = before.loads as i64;
         for l in &st.loads {
-            let file = l.path.as_ref().and_then(|p| self.out.files.iter().position(|f| f.path == *p)).map(|i| i as FileId);
+            let file =
+                l.path.as_ref().and_then(|p| self.out.files.iter().position(|f| f.path == *p)).map(|i| i as FileId);
             self.out.facts.loads.push(Load {
                 name: l.name.clone(),
                 kind: l.kind,
@@ -1541,7 +1541,8 @@ impl Machine<'_> {
             }
         }
         for o in &st.occurrences {
-            let Some(node_id) = self.resolve_vertex(&st, &mut ids, &reached, before, site, o.node, 0).first().copied() else {
+            let Some(node_id) = self.resolve_vertex(&st, &mut ids, &reached, before, site, o.node, 0).first().copied()
+            else {
                 continue;
             };
             self.out.facts.occurrences.push(Occurrence {
@@ -1602,9 +1603,8 @@ impl Machine<'_> {
             self.section = lists.section.as_deref().map(Rc::from);
             self.lua.set_files(lists.lua.clone());
             self.counter_namespace = lists.counter_namespace.clone();
-            self.streams = Rc::new(
-                lists.streams.iter().map(|(n, lines, at)| (*n, (Rc::new(lines.clone()), *at))).collect(),
-            );
+            self.streams =
+                Rc::new(lists.streams.iter().map(|(n, lines, at)| (*n, (Rc::new(lines.clone()), *at))).collect());
             self.env.aliases = lists.aliases.iter().copied().collect();
         }
         let s = &st.scalars;
@@ -1615,7 +1615,8 @@ impl Machine<'_> {
         // A call pending at the segment's start that it did not complete is
         // still this run's own.
         if s.call_shape.is_some() || st.scalars.finished_call || pending.is_none() {
-            self.call_shape = s.call_shape.clone().map(|(sym, span, shape, depth)| (sym, span_in(span, site), shape, depth));
+            self.call_shape =
+                s.call_shape.clone().map(|(sym, span, shape, depth)| (sym, span_in(span, site), shape, depth));
         }
         self.last_named_cs = s.last_named_cs;
         let mut recent = before.recent_file_spans.clone();
@@ -1652,7 +1653,12 @@ impl Machine<'_> {
     ) -> Vec<NodeId> {
         let i = match r {
             VRef::Before(sym) => {
-                return before.slots.get(sym.0 as usize).and_then(|b| b.as_ref()).map(|b| b.defs.clone()).unwrap_or_default();
+                return before
+                    .slots
+                    .get(sym.0 as usize)
+                    .and_then(|b| b.as_ref())
+                    .map(|b| b.defs.clone())
+                    .unwrap_or_default();
             }
             VRef::Table(i) => i as usize,
         };
@@ -1675,7 +1681,8 @@ impl Machine<'_> {
         if !reached.contains(&(i as u32)) || depth > st.vertices.len() {
             return Vec::new();
         }
-        let within = v.within.and_then(|w| self.resolve_vertex(st, ids, reached, before, site, w, depth + 1).first().copied());
+        let within =
+            v.within.and_then(|w| self.resolve_vertex(st, ids, reached, before, site, w, depth + 1).first().copied());
         let mut cds = Vec::new();
         for (on, taken) in &v.cds {
             for on in self.resolve_vertex(st, ids, reached, before, site, *on, depth + 1) {
@@ -1938,7 +1945,8 @@ impl Machine<'_> {
         if !rec.log.sites_seen.insert((span, name)) {
             return;
         }
-        let count = self.expansion_sites.get(&(span, name)).map_or(0, |site| self.out.facts.expansions[site.fact].count);
+        let count =
+            self.expansion_sites.get(&(span, name)).map_or(0, |site| self.out.facts.expansions[site.fact].count);
         rec.log.sites.push(((span, name), count));
     }
 
@@ -2038,7 +2046,11 @@ impl Machine<'_> {
         if rec.chain.is_empty() {
             if rec.served == 0 {
                 let why = rec.log.spoiled.unwrap_or("no line of it was at rest");
-                self.out.package_caches.push((rec.name.clone(), rec.cache.display().to_string(), format!("not stored: {why}")));
+                self.out.package_caches.push((
+                    rec.name.clone(),
+                    rec.cache.display().to_string(),
+                    format!("not stored: {why}"),
+                ));
             }
             return;
         }
@@ -2047,7 +2059,11 @@ impl Machine<'_> {
             return;
         }
         let Some(_lock) = crate::format::StoreLock::try_take(&rec.cache) else {
-            self.out.package_caches.push((rec.name.clone(), rec.cache.display().to_string(), "not stored: another instance is storing it".into()));
+            self.out.package_caches.push((
+                rec.name.clone(),
+                rec.cache.display().to_string(),
+                "not stored: another instance is storing it".into(),
+            ));
             return;
         };
         let mut file = read(&rec.cache).unwrap_or(CacheFile { version: ENCODING_VERSION, trees: Vec::new() });
@@ -2082,7 +2098,9 @@ impl Machine<'_> {
                 served => {
                     // The replay's entry says why it stopped: one entry says both.
                     let why = match self.out.package_caches.last() {
-                        Some((name, cache, why)) if *name == rec.name && *cache == cache_text && why.starts_with("stale: ") => {
+                        Some((name, cache, why))
+                            if *name == rec.name && *cache == cache_text && why.starts_with("stale: ") =>
+                        {
                             let why = format!(" ({})", why.trim_start_matches("stale: "));
                             self.out.package_caches.pop();
                             why
@@ -2176,7 +2194,8 @@ impl Machine<'_> {
         for (_, lfrom, name, lreader, lkind) in links {
             edges.push((vref(*lfrom), VRef::Before(*name), lkind.0, lreader.map(vref)));
         }
-        let extents: Vec<(Span, u32)> = glog.extents[m.extents..].iter().map(|(s, l)| (span_out(*s, site), *l)).collect();
+        let extents: Vec<(Span, u32)> =
+            glog.extents[m.extents..].iter().map(|(s, l)| (span_out(*s, site), *l)).collect();
         let calls = self.out.calls.recorded()[m.calls..].to_vec();
         let observed = self.out.observed.recorded()[m.observed..].to_vec();
 
@@ -2223,7 +2242,11 @@ impl Machine<'_> {
                             .defs
                             .iter()
                             .map(|d| match own {
-                                Some(own) if (*d as usize) < before.vertices && own.contains(d) && !reached_all.contains(d) => {
+                                Some(own)
+                                    if (*d as usize) < before.vertices
+                                        && own.contains(d)
+                                        && !reached_all.contains(d) =>
+                                {
                                     VRef::Before(*sym)
                                 }
                                 _ => vref(*d),
@@ -2313,7 +2336,8 @@ impl Machine<'_> {
                 current: site_state.progress == now,
             });
         }
-        let occurrences: Vec<CachedOccurrence> = self.out.facts.occurrences[m.occurrences.min(self.out.facts.occurrences.len())..]
+        let occurrences: Vec<CachedOccurrence> = self.out.facts.occurrences
+            [m.occurrences.min(self.out.facts.occurrences.len())..]
             .iter()
             .map(|o| CachedOccurrence {
                 kind: o.kind,
@@ -2411,7 +2435,10 @@ impl Machine<'_> {
                 let kept = (0..=before.len())
                     .find(|e| self.recent_file_spans.starts_with(&before[*e..]))
                     .map_or(0, |e| before.len() - e);
-                self.recent_file_spans[kept.min(self.recent_file_spans.len())..].iter().map(|s| span_out(*s, site)).collect()
+                self.recent_file_spans[kept.min(self.recent_file_spans.len())..]
+                    .iter()
+                    .map(|s| span_out(*s, site))
+                    .collect()
             },
         };
         let mut vertices = Vec::new();
@@ -2436,7 +2463,13 @@ impl Machine<'_> {
             files: self.out.files[m.files..]
                 .iter()
                 .enumerate()
-                .map(|(i, f)| (f.path.clone(), f.kind, self.out.entry.get(m.files + i).copied().flatten().map(|s| span_out(s, site))))
+                .map(|(i, f)| {
+                    (
+                        f.path.clone(),
+                        f.kind,
+                        self.out.entry.get(m.files + i).copied().flatten().map(|s| span_out(s, site)),
+                    )
+                })
                 .collect(),
             vertices,
             reached,
@@ -2453,7 +2486,10 @@ impl Machine<'_> {
             identifications,
             occurrences,
             diagnostics,
-            metadata: self.out.metadata[m.metadata..].iter().map(|x| (x.field.to_string(), x.text.clone(), x.source.clone())).collect(),
+            metadata: self.out.metadata[m.metadata..]
+                .iter()
+                .map(|x| (x.field.to_string(), x.text.clone(), x.source.clone()))
+                .collect(),
             csnames: rec.log.csnames[m.csnames..]
                 .iter()
                 .map(|(span, role)| {
@@ -2497,11 +2533,7 @@ impl Machine<'_> {
             .filter(|g| rec.seg_gaps.contains(g))
             .map(|(code, sym)| (code.to_string(), *sym))
             .collect();
-        let reads = Reads {
-            copies,
-            bindings: read_bindings,
-            gaps,
-        };
+        let reads = Reads { copies, bindings: read_bindings, gaps };
 
         // Files: every file opened in the segment and the new ones, and the
         // names looked up for the first time.
@@ -2524,8 +2556,14 @@ impl Machine<'_> {
             .collect();
         let steps = self.out.steps - m.steps;
 
-        let encode = || Mode::Encode { syms: HashMap::new(), sym_order: Vec::new(), files: HashMap::new(), file_order: Vec::new() };
-        let ((reads, effect), mode) = codec::with(encode(), || (postcard::to_allocvec(&reads), postcard::to_allocvec(&effect)));
+        let encode = || Mode::Encode {
+            syms: HashMap::new(),
+            sym_order: Vec::new(),
+            files: HashMap::new(),
+            file_order: Vec::new(),
+        };
+        let ((reads, effect), mode) =
+            codec::with(encode(), || (postcard::to_allocvec(&reads), postcard::to_allocvec(&effect)));
         let Mode::Encode { sym_order, file_order, .. } = mode else { return None };
         let names = sym_order.iter().map(|i| self.out.interner.name(Sym(*i)).to_string()).collect();
         let paths = file_order
@@ -2562,7 +2600,6 @@ impl Machine<'_> {
         Some(node)
     }
 }
-
 
 /// The counter that handed out a register: the one recorded for it, or, for
 /// the slots of an insert, the one its name came from.

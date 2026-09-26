@@ -47,7 +47,14 @@ fn plain(name: &str, source: &str) -> Fixture {
 }
 
 /// The rename of the name at `line:col`, as `line:col` of every site.
-fn rename(fixture: &Fixture, line: u32, col: u32, name: &str, is_command: bool, new_name: &str) -> Result<Vec<String>, String> {
+fn rename(
+    fixture: &Fixture,
+    line: u32,
+    col: u32,
+    name: &str,
+    is_command: bool,
+    new_name: &str,
+) -> Result<Vec<String>, String> {
     let path = fixture.path.to_string_lossy().to_string();
     let sources = Sources::default();
     let plan = rename::plan(&fixture.analysis, &sources, &path, Pos::new(line, col), name, is_command)?;

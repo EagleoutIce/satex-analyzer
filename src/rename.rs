@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use crate::builtins::{LoadKind, OccKind, Primitive};
 use crate::facts::{Definition, MeaningKind};
-use crate::lint::fix::{editable, Edit, Lexeme, Pos, Scan, Sources, Text};
+use crate::lint::fix::{Edit, Lexeme, Pos, Scan, Sources, Text, editable};
 use crate::machine::Analysis;
 use crate::tex::{Catcode, CatcodeTable, FileId, Span, Sym, Tok};
 
@@ -134,11 +134,9 @@ fn declaration(
     key: &str,
     keyed: bool,
 ) -> Result<Site, String> {
-    let unwritten =
-        || format!("`{key}` is built while the document runs, not spelled at {}:{}", span.line, span.col);
-    let (path, text, mut scan) = scan_at(sources, analysis, span).ok_or_else(|| {
-        format!("`{key}` is declared in a file this project may not edit")
-    })?;
+    let unwritten = || format!("`{key}` is built while the document runs, not spelled at {}:{}", span.line, span.col);
+    let (path, text, mut scan) = scan_at(sources, analysis, span)
+        .ok_or_else(|| format!("`{key}` is declared in a file this project may not edit"))?;
     let inside = offset(name, key).unwrap_or(0);
     let spelled = |at: Pos, text: &Text| {
         let end = Pos::new(at.line, at.col + key.chars().count() as u32);
@@ -206,7 +204,7 @@ fn uses(
                 return Err(format!(
                     "`\\{spelled}` is built while the document runs at {}:{}, where a rename cannot reach it",
                     use_.span.line, use_.span.col
-                ))
+                ));
             }
             _ => {}
         }
@@ -434,7 +432,11 @@ pub fn edits(plan: &Plan, analysis: &Analysis, new_name: &str) -> Result<Vec<Edi
         }
     }
     if plan.names.is_empty()
-        && analysis.facts.occurrences.iter().any(|o| o.key == new_key && matches!(o.kind, OccKind::Label | OccKind::BibItem))
+        && analysis
+            .facts
+            .occurrences
+            .iter()
+            .any(|o| o.key == new_key && matches!(o.kind, OccKind::Label | OccKind::BibItem))
     {
         return Err(format!("`{new_key}` is already used as a key"));
     }

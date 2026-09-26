@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::facts::LoadStatus;
 use crate::lint::fix::{Applicability, Fix};
-use crate::lint::{Category, Report, Rule, Severity};
 use crate::lint::shared::{definition_order, document_start, first_loads};
+use crate::lint::{Category, Report, Rule, Severity};
 use crate::tex::Sym;
 
 pub static RULES: &[Rule] = &[
@@ -173,8 +173,7 @@ fn recursive_macro(report: &mut Report) {
         let Some(&span) = sites.get(&name) else { continue };
         let rendered = analysis.interner.cs(name);
         let message = if cycle.len() > 1 {
-            let others: Vec<String> =
-                cycle.iter().filter(|s| **s != name).map(|s| analysis.interner.cs(*s)).collect();
+            let others: Vec<String> = cycle.iter().filter(|s| **s != name).map(|s| analysis.interner.cs(*s)).collect();
             format!("{rendered} is mutually recursive with {}", others.join(", "))
         } else {
             format!("{rendered} calls itself")
@@ -261,7 +260,6 @@ fn refused_loads(
     out
 }
 
-
 fn missing_dependency(report: &mut Report) {
     let Some(depp) = &report.analysis.plugins.depp else { return };
     let Some(file) = &depp.file else { return };
@@ -283,11 +281,8 @@ fn unused_dependency(report: &mut Report) {
     let Some(depp) = &analysis.plugins.depp else { return };
     let Some(file) = &depp.file else { return };
     let name = file.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
-    let at = depp
-        .loaded
-        .as_ref()
-        .map(|(span, _)| *span)
-        .unwrap_or_else(|| crate::tex::Span::new(analysis.main_file, 1, 1));
+    let at =
+        depp.loaded.as_ref().map(|(span, _)| *span).unwrap_or_else(|| crate::tex::Span::new(analysis.main_file, 1, 1));
     for declared in depp.unused() {
         let edits = report.edits().drop_dependency(file, declared.line, &declared.package);
         report.add_fix(

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use satex::config::Config;
-use satex::literate::{code_view, Guards};
+use satex::literate::{Guards, code_view};
 use satex::machine::{Analysis, Machine};
 
 fn installed() -> bool {
@@ -62,10 +62,7 @@ fn guarded_code_is_read_and_the_driver_is_not() {
         !analysis.facts.loads.iter().any(|load| load.name == "ltxdoc"),
         "the driver is guarded `driver`, so its \\documentclass is not code"
     );
-    assert_eq!(
-        satex::query::identity(&analysis).kind,
-        "documented source (.dtx), read as docstrip extracts it"
-    );
+    assert_eq!(satex::query::identity(&analysis).kind, "documented source (.dtx), read as docstrip extracts it");
 }
 
 #[test]
@@ -128,11 +125,8 @@ fn an_ignored_percent_stops_being_a_comment() {
     // than hiding the line.  satex reads the catcode table for every
     // character it tokenizes, so the change takes effect where it is made.
     let cfg = Config::default();
-    let analysis = Machine::analyze(
-        "\\catcode`\\%=9 %\\def\\shown{1}\n\\catcode`\\%=14 %\\def\\hidden{2}\n",
-        None,
-        &cfg,
-    );
+    let analysis =
+        Machine::analyze("\\catcode`\\%=9 %\\def\\shown{1}\n\\catcode`\\%=14 %\\def\\hidden{2}\n", None, &cfg);
     assert!(definition(&analysis, "shown").is_some(), "an ignored percent is not a comment");
     assert!(definition(&analysis, "hidden").is_none(), "a comment percent still hides its line");
 }
@@ -158,19 +152,13 @@ This file was generated from demo.dtx; \endinput is not read here.
 \endbatchfile
 ",
     );
-    let generated: Vec<_> = occurrences(&analysis)
-        .into_iter()
-        .filter(|record| record["kind"] == "generate")
-        .collect();
+    let generated: Vec<_> = occurrences(&analysis).into_iter().filter(|record| record["kind"] == "generate").collect();
     assert_eq!(generated.len(), 2, "one record per file generated: {generated:?}");
     assert_eq!(generated[0]["key"], "demo.sty");
     assert_eq!(generated[0]["detail"], "from demo.dtx (package) into tex/latex/demo");
     assert_eq!(generated[1]["key"], "demo-extra.sty");
     assert!(generated[1]["detail"].as_str().is_some_and(|d| d.contains("(extra,!package)")));
-    assert_eq!(
-        satex::query::identity(&analysis).kind,
-        "docstrip installation script (.ins)"
-    );
+    assert_eq!(satex::query::identity(&analysis).kind, "docstrip installation script (.ins)");
 }
 
 /// What docstrip itself writes, for the comparison below.
@@ -182,14 +170,12 @@ fn unpacked(directory: &Path, dtx: &Path, options: &str) -> Option<String> {
          \\generate{{\\file{{{name}.sty}}{{\\from{{{name}.dtx}}{{{options}}}}}}}\n\\endbatchfile\n"
     );
     std::fs::write(directory.join("unpack.ins"), batch).ok()?;
-    let status = Command::new("tex")
-        .current_dir(directory)
-        .arg("unpack.ins")
-        .output()
-        .ok()?;
-    status.status.success().then_some(()).and_then(|()| {
-        std::fs::read_to_string(directory.join(format!("{name}.sty"))).ok()
-    })
+    let status = Command::new("tex").current_dir(directory).arg("unpack.ins").output().ok()?;
+    status
+        .status
+        .success()
+        .then_some(())
+        .and_then(|()| std::fs::read_to_string(directory.join(format!("{name}.sty"))).ok())
 }
 
 #[test]
@@ -210,11 +196,7 @@ fn the_code_view_is_what_docstrip_writes() {
     // that carry something are comparable, and it reads its input with
     // `\read`, which drops the spaces at the end of a line (tex.web § 31).
     let lines = |text: &str| -> Vec<String> {
-        text.lines()
-            .map(str::trim_end)
-            .filter(|line| !line.is_empty())
-            .map(str::to_string)
-            .collect()
+        text.lines().map(str::trim_end).filter(|line| !line.is_empty()).map(str::to_string).collect()
     };
     let code = lines(&view);
     let written = lines(&extracted);
@@ -260,12 +242,8 @@ fn a_documented_source_defines_what_the_package_does() {
     // A definition made by the documented source itself points into the
     // `.dtx`, at the line the code stands on.  Definitions the rollback
     // releases bring in belong to those files, not to this one.
-    let own: Vec<_> = from_dtx
-        .facts
-        .defs
-        .iter()
-        .filter(|def| from_dtx.file_name(def.span.file).ends_with("array.dtx"))
-        .collect();
+    let own: Vec<_> =
+        from_dtx.facts.defs.iter().filter(|def| from_dtx.file_name(def.span.file).ends_with("array.dtx")).collect();
     assert!(!own.is_empty(), "the documented source defines something of its own");
     for def in own {
         let name = from_dtx.interner.name(def.name);
@@ -274,10 +252,6 @@ fn a_documented_source_defines_what_the_package_does() {
         // one) stands where the first of its characters that this line wrote
         // stands: that character is part of the name.
         let written = line.chars().nth(def.span.col as usize - 1).is_some_and(|c| name.contains(c));
-        assert!(
-            line.contains(name) || written,
-            "line {} of the .dtx defines \\{name}: {line}",
-            def.span.line
-        );
+        assert!(line.contains(name) || written, "line {} of the .dtx defines \\{name}: {line}", def.span.line);
     }
 }

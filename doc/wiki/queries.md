@@ -30,12 +30,12 @@ Every name the document or its packages define. `origin` is `document` for files
 
 ```text
 $ satex query definitions -f samples/paper.tex --filter 'tag=macro and arity>0'
-tag    name      paramet…  arity  takes  package     by        body      file      
-macro  \reserv…  #1.sty\…  1      1                  \def      \def \r…  latex.l…  @ latex.ltx:18742:20
-macro  \reserv…  #10#2#{   2      2      article     \def      \expand…  latex.l…  @ latex.ltx:1277:3
-macro  \reserv…  #1\@nil   1      1      article     \def      \@for \…  latex.l…  @ latex.ltx:18611:3
-macro  \in@@     #1cmtt    1      1      article     \def                latex.l…  @ latex.ltx:12883:6
-macro  \reserv…  #1,,#2\…  2      2      article     \def      #1,#2\r…  latex.l…  @ latex.ltx:8765:3
+tag    name                              paramet…  body      file                  
+macro  \reserved@c                       #1.sty\…  \def \r…  latex.ltx             @ latex.ltx:18742:20
+macro  \reserved@a                       #10#2#{   \expand…  latex.ltx             @ latex.ltx:1277:3
+macro  \reserved@a                       #1\@nil   \@for \…  latex.ltx             @ latex.ltx:18611:3
+macro  \in@@                             #1cmtt              latex.ltx             @ latex.ltx:12883:6
+macro  \reserved@a                       #1,,#2\…  #1,#2\r…  latex.ltx             @ latex.ltx:8765:3
 … 2478 more lines omitted
 ```
 
@@ -75,12 +75,12 @@ Package and class identification banners, passed options, and other one-off even
 
 ```text
 $ satex query occurrences -f samples/paper.tex --filter 'kind=identification'
-kind            key                  package         detail    file                  
-identification  article              article         2025/01…  article.cls           @ article.cls:45:1
-identification  size11.clo           article         2025/01…  size11.clo            @ size11.clo:44:1
-identification  amsmath              amsmath         2025/07…  amsmath.sty           @ amsmath.sty:29:1
-identification  amstext              amstext         2024/11…  amstext.sty           @ amstext.sty:26:1
-identification  amsgen               amsgen          1999/11…  amsgen.sty            @ amsgen.sty:26:1
+kind            key                   detail                   file                  
+identification  article               2025/01/22 v1.4n Stand…  article.cls           @ article.cls:45:1
+identification  size11.clo            2025/01/22 v1.4n Stand…  size11.clo            @ size11.clo:44:1
+identification  amsmath               2025/07/09 v2.17z AMS …  amsmath.sty           @ amsmath.sty:29:1
+identification  amstext               2024/11/17 v2.01 AMS t…  amstext.sty           @ amstext.sty:26:1
+identification  amsgen                1999/11/30 v2.0 generi…  amsgen.sty            @ amsgen.sty:26:1
 … 38 more lines omitted
 ```
 
@@ -126,7 +126,7 @@ variable-definition  \docume…  latex.ltx                       @ latex.ltx:186
 macro-definition     \docume…  latex.ltx                       @ latex.ltx:18618:3
 variable-definition  \usepac…  latex.ltx                       @ latex.ltx:18619:25
 macro-definition     \usepac…  latex.ltx                       @ latex.ltx:18619:25
-… 38892 more lines omitted
+… 38895 more lines omitted
 ```
 
 ## trace
@@ -135,26 +135,22 @@ Every step: which macro expanded, which primitive ran, what changed. Use `satex 
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step         name                                    detail    file            
-0       expand       \documentclass                                    paper.tex       @ paper.tex:1:1
-1       execute      \let                                              latex.ltx       @ latex.ltx:18618:3
-2       define       \documentclass                                    latex.ltx       @ latex.ltx:18618:3
-3       execute      \if@compatibility                                 latex.ltx       @ latex.ltx:18619:3
-4       branch       \if@compatibility                       false     latex.ltx       @ latex.ltx:18619:3
-… 199997 more lines omitted
+index   step       name            detail                                             file       
+0       expand     \documentclass                                                     paper.tex  @ paper.tex:1:1
+7734    open-file  \article        /usr/local/texlive/2026/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
+16002   expand     \value                                                             paper.tex  @ paper.tex:0:0
+29937   expand     \par                                                               paper.tex  @ paper.tex:2:1
+29944   expand     \newif                                                             paper.tex  @ paper.tex:3:1
+… 11 more lines omitted
 ```
 
 `--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile; `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown; `--include-internal` adds packages, classes and the kernel. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
 
 ```text
 $ satex trace -f samples/paper.tex --lines 10:11
-index  step     name                detail  file        
-0      expand   \newcommand                 paper.tex   @ paper.tex:10:1
-1      expand   \@star@or@long              latex.ltx   @ latex.ltx:1237:17
-2      execute  \let                        latex.ltx   @ latex.ltx:1230:3
-3      define   \pr@tectedrel@x             latex.ltx   @ latex.ltx:1230:3
-4      expand   \@ifstar                    latex.ltx   @ latex.ltx:1231:3
-… 211 more lines omitted
+index  step    name         file       
+0      expand  \newcommand  paper.tex  @ paper.tex:11:1
+105    define  \highlight   paper.tex  @ paper.tex:11:13
 ```
 
 ## files
@@ -169,7 +165,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    expl3.ltx                                 
 4    input    expl3-code.tex                            
-… 261 more lines omitted
+… 262 more lines omitted
 ```
 
 ## diagnostics
@@ -212,13 +208,13 @@ Definitions and assignments a macro makes as a side effect of being called, rath
 
 ```text
 $ satex query side-effects -f samples/paper.tex
-tag                  name      by          detail    file      
-variable-definition  \@class…  \@fileswi…  while e…  latex.l…  @ latex.ltx:1450:4
-variable-definition  \@raw@c…  \@fileswi…  while e…  latex.l…  @ latex.ltx:18718:7
-variable-definition  \g__fil…  \seq_gpus…  while e…  expl3-c…  @ expl3-code.tex:5901:5
-variable-definition  \g_file…  \str_gset…  while e…  expl3-c…  @ expl3-code.tex:3545:19
-variable-definition  \g_file…  \str_gset…  while e…  expl3-c…  @ expl3-code.tex:3545:19
-… 1699 more lines omitted
+tag                  name      detail    file                  
+variable-definition  \@class…  while e…  latex.ltx             @ latex.ltx:1450:4
+variable-definition  \@raw@c…  while e…  latex.ltx             @ latex.ltx:18718:7
+variable-definition  \g__fil…  while e…  expl3-code.tex        @ expl3-code.tex:5901:5
+variable-definition  \g_file…  while e…  expl3-code.tex        @ expl3-code.tex:3545:19
+variable-definition  \g_file…  while e…  expl3-code.tex        @ expl3-code.tex:3545:19
+… 1698 more lines omitted
 ```
 
 ## project
@@ -231,8 +227,9 @@ kind       name                                                      count  deta
 document   article [2025/01/22 v1.4n Standard LaTeX document class]         LaTeX2e…  engine pdflatex (build configur…  
 latexmk    samples/latexmkrc                                                pdf_mod…                                    
 documents                                                            3      samples…                                    
+inputs                                                               1      samples…                                    
 packages                                                             1      samples…                                    
-build                                                                1      samples…                                    
+… 1 more line omitted
 ```
 
 ## plugins
@@ -307,7 +304,7 @@ Only the places that stand behind an expansion, for a text the document never wr
 ```text
 $ satex query produces -f samples/paper.tex --text Introduction --filter 'kind!=source'
 kind        tag      name                                               detail    file       
-occurrence  section  Introduction                                       Introdu…  paper.tex  @ paper.tex:32:1
+occurrence  section  Introduction                                       Introdu…  paper.tex  @ paper.tex:33:1
 occurrence  write    \@writefiletocprotectcontentslinesectionprotectn…  \@write…  latex.ltx  @ latex.ltx:9552:34
 occurrence  write    \newlabelsec:intro1thepageIntroductionsection.1    \newlab…  latex.ltx  @ latex.ltx:9552:34
 ```
@@ -403,7 +400,7 @@ $ satex slice -f samples/paper.tex '\ifdraft'
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{mypackage}
-… 42 more lines omitted
+… 16 more lines omitted
 ```
 
 ```text
@@ -414,7 +411,7 @@ $ satex slice -f samples/paper.tex --where 'kind=begin-environment and key=figur
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{mypackage}
-… 33 more lines omitted
+… 16 more lines omitted
 ```
 
 `--out DIR` writes the slice as a standalone project: the main file plus the local packages, classes, graphics and bibliographies it needs, paths preserved.

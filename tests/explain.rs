@@ -1,6 +1,6 @@
 //! `satex explain`: what a control sequence means, and where it comes from.
 
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use satex::config::Config;
 use satex::machine::{Analysis, Machine};
@@ -166,8 +166,7 @@ fn effective_signature_from_dblarg_dispatch_even_never_called() {
 
 #[test]
 fn effective_signature_combines_star_and_dblarg_like_section() {
-    let analysis =
-        analyze_kernel(
+    let analysis = analyze_kernel(
         r"\makeatletter\def\starred#1{}\def\myhelper[#1]#2{}\def\mysec{\@ifstar\starred{\@dblarg\myhelper}}\makeatother",
     );
     let record = explain_one(&analysis, "mysec");
@@ -311,11 +310,7 @@ fn class_field_not_package_for_a_name_from_the_document_class() {
         return;
     }
     let cfg = Config { load_classes: true, ..Config::default() };
-    let analysis = Machine::analyze(
-        r"\documentclass{article}\begin{document}\end{document}",
-        None,
-        &cfg,
-    );
+    let analysis = Machine::analyze(r"\documentclass{article}\begin{document}\end{document}", None, &cfg);
     let record = explain_one(&analysis, "section");
     assert_eq!(str_field(&record, "class"), Some("article"));
     assert!(record.get("package").is_none());
@@ -330,8 +325,8 @@ fn explain_shows_preamble_and_document_meanings_when_they_differ() {
 \renewcommand{\foo}{document}
 \end{document}",
     );
-    let (records, _) = query::explain(&analysis, &["foo".to_string()], false)
-        .unwrap_or_else(|e| panic!("did not explain: {e}"));
+    let (records, _) =
+        query::explain(&analysis, &["foo".to_string()], false).unwrap_or_else(|e| panic!("did not explain: {e}"));
     assert_eq!(records.len(), 2, "records: {records:?}");
     assert_eq!(str_field(&records[0], "when"), Some("preamble"));
     assert_eq!(str_field(&records[0], "body"), Some("preamble"));
@@ -349,11 +344,7 @@ fn usepackage_differentiates_preamble_from_document_error() {
         return;
     }
     let cfg = Config { load_classes: true, ..Config::default() };
-    let analysis = Machine::analyze(
-        r"\documentclass{article}\begin{document}\end{document}",
-        None,
-        &cfg,
-    );
+    let analysis = Machine::analyze(r"\documentclass{article}\begin{document}\end{document}", None, &cfg);
     let (records, _) = query::explain(&analysis, &["usepackage".to_string()], false)
         .unwrap_or_else(|e| panic!("did not explain: {e}"));
     assert_eq!(records.len(), 2, "records: {records:?}");
@@ -379,8 +370,8 @@ fn explain_shows_one_record_when_preamble_and_document_agree() {
 \foo
 \end{document}",
     );
-    let (records, hints) = query::explain(&analysis, &["foo".to_string()], false)
-        .unwrap_or_else(|e| panic!("did not explain: {e}"));
+    let (records, hints) =
+        query::explain(&analysis, &["foo".to_string()], false).unwrap_or_else(|e| panic!("did not explain: {e}"));
     assert_eq!(records.len(), 1, "records: {records:?}");
     assert!(records[0].get("when").is_none());
     assert!(hints.is_empty());
@@ -433,9 +424,7 @@ fn a_trailing_delimiter_runs_to_its_text() {
 
 #[test]
 fn a_tail_call_adds_what_it_reads_after_the_parameter_text() {
-    let analysis = analyze_kernel(
-        r"\newcommand\qtail[2][d]{#1#2}\def\qhead key: #1\;{#1\qtail}",
-    );
+    let analysis = analyze_kernel(r"\newcommand\qtail[2][d]{#1#2}\def\qhead key: #1\;{#1\qtail}");
     let record = explain_one(&analysis, "qhead");
     assert_eq!(str_field(&record, "signature"), Some(r"key: u{\;}O{d}m"));
     assert_eq!(str_field(&record, "effective"), Some(r"\qhead key: {1}\;[d]{2}"));
@@ -464,7 +453,11 @@ fn parameter_texts_are_learned_from_what_fails_to_match() {
     assert_calls(
         &analysis,
         &[
-            ("Weird", r"\Weird key: {1}, value: {2}, magic: {3}\;super {4}\; ", r"key: u{, value: }u{, magic: }u{\;super }u{\; }"),
+            (
+                "Weird",
+                r"\Weird key: {1}, value: {2}, magic: {3}\;super {4}\; ",
+                r"key: u{, value: }u{, magic: }u{\;super }u{\; }",
+            ),
             ("lead", r"\lead x{1}", "xm"),
             ("infix", r"\infix{1}-{2}", "u{-}m"),
             ("trail", r"\trail{1}.", "u{.}"),
@@ -550,7 +543,11 @@ fn primitives_take_keywords_and_quantities() {
             // A keyword a scan gives back (§ 407) is not the command's:
             // no stray `{1}`; `minus` may follow `plus` (§ 461).
             ("hskip", r"\hskip⟨glue⟩ [plus ⟨dimen⟩] [minus ⟨dimen⟩]", "⟨glue⟩[plus ⟨dimen⟩][minus ⟨dimen⟩]"),
-            ("vrule", r"\vrule [width ⟨dimen⟩] [height ⟨dimen⟩] [depth ⟨dimen⟩]", "[width ⟨dimen⟩][height ⟨dimen⟩][depth ⟨dimen⟩]"),
+            (
+                "vrule",
+                r"\vrule [width ⟨dimen⟩] [height ⟨dimen⟩] [depth ⟨dimen⟩]",
+                "[width ⟨dimen⟩][height ⟨dimen⟩][depth ⟨dimen⟩]",
+            ),
             // § 1257: a control sequence, `=`, a name, then `at` or `scaled`.
             ("font", r"\font⟨cs⟩ [=]{1} [at ⟨dimen⟩|scaled ⟨number⟩]", "⟨cs⟩[=]m[at ⟨dimen⟩|scaled ⟨number⟩]"),
             ("read", r"\read⟨number⟩ [to]⟨cs⟩", "⟨number⟩[to]⟨cs⟩"),
@@ -612,8 +609,8 @@ fn item_means_differently_outside_and_inside_a_list() {
         None,
         &Config::default(),
     );
-    let (records, _) = query::explain(&analysis, &["item".to_string()], false)
-        .unwrap_or_else(|e| panic!("did not explain: {e}"));
+    let (records, _) =
+        query::explain(&analysis, &["item".to_string()], false).unwrap_or_else(|e| panic!("did not explain: {e}"));
     assert_eq!(records.len(), 2, "records: {records:?}");
     let outside = records
         .iter()
@@ -627,10 +624,7 @@ fn item_means_differently_outside_and_inside_a_list() {
         .iter()
         .find(|r| str_field(r, "context").is_some_and(|c| c.contains("enumerate")))
         .unwrap_or_else(|| panic!("no in-enumerate meaning: {records:?}"));
-    assert!(
-        str_field(inside, "error").is_none(),
-        "\\item inside enumerate should not carry that error: {inside:?}"
-    );
+    assert!(str_field(inside, "error").is_none(), "\\item inside enumerate should not carry that error: {inside:?}");
 }
 
 #[test]
@@ -644,8 +638,8 @@ fn item_context_meanings_show_with_no_document_uses_at_all() {
     }
     let analysis =
         Machine::analyze("\\documentclass{article}\n\\begin{document}\n\\end{document}\n", None, &Config::default());
-    let (records, _) = query::explain(&analysis, &["item".to_string()], false)
-        .unwrap_or_else(|e| panic!("did not explain: {e}"));
+    let (records, _) =
+        query::explain(&analysis, &["item".to_string()], false).unwrap_or_else(|e| panic!("did not explain: {e}"));
     assert!(records.len() > 1, "should find more than one meaning by probing: {records:?}");
     // Merged with every other environment the probe found that raises the
     // same error `\item` does with nothing open at all — still starts with
@@ -676,8 +670,8 @@ fn macro_redefined_inside_a_custom_environment_is_a_distinct_meaning() {
 \begin{loud}\greet\end{loud}
 \greet",
     );
-    let (records, _) = query::explain(&analysis, &["greet".to_string()], false)
-        .unwrap_or_else(|e| panic!("did not explain: {e}"));
+    let (records, _) =
+        query::explain(&analysis, &["greet".to_string()], false).unwrap_or_else(|e| panic!("did not explain: {e}"));
     assert_eq!(records.len(), 2, "records: {records:?}");
     let outside = records
         .iter()
@@ -737,13 +731,8 @@ fn identical_redefinitions_in_different_environments_are_one_meaning() {
 \newenvironment{loud}{\renewcommand{\shout}{HI}}{}
 \begin{loud}\shout\end{loud}",
     );
-    let (records, _) = query::explain(&analysis, &["shout".to_string()], false)
-        .unwrap_or_else(|e| panic!("did not explain: {e}"));
+    let (records, _) =
+        query::explain(&analysis, &["shout".to_string()], false).unwrap_or_else(|e| panic!("did not explain: {e}"));
     assert_eq!(records.len(), 1, "same meaning in both places should be one record: {records:?}");
     assert_eq!(str_field(&records[0], "context"), Some("outside environments, in loud"));
 }
-
-
-
-
-

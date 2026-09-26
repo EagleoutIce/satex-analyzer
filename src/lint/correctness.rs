@@ -1,9 +1,8 @@
-
 use crate::builtins::OccKind;
 use crate::facts::{LoadStatus, MeaningKind};
 use crate::lint::fix::{Applicability, Fix};
-use crate::lint::{Category, Report, Rule, Severity};
 use crate::lint::shared::{first_loads, labels};
+use crate::lint::{Category, Report, Rule, Severity};
 use crate::tex::{Span, Sym};
 
 pub static RULES: &[Rule] = &[
@@ -105,8 +104,8 @@ correcting the spelling.",
 Running the document reaches `\\errmessage`, which every LaTeX error
 (`\\PackageError`, `\\msg_error:nn`, the kernel's own) ends in: a real run
 stops there.  A more specific rule that explains the same error reports it
-instead.  When the error sits in a conditional arm satex could not decide, it
-is a warning.
+instead.  An error reached only on a path satex could not decide, or after it
+lost track of the mode, is not one a real run need reach, and is not reported.
 
 Fix what the message says.",
         run: raised_errors,
@@ -250,13 +249,8 @@ fn unguarded_recursion(report: &mut Report) {
     let analysis = report.analysis();
     let recursive: std::collections::BTreeMap<Sym, bool> =
         analysis.recursion().into_iter().map(|r| (r.name, r.observed)).collect();
-    let sites: std::collections::HashSet<crate::tex::Span> = analysis
-        .facts
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == "recursion-widened")
-        .map(|d| d.span)
-        .collect();
+    let sites: std::collections::HashSet<crate::tex::Span> =
+        analysis.facts.diagnostics.iter().filter(|d| d.code == "recursion-widened").map(|d| d.span).collect();
     let widened: std::collections::HashSet<Sym> =
         analysis.facts.expansions.iter().filter(|e| sites.contains(&e.span)).map(|e| e.name).collect();
     let defs: Vec<_> = analysis.facts.defs.clone();
@@ -291,13 +285,7 @@ fn unguarded_recursion(report: &mut Report) {
                 ),
             )
         };
-        report.add_as(
-            severity,
-            def.span,
-            &name,
-            message,
-            Some("add the test that ends the recursion".into()),
-        );
+        report.add_as(severity, def.span, &name, message, Some("add the test that ends the recursion".into()));
     }
 }
 
@@ -315,10 +303,7 @@ fn undefined_control_sequences(report: &mut Report) {
         let (severity, message) = if expansion.cds.is_empty() {
             (Severity::Error, format!("{name} is never defined in this run"))
         } else {
-            (
-                Severity::Warning,
-                format!("{name} is undefined on a path satex could not decide"),
-            )
+            (Severity::Warning, format!("{name} is undefined on a path satex could not decide"))
         };
         report.add_as(
             severity,
@@ -330,15 +315,15 @@ fn undefined_control_sequences(report: &mut Report) {
     }
 }
 
-/// Every `\errmessage` the run reached, once per place and text.
+/// Every `\errmessage` a real run reaches, once per place and text, placed
+/// at the request that read the file raising it.
 fn raised_errors(report: &mut Report) {
     let analysis = report.analysis();
     let mut seen = std::collections::HashSet::new();
     for o in &analysis.facts.occurrences {
-        if !crate::lint::shared::is_error(analysis, o) || !seen.insert((o.span, o.key.as_str())) {
+        if !crate::lint::shared::is_error(analysis, o) || !o.certain || !seen.insert((o.span, o.key.as_str())) {
             continue;
         }
-        // Raised while a package was read: at the request that read it.
         let mut span = o.span;
         let mut via = None;
         for _ in 0..64 {
@@ -349,19 +334,14 @@ fn raised_errors(report: &mut Report) {
             via = Some(load.name.clone());
             span = load.span;
         }
-        let undecided = !o.certain;
         // The headline: what follows the first empty line is help.
         let headline = o.key.split("\n\n").next().unwrap_or_default();
         let text = headline.split_whitespace().collect::<Vec<_>>().join(" ");
-        let (severity, message) = match undecided {
-            false => (Severity::Error, text),
-            true => (Severity::Warning, format!("{text} (on a path satex could not decide, or after it lost track of the mode)")),
-        };
         let message = match via {
-            Some(name) => format!("reading {name}: {message}"),
-            None => message,
+            Some(name) => format!("reading {name}: {text}"),
+            None => text,
         };
-        report.add_as(severity, span, "", message, None);
+        report.add(span, "", message, None);
     }
 }
 
@@ -424,22 +404,16 @@ fn option_clash(report: &mut Report) {
         if *at == load.span {
             continue;
         }
-        let extra: Vec<&str> =
-            load.options.iter().filter(|o| !options.contains(o)).map(String::as_str).collect();
+        let extra: Vec<&str> = load.options.iter().filter(|o| !options.contains(o)).map(String::as_str).collect();
         if extra.is_empty() {
             continue;
         }
-        let first_load =
-            report.analysis.facts.loads.iter().find(|l| l.span == *at && l.name == load.name).cloned();
+        let first_load = report.analysis.facts.loads.iter().find(|l| l.span == *at && l.name == load.name).cloned();
         let edits = first_load.and_then(|first| report.edits().add_options(&first, &extra));
         report.add_fix(
             load.span,
             &load.name,
-            format!(
-                "{} was first loaded at {at} without {}",
-                load.name,
-                extra.join(", ")
-            ),
+            format!("{} was first loaded at {at} without {}", load.name, extra.join(", ")),
             Fix::new(
                 format!("move the options to the first \\usepackage{{{}}}", load.name),
                 Applicability::Unsafe,
@@ -581,11 +555,7 @@ fn catcode_escapes_group(report: &mut Report) {
         if character == '@' {
             continue;
         }
-        let at = sites
-            .iter()
-            .find(|(_, key)| key.starts_with(character))
-            .map(|(span, _)| *span)
-            .unwrap_or_default();
+        let at = sites.iter().find(|(_, key)| key.starts_with(character)).map(|(span, _)| *span).unwrap_or_default();
         report.add(
             at,
             &character.to_string(),
@@ -606,7 +576,6 @@ fn expl_syntax_left_on(report: &mut Report) {
         Some("add \\ExplSyntaxOff".into()),
     );
 }
-
 
 /// graphics.sty's `\Ginclude@graphics` raises `File `⟨name⟩' not found`
 /// when no extension in `\Gin@extensions` names a file on `\Ginput@path`;
@@ -662,14 +631,12 @@ fn shell_escape(report: &mut Report) {
         }
         let program = occurrence.key.split_whitespace().next().unwrap_or_default().to_string();
         let (severity, message) = match mode {
-            crate::config::ShellEscape::None => (
-                Severity::Error,
-                format!("`{program}` cannot run: this build has no shell escape"),
-            ),
-            crate::config::ShellEscape::Restricted if !allowed.contains(&program) => (
-                Severity::Error,
-                format!("`{program}` is not one of the programs a restricted build runs"),
-            ),
+            crate::config::ShellEscape::None => {
+                (Severity::Error, format!("`{program}` cannot run: this build has no shell escape"))
+            }
+            crate::config::ShellEscape::Restricted if !allowed.contains(&program) => {
+                (Severity::Error, format!("`{program}` is not one of the programs a restricted build runs"))
+            }
             _ => (Severity::Info, format!("`{program}` runs through \\write18")),
         };
         report.add_as(severity, occurrence.span, &program, message, None);
@@ -731,11 +698,7 @@ fn environment_mismatch(report: &mut Report) {
             span,
             &found,
             message,
-            Fix::new(
-                format!("write \\end{{{open}}}, or close \\begin{{{open}}} first"),
-                Applicability::Unsafe,
-                edits,
-            ),
+            Fix::new(format!("write \\end{{{open}}}, or close \\begin{{{open}}} first"), Applicability::Unsafe, edits),
         );
     }
 }

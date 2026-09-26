@@ -47,8 +47,9 @@ fn everyeof_is_read_before_an_input_file_ends() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("ef.tex"), "ab\n").unwrap();
     let main = dir.join("main.tex");
-    let source =
-        format!("{PRELUDE}\\def\\get#1\\stop{{\\def\\got{{#1}}}}\\everyeof{{\\stop}}\\expandafter\\get\\input ef \\relax\n");
+    let source = format!(
+        "{PRELUDE}\\def\\get#1\\stop{{\\def\\got{{#1}}}}\\everyeof{{\\stop}}\\expandafter\\get\\input ef \\relax\n"
+    );
     std::fs::write(&main, &source).unwrap();
     let analysis = run(&source, Some(&main), Some(Engine::PdfTeX));
     assert_eq!(body(&analysis, "got"), "ab ");
@@ -80,8 +81,9 @@ fn the_last_line_of_a_file_without_a_newline_gets_the_endlinechar() {
     for text in ["ab", "ab  ", "ab\n"] {
         std::fs::write(dir.join("ef.tex"), text).unwrap();
         let main = dir.join("main.tex");
-        let source =
-            format!("{PRELUDE}\\def\\get#1\\stop{{\\def\\got{{[#1]}}}}\\everyeof{{\\stop}}\\expandafter\\get\\input ef \\relax");
+        let source = format!(
+            "{PRELUDE}\\def\\get#1\\stop{{\\def\\got{{[#1]}}}}\\everyeof{{\\stop}}\\expandafter\\get\\input ef \\relax"
+        );
         std::fs::write(&main, &source).unwrap();
         let analysis = run(&source, Some(&main), Some(Engine::PdfTeX));
         assert_eq!(body(&analysis, "got"), "[ab ]", "{text:?}");
@@ -145,140 +147,233 @@ fn a_line_ends_as_its_endlinechar_and_catcode_say() {
     std::fs::write(dir.join("data.tex"), "a\n  b \n").unwrap();
     let cases: &[(&str, &str)] = &[
         // `\def^^M` with `^^M` active
-        (r"\catcode13=13 \def^^M{X}\edef\r{a
+        (
+            r"\catcode13=13 \def^^M{X}\edef\r{a
 b
 }\catcode13=5 %
-", "aXbX"),
+",
+            "aXbX",
+        ),
         // category 12
-        (r"\catcode13=12 \def\r{a
+        (
+            r"\catcode13=12 \def\r{a
   b}\catcode13=5 %
-", "a\rb"),
+",
+            "a\rb",
+        ),
         // category 10
-        (r"\catcode13=10 \def\r{a
+        (
+            r"\catcode13=10 \def\r{a
   b}\catcode13=5 %
-", "a b"),
+",
+            "a b",
+        ),
         // category 9
-        (r"\catcode13=9 \def\r{a
+        (
+            r"\catcode13=9 \def\r{a
   b}\catcode13=5 %
-", "ab"),
+",
+            "ab",
+        ),
         // category 14
-        (r"\catcode13=14 \def\r{a
+        (
+            r"\catcode13=14 \def\r{a
   b}\catcode13=5 %
-", "ab"),
+",
+            "ab",
+        ),
         // blank lines are `\par`
-        (r"\def\r{a
+        (
+            r"\def\r{a
 
   b
 
 
-c}", "a \\par b \\par \\par c"),
+c}",
+            "a \\par b \\par \\par c",
+        ),
         // `\endlinechar` from the next line
-        (r"\endlinechar=`\X \def\r{a
+        (
+            r"\endlinechar=`\X \def\r{a
 b
 c}\endlinechar=13 %
-", "a bXc"),
+",
+            "a bXc",
+        ),
         // `\endlinechar=-1`
-        (r"\endlinechar=-1 \def\r{a
+        (
+            r"\endlinechar=-1 \def\r{a
 b
 c}\endlinechar=13 %
-", "a bc"),
+",
+            "a bc",
+        ),
         // out of range
-        (r"\endlinechar=256 \def\r{a
+        (
+            r"\endlinechar=256 \def\r{a
 b
 c}\endlinechar=13 %
-", "a bc"),
+",
+            "a bc",
+        ),
         // a comment character
-        (r"\endlinechar=37 \def\r{a
+        (
+            r"\endlinechar=37 \def\r{a
  b 
 c}\endlinechar=13 %
-", "a bc"),
+",
+            "a bc",
+        ),
         // active spaces; trailing spaces dropped
-        (r"\catcode32=13 \def {S}\edef\r{a b  c
+        (
+            r"\catcode32=13 \def {S}\edef\r{a b  c
   d   
 e}\catcode32=10 %
-", "aSbSSc SSd e"),
+",
+            "aSbSSc SSd e",
+        ),
         // `\scantokens`
-        (r"\everyeof{\noexpand}\edef\r{\scantokens{a}}\everyeof{}%
-", "a "),
+        (
+            r"\everyeof{\noexpand}\edef\r{\scantokens{a}}\everyeof{}%
+",
+            "a ",
+        ),
         // `\scantokens`, none appended
-        (r"\everyeof{\noexpand}\endlinechar=-1 \edef\r{\scantokens{a}}\endlinechar=13 \everyeof{}%
-", "a"),
+        (
+            r"\everyeof{\noexpand}\endlinechar=-1 \edef\r{\scantokens{a}}\endlinechar=13 \everyeof{}%
+",
+            "a",
+        ),
         // `\scantokens`, category 12
-        (r"\everyeof{\noexpand}\catcode13=12 \edef\r{\scantokens{a}}\catcode13=5 \everyeof{}%
-", "a\r"),
+        (
+            r"\everyeof{\noexpand}\catcode13=12 \edef\r{\scantokens{a}}\catcode13=5 \everyeof{}%
+",
+            "a\r",
+        ),
         // `\scantokens`, two lines
-        (r"\everyeof{\noexpand}\edef\r{\scantokens{a
+        (
+            r"\everyeof{\noexpand}\edef\r{\scantokens{a
 b}}\everyeof{}%
-", "a b "),
+",
+            "a b ",
+        ),
         // a verbatim reader
-        (r"{\catcode`\^^M=13 \gdef\vb{\catcode`\^^M=13 \def^^M{|}\vbx}\gdef\vbx#1\stopv{\gdef\r{#1}\catcode13=5 }}%
+        (
+            r"{\catcode`\^^M=13 \gdef\vb{\catcode`\^^M=13 \def^^M{|}\vbx}\gdef\vbx#1\stopv{\gdef\r{#1}\catcode13=5 }}%
 \vb a
 b
 \stopv
-", "a\rb\r"),
+",
+            "a\rb\r",
+        ),
         // `\obeylines`
-        (r"{\catcode`\^^M=13 \gdef\obeylines{\catcode`\^^M=13 \let^^M\par}}%
+        (
+            r"{\catcode`\^^M=13 \gdef\obeylines{\catcode`\^^M=13 \let^^M\par}}%
 \def\par{P}{\obeylines\xdef\r{a
 b
 }}
-", "aPbP"),
+",
+            "aPbP",
+        ),
         // active, empty line
-        (r"\catcode13=13 \def^^M{X}\def\r{a
+        (
+            r"\catcode13=13 \def^^M{X}\def\r{a
 
 b}\catcode13=5 %
-", "a\r\rb"),
+",
+            "a\r\rb",
+        ),
         // category 10, empty line
-        (r"\catcode13=10 \def\r{a
+        (
+            r"\catcode13=10 \def\r{a
 
 b}\catcode13=5 %
-", "a b"),
+",
+            "a b",
+        ),
         // category 12 after a trailing space
-        (r"\catcode13=12 \def\r{a 
+        (
+            r"\catcode13=12 \def\r{a 
 b}\catcode13=5 %
-", "a\rb"),
+",
+            "a\rb",
+        ),
         // optional space reads the next line
-        (r"\endlinechar=`\z %
+        (
+            r"\endlinechar=`\z %
 \def\r{\foo
 b}\endlinechar=13 %
-", "\\foo b"),
+",
+            "\\foo b",
+        ),
         // `\read`
-        (r"\openin1=data \read1 to\r \closein1 %
-", "a "),
+        (
+            r"\openin1=data \read1 to\r \closein1 %
+",
+            "a ",
+        ),
         // `\readline`
-        (r"\openin1=data \readline1 to\r \closein1 %
-", "a\r"),
+        (
+            r"\openin1=data \readline1 to\r \closein1 %
+",
+            "a\r",
+        ),
         // `\readline`, none appended
-        (r"\openin1=data \endlinechar=-1 \readline1 to\x\readline1 to\y\edef\r{\x|\y}\endlinechar=13 \closein1 %
-", "a|  b"),
+        (
+            r"\openin1=data \endlinechar=-1 \readline1 to\x\readline1 to\y\edef\r{\x|\y}\endlinechar=13 \closein1 %
+",
+            "a|  b",
+        ),
         // `\read`, category 12
-        (r"\openin1=data \catcode13=12 \read1 to\x\read1 to\y\edef\r{\x|\y}\catcode13=5 \closein1 %
-", "a\r|b\r"),
+        (
+            r"\openin1=data \catcode13=12 \read1 to\x\read1 to\y\edef\r{\x|\y}\catcode13=5 \closein1 %
+",
+            "a\r|b\r",
+        ),
         // `\scantokens`, active
-        (r"\everyeof{\noexpand}\catcode13=13 \def^^M{X}\edef\r{\scantokens{a
+        (
+            r"\everyeof{\noexpand}\catcode13=13 \def^^M{X}\edef\r{\scantokens{a
  b}}\catcode13=5 \everyeof{}%
-", "aXbX"),
+",
+            "aXbX",
+        ),
         // a letter ends a control word
-        (r"\endlinechar=122\relax
+        (
+            r"\endlinechar=122\relax
 \def\r{\foo
 b}\endlinechar=13 %
-", "\\fooz b"),
+",
+            "\\fooz b",
+        ),
         // `\scantokens` drops trailing spaces
-        (r"\everyeof{\noexpand}\catcode13=12 \edef\r{\scantokens{a  }}\catcode13=5 \everyeof{}%
-", "a\r"),
+        (
+            r"\everyeof{\noexpand}\catcode13=12 \edef\r{\scantokens{a  }}\catcode13=5 \everyeof{}%
+",
+            "a\r",
+        ),
         // `\ ` at a line end names the `\endlinechar`
-        (r"\catcode13=12 \def\r{a\ 
+        (
+            r"\catcode13=12 \def\r{a\ 
 }\catcode13=5 %
-", "a\\\r"),
+",
+            "a\\\r",
+        ),
         // a line of active spaces is empty
-        (r"\catcode32=13 \def {S}\def\r{a
+        (
+            r"\catcode32=13 \def {S}\def\r{a
    
 b}\catcode32=10 %
-", "a \\par b"),
+",
+            "a \\par b",
+        ),
         // escape at a line end
-        (r"\endlinechar=122\relax
+        (
+            r"\endlinechar=122\relax
 \def\r{\
 b}\endlinechar=13 %
-", "\\z b"),
+",
+            "\\z b",
+        ),
     ];
     let main = dir.join("main.tex");
     // The prelude runs before `\input`, so its catcodes reach probe.tex too
@@ -381,16 +476,28 @@ const ARITHMETIC: &[(&str, &str)] = &[
     ("\\count1=2147483647 \\advance\\count1 by 1 \\edef\\r{\\the\\count1}", "-2147483648"),
     ("\\count1=-2147483647 \\advance\\count1 by -2 \\edef\\r{\\the\\count1}", "2147483647"),
     ("\\dimen1=16383.99999pt \\advance\\dimen1 by\\dimen1 \\edef\\r{\\the\\dimen1}", "32767.99997pt"),
-    ("\\dimen1=16383.99999pt \\advance\\dimen1\\dimen1 \\advance\\dimen1\\dimen1 \\edef\\r{\\the\\dimen1}", "-16384.00005pt"),
+    (
+        "\\dimen1=16383.99999pt \\advance\\dimen1\\dimen1 \\advance\\dimen1\\dimen1 \\edef\\r{\\the\\dimen1}",
+        "-16384.00005pt",
+    ),
     ("\\count1=65536 \\multiply\\count1 by 32768 \\edef\\r{\\the\\count1}", "65536"),
     ("\\count1=-65536 \\multiply\\count1 by 32768 \\edef\\r{\\the\\count1}", "-65536"),
     ("\\count1=46341 \\multiply\\count1 46340 \\edef\\r{\\the\\count1}", "2147441940"),
     ("\\count1=-2147483647 \\advance\\count1 -1 \\multiply\\count1 1 \\edef\\r{\\the\\count1}", "-2147483648"),
-    ("\\count1=-2147483647 \\advance\\count1 -1 \\count2=\\count1 \\count3=1 \\multiply\\count3\\count2 \\edef\\r{\\the\\count3}", "-2147483648"),
+    (
+        "\\count1=-2147483647 \\advance\\count1 -1 \\count2=\\count1 \\count3=1 \\multiply\\count3\\count2 \\edef\\r{\\the\\count3}",
+        "-2147483648",
+    ),
     ("\\dimen1=8192pt \\multiply\\dimen1 2 \\edef\\r{\\the\\dimen1}", "8192.0pt"),
     ("\\dimen1=8191pt \\multiply\\dimen1 -2 \\edef\\r{\\the\\dimen1}", "-16382.0pt"),
-    ("\\skip1=10000pt plus 1fil minus 2fill \\multiply\\skip1 2 \\edef\\r{\\the\\skip1}", "10000.0pt plus 1.0fil minus 2.0fill"),
-    ("\\skip1=100pt plus 1fil minus -3pt \\multiply\\skip1 -3 \\edef\\r{\\the\\skip1}", "-300.0pt plus -3.0fil minus 9.0pt"),
+    (
+        "\\skip1=10000pt plus 1fil minus 2fill \\multiply\\skip1 2 \\edef\\r{\\the\\skip1}",
+        "10000.0pt plus 1.0fil minus 2.0fill",
+    ),
+    (
+        "\\skip1=100pt plus 1fil minus -3pt \\multiply\\skip1 -3 \\edef\\r{\\the\\skip1}",
+        "-300.0pt plus -3.0fil minus 9.0pt",
+    ),
     ("\\skip1=1pt plus 1fil \\multiply\\skip1 0 \\edef\\r{\\the\\skip1,\\the\\gluestretchorder\\skip1}", "0.0pt,0"),
     ("\\count1=-7 \\divide\\count1 2 \\edef\\r{\\the\\count1}", "-3"),
     ("\\count1=7 \\divide\\count1 -2 \\edef\\r{\\the\\count1}", "-3"),
@@ -398,14 +505,26 @@ const ARITHMETIC: &[(&str, &str)] = &[
     ("\\count1=-2147483647 \\advance\\count1 -1 \\divide\\count1 -1 \\edef\\r{\\the\\count1}", "-2147483648"),
     ("\\count1=-2147483647 \\advance\\count1-1 \\divide\\count1 2 \\edef\\r{\\the\\count1}", "-1073741824"),
     ("\\count1=-2147483647 \\advance\\count1-1 \\divide\\count1 -2 \\edef\\r{\\the\\count1}", "-1073741824"),
-    ("\\count1=-2147483647 \\advance\\count1-1 \\count2=\\count1 \\count3=7 \\multiply\\count3\\count2 \\edef\\r{\\the\\count3}", "-2147483648"),
+    (
+        "\\count1=-2147483647 \\advance\\count1-1 \\count2=\\count1 \\count3=7 \\multiply\\count3\\count2 \\edef\\r{\\the\\count3}",
+        "-2147483648",
+    ),
     ("\\count1=-2147483647 \\advance\\count1-1 \\count2=-\\count1 \\edef\\r{\\the\\count2}", "-2147483648"),
     ("\\dimen1=-1sp \\divide\\dimen1 2 \\edef\\r{\\the\\dimen1}", "0.0pt"),
     ("\\dimen1=-3sp \\divide\\dimen1 2 \\edef\\r{\\the\\dimen1}", "-0.00002pt"),
     ("\\dimen1=3pt \\divide\\dimen1 0 \\edef\\r{\\the\\dimen1}", "3.0pt"),
-    ("\\skip1=10pt plus -7sp minus 3fil \\divide\\skip1 2 \\edef\\r{\\the\\skip1}", "5.0pt plus -0.00005pt minus 1.5fil"),
-    ("\\skip1=1pt plus 2fil \\advance\\skip1 by 3pt plus 4pt minus 1fill \\edef\\r{\\the\\skip1}", "4.0pt plus 2.0fil minus 1.0fill"),
-    ("\\skip1=1pt plus 2fil \\advance\\skip1 by 0pt plus -2fil \\edef\\r{\\the\\skip1,\\the\\gluestretchorder\\skip1}", "1.0pt,1"),
+    (
+        "\\skip1=10pt plus -7sp minus 3fil \\divide\\skip1 2 \\edef\\r{\\the\\skip1}",
+        "5.0pt plus -0.00005pt minus 1.5fil",
+    ),
+    (
+        "\\skip1=1pt plus 2fil \\advance\\skip1 by 3pt plus 4pt minus 1fill \\edef\\r{\\the\\skip1}",
+        "4.0pt plus 2.0fil minus 1.0fill",
+    ),
+    (
+        "\\skip1=1pt plus 2fil \\advance\\skip1 by 0pt plus -2fil \\edef\\r{\\the\\skip1,\\the\\gluestretchorder\\skip1}",
+        "1.0pt,1",
+    ),
     ("\\skip1=1pt plus 0fil \\advance\\skip1 by 0pt plus 2pt \\edef\\r{\\the\\skip1}", "1.0pt plus 2.0pt"),
     ("\\skip1=16383pt \\advance\\skip1 by 16383pt \\advance\\skip1\\skip1 \\edef\\r{\\the\\skip1}", "-4.0pt"),
     ("\\dimen1=16384pt \\edef\\r{\\the\\dimen1}", "16383.99998pt"),
@@ -416,12 +535,30 @@ const ARITHMETIC: &[(&str, &str)] = &[
     ("\\dimen1=0.0000076293945312pt \\edef\\r{\\number\\dimen1}", "0"),
     ("\\dimen1=-0.00002288818359375pt \\edef\\r{\\number\\dimen1}", "-2"),
     ("\\dimen1=0.000000000000000009999pt \\edef\\r{\\number\\dimen1}", "0"),
-    ("\\dimen1=1in \\dimen2=1cm \\dimen3=1mm \\dimen4=1bp \\edef\\r{\\number\\dimen1,\\number\\dimen2,\\number\\dimen3,\\number\\dimen4}", "4736286,1864679,186467,65781"),
-    ("\\dimen1=1dd \\dimen2=1cc \\dimen3=1pc \\dimen4=1nd \\dimen5=1nc \\edef\\r{\\number\\dimen1,\\number\\dimen2,\\number\\dimen3,\\number\\dimen4,\\number\\dimen5}", "70124,841489,786432,69925,839105"),
-    ("\\dimen1=-1.5cm \\dimen2=0.3mm \\dimen3=226.7in \\dimen4=226.8in \\edef\\r{\\number\\dimen1,\\number\\dimen2,\\number\\dimen3,\\number\\dimen4}", "-2797019,55940,1073716184,1073741823"),
-    ("\\dimen1=600in \\dimen2=16383.5dd \\dimen3=1400cc \\edef\\r{\\number\\dimen1,\\number\\dimen2,\\number\\dimen3}", "1073741823,1073741823,1073741823"),
-    ("\\dimen1=1073741823sp \\dimen2=1073741824sp \\dimen3=-1.9sp \\edef\\r{\\number\\dimen1,\\number\\dimen2,\\number\\dimen3}", "1073741823,1073741823,-1"),
-    ("\\mag=3000 \\dimen1=10truept \\dimen2=1truein \\dimen3=7truesp \\dimen4=-1.3truecm \\edef\\r{\\number\\dimen1,\\number\\dimen2,\\number\\dimen3,\\number\\dimen4}", "218453,1578738,2,-808029"),
+    (
+        "\\dimen1=1in \\dimen2=1cm \\dimen3=1mm \\dimen4=1bp \\edef\\r{\\number\\dimen1,\\number\\dimen2,\\number\\dimen3,\\number\\dimen4}",
+        "4736286,1864679,186467,65781",
+    ),
+    (
+        "\\dimen1=1dd \\dimen2=1cc \\dimen3=1pc \\dimen4=1nd \\dimen5=1nc \\edef\\r{\\number\\dimen1,\\number\\dimen2,\\number\\dimen3,\\number\\dimen4,\\number\\dimen5}",
+        "70124,841489,786432,69925,839105",
+    ),
+    (
+        "\\dimen1=-1.5cm \\dimen2=0.3mm \\dimen3=226.7in \\dimen4=226.8in \\edef\\r{\\number\\dimen1,\\number\\dimen2,\\number\\dimen3,\\number\\dimen4}",
+        "-2797019,55940,1073716184,1073741823",
+    ),
+    (
+        "\\dimen1=600in \\dimen2=16383.5dd \\dimen3=1400cc \\edef\\r{\\number\\dimen1,\\number\\dimen2,\\number\\dimen3}",
+        "1073741823,1073741823,1073741823",
+    ),
+    (
+        "\\dimen1=1073741823sp \\dimen2=1073741824sp \\dimen3=-1.9sp \\edef\\r{\\number\\dimen1,\\number\\dimen2,\\number\\dimen3}",
+        "1073741823,1073741823,-1",
+    ),
+    (
+        "\\mag=3000 \\dimen1=10truept \\dimen2=1truein \\dimen3=7truesp \\dimen4=-1.3truecm \\edef\\r{\\number\\dimen1,\\number\\dimen2,\\number\\dimen3,\\number\\dimen4}",
+        "218453,1578738,2,-808029",
+    ),
     ("\\dimen1=3em \\dimen2=-2.5ex \\edef\\r{\\the\\dimen1,\\the\\dimen2}", "0.0pt,0.0pt"),
     ("\\dimen2=-1pt \\dimen1=20000\\dimen2 \\edef\\r{\\the\\dimen1}", "16383.99998pt"),
     ("\\dimen2=1pt \\dimen1=-20000\\dimen2 \\edef\\r{\\the\\dimen1}", "-16383.99998pt"),
@@ -431,22 +568,61 @@ const ARITHMETIC: &[(&str, &str)] = &[
     ("\\dimen2=1pt \\dimen1=16383.99999\\dimen2 \\edef\\r{\\number\\dimen1}", "1073741823"),
     ("\\count2=-7 \\dimen1=\\count2 sp \\dimen2=-\\count2 pt \\edef\\r{\\number\\dimen1,\\the\\dimen2}", "-7,7.0pt"),
     ("\\count2=-7 \\skip1=-\\count2 pt plus -\\count2 fil \\edef\\r{\\the\\skip1}", "7.0pt plus 7.0fil"),
-    ("\\skip2=1pt plus 2fil \\dimen1=-\\skip2 \\count1=-\\skip2 \\edef\\r{\\the\\dimen1,\\the\\count1}", "-1.0pt,-65536"),
+    (
+        "\\skip2=1pt plus 2fil \\dimen1=-\\skip2 \\count1=-\\skip2 \\edef\\r{\\the\\dimen1,\\the\\count1}",
+        "-1.0pt,-65536",
+    ),
     ("\\skip1=1pt plus 16384fil \\edef\\r{\\the\\skip1}", "1.0pt plus 16383.99998fil"),
     ("\\skip1=1pt plus 1fillll minus 2fIlL \\edef\\r{\\the\\skip1}", "1.0pt plus 1.0filll minus 2.0fill"),
-    ("\\edef\\r{\\the\\numexpr 7/2\\relax,\\the\\numexpr -7/2\\relax,\\the\\numexpr 7/-2\\relax,\\the\\numexpr 5/2\\relax,\\the\\numexpr -5/2\\relax}", "4,-4,-4,3,-3"),
-    ("\\edef\\r{\\the\\numexpr 2147483647+1\\relax,\\the\\numexpr -2147483647-1\\relax,\\the\\numexpr 2147483647-1+1\\relax}", "0,0,2147483647"),
-    ("\\edef\\r{\\the\\numexpr 7*11/3\\relax,\\the\\numexpr 2147483647*2/2\\relax,\\the\\numexpr (7)/0\\relax,\\the\\numexpr 3*(4-5)/-2\\relax}", "26,2147483647,0,2"),
-    ("\\edef\\r{\\the\\numexpr 65536*32768\\relax,\\the\\numexpr 65536*32768/2\\relax,\\the\\numexpr -65536*32767\\relax,\\the\\numexpr 5*-3/2\\relax}", "0,1073741824,-2147418112,-8"),
-    ("\\edef\\r{\\the\\numexpr 1+(2*3\\relax,\\the\\numexpr (1+2)*(3+4)/5\\relax,\\the\\numexpr 10/4*4\\relax,\\the\\numexpr -9/4/2\\relax}", "7,4,12,-1"),
-    ("\\edef\\r{\\the\\dimexpr 1pt*3/4\\relax,\\the\\dimexpr 1sp*3/2\\relax,\\the\\dimexpr -1sp/2\\relax,\\the\\dimexpr 16383pt+2pt\\relax}", "0.75pt,0.00003pt,-0.00002pt,0.0pt"),
-    ("\\edef\\r{\\the\\dimexpr 1pt*16384\\relax,\\the\\dimexpr 8192pt*2/2\\relax,\\the\\dimexpr 3sp*-1/2\\relax,\\the\\dimexpr 1pt/3*3\\relax}", "0.0pt,8192.0pt,-0.00003pt,0.99998pt"),
-    ("\\edef\\r{\\the\\glueexpr 1pt plus 2fil - 3pt plus 1fill\\relax,\\the\\glueexpr 1pt plus 1fil*3/2\\relax}", "-2.0pt plus 1.0fill,1.5pt plus 1.5fil"),
-    ("\\edef\\r{\\the\\glueexpr 0pt plus 1fil - 0pt plus 1fil\\relax,\\the\\gluestretchorder\\glueexpr 0pt plus 1fil - 0pt plus 1fil\\relax}", "0.0pt,0"),
-    ("\\edef\\r{\\the\\glueexpr 1pt minus 2pt*-1\\relax,\\the\\glueexpr 10pt plus 3sp/2\\relax,\\the\\glueexpr 16383pt plus 1pt*2\\relax}", "-1.0pt minus -2.0pt,5.0pt plus 0.00003pt,0.0pt"),
-    ("\\edef\\r{\\the\\gluestretchorder\\glueexpr 0pt plus 0fil\\relax,\\the\\gluestretchorder\\glueexpr 0pt plus 0fil+0pt\\relax}", "1,0"),
+    (
+        "\\edef\\r{\\the\\numexpr 7/2\\relax,\\the\\numexpr -7/2\\relax,\\the\\numexpr 7/-2\\relax,\\the\\numexpr 5/2\\relax,\\the\\numexpr -5/2\\relax}",
+        "4,-4,-4,3,-3",
+    ),
+    (
+        "\\edef\\r{\\the\\numexpr 2147483647+1\\relax,\\the\\numexpr -2147483647-1\\relax,\\the\\numexpr 2147483647-1+1\\relax}",
+        "0,0,2147483647",
+    ),
+    (
+        "\\edef\\r{\\the\\numexpr 7*11/3\\relax,\\the\\numexpr 2147483647*2/2\\relax,\\the\\numexpr (7)/0\\relax,\\the\\numexpr 3*(4-5)/-2\\relax}",
+        "26,2147483647,0,2",
+    ),
+    (
+        "\\edef\\r{\\the\\numexpr 65536*32768\\relax,\\the\\numexpr 65536*32768/2\\relax,\\the\\numexpr -65536*32767\\relax,\\the\\numexpr 5*-3/2\\relax}",
+        "0,1073741824,-2147418112,-8",
+    ),
+    (
+        "\\edef\\r{\\the\\numexpr 1+(2*3\\relax,\\the\\numexpr (1+2)*(3+4)/5\\relax,\\the\\numexpr 10/4*4\\relax,\\the\\numexpr -9/4/2\\relax}",
+        "7,4,12,-1",
+    ),
+    (
+        "\\edef\\r{\\the\\dimexpr 1pt*3/4\\relax,\\the\\dimexpr 1sp*3/2\\relax,\\the\\dimexpr -1sp/2\\relax,\\the\\dimexpr 16383pt+2pt\\relax}",
+        "0.75pt,0.00003pt,-0.00002pt,0.0pt",
+    ),
+    (
+        "\\edef\\r{\\the\\dimexpr 1pt*16384\\relax,\\the\\dimexpr 8192pt*2/2\\relax,\\the\\dimexpr 3sp*-1/2\\relax,\\the\\dimexpr 1pt/3*3\\relax}",
+        "0.0pt,8192.0pt,-0.00003pt,0.99998pt",
+    ),
+    (
+        "\\edef\\r{\\the\\glueexpr 1pt plus 2fil - 3pt plus 1fill\\relax,\\the\\glueexpr 1pt plus 1fil*3/2\\relax}",
+        "-2.0pt plus 1.0fill,1.5pt plus 1.5fil",
+    ),
+    (
+        "\\edef\\r{\\the\\glueexpr 0pt plus 1fil - 0pt plus 1fil\\relax,\\the\\gluestretchorder\\glueexpr 0pt plus 1fil - 0pt plus 1fil\\relax}",
+        "0.0pt,0",
+    ),
+    (
+        "\\edef\\r{\\the\\glueexpr 1pt minus 2pt*-1\\relax,\\the\\glueexpr 10pt plus 3sp/2\\relax,\\the\\glueexpr 16383pt plus 1pt*2\\relax}",
+        "-1.0pt minus -2.0pt,5.0pt plus 0.00003pt,0.0pt",
+    ),
+    (
+        "\\edef\\r{\\the\\gluestretchorder\\glueexpr 0pt plus 0fil\\relax,\\the\\gluestretchorder\\glueexpr 0pt plus 0fil+0pt\\relax}",
+        "1,0",
+    ),
     ("\\edef\\r{\\ifodd-3 T\\else F\\fi\\ifodd 0 T\\else F\\fi\\ifodd-2147483647 T\\else F\\fi}", "TFT"),
-    ("\\edef\\r{\\ifcase -1 a\\or b\\else c\\fi\\ifcase 2 a\\or b\\else c\\fi\\ifcase 1 a\\or b\\else c\\fi\\ifcase 5 a\\or b\\fi.}", "ccb."),
+    (
+        "\\edef\\r{\\ifcase -1 a\\or b\\else c\\fi\\ifcase 2 a\\or b\\else c\\fi\\ifcase 1 a\\or b\\else c\\fi\\ifcase 5 a\\or b\\fi.}",
+        "ccb.",
+    ),
 ];
 
 #[test]

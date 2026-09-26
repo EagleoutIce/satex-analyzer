@@ -97,7 +97,10 @@ fn an_else_that_ends_the_test_of_its_own_conditional_waits_for_it() {
 \ifnum1=2\fi",
     );
     assert!(gaps(&analysis).is_empty(), "{:?}", gaps(&analysis));
-    assert!(matches!(analysis.interner.lookup("bad").map(|s| analysis.env.meaning(s)), None | Some(Meaning::Undefined)));
+    assert!(matches!(
+        analysis.interner.lookup("bad").map(|s| analysis.env.meaning(s)),
+        None | Some(Meaning::Undefined)
+    ));
 }
 
 #[test]

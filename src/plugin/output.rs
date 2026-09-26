@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-
 /// The document output format: PDF, DVI, PostScript or HTML.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]

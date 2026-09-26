@@ -22,7 +22,7 @@ jobs:
   wiki:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The wiki is its own git repository. GitHub creates it with the first
       # page, so create one by hand once before this job can push.

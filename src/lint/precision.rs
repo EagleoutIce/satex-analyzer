@@ -1,15 +1,13 @@
-
 use std::collections::HashMap;
 
 use crate::lint::{Category, Report, Rule, Severity};
 
-pub static RULES: &[Rule] = &[
-    Rule {
-        code: "analysis-imprecision",
-        category: Category::Precision,
-        severity: Severity::Info,
-        summary: "the analysis had to widen",
-        explanation: "\
+pub static RULES: &[Rule] = &[Rule {
+    code: "analysis-imprecision",
+    category: Category::Precision,
+    severity: Severity::Info,
+    summary: "the analysis had to widen",
+    explanation: "\
 Undecided conditionals are analyzed arm by arm, so they are not reported here.
 This rule reports the two places where the analysis is incomplete instead:
 a recursion that was widened, and a budget that was reached.  Findings that
@@ -17,9 +15,8 @@ depend on such a point may be incomplete.
 
 There is nothing to fix in the document; raising the limits in `satex.yaml` or
 narrowing the analysis with `load_packages: false` can reduce it.",
-        run: imprecision,
-    },
-];
+    run: imprecision,
+}];
 
 fn imprecision(report: &mut Report) {
     let mut order: Vec<(crate::tex::Span, &'static str, String)> = Vec::new();
@@ -37,9 +34,7 @@ fn imprecision(report: &mut Report) {
     }
     for (span, code, message) in order {
         let count = counts.get(&(code, message.clone())).copied().unwrap_or(1);
-        let message =
-            if count > 1 { format!("{message} ({count} sites)") } else { message };
+        let message = if count > 1 { format!("{message} ({count} sites)") } else { message };
         report.add(span, code, message, None);
     }
 }
-

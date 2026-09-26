@@ -50,8 +50,7 @@ fn planned(records: &[Record], unsafe_fixes: bool) -> Vec<Planned> {
         .iter()
         .filter(|record| applicable(record, unsafe_fixes))
         .filter_map(|record| {
-            let edits: Option<Vec<Edit>> =
-                record.get("edits")?.as_array()?.iter().map(Edit::from_json).collect();
+            let edits: Option<Vec<Edit>> = record.get("edits")?.as_array()?.iter().map(Edit::from_json).collect();
             Some(Planned {
                 code: record.get("code").and_then(Json::as_str).unwrap_or_default().to_string(),
                 place: place(record),
@@ -83,11 +82,7 @@ fn overlaps(a: &Edit, b: &Edit) -> bool {
 /// Apply every fix whose edits overlap no fix taken before it, in the order
 /// of where they start: the result does not depend on the order the rules
 /// ran in.  `texts` holds the current text of every file touched so far.
-fn apply_round(
-    texts: &mut BTreeMap<String, String>,
-    fixes: Vec<Planned>,
-    skipped: &mut Vec<Skipped>,
-) -> usize {
+fn apply_round(texts: &mut BTreeMap<String, String>, fixes: Vec<Planned>, skipped: &mut Vec<Skipped>) -> usize {
     let mut taken: Vec<(Edit, String)> = Vec::new();
     let mut applied = 0;
     for fix in fixes {
@@ -313,11 +308,7 @@ pub fn unified(path: &str, old: &str, new: &str) -> String {
         let end = (last + 1 + CONTEXT).min(ops.len());
         let (a_len, b_len) = (at_a[end] - at_a[start], at_b[end] - at_b[start]);
         let first = |at: usize, len: usize| if len == 0 { at } else { at + 1 };
-        out.push_str(&format!(
-            "@@ -{},{a_len} +{},{b_len} @@\n",
-            first(at_a[start], a_len),
-            first(at_b[start], b_len)
-        ));
+        out.push_str(&format!("@@ -{},{a_len} +{},{b_len} @@\n", first(at_a[start], a_len), first(at_b[start], b_len)));
         for index in start..end {
             match ops[index] {
                 Op::Same => push_line(&mut out, ' ', a[at_a[index]]),

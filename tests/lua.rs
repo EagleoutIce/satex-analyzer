@@ -170,7 +170,9 @@ fn a_test_of_an_unknown_value_is_unknown() {
     // The clock is unknown: neither `a` nor `b` is printed for sure, and
     // neither `==` nor `type` tells.
     let source = |test: &str| {
-        format!("\\directlua{{if {test} then tex.print('\\string\\\\gdef\\string\\\\a{{}}') else tex.print('\\string\\\\gdef\\string\\\\b{{}}') end}}")
+        format!(
+            "\\directlua{{if {test} then tex.print('\\string\\\\gdef\\string\\\\a{{}}') else tex.print('\\string\\\\gdef\\string\\\\b{{}}') end}}"
+        )
     };
     assert!(defined(&primitives(&source("1 > 0")), "a"));
     for test in ["os.clock() + 1", "os.clock() == 0", "type(os.clock()) == 'number'", "not os.clock()"] {
@@ -192,7 +194,8 @@ fn a_library_function_satex_lacks_is_not_an_error_pcall_catches() {
         assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"), "{call}");
     }
     // A field LuaTeX does not have is nil, as there.
-    let analysis = primitives("\\directlua{if node.no_such_field == nil then tex.print('\\string\\\\gdef\\string\\\\c{}') end}");
+    let analysis =
+        primitives("\\directlua{if node.no_such_field == nil then tex.print('\\string\\\\gdef\\string\\\\c{}') end}");
     assert!(defined(&analysis, "c"));
 }
 

@@ -2,20 +2,14 @@
 
 use std::rc::Rc;
 
-use crate::builtins::{
-    Arith, CodeTable, Cond, DefMode,
-    LoadKind, OccKind, Prefix, Primitive,
-    TextOf,
-};
+use crate::builtins::{Arith, CodeTable, Cond, DefMode, LoadKind, OccKind, Prefix, Primitive, TextOf};
 use crate::env::{Binding, GroupKind};
 
 use crate::facts::Severity;
-use crate::graph::EdgeKind;
 use crate::graph::ControlDep;
+use crate::graph::EdgeKind;
 use crate::machine::{CondFrame, CondLimit, Machine, Step};
-use crate::tex::{
-    ArgSpec, Catcode, MacroDef, Meaning, ParameterText, RegKind, Span, Sym, Tok, Token,
-};
+use crate::tex::{ArgSpec, Catcode, MacroDef, Meaning, ParameterText, RegKind, Span, Sym, Tok, Token};
 use crate::value::{self, Glue, Num, Value};
 
 /// tex.web § 1232: `"8000` is the largest math code.
@@ -37,12 +31,18 @@ impl Machine<'_> {
         if matches!(
             p,
             // `\unskip`, `\unkern`, `\unpenalty` only take an item away.
-            Primitive::Typeset(crate::builtins::Typeset::Number | crate::builtins::Typeset::Dimen | crate::builtins::Typeset::Glue | crate::builtins::Typeset::Delimiter)
-                | Primitive::Accent
+            Primitive::Typeset(
+                crate::builtins::Typeset::Number
+                    | crate::builtins::Typeset::Dimen
+                    | crate::builtins::Typeset::Glue
+                    | crate::builtins::Typeset::Delimiter
+            ) | Primitive::Accent
                 | Primitive::Pdf(_)
                 | Primitive::Write
                 | Primitive::Command(_)
                 | Primitive::Unmodeled
+                | Primitive::AlignMark
+                | Primitive::AlignTab
                 | Primitive::Lua(_)
         ) || matches!(p, Primitive::Mode(cmd) if cmd != crate::builtins::ModeCmd::Par)
         {
@@ -140,12 +140,8 @@ impl Machine<'_> {
                 let text = crate::tex::detokenize(&body, &self.out.interner);
                 self.sync_end_line();
                 let newline_sym = self.intern("newlinechar");
-                let newline = self
-                    .env
-                    .value(newline_sym)
-                    .as_int()
-                    .and_then(|c| u32::try_from(c).ok())
-                    .and_then(char::from_u32);
+                let newline =
+                    self.env.value(newline_sym).as_int().and_then(|c| u32::try_from(c).ok()).and_then(char::from_u32);
                 // `\scantextokens` reads no pseudo file: its end is no end
                 // of file, so a definition or argument goes on past it.
                 if pseudo_text {
@@ -336,7 +332,6 @@ impl Machine<'_> {
                 }
             }
 
-
             // The engine's `\end` (tex.web § 1054); latex.ltx keeps it as
             // `\@@end` and defines its own `\end{…}`.
             P::End => self.end_job(),
@@ -391,7 +386,7 @@ impl Machine<'_> {
             // A primitive of the engine whose effect satex does not
             // interpret.  It does nothing here, and the run says so, so that
             // what an analysis could not follow is on the record.
-            P::Unmodeled => {
+            P::Unmodeled | P::AlignMark | P::AlignTab => {
                 self.note_gap("unmodeled-primitive", by, span);
                 self.widen_mode();
             }
@@ -406,8 +401,15 @@ impl Machine<'_> {
         }
     }
 
+    /// Whether a definition's scan reads `sym` as `#`: LuaTeX does so for
+    /// a token meaning `\alignmark`, `\let` alias and all.
+    pub fn means_align_mark(&self, sym: Sym) -> bool {
+        self.out.plugins.engine.has_luatex()
+            && matches!(self.env.meaning(sym), Meaning::Primitive(Primitive::AlignMark))
+    }
+
     pub fn make_macro(&self, parameter_text: ParameterText, arg_spec: Option<ArgSpec>, body: Vec<Token>) -> Meaning {
-        let mut replacement = crate::tex::parameterize(body);
+        let mut replacement = crate::tex::parameterize(body, |sym| self.means_align_mark(sym));
         // `\def\a#1#{…}`: the `{` that ended the parameter text belongs to the
         // replacement text as well (tex.web § 476).
         if parameter_text.brace_end {
@@ -470,7 +472,7 @@ impl Machine<'_> {
                 Some(t) => pattern.push(t),
             }
         }
-        let parameter_text = ParameterText::from_tokens(&pattern);
+        let parameter_text = ParameterText::from_tokens(&pattern, |sym| self.means_align_mark(sym));
         // tex.web § 477: an `\edef` body is scanned while it is expanded, and
         // ends at the `}` that balances what expansion leaves.  A conditional
         // satex cannot decide there takes its true arm, as in any text an
@@ -620,9 +622,10 @@ impl Machine<'_> {
             self.env.set_value(name, value, global);
         }
         if let Tok::Cs(src) = source.tok
-            && let Some(reference) = self.reference(src, source.span) {
-                self.out.graph.edge(node, reference, EdgeKind::DEFINED_BY);
-            }
+            && let Some(reference) = self.reference(src, source.span)
+        {
+            self.out.graph.edge(node, reference, EdgeKind::DEFINED_BY);
+        }
     }
 
     /// One step of expansion, as `\expandafter` asks for: an unexpandable
@@ -645,7 +648,11 @@ impl Machine<'_> {
                 if matches!(self.env.meaning(sym), Meaning::Unknown)
                     && !self.is_unknown_marker(sym)
                     && !self.read_noexpanded(token)
-                    && !self.env.slot(sym).and_then(|b| b.may.clone()).is_some_and(|may| may.iter().all(|m| !self.expandable_meaning(m))) =>
+                    && !self
+                        .env
+                        .slot(sym)
+                        .and_then(|b| b.may.clone())
+                        .is_some_and(|may| may.iter().all(|m| !self.expandable_meaning(m))) =>
             {
                 let unknown = self.one_of_texts(sym, token.span);
                 self.unread(unknown);
@@ -661,12 +668,18 @@ impl Machine<'_> {
     pub(crate) fn one_of_texts(&mut self, sym: Sym, span: Span) -> Token {
         let may = self.env.slot(sym).and_then(|b| b.may.clone());
         let plain = may.as_ref().is_some_and(|may| {
-            may.iter().all(|m| m.as_macro().is_some_and(|m| m.parameter_text.items.is_empty() && !m.parameter_text.brace_end))
+            may.iter()
+                .all(|m| m.as_macro().is_some_and(|m| m.parameter_text.items.is_empty() && !m.parameter_text.brace_end))
         });
         let (Some(may), true) = (may, plain) else { return self.unknown_token(span) };
         // One name per set: the set it holds stays the one it was made
         // for, whatever the name it came from is given later.
-        let alias = self.intern(&format!("{}one of:{}:{:p}", crate::machine::UNKNOWN_NAME, self.name(sym), std::rc::Rc::as_ptr(&may)));
+        let alias = self.intern(&format!(
+            "{}one of:{}:{:p}",
+            crate::machine::UNKNOWN_NAME,
+            self.name(sym),
+            std::rc::Rc::as_ptr(&may)
+        ));
         let mut binding = Binding::builtin(Meaning::Unknown);
         binding.may = Some(may);
         self.env.set(alias, binding, true);
@@ -697,7 +710,9 @@ impl Machine<'_> {
                         let tokens: Vec<Token> = text
                             .chars()
                             .zip(&body)
-                            .map(|(c, t)| Token::new(Tok::Chr(c, if c == ' ' { Catcode::Space } else { Catcode::Other }), t.span))
+                            .map(|(c, t)| {
+                                Token::new(Tok::Chr(c, if c == ' ' { Catcode::Space } else { Catcode::Other }), t.span)
+                            })
                             .collect();
                         return self.unread_all(&tokens);
                     }
@@ -709,7 +724,9 @@ impl Machine<'_> {
                 let Some(token) = self.next_token() else { return };
                 // Unknown digits are characters of category 12, which
                 // `\string` gives back as they are (tex.web § 465).
-                if kind == TextOf::String && (token.tok == Tok::Cs(self.unknown_digits) || token.tok == Tok::Cs(self.unknown_more)) {
+                if kind == TextOf::String
+                    && (token.tok == Tok::Cs(self.unknown_digits) || token.tok == Tok::Cs(self.unknown_more))
+                {
                     return self.unread(token);
                 }
                 // Unknown text, or a name whose escape character is unknown,
@@ -720,7 +737,11 @@ impl Machine<'_> {
                             || sym == self.unknown_digits
                             || sym == self.unknown_more
                             || self.is_unknown_name(sym)
-                            || (kind == TextOf::Meaning && matches!(self.env.meaning(sym), Meaning::Unknown | Meaning::Char(crate::tex::UNKNOWN_CHAR, _)))
+                            || (kind == TextOf::Meaning
+                                && matches!(
+                                    self.env.meaning(sym),
+                                    Meaning::Unknown | Meaning::Char(crate::tex::UNKNOWN_CHAR, _)
+                                ))
                     }
                     Tok::Chr(c, Catcode::Active) if kind == TextOf::Meaning => {
                         let sym = self.active_sym(c);
@@ -871,9 +892,7 @@ impl Machine<'_> {
             // outer.
             Meaning::Macro(m) => {
                 let mut prefix = String::new();
-                for (set, word) in
-                    [(m.protected, "protected"), (m.long, "long"), (m.outer, "outer")]
-                {
+                for (set, word) in [(m.protected, "protected"), (m.long, "long"), (m.outer, "outer")] {
                     if set {
                         prefix.extend(escape);
                         prefix.push_str(word);
@@ -888,14 +907,12 @@ impl Machine<'_> {
                 for item in &m.parameter_text.items {
                     match item {
                         crate::tex::ParamItem::Param(n) => parameters.push_str(&format!("#{n}")),
-                        crate::tex::ParamItem::Lit(tok) => parameters.push_str(
-                            &crate::tex::detokenize_in(
-                                &[Token::new(*tok, Span::default())],
-                                &self.out.interner,
-                                escape,
-                                &self.catcodes,
-                            ),
-                        ),
+                        crate::tex::ParamItem::Lit(tok) => parameters.push_str(&crate::tex::detokenize_in(
+                            &[Token::new(*tok, Span::default())],
+                            &self.out.interner,
+                            escape,
+                            &self.catcodes,
+                        )),
                     }
                 }
                 if m.parameter_text.brace_end {
@@ -947,11 +964,7 @@ impl Machine<'_> {
 
     fn job_name(&mut self) -> String {
         let path = self.out.file_name(self.out.main_file).to_string();
-        std::path::Path::new(&path)
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .unwrap_or("texput")
-            .to_string()
+        std::path::Path::new(&path).file_stem().and_then(|stem| stem.to_str()).unwrap_or("texput").to_string()
     }
 
     /// Characters produced by the gullet are `other`, except the space.
@@ -1005,11 +1018,8 @@ impl Machine<'_> {
         let mut candidates = vec![String::new()];
         for c in name.chars() {
             let options: Vec<char> = if c == crate::tex::UNKNOWN_DIGIT { ('0'..='9').collect() } else { vec![c] };
-            candidates = candidates
-                .iter()
-                .flat_map(|p| options.iter().map(move |o| format!("{p}{o}")))
-                .take(10_000)
-                .collect();
+            candidates =
+                candidates.iter().flat_map(|p| options.iter().map(move |o| format!("{p}{o}"))).take(10_000).collect();
         }
         let mut meanings: Vec<Meaning> = Vec::new();
         for candidate in &candidates {
@@ -1094,7 +1104,10 @@ impl Machine<'_> {
                 closed = true;
                 break;
             }
-            if sym == self.unknown_digits || sym == self.unknown_more || matches!(self.env.meaning(sym), Meaning::Unknown) {
+            if sym == self.unknown_digits
+                || sym == self.unknown_more
+                || matches!(self.env.meaning(sym), Meaning::Unknown)
+            {
                 prefix.get_or_insert_with(|| name.clone());
                 name.clear();
                 continue;
@@ -1206,7 +1219,8 @@ impl Machine<'_> {
             let arm = |holds: bool| num.narrow(relation, bound, holds != negate).map(|n| Value::from_num(dimen, n));
             (sym, arm(true), arm(false))
         });
-        if taken.is_none() && command && self.edef_depth == 0 && self.split_conditional(by, span, kind, refine, narrow) {
+        if taken.is_none() && command && self.edef_depth == 0 && self.split_conditional(by, span, kind, refine, narrow)
+        {
             return;
         }
         self.choose_branch(taken, by, span, base, kind);
@@ -1349,7 +1363,14 @@ impl Machine<'_> {
                         Primitive::Fi => open -= 1,
                         _ if open > 0 => {}
                         _ => {
-                            let frame = CondFrame { limit: CondLimit::Fi, undecided: false, dep: false, at: span, kind: None, modes: None };
+                            let frame = CondFrame {
+                                limit: CondLimit::Fi,
+                                undecided: false,
+                                dep: false,
+                                at: span,
+                                kind: None,
+                                modes: None,
+                            };
                             m.conds.push(frame);
                             break;
                         }
@@ -1383,7 +1404,14 @@ impl Machine<'_> {
                     m.env.refine_value(*sym, value.clone());
                 }
                 m.cds.push(ControlDep { on, taken: true });
-                m.conds.push(CondFrame { limit: CondLimit::Else, undecided: false, dep: true, at: span, kind, modes: None });
+                m.conds.push(CondFrame {
+                    limit: CondLimit::Else,
+                    undecided: false,
+                    dep: true,
+                    at: span,
+                    kind,
+                    modes: None,
+                });
                 true
             }
             1 => {
@@ -1395,7 +1423,14 @@ impl Machine<'_> {
                 }
                 if let Some(Primitive::Else | Primitive::Or) = m.pass_arm(false, span) {
                     m.cds.push(ControlDep { on, taken: false });
-                    m.conds.push(CondFrame { limit: CondLimit::Fi, undecided: false, dep: true, at: span, kind, modes: None });
+                    m.conds.push(CondFrame {
+                        limit: CondLimit::Fi,
+                        undecided: false,
+                        dep: true,
+                        at: span,
+                        kind,
+                        modes: None,
+                    });
                 }
                 true
             }
@@ -1415,7 +1450,10 @@ impl Machine<'_> {
             Some(true) => {
                 self.record_with(Step::Branch, by, span, || Some("true"));
                 self.note_conditional(by, span, Some(Some(0)));
-                self.conds.insert(base, CondFrame { limit: CondLimit::Else, undecided: false, dep: false, at: span, kind, modes: None });
+                self.conds.insert(
+                    base,
+                    CondFrame { limit: CondLimit::Else, undecided: false, dep: false, at: span, kind, modes: None },
+                );
             }
             Some(false) => {
                 self.record_with(Step::Branch, by, span, || Some("false"));
@@ -1433,7 +1471,14 @@ impl Machine<'_> {
                         Some((Primitive::Else | Primitive::Or, mark)) => {
                             self.note_conditional(by, span, Some(Some(1)));
                             self.note_cond_mark(span, mark, false);
-                            self.conds.push(CondFrame { limit: CondLimit::Fi, undecided: false, dep: false, at: span, kind, modes: None });
+                            self.conds.push(CondFrame {
+                                limit: CondLimit::Fi,
+                                undecided: false,
+                                dep: false,
+                                at: span,
+                                kind,
+                                modes: None,
+                            });
                             break;
                         }
                         found => {
@@ -1455,14 +1500,14 @@ impl Machine<'_> {
                     Severity::Imprecision,
                     "undecided-condition",
                     span,
-                    format!(
-                        "\\{} could not be decided inside an \\edef body; its text is unknown",
-                        self.name(by)
-                    ),
+                    format!("\\{} could not be decided inside an \\edef body; its text is unknown", self.name(by)),
                 );
                 self.record_with(Step::Branch, by, span, || Some("true"));
                 self.note_conditional(by, span, None);
-                self.conds.insert(base, CondFrame { limit: CondLimit::Else, undecided: false, dep: false, at: span, kind, modes: None });
+                self.conds.insert(
+                    base,
+                    CondFrame { limit: CondLimit::Else, undecided: false, dep: false, at: span, kind, modes: None },
+                );
                 self.unread_unknown(span);
             }
             None if self.scanning > 0 => self.first_arm(by, span, CondLimit::Else, kind),
@@ -1550,7 +1595,13 @@ impl Machine<'_> {
             dep: true,
             at: span,
             kind,
-            modes: Some(crate::mode::ArmModes { entry, seen: Default::default(), other: false, size: self.natural, sizes: None }),
+            modes: Some(crate::mode::ArmModes {
+                entry,
+                seen: Default::default(),
+                other: false,
+                size: self.natural,
+                sizes: None,
+            }),
         });
     }
 
@@ -1571,12 +1622,9 @@ impl Machine<'_> {
             self.note_cond_mark(frame.at, span, false);
         }
         match self.conds.last_mut() {
-            None => self.diagnose(
-                Severity::Unsupported,
-                "extra-else",
-                span,
-                "\\else or \\or outside a conditional".into(),
-            ),
+            None => {
+                self.diagnose(Severity::Unsupported, "extra-else", span, "\\else or \\or outside a conditional".into())
+            }
             Some(frame) if frame.undecided => {
                 frame.limit = CondLimit::Fi;
                 // The arms run one after the other; each starts in the modes
@@ -1589,7 +1637,9 @@ impl Machine<'_> {
                     let left = std::mem::replace(&mut self.natural, arms.size);
                     arms.sizes = Some(arms.sizes.map_or(left, |s| crate::mode::join_natural(s, left)));
                 }
-                if frame.dep && let Some(dep) = self.cds.last_mut() {
+                if frame.dep
+                    && let Some(dep) = self.cds.last_mut()
+                {
                     dep.taken = false;
                 }
             }
@@ -1606,12 +1656,7 @@ impl Machine<'_> {
     /// `\fi` ends the level.
     fn conditional_fi(&mut self, span: Span) {
         if self.conds.is_empty() {
-            self.diagnose(
-                Severity::Unsupported,
-                "extra-fi",
-                span,
-                "\\fi outside a conditional".into(),
-            );
+            self.diagnose(Severity::Unsupported, "extra-fi", span, "\\fi outside a conditional".into());
             return;
         }
         if let Some(frame) = self.conds.last() {
@@ -1624,7 +1669,11 @@ impl Machine<'_> {
         if let Some(frame) = self.conds.pop() {
             if let Some(arms) = frame.modes {
                 // Without an `\else` the condition may select no arm.
-                let (mode, list) = if arms.other { arms.seen } else { (arms.seen.0.union(arms.entry.0), arms.seen.1.union(arms.entry.1)) };
+                let (mode, list) = if arms.other {
+                    arms.seen
+                } else {
+                    (arms.seen.0.union(arms.entry.0), arms.seen.1.union(arms.entry.1))
+                };
                 self.mode = self.mode.union(mode);
                 self.list = self.list.union(list);
                 let sizes = arms.sizes.map_or(self.natural, |s| crate::mode::join_natural(s, self.natural));
@@ -1819,7 +1868,8 @@ impl Machine<'_> {
                 // whatever their unknown parts stand for.
                 let lengths_differ = match (&ma, &mb) {
                     (Meaning::Macro(x), Meaning::Macro(y)) => {
-                        let ((xmin, xmax), (ymin, ymax)) = (self.text_length(&x.replacement_text), self.text_length(&y.replacement_text));
+                        let ((xmin, xmax), (ymin, ymax)) =
+                            (self.text_length(&x.replacement_text), self.text_length(&y.replacement_text));
                         xmax.is_some_and(|m| m < ymin) || ymax.is_some_and(|m| m < xmin)
                     }
                     _ => false,
@@ -1848,28 +1898,42 @@ impl Machine<'_> {
                 if xs.len() > 1 || ys.len() > 1 {
                     let pair = |x: &Meaning, y: &Meaning, me: &Self| -> Option<bool> {
                         match (x, y) {
-                            (Meaning::Unknown | Meaning::Undefined, _) | (_, Meaning::Unknown | Meaning::Undefined) => None,
+                            (Meaning::Unknown | Meaning::Undefined, _) | (_, Meaning::Unknown | Meaning::Undefined) => {
+                                None
+                            }
                             (Meaning::Macro(p), Meaning::Macro(q)) => {
                                 if Rc::ptr_eq(p, q) {
                                     return Some(true);
                                 }
-                                let (pu, qu) = (me.has_unknown(&p.replacement_text), me.has_unknown(&q.replacement_text));
+                                let (pu, qu) =
+                                    (me.has_unknown(&p.replacement_text), me.has_unknown(&q.replacement_text));
                                 if !pu && !qu {
                                     return Some(x == y);
                                 }
-                                let ((pmin, pmax), (qmin, qmax)) = (me.text_length(&p.replacement_text), me.text_length(&q.replacement_text));
+                                let ((pmin, pmax), (qmin, qmax)) =
+                                    (me.text_length(&p.replacement_text), me.text_length(&q.replacement_text));
                                 (pmax.is_some_and(|m| m < qmin) || qmax.is_some_and(|m| m < pmin)).then_some(false)
                             }
                             // A macro is never a character or a primitive.
                             (Meaning::Macro(_), _) | (_, Meaning::Macro(_)) => Some(false),
-                            (Meaning::Char(c, k), Meaning::Char(d, l)) if k == l && crate::tex::may_equal_unknown_char(*c as u32, *d as u32) => None,
+                            (Meaning::Char(c, k), Meaning::Char(d, l))
+                                if k == l && crate::tex::may_equal_unknown_char(*c as u32, *d as u32) =>
+                            {
+                                None
+                            }
                             _ => Some(x == y),
                         }
                     };
-                    let answers: Option<Vec<bool>> = xs.iter().flat_map(|x| ys.iter().map(move |y| (x, y))).map(|(x, y)| pair(x, y, self)).collect();
+                    let answers: Option<Vec<bool>> =
+                        xs.iter().flat_map(|x| ys.iter().map(move |y| (x, y))).map(|(x, y)| pair(x, y, self)).collect();
                     return answers.and_then(|a| alike(a.into_iter()));
                 }
-                if open(&ma, sa) || open(&mb, sb) || font_open || char_open || (!same_macro && !lengths_differ && (vague(&ma, self) || vague(&mb, self))) {
+                if open(&ma, sa)
+                    || open(&mb, sb)
+                    || font_open
+                    || char_open
+                    || (!same_macro && !lengths_differ && (vague(&ma, self) || vague(&mb, self)))
+                {
                     None
                 } else if let (Meaning::Primitive(p), true) = (&ma, ma == mb)
                     && *p != Primitive::DontExpand
@@ -1897,7 +1961,10 @@ impl Machine<'_> {
                 let t = self.next_token()?;
                 let sym = t.cs().or_else(|| self.active_cs(t));
                 operands.extend(sym);
-                if sym == Some(self.unknown) || sym == Some(self.unknown_rest) || sym.is_some_and(|s| self.is_unknown_name(s)) {
+                if sym == Some(self.unknown)
+                    || sym == Some(self.unknown_rest)
+                    || sym.is_some_and(|s| self.is_unknown_name(s))
+                {
                     return None;
                 }
                 // A name a join left one of several meanings is defined
@@ -2396,12 +2463,13 @@ impl Machine<'_> {
             }
         };
         if let Tok::Cs(sym) = token.tok
-            && let Some(Primitive::Register(kind)) = self.env.meaning(sym).prim() {
-                self.next_token();
-                let index = self.scan_number()?;
-                let target = self.register_sym(kind, index);
-                return Some((target, target, kind));
-            }
+            && let Some(Primitive::Register(kind)) = self.env.meaning(sym).prim()
+        {
+            self.next_token();
+            let index = self.scan_number()?;
+            let target = self.register_sym(kind, index);
+            return Some((target, target, kind));
+        }
         let sym = self.read_cs()?;
         // `\advance\tex_escapechar:D` changes `\escapechar` itself.
         let sym = self.env.identity(sym);
@@ -2451,10 +2519,14 @@ impl Machine<'_> {
             .iter()
             .map(|t| match t.tok {
                 // A code that is not known makes a character that is not.
-                Tok::Chr(c, _) if {
-                    let sym = self.char_code_sym(table, c);
-                    matches!(self.env.value(sym), Value::Unknown) && self.env.get(sym).is_some()
-                } => self.unknown_token(t.span),
+                Tok::Chr(c, _)
+                    if {
+                        let sym = self.char_code_sym(table, c);
+                        matches!(self.env.value(sym), Value::Unknown) && self.env.get(sym).is_some()
+                    } =>
+                {
+                    self.unknown_token(t.span)
+                }
                 Tok::Chr(c, cat) => match u32::try_from(self.char_code(table, c))
                     .ok()
                     .and_then(char::from_u32)
@@ -2504,8 +2576,7 @@ impl Machine<'_> {
         let text = self.text_of(&text);
         // tex.web § 1370: a stream that is not open writes to the terminal
         // and the log; that is a message.
-        let open = (0..16).contains(&stream)
-            && self.engine_int(&format!("write_open.{stream}")) == Some(1);
+        let open = (0..16).contains(&stream) && self.engine_int(&format!("write_open.{stream}")) == Some(1);
         if immediate && stream != 18 && !open {
             let at = self.file_call.map_or(span, |(_, call)| call);
             crate::observe::warned(self, &text, at);
@@ -2676,7 +2747,8 @@ impl Machine<'_> {
         // code that raised it was defined.
         let at = self.file_call.map_or(span, |(_, call)| call);
         crate::observe::warned(self, &text, at);
-        if let (Some(watch), Some(Primitive::Message { error: true })) = (&mut self.probe, self.env.meaning(by).prim()) {
+        if let (Some(watch), Some(Primitive::Message { error: true })) = (&mut self.probe, self.env.meaning(by).prim())
+        {
             watch.error.get_or_insert_with(|| text.clone());
             watch.errors += 1;
         }
@@ -2821,8 +2893,19 @@ fn zero_of(kind: RegKind) -> Value {
 /// Lower-case roman numerals, as `\romannumeral` writes them.
 fn roman(value: i64) -> String {
     const NUMERALS: [(i64, &str); 13] = [
-        (1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"), (90, "xc"),
-        (50, "l"), (40, "xl"), (10, "x"), (9, "ix"), (5, "v"), (4, "iv"), (1, "i"),
+        (1000, "m"),
+        (900, "cm"),
+        (500, "d"),
+        (400, "cd"),
+        (100, "c"),
+        (90, "xc"),
+        (50, "l"),
+        (40, "xl"),
+        (10, "x"),
+        (9, "ix"),
+        (5, "v"),
+        (4, "iv"),
+        (1, "i"),
     ];
     if value <= 0 {
         return String::new();
@@ -2873,7 +2956,10 @@ impl Machine<'_> {
             (Some(a), Some(b)) => a.len() * b.len() <= 64,
             _ => current.lo == current.hi && operand.lo == operand.hi,
         };
-        let num = if op != Arith::Advance && !enumerated && (current.lo == value::WORD_MIN || operand.lo == value::WORD_MIN) {
+        let num = if op != Arith::Advance
+            && !enumerated
+            && (current.lo == value::WORD_MIN || operand.lo == value::WORD_MIN)
+        {
             num.map(|n| n.join(&Num::range(value::WORD_MIN, 0), self.env.sets.values))
         } else {
             num
@@ -2882,7 +2968,12 @@ impl Machine<'_> {
             Some(num) if err => num.join(&current, self.env.sets.values),
             Some(num) => num,
             None => {
-                self.diagnose(Severity::Warning, "arithmetic-overflow", span, "arithmetic overflow; the register keeps its value".into());
+                self.diagnose(
+                    Severity::Warning,
+                    "arithmetic-overflow",
+                    span,
+                    "arithmetic overflow; the register keeps its value".into(),
+                );
                 current
             }
         };

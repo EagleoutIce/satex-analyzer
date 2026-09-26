@@ -85,7 +85,10 @@ fn xetex_queries_of_a_tfm_font_read_no_further() {
 fn xetex_string_utilities_and_characters() {
     // xetex: `-1ABY0.999998`
     assert_eq!(
-        out_in(Engine::XeTeX, r"\edef\out{\strcmp{a}{b}\Uchar65\Ucharcat 66 11 \ifprimitive\relax Y\fi\the\XeTeXversion\XeTeXrevision}"),
+        out_in(
+            Engine::XeTeX,
+            r"\edef\out{\strcmp{a}{b}\Uchar65\Ucharcat 66 11 \ifprimitive\relax Y\fi\the\XeTeXversion\XeTeXrevision}"
+        ),
         "-1ABY0.999998"
     );
 }
@@ -133,7 +136,10 @@ fn a_native_font_is_measured_from_its_tables() {
         Engine::XeTeX,
         r#"\font\x="[lmroman10-italic]" at 12pt \edef\out{\the\fontdimen1\x,\the\fontdimen2\x,\the\fontdimen3\x,\the\fontdimen4\x,\the\fontdimen5\x,\the\fontdimen6\x,\the\fontdimen7\x,\the\fontdimen8\x|\the\fontcharwd\x`W,\the\fontcharwd\x"4E00|\iffontchar\x`W Y\else N\fi\iffontchar\x"4E00 Y\else N\fi|\the\XeTeXcountglyphs\x,\the\XeTeXfonttype\x,\the\XeTeXfirstfontchar\x,\the\XeTeXlastfontchar\x}"#,
     );
-    assert_eq!(out, "0.25pt,4.296pt,2.148pt,1.43199pt,5.172pt,12.0pt,1.43199pt,8.196pt|11.988pt,3.36pt|YN|821,2,32,64260");
+    assert_eq!(
+        out,
+        "0.25pt,4.296pt,2.148pt,1.43199pt,5.172pt,12.0pt,1.43199pt,8.196pt|11.988pt,3.36pt|YN|821,2,32,64260"
+    );
     let meaning = out_in(Engine::XeTeX, r#"\font\x="[lmroman10-italic]" at 12pt \edef\out{\meaning\x}"#);
     assert!(meaning.starts_with("select font ") && meaning.contains("unknown"), "{meaning}");
 }
@@ -177,7 +183,10 @@ fn character_codes_start_at_the_engine_default() {
     }
     // pdftex: `1000,0,1000,1,0`
     assert_eq!(
-        out_in(Engine::PdfTeX, r"\font\w=cmr10 \edef\out{\the\efcode\w`A,\the\lpcode\w`A,\the\efcode\nullfont`A,\the\tagcode\w`A,\the\knbscode\w`A}"),
+        out_in(
+            Engine::PdfTeX,
+            r"\font\w=cmr10 \edef\out{\the\efcode\w`A,\the\lpcode\w`A,\the\efcode\nullfont`A,\the\tagcode\w`A,\the\knbscode\w`A}"
+        ),
         "1000,0,1000,1,0"
     );
 }
@@ -252,5 +261,8 @@ fn a_math_font_has_its_constants_as_parameters() {
     // xetex: `0.00099pt|0.00107pt|0.00076pt|15.6pt|3.336pt|-6.67198pt|0.00092pt|0.0pt`
     let source = r#"\font\m="[latinmodern-math.otf]" at 12pt \font\r="[lmroman10-regular]"
 \edef\out{\the\fontdimen9\m|\the\fontdimen10\m|\the\fontdimen11\m|\the\fontdimen12\m|\the\fontdimen63\m|\the\fontdimen64\m|\the\fontdimen65\m|\the\fontdimen9\r}"#;
-    assert_eq!(out_in(Engine::XeTeX, source), "0.00099pt|0.00107pt|0.00076pt|15.6pt|3.336pt|-6.67198pt|0.00092pt|0.0pt");
+    assert_eq!(
+        out_in(Engine::XeTeX, source),
+        "0.00099pt|0.00107pt|0.00076pt|15.6pt|3.336pt|-6.67198pt|0.00092pt|0.0pt"
+    );
 }

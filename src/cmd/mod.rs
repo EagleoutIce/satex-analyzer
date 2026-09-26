@@ -14,8 +14,8 @@ use std::io::Write;
 use clap::Subcommand;
 
 use crate::machine::Analysis;
-use crate::query::Record;
 pub use crate::plugin::Format;
+use crate::query::Record;
 use crate::render::Links;
 
 /// What a [`Command`] hands back to the CLI driver to print: a finished list
@@ -313,9 +313,7 @@ impl Command {
         let generic = matches!(format, Format::Text | Format::Json | Format::Csv | Format::Markdown);
         let (ok, hint): (bool, &str) = match self {
             Command::Lint { rules: true, .. } => (generic, "text, json, csv or markdown"),
-            Command::Lint { explain: Some(_), .. } => {
-                (matches!(format, Format::Text | Format::Json), "text or json")
-            }
+            Command::Lint { explain: Some(_), .. } => (matches!(format, Format::Text | Format::Json), "text or json"),
             Command::Lint { .. } => (
                 generic || matches!(format, Format::Github | Format::Sarif | Format::Lsp),
                 "text, json, csv, markdown, github, sarif or lsp",
@@ -323,16 +321,10 @@ impl Command {
             Command::Summary { .. } | Command::Cache { action: None } => {
                 (matches!(format, Format::Text | Format::Json), "text or json")
             }
-            Command::Dependencies => {
-                (matches!(format, Format::Text | Format::Json | Format::Dot), "text, json or dot")
-            }
+            Command::Dependencies => (matches!(format, Format::Text | Format::Json | Format::Dot), "text, json or dot"),
             _ => (generic, "text, json, csv or markdown"),
         };
-        if ok {
-            Ok(())
-        } else {
-            Err(format!("`--format {}` does not apply here; try {hint}", format.as_str()))
-        }
+        if ok { Ok(()) } else { Err(format!("`--format {}` does not apply here; try {hint}", format.as_str())) }
     }
 
     pub fn opaque_conditionals(&self) -> Vec<String> {
@@ -342,9 +334,7 @@ impl Command {
             Command::Controls { names, .. } if names.is_empty() => {
                 vec![crate::config::EVERY_SWITCH.to_string()]
             }
-            Command::Controls { names, .. } => {
-                names.iter().map(|n| n.trim_start_matches('\\').to_string()).collect()
-            }
+            Command::Controls { names, .. } => names.iter().map(|n| n.trim_start_matches('\\').to_string()).collect(),
             _ => Vec::new(),
         }
     }
@@ -370,9 +360,7 @@ impl Command {
                 lint::run(context, filter.as_deref(), *all, *rules, explain.as_deref(), fixing, out)
             }
             Command::Summary { all, depth } => summary::run(context, *all, *depth, out),
-            Command::Scope { at, filter, all } => {
-                inspect::scope(context, at.as_deref(), filter.as_deref(), *all)
-            }
+            Command::Scope { at, filter, all } => inspect::scope(context, at.as_deref(), filter.as_deref(), *all),
             Command::Explain { names, all, at } => inspect::explain(context, names, *all, at.as_deref()),
             Command::Slice { names, at, where_, forward, list, out: out_dir } => {
                 let query = inspect::SliceQuery {
@@ -426,9 +414,7 @@ pub fn parse_place(text: &str) -> Result<crate::query::At, String> {
     let numeric = |t: &str| t.trim().parse::<u32>().is_ok();
     let parts: Vec<&str> = text.rsplitn(3, ':').collect();
     let (file, rest) = match parts.as_slice() {
-        [col, line, file] if numeric(col) && numeric(line) => {
-            (Some(file.to_string()), &text[file.len() + 1..])
-        }
+        [col, line, file] if numeric(col) && numeric(line) => (Some(file.to_string()), &text[file.len() + 1..]),
         [_, file] if end.is_some() && !numeric(file) => (Some(file.to_string()), &text[file.len() + 1..]),
         _ => (None, text),
     };
@@ -465,7 +451,9 @@ pub fn trace_file(specs: &[Option<&str>]) -> Result<Option<String>, String> {
     for spec in specs.iter().flatten() {
         if let (Some(file), _) = split_file(spec) {
             match &found {
-                Some(other) if *other != file => return Err(format!("trace ranges name two files: {other} and {file}")),
+                Some(other) if *other != file => {
+                    return Err(format!("trace ranges name two files: {other} and {file}"));
+                }
                 _ => found = Some(file),
             }
         }

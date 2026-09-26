@@ -7,14 +7,14 @@ use std::path::{Path, PathBuf};
 use regex::Regex;
 use std::fmt::Write as _;
 
-use serde_json::{json, Map, Value as Json};
+use serde_json::{Map, Value as Json, json};
 
 use crate::builtins::{LoadKind, OccKind};
-use crate::facts::{Load, LoadStatus};
 use crate::env::NodeId;
+use crate::facts::{Load, LoadStatus};
 use crate::graph::EdgeKind;
 use crate::machine::Analysis;
-use crate::tex::{detokenize, FileId, Meaning, Span, Sym};
+use crate::tex::{FileId, Meaning, Span, Sym, detokenize};
 
 pub type Record = Map<String, Json>;
 
@@ -144,7 +144,9 @@ fn lex_filter(text: &str) -> Vec<Lexeme> {
             out.push(Lexeme::Word(word));
             continue;
         }
-        if let Some((symbol, op)) = OPERATORS.iter().find(|(symbol, _)| chars[i..].starts_with(&symbol.chars().collect::<Vec<_>>()[..])) {
+        if let Some((symbol, op)) =
+            OPERATORS.iter().find(|(symbol, _)| chars[i..].starts_with(&symbol.chars().collect::<Vec<_>>()[..]))
+        {
             out.push(Lexeme::Operator(*op));
             i += symbol.chars().count();
             continue;
@@ -463,11 +465,7 @@ fn expansions(analysis: &Analysis) -> Vec<Record> {
             record.insert("arguments".into(), json!(use_.arguments.len()));
             record.insert(
                 "argument".into(),
-                json!(use_
-                    .arguments
-                    .first()
-                    .map(|a| detokenize(a, &analysis.interner))
-                    .unwrap_or_default()),
+                json!(use_.arguments.first().map(|a| detokenize(a, &analysis.interner)).unwrap_or_default()),
             );
             record.insert("conditional".into(), json!(!use_.cds.is_empty()));
             record
@@ -518,8 +516,7 @@ fn occurrences(analysis: &Analysis) -> Vec<Record> {
 }
 
 fn recursion(analysis: &Analysis) -> Vec<Record> {
-    let defined: BTreeMap<Sym, Span> =
-        analysis.facts.defs.iter().map(|d| (d.name, d.span)).collect();
+    let defined: BTreeMap<Sym, Span> = analysis.facts.defs.iter().map(|d| (d.name, d.span)).collect();
     analysis
         .recursion()
         .into_iter()
@@ -530,10 +527,7 @@ fn recursion(analysis: &Analysis) -> Vec<Record> {
             record.insert("name".into(), json!(analysis.interner.cs(sym)));
             record.insert("kind".into(), json!(if cycle.len() > 1 { "mutual" } else { "direct" }));
             record.insert("observed".into(), json!(observed));
-            record.insert(
-                "cycle".into(),
-                json!(cycle.iter().map(|s| analysis.interner.cs(*s)).collect::<Vec<_>>()),
-            );
+            record.insert("cycle".into(), json!(cycle.iter().map(|s| analysis.interner.cs(*s)).collect::<Vec<_>>()));
             record
         })
         .collect()
@@ -565,12 +559,14 @@ fn dependency_graph(analysis: &Analysis) -> Vec<Record> {
             record.insert("name".into(), json!(vertex.render(&analysis.interner)));
             record.insert(
                 "edges".into(),
-                json!(analysis
-                    .graph
-                    .outgoing(id as NodeId)
-                    .iter()
-                    .map(|(to, kind)| json!({ "to": to, "types": kind.names() }))
-                    .collect::<Vec<_>>()),
+                json!(
+                    analysis
+                        .graph
+                        .outgoing(id as NodeId)
+                        .iter()
+                        .map(|(to, kind)| json!({ "to": to, "types": kind.names() }))
+                        .collect::<Vec<_>>()
+                ),
             );
             record.insert("controls".into(), json!(vertex.cds.len()));
             record
@@ -628,10 +624,7 @@ fn side_effects(analysis: &Analysis) -> Vec<Record> {
             record.insert("name".into(), json!(vertex.render(&analysis.interner)));
             record.insert("tag".into(), json!(vertex.tag.as_str()));
             record.insert("by".into(), json!(caused_by.render(&analysis.interner)));
-            record.insert(
-                "detail".into(),
-                json!(format!("while expanding at {}", caused_by.span)),
-            );
+            record.insert("detail".into(), json!(format!("while expanding at {}", caused_by.span)));
             Some(record)
         })
         .collect()
@@ -647,14 +640,8 @@ fn catcodes(analysis: &Analysis) -> Vec<Record> {
             let mut record = Map::new();
             record.insert("key".into(), json!(character.to_string()));
             record.insert("code".into(), json!(code));
-            record.insert(
-                "kind".into(),
-                json!(crate::tex::Catcode::from_u8(code).map(|c| format!("{c:?}"))),
-            );
-            record.insert(
-                "detail".into(),
-                json!(format!("was {:?}", base.get(character))),
-            );
+            record.insert("kind".into(), json!(crate::tex::Catcode::from_u8(code).map(|c| format!("{c:?}"))));
+            record.insert("detail".into(), json!(format!("was {:?}", base.get(character))));
             record
         })
         .collect()
@@ -699,21 +686,16 @@ fn project(analysis: &Analysis) -> Vec<Record> {
     first.insert("kind".into(), json!("document"));
     first.insert("detail".into(), json!(identity.kind));
     first.insert("name".into(), json!(identity.class));
-    first.insert("message".into(), json!(format!(
-        "engine {} ({})",
-        identity.engine, identity.engine_source
-    )));
+    first.insert("message".into(), json!(format!("engine {} ({})", identity.engine, identity.engine_source)));
     let mut out = vec![first];
     for file in &analysis.project.files {
         let mut record = Map::new();
         record.insert("kind".into(), json!(file.tool));
         record.insert("name".into(), json!(file.path.display().to_string()));
-        record.insert("detail".into(), json!(file
-            .settings
-            .iter()
-            .map(|(key, value)| format!("{key}={value}"))
-            .collect::<Vec<_>>()
-            .join(", ")));
+        record.insert(
+            "detail".into(),
+            json!(file.settings.iter().map(|(key, value)| format!("{key}={value}")).collect::<Vec<_>>().join(", ")),
+        );
         out.push(record);
     }
     // What the walk of the project directory found, which is where a run
@@ -727,8 +709,7 @@ fn project(analysis: &Analysis) -> Vec<Record> {
         record.insert("kind".into(), json!(kind));
         record.insert("count".into(), json!(paths.len()));
         let shown = paths.len().min(FOUND_SHOWN);
-        let mut detail =
-            paths[..shown].iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ");
+        let mut detail = paths[..shown].iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ");
         if shown < paths.len() {
             detail.push_str(&format!(", +{}", paths.len() - shown));
         }
@@ -797,7 +778,9 @@ impl At {
         let wanted = std::path::Path::new(wanted);
         (0..analysis.files.len() as FileId).find(|&id| {
             let path = std::path::Path::new(analysis.file_name(id));
-            path.ends_with(wanted) || wanted.ends_with(path) || crate::config::names_file(analysis.file_name(id), &wanted.to_string_lossy())
+            path.ends_with(wanted)
+                || wanted.ends_with(path)
+                || crate::config::names_file(analysis.file_name(id), &wanted.to_string_lossy())
         })
     }
 }
@@ -827,10 +810,7 @@ fn resolve(analysis: &Analysis, names: &[String], at: Option<&At>) -> Vec<NodeId
     let named = |name: &str| {
         names.iter().any(|wanted| match wanted.strip_prefix('\\') {
             Some(cs) => name == cs,
-            None => {
-                name == wanted
-                    || name.strip_prefix(crate::tex::ACTIVE).is_some_and(|c| c == wanted)
-            }
+            None => name == wanted || name.strip_prefix(crate::tex::ACTIVE).is_some_and(|c| c == wanted),
         })
     };
     let mut out: Vec<NodeId> = analysis
@@ -866,12 +846,7 @@ fn at_position(analysis: &Analysis, at: &At) -> Vec<NodeId> {
             .collect();
     }
     let on_line = || {
-        analysis
-            .graph
-            .vertices
-            .iter()
-            .enumerate()
-            .filter(move |(_, v)| v.span.file == file && v.span.line == at.line)
+        analysis.graph.vertices.iter().enumerate().filter(move |(_, v)| v.span.file == file && v.span.line == at.line)
     };
     let Some(col) = on_line()
         .map(|(_, v)| v.span.col)
@@ -884,12 +859,7 @@ fn at_position(analysis: &Analysis, at: &At) -> Vec<NodeId> {
     on_line().filter(|(_, v)| v.span.col == col).map(|(id, _)| id as NodeId).collect()
 }
 
-pub fn slice(
-    analysis: &Analysis,
-    names: &[String],
-    at: Option<&At>,
-    direction: Direction,
-) -> Vec<Record> {
+pub fn slice(analysis: &Analysis, names: &[String], at: Option<&At>, direction: Direction) -> Vec<Record> {
     slice_from(analysis, resolve(analysis, names, at), direction)
 }
 
@@ -1143,15 +1113,13 @@ fn frame(analysis: &Analysis, main: &[String]) -> Frame {
         .filter(|load| load.kind == LoadKind::Class && load.span.file == main_file)
         .map(|load| load.span.line)
         .collect();
-    let mut ends: Vec<u32> = here()
-        .filter(|o| o.kind == OccKind::EndEnvironment && document(o))
-        .map(|o| o.span.line)
-        .collect();
+    let mut ends: Vec<u32> =
+        here().filter(|o| o.kind == OccKind::EndEnvironment && document(o)).map(|o| o.span.line).collect();
     let library = analysis.files.get(main_file as usize).is_some_and(|f| f.kind.is_package());
-    if lines.is_empty() && ends.is_empty() && !library
-        && let Some(last) = main.iter().rposition(|line| {
-            !line.split('%').next().unwrap_or_default().trim().is_empty()
-        })
+    if lines.is_empty()
+        && ends.is_empty()
+        && !library
+        && let Some(last) = main.iter().rposition(|line| !line.split('%').next().unwrap_or_default().trim().is_empty())
     {
         ends.push(last as u32 + 1);
     }
@@ -1161,11 +1129,7 @@ fn frame(analysis: &Analysis, main: &[String]) -> Frame {
 
 /// Everything the run did on a kept line, read from the file itself rather
 /// than produced by an expansion.
-fn on_kept_lines(
-    analysis: &Analysis,
-    lines: &BTreeMap<FileId, BTreeSet<u32>>,
-    ends: &[u32],
-) -> Vec<NodeId> {
+fn on_kept_lines(analysis: &Analysis, lines: &BTreeMap<FileId, BTreeSet<u32>>, ends: &[u32]) -> Vec<NodeId> {
     let main = analysis.main_file;
     analysis
         .graph
@@ -1192,10 +1156,7 @@ fn enclosing_environments(analysis: &Analysis, lines: &BTreeMap<FileId, BTreeSet
             .facts
             .occurrences
             .iter()
-            .filter(|o| {
-                o.span.file == file
-                    && matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment)
-            })
+            .filter(|o| o.span.file == file && matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment))
             .collect();
         marks.sort_by_key(|o| (o.span.line, o.span.col));
         for mark in marks {
@@ -1452,8 +1413,7 @@ pub fn switches(analysis: &Analysis, all: bool) -> Vec<Record> {
 /// How much a switch decides: the definitions and uses recorded under it.
 fn governed_count(analysis: &Analysis, name: Sym) -> usize {
     let under = |cds: &[crate::graph::ControlDep]| {
-        cds.iter()
-            .any(|cd| analysis.graph.vertex(cd.on).is_some_and(|vertex| vertex.name == name))
+        cds.iter().any(|cd| analysis.graph.vertex(cd.on).is_some_and(|vertex| vertex.name == name))
     };
     analysis.facts.defs.iter().filter(|def| under(&def.cds)).count()
         + analysis.facts.expansions.iter().filter(|use_| under(&use_.cds)).count()
@@ -1479,9 +1439,7 @@ fn offered_options(analysis: &Analysis, all: bool) -> Vec<Record> {
                 let package = analysis.interner.name(package);
                 let name = analysis.interner.name(def.name);
                 let key = analysis.interner.name(subject);
-                ["", ".sty", ".cls"]
-                    .iter()
-                    .any(|ext| name == format!("KV@{package}{ext}@{key}"))
+                ["", ".sty", ".cls"].iter().any(|ext| name == format!("KV@{package}{ext}@{key}"))
             });
         if def.tag != "option" && !own_key {
             continue;
@@ -1489,9 +1447,7 @@ fn offered_options(analysis: &Analysis, all: bool) -> Vec<Record> {
         let name = analysis.interner.name(subject);
         // `\DeclareOption*` and the keys a package declares for itself are
         // not options a document can pass.
-        let internal = name.is_empty()
-            || name.contains('@')
-            || !name.starts_with(|c: char| c.is_ascii_alphanumeric());
+        let internal = name.is_empty() || name.contains('@') || !name.starts_with(|c: char| c.is_ascii_alphanumeric());
         if internal && !all {
             continue;
         }
@@ -1509,15 +1465,10 @@ fn offered_options(analysis: &Analysis, all: bool) -> Vec<Record> {
     // anything (`\ExecuteOptions`).
     let mut defaults: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for occurrence in &analysis.facts.occurrences {
-        if occurrence.kind != OccKind::PassedOption
-            || occurrence.detail.as_deref() != Some("default")
-        {
+        if occurrence.kind != OccKind::PassedOption || occurrence.detail.as_deref() != Some("default") {
             continue;
         }
-        let package = occurrence
-            .package
-            .map(|sym| analysis.interner.name(sym).to_string())
-            .unwrap_or_default();
+        let package = occurrence.package.map(|sym| analysis.interner.name(sym).to_string()).unwrap_or_default();
         defaults.entry(package).or_default().push(occurrence.key.clone());
     }
 
@@ -1678,15 +1629,11 @@ pub fn summary(analysis: &Analysis) -> Node {
         let Some(node) = by_file.get_mut(&occurrence.span.file) else { continue };
         match occurrence.kind {
             OccKind::Identification => {
-                node.identification = Some(
-                    occurrence.detail.clone().unwrap_or_default().trim().to_string(),
-                )
+                node.identification = Some(occurrence.detail.clone().unwrap_or_default().trim().to_string())
             }
-            OccKind::Catcode => node.catcodes.push(format!(
-                "{}={}",
-                occurrence.key,
-                occurrence.detail.clone().unwrap_or_default()
-            )),
+            OccKind::Catcode => {
+                node.catcodes.push(format!("{}={}", occurrence.key, occurrence.detail.clone().unwrap_or_default()))
+            }
             OccKind::Label | OccKind::Ref | OccKind::Cite | OccKind::BeginEnvironment => {
                 let tag = match occurrence.kind {
                     OccKind::Label => "labels",
@@ -1716,14 +1663,14 @@ pub fn summary(analysis: &Analysis) -> Node {
     let mut reader: BTreeMap<FileId, Span> = BTreeMap::new();
     for load in &analysis.facts.loads {
         if let Some(child) = load.file
-            && load.status == LoadStatus::Read {
-                reader.entry(child).or_insert(load.span);
-            }
+            && load.status == LoadStatus::Read
+        {
+            reader.entry(child).or_insert(load.span);
+        }
     }
     let main = analysis.main_file;
     let mut open = Vec::new();
-    attach(main, &mut by_file, &loads_in, &reader, &mut open)
-        .unwrap_or_else(|| Node::empty("<input>".into(), "input"))
+    attach(main, &mut by_file, &loads_in, &reader, &mut open).unwrap_or_else(|| Node::empty("<input>".into(), "input"))
 }
 
 fn attach(
@@ -1736,8 +1683,7 @@ fn attach(
     let mut node = by_file.remove(&file)?;
     open.push(file);
     for load in loads_in.get(&file).into_iter().flatten() {
-        let read_here =
-            load.file.is_some_and(|child| reader.get(&child) == Some(&load.span) && !open.contains(&child));
+        let read_here = load.file.is_some_and(|child| reader.get(&child) == Some(&load.span) && !open.contains(&child));
         let mut child = match load.file.filter(|_| read_here) {
             Some(id) => attach(id, by_file, loads_in, reader, open),
             None => None,
@@ -1778,11 +1724,7 @@ pub struct Identity<'a> {
 
 pub fn identity(analysis: &Analysis) -> Identity<'_> {
     let main = analysis.main_file;
-    let class = analysis
-        .facts
-        .loads
-        .iter()
-        .find(|load| load.kind == LoadKind::Class && load.span.file == main);
+    let class = analysis.facts.loads.iter().find(|load| load.kind == LoadKind::Class && load.span.file == main);
     let body = analysis.document_depth.is_some();
     let context = analysis.plugins.kernel == crate::plugin::Kernel::Context;
     let kind = match analysis.files.get(main as usize).map(|file| file.kind) {
@@ -1913,8 +1855,7 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
         let mut record = place(analysis, def.span);
         record.insert("name".into(), json!(analysis.interner.cs(def.name)));
         record.insert("tag".into(), json!(def.tag));
-        record
-            .insert("effective".into(), json!(effective_of(analysis, def.name, def.mac.as_deref(), None)));
+        record.insert("effective".into(), json!(effective_of(analysis, def.name, def.mac.as_deref(), None)));
         let (tier, origin) = origin_of(analysis, def.package, def.span.file);
         record.insert("package".into(), origin);
         rows.push((tier, record));
@@ -1939,18 +1880,13 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
         // every number and character it has ever seen, which would
         // otherwise outnumber the useful primitives and macros many times
         // over.
-        if unprintable_name(name)
-            || (!all && (internal_name(name) || !matches!(tag, "primitive" | "macro")))
-        {
+        if unprintable_name(name) || (!all && (internal_name(name) || !matches!(tag, "primitive" | "macro"))) {
             continue;
         }
         let mut record = Map::new();
         record.insert("name".into(), json!(analysis.interner.cs(sym)));
         record.insert("tag".into(), json!(tag));
-        record.insert(
-            "effective".into(),
-            json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), None)),
-        );
+        record.insert("effective".into(), json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), None)));
         record.insert("package".into(), json!("kernel"));
         rows.push((2, record));
     }
@@ -2081,7 +2017,12 @@ fn takes_of(analysis: &Analysis, sym: crate::tex::Sym, mac: Option<&crate::tex::
 /// `{n}` for a mandatory one, `…` where the probe could not see the end.
 /// A primitive the probe finds nothing for shows the bounds
 /// `builtins::takes` gives it, mandatory arguments first.
-fn effective_of(analysis: &Analysis, sym: crate::tex::Sym, mac: Option<&crate::tex::MacroDef>, view: Option<bool>) -> String {
+fn effective_of(
+    analysis: &Analysis,
+    sym: crate::tex::Sym,
+    mac: Option<&crate::tex::MacroDef>,
+    view: Option<bool>,
+) -> String {
     use crate::tex::ArgType as A;
     let cs = analysis.interner.cs(sym);
     let mut body = String::new();
@@ -2382,14 +2323,9 @@ fn record_for_def(analysis: &Analysis, def: &crate::facts::Definition, window: W
     }
     let package_name = def.package.map(|p| analysis.interner.name(p));
     let kernel = is_kernel_file(analysis, def.span.file);
-    if let Some((doc, link)) = documentation(
-        analysis,
-        def.name,
-        package_name,
-        kind == "class",
-        &analysis.env.meaning(def.name),
-        kernel,
-    ) {
+    if let Some((doc, link)) =
+        documentation(analysis, def.name, package_name, kind == "class", &analysis.env.meaning(def.name), kernel)
+    {
         record.insert("documentation".into(), json!(doc));
         record.insert("reference".into(), json!(link));
     }
@@ -2419,10 +2355,7 @@ fn record_for_kernel(analysis: &Analysis, sym: Sym, window: Window) -> Option<Re
         None => match analysis.format.as_ref() {
             Some(f) => {
                 record.insert("path".into(), json!(f.source));
-                let short = std::path::Path::new(&f.source)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(&f.source);
+                let short = std::path::Path::new(&f.source).file_name().and_then(|n| n.to_str()).unwrap_or(&f.source);
                 record.insert("file".into(), json!(short));
             }
             None => {
@@ -2435,16 +2368,9 @@ fn record_for_kernel(analysis: &Analysis, sym: Sym, window: Window) -> Option<Re
     // what the commands it dispatches to read on top of that.
     let arity = match meaning.as_macro() {
         Some(mac) => mac.arity(),
-        None => analysis
-            .facts
-            .shapes
-            .get(&sym)
-            .map(|shape| shape_bounds(shape).1.unwrap_or(0))
-            .unwrap_or_else(|| {
-                meaning
-                    .prim()
-                    .map_or(0, |p| crate::builtins::takes(p).1.unwrap_or(crate::builtins::takes(p).0))
-            }),
+        None => analysis.facts.shapes.get(&sym).map(|shape| shape_bounds(shape).1.unwrap_or(0)).unwrap_or_else(|| {
+            meaning.prim().map_or(0, |p| crate::builtins::takes(p).1.unwrap_or(crate::builtins::takes(p).0))
+        }),
     };
     record.insert("arity".into(), json!(arity));
     record.insert("context".into(), json!(where_label(analysis, &[Vec::new()])));
@@ -2457,7 +2383,10 @@ fn record_for_kernel(analysis: &Analysis, sym: Sym, window: Window) -> Option<Re
             None => Json::Null,
         },
     );
-    record.insert("effective".into(), json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), window.view())));
+    record.insert(
+        "effective".into(),
+        json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), window.view())),
+    );
     if let Some(error) = probed(analysis, sym, meaning.as_macro().map(|m| &**m), window.view()).and_then(|p| p.error) {
         record.insert("error".into(), json!(error));
     }
@@ -2585,7 +2514,9 @@ fn context_at(analysis: &Analysis, node: NodeId) -> Vec<Sym> {
         .occurrences
         .iter()
         .filter(|o| {
-            matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment) && o.key != "document" && o.node <= node
+            matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment)
+                && o.key != "document"
+                && o.node <= node
         })
         .collect();
     occurrences.sort_by_key(|o| o.node);
@@ -2641,7 +2572,9 @@ const MECHANISM_CAP: usize = 200;
 fn reaching_environments(analysis: &Analysis, via: Sym) -> Vec<Sym> {
     crate::probe::all_environments(analysis)
         .into_iter()
-        .filter(|&env| env == via || crate::probe::closure_bounded(analysis, env, MECHANISM_DEPTH, MECHANISM_CAP).contains(&via))
+        .filter(|&env| {
+            env == via || crate::probe::closure_bounded(analysis, env, MECHANISM_DEPTH, MECHANISM_CAP).contains(&via)
+        })
         .collect()
 }
 
@@ -2865,11 +2798,7 @@ fn probe_context_meanings(analysis: &Analysis, sym: Sym, base: &Record) -> Optio
 /// `@location` suffix asks for one specific meaning instead; `all` lists
 /// every recorded definition.  Returns the records plus a hint per name
 /// that had definitions left out, for the caller to show as a footer.
-pub fn explain(
-    analysis: &Analysis,
-    names: &[String],
-    all: bool,
-) -> Result<(Vec<Record>, Vec<String>), String> {
+pub fn explain(analysis: &Analysis, names: &[String], all: bool) -> Result<(Vec<Record>, Vec<String>), String> {
     explain_at(analysis, names, all, None)
 }
 
@@ -3104,11 +3033,7 @@ pub fn produces(analysis: &Analysis, source: &str, text: &str) -> Vec<Record> {
     }
     for use_ in &analysis.facts.expansions {
         let name = analysis.interner.cs(use_.name);
-        let argument = use_
-            .arguments
-            .iter()
-            .map(|a| detokenize(a, &analysis.interner))
-            .find(|a| a.contains(text));
+        let argument = use_.arguments.iter().map(|a| detokenize(a, &analysis.interner)).find(|a| a.contains(text));
         let matched = match (name.contains(text), argument) {
             (_, Some(argument)) => argument,
             (true, None) => name.clone(),
@@ -3163,7 +3088,6 @@ fn literal_source(analysis: &Analysis, source: &str, text: &str) -> Vec<Record> 
     }
     out
 }
-
 
 /// The pgfkeys a run left registered.  pgfkeys keeps a key as control
 /// sequences named after its path (pgfmanual, "Key Management"): the value
@@ -3232,8 +3156,22 @@ pub fn pgfkeys(analysis: &Analysis, prefix: Option<&str>) -> Vec<Record> {
                 (None, _) => "initial",
                 (Some(_), "pgfkeysalso") => "style",
                 (Some(_), "pgfkeys@handle@boolean") => "is if",
-                (Some(m), "def") if m.replacement_text.get(1).and_then(|t| t.cs()).is_some_and(|s| analysis.interner.name(s) == "pgfkeys@was@choice") => "is choice",
-                (Some(m), "edef") if m.replacement_text.get(1).and_then(|t| t.cs()).is_some_and(|s| analysis.interner.name(s) == "pgfkeysdefaultpath") => "is family",
+                (Some(m), "def")
+                    if m.replacement_text
+                        .get(1)
+                        .and_then(|t| t.cs())
+                        .is_some_and(|s| analysis.interner.name(s) == "pgfkeys@was@choice") =>
+                {
+                    "is choice"
+                }
+                (Some(m), "edef")
+                    if m.replacement_text
+                        .get(1)
+                        .and_then(|t| t.cs())
+                        .is_some_and(|s| analysis.interner.name(s) == "pgfkeysdefaultpath") =>
+                {
+                    "is family"
+                }
                 (Some(_), _) if key.args.is_some() => "code args",
                 (Some(_), _) => "code",
             };
@@ -3321,8 +3259,7 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, String)>
                 // so only what precedes the first comma is the path;
                 // `\setkeys`-style dispatchers pass the bare family instead,
                 // where this is a no-op.
-                let family =
-                    text.split(',').next()?.trim().trim_start_matches('/').split('/').next()?;
+                let family = text.split(',').next()?.trim().trim_start_matches('/').split('/').next()?;
                 (!family.is_empty()).then(|| family.to_string())
             });
             if let Some(family) = found {
@@ -3364,9 +3301,7 @@ pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
         record.insert("kind".into(), json!("positional"));
         record.insert(
             "detail".into(),
-            json!(format!(
-                "takes an optional argument ({shape}) not read through a recognized key family"
-            )),
+            json!(format!("takes an optional argument ({shape}) not read through a recognized key family")),
         );
         return vec![record];
     };

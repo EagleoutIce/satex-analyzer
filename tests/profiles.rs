@@ -60,7 +60,7 @@ fn the_package_profile_turns_off_document_only_lints_and_at_letter() {
     cfg.apply_profile(Profile::Package).unwrap();
     assert_eq!(cfg.profile, Some(Profile::Package));
     assert!(cfg.at_letter);
-    assert!(!cfg.report_public_definitions);
+    assert!(!cfg.lints.unused_definition.report_public);
     assert!(cfg.lint_off.iter().any(|c| c == "unused-label"));
     assert!(cfg.lint_off.iter().any(|c| c == "build-engine-mismatch"));
     // A rule that matters for package code is not turned off.
@@ -74,7 +74,7 @@ fn the_document_profile_changes_nothing() {
     cfg.apply_profile(Profile::Document).unwrap();
     assert_eq!(cfg.profile, Some(Profile::Document));
     assert!(!cfg.at_letter);
-    assert!(cfg.report_public_definitions);
+    assert!(cfg.lints.unused_definition.report_public);
     assert_eq!(cfg.lint_off, Config::default().lint_off);
 }
 
@@ -112,8 +112,5 @@ fn a_document_s_unused_definition_is_reported_regardless() {
     let source = "\\documentclass{article}\n\\newcommand\\unused{x}\n\\begin{document}\\end{document}\n";
     let analysis = analyze_as(Profile::Document, source, "demo.tex");
     let findings = satex::lint::lint(&analysis);
-    assert!(
-        findings.iter().any(|r| r["code"] == "unused-definition" && r["origin"] == "document"),
-        "{findings:?}"
-    );
+    assert!(findings.iter().any(|r| r["code"] == "unused-definition" && r["origin"] == "document"), "{findings:?}");
 }

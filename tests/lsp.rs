@@ -8,12 +8,11 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::Duration;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // Without a format the catcodes are INITEX's (tex.web § 232); prepended with
 // no newline so line/column positions below stay on their original lines.
-const FIXTURE: &str =
-    "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 \\def\\greet#1{Hello, #1!}\n\\greet{world}\n\\def\\unused{\\greet{x}}\n\\let\\alias\\greet\n";
+const FIXTURE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 \\def\\greet#1{Hello, #1!}\n\\greet{world}\n\\def\\unused{\\greet{x}}\n\\let\\alias\\greet\n";
 
 struct Server {
     child: Child,
@@ -139,10 +138,7 @@ fn stdio_session_drives_the_feature_set() {
 
     let mut server = Server::start(&dir);
 
-    let init_id = server.request(
-        "initialize",
-        json!({ "processId": null, "rootUri": null, "capabilities": {} }),
-    );
+    let init_id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
     let init = server.response(init_id);
     let capabilities = &init["result"]["capabilities"];
     assert_eq!(capabilities["hoverProvider"], json!(true));
@@ -176,10 +172,7 @@ fn stdio_session_drives_the_feature_set() {
     );
     let completion = server.response(completion_id);
     let items = completion["result"].as_array().cloned().unwrap_or_default();
-    assert!(
-        items.iter().any(|item| item["label"] == json!("greet")),
-        "completion did not offer `greet`: {items:?}"
-    );
+    assert!(items.iter().any(|item| item["label"] == json!("greet")), "completion did not offer `greet`: {items:?}");
 
     let definition_id = server.request(
         "textDocument/definition",
@@ -244,7 +237,10 @@ fn stdio_session_drives_the_feature_set() {
     let clash = server.response(clash_id);
     assert!(clash["error"]["message"].as_str().is_some_and(|m| m.contains("already defined")), "{clash:?}");
     assert!(
-        edits.iter().any(|e| e["range"] == json!({ "start": { "line": 1, "character": 1 }, "end": { "line": 1, "character": 6 } })),
+        edits
+            .iter()
+            .any(|e| e["range"]
+                == json!({ "start": { "line": 1, "character": 1 }, "end": { "line": 1, "character": 6 } })),
         "rename range missed the use of `\\greet`: {edits:?}"
     );
 

@@ -108,7 +108,22 @@ pub struct Watch {
 
 impl Watch {
     pub(crate) fn new(file: FileId) -> Self {
-        Watch { file, demand: None, peeked: Default::default(), looked_for: Vec::new(), scanned: Vec::new(), delimited: Vec::new(), errors: 0, reached: None, boxed: false, exhausted: false, error: None, raw: Vec::new(), calls: 0, bound: Vec::new() }
+        Watch {
+            file,
+            demand: None,
+            peeked: Default::default(),
+            looked_for: Vec::new(),
+            scanned: Vec::new(),
+            delimited: Vec::new(),
+            errors: 0,
+            reached: None,
+            boxed: false,
+            exhausted: false,
+            error: None,
+            raw: Vec::new(),
+            calls: 0,
+            bound: Vec::new(),
+        }
     }
 
     pub(crate) fn peek(&mut self, name: Sym, source: Token) {
@@ -203,7 +218,12 @@ pub(crate) fn closure(analysis: &Analysis, start: Sym) -> std::collections::Hash
 /// defines a command reaches eventually) — the two answer different
 /// questions, so callers that want "the mechanism a definition site is
 /// specific to" ask shallow.
-pub(crate) fn closure_bounded(analysis: &Analysis, start: Sym, depth: usize, cap: usize) -> std::collections::HashSet<Sym> {
+pub(crate) fn closure_bounded(
+    analysis: &Analysis,
+    start: Sym,
+    depth: usize,
+    cap: usize,
+) -> std::collections::HashSet<Sym> {
     let mut seen = std::collections::HashSet::new();
     seen.insert(start);
     let mut frontier = vec![start];
@@ -302,7 +322,11 @@ pub fn probe_contexts(analysis: &Analysis, sym: Sym) -> Vec<(Option<Sym>, Option
         return found;
     }
     let mut found = vec![(None, probe_bare_error(analysis, sym, None))];
-    found.extend(candidate_environments(analysis, sym).into_iter().map(|env| (Some(env), probe_bare_error(analysis, sym, Some(env)))));
+    found.extend(
+        candidate_environments(analysis, sym)
+            .into_iter()
+            .map(|env| (Some(env), probe_bare_error(analysis, sym, Some(env)))),
+    );
     if let Ok(mut cache) = analysis.context_probes.lock() {
         cache.insert(sym, found.clone());
     }
@@ -459,7 +483,8 @@ impl Prober<'_, '_> {
             }
             // An empty text up to a `{` found earlier is an item already
             // taken; it wants nothing more.
-            let demand = plain.demand.clone().filter(|d| !(d.at < prefix.len() && d.want == Want::Until && d.text == "{"));
+            let demand =
+                plain.demand.clone().filter(|d| !(d.at < prefix.len() && d.want == Want::Until && d.text == "{"));
             // What was offered so far is not what the command wants.
             if demand.as_ref().is_some_and(|d| d.at < prefix.len()) {
                 complete = false;
@@ -619,7 +644,10 @@ impl Prober<'_, '_> {
                         })
                         .collect();
                     let item = if others.iter().all(|(_, v)| *v == value) {
-                        let word = std::iter::once(word.clone()).chain(others.into_iter().map(|(k, _)| k)).collect::<Vec<_>>().join("|");
+                        let word = std::iter::once(word.clone())
+                            .chain(others.into_iter().map(|(k, _)| k))
+                            .collect::<Vec<_>>()
+                            .join("|");
                         ArgType::Keyword { word, value }
                     } else {
                         let shown = |k: &str, v: &Option<String>| match v {
@@ -770,7 +798,9 @@ fn default(given: &Watch, plain: &Watch, at: usize) -> Option<String> {
     let same = |b: &&Bound| b.mac == slot.mac && b.param == slot.param;
     let nth = given.bound[..found].iter().filter(same).count();
     let left_out = plain.bound.iter().filter(same).nth(nth)?;
-    // An empty default is no text to show: `o` says as much.
+    // No text to show: an empty default, or the marker ltcmd hands a
+    // left-out `o` (`\NoValue` since the 2026-06-01 kernel).
     let text = left_out.text.as_deref()?;
-    (left_out.positions.is_empty() && !text.trim().is_empty()).then(|| text.trim_end().to_string())
+    let marker = matches!(text.trim(), r"\NoValue" | r"\c_novalue_tl");
+    (left_out.positions.is_empty() && !text.trim().is_empty() && !marker).then(|| text.trim_end().to_string())
 }

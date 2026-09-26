@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use super::{parse_filter, Context, Format, Output};
+use super::{Context, Format, Output, parse_filter};
 use crate::lint::apply::{self, Outcome};
 use crate::query::Record;
 use crate::{lint, render};
@@ -106,4 +106,3 @@ fn summary(outcome: &Outcome, fixing: Fixing) -> String {
     }
     text
 }
-

@@ -46,11 +46,7 @@ fn every_command_honors_format_json() {
         full.push("--format");
         full.push("json");
         let output = run(&full);
-        assert!(
-            output.status.success(),
-            "{full:?} failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        assert!(output.status.success(), "{full:?} failed: {}", String::from_utf8_lossy(&output.stderr));
         let stdout = String::from_utf8_lossy(&output.stdout);
         serde_json::from_str::<serde_json::Value>(&stdout)
             .unwrap_or_else(|e| panic!("{full:?} did not print valid JSON ({e}):\n{stdout}"));
@@ -78,10 +74,7 @@ fn inapplicable_formats_error_clearly() {
         let output = run(args);
         assert!(!output.status.success(), "{args:?} unexpectedly succeeded");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            stderr.contains("does not apply"),
-            "{args:?}: expected a clear format error, got: {stderr}"
-        );
+        assert!(stderr.contains("does not apply"), "{args:?}: expected a clear format error, got: {stderr}");
     }
 }
 

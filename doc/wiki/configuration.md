@@ -29,9 +29,11 @@ paths:                    # kpathsea variables' fallback list: tried after the
   encfonts: []            # ENCFONTS
 at_letter: false          # start with @ a letter, as .sty files do
 lint_off: [analysis-imprecision]  # rule codes that never fire; a profile fills this in
-report_public_definitions: true  # unused-definition also flags a public name
-unused_definition_ignore: []     # regexes on macro names unused-definition skips
-report_pgf_keys: false           # unused-definition also flags an unused pgf key
+lints:
+  unused-definition:
+    report_public: true    # also flag a public name
+    ignore: []              # regexes on macro names the rule skips
+    pgf_keys: false         # also flag a pgf key no-one uses
 # profile: package          # forces one instead of detecting it from the input
 
 # Sensible defaults per kind of input, chosen automatically by the input's
@@ -42,7 +44,7 @@ profiles:
   document: {}            # a LaTeX document: every default above already fits it
   package:                 # a .sty, read as its own author sees it
     at_letter: true
-    report_public_definitions: false  # a public name is the package's own interface
+    lints: {unused-definition: {report_public: false}}  # a public name is the package's own interface
     lint_off: [analysis-imprecision, unused-label, microtype-available, build-shell-escape-missing,
                build-shell-escape-unneeded, build-engine-mismatch,
                build-bibliography-disabled, build-bibliography-unneeded,
@@ -50,7 +52,7 @@ profiles:
                build-command-placeholders, build-engine-options]
   class:                    # a .cls; the same defaults as a package
     at_letter: true
-    report_public_definitions: false
+    lints: {unused-definition: {report_public: false}}
     lint_off: [analysis-imprecision, unused-label, microtype-available, build-shell-escape-missing,
                build-shell-escape-unneeded, build-engine-mismatch,
                build-bibliography-disabled, build-bibliography-unneeded,
@@ -58,7 +60,7 @@ profiles:
                build-command-placeholders, build-engine-options]
   literate:                 # a .dtx/.ins; unpacks to a package or class
     at_letter: true
-    report_public_definitions: false
+    lints: {unused-definition: {report_public: false}}
     lint_off: [analysis-imprecision, unused-label, microtype-available, build-shell-escape-missing,
                build-shell-escape-unneeded, build-engine-mismatch,
                build-bibliography-disabled, build-bibliography-unneeded,
@@ -67,7 +69,7 @@ profiles:
   plain:                     # plain TeX: no LaTeX packages, classes or labels
     load_packages: false
     load_classes: false
-    lint_off: [analysis-imprecision, unused-label, microtype-available]
+    lint_off: [analysis-imprecision, unused-label, microtype-available, hand-set-quantity]
 
 # Detected when left out: engine from the build files, provider from the
 # locator on PATH, platform from this machine, output from $pdf_mode.
@@ -269,13 +271,13 @@ profile: package            # forces one instead of detecting it; --profile wins
 profiles:
   package:                  # merged over the settings above when this profile applies
     at_letter: true
-    report_public_definitions: false
+    lints: {unused-definition: {report_public: false}}
     lint_off: [unused-label, microtype-available, build-engine-mismatch]
 ```
 
-`report_public_definitions: false` (the package and class profiles' default) keeps `unused-definition` for a name that reads as the package's own internals — `@` in it, or an expl3 `module_function:signature` — but not for one with neither, since that is the package's public interface and the caller, not this run, is the one to use it.
+A rule with settings of its own reads them under `lints`, keyed by the rule's code. `lints.unused-definition.report_public: false` (the package and class profiles' default) keeps `unused-definition` for a name that reads as the package's own internals — `@` in it, or an expl3 `module_function:signature` — but not for one with neither, since that is the package's public interface and the caller, not this run, is the one to use it.
 
-`unused_definition_ignore` takes regexes on the name as written (`\\my@hook`); a match is never reported. `report_pgf_keys: true` also reports a pgf key nothing uses; off by default, since the user sets keys.
+`lints.unused-definition.ignore` takes regexes on the name as written (`\\my@hook`); a match is never reported. `lints.unused-definition.pgf_keys: true` also reports a pgf key nothing uses; off by default, since the user sets keys.
 
 ## Search paths
 

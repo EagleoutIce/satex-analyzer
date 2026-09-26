@@ -181,10 +181,9 @@ pub fn operators(content: &str) -> Vec<Operator> {
             Lexeme::Word(word) if depth == 0 && !is_number(word) => {
                 let operator = match word.as_str() {
                     "BMC" => Some(Operator::BeginMarked { operator: "BMC", optional_content: None }),
-                    "BDC" => Some(Operator::BeginMarked {
-                        operator: "BDC",
-                        optional_content: optional_content(&operands),
-                    }),
+                    "BDC" => {
+                        Some(Operator::BeginMarked { operator: "BDC", optional_content: optional_content(&operands) })
+                    }
                     "EMC" => Some(Operator::EndMarked),
                     "q" => Some(Operator::Save),
                     "Q" => Some(Operator::Restore),

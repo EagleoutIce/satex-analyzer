@@ -40,7 +40,10 @@ pub struct Metrics {
 pub enum LigKern {
     Kern(Scaled),
     /// A ligature by its operation (`=:` is 0) and character.
-    Lig { op: u8, char: u32 },
+    Lig {
+        op: u8,
+        char: u32,
+    },
 }
 
 /// tex.web § 545: `stop_flag` and `kern_flag`.
@@ -218,18 +221,14 @@ const FONT_DIRECTORIES: [&str; 4] = ["fonts/tfm", "fonts/source", "fonts/opentyp
 /// tree's `ls-R`, or by walking the tree when it has none.  An empty
 /// `ext` looks the name up as it is.
 pub fn locate(base: &Path, roots: &[PathBuf], name: &str, ext: &str) -> Option<PathBuf> {
-    let file = if ext.is_empty() || name.ends_with(&format!(".{ext}")) {
-        name.to_string()
-    } else {
-        format!("{name}.{ext}")
-    };
+    let file =
+        if ext.is_empty() || name.ends_with(&format!(".{ext}")) { name.to_string() } else { format!("{name}.{ext}") };
     let beside = base.join(&file);
     if beside.is_file() {
         return Some(beside);
     }
-    let index = INDEX.with(|cache| {
-        cache.borrow_mut().entry(roots.to_vec()).or_insert_with(|| Rc::new(index(roots))).clone()
-    });
+    let index =
+        INDEX.with(|cache| cache.borrow_mut().entry(roots.to_vec()).or_insert_with(|| Rc::new(index(roots))).clone());
     index.get(&file).cloned()
 }
 

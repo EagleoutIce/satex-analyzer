@@ -27,13 +27,8 @@ pub fn resolve(analysis: &Analysis, name: &str) -> Option<PathBuf> {
     if beside.is_file() {
         return Some(beside);
     }
-    if let found @ Some(_) = analysis
-        .plugins
-        .discovery
-        .bibliographies
-        .iter()
-        .find(|path| path.ends_with(&file))
-        .cloned()
+    if let found @ Some(_) =
+        analysis.plugins.discovery.bibliographies.iter().find(|path| path.ends_with(&file)).cloned()
     {
         return found;
     }

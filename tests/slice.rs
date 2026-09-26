@@ -59,12 +59,7 @@ fn scratch(name: &str) -> PathBuf {
     directory
 }
 
-fn slice_at(
-    analysis: &Analysis,
-    names: &[&str],
-    at: Option<At>,
-    direction: Direction,
-) -> Vec<Record> {
+fn slice_at(analysis: &Analysis, names: &[&str], at: Option<At>, direction: Direction) -> Vec<Record> {
     let names: Vec<String> = names.iter().map(|n| (*n).to_string()).collect();
     query::slice(analysis, &names, at.as_ref(), direction)
 }
@@ -75,11 +70,7 @@ fn marks(records: &[Record]) -> Vec<String> {
     let mut out: Vec<String> = records
         .iter()
         .map(|record| {
-            format!(
-                "{}@{}",
-                record["name"].as_str().unwrap_or_default(),
-                record["line"].as_u64().unwrap_or_default()
-            )
+            format!("{}@{}", record["name"].as_str().unwrap_or_default(), record["line"].as_u64().unwrap_or_default())
         })
         .collect();
     out.sort();
@@ -125,8 +116,7 @@ fn a_redefinition_reads_the_definition_it_replaces() {
     // latex.ltx defines `\renewcommand` through `\@ifundefined`, which errors
     // out unless the name is already there: the earlier definition is a real
     // dependency of the later one, and of everything downstream.
-    let analysis =
-        analyze_kernel("\\newcommand{\\foo}{first}\n\\renewcommand{\\foo}{second}\n\\foo\n");
+    let analysis = analyze_kernel("\\newcommand{\\foo}{first}\n\\renewcommand{\\foo}{second}\n\\foo\n");
     assert_holds(&at(&analysis, 3, 1), &["\\foo@1", "\\foo@2"], &[]);
 }
 
@@ -135,8 +125,7 @@ fn a_provision_that_does_nothing_is_not_in_the_slice() {
     // latex.ltx's `\provide@command` defines a scratch name when the name is
     // already taken, so line 2 is what the use on line 3 depends on and the
     // body on line 3 never takes effect.
-    let analysis =
-        analyze_kernel("\\newcommand{\\p}{first}\n\\providecommand{\\p}{second}\n\\p\n");
+    let analysis = analyze_kernel("\\newcommand{\\p}{first}\n\\providecommand{\\p}{second}\n\\p\n");
     assert_holds(&at(&analysis, 3, 1), &["\\p@1"], &["\\p@2"]);
 }
 
@@ -148,14 +137,8 @@ fn a_provision_of_a_free_name_defines_it() {
 
 #[test]
 fn a_let_chain_reaches_the_definition_at_the_end_of_it() {
-    let analysis = analyze(&format!(
-        "{PRELUDE}\\def\\base{{B}}\n\\let\\alias\\base\n\\let\\second\\alias\n\\second\n"
-    ));
-    assert_holds(
-        &at(&analysis, 4, 1),
-        &["\\base@1", "\\alias@2", "\\second@3"],
-        &[],
-    );
+    let analysis = analyze(&format!("{PRELUDE}\\def\\base{{B}}\n\\let\\alias\\base\n\\let\\second\\alias\n\\second\n"));
+    assert_holds(&at(&analysis, 4, 1), &["\\base@1", "\\alias@2", "\\second@3"], &[]);
 }
 
 #[test]
@@ -187,9 +170,7 @@ fn a_definition_rolled_back_with_its_group_is_not_in_a_later_slice() {
 fn a_definition_rolled_back_with_begingroup_is_not_in_a_later_slice() {
     // `\begingroup` opens a group like a brace does (tex.web § 269), so the
     // inner definition cannot reach line 5.
-    let analysis = analyze(&format!(
-        "{PRELUDE}\\def\\g{{outer}}\n\\begingroup\n\\def\\g{{inner}}\n\\endgroup\n\\g\n"
-    ));
+    let analysis = analyze(&format!("{PRELUDE}\\def\\g{{outer}}\n\\begingroup\n\\def\\g{{inner}}\n\\endgroup\n\\g\n"));
     assert_holds(&at(&analysis, 5, 1), &["\\g@1"], &["\\g@3"]);
     assert_holds(&at(&analysis, 3, 1), &["\\g@3"], &[]);
 }
@@ -205,9 +186,8 @@ fn both_arms_of_an_undecided_condition_are_in_the_slice() {
     // a random number cannot be settled, so either definition
     // may be the one in force at line 6 and the slice has to keep both,
     // together with the test that chose between them.
-    let analysis = analyze(&format!(
-        "{PRELUDE}\\ifnum\\pdfuniformdeviate2=0\n\\def\\m{{a}}\n\\else\n\\def\\m{{b}}\n\\fi\n\\m\n"
-    ));
+    let analysis =
+        analyze(&format!("{PRELUDE}\\ifnum\\pdfuniformdeviate2=0\n\\def\\m{{a}}\n\\else\n\\def\\m{{b}}\n\\fi\n\\m\n"));
     assert_holds(&at(&analysis, 6, 1), &["\\m@2", "\\m@4", "\\ifnum@1"], &[]);
 }
 
@@ -215,9 +195,7 @@ fn both_arms_of_an_undecided_condition_are_in_the_slice() {
 fn an_undecided_condition_keeps_the_definition_it_may_not_replace() {
     // No `\else`: the arm may not run at all, so the definition from before
     // the conditional is still possible.
-    let analysis = analyze(&format!(
-        "{PRELUDE}\\def\\m{{a}}\n\\ifnum\\pdfuniformdeviate2=0 \\def\\m{{b}}\\fi\n\\m\n"
-    ));
+    let analysis = analyze(&format!("{PRELUDE}\\def\\m{{a}}\n\\ifnum\\pdfuniformdeviate2=0 \\def\\m{{b}}\\fi\n\\m\n"));
     assert_holds(&at(&analysis, 3, 1), &["\\m@1", "\\m@2", "\\ifnum@2"], &[]);
 }
 
@@ -227,17 +205,13 @@ fn an_undecided_condition_keeps_the_definition_it_may_not_replace() {
 fn a_counter_slice_holds_every_assignment_to_it() {
     // `\setcounter` needs the counter declared and `\addtocounter` needs its
     // value, so line 3 depends on both lines above it.
-    let analysis = analyze_kernel(
-        "\\newcounter{step}\n\\setcounter{step}{3}\n\\addtocounter{step}{2}\n",
-    );
+    let analysis = analyze_kernel("\\newcounter{step}\n\\setcounter{step}{3}\n\\addtocounter{step}{2}\n");
     assert_holds(&at(&analysis, 3, 1), &["\\c@step@1", "\\c@step@2", "\\c@step@3"], &[]);
 }
 
 #[test]
 fn a_length_slice_holds_setlength_and_addtolength() {
-    let analysis = analyze_kernel(
-        "\\newlength{\\gap}\n\\setlength{\\gap}{1pt}\n\\addtolength{\\gap}{2pt}\n",
-    );
+    let analysis = analyze_kernel("\\newlength{\\gap}\n\\setlength{\\gap}{1pt}\n\\addtolength{\\gap}{2pt}\n");
     assert_holds(&at(&analysis, 3, 1), &["\\gap@1", "\\gap@2", "\\gap@3"], &[]);
 }
 
@@ -245,21 +219,15 @@ fn a_length_slice_holds_setlength_and_addtolength() {
 fn reading_a_register_depends_on_what_was_assigned_to_it() {
     // `\the\gap` is a use of the register (tex.web § 465), so the slice at
     // that position has to hold the assignments that decided its value.
-    let analysis = analyze_kernel(
-        "\\newlength{\\gap}\n\\setlength{\\gap}{1pt}\n\\addtolength{\\gap}{2pt}\n\\the\\gap\n",
-    );
-    assert_holds(
-        &at(&analysis, 4, 1),
-        &["\\gap@1", "\\gap@2", "\\gap@3", "\\gap@4"],
-        &[],
-    );
+    let analysis =
+        analyze_kernel("\\newlength{\\gap}\n\\setlength{\\gap}{1pt}\n\\addtolength{\\gap}{2pt}\n\\the\\gap\n");
+    assert_holds(&at(&analysis, 4, 1), &["\\gap@1", "\\gap@2", "\\gap@3", "\\gap@4"], &[]);
 }
 
 #[test]
 fn a_forward_slice_from_a_declaration_reaches_the_assignments() {
     let analysis = analyze_kernel("\\newlength{\\gap}\n\\setlength{\\gap}{1pt}\n\\the\\gap\n");
-    let forward =
-        marks(&slice_at(&analysis, &[], Some(At::here(1, 1)), Direction::Forward));
+    let forward = marks(&slice_at(&analysis, &[], Some(At::here(1, 1)), Direction::Forward));
     assert_holds(&forward, &["\\gap@1", "\\gap@2", "\\gap@3"], &[]);
 }
 
@@ -269,8 +237,7 @@ fn a_forward_slice_from_a_declaration_reaches_the_assignments() {
 fn an_environment_slice_holds_both_halves_of_it() {
     // `\newenvironment{note}` defines `\note` and `\endnote`; a slice on the
     // environment name has to reach the closing half too.
-    let analysis =
-        analyze_kernel("\\newenvironment{note}{A}{B}\n\\begin{note}\nx\n\\end{note}\n");
+    let analysis = analyze_kernel("\\newenvironment{note}{A}{B}\n\\begin{note}\nx\n\\end{note}\n");
     assert_holds(&backward(&analysis, &["note"]), &["\\note@1", "\\endnote@1"], &[]);
 }
 
@@ -278,17 +245,17 @@ fn an_environment_slice_holds_both_halves_of_it() {
 fn an_expl3_name_with_colons_can_be_sliced() {
     // expl3 is `expl3-code.tex`, which only the (cached) kernel brings.
     let cfg = Config { load_format: true, use_kpsewhich: true, ..bare() };
-    let analysis = Machine::analyze(concat!(
-        "\\ExplSyntaxOn\n",
-        "\\cs_new:Npn \\my_helper:n #1 { [#1] }\n",
-        "\\cs_new:Npn \\my_wrap:n #1 { \\my_helper:n {#1} }\n",
-        "\\ExplSyntaxOff\n",
-    ), None, &cfg);
-    assert_holds(
-        &backward(&analysis, &["\\my_wrap:n"]),
-        &["\\my_helper:n@2", "\\my_wrap:n@3"],
-        &[],
+    let analysis = Machine::analyze(
+        concat!(
+            "\\ExplSyntaxOn\n",
+            "\\cs_new:Npn \\my_helper:n #1 { [#1] }\n",
+            "\\cs_new:Npn \\my_wrap:n #1 { \\my_helper:n {#1} }\n",
+            "\\ExplSyntaxOff\n",
+        ),
+        None,
+        &cfg,
     );
+    assert_holds(&backward(&analysis, &["\\my_wrap:n"]), &["\\my_helper:n@2", "\\my_wrap:n@3"], &[]);
 }
 
 #[test]
@@ -303,10 +270,7 @@ fn an_active_character_can_be_sliced() {
 fn a_name_built_with_csname_can_be_sliced() {
     let analysis = analyze(&format!(
         "{PRELUDE}{}",
-        concat!(
-            "\\expandafter\\def\\csname built\\endcsname{D}\n",
-            "\\csname built\\endcsname\n",
-        )
+        concat!("\\expandafter\\def\\csname built\\endcsname{D}\n", "\\csname built\\endcsname\n",)
     ));
     assert_holds(&backward(&analysis, &["\\built"]), &["\\built@1", "\\built@2"], &[]);
 }
@@ -403,20 +367,14 @@ fn a_forward_slice_from_a_position_reaches_the_uses() {
     let analysis = analyze(&format!("{PRELUDE}\\def\\helper{{H}}\n\\def\\caller{{\\helper}}\n\\caller\n"));
     // The prelude shares line 1 with `\def\helper`, so the position names the
     // column right after it (tex.web § 232's catcodes stay off line 1).
-    let forward = marks(&slice_at(
-        &analysis,
-        &[],
-        Some(At::here(1, PRELUDE.len() as u32 + 1)),
-        Direction::Forward,
-    ));
+    let forward = marks(&slice_at(&analysis, &[], Some(At::here(1, PRELUDE.len() as u32 + 1)), Direction::Forward));
     assert_holds(&forward, &["\\helper@1", "\\caller@2", "\\caller@3"], &[]);
 }
 
 #[test]
 fn a_name_and_a_position_are_sliced_together() {
     let analysis = analyze(&format!("{PRELUDE}\\def\\a{{A}}\n\\def\\b{{B}}\n\\a\n\\b\n"));
-    let found =
-        marks(&slice_at(&analysis, &["\\a"], Some(At::here(4, 1)), Direction::Backward));
+    let found = marks(&slice_at(&analysis, &["\\a"], Some(At::here(4, 1)), Direction::Backward));
     assert_holds(&found, &["\\a@1", "\\a@3", "\\b@2", "\\b@4"], &[]);
 }
 
@@ -466,21 +424,9 @@ fn a_reconstruction_is_balanced_for_every_shape_of_definition() {
     let cases: &[(&str, &str, &str)] = &[
         ("one line", "\\def\\a{A}\n\\a\n", "\\a"),
         ("nested braces", "\\def\\a{{A}{B}}\n\\a\n", "\\a"),
-        (
-            "body over lines",
-            "\\newcommand{\\a}{%\n  {A}\n  {B}\n}\n\\a\n",
-            "\\a",
-        ),
-        (
-            "argument over lines",
-            "\\newenvironment{env}\n  {before}\n  {after}\n\\begin{env}x\\end{env}\n",
-            "env",
-        ),
-        (
-            "group over lines",
-            "\\def\\a{A}\n{%\n  \\def\\a{B}\n}\n\\a\n",
-            "\\a",
-        ),
+        ("body over lines", "\\newcommand{\\a}{%\n  {A}\n  {B}\n}\n\\a\n", "\\a"),
+        ("argument over lines", "\\newenvironment{env}\n  {before}\n  {after}\n\\begin{env}x\\end{env}\n", "env"),
+        ("group over lines", "\\def\\a{A}\n{%\n  \\def\\a{B}\n}\n\\a\n", "\\a"),
         ("escaped braces", "\\def\\a{\\{A\\}}\n\\a\n", "\\a"),
     ];
     for (what, source, name) in cases {
@@ -521,9 +467,7 @@ fn meaning(analysis: &Analysis, name: &str) -> (String, String) {
         .into_iter()
         .next_back()
         .unwrap_or_else(|| panic!("\\{name} did not explain"));
-    let field = |key: &str| {
-        record.get(key).and_then(serde_json::Value::as_str).unwrap_or_default().to_string()
-    };
+    let field = |key: &str| record.get(key).and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
     (field("body"), field("effective"))
 }
 
@@ -594,13 +538,7 @@ fn pdflatex_agrees_that_the_reconstruction_preserves_the_meaning() {
     let directory = scratch("engine");
     // The reconstruction is a document of its own, so the probe goes in
     // before its `\end{document}` just as it does in the original.
-    let body = concat!(
-        "\\newcommand{\\foo}{first}\n",
-        "\\renewcommand{\\foo}{%\n",
-        "  second\n",
-        "}\n",
-        "\\foo\n",
-    );
+    let body = concat!("\\newcommand{\\foo}{first}\n", "\\renewcommand{\\foo}{%\n", "  second\n", "}\n", "\\foo\n",);
     let source = format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\\end{{document}}\n");
     let cfg = Config { load_classes: true, ..Config::default() };
     let analysis = Machine::analyze(&source, None, &cfg);
@@ -621,11 +559,8 @@ fn a_macro_from_a_package_is_sliced_back_to_the_package() {
         return;
     }
     let directory = scratch("package");
-    std::fs::write(
-        directory.join("slicepkg.sty"),
-        "\\ProvidesPackage{slicepkg}\n\\newcommand{\\frompackage}{P}\n",
-    )
-    .unwrap();
+    std::fs::write(directory.join("slicepkg.sty"), "\\ProvidesPackage{slicepkg}\n\\newcommand{\\frompackage}{P}\n")
+        .unwrap();
     let main = directory.join("main.tex");
     let source = concat!(
         "\\documentclass{article}\n",
@@ -639,9 +574,7 @@ fn a_macro_from_a_package_is_sliced_back_to_the_package() {
     let analysis = Machine::analyze(source, Some(&main), &cfg);
     let records = slice_at(&analysis, &["\\frompackage"], None, Direction::Backward);
     assert!(
-        records.iter().any(|record| record["path"]
-            .as_str()
-            .is_some_and(|path| path.ends_with("slicepkg.sty"))
+        records.iter().any(|record| record["path"].as_str().is_some_and(|path| path.ends_with("slicepkg.sty"))
             && record["line"].as_u64() == Some(2)),
         "the package's definition belongs in the slice: {:?}",
         marks(&records)

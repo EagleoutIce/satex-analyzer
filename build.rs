@@ -101,10 +101,6 @@ fn lua() {
 fn lpeg() {
     let dir = std::path::Path::new("vendor/lpeg");
     let files = ["lpcap.c", "lpcode.c", "lpcset.c", "lpprint.c", "lptree.c", "lpvm.c"];
-    cc::Build::new()
-        .include(dir)
-        .files(files.iter().map(|f| dir.join(f)))
-        .warnings(false)
-        .compile("lpeg");
+    cc::Build::new().include(dir).files(files.iter().map(|f| dir.join(f))).warnings(false).compile("lpeg");
     println!("cargo:rerun-if-changed=vendor/lpeg");
 }

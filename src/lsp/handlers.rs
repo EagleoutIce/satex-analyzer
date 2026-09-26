@@ -10,8 +10,8 @@ use std::sync::OnceLock;
 
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionResponse, DocumentHighlight, DocumentHighlightKind,
-    GotoDefinitionResponse, Hover, HoverContents, InsertTextFormat, Location, MarkupContent, MarkupKind,
-    Position, PrepareRenameResponse, Range, SymbolInformation, SymbolKind, TextEdit, Uri, WorkspaceEdit,
+    GotoDefinitionResponse, Hover, HoverContents, InsertTextFormat, Location, MarkupContent, MarkupKind, Position,
+    PrepareRenameResponse, Range, SymbolInformation, SymbolKind, TextEdit, Uri, WorkspaceEdit,
 };
 use regex::Regex;
 use serde_json::Value as Json;
@@ -68,7 +68,11 @@ pub fn word_span(line: &str, col: u32) -> Option<(String, bool, u32)> {
     let target = char_byte(line, col.saturating_sub(1));
     word_re().find_iter(line).find(|m| m.start() <= target && target <= m.end()).map(|m| {
         let text = m.as_str();
-        (text.trim_start_matches('\\').to_string(), text.starts_with('\\'), line[..m.start()].chars().count() as u32 + 1)
+        (
+            text.trim_start_matches('\\').to_string(),
+            text.starts_with('\\'),
+            line[..m.start()].chars().count() as u32 + 1,
+        )
     })
 }
 
@@ -89,8 +93,7 @@ fn completion_context(line: &str, col: u32) -> Context {
     static CITE: OnceLock<Regex> = OnceLock::new();
     let env = ENV.get_or_init(|| Regex::new(r"\\begin\{[A-Za-z*]*$").unwrap());
     let refs = REF.get_or_init(|| Regex::new(r"\\(ref|eqref|pageref|autoref|nameref|[Cc]ref)\*?\{[^}]*$").unwrap());
-    let cite = CITE
-        .get_or_init(|| Regex::new(r"\\[a-zA-Z]*cite[a-zA-Z]*\*?(\[[^]]*])*\{[^}]*$").unwrap());
+    let cite = CITE.get_or_init(|| Regex::new(r"\\[a-zA-Z]*cite[a-zA-Z]*\*?(\[[^]]*])*\{[^}]*$").unwrap());
     if env.is_match(prefix) {
         Context::Environment
     } else if refs.is_match(prefix) {
@@ -114,11 +117,8 @@ const PATH: &percent_encoding::AsciiSet =
 /// the absolute-path-to-`file://`-URI case the server needs.
 pub fn path_uri(path: &str) -> Uri {
     let path = std::path::Path::new(path);
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir().unwrap_or_default().join(path)
-    };
+    let absolute =
+        if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(path) };
     let mut slash_path = absolute.to_string_lossy().replace('\\', "/");
     if !slash_path.starts_with('/') {
         slash_path.insert(0, '/');
@@ -204,7 +204,9 @@ pub fn definition(analysis: &Analysis, doc: &Text, position: Position) -> Option
             .into_iter()
             .filter(|r| {
                 r.get("key").and_then(Json::as_str) == Some(name.as_str())
-                    && r.get("kind").and_then(Json::as_str).is_some_and(|k| matches!(k, "label" | "bibitem" | "entry" | "key"))
+                    && r.get("kind")
+                        .and_then(Json::as_str)
+                        .is_some_and(|k| matches!(k, "label" | "bibitem" | "entry" | "key"))
             })
             .collect();
         // An environment name is defined as a control sequence.
@@ -212,7 +214,8 @@ pub fn definition(analysis: &Analysis, doc: &Text, position: Position) -> Option
     };
     // A key declared through a macro of the project has two places: the
     // call in the file and the text the macro expanded to.
-    let expanded: Vec<Record> = records.iter().filter_map(|r| r.get("expanded").and_then(Json::as_object).cloned()).collect();
+    let expanded: Vec<Record> =
+        records.iter().filter_map(|r| r.get("expanded").and_then(Json::as_object).cloned()).collect();
     records.extend(expanded);
     let locations: Vec<Location> = records.iter().filter_map(|r| record_location(r, &sources)).collect();
     (!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations))
@@ -273,12 +276,20 @@ fn bound_sites(
 
 /// `textDocument/references`: every expansion of a control sequence, or
 /// every occurrence of a label/citation/environment key, under the cursor.
-pub fn references(analysis: &Analysis, doc: &Text, path: &str, position: Position, declarations: bool) -> Option<Vec<Location>> {
+pub fn references(
+    analysis: &Analysis,
+    doc: &Text,
+    path: &str,
+    position: Position,
+    declarations: bool,
+) -> Option<Vec<Location>> {
     let pos = to_pos(doc, position);
     let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
     let sources = Sources::default();
-    let locations: Vec<Location> =
-        bound_sites(analysis, path, position, &name, is_command, declarations).iter().filter_map(|r| record_location(r, &sources)).collect();
+    let locations: Vec<Location> = bound_sites(analysis, path, position, &name, is_command, declarations)
+        .iter()
+        .filter_map(|r| record_location(r, &sources))
+        .collect();
     (!locations.is_empty()).then_some(locations)
 }
 
@@ -298,14 +309,14 @@ fn site_range(record: &Record, sources: &Sources, name: &str, is_command: bool) 
     }
     let found = text_line[search..].match_indices(&needle).map(|(i, _)| search + i).find(|&at| {
         let after = text_line[at + needle.len()..].chars().next();
-        !(is_command && name.chars().all(|c| c.is_ascii_alphabetic() || c == '@') && after.is_some_and(|c| c.is_ascii_alphabetic() || c == '@'))
+        !(is_command
+            && name.chars().all(|c| c.is_ascii_alphabetic() || c == '@')
+            && after.is_some_and(|c| c.is_ascii_alphabetic() || c == '@'))
     })?;
     let first = text_line[..found].chars().count() as u32 + 1 + u32::from(is_command);
     let width = name.chars().count() as u32;
-    let range = Range {
-        start: to_lsp(&text, Pos::new(line, first)),
-        end: to_lsp(&text, Pos::new(line, first + width)),
-    };
+    let range =
+        Range { start: to_lsp(&text, Pos::new(line, first)), end: to_lsp(&text, Pos::new(line, first + width)) };
     Some((path.to_string(), range))
 }
 
@@ -333,7 +344,12 @@ fn rename_plan(analysis: &Analysis, doc: &Text, path: &str, position: Position) 
 }
 
 /// `textDocument/prepareRename`: the span under the cursor and its name.
-pub fn prepare_rename(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Option<PrepareRenameResponse> {
+pub fn prepare_rename(
+    analysis: &Analysis,
+    doc: &Text,
+    path: &str,
+    position: Position,
+) -> Option<PrepareRenameResponse> {
     let plan = rename_plan(analysis, doc, path, position).ok()?;
     let site = plan.at(path, to_pos(doc, position))?;
     let range = Range { start: to_lsp(doc, site.start), end: to_lsp(doc, site.end) };
@@ -342,7 +358,13 @@ pub fn prepare_rename(analysis: &Analysis, doc: &Text, path: &str, position: Pos
 
 /// `textDocument/rename`: the name under the cursor, every name its
 /// declaration built with it, and every site that spells it.
-pub fn rename(analysis: &Analysis, doc: &Text, path: &str, position: Position, new_name: &str) -> Result<WorkspaceEdit, String> {
+pub fn rename(
+    analysis: &Analysis,
+    doc: &Text,
+    path: &str,
+    position: Position,
+    new_name: &str,
+) -> Result<WorkspaceEdit, String> {
     let plan = rename_plan(analysis, doc, path, position)?;
     let sources = Sources::default();
     let mut changes: std::collections::HashMap<Uri, Vec<TextEdit>> = std::collections::HashMap::new();
@@ -362,10 +384,18 @@ pub fn workspace_symbols(analysis: &Analysis, query_text: &str) -> Vec<SymbolInf
     let sources = Sources::default();
     let mut out = Vec::new();
     let mut add = |record: &Record, name: &str, kind: SymbolKind| {
-        if !name.is_empty() && name.to_lowercase().contains(&needle) {
-            if let Some(location) = record_location(record, &sources) {
-                out.push(SymbolInformation { name: name.to_string(), kind, tags: None, deprecated: None, location, container_name: None });
-            }
+        if !name.is_empty()
+            && name.to_lowercase().contains(&needle)
+            && let Some(location) = record_location(record, &sources)
+        {
+            out.push(SymbolInformation {
+                name: name.to_string(),
+                kind,
+                tags: None,
+                deprecated: None,
+                location,
+                container_name: None,
+            });
         }
     };
     for record in query::run(analysis, Query::Occurrences, &Filter::Always) {
@@ -380,10 +410,10 @@ pub fn workspace_symbols(analysis: &Analysis, query_text: &str) -> Vec<SymbolInf
         }
     }
     for record in query::run(analysis, Query::Definitions, &Filter::Always) {
-        if record.get("origin").and_then(Json::as_str) == Some("document") {
-            if let Some(name) = record.get("name").and_then(Json::as_str) {
-                add(&record, name, SymbolKind::FUNCTION);
-            }
+        if record.get("origin").and_then(Json::as_str) == Some("document")
+            && let Some(name) = record.get("name").and_then(Json::as_str)
+        {
+            add(&record, name, SymbolKind::FUNCTION);
         }
     }
     out
@@ -446,11 +476,7 @@ fn command_items(analysis: &Analysis, pos: Pos) -> Vec<CompletionItem> {
             };
             Some(CompletionItem {
                 label,
-                kind: Some(if tag == "primitive" {
-                    CompletionItemKind::KEYWORD
-                } else {
-                    CompletionItemKind::FUNCTION
-                }),
+                kind: Some(if tag == "primitive" { CompletionItemKind::KEYWORD } else { CompletionItemKind::FUNCTION }),
                 detail: Some(format!("{effective}  ({package})")),
                 insert_text: Some(insert_text),
                 insert_text_format: Some(format),
@@ -471,7 +497,10 @@ pub fn document_symbols(analysis: &Analysis, path: &str, doc: &Text) -> Option<V
         kind,
         tags: None,
         deprecated: None,
-        location: Location { uri: path_uri(path), range: Range { start: to_lsp(doc, Pos::new(line, col)), end: to_lsp(doc, Pos::new(line, col)) } },
+        location: Location {
+            uri: path_uri(path),
+            range: Range { start: to_lsp(doc, Pos::new(line, col)), end: to_lsp(doc, Pos::new(line, col)) },
+        },
         container_name: None,
     };
     let mut out = Vec::new();

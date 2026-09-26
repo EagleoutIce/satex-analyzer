@@ -53,7 +53,10 @@ impl CharMap {
 
     fn languages(&self, script: u32) -> impl Iterator<Item = u32> + '_ {
         let at = self.layout[0].iter().position(|s| s.tag == script);
-        self.layout.iter().flat_map(move |table| at.and_then(|i| table.get(i))).flat_map(|s| s.languages.iter().map(|l| l.0))
+        self.layout
+            .iter()
+            .flat_map(move |table| at.and_then(|i| table.get(i)))
+            .flat_map(|s| s.languages.iter().map(|l| l.0))
     }
 
     /// `\XeTeXOTcountlanguages`.
@@ -116,9 +119,7 @@ impl CharMap {
         let points = |units: u32| self.points(units, size);
         let space = || self.advance(32).map(points);
         Some(match k {
-            1 => {
-                (-(self.italic_angle.to_radians().tan()) * 65536.0 + 0.5) as i64
-            }
+            1 => (-(self.italic_angle.to_radians().tan()) * 65536.0 + 0.5) as i64,
             2 => space()?,
             3 => space()? / 2,
             4 | 7 => space()? / 3,

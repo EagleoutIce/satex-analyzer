@@ -15,24 +15,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  publish:
+  generate:
     runs-on: ubuntu-latest
     container: texlive/texlive:latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       # Lua and LPeg are compiled from C; the TeX Live image has no compiler.
       - name: Install a C toolchain
         run: apt-get update && apt-get install -y --no-install-recommends build-essential
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      # The generated pages come from the binary itself, so they are built
-      # from the same run that checks them.
       - name: Generate the documentation
         run: |
           cargo build --release
@@ -40,20 +35,50 @@ jobs:
 
       - name: Collect the site
         run: |
-          mkdir -p site
+          mkdir -p site/doc
           cp README.md site/index.md
           cp SEMANTICS.md site/
           cp -r doc/wiki site/wiki
+          cp -r doc/wiki site/doc/wiki
           cp doc/chktex-coverage.md site/
-          cat > site/_config.yml <<'YAML'
+          cp doc/chktex-coverage.md site/doc/
+          # A project page is served under /<repository>, which the theme's
+          # own asset links follow through `baseurl`.
+          cat > site/_config.yml <<YAML
           theme: jekyll-theme-cayman
           title: satex
           description: An abstract interpreter for TeX and LaTeX
+          baseurl: /${{ github.event.repository.name }}
           YAML
+          find site -name '*.md' -print0 | while IFS= read -r -d '' page; do
+            printf '---\nlayout: default\n---\n' | cat - "$page" > "$page.tmp"
+            mv "$page.tmp" "$page"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site-sources
+          path: site
+
+  publish:
+    needs: generate
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: site-sources
+          path: site
 
       - uses: actions/configure-pages@v5
+      - uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./site
+          destination: ./_site
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: _site
       - id: deploy
         uses: actions/deploy-pages@v4

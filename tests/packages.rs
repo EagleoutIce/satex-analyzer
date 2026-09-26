@@ -64,8 +64,7 @@ fn a_package_that_redefines_a_kernel_command_keeps_the_observed_meaning() {
 \section{One}\label{sec:one}
 \end{document}",
     );
-    let labels =
-        satex::query::run(&analysis, satex::query::Query::Occurrences, &satex::query::Filter::Always);
+    let labels = satex::query::run(&analysis, satex::query::Query::Occurrences, &satex::query::Filter::Always);
     assert!(
         labels.iter().any(|record| record.get("key").is_some_and(|k| k == "sec:one")),
         "the label survives hyperref redefining \\label"
@@ -92,8 +91,7 @@ fn expl3_code_keeps_its_names_and_its_catcodes() {
         assert!(defined(&analysis, name), "expl3 defines \\{name}");
     }
     let findings = satex::lint::lint(&analysis);
-    let codes: Vec<&str> =
-        findings.iter().filter_map(|f| f.get("code").and_then(|c| c.as_str())).collect();
+    let codes: Vec<&str> = findings.iter().filter_map(|f| f.get("code").and_then(|c| c.as_str())).collect();
     assert!(!codes.contains(&"expl-syntax-left-on"), "\\ExplSyntaxOff ends it: {codes:?}");
     assert!(!codes.contains(&"catcode-left-changed"), "the catcodes go back: {codes:?}");
 }
@@ -164,13 +162,7 @@ fn an_image_is_looked_for_where_graphicspath_says_and_in_what_the_driver_reads()
 }
 
 fn occurrences(analysis: &Analysis, kind: satex::builtins::OccKind) -> Vec<String> {
-    analysis
-        .facts
-        .occurrences
-        .iter()
-        .filter(|o| o.kind == kind)
-        .map(|o| o.key.clone())
-        .collect()
+    analysis.facts.occurrences.iter().filter(|o| o.kind == kind).map(|o| o.key.clone()).collect()
 }
 
 #[test]
@@ -247,11 +239,7 @@ fn listings_and_minted_keep_their_bodies_out_of_the_analysis() {
         );
         let analysis = analyze(&source);
         assert!(
-            !analysis
-                .facts
-                .expansions
-                .iter()
-                .any(|e| analysis.interner.name(e.name) == "undefinedinlisting"),
+            !analysis.facts.expansions.iter().any(|e| analysis.interner.name(e.name) == "undefinedinlisting"),
             "{package}: the body of {environment} is text, not code"
         );
     }
@@ -321,12 +309,9 @@ fn etoolbox_document_hooks_are_the_kernel_hooks() {
             "mark afterenddocument",
         ]
     );
-    for (name, text) in [
-        ("fromendpreamble", "1"),
-        ("frombegin", "2"),
-        ("fromafterpreamble", "3"),
-        ("fromafterendpreamble", "4"),
-    ] {
+    for (name, text) in
+        [("fromendpreamble", "1"), ("frombegin", "2"), ("fromafterpreamble", "3"), ("fromafterendpreamble", "4")]
+    {
         assert_eq!(body(&analysis, name), text, "\\{name}");
     }
     assert!(!codes(&analysis).contains(&"undefined-control-sequence".to_string()));

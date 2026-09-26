@@ -36,6 +36,7 @@ Current version: 0.1.0. `satex --version` also lists the plugins included in thi
 ```text
 $ satex --version
 satex 0.1.0
+https://github.com/EagleoutIce/satex-analyzer
 
 plugins: 46 in 11 kinds
   provider            3  texlive, miktex, tectonic
@@ -46,9 +47,115 @@ plugins: 46 in 11 kinds
   build system        5  latexmk, make, tectonic, arara, l3build
   tools               7  biber, bibtex, makeindex, xindy, makeglossaries, dvips, ps2pdf
   magic comments      3  % !TeX, % !BIB, % arara:
-  output format       8  text, json, csv, markdown, dot, github, sarif, lsp
-… 6 more lines omitted
+… 7 more lines omitted
 ```
+
+<details>
+<summary>Full satex <code>--help</code> output</summary>
+
+```text
+$ satex --help
+Static analyzer for TeX and LaTeX
+
+Usage: satex [OPTIONS] [COMMAND]
+
+Commands:
+  query         Run a query.  `satex query --list` names them all
+  lint          Context-sensitive lints for the input file; `--all` includes libraries
+  summary       What the document and every file it loads contribute
+  scope         Control sequences visible at a position, for completion
+  explain       What a control sequence means and where it comes from
+  slice         Slice the document around a control sequence, environment or position: a compilable reconstruction of the main file by default
+  controls      Everything a switch, option or conditional governs.  Without a name, the switches and options in effect.  Several names answer in one table, each row's `for` column saying which one it answers
+  dependencies  The program dependence graph — data dependencies plus control dependencies — as DOT or JSON
+  trace         The execution trace, step by step
+  cache         The interpreted LaTeX2e kernel and the package caches.  Without a further command, prints their status
+  tokens        The token stream the mouth produces
+  lsp           A Language Server Protocol server: a thin facade over the queries and lints above, driven by `initialize`/`didOpen`/`didChange` instead of one-shot arguments.  Stdio by default; `--port` switches to TCP
+  help          Print this message or the help of the given subcommand(s)
+
+Options:
+  -V, --version
+          The version, the plugins this build offers, and the configuration in effect here
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+Input:
+  -f, --file <FILE>
+          The document to read. Without it, satex looks for one root document in the current directory, or reads stdin if that is not a terminal
+
+      --config <FILE>
+          An extra config file, merged on top of every discovered satex.yaml (built-in defaults, the global config, the ones from the filesystem root down to the document's directory)
+
+      --no-config
+          Ignore every satex.yaml, discovered or named with --config — built-in defaults and `--set` only
+
+      --profile <NAME>
+          Which defaults to apply (usually auto-detected): document, package, class, literate or plain
+
+      --set <PATH=VALUE>
+          Overrides an option of `satex.yaml` by its dotted path, the value written as there: `--set limits.memory=8GiB --set load_inputs=false`. Repeatable; the flags below win over it
+
+      --no-packages
+          Do not load packages; analyze the document and the kernel only
+
+      --no-classes
+          Do not load the document class
+
+Limits:
+      --max-steps <N>
+          Stop the interpreter after this many expansion steps
+
+      --max-memory <SIZE>
+          What this run may hold at once, as written by `ulimit`: 512M, 4GiB, 0 for no limit
+
+      --threads <N>
+          Threads used for program discovery
+
+Output:
+  -v, --verbose...
+          Report progress: files read (-v), every 100k tokens (-vv), every expansion (-vvv)
+
+      --format <FORMAT>
+          Output format: text, json, csv, markdown, dot, github, sarif or lsp
+
+          Possible values:
+          - text:     Aligned table for a terminal, with color and links
+          - json:     One JSON array of objects, one object per record
+          - csv:      Comma-separated, one record per line
+          - markdown: A Markdown table, for a report or a pull request
+          - dot:      Graphviz, for `satex dependencies`
+          - github:   GitHub Actions annotations
+          - sarif:    SARIF 2.1.0, for code scanning
+          - lsp:      Language Server Protocol diagnostics and quick-fix code actions
+          
+          [default: text]
+
+      --color <COLOR>
+          When to color the output
+
+          Possible values:
+          - auto:   Color when stdout is a terminal, off otherwise
+          - always: Color even when stdout is not a terminal, for example when piped
+          - never:  Never color the output
+          
+          [default: auto]
+
+      --links
+          Turn on terminal hyperlinks from names to their source position, even when auto-detection would leave them off
+
+      --no-links
+          Turn off terminal hyperlinks, even when auto-detection would turn them on
+
+      --stats
+          Print one line of resource accounting (files, tokens, memory, time) to stderr after the run
+
+      --timings
+          Print a per-phase timing breakdown to stderr after the run
+```
+
+</details>
 
 ## Linting
 
@@ -57,14 +164,14 @@ Provides context-sensitive diagnostics like undefined names, duplicates, dead co
 ```text
 $ satex lint -f samples/paper.tex
 errors (1)
-  paper.tex:23:1  error    already-defined  \repeat is already defined
+  paper.tex:24:1  error    already-defined  \repeat is already defined
     [unsafe fix] use \renewcommand{\repeat} instead
 
-suggestions (6)
-  paper.tex:13:1  info     unused-definition  \WeirdMore is never used
+suggestions (7)
+  paper.tex:14:1  info     unused-definition  \WeirdMore is never used
     [unsafe fix] delete \WeirdMore
-  paper.tex:15:1  info     unused-definition  \Weird is never used
-… 19 more lines omitted
+  paper.tex:16:1  info     unused-definition  \Weird is never used
+… 21 more lines omitted
 ```
 
 <details>
@@ -108,6 +215,7 @@ info      style        build-engine-options             the engine command could
 info      style        build-unused-custom-dependency   a latexmk custom dependency that nothing in the document trig…  
 info      style        computer-modern-in-t1            T1 text in Computer Modern relies on cm-super for scalable fo…  
 info      style        dead-definition                  a definition is replaced before anything uses it                
+info      style        hand-set-quantity                a number and its unit are set by hand where siunitx would set…  
 info      style        microtype-available              the engine can protrude characters and expand fonts, but micr…  
 info      style        ot1-font-encoding                accented letters are built with \accent because the text is s…  
 info      style        primitive-tex-command            a plain TeX primitive is used where LaTeX has its own interfa…  
@@ -156,13 +264,13 @@ For CI, output formats include `--format github` (GitHub Actions annotations) an
 
 ```text
 $ satex lint -f samples/paper.tex --format github
-::error file=samples/paper.tex,line=23,col=1,title=already-defined::\repeat is already defined
-::notice file=samples/paper.tex,line=74,col=1,title=unused-label::label `sec:conclusion` is never referenced
-::notice file=samples/paper.tex,line=41,col=1,title=unused-label::label `sec:method` is never referenced
-::notice file=samples/paper.tex,line=21,col=1,title=primitive-tex-command::\csname is plain TeX; here it uses a control sequence by name
-::notice file=samples/paper.tex,line=13,col=1,title=unused-definition::\WeirdMore is never used
-::notice file=samples/paper.tex,line=15,col=1,title=unused-definition::\Weird is never used
-… 3 more lines omitted
+::error file=samples/paper.tex,line=24,col=1,title=already-defined::\repeat is already defined
+::notice file=samples/paper.tex,line=75,col=1,title=unused-label::label `sec:conclusion` is never referenced
+::notice file=samples/paper.tex,line=42,col=1,title=unused-label::label `sec:method` is never referenced
+::notice file=samples/paper.tex,line=22,col=1,title=primitive-tex-command::\csname is plain TeX; here it uses a control sequence by name
+::notice file=samples/preamble.tex,line=1,col=1,title=unused-definition::\hello is never used
+::notice file=samples/paper.tex,line=14,col=1,title=unused-definition::\WeirdMore is never used
+… 4 more lines omitted
 ```
 
 </details>
@@ -217,7 +325,7 @@ $ satex explain -f samples/paper.tex '\usepackage'
 
 ```text
 $ satex explain -f samples/paper.tex '\norm'
-\norm @ paper.tex:11:13
+\norm @ paper.tex:12:13
   tag        macro
   context    outside environments
   effective  \norm{1}
@@ -227,7 +335,7 @@ $ satex explain -f samples/paper.tex '\norm'
   by         \newcommand
   expands    \left, \hat, \hat , \mathaccentV, \right
   body       \left \lVert #1\right \rVert 
-  file       /home/ostwind/git/phd/satex/samples/paper.tex:11
+  file       /home/ostwind/git/phd/satex/samples/paper.tex:12
 ```
 
 </details>
@@ -251,7 +359,7 @@ paper.tex
   provider texlive (TeX 3.141592653 (TeX Live 2026)) (detected)
   platform linux (this machine)
   kernel latex2e (default)
-… 27 more lines omitted
+… 28 more lines omitted
 ```
 
 ### Explore Package Options and Feature Flags
@@ -264,10 +372,10 @@ The `controls` command shows the switches and options a package or class defines
 
 ```text
 $ satex controls -f samples/paper.tex
-tag     name       count  value                           governs  by      file           
-option  article           11pt                                     class   paper.tex      @ paper.tex:1:1
-switch  \ifdraft          false                           270      \newif  paper.tex      @ paper.tex:3:7
-offers  amsmath    15     alignedleftspaceno, alignedle…                   amsmath.sty    @ amsmath.sty:45:16
+tag     name       count  value                                   governs  file           
+option  article           11pt                                             paper.tex      @ paper.tex:1:1
+switch  \ifdraft          false                                   270      paper.tex      @ paper.tex:3:7
+offers  amsmath    15     alignedleftspaceno, alignedleftspacey…           amsmath.sty    @ amsmath.sty:45:16
 … 11 more lines omitted
 ```
 
@@ -293,7 +401,7 @@ $ satex slice -f samples/paper.tex '\ifdraft'
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{mypackage}
-… 42 more lines omitted
+… 16 more lines omitted
 ```
 
 </details>
@@ -302,10 +410,10 @@ $ satex slice -f samples/paper.tex '\ifdraft'
 
 ```text
 $ satex scope -f samples/paper.tex --at 20:1
-tag          name                  effecti…  package             file                
-macro        \Weird                \Weird …  document            paper.tex           @ paper.tex:15:1
-macro        \WeirdMore            \WeirdM…  document            paper.tex           @ paper.tex:13:1
-… 7765 more lines omitted
+tag          name                                      effecti…  file                
+macro        \Weird                                    \Weird …  paper.tex           @ paper.tex:16:1
+macro        \WeirdMore                                \WeirdM…  paper.tex           @ paper.tex:14:1
+… 7766 more lines omitted
 ```
 
 </details>
@@ -319,7 +427,7 @@ $ satex lint -f samples/paper.tex --filter 'category=performance'
 performance (2)
   paper.tex:5:1  info     unused-package  graphicx defines 72 names, none of which are used
     [unsafe fix] delete \usepackage{graphicx} if its side effects are not needed
-  paper.tex:25:1  info     preamble-cost  5 packages requested directly, 266 files read, 10320569 tokens digested
+  paper.tex:26:1  info     preamble-cost  5 packages requested directly, 263 files read
     fix: precompile the preamble into a format to skip this on every build
 
 … 2 more lines omitted
@@ -350,15 +458,15 @@ The commands a document defines itself, without packages and without internal `@
 
 ```text
 $ satex query definitions -f samples/paper.tex --filter 'origin=document and not package~. and not name~@'
-tag     name         subject  parameters       arity  takes  by           body      file       
-switch  \ifdraft     draft                     0      0      \newif                 paper.tex  @ paper.tex:3:7
-switch  \drafttrue   draft                     0      0      \newif       \let \i…  paper.tex  @ paper.tex:3:7
-switch  \draftfalse  draft                     0      0      \newif       \let \i…  paper.tex  @ paper.tex:3:7
-macro   \highlight            #1               1      1      \newcommand  \textbf…  paper.tex  @ paper.tex:10:13
-macro   \norm                 #1               1      1      \newcommand  \left \…  paper.tex  @ paper.tex:11:13
-macro   \WeirdMore            super #1\;       1      1      \def          #1       paper.tex  @ paper.tex:13:1
-macro   \Weird                key: #1, value…  3      3      \def         \texttt…  paper.tex  @ paper.tex:15:1
-… 1 more line omitted
+tag     name         parameters                       body                      file          
+switch  \ifdraft                                                                paper.tex     @ paper.tex:3:7
+switch  \drafttrue                                    \let \ifdraft \iftrue     paper.tex     @ paper.tex:3:7
+switch  \draftfalse                                   \let \ifdraft \iffalse    paper.tex     @ paper.tex:3:7
+macro   \hello                                        world                     preamble.tex  @ preamble.tex:1:1
+macro   \highlight   #1                               \textbf {#1}              paper.tex     @ paper.tex:11:13
+macro   \norm        #1                               \left \lVert #1\right \…  paper.tex     @ paper.tex:12:13
+macro   \WeirdMore   super #1\;                        #1                       paper.tex     @ paper.tex:14:1
+… 2 more lines omitted
 ```
 
 <details>
@@ -412,12 +520,12 @@ options
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step         name                                    detail    file            
-0       expand       \documentclass                                    paper.tex       @ paper.tex:1:1
-1       execute      \let                                              latex.ltx       @ latex.ltx:18618:3
-2       define       \documentclass                                    latex.ltx       @ latex.ltx:18618:3
-3       execute      \if@compatibility                                 latex.ltx       @ latex.ltx:18619:3
-… 199998 more lines omitted
+index   step       name            detail                                             file       
+0       expand     \documentclass                                                     paper.tex  @ paper.tex:1:1
+7734    open-file  \article        /usr/local/texlive/2026/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
+16002   expand     \value                                                             paper.tex  @ paper.tex:0:0
+29937   expand     \par                                                               paper.tex  @ paper.tex:2:1
+… 12 more lines omitted
 ```
 
 </details>
@@ -431,7 +539,7 @@ cs    \documentclass          @ 1:1
 char  [               cat 12  @ 1:15
 char  1               cat 12  @ 1:16
 char  1               cat 12  @ 1:17
-… 1177 more lines omitted
+… 1193 more lines omitted
 ```
 
 </details>
