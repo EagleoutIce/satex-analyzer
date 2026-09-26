@@ -50,8 +50,14 @@ jobs:
           description: An abstract interpreter for TeX and LaTeX
           baseurl: /${{ github.event.repository.name }}
           YAML
+          # `{% raw %}` keeps Liquid off the page bodies: the samples contain
+          # TeX like `\def\Weird ...{%`, which Liquid reads as a tag.
           find site -name '*.md' -print0 | while IFS= read -r -d '' page; do
-            printf '---\nlayout: default\n---\n' | cat - "$page" > "$page.tmp"
+            {
+              printf '%s\n' '---' 'layout: default' '---' '{% raw %}'
+              cat "$page"
+              printf '\n%s\n' '{% endraw %}'
+            } > "$page.tmp"
             mv "$page.tmp" "$page"
           done
 
