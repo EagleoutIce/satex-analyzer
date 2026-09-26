@@ -43,7 +43,8 @@ jobs:
         with:
           # One cache for every shard: they build the same dependencies.
           shared-key: test
-          save-if: ${{ matrix.shard == 'rest' }}
+          save-if: ${{ matrix.shard == 'rest' && github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
 
       - name: Test
         run: bash scripts/ci-test.sh ${{ matrix.shard }}
@@ -67,6 +68,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
 
       - name: Clippy
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
