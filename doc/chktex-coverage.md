@@ -1,5 +1,7 @@
 <!-- generated from doc/src/chktex-coverage.md.in by satex-doc; do not edit -->
 
+<p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
+
 # chktex coverage
 
 [ChkTeX](https://www.nongnu.org/chktex/) reports numbered warnings about typography and style. It reads the source line by line. satex runs the document, so it sees the characters that reach the page, the mode each one was set in, and whether TeX joined them into a ligature.

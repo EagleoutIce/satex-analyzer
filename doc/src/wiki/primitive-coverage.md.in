@@ -1,5 +1,7 @@
 <!-- generated from doc/src/wiki/primitive-coverage.md.in by satex-doc; do not edit -->
 
+<p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
+
 # Primitive coverage
 
 [tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) parts 24-49 define TeX82's primitives. The [eTeX manual](https://mirror.ctan.org/systems/e-tex/base/doc/etex_man.pdf), the [pdfTeX manual](https://mirror.ctan.org/systems/doc/pdftex/manual/pdftex-a.pdf), the [XeTeX reference](https://tug.org/xetex/) and the [LuaTeX manual](https://mirror.ctan.org/systems/doc/luatex/base/luatex.pdf) add the rest.

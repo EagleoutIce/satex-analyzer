@@ -1,5 +1,7 @@
 <!-- generated from doc/src/wiki/configuration.md.in by satex-doc; do not edit -->
 
+<p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
+
 # Configuration
 
 SaTeX merges its configuration from several `satex.yaml` files, in this order: the built-in defaults (the file below, with every key at its default). The user's own global config (`$XDG_CONFIG_HOME/satex/satex.yaml`, or `~/.config/satex/satex.yaml`. `%APPDATA%\satex\satex.yaml` on Windows). Every `satex.yaml` from the filesystem root down to the input file's directory, outermost first, so a directory's own file wins over an ancestor's. Then the file given with `--config`, on top of all of them. Every key is optional in every layer.

@@ -1,3 +1,5 @@
+<p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
+
 # The semantics SaTeX assumes
 
 This document states what `satex` believes TeX, ε-TeX and LaTeX2e do. Every
