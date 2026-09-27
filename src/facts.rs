@@ -188,7 +188,151 @@ pub struct Quantity {
     pub within: Rc<[FileId]>,
 }
 
-/// How sure the interpreter is about what it saw; [`Diagnostic::severity`]
+/// A colour the run defined, read off the `\color@⟨name⟩` macro xcolor
+/// stores it in (xcolor § 2.5): `\definecolor`, `\providecolor`,
+/// `\colorlet` and `\definecolorset` all end in one of these, so the fact
+/// is what the interpreter did and not a list of names.
+#[derive(Clone)]
+pub struct ColorDef {
+    pub name: String,
+    /// The colour as xcolor stored it, always in one of its core models
+    /// (`\XC@coremodel`).  `None` when satex could not read the macro.
+    pub value: Option<crate::value::Colors>,
+    /// The model and the spec the document's own call wrote, before xcolor
+    /// converted them.  `None` when no document call made the definition.
+    pub declared: Option<(crate::value::Model, String)>,
+    /// Where the declared spec stands, for a finding that names it.
+    pub spec_span: Option<Span>,
+    /// Where the document's call stands, or the definition itself when a
+    /// package made it.
+    pub span: Span,
+    /// The control sequence the file called: `\definecolor`, `\colorlet`.
+    pub via: Option<Sym>,
+    pub package: Option<Sym>,
+    /// Whether every run reaches the definition.
+    pub certain: bool,
+}
+
+/// A colour named by a `\csname\color@⟨name⟩\endcsname` the run formed:
+/// xcolor reaches every colour by that one control sequence, so a use, a
+/// test and a `\colorlet` source all arrive here (xcolor § 2.5).
+#[derive(Clone)]
+pub struct ColorUse {
+    pub name: String,
+    /// What the name was formed for ([`CsnameRole::Use`] for `\color`).
+    pub role: CsnameRole,
+    /// Whether the colour was defined when the run reached the name.
+    pub defined: bool,
+    /// Where the document's call stands.
+    pub span: Span,
+    pub via: Option<Sym>,
+    pub package: Option<Sym>,
+    pub certain: bool,
+}
+
+/// What a `\pdfcolorstack` does to its stack (pdfTeX manual, § 8.9.8).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StackOp {
+    Push,
+    Pop,
+    Set,
+    Current,
+}
+
+impl StackOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StackOp::Push => "push",
+            StackOp::Pop => "pop",
+            StackOp::Set => "set",
+            StackOp::Current => "current",
+        }
+    }
+}
+
+/// One `\pdfcolorstack` the run executed: which stack, what it did to it,
+/// and where.  [`crate::lint::pdf`] balances the pushes against the pops
+/// the way it balances `q` against `Q`.
+#[derive(Clone, Copy)]
+pub struct ColorStack {
+    /// The stack number, `None` when the run could not decide it.
+    pub stack: Option<i64>,
+    pub op: StackOp,
+    pub span: Span,
+    pub certain: bool,
+}
+
+/// The font in force at a moment of the run, as LaTeX's font selection
+/// holds it (fntguide § 2): the five macros `\selectfont` reads, and the
+/// font the engine had actually loaded.  [`Facts`] keeps one row per
+/// distinct state and [`Spot`] points at it.
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+pub struct FontState {
+    /// `\cf@encoding`.
+    pub encoding: Rc<str>,
+    /// `\f@family`.
+    pub family: Rc<str>,
+    /// `\f@series`.
+    pub series: Rc<str>,
+    /// `\f@shape`.
+    pub shape: Rc<str>,
+    /// `\f@size`.
+    pub size: Rc<str>,
+    /// `\the\font`, 0 for none: what [`crate::machine::Analysis::fonts`]
+    /// names the metrics of.  NFSS says what the document asked for, this
+    /// says what the engine loaded, and a lint needs both.
+    pub font: u16,
+}
+
+impl FontState {
+    /// `OT1/cmr/m/it/10`, the shape as fntguide § 2 writes it.
+    pub fn nfss(&self) -> String {
+        format!("{}/{}/{}/{}/{}", self.encoding, self.family, self.series, self.shape, self.size)
+    }
+}
+
+/// One character the run typeset outside package code, with where the
+/// token that made it stood and the modes it was set in (tex.web § 211).
+/// Recorded before TeX's ligature program runs, so `--` is still two
+/// characters here.
+#[derive(Clone, Copy, Debug)]
+pub struct Spot {
+    pub span: Span,
+    /// The font it was set in, as an index into
+    /// [`crate::machine::Analysis::font_states`], 0 when the run did not
+    /// know.  A `u16` keeps the struct at the 16 bytes it had without it.
+    pub font_state: u16,
+    pub modes: crate::mode::Modes,
+    /// Whether something that is not a character came right before it, so
+    /// TeX starts a new word and no ligature joins it to the character
+    /// before (tex.web § 1034).
+    pub broken: bool,
+    /// Whether every run sets it: not on one of several paths through an
+    /// undecided conditional, and not after the mode was widened.
+    pub certain: bool,
+}
+
+/// Every character the run typeset outside package code, in order: the
+/// document as the reader sees it, with each character's source position.
+/// [`Facts::text`] holds it, and the typographic lints read it.
+#[derive(Default)]
+pub struct Text {
+    pub chars: String,
+    /// One per character of `chars`, in the same order.
+    pub at: Vec<Spot>,
+}
+
+impl Text {
+    pub fn is_empty(&self) -> bool {
+        self.at.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.at.len()
+    }
+}
+
+/// How sure the interpreter is about what it saw. [`Diagnostic::severity`]
 /// carries it, from a plain note up to an imprecision the analysis had to
 /// make.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -261,6 +405,14 @@ pub struct Facts {
     pub conditionals: Vec<Conditional>,
     /// Numbers with letters set right after them, outside package code.
     pub quantities: Vec<Quantity>,
+    /// The colours the run defined, in order.
+    pub colors: Vec<ColorDef>,
+    /// Every `\color@⟨name⟩` the run formed a control sequence for.
+    pub color_uses: Vec<ColorUse>,
+    /// Every `\pdfcolorstack` the run executed, in order.
+    pub color_stack: Vec<ColorStack>,
+    /// Every character set outside package code, in order.
+    pub text: Text,
 }
 
 /// A conditional the run evaluated (tex.web §§ 487-510), merged over every

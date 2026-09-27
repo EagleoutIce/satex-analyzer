@@ -118,11 +118,13 @@ pub enum Value {
     Toks(Rc<[Token]>),
     #[default]
     Unknown,
+    /// A colour, as xcolor stores one in `\\color@⟨name⟩` (xcolor § 2.5).
+    Color(Colors),
     /// A count (`dimen: false`) or dimension whose value is not known but
     /// lies in an interval, and is one of a few values when `set` says so:
     /// what a join, arithmetic on such a value, or a typesetting result
     /// leaves.  Read as a number it is unknown ([`crate::env::Env::value`]
-    /// reads it so); a test that looks at it decides by the interval.
+    /// reads it so). A test that looks at it decides by the interval.
     Range {
         dimen: bool,
         num: Num,
@@ -389,6 +391,252 @@ impl Num {
     }
 }
 
+/// One of xcolor's colour models (xcolor, table 3), with the two pseudo
+/// models that name a colour instead of measuring one.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+pub enum Model {
+    Rgb,
+    Cmy,
+    Cmyk,
+    Hsb,
+    Gray,
+    /// `RGB`, whole numbers up to `\rangeRGB`.
+    IntRgb,
+    /// `HTML`, six hexadecimal digits.
+    Html,
+    /// `HSB`, whole numbers up to `\rangeHSB`.
+    IntHsb,
+    /// `Gray`, whole numbers up to `\rangeGray`.
+    IntGray,
+    /// `Hsb`, a hue in degrees up to `\rangeHsb`.
+    DegHsb,
+    /// `tHsb`, `Hsb` with the hue transformed by `\rangetHsb`.
+    DegTHsb,
+    /// `wave`, a wavelength in nanometres.
+    Wave,
+    Named,
+    Ps,
+}
+
+/// The models `\XC@coremodel` leaves alone, in the order [`Model`] lists
+/// them. Every other model is converted into one of these before xcolor
+/// stores it.
+pub const CORE_MODELS: [Model; 5] = [Model::Rgb, Model::Cmy, Model::Cmyk, Model::Hsb, Model::Gray];
+
+impl Model {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Model::Rgb => "rgb",
+            Model::Cmy => "cmy",
+            Model::Cmyk => "cmyk",
+            Model::Hsb => "hsb",
+            Model::Gray => "gray",
+            Model::IntRgb => "RGB",
+            Model::Html => "HTML",
+            Model::IntHsb => "HSB",
+            Model::IntGray => "Gray",
+            Model::DegHsb => "Hsb",
+            Model::DegTHsb => "tHsb",
+            Model::Wave => "wave",
+            Model::Named => "named",
+            Model::Ps => "ps",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Model> {
+        [
+            Model::Rgb,
+            Model::Cmy,
+            Model::Cmyk,
+            Model::Hsb,
+            Model::Gray,
+            Model::IntRgb,
+            Model::Html,
+            Model::IntHsb,
+            Model::IntGray,
+            Model::DegHsb,
+            Model::DegTHsb,
+            Model::Wave,
+            Model::Named,
+            Model::Ps,
+        ]
+        .into_iter()
+        .find(|m| m.as_str() == name)
+    }
+
+    /// How many components the model takes. `HTML` counts the three bytes
+    /// its six digits spell.
+    pub fn arity(self) -> usize {
+        match self {
+            Model::Cmyk => 4,
+            Model::Gray | Model::IntGray | Model::Wave => 1,
+            Model::Named | Model::Ps => 0,
+            _ => 3,
+        }
+    }
+
+    /// What `\XC@coremodel` converts it to before xcolor stores it.
+    pub fn core(self) -> Model {
+        match self {
+            Model::IntRgb | Model::Html => Model::Rgb,
+            Model::IntHsb | Model::DegHsb | Model::DegTHsb | Model::Wave => Model::Hsb,
+            Model::IntGray => Model::Gray,
+            other => other,
+        }
+    }
+
+    /// The range component `i` lies in, in scaled points, with xcolor's own
+    /// `\rangeRGB`, `\rangeHSB`, `\rangeHsb` and `\rangeGray` defaults where
+    /// the model is scaled by one.  `None` for a model without components.
+    pub fn bounds(self, i: usize) -> Option<(Scaled, Scaled)> {
+        let top = match self {
+            Model::Rgb | Model::Cmy | Model::Cmyk | Model::Hsb | Model::Gray => UNIT,
+            Model::IntRgb | Model::Html => 255 * UNIT,
+            Model::IntHsb => 240 * UNIT,
+            Model::IntGray => 15 * UNIT,
+            Model::DegHsb | Model::DegTHsb if i == 0 => 360 * UNIT,
+            Model::DegHsb | Model::DegTHsb => UNIT,
+            // Every wavelength outside this is black (xcolor § 2.3).
+            Model::Wave => return (i == 0).then_some((363 * UNIT, 814 * UNIT)),
+            Model::Named | Model::Ps => return None,
+        };
+        (i < self.arity()).then_some((0, top))
+    }
+
+    /// Whether the model's components are written as whole numbers.
+    pub fn whole(self) -> bool {
+        matches!(self, Model::IntRgb | Model::Html | Model::IntHsb | Model::IntGray)
+    }
+}
+
+/// A colour as xcolor holds one: a model and one abstract number per
+/// component, in scaled points, the units xcolor's own arithmetic works in
+/// (`\strip@pt` of a `\dimen`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Color {
+    pub model: Model,
+    pub components: Rc<[Num]>,
+}
+
+impl Color {
+    pub fn new(model: Model, components: Vec<Num>) -> Color {
+        Color { model, components: components.into() }
+    }
+
+    /// The colour exactly, when every component is one value.
+    pub fn exact(&self) -> Option<Vec<Scaled>> {
+        self.components.iter().map(|c| (c.lo == c.hi).then_some(c.lo)).collect()
+    }
+
+    /// `1,0.50195,0`, as xcolor writes the spec.
+    pub fn spell(&self) -> String {
+        self.components.iter().map(spell_component).collect::<Vec<_>>().join(",")
+    }
+
+    /// The component that lies outside the model's range, with the range,
+    /// when one does on every path.
+    pub fn out_of_range(&self) -> Option<(usize, Num, (Scaled, Scaled))> {
+        self.components.iter().enumerate().find_map(|(i, c)| {
+            let (lo, hi) = self.model.bounds(i)?;
+            (c.lo < lo || c.hi > hi).then(|| (i, c.clone(), (lo, hi)))
+        })
+    }
+}
+
+/// `1`, `0.50195`, `?` for a component that is not one value.
+fn spell_component(c: &Num) -> String {
+    if c.lo != c.hi {
+        return "?".into();
+    }
+    let mut s = render_dimen(c.lo);
+    s.truncate(s.len() - "pt".len());
+    match s.strip_suffix(".0") {
+        Some(whole) => whole.to_string(),
+        None => s,
+    }
+}
+
+/// What a colour-valued binding may hold: one model, each component bounded
+/// by a [`Num`], and the exact colours it may be while they are few.
+/// [`Num`]'s own shape lifted to a tuple, so a join keeps a set and a join
+/// past the limit keeps the component bounds alone.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Colors {
+    /// Component-wise bounds over every member.
+    pub hull: Color,
+    /// The colours it may be, each of `hull`'s model.
+    pub set: Option<Rc<[Rc<[Num]>]>>,
+}
+
+impl Colors {
+    pub fn exact(color: Color) -> Colors {
+        let members = Rc::from([Rc::clone(&color.components)]);
+        Colors { hull: color, set: Some(members) }
+    }
+
+    pub fn model(&self) -> Model {
+        self.hull.model
+    }
+
+    /// Least upper bound, listing at most `members` colours.  Two models
+    /// have no common bound: xcolor converts between them through
+    /// `\XC@calc@`, which rounds to scaled points, so a converted spec is
+    /// not the spec the other model would have stored, and claiming it
+    /// would invent a value.  `None` is that, and the caller goes to
+    /// [`Value::Unknown`].
+    pub fn join(&self, other: &Colors, members: usize) -> Option<Colors> {
+        if self.hull.model != other.hull.model {
+            return None;
+        }
+        let arity = self.hull.components.len();
+        if arity != other.hull.components.len() {
+            return None;
+        }
+        let hull: Vec<Num> =
+            (0..arity).map(|i| self.hull.components[i].join(&other.hull.components[i], members)).collect();
+        let set = match (&self.set, &other.set) {
+            (Some(a), Some(b)) => {
+                let mut out: Vec<Rc<[Num]>> = a.to_vec();
+                for member in b.iter() {
+                    if !out.iter().any(|m| m == member) {
+                        out.push(Rc::clone(member));
+                    }
+                }
+                (out.len() <= members).then(|| Rc::from(out))
+            }
+            _ => None,
+        };
+        Some(Colors { hull: Color::new(self.hull.model, hull), set })
+    }
+}
+
+/// `⟨decimal constant⟩` as xcolor's arithmetic holds it: scaled points,
+/// rounded the way `scan_decimal` rounds (tex.web § 102).
+pub fn parse_component(s: &str) -> Option<Scaled> {
+    scale_by(UNIT, s.trim())
+}
+
+/// `⟨model⟩{⟨spec⟩}` as the run wrote it, with each component an exact
+/// [`Num`].  `None` when the model carries no components or the spec is not
+/// the numbers the model takes.
+pub fn parse_color(model: Model, spec: &str) -> Option<Color> {
+    if model.arity() == 0 {
+        return None;
+    }
+    if model == Model::Html {
+        let digits = spec.trim();
+        if digits.len() != 6 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return None;
+        }
+        let bytes = (0..3).map(|i| i64::from_str_radix(&digits[2 * i..2 * i + 2], 16).ok());
+        let components: Option<Vec<Num>> = bytes.map(|b| Some(Num::exact(b? * UNIT))).collect();
+        return Some(Color::new(model, components?));
+    }
+    let components: Option<Vec<Num>> = spec.split(',').map(|part| Some(Num::exact(parse_component(part)?))).collect();
+    let components = components?;
+    (components.len() == model.arity()).then(|| Color::new(model, components))
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -399,6 +647,7 @@ impl PartialEq for Value {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.tok == y.tok)
             }
             (Value::Range { dimen: x, num: a }, Value::Range { dimen: y, num: b }) => x == y && a == b,
+            (Value::Color(a), Value::Color(b)) => a == b,
             _ => false,
         }
     }
@@ -421,19 +670,27 @@ impl Value {
         }
     }
 
-    /// Least upper bound: equal values stay, different known numbers
-    /// become the set of them (up to [`MAY_VALUES`]), anything else unknown.
     /// Least upper bound: equal values stay, different counts or
     /// different dimensions become their [`Num`] join (listing at most
-    /// `members` values), anything else
-    /// unknown.
+    /// `members` values), anything else unknown.
     pub fn join(self, other: &Value, members: usize) -> Value {
         if &self == other {
             return self;
         }
         match (self.num(), other.num()) {
             (Some((x, a)), Some((y, b))) if x == y => Value::Range { dimen: x, num: a.join(&b, members) },
-            _ => Value::Unknown,
+            _ => match (&self, other) {
+                (Value::Color(a), Value::Color(b)) => a.join(b, members).map_or(Value::Unknown, Value::Color),
+                _ => Value::Unknown,
+            },
+        }
+    }
+
+    /// The colour this holds, when it is one.
+    pub fn as_color(&self) -> Option<&Colors> {
+        match self {
+            Value::Color(c) => Some(c),
+            _ => None,
         }
     }
 
@@ -464,6 +721,7 @@ impl Value {
             Value::Glue(g) => render_glue(g, "pt"),
             Value::MuGlue(g) => render_glue(g, "mu"),
             Value::Toks(t) => format!("<{} tokens>", t.len()),
+            Value::Color(c) => format!("{} {}", c.model().as_str(), c.hull.spell()),
             Value::Unknown | Value::Range { .. } => "?".into(),
         }
     }
