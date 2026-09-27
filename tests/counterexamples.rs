@@ -741,3 +741,290 @@ fn an_environment_left_open_is_ended_by_the_document() {
     let all = findings(&analysis);
     assert!(all.contains(&"environment-mismatch document".to_string()), "{all:?}");
 }
+
+/// Every name the run defined, on any path.
+fn names(analysis: &Analysis) -> Vec<String> {
+    analysis.facts.defs.iter().map(|d| analysis.interner.name(d.name).to_string()).collect()
+}
+
+/// A count register whose value satex cannot pin down, for a register
+/// number it cannot pin down either.
+const MAYBE: &str = r"\pdfuniformdeviate2";
+
+/// tex.web § 1224: `\count⟨number⟩` writes the register the number names.
+/// With a number satex cannot pin down, every register it may name may
+/// hold what was written.  `pdftex`: `\count2=1 \count\count2=99` leaves
+/// `\count0` at `0` and `\count1` at `99`, and `\count2=0` the other way
+/// round — so `\count0` afterwards is `0` or `99`, never anything else.
+#[test]
+fn a_write_through_an_unknown_register_number_reaches_every_register_it_may_name() {
+    let analysis = analyze(&format!(
+        r"\count0=0 \count1=0 \ifnum{MAYBE}=0 \count2=0 \else \count2=1 \fi \count\count2=99
+          \ifnum\count0=0 \def\zero{{1}}\fi \ifnum\count0=99 \def\written{{1}}\fi
+          \ifnum\count0=7 \def\other{{1}}\fi"
+    ));
+    let defined = names(&analysis);
+    assert!(defined.contains(&"zero".to_string()), "{defined:?}");
+    assert!(defined.contains(&"written".to_string()), "{defined:?}");
+    assert!(!defined.contains(&"other".to_string()), "{defined:?}");
+}
+
+/// The same for `\advance` (tex.web § 1238): the register the number
+/// names is the one that grows.
+#[test]
+fn advance_through_an_unknown_register_number_reaches_every_register_it_may_name() {
+    let analysis = analyze(&format!(
+        r"\count0=0 \ifnum{MAYBE}=0 \count2=0 \else \count2=1 \fi \advance\count\count2 by 7
+          \ifnum\count0=0 \def\zero{{1}}\fi \ifnum\count0=7 \def\grown{{1}}\fi"
+    ));
+    let defined = names(&analysis);
+    assert!(defined.contains(&"zero".to_string()) && defined.contains(&"grown".to_string()), "{defined:?}");
+}
+
+/// A number whose interval is too wide to list may name any register,
+/// including one nothing has written, which then no longer reads as the
+/// zero of tex.web § 232.  `pdftex`: `\count2=1234567 \count\count2=5`
+/// says "Bad register code" and sets `\count0` to `5` (tex.web § 433).
+#[test]
+fn a_wide_register_number_reaches_registers_satex_has_not_seen() {
+    let analysis = analyze(
+        r"\setbox0\hbox{x}\count0=0 \count9=0 \count2=\wd0 \count\count2=5
+          \ifnum\count0=5 \def\first{1}\fi \ifnum\count9=5 \def\ninth{1}\fi
+          \ifnum\count5=5 \def\unseen{1}\fi \ifnum\count5=0 \def\still{1}\fi",
+    );
+    let defined = names(&analysis);
+    for name in ["first", "ninth", "unseen", "still"] {
+        assert!(defined.contains(&name.to_string()), "{name}: {defined:?}");
+    }
+}
+
+/// A later write with a number satex knows is precise again.
+#[test]
+fn a_known_register_number_is_precise_after_a_wide_one() {
+    let analysis = analyze(
+        r"\setbox0\hbox{x}\count2=\wd0 \count\count2=5 \count0=3
+          \ifnum\count0=3 \def\three{1}\fi \ifnum\count0=4 \def\four{1}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"three".to_string()) && !defined.contains(&"four".to_string()), "{defined:?}");
+}
+
+/// tex.web § 433: a register number outside the engine's range is "Bad
+/// register code" and names register zero.  `pdftex`: `\count-1=7` and
+/// `\count32768=8` both change `\count0`.
+#[test]
+fn a_register_number_out_of_range_names_register_zero() {
+    let analysis = analyze(r"\count0=0 \count-1=7 \ifnum\count0=7 \def\moved{1}\fi \ifnum\count0=0 \def\kept{1}\fi");
+    let defined = names(&analysis);
+    assert!(defined.contains(&"moved".to_string()), "{defined:?}");
+    let analysis = analyze(r"\count0=0 \count32768=8 \ifnum\count0=8 \def\moved{1}\fi");
+    assert!(names(&analysis).contains(&"moved".to_string()), "{:?}", names(&analysis));
+}
+
+/// A group undoes a write through a number satex could not pin down, the
+/// way it undoes the one register TeX really wrote (tex.web § 1224).
+#[test]
+fn a_group_undoes_a_write_through_an_unknown_register_number() {
+    let analysis = analyze(
+        r"\setbox0\hbox{x}\count0=0 {\count2=\wd0 \count\count2=5 }
+          \ifnum\count0=0 \def\kept{1}\fi \ifnum\count0=5 \def\moved{1}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"kept".to_string()) && !defined.contains(&"moved".to_string()), "{defined:?}");
+}
+
+/// tex.web § 1238: `\advance` on a dimension has no range check, so a
+/// register may hold more than `\maxdimen`, and reading it as an
+/// ⟨integer⟩ (tex.web § 440) does not clamp it.  `pdftex`:
+/// `\dimen0=1073741823sp \advance\dimen0 by 1073741823sp` gives
+/// `\the\dimen0` = `32767.99997pt` and `\count0=\dimen0` = `2147483646`,
+/// while `\ifnum\dimen0>1073741823` is true.
+#[test]
+fn advance_may_put_a_dimension_past_maxdimen() {
+    let analysis = analyze(
+        r"\dimen0=1073741823sp \advance\dimen0 by 1073741823sp \edef\shown{\the\dimen0}
+          \count0=\dimen0 \edef\asint{\the\count0}
+          \ifnum\dimen0>1073741823 \def\past{1}\fi",
+    );
+    assert_eq!(body(&analysis, "shown"), "32767.99997pt");
+    assert_eq!(body(&analysis, "asint"), "2147483646");
+    assert!(names(&analysis).contains(&"past".to_string()), "{:?}", names(&analysis));
+}
+
+/// tex.web § 460 (`attach_sign`): reading such a register as a ⟨dimen⟩ is
+/// "Dimension too large" and gives `\maxdimen`.  `pdftex`: after the
+/// above, `\dimen1=\dimen0` is `16383.99998pt` and
+/// `\ifdim\dimen0=16383.99998pt` is true.  The clamp is not monotone, so
+/// an interval that passes `\maxdimen` has to be clamped as well.
+#[test]
+fn a_dimension_past_maxdimen_reads_back_as_maxdimen() {
+    let analysis = analyze(
+        r"\dimen0=1073741823sp \advance\dimen0 by 1073741823sp
+          \dimen1=\dimen0 \ifdim\dimen1=16383.99998pt \def\clamped{1}\fi",
+    );
+    assert!(names(&analysis).contains(&"clamped".to_string()), "{:?}", names(&analysis));
+    // The same where the register holds one of a few values, all past
+    // `\maxdimen`: every one of them reads back as `\maxdimen`.
+    let analysis = analyze(
+        r"\dimen0=1073741823sp \advance\dimen0 by 1073741823sp
+          \ifnum\pdfuniformdeviate2=0 \advance\dimen0 by -1sp \fi
+          \dimen1=\dimen0 \ifdim\dimen1=16383.99998pt \def\clamped{1}\fi
+          \ifdim\dimen1<16383.99998pt \def\under{1}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"clamped".to_string()) && !defined.contains(&"under".to_string()), "{defined:?}");
+}
+
+/// Like [`analyze`] with no depth left for analyzing the arms of an
+/// undecided conditional as paths of their own, so that they run one after
+/// the other in one state (`Machine::undecided_conditional`).
+fn analyze_flat(source: &str) -> Analysis {
+    let mut cfg = Config {
+        load_packages: false,
+        load_classes: false,
+        load_inputs: false,
+        load_format: false,
+        use_kpsewhich: false,
+        ..Config::default()
+    };
+    cfg.limits.branch_depth = 0;
+    Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg)
+}
+
+/// tex.web § 498: a conditional runs one arm.  With no depth left to
+/// analyze them as paths of their own the arms run one after the other in
+/// one state, and what a later arm assigns must not overwrite what an
+/// earlier one did.  `pdftex`, on six runs of
+/// `\count0=0 \ifnum\pdfuniformdeviate2=0 \count0=1 \else \count0=2 \fi`:
+/// `\the\count0` was `2,1,2,2,2,2` — either arm may be the one that ran.
+#[test]
+fn flat_undecided_arms_join_their_assignments() {
+    let analysis =
+        analyze_flat(r"\count0=0 \ifnum\pdfuniformdeviate2=0 \count0=1 \else \count0=2 \fi \edef\v{\the\count0}");
+    assert_ne!(body(&analysis, "v"), "2");
+    let analysis = analyze_flat(
+        r"\count0=0 \ifnum\pdfuniformdeviate2=0 \count0=1 \else \count0=2 \fi
+          \ifnum\count0=1 \def\one{1}\fi \ifnum\count0=2 \def\two{1}\fi \ifnum\count0=0 \def\zero{1}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"one".to_string()) && defined.contains(&"two".to_string()), "{defined:?}");
+    assert!(!defined.contains(&"zero".to_string()), "{defined:?}");
+}
+
+/// The same for meanings: neither arm's `\def` is the one that ran, so a
+/// later `\ifx` against either must be undecided.  `pdftex` prints `a` or
+/// `b` for `\m` here.
+#[test]
+fn flat_undecided_arms_join_their_meanings() {
+    let analysis = analyze_flat(
+        r"\def\m{}\ifnum\pdfuniformdeviate2=0 \def\m{a}\else \def\m{b}\fi
+          \def\a{a}\def\b{b}
+          \ifx\m\a \def\isa{1}\fi \ifx\m\b \def\isb{1}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"isa".to_string()) && defined.contains(&"isb".to_string()), "{defined:?}");
+}
+
+/// A `\global` assignment in one arm is no more certain than a local one:
+/// it survives the group, but the other arm may be the one that ran.
+#[test]
+fn flat_undecided_arms_join_global_assignments() {
+    let analysis = analyze_flat(
+        r"\count0=0 {\ifnum\pdfuniformdeviate2=0 \global\count0=1 \else \global\count0=2 \fi}
+          \ifnum\count0=1 \def\one{1}\fi \ifnum\count0=2 \def\two{1}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"one".to_string()) && defined.contains(&"two".to_string()), "{defined:?}");
+}
+
+/// tex.web § 232: a `\catcode` through a character number the arm could
+/// not pin down leaves no category known, and the rollback that ends the
+/// arm must not put the characters the arm saved back as known.  `pdftex`
+/// with `\count2` pinned to `` `\~ ``: `\catcode`\~=13 \catcode\count2=11`
+/// leaves `~` active, and pinned to `` `\q `` it leaves `~` whatever the
+/// arm made it, so satex may not stay certain either way.
+#[test]
+fn a_flat_arm_that_could_not_pin_a_catcode_down_leaves_no_category_known() {
+    let ran = |source: &str| names(&analyze_flat(source)).contains(&"ran".to_string());
+    // The conditional sits in a macro body, so its `\fi` is a token the arm
+    // reaches even once no category is known.
+    let body = r"\catcode`\~=13 \def~{\def\ran{1}}\count2=\pdfuniformdeviate 999
+                \def\m{\ifnum\pdfuniformdeviate2=0 \catcode`\~=13 \catcode\count2=11 \fi}";
+    assert!(ran(&format!(r"{body}~")), "an active character runs when its category is known");
+    assert!(!ran(&format!(r"{body}\m ~")), "the arm left no category known, so `~` is not known to be active");
+}
+
+/// tex.web § 1232: the same for the code tables, which the arm merge joins
+/// through the bindings and not through a diff of the entries.  `pdftex`
+/// with the count pinned prints `97` or `0` for `\the\lccode`\a`.
+#[test]
+fn a_flat_arm_that_could_not_pin_a_code_table_entry_down_leaves_no_entry_known() {
+    let analysis = analyze_flat(
+        r"\count2=\pdfuniformdeviate 999 \lccode`\a=`\a
+          \ifnum\pdfuniformdeviate2=0 \lccode\count2=0 \fi
+          \ifnum\lccode`\a=97 \def\same{1}\fi \ifnum\lccode`\a=0 \def\zero{1}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"same".to_string()) && defined.contains(&"zero".to_string()), "{defined:?}");
+}
+
+/// tex.web § 1077: and for the box registers.  `pdftex` with `\count2`
+/// pinned to 3 leaves box 3 filled, pinned elsewhere it stays void.
+#[test]
+fn a_flat_arm_that_could_not_pin_a_box_register_down_leaves_no_box_void() {
+    let analysis = analyze_flat(
+        r"\count2=\pdfuniformdeviate 9
+          \ifnum\pdfuniformdeviate2=0 \setbox\count2=\hbox{x}\fi
+          \ifvoid3 \def\yes{}\else\def\no{}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"yes".to_string()) && defined.contains(&"no".to_string()), "{defined:?}");
+}
+
+/// tex.web § 232: `\catcode` assigns a category the run may not know.
+/// `pdftex` with `\count2` pinned to 11 or 12 prints `11` or `12` for
+/// `\the\catcode`\@` after `\catcode`\@=\count2`, so satex may not stay
+/// certain of the category it had.
+#[test]
+fn a_catcode_assigned_an_unknown_number_is_not_known() {
+    let analysis = analyze(
+        r"\ifnum\pdfuniformdeviate2=0 \count2=11 \else \count2=12 \fi
+          \catcode`\@=\count2
+          \ifnum\catcode`\@=12 \def\other{1}\fi \ifnum\catcode`\@=11 \def\letter{1}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"other".to_string()) && defined.contains(&"letter".to_string()), "{defined:?}");
+}
+
+/// The same where the *character* is the part that is not known.
+/// `pdftex`: with `\count2` pinned to `` `\@ `` or `` `\! ``,
+/// `\catcode\count2=11` leaves `\the\catcode`\@ /\the\catcode`\!` as
+/// `11/12` or `12/11`.
+#[test]
+fn a_catcode_of_an_unknown_character_is_not_known() {
+    let analysis = analyze(
+        r"\ifnum\pdfuniformdeviate2=0 \count2=`\@ \else \count2=`\! \fi
+          \catcode\count2=11
+          \ifnum\catcode`\@=12 \def\atother{1}\fi \ifnum\catcode`\@=11 \def\atletter{1}\fi
+          \ifnum\catcode`\!=12 \def\bangother{1}\fi \ifnum\catcode`\!=11 \def\bangletter{1}\fi",
+    );
+    let defined = names(&analysis);
+    for name in ["atother", "atletter", "bangother", "bangletter"] {
+        assert!(defined.contains(&name.to_string()), "{name} missing from {defined:?}");
+    }
+}
+
+/// tex.web § 1232: `\lccode` and its relatives are assigned a number the
+/// run may not know, and then the code is not the table's default either.
+/// `pdftex` with the count pinned prints `65` or `66` for `\the\lccode`\a`.
+#[test]
+fn a_char_code_assigned_an_unknown_number_is_not_known() {
+    let analysis = analyze(
+        r"\ifnum\pdfuniformdeviate2=0 \count2=65 \else \count2=66 \fi
+          \lccode`\a=\count2
+          \ifnum\lccode`\a=65 \def\isa{1}\fi \ifnum\lccode`\a=66 \def\isb{1}\fi
+          \ifnum\lccode`\a=97 \def\isdefault{1}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"isa".to_string()) && defined.contains(&"isb".to_string()), "{defined:?}");
+}

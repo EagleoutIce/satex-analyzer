@@ -1,6 +1,6 @@
 //! TeX's modes (tex.web §§ 211-213): what `\ifvmode`, `\ifhmode`,
 //! `\ifmmode` and `\ifinner` ask.  The run keeps the set of modes it may be
-//! in; paths that disagree join to their union, and a test is decided only
+//! in. Paths that disagree join to their union, and a test is decided only
 //! when every mode in the set answers alike.  The semantic nest itself
 //! lives in the save stack: a group that begins a list of its own (a box,
 //! math, an insertion) saves the modes around it (tex.web § 216
@@ -120,15 +120,17 @@ pub struct Nest {
     /// tex.web § 269; `None` where paths disagree.
     pub code: Option<u8>,
     /// Whether the group holds a list of its own, whose end restores every
-    /// mode; a math group `{…}` gives back only math.
+    /// mode. A math group `{…}` gives back only math.
     pub level: bool,
     /// Which part of a `\discretionary` or `\mathchoice`, or `EQNO`.
     pub part: u8,
     /// The box register a `\setbox` fills when the box ends, and whether
     /// globally (tex.web § 1077 `box_end`).
     pub target: Option<(Option<i64>, bool)>,
-    /// A box's `to` size: `Some(None)` when it is not known.
-    pub to: Option<Option<i64>>,
+    /// What `\raise` and relatives shift the box by (tex.web § 1073).
+    pub shift: Dim,
+    /// How the box is packed (tex.web § 644).
+    pub to: Packing,
     /// Whether anything may have been put on the enclosing list.
     pub material: bool,
     /// The enclosing list's natural size, and whether the box goes onto
@@ -146,7 +148,8 @@ impl Nest {
             level: self.level || other.level,
             part: self.part.max(other.part),
             target: if self.target == other.target { self.target } else { None },
-            to: if self.to == other.to { self.to } else { Some(None) },
+            shift: if self.shift == other.shift { self.shift } else { Dim::ANY },
+            to: if self.to == other.to { self.to } else { Packing::To(Dim::ANY) },
             material: self.material || other.material,
             natural: join_natural(self.natural, other.natural),
             placed: self.placed && other.placed,
@@ -170,22 +173,131 @@ pub struct ArmModes {
     pub sizes: Option<Option<Natural>>,
 }
 
+/// A length satex knows only within an interval.  `hpack` (tex.web § 649)
+/// and `vpack` (§ 668) add the list's items up. An item satex cannot
+/// follow widens the interval instead of being left out, which would
+/// under-approximate the size.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Dim {
+    pub lo: Scaled,
+    pub hi: Scaled,
+}
+
+impl Default for Dim {
+    fn default() -> Dim {
+        Dim::exact(0)
+    }
+}
+
+impl Dim {
+    /// Every length TeX holds: the top of the lattice.
+    pub const ANY: Dim = Dim { lo: -crate::value::MAX_DIMEN, hi: crate::value::MAX_DIMEN };
+
+    pub const fn exact(v: Scaled) -> Dim {
+        Dim { lo: v, hi: v }
+    }
+
+    /// A length whose sum passed `\maxdimen` is TeX's "Dimension too
+    /// large", whose outcome is not modelled: any length then.
+    fn bounded(lo: Scaled, hi: Scaled) -> Dim {
+        let max = crate::value::MAX_DIMEN;
+        if lo < -max || hi > max || lo > hi { Dim::ANY } else { Dim { lo, hi } }
+    }
+
+    pub fn range(lo: Scaled, hi: Scaled) -> Dim {
+        Dim::bounded(lo, hi)
+    }
+
+    /// The length itself, when the interval holds only one.
+    pub fn known(self) -> Option<Scaled> {
+        (self.lo == self.hi).then_some(self.lo)
+    }
+
+    pub fn is_any(self) -> bool {
+        self == Dim::ANY
+    }
+
+    pub fn extended_by(self, other: Dim) -> Dim {
+        Dim::bounded(self.lo + other.lo, self.hi + other.hi)
+    }
+
+    pub fn reduced_by(self, other: Dim) -> Dim {
+        Dim::bounded(self.lo - other.hi, self.hi - other.lo)
+    }
+
+    /// tex.web § 649: the largest height on the list.
+    pub fn max(self, other: Dim) -> Dim {
+        Dim::bounded(self.lo.max(other.lo), self.hi.max(other.hi))
+    }
+
+    pub fn join(self, other: Dim) -> Dim {
+        Dim::bounded(self.lo.min(other.lo), self.hi.max(other.hi))
+    }
+
+    /// The value a document reads back: a number only where there is one,
+    /// and never zero for a length satex could not follow.
+    pub fn value(self) -> Value {
+        match self.known() {
+            Some(v) => Value::Dimen(v),
+            None if self.is_any() => Value::Unknown,
+            None => Value::from_num(true, crate::value::Num::range(self.lo, self.hi)),
+        }
+    }
+}
+
+/// tex.web § 644: a box is packed to its list's natural size, `to` a
+/// given size, or `spread` past the natural one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Packing {
+    Natural,
+    To(Dim),
+    Spread(Dim),
+}
+
+impl Packing {
+    /// The size the box gets, from the list's natural size.
+    fn size(self, natural: Dim) -> Dim {
+        match self {
+            Packing::Natural => natural,
+            Packing::To(to) => to,
+            Packing::Spread(by) => natural.extended_by(by),
+        }
+    }
+}
+
 /// The natural size of the list being built, as `hpack` (tex.web § 649)
-/// and `vpack` (§ 668) find it, while every item on the list is known.
+/// and `vpack` (§ 668) find it, and the tail `\lastskip` and `\unskip`
+/// reach (§ 424, § 1105).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Natural {
     /// The sum along the list: the width of a horizontal list, the height
-    /// of a vertical one.
-    pub along: Scaled,
-    /// The largest height and depth on a horizontal list.  A vertical one
-    /// holds only glue and kerns here, so its width and depth are zero.
-    pub height: Scaled,
-    pub depth: Scaled,
-    /// The last item, which `\lastskip` and relatives read (tex.web § 424)
-    /// and `\unskip` and relatives take away (§ 1105).
-    pub last: Last,
-    /// The item before it, which `\unskip` and relatives uncover.
-    pub before: Last,
+    /// of a vertical one (tex.web § 668 `x`).
+    pub along: Dim,
+    /// The largest height on a horizontal list (tex.web § 649 `h`).  Not
+    /// used on a vertical one.
+    pub height: Dim,
+    /// The largest depth on a horizontal list, the depth the last box left
+    /// on a vertical one (tex.web § 668 `d`).
+    pub depth: Dim,
+    /// A vertical list's width: the largest of its boxes' (tex.web § 668
+    /// `w`).  Not used on a horizontal list.
+    pub wide: Dim,
+    /// The height of the first box or rule of a vertical list, which
+    /// `\vtop` takes for its height (tex.web § 1087); zero once anything
+    /// else came first, `None` while the list is empty.
+    pub first: Option<Dim>,
+    /// Whether a vertical list already holds a box or rule, so that the
+    /// next one takes interline glue (tex.web § 679 `prev_depth`).
+    pub prior: bool,
+    /// Whether `\boxmaxdepth` was set while this list was being built:
+    /// `package` reads it before the group ends (tex.web § 1086), which is
+    /// past where satex can still see it.
+    pub capped: bool,
+    /// The tail of the list, nearest first: what `\lastskip` and relatives
+    /// read (tex.web § 424) and what `\unskip` and relatives uncover as
+    /// they take items away (§ 1105).  `\sw@slant` in the LaTeX kernel
+    /// reaches three deep.
+    pub tail: [Last; TAIL],
     /// The font and character of the word being set that ligatures and
     /// kerns with what comes next, not yet counted (tex.web § 1034 `cur_l`).
     pub pending: Option<(u32, u32)>,
@@ -193,18 +305,171 @@ pub struct Natural {
     pub space_factor: Option<i64>,
 }
 
+impl Natural {
+    /// A list whose size satex lost but whose tail it still follows is not
+    /// the same as one it never followed: every length widens.
+    pub fn any() -> Natural {
+        Natural {
+            along: Dim::ANY,
+            height: Dim::ANY,
+            depth: Dim::ANY,
+            wide: Dim::ANY,
+            first: Some(Dim::ANY),
+            prior: true,
+            capped: true,
+            tail: [Last::Unknown; TAIL],
+            pending: None,
+            space_factor: None,
+        }
+    }
+
+    /// An item went onto the list.
+    fn pushed(&mut self, item: Last) {
+        for k in (1..TAIL).rev() {
+            self.tail[k] = self.tail[k - 1];
+        }
+        self.tail[0] = item;
+    }
+
+    /// An item came off the list. What it uncovers past the window is not
+    /// followed.
+    fn popped(&mut self) {
+        for k in 1..TAIL {
+            self.tail[k - 1] = self.tail[k];
+        }
+        self.tail[TAIL - 1] = Last::Unknown;
+    }
+
+    /// An item that may or may not have been appended: the tail is the one
+    /// or the other.
+    fn perhaps(&mut self, item: Last) {
+        let mut next = self.tail;
+        next[0] = item.merge(self.tail[0]);
+        for ((i, prev), cur) in self.tail[0..TAIL - 1].iter().enumerate().zip(self.tail[1..].iter()) {
+            next[i + 1] = prev.merge(*cur);
+        }
+        self.tail = next;
+    }
+
+    /// tex.web § 651, § 669: glue and kerns add their size along the list.
+    /// A vertical list first settles the depth the last box left.
+    fn advance(&mut self, horizontal: bool, by: Dim) {
+        if horizontal {
+            self.along = self.along.extended_by(by);
+        } else {
+            self.along = self.along.extended_by(self.depth).extended_by(by);
+            self.depth = Dim::exact(0);
+            // tex.web § 1087: only a box or rule first gives `\vtop` its
+            // height.
+            self.first.get_or_insert(Dim::exact(0));
+        }
+    }
+
+    /// tex.web § 651, § 668: a box or rule of the given size.  A `None`
+    /// length is running (§ 463 `null_flag`), which no maximum takes.
+    fn boxed(&mut self, horizontal: bool, [w, h, d]: [Option<Dim>; 3]) {
+        if horizontal {
+            self.along = self.along.extended_by(w.unwrap_or(Dim::ANY));
+            if let Some(h) = h {
+                self.height = self.height.max(h);
+            }
+            if let Some(d) = d {
+                self.depth = self.depth.max(d);
+            }
+            // tex.web § 1056, § 1060: a box or rule sets the space factor.
+            self.space_factor = Some(1000);
+        } else {
+            let h = h.unwrap_or(Dim::ANY);
+            // tex.web § 679 `append_to_vlist`: every box but the first
+            // takes interline glue, which satex does not follow, so only
+            // the height grows unknown, not the width.
+            let glue = if self.prior { Dim::ANY } else { Dim::exact(0) };
+            self.along = self.along.extended_by(self.depth).extended_by(glue).extended_by(h);
+            self.depth = d.unwrap_or(Dim::ANY);
+            if let Some(w) = w {
+                self.wide = self.wide.max(w);
+            }
+            self.first.get_or_insert(h);
+            self.prior = true;
+        }
+    }
+
+    /// A character, box or rule whose size satex does not know: every
+    /// length it could have added widens, so the size is never
+    /// under-approximated.
+    fn widen(&mut self, horizontal: bool) {
+        self.boxed(horizontal, [Some(Dim::ANY); 3]);
+    }
+
+    /// A character on a horizontal list (tex.web § 651 `char_node`).  The
+    /// space factor is the reader's, not a box's.
+    fn character(&mut self, box_: [Dim; 3]) {
+        let sf = self.space_factor;
+        self.boxed(true, box_.map(Some));
+        self.space_factor = sf;
+    }
+
+    fn join(self, other: Natural) -> Natural {
+        let mut joined = Natural {
+            along: self.along.join(other.along),
+            height: self.height.join(other.height),
+            depth: self.depth.join(other.depth),
+            wide: self.wide.join(other.wide),
+            first: match (self.first, other.first) {
+                (None, None) => None,
+                (a, b) => Some(a.unwrap_or(Dim::exact(0)).join(b.unwrap_or(Dim::exact(0)))),
+            },
+            prior: self.prior || other.prior,
+            capped: self.capped || other.capped,
+            tail: std::array::from_fn(|k| self.tail[k].merge(other.tail[k])),
+            pending: self.pending,
+            space_factor: if self.space_factor == other.space_factor { self.space_factor } else { None },
+        };
+        // A character not yet counted differs between the paths: its own
+        // size is not known, so the lengths it would add widen.
+        if self.pending != other.pending {
+            joined.pending = None;
+            joined.along = Dim::ANY;
+            joined.height = joined.height.max(Dim::ANY);
+            joined.depth = joined.depth.max(Dim::ANY);
+            joined.wide = joined.wide.max(Dim::ANY);
+        }
+        joined
+    }
+}
+
+/// How far back `\unskip` and relatives are followed.
+pub const TAIL: usize = 4;
+
 /// The last item of a list, as far as `\lastskip`, `\lastkern` and
 /// `\lastpenalty` tell items apart.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Last {
-    /// None, or one that is not glue, a kern or a penalty.
+    /// None, or one that is neither glue, a kern, a penalty nor a
+    /// character.
     #[default]
     Other,
+    /// A character or ligature node, by the font and character `\/` takes
+    /// its italic correction from (tex.web § 1113); `None` where that is
+    /// not known.
+    Char(Option<(u32, u32)>),
     /// Glue by its natural width, and its whole specification where known.
     Glue(Scaled, Option<crate::value::Glue>),
     Kern(Scaled),
     Penalty(i64),
     Unknown,
+}
+
+impl Last {
+    /// The tail where two paths, or an item that may not have been
+    /// appended, leave different ones.
+    fn merge(self, other: Last) -> Last {
+        match (self, other) {
+            _ if self == other => self,
+            (Last::Other | Last::Char(_), Last::Other | Last::Char(_)) => Last::Char(None),
+            _ => Last::Unknown,
+        }
+    }
 }
 
 /// Which item `\unskip`, `\unkern` or `\unpenalty` takes away.
@@ -225,20 +490,24 @@ pub(crate) enum Item {
     Kern(Option<Scaled>),
     /// Glue by its natural width, and its specification where known.
     Glue(Option<Scaled>, Option<crate::value::Glue>),
-    /// A `\vrule`: its width, and the height and depth it gives, `None`
-    /// where running (tex.web § 463).
+    /// A rule: each of its three lengths, `None` where running (tex.web
+    /// § 463), `Some(None)` where satex does not know it.
     Rule {
-        width: Option<Scaled>,
+        width: Option<Option<Scaled>>,
         height: Option<Option<Scaled>>,
         depth: Option<Option<Scaled>>,
     },
-    Box([Option<Scaled>; 3]),
+    Box([Dim; 3]),
     Unknown,
 }
 
-/// Two paths' natural sizes: the size where they agree, unknown otherwise.
+/// Two paths' natural sizes: each length joined, so a size that differs
+/// widens rather than being dropped.
 pub fn join_natural(a: Option<Natural>, b: Option<Natural>) -> Option<Natural> {
-    if a == b { a } else { None }
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.join(b)),
+        _ => None,
+    }
 }
 
 /// tex.web § 463 `default_rule`: 0.4pt.
@@ -252,8 +521,8 @@ const EQNO: u8 = 1;
 pub enum BoxContext {
     /// Appended to the current list.
     Direct,
-    /// `\raise` and relatives.
-    Shift,
+    /// `\raise` and relatives, by how much the box is shifted.
+    Shift(Dim),
     /// `\setbox`: the register, if known, and whether the assignment is
     /// global.
     Set { register: Option<i64>, global: bool },
@@ -357,8 +626,22 @@ impl Machine<'_> {
     /// tex.web § 1091 `new_graf`.
     fn new_graf(&mut self, span: Span) {
         self.mode = self.mode.map(|m| if m.meets(Modes::ANY_VERTICAL) { Modes::HORIZONTAL } else { m });
-        // The lines the paragraph breaks into are not followed.
-        self.natural = None;
+        // A new horizontal list, whose tail `\lastskip` reads: empty, or
+        // the indent box, which is neither glue nor a kern nor a penalty.
+        // Its size is the paragraph's, which line breaking undoes, so only
+        // the tail and the space factor are followed.
+        self.natural = Some(Natural {
+            along: Dim::ANY,
+            height: Dim::ANY,
+            depth: Dim::ANY,
+            wide: Dim::ANY,
+            first: Some(Dim::ANY),
+            prior: true,
+            capped: false,
+            tail: [Last::Other; TAIL],
+            pending: None,
+            space_factor: Some(1000),
+        });
         self.insert_every("everypar", span);
     }
 
@@ -394,6 +677,9 @@ impl Machine<'_> {
         let list = self.list.and(Modes::ANY_VERTICAL);
         let to = if list.is_empty() { Modes::VERTICAL } else { list };
         self.mode = self.mode.map(|m| if m == Modes::HORIZONTAL { to } else { m });
+        // The lines the paragraph breaks into are not followed, so neither
+        // is the vertical list they go onto.
+        self.natural = None;
     }
 
     /// tex.web § 1070 `normal_paragraph`: the paragraph shape parameters go
@@ -457,7 +743,7 @@ impl Machine<'_> {
     }
 
     /// The `{` a box, an insertion or a math part begins with (tex.web
-    /// § 403 `scan_left_brace`); TeX inserts a missing one.
+    /// § 403 `scan_left_brace`).  TeX inserts a missing one.
     fn box_left_brace(&mut self, span: Span) -> Span {
         loop {
             let Some(token) = self.next_x_token() else { return span };
@@ -495,7 +781,8 @@ impl Machine<'_> {
             level: true,
             part,
             target: None,
-            to: None,
+            shift: Dim::exact(0),
+            to: Packing::Natural,
             material: self.material,
             natural: self.natural,
             placed: false,
@@ -522,7 +809,8 @@ impl Machine<'_> {
             level: false,
             part: 0,
             target: None,
-            to: None,
+            shift: Dim::exact(0),
+            to: Packing::Natural,
             material: self.material,
             natural: self.natural,
             placed: false,
@@ -551,14 +839,31 @@ impl Machine<'_> {
         };
         // tex.web §§ 649, 668: the box's size is its list's natural size,
         // or its `to` size in its own direction.
-        let dims = if kind == BoxState::Unknown || nest.code == Some(group::VTOP) {
-            [None; 3]
-        } else {
-            let along = nest.to.unwrap_or(natural.map(|n| n.along));
-            match natural {
-                _ if kind == BoxState::HBox => [along, natural.map(|n| n.height), natural.map(|n| n.depth)],
-                Some(_) => [Some(0), along, Some(0)],
-                None => [None, along, None],
+        let n = natural.unwrap_or_else(Natural::any);
+        let dims = match kind {
+            BoxState::Unknown => [Dim::ANY; 3],
+            BoxState::HBox => [nest.to.size(n.along), n.height, n.depth],
+            _ => {
+                // tex.web § 668: `vpackage` moves the depth past
+                // `\boxmaxdepth` into the height.
+                let limit = if n.capped { Dim::ANY } else { self.dimen_parameter("boxmaxdepth") };
+                let (along, depth) = if n.depth.hi <= limit.lo {
+                    (n.along, n.depth)
+                } else if n.depth.lo >= limit.hi {
+                    (n.along.extended_by(n.depth).reduced_by(limit), limit)
+                } else {
+                    (n.along.extended_by(n.depth).reduced_by(limit).join(n.along), n.depth.join(limit))
+                };
+                let n = Natural { along, depth, ..n };
+                let height = nest.to.size(n.along);
+                // tex.web § 1087: a `\vtop` takes its height from its first
+                // box, and the rest of the packed box is its depth.
+                if nest.code == Some(group::VTOP) {
+                    let first = n.first.unwrap_or(Dim::exact(0));
+                    [n.wide, first, height.extended_by(n.depth).reduced_by(first)]
+                } else {
+                    [n.wide, height, n.depth]
+                }
             }
         };
         if let Some((register, global)) = nest.target {
@@ -567,6 +872,7 @@ impl Machine<'_> {
                 self.set_box_dims(register, dims);
             }
         } else if nest.placed {
+            let dims = self.shifted(dims, nest.shift);
             self.append_item(Item::Box(dims));
         } else if nest.code == Some(group::INSERT) {
             self.append_item(Item::Zero);
@@ -616,7 +922,8 @@ impl Machine<'_> {
             level: true,
             part: 0,
             target: None,
-            to: None,
+            shift: Dim::exact(0),
+            to: Packing::Natural,
             material: self.material,
             natural: None,
             placed: false,
@@ -665,8 +972,15 @@ impl Machine<'_> {
             }
             ModeCmd::Box(kind) => self.begin_box(kind, BoxContext::Direct, span),
             ModeCmd::Shift { .. } => {
-                self.scan_dimen();
-                self.scan_box(BoxContext::Shift, span);
+                // tex.web § 1073: `\raise` and `\moveleft` shift the other
+                // way round from `\lower` and `\moveright`.
+                let back = {
+                    let name = self.name(self.env.identity(by));
+                    name == "raise" || name == "moveleft"
+                };
+                let amount = self.scan_dimen().map_or(Dim::ANY, Dim::exact);
+                let shift = if back { Dim::exact(0).reduced_by(amount) } else { amount };
+                self.scan_box(BoxContext::Shift(shift), span);
             }
             ModeCmd::Leaders => self.scan_box(BoxContext::Leaders, span),
             ModeCmd::ShipOut => self.scan_box(BoxContext::Ship, span),
@@ -704,7 +1018,8 @@ impl Machine<'_> {
                         level: true,
                         part: EQNO,
                         target: None,
-                        to: None,
+                        shift: Dim::exact(0),
+                        to: Packing::Natural,
                         material: self.material,
                         natural: None,
                         placed: false,
@@ -717,7 +1032,7 @@ impl Machine<'_> {
                 }
             }
             // tex.web § 1191: `\left` begins an inner math list that
-            // `\right` ends; satex keeps no group for it, so the display
+            // `\right` ends. satex keeps no group for it, so the display
             // may be inner from here on.
             ModeCmd::Left => {
                 self.skip_spaces();
@@ -745,20 +1060,25 @@ impl Machine<'_> {
             // the `copy` forms do not.
             Material::Unpackage { take } => {
                 let n = self.scan_number();
-                // A void register adds nothing; a list taken out of a box is
+                // A void register adds nothing. A list taken out of a box is
                 // not followed.
                 if self.fetch_box(n, take) != BoxState::Void {
                     self.append_item(Item::Unknown);
                 }
             }
-            // tex.web § 463: a `\vrule` is 0.4pt wide unless said otherwise,
-            // its height and depth running; an `\hrule` is a vertical one.
+            // tex.web § 463 `scan_rule_spec`: a `\vrule` is 0.4pt wide unless
+            // said otherwise, its height and depth running. An `\hrule` is
+            // 0.4pt high and nothing deep, its width running.
             Material::Rule => {
                 let [width, height, depth] = self.scan_rule_spec();
-                let item = if self.mode.meets(Modes::ANY_HORIZONTAL) {
-                    Item::Rule { width: width.unwrap_or(Some(DEFAULT_RULE)), height, depth }
-                } else {
-                    Item::Unknown
+                let item = match self.list_kind() {
+                    Some(true) => Item::Rule { width: Some(width.unwrap_or(Some(DEFAULT_RULE))), height, depth },
+                    Some(false) => Item::Rule {
+                        width,
+                        height: Some(height.unwrap_or(Some(DEFAULT_RULE))),
+                        depth: Some(depth.unwrap_or(Some(0))),
+                    },
+                    None => Item::Unknown,
                 };
                 self.append_item(item);
             }
@@ -772,7 +1092,7 @@ impl Machine<'_> {
                 self.open_list(Some(group::DISC), Modes::RESTRICTED_HORIZONTAL, 1, span);
             }
             // tex.web § 774 `init_align`: the preamble and the rows are one
-            // group; satex runs the cells in the alignment's list.
+            // group. satex runs the cells in the alignment's list.
             Material::Align => {
                 if self.scan_keyword("to") || self.scan_keyword("spread") {
                     self.scan_dimen();
@@ -838,11 +1158,19 @@ impl Machine<'_> {
                 let state = self.fetch_box(n, false);
                 return self.box_end(context, state, dims);
             }
-            // The last box of the current list is typesetting, and the
-            // list loses it.
+            // tex.web § 1080: `\lastbox` is the box at the tail of the
+            // current list, and void where the tail is no box. The list
+            // loses what it gives.
             BoxCmd::LastBox => {
-                self.natural = None;
-                return self.box_end(context, BoxState::Unknown, [None; 3]);
+                let tail = self.natural.map(|n| n.tail[0]);
+                let state = match tail {
+                    Some(Last::Glue(..) | Last::Kern(_) | Last::Penalty(_) | Last::Char(_)) => BoxState::Void,
+                    _ => {
+                        self.natural = None;
+                        BoxState::Unknown
+                    }
+                };
+                return self.box_end(context, state, [Dim::ANY; 3]);
             }
             // tex.web § 977: the split-off part is a vbox, or void when
             // the register is.
@@ -855,13 +1183,13 @@ impl Machine<'_> {
                     _ => BoxState::Unknown,
                 };
                 self.box_changed(n, BoxState::Unknown);
-                return self.box_end(context, state, [None; 3]);
+                return self.box_end(context, state, [Dim::ANY; 3]);
             }
             BoxCmd::HBox => {
                 // A box appended to a vertical list may take `\vadjust`
                 // material with it.
                 let code = match context {
-                    BoxContext::Direct | BoxContext::Shift => {
+                    BoxContext::Direct | BoxContext::Shift(_) => {
                         self.mode.test(Modes::ANY_VERTICAL).map(|v| if v { group::ADJUSTED_HBOX } else { group::HBOX })
                     }
                     _ => Some(group::HBOX),
@@ -872,26 +1200,27 @@ impl Machine<'_> {
             BoxCmd::VTop => (Some(group::VTOP), Modes::INTERNAL_VERTICAL),
             BoxCmd::VCenter => (Some(group::VCENTER), Modes::INTERNAL_VERTICAL),
         };
+        let dimen = |m: &mut Self| m.scan_dimen().map_or(Dim::ANY, Dim::exact);
         let to = if self.scan_keyword("to") {
-            Some(self.scan_dimen())
+            Packing::To(dimen(self))
+        } else if self.scan_keyword("spread") {
+            Packing::Spread(dimen(self))
         } else {
-            if self.scan_keyword("spread") {
-                self.scan_dimen();
-                Some(None)
-            } else {
-                None
-            }
+            Packing::Natural
         };
-        if matches!(context, BoxContext::Shift | BoxContext::Leaders) {
-            self.natural = None;
-        }
         self.open_list(code, modes, 0, span);
         let mut nest = self.env.nest().expect("the box's group is open");
         nest.to = to;
         match context {
             BoxContext::Set { register, global } => nest.target = Some((register, global)),
             BoxContext::Direct => nest.placed = true,
-            _ => {}
+            BoxContext::Shift(shift) => {
+                nest.placed = true;
+                nest.shift = shift;
+            }
+            // tex.web § 1078: the leader box itself goes on no list. The
+            // glue that follows it is appended on its own.
+            BoxContext::Leaders | BoxContext::Ship => {}
         }
         self.env.set_nest(nest);
         if modes == Modes::INTERNAL_VERTICAL {
@@ -907,7 +1236,7 @@ impl Machine<'_> {
     /// tex.web § 1075 `box_end` for a box that is already made: it goes
     /// into a register, onto the current list, or somewhere satex does not
     /// follow.
-    fn box_end(&mut self, context: BoxContext, state: BoxState, dims: [Option<Scaled>; 3]) {
+    fn box_end(&mut self, context: BoxContext, state: BoxState, dims: [Dim; 3]) {
         match context {
             BoxContext::Set { register, global } => {
                 self.set_box(register, state, global);
@@ -916,18 +1245,46 @@ impl Machine<'_> {
                 }
             }
             BoxContext::Direct => self.append_box(state, dims),
-            BoxContext::Shift | BoxContext::Leaders => self.natural = None,
-            BoxContext::Ship => {}
+            BoxContext::Shift(shift) => {
+                let dims = self.shifted(dims, shift);
+                self.append_box(state, dims);
+            }
+            BoxContext::Leaders | BoxContext::Ship => {}
         }
     }
 
-    /// A box register's contents appended to the current list; a void
+    /// tex.web § 653 and § 670: a shifted box raises the height and lowers
+    /// the depth of a horizontal list, and widens a vertical one.
+    fn shifted(&self, [w, h, d]: [Dim; 3], shift: Dim) -> [Dim; 3] {
+        match self.list_kind() {
+            Some(true) => [w, h.reduced_by(shift), d.extended_by(shift)],
+            _ => [w.extended_by(shift), h, d],
+        }
+    }
+
+    /// A box register's contents appended to the current list. A void
     /// register appends nothing (tex.web § 1076).
-    pub(crate) fn append_box(&mut self, state: BoxState, dims: [Option<Scaled>; 3]) {
+    pub(crate) fn append_box(&mut self, state: BoxState, dims: [Dim; 3]) {
         match state {
             BoxState::Void => {}
             BoxState::Unknown => self.append_item(Item::Unknown),
             _ => self.append_item(Item::Box(dims)),
+        }
+    }
+
+    /// Which list is being built: `Some(true)` a horizontal one,
+    /// `Some(false)` a vertical one of its own.  `None` for the main
+    /// vertical list, whose tail the page builder may take away (tex.web
+    /// § 1000), for math, and where the mode is not known.
+    pub(crate) fn list_kind(&self) -> Option<bool> {
+        if self.mode.is_empty() {
+            None
+        } else if self.mode.within(Modes::ANY_HORIZONTAL) {
+            Some(true)
+        } else if self.mode == Modes::INTERNAL_VERTICAL {
+            Some(false)
+        } else {
+            None
         }
     }
 
@@ -937,59 +1294,49 @@ impl Machine<'_> {
         self.material = true;
         self.end_word();
         let Some(mut n) = self.natural else { return };
-        let horizontal = self.mode == Modes::RESTRICTED_HORIZONTAL;
-        let vertical = self.mode == Modes::INTERNAL_VERTICAL;
-        self.natural = match item {
-            // What may or may not be a whatsit leaves a last glue, kern or
-            // penalty in doubt.
-            Item::Zero => {
-                if n.last != Last::Other {
-                    n.last = Last::Unknown;
-                }
-                if n.last != Last::Other || n.before != Last::Other {
-                    n.before = Last::Unknown;
-                }
-                Some(n)
-            }
-            Item::Penalty(p) => {
-                n.before = n.last;
-                n.last = p.map_or(Last::Unknown, Last::Penalty);
-                Some(n)
-            }
-            Item::Kern(Some(k)) if horizontal || vertical => {
-                n.along += k;
-                n.before = n.last;
-                n.last = Last::Kern(k);
-                Some(n)
-            }
-            Item::Glue(Some(w), spec) if horizontal || vertical => {
-                n.along += w;
-                n.before = n.last;
-                n.last = Last::Glue(w, spec);
-                Some(n)
-            }
-            Item::Rule { width: Some(w), height, depth }
-                if horizontal && height.is_none_or(|h| h.is_some()) && depth.is_none_or(|d| d.is_some()) =>
-            {
-                n.along += w;
-                n.space_factor = Some(1000);
-                n.height = n.height.max(height.flatten().unwrap_or(0));
-                n.depth = n.depth.max(depth.flatten().unwrap_or(0));
-                n.before = n.last;
-                n.last = Last::Other;
-                Some(n)
-            }
-            Item::Box([Some(w), Some(h), Some(d)]) if horizontal => {
-                n.along += w;
-                n.space_factor = Some(1000);
-                n.height = n.height.max(h);
-                n.depth = n.depth.max(d);
-                n.before = n.last;
-                n.last = Last::Other;
-                Some(n)
-            }
-            _ => None,
+        let Some(horizontal) = self.list_kind() else {
+            self.natural = None;
+            return;
         };
+        // tex.web § 463: a running length is `null_flag`, which neither
+        // maximum in § 651 nor § 668 ever takes.
+        let rule = |d: Option<Option<Scaled>>| match d {
+            None => None,
+            Some(Some(v)) => Some(Dim::exact(v)),
+            Some(None) => Some(Dim::ANY),
+        };
+        match item {
+            // Nothing, or a whatsit: the tail is the new item or the one
+            // that was there, so a last glue, kern or penalty is in doubt.
+            Item::Zero => n.perhaps(Last::Other),
+            Item::Penalty(p) => n.pushed(p.map_or(Last::Unknown, Last::Penalty)),
+            Item::Kern(k) => {
+                n.advance(horizontal, k.map_or(Dim::ANY, Dim::exact));
+                n.pushed(k.map_or(Last::Unknown, Last::Kern));
+            }
+            Item::Glue(w, spec) => {
+                n.advance(horizontal, w.map_or(Dim::ANY, Dim::exact));
+                n.pushed(match w {
+                    Some(w) => Last::Glue(w, spec),
+                    None => Last::Unknown,
+                });
+            }
+            Item::Rule { width, height, depth } => {
+                n.boxed(horizontal, [rule(width), rule(height), rule(depth)]);
+                n.pushed(Last::Other);
+            }
+            Item::Box(dims) => {
+                n.boxed(horizontal, dims.map(Some));
+                n.pushed(Last::Other);
+            }
+            Item::Unknown => {
+                n.widen(horizontal);
+                // Material satex did not follow may have set it.
+                n.space_factor = None;
+                n.tail = [Last::Unknown; TAIL];
+            }
+        }
+        self.natural = Some(n);
     }
 
     /// Interword glue (tex.web §§ 1041-1044): `\spaceskip` or the font's
@@ -1052,8 +1399,13 @@ impl Machine<'_> {
     /// its natural size before the primitive is obeyed.  Those that scan
     /// their size first (kerns, penalties, glue, rules and boxes) add it
     /// when they have.
-    pub(crate) fn natural_before(&mut self, p: Primitive) {
+    pub(crate) fn natural_before(&mut self, p: Primitive, by: Sym) {
         use crate::builtins::{PdfOp, Syntax, Typeset};
+        // tex.web § 1113 `append_italic_correction`: `\/` is a kern, not
+        // nothing, so it may not be passed over as a zero-size command.
+        if p == Primitive::Command(Syntax::Nothing) && self.name(self.env.identity(by)) == "/" {
+            return self.italic_correction();
+        }
         let item = match p {
             Primitive::Mode(
                 ModeCmd::Horizontal(_)
@@ -1082,6 +1434,9 @@ impl Machine<'_> {
                 | Syntax::RuleSpec
                 | Syntax::BoxSpec
                 | Syntax::VSplit => Item::Unknown,
+                // tex.web § 1241: `\setbox` is an assignment and puts
+                // nothing on the current list, so the tail stays as it is.
+                Syntax::SetBox => return,
                 _ => Item::Zero,
             },
             _ => Item::Unknown,
@@ -1095,50 +1450,113 @@ impl Machine<'_> {
     /// and native fonts are not followed.
     pub(crate) fn append_char(&mut self, c: u32) {
         self.material = true;
-        let Some(mut n) = self.natural else { return };
-        let font = (self.mode == Modes::RESTRICTED_HORIZONTAL).then(|| self.current_font()).flatten();
-        let Some((font, metrics, size)) = font.and_then(|f| Some((f, self.font_metrics(f)?, self.font_size(f)?)))
-        else {
-            self.natural = None;
+        if self.natural.is_none() {
             return;
-        };
-        if metrics.has_boundary() || !metrics.has_char(c) {
+        }
+        if self.list_kind() != Some(true) {
             self.natural = None;
             return;
         }
+        let font = self.current_font();
+        let known = font.and_then(|f| Some((f, self.font_metrics(f)?, self.font_size(f)?)));
+        let Some((font, metrics, size)) = known else { return self.unmetered_char(c) };
+        if metrics.has_boundary() || !metrics.has_char(c) {
+            return self.unmetered_char(c);
+        }
+        let mut n = self.natural.expect("checked above");
         let step = match n.pending {
             Some((f, left)) if f == font => metrics.lig_kern(left, c, size),
             _ => None,
         };
         match step {
-            Some(crate::tfm::LigKern::Lig { op: 0, char }) if metrics.has_char(char) => n.pending = Some((font, char)),
+            // The ligature takes the place of the character before it, so
+            // the tail is still the one node.
+            Some(crate::tfm::LigKern::Lig { op: 0, char }) if metrics.has_char(char) => {
+                n.pending = Some((font, char));
+                n.tail[0] = Last::Char(None);
+            }
+            // The other ligature operations keep or repeat characters. The
+            // size of what they leave is not followed.
             Some(crate::tfm::LigKern::Lig { .. }) => {
-                self.natural = None;
-                return;
+                n.pending = None;
+                let sf = n.space_factor;
+                n.widen(true);
+                n.space_factor = sf;
+                n.tail = [Last::Unknown; TAIL];
+                n.tail[0] = Last::Char(None);
             }
             step => {
                 self.end_word();
                 let Some(next) = self.natural else { return };
                 n = next;
                 if let Some(crate::tfm::LigKern::Kern(k)) = step {
-                    n.along += k;
+                    n.along = n.along.extended_by(Dim::exact(k));
                 }
                 n.pending = Some((font, c));
+                n.pushed(Last::Char(None));
             }
         }
-        // tex.web § 1034 `adjust_space_factor`.
-        let code = self.char_code(crate::builtins::CodeTable::Space, char::from_u32(c).unwrap_or('\0'));
-        n.space_factor = match (code, n.space_factor) {
+        n.space_factor = self.space_factor_after(c, n.space_factor);
+        self.natural = Some(n);
+    }
+
+    /// A character whose font satex has no metrics for, or which the font
+    /// lacks: its box widens the list, but it is still a character node
+    /// for `\lastskip` and it still sets the space factor (tex.web § 1034).
+    fn unmetered_char(&mut self, c: u32) {
+        self.end_word();
+        let Some(mut n) = self.natural else { return };
+        let sf = n.space_factor;
+        n.widen(true);
+        n.space_factor = self.space_factor_after(c, sf);
+        n.pushed(Last::Char(None));
+        self.natural = Some(n);
+    }
+
+    /// tex.web § 1034 `adjust_space_factor`.
+    fn space_factor_after(&mut self, c: u32, sf: Option<i64>) -> Option<i64> {
+        // A `\sfcode` satex could not follow leaves the space factor unknown.
+        let code = self.char_code_known(crate::builtins::CodeTable::Space, char::from_u32(c).unwrap_or('\0'))?;
+        match (code, sf) {
             (1000, _) => Some(1000),
             (0, sf) => sf,
             (code, _) if code < 1000 => Some(code),
             (_, Some(sf)) if sf < 1000 => Some(1000),
             (code, Some(_)) => Some(code),
             (_, None) => None,
-        };
-        n.before = n.last;
-        n.last = Last::Other;
-        self.natural = Some(n);
+        }
+    }
+
+    /// A dimension parameter as an interval; unset it is zero (tex.web
+    /// § 240: every parameter starts at zero).
+    fn dimen_parameter(&mut self, name: &str) -> Dim {
+        let sym = self.intern(name);
+        match self.env.value(sym) {
+            Value::Dimen(d) => Dim::exact(d),
+            Value::Range { dimen: true, num } => Dim::range(num.lo, num.hi),
+            Value::Unknown if self.env.get(sym).is_none() => Dim::exact(0),
+            _ => Dim::ANY,
+        }
+    }
+
+    /// tex.web § 1113 `append_italic_correction`: a kern of the last
+    /// character's italic correction, and nothing where the tail is not a
+    /// character or ligature.
+    fn italic_correction(&mut self) {
+        self.material = true;
+        self.end_word();
+        let Some(n) = self.natural else { return };
+        match n.tail[0] {
+            Last::Char(Some((font, c))) => {
+                let bx = self.font_size(font).zip(self.font_metrics(font)).and_then(|(z, m)| m.char_box(c, z));
+                self.append_item(Item::Kern(bx.map(|b| b.italic)));
+            }
+            // A character whose italic correction is not known, or a tail
+            // that may be one: the kern it adds is not known either.
+            Last::Char(None) | Last::Unknown => self.append_item(Item::Kern(None)),
+            // The tail is no character, so `\/` appends nothing.
+            _ => {}
+        }
     }
 
     /// The word being set ends: its last character is counted (tex.web
@@ -1147,31 +1565,54 @@ impl Machine<'_> {
         let Some(mut n) = self.natural else { return };
         let Some((font, c)) = n.pending.take() else { return };
         let size = self.font_size(font);
-        let bx = self.font_metrics(font).zip(size).and_then(|(m, z)| m.char_box(c, z));
-        self.natural = bx.map(|b| {
-            n.along += b.width;
-            n.height = n.height.max(b.height);
-            n.depth = n.depth.max(b.depth);
-            n
-        });
+        match self.font_metrics(font).zip(size).and_then(|(m, z)| m.char_box(c, z)) {
+            Some(b) => {
+                n.character([b.width, b.height, b.depth].map(Dim::exact));
+                // The node is settled, so `\/` can read its italic correction.
+                if n.tail[0] == Last::Char(None) {
+                    n.tail[0] = Last::Char(Some((font, c)));
+                }
+            }
+            None => n.character([Dim::ANY; 3]),
+        }
+        self.natural = Some(n);
     }
 
     /// `\unskip`, `\unkern` or `\unpenalty` (tex.web § 1105): each takes
-    /// away a last item of its own kind; which kind is not told apart here.
+    /// away a last item of its own kind. Which kind is not told apart here.
     pub(crate) fn remove_item(&mut self, removed: Removed) {
         self.end_word();
         let Some(mut n) = self.natural else { return };
-        let taken = match (removed, n.last) {
+        let horizontal = self.list_kind();
+        let taken = match (removed, n.tail[0]) {
+            // What the tail is is not known, so neither is what went. The
+            // size widens rather than staying as it was.
             (_, Last::Unknown) => {
-                self.natural = None;
+                match horizontal {
+                    Some(h) => n.widen(h),
+                    None => {
+                        self.natural = None;
+                        return;
+                    }
+                }
+                n.tail = [Last::Unknown; TAIL];
+                self.natural = Some(n);
                 return;
             }
             (Removed::Glue, Last::Glue(w, _)) | (Removed::Kern, Last::Kern(w)) => w,
             (Removed::Penalty, Last::Penalty(_)) => 0,
             _ => return,
         };
-        n.along -= taken;
-        n.last = std::mem::replace(&mut n.before, Last::Unknown);
+        match horizontal {
+            // tex.web § 668: the depth the item before it left is not kept,
+            // so a vertical list only widens.
+            Some(true) => n.along = n.along.reduced_by(Dim::exact(taken)),
+            _ => {
+                n.along = Dim::ANY;
+                n.depth = Dim::ANY;
+            }
+        }
+        n.popped();
         self.natural = Some(n);
     }
 
@@ -1180,7 +1621,7 @@ impl Machine<'_> {
     pub(crate) fn last_value(&mut self, removed: Removed) -> Option<Value> {
         self.end_word();
         let n = self.natural?;
-        match (removed, n.last) {
+        match (removed, n.tail[0]) {
             (_, Last::Unknown) => None,
             (Removed::Glue, Last::Glue(_, spec)) => spec.map(Value::Glue),
             (Removed::Glue, _) => Some(Value::Glue(crate::value::Glue::default())),
@@ -1273,22 +1714,53 @@ impl Machine<'_> {
     /// The box register `n`: void until something is put in it.
     pub(crate) fn box_state(&mut self, n: i64) -> BoxState {
         let sym = self.box_sym(n);
-        match self.env.get(sym) {
+        let value = self.env.get(sym).map(|b| b.value.clone());
+        match value {
+            // A `\setbox` through a number satex could not pin down may
+            // have reached a register it has not seen written.
+            None if self.any_register_written(crate::tex::RegKind::Box) => BoxState::Unknown,
             None => BoxState::Void,
-            Some(b) => match b.value {
-                Value::Int(0) => BoxState::Void,
-                Value::Int(1) => BoxState::HBox,
-                Value::Int(2) => BoxState::VBox,
-                _ => BoxState::Unknown,
-            },
+            Some(Value::Int(0)) => BoxState::Void,
+            Some(Value::Int(1)) => BoxState::HBox,
+            Some(Value::Int(2)) => BoxState::VBox,
+            Some(_) => BoxState::Unknown,
         }
     }
 
-    /// `\box`, `\copy`, `\unhbox` and relatives take the register's box;
+    /// A write through a box number satex could not pin down: every box
+    /// register may hold what was set, and one never set is no longer
+    /// known to be void (tex.web §§ 1077, 1079).
+    fn weaken_boxes(&mut self, global: bool) {
+        self.weaken_registers(crate::tex::RegKind::Box, None, Value::Unknown, global);
+        self.weaken_box_dimens(None, global);
+    }
+
+    /// The same for `\wd`, `\ht` and `\dp`: `which` names one of them, or
+    /// `None` all three.  A void box keeps its zeroes, which is what
+    /// `alter_box_dimen` leaves them (tex.web § 1247).
+    fn weaken_box_dimens(&mut self, which: Option<&str>, global: bool) {
+        let prefix = match which {
+            Some(which) => format!("\u{4}box.{which}."),
+            None => "\u{4}box.".to_string(),
+        };
+        let targets: Vec<Sym> = self.env.bound().into_iter().filter(|&s| self.name(s).starts_with(&prefix)).collect();
+        for sym in targets {
+            self.env.set_value(sym, Value::Unknown, global);
+        }
+    }
+
+    /// `\box`, `\copy`, `\unhbox` and relatives take the register's box.
     /// `take` leaves the register void, without a save-stack entry
     /// (tex.web § 1079 `box(cur_val):=null`).
     pub(crate) fn fetch_box(&mut self, n: Option<i64>, take: bool) -> BoxState {
-        let Some(n) = n else { return BoxState::Unknown };
+        let Some(n) = n else {
+            // A number satex could not pin down names any register, and
+            // taking its box leaves that one void.
+            if take {
+                self.weaken_boxes(true);
+            }
+            return BoxState::Unknown;
+        };
         let state = self.box_state(n);
         if take {
             self.box_changed(Some(n), BoxState::Void);
@@ -1298,7 +1770,8 @@ impl Machine<'_> {
 
     /// A register changed in place, as `\box` and `\vsplit` change it.
     fn box_changed(&mut self, n: Option<i64>, state: BoxState) {
-        let Some(n) = n else { return };
+        // tex.web § 1079 saves nothing, so the change outlives its group.
+        let Some(n) = n else { return self.weaken_boxes(true) };
         if self.box_state(n) == state {
             return;
         }
@@ -1309,7 +1782,7 @@ impl Machine<'_> {
 
     /// `\setbox`: a register assignment (tex.web § 1077).
     pub(crate) fn set_box(&mut self, register: Option<i64>, state: BoxState, global: bool) {
-        let Some(n) = register else { return };
+        let Some(n) = register else { return self.weaken_boxes(global) };
         let sym = self.box_sym(n);
         self.env.set_value(sym, box_value(state), global);
         for dimen in ["wd", "ht", "dp"] {
@@ -1318,24 +1791,34 @@ impl Machine<'_> {
         }
     }
 
-    /// The width, height and depth of box register `n`, where known.
-    pub(crate) fn box_dims(&mut self, n: Option<i64>) -> [Option<Scaled>; 3] {
-        let Some(n) = n else { return [None; 3] };
+    /// The width, height and depth of box register `n`, each within what
+    /// is known of it.
+    pub(crate) fn box_dims(&mut self, n: Option<i64>) -> [Dim; 3] {
+        let Some(n) = n else { return [Dim::ANY; 3] };
+        // tex.web § 420: a void box reads as zero in all three.
         if self.box_state(n) == BoxState::Void {
-            return [Some(0); 3];
+            return [Dim::exact(0); 3];
         }
         ["wd", "ht", "dp"].map(|which| {
             let key = self.intern(&format!("\u{4}box.{which}.{n}"));
             match self.env.value(key) {
-                Value::Dimen(d) => Some(d),
-                _ => None,
+                Value::Dimen(d) => Dim::exact(d),
+                Value::Range { dimen: true, num } => Dim::range(num.lo, num.hi),
+                _ => Dim::ANY,
             }
         })
     }
 
-    fn set_box_dims(&mut self, register: Option<i64>, dims: [Option<Scaled>; 3]) {
-        for (which, value) in ["wd", "ht", "dp"].into_iter().zip(dims) {
-            self.set_box_dimen(which, register, value);
+    /// What `hpack` and `vpack` found, kept as the interval it is: a
+    /// length satex could not follow is never written down as zero.
+    fn set_box_dims(&mut self, register: Option<i64>, dims: [Dim; 3]) {
+        let Some(n) = register else { return self.weaken_box_dimens(None, true) };
+        if self.box_state(n) == BoxState::Void {
+            return;
+        }
+        for (which, dim) in ["wd", "ht", "dp"].into_iter().zip(dims) {
+            let key = self.intern(&format!("\u{4}box.{which}.{n}"));
+            self.env.set_value_in_place(key, dim.value());
         }
     }
 
@@ -1359,14 +1842,14 @@ impl Machine<'_> {
                 match self.env.value(key) {
                     // tex.web §§ 649, 668: `hpack` starts height and depth
                     // at zero and takes the maximum, `vpack` the width, so
-                    // those of a packed box are at least zero.
+                    // the bound `set_box_dims` kept is what the test gets.
+                    Value::Range { dimen: true, num } => {
+                        self.abs = Some(num);
+                        self.abs_from = None;
+                        None
+                    }
                     Value::Unknown => {
-                        let packed = match self.box_state(n) {
-                            BoxState::HBox => which != "wd",
-                            BoxState::VBox => which == "wd",
-                            _ => false,
-                        };
-                        self.abs = packed.then(|| crate::value::Num::range(0, crate::value::MAX_DIMEN));
+                        self.abs = None;
                         self.abs_from = None;
                         None
                     }
@@ -1379,7 +1862,7 @@ impl Machine<'_> {
     /// `\wd⟨n⟩=⟨dimen⟩` (tex.web § 1247): a void box is left alone, and the
     /// change is made in place, as `\box` makes its own.
     pub(crate) fn set_box_dimen(&mut self, which: &str, n: Option<i64>, value: Option<i64>) {
-        let Some(n) = n else { return };
+        let Some(n) = n else { return self.weaken_box_dimens(Some(which), true) };
         match self.box_state(n) {
             BoxState::Void => {}
             state => {

@@ -451,7 +451,13 @@ fn initex_catcodes_and_unknown_digits_as_characters() {
 /// What `pdftex -ini -etex` writes to its log as `R:…` for `source`, when
 /// it is installed; errors (as "Arithmetic overflow") do not stop it.
 fn pdftex_result(source: &str) -> Option<String> {
-    let dir = std::env::temp_dir().join(format!("satex-arith-{}", std::process::id()));
+    pdftex_result_in("arith", source)
+}
+
+/// [`pdftex_result`] in a directory of its own, so that probes running side
+/// by side do not read each other's log.
+fn pdftex_result_in(tag: &str, source: &str) -> Option<String> {
+    let dir = std::env::temp_dir().join(format!("satex-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).ok()?;
     std::fs::write(dir.join("a.tex"), format!("{source}\\end\n")).ok()?;
     std::process::Command::new("pdftex")
@@ -640,4 +646,44 @@ fn arithmetic_is_texs_at_every_edge() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// tex.web § 433 (`scan_four_bit_int`): `\openin`, `\closein` and `\ifeof`
+/// take a stream number in 0..15, and "Bad number" names stream 0 instead.
+#[test]
+fn a_stream_number_outside_the_four_bit_range_names_stream_zero() {
+    // pdftex -ini -etex: `[A:EOFFALSE] [B:EOFFALSE] [C:EOFTRUE]`.
+    let dir = std::env::temp_dir().join(format!("satex-fourbit-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("probe.tex"), "hello\n").unwrap();
+    let main = dir.join("main.tex");
+    let source = format!(
+        "{PRELUDE}\\openin0=probe \\ifeof99 \\def\\a{{}}\\fi\\ifeof0 \\def\\b{{}}\\fi\
+\\closein99 \\ifeof0 \\def\\c{{}}\\fi\n"
+    );
+    std::fs::write(&main, &source).unwrap();
+    let analysis = run(&source, Some(&main), Some(Engine::PdfTeX));
+    assert!(!defined(&analysis, "a"), "\\ifeof99 asks about stream 0, which is open");
+    assert!(!defined(&analysis, "b"), "stream 0 is open");
+    assert!(defined(&analysis, "c"), "\\closein99 closed stream 0");
+}
+
+/// tex.web § 509 (`if_case_code`): while `\ifcase` skips to its arm, a `\fi`
+/// of a conditional the number scan left open pops that one and the skip
+/// goes on, rather than ending the `\ifcase`.  expl3's `\__fp_sanitize:Nw`
+/// depends on it, and without it `\fp_set:Nn \l_tmpa_fp {0}` parses as a
+/// normal number instead of `\c_zero_fp`.
+#[test]
+fn an_ifcase_pops_the_conditionals_its_number_scan_left_open() {
+    // pdftex -ini -etex: `R:three`.
+    let probe = concat!(
+        r"\ifcase\ifnum1>2 1\else\ifnum1>2 2\else\ifx AA3 \fi\fi\fi0 ",
+        r"\def\r{zero}\or\def\r{one}\or\def\r{two}\or\def\r{three}\else\def\r{other}\fi",
+    );
+    let source = format!("{PRELUDE}{probe}\\immediate\\write-1{{R:\\r}}\n");
+    if let Some(real) = pdftex_result_in("ifcase", &source) {
+        assert_eq!(real, "three", "pdftex");
+    }
+    let analysis = run(&source, None, Some(Engine::PdfTeX));
+    assert_eq!(body(&analysis, "r"), "three");
 }

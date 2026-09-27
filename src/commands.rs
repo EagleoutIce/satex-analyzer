@@ -20,6 +20,13 @@ use crate::value::{Scaled, UNIT, Value};
 /// Keeps the font tables and the other engine state out of the namespace
 /// control sequences live in, as the register names are kept out of it.
 const ENGINE: char = '\u{4}';
+
+/// `ENGINE` and `font`: the slot `\the\font` reads, as a constant so that
+/// reading it per character costs no formatting.
+const FONT_SLOT: &str = "\u{4}font";
+
+/// The five macros LaTeX keeps the current font in (fntguide § 2).
+const NFSS: [&str; 5] = ["cf@encoding", "f@family", "f@series", "f@shape", "f@size"];
 /// etex_man § 3: `\eTeXversion` and `\eTeXrevision`.
 const ETEX_VERSION: i64 = 2;
 const ETEX_REVISION: &str = ".6";
@@ -85,6 +92,22 @@ fn chars(text: &str, span: Span) -> Vec<Token> {
         .collect()
 }
 
+/// The family of font table entries one write may reach: every
+/// `\fontdimen` of a font, every `\lpcode` of it, or the one entry
+/// `\hyphenchar` and `\skewchar` name.
+fn font_field_family(font: u32, field: &str) -> String {
+    if let Some(rest) = field.strip_prefix('p')
+        && !rest.is_empty()
+        && rest.bytes().all(|b| b.is_ascii_digit())
+    {
+        return format!("font{font}.p");
+    }
+    match field.split_once('.') {
+        Some((name, _)) => format!("font{font}.{name}."),
+        None => format!("font{font}.{field}"),
+    }
+}
+
 fn text_of_value(value: &Value) -> Option<String> {
     match value {
         Value::Toks(toks) => Some(
@@ -124,6 +147,52 @@ impl Machine<'_> {
         self.env.set_value(sym, value, global);
     }
 
+    /// The slot that stands for a whole family of engine keys, such as
+    /// every `charclass.⟨n⟩`.  A real key holds no `ENGINE` character, so
+    /// this is none of them.
+    fn unpinned_sym(&mut self, family: &str) -> Sym {
+        self.engine_sym(&format!("{family}{ENGINE}any"))
+    }
+
+    /// A write through a number satex could not pin down: every key of the
+    /// family may hold what was written, and one never written is no
+    /// longer at its default either.
+    fn weaken_engine(&mut self, family: &str, global: bool) {
+        let prefix = format!("{ENGINE}{family}");
+        let targets: Vec<Sym> = self.env.bound().into_iter().filter(|&s| self.name(s).starts_with(&prefix)).collect();
+        for sym in targets {
+            self.env.set_value(sym, Value::Unknown, global);
+        }
+        let any = self.unpinned_sym(family);
+        self.env.set_value(any, Value::Unknown, global);
+    }
+
+    /// Whether such a write may have reached this family.
+    fn engine_unpinned(&mut self, family: &str) -> bool {
+        let sym = self.unpinned_sym(family);
+        self.env.get(sym).is_some()
+    }
+
+    /// An engine integer with the value a key never set reads as; `None`
+    /// where the key, or a write satex could not pin down, left it
+    /// unknown.
+    fn engine_slot_int(&mut self, family: &str, key: &str, default: i64) -> Option<i64> {
+        if self.engine_unpinned(family) {
+            return None;
+        }
+        let sym = self.engine_sym(key);
+        match self.env.get(sym) {
+            None => Some(default),
+            Some(_) => self.env.value(sym).as_int(),
+        }
+    }
+
+    /// Whether `\openout` left the stream open (tex.web § 1374); `None`
+    /// where a number satex could not pin down opened or closed one.
+    pub(crate) fn write_open(&mut self, stream: i64) -> Option<bool> {
+        self.engine_slot_int("write_open.", &format!("write_open.{stream}"), 0).map(|n| n == 1)
+    }
+
     /// `\globaldefs` (tex.web § 1214): positive makes every assignment
     /// global, negative every one local, `\global` and `\gdef` included.
     pub fn global_defs(&mut self) -> i64 {
@@ -131,10 +200,31 @@ impl Machine<'_> {
         self.env.value(sym).as_int().unwrap_or(0)
     }
 
-    pub fn apply_global_defs(&mut self) {
-        match self.global_defs() {
-            0 => {}
-            n => self.prefixes.global = n > 0,
+    /// `None` where `\globaldefs` holds a number satex does not know, so
+    /// that it is not read back as the 0 that leaves the prefix alone.
+    fn global_defs_known(&mut self) -> Option<i64> {
+        let sym = self.intern("globaldefs");
+        match self.env.get(sym) {
+            None => Some(0),
+            Some(_) => self.env.value(sym).as_int(),
+        }
+    }
+
+    /// Whether the scope of the assignment that follows is not known:
+    /// tex.web § 1214, a positive `\globaldefs` makes it global and a
+    /// negative one local.  It is then made globally and what it wrote is
+    /// widened, since the name may still hold what it held before.
+    pub fn apply_global_defs(&mut self) -> bool {
+        match self.global_defs_known() {
+            Some(0) => false,
+            Some(n) => {
+                self.prefixes.global = n > 0;
+                false
+            }
+            None => {
+                self.prefixes.global = true;
+                true
+            }
         }
     }
 
@@ -281,11 +371,15 @@ impl Machine<'_> {
                         _ => int(0),
                     };
                 }
-                let Some(frame) = self.conds.last().copied() else { return int(0) };
+                let Some((kind, undecided, limit)) =
+                    self.conds.last().map(|frame| (frame.kind, frame.undecided, frame.limit))
+                else {
+                    return int(0);
+                };
                 match item {
-                    L::IfType => frame.kind.map(|k| Value::Int(k.into())),
-                    _ if frame.undecided => None,
-                    _ => int(match frame.limit {
+                    L::IfType => kind.map(|k| Value::Int(k.into())),
+                    _ if undecided => None,
+                    _ => int(match limit {
                         CondLimit::Else | CondLimit::Or => 1,
                         CondLimit::Fi => -1,
                     }),
@@ -342,6 +436,10 @@ impl Machine<'_> {
             // The clock, the random generator and the output position.
             L::ElapsedTime | L::RandomSeed | L::LastXPos | L::LastYPos => None,
             L::XetexVersion => int(XETEX_VERSION),
+            // Unlike the other engines' version primitives, LuaTeX's varies
+            // meaningfully across installs, so it is read from the real
+            // `luatex --version` for this run rather than a constant.
+            L::LuatexVersion => crate::plugin::lua::engine_version(self.cfg).map(Value::Int),
             L::PdfPageCount => {
                 self.read_file_name();
                 None
@@ -460,7 +558,11 @@ impl Machine<'_> {
                 let which = self.name(self.env.identity(by)).to_string();
                 self.box_dimen(&which, n)
             }
-            Special::ParShape => self.engine_int("parshape").or(Some(0)).map(Value::Int),
+            // tex.web § 1248: `\parshape` reads back the number of lines it
+            // was given, 0 until it is given one.
+            Special::ParShape => {
+                Some(self.engine_slot_int("parshape", "parshape", 0).map_or(Value::Unknown, Value::Int))
+            }
             Special::UCode { math, num } => {
                 let c = self.scan_int().and_then(|c| u32::try_from(c).ok()).and_then(char::from_u32)?;
                 // "Can't use \Umathcode as a number (try \Umathcodenum)".
@@ -468,15 +570,20 @@ impl Machine<'_> {
                     return Some(Value::Int(0));
                 }
                 let table = if math { CodeTable::Math } else { CodeTable::Delimiter };
-                Some(Value::Int(self.char_code(table, c)))
+                Some(self.char_code_known(table, c).map_or(Value::Unknown, Value::Int))
             }
             Special::CharClass => {
                 let c = self.scan_int()?;
-                Some(Value::Int(self.engine_int(&format!("charclass.{c}")).unwrap_or(0)))
+                let class = self.engine_slot_int("charclass.", &format!("charclass.{c}"), 0);
+                Some(class.map_or(Value::Unknown, Value::Int))
             }
             Special::InterCharToks => {
                 let (a, b) = (self.scan_int(), self.scan_int());
-                let sym = self.engine_sym(&format!("interchartoks.{}.{}", a?, b?));
+                let (a, b) = (a?, b?);
+                if self.engine_unpinned("interchartoks.") {
+                    return Some(Value::Unknown);
+                }
+                let sym = self.engine_sym(&format!("interchartoks.{a}.{b}"));
                 match self.env.value(sym) {
                     Value::Unknown if self.env.get(sym).is_none() => Some(Value::Toks(Rc::from(Vec::new()))),
                     value => Some(value),
@@ -485,7 +592,10 @@ impl Machine<'_> {
             Special::Penalties => {
                 let n = self.scan_int()?;
                 let name = self.name(by).to_string();
-                let count = self.engine_int(&format!("{name}.count")).unwrap_or(0);
+                let family = format!("{name}.");
+                let Some(count) = self.engine_slot_int(&family, &format!("{name}.count"), 0) else {
+                    return Some(Value::Unknown);
+                };
                 if n <= 0 {
                     return Some(Value::Int(if n == 0 { count } else { 0 }));
                 }
@@ -493,12 +603,13 @@ impl Machine<'_> {
                     return Some(Value::Int(0));
                 }
                 let k = n.min(count);
-                Some(Value::Int(self.engine_int(&format!("{name}.{k}")).unwrap_or(0)))
+                let value = self.engine_slot_int(&family, &format!("{name}.{k}"), 0);
+                Some(value.map_or(Value::Unknown, Value::Int))
             }
         }
     }
 
-    fn assign_special(&mut self, special: Special, by: Sym) {
+    fn assign_special(&mut self, special: Special, by: Sym, span: Span) {
         match special {
             // tex.web § 1247: `\wd⟨n⟩=⟨dimen⟩` changes a box satex does not
             // build.
@@ -513,8 +624,20 @@ impl Machine<'_> {
             // tex.web § 1248.
             Special::ParShape => {
                 self.scan_optional_equals();
-                let lines = self.scan_int().unwrap_or(0).max(0);
+                let scanned = self.scan_int();
                 let global = self.take_global();
+                // tex.web § 1248: the count says how many ⟨dimen⟩ pairs
+                // follow, so a count satex could not pin down leaves both
+                // the shape and what to read for it unknown.
+                let Some(lines) = scanned.map(|n| n.max(0)) else {
+                    self.weaken_engine("parshape", global);
+                    return self.diagnose(
+                        crate::facts::Severity::Unsupported,
+                        "unknown-parshape",
+                        span,
+                        "\\parshape was given a number satex could not pin down; its lines were not read".into(),
+                    );
+                };
                 for k in 1..=lines {
                     let indent = self.scan_dimen().map_or(Value::Unknown, Value::Dimen);
                     let length = self.scan_dimen().map_or(Value::Unknown, Value::Dimen);
@@ -536,9 +659,13 @@ impl Machine<'_> {
                 };
                 let global = self.take_global();
                 let table = if math { CodeTable::Math } else { CodeTable::Delimiter };
-                if let Some(c) = c {
-                    let sym = self.char_code_sym(table, c);
-                    self.env.set_value(sym, code.map_or(Value::Unknown, Value::Int), global);
+                match c {
+                    Some(c) => {
+                        let sym = self.char_code_sym(table, c);
+                        self.env.set_value(sym, code.map_or(Value::Unknown, Value::Int), global);
+                    }
+                    // Any character may be the one assigned.
+                    None => self.weaken_code_table(table, global),
                 }
             }
             Special::CharClass => {
@@ -546,8 +673,10 @@ impl Machine<'_> {
                 self.scan_optional_equals();
                 let class = self.scan_int().map_or(Value::Unknown, Value::Int);
                 let global = self.take_global();
-                if let Some(c) = c {
-                    self.set_engine(&format!("charclass.{c}"), class, global);
+                match c {
+                    Some(c) => self.set_engine(&format!("charclass.{c}"), class, global),
+                    // Any character's class may be the one assigned.
+                    None => self.weaken_engine("charclass.", global),
                 }
             }
             Special::InterCharToks => {
@@ -555,16 +684,30 @@ impl Machine<'_> {
                 self.scan_optional_equals();
                 let toks = self.read_general_text();
                 let global = self.take_global();
-                if let (Some(a), Some(b)) = (a, b) {
-                    self.set_engine(&format!("interchartoks.{a}.{b}"), Value::Toks(Rc::from(toks)), global);
+                match (a, b) {
+                    (Some(a), Some(b)) => {
+                        self.set_engine(&format!("interchartoks.{a}.{b}"), Value::Toks(Rc::from(toks)), global)
+                    }
+                    // Any pair of classes may be the one assigned.
+                    _ => self.weaken_engine("interchartoks.", global),
                 }
             }
             // etex_man § 3.12.
             Special::Penalties => {
                 self.scan_optional_equals();
-                let count = self.scan_int().unwrap_or(0).max(0);
+                let scanned = self.scan_int();
                 let global = self.take_global();
                 let name = self.name(by).to_string();
+                // etex_man § 3.12: the count says how many penalties follow.
+                let Some(count) = scanned.map(|n| n.max(0)) else {
+                    self.weaken_engine(&format!("{name}."), global);
+                    return self.diagnose(
+                        crate::facts::Severity::Unsupported,
+                        "unknown-penalties",
+                        span,
+                        format!("\\{name} was given a number satex could not pin down; its penalties were not read"),
+                    );
+                };
                 for k in 1..=count {
                     let value = self.scan_int().map_or(Value::Unknown, Value::Int);
                     self.set_engine(&format!("{name}.{k}"), value, global);
@@ -583,6 +726,18 @@ impl Machine<'_> {
     fn font_field(&mut self, font: u32, field: &str) -> Value {
         let sym = self.font_key(font, field);
         self.env.value(sym)
+    }
+
+    /// Whether the entry was assigned at all: one assigned a value satex
+    /// does not know is no longer what the font file says, and neither is
+    /// one a write through an entry satex could not pin down may have
+    /// reached.
+    fn font_field_set(&mut self, font: u32, field: &str) -> bool {
+        if self.engine_unpinned(&font_field_family(font, field)) {
+            return true;
+        }
+        let sym = self.font_key(font, field);
+        self.env.get(sym).is_some()
     }
 
     /// Font data is not subject to grouping (tex.web § 1253).
@@ -678,6 +833,12 @@ impl Machine<'_> {
                 let family = self.scan_int()?;
                 self.family_font(by, family)
             }
+            // A name of unknown meaning may be a font identifier: which
+            // font it selects is not known.
+            Meaning::Unknown => {
+                self.unread(token);
+                None
+            }
             _ => {
                 // "Missing font identifier": the token goes back and the
                 // null font is used.
@@ -687,13 +848,96 @@ impl Machine<'_> {
         }
     }
 
+    /// tex.web § 232: `\nullfont` until a font is selected; `None` where a
+    /// selection satex could not follow left the current font unknown.
     pub(crate) fn current_font(&mut self) -> Option<u32> {
-        self.engine_int("font").map_or(Some(0), |f| u32::try_from(f).ok())
+        u32::try_from(self.engine_slot_int("font", "font", 0)?).ok()
     }
 
+    /// The font id for [`crate::facts::FontState`], read with
+    /// `Env::slot_value` so that observing does not add a read a package
+    /// cache would then depend on.
+    fn observed_font(&mut self) -> u16 {
+        let Some(sym) = self.out.interner.lookup(FONT_SLOT) else { return 0 };
+        self.env.slot_value(sym).and_then(|f| u16::try_from(f).ok()).unwrap_or(0)
+    }
+
+    /// The body of a macro, without recording a read.
+    fn nfss_body(&self, name: Option<Sym>) -> Option<&Rc<[Token]>> {
+        match &self.env.slot(name?)?.meaning {
+            Meaning::Macro(m) => Some(&m.replacement_text),
+            _ => None,
+        }
+    }
+
+    /// Where that body lives, which is all the per-character check needs.
+    fn nfss_at(&self, name: Option<Sym>) -> Option<*const u8> {
+        self.nfss_body(name).map(|body| Rc::as_ptr(body).cast())
+    }
+
+    /// Which row of [`crate::machine::Analysis::font_states`] the character
+    /// about to be set belongs to.  Called once per character, so the five
+    /// NFSS macros are resolved again only when one of their bodies is a
+    /// different token list than at the last resolve.
+    pub(crate) fn observed_font_state(&mut self) -> u16 {
+        if self.font_watch.names.is_none() {
+            self.font_watch.names = Some(NFSS.map(|name| self.out.interner.lookup(name)));
+        }
+        let names = self.font_watch.names.unwrap_or([None; 5]);
+        let at = names.map(|name| self.nfss_at(name));
+        if at == self.font_watch.at {
+            return self.font_watch.state;
+        }
+        let bodies = names.map(|name| self.nfss_body(name).cloned());
+        let text = |body: &Option<Rc<[Token]>>| match body {
+            Some(body) => Rc::from(crate::tex::text_of(body, &self.out.interner)),
+            None => Rc::from(""),
+        };
+        let state = crate::facts::FontState {
+            encoding: text(&bodies[0]),
+            family: text(&bodies[1]),
+            series: text(&bodies[2]),
+            shape: text(&bodies[3]),
+            size: text(&bodies[4]),
+            font: self.observed_font(),
+        };
+        let states = &mut self.out.font_states;
+        let row = match states.iter().position(|kept| *kept == state) {
+            Some(row) => row,
+            None if states.len() < usize::from(u16::MAX) => {
+                states.push(state);
+                states.len() - 1
+            }
+            // A document with more states than fit is left at "not known"
+            // rather than pointed at the wrong row.
+            None => 0,
+        };
+        self.font_watch.bodies = bodies;
+        self.font_watch.at = at;
+        self.font_watch.state = row as u16;
+        self.font_watch.state
+    }
+
+    /// The fonts the run loaded, by the number `\the\font` gives them, with
+    /// the TFM name and the size `\font` loaded each at (tex.web § 1257).
+    /// A native XeTeX font has no TFM and is left out.
+    pub(crate) fn collect_fonts(&mut self) {
+        let count = self.font_count();
+        self.out.fonts = (0..=count)
+            .map(|id| {
+                let native = id > 0 && self.font_native(id) != Some(false);
+                match native {
+                    true => None,
+                    false => Some(crate::machine::FontUse { name: self.font_name(id)?, size: self.font_size(id)? }),
+                }
+            })
+            .collect();
+    }
+
+    /// tex.web § 232: every math family starts at `\nullfont`.
     fn family_font(&mut self, by: Sym, family: i64) -> Option<u32> {
-        let key = format!("{}.{family}", self.name(by));
-        self.engine_int(&key).map_or(Some(0), |f| u32::try_from(f).ok())
+        let name = self.name(by).to_string();
+        u32::try_from(self.engine_slot_int(&format!("{name}."), &format!("{name}.{family}"), 0)?).ok()
     }
 
     /// `\font⟨cs⟩=⟨file name⟩⟨at clause⟩` (tex.web §§ 1257-1260): a font
@@ -866,6 +1110,11 @@ impl Machine<'_> {
         if !matches!(stored, Value::Unknown) {
             return Some(stored);
         }
+        // An assignment satex could not follow put the font file's own
+        // parameter out of reach (tex.web § 580).
+        if self.font_field_set(font, &format!("p{k}")) {
+            return Some(Value::Unknown);
+        }
         let params = self.font_params(font)?;
         if k == 0 || k as i64 > params {
             // tex.web §§ 578-580: past the end, the font loaded last grows;
@@ -896,6 +1145,9 @@ impl Machine<'_> {
         let stored = self.font_field(font, &field);
         if !matches!(stored, Value::Unknown) {
             return Some(stored);
+        }
+        if self.font_field_set(font, &field) {
+            return Some(Value::Unknown);
         }
         match param {
             FontParam::Dimen => {
@@ -931,21 +1183,47 @@ impl Machine<'_> {
             _ => self.scan_int().map_or(Value::Unknown, Value::Int),
         };
         self.prefixes = Default::default();
-        let Some((font, field)) = entry else { return };
+        // A write whose font or entry satex could not pin down may have
+        // reached any of them.
+        let Some((font, field)) = entry else { return self.weaken_font_fields(param, by) };
+        let mut value = value;
         if param == FontParam::Dimen {
             let Ok(k) = field[1..].parse::<i64>() else { return };
-            let params = self.font_params(font).unwrap_or(i64::MAX);
-            if k > params {
-                if font < self.font_count() {
-                    return;
+            match self.font_params(font) {
+                Some(params) if k > params => {
+                    // tex.web § 580: only the font loaded last grows.
+                    if font < self.font_count() {
+                        return;
+                    }
+                    self.set_font_field(font, "params", Value::Int(k));
                 }
-                self.set_font_field(font, "params", Value::Int(k));
+                Some(_) => {}
+                // How many parameters the font has is not known, so
+                // whether the write reached the table is not either.
+                None => value = Value::Unknown,
             }
             if k <= 0 {
                 return;
             }
         }
         self.set_font_field(font, &field, value);
+    }
+
+    /// Every font table entry a write satex could not pin down may have
+    /// reached (tex.web § 1253); the font tables are not grouped.
+    fn weaken_font_fields(&mut self, param: FontParam, by: Sym) {
+        // `font⟨n⟩.p` catches `params` too, which is right: a `\fontdimen`
+        // past the end grows the table (tex.web § 580).
+        let field = match param {
+            FontParam::Dimen => "p1".to_string(),
+            FontParam::HyphenChar => "hyphenchar".into(),
+            FontParam::SkewChar => "skewchar".into(),
+            FontParam::CharCode(_) => format!("{}.0", self.name(by)),
+        };
+        for font in 0..=self.font_count() {
+            let family = font_field_family(font, &field);
+            self.weaken_engine(&family, true);
+        }
     }
 
     pub(crate) fn font_name_text(&mut self, font: u32) -> String {
@@ -1002,7 +1280,7 @@ impl Machine<'_> {
             // "You can't use `\lastpenalty' in vertical mode": a last item
             // is only ever read.
             Primitive::LastItem(_) => {}
-            Primitive::Special(special) => self.assign_special(special, by),
+            Primitive::Special(special) => self.assign_special(special, by, span),
             Primitive::FontParam(param) => self.assign_font_param(param, by),
             // tex.web § 1217: selecting a font is a local assignment.
             Primitive::FontIdent(font) => {
@@ -1092,19 +1370,30 @@ impl Machine<'_> {
                 let stream = self.scan_int();
                 self.scan_optional_equals();
                 let name = self.read_file_name();
-                if let (true, Some(stream)) = (immediate, stream) {
-                    self.set_engine(&format!("write_open.{stream}"), Value::Int(1), true);
-                    // The file exists from here on, which `\input` of it
-                    // (the `.aux` file at `\end{document}`) finds.
-                    self.set_engine(&format!("written.{}", name.trim()), Value::Int(1), true);
-                    self.stream_files.insert(stream, name.trim().to_string());
+                match (immediate, stream) {
+                    (true, Some(stream)) => {
+                        self.set_engine(&format!("write_open.{stream}"), Value::Int(1), true);
+                        // The file exists from here on, which `\input` of it
+                        // (the `.aux` file at `\end{document}`) finds.
+                        self.set_engine(&format!("written.{}", name.trim()), Value::Int(1), true);
+                        self.stream_files.insert(stream, name.trim().to_string());
+                    }
+                    // Any stream may be the one opened.
+                    (true, None) => {
+                        self.set_engine(&format!("written.{}", name.trim()), Value::Int(1), true);
+                        self.weaken_engine("write_open.", true);
+                    }
+                    _ => {}
                 }
             }
             Syntax::CloseOut => {
                 let immediate = std::mem::take(&mut self.prefixes.immediate);
                 let stream = self.scan_int();
-                if let (true, Some(stream)) = (immediate, stream) {
-                    self.set_engine(&format!("write_open.{stream}"), Value::Int(0), true);
+                match (immediate, stream) {
+                    (true, Some(stream)) => self.set_engine(&format!("write_open.{stream}"), Value::Int(0), true),
+                    // Any stream may be the one closed.
+                    (true, None) => self.weaken_engine("write_open.", true),
+                    _ => {}
                 }
             }
             Syntax::FamilyFont => {
@@ -1112,9 +1401,14 @@ impl Machine<'_> {
                 self.scan_optional_equals();
                 let font = self.scan_font_ident();
                 let global = self.take_global();
-                if let Some(family) = family {
-                    let key = format!("{}.{family}", self.name(by));
-                    self.set_engine(&key, font.map_or(Value::Unknown, |f| Value::Int(f.into())), global);
+                let name = self.name(by).to_string();
+                match family {
+                    Some(family) => {
+                        let value = font.map_or(Value::Unknown, |f| Value::Int(f.into()));
+                        self.set_engine(&format!("{name}.{family}"), value, global);
+                    }
+                    // Any family may be the one assigned.
+                    None => self.weaken_engine(&format!("{name}."), global),
                 }
             }
             Syntax::CopyFont { amount } => {
@@ -1124,17 +1418,14 @@ impl Machine<'_> {
                     self.scan_int();
                 }
                 let copy = font.map(|font| self.copy_font(font));
-                if let Some(copy) = copy {
-                    self.set_font_field(copy, "cs", Value::Int(i64::from(name_cs.0)));
-                }
-                self.define(
-                    name_cs,
-                    Meaning::Primitive(Primitive::FontIdent(copy.unwrap_or(0))),
-                    by,
-                    DefMode::Declare,
-                    span,
-                    None,
-                );
+                // A copy of a font satex could not name is no font it
+                // knows, and not `\nullfont` either.
+                let Some(copy) = copy else {
+                    self.define(name_cs, Meaning::Unknown, by, DefMode::Declare, span, None);
+                    return;
+                };
+                self.set_font_field(copy, "cs", Value::Int(i64::from(name_cs.0)));
+                self.define(name_cs, Meaning::Primitive(Primitive::FontIdent(copy)), by, DefMode::Declare, span, None);
             }
             Syntax::UMathCharDef { num } => {
                 let Some(name) = self.read_r_token() else { return };
@@ -1379,23 +1670,34 @@ impl Machine<'_> {
     /// e-TeX's `\readline⟨n⟩to⟨cs⟩` (etex_man § 3.2): the line as characters
     /// of category 12, a space as 10, with the `\endlinechar` at its end.
     fn read_line_verbatim(&mut self, by: Sym, span: Span) {
-        let stream = self.scan_int().unwrap_or(-1);
+        let stream = self.scan_int();
         self.scan_keyword("to");
         let Some(name) = self.read_r_token() else { return };
-        // tex.web § 484: a stream that is not open is the terminal.
-        if !(0..16).contains(&stream) || self.stream_at_end(stream) {
-            if self.terminal_read_is_fatal(span) {
+        let open = self.stream_open(stream);
+        if open != Some(true) {
+            // tex.web § 484: a stream that is not open is the terminal; a
+            // number satex could not pin down may name an open stream
+            // instead, so it never ends the job.
+            if open == Some(false) && self.terminal_read_is_fatal(span) {
                 return;
             }
             self.define(name, Meaning::Unknown, by, DefMode::Declare, span, None);
             return;
         }
+        let stream = stream.expect("an open stream has a number");
         let mut line = self.take_stream_line(stream).unwrap_or_default();
         let sym = self.intern("endlinechar");
-        if let Some(c) = self.env.value(sym).as_int().and_then(|c| u8::try_from(c).ok()) {
+        let end_line = self.env.value(sym).as_int();
+        if let Some(Ok(c)) = end_line.map(u8::try_from) {
             line.push(char::from(c));
         }
-        let body = chars(&line, span);
+        let mut body = chars(&line, span);
+        // tex.web § 482: the character appended is the one `\endlinechar`
+        // names, which is not known.
+        if end_line.is_none() {
+            let unknown = self.unknown_token(span);
+            body.push(unknown);
+        }
         let meaning = self.make_macro(Default::default(), None, body);
         self.define(name, meaning, by, DefMode::Declare, span, None);
     }

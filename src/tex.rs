@@ -178,6 +178,11 @@ pub const ACTIVE: char = '\u{1}';
 /// unknown `\the\count0`: U+10FFFF is a noncharacter no document spells.
 pub const UNKNOWN_CHAR: char = '\u{10FFFF}';
 
+/// The name of the token that stands for text satex cannot know
+/// ([`Machine::unknown`](crate::machine::Machine)): no file can spell it
+/// with the catcodes a run starts with.
+pub const UNKNOWN_CS: &str = "\u{2}unknown:";
+
 /// One digit, `0` to `9`, of an unknown number: what taking one token
 /// from unknown digits yields (a character of category 12, tex.web § 465).
 pub const UNKNOWN_DIGIT: char = '\u{10FFFE}';
@@ -355,6 +360,17 @@ pub struct CatcodeTable {
     /// A character past 255 not in `wide`: 12 in INITEX, 11 once a format
     /// has classified the letters.
     wide_default: Catcode,
+    /// Characters whose category satex could not follow: `\catcode` was
+    /// given a number it does not know.  tex.web has no such state; it is
+    /// the top of the lattice for one character, and [`CatcodeTable::get`]
+    /// still answers with the last one known, as a guess no reader may
+    /// trust without asking [`CatcodeTable::is_unknown`] first.
+    unknown: Rc<std::collections::BTreeSet<char>>,
+    /// Set once a `\catcode` was assigned through a character number satex
+    /// could not pin down: every category is unknown but the ones assigned
+    /// since, which `known` holds.
+    all_unknown: bool,
+    known: Rc<std::collections::BTreeSet<char>>,
 }
 
 impl PartialEq for CatcodeTable {
@@ -362,6 +378,9 @@ impl PartialEq for CatcodeTable {
         self.ascii == other.ascii
             && self.wide_default == other.wide_default
             && (Rc::ptr_eq(&self.wide, &other.wide) || self.wide == other.wide)
+            && (Rc::ptr_eq(&self.unknown, &other.unknown) || self.unknown == other.unknown)
+            && self.all_unknown == other.all_unknown
+            && (Rc::ptr_eq(&self.known, &other.known) || self.known == other.known)
     }
 }
 
@@ -385,7 +404,14 @@ impl CatcodeTable {
         ascii[b'\r' as usize] = Catcode::Eol;
         ascii[b' ' as usize] = Catcode::Space;
         ascii[0x7f] = Catcode::Invalid;
-        Self { ascii, wide: Rc::default(), wide_default: Catcode::Other }
+        Self {
+            ascii,
+            wide: Rc::default(),
+            wide_default: Catcode::Other,
+            unknown: Rc::default(),
+            all_unknown: false,
+            known: Rc::default(),
+        }
     }
 
     /// INITEX defaults plus the assignments `latex.ltx` makes.
@@ -417,10 +443,52 @@ impl CatcodeTable {
         let n = c as u32;
         if n < 256 {
             self.ascii[n as usize] = cat;
-        } else {
-            if self.wide.get(&c) != Some(&cat) {
-                Rc::make_mut(&mut self.wide).insert(c, cat);
-            }
+        } else if self.wide.get(&c) != Some(&cat) {
+            Rc::make_mut(&mut self.wide).insert(c, cat);
+        }
+        // An assignment satex could follow makes the category known again.
+        if self.unknown.contains(&c) {
+            Rc::make_mut(&mut self.unknown).remove(&c);
+        }
+        if self.all_unknown && !self.known.contains(&c) {
+            Rc::make_mut(&mut self.known).insert(c);
+        }
+    }
+
+    /// Whether the category of `c` is not known: [`CatcodeTable::get`]'s
+    /// answer for it is a guess, and everything that dispatches on it must
+    /// widen instead.
+    #[inline]
+    pub fn is_unknown(&self, c: char) -> bool {
+        if self.all_unknown && !self.known.contains(&c) {
+            return true;
+        }
+        !self.unknown.is_empty() && self.unknown.contains(&c)
+    }
+
+    /// `\catcode` was given a number satex does not know: the character's
+    /// category is anything from here on.
+    pub fn set_unknown(&mut self, c: char) {
+        Rc::make_mut(&mut self.unknown).insert(c);
+        if self.known.contains(&c) {
+            Rc::make_mut(&mut self.known).remove(&c);
+        }
+    }
+
+    /// `\catcode` assigned through a character number satex could not pin
+    /// down (tex.web § 1232): any character's category may have changed.
+    pub fn set_all_unknown(&mut self) {
+        self.all_unknown = true;
+        if !self.known.is_empty() {
+            self.known = Rc::default();
+        }
+    }
+
+    /// Put back what [`Env`](crate::env::Env)'s save stack saved.
+    pub fn restore(&mut self, c: char, cat: Catcode, unknown: bool) {
+        self.set(c, cat);
+        if unknown {
+            self.set_unknown(c);
         }
     }
 
@@ -439,6 +507,72 @@ impl CatcodeTable {
             }
         }
         out
+    }
+
+    /// Whether the two tables say different things about `c`.  Both
+    /// knowing nothing is agreement, one knowing it does not know is not,
+    /// which a diff of the values cannot say.
+    fn differs(&self, other: &CatcodeTable, c: char) -> bool {
+        match (self.is_unknown(c), other.is_unknown(c)) {
+            (true, true) => false,
+            (false, false) => self.get(c) != other.get(c),
+            _ => true,
+        }
+    }
+
+    /// The characters the two tables do not agree about: over the category
+    /// lattice of tex.web § 232 the join knows one only where both sides
+    /// know it and name the same one.
+    pub fn disagreements(&self, other: &CatcodeTable) -> Vec<char> {
+        let mut out = Vec::new();
+        for code in 0..256u32 {
+            let c = char::from_u32(code).expect("below the surrogates");
+            if self.differs(other, c) {
+                out.push(c);
+            }
+        }
+        // The wide characters two tables may part about: those either one
+        // gave a category or marked, the rest being the shared default.
+        let marked = [&self.unknown, &other.unknown, &self.known, &other.known];
+        let mut wide: std::collections::BTreeSet<char> =
+            marked.iter().flat_map(|set| set.iter().copied()).filter(|c| *c as u32 >= 256).collect();
+        if !Rc::ptr_eq(&self.wide, &other.wide) {
+            wide.extend(self.wide.keys().chain(other.wide.keys()).copied());
+        }
+        for c in wide {
+            if self.differs(other, c) {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// Widen this table to cover `other` as well: `all_unknown` holds once
+    /// either side has it, and then a character is still known only where
+    /// both sides know it and name the same category.
+    pub fn join_all_unknown(&mut self, other: &CatcodeTable) {
+        if !other.all_unknown {
+            return;
+        }
+        let candidates: Vec<char> = if self.all_unknown {
+            self.known.intersection(&other.known).copied().collect()
+        } else {
+            other.known.iter().copied().collect()
+        };
+        let known: std::collections::BTreeSet<char> = candidates
+            .into_iter()
+            .filter(|c| !self.is_unknown(*c) && !other.is_unknown(*c) && self.get(*c) == other.get(*c))
+            .collect();
+        self.all_unknown = true;
+        self.known = Rc::new(known);
+    }
+
+    /// The join of the two tables over the category lattice, written here.
+    pub fn join(&mut self, other: &CatcodeTable) {
+        self.join_all_unknown(other);
+        for c in self.disagreements(other) {
+            self.set_unknown(c);
+        }
     }
 
     pub fn apply(&mut self, deltas: &[(char, u8)]) {
@@ -700,6 +834,10 @@ pub struct Mouth {
     /// appends it then, so a change later on the same line only affects the
     /// lines after it (tex.web § 362).
     line_end: EndLineChar,
+    /// The character the last unknown-text token stood for.  Only catcode
+    /// 13 runs a meaning (tex.web §§ 232, 344), so the character is what
+    /// bounds what that token may do.
+    pub last_unknown: Option<char>,
     pub file: FileId,
 }
 
@@ -721,10 +859,26 @@ pub struct LineMark {
 pub struct EndLineChar(pub i32);
 
 impl EndLineChar {
+    /// No value satex could follow: what a line ends with, or whether
+    /// anything is appended, is not known.  tex.web has no such state, it
+    /// is the top of the lattice for this parameter.
+    pub const UNKNOWN: Self = Self(i32::MIN);
+
+    pub fn is_unknown(self) -> bool {
+        self.0 == Self::UNKNOWN.0
+    }
+
     /// The character appended, if the value names one (tex.web § 362:
-    /// outside 0..=255 nothing is appended).
+    /// outside 0..=255 nothing is appended).  Ask
+    /// [`EndLineChar::is_unknown`] first, where `None` means not known.
     pub fn char(self) -> Option<char> {
         u8::try_from(self.0).ok().map(char::from)
+    }
+
+    /// The join of two values: a line ends the same way on both sides or
+    /// it is not known how it ends.
+    pub fn join(self, other: Self) -> Self {
+        if self == other { self } else { Self::UNKNOWN }
     }
 }
 
@@ -744,6 +898,7 @@ impl Mouth {
             state: LineState::New,
             force_eof: None,
             line_end: EndLineChar::default(),
+            last_unknown: None,
             file,
         }
     }
@@ -926,6 +1081,12 @@ impl Mouth {
             None if self.line_ends_at(self.pos) => {
                 self.skip_trailing_spaces();
                 self.end_line();
+                // The name is the character the line ends with, which is
+                // not known here (tex.web § 240).
+                if self.line_end.is_unknown() {
+                    self.state = LineState::Middle;
+                    return Some(it.intern(UNKNOWN_CS));
+                }
                 let appended = self.line_end.char()?;
                 self.state = match cats.get(appended) {
                     Catcode::Letter | Catcode::Space => LineState::Skipping,
@@ -935,6 +1096,12 @@ impl Mouth {
             }
             None => self.bump()?,
         };
+        // Whether the name is this one character or goes on is the category
+        // of `first`, which is not known: the name is not either.
+        if cats.is_unknown(first) {
+            self.state = LineState::Middle;
+            return Some(it.intern(UNKNOWN_CS));
+        }
         if cats.get(first) != Catcode::Letter {
             self.state = if cats.get(first) == Catcode::Space { LineState::Skipping } else { LineState::Middle };
             let mut buf = [0u8; 4];
@@ -942,6 +1109,11 @@ impl Mouth {
         }
         let mut name = String::from(first);
         while let Some(c) = self.peek_at(0) {
+            // A character that may or may not carry the name on.
+            if cats.is_unknown(c) {
+                self.state = LineState::Middle;
+                return Some(it.intern(UNKNOWN_CS));
+            }
             if cats.get(c) == Catcode::Letter {
                 self.bump();
                 name.push(c);
@@ -953,6 +1125,12 @@ impl Mouth {
                     name.push(decoded);
                 }
                 _ => {
+                    // Whether the appended character carries the name on
+                    // is not known, so the name is not either.
+                    if self.line_ends_at(self.pos) && self.line_end.is_unknown() {
+                        self.state = LineState::Middle;
+                        return Some(it.intern(UNKNOWN_CS));
+                    }
                     // The appended `\endlinechar` is the buffer's last
                     // character: a letter ends the name (tex.web § 356).
                     if self.line_ends_at(self.pos)
@@ -1003,6 +1181,13 @@ impl Mouth {
                 true => Catcode::Eol,
                 false => cats.get(c),
             };
+            // A category satex could not follow: what this character does to
+            // the input is not known, so it stands for text that is not.
+            if cat != Catcode::Eol && cats.is_unknown(c) {
+                self.state = LineState::Middle;
+                self.last_unknown = Some(c);
+                return Some(Token::new(Tok::Cs(it.intern(UNKNOWN_CS)), span));
+            }
             match cat {
                 Catcode::Ignored | Catcode::Invalid => continue,
                 Catcode::Comment => {
@@ -1019,6 +1204,12 @@ impl Mouth {
                 Catcode::Eol => {
                     if c == '\r' && self.peek_at(0) == Some('\n') {
                         self.bump();
+                    }
+                    // What the line ends with is not known, so what it puts
+                    // in the input is text that is not (tex.web § 240).
+                    if self.line_end.is_unknown() {
+                        self.state = LineState::New;
+                        return Some(Token::new(Tok::Cs(it.intern(UNKNOWN_CS)), span));
                     }
                     let appended = match self.line_end.char() {
                         None => {

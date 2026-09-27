@@ -43,10 +43,15 @@ enum Entry {
         old: Option<Binding>,
         /// The level `old` was made at.
         level: u32,
+        /// A global assignment: only a region that joins its effect undoes
+        /// it, never the end of a group (tex.web § 283).
+        global: bool,
     },
     Catcode {
         character: char,
         old: Catcode,
+        /// Whether the category was one satex could not follow.
+        old_unknown: bool,
     },
 }
 
@@ -309,6 +314,12 @@ impl Env {
         self.slots.get(sym.0 as usize).and_then(|s| s.as_ref())
     }
 
+    /// Every name that currently has a binding: a sweep over a family of
+    /// names, such as the registers a number satex could not pin down.
+    pub fn bound(&self) -> Vec<Sym> {
+        self.slots.iter().enumerate().filter(|(_, s)| s.is_some()).map(|(i, _)| Sym(i as u32)).collect()
+    }
+
     /// A register's value as a number, without recording a read.
     pub fn slot_value(&self, sym: Sym) -> Option<i64> {
         self.slot(sym).and_then(|b| b.value.as_int())
@@ -554,6 +565,13 @@ impl Env {
         self.assignments += 1;
         if global {
             self.note_write(sym.0, writes);
+            // Inside a capturable region the old binding is saved too, so
+            // that joining the region's effect can undo it; a group end
+            // never does (tex.web § 283).
+            if !self.floors.is_empty() {
+                let old = self.slots[i].clone();
+                self.journal.push(Entry::Meaning { sym: sym.0, old, level: self.level[i], global: true });
+            }
             binding.global = true;
             self.level[i] = 0;
             self.slots[i] = Some(binding);
@@ -567,7 +585,7 @@ impl Env {
                 let written = reads.written.get(&sym.0).copied().unwrap_or(0);
                 reads.saved.push((self.journal.len(), sym.0, written));
             }
-            self.journal.push(Entry::Meaning { sym: sym.0, old, level: self.level[i] });
+            self.journal.push(Entry::Meaning { sym: sym.0, old, level: self.level[i], global: false });
         }
         self.note_write(sym.0, writes);
         self.level[i] = current;
@@ -691,8 +709,14 @@ impl Env {
     }
 
     pub fn save_catcode(&mut self, character: char, old: Catcode) {
+        self.save_catcode_state(character, old, false);
+    }
+
+    /// [`Env::save_catcode`] keeping whether the category was one satex
+    /// could not follow, so that the group end puts that back too.
+    pub fn save_catcode_state(&mut self, character: char, old: Catcode, old_unknown: bool) {
         if !self.marks.is_empty() {
-            self.journal.push(Entry::Catcode { character, old });
+            self.journal.push(Entry::Catcode { character, old, old_unknown });
         }
     }
 
@@ -707,13 +731,23 @@ impl Env {
         }
     }
 
+    /// Open a region whose assignments can be captured and rolled back.  The
+    /// group it pushes is what makes every first assignment to a name inside
+    /// save the old binding (tex.web § 277), which is what the capture reads.
     pub fn mark(&mut self) -> usize {
         self.push_group(GroupKind::Simple, Span::default());
         self.floors.push(self.marks.len());
         self.journal.len()
     }
 
-    fn unwind(&mut self, to: usize, mut catcodes: Option<&mut CatcodeTable>) {
+    fn unwind(&mut self, to: usize, catcodes: Option<&mut CatcodeTable>) {
+        self.unwind_with(to, catcodes, false);
+    }
+
+    /// With `undo_global`, a global assignment saved inside the region is
+    /// put back too; without, it survives as tex.web § 283 says and is
+    /// kept on the journal for the region around it.
+    fn unwind_with(&mut self, to: usize, mut catcodes: Option<&mut CatcodeTable>, undo_global: bool) {
         if self.tracking.get() {
             // What a group puts back is what the parts held before, and it
             // came from before the load exactly when it did then.
@@ -726,11 +760,13 @@ impl Env {
                 }
             }
         }
+        let mut kept: Vec<Entry> = Vec::new();
         while self.journal.len() > to {
             match self.journal.pop().expect("journal length checked") {
+                entry @ Entry::Meaning { global: true, .. } if !undo_global => kept.push(entry),
                 // tex.web § 283: a binding made global since is retained.
                 Entry::Meaning { sym, .. } if self.level[sym as usize] == 0 => {}
-                Entry::Meaning { sym, old, level } => {
+                Entry::Meaning { sym, old, level, .. } => {
                     let index = sym as usize;
                     self.log(index);
                     self.level[index] = level;
@@ -742,12 +778,15 @@ impl Env {
                         }
                     }
                 }
-                Entry::Catcode { character, old } => {
+                Entry::Catcode { character, old, old_unknown } => {
                     if let Some(table) = catcodes.as_deref_mut() {
-                        table.set(character, old);
+                        table.restore(character, old, old_unknown);
                     }
                 }
             }
+        }
+        for entry in kept.into_iter().rev() {
+            self.journal.push(entry);
         }
     }
 
@@ -758,13 +797,13 @@ impl Env {
         let mark = mark.min(self.journal.len());
         let mut out = HashMap::new();
         for entry in self.journal.since(mark) {
-            if let Entry::Meaning { sym, .. } = entry
-                && self.level[*sym as usize] != 0
+            if let Entry::Meaning { sym, global, .. } = entry
+                && (*global || self.level[*sym as usize] != 0)
             {
                 out.entry(*sym).or_insert_with(|| self.slots[*sym as usize].clone());
             }
         }
-        self.unwind(mark, Some(catcodes));
+        self.unwind_with(mark, Some(catcodes), true);
         out
     }
 
@@ -933,8 +972,9 @@ impl Env {
 
     /// Continue from `fork` with the least upper bound of the paths: a name
     /// they left with different meanings has an unknown one.  The save stack
-    /// is the first path's.
-    pub fn join_paths(&mut self, fork: &Fork, paths: &[PathEnv]) {
+    /// is the first path's, with `unknown` standing in wherever the paths
+    /// left different `\aftergroup` tokens.
+    pub fn join_paths(&mut self, fork: &Fork, paths: &[PathEnv], unknown: Token) {
         let Some(first) = paths.first() else { return };
         self.rewind(fork);
         let mut touched: Vec<u32> = paths.iter().flat_map(|p| p.slots.keys().copied()).collect();
@@ -955,6 +995,18 @@ impl Env {
         }
         self.journal = first.journal.clone();
         self.marks = first.marks.clone();
+        // tex.web § 326: which path's `\aftergroup` tokens run at the end
+        // of a group is not known when the paths do not agree.
+        for (i, mark) in self.marks.iter_mut().enumerate() {
+            let same = |p: &PathEnv| {
+                p.marks.get(i).is_some_and(|m| {
+                    m.after.len() == mark.after.len() && m.after.iter().zip(&mark.after).all(|(a, b)| a.tok == b.tok)
+                })
+            };
+            if !paths.iter().all(same) {
+                mark.after = vec![unknown];
+            }
+        }
         // What the groups saved of the nest is joined like the bindings.
         for path in &paths[1..] {
             for (mark, other) in self.marks.iter_mut().zip(&path.marks) {
@@ -978,8 +1030,12 @@ impl Env {
                 .map(|c| c.get(&sym).cloned().unwrap_or_else(|| base.clone()))
                 .reduce(|a, b| join(a, b, self.sets))
                 .flatten();
+            // An alternative that assigned globally did so on its path, so
+            // what the join leaves survives the group as tex.web § 283 says.
+            let global =
+                alternatives.iter().any(|c| c.get(&sym).is_some_and(|slot| slot.as_ref().is_some_and(|b| b.global)));
             if let Some(b) = joined {
-                self.set(Sym(sym), b, false);
+                self.set(Sym(sym), b, global);
             }
         }
     }
