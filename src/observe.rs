@@ -184,13 +184,33 @@ pub struct OccContext {
 pub struct WrittenLine {
     head: String,
     args: Vec<String>,
-    /// The arguments that are text the document gave the writing call.
-    keys: Vec<String>,
+    /// The arguments that are text the document gave the writing call,
+    /// each where its own text stands.
+    keys: Vec<(String, Span)>,
     /// The contents of the writing call's own braced arguments.
     parts: std::rc::Rc<[String]>,
     defined: Vec<String>,
     span: Span,
     context: OccContext,
+}
+
+impl WrittenLine {
+    /// The key texts alone, for matching against the names the line defined.
+    fn keys(&self) -> Vec<String> {
+        self.keys.iter().map(|(key, _)| key.clone()).collect()
+    }
+
+    /// Where an occurrence of `key` belongs: at the key's own text, with the
+    /// writing call kept as what expanded it.  amsmath defers a display's
+    /// `\label` to the `\end`, so the write is not where the key stands.
+    fn at(&self, key: &str) -> (Span, OccContext) {
+        let Some(span) = self.keys.iter().find(|(k, _)| k == key).map(|(_, s)| *s) else {
+            return (self.span, self.context.clone());
+        };
+        let mut context = self.context.clone();
+        context.expanded = Some(self.span);
+        (span, context)
+    }
 }
 
 /// A name a call in the document body read.
@@ -286,7 +306,7 @@ fn within(name: &str, args: &[String]) -> Option<(String, String, String)> {
         .min_by_key(|(_, p, s)| p.len() + s.len())
 }
 
-/// A name a body call read — used, tested, or taken by `\let`: matched
+/// A name a body call read, used, tested, or taken by `\let`: matched
 /// against what written lines define once the run has ended.
 pub fn read_name(m: &mut Machine, name: &str) {
     if m.line_defined.is_some() || m.package().is_some() || m.reading_format() {
@@ -373,7 +393,25 @@ pub fn environment_closed(m: &mut Machine, inner: Option<String>, span: Span) {
             m.out.env_stack.remove(pos);
         }
     }
-    let at = m.file_call.map_or(span, |(_, at)| at);
+    // amsmath reads a display's body as one argument (`\collect@@body#1\end#2`):
+    // the `\end` was matched as a delimiter, so the call is still the `\begin`.
+    let call = m.file_call.map(|(_, at)| at);
+    let begun = m
+        .out
+        .facts
+        .occurrences
+        .iter()
+        .rev()
+        .find(|o| o.kind == OccKind::BeginEnvironment && o.key == inner)
+        .map(|o| o.span);
+    let at = match (call, m.absorbed) {
+        (Some(call), Some(end))
+            if begun == Some(call) && end.file == call.file && (end.line, end.col) > (call.line, call.col) =>
+        {
+            end
+        }
+        _ => call.unwrap_or(span),
+    };
     if let Some(node) = m.occurrence(OccKind::EndEnvironment, inner.clone(), None, at) {
         let end = m.intern(&format!("end{inner}"));
         m.reads_definition_of(node, end);
@@ -486,8 +524,10 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
         return;
     };
     let mut args = Vec::new();
-    let mut keys = Vec::new();
-    let here = m.call_extent(span).map(|(here, _)| here);
+    let mut keys: Vec<(String, Span)> = Vec::new();
+    let extent = m.call_extent(span);
+    let here = extent.as_ref().map(|(here, _)| *here);
+    let own = extent.as_ref().map(|(_, text)| own_text(span, text));
     while let Some((group, end)) = group_span(tokens, at) {
         onward(m, &group, span);
         let text = characters(&group).trim().to_string();
@@ -498,28 +538,63 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
         args.push(text);
         at = end;
     }
+    // A key the writing call itself carries stands at that call: the call is
+    // the command to point at, and the key text is only its argument.
+    for (_, at) in &mut keys {
+        let inside = |own: Span| {
+            at.file == span.file
+                && (at.line, at.col) >= (span.line, span.col)
+                && (at.line, at.col) < (own.line, own.col)
+        };
+        if own.is_some_and(inside) {
+            *at = span;
+        }
+    }
     let text = crate::tex::text_with_groups(tokens, &m.out.interner);
     let defined = sandbox_run(m, &text);
     let parts = call_parts(m, span);
     m.written_lines.push(WrittenLine { head, args, keys, parts, defined, span, context });
 }
 
+/// Where the writing call's own text ends: at the next control sequence
+/// after its name, which is a command of its own and reads what follows.
+fn own_text(call: Span, text: &str) -> Span {
+    let (mut line, mut col) = (call.line, call.col);
+    for (i, c) in text.char_indices() {
+        if c == '\\' && i > 0 {
+            break;
+        }
+        match c {
+            '\n' => (line, col) = (line + 1, 1),
+            _ => col += 1,
+        }
+    }
+    Span::new(call.file, line, col)
+}
+
 /// The keys the document gave a written argument: runs of characters
 /// whose tokens stand in the calling file no later than it has been read,
 /// split at commas (`\citation{a,b}`, cite.sty).  What a package adds to
 /// them (cleveref's `@cref`) ends a run.
-fn given(group: &[Token], call: Span, here: Option<Span>) -> Vec<String> {
+fn given(group: &[Token], call: Span, here: Option<Span>) -> Vec<(String, Span)> {
     let Some(here) = here else { return Vec::new() };
     let mut keys = Vec::new();
-    let mut run = String::new();
-    let mut flush = |run: &mut String| {
-        keys.extend(run.split(',').map(str::trim).filter(|k| !k.is_empty()).map(str::to_string));
+    let mut run: Vec<(char, Span)> = Vec::new();
+    let mut flush = |run: &mut Vec<(char, Span)>| {
+        for part in run.split(|(c, _)| *c == ',') {
+            let key = part.iter().map(|(c, _)| *c).collect::<String>().trim().to_string();
+            let at = part.iter().find(|(c, _)| !c.is_whitespace()).map(|(_, s)| *s);
+            match at {
+                Some(at) if !key.is_empty() => keys.push((key, at)),
+                _ => {}
+            }
+        }
         run.clear();
     };
     for token in group {
         let ours = token.span.file == call.file && (token.span.line, token.span.col) <= (here.line, here.col);
         match token.tok {
-            Tok::Chr(c, cat) if ours && !matches!(cat, Catcode::Begin | Catcode::End) => run.push(c),
+            Tok::Chr(c, cat) if ours && !matches!(cat, Catcode::Begin | Catcode::End) => run.push((c, token.span)),
             _ => flush(&mut run),
         }
     }
@@ -540,7 +615,7 @@ fn onward(m: &mut Machine, tokens: &[Token], span: Span) {
         return;
     }
     // The title follows the number, which a command sets as its argument
-    // (`\numberline{1}`); `\protect` is gone once shipped.
+    // (`\numberline{1}`). `\protect` is gone once shipped.
     let mut start = 0;
     while title.get(start).is_some_and(|t| t.cs().is_some()) {
         let numbered = group_span(&title, start + 1)
@@ -615,8 +690,9 @@ pub fn relate(m: &mut Machine) {
     let mut declared: Vec<(usize, String, usize)> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         let mut found: Vec<(String, String, String)> = Vec::new();
+        let keys = line.keys();
         for name in &line.defined {
-            if let Some(hit) = within(name, &line.keys) {
+            if let Some(hit) = within(name, &keys) {
                 match found.iter_mut().find(|f| f.0 == hit.0) {
                     Some(f) if f.1.len() + f.2.len() <= hit.1.len() + hit.2.len() => {}
                     Some(f) => *f = hit,
@@ -635,10 +711,10 @@ pub fn relate(m: &mut Machine) {
     let declaring: std::collections::HashSet<usize> = declared.iter().map(|d| d.2).collect();
     let mut named: Vec<(usize, String, usize)> = Vec::new();
     for (i, line) in lines.iter().enumerate().filter(|(i, l)| !declaring.contains(i) && !l.head.is_empty()) {
+        let keys = line.keys();
         for read in reads.iter().filter(|r| r.span == line.span) {
             let name = m.name(read.name).to_string();
-            if let Some((key, prefix, suffix)) =
-                within(&name, &line.keys).filter(|(_, p, s)| !p.is_empty() || !s.is_empty())
+            if let Some((key, prefix, suffix)) = within(&name, &keys).filter(|(_, p, s)| !p.is_empty() || !s.is_empty())
             {
                 let at = shape(&mut shapes, &prefix, &suffix);
                 shapes[at].3.get_or_insert_with(|| line.head.clone());
@@ -662,8 +738,8 @@ pub fn relate(m: &mut Machine) {
         })
         .collect();
     // The first call to declare a key, written or while running, declares
-    // it; a later one in another shape (`\ac{k}` marking `k` used) uses it,
-    // one in the same shape declares it again.
+    // it. A later one in another shape (`\ac{k}` marking `k` used) uses it,
+    // and one in the same shape declares it again.
     let order = |s: &Span| (s.file != m.out.main_file, s.file, s.line, s.col);
     let mut first: std::collections::HashMap<String, (Span, bool)> = std::collections::HashMap::new();
     let written = declared.iter().map(|(_, k, i)| (k.clone(), lines[*i].span, false));
@@ -714,13 +790,15 @@ pub fn relate(m: &mut Machine) {
             continue;
         };
         if seen.insert((kind, key.clone(), line.span)) {
-            m.occurrence_in(kind, key, Some(line.head.clone()), line.span, &line.context);
+            let (at, context) = line.at(&key);
+            m.occurrence_in(kind, key, Some(line.head.clone()), at, &context);
         }
     }
     for (_, key, i) in &named {
         let line = &lines[*i];
         if seen.insert((OccKind::Cite, key.clone(), line.span)) {
-            m.occurrence_in(OccKind::Cite, key.clone(), Some(line.head.clone()), line.span, &line.context);
+            let (at, context) = line.at(key);
+            m.occurrence_in(OccKind::Cite, key.clone(), Some(line.head.clone()), at, &context);
         }
     }
     // The uses: a read of a name of a declared shape by a call given the
@@ -782,15 +860,16 @@ pub fn relate(m: &mut Machine) {
         }
     }
     // The keys the other lines carry are entries for the program that
-    // reads their file; the rest names files, the bibliography databases.
+    // reads their file. The rest names files, the bibliography databases.
     let mut tried = std::collections::HashSet::new();
     for (i, line) in lines.iter().enumerate() {
         if declaring.contains(&i) || named.iter().any(|n| n.2 == i) {
             continue;
         }
-        for key in &line.keys {
+        for (key, at) in &line.keys {
             if seen.insert((OccKind::Entry, key.clone(), line.span)) {
-                m.occurrence_in(OccKind::Entry, key.clone(), Some(line.head.clone()), line.span, &line.context);
+                let context = line.at(key).1;
+                m.occurrence_in(OccKind::Entry, key.clone(), Some(line.head.clone()), *at, &context);
             }
         }
         for arg in &line.args {
@@ -856,7 +935,7 @@ fn group_span(tokens: &[Token], start: usize) -> Option<(Vec<Token>, usize)> {
 /// file: the image the call it stands in includes, under the name the
 /// driver handed the engine and where that name resolves.  Which names the
 /// driver tried first, and in which directories, is the package's business
-/// (`\Ginput@path`, `\Gin@extensions`); only the file the engine opens is
+/// (`\Ginput@path`, `\Gin@extensions`). Only the file the engine opens is
 /// recorded.
 pub fn image(m: &mut Machine, name: &str, span: Span) {
     let name = name.trim();
@@ -955,8 +1034,8 @@ pub fn version_record(m: &mut Machine, name: &str, meaning: &crate::tex::Meaning
     let Some(file) = name.strip_prefix("ver@") else { return };
     let Some(mac) = meaning.as_macro() else { return };
     let Some((_, span)) = m.file_call else { return };
-    let path = m.out.file_name(span.file).to_string();
-    let base = path.rsplit('/').next().unwrap_or(&path);
+    // A recorded path is a `PathBuf`'s text, whose separator is not `/` on every host.
+    let base = m.out.short_name(span.file).to_string();
     if base != file {
         return;
     }
@@ -1002,8 +1081,10 @@ pub struct Quantities {
 pub fn typeset(m: &mut Machine, c: char, span: Span) {
     if m.package().is_some() || m.reading_format() {
         m.quantity = Quantities::default();
+        m.text_broken = true;
         return;
     }
+    set(m, c, span);
     let after_letter = std::mem::replace(&mut m.quantity.after_letter, c.is_alphabetic());
     let mut run = m.quantity.run.take();
     if c.is_ascii_digit() {
@@ -1046,8 +1127,16 @@ pub fn typeset(m: &mut Machine, c: char, span: Span) {
     m.quantity.run = run;
 }
 
-/// `\sum_{i=1}^{N}` sets a `1` and an `N`, not one newton.
+/// A group boundary breaks TeX's word, so no ligature joins across it
+/// (tex.web § 1034), but `12{,}5 km` is still one quantity.
+pub fn word_break(m: &mut Machine) {
+    m.text_broken = true;
+}
+
+/// The same, and the number-and-unit run ends too: `\sum_{i=1}^{N}` sets a
+/// `1` and an `N`, not one newton.
 pub fn text_break(m: &mut Machine) {
+    word_break(m);
     let run = m.quantity.run.take();
     m.quantity.after_letter = false;
     flush(m, run);
@@ -1067,4 +1156,30 @@ fn flush(m: &mut Machine, run: Option<Run>) {
         via: q.via,
         within: q.within,
     });
+}
+
+/// Add `c` to [`crate::facts::Text`], the characters the document set in
+/// order.  A character is `broken` from the one before when something that
+/// is not a character came between them, or when the two do not stand side
+/// by side in one line of one file: TeX's ligature program joins neither
+/// (tex.web § 1034).
+fn set(m: &mut Machine, c: char, span: Span) {
+    if m.out.facts.text.at.len() >= m.cfg.limits.facts {
+        return;
+    }
+    let font_state = m.observed_font_state();
+    let certain = m.exact();
+    let text = &mut m.out.facts.text;
+    // Both paths through an undecided conditional digest what follows it,
+    // so the one character on the page arrives here once per path.
+    if !certain && text.at.last().is_some_and(|last| last.span == span) && text.chars.ends_with(c) {
+        return;
+    }
+    let side_by_side = text
+        .at
+        .last()
+        .is_some_and(|last| (last.span.file, last.span.line, last.span.col + 1) == (span.file, span.line, span.col));
+    let broken = std::mem::take(&mut m.text_broken) || !side_by_side;
+    text.chars.push(c);
+    text.at.push(crate::facts::Spot { span, font_state, modes: m.mode, broken, certain });
 }

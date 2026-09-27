@@ -40,6 +40,17 @@ fn keys(analysis: &Analysis, kind: OccKind) -> Vec<(String, u32)> {
         .collect()
 }
 
+/// Every occurrence of `kind` in the main file: key, line and column.
+fn places(analysis: &Analysis, kind: OccKind) -> Vec<(String, u32, u32)> {
+    analysis
+        .facts
+        .occurrences
+        .iter()
+        .filter(|o| o.kind == kind && o.span.file == analysis.main_file)
+        .map(|o| (o.key.clone(), o.span.line, o.span.col))
+        .collect()
+}
+
 fn findings(analysis: &Analysis, code: &str) -> Vec<(String, Option<String>)> {
     satex::lint::lint(analysis)
         .into_iter()
@@ -315,4 +326,96 @@ fn bib_entries_skip_strings_and_comments() {
     );
     let keys: Vec<(&str, u32)> = entries.iter().map(|e| (e.key.as_str(), e.line)).collect();
     assert_eq!(keys, [("one", 3), ("two", 5)]);
+}
+
+/// amsmath defers a display's `\label` to the end of the environment, so
+/// the `\newlabel` line is written at the `\end` and, for an absorbed body,
+/// at the `\begin`.  The key's own tokens still stand where the `\label`
+/// put them.
+#[test]
+fn a_label_in_a_display_stands_where_the_document_wrote_it() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{amsmath}
+\begin{document}
+Text \label{sec:a} more.
+\begin{equation}
+  g = h
+  \label{eq:b}
+\end{equation}
+\begin{align}
+  c &= d \label{eq:a} \\
+  e &= f \label{eq:c}
+\end{align}
+\end{document}",
+    );
+    let labels = places(&analysis, OccKind::Label);
+    assert_eq!(
+        labels,
+        [("sec:a".into(), 4, 6), ("eq:b".into(), 7, 10), ("eq:a".into(), 10, 17), ("eq:c".into(), 11, 17)],
+        "{labels:?}"
+    );
+    // The write site stays, as what the key was reached through.
+    let written: Vec<(String, Option<u32>)> = analysis
+        .facts
+        .occurrences
+        .iter()
+        .filter(|o| o.kind == OccKind::Label && o.span.file == analysis.main_file)
+        .map(|o| (o.key.clone(), o.expanded.map(|e| e.line)))
+        .collect();
+    assert_eq!(
+        written,
+        [("sec:a".into(), None), ("eq:b".into(), Some(8)), ("eq:a".into(), Some(9)), ("eq:c".into(), Some(9))],
+        "{written:?}"
+    );
+}
+
+/// amsmath reads a display's body as one argument (`\collect@@body#1\end#2`),
+/// so the `\end` is matched as a delimiter inside the call the `\begin`
+/// started.  The delimiter token still stands in the file.
+#[test]
+fn an_absorbed_body_ends_at_its_own_end() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{amsmath}
+\begin{document}
+\begin{align}
+  c &= d \\
+  e &= f
+\end{align}
+\begin{equation}
+  g = h
+\end{equation}
+\end{document}",
+    );
+    let ends = places(&analysis, OccKind::EndEnvironment);
+    assert_eq!(ends, [("align".into(), 7, 1), ("equation".into(), 10, 1), ("document".into(), 11, 1)], "{ends:?}");
+    let begins = places(&analysis, OccKind::BeginEnvironment);
+    assert_eq!(begins, [("document".into(), 3, 1), ("align".into(), 4, 1), ("equation".into(), 8, 1)], "{begins:?}");
+}
+
+/// tex.web § 465: the text a primitive produces stands where its operand
+/// did, so `\string\x` gives back a whole name at one span.  Counting each
+/// of those pushed the position of a token the main file had peeked and
+/// given back out of the window, and `\begin{document}` was then read as a
+/// macro body's and attributed to the `\usepackage` before it.  hyperref
+/// produces enough such text to do it, so it is last in every case here.
+#[test]
+fn begin_document_stands_at_its_own_line_after_any_number_of_packages() {
+    if !installed() {
+        return;
+    }
+    for packages in [&["hyperref"][..], &["amsmath", "hyperref"][..], &["amsmath", "xcolor", "hyperref"][..]] {
+        let loads: String = packages.iter().map(|p| format!("\\usepackage{{{p}}}\n")).collect();
+        let source = format!("\\documentclass{{article}}\n{loads}\\begin{{document}}\nx\n\\end{{document}}\n");
+        let analysis = analyze(&source);
+        let begin: Vec<(String, u32, u32)> = places(&analysis, OccKind::BeginEnvironment);
+        assert_eq!(begin, [("document".to_string(), 2 + packages.len() as u32, 1)], "{packages:?}: {begin:?}");
+    }
 }

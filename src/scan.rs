@@ -420,6 +420,17 @@ impl Machine<'_> {
                         if value.is_some() || kind != RegKind::Dimen {
                             self.abs = None;
                         }
+                        // `attach_sign` clamps before the sign is attached,
+                        // so the interval is clamped here too; what it
+                        // clamped is no longer the register's own value, so
+                        // no test may narrow the register by it.
+                        if let Some(num) = self.abs.take() {
+                            let clamped = clamp_dimen(&num);
+                            if clamped != num {
+                                self.abs_from = None;
+                            }
+                            self.abs = Some(clamped);
+                        }
                         if negative {
                             self.abs = self.abs.take().map(|num| num.neg());
                             self.abs_from = None;
@@ -675,6 +686,22 @@ impl Machine<'_> {
         }
         true
     }
+}
+
+/// tex.web § 460 (`attach_sign`): a magnitude of 2^30 or more is
+/// "Dimension too large" and reads as `\maxdimen`, whatever its sign — so
+/// the clamp is not monotone and an interval that passes it may only be
+/// `\maxdimen`.
+fn clamp_dimen(num: &Num) -> Num {
+    let clamp = |v: i64| if v.abs() >= DIMEN_LIMIT { MAX_DIMEN } else { v };
+    if let Some(set) = &num.set {
+        return Num::of_set(set.iter().map(|&v| clamp(v)).collect());
+    }
+    if num.lo > -DIMEN_LIMIT && num.hi < DIMEN_LIMIT {
+        return num.clone();
+    }
+    let (lo, hi) = (num.lo.max(-MAX_DIMEN), num.hi.min(MAX_DIMEN));
+    if lo > hi { Num::exact(MAX_DIMEN) } else { Num::range(lo, hi).join(&Num::exact(MAX_DIMEN), usize::MAX) }
 }
 
 /// tex.web § 453 (`attach_fraction`): an integer part of 2^14 points or

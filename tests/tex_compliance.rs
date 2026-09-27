@@ -450,3 +450,60 @@ fn ifx_sees_a_noexpanded_macro_as_no_macro() {
         \expandafter\ifx\noexpand\a\m\def\R{T}\else\def\R{F}\fi";
     assert_eq!(r(joined), ["F"], "probe: {joined}");
 }
+
+/// tex.web § 420: what `\wd` reads for a box whose list satex could not
+/// follow is unknown, never zero — a document that asks `\ifdim\wd0=0pt`
+/// would otherwise take an arm with confidence.
+#[test]
+fn a_box_satex_cannot_follow_has_no_width() {
+    // `\pdfuniformdeviate` is unknown, so the kern's width is too.
+    assert!(!last_certain(r"\setbox0=\hbox{\kern\pdfuniformdeviate 10sp}\ifdim\wd0=0pt \def\R{Z}\else\def\R{N}\fi"));
+    // tex.web § 649: `hpack` of an empty list really is zero wide.
+    check(r"\setbox0=\hbox{}\ifdim\wd0=0pt \def\R{Z}\else\def\R{N}\fi", "Z");
+    // tex.web § 644: `\hbox to 0pt` is zero wide whatever the list holds.
+    check(r"\setbox0=\hbox to 0pt{\kern\pdfuniformdeviate 10sp}\ifdim\wd0=0pt \def\R{Z}\else\def\R{N}\fi", "Z");
+    // tex.web § 420: a void register reads as zero.
+    check(r"\ifdim\wd7=0pt \def\R{Z}\else\def\R{N}\fi", "Z");
+    // tex.web § 668: a vertical list of glue and kerns has no width.
+    check(r"\setbox0=\vbox{\kern\pdfuniformdeviate 10sp}\ifdim\wd0=0pt \def\R{Z}\else\def\R{N}\fi", "Z");
+    // tex.web § 644: a `to` size satex does not know is not zero either.
+    assert!(!last_certain(
+        r"\dimen0=\pdfuniformdeviate 10sp \setbox0=\hbox to \dimen0{}\ifdim\wd0=0pt \def\R{Z}\else\def\R{N}\fi"
+    ));
+}
+
+/// tex.web §§ 649, 668: `hpack` and `vpack` start the height and the depth
+/// at zero and only take maxima, so a packed box has neither below zero —
+/// until `\ht` is assigned one.
+#[test]
+fn a_packed_height_is_not_negative_unless_it_was_assigned() {
+    check(r"\setbox0=\hbox{\kern\pdfuniformdeviate 10sp}\ifdim\ht0<0pt \def\R{N}\else\def\R{P}\fi", "P");
+    assert!(!last_certain(
+        r"\setbox0=\hbox{\kern\pdfuniformdeviate 10sp}\ifnum\pdfuniformdeviate2=0 \ht0=-3pt\fi
+          \ifdim\ht0<0pt \def\R{N}\else\def\R{P}\fi"
+    ));
+}
+
+/// tex.web § 424 and § 1034: a paragraph's horizontal list has a tail and a
+/// space factor of its own, which `\@bsphack` and `\@esphack` read on every
+/// `\label`.
+#[test]
+fn a_paragraph_keeps_its_tail_and_space_factor() {
+    // The `\relax` stops the glue scan, which would otherwise expand the
+    // conditional while looking for `plus` (tex.web § 461).
+    check(r"\noindent a\kern3pt\relax\ifdim\lastskip=0pt \def\R{Z}\else\def\R{N}\fi\par", "Z");
+    check(r"\noindent a\hskip3pt\relax\ifdim\lastskip>0pt \def\R{P}\else\def\R{Z}\fi\par", "P");
+    check(r"\noindent a\hskip3pt\unskip\ifdim\lastskip=0pt \def\R{Z}\else\def\R{N}\fi\par", "Z");
+    check(r"\noindent a\kern3pt\relax\edef\R{\the\lastkern}\par", "3.0pt");
+    check(r"\noindent A\edef\R{\the\spacefactor}\par", "999");
+    check(r"\noindent\edef\R{\the\spacefactor}\par", "1000");
+    // tex.web § 418: outside horizontal mode it is an error read as zero.
+    check(r"\edef\R{\the\spacefactor}", "0");
+}
+
+/// tex.web § 1105: `\unskip` on a list whose tail satex does not know must
+/// widen the size, not leave it as it was.
+#[test]
+fn unskip_on_an_unknown_tail_is_not_free() {
+    assert!(!last_certain(r"\setbox0=\hbox{\kern3pt\pdfliteral{x}\unskip}\ifdim\wd0=3pt \def\R{K}\else\def\R{N}\fi"));
+}

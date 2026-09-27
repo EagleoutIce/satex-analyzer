@@ -146,6 +146,30 @@ pub struct Metadata {
 /// Per name, the probes run in each context it was called from.
 pub type ContextProbes = HashMap<Sym, Vec<(Option<Sym>, Option<String>)>>;
 
+/// What the run remembers between characters so that the font state costs
+/// a few pointer comparisons each, not five macro lookups: the five NFSS
+/// names, the bodies they had when the state was last resolved, and the
+/// row that resolve produced.
+#[derive(Default)]
+pub(crate) struct FontWatch {
+    pub(crate) names: Option<[Option<Sym>; 5]>,
+    /// Held, not just pointed at, so a freed body cannot be mistaken for
+    /// an unchanged one through a reused address.
+    pub(crate) bodies: [Option<std::rc::Rc<[Token]>>; 5],
+    /// The same bodies as bare addresses, which is what the per-character
+    /// comparison reads.
+    pub(crate) at: [Option<*const u8>; 5],
+    pub(crate) state: u16,
+}
+
+/// A font `\font` loaded: the TFM name it was given and the size it was
+/// loaded at (tex.web § 1257), which together locate its metrics.
+#[derive(Clone, Debug)]
+pub struct FontUse {
+    pub name: String,
+    pub size: crate::value::Scaled,
+}
+
 /// Everything a run produced: the [`Env`] and [`CatcodeTable`] it ended with,
 /// the [`Facts`] and [`DependencyGraph`] it recorded, and the bookkeeping every
 /// `satex` command reads instead of the live [`Machine`].
@@ -188,6 +212,13 @@ pub struct Analysis {
     /// Where the kernel defined each name it brought in, so a name that has
     /// no definition site in this run still points at `latex.ltx`.
     pub kernel_sites: HashMap<Sym, Span>,
+    /// The fonts the run loaded, by the number `\the\font` gives them:
+    /// what [`crate::facts::FontState::font`] indexes, so a lint can read
+    /// a character's own metrics.
+    pub fonts: Vec<Option<FontUse>>,
+    /// The distinct font states the run passed through, row 0 the one it
+    /// did not know: what [`crate::facts::Spot::font_state`] indexes.
+    pub font_states: Vec<crate::facts::FontState>,
     /// The meaning of every control sequence at the end of the run.
     pub env: Env,
     /// The category codes in force at the end of the run.
@@ -350,6 +381,11 @@ impl Analysis {
     }
 }
 
+/// How many positions of tokens given back are remembered: the window a
+/// lookahead's token has to be read again within to still count as the
+/// file's.
+pub(crate) const RECENT_FILE_SPANS: usize = 64;
+
 #[derive(Clone)]
 enum Frame {
     /// A file being read.  `catcodes` is the table to restore when it ends:
@@ -375,7 +411,7 @@ enum Frame {
     },
     /// A `\scantokens` pseudo file.  Its characters are tokenized as they
     /// are read, so a catcode change inside it governs the rest of it
-    /// (etex.ch `pseudo_input`); `eof` is the `\everyeof` read at its end.
+    /// (etex.ch `pseudo_input`). `eof` is the `\everyeof` read at its end.
     Pseudo {
         mouth: Box<Mouth>,
         at: Span,
@@ -392,7 +428,7 @@ enum Frame {
 }
 
 /// The `\global`, `\long`, `\outer` and `\protected` prefixes waiting to
-/// apply to the next definition or assignment; [`Machine::define`] consumes
+/// apply to the next definition or assignment. [`Machine::define`] consumes
 /// and resets them.
 #[derive(Default, Clone, Copy)]
 pub struct Prefixes {
@@ -405,7 +441,7 @@ pub struct Prefixes {
     pub immediate: bool,
 }
 
-/// How a conditional level ends (tex.web § 489: `if_limit`); [`CondFrame::limit`]
+/// How a conditional level ends (tex.web § 489: `if_limit`). [`CondFrame::limit`]
 /// holds it while the level is open.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CondLimit {
@@ -417,9 +453,23 @@ pub enum CondLimit {
     Fi,
 }
 
+/// The bindings the arms of an undecided conditional left.  Its arms run
+/// one after the other in one state, so each one's assignments are captured
+/// and rolled back at its end, and the `\fi` joins them: tex.web § 498 runs
+/// one arm, so what follows is what any one of them may have left.
+#[derive(Clone, Debug, Default)]
+pub struct Arms {
+    /// Where the save stack stood when the running arm began.
+    pub mark: usize,
+    /// The group depth then.
+    pub depth: usize,
+    /// What each arm already run assigned.
+    pub done: Vec<Captured>,
+}
+
 /// One entry of the condition stack ([`Machine::conds`]), tracking whether
 /// `\else` is still to come and whether the branch taken is decided yet.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct CondFrame {
     pub limit: CondLimit,
     /// An undecided condition runs every arm in turn, so `\else` falls
@@ -434,6 +484,9 @@ pub struct CondFrame {
     /// For an undecided condition whose arms run in turn: the modes each
     /// arm starts in and those the arms left.
     pub modes: Option<crate::mode::ArmModes>,
+    /// For an undecided condition whose arms run in turn: the bindings each
+    /// arm left, which its `\fi` joins.
+    pub arms: Option<Arms>,
 }
 
 /// tex.web § 305 `scanner_status`: what a scan that meets the end of a
@@ -461,8 +514,8 @@ const REGISTER: char = '\u{2}';
 /// macros and executes primitives, changes [`Env`] and [`CatcodeTable`], and
 /// records what it saw into [`Analysis`].
 /// A text copied through into an `\edef` body ([`Machine::copy_through`]):
-/// whose, where in the body and how long; how much longer it could have been
-/// within the limits it met; and whether it came from before the load being
+/// whose, where in the body and how long, how much longer it could have been
+/// within the limits it met, and whether it came from before the load being
 /// recorded.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CopyEvent {
@@ -475,6 +528,35 @@ pub(crate) struct CopyEvent {
 
 /// `\openin` streams: the lines each still has to give, by stream number.
 type Streams = Rc<HashMap<i64, (Rc<Vec<String>>, usize)>>;
+
+/// The stream a number satex could not pin down names.  `i64::MIN` is past
+/// what `scan_int` can give (tex.web § 445), so no source reaches it.
+const ANY_STREAM: i64 = i64::MIN;
+
+/// Where a stream known to be closed stands: past lines it does not have,
+/// which no open stream is.  Absence says the same, except after a
+/// widening, where it only means nothing is known (tex.web § 1275).
+const CLOSED: usize = usize::MAX;
+
+/// Whether two paths know the same of the `\openin` streams (tex.web
+/// § 480).  The tables are shared, so the pointers usually settle it.
+fn same_streams(a: &Streams, b: &Streams) -> bool {
+    Rc::ptr_eq(a, b) || a == b
+}
+
+/// The join of two stream states (tex.web § 480): a stream is known only
+/// where both sides left it open on the same lines at the same place.  Any
+/// other difference, including one side having opened or closed a stream
+/// the other did not, leaves no stream known, which is the only state the
+/// table has for what satex cannot follow.
+fn join_streams(a: &Streams, b: &Streams) -> Streams {
+    if same_streams(a, b) {
+        return a.clone();
+    }
+    let mut joined = a.clone();
+    Rc::make_mut(&mut joined).insert(ANY_STREAM, (Rc::new(Vec::new()), 0));
+    joined
+}
 
 pub struct Machine<'a> {
     pub cfg: &'a Config,
@@ -498,6 +580,11 @@ pub struct Machine<'a> {
     /// Set when a `\par` aborted the argument scan of a macro that is not
     /// `\long` (tex.web § 396), which abandons the call.
     runaway: bool,
+    /// Set when an argument scan was abandoned: the call did not get the
+    /// argument it was written for, so a loop around it is not converging.
+    scan_abandoned: bool,
+    /// Where an unknown-text token stood for one character, and which.
+    unknown_chars: HashMap<Span, char>,
     pub cds: Vec<ControlDep>,
     /// The conditionals being read, innermost last (tex.web § 489).
     pub conds: Vec<CondFrame>,
@@ -527,7 +614,10 @@ pub struct Machine<'a> {
     /// The macro whose replacement text is currently being read.
     within: Vec<(Sym, NodeId)>,
     pub(crate) quantity: crate::observe::Quantities,
-    /// The macro whose expansion the last token read came from; a list
+    /// Whether something that is not a character was digested since the
+    /// last one, so the next breaks the word (tex.web § 1034).
+    pub(crate) text_broken: bool,
+    /// The macro whose expansion the last token read came from. A list
     /// pushed or given back while it is processed keeps it.  `None`: a file.
     source: Option<Sym>,
     /// Package context: the name and the options it was given.
@@ -582,6 +672,9 @@ pub struct Machine<'a> {
     /// LuaTeX's `\lastnamedcs`: the name the last `\csname`,
     /// `\begincsname` or `\ifcsname` built.
     pub(crate) last_named_cs: Option<Sym>,
+    /// What `observed_font_state` needs to stamp every character with its
+    /// font without resolving the state again.
+    pub(crate) font_watch: FontWatch,
     /// The marker `\noexpand` puts in front of the token it guards.
     pub(crate) dont_expand: Sym,
     /// A token standing for text satex cannot know, such as what
@@ -656,6 +749,10 @@ pub struct Machine<'a> {
     /// a macro body of the project's included: where its own text put what
     /// the call `file_call` does.
     project_site: Option<Span>,
+    /// The last control sequence a call took from a project file as an
+    /// argument delimiter (tex.web § 392): read, but never run, so it is
+    /// not a `file_call` of its own.
+    pub(crate) absorbed: Option<Span>,
     /// The file call each open file was pushed under: when the file ends,
     /// the call that read it is the file call again.
     file_calls: Vec<(FileId, Option<(Sym, Span)>)>,
@@ -664,7 +761,7 @@ pub struct Machine<'a> {
     pub written_lines: Vec<crate::observe::WrittenLine>,
     pub name_reads: Vec<crate::observe::NameRead>,
     /// A copy of the kernel state at `\begin{document}` that written lines
-    /// run in; `Some(None)` once none could be made.
+    /// run in. `Some(None)` once none could be made.
     pub line_sandbox: Option<Option<Box<Machine<'a>>>>,
     /// In that copy: the names the running line defined.
     pub line_defined: Option<Vec<Sym>>,
@@ -717,8 +814,8 @@ pub struct Machine<'a> {
     step_depth: u32,
     /// Where on the stack the outermost `step` runs.
     stack_base: usize,
-    /// Work done without reading a token — copying, comparing and joining
-    /// the paths of undecided conditionals — in tokens' worth: it counts
+    /// Work done without reading a token (copying, comparing and joining
+    /// the paths of undecided conditionals), in tokens' worth: it counts
     /// against `limits.steps` too, so no loop outside the reader escapes it.
     pub(crate) work: u64,
     pub(crate) scanner: Scanner,
@@ -731,7 +828,7 @@ pub struct Machine<'a> {
 
 /// Everything besides the bindings that a path through an undecided
 /// conditional changes, so that each arm starts where the test was.  What
-/// the run records — facts, the graph, hooks, loaded files — is shared: the
+/// the run records (facts, the graph, hooks, loaded files) is shared: the
 /// analysis reports the union of the paths.
 #[derive(Clone)]
 struct PathState {
@@ -765,8 +862,8 @@ struct PathState {
     wild: Wild,
 }
 
-/// A split — an undecided conditional, a name of several meanings, a mode
-/// test — that a path it began may meet again with nothing read from the
+/// A split (an undecided conditional, a name of several meanings, a mode
+/// test) that a path it began may meet again with nothing read from the
 /// source since: a loop whose exit is undecided.  It keeps the join of
 /// every abstract state the loop reached there, so that the loop is
 /// analyzed to a fixpoint (§ 14).
@@ -823,6 +920,14 @@ struct Site {
     /// Expansions since the last one that read something new from a file.
     repeats: u32,
     progress: u64,
+    /// How many tokens the last expansion here was handed.  A recursion
+    /// that does not make this smaller has no measure that is running out.
+    size: usize,
+    /// The source position of the last expansion here, and how many have
+    /// happened since it moved.  Unlike `repeats` an assignment does not
+    /// reset this, so a recursion that only assigns cannot hide from it.
+    source: u64,
+    unread: u32,
 }
 
 impl<'a> Machine<'a> {
@@ -844,7 +949,7 @@ impl<'a> Machine<'a> {
         interner.intern("");
         // No file can spell this name with the catcodes a run starts with.
         let dont_expand = interner.intern("\u{2}notexpanded:");
-        let unknown = interner.intern("\u{2}unknown:");
+        let unknown = interner.intern(crate::tex::UNKNOWN_CS);
         let unknown_rest = interner.intern("\u{2}unknown rest:");
         let unknown_digits = interner.intern("\u{2}unknown digits:");
         let unknown_more = interner.intern("\u{2}unknown more digits:");
@@ -858,7 +963,7 @@ impl<'a> Machine<'a> {
         env.set(unknown_rest, Binding::builtin(Meaning::Unknown), true);
         env.set(unknown_digits, Binding::builtin(Meaning::Char(crate::tex::UNKNOWN_CHAR, Catcode::Other)), true);
         env.set(unknown_more, Binding::builtin(Meaning::Char(crate::tex::UNKNOWN_CHAR, Catcode::Other)), true);
-        // No format yet: INITEX's table; a format installs its own.
+        // No format yet: INITEX's table. A format installs its own.
         let mut catcodes = CatcodeTable::initex();
         catcodes.at_letter(cfg.at_letter);
         Self {
@@ -890,6 +995,8 @@ impl<'a> Machine<'a> {
                 preamble_files: None,
                 entry: Vec::new(),
                 format: None,
+                fonts: Vec::new(),
+                font_states: vec![crate::facts::FontState::default()],
                 env: Env::default(),
                 catcodes: CatcodeTable::latex(),
                 timings: Timings::new(cfg.timings),
@@ -915,9 +1022,12 @@ impl<'a> Machine<'a> {
             after_assignment: None,
             long_argument: true,
             runaway: false,
+            scan_abandoned: false,
+            unknown_chars: HashMap::new(),
             cds: Vec::new(),
             within: Vec::new(),
             quantity: crate::observe::Quantities::default(),
+            text_broken: true,
             source: None,
             packages: Vec::new(),
             expanding: Vec::new(),
@@ -951,6 +1061,7 @@ impl<'a> Machine<'a> {
             held_tokens: 0,
             noexpanded: None,
             last_named_cs: None,
+            font_watch: FontWatch::default(),
             dont_expand,
             unknown,
             unknown_rest,
@@ -974,6 +1085,7 @@ impl<'a> Machine<'a> {
             recent_file_spans: Vec::new(),
             file_call: None,
             project_site: None,
+            absorbed: None,
             file_calls: Vec::new(),
             written_lines: Vec::new(),
             name_reads: Vec::new(),
@@ -1007,13 +1119,16 @@ impl<'a> Machine<'a> {
     }
 
     pub fn analyze(source: &str, path: Option<&Path>, cfg: &'a Config) -> Analysis {
+        // `-f doc.tex` has an empty parent, not a missing one, so the
+        // filter is what keeps a bare name rooted at the working directory.
         let base = path
             .and_then(|p| p.parent().map(Path::to_path_buf))
+            .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
         let mut m = Machine::new(cfg, base);
         let engine = m.out.plugins.engine;
         // A `.dtx` is documentation with code in it, and docstrip decides
-        // which is which; what satex interprets is the code, line for line
+        // which is which. What satex interprets is the code, line for line
         // where it stands in the `.dtx`.  A `.ins` is a batch file and runs
         // as it is written.
         let literate = path.and_then(crate::literate::Literate::of);
@@ -1116,13 +1231,14 @@ impl<'a> Machine<'a> {
         m.out.observed.finish();
         crate::observe::relate(&mut m);
         m.link_cross_references();
+        m.collect_fonts();
         m.out.env = std::mem::take(&mut m.env);
         m.out.catcodes = m.catcodes.clone();
         m.out
     }
 
     /// Expand a value for reporting.  With no list, everything the gullet can
-    /// expand is expanded, which is the text the engine would write; a list
+    /// expand is expanded, which is the text the engine would write. A list
     /// narrows that to the macros it names.
     fn expand_reported(&mut self, tokens: &[Token]) -> Vec<Token> {
         let allowed = self.cfg.expand_in_reports.clone();
@@ -1187,7 +1303,7 @@ impl<'a> Machine<'a> {
             let tokens = macro_def.replacement_text.to_vec();
             let expanded = self.expand_as_pdf_string(&tokens);
             let text = squeeze(&self.pdf_string_text(&expanded));
-            // `\maketitle` empties `\@title` once it has set it; the title
+            // `\maketitle` empties `\@title` once it has set it. The title
             // is what it held before.
             if text.is_empty() {
                 return;
@@ -1381,7 +1497,7 @@ impl<'a> Machine<'a> {
         };
         let cache_dir = self.cache_dir();
 
-        // A missing or stale cache is rebuilt below; it says nothing about
+        // A missing or stale cache is rebuilt below. It says nothing about
         // the document, so it is no finding, only a notice on stderr.
         // One build per process: runs that miss together wait for it and
         // read what it stored.
@@ -1468,7 +1584,7 @@ impl<'a> Machine<'a> {
         let reached =
             self.out.facts.defs.iter().filter(|def| def.span.file == id).map(|def| def.span.line).max().unwrap_or(0);
         let lines = text.lines().count() as u32;
-        // The table a format hands to a document is the LaTeX one; latex.ltx
+        // The table a format hands to a document is the LaTeX one. latex.ltx
         // makes the specials `other` while it bootstraps and restores them in
         // groups this interpreter only approximates.
         self.catcodes = plain;
@@ -1630,7 +1746,7 @@ will look undefined",
         self.cfg.cache_dir.clone().or_else(format::default_cache_dir)
     }
 
-    /// The table a LaTeX format hands to a document; a package or class
+    /// The table a LaTeX format hands to a document. A package or class
     /// read as the main file has `@` a letter, as `\usepackage` gives it.
     fn format_catcodes(&self) -> CatcodeTable {
         let mut table = CatcodeTable::latex();
@@ -1655,12 +1771,12 @@ will look undefined",
     /// The kernel is not the user's code, so it contributes meanings but no
     /// findings.
     fn forget_facts(&mut self) {
-        // Definitions and uses belong to the kernel, not the document; the
+        // Definitions and uses belong to the kernel, not the document. The
         // diagnostics about how well it was read do not.
         // The budget starts again for the document itself.
         self.halted = false;
         // A run that installs the kernel from its cache has not learnt the
-        // counter namespace yet either; both learn it the same way.
+        // counter namespace yet either. Both learn it the same way.
         self.counter_namespace = None;
         self.out.exhausted = false;
         self.out.steps = 0;
@@ -1673,6 +1789,9 @@ will look undefined",
         self.definition_sites.clear();
         self.expansion_sites.clear();
         self.out.facts.spaces.clear();
+        self.out.facts.text = crate::facts::Text::default();
+        self.out.font_states.truncate(1);
+        self.font_watch = FontWatch::default();
         self.out.facts.conditionals.clear();
         self.cond_sites.clear();
     }
@@ -1702,34 +1821,82 @@ will look undefined",
         }
     }
 
-    pub fn set_stream(&mut self, stream: i64, lines: Option<Vec<String>>) {
+    pub fn set_stream(&mut self, stream: Option<i64>, lines: Option<Vec<String>>) {
+        let Some(stream) = stream else { return self.forget_streams() };
         match lines {
             Some(lines) => {
                 Rc::make_mut(&mut self.streams).insert(stream, (Rc::new(lines), 0));
             }
-            None => {
-                Rc::make_mut(&mut self.streams).remove(&stream);
+            // tex.web § 1275: a file that is not there leaves the stream
+            // closed, which `\ifeof` reads as true.
+            None => self.mark_closed(stream),
+        }
+    }
+
+    pub fn close_in(&mut self, stream: Option<i64>) {
+        let Some(stream) = stream else { return self.forget_streams() };
+        self.mark_closed(stream);
+    }
+
+    /// A stream is closed.  Dropping it says so, except after a widening,
+    /// where the table has to say it outright.  Keeping the cases apart
+    /// leaves the table unchanged where no widening has happened.
+    fn mark_closed(&mut self, stream: i64) {
+        let widened = self.streams.contains_key(&ANY_STREAM);
+        let streams = Rc::make_mut(&mut self.streams);
+        match widened {
+            true => {
+                streams.insert(stream, (Rc::new(Vec::new()), CLOSED));
+            }
+            false => {
+                streams.remove(&stream);
             }
         }
     }
 
-    pub fn close_in(&mut self, stream: i64) {
-        Rc::make_mut(&mut self.streams).remove(&stream);
+    /// `\openin` or `\closein` through a number satex could not pin down:
+    /// it may have reached any stream, so no stream's state is known from
+    /// here on (tex.web § 1275).  What was known before is dropped, so
+    /// anything in the table afterwards was learned since.
+    pub fn forget_streams(&mut self) {
+        let streams = Rc::make_mut(&mut self.streams);
+        streams.clear();
+        streams.insert(ANY_STREAM, (Rc::new(Vec::new()), 0));
     }
 
     /// A stream that was never opened, or whose file was not found, is at
-    /// end; an open one only once a read has found no line left (tex.web
-    /// § 485 closes it then), so the last line is read with `\ifeof` false.
-    pub fn stream_at_end(&self, stream: i64) -> bool {
-        !self.streams.contains_key(&stream)
+    /// end. An open one is at end only once a read has found no line left
+    /// (tex.web § 485 closes it then), so the last line is read with
+    /// `\ifeof` false.
+    /// `None` once a number satex could not pin down opened or closed one.
+    pub fn stream_at_end(&self, stream: i64) -> Option<bool> {
+        // What the table holds was learned after the last widening.
+        if let Some((_, at)) = self.streams.get(&stream) {
+            return Some(*at == CLOSED);
+        }
+        if self.streams.contains_key(&ANY_STREAM) {
+            return None;
+        }
+        Some(true)
+    }
+
+    /// Whether `\read` and `\readline` take a line from the stream rather
+    /// than from the terminal (tex.web § 484). `None` where the number or
+    /// the stream's state is not known.
+    pub(crate) fn stream_open(&mut self, stream: Option<i64>) -> Option<bool> {
+        let n = stream?;
+        if !(0..16).contains(&n) {
+            return Some(false);
+        }
+        self.stream_at_end(n).map(|at_end| !at_end)
     }
 
     pub fn take_stream_line(&mut self, stream: i64) -> Option<String> {
-        // The lines stay shared; only the position moves, so a snapshot of
+        // The lines stay shared. Only the position moves, so a snapshot of
         // the streams costs nothing however long the file is.
         let (lines, next) = Rc::make_mut(&mut self.streams).get_mut(&stream)?;
         let Some(line) = lines.get(*next).cloned() else {
-            self.close_in(stream);
+            self.close_in(Some(stream));
             return None;
         };
         *next += 1;
@@ -1778,7 +1945,7 @@ will look undefined",
 
     /// The next token, stopping at the end of the file it is read from.
     ///
-    /// Only the main loop crosses a file boundary; a reader grabbing an
+    /// Only the main loop crosses a file boundary. A reader grabbing an
     /// argument must not, or a package that ends mid-construct would consume
     /// the file that loaded it.
     pub fn next_token(&mut self) -> Option<Token> {
@@ -1870,6 +2037,12 @@ will look undefined",
                 }
                 Some(Frame::File { mouth, eof_seen, .. }) => {
                     if let Some(t) = mouth.next_with(catcodes, &mut out.interner, *end_line) {
+                        // The character an unknown-text token stood for, so
+                        // that executing it later can be bounded by what
+                        // that character could mean (tex.web §§ 232, 344).
+                        if let Some(c) = mouth.last_unknown.take() {
+                            self.unknown_chars.insert(t.span, c);
+                        }
                         self.source_progress += 1;
                         self.progress_step = self.out.steps;
                         self.env.clear_recent();
@@ -1909,7 +2082,7 @@ will look undefined",
     }
 
     /// tex.web §§ 336-339 `check_outer_validity`: a file that ends in the
-    /// middle of a scan ends it — the definition or text gets its `}`, the
+    /// middle of a scan ends it. The definition or text gets its `}`, the
     /// skipped conditional its `\fi`, and a macro call is abandoned, as the
     /// `\par` TeX inserts with `long_state = outer_call` abandons it.
     fn file_ended_while_scanning(&mut self, file: Option<FileId>) {
@@ -1991,8 +2164,8 @@ will look undefined",
     /// TeX reports the groups still open when a job ends (tex.web § 1335).
     /// satex applies that check at every file boundary: a file that returns
     /// at a deeper nesting than it began at has lost a `}` or an `\endgroup`
-    /// to an approximation — one hidden in a token register, or dropped with
-    /// a widened expansion — and leaving the level open would make a later,
+    /// to an approximation (one hidden in a token register, or dropped with
+    /// a widened expansion), and leaving the level open would make a later,
     /// unrelated `}` undo every definition made since.  The level is given up
     /// without restoring anything, so those definitions survive where they
     /// really belong.
@@ -2008,10 +2181,11 @@ will look undefined",
         let open = self.conds.len() - depth;
         let opened = self.conds[depth].at;
         while self.conds.len() > depth {
-            if let Some(frame) = self.conds.pop()
-                && frame.dep
-            {
-                self.cds.pop();
+            if let Some(frame) = self.conds.pop() {
+                self.close_arms(frame.arms, frame.modes.is_some_and(|m| m.other));
+                if frame.dep {
+                    self.cds.pop();
+                }
             }
         }
         let name = self.out.short_name(file).to_string();
@@ -2050,7 +2224,7 @@ will look undefined",
 
     /// tex.web § 325: before anything goes back into the input, token lists
     /// that are used up are ended, so that a macro whose expansion is over
-    /// no longer counts as being expanded — a loop that re-expands its
+    /// no longer counts as being expanded. A loop that re-expands its
     /// result with `\expandafter` does not nest.
     fn end_used_up_lists(&mut self) {
         // A pseudo file stays until a read meets its end (tex.web § 362).
@@ -2078,10 +2252,7 @@ will look undefined",
 
     fn unread_plain(&mut self, token: Token) {
         if self.last_file == Some(token.span.file) {
-            if self.recent_file_spans.len() == 64 {
-                self.recent_file_spans.remove(0);
-            }
-            self.recent_file_spans.push(token.span);
+            self.note_given_back(token.span);
         }
         self.end_used_up_lists();
         self.held_tokens += 1;
@@ -2091,16 +2262,28 @@ will look undefined",
         }
     }
 
+    /// Note where a token given back stood.  One entry per position: the
+    /// text a primitive produces stands where its operand did (tex.web
+    /// § 465, `\string`), so a `\string` gives back a whole name at one
+    /// span, and counting those would push the peeked positions out.
+    fn note_given_back(&mut self, span: Span) {
+        if self.recent_file_spans.contains(&span) {
+            return;
+        }
+        if self.recent_file_spans.len() == RECENT_FILE_SPANS {
+            self.recent_file_spans.remove(0);
+        }
+        self.recent_file_spans.push(span);
+    }
+
     pub fn unread_all(&mut self, tokens: &[Token]) {
         if tokens.is_empty() {
             return;
         }
         // Given back by a keyword scan (tex.web § 407): still the file's.
-        for t in tokens.iter().filter(|t| self.last_file == Some(t.span.file)) {
-            if self.recent_file_spans.len() == 64 {
-                self.recent_file_spans.remove(0);
-            }
-            self.recent_file_spans.push(t.span);
+        let last_file = self.last_file;
+        for t in tokens.iter().filter(|t| last_file == Some(t.span.file)) {
+            self.note_given_back(t.span);
         }
         self.end_used_up_lists();
         self.held_tokens += tokens.len();
@@ -2172,7 +2355,7 @@ will look undefined",
             );
         }
         // tex.web § 1064 `off_save` repairs the nesting by inserting the token
-        // the open group is waiting for; the group therefore ends here either
+        // the open group is waiting for. The group therefore ends here either
         // way, which is also what keeps the depth of an analyzed file right
         // when the mismatch is this interpreter's own approximation.
         let inner = crate::observe::current_environment(self);
@@ -2264,7 +2447,7 @@ will look undefined",
             let defs = self.env.link_defs(via);
             self.link_reads(node, via, &defs);
         }
-        // Assigning a register reads nothing of the value it held; a package
+        // Assigning a register reads nothing of the value it held. A package
         // cache counts it as a read only when the name means something else.
         let tracking = self.env.track_reads(false);
         let mut binding = match self.env.get(name) {
@@ -2312,8 +2495,24 @@ will look undefined",
     /// `\catcode` is a local assignment, so the old value goes on the save
     /// stack and the enclosing group restores it.
     pub fn set_catcode(&mut self, character: char, catcode: Catcode) {
-        self.env.save_catcode(character, self.catcodes.get(character));
+        self.env.save_catcode_state(character, self.catcodes.get(character), self.catcodes.is_unknown(character));
         self.catcodes.set(character, catcode);
+    }
+
+    /// `\catcode` through a character number satex could not pin down: no
+    /// character's category is known from here on (tex.web § 1232). The
+    /// save stack cannot put back what was never one character's, so the
+    /// group it was made in does not end it.
+    pub fn set_catcodes_unknown(&mut self) {
+        self.catcodes.set_all_unknown();
+    }
+
+    pub fn set_catcode_unknown(&mut self, character: char) {
+        if self.catcodes.is_unknown(character) {
+            return;
+        }
+        self.env.save_catcode_state(character, self.catcodes.get(character), false);
+        self.catcodes.set_unknown(character);
     }
 
     pub fn set_end_line(&mut self, value: i32) {
@@ -2321,7 +2520,7 @@ will look undefined",
     }
 
     /// `\endlinechar` is an integer parameter like any other, so the end of
-    /// a group restores it (tex.web § 236); the mouth follows the table.
+    /// a group restores it (tex.web § 236). The mouth follows the table.
     pub(crate) fn sync_end_line(&mut self) {
         let sym = self.intern("endlinechar");
         // A copy kept in step with the parameter, not a use of it: a package
@@ -2336,7 +2535,7 @@ will look undefined",
         let before = self.catcodes.clone();
         change(&mut self.catcodes);
         for (character, _) in self.catcodes.diff(&before) {
-            self.env.save_catcode(character, before.get(character));
+            self.env.save_catcode_state(character, before.get(character), before.is_unknown(character));
         }
     }
 
@@ -2503,7 +2702,7 @@ will look undefined",
     pub fn occurrence(&mut self, kind: OccKind, key: String, detail: Option<String>, span: Span) -> Option<NodeId> {
         // A command that has acted has read its arguments.
         self.finish_shape();
-        // A call that records the same key twice made one occurrence — but
+        // A call that records the same key twice made one occurrence, but
         // every literal a call hands the PDF writer is content of its own:
         // `q … q … Q … Q` from one `\tcolorbox` must stay balanced.
         let seen = self
@@ -2524,7 +2723,7 @@ will look undefined",
         Some(node)
     }
 
-    /// What an occurrence recorded now would be attributed to; kept for one
+    /// What an occurrence recorded now would be attributed to. Kept for one
     /// recorded once the run has ended.
     pub fn occurrence_context(&self) -> crate::observe::OccContext {
         crate::observe::OccContext {
@@ -2547,7 +2746,7 @@ will look undefined",
         context: &crate::observe::OccContext,
     ) -> NodeId {
         let name = self.intern(&key);
-        // A `\label` declares a key; a `\ref` or `\cite` uses one.
+        // A `\label` declares a key. A `\ref` or `\cite` uses one.
         let tag = match kind {
             OccKind::Label | OccKind::BibItem => VertexTag::VariableDefinition,
             _ => VertexTag::Use,
@@ -2584,8 +2783,8 @@ will look undefined",
 
     /// A `use` vertex for `sym`, wired to whatever currently defines it.
     ///
-    /// Names that carry no definition site — the primitives the format
-    /// provides, and undefined names — get no vertex: they would dominate the
+    /// Names that carry no definition site (the primitives the format
+    /// provides, and undefined names) get no vertex: they would dominate the
     /// graph without adding an edge to it.
     pub fn reference(&mut self, sym: Sym, span: Span) -> Option<NodeId> {
         let defs = self.env.defs(sym);
@@ -2674,10 +2873,9 @@ will look undefined",
         Some(self.intern(&base))
     }
 
-    /// Bind `name`, record the definition and wire up the graph.
     /// The names the kernel keeps counters under, learnt by running its
     /// own `\value{⟨counter⟩}` (ltcounts: `\csname c@#1\endcsname`) on a
-    /// probe; none while `\value` is not a macro.
+    /// probe. None while `\value` is not a macro.
     fn counter_namespace(&mut self) -> Option<String> {
         const PROBE: &str = "satex@probe";
         let value = self.out.interner.lookup("value")?;
@@ -2714,6 +2912,7 @@ will look undefined",
         crate::observe::defined_name(self, name);
         let spelled = self.name(name).to_string();
         crate::observe::version_record(self, &spelled, &meaning);
+        crate::observe::color_def(self, &spelled, &meaning, span);
         if let Some(line) = self.source_extent(span) {
             self.out.graph.note_extent(span, line);
         }
@@ -2745,7 +2944,7 @@ will look undefined",
 
         // `\renewcommand` and friends test that the name is already there
         // (latex.ltx, `\@ifundefined`), so they read the definition they
-        // replace; `\def` and `\newcommand` do not.
+        // replace. `\def` and `\newcommand` do not.
         if mode == DefMode::Renew {
             let defs = self.env.link_defs(name);
             self.link_reads(node, name, &defs);
@@ -2817,7 +3016,7 @@ will look undefined",
         let existing = self.definition_sites.get(&(span, name)).copied();
         // Kernel code re-run in a new environment (`\list`'s own
         // `\def\@itemlabel{#1}`, once per `\begin{itemize}`/`\begin{enumerate}`)
-        // hits the same site every time; the first context seen there would
+        // hits the same site every time. The first context seen there would
         // otherwise be the only one `explain` ever finds. A context not
         // already on record for this site, however recently, is its own
         // meaning and gets its own fact.
@@ -2913,7 +3112,7 @@ will look undefined",
                 }
             }
         }
-        // A new context got its own fact above; the site's original one
+        // A new context got its own fact above. The site's original one
         // still describes *its* context and must keep its own `mac`, not
         // this run's (a later environment's local meaning would otherwise
         // overwrite what the record for the first one shows).
@@ -2975,12 +3174,12 @@ will look undefined",
     }
 
     fn record_calls(&mut self, name: Sym, body: &[Token]) {
-        // A redefinition replaces what the name calls; a scratch name the
+        // A redefinition replaces what the name calls. A scratch name the
         // kernel reuses for unrelated purposes throughout the run
         // (`\reserved@a`, `\@gtempa`, ...) would otherwise keep every
         // callee any of its bodies ever had, turning `analysis.calls` into
         // the union of everything it was ever defined to do instead of what
-        // it currently does — which invents cycles `unguarded-recursion`
+        // it currently does, which invents cycles `unguarded-recursion`
         // and the `recursion` query then report as real.
         self.out.calls.node(name);
         self.out.calls.clear(name);
@@ -3010,7 +3209,7 @@ will look undefined",
         m.env = env;
         m.catcodes = catcodes;
         m.dont_expand = m.out.interner.intern("\u{2}notexpanded:");
-        m.unknown = m.out.interner.intern("\u{2}unknown:");
+        m.unknown = m.out.interner.intern(crate::tex::UNKNOWN_CS);
         m.unknown_rest = m.out.interner.intern("\u{2}unknown rest:");
         m.unknown_digits = m.out.interner.intern("\u{2}unknown digits:");
         m.unknown_more = m.out.interner.intern("\u{2}unknown more digits:");
@@ -3110,23 +3309,22 @@ will look undefined",
         }
     }
 
-    /// `-vv` and `-vvv`: say where the run is, so a long one does not look
-    /// like a hang.
-    /// What a call site's repeat count is measured against: input read, or
-    /// any assignment.  expl3's `\clist_count:N` inside a loop that fills
-    /// a table expands `\__clist_count:n` at one site far more often than a
-    /// fixed bound, and each round of the loop assigns; `\def\a{\a}`
-    /// never does.
     /// Whether the kernel format is being read: what it observes is not
     /// kept (only its meanings are), so per-token records can be skipped.
     pub(crate) fn reading_format(&self) -> bool {
         self.budget.is_some()
     }
 
+    /// What a call site's repeat count is measured against: input read,
+    /// or any assignment.  Only reading on is progress (tex.web § 366),
+    /// but an assignment is what tells apart the many calls one site sees
+    /// between two tokens of a file, which are not one loop.
     fn site_progress(&self) -> u64 {
         self.source_progress ^ self.env.assignments.rotate_left(32)
     }
 
+    /// `-vv` and `-vvv`: say where the run is, so a long one does not look
+    /// like a hang.
     fn report_progress(&mut self) {
         let every = match self.cfg.verbose {
             0 | 1 => return,
@@ -3204,9 +3402,9 @@ will look undefined",
     /// One token from the input.  Returns `false` at end of input or budget.
     pub fn step(&mut self) -> bool {
         // A scan that expands what makes it scan again (`\def\a{\number\a}`)
-        // nests without end; TeX runs out of input stack there (tex.web
+        // nests without end. TeX runs out of input stack there (tex.web
         // § 321, "TeX capacity exceeded"), and so does the run.
-        // The stack grows down; a level's cost varies with the path to it,
+        // The stack grows down. A level's cost varies with the path to it,
         // so the stack taken is bounded as well as the count.
         let marker = 0u8;
         let here = std::hint::black_box(std::ptr::addr_of!(marker)) as usize;
@@ -3292,6 +3490,7 @@ will look undefined",
         match self.category_of(token) {
             Some(Catcode::Begin) => {
                 self.end_word();
+                crate::observe::word_break(self);
                 self.open_group(GroupKind::Simple, token.span);
                 self.record(Step::OpenGroup, Sym(0), token.span);
                 self.simple_group_opened();
@@ -3355,10 +3554,10 @@ will look undefined",
         }
     }
 
-    /// Every collection the run appends to has a ceiling; the first one that
+    /// Every collection the run appends to has a ceiling. The first one that
     /// is reached stops the analysis instead of growing the process.
     fn over_budget(&mut self) -> bool {
-        /// Collection sizes change slowly; checking them on every token would
+        /// Collection sizes change slowly. Checking them on every token would
         /// cost more than it saves.
         const CHECK_INTERVAL: u64 = 256;
         if self.halted {
@@ -3544,7 +3743,7 @@ will look undefined",
         }
         match self.env.meaning(sym) {
             // tex.web § 367: only a control sequence or active character is
-            // marked; any other token goes back unchanged.
+            // marked. Any other token goes back unchanged.
             Meaning::Primitive(Primitive::NoExpand) => {
                 // tex.web § 367: read with the scanner normal.
                 let outer = std::mem::replace(&mut self.scanner, Scanner::Normal);
@@ -3560,7 +3759,7 @@ will look undefined",
             }
             Meaning::Macro(m) if m.protected && !self.pdf_string => out.push(token),
             // A name whose meaning is unknown may expand to anything.
-            // A name of unknown meaning expands to unknown text; one a join
+            // A name of unknown meaning expands to unknown text. One a join
             // left one of several macros to one of their texts.
             Meaning::Unknown if self.is_unknown_marker(sym) => out.push(self.unknown_token(token.span)),
             Meaning::Unknown => {
@@ -3679,7 +3878,7 @@ will look undefined",
         if self.project_file(span.file) {
             self.project_site = Some(span);
         }
-        // A control sequence read straight from a file starts a new call; one
+        // A control sequence read straight from a file starts a new call. One
         // that came out of a macro body is part of the call already running.
         if self.last_file == Some(span.file) {
             self.file_call = Some((sym, span));
@@ -3727,7 +3926,7 @@ will look undefined",
                 let node = self.reference(sym, span);
                 self.note_expansion(sym, span, MeaningKind::Register, node, Vec::new());
                 // A `\chardef` constant in the stomach typesets its character
-                // (tex.web § 1038); only a register takes an assignment.
+                // (tex.web § 1038). Only a register takes an assignment.
                 // `\newbox` makes a `\chardef` (plain.tex `\alloc@`), which
                 // typesets its character.
                 if matches!(kind, crate::tex::RegKind::Char | crate::tex::RegKind::Box) {
@@ -3744,8 +3943,17 @@ will look undefined",
                     }
                 } else if kind != crate::tex::RegKind::MathChar {
                     self.end_word();
-                    self.apply_global_defs();
+                    let scope = self.apply_global_defs();
+                    let recent = scope.then(|| {
+                        let recent = self.env.recent();
+                        self.env.clear_recent();
+                        recent
+                    });
                     self.assign_register(sym, kind, span);
+                    if let Some(recent) = recent {
+                        self.env.widen_recent();
+                        self.env.set_recent(recent);
+                    }
                     // tex.web § 1269: a register assignment is a prefixed
                     // command too, and hands back the `\afterassignment`
                     // token once it is done (`\@defaultunits`).
@@ -3759,6 +3967,34 @@ will look undefined",
                 // is spent.
                 self.prefixes = Default::default();
                 let node = self.reference(sym, span);
+                // Of the categories in tex.web § 232 only 13 runs a
+                // meaning, and § 344 says it is the one bound for that
+                // character, so one arm for that binding and one for the
+                // categories that run nothing cover what this may do.  A
+                // marker standing for a name has no such bound, which
+                // `domains.md` records as a limit.
+                if let Some(c) = self.unknown_chars.get(&span).copied() {
+                    let on = self.force_reference(sym, span);
+                    let bound = self.active_sym(c);
+                    let active = match self.env.meaning(bound) {
+                        Meaning::Undefined | Meaning::Unknown => Vec::new(),
+                        _ => vec![bound],
+                    };
+                    if !active.is_empty() {
+                        let mut branches: Vec<Rc<[Token]>> = vec![Rc::from(Vec::new())];
+                        branches.extend(
+                            active.into_iter().map(|a| Rc::from(vec![Token::new(Tok::Cs(a), span)]) as Rc<[Token]>),
+                        );
+                        // The arms run where a command stands, so the
+                        // modes are joined back here as `close_arms` does.
+                        // The rollback drops a group an arm opened, and the
+                        // nest would not match the mode without this.
+                        let entry = (self.mode, self.list);
+                        self.analyze_alternatives(&branches, on);
+                        self.mode = entry.0.union(self.mode);
+                        self.list = entry.1.union(self.list);
+                    }
+                }
                 let kind = match other {
                     Meaning::Char(..) => MeaningKind::Char,
                     _ => MeaningKind::Unknown,
@@ -3812,6 +4048,9 @@ will look undefined",
             // bound only ever bites a loop.
             site.repeats = if site.progress == progress { site.repeats.saturating_add(1) } else { 1 };
             site.progress = progress;
+            let read = self.source_progress;
+            site.unread = if site.source == read { site.unread.saturating_add(1) } else { 1 };
+            site.source = read;
             let (repeats, fact) = (site.repeats, site.fact);
             let mode = self.mode;
             let previous = &mut self.out.facts.expansions[fact];
@@ -3821,7 +4060,14 @@ will look undefined",
         }
         let package = self.package();
         let within = self.within.last().map(|(sym, _)| *sym);
-        let site = Site { fact: self.out.facts.expansions.len(), repeats: 1, progress };
+        let site = Site {
+            fact: self.out.facts.expansions.len(),
+            repeats: 1,
+            progress,
+            size: usize::MAX,
+            source: self.source_progress,
+            unread: 1,
+        };
         self.expansion_sites.insert((span, name), site);
         self.out.facts.expansions.push(Expansion {
             name,
@@ -3866,7 +4112,7 @@ will look undefined",
     }
 
     /// The `\else`, `\or` or (`fi`) `\fi` at `mark` of the conditional at
-    /// `at`; one in another file does not make the two one construct.
+    /// `at`. One in another file does not make the two one construct.
     pub(crate) fn note_cond_mark(&mut self, at: Span, mark: Span, fi: bool) {
         let Some(&index) = self.cond_sites.get(&at).filter(|_| mark.file == at.file) else { return };
         let fact = &mut self.out.facts.conditionals[index];
@@ -3919,7 +4165,9 @@ expansion stopped",
             return;
         }
 
+        self.scan_abandoned = false;
         let arguments = self.read_arguments(&m);
+        let abandoned = self.scan_abandoned;
         if let Some(watch) = &mut self.probe {
             let text = &m.parameter_text;
             let delimited: Vec<bool> = (1..=arguments.len())
@@ -3970,11 +4218,43 @@ expansion stopped",
         self.note_repeated_load(sym, &arguments);
 
         let depth = self.expanding.get(sym.0 as usize).copied().unwrap_or(0);
-        if depth >= self.cfg.limits.expansion_depth || visits > self.cfg.limits.site_expansions {
+        // What this expansion was handed, against what the last one here
+        // was: a recursion that keeps re-entering the same site without
+        // reading on is only running out if this is getting smaller.
+        let size: usize = arguments.iter().map(Vec::len).sum();
+        let (shrinking, unread) = match self.expansion_sites.get_mut(&(span, sym)) {
+            Some(site) => (size < std::mem::replace(&mut site.size, size), site.unread),
+            None => (true, 1),
+        };
+        // A recursion that re-enters this site without reading on, whose
+        // argument scan was abandoned and whose argument is not getting
+        // smaller, has nothing left that could end it: the delimiter it
+        // ends at is the one the scan just failed to find, and the next
+        // round looks for it in the same place.  Running it out to the
+        // per-site bound only repeats that round, so it is widened at
+        // `widen_after`, where a loop head widens what still grows.
+        let rounds = u32::from(self.cfg.limits.widen_after);
+        let stuck = abandoned && !shrinking && visits > rounds && visits <= self.cfg.limits.site_expansions;
+        // `repeats` cannot see a recursion that assigns every round, so
+        // this counts reading on alone (tex.web § 366).  The multiple is
+        // measured, not derived: 16 still cut a loop that was getting
+        // somewhere, 256 costs nothing on either document.  Both are
+        // sound, since the stall widened such a loop anyway.
+        let never_read = self.cfg.limits.site_expansions.saturating_mul(256);
+        let spinning = unread > never_read;
+        if depth >= self.cfg.limits.expansion_depth || visits > self.cfg.limits.site_expansions || stuck || spinning {
             self.record_with(Step::Widen, sym, span, || Some("recursion"));
-            if visits == self.cfg.limits.site_expansions + 1 || depth >= self.cfg.limits.expansion_depth {
+            if visits == self.cfg.limits.site_expansions + 1
+                || depth >= self.cfg.limits.expansion_depth
+                || visits == rounds + 1
+                || unread == never_read + 1
+            {
                 let reason = if depth >= self.cfg.limits.expansion_depth {
                     format!("re-entered {depth} times")
+                } else if spinning {
+                    format!("expanded {unread} times without reading on, whatever it assigned")
+                } else if stuck {
+                    format!("expanded {visits} times without finding the delimiter its argument ends at")
                 } else {
                     format!("expanded {visits} times without reading on")
                 };
@@ -3982,14 +4262,27 @@ expansion stopped",
                     Severity::Imprecision,
                     "recursion-widened",
                     span,
-                    format!("\\{}: {reason}; expansion stopped", self.name(sym)),
+                    format!(
+                        "\\{}: {reason}; what it would expand to and what it would assign are not known",
+                        self.name(sym)
+                    ),
                 );
             }
+            // The rounds that do not run would have assigned as the ones
+            // before them did, so what they could have left is widened too.
+            // `recent` is cleared on every token read from a file, and this
+            // loop read none, so it holds just what the loop assigned.
+            self.env.widen_recent();
+            // tex.web § 366: the call is replaced by its replacement text.
+            // Its arguments are read, so dropping it here would say it
+            // expanded to nothing, which is a claim satex cannot make.
+            let unknown = self.unknown_token(span);
+            self.push_tokens(Rc::from(vec![unknown]), None);
             return;
         }
 
         self.record(Step::Expand, sym, span);
-        // The budget bounds what an expansion adds; arguments it was handed
+        // The budget bounds what an expansion adds. Arguments it was handed
         // were already there (a `filecontents` line read from the file is
         // one argument, however long), and each `#n` copies one.
         let handed: usize = arguments.iter().map(Vec::len).max().unwrap_or(0);
@@ -4089,19 +4382,24 @@ expansion stopped",
 
     /// The contents of a `{…}` group, braces stripped, nesting preserved.
     ///
-    /// A group that does not close before the expansion budget runs out is
-    /// not a group: TeX's conditionals may leave braces unbalanced across the
-    /// arms this interpreter analyzes separately.  The tokens go back and the
-    /// caller gets nothing, which keeps one bad read from swallowing a file.
+    /// tex.web § 392: the group ends at the `}` that matches, however far
+    /// away.  A scan that stops on the expansion budget has not shown the
+    /// group unbalanced, so the tokens go back and the argument is not
+    /// known rather than empty.  The budget is there because the arms of a
+    /// conditional analyzed separately may leave braces unbalanced.
     pub fn read_group_body(&mut self) -> Vec<Token> {
         let mut out = Vec::new();
         let mut depth = 1usize;
         let mut expanded = 0;
+        let mut input_ended = false;
         while self.reading_on(expanded) {
-            let Some(t) = self.next_token() else { break };
+            let Some(t) = self.next_token() else {
+                input_ended = true;
+                break;
+            };
             expanded += self.expansion_delta();
             if self.runaway_argument(t) {
-                return Vec::new();
+                return self.unknown_argument(&out, t.span);
             }
             match t.tok {
                 Tok::Chr(_, Catcode::Begin) => depth += 1,
@@ -4116,13 +4414,18 @@ expansion stopped",
             out.push(t);
         }
         let at = out.first().map(|t| t.span).unwrap_or_default();
-        self.diagnose(Severity::Unsupported, "unbalanced-group", at, "group never closes".into());
+        // Only the input running out shows the group never closes.  Stopping
+        // on the budget says nothing about the `}` that was not reached yet.
+        let (code, why) = if input_ended {
+            ("unbalanced-group", "group never closes")
+        } else {
+            ("group-too-long", "the group is longer than one expansion may read, so what it holds is not known")
+        };
+        self.diagnose(Severity::Unsupported, code, at, why.into());
         self.unread_all(&out);
-        Vec::new()
+        self.unknown_argument(&out, at)
     }
 
-    /// TeX's undelimited argument: one token, or a braced group with the outer
-    /// braces removed (The TeXbook, ch. 20).
     /// Note an argument the call being described just read, if it read it
     /// from the file the call itself stands in and after the call.
     fn note_shape(&mut self, at: Span, item: &str) {
@@ -4157,6 +4460,8 @@ expansion stopped",
         }
     }
 
+    /// TeX's undelimited argument: one token, or a braced group with the outer
+    /// braces removed (The TeXbook, ch. 20).
     pub fn read_undelimited(&mut self) -> Vec<Token> {
         self.skip_spaces();
         match self.next_token() {
@@ -4185,7 +4490,7 @@ expansion stopped",
 
     /// Unknown digits taken as one token (an undelimited argument, the
     /// token `\futurelet` looks at) are their first digit, one character
-    /// of category 12; the rest, perhaps none, is read next (tex.web § 465
+    /// of category 12. The rest, perhaps none, is read next (tex.web § 465
     /// prints a number as characters).
     pub(crate) fn one_token(&mut self, t: Token) -> Token {
         if t.tok != Tok::Cs(self.unknown_digits) {
@@ -4195,25 +4500,52 @@ expansion stopped",
         Token::new(Tok::Chr(crate::tex::UNKNOWN_DIGIT, Catcode::Other), t.span)
     }
 
+    /// What a scan gives when it cannot stand behind what it read: text
+    /// that is not known (tex.web § 392).  Dropping it would say the
+    /// argument was empty, which the scan never earned.
+    fn unknown_argument(&mut self, read: &[Token], span: Span) -> Vec<Token> {
+        self.scan_abandoned = true;
+        if read.is_empty() {
+            return Vec::new();
+        }
+        vec![self.unknown_token(span)]
+    }
+
     /// Everything up to the next occurrence of `delimiter` at brace level 0.
     fn read_delimited(&mut self, delimiter: &[Tok]) -> Vec<Token> {
         let mut out: Vec<Token> = Vec::new();
         let mut depth = 0usize;
         let mut expanded = 0;
+        // Where unknown text was read inside a group, if it was: a `{` or a
+        // `}` it may hold leaves `depth` a guess from there on, so the
+        // delimiter this finds is not known to be the one that ends the
+        // argument.
+        let mut fuzzy: Option<Span> = None;
+        // How many of the tokens just read stand in a project file.
+        let mut from_file = 0usize;
         while self.reading_on(expanded) {
             let Some(t) = self.next_token() else { break };
             expanded += self.expansion_delta();
+            from_file = match self.last_file == Some(t.span.file) && self.project_file(t.span.file) {
+                true => from_file + 1,
+                false => 0,
+            };
             if self.runaway_argument(t) {
-                return Vec::new();
+                return self.unknown_argument(&out, t.span);
             }
             // Unknown text may hold the delimiter, with anything after it:
             // the argument ends in it and the rest of it is read next.  That
             // rest is taken to hold no delimiter, so a split is made once.
-            if depth == 0 && t.tok == Tok::Cs(self.unknown) {
-                out.push(t);
-                let rest = self.unknown_rest_token(t.span);
-                self.unread(rest);
-                return strip_braces(out);
+            if t.tok == Tok::Cs(self.unknown) {
+                if depth == 0 {
+                    out.push(t);
+                    let rest = self.unknown_rest_token(t.span);
+                    self.unread(rest);
+                    return strip_braces(out);
+                }
+                // Inside a group the text may hold the `}` that closes it,
+                // so where the argument ends is not known from here on.
+                fuzzy = fuzzy.or(Some(t.span));
             }
             match t.tok {
                 Tok::Chr(_, Catcode::Begin) => depth += 1,
@@ -4229,16 +4561,22 @@ expansion stopped",
                         t.span,
                         "a delimited argument ran into the end of its group".into(),
                     );
-                    return Vec::new();
+                    return self.unknown_argument(&out, t.span);
                 }
                 Tok::Chr(_, Catcode::End) => depth -= 1,
                 _ => {}
             }
             out.push(t);
             if depth == 0 && out.len() >= delimiter.len() {
-                let tail = &out[out.len() - delimiter.len()..];
-                if tail.iter().zip(delimiter).all(|(t, d)| t.tok == *d) {
-                    out.truncate(out.len() - delimiter.len());
+                let at = out.len() - delimiter.len();
+                if out[at..].iter().zip(delimiter).all(|(t, d)| t.tok == *d) {
+                    if from_file >= delimiter.len() && out[at].cs().is_some() {
+                        self.absorbed = Some(out[at].span);
+                    }
+                    out.truncate(at);
+                    if let Some(span) = fuzzy {
+                        return self.unknown_argument(&out, span);
+                    }
                     return strip_braces(out);
                 }
             }
@@ -4257,7 +4595,7 @@ expansion stopped",
             let Some(t) = self.next_token() else { break };
             expanded += self.expansion_delta();
             if self.runaway_argument(t) {
-                return Vec::new();
+                return self.unknown_argument(&out, t.span);
             }
             match t.tok {
                 Tok::Chr(_, Catcode::Begin) => {
@@ -4276,7 +4614,7 @@ expansion stopped",
                         t.span,
                         "a delimited argument ran into the end of its group".into(),
                     );
-                    return Vec::new();
+                    return self.unknown_argument(&out, t.span);
                 }
                 _ => out.push(t),
             }
@@ -4310,7 +4648,7 @@ expansion stopped",
                         && t.tok != *expected
                     {
                         // tex.web § 398: "Use of \x doesn't match its
-                        // definition"; a probe learns what was wanted.
+                        // definition". A probe learns what was wanted.
                         let wanted: Vec<Tok> = text.items[i..]
                             .iter()
                             .map_while(|item| match item {
@@ -4377,7 +4715,7 @@ expansion stopped",
     /// A probe run offered `found` where a parameter text wanted `wanted`
     /// (tex.web §§ 392, 398): the first such place is what the prober
     /// learns the command's input from.  Only the probe's own characters
-    /// count; the text the macros hand each other is not the caller's.
+    /// count. The text the macros hand each other is not the caller's.
     fn probe_wants(&mut self, found: &[Token], wanted: &[Tok], want: crate::probe::Want) {
         let Some(watch) = &self.probe else { return };
         let file = watch.file;
@@ -4534,7 +4872,7 @@ expansion stopped",
 
     /// The ⟨control sequence⟩ a TeX assignment defines.  `get_r_token`
     /// (tex.web § 1215) skips spaces and takes one token, which has to be a
-    /// control sequence; unlike a LaTeX macro argument it never looks inside
+    /// control sequence. Unlike a LaTeX macro argument it never looks inside
     /// a group, so `\edef~{…}` on an active character defines nothing here
     /// rather than the first name the group happens to contain.
     pub fn read_r_token(&mut self) -> Option<Sym> {
@@ -4687,18 +5025,9 @@ expansion stopped",
         self.scan_optional_equals();
     }
 
-    /// Split the material up to the matching `\fi` into its alternatives.
-    ///
-    /// Returns `None` when no matching `\fi` turns up within
-    /// `Config::max_conditional_tokens`; the tokens are then put back and the
-    /// conditional is left alone, which is what happens in practice when a
-    /// package hides its `\fi` behind `\expandafter`.
-    /// Returns the alternatives and whether an `\else` closed the last one.
-    /// Without one the conditional has a further outcome — that none of the
-    /// arms runs — which the merge has to account for.
     /// Skip the text of an arm that is not taken, as `pass_text` does
     /// (tex.web § 494): nested conditionals are counted, nothing is executed.
-    /// Stops at `\fi`, and at `\else`/`\or` unless `to_fi`.  Returns the
+    /// Stops at `\fi`, and at `\else`/`\or` unless `to_fi`. Returns the
     /// primitive that ended the skip.
     pub fn pass_text(&mut self, to_fi: bool, at: Span) -> Option<(Primitive, Span)> {
         let scanner = std::mem::replace(&mut self.scanner, Scanner::Skipping);
@@ -4725,7 +5054,7 @@ expansion stopped",
             // that file's text into this one's: a package conditional whose
             // test or `\fi` satex got wrong would otherwise swallow the
             // document.  TeX inserts `\fi` where a file ends inside a skip
-            // (tex.web § 336); satex ends the skip here as though it had, and
+            // (tex.web § 336). satex ends the skip here as though it had, and
             // leaves a marker that splits off the path skipping on as TeX does.
             if self.last_file.is_some_and(|f| f != at.file) {
                 self.unread(t);
@@ -4767,6 +5096,15 @@ expansion stopped",
         None
     }
 
+    /// Split the material up to the matching `\fi` into its alternatives.
+    ///
+    /// Returns `None` when no matching `\fi` turns up within
+    /// `Config::max_conditional_tokens`. The tokens are then put back and the
+    /// conditional is left alone, which is what happens in practice when a
+    /// package hides its `\fi` behind `\expandafter`.
+    /// Returns the alternatives and whether an `\else` closed the last one.
+    /// Without one the conditional has a further outcome, that none of the
+    /// arms runs, which the merge has to account for.
     pub fn read_alternatives(&mut self, at: Span) -> Option<(Vec<Rc<[Token]>>, bool)> {
         let mut body: Vec<Token> = Vec::new();
         let mut cuts: Vec<usize> = Vec::new();
@@ -4920,7 +5258,7 @@ expansion stopped",
 
     /// Run the current path until it is back at or below `depth` levels of
     /// input with the conditionals down to `conds`, which is where it can
-    /// meet another path; `false` when it ends first.
+    /// meet another path. `false` when it ends first.
     fn run_to_meeting(&mut self, depth: usize, conds: usize, budget: &mut u64, moved: bool, target: u64) -> bool {
         let start = self.out.steps;
         let mut moved = moved;
@@ -4943,7 +5281,7 @@ expansion stopped",
 
     /// An undecided conditional read by the main loop: every arm runs as a
     /// path of its own from the state the test left, until the paths are
-    /// back at the same place in the input; there the bindings are joined —
+    /// back at the same place in the input. There the bindings are joined:
     /// a name the arms left with different meanings has an unknown one from
     /// then on, so tests on it are undecided in turn.  A path that reaches
     /// `\end` drops out.  `enter` puts the path at the start of arm `i` and
@@ -4953,7 +5291,7 @@ expansion stopped",
         self.split_paths(by, span, false, enter)
     }
 
-    /// [`Machine::run_paths`]; with `moved`, each path reads at least one
+    /// [`Machine::run_paths`]. With `moved`, each path reads at least one
     /// command before it can meet the others, for paths that begin with
     /// the same token given back.
     fn split_paths(&mut self, by: Sym, span: Span, moved: bool, enter: impl Fn(&mut Self, usize) -> bool) -> bool {
@@ -4967,7 +5305,7 @@ expansion stopped",
         if let Some(&h) = matching.iter().rev().find(|&&h| self.same_shape(h)) {
             self.revisit(h);
             // Its state is joined into the head's, which the head analyzes
-            // on; the path adds nothing of its own.
+            // on. The path adds nothing of its own.
             self.halted = true;
             return true;
         }
@@ -5097,8 +5435,8 @@ expansion stopped",
     }
 
     /// A path meets loop head `h` again in the same shape: its state is
-    /// joined into the head's — widened after `widen_after` rounds, so that
-    /// a slot that still grows holds anything from then on — and the head
+    /// joined into the head's, widened after `widen_after` rounds so that
+    /// a slot that still grows holds anything from then on, and the head
     /// is told to run again when that grew it.
     fn revisit(&mut self, h: usize) {
         let head = &self.heads[h];
@@ -5185,8 +5523,8 @@ expansion stopped",
             // Every round compares every path's place and state.
             self.work += places.iter().map(|p| 1 + p.len() as u64).sum::<u64>();
             let met = places.iter().all(|p| *p == places[0]);
-            // State a join cannot combine — category codes, a waiting
-            // `\afterassignment` or `\aftergroup` token — keeps the paths
+            // State a join cannot combine, such as category codes or a waiting
+            // `\afterassignment` or `\aftergroup` token, keeps the paths
             // apart until it agrees again.
             let joinable = met && paths.iter().all(|p| self.joinable(&paths[0], p));
             if joinable || *budget == 0 || paths.iter().all(|p| p.ended) {
@@ -5214,13 +5552,28 @@ expansion stopped",
                     wild.union(&p.state.wild);
                 }
                 let mut first = paths.swap_remove(0);
+                // The paths are brought together where they stand, so what
+                // holds from here is their join, not the first path's state.
+                // A category they parted about is not known (tex.web § 232),
+                // nor is a line end (§ 240), a waiting token (§ 1269) or an
+                // `\openin` stream (§ 480).
+                for path in paths.iter() {
+                    first.state.catcodes.join(&path.state.catcodes);
+                    first.state.end_line = first.state.end_line.join(path.state.end_line);
+                    first.state.streams = join_streams(&first.state.streams, &path.state.streams);
+                }
+                let waiting = first.state.after_assignment.map(|t| t.tok);
+                if paths.iter().any(|p| p.state.after_assignment.map(|t| t.tok) != waiting) {
+                    first.state.after_assignment = Some(self.unknown_token(span));
+                }
                 first.state.wild = wild;
                 first.state.material = material;
                 first.state.natural = natural;
                 first.state.mode = mode;
                 first.state.list = list;
                 if envs.iter().all(|e| crate::env::Env::same_groups(&envs[0], e)) {
-                    self.env.join_paths(fork, &envs);
+                    let unknown = self.unknown_token(span);
+                    self.env.join_paths(fork, &envs, unknown);
                     first.env = self.env.path(fork);
                 }
                 return Some(first);
@@ -5255,7 +5608,8 @@ expansion stopped",
                         material |= paths[k].state.material;
                         natural = crate::mode::join_natural(natural, paths[k].state.natural);
                     }
-                    self.env.join_paths(fork, &envs);
+                    let unknown = self.unknown_token(span);
+                    self.env.join_paths(fork, &envs, unknown);
                     let path = &mut paths[i];
                     path.env = self.env.path(fork);
                     path.state.wild = merged;
@@ -5269,7 +5623,7 @@ expansion stopped",
                     continue;
                 }
             }
-            // The path that is behind runs on; ties go to the deeper one.
+            // The path that is behind runs on. Ties go to the deeper one.
             let behind = (0..paths.len())
                 .filter(|&i| !paths[i].ended)
                 .min_by_key(|&i| (paths[i].state.source_progress, std::cmp::Reverse(places[i].len())))
@@ -5307,7 +5661,7 @@ expansion stopped",
     }
 
     /// Whether a name that holds one of several meanings may split the run
-    /// here; past `meaning_splits` nested paths it is read as a name of
+    /// here. Past `meaning_splits` nested paths it is read as a name of
     /// unknown meaning instead.
     pub(crate) fn may_split_meaning(&self) -> bool {
         self.branch_depth < self.cfg.limits.meaning_splits
@@ -5324,7 +5678,47 @@ expansion stopped",
         a.state.catcodes == b.state.catcodes
             && a.state.end_line == b.state.end_line
             && a.state.after_assignment.map(|t| t.tok) == b.state.after_assignment.map(|t| t.tok)
+            && same_streams(&a.state.streams, &b.state.streams)
             && crate::env::Env::same_after(&a.env, &b.env)
+    }
+
+    /// One alternative is over: what it assigned is captured and rolled
+    /// back, so the next starts where it did.  A category it changed is not
+    /// known from here on. The run may or may not have made the change, and
+    /// pretending it did not would leave satex certain of the old one.
+    ///
+    /// The two states are joined over the category lattice of tex.web
+    /// § 232, not diffed: a diff of the values cannot see a category an
+    /// arm left known to be unknown.
+    pub(crate) fn capture_arm(&mut self, mark: usize, depth: usize) -> Captured {
+        let mut catcodes = std::mem::take(&mut self.catcodes);
+        let arm = catcodes.clone();
+        let captured = self.env.capture_and_rollback(mark, depth, &mut catcodes);
+        self.catcodes = catcodes;
+        // A `\catcode` through a character number the arm could not pin
+        // down carries over: the rollback puts back the characters it saved,
+        // which would otherwise read as known again.
+        self.catcodes.join_all_unknown(&arm);
+        // The rest go on the save stack one by one, so the enclosing group
+        // still ends them.
+        for character in self.catcodes.disagreements(&arm) {
+            self.set_catcode_unknown(character);
+        }
+        captured
+    }
+
+    /// The `\fi` of an undecided conditional: the last arm is captured and
+    /// every arm's bindings are joined into the state the test left.
+    pub(crate) fn close_arms(&mut self, arms: Option<Arms>, other: bool) {
+        let Some(mut arms) = arms else { return };
+        let captured = self.capture_arm(arms.mark, arms.depth);
+        arms.done.push(captured);
+        // Without an `\else` the condition may select no arm (tex.web
+        // § 498), which leaves the bindings the test left.
+        if !other {
+            arms.done.push(Captured::default());
+        }
+        self.env.merge(arms.done);
     }
 
     /// Analyze mutually exclusive alternatives and merge their effects.
@@ -5346,9 +5740,7 @@ expansion stopped",
             self.cds.push(ControlDep { on, taken: i == 0 });
             self.run_tokens(branch.clone());
             self.cds.pop();
-            let mut catcodes = std::mem::take(&mut self.catcodes);
-            captured.push(self.env.capture_and_rollback(mark, depth, &mut catcodes));
-            self.catcodes = catcodes;
+            captured.push(self.capture_arm(mark, depth));
             natural = if i == 0 { self.natural } else { crate::mode::join_natural(natural, self.natural) };
         }
         self.natural = natural;
@@ -5404,7 +5796,7 @@ expansion stopped",
         let (name, kind, options) = self.kernel_file(name.trim(), kind, options);
         let name = name.as_str();
         // The load stands at the call from a file whose own text names the
-        // file; a file the code of some other call opens stands at the
+        // file. A file the code of some other call opens stands at the
         // `\input` that opened it.
         let span = match self.file_call {
             Some((_, call)) if self.call_names_file(call, name) => call,
@@ -5417,7 +5809,7 @@ expansion stopped",
         };
         let by = self.package();
         // `\input docstrip` reads the program whose batch-file commands
-        // satex models; its own code reads the `.dtx` and writes the files,
+        // satex models. Its own code reads the `.dtx` and writes the files,
         // which an interpreter that does neither cannot follow.
         let modeled = self.docstrip && matches!(name, "docstrip" | "docstrip.tex");
         let mut status = if !follow || modeled {
@@ -5432,6 +5824,17 @@ expansion stopped",
         let resolved = if status == LoadStatus::NotFound {
             let base = self.base.clone();
             self.resolver.resolve(name, kind, &base)
+        } else {
+            None
+        };
+        // Check if a case mismatch was detected when the resolve failed.
+        let case_mismatch_disk_name = if resolved.is_none() && status == LoadStatus::NotFound {
+            if let Some((_, found_name)) = self.resolver.case_mismatch(name, kind) {
+                status = LoadStatus::CaseMismatch;
+                Some(found_name)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -5482,6 +5885,7 @@ expansion stopped",
             required,
             provided: None,
             depth: self.file_depth,
+            case_mismatch_disk_name,
         });
         let load = self.out.facts.loads.len() - 1;
         let (Some(source), Some(id)) = (source, file) else { return };
@@ -5519,7 +5923,7 @@ expansion stopped",
 
     /// What latex.ltx is reading through `\input`: the package or class
     /// `\@currname` and `\@currext` name, with the options
-    /// `\opt@⟨name⟩.⟨ext⟩` holds, when the file is theirs; the file itself
+    /// `\opt@⟨name⟩.⟨ext⟩` holds, when the file is theirs. The file itself
     /// otherwise.  Which extensions are a package's and a class's is the
     /// kernel's own `\@pkgextension` and `\@clsextension`.
     fn kernel_file(&self, name: &str, kind: LoadKind, options: Vec<String>) -> (String, LoadKind, Vec<String>) {
@@ -5623,6 +6027,7 @@ expansion stopped",
                     required: None,
                     provided: None,
                     depth: self.file_depth,
+                    case_mismatch_disk_name: None,
                 });
             }
             "@onefilewithoptions@clashchk" if arguments.len() == 1 => {
@@ -5676,7 +6081,6 @@ expansion stopped",
     }
 }
 
-/// How TeX names a group kind in its complaints (tex.web § 1069).
 /// The token that opens a group of this kind, for reporting where an
 /// unclosed one began.
 fn opened_by(kind: GroupKind) -> &'static str {
@@ -5687,6 +6091,7 @@ fn opened_by(kind: GroupKind) -> &'static str {
     }
 }
 
+/// How TeX names a group kind in its complaints (tex.web § 1069).
 fn name_of(kind: GroupKind) -> &'static str {
     match kind {
         GroupKind::Simple => "}",

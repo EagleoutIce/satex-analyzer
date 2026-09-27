@@ -43,7 +43,7 @@ pub fn mult_and_add(n: i64, x: i64, y: i64, max_answer: i64) -> Option<i64> {
 }
 
 /// tex.web § 106 `x_over_n`: `x/n` truncated toward zero on 32-bit
-/// integers; `None` (`arith_error`) when `n` is zero.
+/// integers. `None` (`arith_error`) when `n` is zero.
 pub fn x_over_n(x: i64, n: i64) -> Option<i64> {
     let (mut x, mut n) = (x as i32, n as i32);
     if n == 0 {
@@ -84,7 +84,7 @@ const UNITS: [(&str, i64, i64); 12] = [
     ("nd", 685, 642),
     ("nc", 1370, 107),
     ("sp", 1, 65536),
-    // Math units are stored in the same scaled units as points; only the
+    // Math units are stored in the same scaled units as points. Only the
     // printed name differs (tex.web § 455).
     ("mu", 1, 1),
 ];
@@ -162,7 +162,12 @@ impl Num {
         Num::range(-max, max)
     }
 
-    fn of_set(mut set: Vec<i64>, members: usize) -> Num {
+    /// Exactly the values in `set`, however many they are.
+    pub fn of_set(set: Vec<i64>) -> Num {
+        Num::of_set_capped(set, usize::MAX)
+    }
+
+    fn of_set_capped(mut set: Vec<i64>, members: usize) -> Num {
         set.sort_unstable();
         set.dedup();
         let (lo, hi) = (set[0], set[set.len() - 1]);
@@ -172,13 +177,13 @@ impl Num {
     /// Least upper bound, listing at most `members` values.
     pub fn join(&self, other: &Num, members: usize) -> Num {
         match (&self.set, &other.set) {
-            (Some(a), Some(b)) => Num::of_set(a.iter().chain(b).copied().collect(), members),
+            (Some(a), Some(b)) => Num::of_set_capped(a.iter().chain(b).copied().collect(), members),
             _ => Num::range(self.lo.min(other.lo), self.hi.max(other.hi)),
         }
     }
 
-    /// Widening: a bound that grew goes to the end of TeX's 32-bit range
-    /// — not `\maxdimen`, which `\advance` may pass (tex.web § 1238), so a
+    /// Widening: a bound that grew goes to the end of TeX's 32-bit range,
+    /// not `\maxdimen`, which `\advance` may pass (tex.web § 1238), so a
     /// loop that keeps advancing a dimension stays covered.
     pub fn widen(&self, next: &Num, _dimen: bool) -> Num {
         let lo = if next.lo < self.lo { WORD_MIN } else { self.lo };
@@ -188,66 +193,9 @@ impl Num {
 
     pub fn neg(&self) -> Num {
         match &self.set {
-            Some(set) => Num::of_set(set.iter().map(|n| -n).collect(), usize::MAX),
+            Some(set) => Num::of_set_capped(set.iter().map(|n| -n).collect(), usize::MAX),
             None => Num::range(-self.hi, -self.lo),
         }
-    }
-
-    /// `op` on every pair of members when both are few, else on the
-    /// corners of the intervals (every `op` here is monotone in each
-    /// argument on a sign-constant part); `None` for a pair means TeX's
-    /// arithmetic error, which leaves the register as it was (`keep`);
-    /// `max` bounds the kind.
-    pub fn apply(
-        &self,
-        other: &Num,
-        keep: &Num,
-        max: i64,
-        members: usize,
-        op: impl Fn(i64, i64) -> Option<i64>,
-    ) -> Num {
-        if let (Some(a), Some(b)) = (&self.set, &other.set)
-            && a.len() * b.len() <= 64
-        {
-            let mut out = Vec::new();
-            let mut kept = false;
-            for &x in a {
-                for &y in b {
-                    match op(x, y) {
-                        Some(v) => out.push(v),
-                        None => kept = true,
-                    }
-                }
-            }
-            let num = if out.is_empty() { keep.clone() } else { Num::of_set(out, members) };
-            return if kept { num.join(keep, members) } else { num };
-        }
-        // Corners, with the divisor's interval cut at zero.
-        let mut ys = vec![other.lo, other.hi];
-        if other.lo < 0 && other.hi > 0 {
-            ys.extend([-1, 1, 0]);
-        }
-        let mut lo = i64::MAX;
-        let mut hi = i64::MIN;
-        let mut kept = false;
-        for &x in &[self.lo, self.hi] {
-            for &y in &ys {
-                match op(x, y) {
-                    Some(v) => {
-                        lo = lo.min(v);
-                        hi = hi.max(v);
-                    }
-                    None => kept = true,
-                }
-            }
-        }
-        if lo > hi {
-            return keep.clone();
-        }
-        // An error at a corner (an overflow, or a divisor of zero) may be
-        // near any value inside: every value of the kind, and the register
-        // kept, are possible.
-        if kept { Num::range(-max, max) } else { Num::range(lo, hi) }
     }
 
     /// TeX arithmetic lifted to abstract numbers: the values `exact` gives
@@ -293,7 +241,7 @@ impl Num {
                     None => err = true,
                 }
             }
-            return ((!out.is_empty()).then(|| Num::of_set(out, members)), err);
+            return ((!out.is_empty()).then(|| Num::of_set_capped(out, members)), err);
         }
         let pts: Vec<Vec<i64>> = args
             .iter()
@@ -327,7 +275,7 @@ impl Num {
     }
 
     /// `self relation other` when every pair of values gives the same
-    /// answer; `None` when they differ.
+    /// answer. `None` when they differ.
     pub fn compare(&self, relation: char, other: &Num) -> Option<bool> {
         if let (Some(a), Some(b)) = (&self.set, &other.set) {
             let mut answers = a.iter().flat_map(|&x| b.iter().map(move |&y| (x, y))).map(|(x, y)| match relation {
@@ -377,7 +325,7 @@ impl Num {
         };
         if let Some(set) = &self.set {
             let set: Vec<i64> = set.iter().copied().filter(|&n| keep(n)).collect();
-            return (!set.is_empty()).then(|| Num::of_set(set, usize::MAX));
+            return (!set.is_empty()).then(|| Num::of_set_capped(set, usize::MAX));
         }
         let (lo, hi) = match (relation, holds) {
             ('<', true) => (self.lo, self.hi.min(bound.saturating_sub(1))),
@@ -825,9 +773,9 @@ pub fn parse_dimen(s: &str) -> Option<Scaled> {
     let unit = rest[digits.len()..].trim().to_ascii_lowercase();
     let (num, den) = decimal(&digits)?;
     let &(_, ratio_n, ratio_d) = UNITS.iter().find(|(u, _, _)| unit.starts_with(u))?;
-    // TeX rounds the decimal to scaled points, ties away from zero, and then
-    // truncates the unit conversion toward zero: `0.1pt` is 6554sp and `1in`
-    // is 4736286sp.
+    // TeX rounds the decimal to scaled points, ties away from zero
+    // (tex.web § 102), and then truncates the unit conversion toward zero:
+    // `0.1pt` is 6554sp and `1in` is 4736286sp.
     let scaled = (num as i128 * UNIT as i128 * 2 + den as i128) / (den as i128 * 2);
     let sp = scaled * ratio_n as i128 / ratio_d as i128;
     Some(clamp(sign as i128 * sp))
@@ -847,7 +795,7 @@ fn decimal(s: &str) -> Option<(i64, i64)> {
 }
 
 /// tex.web § 453: `⟨factor⟩⟨internal unit⟩`, as in `.5\textwidth`, is the
-/// unit scaled by the factor — its integer part multiplies, and its fraction,
+/// unit scaled by the factor. Its integer part multiplies, and its fraction,
 /// rounded to 2^-16 the way `scan_decimal` builds it, contributes
 /// `xn_over_d(unit, f, 2^16)`.
 pub fn scale_by(unit: Scaled, factor: &str) -> Option<Scaled> {
@@ -930,17 +878,24 @@ impl ExprLexer<'_> {
     }
 }
 
+/// ε-TeX stops with "Arithmetic overflow" and yields nothing when a step
+/// of an expression leaves the range of its kind (etex manual, `\numexpr`).
+fn in_range(v: i64, dimen: bool) -> Option<i64> {
+    let max = if dimen { MAX_DIMEN } else { MAX_INT };
+    (-max..=max).contains(&v).then_some(v)
+}
+
 fn expr(l: &mut ExprLexer, dimen: bool) -> Option<i64> {
     let mut acc = term(l, dimen)?;
     loop {
         match l.peek() {
             Some(b'+') => {
                 l.i += 1;
-                acc += term(l, dimen)?;
+                acc = in_range(acc.checked_add(term(l, dimen)?)?, dimen)?;
             }
             Some(b'-') => {
                 l.i += 1;
-                acc -= term(l, dimen)?;
+                acc = in_range(acc.checked_sub(term(l, dimen)?)?, dimen)?;
             }
             _ => return Some(acc),
         }
@@ -953,7 +908,7 @@ fn term(l: &mut ExprLexer, dimen: bool) -> Option<i64> {
         match l.peek() {
             Some(b'*') => {
                 l.i += 1;
-                acc = acc.checked_mul(factor(l, false)?)?;
+                acc = in_range(acc.checked_mul(factor(l, false)?)?, dimen)?;
             }
             Some(b'/') => {
                 l.i += 1;
@@ -978,7 +933,7 @@ fn factor(l: &mut ExprLexer, dimen: bool) -> Option<i64> {
     }
     l.skip();
     let start = l.i;
-    // A sign may open a factor; only a later one separates terms.
+    // A sign may open a factor. Only a later one separates terms.
     if matches!(l.s.get(l.i), Some(b'+' | b'-')) {
         l.i += 1;
     }
@@ -1027,5 +982,198 @@ mod tests {
         assert_eq!(eval_expr("2*3+4", false), Some(10));
         assert_eq!(eval_expr("7/2", false), Some(4));
         assert_eq!(eval_expr("1pt*2", true), Some(2 * UNIT));
+    }
+
+    /// Abstract numbers around TeX's edges, each with the concrete values
+    /// it stands for.
+    fn nums() -> Vec<(Num, Vec<i64>)> {
+        let mut out = Vec::new();
+        for c in [0i64, 1, -1, 5, -5, MAX_DIMEN, -MAX_DIMEN, MAX_INT, WORD_MIN, WORD_MIN + 1] {
+            for w in [0i64, 1, 2] {
+                let (lo, hi) = ((c - w).max(WORD_MIN), (c + w).min(WORD_MAX));
+                let all: Vec<i64> = (lo..=hi).collect();
+                out.push((Num::range(lo, hi), all.clone()));
+                out.push((Num::of_set_capped(all.clone(), MAY_VALUES), all));
+            }
+        }
+        out.push((Num::of_set_capped(vec![-7, 0, 9], MAY_VALUES), vec![-7, 0, 9]));
+        out.push((Num::of_set_capped(vec![WORD_MIN, 0, MAX_INT], MAY_VALUES), vec![WORD_MIN, 0, MAX_INT]));
+        out
+    }
+
+    /// Whether `num` stands for `v`: inside the interval, and listed when
+    /// there is a list.
+    fn holds(num: &Num, v: i64) -> bool {
+        num.lo <= v && v <= num.hi && num.set.as_ref().is_none_or(|s| s.contains(&v))
+    }
+
+    /// A [`Num`] keeps what it promises: sorted, deduplicated, inside the
+    /// interval, and holding both ends.
+    fn well_formed(num: &Num) {
+        assert!(num.lo <= num.hi, "{num:?}");
+        if let Some(set) = &num.set {
+            assert!(!set.is_empty() && set.windows(2).all(|w| w[0] < w[1]), "{num:?}");
+            assert_eq!((set[0], set[set.len() - 1]), (num.lo, num.hi), "{num:?}");
+        }
+    }
+
+    #[test]
+    fn join_is_an_upper_bound_of_both() {
+        for (a, xs) in nums() {
+            for (b, ys) in nums() {
+                for members in [0, 1, MAY_VALUES, 64] {
+                    let j = a.join(&b, members);
+                    well_formed(&j);
+                    for v in xs.iter().chain(&ys) {
+                        assert!(holds(&j, *v), "{v} lost joining {a:?} and {b:?} at {members}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn widening_only_grows() {
+        for (a, xs) in nums() {
+            for (b, ys) in nums() {
+                for dimen in [false, true] {
+                    let w = a.widen(&a.join(&b, MAY_VALUES), dimen);
+                    well_formed(&w);
+                    for v in xs.iter().chain(&ys) {
+                        assert!(holds(&w, *v), "{v} lost widening {a:?} past {b:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn negation_covers_every_member() {
+        for (a, xs) in nums() {
+            let n = a.neg();
+            well_formed(&n);
+            for v in &xs {
+                assert!(holds(&n, -v), "{v} negated is lost from {a:?}");
+            }
+        }
+    }
+
+    /// A comparison is decided only when every pair of concrete values
+    /// decides it alike.
+    #[test]
+    fn a_decided_comparison_holds_for_every_pair() {
+        for (a, xs) in nums() {
+            for (b, ys) in nums() {
+                for relation in ['<', '>', '='] {
+                    let Some(answer) = a.compare(relation, &b) else { continue };
+                    for &x in &xs {
+                        for &y in &ys {
+                            let concrete = match relation {
+                                '<' => x < y,
+                                '>' => x > y,
+                                _ => x == y,
+                            };
+                            assert_eq!(concrete, answer, "{relation} on {a:?} and {b:?} at ({x}, {y})");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_decided_parity_holds_for_every_member() {
+        for (a, xs) in nums() {
+            let Some(answer) = a.odd() else { continue };
+            for v in &xs {
+                assert_eq!(v % 2 != 0, answer, "parity of {a:?} at {v}");
+            }
+        }
+    }
+
+    /// Narrowing keeps every value the test leaves, and no arm loses one.
+    #[test]
+    fn narrowing_keeps_every_value_the_test_leaves() {
+        for (a, xs) in nums() {
+            for bound in [0i64, 1, -1, 5, MAX_DIMEN, WORD_MIN, MAX_INT] {
+                for relation in ['<', '>', '='] {
+                    for holds_test in [false, true] {
+                        let narrowed = a.narrow(relation, bound, holds_test);
+                        if let Some(n) = &narrowed {
+                            well_formed(n);
+                        }
+                        for &v in &xs {
+                            let concrete = match relation {
+                                '<' => v < bound,
+                                '>' => v > bound,
+                                _ => v == bound,
+                            };
+                            if concrete != holds_test {
+                                continue;
+                            }
+                            let n = narrowed
+                                .as_ref()
+                                .unwrap_or_else(|| panic!("{a:?} {relation} {bound} = {holds_test} dropped {v}"));
+                            assert!(holds(n, v), "{v} lost narrowing {a:?} by {relation} {bound} = {holds_test}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// `\advance`, `\multiply` and `\divide` on abstract numbers cover
+    /// every concrete result, including the `negate` wrap at -2^31 that
+    /// `Machine::abs_arith` joins `[-2^31, 0]` for (tex.web §§ 105-107,
+    /// 1238-1240).
+    #[test]
+    fn register_arithmetic_covers_every_concrete_result() {
+        let ns = nums();
+        for (a, xs) in &ns {
+            for (b, ys) in &ns {
+                for (name, range, wrap_on, exact, ideal) in ops() {
+                    let (got, err) = Num::lift(&[a, b], MAY_VALUES, range, wrap_on, exact, ideal);
+                    let mut got = got;
+                    // `Machine::abs_arith`: -2^31 negated stays negative, so
+                    // the corners do not bound the 32-bit answer.
+                    let enumerated = match (&a.set, &b.set) {
+                        (Some(p), Some(q)) => p.len() * q.len() <= 64,
+                        _ => a.lo == a.hi && b.lo == b.hi,
+                    };
+                    if name != "advance" && !enumerated && (a.lo == WORD_MIN || b.lo == WORD_MIN) {
+                        got = got.map(|n| n.join(&Num::range(WORD_MIN, 0), MAY_VALUES));
+                    }
+                    for &x in xs {
+                        for &y in ys {
+                            match exact(&[x, y]) {
+                                Some(v) => {
+                                    let n = got
+                                        .as_ref()
+                                        .unwrap_or_else(|| panic!("{name}({x}, {y}) = {v}, abstract says error"));
+                                    assert!(holds(n, v), "{name}({x}, {y}) = {v}, not in {n:?}");
+                                }
+                                None => assert!(err, "{name}({x}, {y}) errs, not flagged"),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn ops() -> Vec<(&'static str, (i64, i64), bool, fn(&[i64]) -> Option<i64>, fn(&[i64]) -> Option<i64>)> {
+        vec![
+            ("advance", (WORD_MIN, WORD_MAX), true, |v| Some(wrap(v[0] + v[1])), |v| Some(v[0] + v[1])),
+            ("multiply", (-MAX_INT, MAX_INT), false, |v| mult_and_add(v[0], v[1], 0, MAX_INT), |v| Some(v[0] * v[1])),
+            (
+                "multiply-dimen",
+                (-MAX_DIMEN, MAX_DIMEN),
+                false,
+                |v| mult_and_add(v[0], v[1], 0, MAX_DIMEN),
+                |v| Some(v[0] * v[1]),
+            ),
+            ("divide", (WORD_MIN, WORD_MAX), true, |v| x_over_n(v[0], v[1]), |v| (v[1] != 0).then(|| v[0] / v[1])),
+        ]
     }
 }

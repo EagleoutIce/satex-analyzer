@@ -1,4 +1,4 @@
-//! What the run observed; `query.rs` renders it.
+//! What the run observed. `query.rs` renders it.
 
 use std::rc::Rc;
 
@@ -114,6 +114,7 @@ pub enum LoadStatus {
     TooDeep,
     NotFound,
     Unreadable,
+    CaseMismatch,
 }
 
 impl LoadStatus {
@@ -126,6 +127,7 @@ impl LoadStatus {
             LoadStatus::TooDeep => "too-deep",
             LoadStatus::NotFound => "not-found",
             LoadStatus::Unreadable => "unreadable",
+            LoadStatus::CaseMismatch => "case-mismatch",
         }
     }
 }
@@ -148,18 +150,23 @@ pub struct Load {
     pub provided: Option<String>,
     /// Nesting depth of the load, for the dependency tree.
     pub depth: u16,
+    /// For `CaseMismatch` status: the name as it appears on disk.
+    pub case_mismatch_disk_name: Option<String>,
 }
 
 /// Anything named that is not itself a control sequence: labels, citations,
 /// environment delimiters, hook names, identification banners, messages.
-/// Tagged by [`OccKind`]; part of [`Facts::occurrences`].
+/// Tagged by [`OccKind`]. Part of [`Facts::occurrences`].
 #[derive(Clone)]
 pub struct Occurrence {
     pub kind: OccKind,
     pub key: String,
     pub detail: Option<String>,
+    /// Where it stands: the call the file made, or, for a key derived from
+    /// a written line, the key's own text.
     pub span: Span,
-    /// `span` is the call the file made, expanded the full target
+    /// Where `span` was reached from: the call that expanded the full
+    /// target, or the `\write` whose line declared the key.
     pub expanded: Option<Span>,
     pub package: Option<Sym>,
     pub node: NodeId,
@@ -396,7 +403,7 @@ pub struct Facts {
     pub groups: Vec<(Span, Span)>,
     /// Real `\errmessage`s the run reached, attributed to every name on the
     /// call stack at the time (`explain` filters by the one it was asked
-    /// about); deduplicated by name, text and context.
+    /// about). Deduplicated by name, text and context.
     pub raised: Vec<RaisedError>,
     /// The modes each space token was read in outside package code
     /// (tex.web § 1043: glue in horizontal mode, nothing otherwise).

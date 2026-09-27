@@ -780,6 +780,17 @@ fn ifcase_takes_the_numbered_arm() {
 }
 
 #[test]
+fn an_ifcase_skips_past_the_conditionals_its_selector_left_open() {
+    // tex.web § 509: the number scan leaves three conditionals open, and
+    // their `\fi` pops one each while the skip to the third `\or` goes on.
+    // expl3's `\__fp_sanitize:Nw` is written exactly this way.
+    let analysis = analyze(
+        r"\ifcase\ifnum1>2 1\else\ifnum1>2 2\else\ifx AA3 \fi\fi\fi0 \def\zero{}\or\def\one{}\or\def\two{}\or\def\three{}\else\def\other{}\fi",
+    );
+    assert_eq!(names(&analysis), vec!["three".to_string()]);
+}
+
+#[test]
 fn a_switch_asked_about_governs_both_arms() {
     // `satex controls \ifdraft` makes that one switch undecidable, which is
     // what lets the reached-through-\csname arm be recorded as well.
@@ -1612,4 +1623,272 @@ fn dimexpr_on_an_interval_bounds_its_result() {
     assert!(has("within") && !has("above") && !has("below"), "{defined:?}");
     assert!(has("big") && has("small"), "{defined:?}");
     assert!(has("negative") && !has("positive"), "{defined:?}");
+}
+
+// ---- writes and reads through a number satex could not pin down ----------
+//
+// Each probe below makes a number satex cannot follow (`\pdfuniformdeviate`
+// is the engine's random generator) and then uses it where the engine would
+// name a stream, a register, a character or a font.  What satex cannot pin
+// down has to widen: never a plausible concrete answer, never a dropped
+// assignment.
+
+/// tex.web § 510: `\ifeof` asks about one stream, and a number satex could
+/// not pin down names none of them.
+#[test]
+fn an_ifeof_of_a_stream_satex_cannot_pin_down_is_undecided() {
+    let analysis = analyze(r"\count0=\pdfuniformdeviate 9 \ifeof\count0 \def\yes{}\else\def\no{}\fi");
+    let defined = names(&analysis);
+    assert!(defined.contains(&"yes".to_string()) && defined.contains(&"no".to_string()), "{defined:?}");
+}
+
+/// tex.web § 1275: `\openin` through a number satex could not pin down may
+/// have opened or closed any stream, so no `\ifeof` is decided after it.
+#[test]
+fn an_openin_through_an_unknown_stream_leaves_every_stream_undecided() {
+    let analysis = analyze(
+        r"\ifeof3 \def\closedbefore{}\fi
+          \count0=\pdfuniformdeviate 9 \openin\count0=nosuchfile
+          \ifeof3 \def\yes{}\else\def\no{}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"closedbefore".to_string()), "a stream nothing opened is at end");
+    assert!(defined.contains(&"yes".to_string()) && defined.contains(&"no".to_string()), "{defined:?}");
+}
+
+/// tex.web § 484: a `\read` from the terminal ends the job in nonstop mode,
+/// which a stream satex could not pin down may not be.
+#[test]
+fn a_read_from_a_stream_satex_cannot_pin_down_does_not_end_the_job() {
+    let analysis = analyze(r"\count0=\pdfuniformdeviate 9 \read\count0 to\line \def\after{}");
+    let defined = names(&analysis);
+    assert!(defined.contains(&"after".to_string()), "the run went on: {defined:?}");
+    assert!(diagnosed(&analysis, "terminal-read-fatal").is_empty());
+}
+
+/// `\toks0=\toks⟨n⟩` copies the other register (tex.web § 1227); a number
+/// satex could not pin down names any of them, which is unknown text and
+/// not the empty list.
+#[test]
+fn a_toks_register_satex_cannot_pin_down_reads_as_unknown_text() {
+    let analysis = analyze(
+        r"\count0=\pdfuniformdeviate 9 \toks1={a}\toks1=\toks\count0
+          \edef\copied{\the\toks1}\def\marker{a}",
+    );
+    assert_ne!(body(&analysis, "copied"), "", "the copy is not the empty list");
+    assert_ne!(body(&analysis, "copied"), "a", "and not what the register held before");
+}
+
+/// etex.ch: `\unless` before a name of unknown meaning may still open a
+/// conditional, so its arms are analyzed rather than run one after the other
+/// with the `\else` and `\fi` left over.
+#[test]
+fn an_unless_before_an_unknown_meaning_opens_a_conditional() {
+    let analysis = analyze(
+        r"\count0=\pdfuniformdeviate 9 \read\count0 to\maybeif
+          \unless\maybeif\def\yes{}\else\def\no{}\fi \def\after{}",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"after".to_string()), "{defined:?}");
+    for code in ["extra-else", "extra-fi"] {
+        assert!(diagnosed(&analysis, code).is_empty(), "{code}");
+    }
+    assert!(!diagnosed(&analysis, "undecided-condition").is_empty());
+}
+
+/// tex.web § 1232: `\catcode` of a character satex could not pin down may
+/// have changed any category, so none of them is known afterwards -- not
+/// even the braces, which is why nothing past it tokenizes.  Before, the
+/// assignment was dropped and `\the\catcode`\a` read back 11.
+#[test]
+fn a_catcode_of_a_character_satex_cannot_pin_down_makes_every_category_unknown() {
+    let analysis = analyze(
+        r"\count0=\pdfuniformdeviate 999 \catcode\count0=11
+          \edef\after{\the\catcode`\a}",
+    );
+    assert!(!diagnosed(&analysis, "unknown-catcode").is_empty());
+    assert!(definition(&analysis, "after").is_none(), "no category is known, so nothing after it is read");
+}
+
+/// The same where the character's interval is narrow: only the categories
+/// it may name go unknown, so the braces and the letters stay known and
+/// the rest of the file is still read.
+#[test]
+fn a_catcode_of_a_character_in_a_narrow_interval_widens_only_that_interval() {
+    let analysis = analyze(
+        r"\count0=\pdfuniformdeviate 999
+          \ifnum\count0>200 \ifnum\count0<300 \catcode\count0=11 \fi\fi
+          \edef\letter{\the\catcode`\a}
+          \ifnum\catcode250=12 \def\stillother{1}\else\def\changed{1}\fi",
+    );
+    let said = diagnosed(&analysis, "unknown-catcode");
+    assert!(said.iter().any(|m| m.contains("every category it may name")), "{said:?}");
+    assert!(!said.iter().any(|m| m.contains("no category is known")), "{said:?}");
+    assert_eq!(body(&analysis, "letter"), "11", "a is still a letter");
+    // The real state past the `\fi`, not just what the run said about it:
+    // character 250 is one the interval may name, so its category is not
+    // read back at the one it had.
+    let defined = names(&analysis);
+    assert!(defined.contains(&"stillother".to_string()) && defined.contains(&"changed".to_string()), "{defined:?}");
+}
+
+/// tex.web §§ 232, 498: the arms of an undecided conditional may part
+/// about a category, and what holds past the `\fi` is their join, not the
+/// first arm's table.  `pdftex` with the count pinned to 11 or 12 prints
+/// `11` or `12` for `\the\catcode`\@`.
+#[test]
+fn arms_that_part_about_a_category_leave_it_unknown_past_the_fi() {
+    let analysis = analyze(
+        r"\count2=\pdfuniformdeviate 9
+          \ifnum\pdfuniformdeviate2=0 \relax \else \catcode`\@=\count2 \fi
+          \ifnum\catcode`\@=12 \def\other{1}\fi \ifnum\catcode`\@=11 \def\letter{1}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"other".to_string()) && defined.contains(&"letter".to_string()), "{defined:?}");
+}
+
+/// The same for the code tables `\lccode` and its relatives: the entry is
+/// not read back at the table's default.
+#[test]
+fn an_lccode_of_a_character_satex_cannot_pin_down_makes_the_table_unknown() {
+    let analysis = analyze(
+        r"\count0=\pdfuniformdeviate 999 \lccode`\a=`\a \lccode\count0=0
+          \edef\after{\the\lccode`\a}",
+    );
+    assert!(!diagnosed(&analysis, "unknown-char-code").is_empty());
+    assert!(definition(&analysis, "after").is_some(), "the run went on");
+    assert_ne!(body(&analysis, "after"), "97", "the entry is no longer what it was set to");
+}
+
+/// tex.web § 1077: a `\setbox` through a register satex could not pin down
+/// may have filled any box, so none of them is known to be void.
+#[test]
+fn a_setbox_through_a_register_satex_cannot_pin_down_leaves_every_box_unknown() {
+    let analysis = analyze(
+        r"\ifvoid3 \def\voidbefore{}\fi
+          \count0=\pdfuniformdeviate 9 \setbox\count0=\hbox{x}
+          \ifvoid3 \def\yes{}\else\def\no{}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"voidbefore".to_string()), "a box nothing filled is void");
+    assert!(defined.contains(&"yes".to_string()) && defined.contains(&"no".to_string()), "{defined:?}");
+}
+
+/// tex.web § 580: a `\fontdimen` assigned a value satex could not follow is
+/// not the font file's parameter any more.
+#[test]
+fn a_fontdimen_assigned_an_unknown_value_is_not_the_font_files() {
+    let analysis = analyze(
+        r"\font\f=cmr10 \dimen0=\fontdimen6\f \edef\design{\the\dimen0}
+          \fontdimen6\f=\pdfuniformdeviate 999sp \dimen1=\fontdimen6\f
+          \ifdim\dimen1=\design\def\same{}\else\def\other{}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"same".to_string()) && defined.contains(&"other".to_string()), "{defined:?}");
+}
+
+/// `\parshape` says how many ⟨dimen⟩ pairs follow (tex.web § 1248): a count
+/// satex could not pin down leaves the shape unknown, not empty.
+#[test]
+fn a_parshape_count_satex_cannot_pin_down_leaves_the_shape_unknown() {
+    let analysis = analyze(r"\parshape=\pdfuniformdeviate 9 \ifnum\parshape=0 \def\none{}\else\def\some{}\fi");
+    let defined = names(&analysis);
+    assert!(defined.contains(&"none".to_string()) && defined.contains(&"some".to_string()), "{defined:?}");
+    assert!(!diagnosed(&analysis, "unknown-parshape").is_empty());
+}
+
+/// tex.web § 1370: `\write` to a stream satex could not pin down may reach
+/// the shell, so the run says a shell escape may have happened.
+#[test]
+fn a_write_to_a_stream_satex_cannot_pin_down_may_be_a_shell_escape() {
+    let analysis = analyze(r"\count0=\pdfuniformdeviate 9 \immediate\write\count0{ls}");
+    let kinds: Vec<_> = analysis.facts.occurrences.iter().map(|o| o.kind).collect();
+    assert!(kinds.contains(&OccKind::ShellEscape), "{kinds:?}");
+    assert!(!diagnosed(&analysis, "unknown-write-stream").is_empty());
+}
+
+/// tex.web §§ 392, 395: a delimited argument that runs into the `}` of the
+/// group it was called in is abandoned, and what the scan had already read
+/// is not the argument.  Dropping it said the argument was empty, so
+/// `\got` came out empty although the scan had read `abc`.
+#[test]
+fn an_argument_scan_that_ran_into_a_brace_is_not_the_empty_argument() {
+    let analysis = analyze(r"\def\grab#1\stop{\def\got{#1}}{\grab abc}");
+    assert!(!diagnosed(&analysis, "unbalanced-argument").is_empty());
+    let got = body(&analysis, "got");
+    assert_ne!(got, "", "the scan read `abc`, so the argument is not the empty one");
+    assert!(got.contains("unknown"), "what the argument holds is not known: {got:?}");
+}
+
+/// tex.web § 392: an argument is read by counting braces, and text satex
+/// could not follow may hold a `{` or a `}` of its own.  A scan that met
+/// such text inside a group does not know where the group ends, so the
+/// delimiter it goes on to find is not known to be the one that ends the
+/// argument.  Before, `\got` came out as `{xQy}z` with the braces taken on
+/// trust.
+#[test]
+fn an_argument_whose_braces_hide_unknown_text_is_not_known() {
+    let analysis = analyze(
+        r"\count0=\pdfuniformdeviate 9 \catcode`\Q=\count0
+          \def\grab#1\stop{\def\got{#1}}\grab {xQy}z\stop",
+    );
+    let got = body(&analysis, "got");
+    assert!(!got.contains('}'), "the braces were not known to be the argument's: {got:?}");
+    assert!(got.contains("unknown"), "what the argument holds is not known: {got:?}");
+}
+
+/// tex.web § 366: a macro call is replaced by its replacement text, and a
+/// call satex stops expanding did not expand to nothing.  A scan that
+/// cannot find the delimiter its argument ends at looks for it in the same
+/// place on every round, so a loop around it is not converging and is
+/// widened where a loop head widens, not run out to the per-site bound.
+/// Before, one `\IfFileExists` on a name satex could not follow raised
+/// `unbalanced-argument` 98297 times inside expl3's file-name scanners.
+#[test]
+fn a_scan_that_cannot_find_its_delimiter_does_not_run_out_the_site_budget() {
+    let analysis = analyze_kernel(r"\count0=\pdfuniformdeviate 9 \catcode`\Q=\count0 \IfFileExists{x/Q}{}{}");
+    let raised: u32 =
+        analysis.facts.diagnostics.iter().filter(|d| d.code == "unbalanced-argument").map(|d| d.count).sum();
+    assert!(raised > 0, "the scan does run into the end of its group");
+    assert!(raised < 1000, "the loop around it is widened, not run out: {raised}");
+}
+
+/// tex.web § 366: expanding a macro puts its replacement text back for the
+/// same reader, so a recursion that only assigns and re-enters has read
+/// nothing.  The per-site bound counts an assignment as progress, to tell
+/// apart the many calls one site sees between two tokens of a file, so a
+/// recursion that assigns every round used to slip past it and run until
+/// the stall limit.  Reading on is counted separately for that reason.
+#[test]
+fn a_recursion_that_only_assigns_is_bounded_before_the_stall() {
+    let analysis = analyze(r"\def\spin{\count255=1 \spin}\spin");
+    let codes: Vec<_> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&"recursion-widened"), "the loop is widened where it is found: {codes:?}");
+    assert!(!codes.contains(&"stalled-loop"), "and not left to the stall limit: {codes:?}");
+}
+
+/// tex.web §§ 232, 344: of the categories a character may have, only 13
+/// runs a meaning of its own, and that meaning is the one bound for the
+/// character.  So what a character satex could not pin down may do is
+/// bounded by the active characters the document has, and executing it
+/// must join in what those could assign.  Nothing else it could be
+/// assigns, so a character nothing binds leaves the run as precise as it
+/// was.
+#[test]
+fn a_character_whose_category_is_unknown_may_do_what_it_is_bound_to_do() {
+    let unbound = names(&analyze(
+        r"\count1=5 \count0=\pdfuniformdeviate 9 \catcode`\Q=\count0
+          Q \ifnum\count1=5 \def\same{}\else\def\changed{}\fi",
+    ));
+    assert!(unbound.contains(&"same".to_string()), "{unbound:?}");
+    assert!(!unbound.contains(&"changed".to_string()), "nothing binds Q, so no meaning of it assigns: {unbound:?}");
+    let bound = names(&analyze(
+        r"\catcode`\~=13 \def~{\count1=7 }\count1=5
+          \count0=\pdfuniformdeviate 9 \catcode`\~=\count0
+          ~ \ifnum\count1=5 \def\same{}\else\def\changed{}\fi",
+    ));
+    assert!(
+        bound.contains(&"same".to_string()) && bound.contains(&"changed".to_string()),
+        "the character may still be active, and that meaning assigns: {bound:?}"
+    );
 }
