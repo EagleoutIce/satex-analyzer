@@ -1275,12 +1275,22 @@ impl Machine<'_> {
                 crate::observe::image(self, &name, span);
             }
             Syntax::PdfColorStack => {
-                self.scan_int();
-                if self.scan_keyword("set") || self.scan_keyword("push") {
+                let stack = self.scan_int();
+                let op = if self.scan_keyword("push") {
                     self.read_general_text();
-                } else if !self.scan_keyword("pop") {
+                    crate::facts::StackOp::Push
+                } else if self.scan_keyword("pop") {
+                    crate::facts::StackOp::Pop
+                } else if self.scan_keyword("set") {
+                    self.read_general_text();
+                    crate::facts::StackOp::Set
+                } else {
+                    // `current` takes no general text (pdfTeX manual § 8.9.8):
+                    // it re-issues the stack's own colour, not a new one.
                     self.scan_keyword("current");
-                }
+                    crate::facts::StackOp::Current
+                };
+                crate::observe::color_stack(self, stack, op, span);
             }
             Syntax::PdfCatalog => {
                 self.read_general_text();
@@ -1527,9 +1537,9 @@ impl Machine<'_> {
                 self.scan_keyword("page");
                 self.scan_keyword("direct");
                 self.read_general_text();
-                let next = self.engine_int("colorstacks").unwrap_or(0) + 1;
-                self.set_engine("colorstacks", Value::Int(next), true);
-                Some(next.to_string())
+                let next = self.engine_slot_int("colorstacks", "colorstacks", 0).map(|n| n + 1);
+                self.set_engine("colorstacks", next.map_or(Value::Unknown, Value::Int), true);
+                next.map(|n| n.to_string())
             }
             C::Primitive => {
                 self.primitive_meaning(span);

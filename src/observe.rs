@@ -17,6 +17,154 @@ pub fn csname(m: &mut Machine, name: &str, span: Span) {
     if matches!(role, CsnameRole::Use | CsnameRole::Test | CsnameRole::LetTo) {
         read_name(m, name);
     }
+    // xcolor's own core-model dispatch macros are named "color@rgb" and
+    // the like. A colour the document names gets an extra literal
+    // backslash character baked into its control sequence's name ahead
+    // of that, from `\@backslashchar` (xcolor `\XC@definec@lor` and
+    // `\XC@declaredc@lor`), so `COLOR_NAME_PREFIX` alone tells the two
+    // apart. A `\csname` forming one is read, tested, or aliased from.
+    if let Some(color_name) = name.strip_prefix(COLOR_NAME_PREFIX)
+        && !color_name.is_empty()
+        && matches!(role, CsnameRole::Use | CsnameRole::Test | CsnameRole::LetTo)
+    {
+        color_use(m, name, color_name, role, span);
+    }
+}
+
+/// The prefix a colour's own control sequence carries in its name text: a
+/// literal backslash character (`\@backslashchar`) followed by `color@`.
+const COLOR_NAME_PREFIX: &str = "\\color@";
+
+/// A use, test, or `\colorlet` source of `\color@⟨name⟩`.  `full` is the
+/// control sequence's own name text, for looking its meaning up.
+fn color_use(m: &mut Machine, full: &str, color_name: &str, role: CsnameRole, span: Span) {
+    // A package's own use of a colour is not recorded: it runs again every
+    // time the package is read, whether from source or from its cache, and
+    // only the source path calls this observer (`hand-set-quantity`'s own
+    // `typeset` skips package code the same way, for the same reason).
+    if m.package().is_some() || m.out.facts.color_uses.len() >= m.cfg.limits.facts {
+        return;
+    }
+    let defined =
+        m.out.interner.lookup(full).is_some_and(|sym| !matches!(m.env.meaning(sym), crate::tex::Meaning::Undefined));
+    m.out.facts.color_uses.push(crate::facts::ColorUse {
+        name: color_name.to_string(),
+        role,
+        defined,
+        span,
+        via: m.file_call.map(|(sym, _)| sym),
+        package: m.package(),
+        certain: m.exact(),
+    });
+}
+
+/// `\color@⟨name⟩` was just (re)defined or `\let`-aliased: xcolor stores
+/// every colour there, always as `\xcolor@{cls}{drv}{model}{spec}` in one
+/// of its core models (xcolor § 2.5, `\XC@definec@lor`).  Fired from
+/// [`crate::machine::Machine::define`], which already resolves `meaning`
+/// for both `\def` and `\let`, so `\definecolor`, `\providecolor`,
+/// `\colorlet` and `\definecolorset` all arrive here alike.
+pub fn color_def(m: &mut Machine, name: &str, meaning: &crate::tex::Meaning, span: Span) {
+    let Some(color_name) = name.strip_prefix(COLOR_NAME_PREFIX) else { return };
+    // Cache replay reconstructs a package's own definitions from its log,
+    // not by calling `define` again, so a colour a package defines would
+    // stand here on a cache miss and vanish on a cache hit.  Left out here,
+    // the same way a package's own reads are (see `color_use`).
+    if color_name.is_empty() || m.package().is_some() || m.out.facts.colors.len() >= m.cfg.limits.facts {
+        return;
+    }
+    let value = meaning.as_macro().and_then(|mac| parse_stored_color(m, &mac.replacement_text));
+    let via = m.file_call.map(|(sym, _)| sym);
+    // A package's own call declares nothing the document wrote.
+    let from_document = m.file_call.is_some_and(|(_, at)| m.project_file(at.file));
+    let declared = from_document.then(|| declared_spec(m, color_name)).flatten();
+    m.out.facts.colors.push(crate::facts::ColorDef {
+        name: color_name.to_string(),
+        value,
+        declared: declared.as_ref().map(|(model, spec, _)| (*model, spec.clone())),
+        spec_span: declared.as_ref().map(|(.., span)| *span),
+        span,
+        via,
+        package: m.package(),
+        certain: m.exact(),
+    });
+}
+
+/// `\xcolor@{cls}{drv}{model}{spec}`, as `\XC@definec@lor` stores every
+/// colour (xcolor.sty): read the last two groups back as a [`Colors`].
+fn parse_stored_color(m: &Machine, body: &[Token]) -> Option<crate::value::Colors> {
+    let xcolor_at = m.out.interner.lookup("xcolor@")?;
+    let start = body.iter().position(|t| matches!(t.tok, Tok::Cs(sym) if sym == xcolor_at))?;
+    let groups = brace_groups(&body[start + 1..], 4)?;
+    let model = crate::tex::text_of(groups[2], &m.out.interner);
+    let spec = crate::tex::text_of(groups[3], &m.out.interner);
+    let model = crate::value::Model::parse(model.trim())?;
+    let color = crate::value::parse_color(model, &spec)?;
+    Some(crate::value::Colors::exact(color))
+}
+
+/// The model and spec text `\XC@definec@lor` read for `color_name`, from
+/// the argument capture kept when the run is asked for it (`query trace`
+/// and the like): `None` when arguments are not being kept, so `declared`
+/// is left unclaimed rather than guessed.
+fn declared_spec(m: &Machine, color_name: &str) -> Option<(crate::value::Model, String, Span)> {
+    let target = m.out.interner.lookup("XC@definec@lor")?;
+    m.out.facts.expansions.iter().rev().find_map(|e| {
+        if e.name != target || e.arguments.len() < 5 {
+            return None;
+        }
+        let read_name = crate::tex::text_of(&e.arguments[1], &m.out.interner);
+        if read_name != color_name {
+            return None;
+        }
+        let model_text = crate::tex::text_of(&e.arguments[3], &m.out.interner);
+        let spec = crate::tex::text_of(&e.arguments[4], &m.out.interner);
+        let model = crate::value::Model::parse(model_text.trim())?;
+        let span = e.arguments[4].first().map(|t| t.span).unwrap_or(span_of(e));
+        Some((model, spec, span))
+    })
+}
+
+fn span_of(e: &crate::facts::Expansion) -> Span {
+    e.span
+}
+
+/// Split `toks` into `n` balanced brace groups written back to back
+/// (`{a}{b}{c}{d}`), as xcolor always writes them.
+fn brace_groups(toks: &[Token], n: usize) -> Option<Vec<&[Token]>> {
+    let mut out = Vec::with_capacity(n);
+    let mut i = 0;
+    for _ in 0..n {
+        if !matches!(toks.get(i)?.tok, Tok::Chr(_, Catcode::Begin)) {
+            return None;
+        }
+        let start = i + 1;
+        let mut depth = 1;
+        i = start;
+        while depth > 0 {
+            match toks.get(i)?.tok {
+                Tok::Chr(_, Catcode::Begin) => depth += 1,
+                Tok::Chr(_, Catcode::End) => depth -= 1,
+                _ => {}
+            }
+            i += 1;
+        }
+        out.push(&toks[start..i - 1]);
+    }
+    Some(out)
+}
+
+/// A `\pdfcolorstack` the run executed (pdfTeX manual § 8.9.8): `stack` is
+/// `None` when [`Machine::scan_int`] could not decide it.
+pub fn color_stack(m: &mut Machine, stack: Option<i64>, op: crate::facts::StackOp, span: Span) {
+    // A driver's own `\pdfcolorstack` (pdftex.def sets the page's starting
+    // colour this way) is not recorded, for the same reason a package's own
+    // colour definitions and reads are not: it would stand on a cache miss
+    // and vanish on a cache hit, since replay never runs this code again.
+    if m.package().is_some() || m.out.facts.color_stack.len() >= m.cfg.limits.facts {
+        return;
+    }
+    m.out.facts.color_stack.push(crate::facts::ColorStack { stack, op, span, certain: m.exact() });
 }
 
 /// Where an occurrence recorded once the run has ended belongs.
