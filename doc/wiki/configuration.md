@@ -34,6 +34,16 @@ lints:
     report_public: true    # also flag a public name
     ignore: []              # regexes on macro names the rule skips
     pgf_keys: false         # also flag a pgf key no-one uses
+  wrong-dash:               # how many hyphens belong in each context
+    letters: [1, 3]         # chktex HyphDash: a hyphen or an em-dash
+    digits: [2]             # chktex NumDash: an en-dash spans a range
+    words: [3]              # chktex WordDash: an em-dash breaks a sentence
+    except: [Birch--Swinnerton-Dyer]   # chktex DashExcpt: spellings to leave alone
+  user-pattern:             # chktex UserWarn and UserWarnRegex
+    patterns: []            # literal strings to report
+    regexes: []             # regular expressions to report
+  comment-marker:
+    markers: [TODO, FIXME, XXX, HACK]   # markers in a comment worth a finding
 # profile: package          # forces one instead of detecting it from the input
 
 # Sensible defaults per kind of input, chosen automatically by the input's
@@ -88,9 +98,10 @@ load_format: true         # interpret the installation's latex.ltx
 cache: true               # keep the interpreted kernel between runs
 # cache_dir: ~/.cache/satex   # else $SATEX_CACHE, else the platform default
 cache_index:              # package caches; `satex cache build` prepares the
-                          # packages listed (none by default; this list is ours)
-  packages: [tikz, pgfplots, xcolor, graphicx, hyperref, amsmath, siunitx, babel,
-             fontspec, biblatex, xparse, forest, tcolorbox, listings]
+                          # packages listed here, or, when empty, whatever
+                          # ordinary runs already found expensive to
+                          # interpret (measured, not a hand-picked list)
+  packages: []
   engines: []             # empty: the engine in effect
   class: article          # the class they are loaded after
   auto: true              # every run stores the packages it reads
@@ -120,6 +131,7 @@ plugins:
   tools: true             # infer biber, makeindex and the rest
   preload: true           # honor %& lines and -fmt=
   discovery: true         # walk the project, skipping what .gitignore excludes
+  packages: false         # ask tlmgr which package ships a missing file (network)
 
 trace: false              # record the execution trace
 timings: false            # measure where the time goes
@@ -278,6 +290,12 @@ profiles:
 A rule with settings of its own reads them under `lints`, keyed by the rule's code. `lints.unused-definition.report_public: false` (the package and class profiles' default) keeps `unused-definition` for a name that reads as the package's own internals — `@` in it, or an expl3 `module_function:signature` — but not for one with neither, since that is the package's public interface and the caller, not this run, is the one to use it.
 
 `lints.unused-definition.ignore` takes regexes on the name as written (`\\my@hook`); a match is never reported. `lints.unused-definition.pgf_keys: true` also reports a pgf key nothing uses; off by default, since the user sets keys.
+
+`lints.wrong-dash` says how many hyphens in a row belong in each context, following chktex's `HyphDash`, `NumDash` and `WordDash`. `letters: [1, 3]` allows a hyphen or an em-dash between letters, `digits: [2]` an en-dash between numbers, `words: [3]` an em-dash between spaces. The first entry of a list is what the fix writes. `except` names whole spellings to leave alone, such as `Birch--Swinnerton-Dyer`, which chktex calls `DashExcpt`.
+
+`lints.user-pattern` is chktex's `UserWarn` and `UserWarnRegex`: `patterns` takes literal strings and `regexes` takes regular expressions, and the rule reports each one it finds in the document's own text. Both are empty, so the rule says nothing until a project fills one in.
+
+`lints.comment-marker.markers` lists the markers in a comment worth a finding, `[TODO, FIXME, XXX, HACK]` by default. This is satex's reading of chktex's warning 22, which prints every comment.
 
 ## Search paths
 

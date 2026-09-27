@@ -137,6 +137,12 @@ A rule with settings of its own reads them under `lints`, keyed by the rule's co
 
 `lints.unused-definition.ignore` takes regexes on the name as written (`\\my@hook`); a match is never reported. `lints.unused-definition.pgf_keys: true` also reports a pgf key nothing uses; off by default, since the user sets keys.
 
+`lints.wrong-dash` says how many hyphens in a row belong in each context, following chktex's `HyphDash`, `NumDash` and `WordDash`. `letters: [1, 3]` allows a hyphen or an em-dash between letters, `digits: [2]` an en-dash between numbers, `words: [3]` an em-dash between spaces. The first entry of a list is what the fix writes. `except` names whole spellings to leave alone, such as `Birch--Swinnerton-Dyer`, which chktex calls `DashExcpt`.
+
+`lints.user-pattern` is chktex's `UserWarn` and `UserWarnRegex`: `patterns` takes literal strings and `regexes` takes regular expressions, and the rule reports each one it finds in the document's own text. Both are empty, so the rule says nothing until a project fills one in.
+
+`lints.comment-marker.markers` lists the markers in a comment worth a finding, `[TODO, FIXME, XXX, HACK]` by default. This is satex's reading of chktex's warning 22, which prints every comment.
+
 ## Search paths
 
 Where SaTeX looks for a package, class or `\input` file beyond the document's own directory and the installation's trees, and where `\bibliography` looks for a `.bib` database beyond the project itself: the kpathsea search-path variables `TEXINPUTS` and `BIBINPUTS` (`BSTINPUTS`, `TFMFONTS` and `ENCFONTS` are resolved the same way and passed to `kpsewhich`, though SaTeX does not yet search them itself). Each is resolved in the order a real build would set it up in, the first source that sets it winning: the process environment. Then the project's `latexmkrc` (`ensure_path('TEXINPUTS', …)`, `$ENV{TEXINPUTS} = …`, read from the directory's own file and from `~/.latexmkrc`). Then its Makefile (`export TEXINPUTS=…`, or an inline `TEXINPUTS=… pdflatex`). Then `paths.texinputs` (and the other `paths.*` keys) in `satex.yaml`, itself overridable with `--set paths.texinputs=[…]`.
