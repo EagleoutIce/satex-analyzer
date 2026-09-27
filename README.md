@@ -70,6 +70,7 @@ Commands:
   dependencies  The program dependence graph — data dependencies plus control dependencies — as DOT or JSON
   trace         The execution trace, step by step
   cache         The interpreted LaTeX2e kernel and the package caches.  Without a further command, prints their status
+  install       Install the packages the document loads that this machine does not have.  Asks first, never elevates, and is never run by `lint --fix`
   tokens        The token stream the mouth produces
   lsp           A Language Server Protocol server: a thin facade over the queries and lints above, driven by `initialize`/`didOpen`/`didChange` instead of one-shot arguments.  Stdio by default; `--port` switches to TCP
   help          Print this message or the help of the given subcommand(s)
@@ -167,11 +168,11 @@ errors (1)
   paper.tex:24:1  error    already-defined  \repeat is already defined
     [unsafe fix] use \renewcommand{\repeat} instead
 
-suggestions (7)
-  paper.tex:14:1  info     unused-definition  \WeirdMore is never used
-    [unsafe fix] delete \WeirdMore
-  paper.tex:16:1  info     unused-definition  \Weird is never used
-… 21 more lines omitted
+warnings (3)
+  paper.tex:62:53  warning  missing-nonbreaking-space  an ordinary space stands in front of the reference, so the line
+                                                       may break between the word and it
+    [unsafe fix] write a tie, `~`, instead of the space
+… 33 more lines omitted
 ```
 
 <details>
@@ -186,41 +187,79 @@ error     correctness  build-command-placeholders       an engine command in the
 error     correctness  build-engine-mismatch            the build runs another engine, or another output, than the do…  
 error     correctness  build-shell-escape-missing       the document runs programs through \write18, but the build do…  
 error     correctness  duplicate-label                  the same label is defined twice                                 
+error     correctness  math-still-open                  the run is still in math mode where the text ends               
 error     correctness  missing-graphic                  an included image is not there for this output target           
 error     correctness  not-defined                      \renewcommand targets a name that does not exist                
 error     correctness  option-clash                     a package is loaded twice with different options                
 error     correctness  raised-error                     the document's code raises a TeX error                          
+error     correctness  undefined-color                  a colour is used, or aliased from, before xcolor ever defines…  
 error     correctness  undefined-control-sequence       a control sequence is used that nothing defines                 
 error     correctness  undefined-environment            \begin names an environment that is not defined                 
 error     correctness  undefined-glossary-entry         a glossary or acronym entry is used but never declared          
 error     correctness  unguarded-recursion              a recursive macro has nothing that can stop it                  
 warning   correctness  build-missing-custom-dependency  the document writes glossary files, but latexmk has no rule t…  
 warning   correctness  catcode-escapes-group            a category code change is still in force at the end of the run  
+warning   correctness  conflicting-color-definition     the same colour name is defined twice with different colours    
+warning   correctness  delimiter-not-followed           \left, \right or \middle is followed by a brace or a math shi…  
 warning   correctness  duplicate-bibliography-entry     the same key is declared by two bibliography entries            
 warning   correctness  environment-mismatch             \end names an environment other than the one that is open       
 warning   correctness  expl-syntax-left-on              \ExplSyntaxOn is never turned off                               
 warning   correctness  expl3-signature-mismatch         an expl3 function takes other arguments than its name says      
+warning   correctness  ignored-verbatim-tail            text stands on the line that closes a verbatim body and never…  
+warning   correctness  math-script-braces               `^` and `_` take one token, so what follows needs braces        
 warning   correctness  missing-dependency               a TeX Live package the run reads from is not in the dependenc…  
+warning   correctness  unbalanced-brackets              a file sets more of one bracket than of its partner             
+warning   correctness  unbalanced-color-stack           a `\pdfcolorstack` push is never popped, or a pop has nothing…  
 warning   correctness  unbalanced-pdf-content           a PDF literal opens marked content or a graphics state that i…  
 warning   correctness  undefined-citation               a citation names a key no bibliography entry declares           
 warning   correctness  undefined-optional-content       marked content refers to an optional content group no resourc…  
 warning   correctness  undefined-reference              \ref names a label that is never defined                        
+warning   correctness  uninstalled-package              the package is not installed, and the distribution could inst…  
 warning   correctness  unresolved-file                  a package, class or input file is not in the installation       
+info      correctness  math-mode-mismatch               \(, \), \[ or \] stands where the mode does not allow it        
+info      correctness  unintended-escape                a command is followed by an escaped punctuation mark, which i…  
 warning   security     build-shell-escape-unneeded      the build allows \write18, but the document never uses it       
 warning   security     shell-escape                     the document runs a program through \write18                    
+warning   style        accent-on-dotted-letter          an accent sits on top of the dot of an `i` or a `j`             
+warning   style        command-terminated-space         a control word ate the space after it and the next word is se…  
+warning   style        dimension-times                  the letter x stands between two numbers where a multiplicatio…  
+warning   style        double-space                     two interword spaces reached the page, one of them from a tie   
+warning   style        ellipsis-dots                    three periods set three periods, not an ellipsis                
 warning   style        group-local-definition           a definition is made inside a group and lost when it closes     
+warning   style        math-operator-name               an operator name is set in math italic instead of by its comm…  
+warning   style        math-shift-dollars               math opened with `$` or `$$` where LaTeX spells it \( or \[     
+warning   style        missing-italic-correction        a slanted letter runs into upright text with no `\/` between …  
+warning   style        missing-nonbreaking-space        an ordinary space in front of a reference lets the line break…  
+warning   style        parenthesis-spacing              a parenthesis carries the space of the text inside it instead…  
+warning   style        quote-direction                  a quotation mark points the wrong way, or a run of them mixes…  
+warning   style        sentence-spacing                 a period set the wrong width of space for the sentence around…  
+warning   style        space-before-command             a space lets the line break between a word and the mark that …  
+warning   style        space-before-punctuation         a space stands between a word and the punctuation after it      
+warning   style        stray-italic-correction          a repeated italic correction, or one in front of a period or …  
 warning   style        unknown-suppress-code            a satex-disable comment names a code no rule has                
+warning   style        user-pattern                     the source matches a pattern the project asked to be warned a…  
+warning   style        wrong-dash                       a run of hyphens sets a dash of the wrong length for what sta…  
+warning   style        wrong-quote-character            a character that is not a quotation mark stands in for one      
+warning   style        zero-italic-correction           the italic correction is zero here, so `\/` changes nothing     
 info      style        build-bibliography-unneeded      the build configures BibTeX or biber for a document without a…  
 info      style        build-engine-options             the engine command could report errors as file:line and write…  
 info      style        build-unused-custom-dependency   a latexmk custom dependency that nothing in the document trig…  
+info      style        comment-marker                   a comment still carries a TODO-style marker                     
 info      style        computer-modern-in-t1            T1 text in Computer Modern relies on cm-super for scalable fo…  
+info      style        csquotes-available               the document sets quotation marks by hand instead of loading …  
 info      style        dead-definition                  a definition is replaced before anything uses it                
+info      style        duplicate-color-value            two colour names store the exact same colour                    
 info      style        hand-set-quantity                a number and its unit are set by hand where siunitx would set…  
+info      style        math-punctuation                 punctuation sits on the wrong side of a formula                 
 info      style        microtype-available              the engine can protrude characters and expand fonts, but micr…  
 info      style        ot1-font-encoding                accented letters are built with \accent because the text is s…  
 info      style        primitive-tex-command            a plain TeX primitive is used where LaTeX has its own interfa…  
+info      style        quote-ligature                   three quotation marks in a row set a double and a single mark…  
+info      style        quote-punctuation                punctuation stands inside the closing quotation mark            
 info      style        stray-space                      a macro body picked up a space from an unescaped line end       
+info      style        unreferenced-numbered-display    a display that stepped a counter is never referenced, so its …  
 info      style        unused-bibitem                   a \bibitem written in the document is never cited               
+info      style        unused-color                     a colour the document defines is never used                     
 info      style        unused-definition                a macro defined in the document is never used                   
 info      style        unused-label                     a label is never referenced                                     
 warning   performance  duplicate-package                a package is loaded more than once                              
@@ -241,12 +280,10 @@ $ satex lint --explain unguarded-recursion
 unguarded-recursion  correctness / error
 a recursive macro has nothing that can stop it
 
-The run saw the macro's expansion reach the macro again, from a call written
-in the replacement text of a macro of the cycle (a tail call included), the
-run could not see the recursion end, and its replacement text contains no
-conditional — no `\if…`, `\else` or
-`\fi` — so nothing can end the recursion.  A macro nothing expands is judged
-by the names its replacement text holds, and reported as a warning.  A real run expands until TeX runs out of memory:
+The run saw the macro's expansion reach the macro again, could not see the
+recursion end, and found no conditional — no `\if…`, `\else` or `\fi` — to
+end it.  A macro nothing expands is judged by the names its replacement text
+holds.  A real run expands until TeX runs out of memory:
 `TeX capacity exceeded, sorry [main memory size]`.
 
 Fix by adding the test that stops it, or by removing the self-reference.
@@ -270,7 +307,7 @@ $ satex lint -f samples/paper.tex --format github
 ::notice file=samples/paper.tex,line=22,col=1,title=primitive-tex-command::\csname is plain TeX; here it uses a control sequence by name
 ::notice file=samples/preamble.tex,line=1,col=1,title=unused-definition::\hello is never used
 ::notice file=samples/paper.tex,line=14,col=1,title=unused-definition::\WeirdMore is never used
-… 4 more lines omitted
+… 7 more lines omitted
 ```
 
 </details>
@@ -428,9 +465,9 @@ performance (2)
   paper.tex:5:1  info     unused-package  graphicx defines 72 names, none of which are used
     [unsafe fix] delete \usepackage{graphicx} if its side effects are not needed
   paper.tex:26:1  info     preamble-cost  5 packages requested directly, 263 files read
-    fix: precompile the preamble into a format to skip this on every build
-
-… 2 more lines omitted
+    [unsafe fix] dump the preamble into a format with `pdftex -ini -jobname=paper "&pdflatex" mylatexformat.ltx
+                 """paper.tex"""`, then every build starts from it
+… 3 more lines omitted
 ```
 
 `--timings` breaks the time down per phase and file, `--stats` sums up counts and wall time. Both measure the run itself and change between runs.
@@ -580,7 +617,7 @@ There are various preexisting analysis approaches for TeX, albeit none offer ful
 - [unravel](https://ctan.org/pkg/unravel) steps through TeX's expansion as a debugger, but runs one concrete execution for this.
 - [TexLab](https://github.com/latex-lsp/texlab) is a language server that gives editor features from a syntax tree, without expanding macros.
 - [unified-latex](https://github.com/siefkenj/unified-latex) parses LaTeX into a syntax tree for transformation, and does not expand macros in general.
-- [ChkTeX](https://www.nongnu.org/chktex/) is a token-level linter for typographic and style mistakes (it does not expand macros).
+- [ChkTeX](https://www.nongnu.org/chktex/) is a token-level linter for typographic and style mistakes (it does not expand macros). [Which of its 49 warnings satex covers](https://eagleoutice.github.io/satex-analyzer/chktex-coverage), and what running the document adds to each.
 
 
 [concrete semantics]: https://eagleoutice.github.io/satex-analyzer/SEMANTICS

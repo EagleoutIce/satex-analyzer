@@ -126,7 +126,7 @@ variable-definition  \docume…  latex.ltx                       @ latex.ltx:186
 macro-definition     \docume…  latex.ltx                       @ latex.ltx:18618:3
 variable-definition  \usepac…  latex.ltx                       @ latex.ltx:18619:25
 macro-definition     \usepac…  latex.ltx                       @ latex.ltx:18619:25
-… 38895 more lines omitted
+… 38897 more lines omitted
 ```
 
 ## trace
@@ -359,7 +359,7 @@ A name without its own redefinitions can still behave differently by context. `e
 
 `effective` writes a call: `\section*?[1]{2}` is `som` (optional star, optional argument, mandatory argument). `[default]` shows a default. `takes` is the least and most arguments a call reads.
 
-SaTeX finds a signature by running the command on probe input and watching what it reads (SEMANTICS § 13, "What a command takes").
+SaTeX finds a signature by running the command on probe input and watching what it reads (SEMANTICS [§ 13](https://ctan.org/pkg/usrguide), "What a command takes").
 
 ## Locations
 

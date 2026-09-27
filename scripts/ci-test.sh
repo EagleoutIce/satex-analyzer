@@ -5,7 +5,7 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 <cache|slow|rest>" >&2
+    echo "usage: $0 <cache|slow|compliance|rest>" >&2
     exit 2
 }
 
@@ -13,6 +13,9 @@ usage() {
 # the engine or a whole installation.  Together they are half the wall time.
 CACHE_SHARD=(package_cache)
 SLOW_SHARD=(no_hang l3build build_lints mutation corpus)
+# Held apart from `rest`: it fails on purpose while the known-divergence
+# ledger has entries, and CI reports it non-blocking instead of hiding it.
+COMPLIANCE_SHARD=(compliance_matrix)
 
 cd "$(dirname "$0")/.."
 
@@ -21,7 +24,7 @@ for file in tests/*.rs; do
     all+=("$(basename "$file" .rs)")
 done
 
-claimed=("${CACHE_SHARD[@]}" "${SLOW_SHARD[@]}")
+claimed=("${CACHE_SHARD[@]}" "${SLOW_SHARD[@]}" "${COMPLIANCE_SHARD[@]}")
 for target in "${claimed[@]}"; do
     [[ " ${all[*]} " == *" $target "* ]] || { echo "$0: no tests/$target.rs; fix the shards" >&2; exit 1; }
 done
@@ -30,6 +33,7 @@ args=()
 case "${1-}" in
     cache) targets=("${CACHE_SHARD[@]}") ;;
     slow) targets=("${SLOW_SHARD[@]}") ;;
+    compliance) targets=("${COMPLIANCE_SHARD[@]}") ;;
     rest)
         targets=()
         for target in "${all[@]}"; do

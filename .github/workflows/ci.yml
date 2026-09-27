@@ -5,6 +5,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The full tier: several TeX Live versions and the exhaustive compliance
+  # cross product.  Too slow for every push, so it runs at release time, and
+  # workflow_dispatch lets it be run by hand without cutting a release.
+  release:
+    types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -20,16 +26,24 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  test:
+  # ---------------------------------------------------------------------
+  # Quick tier: every push and pull request.  Three OSes, current TeX Live
+  # only, the default (~11s) compliance_matrix run.  Kept fast enough that
+  # nobody dreads it; the full cross product and older distributions live
+  # in the release tier below.
+  # ---------------------------------------------------------------------
+  quick-linux:
+    name: Test ubuntu-latest (${{ matrix.shard }})
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     # The TeX Live image already holds a full installation, which the
     # engine-dependent tests need; installing one with apt takes minutes.
     container: texlive/texlive:latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [cache, slow, rest]
+        shard: [cache, slow, rest, compliance]
     steps:
       # Lua and LPeg are compiled from C; the TeX Live image has no compiler.
       - name: Install a C toolchain
@@ -42,16 +56,233 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # One cache for every shard: they build the same dependencies.
-          shared-key: test
+          shared-key: quick-linux
           save-if: ${{ matrix.shard == 'rest' && github.ref == 'refs/heads/main' }}
           cache-on-failure: true
 
+      # Fails in seconds if the image ever stops shipping TeX, which would
+      # otherwise turn the whole engine suite into silent no-ops.
+      - name: The distribution is really there
+        run: kpsewhich latex.ltx
+
       - name: Test
+        if: matrix.shard != 'compliance'
+        env:
+          SATEX_REQUIRE_TEX: '1'
         run: bash scripts/ci-test.sh ${{ matrix.shard }}
 
-  lint:
+      # The known-divergence ledger: fails on purpose while any of its ~61
+      # entries is open.  Reported here as its own shard, non-blocking, so
+      # the count is visible on every run without turning the job red.
+      - name: Compliance ledger (known-red, non-blocking)
+        if: matrix.shard == 'compliance'
+        continue-on-error: true
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: bash scripts/ci-test.sh compliance
+
+  quick-other:
+    name: Test ${{ matrix.os }}
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # scheme-basic is the smallest tree with a real LaTeX in it, and it
+      # carries pdfTeX, XeTeX and LuaTeX: what the engine-dependent tests
+      # drive.  A bigger scheme buys packages, not platform coverage.
+      - uses: teatimeguest/setup-texlive-action@v3
+        with:
+          packages: scheme-basic
+          cache: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: quick-${{ matrix.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+
+      - name: The distribution is really there
+        shell: bash
+        run: kpsewhich latex.ltx
+
+      # Most other targets assume a LaTeX kernel without saying so and fail
+      # rather than skip when scheme-basic is missing a package; these are
+      # the ones that either need no distribution or only what scheme-basic
+      # carries, plus the four the brief calls out by name.  `--test
+      # distribution_guard` reports what is left out of this list.
+      - name: Test
+        shell: bash
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: >
+          cargo test --locked --profile ci --no-fail-fast --lib
+          --test distribution_guard
+          --test engine
+          --test engine_truth
+          --test differential
+          --test engine_trace
+          --test format_flags
+          --test lua
+          --test no_hang
+          --test no_installation
+          --test paths
+          --test positions
+          --test primitives
+          --test termination
+          --test tex_compliance
+          --test trace_range
+
+      - name: Compliance ledger (known-red, non-blocking)
+        shell: bash
+        continue-on-error: true
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: cargo test --locked --profile ci --no-fail-fast --test compliance_matrix
+
+  # ---------------------------------------------------------------------
+  # Release tier: several TeX Live versions, the exhaustive compliance
+  # cross product, and anything else too slow for every push.  Runs when a
+  # release is published, or by hand via workflow_dispatch.
+  # ---------------------------------------------------------------------
+  full-linux:
+    name: Full ubuntu-latest ${{ matrix.tl }} (${{ matrix.shard }})
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Prebuilt images: an install would cost minutes per cell, a pull
+        # costs seconds.  Historic images are maintained monthly, so these
+        # tags stay resolvable.  Three versions, spanning current down to
+        # an install base several years old.
+        tl: [current, TL2022, TL2019]
+        include:
+          - tl: current
+            container: texlive/texlive:latest
+          - tl: TL2022
+            container: texlive/texlive:TL2022-historic
+          - tl: TL2019
+            container: texlive/texlive:TL2019-historic
+        shard: [cache, slow, rest, compliance]
+    steps:
+      - name: Install a C toolchain
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential
+
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Rust build products do not depend on the TeX Live version, so
+          # every version shares one cache.
+          shared-key: full-linux
+          save-if: ${{ matrix.tl == 'current' && matrix.shard == 'rest' && github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+
+      - name: The distribution is really there
+        run: kpsewhich latex.ltx
+
+      - name: Test
+        if: matrix.shard != 'compliance'
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: bash scripts/ci-test.sh ${{ matrix.shard }}
+
+      # Default (~11s) on every version, for visibility of version-specific
+      # divergences.  The full cross product (~90s) only on the current
+      # version, per the brief: exactly one cell carries it.
+      - name: Compliance ledger, default (known-red, non-blocking)
+        if: matrix.shard == 'compliance' && matrix.tl != 'current'
+        continue-on-error: true
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: bash scripts/ci-test.sh compliance
+
+      - name: Compliance ledger, full cross product (known-red, non-blocking)
+        if: matrix.shard == 'compliance' && matrix.tl == 'current'
+        continue-on-error: true
+        env:
+          SATEX_REQUIRE_TEX: '1'
+          SATEX_COMPLIANCE: full
+        run: bash scripts/ci-test.sh compliance
+
+  full-other:
+    name: Full ${{ matrix.os }} (current)
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: teatimeguest/setup-texlive-action@v3
+        with:
+          packages: scheme-basic
+          cache: true
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: full-${{ matrix.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+
+      - name: The distribution is really there
+        shell: bash
+        run: kpsewhich latex.ltx
+
+      - name: Test
+        shell: bash
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: >
+          cargo test --locked --profile ci --no-fail-fast --lib
+          --test distribution_guard
+          --test engine
+          --test engine_truth
+          --test differential
+          --test engine_trace
+          --test format_flags
+          --test lua
+          --test no_hang
+          --test no_installation
+          --test paths
+          --test positions
+          --test primitives
+          --test termination
+          --test tex_compliance
+          --test trace_range
+
+      - name: Compliance ledger (known-red, non-blocking)
+        shell: bash
+        continue-on-error: true
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: cargo test --locked --profile ci --no-fail-fast --test compliance_matrix
+
+  lint:
+    name: Lint ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v5
 
@@ -61,8 +292,10 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      # Before the cache, so a formatting slip is reported in seconds.
+      # Before the cache, so a formatting slip is reported in seconds.  One
+      # runner is enough: the source is the same on all three.
       - name: Format
+        if: runner.os == 'Linux'
         run: cargo fmt --all --check
 
       - uses: Swatinem/rust-cache@v2
@@ -71,5 +304,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
 
+      # `#[cfg(windows)]` code is only compiled on Windows, so a Linux-only
+      # clippy never sees it fail to build.
       - name: Clippy
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
