@@ -76,12 +76,10 @@ fn lua() {
     let target = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     match target.as_str() {
         "macos" | "ios" => build.define("LUA_USE_MACOSX", None),
-        "windows" => {
-            if std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|e| e == "msvc") {
-                println!("cargo:rustc-link-arg-bins=/FORCE:MULTIPLE");
-            }
-            &mut build
-        }
+        // `mlua`'s `module` mode would declare Lua as a raw-dylib import and
+        // duplicate these symbols; `.cargo/config.toml` names this library
+        // instead, so nothing here has to force the link through.
+        "windows" => &mut build,
         _ => build.define("LUA_USE_LINUX", None),
     };
     let mut files: Vec<_> = std::fs::read_dir(dir)

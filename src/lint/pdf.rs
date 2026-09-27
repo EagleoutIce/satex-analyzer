@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 
 use crate::builtins::OccKind;
-use crate::lint::{Category, Report, Rule, Severity};
+use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 use crate::machine::Analysis;
 use crate::plugin::pdf::{Operator, Payload, classify, names, operators};
 use crate::tex::Span;
@@ -18,17 +18,17 @@ pub static RULES: &[Rule] = &[
         summary: "a PDF literal opens marked content or a graphics state that is never closed",
         explanation: "\
 Marked content (`BMC`/`BDC` … `EMC`) and saved graphics states (`q` … `Q`)
-have to nest within a page's content stream (PDF 32000, §§ 8.4.2, 14.6).  An
-`EMC` or `Q` without its opening operator, or one left open, makes viewers
-reject the page or show an optional content layer on every page after it.
-Optional content packages (ocgx2, ocg-p, pdfbase) write these operators with
-`\\pdfliteral` or `\\special{pdf:…}` at the start and end of an environment.
+have to nest within a page's content stream (PDF 32000, §§ 8.4.2, 14.6).  One
+left open makes viewers reject the page or show an optional content layer on
+every page after it.
 
-satex does not break pages, so it checks the order in which the run executes
-the literals; a pair split by a page break is not seen.
+ocgx2, ocg-p and pdfbase write these operators with `\\pdfliteral` or
+`\\special{pdf:…}`.  satex does not break pages, so it checks the order the
+run executes the literals in.
 
 Fix by closing what is opened in the same group, or by using one environment
 for both ends.",
+        references: &[Ref { source: Source::Pdf, at: "8.4.2" }, Ref { source: Source::Pdf, at: "14.6" }],
         run: unbalanced_pdf_content,
     },
     Rule {
@@ -44,6 +44,7 @@ viewer, and the content is shown or hidden at its whim.  The rule is silent
 while the run observed no such resources at all.
 
 Fix by declaring the group, or by correcting the name.",
+        references: &[Ref { source: Source::Pdf, at: "8.11.3.2" }],
         run: undefined_optional_content,
     },
 ];

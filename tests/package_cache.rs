@@ -326,6 +326,64 @@ fn a_file_that_now_shadows_a_lookup_makes_the_cache_stale() {
     assert!(defined(&second, "shadowed"));
 }
 
+/// Two different repositories can each ship their own `outer.sty` with the
+/// same package name. A cache shared between them (the ordinary case: the
+/// platform cache directory is one per machine, not one per project) must
+/// not let one project's analysis stand for the other's: the key has to
+/// include the resolved path, not just the name.
+#[test]
+fn two_projects_sharing_a_cache_do_not_shadow_each_others_package() {
+    let shared_cache = std::env::temp_dir().join(format!("satex-package-cache-shared-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&shared_cache);
+    std::fs::create_dir_all(&shared_cache).expect("shared cache dir");
+
+    let a = project("shadow-a");
+    let b = project("shadow-b");
+    // Same package name, different content, in two unrelated directories.
+    std::fs::write(
+        a.join("outer.sty"),
+        "\\ProvidesPackage{outer}[2020/01/01 v1]\n\\def\\outermacro{fromA}\n\\def\\onlyinA{}\n",
+    )
+    .expect("outer.sty in a");
+    std::fs::write(
+        b.join("outer.sty"),
+        "\\ProvidesPackage{outer}[2020/01/01 v1]\n\\def\\outermacro{fromB}\n\\def\\onlyinB{}\n",
+    )
+    .expect("outer.sty in b");
+
+    let cfg_for = |dir: &Path| -> Config {
+        let mut cfg = latex(dir);
+        cfg.cache_dir = Some(shared_cache.clone());
+        cfg
+    };
+
+    let from_a = analyze(&a, DOCUMENT, &cfg_for(&a));
+    assert!(defined(&from_a, "onlyinA"), "a's own package was read: {:?}", from_a.package_caches);
+    assert!(!defined(&from_a, "onlyinB"), "a must not see b's package");
+
+    let from_b = analyze(&b, DOCUMENT, &cfg_for(&b));
+    assert!(defined(&from_b, "onlyinB"), "b must read its own outer.sty, not a's cache: {:?}", from_b.package_caches);
+    assert!(!defined(&from_b, "onlyinA"), "b must not see a's package");
+    assert_ne!(
+        served(&from_b, "outer"),
+        Some(true),
+        "a's cache for the same name must not be served to b: {:?}",
+        from_b.package_caches
+    );
+
+    // Running each project a second time replays its own cache, still
+    // without crossing over.
+    let a_again = analyze(&a, DOCUMENT, &cfg_for(&a));
+    assert_eq!(served(&a_again, "outer"), Some(true), "{:?}", a_again.package_caches);
+    assert!(defined(&a_again, "onlyinA"));
+    assert!(!defined(&a_again, "onlyinB"));
+
+    let b_again = analyze(&b, DOCUMENT, &cfg_for(&b));
+    assert_eq!(served(&b_again, "outer"), Some(true), "{:?}", b_again.package_caches);
+    assert!(defined(&b_again, "onlyinB"));
+    assert!(!defined(&b_again, "onlyinA"));
+}
+
 #[test]
 fn cache_build_builds_what_is_missing_and_refresh_rebuilds() {
     let dir = project("index");

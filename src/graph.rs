@@ -653,12 +653,12 @@ pub enum CallEvent {
 }
 
 impl CallGraph {
-    /// Start recording, or stop and hand back what was recorded.
     /// What has been recorded so far, in order.
     pub fn recorded(&self) -> &[CallEvent] {
         self.log.as_ref().map_or(&[][..], |(_, order)| &order[..])
     }
 
+    /// Start recording, or stop and hand back what was recorded.
     pub fn record(&mut self, on: bool) -> Vec<CallEvent> {
         let previous = std::mem::replace(&mut self.log, on.then(Default::default));
         previous.map(|(_, order)| order).unwrap_or_default()
@@ -729,40 +729,62 @@ impl CallGraph {
         self.index.get(&s).copied()
     }
 
-    /// Strongly connected components; a component of more than one name is a
-    /// cycle of macros calling one another.
-    pub fn sccs(&self) -> Vec<Vec<Sym>> {
-        let mut graph: petgraph::graph::DiGraph<(), ()> = petgraph::graph::DiGraph::new();
-        let nodes: Vec<_> = self.nodes.iter().map(|_| graph.add_node(())).collect();
-        for (from, targets) in self.edges.iter().enumerate() {
-            for to in targets {
-                graph.add_edge(nodes[from], nodes[*to], ());
-            }
-        }
-        petgraph::algo::tarjan_scc(&graph)
-            .into_iter()
-            .map(|component| component.into_iter().map(|node| self.nodes[node.index()]).collect())
-            .collect()
-    }
-
-    /// Names that are directly or mutually recursive.
+    /// Names that are directly or mutually recursive: the strongly
+    /// connected components of the call graph, one of more than one name
+    /// being a cycle of macros calling one another.
     pub fn recursive(&self) -> Vec<(Sym, Vec<Sym>)> {
         let mut out = Vec::new();
-        for comp in self.sccs() {
-            if comp.len() > 1 {
-                for &s in &comp {
-                    out.push((s, comp.clone()));
-                }
-            } else if let Some(i) = self.get(comp[0])
-                && self.edges[i].contains(&i)
-            {
-                out.push((comp[0], comp));
+        let mut tarjan = petgraph::algo::TarjanScc::new();
+        tarjan.run(Adjacency(&self.edges), |component| match component {
+            [only] if self.edges[*only].contains(only) => out.push((self.nodes[*only], vec![self.nodes[*only]])),
+            [_] => {}
+            many => {
+                let cycle: Vec<Sym> = many.iter().map(|node| self.nodes[*node]).collect();
+                out.extend(many.iter().map(|node| (self.nodes[*node], cycle.clone())));
             }
-        }
+        });
         out
     }
 }
 
 fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// The call graph's adjacency lists as petgraph sees them.  `DiGraph` walks
+/// a node's edges newest first, so the neighbours come out reversed.
+#[derive(Clone, Copy)]
+struct Adjacency<'a>(&'a [Vec<usize>]);
+
+impl petgraph::visit::GraphBase for Adjacency<'_> {
+    type NodeId = usize;
+    type EdgeId = usize;
+}
+
+impl petgraph::visit::GraphRef for Adjacency<'_> {}
+
+impl petgraph::visit::NodeIndexable for Adjacency<'_> {
+    fn node_bound(&self) -> usize {
+        self.0.len()
+    }
+    fn to_index(&self, node: usize) -> usize {
+        node
+    }
+    fn from_index(&self, index: usize) -> usize {
+        index
+    }
+}
+
+impl<'a> petgraph::visit::IntoNeighbors for Adjacency<'a> {
+    type Neighbors = std::iter::Rev<std::iter::Copied<std::slice::Iter<'a, usize>>>;
+    fn neighbors(self, node: usize) -> Self::Neighbors {
+        self.0[node].iter().copied().rev()
+    }
+}
+
+impl<'a> petgraph::visit::IntoNodeIdentifiers for Adjacency<'a> {
+    type NodeIdentifiers = std::ops::Range<usize>;
+    fn node_identifiers(self) -> Self::NodeIdentifiers {
+        0..self.0.len()
+    }
 }

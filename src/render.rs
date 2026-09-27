@@ -1,5 +1,6 @@
 //! Terminal output: aligned tables, color, and OSC 8 hyperlinks.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -91,16 +92,19 @@ fn reference(record: &Record) -> &str {
 
 fn location(record: &Record) -> String {
     let Some(Json::String(path)) = record.get("path") else { return String::new() };
-    let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
+    let url = file_url(path);
     // A record with no line names the file itself, not a place in it.
     match record.get("line").and_then(Json::as_u64).filter(|line| *line > 0) {
-        Some(line) => format!("file://{}#L{line}", absolute.display()),
-        None => format!("file://{}", absolute.display()),
+        Some(line) => format!("{url}#L{line}"),
+        None => url,
     }
 }
 
-const COLUMNS: [&str; 40] = [
+const COLUMNS: [&str; 43] = [
     "index",
+    "warning",
+    "covered",
+    "rules",
     "id",
     "step",
     "severity",
@@ -282,8 +286,6 @@ pub fn markdown(records: &[Record]) -> String {
     out
 }
 
-/// One block per record instead of one row, with nothing cut to fit: the
-/// detail views, whose fields are too wide for a table.
 /// A record with the contexts it holds in, each with the error raised there.
 type Grouped = (Record, Vec<(String, Option<String>)>);
 
@@ -326,6 +328,8 @@ fn by_context(records: &[Record]) -> Vec<Grouped> {
         .collect()
 }
 
+/// One block per record instead of one row, with nothing cut to fit: the
+/// detail views, whose fields are too wide for a table.
 pub fn fields(records: &[Record], links: Links) -> String {
     let mut out = String::new();
     for (index, (record, contexts)) in by_context(records).iter().enumerate() {
@@ -368,9 +372,6 @@ pub fn fields(records: &[Record], links: Links) -> String {
             }
             let text = match column {
                 "file" => path_of(record),
-                // `effective` already shows the call shape; the raw
-                // parameter-text arity underneath it only confused things
-                // (`0-1 (arity 0)`), so `takes` shows just the min-max.
                 "uses" => match record.get(column).and_then(Json::as_u64) {
                     Some(1) => "1 time, in this run".to_string(),
                     Some(n) => format!("{n} times, in this run"),
@@ -605,13 +606,33 @@ fn finding(out: &mut String, record: &Record, links: Links) {
     }
 }
 
-fn findings_section(out: &mut String, title: &str, records: &[&Record], links: Links) {
+/// How many findings one rule shows before the rest become a count.  A rule
+/// that fires on every quantity in a document says the same thing each time,
+/// and the places are what `--filter` is for.
+const SHOWN_PER_RULE: usize = 3;
+
+fn findings_section(out: &mut String, title: &str, records: &[&Record], links: Links, group: bool) {
     if records.is_empty() {
         return;
     }
-    let _ = writeln!(out, "{}", heading(&format!("{title} ({})", records.len())));
+    let code = |r: &&Record| r.get("code").map(plain).unwrap_or_default();
+    let mut total: HashMap<String, usize> = HashMap::new();
     for record in records {
-        finding(out, record, links);
+        *total.entry(code(record)).or_default() += 1;
+    }
+    let _ = writeln!(out, "{}", heading(&format!("{title} ({})", records.len())));
+    let mut shown: HashMap<String, usize> = HashMap::new();
+    for record in records {
+        let this = code(record);
+        let seen = shown.entry(this.clone()).or_default();
+        *seen += 1;
+        let count = total[&this];
+        if !group || count <= SHOWN_PER_RULE || *seen <= SHOWN_PER_RULE {
+            finding(out, record, links);
+        } else if group && *seen == SHOWN_PER_RULE + 1 {
+            let rest = count - SHOWN_PER_RULE;
+            let _ = writeln!(out, "  {}", label(&format!("{rest} more {this}, shown by --no-group")));
+        }
     }
     out.push('\n');
 }
@@ -638,7 +659,7 @@ fn precision_line(records: &[&Record]) -> String {
 /// `satex lint`'s text output: findings grouped by severity, with build-cost
 /// observations and what the analysis could not follow kept apart from them
 /// rather than mixed into one flat, truncated table.
-pub fn lint(records: &[Record], links: Links) -> String {
+pub fn lint(records: &[Record], links: Links, group: bool) -> String {
     let mut document: Vec<&Record> = Vec::new();
     let mut performance: Vec<&Record> = Vec::new();
     let mut precision: Vec<&Record> = Vec::new();
@@ -658,10 +679,10 @@ pub fn lint(records: &[Record], links: Links) -> String {
     let suggestions: Vec<&Record> = document.iter().copied().filter(|r| severity(r) == "info").collect();
 
     let mut out = String::new();
-    findings_section(&mut out, "errors", &errors, links);
-    findings_section(&mut out, "warnings", &warnings, links);
-    findings_section(&mut out, "suggestions", &suggestions, links);
-    findings_section(&mut out, "performance", &performance, links);
+    findings_section(&mut out, "errors", &errors, links, group);
+    findings_section(&mut out, "warnings", &warnings, links, group);
+    findings_section(&mut out, "suggestions", &suggestions, links, group);
+    findings_section(&mut out, "performance", &performance, links, group);
     if !precision.is_empty() {
         let _ = writeln!(out, "{}", precision_line(&precision));
         out.push('\n');
@@ -973,7 +994,8 @@ pub fn timings(analysis: &crate::machine::Analysis, links: Links) -> String {
                 None => detail("no format"),
             },
             crate::timing::Phase::Document => detail(&format!("{} files read", analysis.files.len())),
-            crate::timing::Phase::Hooks => String::new(),
+            crate::timing::Phase::Lint => detail(&format!("{} rules", crate::lint::rules().len())),
+            crate::timing::Phase::Hooks | crate::timing::Phase::Fix => String::new(),
         };
         let _ = writeln!(out, "  {:<10} {:>8.1} ms{note}", phase.as_str(), elapsed.as_secs_f64() * 1000.0);
     }
@@ -984,15 +1006,10 @@ pub fn timings(analysis: &crate::machine::Analysis, links: Links) -> String {
     if rows.is_empty() {
         return out;
     }
-    // `flatten` already folds a file read twice under the same parent into
-    // one row; a file read again under a *different* one, or one whose
-    // reading was folded into an ancestor's package-cache segment rather
-    // than opened as its own frame, reads as its own zero-cost row per
-    // place it recurs — as uninformative repeated as the same-parent case,
-    // so it is pulled out the same way, into one line naming every one of
-    // them instead of a row each. A frame this run actually opened always
-    // counts at least the token that discovers its end, so zero tokens on
-    // a `read` status means no frame was opened for it here.
+    // `flatten` folds a file read twice under one parent into a row, and a
+    // file read again under a different one is no more informative, so it is
+    // pulled into one line too.  A frame this run opened counts at least the
+    // token that finds its end, so zero tokens on `read` means no frame.
     let mut again: Vec<&str> = Vec::new();
     rows.retain(|(_, node)| {
         let repeat = node.tokens == 0 && matches!(node.status, "already-loaded" | "read");
@@ -1125,8 +1142,10 @@ fn linked_file(path: &str, links: Links) -> String {
 }
 
 pub(crate) fn file_url(path: &str) -> String {
-    let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
-    format!("file://{}", absolute.display())
+    // Absolute, not canonical: resolving symlinks would name `/private/var` for the
+    // `/var` an editor opened on macOS, and the URL has to be the one the client knows.
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
+    crate::paths::file_url(&absolute)
 }
 
 pub fn github(records: &[Record]) -> String {
@@ -1457,7 +1476,7 @@ mod tests {
             finding_record("warning", "performance", "perf-code", "5 files read", Some("precompile")),
             finding_record("info", "precision", "analysis-imprecision", "widened", None),
         ];
-        let out = lint(&records, Links(false));
+        let out = lint(&records, Links(false), true);
         assert!(out.contains("errors (1)"));
         assert!(out.contains("warnings (1)"));
         assert!(out.contains("suggestions (1)"));

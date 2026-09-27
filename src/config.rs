@@ -108,18 +108,19 @@ impl Default for Limits {
             // site far more often than that while the source stands still,
             // and widening them loses every math symbol after the first few.
             // pgfkeys runs one helper site for every key of a `\tikzset`
-            // list that was read in one piece, so a long option list passes
-            // 256 without looping; widening it there cost more tokens than
-            // following it (tikzpingus: 12 s at 256, 2 s at 16384).
+            // list read in one piece, so a long option list passes 256
+            // without looping, and widening it there costs more tokens
+            // than following it.
             site_expansions: 16_384,
             stall_tokens: 50_000_000,
             seconds: 300,
             branch_depth: 8,
             join_tokens: 65_536,
-            // Measured on doc/architecture.tex (TikZ), with loop heads and
-            // joins by program point: false-error sites 0: 64, 1: 22,
-            // 2: 39, 3: 51, 8: 66; time 1: 5s, 8: 31s.  Deeper splits run
-            // pgfmath's parser over more unknown text.
+            // Measured on `lint --all doc/architecture.tex` (TikZ): errors
+            // 0: 1, 1: 1, 2: 1, 3: 1, 8: 0; time 0: 21s, 1: 15s, 2: 20s,
+            // 3: 33s, 8: 100s.  Splitting deeper buys one error back for
+            // seven times the time, since each path runs pgfmath's parser
+            // over more unknown text.
             meaning_splits: 1,
             widen_after: 3,
             meaning_set: 8,
@@ -160,11 +161,17 @@ pub struct PluginSwitches {
     /// Walking the project directory for its documents and build files,
     /// skipping what `.gitignore` excludes.
     pub discovery: bool,
+    /// Asking the distribution's package manager which package ships a file
+    /// the search could not find, and whether it could be installed.  Off:
+    /// `tlmgr info` and `tlmgr search --global` read the repository's
+    /// database, so a lint run would reach the network (TeX Live manual,
+    /// `tlmgr`).  `satex install` asks regardless, being the request itself.
+    pub packages: bool,
 }
 
 impl Default for PluginSwitches {
     fn default() -> PluginSwitches {
-        PluginSwitches { magic: true, tools: true, preload: true, discovery: true }
+        PluginSwitches { magic: true, tools: true, preload: true, discovery: true, packages: false }
     }
 }
 
@@ -221,7 +228,9 @@ pub enum Interaction {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct CacheIndex {
-    /// The packages `satex cache build` prepares.
+    /// The packages `satex cache build` prepares. Empty means it discovers
+    /// them instead, from what ordinary runs already found expensive to
+    /// interpret in the cache directory (see `cmd::cache::build::discover_expensive`).
     pub packages: Vec<String>,
     /// The engines it prepares them for; empty means the one in effect.
     pub engines: Vec<Engine>,
@@ -630,7 +639,9 @@ impl Default for Profiles {
         let package = parse(
             "at_letter: true\n\
              lints: {unused-definition: {report_public: false}}\n\
-             lint_off: [analysis-imprecision, unused-label, microtype-available, build-shell-escape-missing, \
+             lint_off: [analysis-imprecision, unused-label, microtype-available, preamble-cost, \
+               comment-marker, \
+               user-pattern, unreferenced-numbered-display, build-shell-escape-missing, \
              build-shell-escape-unneeded, build-engine-mismatch, build-bibliography-disabled, \
              build-bibliography-unneeded, build-missing-custom-dependency, \
              build-unused-custom-dependency, build-command-placeholders, build-engine-options]\n",
@@ -653,6 +664,56 @@ impl Default for Profiles {
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct Lints {
     pub unused_definition: UnusedDefinition,
+    pub wrong_dash: WrongDash,
+    pub user_pattern: UserPattern,
+    pub comment_marker: CommentMarker,
+}
+
+/// `lints.user-pattern:` in `satex.yaml`: chktex's `UserWarn` (warning 20)
+/// and `UserWarnRegex` (warning 44).  Both empty, so the rule is silent
+/// until the project fills one in.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UserPattern {
+    pub patterns: Vec<String>,
+    pub regexes: Vec<String>,
+}
+
+/// `lints.comment-marker:` in `satex.yaml`: the markers in a comment worth
+/// a finding.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CommentMarker {
+    pub markers: Vec<String>,
+}
+
+impl Default for CommentMarker {
+    fn default() -> CommentMarker {
+        CommentMarker { markers: ["TODO", "FIXME", "XXX", "HACK"].iter().map(|m| (*m).to_string()).collect() }
+    }
+}
+
+/// `lints.wrong-dash:` in `satex.yaml`: how many hyphens in a row are
+/// right in each context, as chktex's `HyphDash`, `NumDash` and `WordDash`
+/// set them, and the spellings to leave alone (`DashExcpt`).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WrongDash {
+    pub letters: Vec<usize>,
+    pub digits: Vec<usize>,
+    pub words: Vec<usize>,
+    pub except: Vec<String>,
+}
+
+impl Default for WrongDash {
+    fn default() -> WrongDash {
+        WrongDash {
+            letters: vec![1, 3],
+            digits: vec![2],
+            words: vec![3],
+            except: vec!["Birch--Swinnerton-Dyer".to_string()],
+        }
+    }
 }
 
 /// `lints.unused-definition:` in `satex.yaml`.

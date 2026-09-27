@@ -167,11 +167,8 @@ fn roots_for(request: &Request, cache: Option<&Path>) -> Roots {
 
 fn fallback_roots(year: Option<u32>, platform: Platform) -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    if let Some(personal) = platform.home_tree()
-        && personal.is_dir()
-    {
-        roots.push(personal);
-    }
+    // More than one personal tree can exist per platform; probe each.
+    roots.extend(platform.home_trees().into_iter().filter(|tree| tree.is_dir()));
     for pattern in platform.roots() {
         let Ok(matches) = glob::glob(pattern) else { continue };
         // A pattern matches one directory per installed version: the wanted

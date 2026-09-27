@@ -31,6 +31,33 @@ impl Provider {
         }
     }
 
+    /// The distribution's kpathsea program, for the lookups satex makes
+    /// outside [`crate::distribution`].  Tectonic has none: it resolves from
+    /// its own bundle, so nothing can be asked of it.
+    pub fn kpsewhich(self) -> Option<&'static str> {
+        match self {
+            Provider::TexLive | Provider::MikTeX => Some(self.locator()),
+            Provider::Tectonic => None,
+        }
+    }
+
+    /// The kpathsea program of `provider`, falling back to whichever
+    /// distribution is installed when the run configured none.
+    pub fn kpsewhich_of(provider: Option<Provider>) -> Option<&'static str> {
+        provider.or_else(Provider::detect)?.kpsewhich()
+    }
+
+    /// The distribution's package manager, when it has one (TeX Live
+    /// manual, `tlmgr`; MiKTeX manual, `miktex packages`).  Tectonic has
+    /// none: it carries one bundle and takes what a document needs out of it.
+    pub fn manager(self) -> Option<&'static str> {
+        match self {
+            Provider::TexLive => Some("tlmgr"),
+            Provider::MikTeX => Some("miktex"),
+            Provider::Tectonic => None,
+        }
+    }
+
     /// Detect the installed provider by checking which locator is available.
     pub fn detect() -> Option<Provider> {
         [Provider::TexLive, Provider::MikTeX, Provider::Tectonic]

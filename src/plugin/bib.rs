@@ -20,7 +20,7 @@ pub fn resolve(analysis: &Analysis, name: &str) -> Option<PathBuf> {
     let base = analysis
         .files
         .get(usize::from(analysis.main_file))
-        .and_then(|file| Path::new(&file.path).parent().map(Path::to_path_buf))
+        .map(|file| crate::paths::dir_of(Path::new(&file.path)))
         .unwrap_or_default();
     let file = if name.ends_with(".bib") { name.to_string() } else { format!("{name}.bib") };
     let beside = base.join(&file);

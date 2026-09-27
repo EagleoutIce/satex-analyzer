@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::builtins::OccKind;
-use crate::lint::{Category, Report, Rule, Severity};
+use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 use crate::machine::Analysis;
 use crate::tex::Span;
 
@@ -24,6 +24,7 @@ written so is a citation.  Nothing is reported while a named database cannot
 be found.
 
 Fix by adding the entry, or by correcting the key.",
+        references: &[Ref { source: Source::Source2e, at: "ltbibl.dtx" }],
         run: undefined_citation,
     },
     Rule {
@@ -37,6 +38,7 @@ every citation resolves to the later one; two `.bib` entries with one key make
 BibTeX stop with `Repeated entry`.
 
 Fix by renaming or deleting one of them.",
+        references: &[Ref { source: Source::Bibtex, at: "Using BibTeX" }],
         run: duplicate_bibliography_entry,
     },
     Rule {
@@ -50,6 +52,7 @@ database only contributes what is cited, so its entries are not reported.
 `\\nocite{*}` cites everything.
 
 Fix by citing the entry, or by deleting it.",
+        references: &[Ref { source: Source::Bibtex, at: "Using BibTeX" }],
         run: unused_bibitem,
     },
 ];

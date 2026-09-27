@@ -2,9 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::facts::LoadStatus;
 use crate::lint::fix::{Applicability, Fix};
-use crate::lint::shared::{definition_order, document_start, first_loads};
-use crate::lint::{Category, Report, Rule, Severity};
-use crate::tex::Sym;
+use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
+use crate::tex::{Span, Sym};
 
 pub static RULES: &[Rule] = &[
     Rule {
@@ -17,6 +16,7 @@ The second request is ignored by LaTeX.  It costs nothing at run time but it
 hides which load carries the options.
 
 Fix by deleting the later `\\usepackage`.",
+        references: &[Ref { source: Source::Source2e, at: "ltclass.dtx" }],
         run: duplicate_package,
     },
     Rule {
@@ -31,6 +31,7 @@ is a hint, not a verdict.
 
 Fix, if the package really is unused, by deleting the `\\usepackage`: it is read
 on every build.",
+        references: &[],
         run: unused_package,
     },
     Rule {
@@ -45,6 +46,7 @@ have defined becomes unknown.
 
 Fix, if the recursion is unintended, by breaking the cycle; otherwise make sure
 a conditional terminates it.",
+        references: &[],
         run: recursive_macro,
     },
     Rule {
@@ -57,6 +59,7 @@ a conditional terminates it.",
 `\\usepackage before \\begin{document}` and the package cannot set anything up.
 
 Fix by moving the load into the preamble.",
+        references: &[Ref { source: Source::Source2e, at: "ltclass.dtx" }],
         run: package_after_preamble,
     },
     Rule {
@@ -72,6 +75,7 @@ project's dependency file lacks one of them, so an installation made from it
 document.
 
 Fix by adding the package to the dependency file, or by rerunning depp.",
+        references: &[],
         run: missing_dependency,
     },
     Rule {
@@ -86,14 +90,33 @@ read — fonts, hyphenation patterns, Lua libraries, programs — so this is a
 hint, not a verdict.
 
 Fix, if the package really is unused, by deleting its line.",
+        references: &[],
         run: unused_dependency,
+    },
+    Rule {
+        code: "preamble-cost",
+        category: Category::Performance,
+        severity: Severity::Info,
+        summary: "what the preamble costs on every build",
+        explanation: "\
+The packages the document asks for and the files read before
+`\\begin{document}`.  This work repeats on every compilation.
+
+A format holds the preamble already interpreted, so a build that starts from
+one skips all of it.  [mylatexformat](https://ctan.org/pkg/mylatexformat)
+dumps one from the document's own preamble, and TeX reads a `%&`(format) line
+before anything else (web2c manual, \"Format files\").
+
+Fix by dumping the preamble into a format and starting every build from it.",
+        references: &[Ref { source: Source::Companion, at: "formats" }],
+        run: preamble_cost,
     },
 ];
 
 fn duplicate_package(report: &mut Report) {
-    let first = first_loads(report.analysis);
-    let loads: Vec<_> = report.analysis.facts.loads.clone();
-    for load in loads {
+    let analysis = report.analysis();
+    let first = report.index().first_loads();
+    for load in &analysis.facts.loads {
         if !load.kind.is_package() {
             continue;
         }
@@ -101,7 +124,7 @@ fn duplicate_package(report: &mut Report) {
         if *at == load.span || load.options.iter().any(|o| !options.contains(o)) {
             continue;
         }
-        let edits = report.edits().delete_load(&load);
+        let edits = report.edits().delete_load(load);
         report.add_fix(
             load.span,
             &load.name,
@@ -112,7 +135,7 @@ fn duplicate_package(report: &mut Report) {
 }
 
 fn unused_package(report: &mut Report) {
-    let analysis = report.analysis;
+    let analysis = report.analysis();
     // The files each package's load read, its own and those it requested.
     let mut files: BTreeMap<Sym, BTreeSet<crate::tex::FileId>> = BTreeMap::new();
     for load in &analysis.facts.loads {
@@ -140,18 +163,17 @@ fn unused_package(report: &mut Report) {
             provided.entry(package).or_default().insert(def.name);
         }
     }
-    let used: BTreeSet<Sym> = analysis.facts.expansions.iter().map(|e| e.name).collect();
-    let loads: Vec<_> = analysis.facts.loads.clone();
-    for load in loads {
+    let used = report.index().expanded();
+    for load in &analysis.facts.loads {
         if !load.kind.is_package() || load.status != LoadStatus::Read {
             continue;
         }
         let Some(package) = analysis.interner.lookup(&load.name) else { continue };
         let Some(names) = provided.get(&package) else { continue };
-        if names.is_empty() || names.iter().any(|n| used.contains(n)) {
+        if names.is_empty() || names.iter().any(|n| used.contains(*n)) {
             continue;
         }
-        let edits = report.edits().delete_load(&load);
+        let edits = report.edits().delete_load(load);
         report.add_fix(
             load.span,
             &load.name,
@@ -166,30 +188,40 @@ fn unused_package(report: &mut Report) {
 }
 
 fn recursive_macro(report: &mut Report) {
-    let analysis = report.analysis;
-    let sites = definition_order(analysis);
+    let analysis = report.analysis();
+    let index = report.index();
+    let sites = index.definition_order();
     // A cycle nothing expands costs nothing to run.
-    for crate::machine::Recursion { name, cycle, .. } in analysis.recursion().into_iter().filter(|r| r.observed) {
-        let Some(&span) = sites.get(&name) else { continue };
-        let rendered = analysis.interner.cs(name);
-        let message = if cycle.len() > 1 {
-            let others: Vec<String> = cycle.iter().filter(|s| **s != name).map(|s| analysis.interner.cs(*s)).collect();
-            format!("{rendered} is mutually recursive with {}", others.join(", "))
-        } else {
-            format!("{rendered} calls itself")
-        };
+    let found: Vec<(Span, String, String)> = index
+        .recursion()
+        .iter()
+        .filter(|r| r.observed)
+        .filter_map(|crate::machine::Recursion { name, cycle, .. }| {
+            let &span = sites.get(name)?;
+            let rendered = analysis.interner.cs(*name);
+            let message = if cycle.len() > 1 {
+                let others: Vec<String> =
+                    cycle.iter().filter(|s| *s != name).map(|s| analysis.interner.cs(*s)).collect();
+                format!("{rendered} is mutually recursive with {}", others.join(", "))
+            } else {
+                format!("{rendered} calls itself")
+            };
+            Some((span, rendered, message))
+        })
+        .collect();
+    for (span, rendered, message) in found {
         report.add(span, &rendered, message, None);
     }
 }
 
 fn package_after_preamble(report: &mut Report) {
-    let Some(end) = document_start(report.analysis) else { return };
-    let loads: Vec<_> = report.analysis.facts.loads.clone();
-    for load in loads {
+    let analysis = report.analysis();
+    let Some(end) = report.index().document_start() else { return };
+    for load in &analysis.facts.loads {
         if !load.kind.is_package() || load.span.file != end.file || load.span.before(end.line, end.col) {
             continue;
         }
-        let edits = report.edits().move_to_preamble(&load, end);
+        let edits = report.edits().move_to_preamble(load, end);
         report.add_fix(
             load.span,
             &load.name,
@@ -197,7 +229,7 @@ fn package_after_preamble(report: &mut Report) {
             Fix::new("move the \\usepackage into the preamble", Applicability::Unsafe, edits),
         );
     }
-    let refused = refused_loads(report.analysis, &report.edits(), end);
+    let refused = refused_loads(report, end);
     for load in refused {
         let edits = report.edits().move_to_preamble(&load, end);
         report.add_fix(
@@ -213,18 +245,19 @@ fn package_after_preamble(report: &mut Report) {
 /// lets the command to `\@notprerr`, whose `\errmessage` stands at the call.
 /// The command is a package request when a preamble meaning of it passes the
 /// kernel's `\@pkgextension`.
-fn refused_loads(
-    analysis: &crate::machine::Analysis,
-    edits: &crate::lint::fix::Edits,
-    begin: crate::tex::Span,
-) -> Vec<crate::facts::Load> {
+fn refused_loads(report: &Report, begin: crate::tex::Span) -> Vec<crate::facts::Load> {
+    let analysis = report.analysis();
+    let index = report.index();
+    let edits = report.edits();
     let interner = &analysis.interner;
     let Some(extension) = interner.lookup("@pkgextension") else { return Vec::new() };
-    let error = |o: &crate::facts::Occurrence| crate::lint::shared::is_error(analysis, o);
-    let requests = |name: Sym| {
-        analysis.facts.defs.iter().any(|def| {
-            def.name == name
-                && def.mac.as_ref().is_some_and(|m| m.replacement_text.iter().any(|t| t.cs() == Some(extension)))
+    let mut asks: BTreeMap<Sym, bool> = BTreeMap::new();
+    let mut requests = |name: Sym| {
+        *asks.entry(name).or_insert_with(|| {
+            analysis.facts.defs.iter().any(|def| {
+                def.name == name
+                    && def.mac.as_ref().is_some_and(|m| m.replacement_text.iter().any(|t| t.cs() == Some(extension)))
+            })
         })
     };
     let mut out = Vec::new();
@@ -234,10 +267,7 @@ fn refused_loads(
         if span.file != begin.file || span.before(begin.line, begin.col) || !seen.insert((span.line, span.col)) {
             continue;
         }
-        if analysis.facts.loads.iter().any(|l| l.span == span)
-            || !analysis.facts.occurrences.iter().any(|o| o.span == span && error(o))
-            || !requests(expansion.name)
-        {
+        if index.load_spans().contains(&span) || !index.error_spans().contains(&span) || !requests(expansion.name) {
             continue;
         }
         let Some((options, names)) = edits.load_request(span) else { continue };
@@ -254,6 +284,7 @@ fn refused_loads(
                 required: None,
                 provided: None,
                 depth: 0,
+                case_mismatch_disk_name: None,
             });
         }
     }
@@ -296,4 +327,49 @@ fn unused_dependency(report: &mut Report) {
             ),
         );
     }
+}
+
+/// The command that dumps a format from this document's preamble, as
+/// mylatexformat's manual gives it: the `ini` engine, the LaTeX format it
+/// starts from, then `mylatexformat.ltx` and the document.
+fn dump_command(engine: crate::config::Engine, job: &str, file: &str) -> String {
+    use crate::config::Engine;
+    let (ini, format) = match engine {
+        Engine::LuaTeX => ("luahbtex", "lualatex"),
+        Engine::XeTeX => ("xetex", "xelatex"),
+        Engine::Tex => ("tex", "latex"),
+        Engine::PdfTeX => ("pdftex", "pdflatex"),
+    };
+    format!("{ini} -ini -jobname={job} \"&{format}\" mylatexformat.ltx \"\"\"{file}\"\"\"")
+}
+
+fn preamble_cost(report: &mut Report) {
+    let analysis = report.analysis;
+    let direct =
+        analysis.facts.loads.iter().filter(|l| l.kind.is_package() && l.span.file == analysis.main_file).count();
+    let files = analysis.preamble_files.unwrap_or(analysis.files.len());
+    let span = report.index().document_start().unwrap_or_default();
+    let message = format!("{direct} packages requested directly, {files} files read");
+    // A format the build already starts from leaves nothing to suggest.
+    if analysis.plugins.preload.is_some() {
+        report.add(span, "", message, None);
+        return;
+    }
+    let path = analysis.file_name(analysis.main_file).to_string();
+    let name = std::path::Path::new(&path);
+    let job = name.file_stem().and_then(|s| s.to_str()).unwrap_or("preamble");
+    let file = name.file_name().and_then(|s| s.to_str()).unwrap_or(&path);
+    let command = dump_command(analysis.plugins.engine, job, file);
+    // TeX honors `%&` only as the very first line of the file.
+    let edits = report.edits().insert_first(analysis.main_file, &format!("%&{job}"));
+    report.add_fix(
+        span,
+        "",
+        message,
+        Fix::new(
+            format!("dump the preamble into a format with `{command}`, then every build starts from it"),
+            Applicability::Unsafe,
+            edits,
+        ),
+    );
 }

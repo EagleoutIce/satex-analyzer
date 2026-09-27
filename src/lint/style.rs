@@ -3,8 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::builtins::{OccKind, Primitive};
 use crate::facts::CsnameRole;
 use crate::lint::fix::{Applicability, Fix};
-use crate::lint::shared::labels;
-use crate::lint::{Category, Report, Rule, Severity};
+use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 use crate::machine::Analysis;
 use crate::mode::Modes;
 use crate::tex::{Span, Sym, Tok, Token};
@@ -21,6 +20,7 @@ replacement text never reaches the typesetter.  Both definitions are made on
 every path, so this is not a conditional fallback.
 
 Fix by deleting the first definition, or by checking which one was meant.",
+        references: &[],
         run: dead_definition,
     },
     Rule {
@@ -33,6 +33,7 @@ Nothing refers to this label.  Harmless, but usually a leftover or a typo in
 the reference.
 
 Fix by deleting the `\\label`, or by checking the `\\ref` that was meant to use it.",
+        references: &[],
         run: unused_label,
     },
     Rule {
@@ -46,6 +47,7 @@ an environment, the definition disappears at the closing brace.
 
 Fix by moving the definition out of the group, or by prefixing it with
 `\\global`.",
+        references: &[Ref { source: Source::TeXbook, at: "chapter 5" }],
         run: group_local_definition,
     },
     Rule {
@@ -55,18 +57,17 @@ Fix by moving the definition out of the group, or by prefixing it with
         summary: "a plain TeX primitive is used where LaTeX has its own interface",
         explanation: "\
 chktex warning 41 (`You ought to not use primitive TeX in LaTeX code`) flags
-the primitives in chktexrc's `Primitives` list, which chktex leaves off by
-default.  satex reports one only where the name still means the primitive, and
-names the LaTeX command for the same job where there is one.  For `\\csname`
-the job is what the run saw the name formed for: defined after
-`\\expandafter\\def`, made an alias after `\\expandafter\\let`, tested by
-`\\expandafter\\ifx…\\relax`, or used; the suggestion is etoolbox's command
-for it (`\\csdef`, `\\csgdef`, `\\csedef`, `\\csxdef`, `\\cslet`, `\\letcs`,
-`\\ifcsundef`, `\\csuse`) when the document has it, else the kernel's
-(`\\@namedef`, `\\@ifundefined`, `\\@nameuse`).
-`latex_alternatives` in `satex.yaml` adds entries or overrides them.
+the primitives in chktexrc's `Primitives` list.  satex reports one only where
+the name still means the primitive, and names the LaTeX command for the same
+job.
+
+For `\\csname` the job is the one the run saw the name formed for — defined,
+aliased, tested or used — and the suggestion is
+[etoolbox](https://ctan.org/pkg/etoolbox)'s command for it when the document
+has it.
 
 Fix by using LaTeX's interface for the same job, if one exists.",
+        references: &[Ref { source: Source::Chktex, at: "41" }, Ref { source: Source::L2tabu, at: "1" }],
         run: primitive_tex_command,
     },
     Rule {
@@ -78,6 +79,7 @@ Fix by using LaTeX's interface for the same job, if one exists.",
 Nothing expands this name.  It may be intended for later, or it may be dead.
 
 Fix by deleting it if it is dead.",
+        references: &[],
         run: unused_definition,
     },
     Rule {
@@ -87,19 +89,15 @@ Fix by deleting it if it is dead.",
         summary: "a macro body picked up a space from an unescaped line end",
         explanation: "\
 Inside a macro's replacement text, TeX turns the end of a line into a space
-token unless a control word already skipped it, or a `%` swallowed the rest
-of the line ([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) § 347).  This is the classic missing `%`: an extra
-space nobody wrote, which shows up wherever the macro is used.
+token unless a control word already skipped it or a `%` swallowed the rest
+of the line ([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) § 347).  This is the classic missing `%`.
 
-A body wrapped start-to-end in the kernel's own `\\@bsphack…\\@esphack` pair is
-exempt, since that pair keeps whatever is inside it from reaching the page.
-The finding follows the modes the run was in each time it read that space
-([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) § 1043: a space is glue only in horizontal mode): it says the
-macro *inserts* a space when every reading was in horizontal mode, that it
-*may* when some might have been, and nothing when none was or the space
-was never read as material (an argument delimiter, a `\\write`).
+The finding follows the modes the run read that space in (§ 1043: a space is
+glue only in horizontal mode).  It says the macro *inserts* a space where
+every reading was horizontal, and that it *may* where some might have been.
 
 Fix by writing `%` at the end of that line.",
+        references: &[Ref { source: Source::TeXWeb, at: "347" }, Ref { source: Source::TeXWeb, at: "1043" }],
         run: stray_space,
     },
 ];
@@ -115,33 +113,39 @@ fn bsphacked(body: &[Token], bsphack: Option<Sym>, esphack: Option<Sym>) -> bool
 /// captures a space token's span before consuming the character, so an
 /// end-of-line space's column sits one past the line's last character,
 /// where an explicit space's does not.
-fn line_end_space(report: &Report, span: Span) -> bool {
-    let Some((_, text)) = report.edits().text(span.file) else { return false };
+fn line_end_space(text: Option<&crate::lint::fix::Text>, span: Span) -> bool {
+    let Some(text) = text else { return false };
     span.col == text.line(span.line).chars().count() as u32 + 1
 }
 
 fn stray_space(report: &mut Report) {
-    let analysis = report.analysis;
+    let analysis = report.analysis();
+    let index = report.index();
     let bsphack = analysis.interner.lookup("@bsphack");
     let esphack = analysis.interner.lookup("@esphack");
-    let used: BTreeSet<Sym> = analysis.facts.expansions.iter().map(|e| e.name).collect();
-    let defs: Vec<_> = analysis.facts.defs.clone();
-    for def in defs {
-        let Some(mac) = def.mac.clone() else { continue };
-        if def.package.is_some()
-            || !used.contains(&def.name)
-            || !crate::lint::shared::written_definition(analysis, &def)
-        {
+    let used = index.expanded();
+    let mut texts: std::collections::HashMap<crate::tex::FileId, Option<std::rc::Rc<crate::lint::fix::Text>>> =
+        std::collections::HashMap::new();
+    for def in &analysis.facts.defs {
+        let Some(mac) = &def.mac else { continue };
+        if def.package.is_some() || !used.contains(def.name) || !index.written_definition(def) {
             continue;
         }
         let body = &mac.replacement_text;
         if bsphacked(body, bsphack, esphack) {
             continue;
         }
-        // Two space tokens never sit next to each other in a replacement
-        // text ([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) § 347), so each has real material beside it.
+        // tex.web § 347: two space tokens never sit next to each other in a
+        // replacement text, so each has real material beside it.
         for tok in body.iter() {
-            if tok.is_space() && line_end_space(report, tok.span) {
+            if !tok.is_space() {
+                continue;
+            }
+            let text = texts
+                .entry(tok.span.file)
+                .or_insert_with(|| report.edits().text(tok.span.file).map(|(_, text)| text))
+                .clone();
+            if line_end_space(text.as_deref(), tok.span) {
                 let modes = analysis.facts.spaces.get(&tok.span).copied().unwrap_or_default();
                 let verb = match (modes.meets(Modes::ANY_HORIZONTAL), modes.within(Modes::ANY_HORIZONTAL)) {
                     (false, _) => continue,
@@ -163,13 +167,15 @@ fn stray_space(report: &mut Report) {
 }
 
 fn unused_label(report: &mut Report) {
-    let analysis = report.analysis;
+    let analysis = report.analysis();
     let referenced: BTreeSet<&str> =
         analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Ref).map(|o| o.key.as_str()).collect();
-    let unused: Vec<(Span, String)> = labels(analysis)
-        .into_iter()
-        .filter(|(key, _)| !referenced.contains(key))
-        .map(|(key, span)| (span, key.to_string()))
+    let unused: Vec<(Span, String)> = report
+        .index()
+        .labels()
+        .iter()
+        .filter(|(key, _)| !referenced.contains(*key))
+        .map(|(key, span)| (*span, key.to_string()))
         .collect();
     for (span, key) in unused {
         let edits = report.edits().delete_command(span, &key);
@@ -183,16 +189,16 @@ fn unused_label(report: &mut Report) {
 }
 
 fn group_local_definition(report: &mut Report) {
-    let baseline = report.analysis.document_depth.unwrap_or(0);
-    let defs: Vec<_> = report.analysis.facts.defs.clone();
-    for def in defs {
+    let analysis = report.analysis();
+    let baseline = analysis.document_depth.unwrap_or(0);
+    for def in &analysis.facts.defs {
         if def.depth <= baseline || def.global || def.package.is_some() {
             continue;
         }
         // A macro that defines a scratch name while it runs inside a group is
-        // how TeX code keeps its work local; only a definition written
+        // how TeX code keeps its work local.  Only a definition written
         // straight in the document can be meant to outlive the group.
-        let from_macro = report.analysis.graph.vertices.get(def.node as usize).is_some_and(|v| v.within.is_some());
+        let from_macro = analysis.graph.vertices.get(def.node as usize).is_some_and(|v| v.within.is_some());
         if from_macro {
             continue;
         }
@@ -207,7 +213,7 @@ fn group_local_definition(report: &mut Report) {
 }
 
 /// The primitives chktex's warning 41 flags (chktexrc's `Primitives` list), with the LaTeX command that
-/// does the same job where there is one (usrguide; the LaTeX Companion).  An
+/// does the same job where there is one (usrguide, the LaTeX Companion).  An
 /// empty replacement means LaTeX offers no direct equivalent, so the finding
 /// only says that the primitive is plain TeX.  `latex_alternatives` in
 /// `satex.yaml` adds to this or overrides an entry.
@@ -238,39 +244,59 @@ const LATEX_ALTERNATIVES: &[(&str, &str)] = &[
 /// A primitive is only worth reporting while it still means the primitive: a
 /// document that redefines `\count` as its own macro is using its own macro.
 fn primitive_tex_command(report: &mut Report) {
-    let analysis = report.analysis;
+    let analysis = report.analysis();
     // The alternatives are LaTeX's: a plain TeX document has no other
     // interface than the primitives.
     if analysis.plugins.kernel != crate::plugin::Kernel::Latex {
         return;
     }
     let configured = &analysis.settings.latex_alternatives;
-    let expansions: Vec<_> = analysis.facts.expansions.clone();
-    for expansion in expansions {
-        let name = analysis.interner.name(expansion.name);
-        let alternative = match configured.get(name) {
-            Some(alternative) => alternative.as_str(),
-            None => match LATEX_ALTERNATIVES.iter().find(|(primitive, _)| *primitive == name) {
-                Some((_, alternative)) => alternative,
-                None => continue,
-            },
-        };
-        if analysis.env.meaning(expansion.name).prim().is_none() {
+    // One lookup per expansion instead of a scan of the table per expansion.
+    let mut table: BTreeMap<Sym, (&str, bool)> = BTreeMap::new();
+    for (primitive, alternative) in LATEX_ALTERNATIVES {
+        if let Some(sym) = analysis.interner.lookup(primitive) {
+            table.insert(sym, (alternative, false));
+        }
+    }
+    for (primitive, alternative) in configured {
+        if let Some(sym) = analysis.interner.lookup(primitive) {
+            table.insert(sym, (alternative.as_str(), true));
+        }
+    }
+    // `csname_alternative` and `interface` both search the run: the answers
+    // repeat for every `\csname` the document writes.
+    let mut roles: Vec<(CsnameRole, (&'static str, Option<Sym>))> = Vec::new();
+    let mut interfaces: BTreeMap<Sym, String> = BTreeMap::new();
+    for expansion in &analysis.facts.expansions {
+        let Some(&(alternative, overridden)) = table.get(&expansion.name) else { continue };
+        let primitive = analysis.env.meaning(expansion.name).prim();
+        if primitive.is_none() {
             continue;
         }
-        let role = (analysis.env.meaning(expansion.name).prim() == Some(Primitive::Csname)
-            && !configured.contains_key(name))
-        .then(|| analysis.facts.csnames.get(&expansion.span).copied())
-        .flatten();
+        let role = (primitive == Some(Primitive::Csname) && !overridden)
+            .then(|| analysis.facts.csnames.get(&expansion.span).copied())
+            .flatten();
         let name = report.cs(expansion.name);
         // The command spelled out expands one step later than the primitive,
         // which an `\expandafter` chain around it may count on.
-        let (message, fix) = match role.map(|role| (role, csname_alternative(analysis, role))) {
+        let alternate = role.map(|role| {
+            let found = match roles.iter().find(|(seen, _)| *seen == role) {
+                Some((_, found)) => *found,
+                None => {
+                    let found = csname_alternative(analysis, role);
+                    roles.push((role, found));
+                    found
+                }
+            };
+            (role, found)
+        });
+        let (message, fix) = match alternate {
             Some((role, (purpose, found))) => (
                 format!("{name} is plain TeX; here it {purpose}"),
                 found.map(|sym| {
                     let edits = report.edits().csname(expansion.span, role, sym);
-                    Fix::new(format!("use {}", interface(analysis, sym)), Applicability::Unsafe, edits)
+                    let spelled = interfaces.entry(sym).or_insert_with(|| interface(analysis, sym)).clone();
+                    Fix::new(format!("use {spelled}"), Applicability::Unsafe, edits)
                 }),
             ),
             None if alternative.is_empty() => {
@@ -342,28 +368,19 @@ fn is_pgf_key(name: &str) -> bool {
 }
 
 fn unused_definition(report: &mut Report) {
-    let analysis = report.analysis;
-    let used: BTreeSet<Sym> = analysis.facts.expansions.iter().map(|e| e.name).collect();
-    let defs: Vec<_> = analysis.facts.defs.clone();
+    let analysis = report.analysis();
+    let index = report.index();
+    let used = index.expanded();
     let rule = &analysis.settings.lints.unused_definition;
     let ignore: Vec<regex::Regex> = rule.ignore.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
-    // A name one call defines for another it defines, whose text calls it
-    // (ltcmd's `\fd code`, `\newcommand`'s `\\fe`), is that name's
-    // implementation: the other is the one reported.
-    let implementation = |def: &crate::facts::Definition| {
-        defs.iter().any(|other| {
-            other.span == def.span
-                && other.by == def.by
-                && other.name != def.name
-                && other.mac.as_ref().is_some_and(|m| m.replacement_text.iter().any(|t| t.cs() == Some(def.name)))
-        })
-    };
-    for def in &defs {
+    for def in &analysis.facts.defs {
+        // A name one call defines for another it defines, whose text calls
+        // it (ltcmd's `\fd code`), is that name's implementation.
         if def.package.is_some()
             || def.tag != "macro"
-            || used.contains(&def.name)
-            || implementation(def)
-            || !crate::lint::shared::written_definition(analysis, def)
+            || used.contains(def.name)
+            || index.implements_sibling(def)
+            || !index.written_definition(def)
         {
             continue;
         }
@@ -385,20 +402,26 @@ fn unused_definition(report: &mut Report) {
 }
 
 fn dead_definition(report: &mut Report) {
-    let analysis = report.analysis;
+    let analysis = report.analysis();
+    let index = report.index();
+    let mut written: Vec<&crate::facts::Definition> = analysis
+        .facts
+        .defs
+        .iter()
+        .filter(|def| def.certain && def.mac.is_some() && index.written_definition(def))
+        .collect();
+    // Grouped by name, as the report is ordered.  Only a name defined twice
+    // can have a definition nothing reads.
+    written.sort_by_key(|def| def.name);
+    let repeated: BTreeSet<Sym> = written.windows(2).filter(|p| p[0].name == p[1].name).map(|p| p[0].name).collect();
     let mut uses: BTreeMap<Sym, Vec<crate::env::NodeId>> = BTreeMap::new();
     for expansion in &analysis.facts.expansions {
-        if let Some(node) = expansion.node {
+        if let (Some(node), true) = (expansion.node, repeated.contains(&expansion.name)) {
             uses.entry(expansion.name).or_default().push(node);
         }
     }
-    let mut defs: BTreeMap<Sym, Vec<&crate::facts::Definition>> = BTreeMap::new();
-    for def in &analysis.facts.defs {
-        if def.certain && def.mac.is_some() && crate::lint::shared::written_definition(analysis, def) {
-            defs.entry(def.name).or_default().push(def);
-        }
-    }
-    for (name, sites) in defs {
+    for sites in written.chunk_by(|a, b| a.name == b.name) {
+        let name = sites[0].name;
         let empty = Vec::new();
         let read = uses.get(&name).unwrap_or(&empty);
         for pair in sites.windows(2) {
@@ -410,7 +433,7 @@ fn dead_definition(report: &mut Report) {
                 continue;
             }
             let rendered = analysis.interner.cs(name);
-            // Only a `\def` redefines whatever came before; a `\newcommand` or
+            // Only a `\def` redefines whatever came before.  A `\newcommand` or
             // `\renewcommand` after the deleted one would change what it does.
             let applicability = match analysis.env.meaning(second.by).prim() {
                 Some(Primitive::Def { .. }) => Applicability::Safe,

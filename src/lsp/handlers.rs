@@ -105,34 +105,22 @@ fn completion_context(line: &str, col: u32) -> Context {
     }
 }
 
-/// What a `file://` URI's path escapes: everything but the unreserved set
-/// and the `/` separator (RFC 3986 § 2.3).
-const PATH: &percent_encoding::AsciiSet =
-    &percent_encoding::NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~').remove(b'/');
-
 /// The path a run recorded a file under, resolved to a `file://` URI.
 /// `lsp_types::Uri` (since 0.95) is a thin wrapper over a generic RFC 3986
 /// URI, not a `url::Url`, so there is no `from_file_path`/`to_file_path`
-/// left to reuse: this and [`uri_to_path`] are satex's own, covering exactly
-/// the absolute-path-to-`file://`-URI case the server needs.
+/// left to reuse: [`crate::paths::file_url`] and [`uri_to_path`] are
+/// satex's own, covering exactly the case the server needs.
 pub fn path_uri(path: &str) -> Uri {
-    let path = std::path::Path::new(path);
-    let absolute =
-        if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(path) };
-    let mut slash_path = absolute.to_string_lossy().replace('\\', "/");
-    if !slash_path.starts_with('/') {
-        slash_path.insert(0, '/');
-    }
-    format!("file://{}", percent_encoding::utf8_percent_encode(&slash_path, PATH))
-        .parse()
-        .unwrap_or_else(|_| "file:///".parse().unwrap())
+    // The same rooting [`crate::render::file_url`] does, so a diagnostic and the file it
+    // belongs to reach the client under one URI.
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
+    crate::paths::file_url(&absolute).parse().unwrap_or_else(|_| "file:///".parse().unwrap())
 }
 
 /// The reverse of [`path_uri`]: the local path a `file://` URI names, or
 /// `None` for any other scheme.
 pub fn uri_to_path(uri: &Uri) -> Option<std::path::PathBuf> {
-    let rest = uri.as_str().strip_prefix("file://")?;
-    Some(std::path::PathBuf::from(percent_encoding::percent_decode_str(rest).decode_utf8_lossy().into_owned()))
+    crate::paths::from_file_url(uri.as_str())
 }
 
 /// A `place`d record (`path`/`line`/`col`, as every query answer carries) as

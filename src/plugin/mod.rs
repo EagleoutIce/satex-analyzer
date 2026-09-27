@@ -11,6 +11,7 @@ pub mod lua;
 pub mod lua_run;
 pub mod magic;
 pub mod output;
+pub mod packages;
 pub mod pdf;
 pub mod platform;
 pub mod preload;

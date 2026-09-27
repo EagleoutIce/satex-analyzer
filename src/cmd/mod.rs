@@ -3,6 +3,7 @@
 pub mod cache;
 mod graph;
 mod inspect;
+pub mod install;
 mod lint;
 pub mod lsp;
 pub mod query;
@@ -93,6 +94,12 @@ pub enum Command {
         /// Explain one rule and how to fix what it reports.
         #[arg(long, value_name = "CODE", help_heading = "Rules")]
         explain: Option<String>,
+        /// List chktex's warnings and the rule that covers each.
+        #[arg(long, help_heading = "Rules")]
+        chktex: bool,
+        /// Print every finding, instead of a count for a rule that repeats.
+        #[arg(long, help_heading = "Selection")]
+        no_group: bool,
         /// Apply the safe fixes to the project's files, lint again until
         /// nothing fixable is left, and report what remains.
         #[arg(long, help_heading = "Fixes")]
@@ -223,6 +230,23 @@ pub enum Command {
         #[command(subcommand)]
         action: Option<CacheAction>,
     },
+    /// Install the packages the document loads that this machine does not
+    /// have.  Asks first, never elevates, and is never run by `lint --fix`.
+    Install {
+        /// Install these packages instead of the ones the document needs.
+        #[arg(value_name = "PACKAGE")]
+        packages: Vec<String>,
+        /// Install without asking.
+        #[arg(long)]
+        yes: bool,
+        /// Print the commands and run nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Install into your own TEXMF tree, which needs no elevation
+        /// (TeX Live manual, `--usermode`).
+        #[arg(long)]
+        usermode: bool,
+    },
     /// The token stream the mouth produces.
     Tokens,
     /// A Language Server Protocol server: a thin facade over the queries and
@@ -274,6 +298,7 @@ impl Command {
                 | Command::Query { request: Some(_), .. }
                 | Command::Lint { rules: true, .. }
                 | Command::Lint { explain: Some(_), .. }
+                | Command::Lint { chktex: true, .. }
                 | Command::Cache { action: Some(_) }
                 | Command::Lsp { .. }
         )
@@ -312,13 +337,15 @@ impl Command {
     pub fn check_format(&self, format: Format) -> Result<(), String> {
         let generic = matches!(format, Format::Text | Format::Json | Format::Csv | Format::Markdown);
         let (ok, hint): (bool, &str) = match self {
-            Command::Lint { rules: true, .. } => (generic, "text, json, csv or markdown"),
+            Command::Lint { rules: true, .. } | Command::Lint { chktex: true, .. } => {
+                (generic, "text, json, csv or markdown")
+            }
             Command::Lint { explain: Some(_), .. } => (matches!(format, Format::Text | Format::Json), "text or json"),
             Command::Lint { .. } => (
                 generic || matches!(format, Format::Github | Format::Sarif | Format::Lsp),
                 "text, json, csv, markdown, github, sarif or lsp",
             ),
-            Command::Summary { .. } | Command::Cache { action: None } => {
+            Command::Summary { .. } | Command::Cache { action: None } | Command::Install { .. } => {
                 (matches!(format, Format::Text | Format::Json), "text or json")
             }
             Command::Dependencies => (matches!(format, Format::Text | Format::Json | Format::Dot), "text, json or dot"),
@@ -355,9 +382,16 @@ impl Command {
                 let file = trace_file(&[from.as_deref(), to.as_deref(), lines.as_deref()])?;
                 query::trace(context, filter.as_deref(), *interactive, *include_internal, file.as_deref(), out)
             }
-            Command::Lint { filter, all, rules, explain, fix, unsafe_fixes, diff } => {
+            Command::Lint { filter, all, rules, explain, chktex, fix, unsafe_fixes, diff, no_group: _ } => {
                 let fixing = lint::Fixing { fix: *fix, unsafe_fixes: *unsafe_fixes, diff: *diff };
-                lint::run(context, filter.as_deref(), *all, *rules, explain.as_deref(), fixing, out)
+                let selection = lint::Selection {
+                    filter: filter.as_deref(),
+                    all: *all,
+                    rules: *rules,
+                    explain: explain.as_deref(),
+                    chktex: *chktex,
+                };
+                lint::run(context, selection, fixing, out)
             }
             Command::Summary { all, depth } => summary::run(context, *all, *depth, out),
             Command::Scope { at, filter, all } => inspect::scope(context, at.as_deref(), filter.as_deref(), *all),
@@ -379,6 +413,10 @@ impl Command {
             // `Query { request: Some(_) }`.
             Command::Cache { action: Some(_) } => Ok(Output::Done),
             Command::Lsp { .. } => Ok(Output::Done),
+            Command::Install { packages, yes, dry_run, usermode } => {
+                let options = install::Options { yes: *yes, dry_run: *dry_run, usermode: *usermode };
+                install::run(context, packages, options, out)
+            }
             Command::Tokens => tokens::run(context),
         }
     }
