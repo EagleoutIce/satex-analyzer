@@ -92,6 +92,7 @@ fn environment_variable_outranks_latexmkrc() {
         .expect("TEXINPUTS entry");
     assert_eq!(texinputs["source"], "environment");
     let dirs: Vec<&str> = texinputs["dirs"].as_array().unwrap().iter().map(|d| d.as_str().unwrap()).collect();
-    assert!(dirs.iter().any(|d| d.ends_with("libs/sub")), "{dirs:?}");
+    // Compared by components: the reported path is `\`-separated on Windows.
+    assert!(dirs.iter().any(|d| Path::new(d).ends_with("libs/sub")), "{dirs:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

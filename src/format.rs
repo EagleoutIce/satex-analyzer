@@ -164,8 +164,9 @@ pub fn prune_caches(dir: &Path, package_encoding: u32, bound: u64) -> Pruned {
             pruned.files += 1;
             pruned.bytes += bytes;
             if let Some(lock) = StoreLock::try_take(path) {
-                let _ = std::fs::remove_file(lock_for(path));
+                // The handle goes first: Windows refuses to unlink a file still open without it.
                 drop(lock);
+                let _ = std::fs::remove_file(lock_for(path));
             }
         }
     };

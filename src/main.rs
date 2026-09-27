@@ -102,6 +102,11 @@ struct Cli {
 }
 
 impl Cli {
+    /// Whether `--no-group` was given to `lint`.
+    fn no_group(&self) -> bool {
+        matches!(self.command, Some(Command::Lint { no_group: true, .. }))
+    }
+
     /// The subcommand, once `--version` has taken the command-less form.
     fn command(&self) -> &Command {
         self.command.as_ref().expect("a subcommand, which clap has already checked for")
@@ -237,9 +242,6 @@ fn run() -> Result<(), String> {
     if cli.stats {
         anstream::eprintln!("{}", analysis.stats(started.elapsed()));
     }
-    if cfg.timings {
-        anstream::eprint!("{}", render::timings(&analysis, cli.link_policy(io::stderr().is_terminal())));
-    }
     log_gaps(&analysis, &cfg);
     // What the run could not follow reads as a note on the answer, so it goes
     // after it.
@@ -273,7 +275,7 @@ fn run() -> Result<(), String> {
         }
         Output::Lint(records) => {
             let text = match cli.format.is_text() {
-                true => render::lint(&records, links),
+                true => render::lint(&records, links, !cli.no_group()),
                 false => rendered(&records, &cli, links),
             };
             let _ = write!(out, "{text}");
@@ -297,6 +299,11 @@ fn run() -> Result<(), String> {
     }
     if !owns_gaps {
         let _ = write!(out, "{unfollowed}");
+    }
+    // After the command, so that the phases it ran are in the table.
+    if cfg.timings {
+        let _ = out.flush();
+        anstream::eprint!("{}", render::timings(&analysis, cli.link_policy(io::stderr().is_terminal())));
     }
     Ok(())
 }
@@ -642,9 +649,10 @@ fn read_source(path: Option<&Path>) -> Result<String, String> {
 }
 
 fn base_dir(path: Option<&Path>) -> PathBuf {
-    path.and_then(|p| p.parent().map(Path::to_path_buf))
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+    match path {
+        Some(path) => satex::paths::dir_of(path),
+        None => std::env::current_dir().unwrap_or_default(),
+    }
 }
 
 /// `FROM:TO`, either end left out for open: `10:`, `:20`, `15`.

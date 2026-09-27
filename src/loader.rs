@@ -1,4 +1,4 @@
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -27,11 +27,20 @@ pub struct Resolver {
     /// Files the build generates from a `.dtx` before TeX runs, by name:
     /// the `.dtx` and the docstrip guards that extract each.
     unpacked: std::collections::BTreeMap<String, (PathBuf, Vec<String>)>,
+    /// Case mismatches found: (asked_name, found_name on disk) for each lookup.
+    case_mismatches: RefCell<HashMap<(String, LoadKind), (String, String)>>,
 }
 
 impl Resolver {
     pub fn new(local: Vec<PathBuf>, request: Request) -> Self {
-        Self { local, request, trees: OnceCell::new(), cache: HashMap::new(), unpacked: Default::default() }
+        Self {
+            local,
+            request,
+            trees: OnceCell::new(),
+            cache: HashMap::new(),
+            unpacked: Default::default(),
+            case_mismatches: RefCell::new(HashMap::new()),
+        }
     }
 
     pub fn with_unpacked(mut self, unpacked: std::collections::BTreeMap<String, (PathBuf, Vec<String>)>) -> Self {
@@ -61,7 +70,7 @@ impl Resolver {
         if let Some(hit) = self.cache.get(&(name.to_string(), kind)) {
             return hit.clone();
         }
-        let found = self.search(name, kind, base);
+        let found = self.search_internal(name, kind, base);
         self.cache.insert((name.to_string(), kind), found.clone());
         found
     }
@@ -73,16 +82,23 @@ impl Resolver {
 
     /// Look a name up afresh, bypassing what earlier lookups found.
     pub fn search_again(&self, name: &str, kind: LoadKind, base: &Path) -> Option<PathBuf> {
-        self.search(name, kind, base)
+        self.search_internal(name, kind, base)
     }
 
-    fn search(&self, name: &str, kind: LoadKind, base: &Path) -> Option<PathBuf> {
+    /// Returns the case mismatch detected for a name, if any: (asked, found).
+    pub fn case_mismatch(&self, name: &str, kind: LoadKind) -> Option<(String, String)> {
+        self.case_mismatches.borrow().get(&(name.to_string(), kind)).cloned()
+    }
+
+    fn search_internal(&self, name: &str, kind: LoadKind, base: &Path) -> Option<PathBuf> {
         let candidates = candidates(name, kind);
         for file in &candidates {
             for directory in std::iter::once(base).chain(self.local.iter().map(PathBuf::as_path)) {
-                let path = directory.join(file);
-                if path.is_file() {
+                if let Some(path) = exact_file(directory, file, HOST) {
                     return Some(path);
+                }
+                if let Some(found_name) = case_folded_name(directory, file) {
+                    self.case_mismatches.borrow_mut().insert((name.to_string(), kind), (file.to_string(), found_name));
                 }
             }
         }
@@ -91,6 +107,82 @@ impl Resolver {
         }
         candidates.iter().find_map(|file| self.trees().get(file).cloned())
     }
+}
+
+/// How a host's filesystem matches a name: NTFS and default APFS open a
+/// file whatever case it is asked for, ext4 does not.  Named rather than
+/// `cfg!`-tested inline, so one test run covers both.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct Fs {
+    folding: bool,
+}
+
+/// The host answers for itself, so nothing here has to model its case rule.
+pub(crate) const HOST: Fs = Fs { folding: false };
+/// A folding filesystem, for testing that branch away from Windows and macOS.
+#[cfg(test)]
+pub(crate) const FOLDING: Fs = Fs { folding: true };
+
+impl Fs {
+    fn is_file(self, path: &Path) -> bool {
+        path.is_file() || (self.folding && folded_file(path))
+    }
+}
+
+/// Whether `path` names a file once case is ignored, which is what the
+/// filesystem call itself does on a folding host.
+fn folded_file(path: &Path) -> bool {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { return false };
+    let Some(name) = name.to_str() else { return false };
+    let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    entries
+        .flatten()
+        .any(|e| e.file_name().to_str().is_some_and(|f| f.eq_ignore_ascii_case(name)) && e.path().is_file())
+}
+
+/// When an exact match fails, check if a case-insensitive match exists by
+/// reading the directory and comparing case-insensitively. Returns the name
+/// as found on disk if one exists, or None. This only checks the immediate
+/// parent directory, not nested directories.
+fn case_folded_name(dir: &Path, rel: &str) -> Option<String> {
+    let path = Path::new(rel);
+    let name_str = path.file_name()?.to_str()?;
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let Ok(entries) = std::fs::read_dir(dir.join(parent)) else { return None };
+    entries.flatten().find_map(|e| {
+        if !e.path().is_file() {
+            return None;
+        }
+        let file_name = e.file_name();
+        let file_str = file_name.to_str()?;
+        if file_str.eq_ignore_ascii_case(name_str) && !file_str.eq(name_str) {
+            Some(file_str.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+/// `dir/rel`, when every component of it is spelled on disk exactly as
+/// written.  kpathsea matches its `ls-R` index case-sensitively, and so does
+/// [`Trees::get`], so a name that only opens because NTFS or APFS folds case
+/// would resolve here and nowhere else, including on the Linux machine that
+/// builds the document for real.
+fn exact_file(dir: &Path, rel: &str, fs: Fs) -> Option<PathBuf> {
+    let path = dir.join(rel);
+    if !fs.is_file(&path) {
+        return None;
+    }
+    let mut at = path.as_path();
+    while at != dir {
+        let (Some(parent), Some(name)) = (at.parent(), at.file_name()) else { break };
+        let listed = std::fs::read_dir(parent).is_ok_and(|mut e| e.any(|e| e.is_ok_and(|e| e.file_name() == name)));
+        if !listed {
+            return None;
+        }
+        at = parent;
+    }
+    Some(path)
 }
 
 fn candidates(name: &str, kind: LoadKind) -> Vec<String> {
@@ -102,4 +194,81 @@ fn candidates(name: &str, kind: LoadKind) -> Vec<String> {
         candidates.push(format!("{name}.{extension}"));
     }
     candidates
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("satex-loader-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("MyPkg.sty"), "").unwrap();
+        std::fs::write(dir.join("sub").join("Deep.tex"), "").unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_name_resolves_only_when_it_is_spelled_the_way_the_disk_spells_it() {
+        let dir = scratch("exact");
+        for fs in [HOST, FOLDING] {
+            assert_eq!(exact_file(&dir, "MyPkg.sty", fs), Some(dir.join("MyPkg.sty")), "{fs:?}");
+            assert_eq!(exact_file(&dir, "sub/Deep.tex", fs), Some(dir.join("sub/Deep.tex")), "{fs:?}");
+            // What `Trees::get` would miss, the local directory must miss too.
+            assert_eq!(exact_file(&dir, "mypkg.sty", fs), None, "{fs:?}");
+            assert_eq!(exact_file(&dir, "MYPKG.STY", fs), None, "{fs:?}");
+            assert_eq!(exact_file(&dir, "sub/deep.tex", fs), None, "{fs:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_folding_filesystem_this_is_tested_against_really_does_fold() {
+        // Without this the case-sensitive assertions above would pass on
+        // Linux for the wrong reason: the open never succeeding at all.
+        let dir = scratch("folding");
+        assert!(FOLDING.is_file(&dir.join("mypkg.sty")));
+        assert!(!HOST.is_file(&dir.join("mypkg.sty")) || cfg!(any(windows, target_os = "macos")));
+        assert!(!FOLDING.is_file(&dir.join("other.sty")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_file_resolves_on_no_filesystem() {
+        let dir = scratch("missing");
+        for fs in [HOST, FOLDING] {
+            assert_eq!(exact_file(&dir, "nothing.sty", fs), None, "{fs:?}");
+            assert_eq!(exact_file(&dir, "sub", fs), None, "{fs:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn case_mismatch_is_detected_when_file_exists_with_different_case() {
+        let dir = std::env::temp_dir().join("satex-loader-case-mismatch");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Create files with specific cases: MyPkg.sty and Deep.tex
+        std::fs::write(dir.join("MyPkg.sty"), "").unwrap();
+        std::fs::write(dir.join("Deep.tex"), "").unwrap();
+
+        // Check that exact matches work.
+        assert_eq!(case_folded_name(&dir, "MyPkg.sty"), None, "exact match should not be detected as mismatch");
+        assert_eq!(case_folded_name(&dir, "Deep.tex"), None, "exact match should not be detected as mismatch");
+
+        // Check that case-insensitive matches are detected only on case-insensitive systems.
+        // On Linux (case-sensitive), a mismatch should be found.
+        // On Windows/macOS (case-insensitive), the exact case might match differently.
+        let mypkg_lower = case_folded_name(&dir, "mypkg.sty");
+        let deep_lower = case_folded_name(&dir, "deep.tex");
+
+        if !cfg!(any(target_os = "windows", target_os = "macos")) {
+            // On case-sensitive systems, mismatches should be detected.
+            assert_eq!(mypkg_lower, Some("MyPkg.sty".to_string()), "case mismatch should be detected");
+            assert_eq!(deep_lower, Some("Deep.tex".to_string()), "case mismatch should be detected");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

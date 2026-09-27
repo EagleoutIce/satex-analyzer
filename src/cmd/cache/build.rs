@@ -86,6 +86,56 @@ fn workers(cfg: &Config) -> usize {
 /// `limits.memory`.
 const MEMORY_PER_WORKER: u64 = 1 << 30;
 
+/// A package is worth pre-warming once ordinary runs on this machine have
+/// left at least this much cache behind it: what a package's stored
+/// segments weigh tracks what it costs to hold and replay them, and on this
+/// project's own cache directory this cut falls cleanly between routine
+/// packages (graphicx, article: under half a megabyte) and the ones whose
+/// first load noticeably stalls an interactive run (amsmath, hyperref,
+/// xcolor's own load site: several megabytes). Below it, `cache_index.auto`
+/// catching a package on first use is good enough; `cache build` exists for
+/// the packages where that first use is itself the problem.
+pub(crate) const EXPENSIVE_BYTES: u64 = 1_000_000;
+
+/// The package name a package cache's file name was built from (see
+/// `package_cache::family`/`cache_file`): the sanitized name between
+/// `package-` and the first `-v<digits>-` marker.
+fn package_name_of(file_name: &str) -> Option<&str> {
+    let rest = file_name.strip_prefix("package-")?;
+    let rest = rest.strip_suffix(".postcard")?;
+    let mut at = 0;
+    while let Some(found) = rest[at..].find("-v") {
+        let start = at + found;
+        let digits = rest[start + 2..].bytes().take_while(u8::is_ascii_digit).count();
+        if digits > 0 && rest.as_bytes().get(start + 2 + digits) == Some(&b'-') {
+            return Some(&rest[..start]);
+        }
+        at = start + 2;
+    }
+    None
+}
+
+/// What `cache build` prepares when nothing is configured or named: the
+/// packages whose cache files in `dir` already total at least `threshold`
+/// bytes, most expensive first. A measurement of what ordinary runs
+/// (`cache_index.auto`) already found worth storing on this machine, not a
+/// list of names; a fresh cache directory has nothing to discover, which is
+/// the honest answer until some document has loaded a package for real.
+pub(crate) fn discover_expensive(dir: &Path, threshold: u64) -> Vec<(String, u64)> {
+    let mut totals: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else { continue };
+        let Some(package) = package_name_of(file_name) else { continue };
+        let Ok(meta) = entry.metadata() else { continue };
+        *totals.entry(package.to_string()).or_default() += meta.len();
+    }
+    let mut found: Vec<(String, u64)> = totals.into_iter().filter(|(_, bytes)| *bytes >= threshold).collect();
+    found.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    found
+}
+
 /// Analyze one package in its canonical preamble, on the calling thread.
 fn prepare_one(run: &Config, base: &Path, directory: &Path, package: &str) -> Prepared {
     let started = Instant::now();
@@ -137,8 +187,36 @@ pub fn prepare(
     let directory = cfg.cache_dir.clone().or_else(crate::format::default_cache_dir).ok_or("no cache directory")?;
     let base = directory.join("index");
     std::fs::create_dir_all(&base).map_err(|e| format!("{}: {e}", base.display()))?;
+    // Nothing configured or named: prepare what ordinary runs on this
+    // machine (`cache_index.auto`) already found expensive, discovered from
+    // their caches rather than a list of names. A fresh cache directory has
+    // nothing to discover yet; `cache build` then has nothing to warm until
+    // some document has loaded a package for real.
+    let discovered;
     let packages: &[String] = match preamble {
         Some(_) => &[],
+        None if packages.is_empty() && cfg.cache_index.packages.is_empty() => {
+            let found = discover_expensive(&directory, EXPENSIVE_BYTES);
+            if found.is_empty() {
+                progress(
+                    "nothing configured and nothing measured yet: run satex over your documents \
+                     first (cache_index.auto stores what they load), then `cache build` will warm \
+                     what turned out to be expensive",
+                );
+            } else {
+                progress(&format!(
+                    "discovered from what ran here already, at least {} each: {}",
+                    bytesize::ByteSize(EXPENSIVE_BYTES),
+                    found
+                        .iter()
+                        .map(|(name, bytes)| format!("{name} ({})", bytesize::ByteSize(*bytes)))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            discovered = found.into_iter().map(|(name, _)| name).collect::<Vec<_>>();
+            &discovered[..]
+        }
         None if packages.is_empty() => &cfg.cache_index.packages[..],
         None => packages,
     };
@@ -310,4 +388,36 @@ pub fn run(
         started.elapsed().as_secs_f64()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_package_name_is_read_back_out_of_its_cache_file_name() {
+        assert_eq!(package_name_of("package-xcolor-v1-a1b2c3d4e5f6a7b8-0123456789abcdef.postcard"), Some("xcolor"));
+        assert_eq!(package_name_of("package-koma-script-v1-abcd1234-1234abcd.postcard"), Some("koma-script"));
+        assert_eq!(package_name_of("format-pdftex-2026-v1-abcd.postcard"), None, "not a package cache");
+        assert_eq!(package_name_of("package-xcolor-v1-abcd.lock"), None, "a lock file, not a cache");
+    }
+
+    #[test]
+    fn discovery_finds_only_what_exceeds_the_threshold_and_sums_a_packages_files() {
+        let dir = std::env::temp_dir().join(format!("satex-cache-discover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        // Two cache files for the same package (different resolved paths or
+        // engines) add up.
+        std::fs::write(dir.join("package-big-v1-aaaa-1111.postcard"), vec![0u8; 600]).unwrap();
+        std::fs::write(dir.join("package-big-v1-aaaa-2222.postcard"), vec![0u8; 600]).unwrap();
+        std::fs::write(dir.join("package-small-v1-bbbb-3333.postcard"), vec![0u8; 100]).unwrap();
+        std::fs::write(dir.join("package-small-v1-bbbb-3333.lock"), vec![]).unwrap();
+
+        let found = discover_expensive(&dir, 1000);
+        assert_eq!(found, vec![("big".to_string(), 1200)], "only the package over the threshold, summed: {found:?}");
+
+        let none = discover_expensive(&dir, 10_000);
+        assert!(none.is_empty(), "nothing on a fresh or light machine: {none:?}");
+    }
 }

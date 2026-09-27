@@ -217,6 +217,22 @@ fn unused_label_is_deleted_inline_and_as_a_line() {
     check(&fixed, "\\documentclass{article}\n\\begin{document}\n\\section{A}\n\\section{B}\nx\n\\end{document}\n");
 }
 
+/// amsmath writes the `\newlabel` at the end of a display, and reads an
+/// `align` body as one argument: the label is recorded at its own key, so
+/// the deletion finds the `\label` that carries it.
+#[test]
+fn unused_label_is_deleted_inside_a_display() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\begin{equation}\n  g = h\n  \\label{eq:b}\n\\end{equation}\n\\begin{align}\n  c &= d \\label{eq:a} \\\\\n  e &= f\n\\end{align}\n\\end{document}\n";
+    let fixed = fix("unused-label-display", source, "unused-label", true);
+    check(
+        &fixed,
+        "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\begin{equation}\n  g = h\n\\end{equation}\n\\begin{align}\n  c &= d  \\\\\n  e &= f\n\\end{align}\n\\end{document}\n",
+    );
+}
+
 #[test]
 fn dead_definition_before_a_def_is_a_safe_deletion() {
     if !installed() {

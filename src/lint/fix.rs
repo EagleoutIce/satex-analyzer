@@ -10,7 +10,7 @@ use std::rc::Rc;
 use serde_json::{Value as Json, json};
 
 use crate::builtins::{LoadKind, Primitive};
-use crate::facts::{CsnameRole, Definition, Load};
+use crate::facts::{CsnameRole, Definition, Load, Quantity};
 use crate::machine::Analysis;
 use crate::tex::{Catcode, CatcodeTable, FileId, Interner, Mouth, Span, Sym, Tok};
 
@@ -178,15 +178,29 @@ impl Text {
 #[derive(Default)]
 pub struct Sources {
     texts: RefCell<HashMap<String, Option<Rc<Text>>>>,
+    /// [`editable`] canonicalizes the file and every root of the
+    /// installation, so it is asked once per path, not once per fix.
+    editable: RefCell<HashMap<String, bool>>,
+    cats: RefCell<HashMap<FileId, CatcodeTable>>,
 }
 
 impl Sources {
     pub fn get(&self, path: &str) -> Option<Rc<Text>> {
-        self.texts
-            .borrow_mut()
-            .entry(path.to_string())
-            .or_insert_with(|| crate::overlay::read_to_string(Path::new(path)).ok().map(|t| Rc::new(Text::new(t))))
-            .clone()
+        if let Some(text) = self.texts.borrow().get(path) {
+            return text.clone();
+        }
+        let text = crate::overlay::read_to_string(Path::new(path)).ok().map(|t| Rc::new(Text::new(t)));
+        self.texts.borrow_mut().insert(path.to_string(), text.clone());
+        text
+    }
+
+    fn editable(&self, analysis: &Analysis, path: &str) -> bool {
+        if let Some(&known) = self.editable.borrow().get(path) {
+            return known;
+        }
+        let known = editable(analysis, path);
+        self.editable.borrow_mut().insert(path.to_string(), known);
+        known
     }
 }
 
@@ -206,7 +220,7 @@ pub fn editable(analysis: &Analysis, path: &str) -> bool {
         .filter_map(|root| root.canonicalize().ok())
         .any(|root| canonical.starts_with(root));
     let main = Path::new(analysis.file_name(analysis.main_file)).canonicalize();
-    let project = main.ok().and_then(|main| main.parent().map(Path::to_path_buf));
+    let project = main.ok().map(|main| crate::paths::dir_of(&main));
     !installed && project.is_some_and(|root| canonical.starts_with(root))
 }
 
@@ -413,8 +427,8 @@ impl<'a> Edits<'a> {
 
     /// Insert `%` right after the last character of a line — the fix for a
     /// line end that fell into a macro body as a stray space token (tex.web
-    /// § 347: end-of-line becomes a space in state M; `%` would have
-    /// swallowed it instead).
+    /// § 347: end-of-line becomes a space in state M, where `%` would have
+    /// swallowed it).
     pub fn insert_percent(&self, span: Span) -> Option<Vec<Edit>> {
         let (path, _) = self.text(span.file)?;
         let pos = Pos::of(span);
@@ -422,7 +436,7 @@ impl<'a> Edits<'a> {
     }
 
     pub fn path(&self, path: &str) -> Option<(String, Rc<Text>)> {
-        if !editable(self.analysis, path) {
+        if !self.sources.editable(self.analysis, path) {
             return None;
         }
         Some((path.to_string(), self.sources.get(path)?))
@@ -432,6 +446,15 @@ impl<'a> Edits<'a> {
     /// in a package or class, which `\usepackage` and `\documentclass` make
     /// it (source2e, ltclass.dtx).
     fn cats(&self, file: FileId) -> CatcodeTable {
+        if let Some(cats) = self.sources.cats.borrow().get(&file) {
+            return cats.clone();
+        }
+        let cats = self.build_cats(file);
+        self.sources.cats.borrow_mut().insert(file, cats.clone());
+        cats
+    }
+
+    fn build_cats(&self, file: FileId) -> CatcodeTable {
         let mut cats = CatcodeTable::latex();
         let kind = self.analysis.files.get(file as usize).map(|f| f.kind);
         if matches!(kind, Some(LoadKind::Package | LoadKind::Class)) {
@@ -524,6 +547,18 @@ impl<'a> Edits<'a> {
         Some(edits)
     }
 
+    /// A line written as the file's very first, which is the only place
+    /// TeX reads a `%&` format line (web2c manual, "Format files").
+    pub fn insert_first(&self, file: FileId, line: &str) -> Option<Vec<Edit>> {
+        let (path, text) = self.text(file)?;
+        // A file that already starts with `%&` has its format chosen.
+        if text.line(1).trim_start().starts_with("%&") {
+            return None;
+        }
+        let start = Pos::new(1, 1);
+        Some(vec![Edit { path, start, end: start, replacement: format!("{line}\n") }])
+    }
+
     /// Insert a line of its own before the line `at` starts, when `at` is
     /// the first thing on it.
     pub fn insert_before(&self, at: Span, line: &str) -> Option<Vec<Edit>> {
@@ -561,19 +596,18 @@ impl<'a> Edits<'a> {
     /// The source a quantity was set from, up to where the observed unit
     /// text is complete.  `via` is the control sequence the file called
     /// where the unit was set.
-    pub fn quantity(
-        &self,
-        span: Span,
-        number: &str,
-        unit: &str,
-        via: Option<&str>,
-        replacement: &str,
-    ) -> Option<Vec<Edit>> {
+    pub fn quantity(&self, q: &Quantity, via: Option<&str>, replacement: &str) -> Option<Vec<Edit>> {
         /// Lexemes a unit may take before the source is given up on.
         const STEPS: usize = 8;
+        let (span, number, unit) = (q.span, q.number.as_str(), q.unit.as_str());
         let (path, text) = self.text(span.file)?;
         let start = Pos::of(span);
         let mut scan = Scan::at(&text, start, self.cats(span.file))?;
+        // A command sets the unit itself (`\%`, `\degree`) only when the
+        // unit's first character does not stand after it in this file:
+        // in `13\,ms` the letters set it, and `\,` is only spacing.
+        let sets_unit =
+            |at: Pos| q.unit_span.file != span.file || (q.unit_span.line, q.unit_span.col) <= (at.line, at.col);
         let mut digits = String::new();
         while let Some(Tok::Chr(c, Catcode::Other)) = scan.peek().map(|l| l.tok) {
             if !(c.is_ascii_digit() || (matches!(c, '.' | ',') && !digits.is_empty())) {
@@ -587,6 +621,9 @@ impl<'a> Edits<'a> {
         }
         let mut seen = String::new();
         let mut end = None;
+        // Whether a command stood for the rest of the unit rather than the
+        // source spelling it out.
+        let mut by_command = false;
         for _ in 0..STEPS {
             if seen == unit {
                 break;
@@ -608,10 +645,16 @@ impl<'a> Edits<'a> {
                         end = Some(group.end);
                         continue;
                     }
+                    if !sets_unit(lexeme.start) {
+                        // Spacing between the number and its unit: `13\,ms`.
+                        end = Some(lexeme.end);
+                        continue;
+                    }
                     if name == "%" {
                         seen.push('%');
                     } else if via == Some(name.as_str()) {
                         seen = unit.to_string();
+                        by_command = true;
                     }
                 }
                 _ => return None,
@@ -621,17 +664,44 @@ impl<'a> Edits<'a> {
         if seen != unit {
             return None;
         }
+        // The command stood for the whole unit, yet the source reads on
+        // with letters: what they set is not covered, so offer no edit.
+        if by_command && matches!(scan.peek().map(|l| l.tok), Some(Tok::Chr(_, Catcode::Letter))) {
+            return None;
+        }
         Some(vec![Edit { path, start, end: end?, replacement: replacement.to_string() }])
     }
 
     /// Delete a command whose one argument reads `key`: `\label{sec:x}`.
     pub fn delete_command(&self, span: Span, key: &str) -> Option<Vec<Edit>> {
+        self.delete_call(span, key).or_else(|| self.delete_call(self.command_of(span)?, key))
+    }
+
+    fn delete_call(&self, span: Span, key: &str) -> Option<Vec<Edit>> {
         let (path, text, mut scan, cs) = self.command(span)?;
         let group = scan.group()?;
         if text.slice(group.inner_start, group.inner_end)?.trim() != key {
             return None;
         }
         Some(vec![removal(&text, &path, cs.start, group.end)])
+    }
+
+    /// Where the command whose argument holds `span` stands: an occurrence
+    /// derived from a written line is recorded at the key's own text, which
+    /// is the only span its tokens carry.
+    fn command_of(&self, span: Span) -> Option<Span> {
+        let (_, text) = self.text(span.file)?;
+        let mut scan = Scan::at(&text, Pos::new(span.line, 1), self.cats(span.file))?;
+        let mut last = None;
+        while let Some(lexeme) = scan.advance() {
+            if lexeme.start >= Pos::of(span) {
+                break;
+            }
+            if scan.name(&lexeme).is_some() {
+                last = Some(lexeme.start);
+            }
+        }
+        last.map(|at| Span::new(span.file, at.line, at.col))
     }
 
     /// Replace the argument of `\end{old}`-like commands by `new`.
@@ -779,7 +849,7 @@ impl<'a> Edits<'a> {
             return None;
         }
         let mut replacement = format!("\\{alternative}{{{inner}}}");
-        // TeX skipped the spaces after `\endcsname`; after `}` they would count.
+        // TeX skipped the spaces after `\endcsname`.  After `}` they would count.
         let end = match scan.peek() {
             Some(next) if next.start.line == endcsname.end.line => next.start,
             _ => {

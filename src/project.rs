@@ -238,6 +238,9 @@ fn makefile_paths(path: &Path) -> Vec<(String, String)> {
     let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
     let mut out = Vec::new();
     for raw in text.lines() {
+        // A recipe line starts with a tab; its value ends at the command that follows it,
+        // while an assignment's runs to the end of the line and may hold spaces.
+        let recipe = raw.starts_with('\t');
         let line = raw.trim();
         let assignment = line.strip_prefix("export ").unwrap_or(line);
         let Some((variable, rest)) = assignment.split_once('=') else { continue };
@@ -245,8 +248,10 @@ fn makefile_paths(path: &Path) -> Vec<(String, String)> {
         if !crate::paths::VARIABLES.contains(&variable) {
             continue;
         }
-        let value = rest.split_whitespace().next().unwrap_or_default();
-        let value = value.split('$').next().unwrap_or(value).trim_end_matches(':').to_string();
+        // `#` opens a comment anywhere on a line (GNU make manual, "Makefile Contents").
+        let rest = rest.split('#').next().unwrap_or(rest);
+        let value = if recipe { rest.split_whitespace().next().unwrap_or_default() } else { rest.trim() };
+        let value = value.split('$').next().unwrap_or(value).trim_end_matches(crate::paths::SEPARATOR).to_string();
         if !value.is_empty() {
             out.push((variable.to_string(), value));
         }
@@ -267,6 +272,28 @@ mod tests {
         assert_eq!(project.files.len(), 1);
         assert_eq!(project.files[0].tool, "latexmk");
         assert_eq!(project.engine(), Some(Engine::LuaTeX));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_makefile_assignment_keeps_a_path_with_spaces() {
+        let sep = crate::paths::SEPARATOR;
+        let dir = std::env::temp_dir().join(format!("satex-makefile-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let make = dir.join("Makefile");
+        std::fs::write(
+            &make,
+            format!("export TEXINPUTS = C:/Program Files/tex{sep} # note\nall:\n\tBIBINPUTS=./bib{sep} pdflatex x\n"),
+        )
+        .unwrap();
+        let paths = makefile_paths(&make);
+        assert_eq!(
+            paths,
+            vec![
+                ("TEXINPUTS".to_string(), "C:/Program Files/tex".to_string()),
+                ("BIBINPUTS".to_string(), "./bib".to_string()),
+            ]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

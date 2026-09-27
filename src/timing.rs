@@ -13,6 +13,10 @@ pub enum Phase {
     Format,
     Document,
     Hooks,
+    /// Running the lint rules over the finished analysis.
+    Lint,
+    /// Applying quick-fixes and re-analyzing.
+    Fix,
 }
 
 impl Phase {
@@ -22,6 +26,8 @@ impl Phase {
             Phase::Format => "format",
             Phase::Document => "document",
             Phase::Hooks => "hooks",
+            Phase::Lint => "lint",
+            Phase::Fix => "fix",
         }
     }
 }
@@ -35,6 +41,9 @@ pub struct Timings {
     open: Option<(Phase, Instant)>,
     files: Vec<(Duration, u64)>,
     stack: Vec<(FileId, Instant, Duration)>,
+    /// Phases timed after the analysis is finished, so behind a lock: the
+    /// command that reads the analysis only has it by shared reference.
+    after: std::sync::Mutex<Vec<(Phase, Duration)>>,
 }
 
 impl Timings {
@@ -106,8 +115,32 @@ impl Timings {
         self.files[slot].1 += tokens;
     }
 
-    pub fn phases(&self) -> &[(Phase, Duration)] {
-        &self.phases
+    /// Time a phase that runs after the analysis: the linter, the fixes.
+    pub fn record(&self, phase: Phase, elapsed: Duration) {
+        if self.enabled
+            && let Ok(mut after) = self.after.lock()
+        {
+            after.push((phase, elapsed));
+        }
+    }
+
+    /// Run `work`, timing it as `phase` when the run asked for timings.
+    pub fn around<T>(&self, phase: Phase, work: impl FnOnce() -> T) -> T {
+        if !self.enabled {
+            return work();
+        }
+        let since = Instant::now();
+        let out = work();
+        self.record(phase, since.elapsed());
+        out
+    }
+
+    pub fn phases(&self) -> Vec<(Phase, Duration)> {
+        let mut out = self.phases.clone();
+        if let Ok(after) = self.after.lock() {
+            out.extend(after.iter().copied());
+        }
+        out
     }
 
     pub fn by_file(&self) -> Vec<(FileId, Duration, u64)> {

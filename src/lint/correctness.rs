@@ -1,8 +1,8 @@
 use crate::builtins::OccKind;
 use crate::facts::{LoadStatus, MeaningKind};
 use crate::lint::fix::{Applicability, Fix};
-use crate::lint::shared::{first_loads, labels};
-use crate::lint::{Category, Report, Rule, Severity};
+use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
+use crate::plugin::Provider;
 use crate::tex::{Span, Sym};
 
 pub static RULES: &[Rule] = &[
@@ -17,6 +17,7 @@ pub static RULES: &[Rule] = &[
 with `Glossary entry ... has not been defined`.
 
 Fix by declaring the entry, or by correcting the key.",
+        references: &[Ref { source: Source::Glossaries, at: "Defining glossary entries" }],
         run: undefined_glossary_entry,
     },
     Rule {
@@ -31,6 +32,7 @@ program is one TeX Live allows.  `shell_escape` in `satex.yaml` says which of
 the three this build is.
 
 Fix by running with the flag the document needs, or by removing the call.",
+        references: &[Ref { source: Source::Pdftex, at: "-shell-escape" }],
         run: shell_escape,
     },
     Rule {
@@ -45,6 +47,7 @@ extensions count is the driver's (pdftex.def, dvips.def, xetex.def), so it
 follows the output.
 
 Fix by adding the file, or by producing the format the driver reads.",
+        references: &[Ref { source: Source::Graphics, at: "pdftex.def" }],
         run: missing_graphic,
     },
     Rule {
@@ -53,15 +56,18 @@ Fix by adding the file, or by producing the format the driver reads.",
         severity: Severity::Warning,
         summary: "an expl3 function takes other arguments than its name says",
         explanation: "\
-An expl3 name carries its signature after the colon ([interface3](https://ctan.org/pkg/expl3), \"Naming
-conventions\"): one letter per argument, `N` a single token, `n` a braced
-group, and so on.  What the function really consumes (the calls the run saw,
-or, for one defined in the document, running it on probe input) takes a
-different number of arguments, or an optional one or a star, which no expl3
-signature has.  `\\foo:nn` that takes one argument leaves the second for
-whatever follows.
+An expl3 name carries its signature after the colon
+([interface3](https://ctan.org/pkg/expl3), \"Naming conventions\"): one letter
+per argument, `N` a single token, `n` a braced group.
 
-Fix by renaming the function to the signature it has, or its parameter text.",
+What the function really consumes — the calls the run saw, or probe input
+for one the document defines — takes a different number of arguments, or an
+optional one or a star, which no expl3 signature has.  `\\foo:nn` that takes
+one argument leaves the second for whatever follows.
+
+Fix by renaming the function to the signature it has, or its parameter
+text.",
+        references: &[Ref { source: Source::Interface3, at: "Naming conventions" }],
         run: expl3_signature_mismatch,
     },
     Rule {
@@ -70,15 +76,14 @@ Fix by renaming the function to the signature it has, or its parameter text.",
         severity: Severity::Error,
         summary: "a recursive macro has nothing that can stop it",
         explanation: "\
-The run saw the macro's expansion reach the macro again, from a call written
-in the replacement text of a macro of the cycle (a tail call included), the
-run could not see the recursion end, and its replacement text contains no
-conditional — no `\\if…`, `\\else` or
-`\\fi` — so nothing can end the recursion.  A macro nothing expands is judged
-by the names its replacement text holds, and reported as a warning.  A real run expands until TeX runs out of memory:
+The run saw the macro's expansion reach the macro again, could not see the
+recursion end, and found no conditional — no `\\if…`, `\\else` or `\\fi` — to
+end it.  A macro nothing expands is judged by the names its replacement text
+holds.  A real run expands until TeX runs out of memory:
 `TeX capacity exceeded, sorry [main memory size]`.
 
 Fix by adding the test that stops it, or by removing the self-reference.",
+        references: &[],
         run: unguarded_recursion,
     },
     Rule {
@@ -93,6 +98,7 @@ definition sits in a conditional arm that this use does not depend on.
 
 Fix by loading the package that provides it, defining it before the use, or
 correcting the spelling.",
+        references: &[Ref { source: Source::TeXbook, at: "chapter 27" }],
         run: undefined_control_sequences,
     },
     Rule {
@@ -108,6 +114,7 @@ instead.  An error reached only on a path satex could not decide, or after it
 lost track of the mode, is not one a real run need reach, and is not reported.
 
 Fix what the message says.",
+        references: &[],
         run: raised_errors,
     },
     Rule {
@@ -121,6 +128,7 @@ Fix what the message says.",
 
 Fix by loading the package that provides the environment or by defining it with
 `\\newenvironment{name}{…}{…}`.",
+        references: &[Ref { source: Source::Source2e, at: "ltmiscen.dtx" }],
         run: undefined_environments,
     },
     Rule {
@@ -130,11 +138,14 @@ Fix by loading the package that provides the environment or by defining it with
         summary: "a package, class or input file is not in the installation",
         explanation: "\
 The file was searched for in the document's directory, the configured search
-paths and the TEXMF trees, and not found.  `satex query distribution` shows
-which installation was searched.
+paths and the TEXMF trees, and not found. Case mismatches on case-insensitive
+filesystems are also reported: they work on Windows or macOS but break on Linux.
+`satex query distribution` shows which installation was searched.
 
 Fix by installing the package, adding its directory to `search_paths` in
-`satex.yaml`, or pointing `texmf_roots` at the right installation.",
+`satex.yaml`, pointing `texmf_roots` at the right installation, or
+(for case mismatches) renaming the file to match the requested name.",
+        references: &[Ref { source: Source::Chktex, at: "27" }],
         run: unresolved_files,
     },
     Rule {
@@ -148,6 +159,7 @@ did not have raises `Option clash for package`.
 
 Fix by giving all the options to the first load, or by using
 `\\PassOptionsToPackage` before it.",
+        references: &[Ref { source: Source::Source2e, at: "ltclass.dtx" }],
         run: option_clash,
     },
     Rule {
@@ -159,6 +171,7 @@ Fix by giving all the options to the first load, or by using
 `\\newcommand` refuses to redefine and raises `Command … already defined`.
 
 Fix with `\\renewcommand` if the redefinition is intended, or pick another name.",
+        references: &[Ref { source: Source::Source2e, at: "ltdefns.dtx" }],
         run: already_defined,
     },
     Rule {
@@ -171,6 +184,7 @@ Fix with `\\renewcommand` if the redefinition is intended, or pick another name.
 `Undefined control sequence`.
 
 Fix with `\\newcommand`, or load the package that was supposed to define it.",
+        references: &[Ref { source: Source::Source2e, at: "ltdefns.dtx" }],
         run: not_defined,
     },
     Rule {
@@ -183,6 +197,7 @@ No `\\label` in the document or its inputs declares this key, so the reference
 prints `??`.
 
 Fix by adding the `\\label`, or by correcting the key.",
+        references: &[Ref { source: Source::Source2e, at: "ltxref.dtx" }],
         run: undefined_reference,
     },
     Rule {
@@ -195,6 +210,7 @@ LaTeX warns `Label … multiply defined` and every reference resolves to the
 later one.
 
 Fix by renaming one of them.",
+        references: &[Ref { source: Source::Source2e, at: "ltxref.dtx" }],
         run: duplicate_label,
     },
     Rule {
@@ -209,6 +225,7 @@ level, and everything read after it is tokenized differently.
 
 Fix by wrapping the change in `{…}` or `\\begingroup…\\endgroup`, or by restoring
 the old value explicitly.  `satex query catcodes` shows the current table.",
+        references: &[Ref { source: Source::TeXbook, at: "chapter 5" }],
         run: catcode_escapes_group,
     },
     Rule {
@@ -226,6 +243,12 @@ occurrences, so this rule covers environments and not generic `{}`, `[]` or
 
 Fix by naming the environment that is actually open, or by closing the inner
 environments first.",
+        references: &[
+            Ref { source: Source::Chktex, at: "9" },
+            Ref { source: Source::Chktex, at: "10" },
+            Ref { source: Source::Chktex, at: "15" },
+            Ref { source: Source::Source2e, at: "ltmiscen.dtx" },
+        ],
         run: environment_mismatch,
     },
     Rule {
@@ -238,6 +261,7 @@ With expl3 syntax on, spaces are ignored and `_` and `:` are letters, so
 ordinary text stops working.
 
 Fix by adding `\\ExplSyntaxOff` after the code that needs it.",
+        references: &[Ref { source: Source::Source2e, at: "ltfiles.dtx" }],
         run: expl_syntax_left_on,
     },
 ];
@@ -248,13 +272,12 @@ fn unguarded_recursion(report: &mut Report) {
 
     let analysis = report.analysis();
     let recursive: std::collections::BTreeMap<Sym, bool> =
-        analysis.recursion().into_iter().map(|r| (r.name, r.observed)).collect();
+        report.index().recursion().iter().map(|r| (r.name, r.observed)).collect();
     let sites: std::collections::HashSet<crate::tex::Span> =
         analysis.facts.diagnostics.iter().filter(|d| d.code == "recursion-widened").map(|d| d.span).collect();
     let widened: std::collections::HashSet<Sym> =
         analysis.facts.expansions.iter().filter(|e| sites.contains(&e.span)).map(|e| e.name).collect();
-    let defs: Vec<_> = analysis.facts.defs.clone();
-    for def in defs {
+    for def in &analysis.facts.defs {
         let Some(&observed) = recursive.get(&def.name) else { continue };
         // A recursion the run saw end had something to stop it.
         if observed && !widened.contains(&def.name) {
@@ -291,7 +314,7 @@ fn unguarded_recursion(report: &mut Report) {
 
 fn undefined_control_sequences(report: &mut Report) {
     // Under ConTeXt satex knows the primitives and nothing else, so every
-    // ConTeXt command would look undefined; it reports none rather than all.
+    // ConTeXt command would look undefined, so it reports none at all.
     if report.analysis.plugins.kernel == crate::plugin::Kernel::Context {
         return;
     }
@@ -319,6 +342,7 @@ fn undefined_control_sequences(report: &mut Report) {
 /// at the request that read the file raising it.
 fn raised_errors(report: &mut Report) {
     let analysis = report.analysis();
+    let view = report.text();
     let mut seen = std::collections::HashSet::new();
     for o in &analysis.facts.occurrences {
         if !crate::lint::shared::is_error(analysis, o) || !o.certain || !seen.insert((o.span, o.key.as_str())) {
@@ -327,7 +351,7 @@ fn raised_errors(report: &mut Report) {
         let mut span = o.span;
         let mut via = None;
         for _ in 0..64 {
-            if crate::query::origin(analysis, span.file) == "document" {
+            if view.document(span.file) {
                 break;
             }
             let Some(load) = analysis.facts.loads.iter().find(|l| l.file == Some(span.file)) else { break };
@@ -361,9 +385,9 @@ fn undefined_environments(report: &mut Report) {
 fn unresolved_files(report: &mut Report) {
     let distribution = report.analysis.distribution.describe();
     let empty = report.analysis.distribution.indexed == 0;
-    let loads: Vec<_> = report.analysis.facts.loads.clone();
-    for load in loads {
-        if load.name.is_empty() {
+    let analysis = report.analysis();
+    for load in &analysis.facts.loads {
+        if load.name.is_empty() || crate::plugin::packages::installable_load(analysis, load) {
             continue;
         }
         let message = match load.status {
@@ -372,10 +396,23 @@ fn unresolved_files(report: &mut Report) {
                 format!("{} `{}` is not in this installation ({distribution})", load.kind.as_str(), load.name)
             }
             LoadStatus::Unreadable => format!("`{}` was found but could not be read", load.name),
+            LoadStatus::CaseMismatch => {
+                let on_disk = load.case_mismatch_disk_name.as_deref().unwrap_or(&load.name);
+                format!(
+                    "exists as `{on_disk}` but was asked for as `{}`: works here, breaks on case-sensitive systems",
+                    load.name
+                )
+            }
             _ => continue,
         };
         let fix = if empty {
             Some("set texmf_roots or texlive_root in satex.yaml".to_string())
+        } else if load.status == LoadStatus::CaseMismatch {
+            Some(format!(
+                "rename `{}` to match the requested name `{}`",
+                load.case_mismatch_disk_name.as_deref().unwrap_or(&load.name),
+                load.name
+            ))
         } else {
             Some(format!("install `{}`, or add its directory to search_paths", load.name))
         };
@@ -388,15 +425,18 @@ fn unresolved_files(report: &mut Report) {
         Some(rest[..rest.find("' not found")?].to_string())
     });
     for (span, name) in missing {
+        if crate::plugin::packages::installable(analysis, &name).is_some() {
+            continue;
+        }
         let message = format!("`{name}` is not in this installation ({distribution})");
         report.add(span, &name, message, Some(format!("install `{name}`, or add its directory to search_paths")));
     }
 }
 
 fn option_clash(report: &mut Report) {
-    let first = first_loads(report.analysis);
-    let loads: Vec<_> = report.analysis.facts.loads.clone();
-    for load in loads {
+    let analysis = report.analysis();
+    let first = report.index().first_loads();
+    for load in &analysis.facts.loads {
         if !load.kind.is_package() {
             continue;
         }
@@ -408,8 +448,8 @@ fn option_clash(report: &mut Report) {
         if extra.is_empty() {
             continue;
         }
-        let first_load = report.analysis.facts.loads.iter().find(|l| l.span == *at && l.name == load.name).cloned();
-        let edits = first_load.and_then(|first| report.edits().add_options(&first, &extra));
+        let first_load = analysis.facts.loads.iter().find(|l| l.span == *at && l.name == load.name);
+        let edits = first_load.and_then(|first| report.edits().add_options(first, &extra));
         report.add_fix(
             load.span,
             &load.name,
@@ -465,8 +505,7 @@ fn renamed(report: &Report, span: Span, from: &str, to: &str) -> Option<Vec<crat
 }
 
 /// The kernel's `\renew@command` of an unknown name: `Command \⟨name⟩
-/// undefined`;
-/// it defines the name all the same (ltdefns).
+/// undefined`.  It defines the name all the same (ltdefns).
 fn not_defined(report: &mut Report) {
     let missing = kernel_errors(report, |text| {
         let rest = &text[text.find("Command \\")? + "Command ".len()..];
@@ -498,7 +537,7 @@ fn kernel_errors(report: &Report, parse: impl Fn(&str) -> Option<String>) -> Vec
 }
 
 fn undefined_reference(report: &mut Report) {
-    let known = labels(report.analysis);
+    let known = report.index().labels();
     let missing: Vec<(Span, String)> = report
         .analysis
         .facts
@@ -518,7 +557,7 @@ fn undefined_reference(report: &mut Report) {
 }
 
 fn duplicate_label(report: &mut Report) {
-    let first = labels(report.analysis);
+    let first = report.index().labels();
     let repeats: Vec<(Span, String, Span)> = report
         .analysis
         .facts
@@ -578,8 +617,8 @@ fn expl_syntax_left_on(report: &mut Report) {
 }
 
 /// graphics.sty's `\Ginclude@graphics` raises `File `⟨name⟩' not found`
-/// when no extension in `\Gin@extensions` names a file on `\Ginput@path`;
-/// the lint reports what the real code said, once per call.
+/// when no extension in `\Gin@extensions` names a file on `\Ginput@path`.
+/// The lint reports what the real code said, once per call.
 fn missing_graphic(report: &mut Report) {
     let mut seen = std::collections::HashSet::new();
     let missing: Vec<(Span, String)> = report
@@ -604,39 +643,58 @@ fn missing_graphic(report: &mut Report) {
 }
 
 /// The programs a restricted build runs: the installation's own
-/// `shell_escape_commands` (texmf.cnf), as `kpsewhich -var-value` reports it.
-fn restricted_commands() -> Vec<String> {
-    static COMMANDS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    COMMANDS
-        .get_or_init(|| {
-            std::process::Command::new("kpsewhich")
-                .args(["-var-value", "shell_escape_commands"])
-                .output()
-                .ok()
-                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-                .map(|text| text.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect())
-                .unwrap_or_default()
-        })
-        .clone()
+/// `shell_escape_commands` (texmf.cnf), as the provider's kpathsea program
+/// reports it.  `None` when there is nothing to ask, which is not the same
+/// answer as an empty list.
+fn restricted_commands(provider: Option<Provider>) -> Option<&'static [String]> {
+    // Only the two kpathsea names exist, so one cell each beats a keyed cache.
+    static TEXLIVE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    static MIKTEX: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let locator = Provider::kpsewhich_of(provider)?;
+    let cell = if locator == Provider::MikTeX.locator() { &MIKTEX } else { &TEXLIVE };
+    let commands = cell.get_or_init(|| shell_escape_commands(locator));
+    (!commands.is_empty()).then_some(commands.as_slice())
+}
+
+fn shell_escape_commands(locator: &str) -> Vec<String> {
+    std::process::Command::new(locator)
+        .args(["-var-value", "shell_escape_commands"])
+        .output()
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .map(|text| text.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect())
+        .unwrap_or_default()
 }
 
 fn shell_escape(report: &mut Report) {
     let analysis = report.analysis;
     let mode = analysis.settings.shell_escape;
-    let allowed = restricted_commands();
-    let occurrences: Vec<_> = analysis.facts.occurrences.clone();
-    for occurrence in occurrences {
+    let provider = analysis.plugins.provider;
+    for occurrence in &analysis.facts.occurrences {
         if occurrence.kind != OccKind::ShellEscape {
             continue;
         }
         let program = occurrence.key.split_whitespace().next().unwrap_or_default().to_string();
+        // `restricted_commands` runs kpsewhich: only ask once a finding turns on the answer.
         let (severity, message) = match mode {
             crate::config::ShellEscape::None => {
                 (Severity::Error, format!("`{program}` cannot run: this build has no shell escape"))
             }
-            crate::config::ShellEscape::Restricted if !allowed.contains(&program) => {
-                (Severity::Error, format!("`{program}` is not one of the programs a restricted build runs"))
-            }
+            crate::config::ShellEscape::Restricted => match restricted_commands(provider) {
+                Some(allowed) if !allowed.contains(&program) => {
+                    (Severity::Error, format!("`{program}` is not one of the programs a restricted build runs"))
+                }
+                Some(_) => (Severity::Info, format!("`{program}` runs through \\write18")),
+                // Nothing to read texmf.cnf with, so the allowed list is
+                // unknown: say so rather than call the program disallowed.
+                None => (
+                    Severity::Warning,
+                    format!(
+                        "`{program}` runs through \\write18, and satex found no kpathsea program \
+                         to read shell_escape_commands from"
+                    ),
+                ),
+            },
             _ => (Severity::Info, format!("`{program}` runs through \\write18")),
         };
         report.add_as(severity, occurrence.span, &program, message, None);
@@ -648,7 +706,7 @@ fn shell_escape(report: &mut Report) {
 /// walked in source order and matched with a plain stack, the same algorithm
 /// chktex itself uses for brackets.
 /// latex.ltx's `\@checkend` raises `\begin{x} on input line n ended by
-/// \end{y}`; the rule reports the errors the run raised.
+/// \end{y}`.  The rule reports the errors the run raised.
 fn environment_mismatch(report: &mut Report) {
     let between = |text: &str, open: &str| -> Option<String> {
         let rest = &text[text.find(open)? + open.len()..];
@@ -743,11 +801,11 @@ fn undefined_glossary_entry(report: &mut Report) {
 /// An expl3 function's name against what it was seen, or probed, to take.
 fn expl3_signature_mismatch(report: &mut Report) {
     let analysis = report.analysis();
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = vec![false; analysis.facts.defs.iter().map(|d| d.name.0 as usize + 1).max().unwrap_or(0)];
     let mut found = Vec::new();
     for def in analysis.facts.defs.iter().rev() {
         let Some(mac) = &def.mac else { continue };
-        if !seen.insert(def.name) {
+        if std::mem::replace(&mut seen[def.name.0 as usize], true) {
             continue;
         }
         let name = analysis.interner.name(def.name);

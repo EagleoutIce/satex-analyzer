@@ -84,12 +84,21 @@ pub fn status(context: &Context, out: &mut impl Write) -> Result<Output, String>
             );
         }
         let (count, bytes) = crate::format::package_caches(directory);
+        let prepares = if analysis.settings.cache_index.packages.is_empty() {
+            let found = build::discover_expensive(directory, build::EXPENSIVE_BYTES);
+            if found.is_empty() {
+                "nothing yet; discovered from what ran here, once something has".to_string()
+            } else {
+                found.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", ")
+            }
+        } else {
+            analysis.settings.cache_index.packages.join(", ")
+        };
         let _ = writeln!(
             out,
-            "  {} {count} stored, {} (`satex cache build` prepares {})",
+            "  {} {count} stored, {} (`satex cache build` prepares {prepares})",
             render::label("package caches"),
             bytesize::ByteSize(bytes),
-            analysis.settings.cache_index.packages.join(", ")
         );
     }
     if fmt.lines > 0 {

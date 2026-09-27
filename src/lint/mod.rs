@@ -259,7 +259,11 @@ pub struct Rule {
 pub struct Report<'a> {
     analysis: &'a Analysis,
     sources: &'a fix::Sources,
+    text: &'a text::View<'a>,
+    index: &'a Index<'a>,
     rule: &'static Rule,
+    /// [`cites`] for `rule`, built once instead of once per finding.
+    reference: String,
     out: Vec<Record>,
 }
 
@@ -278,7 +282,7 @@ impl<'a> Report<'a> {
         self.push(severity, span, name, message, fix, None);
     }
 
-    /// A finding whose fix carries edits; [`Report::edits`] builds them.
+    /// A finding whose fix carries edits. [`Report::edits`] builds them.
     pub fn add_fix(&mut self, span: Span, name: &str, message: String, fix: fix::Fix) {
         self.add_fix_as(self.rule.severity, span, name, message, fix);
     }
@@ -286,6 +290,30 @@ impl<'a> Report<'a> {
     pub fn add_fix_as(&mut self, severity: Severity, span: Span, name: &str, message: String, fix: fix::Fix) {
         let edits = (!fix.edits.is_empty()).then_some((fix.applicability, fix.edits));
         self.push(severity, span, name, message, Some(fix.description), edits);
+    }
+
+    /// A finding over the characters `rewrite` covers, whose fix writes
+    /// what belongs there in their place.
+    pub fn rewrite(&mut self, rewrite: text::Rewrite) {
+        let view = self.text;
+        let Some(span) = view.span(rewrite.range.start) else { return };
+        let edits = rewrite.want.as_ref().and_then(|want| text::replace(&self.edits(), view, rewrite.range, want));
+        let description = rewrite.fix.unwrap_or_else(|| format!("write `{}`", rewrite.want.unwrap_or_default()));
+        let fix = fix::Fix::new(description, rewrite.applicability, edits);
+        match rewrite.severity {
+            Some(severity) => self.add_fix_as(severity, span, &rewrite.name, rewrite.message, fix),
+            None => self.add_fix(span, &rewrite.name, rewrite.message, fix),
+        }
+    }
+
+    /// The characters the document set, built once for every rule.
+    pub fn text(&self) -> &'a text::View<'a> {
+        self.text
+    }
+
+    /// The fact indexes shared by every rule of one run.
+    pub fn index(&self) -> &'a Index<'a> {
+        self.index
     }
 
     pub fn edits(&self) -> fix::Edits<'a> {
@@ -306,7 +334,8 @@ impl<'a> Report<'a> {
         record.insert("category".into(), json!(self.rule.category.as_str()));
         record.insert("severity".into(), json!(severity.as_str()));
         record.insert("name".into(), json!(name));
-        record.insert("origin".into(), json!(crate::query::origin(self.analysis, span.file)));
+        record.insert("reference".into(), json!(self.reference));
+        record.insert("origin".into(), json!(self.index.origin(span.file)));
         record.insert("message".into(), json!(message));
         record.insert("fix".into(), json!(fix));
         if let Some((applicability, edits)) = edits {
@@ -333,6 +362,7 @@ impl<'a> Report<'a> {
         record.insert("category".into(), json!(self.rule.category.as_str()));
         record.insert("severity".into(), json!(self.rule.severity.as_str()));
         record.insert("name".into(), json!(name));
+        record.insert("reference".into(), json!(self.reference));
         record.insert("origin".into(), json!("build"));
         record.insert("message".into(), json!(message));
         record.insert("fix".into(), json!(fix));
@@ -343,16 +373,56 @@ impl<'a> Report<'a> {
 pub fn lint(analysis: &Analysis) -> Vec<Record> {
     let mut out = Vec::new();
     let sources = fix::Sources::default();
+    let text = text::View::of(analysis, &sources);
+    let index = Index::of(analysis);
+    let mut raised: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for rule in all().filter(|rule| !analysis.settings.lint_off.iter().any(|code| code == rule.code)) {
-        let mut report = Report { analysis, sources: &sources, rule, out: Vec::new() };
+        let mut report = Report {
+            analysis,
+            sources: &sources,
+            text: &text,
+            index: &index,
+            rule,
+            reference: cites(rule),
+            out: Vec::new(),
+        };
         (rule.run)(&mut report);
+        let start = out.len();
         out.append(&mut report.out);
+        if rule.code == "raised-error" {
+            raised.extend(start..out.len());
+        }
     }
-    // A raised error another rule explains at the same place is its.
-    let place = |r: &Record| (r.get("path").cloned(), r.get("line").cloned(), r.get("col").cloned());
-    let explained: std::collections::HashSet<_> =
-        out.iter().filter(|r| r.get("code").is_some_and(|c| c != "raised-error")).map(place).collect();
-    out.retain(|r| r.get("code").is_none_or(|c| c != "raised-error") || !explained.contains(&place(r)));
+    // A raised error another rule explains at the same place is its.  The
+    // places a raised error stands at are few, so the line alone sieves the
+    // rest out before any place is built.
+    if !raised.is_empty() {
+        fn place(r: &Record) -> (Option<&str>, Option<u64>, Option<u64>) {
+            (
+                r.get("path").and_then(|v| v.as_str()),
+                r.get("line").and_then(|v| v.as_u64()),
+                r.get("col").and_then(|v| v.as_u64()),
+            )
+        }
+        let line = |r: &Record| r.get("line").and_then(|v| v.as_u64());
+        let lines: std::collections::HashSet<_> = raised.iter().map(|i| line(&out[*i])).collect();
+        let mut explained: std::collections::HashSet<_> = std::collections::HashSet::new();
+        for (i, record) in out.iter().enumerate() {
+            if !raised.contains(&i) && lines.contains(&line(record)) {
+                explained.insert(place(record));
+            }
+        }
+        let mut keep = vec![true; out.len()];
+        for &i in &raised {
+            keep[i] = !explained.contains(&place(&out[i]));
+        }
+        drop(explained);
+        let mut at = 0;
+        out.retain(|_| {
+            at += 1;
+            keep[at - 1]
+        });
+    }
     suppress::apply(analysis, out)
 }
 
@@ -368,41 +438,17 @@ pub fn rules() -> Vec<Record> {
             record.insert("category".into(), json!(rule.category.as_str()));
             record.insert("severity".into(), json!(rule.severity.as_str()));
             record.insert("message".into(), json!(rule.summary));
+            record.insert("reference".into(), json!(cites(rule)));
             record
         })
         .collect()
 }
 
-pub fn explanation(code: &str) -> Option<&'static Rule> {
-    all().find(|rule| rule.code == code)
+/// The rule's references as one citation string, empty when it has none.
+pub fn cites(rule: &Rule) -> String {
+    rule.references.iter().map(Ref::cite).collect::<Vec<_>>().join(", ")
 }
 
-static PREAMBLE_COST: Rule = Rule {
-    code: "preamble-cost",
-    category: Category::Performance,
-    severity: Severity::Info,
-    summary: "what the preamble costs on every build",
-    explanation: "\
-The packages the document asks for and the files read before
-`\\begin{document}`.  This work repeats on every compilation.
-
-Fix by precompiling the preamble into a format with `mylatexformat` or
-`precompiled preamble` support in your editor, which skips it entirely.",
-    run: preamble_cost,
-};
-
-fn preamble_cost(report: &mut Report) {
-    let analysis = report.analysis;
-    let direct =
-        analysis.facts.loads.iter().filter(|l| l.kind.is_package() && l.span.file == analysis.main_file).count();
-    let span = document_start(analysis).unwrap_or_default();
-    report.add(
-        span,
-        "",
-        format!(
-            "{direct} packages requested directly, {} files read",
-            analysis.preamble_files.unwrap_or(analysis.files.len()),
-        ),
-        Some("precompile the preamble into a format to skip this on every build".into()),
-    );
+pub fn explanation(code: &str) -> Option<&'static Rule> {
+    all().find(|rule| rule.code == code)
 }

@@ -167,8 +167,7 @@ impl Depp {
             }
         }
 
-        let base =
-            Path::new(analysis.file_name(analysis.main_file)).parent().map(Path::to_path_buf).unwrap_or_default();
+        let base = crate::paths::dir_of(Path::new(analysis.file_name(analysis.main_file)));
         let jobname = Path::new(analysis.file_name(analysis.main_file))
             .file_stem()
             .and_then(|s| s.to_str())

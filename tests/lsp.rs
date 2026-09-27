@@ -125,7 +125,7 @@ impl Server {
 }
 
 fn fixture_uri(path: &std::path::Path) -> String {
-    format!("file://{}", path.display())
+    satex::paths::file_url(path)
 }
 
 #[test]

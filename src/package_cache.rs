@@ -33,7 +33,7 @@ use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Frame, Machine, Metadata, Site};
+use super::{Frame, Machine, Metadata, RECENT_FILE_SPANS, Site};
 use crate::builtins::{DefMode, LoadKind, OccKind};
 use crate::env::{Binding, NodeId, ReadKind};
 use crate::facts::{
@@ -215,6 +215,7 @@ struct CachedLoad {
     required: Option<String>,
     provided: Option<String>,
     depth: u16,
+    case_mismatch_disk_name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -341,7 +342,12 @@ struct Node {
     lookups: Vec<(String, LoadKind, Option<PathBuf>)>,
     names: Vec<String>,
     paths: Vec<String>,
+    /// Postcard's derived `Vec<u8>` decode visits one byte at a time; a
+    /// large package's blobs dwarf everything else read from its cache
+    /// file, so these two go through `serde_bytes` for a bulk copy instead.
+    #[serde(with = "serde_bytes")]
     reads: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     effect: Vec<u8>,
 }
 
@@ -889,6 +895,7 @@ impl Machine<'_> {
             class_options: _,
             identifying: _,
             last_named_cs: _,
+            font_watch: _,
             source_progress: _,
             call_shape: _,
             gaps: _,
@@ -896,6 +903,7 @@ impl Machine<'_> {
             recent_file_spans: _,
             file_call: _,
             project_site: _,
+            absorbed: _,
             file_calls: _,
             counter_namespace: _,
             progress_step: _,
@@ -909,6 +917,8 @@ impl Machine<'_> {
             prefixes,
             long_argument,
             runaway,
+            scan_abandoned: _,
+            unknown_chars: _,
             cds,
             conds,
             testing,
@@ -969,6 +979,7 @@ impl Machine<'_> {
             diag_seen: _,
             diag_floor: _,
             quantity: _,
+            text_broken: _,
         } = self;
         Rest {
             input,
@@ -1514,7 +1525,8 @@ impl Machine<'_> {
                 count: e.count,
                 mode: e.mode,
             });
-            self.expansion_sites.insert(key, Site { fact, repeats: e.repeats, progress: 0 });
+            self.expansion_sites
+                .insert(key, Site { fact, repeats: e.repeats, progress: 0, size: usize::MAX, source: 0, unread: 1 });
             sites.push((key, fact, e.repeats, e.current));
         }
         let base_loads = before.loads as i64;
@@ -1533,6 +1545,7 @@ impl Machine<'_> {
                 required: l.required.clone(),
                 provided: l.provided.clone(),
                 depth: l.depth,
+                case_mismatch_disk_name: l.case_mismatch_disk_name.clone(),
             });
         }
         for (load, provided) in &st.identifications {
@@ -1632,7 +1645,7 @@ impl Machine<'_> {
         let now = self.site_progress();
         for (key, fact, repeats, current) in sites {
             let progress = if current { now } else { !now };
-            self.expansion_sites.insert(key, Site { fact, repeats, progress });
+            self.expansion_sites.insert(key, Site { fact, repeats, progress, size: usize::MAX, source: 0, unread: 1 });
         }
         Some(written)
     }
@@ -1725,9 +1738,6 @@ impl Machine<'_> {
         out
     }
 }
-
-/// How many given-back file tokens the machine remembers.
-const RECENT_FILE_SPANS: usize = 64;
 
 /// How many tokens a segment holds at least before a checkpoint ends it,
 /// unless the file ends first.  A load that diverges from its cache is read
@@ -2379,6 +2389,7 @@ impl Machine<'_> {
                 required: l.required.clone(),
                 provided: l.provided.clone(),
                 depth: l.depth,
+                case_mismatch_disk_name: l.case_mismatch_disk_name.clone(),
             })
             .collect();
         let identifications = rec.log.identifications[m.identifications..]

@@ -10,7 +10,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{Category, Report, Rule, Severity};
+use super::{Category, Ref, Report, Rule, Severity, Source};
 use crate::builtins::OccKind;
 use crate::config::Engine;
 use crate::machine::Analysis;
@@ -33,6 +33,10 @@ TeX Live allows).  latexmk starts the engine with the command in `$pdflatex`,
 Fix by adding `-shell-escape` to the command, e.g.
 `$pdflatex = 'pdflatex -shell-escape %O %S';`, or
 `set_tex_cmds('-shell-escape %O %S');` for every engine at once.",
+        references: &[
+            Ref { source: Source::Latexmk, at: "$pdf_mode" },
+            Ref { source: Source::Arara, at: "The official rules" },
+        ],
         run: shell_escape_missing,
     },
     Rule {
@@ -47,6 +51,7 @@ permission buys nothing and only widens what a hostile input file can do.
 
 Fix by removing `-shell-escape` from the engine command (or `shell: yes` from
 the arara directive).",
+        references: &[Ref { source: Source::Pdftex, at: "-shell-escape" }],
         run: shell_escape_unneeded,
     },
     Rule {
@@ -63,6 +68,7 @@ when it uses a primitive only another engine has (`\\directlua` is LuaTeX's,
 than latexmk waits for.
 
 Fix by setting `$pdf_mode` to the engine the document is written for.",
+        references: &[Ref { source: Source::Latexmk, at: "$pdf_mode" }],
         run: engine_mismatch,
     },
     Rule {
@@ -77,6 +83,7 @@ and every citation stays undefined.
 
 Fix by removing the setting; latexmk's default, 1, runs them whenever the
 `.bib` files exist.",
+        references: &[Ref { source: Source::Latexmk, at: "$bibtex_use" }],
         run: bibliography_disabled,
     },
     Rule {
@@ -90,6 +97,7 @@ no bibliography database (`\\bibliography`, `\\addbibresource`), so the setting
 never takes effect (latexmk(1), `$bibtex_use`).
 
 Fix by removing the setting.",
+        references: &[Ref { source: Source::Latexmk, at: "$bibtex_use" }],
         run: bibliography_unneeded,
     },
     Rule {
@@ -106,6 +114,10 @@ The glossaries manual gives the rule, e.g.
 
     add_cus_dep('glo', 'gls', 0, 'makeglossaries');
     sub makeglossaries { system(\"makeglossaries '$_[0]'\"); }",
+        references: &[
+            Ref { source: Source::Latexmk, at: "CUSTOM DEPENDENCIES" },
+            Ref { source: Source::Glossaries, at: "bib2gls" },
+        ],
         run: missing_custom_dependency,
     },
     Rule {
@@ -120,6 +132,7 @@ DEPENDENCIES\").  The document writes no glossary or index, and no file with the
 `from` extension is in the project, so the rule never runs.
 
 Fix by removing the rule, or keep it if another document of the project needs it.",
+        references: &[Ref { source: Source::Latexmk, at: "CUSTOM DEPENDENCIES" }],
         run: unused_custom_dependency,
     },
     Rule {
@@ -134,6 +147,7 @@ without `%S` compiles nothing, and one without `%O` loses `-jobname`,
 `-output-directory` and the options given on latexmk's own command line.
 
 Fix by ending the command with `%O %S`.",
+        references: &[Ref { source: Source::Latexmk, at: "FORMAT OF COMMAND SPECIFICATIONS" }],
         run: command_placeholders,
     },
     Rule {
@@ -143,12 +157,16 @@ Fix by ending the command with `%O %S`.",
         summary: "the engine command could report errors as file:line and write SyncTeX data",
         explanation: "\
 `-file-line-error` makes the engine report `file:line: message` instead of
-`! message`, which editors and satex's log reading can jump to; `-synctex=1`
-writes the data that links the PDF back to the source (pdftex(1), luatex(1)).
-Both cost nothing measurable.
+`! message`, which editors and satex's log reading can jump to.  `-synctex=1`
+writes the data that links the PDF back to the source.  Both cost nothing
+measurable.
 
 Fix by adding them to the command, e.g.
 `$pdflatex = 'pdflatex -file-line-error -synctex=1 %O %S';`.",
+        references: &[
+            Ref { source: Source::Pdftex, at: "-file-line-error" },
+            Ref { source: Source::Luatex, at: "-synctex" },
+        ],
         run: engine_options,
     },
 ];
@@ -217,7 +235,7 @@ impl Latexmkrc {
     }
 
     /// The engine command variable `$pdf_mode` selects, and the engine it
-    /// runs; `None` when `$pdf_mode` is not set here, which leaves the
+    /// runs.  `None` when `$pdf_mode` is not set here, which leaves the
     /// choice to latexmk's command line.
     fn selected(&self) -> Option<(&'static str, Engine)> {
         let mode = self.setting("pdf_mode")?;
@@ -617,7 +635,7 @@ fn unused_custom_dependency(report: &mut Report) {
         return;
     }
     for rc in latexmkrcs(analysis) {
-        let directory = rc.path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let directory = crate::paths::dir_of(&rc.path);
         for dependency in &rc.dependencies {
             if writes(analysis, &[dependency.from.trim_start_matches('.')])
                 || has_extension(&directory, &dependency.from)

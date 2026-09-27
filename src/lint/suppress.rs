@@ -30,8 +30,9 @@ nothing, since matching a finding's own code is all these comments do.
 Fix by correcting the code, or removing it if the rule was renamed or
 never existed.",
     // The finding is produced by `suppress::apply`, which already scans
-    // every magic comment while it builds the suppression map; a second,
+    // every magic comment while it builds the suppression map.  A second,
     // ordinary rule pass would just repeat that scan.
+    references: &[],
     run: |_| {},
 }];
 
@@ -81,6 +82,8 @@ fn parse_directive(comment: &str) -> Option<Directive> {
 
 #[derive(Default)]
 struct FileSuppressions {
+    /// No directive at all: the file suppresses nothing.
+    empty: bool,
     file_all: bool,
     file_codes: HashSet<String>,
     next_line: HashMap<u32, Option<Vec<String>>>,
@@ -99,10 +102,9 @@ impl FileSuppressions {
             return true;
         }
         // A region's state as of `line`: `all` once a bare `disable` is
-        // seen, `exceptions` are codes an `enable` carved back out of it;
-        // outside `all`, `specific` are the codes a bare-less `disable`
-        // named directly. Recomputed per query: regions are few, findings
-        // are not, and a finding's own suppression never changes a run.
+        // seen, `exceptions` the codes an `enable` carved back out of it,
+        // and `specific` the codes a `disable` named directly outside an
+        // `all`.  Recomputed per query, because regions are few.
         let (mut all, mut specific, mut exceptions) = (false, HashSet::<&str>::new(), HashSet::<&str>::new());
         for (at, dir) in &self.regions {
             if *at > line {
@@ -146,7 +148,7 @@ fn unknown_finding(path: &str, line: u32, col: u32, code: &str) -> Record {
 }
 
 fn scan(path: &str, text: &str) -> (FileSuppressions, Vec<Record>) {
-    let mut sup = FileSuppressions::default();
+    let mut sup = FileSuppressions { empty: true, ..FileSuppressions::default() };
     let mut warnings = Vec::new();
     for (i, line) in text.lines().enumerate() {
         let ln = i as u32 + 1;
@@ -160,6 +162,7 @@ fn scan(path: &str, text: &str) -> (FileSuppressions, Vec<Record>) {
                 }
             }
         }
+        sup.empty = false;
         match dir.kind {
             Kind::NextLine => {
                 sup.next_line.insert(ln + 1, dir.codes);
@@ -194,6 +197,12 @@ pub fn apply(analysis: &Analysis, records: Vec<Record>) -> Vec<Record> {
         let (sup, warnings) = scan(&path, &text);
         extra.extend(warnings);
         by_file.insert(path, sup);
+    }
+    // Nothing to match against: the common document has no magic comment.
+    if by_file.values().all(|sup| sup.empty) {
+        let mut out = records;
+        out.extend(extra);
+        return out;
     }
     let mut out: Vec<Record> = records
         .into_iter()

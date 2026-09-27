@@ -268,6 +268,7 @@ pub(super) fn load(m: &mut Machine, module: &Module, span: Span) -> Option<(Path
         required: None,
         provided: None,
         depth: load_depth,
+        case_mismatch_disk_name: None,
     });
     let path = path?;
     m.lua.read.insert(path.clone());
@@ -315,8 +316,8 @@ fn find(m: &mut Machine, module: &Module, span: Span) -> Option<PathBuf> {
             vec![format!("{name}.lua"), format!("{}.lua", name.replace('.', "/"))]
         }
     };
-    let here = Path::new(m.out.file_name(span.file)).parent().map(Path::to_path_buf);
-    let mut dirs: Vec<PathBuf> = here.into_iter().collect();
+    let here = crate::paths::dir_of(Path::new(m.out.file_name(span.file)));
+    let mut dirs: Vec<PathBuf> = vec![here];
     dirs.push(m.base().to_path_buf());
     dirs.extend(m.cfg.search_paths.iter().cloned());
     dirs.extend(m.out.project.search_paths());

@@ -21,6 +21,16 @@ lints:
     report_public: true    # also flag a public name
     ignore: []              # regexes on macro names the rule skips
     pgf_keys: false         # also flag a pgf key no-one uses
+  wrong-dash:               # how many hyphens belong in each context
+    letters: [1, 3]         # chktex HyphDash: a hyphen or an em-dash
+    digits: [2]             # chktex NumDash: an en-dash spans a range
+    words: [3]              # chktex WordDash: an em-dash breaks a sentence
+    except: [Birch--Swinnerton-Dyer]   # chktex DashExcpt: spellings to leave alone
+  user-pattern:             # chktex UserWarn and UserWarnRegex
+    patterns: []            # literal strings to report
+    regexes: []             # regular expressions to report
+  comment-marker:
+    markers: [TODO, FIXME, XXX, HACK]   # markers in a comment worth a finding
 # profile: package          # forces one instead of detecting it from the input
 
 # Sensible defaults per kind of input, chosen automatically by the input's
@@ -75,9 +85,10 @@ load_format: true         # interpret the installation's latex.ltx
 cache: true               # keep the interpreted kernel between runs
 # cache_dir: ~/.cache/satex   # else $SATEX_CACHE, else the platform default
 cache_index:              # package caches; `satex cache build` prepares the
-                          # packages listed (none by default; this list is ours)
-  packages: [tikz, pgfplots, xcolor, graphicx, hyperref, amsmath, siunitx, babel,
-             fontspec, biblatex, xparse, forest, tcolorbox, listings]
+                          # packages listed here, or, when empty, whatever
+                          # ordinary runs already found expensive to
+                          # interpret (measured, not a hand-picked list)
+  packages: []
   engines: []             # empty: the engine in effect
   class: article          # the class they are loaded after
   auto: true              # every run stores the packages it reads
@@ -107,6 +118,7 @@ plugins:
   tools: true             # infer biber, makeindex and the rest
   preload: true           # honor %& lines and -fmt=
   discovery: true         # walk the project, skipping what .gitignore excludes
+  packages: false         # ask tlmgr which package ships a missing file (network)
 
 trace: false              # record the execution trace
 timings: false            # measure where the time goes
