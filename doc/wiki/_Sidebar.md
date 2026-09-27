@@ -1,4 +1,4 @@
-**[🏠 Home](Home)**
+**[<img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wordmark.svg" alt="SaTeX" height="20"> Home](Home)**
 
 **[🔍 Lints](Lints)**
 - [chktex compliance](Chktex-Coverage)
