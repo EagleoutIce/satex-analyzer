@@ -288,13 +288,40 @@ fn a_negative_math_code_whose_character_fits_is_taken() {
         assert_eq!(the(engine, source, "\\Umathcodenum`\\A"), "0", "{engine:?}");
         assert_eq!(raised(engine, source, "invalid-code"), 1, "{engine:?}");
     }
-    // `-2147483647` carries character 1.  XeTeX reads it back as it stands;
-    // LuaTeX recomposes a negative code differently, which satex does not
-    // follow (see SATEX-KNOWN-ISSUES.md).
+    // `-2147483647` carries character 1, so both engines take it.
     let source = "\\Umathcodenum`\\A=-2147483647 ";
     assert_eq!(the(Engine::XeTeX, source, "\\Umathcodenum`\\A"), "-2147483647");
     assert_eq!(raised(Engine::XeTeX, source, "invalid-code"), 0);
     assert_eq!(raised(Engine::LuaTeX, source, "invalid-code"), 0);
+}
+
+/// LuaTeX splits an assigned code into a family, a class and a character and
+/// stores it recomposed, so a negative one comes back changed.  XeTeX stores
+/// the code whole.  Neither is an error, and a non-negative code is
+/// untouched.
+#[test]
+fn luatex_stores_a_negative_math_code_recomposed() {
+    for (code, lua) in [
+        ("-2147483647", "-2145386495"),
+        ("-1048576", "1048576"),
+        ("-2097152", "-2097152"),
+        ("-16777216", "-16777216"),
+        ("-33554432", "-33554432"),
+        ("-6291456", "-6291456"),
+        ("-268435456", "-268435456"),
+        ("-2145386496", "-2145386496"),
+        ("2146500607", "2146500607"),
+    ] {
+        let source = format!("\\Umathcodenum`\\A={code} ");
+        assert_eq!(the(Engine::LuaTeX, &source, "\\Umathcodenum`\\A"), lua, "luatex {code}");
+        assert_eq!(the(Engine::LuaTeX, &source, "\\mathcode`\\A"), lua, "luatex mathcode {code}");
+        assert_eq!(the(Engine::XeTeX, &source, "\\Umathcodenum`\\A"), code, "xetex {code}");
+        assert_eq!(raised(Engine::LuaTeX, &source, "invalid-code"), 0, "luatex {code}");
+    }
+    // `\\Umathcharnumdef` takes the same packed code, so it is recomposed too.
+    let source = "\\Umathcharnumdef\\zq=-2147483647 ";
+    assert_eq!(the(Engine::LuaTeX, source, "\\zq"), "-2145386495");
+    assert_eq!(the(Engine::XeTeX, source, "\\zq"), "-2147483647");
 }
 
 #[test]
@@ -716,6 +743,28 @@ fn umathcharnumdef_takes_the_same_codes_as_umathcodenum() {
     // A code the engine takes raises nothing.
     assert_eq!(raised(Engine::XeTeX, "\\Umathcharnumdef\\zq=31457345 ", "invalid-code"), 0);
     assert_eq!(raised(Engine::XeTeX, "\\Umathcharnumdef\\zq=1114112 ", "invalid-code"), 1);
+}
+
+/// `\meaning` splits the stored code into a class, a family and a character.
+/// XeTeX takes the three as bits.  LuaTeX divides by the character's width
+/// truncating towards zero, so a negative code shows a class one above its
+/// bits, and a carry out of the class shows in the family as well.
+#[test]
+fn a_negative_math_char_shows_the_fields_its_engine_splits_it_into() {
+    for (code, xe, lua) in [
+        ("-2147483647", "\\Umathchar\"0\"80\"1", "\\Umathchar\"2\"80\"000001"),
+        ("-16777215", "\\Umathchar\"0\"FF\"1", "\\Umathchar\"2\"FF\"000001"),
+        ("-2064865171", "\\Umathchar\"7\"84\"CA86D", "\\Umathchar\"1\"85\"0CA86D"),
+        ("-1048576", "\\Umathchar\"7\"FF\"100000", "\\Umathchar\"0\"00\"100000"),
+        ("-6291456", "\\Umathchar\"5\"FF\"0", "\\Umathchar\"5\"FF\"000000"),
+        ("-2097152", "\\Umathchar\"7\"FF\"0", "\\Umathchar\"7\"FF\"000000"),
+        ("31457345", "\\Umathchar\"7\"1\"41", "\\Umathchar\"7\"01\"000041"),
+        ("1114111", "\\Umathchar\"0\"0\"10FFFF", "\\Umathchar\"0\"00\"10FFFF"),
+    ] {
+        let source = format!("\\Umathcharnumdef\\zq={code} ");
+        assert_eq!(expand(Engine::XeTeX, &source, "\\meaning\\zq"), xe, "xetex {code}");
+        assert_eq!(expand(Engine::LuaTeX, &source, "\\meaning\\zq"), lua, "luatex {code}");
+    }
 }
 
 // `\readline` (eTeX manual § 3.2).
