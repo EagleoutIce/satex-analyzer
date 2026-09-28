@@ -48,15 +48,15 @@ fn body(analysis: &Analysis, name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Byte `n` of `text` as the character an 8-bit engine reads.  The real
-/// engine prints it as `^^xx`; satex writes the character itself.
-fn byte(text: &str, n: usize) -> char {
-    char::from(text.as_bytes()[n])
+/// Byte `n` of `text` as the engine prints the character it reads: a byte
+/// outside `' '`..`'~'` shows as `^^xx` (tex.web §§ 47-49).
+fn byte(text: &str, n: usize) -> String {
+    satex::tex::printable(char::from(text.as_bytes()[n]))
 }
 
-/// Every byte of `text` as its own character.
+/// Every byte of `text` as printed by the engine
 fn bytes_of(text: &str) -> String {
-    text.bytes().map(char::from).collect()
+    text.bytes().map(|b| satex::tex::printable(char::from(b))).collect()
 }
 
 /// What `satex tokens` prints for `text` under `engine`: every character
@@ -100,7 +100,7 @@ fn pdftex_takes_the_eight_bit_branch_of_the_hyph_utf8_probe() {
     for engine in [Engine::PdfTeX, Engine::Tex] {
         // pdftex: `\meaning\secondarg` is `macro:->^^a4`, the second byte.
         let analysis = run(&engine_probe(), engine);
-        assert_eq!(body(&analysis, "secondarg"), byte(TAU, 1).to_string(), "{engine:?}");
+        assert_eq!(body(&analysis, "secondarg"), byte(TAU, 1), "{engine:?}");
     }
 }
 
@@ -192,8 +192,8 @@ fn an_undelimited_argument_takes_one_byte_under_pdftex() {
     // is still in the stream; xetex and luatex give `Τ` and `Z`.
     let source = format!("\\def\\two#1#2{{\\def\\gotA{{#1}}\\def\\gotB{{#2}}}}\\two {TAU}Z");
     let analysis = run(&source, Engine::PdfTeX);
-    assert_eq!(body(&analysis, "gotA"), byte(TAU, 0).to_string());
-    assert_eq!(body(&analysis, "gotB"), byte(TAU, 1).to_string());
+    assert_eq!(body(&analysis, "gotA"), byte(TAU, 0));
+    assert_eq!(body(&analysis, "gotB"), byte(TAU, 1));
     for engine in [Engine::XeTeX, Engine::LuaTeX] {
         let analysis = run(&source, engine);
         assert_eq!(body(&analysis, "gotA"), TAU, "{engine:?}");
