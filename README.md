@@ -262,8 +262,8 @@ info      style        unused-bibitem                   a \bibitem written in th
 info      style        unused-color                     a colour the document defines is never used                     
 info      style        unused-definition                a macro defined in the document is never used                   
 info      style        unused-label                     a label is never referenced                                     
-warning   performance  duplicate-package                a package is loaded more than once                              
 warning   performance  package-after-preamble           a package is loaded after \begin{document}                      
+info      performance  duplicate-package                a package is loaded more than once                              
 info      performance  preamble-cost                    what the preamble costs on every build                          
 info      performance  recursive-macro                  a macro calls itself, directly or through others                
 info      performance  unused-dependency                the dependency file lists a TeX Live package no file of the r…  
@@ -562,7 +562,7 @@ index   step       name            detail                                       
 7734    open-file  \article        /usr/local/texlive/YYYY/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
 16002   expand     \value                                                             paper.tex  @ paper.tex:0:0
 29937   expand     \par                                                               paper.tex  @ paper.tex:2:1
-… 12 more lines omitted
+… 13 more lines omitted
 ```
 
 </details>

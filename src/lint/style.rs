@@ -375,17 +375,15 @@ fn is_pgf_key(name: &str) -> bool {
 fn unused_definition(report: &mut Report) {
     let analysis = report.analysis();
     let index = report.index();
-    let used = index.expanded();
     let rule = &analysis.settings.lints.unused_definition;
     let ignore: Vec<regex::Regex> = rule.ignore.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
     for def in &analysis.facts.defs {
         // A name one call defines for another it defines, whose text calls
         // it (ltcmd's `\fd code`), is that name's implementation.
-        if def.package.is_some()
-            || def.tag != "macro"
-            || used.contains(def.name)
+        if def.tag != "macro"
             || index.implements_sibling(def)
-            || !index.written_definition(def)
+            || !index.own_definition(def)
+            || index.used_definition(def)
         {
             continue;
         }
@@ -413,28 +411,18 @@ fn dead_definition(report: &mut Report) {
         .facts
         .defs
         .iter()
-        .filter(|def| def.certain && def.mac.is_some() && index.written_definition(def))
+        .filter(|def| def.certain && def.mac.is_some() && index.own_definition(def))
         .collect();
     // Grouped by name, as the report is ordered.  Only a name defined twice
     // can have a definition nothing reads.
     written.sort_by_key(|def| def.name);
-    let repeated: BTreeSet<Sym> = written.windows(2).filter(|p| p[0].name == p[1].name).map(|p| p[0].name).collect();
-    let mut uses: BTreeMap<Sym, Vec<crate::env::NodeId>> = BTreeMap::new();
-    for expansion in &analysis.facts.expansions {
-        if let (Some(node), true) = (expansion.node, repeated.contains(&expansion.name)) {
-            uses.entry(expansion.name).or_default().push(node);
-        }
-    }
     for sites in written.chunk_by(|a, b| a.name == b.name) {
         let name = sites[0].name;
-        let empty = Vec::new();
-        let read = uses.get(&name).unwrap_or(&empty);
         for pair in sites.windows(2) {
             let (first, second) = (pair[0], pair[1]);
-            if first.span == second.span || first.depth != second.depth {
-                continue;
-            }
-            if read.iter().any(|node| *node > first.node && *node < second.node) {
+            // Whatever reads the first definition, through any name, reads
+            // it before the second replaces it.
+            if first.span == second.span || first.depth != second.depth || index.used_definition(first) {
                 continue;
             }
             let rendered = analysis.interner.cs(name);
@@ -448,7 +436,7 @@ fn dead_definition(report: &mut Report) {
             report.add_fix(
                 first.span,
                 &rendered,
-                format!("{rendered} is redefined at {} before anything uses it", second.span),
+                format!("{rendered} is redefined at {} before anything uses it", report.place(second.span)),
                 Fix::new(format!("delete this definition of {rendered}"), applicability, edits),
             );
         }

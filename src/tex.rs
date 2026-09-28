@@ -679,20 +679,36 @@ pub fn printable(c: char) -> String {
 /// [`detokenize`] under an `\escapechar`: `None` when it names no
 /// character, and then no escape is printed (tex.web § 63, `print_esc`).
 pub fn detokenize_escaped(toks: &[Token], it: &Interner, escape: Option<char>) -> String {
-    detokenize_by(toks, it, escape, &|c: char| c.is_alphabetic())
+    detokenize_by(toks, it, escape, &|c: char| c.is_alphabetic(), true)
+}
+
+/// A token list as LuaTeX hands it to Lua (`\directlua`, `\luaescapestring`):
+/// every character as itself, never as `^^X` (probed: `a^^Jb` arrives as
+/// the bytes 97, 10, 98).
+pub fn lua_string(toks: &[Token], it: &Interner) -> String {
+    detokenize_by(toks, it, Some('\\'), &|c: char| c.is_alphabetic(), false)
 }
 
 /// [`detokenize_escaped`] as the engine prints it: whether a one-character
 /// control sequence gets a space after it depends on that character's
 /// category code now (tex.web § 262), so `\_ ` under expl3's catcodes.
 pub fn detokenize_in(toks: &[Token], it: &Interner, escape: Option<char>, cats: &CatcodeTable) -> String {
-    detokenize_by(toks, it, escape, &|c| cats.get(c) == Catcode::Letter)
+    detokenize_by(toks, it, escape, &|c| cats.get(c) == Catcode::Letter, true)
 }
 
-fn detokenize_by(toks: &[Token], it: &Interner, escape: Option<char>, letter: &dyn Fn(char) -> bool) -> String {
+fn detokenize_by(
+    toks: &[Token],
+    it: &Interner,
+    escape: Option<char>,
+    letter: &dyn Fn(char) -> bool,
+    caret: bool,
+) -> String {
+    // Without `caret` every character shows as itself.
+    let is_printable = |c: char| !caret || is_printable(c);
     // tex.web § 63 (`print_esc`) prints the escape character, so one the
     // engine cannot show comes out as `^^X`.
-    let escaped: String = escape.map(printable).unwrap_or_default();
+    let escaped: String =
+        escape.map(|c| if is_printable(c) { c.to_string() } else { printable(c) }).unwrap_or_default();
     let mut out = String::new();
     for t in toks {
         match t.tok {
@@ -712,7 +728,7 @@ fn detokenize_by(toks: &[Token], it: &Interner, escape: Option<char>, letter: &d
                 // control sequence a `\ ` at a line end names.  A name of
                 // satex's own is not one a document can write and is left as
                 // it stands, so the markers it uses stay recognisable.
-                if is_internal(name) || name.chars().all(is_printable) {
+                if is_internal(name) || name.chars().all(&is_printable) {
                     out.push_str(name);
                 } else {
                     out.extend(name.chars().map(printable));

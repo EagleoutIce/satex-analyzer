@@ -247,6 +247,9 @@ fn run() -> Result<(), String> {
         anstream::eprintln!("{}", analysis.stats(started.elapsed()));
     }
     log_gaps(&analysis, &cfg);
+    for note in analysis.limit_notes() {
+        anstream::eprintln!("satex: {note}");
+    }
     // What the run could not follow reads as a note on the answer, so it goes
     // after it.
     let unfollowed = match cfg.report_gaps && cli.format.is_text() {

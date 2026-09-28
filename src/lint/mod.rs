@@ -335,14 +335,28 @@ impl<'a> Report<'a> {
         record.insert("severity".into(), json!(severity.as_str()));
         record.insert("name".into(), json!(name));
         record.insert("reference".into(), json!(self.reference));
-        record.insert("origin".into(), json!(self.index.origin(span.file)));
+        let origin = self.index.origin(span.file);
+        record.insert("origin".into(), json!(origin));
         record.insert("message".into(), json!(message));
-        record.insert("fix".into(), json!(fix));
+        // A fix only ever changes the user's own files: its edits all land
+        // in files satex may change, and one with no edits, only advice, is
+        // given where the finding is in the user's own files.
+        let edits = edits.filter(|(_, edits)| {
+            !edits.is_empty() && edits.iter().all(|e| self.sources.editable(self.analysis, &e.path))
+        });
+        let advice = edits.is_some() || origin == "document";
+        record.insert("fix".into(), json!(fix.filter(|_| advice)));
         if let Some((applicability, edits)) = edits {
             record.insert("applicability".into(), json!(applicability.as_str()));
             record.insert("edits".into(), edits.iter().map(fix::Edit::to_json).collect());
         }
         self.out.push(record);
+    }
+
+    /// A place for a message: the file it is in as well as the line and
+    /// column, so that it names somewhere whichever file the finding is in.
+    pub fn place(&self, span: Span) -> String {
+        format!("{}:{}:{}", self.analysis.short_name(span.file), span.line, span.col)
     }
 
     pub fn cs(&self, sym: Sym) -> String {

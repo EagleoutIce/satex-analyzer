@@ -104,6 +104,7 @@ pub struct Index<'a> {
     error_spans: OnceCell<HashSet<Span>>,
     sites: OnceCell<Sites>,
     origins: RefCell<Vec<Option<&'static str>>>,
+    live: OnceCell<Vec<bool>>,
 }
 
 impl<'a> Index<'a> {
@@ -128,6 +129,7 @@ impl<'a> Index<'a> {
             error_spans: OnceCell::new(),
             sites: OnceCell::new(),
             origins: RefCell::new(vec![None; analysis.files.len()]),
+            live: OnceCell::new(),
         }
     }
 
@@ -189,6 +191,18 @@ impl<'a> Index<'a> {
         }
     }
 
+    /// Whether the document wrote `def`: made outside any package, by a
+    /// command the document wrote, under a name its own files hold.
+    pub fn own_definition(&self, def: &crate::facts::Definition) -> bool {
+        def.package.is_none() && def.spelled && self.written_definition(def)
+    }
+
+    /// Whether what `def` made may be read: its graph vertex is live.
+    pub fn used_definition(&self, def: &crate::facts::Definition) -> bool {
+        let live = self.live.get_or_init(|| live_vertices(self));
+        live.get(def.node as usize).copied().unwrap_or(true)
+    }
+
     /// Whether another name the same call defined calls `def`, which makes
     /// `def` that name's implementation rather than a definition of its own:
     /// `\newcommand` writes both `\fe` and its `\\fe`.
@@ -228,4 +242,51 @@ impl Sites {
             Some(i)
         })
     }
+}
+
+/// The dependency-graph vertices a real read reaches: the least fixpoint of
+/// "live" over the graph's edges (a reader depends on what it reads).
+///
+/// A call, a test and a value are live.  A definition is live when a live
+/// vertex reads it, and then so is what it is defined by: its body, whose
+/// mentions it reads, and for `\let` the read of the meaning it copies.  A
+/// definition the document did not write is live whatever reads it, since
+/// the package that made it may read it later (`\lstset`'s literate text).
+fn live_vertices(index: &Index) -> Vec<bool> {
+    use crate::graph::{EdgeKind, VertexTag};
+    let graph = &index.analysis.graph;
+    let own: HashSet<crate::env::NodeId> =
+        index.analysis.facts.defs.iter().filter(|def| index.own_definition(def)).map(|def| def.node).collect();
+    let tag = |v: u32| graph.vertex(v).map(|v| v.tag);
+    let definition = |v: u32| tag(v) == Some(VertexTag::VariableDefinition);
+    // The reads a definition is made of: live only with it.
+    let mut made_of = vec![false; graph.len()];
+    for v in (0..graph.len() as u32).filter(|&v| definition(v)) {
+        for &(to, kind) in graph.outgoing(v) {
+            if kind.intersects(EdgeKind::DEFINED_BY) {
+                made_of[to as usize] = true;
+            }
+        }
+    }
+    let mut live = vec![false; graph.len()];
+    let mut work: Vec<u32> = (0..graph.len() as u32)
+        .filter(|&v| match tag(v) {
+            Some(VertexTag::VariableDefinition) => !own.contains(&v),
+            Some(VertexTag::MacroDefinition) | None => false,
+            Some(_) => !made_of[v as usize],
+        })
+        .collect();
+    for &v in &work {
+        live[v as usize] = true;
+    }
+    while let Some(v) = work.pop() {
+        // A definition passes life on to what makes it, a reader to what it reads.
+        let follow = if definition(v) { EdgeKind::DEFINED_BY } else { EdgeKind::READS };
+        for &(to, kind) in graph.outgoing(v) {
+            if kind.intersects(follow) && !std::mem::replace(&mut live[to as usize], true) {
+                work.push(to);
+            }
+        }
+    }
+    live
 }

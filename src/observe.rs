@@ -1122,6 +1122,16 @@ pub fn typeset(m: &mut Machine, c: char, span: Span) {
     m.quantity.run = run;
 }
 
+/// A `\/` or a paragraph's end: the last character's overhang is taken
+/// back or has nothing after it on its line.
+pub fn close_overhang(m: &mut Machine) {
+    let text = &mut m.out.facts.text;
+    let at = text.at.len() as u32;
+    if text.closed.last() != Some(&at) {
+        text.closed.push(at);
+    }
+}
+
 /// A group boundary breaks TeX's word, so no ligature joins across it
 /// (tex.web § 1034), but `12{,}5 km` is still one quantity.
 pub fn word_break(m: &mut Machine) {

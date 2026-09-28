@@ -210,7 +210,7 @@ impl Sources {
         text
     }
 
-    fn editable(&self, analysis: &Analysis, path: &str) -> bool {
+    pub(crate) fn editable(&self, analysis: &Analysis, path: &str) -> bool {
         if let Some(&known) = self.editable.borrow().get(path) {
             return known;
         }

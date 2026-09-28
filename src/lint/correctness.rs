@@ -501,7 +501,7 @@ fn option_clash(report: &mut Report) {
         report.add_fix(
             load.span,
             &load.name,
-            format!("{} was first loaded at {at} without {}", load.name, extra.join(", ")),
+            format!("{} was first loaded at {} without {}", load.name, report.place(*at), extra.join(", ")),
             Fix::new(
                 format!("move the options to the first \\usepackage{{{}}}", load.name),
                 Applicability::Unsafe,
@@ -621,7 +621,7 @@ fn duplicate_label(report: &mut Report) {
         report.add(
             span,
             &key,
-            format!("label `{key}` is already defined at {at}"),
+            format!("label `{key}` is already defined at {}", report.place(at)),
             Some("rename one of the two labels".into()),
         );
     }
@@ -716,7 +716,7 @@ fn shell_escape_commands(locator: &str) -> Vec<String> {
 
 fn shell_escape(report: &mut Report) {
     let analysis = report.analysis;
-    let mode = analysis.settings.shell_escape;
+    let mode = analysis.plugins.shell_escape;
     let provider = analysis.plugins.provider;
     for occurrence in &analysis.facts.occurrences {
         if occurrence.kind != OccKind::ShellEscape {

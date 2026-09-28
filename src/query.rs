@@ -386,9 +386,8 @@ fn symbol(analysis: &Analysis, sym: Option<Sym>) -> Json {
 /// project; `library` for everything else the run read.
 pub fn origin(analysis: &Analysis, file: crate::tex::FileId) -> &'static str {
     let path = |id: crate::tex::FileId| analysis.files.get(id as usize).map(|f| Path::new(&f.path));
-    let project = path(analysis.main_file).and_then(Path::parent);
-    let inside = match (path(file), project) {
-        (Some(file), Some(root)) if !root.as_os_str().is_empty() => file.starts_with(root),
+    let inside = match (path(file), path(analysis.main_file)) {
+        (Some(file), Some(main)) => crate::paths::within(&crate::paths::dir_of(main), file),
         _ => false,
     };
     if file == analysis.main_file || inside { "document" } else { "library" }

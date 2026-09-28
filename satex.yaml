@@ -110,7 +110,7 @@ report_gaps: true         # and print it
 # gaps_log: ~/.cache/satex/gaps.ndjson
 
 
-shell_escape: restricted  # none, restricted or full, as the engine was started
+# shell_escape: restricted # none, restricted or full; unset, what the build files ask for
 interaction: nonstopmode  # the engine's -interaction: batchmode … errorstopmode
 
 plugins:
@@ -129,7 +129,7 @@ record_arguments: false   # keep the argument tokens of every call
 limits:
   memory: 4GiB            # what one run may hold at once; 0 lifts the limit
   threads: 0              # threads for the project walk; the interpreter runs on one
-  cache_size: 1GiB        # package caches kept, least recently used evicted; 0 for no bound
+  cache_size: 2GiB        # package caches kept, least recently used evicted; 0 for no bound
   steps: 900000000        # tokens the document may digest
   format_steps: 1000000000  # tokens latex.ltx may digest (built once, then cached)
   file_depth: 64          # how deep \input and \usepackage may nest
@@ -150,5 +150,5 @@ limits:
   expansion_stack: 4000   # token lists open at once: expansions, arguments, files
   save_stack: 2000000     # assignments a group may have to undo (~200 MB)
   vertices: 400000        # graph nodes recorded
-  facts: 400000           # definitions, uses and occurrences recorded
+  facts: 2000000          # definitions, uses and occurrences recorded
   trace: 200000           # trace events recorded

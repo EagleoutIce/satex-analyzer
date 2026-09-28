@@ -1075,7 +1075,7 @@ impl Machine<'_> {
     /// `\expandafter\endcsname` idiom, which moves that `\endcsname` past
     /// whatever follows it.
     fn build_csname(&mut self, span: Span) {
-        let (name, at) = self.scan_csname_at(span);
+        let (name, at, files) = self.scan_csname_at(span);
         // A name built from unknown text is one name satex cannot know,
         // known by the text around the unknown part.
         let name = match name {
@@ -1098,6 +1098,11 @@ impl Machine<'_> {
         if !self.env.is_defined(sym) {
             let binding = Binding::builtin(Meaning::Primitive(Primitive::Relax));
             self.env.set(sym, binding, false);
+        }
+        // The token stands where the document wrote part of the name, but
+        // only a name all of whose characters it wrote is its own.
+        if self.own_file(at.file) && !files.iter().all(|&f| self.own_file(f)) {
+            self.foreign_names.insert((sym, at));
         }
         self.unread(Token::new(Tok::Cs(sym), at));
     }
@@ -1157,15 +1162,17 @@ impl Machine<'_> {
     /// The name, and where its first character was written: the place a
     /// name built from a file's text belongs to.  A name with unknown text
     /// in it is known only by the text before and after that.
-    fn scan_csname_at(&mut self, span: Span) -> (Result<String, (String, String)>, Span) {
+    /// The name, where it stands, and the files its characters came from.
+    fn scan_csname_at(&mut self, span: Span) -> (Result<String, (String, String)>, Span, Vec<crate::tex::FileId>) {
         let depth = crate::commands::enter_csname();
         let found = self.scan_csname_chars(span);
         crate::commands::leave_csname(depth);
         found
     }
 
-    fn scan_csname_chars(&mut self, span: Span) -> (Result<String, (String, String)>, Span) {
+    fn scan_csname_chars(&mut self, span: Span) -> (Result<String, (String, String)>, Span, Vec<crate::tex::FileId>) {
         let mut name = String::new();
+        let mut files = Vec::new();
         // The text before the first unknown part; `name` then collects
         // what follows the last.
         let mut prefix: Option<String> = None;
@@ -1177,6 +1184,9 @@ impl Machine<'_> {
             let cs = match t.tok {
                 Tok::Chr(c, cat) if cat != Catcode::Active => {
                     name.push(c);
+                    if !files.contains(&t.span.file) {
+                        files.push(t.span.file);
+                    }
                     // A character the calling file wrote in this call names
                     // the place.
                     let written = self.file_call.is_some_and(|(_, call)| {
@@ -1234,7 +1244,7 @@ impl Machine<'_> {
             None => Ok(name),
             Some(prefix) => Err((prefix, name)),
         };
-        (name, at.unwrap_or(span))
+        (name, at.unwrap_or(span), files)
     }
 
     /// A conditional is read one token at a time: the arm that is not taken
@@ -1242,6 +1252,7 @@ impl Machine<'_> {
     /// macro whose parameter text is delimited by `\fi` still sees it
     /// (tex.web §§ 489-500).  An undecided condition runs every arm in turn.
     fn conditional(&mut self, cond: Cond, by: Sym, span: Span, negate: bool) {
+        self.cond_gaps.insert(span, self.gaps_raised);
         let command = std::mem::take(&mut self.command_level);
         // `satex controls` asks what a switch governs, which only has an
         // answer if the switch is left undecided.

@@ -303,6 +303,12 @@ pub struct Natural {
     pub pending: Option<(u32, u32)>,
     /// A horizontal list's space factor (tex.web § 212), where known.
     pub space_factor: Option<i64>,
+    /// Whether the character node `tail[0]` is a ligature (tex.web § 143),
+    /// where known: `\lastnodetype` tells the two apart.
+    pub ligature: Option<bool>,
+    /// A `\noboundary` came: the word it ends, or the one it starts, meets
+    /// no boundary character (tex.web §§ 1030, 1038).
+    pub no_boundary: bool,
 }
 
 impl Natural {
@@ -320,6 +326,8 @@ impl Natural {
             tail: [Last::Unknown; TAIL],
             pending: None,
             space_factor: None,
+            ligature: None,
+            no_boundary: false,
         }
     }
 
@@ -329,6 +337,7 @@ impl Natural {
             self.tail[k] = self.tail[k - 1];
         }
         self.tail[0] = item;
+        self.ligature = None;
     }
 
     /// An item came off the list. What it uncovers past the window is not
@@ -338,6 +347,7 @@ impl Natural {
             self.tail[k - 1] = self.tail[k];
         }
         self.tail[TAIL - 1] = Last::Unknown;
+        self.ligature = None;
     }
 
     /// An item that may or may not have been appended: the tail is the one
@@ -349,6 +359,7 @@ impl Natural {
             next[i + 1] = prev.merge(*cur);
         }
         self.tail = next;
+        self.ligature = None;
     }
 
     /// tex.web § 651, § 669: glue and kerns add their size along the list.
@@ -424,6 +435,8 @@ impl Natural {
             tail: std::array::from_fn(|k| self.tail[k].merge(other.tail[k])),
             pending: self.pending,
             space_factor: if self.space_factor == other.space_factor { self.space_factor } else { None },
+            ligature: if self.ligature == other.ligature { self.ligature } else { None },
+            no_boundary: self.no_boundary || other.no_boundary,
         };
         // A character not yet counted differs between the paths: its own
         // size is not known, so the lengths it would add widen.
@@ -641,6 +654,8 @@ impl Machine<'_> {
             tail: [Last::Other; TAIL],
             pending: None,
             space_factor: Some(1000),
+            ligature: None,
+            no_boundary: false,
         });
         self.insert_every("everypar", span);
     }
@@ -724,6 +739,7 @@ impl Machine<'_> {
             return;
         }
         self.normal_paragraph(acting == self.mode);
+        crate::observe::close_overhang(self);
         self.end_graf();
     }
 
@@ -1093,7 +1109,12 @@ impl Machine<'_> {
                 self.append_item(Item::Glue(glue.map(|g| g.width), glue));
             }
             Material::Fil => self.append_item(Item::Glue(Some(0), None)),
-            Material::NoBoundary => {}
+            Material::NoBoundary => {
+                if let Some(n) = &mut self.natural {
+                    n.no_boundary = true;
+                }
+                self.end_word();
+            }
             Material::Discretionary => {
                 self.open_list(Some(group::DISC), Modes::RESTRICTED_HORIZONTAL, 1, span);
             }
@@ -1475,8 +1496,9 @@ impl Machine<'_> {
 
     /// A character typeset in the current font (tex.web §§ 1034-1040): it
     /// kerns or forms a `=:` ligature with the character before it in the
-    /// same word.  Other ligatures, boundary characters, missing characters
-    /// and native fonts are not followed.
+    /// same word, or with the font's left boundary where the word starts.
+    /// Other ligatures, missing characters and native fonts are not
+    /// followed.
     pub(crate) fn append_char(&mut self, c: u32) {
         self.material = true;
         // The lines a paragraph breaks into are boxes, so a character set
@@ -1492,20 +1514,37 @@ impl Machine<'_> {
         let font = self.current_font();
         let known = font.and_then(|f| Some((f, self.font_metrics(f)?, self.font_size(f)?)));
         let Some((font, metrics, size)) = known else { return self.unmetered_char(c) };
-        if metrics.has_boundary() || !metrics.has_char(c) {
+        if !metrics.has_char(c) {
             return self.unmetered_char(c);
         }
         let mut n = self.natural.expect("checked above");
+        let within = matches!(n.pending, Some((f, _)) if f == font);
         let step = match n.pending {
             Some((f, left)) if f == font => metrics.lig_kern(left, c, size),
-            _ => None,
+            // A word starts: it meets the font's left boundary first.
+            _ => {
+                self.end_word();
+                let Some(next) = self.natural else { return };
+                n = next;
+                match std::mem::take(&mut n.no_boundary) {
+                    true => None,
+                    false => metrics.left_boundary(c, size),
+                }
+            }
         };
         match step {
+            // The boundary and the first character make one ligature node.
+            Some(crate::tfm::LigKern::Lig { op: 0, char }) if !within && metrics.has_char(char) => {
+                n.pending = Some((font, char));
+                n.pushed(Last::Char(None));
+                n.ligature = Some(true);
+            }
             // The ligature takes the place of the character before it, so
             // the tail is still the one node.
             Some(crate::tfm::LigKern::Lig { op: 0, char }) if metrics.has_char(char) => {
                 n.pending = Some((font, char));
                 n.tail[0] = Last::Char(None);
+                n.ligature = Some(true);
             }
             // The other ligature operations keep or repeat characters. The
             // size of what they leave is not followed.
@@ -1518,7 +1557,7 @@ impl Machine<'_> {
                 n.tail[0] = Last::Char(None);
             }
             step => {
-                self.end_word();
+                self.settle_char();
                 let Some(next) = self.natural else { return };
                 n = next;
                 if let Some(crate::tfm::LigKern::Kern(k)) = step {
@@ -1526,6 +1565,7 @@ impl Machine<'_> {
                 }
                 n.pending = Some((font, c));
                 n.pushed(Last::Char(None));
+                n.ligature = Some(false);
             }
         }
         n.space_factor = self.space_factor_after(c, n.space_factor);
@@ -1575,6 +1615,7 @@ impl Machine<'_> {
     /// character's italic correction, and nothing where the tail is not a
     /// character or ligature.
     fn italic_correction(&mut self) {
+        crate::observe::close_overhang(self);
         self.material = true;
         self.end_word();
         let Some(n) = self.natural else { return };
@@ -1593,14 +1634,51 @@ impl Machine<'_> {
 
     /// The word being set ends: its last character is counted (tex.web
     /// § 1034 `main_loop_wrapup`).
+    /// The word ends: its last character is settled and meets the font's
+    /// right boundary character (tex.web § 1038 `wrapup`), unless a
+    /// `\noboundary` came.
     pub(crate) fn end_word(&mut self) {
+        let Some((font, c)) = self.natural.and_then(|n| n.pending) else { return };
+        self.settle_char();
+        let Some(mut n) = self.natural else { return };
+        if std::mem::take(&mut n.no_boundary) {
+            self.natural = Some(n);
+            return;
+        }
+        let size = self.font_size(font);
+        let step = self
+            .font_metrics(font)
+            .zip(size)
+            .and_then(|(m, z)| Some((m.boundary_char()?, m, z)))
+            .and_then(|(b, m, z)| m.lig_kern(c, b, z));
+        match step {
+            Some(crate::tfm::LigKern::Kern(k)) => {
+                n.along = n.along.extended_by(Dim::exact(k));
+                n.pushed(Last::Kern(k));
+            }
+            // A ligature with the boundary changes the word's last node in
+            // a way not followed: its size and tail are not known.
+            Some(crate::tfm::LigKern::Lig { .. }) => {
+                let sf = n.space_factor;
+                n.widen(true);
+                n.space_factor = sf;
+                n.tail = [Last::Unknown; TAIL];
+                n.ligature = None;
+            }
+            None => {}
+        }
+        self.natural = Some(n);
+    }
+
+    /// The character not yet counted goes onto the list: its box is added
+    /// and `\/` can read its italic correction.
+    fn settle_char(&mut self) {
         let Some(mut n) = self.natural else { return };
         let Some((font, c)) = n.pending.take() else { return };
         let size = self.font_size(font);
         match self.font_metrics(font).zip(size).and_then(|(m, z)| m.char_box(c, z)) {
             Some(b) => {
                 n.character([b.width, b.height, b.depth].map(Dim::exact));
-                // The node is settled, so `\/` can read its italic correction.
                 if n.tail[0] == Last::Char(None) {
                     n.tail[0] = Last::Char(Some((font, c)));
                 }

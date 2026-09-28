@@ -115,8 +115,8 @@ Every rule, with a link to its explanation below.
 | [`unused-color`](#unused-color) | style | info | a colour the document defines is never used |
 | [`unused-definition`](#unused-definition) | style | info | a macro defined in the document is never used |
 | [`unused-label`](#unused-label) | style | info | a label is never referenced |
-| [`duplicate-package`](#duplicate-package) | performance | warning | a package is loaded more than once |
 | [`package-after-preamble`](#package-after-preamble) | performance | warning | a package is loaded after \begin{document} |
+| [`duplicate-package`](#duplicate-package) | performance | info | a package is loaded more than once |
 | [`preamble-cost`](#preamble-cost) | performance | info | what the preamble costs on every build |
 | [`recursive-macro`](#recursive-macro) | performance | info | a macro calls itself, directly or through others |
 | [`unused-dependency`](#unused-dependency) | performance | info | the dependency file lists a TeX Live package no file of the run comes from |
@@ -1016,16 +1016,6 @@ Fix by deleting the `\label`, or by checking the `\ref` that was meant to use it
 <details>
 <summary><b>performance</b> — 6 rules</summary>
 
-### `duplicate-package`
-
-**performance / warning** — a package is loaded more than once
-
-The second request is ignored by LaTeX. It costs nothing at run time but it hides which load carries the options.
-
-Fix by deleting the later `\usepackage`.
-
-See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
-
 ### `package-after-preamble`
 
 **performance / warning** — a package is loaded after \begin{document}
@@ -1033,6 +1023,16 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 `\usepackage` belongs in the preamble. After `\begin{document}` LaTeX raises `\usepackage before \begin{document}` and the package cannot set anything up.
 
 Fix by moving the load into the preamble.
+
+See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
+
+### `duplicate-package`
+
+**performance / info** — a package is loaded more than once
+
+The second request is ignored by LaTeX. It costs nothing at run time but it hides which load carries the options. A request with options the first did not have is an option clash instead (`option-clash`).
+
+Fix by deleting the later `\usepackage`.
 
 See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 

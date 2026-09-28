@@ -192,7 +192,7 @@ fn initex() -> CatcodeTable {
 fn chunk_text(m: &mut Machine) -> String {
     let body = m.read_general_text();
     let expanded = m.expand_tokens(Rc::from(body));
-    crate::tex::detokenize(&expanded, &m.out.interner)
+    crate::tex::lua_string(&expanded, &m.out.interner)
 }
 
 /// `\luaescapestring`: a backslash, a quote and a newline are escaped so the

@@ -901,11 +901,13 @@ fn an_italic_correction_the_font_really_has_is_not_reported() {
 }
 
 // chktex warning 6: leaving a slanted shape with no italic correction.
+// `\emph` is a `\DeclareTextFontCommand`, whose `\check@icr` adds the `\/`
+// itself (ltfntcmd.dtx), so only the declaration form lacks it.
 #[test]
 fn leaving_a_slanted_shape_without_a_correction_is_reported() {
     let Some(analysis) = latex_file(
         "overhang.tex",
-        "\\documentclass{article}\n\\begin{document}\nThe \\emph{f} before roman text\n\\end{document}\n",
+        "\\documentclass{article}\n\\begin{document}\nThe \\emph{f} and {\\em f} before roman text\n\\end{document}\n",
     ) else {
         return;
     };

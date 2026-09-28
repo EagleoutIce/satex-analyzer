@@ -143,12 +143,13 @@ fn ot1_font_encoding(report: &mut Report) {
         span,
         "OT1",
         format!(
-            "the document set {} characters in OT1, first at {first}, which builds accented letters with \\accent \
+            "the document set {} characters in OT1, first at {}, which builds accented letters with \\accent \
              ({} in that text, first at {}): TeX does not hyphenate words containing them and the PDF text holds \
              accent and letter apart",
             ot1.count,
+            report.place(first),
             accents.len(),
-            accent.span
+            report.place(accent.span)
         ),
         Fix::new(
             if ot1.kernel_roman {
@@ -172,9 +173,10 @@ fn computer_modern_in_t1(report: &mut Report) {
         span,
         "T1",
         format!(
-            "the document set {} characters in T1 Computer Modern, first at {first}, which is the EC fonts: they \
+            "the document set {} characters in T1 Computer Modern, first at {}, which is the EC fonts: they \
              are scalable only when cm-super is installed",
-            ec.count
+            ec.count,
+            report.place(first)
         ),
         Fix::new("load \\usepackage{lmodern}, or install cm-super", Applicability::Unsafe, edits),
     );

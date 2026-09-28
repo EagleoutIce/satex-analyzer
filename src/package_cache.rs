@@ -1060,9 +1060,13 @@ impl Machine<'_> {
             file_calls: _,
             counter_namespace: _,
             progress_step: _,
+            name_token: _,
+            foreign_names: _,
+            own_files: _,
             progress_depth: _,
             progress_conds: _,
             gaps_raised: _,
+            cond_gaps: _,
             gap_depth: _,
             // Part of the tree's root.
             docstrip_dir: _,
@@ -1638,6 +1642,7 @@ impl Machine<'_> {
                     d.redefines
                 },
                 certain: d.certain,
+                spelled: false,
                 cds,
                 // A package load is outside any environment; not persisted
                 // in the cache, so a replay reports it that way too.

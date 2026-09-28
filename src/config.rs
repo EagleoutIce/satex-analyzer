@@ -85,6 +85,33 @@ pub struct Limits {
 }
 
 impl Limits {
+    /// The value of the limit `limits.<key>` names, as a number.
+    pub fn value(&self, key: &str) -> Option<u64> {
+        Some(match key {
+            "steps" => self.steps,
+            "format_steps" => self.format_steps,
+            "file_depth" => self.file_depth.into(),
+            "expansion_depth" => self.expansion_depth.into(),
+            "site_expansions" => self.site_expansions.into(),
+            "stall_tokens" => self.stall_tokens,
+            "repeat_failures" => self.repeat_failures.into(),
+            "seconds" => self.seconds,
+            "branch_depth" => self.branch_depth.into(),
+            "join_tokens" => self.join_tokens,
+            "widen_after" => self.widen_after.into(),
+            "expansion_tokens" => self.expansion_tokens as u64,
+            "conditional_tokens" => self.conditional_tokens as u64,
+            "held_tokens" => self.held_tokens as u64,
+            "expansion_stack" => self.expansion_stack as u64,
+            "vertices" => self.vertices as u64,
+            "facts" => self.facts as u64,
+            "trace" => self.trace as u64,
+            "save_stack" => self.save_stack as u64,
+            "memory" => self.memory.as_u64(),
+            _ => return None,
+        })
+    }
+
     /// How many threads the file walks may use.  Zero means satex chooses:
     /// enough to overlap the reads, few enough to leave the machine usable.
     pub fn thread_count(&self) -> usize {
@@ -117,7 +144,9 @@ impl Default for Limits {
             // without looping, and widening it there costs more tokens
             // than following it.
             site_expansions: 16_384,
-            stall_tokens: 50_000_000,
+            // Measured: a tikzpicture read as one argument (`\resizebox`) digests
+            // over 100 million tokens without reading on.
+            stall_tokens: 200_000_000,
             // Measured: the kernel's own `\if` chains report a handful of
             // the same gap while they are still making progress, and no
             // document needed more than a few before the path repeated
@@ -138,7 +167,7 @@ impl Default for Limits {
             held_tokens: 4_000_000,
             expansion_stack: 4_000,
             vertices: 400_000,
-            facts: 400_000,
+            facts: 2_000_000,
             trace: 200_000,
             save_stack: 2_000_000,
             // Enough for the kernel and a large document several times over,
@@ -146,7 +175,7 @@ impl Default for Limits {
             // starts swapping.
             memory: bytesize::ByteSize::gib(4),
             threads: 0,
-            cache_size: bytesize::ByteSize::gib(1),
+            cache_size: bytesize::ByteSize::gib(2),
         }
     }
 }
@@ -324,8 +353,10 @@ pub struct Config {
     /// Whether a run also prints what it could not follow, so a reader sees
     /// the analysis's limits without asking for them.
     pub report_gaps: bool,
-    /// What `\write18` may do in this build.
-    pub shell_escape: ShellEscape,
+    /// What `\write18` may do in this build; unset, what the build files
+    /// ask for (a latexmk engine command, an arara `shell: yes`), else
+    /// TeX Live's `restricted`.
+    pub shell_escape: Option<ShellEscape>,
     #[serde(default)]
     pub interaction: Interaction,
     pub engine: Option<Engine>,
@@ -410,7 +441,7 @@ impl Default for Config {
             log_gaps: true,
             gaps_log: None,
             report_gaps: true,
-            shell_escape: ShellEscape::Restricted,
+            shell_escape: None,
             interaction: Interaction::Nonstopmode,
             engine: None,
             kernel: None,

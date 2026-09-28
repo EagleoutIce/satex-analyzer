@@ -348,12 +348,19 @@ fn missing_italic_correction(report: &mut Report) {
         return;
     }
     let view = report.text();
-    let spots = ordered(view);
-    let slashes: Vec<Span> = corrections(analysis, view).iter().map(|e| e.span).collect();
+    let closed = &analysis.facts.text.closed;
     let mut fonts = Fonts::of(analysis);
     let mut findings = Vec::new();
-    for pair in spots.windows(2) {
-        let [(from, a), (to, b)] = [pair[0], pair[1]];
+    // Neighbours as TeX set them, not as the source lists them: a title set
+    // once upright and once in italics is two runs of characters.
+    for a in view.ours() {
+        let b = a + 1;
+        let (Some(from), Some(to)) = (view.span(a), view.span(b)) else { continue };
+        // The `\/` goes into the source right after the letter, so only a
+        // letter the next character follows there can take one.
+        if from.file != to.file || closed.binary_search(&(b as u32)).is_ok() {
+            continue;
+        }
         let (Some(left), Some(right)) = (view.font(a), view.font(b)) else { continue };
         // The overhang shows only where a slanted shape gives way to an
         // upright one, not on a change of family or size.
@@ -365,7 +372,7 @@ fn missing_italic_correction(report: &mut Report) {
             continue;
         }
         let Some(letter) = view.char_at(a).filter(|c| *c != ' ') else { continue };
-        if matches!(view.char_at(b), Some('.' | ',')) || slash_between(&slashes, from, to) {
+        if matches!(view.char_at(b), Some('.' | ',')) {
             continue;
         }
         let Some(italic) = fonts.italic(left, letter).filter(|width| *width > 0) else { continue };
@@ -382,12 +389,6 @@ fn missing_italic_correction(report: &mut Report) {
         let at = finding.at;
         report.rewrite(Rewrite::new(at..at + 1, "overhang", message, with).fix("write \\/ after it"));
     }
-}
-
-/// Whether a `\/` stands between two characters.
-fn slash_between(slashes: &[Span], from: Span, to: Span) -> bool {
-    let at = slashes.partition_point(|span| key(*span) <= key(from));
-    slashes.get(at).is_some_and(|span| key(*span) < key(to))
 }
 
 /// The control sequence a command's meaning starts with once it reaches a

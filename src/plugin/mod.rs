@@ -158,6 +158,8 @@ pub struct Plugins {
     pub discovery: Discovery,
     /// How each was decided: configured, detected, or the default.
     pub sources: Vec<(Kind, &'static str)>,
+    /// What `\write18` may do: configured, else what the build asks for.
+    pub shell_escape: crate::config::ShellEscape,
 }
 
 impl Plugins {
@@ -275,6 +277,17 @@ impl Plugins {
             depp: None,
             discovery: Discovery::default(),
             sources,
+            shell_escape: cfg.shell_escape.unwrap_or_default(),
+        }
+    }
+
+    /// The `\write18` access the build files and magic comments ask for,
+    /// unless the configuration says.
+    pub fn read_shell_escape(&mut self, cfg: &Config, project: &Project) {
+        if cfg.shell_escape.is_none()
+            && let Some(mode) = crate::lint::build::requested_shell_escape(project, &self.magic)
+        {
+            self.shell_escape = mode;
         }
     }
 
