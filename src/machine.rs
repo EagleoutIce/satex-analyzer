@@ -117,6 +117,15 @@ pub struct FileInfo {
     pub short: String,
 }
 
+/// A limit (`limits.<key>` in the configuration) that cut the run.
+#[derive(Clone, Debug)]
+pub struct LimitHit {
+    pub key: &'static str,
+    pub value: u64,
+    pub at: Span,
+    pub count: u32,
+}
+
 /// Where the LaTeX2e kernel came from for this run: the `latex.ltx` path,
 /// whether it was read from a [`Format`] cache, and how far interpretation of
 /// it got.
@@ -236,6 +245,11 @@ pub struct Analysis {
     /// The characters typeset from the lines a filtered trace covers.
     pub typeset: String,
     pub steps: u64,
+    /// The limits that cut the run somewhere, in the order first reached.
+    pub limits: Vec<LimitHit>,
+    /// Source lines the run read from files, each file counted to where it
+    /// stopped reading.
+    pub lines: u64,
     pub exhausted: bool,
     /// Final sizes of the interpreter's working sets.
     pub journal_size: usize,
@@ -338,6 +352,25 @@ impl Analysis {
         }
     }
 
+    /// One line per limit that cut the run: which, where first, and how to
+    /// raise it.
+    pub fn limit_notes(&self) -> Vec<String> {
+        self.limits
+            .iter()
+            .map(|hit| {
+                format!(
+                    "limits.{} = {} was reached {}× (first at {}:{}); raise it with --set limits.{}=<larger>",
+                    hit.key,
+                    hit.value,
+                    hit.count,
+                    self.short_name(hit.at.file),
+                    hit.at.line,
+                    hit.key
+                )
+            })
+            .collect()
+    }
+
     /// One line of resource accounting, for benchmarking and for the budgets.
     pub fn stats(&self, elapsed: std::time::Duration) -> String {
         fn compact(n: u64) -> String {
@@ -357,7 +390,7 @@ impl Analysis {
         let exhausted = if self.exhausted { "  |  budget exhausted" } else { "" };
         [
             format!("{:.3}s{peak}{exhausted}", elapsed.as_secs_f64()),
-            format!("{} files  {} tokens", c(self.files.len()), compact(self.steps)),
+            format!("{} files  {} lines  {} tokens", c(self.files.len()), compact(self.lines), compact(self.steps)),
             format!(
                 "{} definitions  {} expansions  {} occurrences  {} diagnostics",
                 c(facts.defs.len()),
@@ -806,6 +839,12 @@ pub struct Machine<'a> {
     /// The trace reached `limits.trace` and its truncation was reported.
     trace_full: bool,
     progress_step: u64,
+    /// The token the last `get_r_token` read: the name a definition makes.
+    name_token: Option<Token>,
+    /// Names `\csname` built where the document wrote only part of them.
+    pub(crate) foreign_names: HashSet<(Sym, Span)>,
+    /// [`Machine::project_file`] per file: 0 not asked, 1 no, 2 yes.
+    own_files: Vec<u8>,
     /// The group depth and the open conditionals when the run last read from
     /// a file: the state a loop that reads nothing started from, and the one
     /// `abandon_stall` rolls back to when it gives that loop up.
@@ -816,7 +855,9 @@ pub struct Machine<'a> {
     /// over it.  An expansion that ran into a gap cannot stand behind the
     /// text it assembled: that fragment is what satex got past the gap, not
     /// what the engine would make, so unknown text goes back in its place.
-    gaps_raised: u64,
+    pub(crate) gaps_raised: u64,
+    /// `gaps_raised` when each conditional's test was read, by where it stands.
+    pub(crate) cond_gaps: HashMap<Span, u64>,
     gap_depth: Option<usize>,
     started: std::time::Instant,
     /// The modes the run may be in, and those of the list the current
@@ -926,19 +967,53 @@ struct Arm {
     ended: bool,
     /// Which arm of the conditional the path entered.
     arm: usize,
+    /// Tokens it has digested since the split, for running paths fairly.
+    ran: u64,
     /// The source progress where the paths split.
     progress: u64,
 }
 
 /// Where a path stands in the input, for telling when two paths meet: a
-/// token list by identity and position, a file by position, tokens given
-/// back by content.  Exhausted lists are left out, since reading on pops them.
-#[derive(PartialEq, Debug)]
+/// file by position, a token list by what is left to read in it.  Two
+/// expansions of one macro are separate lists but the same continuation.
+/// Exhausted lists are left out, since reading on pops them.
+#[derive(Debug)]
 enum Place {
     File(FileId, usize, bool),
-    Tokens(usize, usize),
+    Tokens(Rc<[Token]>, usize),
+    Pseudo(usize, usize),
     Returned(Vec<Token>),
     Boundary,
+}
+
+impl PartialEq for Place {
+    fn eq(&self, other: &Place) -> bool {
+        match (self, other) {
+            (Place::File(f, i, e), Place::File(g, j, d)) => (f, i, e) == (g, j, d),
+            (Place::Tokens(a, i), Place::Tokens(b, j)) => (Rc::ptr_eq(a, b) && i == j) || a[*i..] == b[*j..],
+            (Place::Pseudo(a, i), Place::Pseudo(b, j)) => (a, i) == (b, j),
+            (Place::Returned(a), Place::Returned(b)) => a == b,
+            (Place::Boundary, Place::Boundary) => true,
+            _ => false,
+        }
+    }
+}
+
+/// Which of two input stacks (bottom first) is further back: at the first
+/// level they part, a lower position in the same list or file; with one
+/// stack a prefix of the other, the deeper, which has more to read first.
+fn place_order(a: &[Place], b: &[Place]) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    for (x, y) in a.iter().zip(b) {
+        match (x, y) {
+            _ if x == y => continue,
+            (Place::Tokens(p, i), Place::Tokens(q, j)) if Rc::ptr_eq(p, q) => return i.cmp(j),
+            (Place::Pseudo(p, i), Place::Pseudo(q, j)) if p == q => return i.cmp(j),
+            (Place::File(f, i, _), Place::File(g, j, _)) if f == g => return i.cmp(j),
+            _ => return Ordering::Equal,
+        }
+    }
+    b.len().cmp(&a.len())
 }
 
 /// What one call site has done so far.
@@ -959,7 +1034,7 @@ struct Site {
 
 /// Gaps the repeated-failure cut leaves alone: the ones it would raise
 /// itself, and the ones that already end the run.
-const CUT_EXEMPT: [&str; 2] = ["repeated-failure", "budget-exhausted"];
+const CUT_EXEMPT: [&str; 4] = ["repeated-failure", "budget-exhausted", "limit-reached", "paths-diverged"];
 
 /// Gaps the repeated-failure cut takes although they are imprecision, not a
 /// fault of the document: a scan that gave up where unknown text may have
@@ -1063,6 +1138,8 @@ impl<'a> Machine<'a> {
                 trace: Vec::new(),
                 typeset: String::new(),
                 steps: 0,
+                limits: Vec::new(),
+                lines: 0,
                 exhausted: false,
                 journal_size: 0,
                 held_tokens_left: 0,
@@ -1162,9 +1239,13 @@ impl<'a> Machine<'a> {
             popping_in_read: false,
             reading_command: false,
             progress_step: 0,
+            name_token: None,
+            foreign_names: HashSet::new(),
+            own_files: Vec::new(),
             progress_depth: 0,
             progress_conds: 0,
             gaps_raised: 0,
+            cond_gaps: HashMap::new(),
             gap_depth: None,
             started: std::time::Instant::now(),
             mode: crate::mode::Modes::VERTICAL,
@@ -1225,6 +1306,7 @@ impl<'a> Machine<'a> {
         if m.cfg.plugins.magic {
             m.out.plugins.read_magic(source);
         }
+        m.out.plugins.read_shell_escape(m.cfg, &m.out.project);
         m.out.plugins.read_kernel(m.cfg, source);
         // `Plugins::resolve` ran before the source was read, so a magic
         // comment may have named a different engine than the table installed
@@ -2292,6 +2374,7 @@ will look undefined",
             Some(Frame::Pseudo { .. }) => self.bump_expanding(self.pseudo_file, -1),
             Some(Frame::File { mouth, package, catcodes, depth, conds, .. }) => {
                 self.out.timings.leave_file();
+                self.out.lines += u64::from(mouth.here().line);
                 self.balance_file(mouth.file, depth);
                 self.balance_conditionals(mouth.file, conds);
                 if let Some(table) = catcodes {
@@ -2456,6 +2539,10 @@ will look undefined",
         if toks.is_empty() || self.held_tokens + toks.len() > self.cfg.limits.held_tokens {
             if let Some(sym) = expanding {
                 self.bump_expanding(sym, -1);
+            }
+            if !toks.is_empty() {
+                let at = toks[0].span;
+                self.limit_reached("held_tokens", at);
             }
             return;
         }
@@ -2799,6 +2886,7 @@ will look undefined",
                 span,
                 format!("trace stopped after {} events (limits.trace)", self.cfg.limits.trace),
             );
+            self.limit_reached("trace", span);
             return;
         }
         let index = self.out.trace.len() as u32;
@@ -3113,6 +3201,14 @@ will look undefined",
         }
         let prefixes = self.take_prefixes();
         let global = prefixes.global;
+        let own_name = self.name_token.take().is_some_and(|t| {
+            let named = match t.tok {
+                Tok::Cs(sym) => sym == name,
+                Tok::Chr(c, Catcode::Active) => self.active_sym(c) == name,
+                _ => false,
+            };
+            named && self.own_file(t.span.file) && !self.foreign_names.contains(&(name, t.span))
+        });
         let (redefines, relative) = self.redefines(name);
         let register = match &meaning {
             Meaning::Register(kind, _) => Some(*kind),
@@ -3286,6 +3382,7 @@ will look undefined",
                     cds: self.cds.clone(),
                     context: current_context,
                     via: self.within.last().map(|(sym, _)| *sym),
+                    spelled: own_name,
                 };
                 if let Some(capture) = &mut self.package_capture {
                     capture.log.definitions.push((fact.clone(), relative));
@@ -3561,8 +3658,20 @@ will look undefined",
             return true;
         }
         let main = self.out.files.get(usize::from(self.out.main_file)).map(|f| f.path.as_str()).unwrap_or_default();
-        let Some(dir) = Path::new(main).parent().filter(|d| !d.as_os_str().is_empty()) else { return false };
-        self.out.files.get(usize::from(file)).is_some_and(|f| Path::new(&f.path).starts_with(dir))
+        let dir = crate::paths::dir_of(Path::new(main));
+        self.out.files.get(usize::from(file)).is_some_and(|f| crate::paths::within(&dir, Path::new(&f.path)))
+    }
+
+    /// [`Machine::project_file`], asked once per file.
+    pub(crate) fn own_file(&mut self, file: FileId) -> bool {
+        let i = usize::from(file);
+        if self.own_files.len() <= i {
+            self.own_files.resize(i + 1, 0);
+        }
+        if self.own_files[i] == 0 {
+            self.own_files[i] = if self.project_file(file) { 2 } else { 1 };
+        }
+        self.own_files[i] == 2
     }
 
     /// Where the file of `span` is being read, and the text from `span` to
@@ -3614,6 +3723,35 @@ will look undefined",
         let stepped = self.step_once();
         self.step_depth -= 1;
         stepped
+    }
+
+    /// Where the innermost file being read stands.
+    fn position_span(&self) -> Span {
+        self.input
+            .iter()
+            .rev()
+            .find_map(|frame| match frame {
+                Frame::File { mouth, .. } => Some(mouth.here()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    /// The limit `limits.<key>` cut the run at `at`: recorded once per key,
+    /// with how often, so that a run can say which to raise.
+    pub(crate) fn limit_reached(&mut self, key: &'static str, at: Span) {
+        if let Some(hit) = self.out.limits.iter_mut().find(|h| h.key == key) {
+            hit.count += 1;
+            return;
+        }
+        let value = self.cfg.limits.value(key).unwrap_or_default();
+        self.out.limits.push(LimitHit { key, value, at, count: 1 });
+        self.diagnose(
+            Severity::Unsupported,
+            "limit-reached",
+            at,
+            format!("limits.{key} ({value}) was reached; what it cut is not in this analysis"),
+        );
     }
 
     /// tex.web § 94 `overflow`: "TeX capacity exceeded", which ends the run.
@@ -3770,35 +3908,37 @@ will look undefined",
         let facts = &self.out.facts;
         let used = facts.defs.len() + facts.expansions.len() + facts.occurrences.len();
         let max_steps = self.budget.unwrap_or(self.cfg.limits.steps);
-        let reason = if self.out.steps.saturating_add(self.work) >= max_steps {
-            "token budget"
+        let (reason, key) = if self.out.steps.saturating_add(self.work) >= max_steps {
+            ("token budget", if self.budget.is_some() { "format_steps" } else { "steps" })
         } else if self.out.graph.len() >= self.cfg.limits.vertices {
-            "dependency graph size"
+            ("dependency graph size", "vertices")
         } else if used >= self.cfg.limits.facts {
-            "fact budget"
+            ("fact budget", "facts")
         } else if self.input.len() >= self.cfg.limits.expansion_stack {
-            "input stack depth"
+            ("input stack depth", "expansion_stack")
         } else if self.cfg.limits.seconds > 0 && self.started.elapsed().as_secs() >= self.cfg.limits.seconds {
-            "time limit (limits.seconds)"
+            ("time limit", "seconds")
         } else if self.held_tokens >= self.cfg.limits.held_tokens {
-            "held token count"
+            ("held token count", "held_tokens")
         } else if self.env.journal_len() >= self.cfg.limits.save_stack {
-            "save stack size"
+            ("save stack size", "save_stack")
         } else if self.cfg.limits.memory.as_u64() > 0
             && crate::budget::in_use() as u64 >= self.cfg.limits.memory.as_u64()
         {
-            "memory limit"
+            ("memory limit", "memory")
         } else {
             return false;
         };
         self.halted = true;
         self.out.exhausted = true;
+        let at = self.position_span();
         self.diagnose(
             Severity::Unsupported,
             "budget-exhausted",
             Span::default(),
-            format!("analysis stopped: {reason} exceeded"),
+            format!("analysis stopped: {reason} (limits.{key}) exceeded"),
         );
+        self.limit_reached(key, at);
         true
     }
 
@@ -3933,6 +4073,8 @@ will look undefined",
                 self.cfg.limits.stall_tokens
             ),
         );
+        let at = self.position_span();
+        self.limit_reached("stall_tokens", at);
     }
 
     /// A gap met `limits.repeat_failures` times at one place.  The path is
@@ -3958,6 +4100,7 @@ will look undefined",
                 at.line, self.cfg.limits.repeat_failures
             ),
         );
+        self.limit_reached("repeat_failures", at);
     }
 
     /// Run a token list to completion, then return.
@@ -4577,6 +4720,8 @@ will look undefined",
             .map_or(0, |site| site.repeats);
         if depth >= self.cfg.limits.expansion_depth || site > self.cfg.limits.site_expansions {
             self.record_with(Step::Widen, sym, span, || Some("recursion"));
+            let key = if depth >= self.cfg.limits.expansion_depth { "expansion_depth" } else { "site_expansions" };
+            self.limit_reached(key, span);
             self.diagnose(
                 Severity::Imprecision,
                 "recursion-widened",
@@ -4713,6 +4858,14 @@ expansion stopped",
                     ),
                 );
             }
+            let key = if depth >= self.cfg.limits.expansion_depth {
+                "expansion_depth"
+            } else if stuck {
+                "widen_after"
+            } else {
+                "site_expansions"
+            };
+            self.limit_reached(key, span);
             // The rounds that do not run would have assigned as the ones
             // before them did, so what they could have left is widened too.
             // `recent` is cleared on every token read from a file, and this
@@ -4740,6 +4893,7 @@ expansion stopped",
                 span,
                 format!("\\{} would expand beyond the token limit", self.name(sym)),
             );
+            self.limit_reached("expansion_tokens", span);
             return;
         };
         self.end_used_up_lists();
@@ -5356,6 +5510,7 @@ expansion stopped",
     pub fn read_r_token(&mut self) -> Option<Sym> {
         self.skip_spaces();
         let t = self.next_token()?;
+        self.name_token = Some(t);
         match t.tok {
             Tok::Cs(sym) => Some(sym),
             Tok::Chr(c, Catcode::Active) => Some(self.active_sym(c)),
@@ -5562,7 +5717,11 @@ expansion stopped",
             // document.  TeX inserts `\fi` where a file ends inside a skip
             // (tex.web § 336). satex ends the skip here as though it had, and
             // leaves a marker that splits off the path skipping on as TeX does.
-            if self.last_file.is_some_and(|f| f != at.file) {
+            // Only after a gap: without one the skip is TeX's own, and text
+            // `\iffalse` skips on purpose (versions.sty, comment.sty) is not
+            // a lost `\fi`.
+            let unsure = self.cond_gaps.get(&at).is_none_or(|&gaps| gaps != self.gaps_raised);
+            if unsure && self.last_file.is_some_and(|f| f != at.file) {
                 self.unread(t);
                 let name = self.out.short_name(at.file).to_string();
                 self.diagnose(
@@ -5599,6 +5758,9 @@ expansion stopped",
             at,
             "no matching \\fi within the conditional budget".into(),
         );
+        if read >= self.cfg.limits.conditional_tokens {
+            self.limit_reached("conditional_tokens", at);
+        }
         None
     }
 
@@ -5639,6 +5801,7 @@ expansion stopped",
             body.push(t);
         }
         if !closed {
+            let full = body.len() >= self.cfg.limits.conditional_tokens;
             self.unread_all(&body);
             self.diagnose(
                 Severity::Unsupported,
@@ -5646,6 +5809,9 @@ expansion stopped",
                 at,
                 "no matching \\fi within the conditional budget".into(),
             );
+            if full {
+                self.limit_reached("conditional_tokens", at);
+            }
             return None;
         }
         let mut alternatives = Vec::with_capacity(cuts.len() + 1);
@@ -5754,10 +5920,8 @@ expansion stopped",
             .iter()
             .filter_map(|frame| match frame {
                 Frame::File { mouth, .. } => Some(Place::File(mouth.file, mouth.offset(), mouth.ending())),
-                Frame::Tokens { toks, pos, .. } => {
-                    (*pos < toks.len()).then(|| Place::Tokens(toks.as_ptr() as usize, *pos))
-                }
-                Frame::Pseudo { mouth, pos, .. } => Some(Place::Tokens(mouth.source_id(), mouth.offset() + pos)),
+                Frame::Tokens { toks, pos, .. } => (*pos < toks.len()).then(|| Place::Tokens(toks.clone(), *pos)),
+                Frame::Pseudo { mouth, pos, .. } => Some(Place::Pseudo(mouth.source_id(), mouth.offset() + pos)),
                 Frame::Returned(tokens) => (!tokens.is_empty()).then(|| Place::Returned(tokens.clone())),
                 Frame::Boundary => Some(Place::Boundary),
             })
@@ -5883,9 +6047,11 @@ expansion stopped",
                 // Each arm copies the input stack and the save stack's top.
                 self.work += 1 + self.input.len() as u64;
                 self.split_at.push((span, arm, progress));
+                let start = self.out.steps;
                 let ended = !self.run_to_meeting(depth, conds, &mut budget, moved, 0);
                 self.split_at.pop();
-                paths.push(Arm { state: self.save_path(), env: self.env.path(&fork), ended, arm, progress });
+                let ran = self.out.steps - start;
+                paths.push(Arm { state: self.save_path(), env: self.env.path(&fork), ended, arm, ran, progress });
             }
             let live = self.converge(paths, &fork, depth, conds, &mut budget, by, span);
             // A path met the head again with a state it had not seen: the
@@ -6036,17 +6202,24 @@ expansion stopped",
             // apart until it agrees again.
             let joinable = met && paths.iter().all(|p| self.joinable(&paths[0], p));
             if joinable || *budget == 0 || paths.iter().all(|p| p.ended) {
-                if *budget == 0 || !joinable {
+                let apart = *budget == 0 || !joinable;
+                if apart {
+                    // Only the first path's control goes on: what the others
+                    // read after this point is not analyzed.
                     self.diagnose(
-                        Severity::Imprecision,
+                        Severity::Unsupported,
                         "paths-diverged",
                         span,
                         format!(
-                            "the arms of \\{} did not meet again within {} tokens; the run goes on after the first",
+                            "the arms of \\{} did not meet again within {} tokens; the run goes on after the first, \
+                             with what every arm assigned joined",
                             self.name(by),
                             self.cfg.limits.join_tokens
                         ),
                     );
+                    if *budget == 0 {
+                        self.limit_reached("join_tokens", span);
+                    }
                 }
                 let envs: Vec<_> = paths.iter().map(|p| p.env.clone()).collect();
                 let (mode, list) =
@@ -6085,6 +6258,10 @@ expansion stopped",
                     let unknown = self.unknown_token(span);
                     self.env.join_paths(fork, &envs, unknown);
                     first.env = self.env.path(fork);
+                } else if apart {
+                    // In other groups the saved bindings do not line up: only
+                    // what the others assigned is joined in.
+                    self.env.absorb_paths(fork, &mut first.env, &envs[1..]);
                 }
                 return Some(first);
             }
@@ -6136,10 +6313,18 @@ expansion stopped",
                     continue;
                 }
             }
-            // The path that is behind runs on. Ties go to the deeper one.
+            // The path that is behind runs on: behind in the source, then in
+            // its input, then the one that ran least, so every path advances.
             let behind = (0..paths.len())
                 .filter(|&i| !paths[i].ended)
-                .min_by_key(|&i| (paths[i].state.source_progress, std::cmp::Reverse(places[i].len())))
+                .min_by(|&i, &j| {
+                    paths[i]
+                        .state
+                        .source_progress
+                        .cmp(&paths[j].state.source_progress)
+                        .then_with(|| place_order(&places[i], &places[j]))
+                        .then_with(|| paths[i].ran.cmp(&paths[j].ran))
+                })
                 .expect("not every path has ended");
             // It runs until it has read as far as the furthest path, so the
             // paths are compared where they can meet, not at every command.
@@ -6148,10 +6333,11 @@ expansion stopped",
             self.restore_path(path.state.clone());
             self.env.resume(fork, &path.env);
             self.split_at.push((span, path.arm, path.progress));
+            let start = self.out.steps;
             let ended = !self.run_to_meeting(depth, conds, budget, true, target);
             self.split_at.pop();
-            let (arm, progress) = (path.arm, path.progress);
-            *path = Arm { state: self.save_path(), env: self.env.path(fork), ended, arm, progress };
+            let (arm, progress, ran) = (path.arm, path.progress, path.ran + (self.out.steps - start));
+            *path = Arm { state: self.save_path(), env: self.env.path(fork), ended, arm, ran, progress };
         }
     }
 
@@ -6344,6 +6530,7 @@ expansion stopped",
         } else if self.cfg.skip_packages.iter().any(|p| p == name) {
             LoadStatus::Skipped
         } else if self.file_depth >= self.cfg.limits.file_depth {
+            self.limit_reached("file_depth", span);
             LoadStatus::TooDeep
         } else {
             LoadStatus::NotFound

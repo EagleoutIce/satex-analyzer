@@ -348,7 +348,19 @@ impl Machine<'_> {
             L::Skip => self.last_value(crate::mode::Removed::Glue),
             L::Kern => self.last_value(crate::mode::Removed::Kern),
             L::Penalty => self.last_value(crate::mode::Removed::Penalty),
-            L::NodeType | L::Badness => None,
+            // etex.ch: 0 a character, 7 a ligature, 11 glue, 12 a kern, 13 a
+            // penalty, read off the tail of the list.
+            L::NodeType => {
+                let n = self.natural?;
+                match n.tail[0] {
+                    crate::mode::Last::Char(_) => n.ligature.map(|lig| Value::Int(if lig { 7 } else { 0 })),
+                    crate::mode::Last::Glue(..) => int(11),
+                    crate::mode::Last::Kern(_) => int(12),
+                    crate::mode::Last::Penalty(_) => int(13),
+                    crate::mode::Last::Other | crate::mode::Last::Unknown => None,
+                }
+            }
+            L::Badness => None,
             L::InputLineNo => self.input_line().map(|line| Value::Int(line.into())),
             L::EtexVersion => int(ETEX_VERSION),
             L::PdftexVersion => int(PDFTEX_VERSION),
@@ -428,7 +440,7 @@ impl Machine<'_> {
                 let n = self.scan_int()?;
                 self.par_shape_item(item, n).map(Value::Dimen)
             }
-            L::ShellEscape => int(match self.cfg.shell_escape {
+            L::ShellEscape => int(match self.out.plugins.shell_escape {
                 crate::config::ShellEscape::None => 0,
                 crate::config::ShellEscape::Full => 1,
                 crate::config::ShellEscape::Restricted => 2,
@@ -1098,9 +1110,11 @@ impl Machine<'_> {
             }
             FontParam::HyphenChar => Some((self.scan_font_ident()?, "hyphenchar".into())),
             FontParam::SkewChar => Some((self.scan_font_ident()?, "skewchar".into())),
-            FontParam::CharCode(_) => {
+            FontParam::CharCode(_) | FontParam::TagCode { .. } => {
                 let font = self.scan_font_ident();
                 let c = self.scan_int();
+                // A `\let` copy writes the table of the primitive it copies.
+                let by = self.env.identity(by);
                 Some((font?, format!("{}.{}", self.name(by), c?)))
             }
         }
@@ -1150,11 +1164,15 @@ impl Machine<'_> {
 
     fn font_param_value(&mut self, param: FontParam, by: Sym) -> Option<Value> {
         let (font, field) = self.font_entry(param, by)?;
-        let stored = self.font_field(font, &field);
+        self.font_entry_value(param, font, &field)
+    }
+
+    fn font_entry_value(&mut self, param: FontParam, font: u32, field: &str) -> Option<Value> {
+        let stored = self.font_field(font, field);
         if !matches!(stored, Value::Unknown) {
             return Some(stored);
         }
-        if self.font_field_set(font, &field) {
+        if self.font_field_set(font, field) {
             return Some(Value::Unknown);
         }
         match param {
@@ -1165,6 +1183,11 @@ impl Machine<'_> {
             FontParam::HyphenChar if font == 0 => Some(Value::Int('-' as i64)),
             FontParam::SkewChar if font == 0 => Some(Value::Int(-1)),
             FontParam::CharCode(default) => Some(Value::Int(default.into())),
+            FontParam::TagCode { .. } if font == 0 => Some(Value::Int(-1)),
+            FontParam::TagCode { .. } => {
+                let c = field.rsplit('.').next()?.parse().ok()?;
+                Some(Value::Int(self.font_metrics(font)?.tag_code(c)))
+            }
             _ => None,
         }
     }
@@ -1214,6 +1237,17 @@ impl Machine<'_> {
                 return;
             }
         }
+        if let FontParam::TagCode { lig } = param {
+            // pdftex.web `set_tag_code`: -7 to -1 name the tags to clear as
+            // bits, anything else clears none.
+            value = match (self.font_entry_value(param, font, &field), value) {
+                (Some(Value::Int(tag)), _) if tag <= 0 || (tag == 1 && !lig) => Value::Int(tag),
+                (Some(Value::Int(tag)), Value::Int(v)) => {
+                    Value::Int(if (-v.clamp(-7, 0)) & tag == 0 { tag } else { 0 })
+                }
+                _ => Value::Unknown,
+            };
+        }
         self.set_font_field(font, &field, value);
     }
 
@@ -1226,7 +1260,10 @@ impl Machine<'_> {
             FontParam::Dimen => "p1".to_string(),
             FontParam::HyphenChar => "hyphenchar".into(),
             FontParam::SkewChar => "skewchar".into(),
-            FontParam::CharCode(_) => format!("{}.0", self.name(by)),
+            FontParam::CharCode(_) | FontParam::TagCode { .. } => {
+                let by = self.env.identity(by);
+                format!("{}.0", self.name(by))
+            }
         };
         for font in 0..=self.font_count() {
             let family = font_field_family(font, &field);

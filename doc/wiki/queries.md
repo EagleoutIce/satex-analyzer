@@ -143,7 +143,7 @@ index   step       name            detail                                       
 16002   expand     \value                                                             paper.tex  @ paper.tex:0:0
 29937   expand     \par                                                               paper.tex  @ paper.tex:2:1
 29944   expand     \newif                                                             paper.tex  @ paper.tex:3:1
-… 11 more lines omitted
+… 12 more lines omitted
 ```
 
 `--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile; `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown; `--include-internal` adds packages, classes and the kernel. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.

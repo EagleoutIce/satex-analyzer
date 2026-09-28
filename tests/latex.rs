@@ -681,6 +681,94 @@ fn an_unused_command_is_reported_once_not_with_its_implementation() {
     assert_eq!(names, [r"\fd", r"\fe"]);
 }
 
+/// A definition is used when anything that reads it is: a `\let` copy that
+/// is expanded, a `\csname` dispatch table, a token list a package keeps
+/// (`\lstset` literate).  Names package code builds for the document
+/// (`\coordinate`'s `\pgf@sh@…`, `\includegraphics`' `\ver@…`) are not the
+/// document's definitions.  What nothing reads, even through a caller that
+/// is itself unused, still is reported.
+#[test]
+fn a_definition_read_through_an_alias_or_a_package_is_used() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{listings,tikz,graphicx}
+\newcommand\viaLet{x}\let\alias\viaLet
+\newcommand\viaTable{A}\expandafter\let\csname table@a\endcsname\viaTable
+\newcommand\viaLiterate{$\leftarrow$}\lstset{literate={<-}{{\viaLiterate}}2}
+\newcommand\callee{a}\newcommand\caller{\callee}
+\newcommand\lonely{b}\newcommand\lonelier{\lonely}
+\begin{document}
+\alias \csname table@a\endcsname \caller
+\begin{tikzpicture}\coordinate (a) at (0,0);\draw (a) -- (1,1);\end{tikzpicture}
+\includegraphics{example-image}
+\end{document}",
+    );
+    let mut names: Vec<String> = satex::lint::lint(&analysis)
+        .iter()
+        .filter(|f| matches!(f.get("code").and_then(|c| c.as_str()), Some("unused-definition" | "dead-definition")))
+        .filter(|f| f.get("origin").and_then(|o| o.as_str()) == Some("document"))
+        .filter_map(|f| f.get("name").and_then(|n| n.as_str()).map(str::to_string))
+        .collect();
+    names.sort();
+    assert_eq!(names, [r"\lonelier", r"\lonely"]);
+}
+
+/// An overhang is between characters TeX set next to each other, not ones
+/// the source lists next to each other: a `\title` set upright in the
+/// heading and in italics elsewhere is two runs, each ended where LaTeX's
+/// `\textit` adds `\/` itself.
+#[test]
+fn italic_correction_follows_the_typeset_order() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\title{Analyzing Code}\author{x}
+\begin{document}
+\maketitle
+{\itshape f}(x) and \textit{f}(y) and {\itshape f\/}(z).
+\makeatletter\textit{\@title}\makeatother
+\end{document}",
+    );
+    let places: Vec<(u64, u64)> = satex::lint::lint(&analysis)
+        .iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("missing-italic-correction"))
+        .map(|f| (f["line"].as_u64().unwrap_or(0), f["col"].as_u64().unwrap_or(0)))
+        .collect();
+    assert_eq!(places, [(5, 11)]);
+}
+
+/// versions.sty excludes an environment by skipping the document's text
+/// with `\iffalse` until `\end`, which it lets to `\fi`.  With no gap
+/// before it the skip is TeX's own and the run reads on after the
+/// environment, as pdflatex does.
+#[test]
+fn an_excluded_version_is_skipped_and_the_document_goes_on() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{versions}
+\excludeversion{showenv}
+\newenvironment{corr}{\showenv\fbox\bgroup}{\endshowenv\egroup}
+\begin{document}
+\begin{corr}
+Hidden \textbf{text} here.
+\end{corr}
+\def\after{}
+\end{document}",
+    );
+    assert!(defined(&analysis, "after"));
+    let gaps: Vec<_> =
+        analysis.facts.diagnostics.iter().filter(|d| d.severity == satex::facts::Severity::Unsupported).collect();
+    assert!(gaps.is_empty(), "{:?}", gaps.iter().map(|d| d.code).collect::<Vec<_>>());
+}
+
 #[test]
 fn verbatim_bodies_are_read_line_by_line_with_an_active_end_of_line() {
     // pdflatex: `\FV@SV@V` holds `{a  b}` and `{ \c%}` (trailing spaces
@@ -1044,20 +1132,21 @@ mod document_metadata {
     }
 
     /// The bound is what holds the report down, not something else about the
-    /// document: lifting it puts the same run back into the millions, at
-    /// `\exp_args:Ne` and `\exp_args:Nf` in `expl3-code.tex`.  Should the
-    /// gaps themselves ever be fixed, this asks to be rewritten around a
-    /// document that still has one.
+    /// document: lifting it puts the same run back into the hundreds of
+    /// thousands, at `expl3-code.tex` line 12363 under the latex-lab
+    /// testphase code.  Should the gap itself ever be fixed, this asks to be
+    /// rewritten around a document that still has one.
     #[test]
-    fn lifting_the_bound_puts_the_same_document_back_into_the_millions() {
+    fn lifting_the_bound_counts_the_same_gap_without_end() {
         if !super::installed() {
             return;
         }
+        const OPTIONS: &str = "lang=en,pdfversion=1.7,testphase={phase-III}";
         let mut lifted = Config::default();
         lifted.limits.repeat_failures = 0;
-        let unbounded = worst(&analyze_with("lang=en", &lifted));
-        assert!(unbounded > 1_000_000, "the unbounded run counted one gap only {unbounded} times");
-        let bounded = worst(&analyze_document("lang=en"));
+        let unbounded = worst(&analyze_with(OPTIONS, &lifted));
+        assert!(unbounded > 100_000, "the unbounded run counted one gap only {unbounded} times");
+        let bounded = worst(&analyze_document(OPTIONS));
         assert!(bounded <= bound(), "one gap was counted {bounded} times, past the bound of {}", bound());
     }
 }

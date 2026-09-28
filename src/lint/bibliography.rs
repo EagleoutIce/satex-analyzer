@@ -145,7 +145,7 @@ fn duplicate_bibliography_entry(report: &mut Report) {
                     None => continue,
                     Some(at) => {
                         first_item = Some(at);
-                        (*span, format!("`{key}` is already declared by the \\bibitem at {at}"))
+                        (*span, format!("`{key}` is already declared by the \\bibitem at {}", report.place(at)))
                     }
                 },
                 Declared::Entry { file, line, at } => {

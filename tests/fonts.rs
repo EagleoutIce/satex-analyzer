@@ -192,6 +192,34 @@ fn character_codes_start_at_the_engine_default() {
 }
 
 #[test]
+fn tag_codes_come_from_the_font_and_assignments_only_clear_them() {
+    if !installed() {
+        return;
+    }
+    let source = r"\font\r=cmr10 \font\x=cmex10
+        \edef\a{\the\tagcode\r`A,\the\tagcode\r`B,\the\tagcode\r 200,\the\tagcode\nullfont`A,\the\tagcode\x 0,\the\tagcode\x 64}
+        \tagcode\r`B=5 \tagcode\x 0=-1 \tagcode\x 1=-5 \tagcode\x 2=-6 \tagcode\x 64=-3 \tagcode\x 65=-4 \tagcode\r`A=-6 \tagcode\r`a=-7
+        \edef\out{\a;\the\tagcode\r`B,\the\tagcode\x 0,\the\tagcode\x 1,\the\tagcode\x 2,\the\tagcode\x 64,\the\tagcode\x 65,\the\tagcode\r`A,\the\tagcode\r`a}";
+    // pdftex: `1,0,-1,-1,2,4;0,2,2,0,4,0,1,0`
+    assert_eq!(out_in(Engine::PdfTeX, source), "1,0,-1,-1,2,4;0,2,2,0,4,0,1,0");
+    // luatex (with `\tagcode` enabled): the same, but `-7` leaves the
+    // ligature/kerning tag of `a`
+    assert_eq!(out_in(Engine::LuaTeX, source), "1,0,-1,-1,2,4;0,2,2,0,4,0,1,1");
+}
+
+#[test]
+fn a_copy_of_a_character_code_writes_the_primitive_s_table() {
+    if !installed() {
+        return;
+    }
+    let source = r"\font\r=cmr10 \let\t\tagcode \let\l\lpcode
+        \t\r`A=-1 \lpcode\r`B=7 \l\r`C=9
+        \edef\out{\the\tagcode\r`A,\the\t\r`A,\the\l\r`B,\the\lpcode\r`C}";
+    // pdftex: `0,0,7,9`
+    assert_eq!(out_in(Engine::PdfTeX, source), "0,0,7,9");
+}
+
+#[test]
 fn unicode_math_codes_pack_class_family_and_slot() {
     // xetex: `0,35771470,0,0,1080037940,0,\Umathchar"4"5"6789,92301193`
     assert_eq!(
@@ -265,4 +293,43 @@ fn a_math_font_has_its_constants_as_parameters() {
         out_in(Engine::XeTeX, source),
         "0.00099pt|0.00107pt|0.00076pt|15.6pt|3.336pt|-6.67198pt|0.00092pt|0.0pt"
     );
+}
+
+/// `\lastnodetype` reads the list's tail (etex.ch): a ligature is 7, a
+/// character 0, a kern 12.  The EC fonts carry boundary characters, which
+/// kern and ligature with a word's first and last character (tex.web
+/// §§ 545, 1034-1040); `\noboundary` suppresses them.
+#[test]
+fn node_types_and_boundaries_follow_the_font() {
+    if !installed() {
+        return;
+    }
+    let source = r"\font\r=ecrm1000 \r
+        \setbox0\hbox{fi\xdef\A{\the\lastnodetype}}\setbox0\hbox{a\xdef\B{\the\lastnodetype}}
+        \setbox0\hbox{a\kern1pt\xdef\C{\the\lastnodetype}}\setbox0\hbox{AV}\xdef\D{\the\wd0}
+        \setbox0\hbox{f\noboundary}\xdef\E{\the\wd0}\setbox0\hbox{.a}\xdef\F{\the\wd0}
+        \edef\out{\A,\B,\C,\D,\E,\F}";
+    // pdftex -ini -etex: `7,0,12,13.8855pt,3.05481pt,7.77588pt`
+    assert_eq!(out_in(Engine::PdfTeX, source), "7,0,12,13.8855pt,3.05481pt,7.77588pt");
+}
+
+/// Without the font's metrics nothing about its ligatures is known, so the
+/// node type is unknown rather than a guess.
+#[test]
+fn a_font_without_metrics_leaves_the_node_type_unknown() {
+    let cfg = Config {
+        engine: Some(Engine::PdfTeX),
+        load_packages: false,
+        load_classes: false,
+        load_inputs: false,
+        load_format: false,
+        use_kpsewhich: false,
+        use_fallback_roots: false,
+        ..Config::default()
+    };
+    let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\font\\r=ecrm1000 \\r\\setbox0\\hbox{fi\\ifnum\\lastnodetype=7 \\gdef\\L{lig}\\else\\gdef\\L{char}\\fi}";
+    let analysis = Machine::analyze(source, None, &cfg);
+    let certain: Vec<bool> =
+        analysis.facts.defs.iter().filter(|d| analysis.interner.name(d.name) == "L").map(|d| d.certain).collect();
+    assert_eq!(certain, [false, false], "both arms, neither certain");
 }

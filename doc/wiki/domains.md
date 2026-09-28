@@ -145,7 +145,13 @@ dimensions and node sizes, added up the way `hpack` ([tex.web § 649](https://mi
 the lattice. What an item `satex` cannot follow widens the running size to,
 rather than leaving the item out, which would under-approximate. `Natural`
 bundles the running `along`/`height`/`depth`/`wide` dimensions plus the
-list's tail, mirroring the fields `hpack`/`vpack` compute.
+list's tail, mirroring the fields `hpack`/`vpack` compute.  The tail's items
+(`Last`: a character, glue, a kern, a penalty, anything else) have
+`Last::Unknown` as their top, and whether a character node is a ligature is
+a flag whose top is "not known".  `\lastnodetype` reads both (etex.ch), so it
+is exact where the font's ligature/kerning program was followed ([tex.web
+§§ 1034-1040](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web), boundary characters included) and unknown where the font has
+no metrics.
 
 ## `CatcodeTable::unknown`: unknown category as a lattice element
 
@@ -174,7 +180,12 @@ afterwards holding that definition. A register the arms leave with
 different values holds their `Num`/`Value` join. Category codes or a
 pending `\afterassignment`/`\aftergroup` token that disagree keep the paths
 running apart until they agree again or the join's token budget
-(`limits.join_tokens` below) runs out.
+(`limits.join_tokens` below) runs out.  Paths are compared by what is left to read, not
+by which copy of a token list holds it, and the path that is furthest behind
+(then the one that has run least) runs next, so paths that can meet do.
+When the budget runs out, the first path's control goes on and every path's
+bindings are joined into it.  Their save stacks cannot be joined where the
+paths stand in different groups, which the `paths-diverged` gap records.
 
 A loop whose exit is undecided (`\loop … \ifhbox … \repeat`, or pgfmath's
 tail-recursive dispatch) is analyzed to a **fixpoint**: each round's result
@@ -198,7 +209,7 @@ into a bounded search. Full description of each on [Configuration](Configuration
 | [`limits.file_depth`](Configuration#what-a-run-may-use) | 64 | How deep `\input` may nest. |
 | [`limits.expansion_depth`](Configuration#what-a-run-may-use) | 32 | How often a macro may re-enter itself, and how often one call site may expand without the source moving on — TeX loops are tail recursive. |
 | [`limits.site_expansions`](Configuration#what-a-run-may-use) | 16384 |  |
-| [`limits.stall_tokens`](Configuration#what-a-run-may-use) | 50000000 | Tokens a run may digest without reading from a file before the expansion it is in is given up as a loop that does not end. |
+| [`limits.stall_tokens`](Configuration#what-a-run-may-use) | 200000000 | Tokens a run may digest without reading from a file before the expansion it is in is given up as a loop that does not end. |
 | [`limits.repeat_failures`](Configuration#what-a-run-may-use) | 8 | How often one construct satex cannot follow may be met at one place before the expansion it is in is given up the same way.  A path that fails at a site once fails there again on every round, so counting the failure into the millions says nothing the first one did not. |
 | [`limits.seconds`](Configuration#what-a-run-may-use) | 300 | Wall-clock seconds a run may take before it stops and says so; 0 for no limit.  A safety net: no document should come near it. |
 | [`limits.branch_depth`](Configuration#what-a-run-may-use) | 8 | How deep undecided conditions may nest before only one arm is read. |
@@ -212,12 +223,12 @@ into a bounded search. Full description of each on [Configuration](Configuration
 | [`limits.held_tokens`](Configuration#what-a-run-may-use) | 4000000 | Tokens the input stack may hold at once. |
 | [`limits.expansion_stack`](Configuration#what-a-run-may-use) | 4000 | How many token lists may be open at once: one per macro being expanded, argument being read or file being input. |
 | [`limits.vertices`](Configuration#what-a-run-may-use) | 400000 | Ceilings on what the run records. |
-| [`limits.facts`](Configuration#what-a-run-may-use) | 400000 |  |
+| [`limits.facts`](Configuration#what-a-run-may-use) | 2000000 |  |
 | [`limits.trace`](Configuration#what-a-run-may-use) | 200000 |  |
 | [`limits.save_stack`](Configuration#what-a-run-may-use) | 2000000 | Entries on the save stack: one per assignment a group may have to undo ([tex.web § 268](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)). |
 | [`limits.memory`](Configuration#what-a-run-may-use) | 4.0 GiB | What this run may hold at once, written the way `ulimit` takes it (`512M`, `4GiB`); zero lifts the limit.  Only the `satex` binary counts allocations, so a library user gets no limit. |
 | [`limits.threads`](Configuration#what-a-run-may-use) | 0 | Threads any parallel work may use; 0 lets satex choose.  The interpreter runs on one thread because TeX's state is one machine, so this bounds the file walks around it. |
-| [`limits.cache_size`](Configuration#what-a-run-may-use) | 1.0 GiB | How much the package caches in the cache directory may take together; the least recently used go first.  Zero lifts the bound. |
+| [`limits.cache_size`](Configuration#what-a-run-may-use) | 2.0 GiB | How much the package caches in the cache directory may take together; the least recently used go first.  Zero lifts the bound. |
 
 Each is a place `satex` chooses breadth of exploration over runtime, never a
 place it silently drops soundness. Past the limit the value goes up the
@@ -284,9 +295,10 @@ so the run would stop rather than go on imprecisely.
 ### Loops that span call sites
 
 The per-site bound counts re-entries of one site, so it cannot see a loop
-whose rounds land on different sites. Only the stall limit stops such a
-loop, and it does so after far more work. Catching it needs a loop head for
-expansion, of the kind the conditional paths already have.
+whose rounds land on different sites.  Such a loop meets its loop head
+again when it is decided by an undecided conditional, since paths meet by
+what is left to read, and is then analyzed to a fixpoint.  Only a loop that
+never meets a split is left to the stall limit.
 
 ## Soundness invariant
 

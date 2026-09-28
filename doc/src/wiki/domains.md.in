@@ -145,7 +145,13 @@ dimensions and node sizes, added up the way `hpack` (tex.web § 649) and
 the lattice. What an item `satex` cannot follow widens the running size to,
 rather than leaving the item out, which would under-approximate. `Natural`
 bundles the running `along`/`height`/`depth`/`wide` dimensions plus the
-list's tail, mirroring the fields `hpack`/`vpack` compute.
+list's tail, mirroring the fields `hpack`/`vpack` compute.  The tail's items
+(`Last`: a character, glue, a kern, a penalty, anything else) have
+`Last::Unknown` as their top, and whether a character node is a ligature is
+a flag whose top is "not known".  `\lastnodetype` reads both (etex.ch), so it
+is exact where the font's ligature/kerning program was followed (tex.web
+§§ 1034-1040, boundary characters included) and unknown where the font has
+no metrics.
 
 ## `CatcodeTable::unknown`: unknown category as a lattice element
 
@@ -174,7 +180,12 @@ afterwards holding that definition. A register the arms leave with
 different values holds their `Num`/`Value` join. Category codes or a
 pending `\afterassignment`/`\aftergroup` token that disagree keep the paths
 running apart until they agree again or the join's token budget
-(`limits.join_tokens` below) runs out.
+(`limits.join_tokens` below) runs out.  Paths are compared by what is left to read, not
+by which copy of a token list holds it, and the path that is furthest behind
+(then the one that has run least) runs next, so paths that can meet do.
+When the budget runs out, the first path's control goes on and every path's
+bindings are joined into it.  Their save stacks cannot be joined where the
+paths stand in different groups, which the `paths-diverged` gap records.
 
 A loop whose exit is undecided (`\loop … \ifhbox … \repeat`, or pgfmath's
 tail-recursive dispatch) is analyzed to a **fixpoint**: each round's result
@@ -258,9 +269,10 @@ so the run would stop rather than go on imprecisely.
 ### Loops that span call sites
 
 The per-site bound counts re-entries of one site, so it cannot see a loop
-whose rounds land on different sites. Only the stall limit stops such a
-loop, and it does so after far more work. Catching it needs a loop head for
-expansion, of the kind the conditional paths already have.
+whose rounds land on different sites.  Such a loop meets its loop head
+again when it is decided by an undecided conditional, since paths meet by
+what is left to read, and is then analyzed to a fixpoint.  Only a loop that
+never meets a split is left to the stall limit.
 
 ## Soundness invariant
 

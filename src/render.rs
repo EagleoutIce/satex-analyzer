@@ -90,14 +90,12 @@ fn reference(record: &Record) -> &str {
     record.get("reference").and_then(Json::as_str).unwrap_or_default()
 }
 
+/// The link target of a record's place: the file, as a `file://` URL.  A
+/// `file:` URL has no standard way to name a line, and a fragment makes the
+/// opener look for a file of that name, so the line stays in the link's text.
 fn location(record: &Record) -> String {
     let Some(Json::String(path)) = record.get("path") else { return String::new() };
-    let url = file_url(path);
-    // A record with no line names the file itself, not a place in it.
-    match record.get("line").and_then(Json::as_u64).filter(|line| *line > 0) {
-        Some(line) => format!("{url}#L{line}"),
-        None => url,
-    }
+    file_url(path)
 }
 
 const COLUMNS: [&str; 43] = [

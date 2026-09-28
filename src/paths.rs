@@ -220,6 +220,14 @@ pub fn from_file_url(url: &str) -> Option<PathBuf> {
     path_in(url, NATIVE).map(PathBuf::from)
 }
 
+/// Whether `file` lies in `dir` or below it, however either is written:
+/// both are made absolute against the working directory first, without
+/// resolving symlinks, so `-f main.tex` and a client's link name agree.
+pub fn within(dir: &Path, file: &Path) -> bool {
+    let absolute = |p: &Path| std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+    absolute(file).starts_with(absolute(dir))
+}
+
 /// The directory `path` lives in, for a document- or project-relative
 /// lookup: `Path::parent()` returns `Some("")`, not `None`, for a bare file
 /// name, so code that does `.unwrap_or_default()` on it silently gets the

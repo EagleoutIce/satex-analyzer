@@ -359,6 +359,11 @@ fn template(name: &str, p: Primitive) -> Result<Template, &'static str> {
         P::FontParam(FontParam::CharCode(_)) => {
             t(format!("\\font\\zf=cmr10 {cs}\\zf 65=5 \\edef\\zR{{\\the{cs}\\zf 65,\\the{cs}\\zf 66}}"))
         }
+        // Read from the TFM tag first: `A` has a lig/kern program, `B` none.
+        P::FontParam(FontParam::TagCode { .. }) => t(format!(
+            "\\font\\zf=cmr10 \\edef\\zA{{\\the{cs}\\zf 65,\\the{cs}\\zf 66}}{cs}\\zf 66=5 {cs}\\zf 97=-7 \
+             \\edef\\zR{{\\zA;\\the{cs}\\zf 66,\\the{cs}\\zf 97}}"
+        )),
         P::FontIdent(_) => t(format!("\\edef\\zR{{\\fontname{cs},\\meaning{cs}}}")),
 
         // Expandable text of the engine's own.
@@ -731,10 +736,6 @@ fn normalize(text: &str) -> String {
 const KNOWN: &[(&str, &str)] = &[
     // Primitives classified as a plain parameter that are not one.
     // Quantities the mode or the page builder owns.
-    (
-        " tagcode ",
-        "pdfTeX reads `\\tagcode` from the font's TFM tag for that character, not from a default: probed with cmr10, 64 and 66 give 0 while 65 and 97 give 1, and an assignment does not change what is read back.  satex keeps one default per engine and stores what is assigned",
-    ),
     // Reading and printing.
     (
         " outer ",

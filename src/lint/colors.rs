@@ -160,7 +160,7 @@ fn conflicting_color_definition(report: &mut Report) {
                     "colour `{name}` is redefined here as {}, but was {} at {}",
                     b.hull.spell(),
                     a.hull.spell(),
-                    first.span
+                    report.place(first.span)
                 ),
                 None,
             );

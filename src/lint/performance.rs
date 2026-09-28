@@ -9,11 +9,12 @@ pub static RULES: &[Rule] = &[
     Rule {
         code: "duplicate-package",
         category: Category::Performance,
-        severity: Severity::Warning,
+        severity: Severity::Info,
         summary: "a package is loaded more than once",
         explanation: "\
 The second request is ignored by LaTeX.  It costs nothing at run time but it
-hides which load carries the options.
+hides which load carries the options.  A request with options the first did
+not have is an option clash instead (`option-clash`).
 
 Fix by deleting the later `\\usepackage`.",
         references: &[Ref { source: Source::Source2e, at: "ltclass.dtx" }],
@@ -125,10 +126,19 @@ fn duplicate_package(report: &mut Report) {
             continue;
         }
         let edits = report.edits().delete_load(load);
+        // The first load may be a package's own request (`tikz` loads `pgf`).
+        let by = analysis
+            .facts
+            .loads
+            .iter()
+            .find(|l| l.span == *at && l.name == load.name)
+            .and_then(|l| l.by)
+            .map(|by| format!(" by {}", analysis.interner.name(by)))
+            .unwrap_or_default();
         report.add_fix(
             load.span,
             &load.name,
-            format!("{} is already loaded at {at}", load.name),
+            format!("{} is already loaded{by} at {}", load.name, report.place(*at)),
             Fix::new(format!("delete this \\usepackage{{{}}}", load.name), Applicability::Safe, edits),
         );
     }

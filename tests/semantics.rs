@@ -545,10 +545,11 @@ fn the_load_tree_carries_the_path_of_every_file() {
 }
 
 #[test]
-fn a_skip_begun_in_another_file_ends_where_its_text_ends() {
-    // TeX skips `\opener`'s `\iffalse` on through main.tex to its `\else`;
-    // satex also follows the path where the skip ended at main.tex's text,
-    // joins the two and records the gap (SEMANTICS.md § 14).
+fn a_skip_begun_in_another_file_skips_on_as_tex_does() {
+    // TeX skips `\opener`'s `\iffalse` on through main.tex to its `\else`.
+    // With no gap before it satex knows the skip is TeX's own, the way
+    // versions.sty and comment.sty skip the document's text on purpose, and
+    // follows only that path (SEMANTICS.md § 14).
     let dir = std::env::temp_dir().join(format!("satex-skip-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     std::fs::write(dir.join("opener.tex"), "\\def\\opener{\\iffalse}\n").unwrap();
@@ -568,10 +569,10 @@ fn a_skip_begun_in_another_file_ends_where_its_text_ends() {
     let source = std::fs::read_to_string(&main).unwrap();
     let analysis = Machine::analyze(&source, Some(&main), &cfg);
     let _ = std::fs::remove_dir_all(&dir);
-    assert!(!definition(&analysis, "a").expect("the path that ended the skip").certain);
-    assert!(definition(&analysis, "b").is_some(), "the path that skipped on");
-    assert!(definition(&analysis, "after").expect("after the join").certain);
-    assert_eq!(diagnosed(&analysis, "conditional-crosses-file").len(), 1);
+    assert!(definition(&analysis, "a").is_none(), "the skipped text defines nothing");
+    assert!(definition(&analysis, "b").expect("the false text").certain);
+    assert!(definition(&analysis, "after").expect("after the conditional").certain);
+    assert!(diagnosed(&analysis, "conditional-crosses-file").is_empty());
 }
 
 #[test]

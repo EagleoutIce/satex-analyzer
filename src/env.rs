@@ -1027,6 +1027,22 @@ impl Env {
         self.floors = first.floors.clone();
     }
 
+    /// What paths that go no further left, joined into `keep`, whose control
+    /// goes on: a name they assigned holds the join of its values.  `keep`'s
+    /// save stack and `\aftergroup` tokens stay its own, since the groups
+    /// the others stand in are not the ones the run goes on in.
+    pub fn absorb_paths(&mut self, fork: &Fork, keep: &mut PathEnv, others: &[PathEnv]) {
+        self.rewind(fork);
+        for other in others {
+            for (&sym, (slot, _)) in &other.slots {
+                let i = sym as usize;
+                let (base, level) = (self.slots[i].clone(), self.level[i]);
+                let entry = keep.slots.entry(sym).or_insert((base, level));
+                entry.0 = join(entry.0.clone(), slot.clone(), self.sets);
+            }
+        }
+    }
+
     pub fn merge(&mut self, alternatives: Vec<Captured>) {
         let mut touched: Vec<u32> = alternatives.iter().flat_map(|c| c.keys().copied()).collect();
         touched.sort_unstable();

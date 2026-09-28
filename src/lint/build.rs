@@ -317,9 +317,11 @@ struct Directive {
 }
 
 fn directives(analysis: &Analysis) -> Vec<Directive> {
-    analysis
-        .plugins
-        .magic
+    directives_of(&analysis.plugins.magic)
+}
+
+fn directives_of(magic: &[crate::plugin::magic::Magic]) -> Vec<Directive> {
+    magic
         .iter()
         .filter(|m| m.key == "arara")
         .map(|m| {
@@ -346,6 +348,19 @@ impl Directive {
         let options = self.options.replace(' ', "");
         ["shell:yes", "shell:true", "shell:on"].iter().any(|o| options.contains(o))
     }
+}
+
+/// The `\write18` access the build asks for: a latexmkrc engine command
+/// with `-shell-escape`, or an arara engine directive with `shell: yes`.
+/// `None` when neither says, which leaves the installation's default.
+pub(crate) fn requested_shell_escape(
+    project: &crate::project::Project,
+    magic: &[crate::plugin::magic::Magic],
+) -> Option<crate::config::ShellEscape> {
+    let rcs = project.files.iter().filter(|file| file.tool == "latexmk").filter_map(|file| Latexmkrc::read(&file.path));
+    let latexmk = rcs.into_iter().any(|rc| rc.commands().iter().any(|(name, _)| rc.shell_escape(name).is_some()));
+    let arara = directives_of(magic).iter().any(|d| d.engine().is_some() && d.shell_escape());
+    (latexmk || arara).then_some(crate::config::ShellEscape::Full)
 }
 
 fn used(analysis: &Analysis, kinds: &[OccKind]) -> bool {

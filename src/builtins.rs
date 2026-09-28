@@ -258,8 +258,14 @@ pub enum FontParam {
     HyphenChar,
     SkewChar,
     /// With the value a character has until one is assigned: 1000 for
-    /// `\efcode`, 1 for `\tagcode`, 0 for the rest (probed, pdfTeX 1.40).
+    /// `\efcode`, 0 for the rest (probed, pdfTeX 1.40).
     CharCode(i16),
+    /// `\tagcode⟨font⟩⟨char⟩` reads the character's TFM tag.  An assignment
+    /// only clears it, and LuaTeX never clears a ligature/kerning tag
+    /// (`lig`; pdftex.web and LuaTeX's `set_tag_code`, probed).
+    TagCode {
+        lig: bool,
+    },
 }
 
 /// What a command the stomach obeys reads before it is done, when its
@@ -2224,9 +2230,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     }
     if matches!(engine, Engine::PdfTeX | Engine::LuaTeX) {
         put(it, "efcode", P::FontParam(FontParam::CharCode(1000)));
-        // pdfTeX reads this from the font's TFM tag per character, so no
-        // single default is right: cmr10 gives 1 for `A` and 0 for `B`.
-        put(it, "tagcode", P::FontParam(FontParam::CharCode(1)));
+        put(it, "tagcode", P::FontParam(FontParam::TagCode { lig: engine == Engine::PdfTeX }));
         put(it, "quitvmode", P::Mode(ModeCmd::QuitVMode));
         put(it, "letterspacefont", P::Command(Syntax::CopyFont { amount: true }));
     }
@@ -2785,7 +2789,10 @@ fn last_item_verdict(item: LastItem) -> Judgment {
         L::Penalty | L::Kern | L::Skip => {
             at!(V::Approximated, "reads the tail of the list satex tracks. Unknown once the tail itself is")
         }
-        L::NodeType => at!(V::Approximated, "-1 for a genuinely empty list (etex.ch). Unknown otherwise"),
+        L::NodeType => at!(
+            V::Approximated,
+            "reads the tail of the list: a character, a ligature, glue, a kern or a penalty, and -1 for the empty main list (etex.ch). Unknown otherwise"
+        ),
         L::Badness => at!(V::Approximated, "always Unknown. Badness needs the line-breaking satex does not run"),
         L::InputLineNo | L::EtexVersion | L::PdftexVersion | L::GroupLevel | L::GroupType => {
             at!(V::Exact, "read from state satex already tracks")

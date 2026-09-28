@@ -486,6 +486,10 @@ fn analyze(
         analysis.file_names().iter().any(|f| same_file(Path::new(f), &path)).then_some(analysis)
     });
     let analysis = whole.unwrap_or_else(|| Machine::analyze(&text, Some(&path), cfg));
+    // The server's stderr is the client's log.
+    for note in analysis.limit_notes() {
+        eprintln!("satex: {note}");
+    }
     let mut groups = handlers::diagnostics_json(&analysis);
     let own_uri = handlers::path_uri(&path.display().to_string());
     if !groups.iter().any(|g| g.get("uri").and_then(Json::as_str) == Some(own_uri.as_str())) {

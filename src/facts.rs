@@ -36,6 +36,10 @@ pub struct Definition {
     /// environment built on it.  What `explain` derives "which environments
     /// reach this" from, generically, instead of the raw environment stack.
     pub via: Option<Sym>,
+    /// The name is a token the document's own files hold (tex.web § 1215,
+    /// `get_r_token`): written there, or built by a `\csname` written
+    /// there.  A name package code builds for the document is not.
+    pub spelled: bool,
 }
 
 impl Definition {
@@ -325,6 +329,10 @@ pub struct Text {
     pub chars: String,
     /// One per character of `chars`, in the same order.
     pub at: Vec<Spot>,
+    /// Where a character's overhang cannot reach the next one: after a
+    /// `\/` (tex.web § 1113) or at a paragraph's end, as the number of
+    /// characters set before it, ascending.
+    pub closed: Vec<u32>,
 }
 
 impl Text {
