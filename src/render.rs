@@ -1274,6 +1274,11 @@ fn lsp_severity(record: &Record) -> u8 {
 /// positions 0-based and columns in UTF-16 code units, as the protocol
 /// counts them.  An editor integration hands these on unchanged.
 pub fn lsp(records: &[Record]) -> String {
+    lsp_with(records, file_url)
+}
+
+/// [`lsp`] with the URI each path is published under.
+pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
     let sources = crate::lint::fix::Sources::default();
     let position = |path: &str, line: u64, col: u64| -> Json {
         let pos = crate::lint::fix::Pos::new(line.max(1) as u32, col.max(1) as u32);
@@ -1281,7 +1286,6 @@ pub fn lsp(records: &[Record]) -> String {
             sources.get(path).and_then(|text| text.utf16(pos)).unwrap_or((pos.line - 1, pos.col - 1));
         serde_json::json!({ "line": line, "character": character })
     };
-    let uri = |path: &str| file_url(path);
     let mut files: Vec<(String, Vec<Json>, Vec<Json>)> = Vec::new();
     for record in records {
         let path = plain(record.get("path").unwrap_or(&Json::Null));

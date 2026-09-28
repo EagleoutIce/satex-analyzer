@@ -23,6 +23,10 @@ struct Server {
 
 impl Server {
     fn start(cache: &std::path::Path) -> Server {
+        Server::start_in(cache, std::path::Path::new(env!("CARGO_MANIFEST_DIR")))
+    }
+
+    fn start_in(cache: &std::path::Path, cwd: &std::path::Path) -> Server {
         let mut child = Command::new(env!("CARGO_BIN_EXE_satex"))
             .args([
                 "lsp",
@@ -33,7 +37,7 @@ impl Server {
                 "--set",
                 "use_kpsewhich=false",
             ])
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .current_dir(cwd)
             .env("SATEX_CACHE", cache)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -261,4 +265,47 @@ fn stdio_session_drives_the_feature_set() {
 
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A folder opened through a symlink is answered under the symlink, though
+/// the server's working directory is the resolved folder (#17), and an input
+/// file is analyzed with the document that reads it.
+#[cfg(unix)]
+#[test]
+fn a_folder_opened_through_a_symlink_keeps_its_name() {
+    let base = std::env::temp_dir().join(format!("satex-lsp-link-{}", std::process::id()));
+    let (real, link) = (base.join("real"), base.join("link"));
+    std::fs::create_dir_all(&real).unwrap();
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let main = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\input sub\n\\greet{world}\n";
+    let sub = "\\def\\greet#1{Hello, #1!}\n";
+    std::fs::write(real.join("main.tex"), main).unwrap();
+    std::fs::write(real.join("sub.tex"), sub).unwrap();
+    let uri = fixture_uri(&link.join("sub.tex"));
+
+    let mut server = Server::start_in(&base, &real);
+    let init_id =
+        server.request("initialize", json!({ "processId": null, "rootUri": fixture_uri(&link), "capabilities": {} }));
+    server.response(init_id);
+    server.notify("initialized", json!({}));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": sub } }),
+    );
+    let published = server.notification("textDocument/publishDiagnostics");
+    let named = fixture_uri(&link);
+    assert!(published["params"]["uri"].as_str().is_some_and(|u| u.starts_with(&named)), "{published:?}");
+
+    let rename_id = server.request(
+        "textDocument/rename",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 0, "character": 6 }, "newName": "salute" }),
+    );
+    let rename = server.response(rename_id);
+    let changes = rename["result"]["changes"].as_object().cloned().unwrap_or_default();
+    let mut files: Vec<&String> = changes.keys().collect();
+    files.sort();
+    assert_eq!(files, [&fixture_uri(&link.join("main.tex")), &uri], "{rename:?}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&base);
 }
