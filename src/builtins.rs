@@ -2307,6 +2307,25 @@ const MATH_SLOT_MAX: i64 = 0x10_ffff;
 const MATH_ACTIVE: i64 = 0x1f_ffff;
 /// tex.web § 1232: `"8000` is TeX82's active math code.
 const MATH_CLASSIC_ACTIVE: i64 = 0x8000;
+/// The place a packed math code's class sits at, just above the character.
+const MATH_CLASS_UNIT: i64 = MATH_SLOT_MASK + 1;
+/// The place its family sits at, just above the three class bits.
+const MATH_FAMILY_UNIT: i64 = MATH_CLASS_UNIT * 8;
+
+/// What an engine stores for an assigned math code.  XeTeX keeps whatever
+/// was written.  LuaTeX splits the code into a family, a class and a
+/// character and stores it recomposed (LuaTeX manual, "Math").  The family
+/// and the class come from a division that truncates towards zero while the
+/// character is the low 21 bits, so a negative code comes back changed.
+/// `-2147483647` is stored as `-2145386495`.  A non-negative code is
+/// unchanged under either engine.
+fn recompose_math_code(code: i64, engine: Engine) -> i64 {
+    if engine != Engine::LuaTeX {
+        return code;
+    }
+    let (family, class) = (code / MATH_FAMILY_UNIT, code / MATH_CLASS_UNIT % 8);
+    family * MATH_FAMILY_UNIT + class * MATH_CLASS_UNIT + (code & MATH_SLOT_MASK)
+}
 
 /// XeTeX and LuaTeX keep one math code per character, packed as a family, a
 /// class and a character (XeTeX reference; LuaTeX manual, "Math").  TeX82's
@@ -2321,6 +2340,21 @@ pub fn pack_math_code(code: i64, engine: Engine) -> i64 {
         return MATH_ACTIVE;
     }
     ((code >> 8) & 0xf) << 24 | (code >> 12) << 21 | (code & 0xff)
+}
+
+/// The class, the family and the character `\meaning` shows for a packed
+/// math code, which the two engines split apart differently.  XeTeX takes
+/// the three as bits.  LuaTeX divides by the character's width truncating
+/// towards zero, so a negative code loses the borrow and shows a class one
+/// above its bits: `-14680063` is `"2"FF"000001` and not `"1"FF"000001`
+/// (measured on TeX Live 2026).
+pub fn split_math_code(code: i64, engine: Engine) -> (i64, i64, i64) {
+    let slot = code & MATH_SLOT_MASK;
+    if engine != Engine::LuaTeX {
+        return (code >> 21 & 7, code >> 24 & 0xff, slot);
+    }
+    let rest = code / MATH_CLASS_UNIT;
+    (rest & 7, rest >> 3 & 0xff, slot)
 }
 
 /// What `\the\mathcode` gives for a packed code.  XeTeX reads it back as
@@ -2349,10 +2383,11 @@ pub enum Limit {
     /// The parameter is read-only: a write is accepted and ignored, and a
     /// read always gives this value (LuaTeX manual, "Math").
     Fixed(i64),
-    /// A packed math code.  An invalid one is an error and a recovery value
-    /// is stored: XeTeX's active marker where the low bits ask for it, zero
+    /// A packed math code, whose engine decides both what it refuses and
+    /// what it stores.  An invalid one is an error and a recovery value is
+    /// stored: XeTeX's active marker where the low bits ask for it, zero
     /// otherwise.
-    MathCode { active: bool },
+    MathCode { engine: Engine },
 }
 
 /// What an engine does with one assigned value.
@@ -2360,6 +2395,9 @@ pub enum Limit {
 pub enum Taken {
     /// Stored as it is.
     Yes,
+    /// Taken, but stored as this.  The engine split the value into fields
+    /// and put them back together, which is not what it was given.
+    Recomposed(i64),
     /// Refused, and the old value stays.
     Old,
     /// Refused, and this value is stored instead.
@@ -2390,10 +2428,12 @@ impl Limit {
             // whose character fits is taken.  XeTeX takes `0x1FFFFF` as the
             // active marker and falls back to it for any other value that
             // asks for it.  LuaTeX has no marker and falls back to zero.
-            Limit::MathCode { active } => {
+            Limit::MathCode { engine } => {
+                let active = engine == Engine::XeTeX;
                 let slot = value & MATH_SLOT_MASK;
                 if slot <= MATH_SLOT_MAX || (active && value == MATH_ACTIVE) {
-                    Taken::Yes
+                    let stored = recompose_math_code(value, engine);
+                    if stored == value { Taken::Yes } else { Taken::Recomposed(stored) }
                 } else if active && slot == MATH_ACTIVE {
                     Taken::Instead(MATH_ACTIVE)
                 } else {
@@ -2460,9 +2500,7 @@ pub fn limit(name: &str, engine: Engine) -> Option<Limit> {
         // math code, which only XeTeX gives an active marker.  A
         // `\Umathcharnumdef` takes the same packed code and recovers the
         // same way.
-        "Umathcodenum" | "Umathcharnumdef" if engine.has_unicode_math() => {
-            Limit::MathCode { active: engine == Engine::XeTeX }
-        }
+        "Umathcodenum" | "Umathcharnumdef" if engine.has_unicode_math() => Limit::MathCode { engine },
         _ => return None,
     })
 }

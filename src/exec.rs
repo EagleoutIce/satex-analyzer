@@ -1017,8 +1017,9 @@ impl Machine<'_> {
             // `\mathchardef` (XeTeX reference; LuaTeX manual, "Math").
             Meaning::Register(crate::tex::RegKind::UMathChar, _) => {
                 let code = self.env.value(sym).as_int().unwrap_or(0);
-                let (class, family, slot) = (code >> 21 & 7, code >> 24 & 0xff, code & 0x1f_ffff);
-                if self.out.plugins.engine.has_luatex() {
+                let engine = self.out.plugins.engine;
+                let (class, family, slot) = crate::builtins::split_math_code(code, engine);
+                if engine.has_luatex() {
                     format!("{esc}Umathchar\"{class:X}\"{family:02X}\"{slot:06X}")
                 } else {
                     format!("{esc}Umathchar\"{class:X}\"{family:X}\"{slot:X}")
@@ -2927,8 +2928,11 @@ impl Machine<'_> {
             return Some(if num.lo == num.hi { Value::Int(num.lo) } else { Value::Range { dimen: false, num } });
         };
         let taken = limit.take(value);
-        if taken == Taken::Yes {
-            return Some(Value::Int(value));
+        match taken {
+            Taken::Yes => return Some(Value::Int(value)),
+            // Taken, so no error, but not stored as it was written.
+            Taken::Recomposed(stored) => return Some(Value::Int(stored)),
+            _ => {}
         }
         let name = self.name(named).to_string();
         let (severity, code) = match limit {
