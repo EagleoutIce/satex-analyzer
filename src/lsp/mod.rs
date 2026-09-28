@@ -23,7 +23,7 @@
 mod handlers;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, select};
@@ -46,17 +46,26 @@ use crate::machine::{Analysis, Machine};
 /// minus `file` when the request means the document that sent it.
 const EXECUTE_COMMAND: &str = "satex/query";
 
-pub fn serve(cfg: Config, root: PathBuf) -> Result<(), String> {
+pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), String> {
     let (connection, io_threads) = match cfg.lsp.port {
         Some(port) => Connection::listen((cfg.lsp.host.as_str(), port)).map_err(|e| e.to_string())?,
         None => Connection::stdio(),
     };
-    connection.initialize(serde_json::to_value(server_capabilities()).unwrap()).map_err(|e| e.to_string())?;
+    let params =
+        connection.initialize(serde_json::to_value(server_capabilities()).unwrap()).map_err(|e| e.to_string())?;
+    // The folder the client opened, in its own spelling: the working
+    // directory is the resolved one, and a folder opened through a symlink
+    // must be answered under the symlink (#17).
+    let named = client_roots(&params);
+    let root = named.first().cloned().unwrap_or(root);
 
     let (engine_tx, engine_rx) = crossbeam_channel::unbounded::<EngineMsg>();
     let (diagnostics_tx, diagnostics_rx) = crossbeam_channel::unbounded::<PublishDiagnosticsParams>();
     let debounce = Duration::from_millis(cfg.lsp.debounce_ms.max(1));
-    let engine = std::thread::spawn(move || engine_loop(engine_rx, diagnostics_tx, cfg, root, debounce));
+    let engine = std::thread::spawn(move || {
+        handlers::VIEW.with_borrow_mut(|view| named.iter().for_each(|r| view.add(r)));
+        engine_loop(engine_rx, diagnostics_tx, cfg, root, main, debounce)
+    });
 
     let result = main_loop(&connection, &engine_tx, &diagnostics_rx);
     let _ = engine_tx.send(EngineMsg::Shutdown);
@@ -278,13 +287,38 @@ struct Doc {
     analysis: Option<Analysis>,
 }
 
+/// The workspace folders the client named, else its root.
+fn client_roots(params: &Json) -> Vec<PathBuf> {
+    let uri = |v: &Json| v.as_str().and_then(|s| s.parse::<Uri>().ok()).and_then(|u| handlers::uri_to_path(&u));
+    let folders: Vec<PathBuf> = params
+        .get("workspaceFolders")
+        .and_then(Json::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f.get("uri").and_then(uri))
+        .collect();
+    if !folders.is_empty() {
+        return folders;
+    }
+    params
+        .get("rootUri")
+        .and_then(uri)
+        .or_else(|| params.get("rootPath").and_then(Json::as_str).map(PathBuf::from))
+        .into_iter()
+        .collect()
+}
+
 fn engine_loop(
     rx: Receiver<EngineMsg>,
     diagnostics_tx: Sender<PublishDiagnosticsParams>,
     cfg: Config,
     root: PathBuf,
+    main: Option<PathBuf>,
     debounce: Duration,
 ) {
+    // The document an input file is read as part of (`satex lsp -f`, else
+    // the one discovery would start from).
+    let main = main.or_else(|| crate::plugin::discovery::scan(&root).root_document());
     let mut docs: HashMap<Uri, Doc> = HashMap::new();
     let mut actions: HashMap<Uri, Vec<Json>> = HashMap::new();
     let mut dirty: Vec<Uri> = Vec::new();
@@ -298,7 +332,7 @@ fn engine_loop(
             Ok(msg) => msg,
             Err(RecvTimeoutError::Timeout) => {
                 for uri in dirty.drain(..) {
-                    analyze(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx);
+                    analyze(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx);
                 }
                 continue;
             }
@@ -307,6 +341,7 @@ fn engine_loop(
         match msg {
             EngineMsg::Shutdown => return,
             EngineMsg::Open(uri, path, text) => {
+                handlers::VIEW.with_borrow_mut(|view| view.add(&path));
                 docs.insert(uri.clone(), Doc { text, path, analysis: None });
                 if !dirty.contains(&uri) {
                     dirty.push(uri);
@@ -327,29 +362,29 @@ fn engine_loop(
                 dirty.retain(|d| d != &uri);
             }
             EngineMsg::Hover(uri, pos, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
+                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
                 let result = with_doc(&docs, &uri, |analysis, text| handlers::hover(analysis, text, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::Definition(uri, pos, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
+                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
                 let result = with_doc(&docs, &uri, |analysis, text| handlers::definition(analysis, text, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::References(uri, pos, decls, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
+                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
                 let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
                 let result =
                     with_doc(&docs, &uri, |analysis, text| handlers::references(analysis, text, &path, pos, decls));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::Completion(uri, pos, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
+                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
                 let result = with_doc(&docs, &uri, |analysis, text| handlers::completion(analysis, text, pos));
                 let _ = reply.send(result.unwrap_or(lsp_types::CompletionResponse::Array(Vec::new())));
             }
             EngineMsg::DocumentSymbol(uri, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
+                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
                 let path = docs.get(&uri).map(|d| d.path.display().to_string());
                 let result = match path {
                     Some(path) => with_doc(&docs, &uri, |analysis, text| {
@@ -361,20 +396,20 @@ fn engine_loop(
                 let _ = reply.send(result);
             }
             EngineMsg::Highlight(uri, pos, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
+                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
                 let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
                 let result = with_doc(&docs, &uri, |analysis, text| handlers::highlights(analysis, text, &path, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::PrepareRename(uri, pos, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
+                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
                 let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
                 let result =
                     with_doc(&docs, &uri, |analysis, text| handlers::prepare_rename(analysis, text, &path, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::Rename(uri, pos, new_name, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
+                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
                 let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
                 let result =
                     with_doc(&docs, &uri, |analysis, text| handlers::rename(analysis, text, &path, pos, &new_name))
@@ -384,7 +419,7 @@ fn engine_loop(
             EngineMsg::WorkspaceSymbol(query, reply) => {
                 let uri = docs.keys().next().cloned();
                 if let Some(uri) = &uri {
-                    ensure_analyzed(&mut docs, &mut actions, uri, &cfg, &diagnostics_tx, &mut dirty);
+                    ensure_analyzed(&mut docs, &mut actions, uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
                 }
                 let result = uri
                     .and_then(|u| with_doc(&docs, &u, |analysis, _| handlers::workspace_symbols(analysis, &query)))
@@ -392,7 +427,7 @@ fn engine_loop(
                 let _ = reply.send(result);
             }
             EngineMsg::CodeAction(uri, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, &diagnostics_tx, &mut dirty);
+                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
                 let _ = reply.send(actions.get(&uri).cloned().unwrap_or_default());
             }
             EngineMsg::ExecuteCommand(body, reply) => {
@@ -411,25 +446,29 @@ fn ensure_analyzed(
     actions: &mut HashMap<Uri, Vec<Json>>,
     uri: &Uri,
     cfg: &Config,
+    main: Option<&Path>,
     diagnostics_tx: &Sender<PublishDiagnosticsParams>,
     dirty: &mut Vec<Uri>,
 ) {
     if docs.get(uri).is_some_and(|d| d.analysis.is_some()) {
         return;
     }
-    analyze(docs, actions, uri, cfg, diagnostics_tx);
+    analyze(docs, actions, uri, cfg, main, diagnostics_tx);
     dirty.retain(|d| d != uri);
 }
 
 /// Re-analyzes `uri`'s current text, publishes its diagnostics, and stashes
 /// their quick-fix code actions for later `textDocument/codeAction` calls.
 /// Every other open document is set in the overlay first, so an `\input` of
-/// one sees its unsaved text too (`crate::overlay`).
+/// one sees its unsaved text too (`crate::overlay`).  An input file (no
+/// `\documentclass`, as discovery classifies it) is analyzed as part of
+/// `main`, so its names are seen with every file that uses them.
 fn analyze(
     docs: &mut HashMap<Uri, Doc>,
     actions: &mut HashMap<Uri, Vec<Json>>,
     uri: &Uri,
     cfg: &Config,
+    main: Option<&Path>,
     diagnostics_tx: &Sender<PublishDiagnosticsParams>,
 ) {
     let Some((text, path)) = docs.get(uri).map(|d| (d.text.clone(), d.path.clone())) else { return };
@@ -438,7 +477,15 @@ fn analyze(
             crate::overlay::set(&other.path, other.text.clone());
         }
     }
-    let analysis = Machine::analyze(&text, Some(&path), cfg);
+    let input = path.extension().is_some_and(|e| e == "tex") && !text.contains("\\documentclass");
+    let whole = main.filter(|main| input && !same_file(main, &path)).and_then(|main| {
+        crate::overlay::set(&path, text.clone());
+        let source = crate::overlay::read_to_string(main).ok()?;
+        let analysis = Machine::analyze(&source, Some(main), cfg);
+        // Only a document that reads the file speaks for it.
+        analysis.file_names().iter().any(|f| same_file(Path::new(f), &path)).then_some(analysis)
+    });
+    let analysis = whole.unwrap_or_else(|| Machine::analyze(&text, Some(&path), cfg));
     let mut groups = handlers::diagnostics_json(&analysis);
     let own_uri = handlers::path_uri(&path.display().to_string());
     if !groups.iter().any(|g| g.get("uri").and_then(Json::as_str) == Some(own_uri.as_str())) {
@@ -468,4 +515,8 @@ fn with_doc<T>(docs: &HashMap<Uri, Doc>, uri: &Uri, f: impl FnOnce(&Analysis, &T
     // Columns count what this document's engine reads, whatever was
     // analyzed last on this thread (`crate::source`).
     Some(crate::source::with(analysis.plugins.engine.encoding(), || f(analysis, &text)))
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b || std::fs::canonicalize(a).ok().zip(std::fs::canonicalize(b).ok()).is_some_and(|(a, b)| a == b)
 }

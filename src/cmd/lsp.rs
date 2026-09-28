@@ -18,5 +18,5 @@ pub fn run(cfg: &Config, file: Option<&Path>, port: Option<u16>, host: Option<&s
         .filter(|p| !p.as_os_str().is_empty())
         .map(Path::to_path_buf)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    crate::lsp::serve(cfg, root)
+    crate::lsp::serve(cfg, root, file.map(Path::to_path_buf))
 }

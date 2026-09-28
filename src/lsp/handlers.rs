@@ -6,6 +6,7 @@
 //! ([`Pos`]: 1-based, character columns) and shapes the JSON as `lsp_types`
 //! structs.
 
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use lsp_types::{
@@ -95,8 +96,43 @@ fn completion_context(line: &str, col: u32) -> Context {
 pub fn path_uri(path: &str) -> Uri {
     // The same rooting [`crate::render::file_url`] does, so a diagnostic and the file it
     // belongs to reach the client under one URI.
-    let absolute = std::path::absolute(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| PathBuf::from(path));
+    let absolute = VIEW.with_borrow(|view| view.named(&absolute));
     crate::paths::file_url(&absolute).parse().unwrap_or_else(|_| "file:///".parse().unwrap())
+}
+
+thread_local! {
+    /// The paths the client named on the engine thread, which makes every URI.
+    pub static VIEW: std::cell::RefCell<ClientView> = std::cell::RefCell::default();
+}
+
+/// Paths as the client named them, against what they resolve to.  satex
+/// may reach a file by its resolved path (the working directory, a file
+/// found from a resolved one), and a client that opened it through a
+/// symlink only knows it by that name (#17).
+#[derive(Default)]
+pub struct ClientView(Vec<(PathBuf, PathBuf)>);
+
+impl ClientView {
+    pub fn add(&mut self, named: &Path) {
+        let Ok(resolved) = std::fs::canonicalize(named) else { return };
+        if resolved != named && !self.0.iter().any(|(r, _)| *r == resolved) {
+            self.0.push((resolved, named.to_path_buf()));
+            // The deepest name wins.
+            self.0.sort_by_key(|(r, _)| std::cmp::Reverse(r.components().count()));
+        }
+    }
+
+    /// `path` in the client's spelling: unchanged unless it lies under a
+    /// path the client named by another name.
+    pub fn named(&self, path: &Path) -> PathBuf {
+        let resolved = std::fs::canonicalize(path);
+        for (from, to) in &self.0 {
+            let Some(rest) = resolved.as_deref().unwrap_or(path).strip_prefix(from).ok() else { continue };
+            return if rest.as_os_str().is_empty() { to.clone() } else { to.join(rest) };
+        }
+        path.to_path_buf()
+    }
 }
 
 /// The reverse of [`path_uri`]: the local path a `file://` URI names, or
@@ -511,6 +547,6 @@ pub fn diagnostics_json(analysis: &Analysis) -> Vec<Json> {
         .into_iter()
         .filter(|r| r.get("origin").and_then(Json::as_str) == Some("document"))
         .collect();
-    let text = crate::render::lsp(&records);
+    let text = crate::render::lsp_with(&records, |path| path_uri(path).to_string());
     serde_json::from_str(&text).unwrap_or_default()
 }
