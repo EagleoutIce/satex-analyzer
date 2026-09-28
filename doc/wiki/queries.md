@@ -38,7 +38,7 @@ macro  \reserved@a                       #10#2#{   \expand…  latex.ltx        
 macro  \reserved@a                       #1\@nil   \@for \…  latex.ltx             @ latex.ltx:18611:3
 macro  \in@@                             #1cmtt              latex.ltx             @ latex.ltx:12883:6
 macro  \reserved@a                       #1,,#2\…  #1,#2\r…  latex.ltx             @ latex.ltx:8765:3
-… 2478 more lines omitted
+… 2476 more lines omitted
 ```
 
 ## expansions
@@ -128,7 +128,7 @@ variable-definition  \docume…  latex.ltx                       @ latex.ltx:186
 macro-definition     \docume…  latex.ltx                       @ latex.ltx:18618:3
 variable-definition  \usepac…  latex.ltx                       @ latex.ltx:18619:25
 macro-definition     \usepac…  latex.ltx                       @ latex.ltx:18619:25
-… 38897 more lines omitted
+… 38896 more lines omitted
 ```
 
 ## trace
@@ -139,7 +139,7 @@ Every step: which macro expanded, which primitive ran, what changed. Use `satex 
 $ satex trace -f samples/paper.tex
 index   step       name            detail                                             file       
 0       expand     \documentclass                                                     paper.tex  @ paper.tex:1:1
-7734    open-file  \article        /usr/local/texlive/2026/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
+7734    open-file  \article        /usr/local/texlive/YYYY/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
 16002   expand     \value                                                             paper.tex  @ paper.tex:0:0
 29937   expand     \par                                                               paper.tex  @ paper.tex:2:1
 29944   expand     \newif                                                             paper.tex  @ paper.tex:3:1
@@ -167,7 +167,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    expl3.ltx                                 
 4    input    expl3-code.tex                            
-… 262 more lines omitted
+… 253 more lines omitted
 ```
 
 ## diagnostics
@@ -189,10 +189,10 @@ The detected TeX installation: provider, version, and the texmf trees searched.
 $ satex query distribution -f samples/paper.tex
 kind        message                                                               root                                  
             TeX Live 2026, LaTeX2e 2025-11-01, 6 trees via kpsewhich, 47457 fil…                                        
-texmf-tree                                                                        /home/ostwind/texmf                   
-texmf-tree                                                                        /home/ostwind/.texlive2026/texmf-var  
+texmf-tree                                                                        ~/texmf                   
+texmf-tree                                                                        ~/.texliveYYYY/texmf-var  
 texmf-tree                                                                        /usr/local/texlive/texmf-local        
-texmf-tree                                                                        /usr/local/texlive/2026/texmf-config  
+texmf-tree                                                                        /usr/local/texlive/YYYY/texmf-config  
 … 2 more lines omitted
 ```
 
@@ -290,14 +290,14 @@ Where a piece of text can come from, with or without expansion. `--text` is a li
 
 ```text
 $ satex query produces -f samples/paper.tex --text 1.5em
-kind        tag      name           detail                                  file           
-source      class                   \vskip 1.5em%                           article.cls    @ article.cls:184:14
-source      class                   \vskip 1.5em%                           article.cls    @ article.cls:243:12
-source      class                   \vskip 1.5em}                           article.cls    @ article.cls:253:10
-source      class                   \itemindent -1.5em%                     article.cls    @ article.cls:392:40
-source      class                   \advance\leftmargin 1.5em}%             article.cls    @ article.cls:395:45
-source      class                   {\list{}{\listparindent 1.5em%          article.cls    @ article.cls:399:40
-source      class                   \setlength\@tempdima{1.5em}%            article.cls    @ article.cls:532:26
+kind        tag          name           detail                              file           
+source      class                       \vskip 1.5em%                       article.cls    @ article.cls:184:14
+source      class                       \vskip 1.5em%                       article.cls    @ article.cls:243:12
+source      class                       \vskip 1.5em}                       article.cls    @ article.cls:253:10
+source      class                       \itemindent -1.5em%                 article.cls    @ article.cls:392:40
+source      class                       \advance\leftmargin 1.5em}%         article.cls    @ article.cls:395:45
+source      class                       {\list{}{\listparindent 1.5em%      article.cls    @ article.cls:399:40
+source      class                       \setlength\@tempdima{1.5em}%        article.cls    @ article.cls:532:26
 … 11 more lines omitted
 ```
 
@@ -324,9 +324,9 @@ $ satex explain '\itshape'
   takes          0
   uses           0 times, in this run
   by             \def
-  documentation  The LaTeX2e sources, source2e
+  documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
   body           \not@math@alphabet \itshape \mathit \fontshape \itdefault \selectfont 
-  reference      https://texdoc.org/serve/source2e/0
+  reference      https://texdoc.org/serve/[source2e](https://ctan.org/pkg/source2e)/0
 … 1 more line omitted
 ```
 
@@ -384,7 +384,7 @@ $ satex explain '\itshape' --at preamble
   effective      \itshape
   takes          0
   package        kernel
-  documentation  The LaTeX2e sources, source2e
+  documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
 … 3 more lines omitted
 ```
 

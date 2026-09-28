@@ -130,3 +130,45 @@ fn generated_docs_have_no_bare_citations() {
         }
     }
 }
+
+/// `{{run: ...}}` transcripts are real `satex` output against this checkout,
+/// on this machine, so without `redact_paths` (in src/bin/satex-doc.rs) they
+/// would embed this machine's absolute paths verbatim: where the checkout
+/// sits, `$HOME`, a personal or per-year texmf tree. That makes the
+/// committed page wrong for every other reader, and is why
+/// `generated_docs_are_up_to_date` cannot pass from a worktree whose
+/// checkout path differs. Guards the whole generated set at once, not one
+/// page, against any of that leaking back in.
+#[test]
+fn generated_docs_have_no_machine_specific_paths() {
+    let checkout = std::env::current_dir().expect("current directory");
+    let checkout = checkout.display().to_string();
+    let home_re = Regex::new(r"(?:^|[^~\w])(/home/[A-Za-z0-9_.-]+)").unwrap();
+    let user = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).ok();
+
+    let mut violations = Vec::new();
+    for page in GENERATED_PAGES {
+        let text = fs::read_to_string(page).unwrap_or_else(|e| panic!("{page}: {e}"));
+        for (n, line) in text.lines().enumerate() {
+            if line.contains(&checkout) {
+                violations.push(format!("{page}:{}: this checkout's own path: {line}", n + 1));
+            }
+            if let Some(m) = home_re.find(line) {
+                violations.push(format!("{page}:{}: an absolute `/home` path ({}): {line}", n + 1, m.as_str().trim()));
+            }
+            if let Some(user) = &user
+                && !user.is_empty()
+                && line.contains(user.as_str())
+            {
+                violations.push(format!("{page}:{}: the current user's name (`{user}`): {line}", n + 1));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "generated pages contain machine-specific paths; `redact_paths` in \
+         src/bin/satex-doc.rs needs to cover this shape too, then regenerate with \
+         `cargo run --release --features doc --bin satex-doc`:\n{}",
+        violations.join("\n")
+    );
+}

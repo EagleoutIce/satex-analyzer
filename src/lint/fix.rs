@@ -138,20 +138,23 @@ impl Text {
 
     /// The byte offset of a position.  One column past the last character
     /// is the end of the line, and a position on the line after the last is
-    /// the end of the file.
+    /// the end of the file.  A column counts what the engine reads, so under
+    /// an 8-bit engine it counts bytes ([`crate::source`]).
     pub fn offset(&self, pos: Pos) -> Option<usize> {
         let (start, end) = self.line_range(pos.line)?;
         let skip = pos.col.checked_sub(1)? as usize;
-        match self.body[start..end].char_indices().nth(skip) {
-            Some((i, _)) => Some(start + i),
-            None if self.body[start..end].chars().count() == skip => Some(end),
-            None => None,
+        let line = &self.body[start..end];
+        match crate::source::columns(line).cmp(&skip) {
+            std::cmp::Ordering::Less => None,
+            std::cmp::Ordering::Equal => Some(end),
+            std::cmp::Ordering::Greater => Some(start + crate::source::byte_of_col(line, pos.col)),
         }
     }
 
     pub fn pos(&self, offset: usize) -> Pos {
         let index = self.starts.partition_point(|start| *start <= offset).max(1) - 1;
-        let col = self.body[self.starts[index]..offset].chars().count() as u32 + 1;
+        let start = self.starts[index];
+        let col = crate::source::col_of_byte(&self.body[start..], offset - start);
         Pos::new(index as u32 + 1, col)
     }
 
@@ -170,6 +173,19 @@ impl Text {
         let (start, _) = self.line_range(pos.line)?;
         let offset = self.offset(pos)?;
         Some((pos.line - 1, self.body[start..offset].encode_utf16().count() as u32))
+    }
+
+    /// The satex column of an LSP column (UTF-16 code units) on `line`.
+    pub fn from_utf16(&self, line: u32, utf16: u32) -> u32 {
+        let text = self.line(line);
+        let mut units = 0u32;
+        for (at, c) in text.char_indices() {
+            if units >= utf16 {
+                return crate::source::col_of_byte(text, at);
+            }
+            units += c.len_utf16() as u32;
+        }
+        crate::source::col_of_byte(text, text.len())
     }
 }
 
@@ -256,7 +272,8 @@ impl Scan {
     pub fn at(text: &Text, pos: Pos, cats: CatcodeTable) -> Option<Scan> {
         let offset = text.offset(pos)?;
         Some(Scan {
-            mouth: Mouth::new(&text.body[offset..], 0),
+            // The mouth reads what the engine reads, bytes or characters.
+            mouth: Mouth::new(&crate::source::recode(&text.body[offset..]), 0),
             cats,
             interner: Interner::default(),
             origin: pos,
@@ -563,7 +580,8 @@ impl<'a> Edits<'a> {
     /// the first thing on it.
     pub fn insert_before(&self, at: Span, line: &str) -> Option<Vec<Edit>> {
         let (path, text) = self.text(at.file)?;
-        let before: String = text.line(at.line).chars().take(at.col.saturating_sub(1) as usize).collect();
+        let at_line = text.line(at.line);
+        let before = &at_line[..crate::source::byte_of_col(at_line, at.col)];
         if !before.trim().is_empty() {
             return None;
         }
@@ -853,12 +871,13 @@ impl<'a> Edits<'a> {
         let end = match scan.peek() {
             Some(next) if next.start.line == endcsname.end.line => next.start,
             _ => {
-                let rest: String = text.line(endcsname.end.line).chars().skip(endcsname.end.col as usize - 1).collect();
-                let blank = rest.chars().take_while(|c| cats_space(*c)).count();
-                if !rest[rest.char_indices().nth(blank).map_or(rest.len(), |(i, _)| i)..].starts_with('%') {
+                let end_line = text.line(endcsname.end.line);
+                let rest = &end_line[crate::source::byte_of_col(end_line, endcsname.end.col)..];
+                let blank: usize = rest.chars().take_while(|c| cats_space(*c)).map(char::len_utf8).sum();
+                if !rest[blank..].starts_with('%') {
                     replacement.push('%');
                 }
-                Pos::new(endcsname.end.line, endcsname.end.col + blank as u32)
+                Pos::new(endcsname.end.line, endcsname.end.col + crate::source::columns(&rest[..blank]) as u32)
             }
         };
         Some(vec![Edit { path, start, end, replacement }])
@@ -897,10 +916,12 @@ impl<'a> Edits<'a> {
         let start = Pos::new(line, col);
         let end = match words.get(index + 1) {
             Some((next, _)) => Pos::new(line, *next),
-            None => Pos::new(line, col + word.chars().count() as u32),
+            None => Pos::new(line, col + crate::source::columns(word) as u32),
         };
         let start = match (words.get(index + 1), index.checked_sub(1)) {
-            (None, Some(previous)) => Pos::new(line, words[previous].0 + words[previous].1.chars().count() as u32),
+            (None, Some(previous)) => {
+                Pos::new(line, words[previous].0 + crate::source::columns(words[previous].1) as u32)
+            }
             _ => start,
         };
         Some(vec![Edit { path, start, end, replacement: String::new() }])
@@ -915,18 +936,18 @@ fn cats_space(c: char) -> bool {
 fn words(line: &str) -> Vec<(u32, &str)> {
     let mut out = Vec::new();
     let mut start = None;
-    for (col, (i, c)) in line.char_indices().enumerate() {
+    for (i, c) in line.char_indices() {
         match (c.is_whitespace(), start) {
-            (false, None) => start = Some((col, i)),
-            (true, Some((col0, i0))) => {
-                out.push((col0 as u32 + 1, &line[i0..i]));
+            (false, None) => start = Some(i),
+            (true, Some(i0)) => {
+                out.push((crate::source::col_of_byte(line, i0), &line[i0..i]));
                 start = None;
             }
             _ => {}
         }
     }
-    if let Some((col0, i0)) = start {
-        out.push((col0 as u32 + 1, &line[i0..]));
+    if let Some(i0) = start {
+        out.push((crate::source::col_of_byte(line, i0), &line[i0..]));
     }
     out
 }
@@ -934,9 +955,10 @@ fn words(line: &str) -> Vec<(u32, &str)> {
 /// The lines from `start` to `end` when nothing else stands on them but
 /// blanks and a comment, deleted with their line ends.
 fn whole_lines(text: &Text, path: &str, start: Pos, end: Pos) -> Option<Edit> {
-    let before: String = text.line(start.line).chars().take(start.col as usize - 1).collect();
-    let after: String = text.line(end.line).chars().skip(end.col as usize - 1).collect();
-    let after = after.trim_start();
+    let start_line = text.line(start.line);
+    let end_line = text.line(end.line);
+    let before = &start_line[..crate::source::byte_of_col(start_line, start.col)];
+    let after = end_line[crate::source::byte_of_col(end_line, end.col)..].trim_start();
     if !before.trim().is_empty() || !(after.is_empty() || after.starts_with('%')) {
         return None;
     }

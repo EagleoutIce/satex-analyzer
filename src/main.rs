@@ -208,6 +208,10 @@ fn run() -> Result<(), String> {
         source = EMPTY_DOCUMENT.to_string();
     }
     let (cfg, _layers) = configure(&cli, Some(&source))?;
+    // Input decoding follows the engine.  `Machine::analyze` settles it
+    // again once the project and the magic comments are read; commands that
+    // tokenize without an analysis, such as `tokens`, keep this one.
+    satex::source::set_encoding(satex::plugin::Plugins::sniff_engine(&cfg, &source).encoding());
     if let Some(satex::cmd::Command::Lsp { port, host }) = &cli.command {
         return satex::cmd::lsp::run(&cfg, cli.file.as_deref(), *port, host.as_deref());
     }
@@ -260,7 +264,9 @@ fn run() -> Result<(), String> {
     // `lint` already says what the analysis could not follow,
     // in a form that fits its own findings; the generic footer would only
     // repeat that in a second, unrelated shape.
-    let owns_gaps = (cli.format.is_text() && matches!(output, Output::Lint(_))) || cli.command().fixes();
+    let owns_gaps = (cli.format.is_text() && matches!(output, Output::Lint(_)))
+        || cli.command().fixes()
+        || cli.command().reports_gaps();
     match output {
         Output::Done => {}
         Output::Records(records) => {

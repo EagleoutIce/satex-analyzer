@@ -13,7 +13,7 @@ fn installed() -> bool {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let directory = std::env::temp_dir().join("satex-build-lints").join(name);
+    let directory = std::env::temp_dir().join(format!("satex-build-lints-{}", std::process::id())).join(name);
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("a scratch directory");
     directory

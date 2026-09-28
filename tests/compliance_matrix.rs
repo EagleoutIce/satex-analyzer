@@ -33,17 +33,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use satex::builtins::{
-    self, Arith, BoxCmd, CodeTable, Cond, Convert, FontParam, LastItem, LoadKind, Material, ModeCmd, Prefix, Primitive,
-    Special, Syntax, TextOf, Typeset, Verdict,
+    self, Arith, BoxCmd, CodeTable, Cond, Convert, Deferred, FontParam, LastItem, LoadKind, Material, ModeCmd, Prefix,
+    Primitive, Special, Syntax, TextOf, Typeset, Verdict,
 };
-use satex::config::{Config, Engine};
+use satex::config::{Config, Engine, Interaction};
 use satex::machine::{Analysis, Machine};
 use satex::plugin::Kernel;
 use satex::tex::{Meaning, RegKind};
 
-// ---------------------------------------------------------------------------
 // The document each probe is written into.
-// ---------------------------------------------------------------------------
 
 /// Without a format the catcodes are INITEX's (tex.web § 232), so only the
 /// grouping, parameter and superscript characters have to be declared.  This
@@ -81,10 +79,8 @@ const WITNESS_Z: &str = "\\edef\\zZ{\\the\\currentgrouplevel;\\the\\currentiflev
 /// The macros a probe's answer and witnesses are read from.
 const SLOTS: [&str; 4] = ["zR", "zX", "zY", "zZ"];
 
-// ---------------------------------------------------------------------------
 // Dimensions.  Each is a context a primitive can be met in that the
 // interpreter has to get right, with the reason it is here.
-// ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Dim {
@@ -185,10 +181,8 @@ const EDGE_DIMENS: [&str; 10] = [
     "1073741823sp",
 ];
 
-// ---------------------------------------------------------------------------
 // Probe templates, chosen by the `Primitive` variant so the table in
 // `builtins.rs` drives the suite.
-// ---------------------------------------------------------------------------
 
 /// A probe body with its placeholders still in it: `%I%` a register index,
 /// `%S%` an input stream number, `%N%` an integer literal, `%D%` a dimension
@@ -286,8 +280,10 @@ fn template(name: &str, p: Primitive) -> Result<Template, &'static str> {
         P::Unless => t(format!("{cs}\\ifnum1=2 \\def\\zR{{T}}\\else\\def\\zR{{F}}\\fi")),
         P::BeginGroup => t(format!("{cs}\\count%I%=%N% \\endgroup\\edef\\zR{{\\the\\count%I%}}")),
         P::EndGroup => t(format!("\\begingroup\\count%I%=%N% {cs}\\edef\\zR{{\\the\\count%I%}}")),
-        P::Defer if name == "aftergroup" => t(format!("\\def\\za{{\\def\\zR{{A}}}}\\begingroup{cs}\\za\\endgroup")),
-        P::Defer => t(format!("\\def\\za{{\\def\\zR{{B}}}}{cs}\\za\\count%I%=%N% ")),
+        // The two are distinct commands (tex.web § 265), so the probe comes
+        // from what the meaning holds, not from the name it was reached by.
+        P::Defer(Deferred::Group) => t(format!("\\def\\za{{\\def\\zR{{A}}}}\\begingroup{cs}\\za\\endgroup")),
+        P::Defer(Deferred::Assignment) => t(format!("\\def\\za{{\\def\\zR{{B}}}}{cs}\\za\\count%I%=%N% ")),
 
         // Registers and arithmetic.
         P::Allocate(_) => Err("LaTeX's allocator, defined by the format, not an engine primitive"),
@@ -452,7 +448,7 @@ fn template(name: &str, p: Primitive) -> Result<Template, &'static str> {
 /// The value a register of this kind is given.
 fn register_value(k: RegKind) -> &'static str {
     match k {
-        RegKind::Count | RegKind::Char | RegKind::MathChar => "%N%",
+        RegKind::Count | RegKind::Char | RegKind::MathChar | RegKind::UMathChar => "%N%",
         RegKind::Dimen => "%D%",
         RegKind::Skip => "%D% plus 1fil",
         RegKind::MuSkip => "3mu",
@@ -562,9 +558,7 @@ fn last_item(name: &str, item: LastItem) -> Result<Template, &'static str> {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Building the document.
-// ---------------------------------------------------------------------------
 
 #[derive(Clone)]
 struct Case {
@@ -639,9 +633,7 @@ fn line_for(case: &Case, index: usize, deviate: &str) -> (String, Option<(String
     (format!("\\setbox254=\\vbox{{{RESET}{line}}}%"), extra)
 }
 
-// ---------------------------------------------------------------------------
 // Running.
-// ---------------------------------------------------------------------------
 
 /// A directory of its own for every batch, under `target/` so nothing is
 /// written to a tmpfs, and emptied first so no probe reads the last one's log.
@@ -724,9 +716,7 @@ fn normalize(text: &str) -> String {
     text.replace("##", "#").split_whitespace().collect()
 }
 
-// ---------------------------------------------------------------------------
 // The divergences this suite found and that are not fixed yet.
-// ---------------------------------------------------------------------------
 
 /// Each entry names a divergence this suite found, where it lives, and why
 /// the engine is right.  Nothing here weakens a comparison: every probe is
@@ -739,92 +729,36 @@ fn normalize(text: &str) -> String {
 ///
 /// A matcher is looked for in `" ⟨primitive⟩ ⟨dimension⟩ ⟨what disagreed⟩"`.
 const KNOWN: &[(&str, &str)] = &[
-    // Ranges the engine checks and satex does not (tex.web §§ 433, 434, 1232:
-    // `scan_char_num`, `scan_fifteen_bit_int`, `scan_eight_bit_int`, and the
-    // "Invalid code" recovery, which stores 0).
-    (
-        " outputbox ",
-        "LuaTeX's `\\outputbox` takes 0..255 (src/builtins.rs:1821), while satex stores whatever is assigned",
-    ),
-    (
-        " prevgraf ",
-        "`\\prevgraf` may not be negative (tex.web § 1244, src/builtins.rs:1256), while the engine stores 0",
-    ),
-    (
-        " interactionmode ",
-        "`\\interactionmode` takes 0..3 (src/builtins.rs:1919), while satex stores whatever is assigned",
-    ),
-    (" mathnolimitsmode ", "LuaTeX clamps its math mode parameters (src/builtins.rs:1808), while satex does not"),
-    (" mathitalicsmode ", "LuaTeX clamps its math mode parameters, while satex does not"),
-    (" mathdefaultsmode ", "LuaTeX clamps its math mode parameters, while satex does not"),
-    (" mathscriptboxmode ", "LuaTeX clamps its math mode parameters, while satex does not"),
-    (" mathscriptcharmode ", "LuaTeX clamps its math mode parameters, while satex does not"),
-    (" mathdelimitersmode ", "LuaTeX clamps its math mode parameters, while satex does not"),
-    (" Umathcodenum ", "LuaTeX range-checks the packed code, while satex stores whatever is assigned"),
     // Primitives classified as a plain parameter that are not one.
     // Quantities the mode or the page builder owns.
     (
         " tagcode ",
         "pdfTeX reads `\\tagcode` from the font's TFM tag for that character, not from a default: probed with cmr10, 64 and 66 give 0 while 65 and 97 give 1, and an assignment does not change what is read back.  satex keeps one default per engine and stores what is assigned",
     ),
-    (
-        " spacefactor ",
-        "src/builtins.rs:1260, src/exec.rs:84: `\\spacefactor` belongs to horizontal mode (tex.web § 1243), while satex reads and writes it in any mode",
-    ),
-    (" prevdepth ", "src/builtins.rs:1291: `\\prevdepth` belongs to vertical mode (tex.web § 1243)"),
-    (
-        " pagegoal ",
-        "src/builtins.rs:1282: the page-so-far dimensions are the page builder's (tex.web §§ 982, 987).  While the page is empty the engine reads `\\maxdimen` for `\\pagegoal` and 0 for the rest, whatever was assigned",
-    ),
-    (" pagedepth ", "page state, as `\\pagegoal`"),
-    (" pagetotal ", "page state, as `\\pagegoal`"),
-    (" pagestretch ", "page state, as `\\pagegoal`"),
-    (" pageshrink ", "page state, as `\\pagegoal`"),
-    (" pagefilstretch ", "page state, as `\\pagegoal`"),
-    (" pagefillstretch ", "page state, as `\\pagegoal`"),
-    (" pagefilllstretch ", "page state, as `\\pagegoal`"),
     // Reading and printing.
     (
-        " Umathcode ",
-        "a `\\Umathcode` write is not visible to `\\the\\mathcode`, and satex's packing is not the engine's",
+        " outer ",
+        "src/machine.rs `outer_while_scanning`: satex now ends the scan where tex.web \u{a7} 336 does and says so \
+         (`forbidden-outer`), but the engine then reads the control sequence again as a command, and the \
+         errors that follow rewrite the rest of the line.  satex reads its own recovery on, so the state \
+         after one differs",
     ),
     (
-        " escapechar ",
-        "src/tex.rs `detokenize`: `\\meaning` under an `\\escapechar` that is not printable prints `^^C` in the engine, while satex emits the raw character",
-    ),
-    (
-        " output ",
-        "src/exec.rs: `\\the\\output` brackets the output routine in braces (tex.web § 1226), while satex leaves them off",
-    ),
-    (
-        "macro:##1",
-        "src/exec.rs `ScanTokens`: `\\scantokens` writes its text out first, which doubles a macro parameter character (eTeX manual § 3.9), while satex re-reads it undoubled",
-    ),
-    (
-        "def rescan zZ",
-        "the same `\\scantokens` doubling: the engine's error over `##1` starts a paragraph, satex stays in vertical mode",
+        "macro:#1#21->",
+        "src/machine.rs: the `#` `\\scantokens` doubles now makes the parameters the engine makes, so the \
+         rescanned `\\def\\zq#1{\u{2026}}` takes two of them and a literal `1`.  Its call then runs away to the end \
+         of the pseudo-file, which satex diagnoses (`runaway-argument`, `file-ended`) and then reads the swallowed \
+         tokens on, while the engine abandons them with a `\\par`",
     ),
     (
         " inputlineno rescan ",
         "src/exec.rs `ScanTokens`: inside `\\scantokens` the engine counts lines from 1 in the pseudo-file (eTeX manual § 3.9), while satex reports the line of the enclosing file",
-    ),
-    (
-        " outer ",
-        "src/exec.rs `Prefix(Outer)`: the engine refuses an `\\outer` definition met while a macro is expanded or a pseudo-file is scanned (tex.web § 396) and abandons the line, while satex runs it and stays confident about state the engine never reached",
     ),
     // Widenings that outlive what caused them, or that the verdict says
     // should not happen at all.
     (
         " everyeof rescan ",
         "src/exec.rs `ScanTokens`: `\\everyeof` is inserted at the end of the pseudo-file `\\scantokens` reads (eTeX manual \u{a7} 3.9), and its text is typeset, while satex never fires it there",
-    ),
-    (
-        " readline ",
-        "src/exec.rs `Syntax::ReadLine`: `\\readline` keeps the `\\endlinechar` as a character of category 12 (eTeX manual \u{a7} 3.2), while satex drops it",
-    ),
-    (
-        " Umathcharnumdef ",
-        "src/builtins.rs `Syntax::UMathCharDef`: `\\Umathcharnumdef` makes a `\\Umathchar`, not a `\\mathchar`, and `\\ifx` tells them apart",
     ),
 ];
 
@@ -957,6 +891,9 @@ fn run_batch(engine: Engine, tag: &str, batch: &[Case], deviate: &str, report: &
     let cfg = Config {
         engine: Some(engine),
         kernel: Some(Kernel::None),
+        // The oracle is started with `-interaction=batchmode`, and the
+        // option is what `\interactionmode` reads (tex.web § 1337).
+        interaction: Interaction::Batchmode,
         load_packages: false,
         load_classes: false,
         load_format: false,
@@ -1019,9 +956,7 @@ fn run_batch(engine: Engine, tag: &str, batch: &[Case], deviate: &str, report: &
     again
 }
 
-// ---------------------------------------------------------------------------
 // The table the cases come from.
-// ---------------------------------------------------------------------------
 
 /// Every primitive name the engines know, each assigned to the cheapest engine
 /// that has it.  This is the whole table from `builtins.rs`, and nothing here
@@ -1158,9 +1093,7 @@ fn finish(what: &str, report: Report) -> Report {
     report
 }
 
-// ---------------------------------------------------------------------------
 // The case sets.
-// ---------------------------------------------------------------------------
 
 /// Every primitive, whatever its verdict: `\meaning` reaches all of them,
 /// including the ones satex leaves alone, because `\ifx` compares meanings
@@ -1254,9 +1187,7 @@ fn edge_cases() -> Vec<(Engine, Case)> {
     slice(cases, 11)
 }
 
-// ---------------------------------------------------------------------------
 // The tests.
-// ---------------------------------------------------------------------------
 
 #[test]
 fn every_primitive_means_what_the_engine_says() {

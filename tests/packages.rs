@@ -121,7 +121,7 @@ fn an_image_is_looked_for_where_graphicspath_says_and_in_what_the_driver_reads()
     if !installed() {
         return;
     }
-    let directory = std::env::temp_dir().join("satex-graphics-test");
+    let directory = std::env::temp_dir().join(format!("satex-graphics-test-{}", std::process::id()));
     let figures = directory.join("figs");
     std::fs::create_dir_all(&figures).unwrap();
     std::fs::write(figures.join("tree.png"), b"").unwrap();
@@ -451,4 +451,61 @@ fn acro_acronyms_are_observed_from_what_acro_writes_and_its_errors() {
         .filter_map(|f| f.get("name").and_then(|c| c.as_str()).map(str::to_string))
         .collect();
     assert_eq!(missing, ["xx"]);
+}
+
+/// A document on disk, so that `\input` reads real files.
+fn analyze_in(dir: &std::path::Path, source: &str) -> Analysis {
+    let main = dir.join("doc.tex");
+    std::fs::write(&main, source).unwrap();
+    let cfg = Config { load_classes: true, ..Config::default() };
+    Machine::analyze(source, Some(&main), &cfg)
+}
+
+fn loaded(analysis: &Analysis, name: &str) -> bool {
+    analysis.facts.loads.iter().any(|load| load.name == name)
+}
+
+#[test]
+fn a_load_at_the_very_end_of_an_input_file_still_happens() {
+    if !installed() {
+        return;
+    }
+    // `\usepackage` and `\documentclass` end in `\@ifnextchar[`, whose
+    // `\futurelet` has to look past the end of the file it stands in.
+    // tex.web §§ 336-339 end only a scan that is in progress there, so the
+    // look-ahead reads on in the file that opened this one.  pdflatex loads
+    // the package in every shape below: `\meaning\numberwithin` is amsmath's
+    // `\protected macro:->\__cmd_start:nNNnnn …`.
+    let dir = std::env::temp_dir().join(format!("satex-endload-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let document = "\\documentclass{article}\n\\input{cfg.tex}\n\\begin{document}\\end{document}\n";
+    for (shape, text) in [
+        ("the only line of the file", "\\usepackage{amsmath}\n"),
+        ("no final newline", "\\usepackage{amsmath}"),
+        ("an optional argument", "\\usepackage[intlimits]{amsmath}\n"),
+    ] {
+        std::fs::write(dir.join("cfg.tex"), text).unwrap();
+        let analysis = analyze_in(&dir, document);
+        assert!(loaded(&analysis, "amsmath"), "{shape}: {:?}", names(&analysis));
+        assert!(defined(&analysis, "numberwithin"), "{shape}: amsmath did not run");
+    }
+    // A nested `\input` that is itself the last line.
+    std::fs::write(dir.join("cfg.tex"), "\\input{deeper.tex}").unwrap();
+    std::fs::write(dir.join("deeper.tex"), "\\usepackage{amsmath}").unwrap();
+    let analysis = analyze_in(&dir, document);
+    assert!(loaded(&analysis, "amsmath"), "nested: {:?}", names(&analysis));
+    assert!(defined(&analysis, "numberwithin"), "nested: amsmath did not run");
+    // The same for a class, which is what makes the rest of the document
+    // readable at all.
+    std::fs::write(dir.join("cls.tex"), "\\documentclass{article}").unwrap();
+    let analysis = analyze_in(&dir, "\\input{cls.tex}\n\\begin{document}\\end{document}\n");
+    assert!(loaded(&analysis, "article"), "class: {:?}", names(&analysis));
+    assert!(defined(&analysis, "section"), "class: article did not run");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The names of everything the run loaded, for a failure message.
+fn names(analysis: &Analysis) -> Vec<String> {
+    analysis.facts.loads.iter().map(|load| load.name.clone()).collect()
 }

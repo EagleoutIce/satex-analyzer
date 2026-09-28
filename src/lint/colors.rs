@@ -33,7 +33,7 @@ Fix by defining the colour first, or by correcting its name.",
         explanation: "\
 The document names a colour with `\\definecolor`, `\\providecolor` or
 `\\colorlet` and never reads it back through `\\color`, `\\textcolor` or a
-`\\colorlet` source.  Harmless, but likely a leftover.
+`\\colorlet` source.
 
 Silent for a colour a package defines: a library may define more colours
 than any one document uses.",
@@ -47,7 +47,7 @@ than any one document uses.",
         summary: "the same colour name is defined twice with different colours",
         explanation: "\
 Two `\\definecolor`-family calls store different colours under the same
-name. Only the last one is ever read back.  Usually a copy-paste slip.
+name. Only the last one is ever read back.
 
 Fix by giving the second colour its own name, or by removing the earlier
 definition.",

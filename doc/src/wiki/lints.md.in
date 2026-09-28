@@ -15,8 +15,6 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 
 `--fix` applies the safe fixes, `--unsafe-fixes` adds the unsafe ones, `--diff` prints the edits instead of writing them. Only project files change. Overlapping fixes wait for the next round. The document is re-analyzed after each round, up to eight.
 
-{{run: satex lint --diff --unsafe-fixes -f samples/paper.tex}}
-
 `--format json` gives each fix as `applicability` and `edits` (`path`, 1-based `start`/`end`, `replacement`), `--format sarif` as `fixes`, `--format lsp` as diagnostics with `quickfix` code actions.
 
 ## Suppressing findings
@@ -30,6 +28,14 @@ A comment in the document silences findings. Without codes it silences every rul
 
 They apply to every output format and to `--fix`. An unknown code is reported as `unknown-suppress-code`.
 
+## Rules
+
+Every rule, with a link to its explanation below.
+
 {{rules}}
+
+## Explanations
+
+One group per category. Open a group to read its rules.
 
 {{explanations}}

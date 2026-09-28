@@ -758,6 +758,7 @@ fn classify(m: &mut Machine, t: Token) -> Option<(&'static str, Option<i64>, boo
                 RegKind::Toks => "assign_toks",
                 RegKind::Char => "char_given",
                 RegKind::MathChar => "math_given",
+                RegKind::UMathChar => "xmath_given",
                 _ => return None,
             };
             (name, Some(n.into()), false, false)

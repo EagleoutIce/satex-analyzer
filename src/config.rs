@@ -24,6 +24,11 @@ pub struct Limits {
     /// Tokens a run may digest without reading from a file before the
     /// expansion it is in is given up as a loop that does not end.
     pub stall_tokens: u64,
+    /// How often one construct satex cannot follow may be met at one place
+    /// before the expansion it is in is given up the same way.  A path that
+    /// fails at a site once fails there again on every round, so counting
+    /// the failure into the millions says nothing the first one did not.
+    pub repeat_failures: u32,
     /// Wall-clock seconds a run may take before it stops and says so; 0 for
     /// no limit.  A safety net: no document should come near it.
     pub seconds: u64,
@@ -96,13 +101,13 @@ impl Limits {
 impl Default for Limits {
     fn default() -> Limits {
         Limits {
-            steps: 900_000_000,
+            steps: 1_000_000_000,
             // The real expl3 reads the Unicode data files while the kernel
             // is built; that is done once and then cached, and a runaway is
             // cut short by `stall_tokens` long before this bound.
-            format_steps: 1_000_000_000,
+            format_steps: 9_000_000_000,
             file_depth: 64,
-            expansion_depth: 24,
+            expansion_depth: 32,
             // Measured: the kernel's own helpers (`\hexnumber@` inside
             // `\DeclareMathSymbol`, the expl3 mapping functions) re-expand one
             // site far more often than that while the source stands still,
@@ -113,15 +118,15 @@ impl Default for Limits {
             // than following it.
             site_expansions: 16_384,
             stall_tokens: 50_000_000,
+            // Measured: the kernel's own `\if` chains report a handful of
+            // the same gap while they are still making progress, and no
+            // document needed more than a few before the path repeated
+            // itself.
+            repeat_failures: 8,
             seconds: 300,
             branch_depth: 8,
             join_tokens: 65_536,
-            // Measured on `lint --all doc/architecture.tex` (TikZ): errors
-            // 0: 1, 1: 1, 2: 1, 3: 1, 8: 0; time 0: 21s, 1: 15s, 2: 20s,
-            // 3: 33s, 8: 100s.  Splitting deeper buys one error back for
-            // seven times the time, since each path runs pgfmath's parser
-            // over more unknown text.
-            meaning_splits: 1,
+            meaning_splits: 4,
             widen_after: 3,
             meaning_set: 8,
             value_set: 8,
@@ -513,6 +518,26 @@ impl Engine {
     pub fn has_xetex(self) -> bool {
         self == Engine::XeTeX
     }
+    /// How this engine reads an input file.  `tex` and `pdftex` are 8-bit:
+    /// they read bytes (tex.web § 232), so a two-byte UTF-8 character is two
+    /// character tokens.  XeTeX and LuaTeX read UTF-8 characters.
+    pub fn encoding(self) -> Encoding {
+        match self {
+            Engine::Tex | Engine::PdfTeX => Encoding::Bytes,
+            Engine::LuaTeX | Engine::XeTeX => Encoding::Utf8,
+        }
+    }
+}
+
+/// What one input character is: one byte, or one UTF-8 character.
+/// [`Engine::encoding`] picks it, and [`crate::source`] holds the choice for
+/// the run.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Encoding {
+    /// Every byte is its own character, code 0..=255.
+    Bytes,
+    #[default]
+    Utf8,
 }
 
 /// Which kind of input a run analyzes, and so which `profiles.*` block in
@@ -571,8 +596,10 @@ impl Profile {
     /// The profile `path`/`source` implies: by [`Self::of_name`], else by
     /// what the source starts with — `\ProvidesClass`/`\ProvidesPackage` or
     /// `\documentclass`/`\documentstyle` at the first substantial line,
-    /// else `document` if `\documentclass` appears anywhere and `plain` if
-    /// it never does.
+    /// else `document` if `\documentclass` or `\begin{document}` appears
+    /// anywhere and `plain` if neither ever does.  `\begin` counts because
+    /// plain TeX has no environments, so a file that opens one is LaTeX
+    /// even when an `\input` file holds its `\documentclass`.
     pub fn detect(path: Option<&Path>, source: &str) -> Profile {
         let dtx = path.and_then(crate::literate::Literate::of) == Some(crate::literate::Literate::Dtx);
         let code = dtx.then(|| crate::literate::code_view(source, &crate::literate::Guards::AllButDriver));
@@ -594,7 +621,11 @@ impl Profile {
                 return Profile::Document;
             }
         }
-        if source.contains("\\documentclass") { Profile::Document } else { Profile::Plain }
+        if source.contains("\\documentclass") || source.contains("\\begin{document}") {
+            Profile::Document
+        } else {
+            Profile::Plain
+        }
     }
 }
 

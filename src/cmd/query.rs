@@ -305,8 +305,11 @@ fn window(
         .entry(path.to_string())
         .or_insert_with(|| std::fs::read_to_string(path).ok().map(|t| t.lines().map(str::to_string).collect()))
         .as_ref()?;
-    let text: Vec<char> = lines.get(line.checked_sub(1)? as usize)?.chars().collect();
-    let end = (col as usize).saturating_sub(1).saturating_add(width).min(text.len());
+    let raw = lines.get(line.checked_sub(1)? as usize)?;
+    // A column counts what the engine reads; the window counts characters.
+    let at = raw[..crate::source::byte_of_col(raw, col)].chars().count();
+    let text: Vec<char> = raw.chars().collect();
+    let end = at.saturating_add(width).min(text.len());
     let (from, to) = (end.saturating_sub(50), (end + 50).min(text.len()));
     let cut = |a: usize, b: usize| text[a..b].iter().collect::<String>();
     let head = format!("{}{}", if from > 0 { "…" } else { "" }, cut(from, end));

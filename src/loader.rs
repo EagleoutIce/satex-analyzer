@@ -105,8 +105,16 @@ impl Resolver {
         if let Some((dtx, _)) = candidates.iter().find_map(|file| self.unpacked.get(file)) {
             return Some(dtx.clone());
         }
-        candidates.iter().find_map(|file| self.trees().get(file).cloned())
+        // The distribution index is keyed by bare file names, so a name that
+        // spells a path names nothing in it and must not be searched for.
+        candidates.iter().filter(|file| !spells_a_path(file)).find_map(|file| self.trees().get(file).cloned())
     }
+}
+
+/// Whether a name spells a path, like `../template/x.cls`, rather than the
+/// file name a distribution indexes.
+fn spells_a_path(name: &str) -> bool {
+    Path::new(name).parent().is_some_and(|parent| !parent.as_os_str().is_empty())
 }
 
 /// How a host's filesystem matches a name: NTFS and default APFS open a
@@ -163,24 +171,73 @@ fn case_folded_name(dir: &Path, rel: &str) -> Option<String> {
     })
 }
 
-/// `dir/rel`, when every component of it is spelled on disk exactly as
-/// written.  kpathsea matches its `ls-R` index case-sensitively, and so does
-/// [`Trees::get`], so a name that only opens because NTFS or APFS folds case
-/// would resolve here and nowhere else, including on the Linux machine that
-/// builds the document for real.
+/// One step of a name, as the walk that checks its spelling takes it.
+enum Step {
+    /// A directory entry, which the parent directory has to list verbatim.
+    Name(std::ffi::OsString),
+    /// `..`, which names no entry of the directory it is written in.
+    Up,
+    /// The root an absolute name starts from, which names no entry either.
+    Root(std::ffi::OsString),
+}
+
+/// `rel` lexically normalized: `.` drops out and `..` pops the name before
+/// it.  A `..` with nothing to pop stays, because the directory it leads to
+/// is the caller's to reach, not an entry to check.
+fn steps(rel: &Path) -> Vec<Step> {
+    use std::path::Component;
+    let mut steps = Vec::new();
+    for component in rel.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(steps.last(), Some(Step::Name(_))) {
+                    steps.pop();
+                } else {
+                    steps.push(Step::Up);
+                }
+            }
+            Component::Normal(name) => steps.push(Step::Name(name.to_os_string())),
+            root => steps.push(Step::Root(root.as_os_str().to_os_string())),
+        }
+    }
+    steps
+}
+
+/// `dir/rel`, when every component of it that names a directory entry is
+/// spelled on disk exactly as written.  kpathsea matches its `ls-R` index
+/// case-sensitively, and so does [`Trees::get`], so a name that only opens
+/// because NTFS or APFS folds case would resolve here and nowhere else,
+/// including on the Linux machine that builds the document for real.
+/// `.` and `..` name no entry, so they carry no spelling to check, and `..`
+/// leading out of `dir` is what TeX itself does with `../template/x.cls`.
 fn exact_file(dir: &Path, rel: &str, fs: Fs) -> Option<PathBuf> {
     let path = dir.join(rel);
     if !fs.is_file(&path) {
         return None;
     }
-    let mut at = path.as_path();
-    while at != dir {
-        let (Some(parent), Some(name)) = (at.parent(), at.file_name()) else { break };
-        let listed = std::fs::read_dir(parent).is_ok_and(|mut e| e.any(|e| e.is_ok_and(|e| e.file_name() == name)));
-        if !listed {
-            return None;
+    let mut at = dir.to_path_buf();
+    let mut rooted = false;
+    for step in steps(Path::new(rel)) {
+        match step {
+            Step::Up => at.push(".."),
+            // An absolute name starts from its own root, not from `dir`.
+            // Windows spells that root in two steps, a prefix and a `\`.
+            Step::Root(root) => {
+                if !std::mem::replace(&mut rooted, true) {
+                    at = PathBuf::new();
+                }
+                at.push(root);
+            }
+            Step::Name(name) => {
+                let listed =
+                    std::fs::read_dir(&at).is_ok_and(|mut e| e.any(|e| e.is_ok_and(|e| e.file_name() == name)));
+                if !listed {
+                    return None;
+                }
+                at.push(name);
+            }
         }
-        at = parent;
     }
     Some(path)
 }
@@ -206,6 +263,18 @@ mod tests {
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         std::fs::write(dir.join("MyPkg.sty"), "").unwrap();
         std::fs::write(dir.join("sub").join("Deep.tex"), "").unwrap();
+        dir
+    }
+
+    /// A document directory beside a template directory: the shape
+    /// `\documentclass{../template/x}` names.
+    fn tree(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("satex-loader-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("doc").join("deeper")).unwrap();
+        std::fs::create_dir_all(dir.join("template")).unwrap();
+        std::fs::write(dir.join("template").join("MyCls.cls"), "").unwrap();
+        std::fs::write(dir.join("doc").join("Local.sty"), "").unwrap();
         dir
     }
 
@@ -241,6 +310,66 @@ mod tests {
             assert_eq!(exact_file(&dir, "nothing.sty", fs), None, "{fs:?}");
             assert_eq!(exact_file(&dir, "sub", fs), None, "{fs:?}");
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_path_leading_out_of_the_document_directory_resolves() {
+        let dir = tree("parent");
+        let doc = dir.join("doc");
+        let deeper = doc.join("deeper");
+        for fs in [HOST, FOLDING] {
+            assert_eq!(
+                exact_file(&doc, "../template/MyCls.cls", fs),
+                Some(doc.join("../template/MyCls.cls")),
+                "{fs:?}"
+            );
+            assert_eq!(exact_file(&doc, "./Local.sty", fs), Some(doc.join("./Local.sty")), "{fs:?}");
+            assert_eq!(exact_file(&doc, "deeper/../Local.sty", fs), Some(doc.join("deeper/../Local.sty")), "{fs:?}");
+            assert_eq!(
+                exact_file(&deeper, "../../template/MyCls.cls", fs),
+                Some(deeper.join("../../template/MyCls.cls")),
+                "{fs:?}"
+            );
+            // `..` names a directory, not a file, and leads nowhere alone.
+            assert_eq!(exact_file(&doc, "../template", fs), None, "{fs:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_path_leading_out_of_the_document_directory_is_still_spelled_exactly() {
+        let dir = tree("parent-case");
+        let doc = dir.join("doc");
+        // Without this the assertions below would pass on Linux for the
+        // wrong reason: the open never succeeding at all.
+        assert!(FOLDING.is_file(&doc.join("../template/mycls.cls")));
+        for fs in [HOST, FOLDING] {
+            assert_eq!(exact_file(&doc, "../template/mycls.cls", fs), None, "{fs:?}");
+            assert_eq!(exact_file(&doc, "../Template/MyCls.cls", fs), None, "{fs:?}");
+            assert_eq!(exact_file(&doc, "./local.sty", fs), None, "{fs:?}");
+            assert_eq!(exact_file(&doc, "deeper/../local.sty", fs), None, "{fs:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_name_that_spells_a_path_is_not_a_distribution_file_name() {
+        assert!(spells_a_path("../template/MyCls.cls"));
+        assert!(spells_a_path("sub/deep.tex"));
+        assert!(!spells_a_path("article.cls"));
+        assert!(!spells_a_path("MyPkg.sty"));
+    }
+
+    #[test]
+    fn a_case_mismatch_is_found_through_a_parent_directory_too() {
+        if cfg!(any(target_os = "windows", target_os = "macos")) {
+            return;
+        }
+        let dir = tree("parent-mismatch");
+        let doc = dir.join("doc");
+        assert_eq!(case_folded_name(&doc, "../template/MyCls.cls"), None);
+        assert_eq!(case_folded_name(&doc, "../template/mycls.cls"), Some("MyCls.cls".to_string()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

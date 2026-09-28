@@ -90,7 +90,6 @@ fn includes_all(source: &str, outcomes: &[&str]) {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Agreement with pdfTeX (these pass).
 
 #[test]
@@ -185,6 +184,42 @@ fn dimension_units_convert_like_tex() {
     check(r"\count0=-7 \divide\count0 2 \edef\R{\the\count0}", "-3");
 }
 
+/// The number of an `\ifcase` built by conditionals that are still open when
+/// the case is chosen: tex.web § 500 pops each of them at its `\fi` and goes
+/// on skipping, and passes over their `\or`/`\else`.  expl3's
+/// `\__fp_sanitize:Nw` is written this way, so getting it wrong loses the
+/// `\__fp_sep:` that ends every floating point value.
+const CHAIN: &str =
+    r"\def\chain#1#2#3{\ifcase \ifnum #1 1 \else\ifnum #2 2 \else\ifnum #3 3 \fi\fi\fi 0 A\or B\or C\or D\else E\fi}";
+
+#[test]
+fn ifcase_skips_past_the_fi_of_a_conditional_its_number_left_open() {
+    check(&format!(r"{CHAIN}\edef\R{{\chain{{1>2}}{{3>4}}{{5<6}}}}"), "D");
+    check(&format!(r"{CHAIN}\edef\R{{\chain{{1<2}}{{3>4}}{{5<6}}}}"), "B");
+    check(&format!(r"{CHAIN}\edef\R{{\chain{{1>2}}{{3<4}}{{5<6}}}}"), "C");
+    // Every test false: the innermost has no `\else`, so its own `\fi` closes
+    // it and the number is the trailing 0.
+    check(&format!(r"{CHAIN}\edef\R{{\chain{{1>2}}{{3>4}}{{5>6}}}}"), "A");
+}
+
+#[test]
+fn ifcase_passes_over_the_else_of_a_conditional_its_number_left_open() {
+    let pick = r"\def\pick#1{\ifcase \ifnum #1 2 \else 1 \fi 0 A\or B\or C\else D\fi}";
+    check(&format!(r"{pick}\edef\R{{\pick{{1<2}}}}"), "C");
+    check(&format!(r"{pick}\edef\R{{\pick{{1>2}}}}"), "B");
+}
+
+#[test]
+fn ifcase_with_one_open_conditional_in_its_number() {
+    // No arm matches 9, so the `\else` text runs.
+    check(r"\edef\R{\ifcase \ifnum 1>2 1 \else 9 \fi A\or B\else C\fi}", "C");
+    check(r"\edef\R{\ifcase \ifnum 1<2 0 \fi A\or B\or C\fi}", "A");
+    // A negative selector runs the `\else` text, the inner `\fi` first.
+    check(r"\edef\R{\ifcase \ifnum 1<2 -1 \fi A\or B\else C\fi}", "C");
+    // An `\ifcase` inside the number of another one.
+    check(r"\edef\R{\ifcase \ifcase \ifnum 1<2 1 \fi 7\or 2\or 8\fi A\or B\or C\fi}", "C");
+}
+
 #[test]
 fn initex_code_tables() {
     check(r"\edef\R{\the\lccode`A,\the\uccode`a,\the\sfcode`A,\the\mathcode`a,\the\catcode`a}", "97,65,999,29025,11");
@@ -195,6 +230,58 @@ fn afterassignment_and_aftergroup_order() {
     check(r"\def\a{\xdef\R{\R A}}\def\b{\xdef\R{\R B}}\def\R{}{\aftergroup\a\aftergroup\b}", "AB");
     check(r"\def\a{\xdef\R{\R A}}\def\R{}\afterassignment\a\afterassignment\a\count1=5", "A");
     check(r"\def\R{}\def\a{\xdef\R{\R A[\meaning\q]}}\afterassignment\a\def\q{Q}", "A[macro:->Q]");
+}
+
+/// Two macros so that every `\aftergroup` probe below can say what ran, in
+/// what order.
+const AB: &str = r"\def\R{}\def\a{\xdef\R{\R A}}\def\b{\xdef\R{\R B}}";
+
+/// tex.web § 265 makes `\aftergroup` and `\afterassignment` two commands, so
+/// a `\let` copy is the command it copied and not the name it is reached
+/// through.  expl3 reaches `\aftergroup` only through copies
+/// (`\tex_aftergroup:D`, `\group_insert_after:N`), so a copy that waits for
+/// an assignment instead holds its token back for good.
+#[test]
+fn a_let_copy_of_aftergroup_still_ends_the_group() {
+    check(&format!(r"{AB}\let\ag\aftergroup{{\ag\a\ag\b}}"), "AB");
+    check(&format!(r"{AB}\let\ag\aftergroup\begingroup\ag\a\ag\b\endgroup"), "AB");
+    check(&format!(r"{AB}\def\c{{\xdef\R{{\R C}}}}\let\ag\aftergroup{{\ag\a\ag\b\ag\c}}"), "ABC");
+    // An implicit `{` closes like an explicit one (tex.web § 1063).
+    check(&format!(r"{AB}\let\ag\aftergroup\let\bg={{ \let\eg=}} \bg\ag\a\eg"), "A");
+}
+
+/// tex.web § 269: the tokens go back into the input at the end of the group,
+/// in front of what followed it, so the macro among them reads its arguments
+/// from there.
+#[test]
+fn a_token_from_aftergroup_reads_its_arguments_after_the_group() {
+    let ag = r"\def\R{}\let\ag\aftergroup";
+    // An undelimited argument, taken from after the group.
+    check(&format!(r"{ag}\def\u#1{{\xdef\R{{\R[\string#1]}}}}{{\ag\u}}\relax"), r"[\relax]");
+    // A braced one, which loses its braces.
+    check(&format!(r"{ag}\def\u#1{{\xdef\R{{\R[#1]}}}}{{\ag\u}}{{ab}}"), "[ab]");
+    // Two of them: the `\use_i:nn` shape every expl3 conditional returns with.
+    check(&format!(r"{ag}\def\u#1#2{{\xdef\R{{\R(#1)}}}}{{\ag\u}}{{p}}{{q}}"), "(p)");
+    // A delimited one, which scans past the group for its delimiter.
+    check(&format!(r"{ag}\def\u#1\stop{{\xdef\R{{\R<\string#1>}}}}{{\ag\u}}\relax\stop"), r"<\relax>");
+    // The same, with the group inside a macro body and the arguments at the
+    // call site.
+    check(&format!(r"{ag}\def\u#1#2{{\xdef\R{{\R(#1)}}}}\def\c{{{{\ag\u}}}}\c{{yes}}{{no}}"), "(yes)");
+}
+
+/// The innermost group ends first, so its tokens run first.
+#[test]
+fn aftergroup_in_nested_groups_runs_the_inner_group_first() {
+    check(&format!(r"{AB}{{\aftergroup\a{{\aftergroup\b}}}}"), "BA");
+    check(&format!(r"{AB}\let\ag\aftergroup{{\ag\a{{\ag\b}}}}"), "BA");
+}
+
+/// `\afterassignment` fires at the next assignment, `\aftergroup` at the end
+/// of the group, whichever names they are reached through.
+#[test]
+fn aftergroup_and_afterassignment_are_told_apart() {
+    check(&format!(r"{AB}\let\ag\aftergroup\let\aa\afterassignment{{\ag\a\aa\b\count255=1 }}"), "BA");
+    check(&format!(r"{AB}\let\aa\afterassignment{{\aa\a}}\count255=3 "), "A");
 }
 
 #[test]
@@ -221,7 +308,6 @@ fn undecidable_conditionals_keep_both_arms() {
     includes_all(r"\count1=\pdfuniformdeviate 10\relax \ifnum\count1>4 \def\R{T}\else\def\R{F}\fi", &["T", "F"]);
 }
 
-// ---------------------------------------------------------------------------
 // Former divergences (see the critique report); each asserts the pdfTeX
 // behaviour, or, where one path's outcome cannot be told apart from the
 // other's, that satex does not claim a certain one.

@@ -792,6 +792,12 @@ impl Machine<'_> {
         self.natural = Some(Natural { space_factor: Some(1000), ..Natural::default() });
         self.mode = modes;
         self.list = modes;
+        // tex.web § 1083: a box's vertical list starts with `\prevdepth` at
+        // `ignore_depth`; the group gives the enclosing list's back at `}`.
+        if modes == Modes::INTERNAL_VERTICAL {
+            let sym = self.intern("prevdepth");
+            self.env.set_value(sym, Value::Dimen(crate::builtins::IGNORE_DEPTH), false);
+        }
     }
 
     /// A `{` of a simple group: in math it begins a math list (tex.web
@@ -1272,6 +1278,22 @@ impl Machine<'_> {
         }
     }
 
+    /// A box or a rule may have reached the main vertical list, unless the
+    /// mode says it certainly went into a box of its own (tex.web § 1000).
+    /// After this the page dimensions are the page builder's, which satex
+    /// does not run, so they stop reading as an empty page's.
+    pub(crate) fn touch_page(&mut self) {
+        if self.mode.test(Modes::INNER) != Some(true) {
+            self.page_touched = true;
+        }
+    }
+
+    /// Whether the page builder has certainly not frozen the page
+    /// dimensions yet (tex.web § 986).
+    pub(crate) fn page_empty(&self) -> bool {
+        !self.page_touched
+    }
+
     /// Which list is being built: `Some(true)` a horizontal one,
     /// `Some(false)` a vertical one of its own.  `None` for the main
     /// vertical list, whose tail the page builder may take away (tex.web
@@ -1292,6 +1314,13 @@ impl Machine<'_> {
     /// (tex.web §§ 651-656 `hpack`, 669-670 `vpack`).
     pub(crate) fn append_item(&mut self, item: Item) {
         self.material = true;
+        // tex.web §§ 987, 1000: the page builder freezes the page
+        // dimensions when the first box or rule reaches the main vertical
+        // list.  Glue, kerns, penalties, marks and whatsits leave the page
+        // empty, and nothing inside a box reaches it at all.
+        if matches!(item, Item::Box(_) | Item::Rule { .. } | Item::Unknown) {
+            self.touch_page();
+        }
         self.end_word();
         let Some(mut n) = self.natural else { return };
         let Some(horizontal) = self.list_kind() else {
@@ -1450,6 +1479,9 @@ impl Machine<'_> {
     /// and native fonts are not followed.
     pub(crate) fn append_char(&mut self, c: u32) {
         self.material = true;
+        // The lines a paragraph breaks into are boxes, so a character set
+        // outside a box will reach the page.
+        self.touch_page();
         if self.natural.is_none() {
             return;
         }

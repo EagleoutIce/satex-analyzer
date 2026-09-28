@@ -51,6 +51,16 @@ fn to_crlf(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\n', "\r\n")
 }
 
+/// A file's bytes, as [`crate::source::decode`] wants them: what the
+/// overlay holds for it, or what is on disk.
+pub fn read_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    match FILES.with(|files| files.borrow().get(path).cloned()) {
+        // The overlay holds a file as it is written, so its bytes are its.
+        Some(text) => Ok(text.into_bytes()),
+        None => std::fs::read(path),
+    }
+}
+
 pub fn set(path: &Path, text: String) {
     FILES.with(|files| files.borrow_mut().insert(path.to_path_buf(), text));
 }

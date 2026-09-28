@@ -659,10 +659,18 @@ impl Machine<'_> {
                 };
                 let global = self.take_global();
                 let table = if math { CodeTable::Math } else { CodeTable::Delimiter };
+                let named = self.env.identity(by);
+                let limit = crate::builtins::limit(self.name(named), self.out.plugins.engine);
                 match c {
                     Some(c) => {
                         let sym = self.char_code_sym(table, c);
-                        self.env.set_value(sym, code.map_or(Value::Unknown, Value::Int), global);
+                        let stored = match limit {
+                            Some(limit) => self.limited(named, sym, limit, code, span),
+                            None => Some(code.map_or(Value::Unknown, Value::Int)),
+                        };
+                        if let Some(stored) = stored {
+                            self.env.set_value(sym, stored, global);
+                        }
                     }
                     // Any character may be the one assigned.
                     None => self.weaken_code_table(table, global),
@@ -1273,8 +1281,16 @@ impl Machine<'_> {
             }
             Primitive::TokensParameter => {
                 self.scan_optional_equals();
-                let toks = self.read_general_text();
+                let mut toks = self.read_general_text();
                 let by = self.env.identity(by);
+                // tex.web § 1226: the output routine is stored inside a
+                // brace pair of its own, so `\the\output` shows it braced
+                // and firing it opens a group.
+                if self.name(by) == "output" {
+                    let at = toks.first().map_or(span, |t| t.span);
+                    toks.insert(0, Token::new(Tok::Chr('{', Catcode::Begin), at));
+                    toks.push(Token::new(Tok::Chr('}', Catcode::End), toks.last().map_or(span, |t| t.span)));
+                }
                 self.assign_value(by, Value::Toks(Rc::from(toks)), span);
             }
             // "You can't use `\lastpenalty' in vertical mode": a last item
@@ -1431,11 +1447,21 @@ impl Machine<'_> {
                 let Some(name) = self.read_r_token() else { return };
                 self.scan_optional_equals();
                 let code = if num { self.scan_int() } else { self.scan_umath_char() };
+                // `\Umathcharnumdef` range-checks its packed code the way
+                // `\Umathcodenum` does, and recovers the same way.
+                let named = self.env.identity(by);
+                let code = match crate::builtins::limit(self.name(named), self.out.plugins.engine).filter(|_| num) {
+                    Some(limit) => match self.limited(named, name, limit, code, span) {
+                        Some(stored) => stored.as_int(),
+                        None => code,
+                    },
+                    None => code,
+                };
                 let Some(code) = code else {
                     self.define(name, Meaning::Unknown, by, DefMode::Declare, span, None);
                     return;
                 };
-                let meaning = Meaning::Register(RegKind::MathChar, code as u16);
+                let meaning = Meaning::Register(RegKind::UMathChar, code as u16);
                 self.define(name, meaning, by, DefMode::Declare, span, None);
                 self.env.set_value(name, Value::Int(code), true);
             }

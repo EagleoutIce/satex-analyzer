@@ -482,6 +482,14 @@ impl Env {
         }
     }
 
+    /// Whether `sym` means an `\outer` macro.  tex.web § 336 looks at this
+    /// for every token it reads, which is the engine's own bookkeeping and
+    /// not a read of the meaning, so nothing is recorded and nothing is
+    /// cloned.
+    pub fn is_outer(&self, sym: Sym) -> bool {
+        self.slot(sym).is_some_and(|b| matches!(&b.meaning, Meaning::Macro(m) if m.outer))
+    }
+
     /// The meaning, as text being skipped sees it: only whether it is a
     /// conditional, `\else`, `\or` or `\fi` counts as read.
     pub fn skip_meaning(&self, sym: Sym) -> Meaning {

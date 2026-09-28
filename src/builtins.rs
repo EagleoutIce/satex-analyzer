@@ -678,6 +678,17 @@ pub enum Typeset {
     Delimiter,
 }
 
+/// What a token held back waits for.  tex.web § 265 makes `\aftergroup` and
+/// `\afterassignment` two commands, so a copy such as `\tex_aftergroup:D`
+/// carries which one it is and not the name it was reached through.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+pub enum Deferred {
+    /// `\aftergroup`: the end of the current group (tex.web § 326).
+    Group,
+    /// `\afterassignment`: the next assignment (tex.web § 1269).
+    Assignment,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum Primitive {
     Def {
@@ -738,7 +749,7 @@ pub enum Primitive {
     BeginGroup,
     EndGroup,
     /// `\aftergroup`, `\afterassignment`.
-    Defer,
+    Defer(Deferred),
 
     Allocate(RegKind),
     Register(RegKind),
@@ -1031,7 +1042,7 @@ pub fn expandable(p: Primitive) -> bool {
             | P::Endcsname
             | P::BeginGroup
             | P::EndGroup
-            | P::Defer
+            | P::Defer(_)
             | P::Register(_)
             | P::RegisterDef(_)
             | P::Arith(_)
@@ -1143,8 +1154,8 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "immediate", P::Prefix(Prefix::Immediate));
     put(it, "begingroup", P::BeginGroup);
     put(it, "endgroup", P::EndGroup);
-    put(it, "aftergroup", P::Defer);
-    put(it, "afterassignment", P::Defer);
+    put(it, "aftergroup", P::Defer(Deferred::Group));
+    put(it, "afterassignment", P::Defer(Deferred::Assignment));
 
     put(it, "expandafter", P::ExpandAfter);
     put(it, "noexpand", P::NoExpand);
@@ -1811,7 +1822,8 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "ifabsnum", P::If(Cond::AbsNum));
         put(it, "ifabsdim", P::If(Cond::AbsDim));
         // LuaTeX manual, "TeX and LuaTeX primitives": its own integer,
-        // dimension and glue parameters.
+        // dimension and glue parameters.  The range-checked and read-only
+        // ones among them are in [`limit`], which decides what a write does.
         for n in [
             "automatichyphenpenalty",
             "explicithyphenpenalty",
@@ -2286,6 +2298,215 @@ pub fn docstrip_meanings(it: &mut Interner) -> Vec<(Sym, Meaning)> {
     table
 }
 
+/// The character a packed math code carries, in its low 21 bits (XeTeX
+/// reference, "Math"; LuaTeX manual, "Math").
+const MATH_SLOT_MASK: i64 = 0x1f_ffff;
+/// The highest character a packed math code may carry.
+const MATH_SLOT_MAX: i64 = 0x10_ffff;
+/// XeTeX's active marker, which is a math code of its own.
+const MATH_ACTIVE: i64 = 0x1f_ffff;
+/// tex.web § 1232: `"8000` is TeX82's active math code.
+const MATH_CLASSIC_ACTIVE: i64 = 0x8000;
+
+/// XeTeX and LuaTeX keep one math code per character, packed as a family, a
+/// class and a character (XeTeX reference; LuaTeX manual, "Math").  TeX82's
+/// fifteen-bit code goes into the same table, so it is packed on the way in.
+pub fn pack_math_code(code: i64, engine: Engine) -> i64 {
+    if !engine.has_unicode_math() {
+        return code;
+    }
+    // XeTeX keeps the active math code as a marker of its own, while LuaTeX
+    // packs it like any other, as class 8.
+    if engine == Engine::XeTeX && code == MATH_CLASSIC_ACTIVE {
+        return MATH_ACTIVE;
+    }
+    ((code >> 8) & 0xf) << 24 | (code >> 12) << 21 | (code & 0xff)
+}
+
+/// What `\the\mathcode` gives for a packed code.  XeTeX reads it back as
+/// TeX82's, and gives 0 where it does not fit ("Extended mathchar used as
+/// mathchar"); LuaTeX hands the packed code over as it stands.
+pub fn read_math_code(code: i64, engine: Engine) -> i64 {
+    if engine != Engine::XeTeX {
+        return code;
+    }
+    if code == MATH_ACTIVE {
+        return MATH_CLASSIC_ACTIVE;
+    }
+    let (family, class, slot) = ((code >> 24) & 0xff, (code >> 21) & 7, code & MATH_SLOT_MASK);
+    if family > 0xf || slot > 0xff { 0 } else { class << 12 | family << 8 | slot }
+}
+
+/// What an engine does with a value a parameter will not take, and what a
+/// read gives before anything is assigned.  Every entry of [`limit`] was
+/// measured with `\showthe` on a real engine, not read off a manual.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Limit {
+    /// The parameter takes `lo..=hi` and starts at `start`.  Anything else
+    /// is an error, after which `bad` is stored, or the old value stays
+    /// where there is none (tex.web §§ 1243, 1244).
+    Range { start: i64, lo: i64, hi: i64, bad: Option<i64> },
+    /// The parameter is read-only: a write is accepted and ignored, and a
+    /// read always gives this value (LuaTeX manual, "Math").
+    Fixed(i64),
+    /// A packed math code.  An invalid one is an error and a recovery value
+    /// is stored: XeTeX's active marker where the low bits ask for it, zero
+    /// otherwise.
+    MathCode { active: bool },
+}
+
+/// What an engine does with one assigned value.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Taken {
+    /// Stored as it is.
+    Yes,
+    /// Refused, and the old value stays.
+    Old,
+    /// Refused, and this value is stored instead.
+    Instead(i64),
+}
+
+impl Limit {
+    /// What a read gives before anything is assigned, where a parameter has
+    /// one of its own.  A code table has none: its default is per character.
+    pub fn start(self) -> Option<i64> {
+        match self {
+            Limit::Range { start, .. } => Some(start),
+            Limit::Fixed(value) => Some(value),
+            Limit::MathCode { .. } => None,
+        }
+    }
+
+    /// What the engine does with `value`.
+    pub fn take(self, value: i64) -> Taken {
+        match self {
+            Limit::Range { lo, hi, bad, .. } => match bad {
+                _ if (lo..=hi).contains(&value) => Taken::Yes,
+                Some(bad) => Taken::Instead(bad),
+                None => Taken::Old,
+            },
+            Limit::Fixed(_) => Taken::Old,
+            // Both engines check the low 21 bits alone, so a negative value
+            // whose character fits is taken.  XeTeX takes `0x1FFFFF` as the
+            // active marker and falls back to it for any other value that
+            // asks for it.  LuaTeX has no marker and falls back to zero.
+            Limit::MathCode { active } => {
+                let slot = value & MATH_SLOT_MASK;
+                if slot <= MATH_SLOT_MAX || (active && value == MATH_ACTIVE) {
+                    Taken::Yes
+                } else if active && slot == MATH_ACTIVE {
+                    Taken::Instead(MATH_ACTIVE)
+                } else {
+                    Taken::Instead(0)
+                }
+            }
+        }
+    }
+
+    /// Every value the parameter can end up holding, which an assignment
+    /// satex could not pin down joins the old value with.
+    pub fn reach(self) -> (i64, i64) {
+        match self {
+            Limit::Range { lo, hi, .. } => (lo, hi),
+            Limit::Fixed(value) => (value, value),
+            Limit::MathCode { .. } => (crate::value::WORD_MIN, crate::value::WORD_MAX),
+        }
+    }
+
+    /// Why the engine refused `value`, in the words `assign_char_code` uses
+    /// for the same shape.
+    pub fn refusal(self, name: &str, value: i64) -> String {
+        match self {
+            Limit::Range { lo, hi, bad, .. } => {
+                let after = match bad {
+                    Some(bad) => format!("{bad} is used"),
+                    None => "the old value is kept".into(),
+                };
+                format!("invalid value ({value}) for \\{name}, which takes {lo}..{hi}; {after}")
+            }
+            Limit::Fixed(reads) => format!("\\{name} is read-only and reads {reads}; this assignment does nothing"),
+            Limit::MathCode { .. } => {
+                let stored = match self.take(value) {
+                    Taken::Instead(stored) => stored,
+                    _ => 0,
+                };
+                format!("invalid math code ({value}) for \\{name}; {stored} is used")
+            }
+        }
+    }
+}
+
+/// The parameters an engine range-checks, refuses to change, or starts away
+/// from zero, and what it does with a value it will not take.  The ranges
+/// and the recovery values differ by engine, so the engine decides.
+pub fn limit(name: &str, engine: Engine) -> Option<Limit> {
+    Some(match name {
+        // tex.web § 1244: `\prevgraf` may not be negative.
+        "prevgraf" => Limit::Range { start: 0, lo: 0, hi: crate::value::WORD_MAX, bad: None },
+        // tex.web § 1265 (`new_interaction`): batch, nonstop, scroll and
+        // error-stop mode, and § 74 starts a run in the last of them.
+        "interactionmode" => Limit::Range { start: crate::commands::ERROR_STOP_MODE, lo: 0, hi: 3, bad: None },
+        // LuaTeX manual, "The output routine": `\outputbox` names the box
+        // the output routine finds the page in, and starts at 255.
+        "outputbox" if engine == Engine::LuaTeX => Limit::Range { start: 255, lo: 0, hi: 65535, bad: None },
+        // LuaTeX manual, "Math": these report how the math machinery is
+        // built, so a write is accepted and ignored.
+        "mathnolimitsmode" | "mathitalicsmode" | "mathdelimitersmode" if engine == Engine::LuaTeX => Limit::Fixed(0),
+        "mathdefaultsmode" | "mathscriptboxmode" | "mathscriptcharmode" if engine == Engine::LuaTeX => Limit::Fixed(1),
+        // tex.web § 1243 (`alter_aux`): "Bad space factor", after which the
+        // engine goes on with 1000, which is also a fresh list's.
+        "spacefactor" => Limit::Range { start: 1000, lo: 1, hi: 32767, bad: Some(1000) },
+        // XeTeX reference and LuaTeX manual, "Math": the packed form of a
+        // math code, which only XeTeX gives an active marker.  A
+        // `\Umathcharnumdef` takes the same packed code and recovers the
+        // same way.
+        "Umathcodenum" | "Umathcharnumdef" if engine.has_unicode_math() => {
+            Limit::MathCode { active: engine == Engine::XeTeX }
+        }
+        _ => return None,
+    })
+}
+
+/// tex.web § 212 (`ignore_depth`): what `\prevdepth` is on a vertical list
+/// that has nothing on it yet, which is below any real depth, so the first
+/// box takes no interline glue.
+pub const IGNORE_DEPTH: i64 = -1000 * 65536;
+
+/// A quantity the engine keeps outside the parameter table: the current
+/// list's own, or the page builder's.  Reading or writing one where its
+/// owner is not there is an error, so the answer is not what was assigned.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Owned {
+    /// The current list's, and only readable and writable while the mode is
+    /// one of `modes` (tex.web §§ 418, 1243).  Elsewhere a read is
+    /// "Improper" and gives zero, and a write is `report_illegal_case`,
+    /// which scans nothing, so the `=⟨value⟩` is left in the input.  A list
+    /// of its own starts at `fresh` (tex.web § 1083).
+    List { modes: crate::mode::Modes, fresh: i64 },
+    /// The page builder's (tex.web §§ 982, 986).  The write is an ordinary
+    /// assignment, but while the page is empty the read gives this instead
+    /// of what was assigned.
+    PageSoFar { empty: i64 },
+}
+
+/// The quantities [`Owned`] covers.  Every engine has all of them: they are
+/// TeX82's (tex.web §§ 982, 1243).
+pub fn owned(name: &str) -> Option<Owned> {
+    use crate::mode::Modes;
+    Some(match name {
+        // tex.web § 418: `\spacefactor` is the horizontal list's and
+        // `\prevdepth` the vertical list's.
+        "spacefactor" => Owned::List { modes: Modes::ANY_HORIZONTAL, fresh: 1000 },
+        "prevdepth" => Owned::List { modes: Modes::ANY_VERTICAL, fresh: IGNORE_DEPTH },
+        // tex.web § 986 (`set_page_dimen`): while the page is empty
+        // `\pagegoal` reads `\maxdimen` and the other seven read zero.
+        "pagegoal" => Owned::PageSoFar { empty: crate::value::MAX_DIMEN },
+        "pagetotal" | "pagedepth" | "pagestretch" | "pageshrink" | "pagefilstretch" | "pagefillstretch"
+        | "pagefilllstretch" => Owned::PageSoFar { empty: 0 },
+        _ => return None,
+    })
+}
+
 /// A name of the expl3 programming layer: a function (`\tl_set:Nn`) or one
 /// of the quarks and scan marks (`\q_nil`, `\s__tl_stop`) that
 /// `expl3-code.tex` defines.
@@ -2324,10 +2545,30 @@ pub enum Verdict {
     Unsupported,
 }
 
+/// Where a verdict is decided: the source file and the line of the arm
+/// that returns it. Filled by the `at!` macro, so a link cannot drift.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Site {
+    /// Path from the crate root, as `file!()` gives it.
+    pub file: &'static str,
+    /// Line of the arm.
+    pub line: u32,
+}
+
+/// A verdict, why, and the arm that decided it.
+pub type Judgment = (Verdict, &'static str, Site);
+
+/// Tags a verdict with the [`Site`] of the arm it is written on.
+macro_rules! at {
+    ($verdict:expr, $detail:expr $(,)?) => {
+        ($verdict, $detail, Site { file: file!(), line: line!() })
+    };
+}
+
 /// The verdict for a [`Primitive`] and why, from what `src/exec.rs`,
 /// `src/mode.rs` and `src/commands.rs` actually do with it. Grouped by
 /// sub-enum so a new case cannot be forgotten (exhaustive matches).
-pub fn verdict(p: Primitive) -> (Verdict, &'static str) {
+pub fn verdict(p: Primitive) -> Judgment {
     use Primitive as P;
     use Verdict as V;
     match p {
@@ -2344,368 +2585,370 @@ pub fn verdict(p: Primitive) -> (Verdict, &'static str) {
         // Definitions, grouping and expansion: tex.web parts 24-27 and the
         // eTeX manual §§ 3.1-3.4, matched by `src/exec.rs`.
         P::Def { .. } => {
-            (V::Exact, "tex.web § 476. An unterminated definition is diagnosed, not read past the file's end")
+            at!(V::Exact, "tex.web § 476. An unterminated definition is diagnosed, not read past the file's end")
         }
-        P::Let { .. } => (V::Exact, "tex.web § 1221, including the two-token `\\futurelet` lookahead"),
-        P::Prefix(_) => (V::Exact, "tex.web § 1211"),
-        P::ExpandAfter => (V::Exact, "tex.web § 367"),
-        P::NoExpand | P::DontExpand => (V::Exact, "tex.web §§ 367, 358"),
+        P::Let { .. } => at!(V::Exact, "tex.web § 1221, including the two-token `\\futurelet` lookahead"),
+        P::Prefix(_) => at!(V::Exact, "tex.web § 1211"),
+        P::ExpandAfter => at!(V::Exact, "tex.web § 367"),
+        P::NoExpand | P::DontExpand => at!(V::Exact, "tex.web §§ 367, 358"),
         P::SkipCrossing { .. } => {
-            (V::Exact, "satex's own marker for a conditional a file boundary interrupted, not an engine primitive")
+            at!(V::Exact, "satex's own marker for a conditional a file boundary interrupted, not an engine primitive")
         }
-        P::Csname => (
+        P::Csname => at!(
             V::Approximated,
             "exact once the name is resolved. A bounded join of candidate meanings when it is built from unknown digits (`one_of_names`)",
         ),
-        P::BeginCsname | P::LastNamedCs | P::Endcsname => (V::Exact, "LuaTeX manual, \"Macros\""),
-        P::Reinject => (V::Exact, "eTeX manual § 3.4"),
+        P::BeginCsname | P::LastNamedCs | P::Endcsname => at!(V::Exact, "LuaTeX manual, \"Macros\""),
+        P::Reinject => at!(V::Exact, "eTeX manual § 3.4"),
         P::ScanTokens { .. } => {
-            (V::Exact, "eTeX manual § 3.9. A capacity overflow (`MAX_IN_OPEN`) is diagnosed, not assumed away")
+            at!(V::Exact, "eTeX manual § 3.9. A capacity overflow (`MAX_IN_OPEN`) is diagnosed, not assumed away")
         }
-        P::Use(_) | P::Expanded => (V::Exact, "interface3, \"Selecting tokens\"; pdfTeX manual, \"\\expanded\""),
-        P::Else | P::Or | P::Fi => (V::Exact, "tex.web § 510, including `insert_relax` for an else or fi met mid-test"),
-        P::Unless => (
+        P::Use(_) | P::Expanded => at!(V::Exact, "interface3, \"Selecting tokens\"; pdfTeX manual, \"\\expanded\""),
+        P::Else | P::Or | P::Fi => {
+            at!(V::Exact, "tex.web § 510, including `insert_relax` for an else or fi met mid-test")
+        }
+        P::Unless => at!(
             V::Approximated,
             "etex.ch. Exact before a conditional; before a name of unknown meaning the conditional it may open is left undecided",
         ),
-        P::BeginGroup | P::EndGroup | P::Defer => {
-            (V::Exact, "tex.web §§ 1211, 1 (semi-simple groups, `\\aftergroup`/`\\afterassignment`)")
+        P::BeginGroup | P::EndGroup | P::Defer(_) => {
+            at!(V::Exact, "tex.web §§ 1211, 1 (semi-simple groups, `\\aftergroup`/`\\afterassignment`)")
         }
 
         // Registers, arithmetic and per-character tables: tex.web part 25.
-        P::Allocate(_) => (V::Exact, "hands out a fresh register, tracked exactly"),
-        P::Register(_) | P::RegisterDef(_) => (
+        P::Allocate(_) => at!(V::Exact, "hands out a fresh register, tracked exactly"),
+        P::Register(_) | P::RegisterDef(_) => at!(
             V::Approximated,
             "exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`)",
         ),
-        P::FontDef => (V::Exact, "tex.web § 1257 (`\\font`)"),
-        P::OpenIn | P::CloseIn | P::Read => (
+        P::FontDef => at!(V::Exact, "tex.web § 1257 (`\\font`)"),
+        P::OpenIn | P::CloseIn | P::Read => at!(
             V::Approximated,
             "tex.web § 1351. Exact for a known stream number; one satex cannot pin down leaves every stream's state unknown",
         ),
-        P::Arith(_) => (
+        P::Arith(_) => at!(
             V::Approximated,
             "exact for known operands. Interval arithmetic and tex.web § 222's zero default otherwise",
         ),
         P::IntegerParameter | P::DimenParameter | P::GlueParameter { .. } => {
-            (V::Exact, "read and written from the stored parameter table")
+            at!(V::Exact, "the stored parameter table")
         }
-        P::TokensParameter => (
+        P::TokensParameter => at!(
             V::Approximated,
-            "read and written from the stored parameter table exactly, but setting any `\\every…` list widens the dimensions of boxes that were already packed before it was read",
+            "the stored parameter table, but setting any `\\every…` list widens the dimensions of boxes that were already packed before it was read",
         ),
-        P::CatcodeAssign => (
+        P::CatcodeAssign => at!(
             V::Unsupported,
             "exact for one known character and category. Diagnosed (`unknown-catcode`) and widened when either can't be pinned down",
         ),
-        P::CharCode(_) => (
+        P::CharCode(_) => at!(
             V::Unsupported,
             "exact for one known character. Diagnosed (`unknown-char-code`) and the whole table widened when the candidates can't be enumerated at all",
         ),
-        P::CaseShift(_) => (V::Exact, "tex.web § 1288. Widens a code an unknown token was assigned"),
-        P::FontParam(_) => (
+        P::CaseShift(_) => at!(V::Exact, "tex.web § 1288. Widens a code an unknown token was assigned"),
+        P::FontParam(_) => at!(
             V::Approximated,
             "reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching tex.web § 580's own recovery. An entry satex cannot pin down widens every one it may name",
         ),
-        P::FontIdent(_) => (V::Exact, "tex.web § 1217: selecting a font is a local assignment"),
+        P::FontIdent(_) => at!(V::Exact, "tex.web § 1217: selecting a font is a local assignment"),
 
         // File and job control.
-        P::Load(_) => (V::Exact, "tex.web § 537 (`\\input`)"),
-        P::Endinput => (
+        P::Load(_) => at!(V::Exact, "tex.web § 537 (`\\input`)"),
+        P::Endinput => at!(
             V::Unsupported,
             "exact when unconditional. Diagnosed (`conditional-endinput`) and the file read on when reached under an undecided conditional",
         ),
-        P::End => (V::Exact, "tex.web § 1054 (`end_job`)"),
-        P::Message { .. } => (V::Exact, "tex.web § 1279"),
-        P::Write => (
+        P::End => at!(V::Exact, "tex.web § 1054 (`end_job`)"),
+        P::Message { .. } => at!(V::Exact, "tex.web § 1279"),
+        P::Write => at!(
             V::Approximated,
             "`\\immediate\\write` is exact. A deferred `\\write`'s text is recorded unexpanded, since satex never reaches shipout to expand it",
         ),
-        P::Expr(_) => (V::Exact, "eTeX manual § 3.5"),
-        P::Relax => (V::Exact, "tex.web § 1211"),
-        P::IgnoreSpaces => (V::Exact, "tex.web § 1045"),
+        P::Expr(_) => at!(V::Exact, "eTeX manual § 3.5"),
+        P::Relax => at!(V::Exact, "tex.web § 1211"),
+        P::IgnoreSpaces => at!(V::Exact, "tex.web § 1045"),
 
         // Output, PDF, Lua and docstrip, and the primitives satex leaves
         // alone on purpose.
         P::Accent => {
-            (V::Approximated, "widens to Unknown when the accented character does not resolve in horizontal mode")
+            at!(V::Approximated, "widens to Unknown when the accented character does not resolve in horizontal mode")
         }
-        P::Pdf(_) => (
+        P::Pdf(_) => at!(
             V::Approximated,
             "the manual's keywords are scanned exactly. No PDF is built, so the payload is recorded as an occurrence, not replayed",
         ),
         P::LuaCall { .. } => {
-            (V::Approximated, "runs the named Lua function where a host is available. Widens where it is not")
+            at!(V::Approximated, "runs the named Lua function where a host is available. Widens where it is not")
         }
-        P::Unmodeled | P::AlignMark | P::AlignTab => (
-            V::Unsupported,
-            "`Machine::note_gap` plus widening the mode. The primitive is a meaning of its own for `\\ifx`, nothing else",
-        ),
+        P::Unmodeled | P::AlignMark | P::AlignTab => at!(V::Unsupported, "widens the mode"),
         P::Docstrip(_) => {
-            (V::Exact, "recorded as generate/preamble facts, not run as TeX (docstrip.dtx, \"The user interface\")")
+            at!(V::Exact, "recorded as generate/preamble facts, not run as TeX (docstrip.dtx, \"The user interface\")")
         }
     }
 }
 
-fn text_verdict(t: TextOf) -> (Verdict, &'static str) {
+fn text_verdict(t: TextOf) -> Judgment {
     use Verdict as V;
     match t {
-        TextOf::JobName => (V::Exact, "the run's real main file name"),
-        _ => (
+        TextOf::JobName => at!(V::Exact, "the run's real main file name"),
+        _ => at!(
             V::Approximated,
             "exact for a known operand. Widens when the token's meaning or a register's digits are unresolved",
         ),
     }
 }
 
-fn cond_verdict(c: Cond) -> (Verdict, &'static str) {
+fn cond_verdict(c: Cond) -> Judgment {
     use Cond as C;
     use Verdict as V;
     match c {
-        C::True | C::False => (V::Exact, "a constant"),
-        C::IfX => (
+        C::True | C::False => at!(V::Exact, "a constant"),
+        C::IfX => at!(
             V::Approximated,
             "exact for known meanings (tex.web § 507's `original` handles a redefined primitive). Member-by-member across a set of possible meanings otherwise, decided only when they agree",
         ),
         C::Defined => {
-            (V::Approximated, "exact for a known name. Narrowed by which names could still be undefined otherwise")
+            at!(V::Approximated, "exact for a known name. Narrowed by which names could still be undefined otherwise")
         }
-        C::Csname => (V::Exact, "builds the name and looks it up"),
+        C::Csname => at!(V::Exact, "builds the name and looks it up"),
         C::Num | C::Dim | C::Odd => {
-            (V::Approximated, "exact for known operands. Narrows the interval on each branch otherwise")
+            at!(V::Approximated, "exact for known operands. Narrows the interval on each branch otherwise")
         }
         C::Chars | C::Catcodes => {
-            (V::Approximated, "exact for known characters. Undecided when either operand is an unresolved character")
+            at!(V::Approximated, "exact for known characters. Undecided when either operand is an unresolved character")
         }
         C::Case => {
-            (V::Approximated, "tex.web § 509. Every arm is analyzed as its own path when the selector is unknown")
+            at!(V::Approximated, "tex.web § 509. Every arm is analyzed as its own path when the selector is unknown")
         }
-        C::Eof => (
+        C::Eof => at!(
             V::Approximated,
             "satex resolves the real file, so end-of-file is known for a known stream number; one it cannot pin down leaves the test undecided",
         ),
-        C::Opaque => (V::Approximated, "both branches are analyzed and their state joined, by configuration"),
-        C::VMode | C::HMode | C::InnerMode | C::MathMode => (
+        C::Opaque => at!(V::Approximated, "both branches are analyzed and their state joined, by configuration"),
+        C::VMode | C::HMode | C::InnerMode | C::MathMode => at!(
             V::Approximated,
             "decided from the mode satex tracks through the run. Open groups the run couldn't follow leave it undecided",
         ),
-        C::Box => (
+        C::Box => at!(
             V::Approximated,
             "exact for a known box state (void, `\\hbox`, `\\vbox`). Undecided once the register is Unknown",
         ),
         C::AbsNum | C::AbsDim | C::InCsname | C::Primitive => {
-            (V::Exact, "computed from state satex already tracks (`eval_extra_condition`)")
+            at!(V::Exact, "computed from state satex already tracks (`eval_extra_condition`)")
         }
-        C::FontChar => (V::Exact, "eTeX manual § 3.10: read from the font's real character table"),
+        C::FontChar => at!(V::Exact, "eTeX manual § 3.10: read from the font's real character table"),
     }
 }
 
-fn last_item_verdict(item: LastItem) -> (Verdict, &'static str) {
+fn last_item_verdict(item: LastItem) -> Judgment {
     use LastItem as L;
     use Verdict as V;
     match item {
         L::Penalty | L::Kern | L::Skip => {
-            (V::Approximated, "reads the tail of the list satex tracks. Unknown once the tail itself is")
+            at!(V::Approximated, "reads the tail of the list satex tracks. Unknown once the tail itself is")
         }
-        L::NodeType => (V::Approximated, "-1 for a genuinely empty list (etex.ch). Unknown otherwise"),
-        L::Badness => (V::Approximated, "always Unknown. Badness needs the line-breaking satex does not run"),
+        L::NodeType => at!(V::Approximated, "-1 for a genuinely empty list (etex.ch). Unknown otherwise"),
+        L::Badness => at!(V::Approximated, "always Unknown. Badness needs the line-breaking satex does not run"),
         L::InputLineNo | L::EtexVersion | L::PdftexVersion | L::GroupLevel | L::GroupType => {
-            (V::Exact, "read from state satex already tracks")
+            at!(V::Exact, "read from state satex already tracks")
         }
         L::IfLevel | L::IfType | L::IfBranch => {
-            (V::Approximated, "exact once the conditional stack has settled. Unknown while a branch is undecided")
+            at!(V::Approximated, "exact once the conditional stack has settled. Unknown while a branch is undecided")
         }
         L::GlueStretch | L::GlueShrink | L::GlueStretchOrder | L::GlueShrinkOrder | L::GlueToMu | L::MuToGlue => {
-            (V::Exact, "computed from a known glue spec")
+            at!(V::Exact, "computed from a known glue spec")
         }
-        L::FontCharWd => (V::Exact, "a TFM's or a native font's real glyph advance"),
-        L::FontCharHt | L::FontCharDp | L::FontCharIc => (
+        L::FontCharWd => at!(V::Exact, "a TFM's or a native font's real glyph advance"),
+        L::FontCharHt | L::FontCharDp | L::FontCharIc => at!(
             V::Approximated,
             "exact for a TFM font (etex_man § 3.10). A native font's height, depth and italic correction are not read, so it widens to Unknown",
         ),
-        L::ParShapeLength | L::ParShapeIndent | L::ParShapeDimen => (V::Exact, "read from the stored `\\parshape`"),
-        L::ShellEscape => (V::Exact, "the configuration's own setting"),
-        L::ElapsedTime | L::RandomSeed | L::LastXPos | L::LastYPos => (
+        L::ParShapeLength | L::ParShapeIndent | L::ParShapeDimen => at!(V::Exact, "read from the stored `\\parshape`"),
+        L::ShellEscape => at!(V::Exact, "the configuration's own setting"),
+        L::ElapsedTime | L::RandomSeed | L::LastXPos | L::LastYPos => at!(
             V::Approximated,
             "genuinely unknowable without the real engine's clock, RNG or page builder. Widens to Unknown",
         ),
-        L::XetexVersion => (V::Exact, "a constant"),
-        L::LuatexVersion => (V::Exact, "probed from the real `luatex --version` for this run"),
+        L::XetexVersion => at!(V::Exact, "a constant"),
+        L::LuatexVersion => at!(V::Exact, "probed from the real `luatex --version` for this run"),
         L::PdfPageCount => {
-            (V::Approximated, "widens to Unknown. The file's page count needs parsing a PDF satex does not read")
+            at!(V::Approximated, "widens to Unknown. The file's page count needs parsing a PDF satex does not read")
         }
-        L::Xetex(_) => (
-            V::Approximated,
-            "exact from a loaded font's real TFM or OpenType tables. Unknown once the font or its tables aren't resolved",
-        ),
+        L::Xetex(_) => at!(V::Approximated, "the font's real tables"),
     }
 }
 
-fn special_verdict(s: Special) -> (Verdict, &'static str) {
+fn special_verdict(s: Special) -> Judgment {
     use Special as S;
     use Verdict as V;
     match s {
         S::BoxDimen => {
-            (V::Approximated, "round-trips through the register consistently. The box behind it is never built")
+            at!(V::Approximated, "round-trips through the register consistently. The box behind it is never built")
         }
-        S::ParShape | S::Penalties | S::CharClass | S::InterCharToks | S::UCode { .. } => (
+        S::ParShape | S::Penalties | S::CharClass | S::InterCharToks | S::UCode { .. } => at!(
             V::Approximated,
             "a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached",
         ),
     }
 }
 
-fn syntax_verdict(s: Syntax) -> (Verdict, &'static str) {
+fn syntax_verdict(s: Syntax) -> Judgment {
     use Syntax as S;
     use Verdict as V;
     match s {
-        S::Nothing => (V::Exact, "no operand"),
-        S::Interaction(_) => (V::Exact, "sets `\\interactionmode`"),
-        S::Token => (V::Exact, "`\\show`"),
-        S::Internal => (V::Exact, "`\\showthe`"),
-        S::BoxSpec | S::RuleSpec | S::SetBox => (V::Exact, "forwarded to the real box-scanning path"),
-        S::OpenOut | S::CloseOut => (
+        S::Nothing => at!(V::Exact, "no operand"),
+        S::Interaction(_) => at!(V::Exact, "sets `\\interactionmode`"),
+        S::Token => at!(V::Exact, "`\\show`"),
+        S::Internal => at!(V::Exact, "`\\showthe`"),
+        S::BoxSpec | S::RuleSpec | S::SetBox => at!(V::Exact, "forwarded to the real box-scanning path"),
+        S::OpenOut | S::CloseOut => at!(
             V::Approximated,
             "tracks the stream state a later `\\input` of the written file reads back; a stream number satex cannot pin down widens every stream",
         ),
-        S::FamilyFont | S::CopyFont { .. } | S::UMathCharDef { .. } | S::SetFontId => (
+        S::FamilyFont | S::CopyFont { .. } | S::UMathCharDef { .. } | S::SetFontId => at!(
             V::Approximated,
             "stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown",
         ),
-        S::ReadLine => (
+        S::ReadLine => at!(
             V::Approximated,
             "eTeX manual § 3.2, including the terminal-fatal case; a stream number satex cannot pin down gives an unknown line and does not end the job",
         ),
-        S::PdfXImage => (V::Exact, "the file name reaches `observe::image`"),
-        S::PdfColorStack => (
+        S::PdfXImage => at!(V::Exact, "the file name reaches `observe::image`"),
+        S::PdfColorStack => at!(
             V::Approximated,
             "the operation and stack id are tracked. The colour text itself is a recorded occurrence, not replayed",
         ),
-        S::VSplit => (V::Exact, "unreachable in practice. `\\vsplit` is `ModeCmd::Box(BoxCmd::VSplit)`, not this arm"),
-        _ => (
-            V::Approximated,
-            "the operand is scanned exactly. The primitive's effect is typesetting or PDF output satex does not build, so nothing reads the result back",
-        ),
+        S::VSplit => {
+            at!(V::Exact, "unreachable in practice. `\\vsplit` is `ModeCmd::Box(BoxCmd::VSplit)`, not this arm")
+        }
+        _ => at!(V::Approximated, "scanned, not built"),
     }
 }
 
-fn convert_verdict(c: Convert) -> (Verdict, &'static str) {
+fn convert_verdict(c: Convert) -> Judgment {
     use Convert as C;
     use Verdict as V;
     match c {
         C::EtexRevision | C::PdftexRevision | C::XetexRevision | C::FontId | C::FontName => {
-            (V::Exact, "a real constant or stored name")
+            at!(V::Exact, "a real constant or stored name")
         }
         C::StrCmp | C::EscapeHex | C::UnescapeHex | C::EscapeString | C::EscapeName => {
-            (V::Exact, "the manual's own algorithm, run for real")
+            at!(V::Exact, "the manual's own algorithm, run for real")
         }
-        C::FileSize | C::FileDump | C::MdFiveSum => (V::Exact, "reads the real file"),
-        C::FileModDate => (V::Approximated, "always Unknown. satex does not read file modification times"),
-        C::Uchar { .. } => (V::Exact, "tex.web, eTeX and XeTeX's character and category-code construction rules"),
-        C::PdfFontSize => (V::Exact, "the font's real design size"),
-        C::PdfFontName | C::PdfFontObjNum => (V::Approximated, "widens to Unknown. No PDF font object is built"),
-        C::ColorStackInit => (
+        C::FileSize | C::FileDump | C::MdFiveSum => at!(V::Exact, "reads the real file"),
+        C::FileModDate => at!(V::Approximated, "always Unknown. satex does not read file modification times"),
+        C::Uchar { .. } => at!(V::Exact, "tex.web, eTeX and XeTeX's character and category-code construction rules"),
+        C::PdfFontSize => at!(V::Exact, "the font's real design size"),
+        C::PdfFontName | C::PdfFontObjNum => at!(V::Approximated, "widens to Unknown. No PDF font object is built"),
+        C::ColorStackInit => at!(
             V::Approximated,
             "`\\pdfcolorstackinit` hands out the next colour stack number, widened rather than counted exactly. The colour text is a recorded occurrence, not replayed",
         ),
         C::Primitive => {
-            (V::Exact, "re-injects the frozen meaning for normal expansion to re-process, as `\\pdfprimitive` does")
+            at!(V::Exact, "re-injects the frozen meaning for normal expansion to re-process, as `\\pdfprimitive` does")
         }
-        C::Xetex(_) => (V::Approximated, "exact from a loaded font's real tables. Unknown once they aren't resolved"),
-        _ => (
-            V::Approximated,
-            "operands are scanned per the manual. The answer needs state (regex captures, PDF pages, the page builder's marks, a clock, an RNG) satex does not build, so it widens to Unknown",
-        ),
+        C::Xetex(_) => {
+            at!(V::Approximated, "exact from a loaded font's real tables. Unknown once they aren't resolved")
+        }
+        _ => at!(V::Approximated, "scanned, answer unknown"),
     }
 }
 
-fn mode_verdict(m: ModeCmd) -> (Verdict, &'static str) {
+fn mode_verdict(m: ModeCmd) -> Judgment {
     use ModeCmd as M;
     use Verdict as V;
     match m {
         M::Par | M::StartPar { .. } | M::QuitVMode | M::Shift { .. } | M::EqNo => {
-            (V::Exact, "tex.web's own mode-transition rules")
+            at!(V::Exact, "tex.web's own mode-transition rules")
         }
-        M::Horizontal(Material::Rule) => (
+        M::Horizontal(Material::Rule) => at!(
             V::Approximated,
             "a real rule item in a horizontal list, but a `\\vrule` met in a vertical list starts a paragraph and widens the enclosing box's dimensions rather than answering them exactly",
         ),
         M::Horizontal(mat) | M::Vertical(mat) => material_verdict(mat),
         M::Box(b) => box_verdict(b),
-        M::Leaders => (
+        M::Leaders => at!(
             V::Approximated,
             "the box or rule is scanned exactly. tex.web § 1078's repeated copies are not laid out, since satex tracks natural size, not a page",
         ),
-        M::ShipOut => (V::Exact, "removes the box from the list, tex.web § 1073's own effect on it"),
+        M::ShipOut => at!(V::Exact, "removes the box from the list, tex.web § 1073's own effect on it"),
         M::Insert { .. } => {
-            (V::Approximated, "opens the insert's own list. Not told apart from the vertical list around it")
+            at!(V::Approximated, "opens the insert's own list. Not told apart from the vertical list around it")
         }
-        M::NoAlign => (V::Approximated, "cells run in the alignment's own list, not distinguished from the preamble"),
-        M::MathChoice => (V::Exact, "tex.web § 1172: opens all four styles in sequence"),
+        M::NoAlign => {
+            at!(V::Approximated, "cells run in the alignment's own list, not distinguished from the preamble")
+        }
+        M::MathChoice => at!(V::Exact, "tex.web § 1172: opens all four styles in sequence"),
         M::Left => {
-            (V::Approximated, "documented: satex keeps no group for it, so the display may read as inner from here on")
+            at!(
+                V::Approximated,
+                "documented: satex keeps no group for it, so the display may read as inner from here on"
+            )
         }
     }
 }
 
-fn material_verdict(m: Material) -> (Verdict, &'static str) {
+fn material_verdict(m: Material) -> Judgment {
     use Material as M;
     use Verdict as V;
     match m {
         M::Char | M::Rule | M::Glue | M::Fil | M::Discretionary | M::Space | M::NoBoundary => {
-            (V::Exact, "a real item, appended to the list satex tracks")
+            at!(V::Exact, "a real item, appended to the list satex tracks")
         }
-        M::Unpackage { .. } => (
+        M::Unpackage { .. } => at!(
             V::Approximated,
             "a void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed",
         ),
         M::Discards | M::Hyphen => {
-            (V::Approximated, "widens to Unknown. A rarely-taken tex.web path this pass does not distinguish further")
+            at!(
+                V::Approximated,
+                "widens to Unknown. A rarely-taken tex.web path this pass does not distinguish further"
+            )
         }
-        M::Align => (V::Approximated, "cells run in the alignment's own list, not distinguished from the preamble"),
+        M::Align => at!(V::Approximated, "cells run in the alignment's own list, not distinguished from the preamble"),
     }
 }
 
-fn box_verdict(b: BoxCmd) -> (Verdict, &'static str) {
+fn box_verdict(b: BoxCmd) -> Judgment {
     use BoxCmd as B;
     use Verdict as V;
     match b {
-        B::HBox | B::VBox | B::VTop | B::VCenter | B::Copy | B::LastBox => (V::Exact, "the real box machinery"),
-        B::VSplit => (
+        B::HBox | B::VBox | B::VTop | B::VCenter | B::Copy | B::LastBox => at!(V::Exact, "the real box machinery"),
+        B::VSplit => at!(
             V::Approximated,
             "the result always widens to Unknown, even from a void register. A real split's remainder is not tracked",
         ),
     }
 }
 
-fn typeset_verdict(t: Typeset) -> (Verdict, &'static str) {
+fn typeset_verdict(t: Typeset) -> Judgment {
     use Typeset as T;
     use Verdict as V;
     match t {
-        T::Plain => (V::Exact, "`\\unskip`, `\\unkern` and `\\unpenalty` remove the real tail item"),
-        T::Number => (V::Exact, "the penalty is appended as scanned"),
-        T::Dimen => (
+        T::Plain => at!(V::Exact, "`\\unskip`, `\\unkern` and `\\unpenalty` remove the real tail item"),
+        T::Number => at!(V::Exact, "the penalty is appended as scanned"),
+        T::Dimen => at!(
             V::Approximated,
             "`\\kern` is exact. `\\mkern`'s math-unit dimension always widens to Unknown, since it needs math-font setup satex does not run",
         ),
-        T::Delimiter => (V::Exact, "tex.web § 1161: the delimiter is the one token the primitive itself consumes"),
-        T::Glue => (
+        T::Delimiter => at!(V::Exact, "tex.web § 1161: the delimiter is the one token the primitive itself consumes"),
+        T::Glue => at!(
             V::Approximated,
             "`\\mskip` appends an item of unknown size: its glue is in math units, which need math-font setup satex does not run",
         ),
     }
 }
 
-fn lua_verdict(op: LuaOp) -> (Verdict, &'static str) {
+fn lua_verdict(op: LuaOp) -> Judgment {
     use LuaOp as L;
     use Verdict as V;
     match op {
-        L::Direct | L::Late => (
+        L::Direct | L::Late => at!(
             V::Approximated,
             "the chunk runs for real where a Lua host is available. A failed or unavailable run is diagnosed and widened",
         ),
         L::Escape | L::InitCatcodes | L::SaveCatcodes | L::SelectCatcodes => {
-            (V::Exact, "a real string escape or catcode-table operation")
+            at!(V::Exact, "a real string escape or catcode-table operation")
         }
     }
 }

@@ -336,10 +336,10 @@ $ satex explain -f samples/paper.tex '\usepackage'
   takes          1-3
   uses           4 times, in this run
   by             \let
-  documentation  The LaTeX2e sources, source2e
+  documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
   body           \@fileswithoptions \@pkgextension 
-  reference      https://texdoc.org/serve/source2e/0
-  file           /usr/local/texlive/2026/texmf-dist/tex/latex/base/latex.ltx:18619
+  reference      https://texdoc.org/serve/[source2e](https://ctan.org/pkg/source2e)/0
+  file           /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx:18619
 
 \usepackage @ latex.ltx:9521:22
   tag            alias
@@ -350,10 +350,10 @@ $ satex explain -f samples/paper.tex '\usepackage'
   takes          0
   uses           0 times, in this run
   by             \let
-  documentation  The LaTeX2e sources, source2e
+  documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
   body           \@latex@error {Can be used only in preamble}\@eha 
-  reference      https://texdoc.org/serve/source2e/0
-  file           /usr/local/texlive/2026/texmf-dist/tex/latex/base/latex.ltx:9521
+  reference      https://texdoc.org/serve/[source2e](https://ctan.org/pkg/source2e)/0
+  file           /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx:9521
 ```
 </details>
 
@@ -372,7 +372,7 @@ $ satex explain -f samples/paper.tex '\norm'
   by         \newcommand
   expands    \left, \hat, \hat , \mathaccentV, \right
   body       \left \lVert #1\right \rVert 
-  file       /home/ostwind/git/phd/satex/samples/paper.tex:12
+  file       samples/paper.tex:12
 ```
 
 </details>
@@ -450,7 +450,7 @@ $ satex scope -f samples/paper.tex --at 20:1
 tag          name                                      effecti…  file                
 macro        \Weird                                    \Weird …  paper.tex           @ paper.tex:16:1
 macro        \WeirdMore                                \WeirdM…  paper.tex           @ paper.tex:14:1
-… 7766 more lines omitted
+… 7767 more lines omitted
 ```
 
 </details>
@@ -464,7 +464,7 @@ $ satex lint -f samples/paper.tex --filter 'category=performance'
 performance (2)
   paper.tex:5:1  info     unused-package  graphicx defines 72 names, none of which are used
     [unsafe fix] delete \usepackage{graphicx} if its side effects are not needed
-  paper.tex:26:1  info     preamble-cost  5 packages requested directly, 263 files read
+  paper.tex:26:1  info     preamble-cost  5 packages requested directly, 254 files read
     [unsafe fix] dump the preamble into a format with `pdftex -ini -jobname=paper "&pdflatex" mylatexformat.ltx
                  """paper.tex"""`, then every build starts from it
 … 3 more lines omitted
@@ -479,8 +479,8 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 ```text
 $ satex cache
 cache
-  source /usr/local/texlive/2026/texmf-dist/tex/latex/base/latex.ltx
-  holds 182295 definitions
+  source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
+  holds 182312 definitions
   state cached
 … 2 more lines omitted
 ```
@@ -559,7 +559,7 @@ options
 $ satex trace -f samples/paper.tex
 index   step       name            detail                                             file       
 0       expand     \documentclass                                                     paper.tex  @ paper.tex:1:1
-7734    open-file  \article        /usr/local/texlive/2026/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
+7734    open-file  \article        /usr/local/texlive/YYYY/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
 16002   expand     \value                                                             paper.tex  @ paper.tex:0:0
 29937   expand     \par                                                               paper.tex  @ paper.tex:2:1
 … 12 more lines omitted

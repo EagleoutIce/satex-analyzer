@@ -27,7 +27,7 @@ The run reached `\\write18`, which only hands its text to the shell when the
 engine is started with `-shell-escape` (or `-shell-restricted` and a program
 TeX Live allows).  latexmk starts the engine with the command in `$pdflatex`,
 `$lualatex`, `$xelatex` or `$latex`, whichever `$pdf_mode` selects (latexmk(1),
-`$pdf_mode`); arara's `pdflatex`, `lualatex` and `xelatex` rules take
+`$pdf_mode`).  arara's `pdflatex`, `lualatex` and `xelatex` rules take
 `shell: yes` (arara manual, \"The official rules\").
 
 Fix by adding `-shell-escape` to the command, e.g.
@@ -81,7 +81,7 @@ Fix by setting `$pdf_mode` to the engine the document is written for.",
 `$bibtex_use`), so the `.bbl` file the bibliography is read from is never made
 and every citation stays undefined.
 
-Fix by removing the setting; latexmk's default, 1, runs them whenever the
+Fix by removing the setting.  latexmk's default, 1, runs them whenever the
 `.bib` files exist.",
         references: &[Ref { source: Source::Latexmk, at: "$bibtex_use" }],
         run: bibliography_disabled,
@@ -158,8 +158,7 @@ Fix by ending the command with `%O %S`.",
         explanation: "\
 `-file-line-error` makes the engine report `file:line: message` instead of
 `! message`, which editors and satex's log reading can jump to.  `-synctex=1`
-writes the data that links the PDF back to the source.  Both cost nothing
-measurable.
+writes the data that links the PDF back to the source.
 
 Fix by adding them to the command, e.g.
 `$pdflatex = 'pdflatex -file-line-error -synctex=1 %O %S';`.",

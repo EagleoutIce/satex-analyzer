@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use satex::config::Config;
+use satex::facts::LoadStatus;
 use satex::machine::{Analysis, Machine};
 
 fn project(name: &str) -> PathBuf {
@@ -640,4 +641,88 @@ fn a_list_the_package_inspects_before_appending_makes_it_miss() {
     assert!(!defined(&warm, "wasa"));
     assert_eq!(text_of(&warm, "biglist").as_deref(), Some("b,inspector"));
     same_facts(&run_cold(&dir, &source), &warm);
+}
+
+/// A `\input` name that only exists on disk under different case is a
+/// `LoadStatus::CaseMismatch { on_disk }`, and `unresolved-file` reports it
+/// with the exact name found on disk, not just "not found". (`\usepackage`
+/// checks existence with `\IfFileExists`/`\openin` first, exactly like a
+/// real case-sensitive engine would, so it never reaches `\input` for a
+/// case-mismatched name at all; a bare `\input` has no such gate.)
+#[test]
+fn a_case_mismatched_load_reports_the_disk_name_in_the_lint() {
+    if !installed() {
+        return;
+    }
+    let dir = project("case-mismatch-lint");
+    std::fs::write(dir.join("Mismatch.sty"), "\\ProvidesPackage{Mismatch}[2020/01/01 v1]\n\\def\\mismatchmacro{}\n")
+        .expect("Mismatch.sty");
+    // `\input{mismatch}` (braced) goes through the kernel's `\@iinput`,
+    // which checks existence with `\IfFileExists`/`\openin` first, exactly
+    // like `\usepackage` does; on this host that check is honestly
+    // case-sensitive and so genuinely fails, matching a real engine, and
+    // `\input` is never reached. `\@@input` is the raw primitive latex.ltx
+    // keeps aside (`\let\@@input\input`) precisely for this unconditional
+    // form, so it is what exercises the loader's own case-fold detection.
+    let analysis =
+        run(&dir, "\\documentclass{article}\n\\makeatletter\n\\begin{document}\\@@input mismatch \\end{document}\n");
+
+    let load = analysis.facts.loads.iter().find(|l| l.name == "mismatch").expect("a load for `mismatch`");
+    let LoadStatus::CaseMismatch { on_disk } = load.status else {
+        panic!("expected a case-mismatch status, got {:?}", load.status);
+    };
+    assert_eq!(analysis.interner.name(on_disk), "Mismatch.sty");
+
+    let findings = satex::lint::lint(&analysis);
+    let finding = findings
+        .iter()
+        .find(|r| r.get("code").and_then(|c| c.as_str()) == Some("unresolved-file"))
+        .expect("an unresolved-file finding");
+    assert_eq!(
+        finding.get("message").and_then(|m| m.as_str()),
+        Some("exists as `Mismatch.sty` but was asked for as `mismatch`: works here, breaks on case-sensitive systems")
+    );
+    assert_eq!(
+        finding.get("fix").and_then(|m| m.as_str()),
+        Some("rename `Mismatch.sty` to match the requested name `mismatch`")
+    );
+}
+
+/// The case-mismatch payload is carried on the side in `CachedLoad`
+/// (`case_mismatch_on_disk`), not inside the index-based `STATUSES` array,
+/// so it must survive a package-cache round trip: cache a package whose
+/// body case-mismatches a load, replay it, and check the disk name the
+/// replay reports is still exactly right.
+#[test]
+fn a_case_mismatch_survives_a_package_cache_round_trip() {
+    if !installed() {
+        return;
+    }
+    let dir = project("case-mismatch-cache");
+    std::fs::write(dir.join("Mismatch.sty"), "\\ProvidesPackage{Mismatch}[2020/01/01 v1]\n\\def\\mismatchmacro{}\n")
+        .expect("Mismatch.sty");
+    std::fs::write(
+        dir.join("container.sty"),
+        "\\ProvidesPackage{container}[2020/01/01 v1]\n\\@@input mismatch \n\\def\\containermacro{}\n",
+    )
+    .expect("container.sty");
+    let source = "\\documentclass{article}\n\\usepackage{container}\n\\begin{document}\\end{document}\n";
+
+    let cold = run(&dir, source);
+    assert_eq!(served(&cold, "container"), Some(false), "{:?}", cold.package_caches);
+    let warm = run(&dir, source);
+    assert_eq!(served(&warm, "container"), Some(true), "{:?}", warm.package_caches);
+
+    for (analysis, label) in [(&cold, "cold"), (&warm, "warm")] {
+        let load = analysis
+            .facts
+            .loads
+            .iter()
+            .find(|l| l.name == "mismatch")
+            .unwrap_or_else(|| panic!("{label}: no load for `mismatch`"));
+        let LoadStatus::CaseMismatch { on_disk } = load.status else {
+            panic!("{label}: expected a case-mismatch status, got {:?}", load.status);
+        };
+        assert_eq!(analysis.interner.name(on_disk), "Mismatch.sty", "{label} run");
+    }
 }

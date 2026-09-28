@@ -152,6 +152,7 @@ limits:
   site_expansions: 16384   # how often one call site may expand without reading on
   seconds: 300            # wall-clock limit per run, 0 for none
   stall_tokens: 50000000  # tokens without reading the file before a loop is dropped
+  repeat_failures: 8      # times one gap may be met at one place before the expansion is dropped
   branch_depth: 8         # nesting of undecided conditions
   join_tokens: 65536      # tokens the arms of one may read before they meet
   meaning_splits: 1       # path nesting up to which a name joined to several meanings splits per meaning
@@ -188,7 +189,7 @@ TeX, e-TeX and pdfTeX are what SaTeX models in full. LuaTeX and XeTeX are **expe
 
 ### kernel
 
-The format the engine is started with: `latex2e` or `context`. `latex2e` is the default and the only one SaTeX interprets. ConTeXt is **experimental**: a document is recognized as ConTeXt from `% !TeX program = context` or from `\starttext`, `\stoptext`, `\startcomponent` or `\usemodule` in the source, `satex summary` then reports it as a ConTeXt document instead of mislabeling it LaTeX2e, and `latex.ltx` is not loaded for it. Because the ConTeXt kernel is not interpreted, only the engine primitives are known in such a run, and `undefined-control-sequence` is not reported. Set with `kernel:` in `satex.yaml`.
+The format the engine is started with: `latex2e`, `plain`, `context`, or `none`. `latex2e` is the default and the only one SaTeX interprets. ConTeXt is **experimental**: a document is recognized as ConTeXt from `% !TeX program = context` or from `\starttext`, `\stoptext`, `\startcomponent` or `\usemodule` in the source, `satex summary` then reports it as a ConTeXt document instead of mislabeling it LaTeX2e, and `latex.ltx` is not loaded for it. Because the ConTeXt kernel is not interpreted, only the engine primitives are known in such a run, and `undefined-control-sequence` is not reported. Set with `kernel:` in `satex.yaml`.
 
 ### output
 

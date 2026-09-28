@@ -112,7 +112,7 @@ pub fn scan_with(root: &Path, threads: usize) -> Discovery {
     };
     let mut builder = ignore::WalkBuilder::new(root);
     builder.max_depth(Some(MAX_DEPTH)).threads(threads.max(1));
-    let files = match threads > 1 {
+    let mut files = match threads > 1 {
         true => {
             let collected = std::sync::Mutex::new(Vec::new());
             builder.build_parallel().run(|| {
@@ -137,6 +137,11 @@ pub fn scan_with(root: &Path, threads: usize) -> Discovery {
             .collect(),
     };
 
+    // The parallel walker hands files back in whatever order its threads
+    // finish in, and `read_dir` is not sorted either.  `declared_root` takes
+    // the first `% !TeX root` it meets, so the walk order would decide which
+    // one a project with several of them starts from.
+    files.sort_by(|a, b| a.path.cmp(&b.path));
     let mut found = Discovery { root: root.to_path_buf(), respects_ignores: true, ..Discovery::default() };
     for file in files {
         found.declared_root = found.declared_root.take().or(file.declares_root);

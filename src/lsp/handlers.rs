@@ -21,20 +21,10 @@ use crate::machine::Analysis;
 use crate::query::{self, Filter, Query, Record};
 
 /// LSP position (0-based line, UTF-16 column) to satex's (1-based line,
-/// character column), against the line as it stands in `doc`.
+/// column as the engine counts one), against the line as it stands in `doc`.
 pub fn to_pos(doc: &Text, position: Position) -> Pos {
     let line = position.line + 1;
-    let text = doc.line(line);
-    let mut utf16 = 0u32;
-    let mut col = 1u32;
-    for ch in text.chars() {
-        if utf16 >= position.character {
-            break;
-        }
-        utf16 += ch.len_utf16() as u32;
-        col += 1;
-    }
-    Pos::new(line, col)
+    Pos::new(line, doc.from_utf16(line, position.character))
 }
 
 /// The reverse of [`to_pos`], through [`Text::utf16`]; falls back to a
@@ -45,10 +35,6 @@ fn to_lsp(doc: &Text, pos: Pos) -> Position {
         Some((line, character)) => Position { line, character },
         None => Position { line: pos.line.saturating_sub(1), character: pos.col.saturating_sub(1) },
     }
-}
-
-fn char_byte(line: &str, char_idx: u32) -> usize {
-    line.char_indices().nth(char_idx as usize).map(|(i, _)| i).unwrap_or(line.len())
 }
 
 fn word_re() -> &'static Regex {
@@ -65,14 +51,10 @@ pub fn word_at(line: &str, col: u32) -> Option<(String, bool)> {
 
 /// The same, with the 1-based column the match starts at.
 pub fn word_span(line: &str, col: u32) -> Option<(String, bool, u32)> {
-    let target = char_byte(line, col.saturating_sub(1));
+    let target = crate::source::byte_of_col(line, col);
     word_re().find_iter(line).find(|m| m.start() <= target && target <= m.end()).map(|m| {
         let text = m.as_str();
-        (
-            text.trim_start_matches('\\').to_string(),
-            text.starts_with('\\'),
-            line[..m.start()].chars().count() as u32 + 1,
-        )
+        (text.trim_start_matches('\\').to_string(), text.starts_with('\\'), crate::source::col_of_byte(line, m.start()))
     })
 }
 
@@ -87,7 +69,7 @@ enum Context {
 }
 
 fn completion_context(line: &str, col: u32) -> Context {
-    let prefix = &line[..char_byte(line, col.saturating_sub(1)).min(line.len())];
+    let prefix = &line[..crate::source::byte_of_col(line, col).min(line.len())];
     static ENV: OnceLock<Regex> = OnceLock::new();
     static REF: OnceLock<Regex> = OnceLock::new();
     static CITE: OnceLock<Regex> = OnceLock::new();
@@ -289,7 +271,7 @@ fn site_range(record: &Record, sources: &Sources, name: &str, is_command: bool) 
     let col = record.get("col").and_then(Json::as_u64).unwrap_or(1) as u32;
     let text = sources.get(path)?;
     let text_line = text.line(line);
-    let from = char_byte(text_line, col.saturating_sub(1));
+    let from = crate::source::byte_of_col(text_line, col);
     let needle = if is_command { format!("\\{name}") } else { name.to_string() };
     let mut search = from;
     if !is_command {
@@ -301,8 +283,8 @@ fn site_range(record: &Record, sources: &Sources, name: &str, is_command: bool) 
             && name.chars().all(|c| c.is_ascii_alphabetic() || c == '@')
             && after.is_some_and(|c| c.is_ascii_alphabetic() || c == '@'))
     })?;
-    let first = text_line[..found].chars().count() as u32 + 1 + u32::from(is_command);
-    let width = name.chars().count() as u32;
+    let first = crate::source::col_of_byte(text_line, found) + u32::from(is_command);
+    let width = crate::source::columns(name) as u32;
     let range =
         Range { start: to_lsp(&text, Pos::new(line, first)), end: to_lsp(&text, Pos::new(line, first + width)) };
     Some((path.to_string(), range))

@@ -44,7 +44,7 @@ Recursion is normal in TeX, but an unguarded one loops until TeX runs out of
 memory, and the analysis has to widen at it — everything the recursion would
 have defined becomes unknown.
 
-Fix, if the recursion is unintended, by breaking the cycle; otherwise make sure
+Fix, if the recursion is unintended, by breaking the cycle.  Otherwise make sure
 a conditional terminates it.",
         references: &[],
         run: recursive_macro,
@@ -55,7 +55,7 @@ a conditional terminates it.",
         severity: Severity::Warning,
         summary: "a package is loaded after \\begin{document}",
         explanation: "\
-`\\usepackage` belongs in the preamble; after `\\begin{document}` LaTeX raises
+`\\usepackage` belongs in the preamble.  After `\\begin{document}` LaTeX raises
 `\\usepackage before \\begin{document}` and the package cannot set anything up.
 
 Fix by moving the load into the preamble.",
@@ -100,7 +100,7 @@ Fix, if the package really is unused, by deleting its line.",
         summary: "what the preamble costs on every build",
         explanation: "\
 The packages the document asks for and the files read before
-`\\begin{document}`.  This work repeats on every compilation.
+`\\begin{document}`.
 
 A format holds the preamble already interpreted, so a build that starts from
 one skips all of it.  [mylatexformat](https://ctan.org/pkg/mylatexformat)
@@ -284,7 +284,6 @@ fn refused_loads(report: &Report, begin: crate::tex::Span) -> Vec<crate::facts::
                 required: None,
                 provided: None,
                 depth: 0,
-                case_mismatch_disk_name: None,
             });
         }
     }

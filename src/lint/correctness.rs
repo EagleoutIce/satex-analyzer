@@ -111,9 +111,7 @@ Running the document reaches `\\errmessage`, which every LaTeX error
 (`\\PackageError`, `\\msg_error:nn`, the kernel's own) ends in: a real run
 stops there.  A more specific rule that explains the same error reports it
 instead.  An error reached only on a path satex could not decide, or after it
-lost track of the mode, is not one a real run need reach, and is not reported.
-
-Fix what the message says.",
+lost track of the mode, is not one a real run need reach, and is not reported.",
         references: &[],
         run: raised_errors,
     },
@@ -237,7 +235,7 @@ the old value explicitly.  `satex query catcodes` shows the current table.",
 Environments nest like brackets: the name `\\end` gives has to match the one
 `\\begin` most recently opened.  chktex tracks this as warnings 9 (`'%s'
 expected, found '%s'`), 10 (`Solo '%s' found`) and 15 (`No match found for
-'%s'`) for brackets and environments alike; satex only records `\\begin`/`\\end`
+'%s'`) for brackets and environments alike.  satex only records `\\begin`/`\\end`
 occurrences, so this rule covers environments and not generic `{}`, `[]` or
 `()` nesting.
 
@@ -284,6 +282,20 @@ fn unguarded_recursion(report: &mut Report) {
             continue;
         }
         let Some(mac) = &def.mac else { continue };
+        // `\newcommand\foo[1][default]{...}` (and `\DeclareRobustCommand`,
+        // `\providecommand`, `\newenvironment`) does not define `\foo` as
+        // its body: ltdefns' `\@xargdef` defines it as a dispatcher that
+        // reads the optional argument and hands off to `\foo`'s internal
+        // counterpart, `\csname\string\foo\endcsname`:
+        //   \def\foo{\@protected@testopt \foo \\foo {default}}
+        // `\foo` genuinely names itself there, but only as data handed to
+        // `\@protected@testopt` (by way of `\expandafter`, already spent by
+        // the time this body exists) — never expanded, by construction, for
+        // every optional-argument command that exists.  Only a self-name
+        // outside that one pairing is a real call to guard against.
+        if !observed && only_optarg_wrapper_self_reference(analysis, def.name, mac) {
+            continue;
+        }
         let guarded = mac.replacement_text.iter().any(|token| match token.tok {
             Tok::Cs(sym) => matches!(
                 analysis.env.meaning(sym).prim(),
@@ -310,6 +322,45 @@ fn unguarded_recursion(report: &mut Report) {
         };
         report.add_as(severity, def.span, &name, message, Some("add the test that ends the recursion".into()));
     }
+}
+
+/// Whether every occurrence of `name` in `mac`'s body is the optional-argument
+/// dispatch pairing ltdefns and ltcmd both generate: the plain name right
+/// after the kernel's own optional-argument dispatcher, immediately followed
+/// by the name's internal counterpart (`\csname\string\name\endcsname`,
+/// which carries a literal `\` as the first character of its own name).
+/// A `false` here means some other occurrence is a real call.
+fn only_optarg_wrapper_self_reference(
+    analysis: &crate::machine::Analysis,
+    name: Sym,
+    mac: &crate::tex::MacroDef,
+) -> bool {
+    use crate::tex::Tok;
+    // `\@protected@testopt` (ltdefns, current kernel) and its predecessor
+    // `\@testopt`, which a format without the merged definition still uses.
+    fn is_dispatcher(n: &str) -> bool {
+        matches!(n, "@protected@testopt" | "@testopt")
+    }
+    let own = analysis.interner.name(name);
+    let is_internal_counterpart = |n: &str| n.len() == own.len() + 1 && n.as_bytes()[0] == b'\\' && &n[1..] == own;
+    let text = &mac.replacement_text;
+    let mut any = false;
+    for (i, token) in text.iter().enumerate() {
+        let Tok::Cs(sym) = token.tok else { continue };
+        if sym != name {
+            continue;
+        }
+        let dispatched =
+            i > 0 && matches!(text[i - 1].tok, Tok::Cs(prev) if is_dispatcher(analysis.interner.name(prev)));
+        let paired = text.get(i + 1).is_some_and(
+            |next| matches!(next.tok, Tok::Cs(sym) if is_internal_counterpart(analysis.interner.name(sym))),
+        );
+        if !(dispatched && paired) {
+            return false;
+        }
+        any = true;
+    }
+    any
 }
 
 fn undefined_control_sequences(report: &mut Report) {
@@ -396,10 +447,10 @@ fn unresolved_files(report: &mut Report) {
                 format!("{} `{}` is not in this installation ({distribution})", load.kind.as_str(), load.name)
             }
             LoadStatus::Unreadable => format!("`{}` was found but could not be read", load.name),
-            LoadStatus::CaseMismatch => {
-                let on_disk = load.case_mismatch_disk_name.as_deref().unwrap_or(&load.name);
+            LoadStatus::CaseMismatch { on_disk } => {
+                let on_disk_name = report.analysis.interner.name(on_disk);
                 format!(
-                    "exists as `{on_disk}` but was asked for as `{}`: works here, breaks on case-sensitive systems",
+                    "exists as `{on_disk_name}` but was asked for as `{}`: works here, breaks on case-sensitive systems",
                     load.name
                 )
             }
@@ -407,12 +458,9 @@ fn unresolved_files(report: &mut Report) {
         };
         let fix = if empty {
             Some("set texmf_roots or texlive_root in satex.yaml".to_string())
-        } else if load.status == LoadStatus::CaseMismatch {
-            Some(format!(
-                "rename `{}` to match the requested name `{}`",
-                load.case_mismatch_disk_name.as_deref().unwrap_or(&load.name),
-                load.name
-            ))
+        } else if let LoadStatus::CaseMismatch { on_disk } = load.status {
+            let on_disk_name = report.analysis.interner.name(on_disk);
+            Some(format!("rename `{on_disk_name}` to match the requested name `{}`", load.name))
         } else {
             Some(format!("install `{}`, or add its directory to search_paths", load.name))
         };

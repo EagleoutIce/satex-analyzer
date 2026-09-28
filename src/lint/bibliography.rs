@@ -19,7 +19,7 @@ No `\\bibitem` and no entry of the `.bib` databases `\\bibliography` names
 declares this key, so LaTeX prints `?` and warns `Citation … undefined`.
 Citations are observed rather than listed: a citation command writes its key
 to the `.aux` for the bibliography program (`\\citation{⟨key⟩}`) and reads
-the name the entry defines when the file is read back (`\\b@⟨key⟩`); any line
+the name the entry defines when the file is read back (`\\b@⟨key⟩`).  Any line
 written so is a citation.  Nothing is reported while a named database cannot
 be found.
 
@@ -34,7 +34,7 @@ Fix by adding the entry, or by correcting the key.",
         summary: "the same key is declared by two bibliography entries",
         explanation: "\
 Two `\\bibitem`s with one key make LaTeX warn `Label … multiply defined` and
-every citation resolves to the later one; two `.bib` entries with one key make
+every citation resolves to the later one.  Two `.bib` entries with one key make
 BibTeX stop with `Repeated entry`.
 
 Fix by renaming or deleting one of them.",

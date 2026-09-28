@@ -268,7 +268,6 @@ pub(super) fn load(m: &mut Machine, module: &Module, span: Span) -> Option<(Path
         required: None,
         provided: None,
         depth: load_depth,
-        case_mismatch_disk_name: None,
     });
     let path = path?;
     m.lua.read.insert(path.clone());

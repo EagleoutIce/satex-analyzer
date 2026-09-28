@@ -240,7 +240,14 @@ fn write_cached_index(dir: &Path, roots: &[PathBuf], index: &HashMap<String, Pat
     let cached = CachedIndex {
         version: INDEX_VERSION,
         stamps: stamps_for(roots),
-        entries: index.iter().map(|(name, path)| (name.clone(), path.clone())).collect(),
+        entries: {
+            // A map's order is the process's, so the file would differ
+            // between two runs that indexed the same installation.
+            let mut entries: Vec<(String, PathBuf)> =
+                index.iter().map(|(name, path)| (name.clone(), path.clone())).collect();
+            entries.sort();
+            entries
+        },
     };
     let Ok(bytes) = postcard::to_allocvec(&cached) else { return };
     if std::fs::create_dir_all(dir).is_err() {
@@ -361,8 +368,11 @@ const MAX_WALK_DEPTH: usize = 8;
 
 /// Index a tree that ships no `ls-R`.
 fn walk(directory: &Path, index: &mut HashMap<String, (u8, PathBuf)>) {
+    // `offer` keeps the first path of a rank, so an unsorted walk would let
+    // the directory order decide which `foo.sty` of two the run reads.
     for entry in walkdir::WalkDir::new(directory)
         .max_depth(MAX_WALK_DEPTH)
+        .sort_by_file_name()
         .into_iter()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())

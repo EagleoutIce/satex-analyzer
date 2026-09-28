@@ -118,7 +118,7 @@ look at the set.
   *splits* the run into one path per meaning, but only `limits.meaning_splits`
   levels deep (below). Beyond that, or inside an `\edef`/scan, the
   name is simply of unknown meaning. The default is deliberately shallow.
-  Measured on `doc/architecture.tex` (TikZ), splitting further runs
+  Measured on a TikZ document, splitting further runs
   pgfmath's parser over more unknown text for one more error caught at
   seven times the run time.
 - `\let` copies the whole set, not just one meaning.

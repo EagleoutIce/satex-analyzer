@@ -28,21 +28,21 @@ The operating system SaTeX is running on: `linux`, `macos`, or `windows`. Detect
 
 ### engine
 
-The TeX engine: `tex`, `pdftex`, `luatex`, or `xetex`. Detected from the document's build configuration, for example `latexmkrc`'s `$pdf_mode`, or a `% !TeX program` magic comment. The engine decides which primitives SaTeX interprets and which format file it looks for.
+The TeX engine: {{engines}}. Detected from the document's build configuration, for example `latexmkrc`'s `$pdf_mode`, or a `% !TeX program` magic comment. The engine decides which primitives SaTeX interprets and which format file it looks for.
 
 TeX, e-TeX and pdfTeX are what SaTeX models in full. LuaTeX and XeTeX are **experimental**: their primitive catalogs were probed against the installed engines, so every primitive is known and `\ifx` tests against them answer correctly, but SaTeX does not run Lua and does not model what the primitives do. `\directlua{…}` and `\latelua{…}` are read as Lua, not TeX: see [Lua](#lua) for what SaTeX reads from them without running them.
 
 ### kernel
 
-The format the engine is started with: `latex2e` or `context`. `latex2e` is the default and the only one SaTeX interprets. ConTeXt is **experimental**: a document is recognized as ConTeXt from `% !TeX program = context` or from `\starttext`, `\stoptext`, `\startcomponent` or `\usemodule` in the source, `satex summary` then reports it as a ConTeXt document instead of mislabeling it LaTeX2e, and `latex.ltx` is not loaded for it. Because the ConTeXt kernel is not interpreted, only the engine primitives are known in such a run, and `undefined-control-sequence` is not reported. Set with `kernel:` in `satex.yaml`.
+The format the engine is started with: {{kernels}}. `latex2e` is the default and the only one SaTeX interprets. ConTeXt is **experimental**: a document is recognized as ConTeXt from `% !TeX program = context` or from `\starttext`, `\stoptext`, `\startcomponent` or `\usemodule` in the source, `satex summary` then reports it as a ConTeXt document instead of mislabeling it LaTeX2e, and `latex.ltx` is not loaded for it. Because the ConTeXt kernel is not interpreted, only the engine primitives are known in such a run, and `undefined-control-sequence` is not reported. Set with `kernel:` in `satex.yaml`.
 
 ### output
 
-The document's output format: `pdf`, `dvi`, `ps`, or `html`. Detected the same way as the engine, mainly from `$pdf_mode` in a `latexmkrc`. This decides which files a `\includegraphics` call can actually resolve to, and so whether `missing-graphic` fires.
+The document's output format: {{outputs}}. Detected the same way as the engine, mainly from `$pdf_mode` in a `latexmkrc`. This decides which files a `\includegraphics` call can actually resolve to, and so whether `missing-graphic` fires.
 
 ### build system
 
-The build tool driving the compilation: `latexmk`, `make`, `tectonic`, or `arara`, detected from which build file sits beside the document (`latexmkrc`, `Makefile`, `Tectonic.toml`, or an `% arara:` magic comment). This is what `satex query project` reports as the build configuration, and what the engine and output plugins read their defaults from.
+The build tool driving the compilation: {{build-systems}}, detected from which build file sits beside the document (`latexmkrc`, `Makefile`, `Tectonic.toml`, or an `% arara:` magic comment). This is what `satex query project` reports as the build configuration, and what the engine and output plugins read their defaults from.
 
 ### l3build
 

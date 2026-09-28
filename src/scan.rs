@@ -192,7 +192,9 @@ impl Machine<'_> {
     /// § 410: `int_val` … `tok_val`), with `RegKind` naming the level.
     pub fn internal_level(&self, meaning: &Meaning) -> Option<RegKind> {
         let level = |kind: RegKind| match kind {
-            RegKind::Box | RegKind::Read | RegKind::Write | RegKind::Char | RegKind::MathChar => RegKind::Count,
+            RegKind::Box | RegKind::Read | RegKind::Write | RegKind::Char | RegKind::MathChar | RegKind::UMathChar => {
+                RegKind::Count
+            }
             other => other,
         };
         match meaning {

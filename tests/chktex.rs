@@ -77,11 +77,56 @@ fn properly_nested_environments_are_not_reported() {
 
 // chktex warning 41: `You ought to not use primitive TeX in LaTeX code.`
 #[test]
-fn plain_tex_primitives_from_the_default_list_are_reported() {
-    let analysis = analyze(r"\catcode`\@=11 \csname foo\endcsname");
+fn plain_tex_primitives_with_a_latex_alternative_are_reported() {
+    let analysis = analyze(r"\hskip 1pt \vskip 1pt");
     let found = findings(&analysis, "primitive-tex-command");
-    assert!(found.iter().any(|m| m.contains("\\catcode")), "{found:?}");
-    assert!(found.iter().any(|m| m.contains("\\csname")), "{found:?}");
+    assert!(found.iter().any(|m| m.contains("\\hskip")), "{found:?}");
+    assert!(found.iter().any(|m| m.contains("\\vskip")), "{found:?}");
+}
+
+/// `\catcode` has no LaTeX interface at all (it is not in the built-in
+/// table), so a finding for it could only say so and give nothing to act
+/// on: satex reports none.  `\expandafter` is the same story.
+#[test]
+fn plain_tex_primitives_with_no_latex_alternative_are_not_reported() {
+    let analysis = analyze(r"\catcode`\@=11 \expandafter\relax\expandafter\relax\relax");
+    assert!(findings(&analysis, "primitive-tex-command").is_empty());
+}
+
+/// `\csname` genuinely has a LaTeX interface (`\@nameuse`, `\@namedef`, …),
+/// but the specific role satex saw this one in — naming a control sequence
+/// for `\let` — only has an alternative in etoolbox, which this document
+/// never loads.  A finding that only repeats "this is plain TeX" back would
+/// be exactly the noise `\expandafter` used to be: satex reports nothing
+/// for it either, unless `latex_alternatives` names it explicitly.
+#[test]
+fn a_csname_role_with_no_loaded_alternative_is_not_reported() {
+    let analysis = analyze(r"\expandafter\let\csname foo\endcsname\relax");
+    assert!(
+        findings(&analysis, "primitive-tex-command").is_empty(),
+        "{:?}",
+        findings(&analysis, "primitive-tex-command")
+    );
+}
+
+/// A `latex_alternatives` entry naming a primitive that has none built in
+/// is the user asking for it by name: satex still reports it, with no
+/// suggestion attached, exactly as it always has for an explicit override.
+#[test]
+fn an_explicit_override_with_no_alternative_is_still_reported() {
+    let cfg = Config {
+        load_packages: false,
+        load_classes: false,
+        load_inputs: false,
+        load_format: false,
+        use_kpsewhich: false,
+        latex_alternatives: std::collections::BTreeMap::from([("expandafter".to_string(), String::new())]),
+        ..Config::default()
+    };
+    let analysis = Machine::analyze(r"\expandafter\relax\relax", None, &cfg);
+    let found = findings(&analysis, "primitive-tex-command");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("\\expandafter"), "{found:?}");
 }
 
 #[test]

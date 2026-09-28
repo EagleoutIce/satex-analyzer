@@ -179,9 +179,13 @@ fn csname_is_matched_to_the_interface_for_what_it_was_formed_for() {
         assert!(fix.starts_with(&format!("use {want}")) && fix.contains("etoolbox"), "{fix} for {want}");
     }
 
+    // `\gdef`, `\let` and `\let`-to-a-name-formed-by-\csname have no kernel
+    // fallback, only etoolbox's: with no fix to offer, satex now reports
+    // none of the three at all rather than repeating "this is plain TeX"
+    // back with nothing to act on.
     let without = analyze(&format!("\\documentclass{{article}}\n{body}"));
     let found = fixes(&without);
-    let expected = [Some("use \\@namedef"), None, None, None, Some("use \\@ifundefined"), Some("use \\@nameuse")];
+    let expected = [Some("use \\@namedef"), Some("use \\@ifundefined"), Some("use \\@nameuse")];
     assert_eq!(found.iter().map(Option::as_deref).collect::<Vec<_>>(), expected);
 }
 
@@ -272,7 +276,11 @@ fn marked_content_in_literals_has_to_balance() {
     let unbalanced = findings(&analysis, "unbalanced-pdf-content");
     let messages: Vec<&str> = unbalanced.iter().map(|(m, _)| m.as_str()).collect();
     // The special closes the BDC the second literal left open.
-    assert_eq!(messages, ["Q has no q before it to close"]);
+    assert_eq!(
+        messages,
+        ["\\pdfliteral closes the graphics state (`Q`) that nothing here opened: \
+                            no matching `q` precedes it"]
+    );
     let undefined = findings(&analysis, "undefined-optional-content");
     assert_eq!(undefined.len(), 1, "{undefined:?}");
     assert!(undefined[0].0.contains("oc9"), "{undefined:?}");
@@ -291,7 +299,10 @@ fn marked_content_left_open_is_reported_where_it_opens() {
     );
     let unbalanced = findings(&analysis, "unbalanced-pdf-content");
     assert_eq!(unbalanced.len(), 1, "{unbalanced:?}");
-    assert!(unbalanced[0].0.contains("BDC is never closed by EMC"), "{unbalanced:?}");
+    assert!(
+        unbalanced[0].0.starts_with("\\pdfliteral opens marked content (`BDC`) and never closes it (`EMC`)"),
+        "{unbalanced:?}"
+    );
     assert!(findings(&analysis, "undefined-optional-content").is_empty(), "no resources were observed");
 }
 
@@ -308,6 +319,90 @@ fn ocg_p_layers_are_balanced() {
 \end{document}",
     );
     assert!(findings(&analysis, "unbalanced-pdf-content").is_empty());
+}
+
+/// A graphics-state save that is never restored: exactly one finding, at the
+/// `q` itself, naming the construct that wrote it and what leaks.
+#[test]
+fn unclosed_graphics_state_is_reported_once() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\pdfliteral{q}
+\end{document}",
+    );
+    let unbalanced = findings(&analysis, "unbalanced-pdf-content");
+    assert_eq!(unbalanced.len(), 1, "{unbalanced:?}");
+    assert_eq!(
+        unbalanced[0].0,
+        "\\pdfliteral opens the graphics state (`q`) and never closes it (`Q`): colour, line width and the \
+         current transform leak into everything typeset after it"
+    );
+    assert_eq!(unbalanced[0].1.as_deref(), Some("add the matching `Q` in the same group before it ends"));
+}
+
+/// A `\special{pdf:…}` save that is closed in the same group: no finding.
+#[test]
+fn balanced_graphics_state_is_not_reported() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\special{pdf:content q}\special{pdf:content Q}
+\end{document}",
+    );
+    assert!(findings(&analysis, "unbalanced-pdf-content").is_empty());
+}
+
+/// `\special{pdf:…}` is named as the emitting construct, not `\pdfliteral`.
+#[test]
+fn the_special_form_is_named_in_its_own_finding() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\special{pdf:content q}
+\end{document}",
+    );
+    let unbalanced = findings(&analysis, "unbalanced-pdf-content");
+    assert_eq!(unbalanced.len(), 1, "{unbalanced:?}");
+    assert!(unbalanced[0].0.starts_with("\\special{pdf:…} opens"), "{unbalanced:?}");
+}
+
+/// The interpreter can record the same content-stream operator twice under
+/// the same graph node (once directly, once by way of an `expanded` site):
+/// [`payloads`] in `src/lint/pdf.rs` keeps only the first.  Reverting that
+/// dedup makes this test fail with two findings instead of one.
+#[test]
+fn a_literal_recorded_twice_under_the_same_node_is_reported_once() {
+    if !installed() {
+        return;
+    }
+    let mut analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\pdfliteral{q}
+\end{document}",
+    );
+    let duplicate = analysis
+        .facts
+        .occurrences
+        .iter()
+        .find(|o| o.kind == OccKind::Pdf && o.span.file == analysis.main_file)
+        .cloned()
+        .expect("the run recorded the \\pdfliteral");
+    let mut duplicate = duplicate;
+    duplicate.expanded = Some(satex::tex::Span::default());
+    analysis.facts.occurrences.push(duplicate);
+    let unbalanced = findings(&analysis, "unbalanced-pdf-content");
+    assert_eq!(unbalanced.len(), 1, "{unbalanced:?}");
 }
 
 #[test]

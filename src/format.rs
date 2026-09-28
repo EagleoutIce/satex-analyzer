@@ -6,11 +6,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::builtins::LoadKind;
 use crate::env::{Binding, Env};
-use crate::tex::{Interner, Meaning, Sym};
+use crate::facts::{Diagnostic, Severity};
+use crate::machine::Machine;
+use crate::tex::{Interner, Meaning, Span, Sym};
 use crate::value::Value;
 
 /// Cache version: different encodings get different files.
-const ENCODING_VERSION: u32 = 1;
+const ENCODING_VERSION: u32 = 2;
+
+/// [`Severity`] by index, so a cache stores a byte and not a name.
+const SEVERITIES: [Severity; 4] = [Severity::Info, Severity::Warning, Severity::Imprecision, Severity::Unsupported];
+
+/// One diagnostic the kernel build raised: severity index, code, message,
+/// span and how often it was raised.
+type CachedDiagnostic = (u8, String, String, Span, u32);
 
 /// A cached LaTeX2e kernel: the [`Meaning`]s and catcodes `latex.ltx` leaves
 /// behind, captured once so later runs skip interpreting it again. The
@@ -36,6 +45,26 @@ pub struct Format {
     aliases: Vec<(u32, u32)>,
     /// The patterns of names the kernel may have defined from unknown text.
     wild: crate::machine::Wild,
+    /// What was diagnosed while the kernel was interpreted.  A run that
+    /// installs the cache raises them again, so the answer does not depend
+    /// on whether the cache was there.
+    diagnostics: Vec<CachedDiagnostic>,
+    /// The gaps the kernel build recorded, so a document that reaches the
+    /// same gap is deduplicated against them on both paths.
+    gaps: Vec<(String, u32)>,
+}
+
+/// A cached diagnostic code is `&'static str` in the run: interned once per
+/// process.
+fn leak(text: &str) -> &'static str {
+    static SEEN: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(found) = seen.iter().find(|s| **s == text) {
+        return found;
+    }
+    let leaked: &'static str = Box::leak(text.to_string().into_boxed_str());
+    seen.push(leaked);
+    leaked
 }
 
 pub(crate) fn stamp(path: &Path) -> Option<(u64, u64)> {
@@ -69,12 +98,53 @@ pub(crate) fn digest(bytes: &[u8]) -> u64 {
 /// The interpreter's source: a cache written by different code is stale.
 const INTERPRETER: &str = env!("SATEX_SOURCE_DIGEST");
 
-/// Cache file per installation, engine, interpreter and preload.
+/// Cache file per installation, engine, interpreter and preload.  The
+/// kernel source is canonicalized first: one `latex.ltx` reached by two
+/// paths is one cache, not two, so a run started from another directory
+/// reuses what the last one built.
 pub fn cache_file(dir: &Path, source: &Path, engine: &str, preload: u64) -> PathBuf {
-    let mut hash = digest(source.as_os_str().as_encoded_bytes());
+    let canonical = std::fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf());
+    let mut hash = digest(canonical.as_os_str().as_encoded_bytes());
     hash ^= digest(engine.as_bytes());
     hash ^= preload;
     dir.join(format!("{}{INTERPRETER}-{hash:08x}.postcard", family(source, engine)))
+}
+
+/// What a kernel cache the run wanted and did not find can be told from the
+/// ones that are there: whether another satex build wrote them, or this
+/// build wrote one under another key.  A rebuild takes minutes, so it says
+/// which.
+fn miss_reason(dir: &Path, wanted: &Path) -> String {
+    let Some(name) = wanted.file_name().and_then(|n| n.to_str()) else {
+        return "none built yet for this satex build and engine".into();
+    };
+    let Some((family, rest)) = name.split_once(INTERPRETER) else {
+        return "none built yet for this satex build and engine".into();
+    };
+    let (mut others, mut mine) = (0usize, Vec::new());
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return "none built yet for this satex build and engine".into();
+    };
+    for entry in entries.flatten() {
+        let found = entry.file_name();
+        let Some(found) = found.to_str().filter(|f| f.starts_with("format-") && f.ends_with(".postcard")) else {
+            continue;
+        };
+        match found.strip_prefix(family).and_then(|r| r.strip_prefix(INTERPRETER)) {
+            Some(key) if key != rest => mine.push(key.to_string()),
+            Some(_) => {}
+            None => others += 1,
+        }
+    }
+    match (mine.is_empty(), others) {
+        (true, 0) => "none built yet for this satex build and engine".into(),
+        (true, n) => format!("the {n} kernel cache(s) here were built by another satex build"),
+        (false, _) => format!(
+            "this satex build has {} kernel cache(s) here under another key: the kernel file, the \
+engine or the preloaded format differs",
+            mine.len()
+        ),
+    }
 }
 
 /// The part of a cache name every interpreter version shares.
@@ -82,16 +152,20 @@ fn family(source: &Path, engine: &str) -> String {
     format!("format-{engine}-{}-v{ENCODING_VERSION}-", tree_name(source))
 }
 
-/// How many caches of other interpreter versions a family keeps.  Two
-/// builds of satex used side by side — a release and a test binary, or two
-/// checkouts — would otherwise delete each other's cache on every run.
+/// How many caches of other interpreter versions a family keeps whatever
+/// the size bound says.  Two builds of satex used side by side — a release
+/// and a test binary, or two checkouts — would otherwise delete each
+/// other's cache on every run.
 pub(crate) const KEEP_OTHER_VERSIONS: usize = 4;
 
-/// Remove the caches other interpreter versions left for this family,
-/// beyond the most recent [`KEEP_OTHER_VERSIONS`].
-fn prune(dir: &Path, source: &Path, engine: &str) {
+/// Remove the caches other interpreter versions left for this family, once
+/// they no longer fit within `bound` bytes, and everything of an older
+/// encoding.  A kernel cache costs minutes to build, so the rule is the
+/// configured size and not a count: a count evicts caches a run would have
+/// reused while the cache directory is nearly empty.
+fn prune(dir: &Path, source: &Path, engine: &str, bound: u64) {
     let family = family(source, engine);
-    prune_family(dir, &family, INTERPRETER);
+    prune_family(dir, &family, INTERPRETER, bound);
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let name = entry.file_name();
@@ -102,22 +176,45 @@ fn prune(dir: &Path, source: &Path, engine: &str) {
     }
 }
 
+/// Delete `path` and the lock beside it: a lock left behind outlives every
+/// cache it ever guarded, and they pile up one per key.
+fn remove_with_lock(path: &Path) -> bool {
+    // The lock comes first.  A cache another process holds is left alone:
+    // unlinking it under that process would let the next one take a lock on
+    // an inode nothing else can reach, and two writers would then both
+    // believe they hold it.
+    let Some(lock) = StoreLock::try_take(path) else { return false };
+    let removed = std::fs::remove_file(path).is_ok();
+    // The handle goes first: Windows refuses to unlink a file still open without it.
+    drop(lock);
+    let _ = std::fs::remove_file(lock_for(path));
+    removed
+}
+
 /// Keep the caches whose name starts with `family` and were written by this
-/// interpreter, and the [`KEEP_OTHER_VERSIONS`] most recent other ones.
-pub(crate) fn prune_family(dir: &Path, family: &str, interpreter: &str) {
+/// interpreter, the [`KEEP_OTHER_VERSIONS`] most recent other ones, and any
+/// further ones that still fit within `bound` bytes (0: no bound).
+pub(crate) fn prune_family(dir: &Path, family: &str, interpreter: &str, bound: u64) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    let mut others: Vec<(std::time::SystemTime, PathBuf)> = entries
+    let mut others: Vec<(std::time::SystemTime, u64, PathBuf)> = entries
         .flatten()
         .filter(|entry| {
             let name = entry.file_name();
             let name = name.to_string_lossy();
             name.ends_with(".postcard") && name.strip_prefix(family).is_some_and(|rest| !rest.starts_with(interpreter))
         })
-        .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
+        .filter_map(|entry| {
+            let meta = entry.metadata().ok()?;
+            Some((meta.modified().ok()?, meta.len(), entry.path()))
+        })
         .collect();
-    others.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
-    for (_, path) in others.into_iter().skip(KEEP_OTHER_VERSIONS) {
-        let _ = std::fs::remove_file(path);
+    others.sort_by_key(|(modified, ..)| std::cmp::Reverse(*modified));
+    let mut total = 0u64;
+    for (i, (_, bytes, path)) in others.into_iter().enumerate() {
+        total += bytes;
+        if i >= KEEP_OTHER_VERSIONS && (bound == 0 || total > bound) {
+            let _ = remove_with_lock(&path);
+        }
     }
 }
 
@@ -160,14 +257,9 @@ pub fn prune_caches(dir: &Path, package_encoding: u32, bound: u64) -> Pruned {
         }
     }
     let mut remove = |path: &Path, bytes: u64| {
-        if std::fs::remove_file(path).is_ok() {
+        if remove_with_lock(path) {
             pruned.files += 1;
             pruned.bytes += bytes;
-            if let Some(lock) = StoreLock::try_take(path) {
-                // The handle goes first: Windows refuses to unlink a file still open without it.
-                drop(lock);
-                let _ = std::fs::remove_file(lock_for(path));
-            }
         }
     };
     let mut live: std::collections::HashSet<String> = [INTERPRETER.to_string()].into();
@@ -297,15 +389,43 @@ impl Format {
             catcodes: catcodes.to_vec(),
             files,
             sites,
-            aliases: env.aliases.iter().map(|(a, b)| (a.0, b.0)).collect(),
+            // Sorted, because a map's order is the process's: two runs that
+            // built the same format would otherwise write different bytes.
+            aliases: {
+                let mut aliases: Vec<(u32, u32)> = env.aliases.iter().map(|(a, b)| (a.0, b.0)).collect();
+                aliases.sort_unstable();
+                aliases
+            },
             wild: wild.clone(),
+            diagnostics: Vec::new(),
+            gaps: Vec::new(),
         })
+    }
+
+    /// Keep what the kernel build diagnosed, and the gaps it recorded, so a
+    /// run that installs this cache reports them again.
+    pub(crate) fn diagnosed(
+        mut self,
+        diagnostics: &[Diagnostic],
+        gaps: &std::collections::HashSet<(&'static str, Sym)>,
+    ) -> Format {
+        self.diagnostics = diagnostics
+            .iter()
+            .map(|d| {
+                let severity = SEVERITIES.iter().position(|s| *s == d.severity).unwrap_or(0) as u8;
+                (severity, d.code.to_string(), d.message.clone(), d.span, d.count)
+            })
+            .collect();
+        // Sorted: a cache file must not depend on hash order.
+        self.gaps = gaps.iter().map(|(code, sym)| ((*code).to_string(), sym.0)).collect();
+        self.gaps.sort();
+        self
     }
 
     pub fn load(dir: &Path, source: &Path, engine: &str, preload: u64) -> Result<Format, String> {
         let path = cache_file(dir, source, engine, preload);
         let bytes = std::fs::read(&path).map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => "none built yet for this satex build and engine".to_string(),
+            std::io::ErrorKind::NotFound => miss_reason(dir, &path),
             _ => format!("{}: {e}", path.display()),
         })?;
         let format: Format = postcard::from_bytes(&bytes).map_err(|e| format!("cannot decode the cache: {e}"))?;
@@ -317,7 +437,7 @@ impl Format {
         Ok(format)
     }
 
-    pub fn store(&self, dir: &Path, source: &Path, engine: &str, preload: u64) -> std::io::Result<()> {
+    pub fn store(&self, dir: &Path, source: &Path, engine: &str, preload: u64, bound: u64) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
         let bytes = postcard::to_allocvec(self).map_err(|e| std::io::Error::other(e.to_string()))?;
         let target = cache_file(dir, source, engine, preload);
@@ -325,7 +445,7 @@ impl Format {
         let temporary = temporary_for(&target);
         std::fs::write(&temporary, bytes)?;
         std::fs::rename(temporary, target)?;
-        prune(dir, source, engine);
+        prune(dir, source, engine, bound);
         Ok(())
     }
 
@@ -358,6 +478,37 @@ impl Format {
 
     pub(crate) fn wild(&self) -> &crate::machine::Wild {
         &self.wild
+    }
+}
+
+impl Machine<'_> {
+    /// Raise again what the kernel build diagnosed, so a run that installs
+    /// the cache reports what the run that built it reported.
+    pub(crate) fn restore_format_diagnostics(&mut self, format: &Format) {
+        for (severity, code, message, span, count) in &format.diagnostics {
+            let code = leak(code);
+            let severity = SEVERITIES[usize::from(*severity).min(SEVERITIES.len() - 1)];
+            let before = self.out.facts.diagnostics.len();
+            self.diagnose(severity, code, *span, message.clone());
+            // The row it landed on: a new one, or the one it was merged
+            // into.  Either way it now counts once, and the build counted
+            // it `count` times.
+            let at = match self.out.facts.diagnostics.len() > before {
+                true => Some(before),
+                false => self
+                    .out
+                    .facts
+                    .diagnostics
+                    .iter()
+                    .position(|d| d.code == code && d.span == *span && d.message == *message),
+            };
+            if let Some(row) = at.and_then(|at| self.out.facts.diagnostics.get_mut(at)) {
+                row.count = row.count.saturating_sub(1).saturating_add(*count);
+            }
+        }
+        for (code, sym) in &format.gaps {
+            self.gaps.insert((leak(code), Sym(*sym)));
+        }
     }
 }
 
@@ -407,6 +558,8 @@ mod tests {
             files: vec![("latex.ltx".to_string(), LoadKind::Input)],
             sites: Vec::new(),
             aliases: Vec::new(),
+            diagnostics: vec![(1, "invalid-code".into(), "invalid code (8217)".into(), Span::new(3, 2, 1), 2)],
+            gaps: vec![("unsupported-primitive".into(), 0)],
             wild: {
                 let mut wild = crate::machine::Wild::default();
                 wild.add("MT@inh@".into(), String::new());
@@ -422,9 +575,75 @@ mod tests {
         assert_eq!(back.names, sample().names);
         assert_eq!(back.bindings.len(), sample().bindings.len());
         assert_eq!(back.catcodes, sample().catcodes);
+        assert_eq!(back.diagnostics, sample().diagnostics);
+        assert_eq!(back.gaps, sample().gaps);
         // The names the kernel may have defined from unknown text.
         assert_eq!(back.wild, sample().wild);
         assert!(!back.wild.is_empty());
+    }
+
+    #[test]
+    fn a_pruned_family_leaves_no_lock_behind() {
+        let dir = std::env::temp_dir().join(format!("satex-locks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let family = "format-pdftex-2026-v9-";
+        let make = |interpreter: &str, key: &str, bytes: u64| {
+            for extension in ["postcard", "lock"] {
+                let path = dir.join(format!("{family}{interpreter}-{key}.{extension}"));
+                let file = std::fs::File::create(&path).unwrap();
+                if extension == "postcard" {
+                    file.set_len(bytes).unwrap();
+                }
+            }
+        };
+        make("mine", "1", 10);
+        for i in 0..6 {
+            make(&format!("other{i}"), "1", 100);
+        }
+        // Four other builds are kept whatever the bound says, and the rest
+        // only while they fit: 250 bytes leaves none of the last two.
+        prune_family(&dir, family, "mine", 250);
+        let mut left: Vec<String> =
+            std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        let caches = left.iter().filter(|n| n.ends_with(".postcard")).count();
+        let locks = left.iter().filter(|n| n.ends_with(".lock")).count();
+        assert_eq!(caches, 5, "{left:?}");
+        assert_eq!(locks, caches, "every cache that went took its lock: {left:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cache_another_process_holds_is_not_evicted() {
+        let dir = std::env::temp_dir().join(format!("satex-held-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let family = "format-pdftex-2026-v9-";
+        let path = |interpreter: &str| dir.join(format!("{family}{interpreter}-1.postcard"));
+        // Six other builds, newest first: the four most recent are kept
+        // whatever the bound says, so `held` and `also` are the two the
+        // bound would evict.
+        let others = ["one", "two", "three", "four", "held", "also"];
+        for (age, interpreter) in others.iter().enumerate() {
+            let file = std::fs::File::create(path(interpreter)).unwrap();
+            file.set_len(1000).unwrap();
+            file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age as u64 + 1)).unwrap();
+        }
+        std::fs::File::create(path("mine")).unwrap().set_len(1000).unwrap();
+        // `held` is being written by someone: the bound says it must go,
+        // the lock says it must not.  Unlinking it would let the next
+        // writer lock an inode its holder cannot see.
+        let lock = StoreLock::try_take(&path("held")).expect("the lock is free to take here");
+        prune_family(&dir, family, "mine", 1);
+        assert!(path("held").exists(), "a locked cache was evicted");
+        assert!(path("mine").exists(), "this build's own cache was evicted");
+        assert!(!path("also").exists(), "a free cache beyond the bound was kept");
+        drop(lock);
+        // Once it is free, the same rule removes it.
+        prune_family(&dir, family, "mine", 1);
+        assert!(!path("held").exists(), "a cache kept only by its lock was kept after the lock went");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

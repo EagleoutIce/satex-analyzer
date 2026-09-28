@@ -59,6 +59,7 @@ pub mod query;
 pub mod rename;
 pub mod render;
 pub mod scan;
+pub mod source;
 pub mod tex;
 pub mod tfm;
 pub mod timing;
