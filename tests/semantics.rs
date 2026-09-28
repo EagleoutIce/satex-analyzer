@@ -1911,9 +1911,8 @@ fn a_recursion_that_only_assigns_is_bounded_before_the_stall() {
 /// the file and is cut by nothing, and every item it walks reaches the body.
 #[test]
 fn an_ordinary_loop_over_twenty_items_is_not_cut() {
-    let analysis = analyze_kernel(
-        r"\makeatletter\def\acc{}\@tfor\itm:=abcdefghijklmnopqrst\do{\edef\acc{\acc\itm}}\makeatother",
-    );
+    let analysis =
+        analyze_kernel(r"\makeatletter\def\acc{}\@tfor\itm:=abcdefghijklmnopqrst\do{\edef\acc{\acc\itm}}\makeatother");
     assert_eq!(last_body(&analysis, "acc"), "abcdefghijklmnopqrst");
     assert_eq!(diagnosed(&analysis, "recursion-widened").len(), 0);
     assert_eq!(diagnosed(&analysis, "stalled-loop").len(), 0);
