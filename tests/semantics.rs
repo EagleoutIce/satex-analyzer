@@ -34,6 +34,19 @@ fn definition<'a>(analysis: &'a Analysis, name: &str) -> Option<&'a satex::facts
     analysis.facts.defs.iter().find(|d| analysis.interner.name(d.name) == name)
 }
 
+/// The last definition of `name`, for a macro a loop redefines every round.
+fn last_body(analysis: &Analysis, name: &str) -> String {
+    analysis
+        .facts
+        .defs
+        .iter()
+        .rev()
+        .find(|d| analysis.interner.name(d.name) == name)
+        .and_then(|d| d.mac.as_ref())
+        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .unwrap_or_default()
+}
+
 fn body(analysis: &Analysis, name: &str) -> String {
     definition(analysis, name)
         .and_then(|d| d.mac.as_ref())
@@ -868,6 +881,32 @@ fn ifcsname_expands_the_name_it_tests() {
     assert_eq!(out(r"\edef\out{\ifcsname\relax\endcsname Y\else N\fi}"), "N");
 }
 
+/// Which gaps make an expansion give up on the text it assembled, and which
+/// leave it standing.  The two sides are not the same kind of thing, and
+/// `WIDEN_ON` in src/machine.rs is the list that tells them apart.
+///
+/// A gap satex invented: the scan for `\stop` runs off the end of the input,
+/// so where the argument ended is satex's guess and `[#1]` is a fragment satex
+/// assembled, not text the engine makes.  The body goes back as unknown text.
+///
+/// An error the engine makes too, whose recovery tex.web defines: `\csname`
+/// that runs into an unexpandable token is "Missing \endcsname inserted"
+/// (tex.web § 372).  The engine inserts the `\endcsname` and reads on, and
+/// satex inserts the same one, so the text satex assembled *is* the text the
+/// engine makes -- `etex -ini` stores `N` here.  Widening it would throw away
+/// an answer satex had right, which is what a broader `WIDEN_ON` did.
+#[test]
+fn an_expansion_gives_up_only_over_a_gap_satex_invented() {
+    let invented = r"\def\d#1\stop{[#1]}\edef\out{\d z}";
+    assert_eq!(diagnosed(&analyze(invented), "unbalanced-argument").len(), 1);
+    assert_eq!(out(invented), "\\\u{2}unknown: ");
+
+    // etex: `N`.
+    let engines = r"\edef\out{\ifcsname\relax\endcsname Y\else N\fi}";
+    assert_eq!(diagnosed(&analyze(engines), "missing-endcsname").len(), 1);
+    assert_eq!(out(engines), "N");
+}
+
 #[test]
 fn box_tests_read_their_register_number() {
     // etex: `x`; the `0` belongs to `\ifvoid`
@@ -934,7 +973,7 @@ fn endlinechar_is_fixed_when_the_line_is_read() {
 fn every_line_starts_in_state_n() {
     // etex: `x\^^My` — the escape at the end of the line names `^^M`, and the
     // next line's leading spaces are skipped.
-    assert_eq!(out("\\def\\out{x\\\n   y}"), "x\\\ry");
+    assert_eq!(out("\\def\\out{x\\\n   y}"), "x\\^^My");
 }
 
 /// Each arm of an undecided conditional runs on its own copy of the state:
@@ -1626,7 +1665,7 @@ fn dimexpr_on_an_interval_bounds_its_result() {
 }
 
 // ---- writes and reads through a number satex could not pin down ----------
-//
+
 // Each probe below makes a number satex cannot follow (`\pdfuniformdeviate`
 // is the engine's random generator) and then uses it where the engine would
 // name a stream, a register, a character or a font.  What satex cannot pin
@@ -1865,6 +1904,19 @@ fn a_recursion_that_only_assigns_is_bounded_before_the_stall() {
     let codes: Vec<_> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
     assert!(codes.contains(&"recursion-widened"), "the loop is widened where it is found: {codes:?}");
     assert!(!codes.contains(&"stalled-loop"), "and not left to the stall limit: {codes:?}");
+}
+
+/// The same cut must not touch a loop that decides its test: `\@tfor` over
+/// twenty real items assigns its variable every round, reads nothing from
+/// the file and is cut by nothing, and every item it walks reaches the body.
+#[test]
+fn an_ordinary_loop_over_twenty_items_is_not_cut() {
+    let analysis = analyze_kernel(
+        r"\makeatletter\def\acc{}\@tfor\itm:=abcdefghijklmnopqrst\do{\edef\acc{\acc\itm}}\makeatother",
+    );
+    assert_eq!(last_body(&analysis, "acc"), "abcdefghijklmnopqrst");
+    assert_eq!(diagnosed(&analysis, "recursion-widened").len(), 0);
+    assert_eq!(diagnosed(&analysis, "stalled-loop").len(), 0);
 }
 
 /// tex.web §§ 232, 344: of the categories a character may have, only 13

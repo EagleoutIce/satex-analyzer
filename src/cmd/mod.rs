@@ -328,6 +328,14 @@ impl Command {
         matches!(self, Command::Lint { fix: true, .. } | Command::Lint { diff: true, .. })
     }
 
+    /// Whether the command's own output already lists the gaps.  `query
+    /// gaps` prints exactly the records the footer would summarize, so the
+    /// footer would repeat them and point the reader at the command they
+    /// are already running.
+    pub fn reports_gaps(&self) -> bool {
+        matches!(self, Command::Query { name: Some(n), request: None, .. } if n == "gaps")
+    }
+
     /// Whether `format` is something this command can print, matching the
     /// precedence its own `run` gives its flags (`--rules` before
     /// `--explain` before the findings themselves) — and a hint for what to

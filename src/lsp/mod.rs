@@ -465,5 +465,7 @@ fn with_doc<T>(docs: &HashMap<Uri, Doc>, uri: &Uri, f: impl FnOnce(&Analysis, &T
     let doc = docs.get(uri)?;
     let analysis = doc.analysis.as_ref()?;
     let text = Text::new(doc.text.clone());
-    Some(f(analysis, &text))
+    // Columns count what this document's engine reads, whatever was
+    // analyzed last on this thread (`crate::source`).
+    Some(crate::source::with(analysis.plugins.engine.encoding(), || f(analysis, &text)))
 }

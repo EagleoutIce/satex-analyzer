@@ -38,11 +38,9 @@ const COLOR_NAME_PREFIX: &str = "\\color@";
 /// A use, test, or `\colorlet` source of `\color@⟨name⟩`.  `full` is the
 /// control sequence's own name text, for looking its meaning up.
 fn color_use(m: &mut Machine, full: &str, color_name: &str, role: CsnameRole, span: Span) {
-    // A package's own use of a colour is not recorded: it runs again every
-    // time the package is read, whether from source or from its cache, and
-    // only the source path calls this observer (`hand-set-quantity`'s own
-    // `typeset` skips package code the same way, for the same reason).
-    if m.package().is_some() || m.out.facts.color_uses.len() >= m.cfg.limits.facts {
+    // A package's own use counts: its cache carries the fact and a replay
+    // pushes it again, so a cache hit and a cache miss report the same.
+    if m.out.facts.color_uses.len() >= m.cfg.limits.facts {
         return;
     }
     let defined =
@@ -66,11 +64,9 @@ fn color_use(m: &mut Machine, full: &str, color_name: &str, role: CsnameRole, sp
 /// `\colorlet` and `\definecolorset` all arrive here alike.
 pub fn color_def(m: &mut Machine, name: &str, meaning: &crate::tex::Meaning, span: Span) {
     let Some(color_name) = name.strip_prefix(COLOR_NAME_PREFIX) else { return };
-    // Cache replay reconstructs a package's own definitions from its log,
-    // not by calling `define` again, so a colour a package defines would
-    // stand here on a cache miss and vanish on a cache hit.  Left out here,
-    // the same way a package's own reads are (see `color_use`).
-    if color_name.is_empty() || m.package().is_some() || m.out.facts.colors.len() >= m.cfg.limits.facts {
+    // A colour a package defines is recorded too: its cache carries the
+    // fact and a replay pushes it again (see `color_use`).
+    if color_name.is_empty() || m.out.facts.colors.len() >= m.cfg.limits.facts {
         return;
     }
     let value = meaning.as_macro().and_then(|mac| parse_stored_color(m, &mac.replacement_text));
@@ -158,10 +154,9 @@ fn brace_groups(toks: &[Token], n: usize) -> Option<Vec<&[Token]>> {
 /// `None` when [`Machine::scan_int`] could not decide it.
 pub fn color_stack(m: &mut Machine, stack: Option<i64>, op: crate::facts::StackOp, span: Span) {
     // A driver's own `\pdfcolorstack` (pdftex.def sets the page's starting
-    // colour this way) is not recorded, for the same reason a package's own
-    // colour definitions and reads are not: it would stand on a cache miss
-    // and vanish on a cache hit, since replay never runs this code again.
-    if m.package().is_some() || m.out.facts.color_stack.len() >= m.cfg.limits.facts {
+    // colour this way) is recorded as well: the package cache carries it,
+    // so an unbalanced push inside a package is reported either way.
+    if m.out.facts.color_stack.len() >= m.cfg.limits.facts {
         return;
     }
     m.out.facts.color_stack.push(crate::facts::ColorStack { stack, op, span, certain: m.exact() });

@@ -37,14 +37,15 @@ use super::{Frame, Machine, Metadata, RECENT_FILE_SPANS, Site};
 use crate::builtins::{DefMode, LoadKind, OccKind};
 use crate::env::{Binding, NodeId, ReadKind};
 use crate::facts::{
-    CsnameRole, Definition, Diagnostic, Expansion, Load, LoadStatus, MeaningKind, Occurrence, Severity,
+    ColorDef, ColorStack, ColorUse, CsnameRole, Definition, Diagnostic, Expansion, Load, LoadStatus, MeaningKind,
+    Occurrence, Severity, StackOp,
 };
 use crate::graph::{ControlDep, EdgeKind, Vertex, VertexTag};
 use crate::tex::codec::{self, Mode};
 use crate::tex::{CatcodeTable, EndLineChar, FileId, LineMark, MacroDef, Meaning, Mouth, RegKind, Span, Sym, Token};
 use crate::value::Value;
 
-const ENCODING_VERSION: u32 = 1;
+const ENCODING_VERSION: u32 = 2;
 const INTERPRETER: &str = env!("SATEX_SOURCE_DIGEST");
 /// The file number that stands for "the site of this load" in a cached span.
 const LOAD_SITE: FileId = FileId::MAX;
@@ -61,7 +62,7 @@ const SITE: &str = "<site>";
 
 const TAGS: [VertexTag; 5] =
     [VertexTag::Value, VertexTag::Use, VertexTag::MacroCall, VertexTag::VariableDefinition, VertexTag::MacroDefinition];
-const STATUSES: [LoadStatus; 7] = [
+const STATUSES: [LoadStatus; 8] = [
     LoadStatus::Read,
     LoadStatus::NotFollowed,
     LoadStatus::Skipped,
@@ -69,9 +70,11 @@ const STATUSES: [LoadStatus; 7] = [
     LoadStatus::TooDeep,
     LoadStatus::NotFound,
     LoadStatus::Unreadable,
+    LoadStatus::CaseMismatch { on_disk: Sym(0) },
 ];
 const SEVERITIES: [Severity; 4] = [Severity::Info, Severity::Warning, Severity::Imprecision, Severity::Unsupported];
-const REGISTERS: [RegKind; 10] = [
+const STACK_OPS: [StackOp; 4] = [StackOp::Push, StackOp::Pop, StackOp::Set, StackOp::Current];
+const REGISTERS: [RegKind; 11] = [
     RegKind::Count,
     RegKind::Dimen,
     RegKind::Skip,
@@ -82,10 +85,20 @@ const REGISTERS: [RegKind; 10] = [
     RegKind::Write,
     RegKind::Char,
     RegKind::MathChar,
+    RegKind::UMathChar,
 ];
 
 fn index_of<T: PartialEq>(all: &[T], item: &T) -> u8 {
     all.iter().position(|x| x == item).unwrap_or(0) as u8
+}
+
+/// [`index_of`] compares by value, so it never matches `CaseMismatch {
+/// on_disk }` against the placeholder `on_disk: Sym(0)` in [`STATUSES`]
+/// unless the real symbol also happens to be zero — silently miscoding the
+/// load as `Read`. Match by variant instead; the payload is carried
+/// separately in `CachedLoad::case_mismatch_on_disk`.
+fn status_index(item: &LoadStatus) -> u8 {
+    STATUSES.iter().position(|x| std::mem::discriminant(x) == std::mem::discriminant(item)).unwrap_or(0) as u8
 }
 
 /// The run's diagnostic codes and fact tags are `&'static str`; a cached one
@@ -119,6 +132,94 @@ impl Fnv {
         self.write(&bytes);
     }
 }
+
+/// Which node of a tree this is, as a digest of what it holds.  A run keeps
+/// it for the node its replay stopped at, so that a store hours or
+/// processes later can tell whether that node is still the one it read.
+fn node_id(node: &Node) -> u64 {
+    let mut hash = Fnv::new();
+    hash.put(&(node.end, node.last, node.steps));
+    hash.write(&node.reads);
+    hash.write(&node.effect);
+    hash.0
+}
+
+/// What a store says when the file changed under it.
+const REWRITTEN: &str = "not stored: another instance rewrote it first";
+
+/// Where a recording may be appended: the tree whose root is `root`, when
+/// the node its chain hangs from is still the one that was read.  The file
+/// may have changed since this run read it -- another process storing the
+/// same package inserts its tree at the front, which moves every later
+/// index, and `MAX_TREES` drops the oldest -- so the index the run kept
+/// cannot be trusted.  `None` means the recording belongs nowhere in the
+/// file as it stands now: written on a stale index it would hang under
+/// someone else's root, and a later run would replay it for a state it was
+/// never recorded in.
+fn append_target(
+    file: &mut CacheFile,
+    root: &[(String, u64)],
+    parent: Option<u32>,
+    parent_id: Option<u64>,
+) -> Option<usize> {
+    match file.trees.iter().position(|t| t.root == root) {
+        Some(t) => {
+            let same = match parent {
+                None => true,
+                Some(k) => file.trees[t].nodes.get(k as usize).map(node_id) == parent_id,
+            };
+            same.then_some(t)
+        }
+        None => {
+            // A chain that hangs from a node cannot be moved to an empty tree.
+            if parent.is_some() {
+                return None;
+            }
+            file.trees.insert(0, Tree { root: root.to_vec(), nodes: Vec::new() });
+            file.trees.truncate(MAX_TREES);
+            Some(0)
+        }
+    }
+}
+
+/// What a test hands [`BEFORE_STORE`]: the cache file is its to rewrite.
+#[cfg(test)]
+pub(super) type Rewrite = Box<dyn Fn(&Path) + Send>;
+
+/// What one store decided: the package, the node its chain hung from, the
+/// tree it went to, and how long the chain was.
+#[cfg(test)]
+pub(super) type Decided = (String, Option<u32>, Option<usize>, usize);
+
+/// A test's chance to rewrite the cache file in the window a second process
+/// writes in: after the read that chose a segment, before the store that
+/// appends to it.  Test builds only -- a release build has no hook at all.
+#[cfg(test)]
+pub(super) static BEFORE_STORE: std::sync::Mutex<Option<Rewrite>> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn rewrite_before_store(path: &Path) {
+    let hook = BEFORE_STORE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(hook) = hook.as_ref() {
+        hook(path);
+    }
+}
+
+#[cfg(not(test))]
+fn rewrite_before_store(_path: &Path) {}
+
+/// What the last store decided, so a test can say whether it exercised the
+/// window at all instead of passing without reaching it.  Test builds only.
+#[cfg(test)]
+pub(super) static LAST_APPEND: std::sync::Mutex<Vec<Decided>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn note_append(name: &str, parent: Option<u32>, target: Option<usize>, chain: usize) {
+    LAST_APPEND.lock().unwrap_or_else(|e| e.into_inner()).push((name.to_string(), parent, target, chain));
+}
+
+#[cfg(not(test))]
+fn note_append(_name: &str, _parent: Option<u32>, _target: Option<usize>, _chain: usize) {}
 
 /// A vertex a segment refers to: one of the segment's table, or one of the
 /// definitions a name had before the load, which a replay finds by the name.
@@ -215,7 +316,7 @@ struct CachedLoad {
     required: Option<String>,
     provided: Option<String>,
     depth: u16,
-    case_mismatch_disk_name: Option<String>,
+    case_mismatch_on_disk: Option<Sym>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -288,12 +389,58 @@ struct Lists {
 /// One cached diagnostic: severity, code, message, span, and the gap it names, if any.
 type CachedDiagnostic = (u8, String, String, Span, Option<(String, Sym)>, u32);
 
+/// A colour the segment defined: name, value, declared model and spec,
+/// where the spec stands, where the call stands, and what called it.
+#[derive(Serialize, Deserialize)]
+struct CachedColorDef {
+    name: String,
+    value: Option<crate::value::Colors>,
+    declared: Option<(crate::value::Model, String)>,
+    spec_span: Option<Span>,
+    span: Span,
+    via: Option<Sym>,
+    package: Option<Sym>,
+    certain: bool,
+}
+
+/// A `\color@⟨name⟩` the segment formed: what for, and whether the colour
+/// was defined then.
+#[derive(Serialize, Deserialize)]
+struct CachedColorUse {
+    name: String,
+    role: (u8, bool, bool),
+    defined: bool,
+    span: Span,
+    via: Option<Sym>,
+    package: Option<Sym>,
+    certain: bool,
+}
+
+/// A `\pdfcolorstack` the segment executed: stack, operation index, span.
+type CachedColorStack = (Option<i64>, u8, Span, bool);
+
+/// The head of an [`Effect`], field for field: what the first pass needs to
+/// relocate the segment's names.  Decoded with `take_from_bytes`, so the
+/// rest of the segment is read once and not twice.
+#[derive(Deserialize)]
+struct EffectHead {
+    names: Vec<Sym>,
+    files: Vec<(String, LoadKind, Option<Span>)>,
+    moved: Vec<(u8, i64, i64, Vec<VRef>)>,
+    origins: Vec<((RegKind, u16), u8)>,
+}
+
 /// What one segment did.
 #[derive(Serialize, Deserialize, Default)]
 struct Effect {
     /// Names in the order the segment first asked for them.
     names: Vec<Sym>,
     files: Vec<(String, LoadKind, Option<Span>)>,
+    /// The allocation counters advanced since the load began: which, from
+    /// what, to what, and the assignments that set them.
+    moved: Vec<(u8, i64, i64, Vec<VRef>)>,
+    /// Which counter handed out each register the segment named.
+    origins: Vec<((RegKind, u16), u8)>,
     vertices: Vec<CachedVertex>,
     /// The table entries the segment reached, in the order it did, with the
     /// call read from a file then: a run that does not have them makes them
@@ -307,11 +454,6 @@ struct Effect {
     /// Every name assigned, what it holds at the checkpoint, and which
     /// parts of it the load has written.
     bindings: Vec<(Sym, Option<CachedBinding>, u8)>,
-    /// The allocation counters advanced since the load began: which, from
-    /// what, to what, and the assignments that set them.
-    moved: Vec<(u8, i64, i64, Vec<VRef>)>,
-    /// Which counter handed out each register the segment named.
-    origins: Vec<((RegKind, u16), u8)>,
     definitions: Vec<CachedDefinition>,
     expansions: Vec<CachedExpansion>,
     loads: Vec<CachedLoad>,
@@ -319,6 +461,11 @@ struct Effect {
     /// -1.
     identifications: Vec<(i64, Option<String>)>,
     occurrences: Vec<CachedOccurrence>,
+    /// The colour facts the segment recorded, so a replay reports them
+    /// without running the recorders again.
+    colors: Vec<CachedColorDef>,
+    color_uses: Vec<CachedColorUse>,
+    color_stack: Vec<CachedColorStack>,
     diagnostics: Vec<CachedDiagnostic>,
     metadata: Vec<(String, String, String)>,
     csnames: Vec<(Span, u8, bool, bool)>,
@@ -438,6 +585,9 @@ struct Marks {
     opened: usize,
     loads: usize,
     occurrences: usize,
+    colors: usize,
+    color_uses: usize,
+    color_stack: usize,
     diagnostics: usize,
     metadata: usize,
     files: usize,
@@ -489,8 +639,11 @@ pub(super) struct Recorder {
     cache: PathBuf,
     site: Span,
     root: Vec<(String, u64)>,
-    tree: Option<usize>,
     parent: Option<u32>,
+    /// What the node `parent` names held when the file was read.  Another
+    /// process may write the file before this run stores, so the index
+    /// alone is not enough to find that node again.
+    parent_id: Option<u64>,
     before: Before,
     rest: Rest,
     marks: Marks,
@@ -907,6 +1060,10 @@ impl Machine<'_> {
             file_calls: _,
             counter_namespace: _,
             progress_step: _,
+            progress_depth: _,
+            progress_conds: _,
+            gaps_raised: _,
+            gap_depth: _,
             // Part of the tree's root.
             docstrip_dir: _,
             // Follows the input stack: an expansion is counted while its
@@ -926,6 +1083,7 @@ impl Machine<'_> {
             mode: _,
             list: _,
             material: _,
+            page_touched: _,
             natural: _,
             docstrip,
             pinned,
@@ -975,6 +1133,8 @@ impl Machine<'_> {
             scanner: _,
             pseudo_file: _,
             probe: _,
+            // Acted on at the next step, never across a load.
+            repeat_cut: _,
             // Bookkeeping of the output, not state the run depends on.
             diag_seen: _,
             diag_floor: _,
@@ -1035,8 +1195,8 @@ impl Machine<'_> {
         let before = self.before_state();
         let rest = self.rest_state(self.input.len() + 1);
         let base = self.base.clone();
-        let mut tree_index = None;
         let mut at: Option<u32> = None;
+        let mut parent_id: Option<u64> = None;
         let mut end: Option<(LineMark, bool)> = None;
         let mut served = 0;
         let mut reason: Option<String> = None;
@@ -1059,7 +1219,6 @@ impl Machine<'_> {
                     reason = Some(format!("{differs} differs"));
                 }
                 Some(t) => {
-                    tree_index = Some(t);
                     let tree = &file.trees[t];
                     let mut children: HashMap<Option<u32>, Vec<u32>> = HashMap::new();
                     for (i, node) in tree.nodes.iter().enumerate() {
@@ -1099,6 +1258,7 @@ impl Machine<'_> {
                             break;
                         }
                     }
+                    parent_id = at.and_then(|k| tree.nodes.get(k as usize)).map(node_id);
                 }
             },
         }
@@ -1139,8 +1299,8 @@ impl Machine<'_> {
             cache,
             site: span,
             root,
-            tree: tree_index,
             parent: at,
+            parent_id,
             before,
             rest,
             marks,
@@ -1266,9 +1426,9 @@ impl Machine<'_> {
         // the order it asked for names in.
         let local: Vec<Sym> = (0..node.names.len() as u32).map(Sym).collect();
         let (provisional, _) = codec::with(Mode::Decode { syms: local, files: self.lookup_files(&node.paths) }, || {
-            postcard::from_bytes::<Effect>(&node.effect)
+            postcard::take_from_bytes::<EffectHead>(&node.effect)
         });
-        let provisional = provisional.ok()?;
+        let provisional = provisional.ok()?.0;
         let mut shift: HashMap<u8, i64> = HashMap::new();
         for (counter, from, ..) in &provisional.moved {
             let now = before.counters.iter().find(|(c, _)| c == counter).and_then(|(_, v)| *v)?;
@@ -1541,11 +1701,18 @@ impl Machine<'_> {
                 by: l.by,
                 file,
                 path: l.path.clone(),
-                status: STATUSES[l.status as usize],
+                status: {
+                    let mut s = STATUSES[l.status as usize];
+                    if let (LoadStatus::CaseMismatch { on_disk: od }, Some(actual_on_disk)) =
+                        (&mut s, l.case_mismatch_on_disk)
+                    {
+                        *od = actual_on_disk;
+                    }
+                    s
+                },
                 required: l.required.clone(),
                 provided: l.provided.clone(),
                 depth: l.depth,
-                case_mismatch_disk_name: l.case_mismatch_disk_name.clone(),
             });
         }
         for (load, provided) in &st.identifications {
@@ -1568,6 +1735,38 @@ impl Machine<'_> {
                 node: node_id,
                 section: o.section.as_deref().map(Rc::from),
                 certain: o.certain && self.exact(),
+            });
+        }
+        for c in &st.colors {
+            self.out.facts.colors.push(ColorDef {
+                name: c.name.clone(),
+                value: c.value.clone(),
+                declared: c.declared.clone(),
+                spec_span: c.spec_span.map(|s| span_in(s, site)),
+                span: span_in(c.span, site),
+                via: c.via,
+                package: c.package,
+                certain: c.certain && self.exact(),
+            });
+        }
+        for u in &st.color_uses {
+            let (kind, global, expand) = u.role;
+            self.out.facts.color_uses.push(ColorUse {
+                name: u.name.clone(),
+                role: role_in(kind, global, expand),
+                defined: u.defined,
+                span: span_in(u.span, site),
+                via: u.via,
+                package: u.package,
+                certain: u.certain && self.exact(),
+            });
+        }
+        for (stack, op, span, certain) in &st.color_stack {
+            self.out.facts.color_stack.push(ColorStack {
+                stack: *stack,
+                op: STACK_OPS[usize::from(*op).min(STACK_OPS.len() - 1)],
+                span: span_in(*span, site),
+                certain: *certain && self.exact(),
             });
         }
         for (severity, code, message, span, gap, count) in &st.diagnostics {
@@ -1771,6 +1970,9 @@ impl Machine<'_> {
             opened: rec.log.opened.len(),
             loads: self.out.facts.loads.len(),
             occurrences: self.out.facts.occurrences.len(),
+            colors: self.out.facts.colors.len(),
+            color_uses: self.out.facts.color_uses.len(),
+            color_stack: self.out.facts.color_stack.len(),
             diagnostics: {
                 self.diag_floor = self.out.facts.diagnostics.len();
                 self.diag_floor
@@ -2076,14 +2278,13 @@ impl Machine<'_> {
             ));
             return;
         };
+        rewrite_before_store(&rec.cache);
         let mut file = read(&rec.cache).unwrap_or(CacheFile { version: ENCODING_VERSION, trees: Vec::new() });
-        let tree = match rec.tree.filter(|t| *t < file.trees.len()) {
-            Some(t) => t,
-            None => {
-                file.trees.insert(0, Tree { root: rec.root.clone(), nodes: Vec::new() });
-                file.trees.truncate(MAX_TREES);
-                0
-            }
+        let target = append_target(&mut file, &rec.root, rec.parent, rec.parent_id);
+        note_append(&rec.name, rec.parent, target, rec.chain.len());
+        let Some(tree) = target else {
+            self.out.package_caches.push((rec.name.clone(), rec.cache.display().to_string(), REWRITTEN.into()));
+            return;
         };
         let nodes = &mut file.trees[tree].nodes;
         let mut parent = rec.parent;
@@ -2098,7 +2299,7 @@ impl Machine<'_> {
         let Ok(bytes) = postcard::to_allocvec(&file) else { return };
         let temporary = crate::format::temporary_for(&rec.cache);
         if std::fs::write(&temporary, bytes).is_ok() && std::fs::rename(&temporary, &rec.cache).is_ok() {
-            crate::format::prune_family(dir, &family(&rec.name), INTERPRETER);
+            crate::format::prune_family(dir, &family(&rec.name), INTERPRETER, self.cfg.limits.cache_size.as_u64());
             prune(dir, self.cfg.limits.cache_size.as_u64());
             let recorded = total.saturating_sub(rec.served);
             let _ = recorded;
@@ -2360,6 +2561,37 @@ impl Machine<'_> {
                 certain: o.certain,
             })
             .collect();
+        let colors: Vec<CachedColorDef> = self.out.facts.colors[m.colors.min(self.out.facts.colors.len())..]
+            .iter()
+            .map(|c| CachedColorDef {
+                name: c.name.clone(),
+                value: c.value.clone(),
+                declared: c.declared.clone(),
+                spec_span: c.spec_span.map(|s| span_out(s, site)),
+                span: span_out(c.span, site),
+                via: c.via,
+                package: c.package,
+                certain: c.certain,
+            })
+            .collect();
+        let color_uses: Vec<CachedColorUse> = self.out.facts.color_uses
+            [m.color_uses.min(self.out.facts.color_uses.len())..]
+            .iter()
+            .map(|u| CachedColorUse {
+                name: u.name.clone(),
+                role: role_out(u.role),
+                defined: u.defined,
+                span: span_out(u.span, site),
+                via: u.via,
+                package: u.package,
+                certain: u.certain,
+            })
+            .collect();
+        let color_stack: Vec<CachedColorStack> = self.out.facts.color_stack
+            [m.color_stack.min(self.out.facts.color_stack.len())..]
+            .iter()
+            .map(|e| (e.stack, index_of(&STACK_OPS, &e.op), span_out(e.span, site), e.certain))
+            .collect();
         let gap_of: HashMap<usize, (&'static str, Sym)> =
             rec.log.gaps_new[m.gaps_new..].iter().map(|(code, sym, at)| (*at, (*code, *sym))).collect();
         let diagnostics = self.out.facts.diagnostics[m.diagnostics..]
@@ -2378,18 +2610,24 @@ impl Machine<'_> {
             .collect();
         let loads = self.out.facts.loads[m.loads..]
             .iter()
-            .map(|l| CachedLoad {
-                name: l.name.clone(),
-                kind: l.kind,
-                options: l.options.clone(),
-                span: span_out(l.span, site),
-                by: l.by,
-                path: l.path.clone(),
-                status: index_of(&STATUSES, &l.status),
-                required: l.required.clone(),
-                provided: l.provided.clone(),
-                depth: l.depth,
-                case_mismatch_disk_name: l.case_mismatch_disk_name.clone(),
+            .map(|l| {
+                let case_mismatch_on_disk = match l.status {
+                    LoadStatus::CaseMismatch { on_disk } => Some(on_disk),
+                    _ => None,
+                };
+                CachedLoad {
+                    name: l.name.clone(),
+                    kind: l.kind,
+                    options: l.options.clone(),
+                    span: span_out(l.span, site),
+                    by: l.by,
+                    path: l.path.clone(),
+                    status: status_index(&l.status),
+                    required: l.required.clone(),
+                    provided: l.provided.clone(),
+                    depth: l.depth,
+                    case_mismatch_on_disk,
+                }
             })
             .collect();
         let identifications = rec.log.identifications[m.identifications..]
@@ -2496,6 +2734,9 @@ impl Machine<'_> {
             loads,
             identifications,
             occurrences,
+            colors,
+            color_uses,
+            color_stack,
             diagnostics,
             metadata: self.out.metadata[m.metadata..]
                 .iter()
@@ -2659,4 +2900,276 @@ fn with_text(meaning: &Meaning, f: impl FnOnce(&[Token]) -> Option<Rc<[Token]>>)
     let mut m = (**m).clone();
     m.replacement_text = f(&m.replacement_text)?;
     Some(Meaning::Macro(Rc::new(m)))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::*;
+    use crate::config::Config;
+    use crate::machine::{Analysis, Machine};
+
+    fn node(steps: u64) -> Node {
+        Node {
+            parent: None,
+            end: LineMark { pos: 0, line: 0, col: 0, force_eof: None, ended: false },
+            last: false,
+            steps,
+            stamps: Vec::new(),
+            lookups: Vec::new(),
+            names: Vec::new(),
+            paths: Vec::new(),
+            reads: Vec::new(),
+            effect: vec![steps as u8],
+        }
+    }
+
+    fn tree(root: &str, nodes: Vec<Node>) -> Tree {
+        Tree { root: vec![(root.to_string(), 1)], nodes }
+    }
+
+    fn root_of(name: &str) -> Vec<(String, u64)> {
+        vec![(name.to_string(), 1)]
+    }
+
+    #[test]
+    fn a_recording_is_appended_to_the_tree_its_root_names() {
+        let mut file =
+            CacheFile { version: ENCODING_VERSION, trees: vec![tree("other", vec![]), tree("mine", vec![node(1)])] };
+        let id = Some(node_id(&node(1)));
+        // The index the run kept is 1 and still is: the append goes there.
+        assert_eq!(append_target(&mut file, &root_of("mine"), Some(0), id), Some(1));
+        // A run that replayed nothing may always start a chain of its own.
+        assert_eq!(append_target(&mut file, &root_of("mine"), None, None), Some(1));
+        // A root nothing holds gets a tree of its own, at the front.
+        assert_eq!(append_target(&mut file, &root_of("new"), None, None), Some(0));
+        assert_eq!(file.trees[0].root, root_of("new"));
+    }
+
+    #[test]
+    fn a_tree_inserted_under_a_run_moves_its_index_and_the_recording_is_dropped() {
+        let id = Some(node_id(&node(1)));
+        // The run read a file whose tree 0 was `mine`; another process then
+        // put its own tree in front, so index 0 is now someone else's.
+        let mut file = CacheFile {
+            version: ENCODING_VERSION,
+            trees: vec![tree("theirs", vec![node(9)]), tree("mine", vec![node(1)])],
+        };
+        assert_eq!(append_target(&mut file, &root_of("mine"), Some(0), id), Some(1), "found by root, not by index");
+        assert_eq!(file.trees[0].nodes.len(), 1, "the other tree was not written into");
+        // And when the node at that index is no longer the node that was
+        // replayed, there is nowhere sound to put the chain.
+        let mut file = CacheFile { version: ENCODING_VERSION, trees: vec![tree("mine", vec![node(7)])] };
+        assert_eq!(append_target(&mut file, &root_of("mine"), Some(0), id), None);
+    }
+
+    #[test]
+    fn a_tree_truncated_away_under_a_run_drops_the_recording() {
+        let id = Some(node_id(&node(1)));
+        // MAX_TREES pushed `mine` off the end while this run was reading.
+        let trees = (0..MAX_TREES).map(|i| tree(&format!("other{i}"), vec![node(9)])).collect();
+        let mut file = CacheFile { version: ENCODING_VERSION, trees };
+        assert_eq!(append_target(&mut file, &root_of("mine"), Some(0), id), None);
+        assert_eq!(file.trees.len(), MAX_TREES, "nothing was inserted");
+        assert!(file.trees.iter().all(|t| t.nodes.len() == 1), "no tree was written into");
+    }
+
+    /// The hook and the kernel cache are process-wide: these run one at a time.
+    static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Clears the hook however the test ends.
+    struct Hooked;
+
+    impl Drop for Hooked {
+        fn drop(&mut self) {
+            *BEFORE_STORE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+    }
+
+    fn hook(f: impl Fn(&Path) + Send + 'static) -> Hooked {
+        *BEFORE_STORE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(f));
+        Hooked
+    }
+
+    fn installed() -> bool {
+        which::which("kpsewhich").is_ok()
+    }
+
+    /// One kernel cache for every test here, as `tests/package_cache.rs` does.
+    fn kernel() -> &'static Path {
+        static KERNEL: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        KERNEL.get_or_init(|| {
+            let dir = std::env::temp_dir().join(format!("satex-graft-kernel-{}", std::process::id()));
+            let cfg = Config { cache_dir: Some(dir.clone()), ..Config::default() };
+            Machine::analyze("\\relax\n", Some(&dir.join("kernel.tex")), &cfg);
+            dir
+        })
+    }
+
+    /// A package whose last lines read a name the preamble may define, so a
+    /// second run replays the front of it and records the rest: that is the
+    /// run that holds an index into a tree someone else can move.
+    const GUARD: &str = "\\ProvidesPackage{guard}[2020/01/01 v1]\n\\def\\guardone{1}\n\\relax\n\
+\\def\\guardtwo{2}\n\\relax\n\\ifdefined\\userflag\\def\\guardflagged{}\\fi\n\\def\\guardthree{3}\n";
+
+    fn project(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("satex-graft-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = dir.join("cache");
+        std::fs::create_dir_all(&cache).expect("temporary directory");
+        std::fs::write(dir.join("guard.sty"), GUARD).expect("guard.sty");
+        for entry in std::fs::read_dir(kernel()).expect("kernel cache").flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with("format-") {
+                std::fs::copy(entry.path(), cache.join(&name)).expect("kernel cache copied");
+            }
+        }
+        dir
+    }
+
+    fn analyze(dir: &Path, source: &str) -> Analysis {
+        let cfg = Config { cache_dir: Some(dir.join("cache")), ..Config::default() };
+        let path = dir.join("doc.tex");
+        std::fs::write(&path, source).expect("doc.tex");
+        Machine::analyze(source, Some(&path), &cfg)
+    }
+
+    const PLAIN: &str = "\\documentclass{article}\n\\usepackage{guard}\n\\begin{document}\\relax\\end{document}\n";
+    const FLAGGED: &str =
+        "\\documentclass{article}\n\\def\\userflag{}\n\\usepackage{guard}\n\\begin{document}\\relax\\end{document}\n";
+
+    fn cache_of(dir: &Path) -> Option<PathBuf> {
+        std::fs::read_dir(dir.join("cache"))
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("package-guard-")))
+    }
+
+    fn state_of(analysis: &Analysis, package: &str) -> Option<String> {
+        analysis.package_caches.iter().rev().find(|(name, ..)| name == package).map(|(.., state)| state.clone())
+    }
+
+    /// Rewrite the file the way a second process would, in the window
+    /// between the read that chose a segment and the store: `bogus` trees
+    /// go in front of whatever is there.
+    fn sabotage(path: &Path, bogus: usize, keep: bool) {
+        let Ok(bytes) = std::fs::read(path) else { return };
+        let Ok(mut file) = postcard::from_bytes::<CacheFile>(&bytes) else { return };
+        if !keep {
+            file.trees.clear();
+        }
+        for i in 0..bogus {
+            file.trees.insert(0, tree(&format!("bogus{i}"), vec![node(9)]));
+        }
+        file.trees.truncate(MAX_TREES);
+        if let Ok(bytes) = postcard::to_allocvec(&file) {
+            let _ = std::fs::write(path, bytes);
+        }
+    }
+
+    /// What a run learned, for comparing a run against a sabotaged cache
+    /// with one that read the package itself.
+    fn facts(a: &Analysis) -> Vec<String> {
+        let mut out: Vec<String> = a
+            .facts
+            .defs
+            .iter()
+            .map(|d| format!("{} {}:{}", a.interner.name(d.name), a.file_name(d.span.file), d.span.line))
+            .collect();
+        out.extend(
+            a.facts.diagnostics.iter().map(|d| format!("{} {}:{}", d.code, a.file_name(d.span.file), d.span.line)),
+        );
+        out
+    }
+
+    /// `bogus` trees appear in front of this run's while it is storing.
+    /// `keep` says whether its own tree survives the rewrite.
+    ///
+    /// This drives the window itself: the file really is rewritten between
+    /// the read that chose a segment and the store that appends to it, and
+    /// the store has to work from what it finds there.  A package this
+    /// small is recorded as one segment, so the run hangs its chain from no
+    /// node and the rule cannot refuse it; what the rule decides for a
+    /// chain that does hang from one is pinned by the three tests above.
+    fn grafting(name: &str, bogus: usize, keep: bool) -> (Option<u32>, Option<usize>) {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = project(name);
+        // A first run records the package; a second replays what still fits
+        // and records the rest, so it holds an index into a tree on disk.
+        let first = analyze(&dir, PLAIN);
+        assert_eq!(state_of(&first, "guard").as_deref(), Some("stored"), "{:?}", first.package_caches);
+        let target_file = cache_of(&dir).expect("a cache for guard");
+        let once = std::sync::atomic::AtomicBool::new(false);
+        LAST_APPEND.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        let _hooked = hook(move |path: &Path| {
+            if path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("package-guard-"))
+                && !once.swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                sabotage(path, bogus, keep);
+            }
+        });
+        let second = analyze(&dir, FLAGGED);
+        drop(_hooked);
+        let seen = LAST_APPEND.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let (_, parent, target, chain) =
+            seen.iter().rev().find(|(n, ..)| n == "guard").cloned().expect("guard reached the store");
+        assert!(chain > 0, "the run recorded something to store");
+
+        // Whatever the rewrite did, nothing this run never read was written
+        // into: the bogus trees keep the one node they were made with.
+        let bytes = std::fs::read(&target_file).expect("the cache is readable");
+        let file: CacheFile = postcard::from_bytes(&bytes).expect("the cache decodes");
+        for (i, t) in file.trees.iter().enumerate() {
+            if t.root.first().is_some_and(|(root, _)| root.starts_with("bogus")) {
+                assert_eq!(t.nodes.len(), 1, "tree {i} was grafted into: {:?}", t.root);
+            }
+        }
+        // The chain went under this package's own root, or nowhere.
+        match target {
+            Some(t) => {
+                assert!(
+                    !file.trees[t].root.first().is_some_and(|(root, _)| root.starts_with("bogus")),
+                    "the chain went under a root this run never read"
+                );
+                assert_eq!(state_of(&second, "guard").as_deref(), Some("stored"), "{:?}", second.package_caches);
+            }
+            None => {
+                assert!(parent.is_some(), "only a chain hanging from a node is refused");
+                assert_eq!(state_of(&second, "guard").as_deref(), Some(REWRITTEN), "{:?}", second.package_caches);
+            }
+        }
+        // And a later run against the rewritten cache reports what a run
+        // that reads the package itself reports.  Both are in this
+        // directory, so their files have the same names.
+        let after = analyze(&dir, FLAGGED);
+        for entry in std::fs::read_dir(dir.join("cache")).expect("cache").flatten() {
+            if entry.file_name().to_string_lossy().starts_with("package-") {
+                std::fs::remove_file(entry.path()).expect("removed");
+            }
+        }
+        let uncached = analyze(&dir, FLAGGED);
+        assert_eq!(facts(&after), facts(&uncached), "a run against the rewritten cache");
+        (parent, target)
+    }
+
+    #[test]
+    fn a_tree_inserted_while_a_run_stores_is_not_grafted_into() {
+        if !installed() {
+            return;
+        }
+        // Index 0 is someone else's tree now, so a store that trusted the
+        // index it kept would push this package's segments under it.
+        let (_, target) = grafting("insert", 1, true);
+        assert_ne!(target, Some(0), "the chain went to the tree that was pushed in front");
+    }
+
+    #[test]
+    fn a_tree_truncated_away_while_a_run_stores_drops_the_recording() {
+        if !installed() {
+            return;
+        }
+        grafting("truncate", MAX_TREES, false);
+    }
 }

@@ -21,8 +21,8 @@ beside the display.  The starred forms set the same mathematics and spend no
 number.
 
 satex decides *numbered* by running the document: `\\refstepcounter`
-redefines `\\@currentlabel` ([clsguide](https://ctan.org/pkg/clsguide)
-§ counters), so an environment whose body redefined it stepped a counter.
+redefines `\\@currentlabel` (clsguide § counters), so an environment whose
+body redefined it stepped a counter.
 `\\@captype` and `\\@listctr` say the number went to something inside, and
 amsmath's `\\notag`, `\\nonumber` and `\\tag` say the display governs itself.
 

@@ -118,7 +118,7 @@ look at the set.
   *splits* the run into one path per meaning, but only `limits.meaning_splits`
   levels deep (below). Beyond that, or inside an `\edef`/scan, the
   name is simply of unknown meaning. The default is deliberately shallow.
-  Measured on `doc/architecture.tex` (TikZ), splitting further runs
+  Measured on a TikZ document, splitting further runs
   pgfmath's parser over more unknown text for one more error caught at
   seven times the run time.
 - `\let` copies the whole set, not just one meaning.
@@ -193,16 +193,17 @@ into a bounded search. Full description of each on [Configuration](Configuration
 
 | setting | default | what it bounds |
 | --- | --- | --- |
-| [`limits.steps`](Configuration#what-a-run-may-use) | 900000000 | Tokens the document may digest, and the kernel on top of that. |
-| [`limits.format_steps`](Configuration#what-a-run-may-use) | 1000000000 |  |
+| [`limits.steps`](Configuration#what-a-run-may-use) | 1000000000 | Tokens the document may digest, and the kernel on top of that. |
+| [`limits.format_steps`](Configuration#what-a-run-may-use) | 9000000000 |  |
 | [`limits.file_depth`](Configuration#what-a-run-may-use) | 64 | How deep `\input` may nest. |
-| [`limits.expansion_depth`](Configuration#what-a-run-may-use) | 24 | How often a macro may re-enter itself, and how often one call site may expand without the source moving on — TeX loops are tail recursive. |
+| [`limits.expansion_depth`](Configuration#what-a-run-may-use) | 32 | How often a macro may re-enter itself, and how often one call site may expand without the source moving on — TeX loops are tail recursive. |
 | [`limits.site_expansions`](Configuration#what-a-run-may-use) | 16384 |  |
 | [`limits.stall_tokens`](Configuration#what-a-run-may-use) | 50000000 | Tokens a run may digest without reading from a file before the expansion it is in is given up as a loop that does not end. |
+| [`limits.repeat_failures`](Configuration#what-a-run-may-use) | 8 | How often one construct satex cannot follow may be met at one place before the expansion it is in is given up the same way.  A path that fails at a site once fails there again on every round, so counting the failure into the millions says nothing the first one did not. |
 | [`limits.seconds`](Configuration#what-a-run-may-use) | 300 | Wall-clock seconds a run may take before it stops and says so; 0 for no limit.  A safety net: no document should come near it. |
 | [`limits.branch_depth`](Configuration#what-a-run-may-use) | 8 | How deep undecided conditions may nest before only one arm is read. |
 | [`limits.join_tokens`](Configuration#what-a-run-may-use) | 65536 | Tokens the arms of one undecided conditional may read, together, before they have to meet again in the input. |
-| [`limits.meaning_splits`](Configuration#what-a-run-may-use) | 1 | How deep in nested paths a name that a join left with one of several meanings still splits the run into a path per meaning when it is executed or compared by `\ifx`; deeper, and with 0 everywhere, it is read as a name of unknown meaning. |
+| [`limits.meaning_splits`](Configuration#what-a-run-may-use) | 4 | How deep in nested paths a name that a join left with one of several meanings still splits the run into a path per meaning when it is executed or compared by `\ifx`; deeper, and with 0 everywhere, it is read as a name of unknown meaning. |
 | [`limits.widen_after`](Configuration#what-a-run-may-use) | 3 | How many rounds a loop head analyzes its paths again from a grown joined state before what still grows is widened (SEMANTICS [§ 14](Configuration#what-a-run-may-use)). |
 | [`limits.meaning_set`](Configuration#what-a-run-may-use) | 8 | How many meanings a join leaves a name with as a set (one of them) before it has an unknown meaning. |
 | [`limits.value_set`](Configuration#what-a-run-may-use) | 8 | How many values a join leaves a count or dimension register with as a set before only their interval is kept. |

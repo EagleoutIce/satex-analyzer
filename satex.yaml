@@ -137,6 +137,7 @@ limits:
   site_expansions: 16384   # how often one call site may expand without reading on
   seconds: 300            # wall-clock limit per run, 0 for none
   stall_tokens: 50000000  # tokens without reading the file before a loop is dropped
+  repeat_failures: 8      # times one gap may be met at one place before the expansion is dropped
   branch_depth: 8         # nesting of undecided conditions
   join_tokens: 65536      # tokens the arms of one may read before they meet
   meaning_splits: 1       # path nesting up to which a name joined to several meanings splits per meaning

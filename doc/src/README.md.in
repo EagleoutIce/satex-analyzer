@@ -1,6 +1,5 @@
 <!-- generated from doc/src/README.md.in by satex-doc; do not edit -->
 
-# SaTeX - Static Analysis for (La)TeX and Friends
 <p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
 
 An abstract interpreter for (La)TeX and related engines with the ability to expands macros, execute primitives, track dynamic catcode changes, recursion, and more. While SaTeX is context and path-sensitive, it does not typeset the document.

@@ -56,6 +56,20 @@ moment the character is tokenized, not when the token is used. ([*TeXbook*][texb
 
 ## 3. The line reader
 
+What one input character is depends on the engine. `tex` and `pdftex` are
+8-bit. They read a file byte by byte, and a byte past 127 takes its category
+from the catcode table like any other character, 12 by default ([*tex.web*][tex.web]
+§ 232). A two-byte UTF-8 character is two character tokens there. `xetex` and
+`luatex` read UTF-8 characters instead. `satex` decides this once, from the
+settled engine, and every source its mouth reads is decoded that way. A
+column therefore counts bytes under an 8-bit engine and characters under a
+Unicode one.
+
+A byte sequence that is no UTF-8 is read by `xetex` as one replacement
+character, U+FFFD, per sequence. `luatex` stops with "String contains an
+invalid utf-8 sequence". **[abstraction]** `satex` reads XeTeX's replacement
+character under both and records an `invalid-utf8` gap for `luatex`.
+
 TeX strips trailing spaces from each input line and appends the character
 `\endlinechar` (13 by default, category 5); if `\endlinechar` is outside
 0–255 nothing is appended and the line yields no end-of-line token at all.
@@ -264,6 +278,11 @@ that the test itself starts and leaves open (`\if e\ifx AB x\else y\fi …`)
 sits above it: the next `\else` or `\fi` belongs to the inner one, and when
 the outer one skips its false text, the inner `\fi` it passes ends the inner
 conditional and an inner `\else` is passed over. ([*tex.web*][tex.web] § 498, § 500.)
+The same holds for the skip of an `\ifcase` to the arm its number selected.
+A number built by conditionals that close only after the `\ifcase`
+(`\ifcase\ifnum … 1 \else\ifnum … 2 \else 3 \fi\fi 0 …`) is the usual shape,
+so the `\fi` the skip meets first is theirs and not the `\ifcase`'s, and an
+`\or` of theirs counts for no case.
 
 Decidable when the operands are known: `\iftrue`, `\iffalse`, `\ifx`,
 `\ifdefined`, `\ifcsname`, `\if`, `\ifcat`, `\ifnum`, `\ifdim`, `\ifodd`.
@@ -321,7 +340,11 @@ ch. 24.)
 
 Every non-global assignment is undone when the group closes.
 `\aftergroup⟨token⟩` keeps the token back and inserts it just after the group
-ends, in the order the `\aftergroup`s were given. ([*tex.web*][tex.web] § 326.) `\global` sets the
+ends, in the order the `\aftergroup`s were given. ([*tex.web*][tex.web] § 326.)
+`\aftergroup` and `\afterassignment` are two commands, so a `\let` copy waits
+for what the command it copied waits for and not for what its own name says.
+expl3 reaches `\aftergroup` only through copies, as `\tex_aftergroup:D` and
+`\group_insert_after:N`. ([*tex.web*][tex.web] § 265.) `\global` sets the
 value at the outermost level; the save-stack entries already pushed for that
 name are not removed, they are discarded instead of restored when the group
 ends — which is why alternating local and global assignments to one name make
@@ -744,7 +767,7 @@ on, and it never invents a meaning.
   that comes round again is a loop head as above. Nested deeper than
   `meaning_splits` paths, or inside an `\edef` or a scan, the name is one
   of unknown meaning. The limit is 1 by default: on
-  TikZ (`doc/architecture.tex`) deeper splits run pgfmath's parser over
+  a TikZ document deeper splits run pgfmath's parser over
   more unknown text and report more that a real run does not. A name that is a switch on every
   path (`\iftrue`, `\iffalse`, or a switch already joined) is an undecided
   switch after the join, still a conditional, so its `\else` and `\fi` match
@@ -753,10 +776,27 @@ on, and it never invents a meaning.
   pseudo file that ends while a definition or text is scanned ends it (the
   inserted `}`), while conditional text is skipped ends the skip (`\fi`),
   and while macro arguments are matched abandons the call; each is a
-  `file-ended` warning. `\everyeof` is read first, when an `\input` file
+  `file-ended` warning. Only a scan ends there. A read outside one goes on
+  in the file that opened this one, which is what lets the `\futurelet` of
+  `\@ifnextchar` see past the end of an `\input` file, so a `\usepackage`
+  or `\documentclass` on that file's last line still loads.
+  `\everyeof` is read first, when an `\input` file
   or pseudo file ends, so a scan can find its delimiter there (expl3's
   `\file_get:nnN`). ([*etex.ch*][etex.ch] § 362.) The token `\noexpand` reads is read with the scanner
-  normal, so `\everyeof{\noexpand}` still lets a scan run past the end.
+  normal, so `\everyeof{\noexpand}` still lets a scan run past the end. A
+  file `\endinput` ended does not read `\everyeof`: the insertion is on the
+  branch that ran out of lines.
+* **`\endinput`** ([*tex.web*][tex.web] § 362): the primitive only sets a
+  flag, and the next file to ask for a line takes it and closes. So the rest
+  of the line runs and the next line does not, whatever file or token list
+  the `\endinput` stood in, and a file opened before the flag fires takes it
+  over: `\endinput\input a` ends `a` after one line and reads the outer file
+  on. The flag is one global in tex.web, and eTeX reads a `\scantokens`
+  pseudo file with the same code, so `\scantokens{\endinput}` ends the pseudo
+  file alone. Closing a file closes no group, so an `\endinput` inside one is
+  still an `unbalanced-file` report. Under an undecided conditional the file
+  cannot both end and read on: satex reads on and says so
+  (`conditional-endinput`).
 
 Two limits are incompleteness rather than over-approximation, because a sound
 analysis of them would not terminate. Neither is ever silent: each reports an

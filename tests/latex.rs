@@ -699,7 +699,8 @@ fn verbatim_bodies_are_read_line_by_line_with_an_active_end_of_line() {
         saved.ends_with("\\FV@ProcessLine {a  b}\\advance \\c@FancyVerbLine \\@ne \\FV@ProcessLine { \\c%}"),
         "{saved}"
     );
-    assert_eq!(body(&analysis, "r"), "a\rb");
+    // tex.web § 49: the active end of line prints as `^^M`, not raw.
+    assert_eq!(body(&analysis, "r"), "a^^Mb");
     assert!(!defined(&analysis, "bad"));
     assert!(defined(&analysis, "after"));
 }
@@ -766,4 +767,428 @@ fn a_generated_variant_is_protected_like_its_base() {
     assert_eq!(body(&analysis, "R").replace(' ', ""), r"\long macro:->\exp_args:No\my_foo:nN".replace(' ', ""));
     let found = codes(&analysis);
     assert!(!found.contains(&"raised-error".to_string()), "{found:?}");
+}
+
+/// The bisection behind [`aftergroup_from_an_expl3_alias_ends_the_group`]:
+/// `body` is how the conditional returns, `branch` what its true branch
+/// does.  `\l_my_log_tl` records every item the map sees, `+`/`-` for the
+/// branch taken and `T`/`F` for the boolean the true branch set, so the text
+/// it ends with says how far the loop ran.
+fn map_break_document(body: &str, branch: &str) -> String {
+    format!(
+        r"\documentclass{{article}}
+\ExplSyntaxOn
+\seq_new:N \l_my_seq
+\seq_put_right:Nn \l_my_seq {{LF}}
+\seq_put_right:Nn \l_my_seq {{OsF}}
+\tl_new:N \l_my_log_tl
+\prg_new_protected_conditional:Nnn \my_exists:n {{ TF }}
+  {{ {body} }}
+\ExplSyntaxOff
+\begin{{document}}
+\ExplSyntaxOn
+\seq_map_inline:Nn \l_my_seq
+  {{
+    \tl_put_right:Nn \l_my_log_tl {{#1}}
+    \my_exists:nTF {{#1}}
+      {{ \bool_set_true:N \l_tmpa_bool \tl_put_right:Nn \l_my_log_tl {{+}} {branch} }}
+      {{ \tl_put_right:Nn \l_my_log_tl {{-}} }}
+  }}
+\bool_if:NTF \l_tmpa_bool {{ \tl_put_right:Nn \l_my_log_tl {{T}} }} {{ \tl_put_right:Nn \l_my_log_tl {{F}} }}
+\ExplSyntaxOff
+x
+\end{{document}}"
+    )
+}
+
+/// Every `Unsupported` diagnostic the run recorded, as `code at file:line`.
+fn unsupported(analysis: &Analysis) -> Vec<String> {
+    analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .map(|d| {
+            let file = analysis.files.get(d.span.file as usize).map(|f| f.path.as_str()).unwrap_or("?");
+            format!("{} at {file}:{}", d.code, d.span.line)
+        })
+        .collect()
+}
+
+/// The last replacement text `name` was given; [`body`] takes the first.
+fn last_body(analysis: &Analysis, name: &str) -> String {
+    analysis
+        .facts
+        .defs
+        .iter()
+        .rev()
+        .find(|d| analysis.interner.name(d.name) == name && d.mac.is_some())
+        .and_then(|d| d.mac.as_ref())
+        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .unwrap_or_default()
+}
+
+/// One row of the bisection: no gap at all, and the log text `pdflatex`
+/// leaves behind.
+fn map_break_row(body: &str, branch: &str, log: &str) {
+    let analysis = analyze(&map_break_document(body, branch));
+    assert_eq!(unsupported(&analysis), Vec::<String>::new(), "body {body:?} branch {branch:?}");
+    assert_eq!(last_body(&analysis, "l_my_log_tl"), log, "body {body:?} branch {branch:?}");
+}
+
+/// The defect this pins: a `\prg_new_protected_conditional:` whose body
+/// returns through `\group_insert_after:N \prg_return_true:` hands the
+/// return token to the end of the group, and the `\use_i:nn` it expands to
+/// reads the two branches from the input right after that group.  Reaching
+/// `\aftergroup` through an expl3 copy used to hold the token back for the
+/// next assignment instead, which left `\exp_end:` to start a paragraph and
+/// the branches to be read as groups of their own.  `pdflatex`: `LF+T`.
+#[test]
+fn aftergroup_from_an_expl3_alias_ends_the_group() {
+    if !installed() {
+        return;
+    }
+    map_break_row(r"\group_begin: \group_insert_after:N \prg_return_true: \group_end:", r"\seq_map_break:", "LF+T");
+}
+
+/// The same through `\tex_aftergroup:D`, the other name expl3 reaches it by.
+#[test]
+fn aftergroup_from_tex_aftergroup_ends_the_group() {
+    if !installed() {
+        return;
+    }
+    map_break_row(r"\group_begin: \tex_aftergroup:D \prg_return_true: \group_end:", r"\seq_map_break:", "LF+T");
+}
+
+/// The delivery on its own, with no delimited `\seq_map_break:` scan behind
+/// it: both items are seen and both take the true branch.  `pdflatex`:
+/// `LF+OsF+T`.
+#[test]
+fn aftergroup_delivery_without_a_map_break_runs_the_whole_loop() {
+    if !installed() {
+        return;
+    }
+    map_break_row(r"\group_begin: \group_insert_after:N \prg_return_true: \group_end:", r"\typeout{T}", "LF+OsF+T");
+}
+
+/// The control rows of the bisection: a return with no group at all, and one
+/// after an empty group.  Both were clean before the fix and stay clean.
+#[test]
+fn a_conditional_that_returns_without_aftergroup_is_clean() {
+    if !installed() {
+        return;
+    }
+    map_break_row(r"\prg_return_true:", r"\seq_map_break:", "LF+T");
+    map_break_row(r"\group_begin: \group_end: \prg_return_true:", r"\seq_map_break:", "LF+T");
+}
+
+/// figureversions returns from `\figureversion` through the same idiom, and
+/// it is where the defect showed on real documents.
+#[test]
+fn figureversions_selects_a_figure_style_without_a_gap() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{figureversions}
+\begin{document}
+\figureversion{lining}x
+\end{document}",
+    );
+    assert_eq!(unsupported(&analysis), Vec::<String>::new());
+}
+
+/// Every floating point value ends in `\__fp_sep:`, and `\__fp_sanitize:Nw`
+/// decides with an `\ifcase` whose number three conditionals build and close
+/// only after it.  Reading those `\fi` as the end of the `\ifcase`
+/// (tex.web § 500) skipped the sanitizing arm, so a zero came back as `nan`
+/// and the value lost its terminator — after which every delimited scan for
+/// `\__fp_sep:` ran into the `}` of `\exp_not:f`.  `pdflatex`:
+/// `[3][0][0][0][1][1e9999][1e-9999][0][0]`.
+#[test]
+fn a_floating_point_zero_is_sanitized_and_keeps_its_terminator() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\fp_new:N \l_my_fp
+\tl_new:N \l_my_tl
+\cs_new_protected:Npn \myshow:n #1
+  {
+    \fp_set:Nn \l_my_fp {#1}
+    \tl_put_right:Ne \l_my_tl { [ \fp_to_tl:N \l_my_fp ] }
+  }
+\ExplSyntaxOff
+\begin{document}
+\ExplSyntaxOn
+\myshow:n { 1 + 2 }
+\myshow:n { 0 }
+\myshow:n { 1 - 1 }
+\myshow:n { 0.0 }
+\myshow:n { \c_one_fp }
+\myshow:n { 1e9999 }
+\myshow:n { 1e-9999 }
+\myshow:n { 2 * 0 }
+\myshow:n { round(0.4) }
+\ExplSyntaxOff
+x
+\end{document}",
+    );
+    assert_eq!(unsupported(&analysis), Vec::<String>::new());
+    assert_eq!(last_body(&analysis, "l_my_tl"), "[3][0][0][0][1][1e9999][1e-9999][0][0]");
+}
+
+/// siunitx compares each of its unit symbols against the engine's output at
+/// `\begin{document}`, which sets a floating point multiplier for every one:
+/// the five lines below were the smallest document that showed the defect.
+#[test]
+fn siunitx_declares_its_units_without_a_gap() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{siunitx}
+\begin{document}
+x
+\end{document}",
+    );
+    assert_eq!(unsupported(&analysis), Vec::<String>::new());
+}
+
+/// `\DocumentMetadata` is the entry point of the PDF-management and tagging
+/// code, so it is in every new document.  It loads pdfmanagement, tagpdf and
+/// the latex-lab testphase files, and satex has to come out the other side
+/// with a bounded run and a bounded report instead of one gap counted into
+/// the millions.
+mod document_metadata {
+    use satex::config::Config;
+    use satex::facts::Severity;
+    use satex::machine::{Analysis, Machine};
+
+    /// The bound one gap at one place is counted to.
+    fn bound() -> u32 {
+        Config::default().limits.repeat_failures
+    }
+
+    fn analyze_with(options: &str, cfg: &Config) -> Analysis {
+        let source = format!(
+            "\\DocumentMetadata{{{options}}}\n\\documentclass{{article}}\n\\begin{{document}}\nx\n\\end{{document}}\n"
+        );
+        Machine::analyze(&source, None, cfg)
+    }
+
+    fn analyze_document(options: &str) -> Analysis {
+        analyze_with(options, &Config::default())
+    }
+
+    fn unsupported(analysis: &Analysis) -> Vec<(&str, u32)> {
+        analysis
+            .facts
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Unsupported)
+            .map(|d| (d.code, d.count))
+            .collect()
+    }
+
+    /// No gap at one place may be reported more than `repeat_failures`
+    /// times, and the run may not end in `budget-exhausted`.  The document
+    /// still leaves gaps, so the codes are not asserted away; what is
+    /// asserted is that each is bounded and the run finished.
+    fn stays_bounded(options: &str) {
+        let analysis = analyze_document(options);
+        let bound = bound();
+        let over: Vec<_> = unsupported(&analysis).into_iter().filter(|&(_, n)| n > bound).collect();
+        assert_eq!(over, Vec::new(), "gaps past the bound of {bound} for `{options}`");
+        let exhausted: Vec<_> =
+            unsupported(&analysis).into_iter().filter(|&(code, _)| code == "budget-exhausted").collect();
+        assert_eq!(exhausted, Vec::new(), "the run ran out of budget on `{options}`");
+        assert!(!analysis.exhausted, "the run was exhausted on `{options}`");
+        // Measured: 20 million tokens with the bound, 240 million without,
+        // out of the 900 million the default budget allows.
+        assert!(analysis.steps < BOUNDED_STEPS, "{} steps for `{options}`", analysis.steps);
+    }
+
+    /// Well above what the bounded run needs and well below what the
+    /// unbounded one took.
+    const BOUNDED_STEPS: u64 = 50_000_000;
+
+    #[test]
+    fn the_bare_five_line_document_stays_bounded() {
+        if !super::installed() {
+            return;
+        }
+        stays_bounded("lang=en");
+    }
+
+    /// The options real documents carry: `pdfversion` picks the PDF the
+    /// backend writes, `testphase` loads the latex-lab code, `tagging`
+    /// turns the structure tree on.
+    #[test]
+    fn the_common_options_stay_bounded() {
+        if !super::installed() {
+            return;
+        }
+        stays_bounded("pdfversion=2.0");
+        stays_bounded("lang=en,pdfversion=1.7,testphase={phase-III}");
+        stays_bounded("tagging=on");
+    }
+
+    /// The worst one gap at one place is counted.
+    fn worst(analysis: &Analysis) -> u32 {
+        unsupported(analysis).into_iter().map(|(_, n)| n).max().unwrap_or(0)
+    }
+
+    /// The bound is what holds the report down, not something else about the
+    /// document: lifting it puts the same run back into the millions, at
+    /// `\exp_args:Ne` and `\exp_args:Nf` in `expl3-code.tex`.  Should the
+    /// gaps themselves ever be fixed, this asks to be rewritten around a
+    /// document that still has one.
+    #[test]
+    fn lifting_the_bound_puts_the_same_document_back_into_the_millions() {
+        if !super::installed() {
+            return;
+        }
+        let mut lifted = Config::default();
+        lifted.limits.repeat_failures = 0;
+        let unbounded = worst(&analyze_with("lang=en", &lifted));
+        assert!(unbounded > 1_000_000, "the unbounded run counted one gap only {unbounded} times");
+        let bounded = worst(&analyze_document("lang=en"));
+        assert!(bounded <= bound(), "one gap was counted {bounded} times, past the bound of {}", bound());
+    }
+}
+
+/// `\int_rand:n` over a range wider than `\c__kernel_randint_max_int`
+/// (131071) goes through expl3's wide path, where `\tex_uniformdeviate:D`
+/// hands `\__fp_randint_split_o:Nw` text satex cannot know and its
+/// `\if_meaning:w` cannot be decided.  The token stream comes apart there,
+/// and `\DocumentMetadata` meets it in tagpdf's namespace id.  What the
+/// bound has to guarantee is that the damage stays countable.
+#[test]
+fn a_wide_int_rand_leaves_bounded_gaps() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\tl_set:Ne \l_tmpa_tl { \int_rand:n {16777215} }
+\ExplSyntaxOff
+\begin{document}
+x
+\end{document}",
+    );
+    let bound = satex::config::Config::default().limits.repeat_failures;
+    let over: Vec<_> = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == satex::facts::Severity::Unsupported && d.code != "repeated-failure")
+        .filter(|d| d.count > bound)
+        .map(|d| (d.code, d.count))
+        .collect();
+    assert_eq!(over, Vec::new(), "gaps past the bound of {bound}");
+    assert!(!analysis.exhausted, "the run was exhausted");
+}
+
+/// The narrow path of the same function stays clean: `\int_rand:n` up to
+/// `\c__kernel_randint_max_int` needs one `\tex_uniformdeviate:D` and no
+/// `\if_meaning:w` on its digits, so it leaves no gap at all.
+#[test]
+fn a_narrow_int_rand_leaves_no_gap() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\tl_set:Ne \l_tmpa_tl { \int_rand:n {65535} }
+\ExplSyntaxOff
+\begin{document}
+x
+\end{document}",
+    );
+    let found: Vec<(&str, u32)> = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .map(|d| (d.code, d.count))
+        .collect();
+    assert_eq!(found, Vec::new());
+}
+
+/// expl3 raises its errors from an expandable branch a satex run often
+/// cannot decide, and the branch runs `\msg_error:nneeee`, whose line
+/// wrapping plays `\tex_edef:D \l__iow_line_part_tl { \if_false: } \fi:`.
+/// That is the shape every expl3 error path has, so it has to survive a run
+/// that takes it by over-approximation: `\intarray_gset:Nnn` with a value
+/// satex cannot know reaches `\__intarray_gset_overflow:NNnn` and must
+/// still leave the token stream intact.
+#[test]
+fn an_expl3_error_path_taken_on_an_unknown_value_leaves_no_gap() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\intarray_new:Nn \g_my_intarray { 4 }
+\intarray_gset:Nnn \g_my_intarray { 1 } { \tex_pdflastobj:D }
+\ExplSyntaxOff
+\begin{document}
+x
+\end{document}",
+    );
+    let found: Vec<(&str, u32)> = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .map(|d| (d.code, d.count))
+        .collect();
+    assert_eq!(found, Vec::new());
+}
+
+/// A `.code:n` key whose body builds a `\csname` out of its own argument is
+/// what tagpdf's `parent` key does.  The parameter has to stay a parameter
+/// until the key is set: a raw `#1` reaching `\csname` would build a name no
+/// engine ever builds.
+#[test]
+fn a_code_key_keeps_its_parameter_out_of_a_csname() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\prop_new:N \g_my_0_prop
+\keys_define:nn { my }
+  {
+    parent .code:n =
+      {
+        \bool_lazy_and:nnTF
+          { \prop_if_exist_p:c { g_my_ \int_eval:n {#1} _prop } }
+          { \int_compare_p:nNn {#1} < {5} }
+          { \tl_set:Ne \l_tmpa_tl { \int_eval:n {#1} } }
+          { }
+      }
+  }
+\ExplSyntaxOff
+\begin{document}
+x
+\end{document}",
+    );
+    let found: Vec<(&str, u32)> = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .map(|d| (d.code, d.count))
+        .collect();
+    assert_eq!(found, Vec::new());
 }

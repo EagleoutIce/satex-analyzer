@@ -91,7 +91,7 @@ fn the_last_line_of_a_file_without_a_newline_gets_the_endlinechar() {
     // The main file too: its last line ends in a `^^M` of category 12.
     let source = format!("{PRELUDE}\\catcode13=12 \\def\\y#1{{\\def\\z{{[#1]}}}}\\y");
     let analysis = run(&source, None, Some(Engine::PdfTeX));
-    assert_eq!(body(&analysis, "z"), "[\r]");
+    assert_eq!(body(&analysis, "z"), "[^^M]");
 }
 
 #[test]
@@ -159,7 +159,7 @@ b
             r"\catcode13=12 \def\r{a
   b}\catcode13=5 %
 ",
-            "a\rb",
+            "a^^Mb",
         ),
         // category 10
         (
@@ -248,7 +248,7 @@ e}\catcode32=10 %
         (
             r"\everyeof{\noexpand}\catcode13=12 \edef\r{\scantokens{a}}\catcode13=5 \everyeof{}%
 ",
-            "a\r",
+            "a^^M",
         ),
         // `\scantokens`, two lines
         (
@@ -264,7 +264,7 @@ b}}\everyeof{}%
 b
 \stopv
 ",
-            "a\rb\r",
+            "a^^Mb^^M",
         ),
         // `\obeylines`
         (
@@ -281,7 +281,7 @@ b
 
 b}\catcode13=5 %
 ",
-            "a\r\rb",
+            "a^^M^^Mb",
         ),
         // category 10, empty line
         (
@@ -296,7 +296,7 @@ b}\catcode13=5 %
             r"\catcode13=12 \def\r{a 
 b}\catcode13=5 %
 ",
-            "a\rb",
+            "a^^Mb",
         ),
         // optional space reads the next line
         (
@@ -316,7 +316,7 @@ b}\endlinechar=13 %
         (
             r"\openin1=data \readline1 to\r \closein1 %
 ",
-            "a\r",
+            "a^^M",
         ),
         // `\readline`, none appended
         (
@@ -328,7 +328,7 @@ b}\endlinechar=13 %
         (
             r"\openin1=data \catcode13=12 \read1 to\x\read1 to\y\edef\r{\x|\y}\catcode13=5 \closein1 %
 ",
-            "a\r|b\r",
+            "a^^M|b^^M",
         ),
         // `\scantokens`, active
         (
@@ -349,14 +349,14 @@ b}\endlinechar=13 %
         (
             r"\everyeof{\noexpand}\catcode13=12 \edef\r{\scantokens{a  }}\catcode13=5 \everyeof{}%
 ",
-            "a\r",
+            "a^^M",
         ),
         // `\ ` at a line end names the `\endlinechar`
         (
             r"\catcode13=12 \def\r{a\ 
 }\catcode13=5 %
 ",
-            "a\\\r",
+            "a\\^^M",
         ),
         // a line of active spaces is empty
         (

@@ -646,6 +646,36 @@ pub fn detokenize(toks: &[Token], it: &Interner) -> String {
     detokenize_escaped(toks, it, Some('\\'))
 }
 
+/// A name satex made for its own bookkeeping rather than one a document
+/// wrote: a register, a code table entry or a marker for something unknown.
+/// They start with a character no control sequence name can.
+fn is_internal(name: &str) -> bool {
+    matches!(name.chars().next(), Some('\u{1}'..='\u{8}'))
+}
+
+/// tex.web § 49: whether the engine can show a character as itself, which
+/// is `' '` through `'~'`.  A Unicode engine shows anything past 255 too.
+pub fn is_printable(c: char) -> bool {
+    let k = c as u32;
+    (0x20..=0x7e).contains(&k) || k > 0xff
+}
+
+/// tex.web § 49: a character the engine cannot show prints as `^^X`, with
+/// `X` the character 64 above it below `@` and 64 below it above, and as
+/// `^^` with two lowercase hex digits from 128 up.
+pub fn printable(c: char) -> String {
+    let k = c as u32;
+    if is_printable(c) {
+        c.to_string()
+    } else if k < 0x40 {
+        format!("^^{}", char::from(k as u8 + 0x40))
+    } else if k < 0x80 {
+        format!("^^{}", char::from(k as u8 - 0x40))
+    } else {
+        format!("^^{k:02x}")
+    }
+}
+
 /// [`detokenize`] under an `\escapechar`: `None` when it names no
 /// character, and then no escape is printed (tex.web § 63, `print_esc`).
 pub fn detokenize_escaped(toks: &[Token], it: &Interner, escape: Option<char>) -> String {
@@ -660,21 +690,33 @@ pub fn detokenize_in(toks: &[Token], it: &Interner, escape: Option<char>, cats: 
 }
 
 fn detokenize_by(toks: &[Token], it: &Interner, escape: Option<char>, letter: &dyn Fn(char) -> bool) -> String {
+    // tex.web § 63 (`print_esc`) prints the escape character, so one the
+    // engine cannot show comes out as `^^X`.
+    let escaped: String = escape.map(printable).unwrap_or_default();
     let mut out = String::new();
     for t in toks {
         match t.tok {
             Tok::Cs(sym) => {
                 let name = it.name(sym);
-                out.extend(escape);
+                out.push_str(&escaped);
                 // tex.web § 262: the control sequence with the empty name
                 // prints as `\csname\endcsname`.
                 if name.is_empty() {
                     out.push_str("csname");
-                    out.extend(escape);
+                    out.push_str(&escaped);
                     out.push_str("endcsname ");
                     continue;
                 }
-                out.push_str(name);
+                // The name is printed like any other text, so a character
+                // the engine cannot show comes out as `^^X` — `\^^M` for the
+                // control sequence a `\ ` at a line end names.  A name of
+                // satex's own is not one a document can write and is left as
+                // it stands, so the markers it uses stay recognisable.
+                if is_internal(name) || name.chars().all(is_printable) {
+                    out.push_str(name);
+                } else {
+                    out.extend(name.chars().map(printable));
+                }
                 // tex.web § 262 (`print_cs`): a multi-letter name always ends
                 // with a space, and a one-character name does when that
                 // character's category is letter — `\a ` but `\!`.
@@ -684,11 +726,20 @@ fn detokenize_by(toks: &[Token], it: &Interner, escape: Option<char>, letter: &d
                     out.push(' ');
                 }
             }
-            Tok::Chr(c, Catcode::Param) => {
+            // tex.web § 49: a character token the engine cannot show prints
+            // as `^^X`, which is what `\readline` leaves of the
+            // `\endlinechar` it keeps (eTeX manual § 3.2).
+            Tok::Chr(c, Catcode::Param) if is_printable(c) => {
                 out.push(c);
                 out.push(c);
             }
-            Tok::Chr(c, _) => out.push(c),
+            Tok::Chr(c, Catcode::Param) => {
+                let shown = printable(c);
+                out.push_str(&shown);
+                out.push_str(&shown);
+            }
+            Tok::Chr(c, _) if is_printable(c) => out.push(c),
+            Tok::Chr(c, _) => out.push_str(&printable(c)),
             Tok::Param(n) => {
                 out.push('#');
                 out.push((b'0' + n) as char);
@@ -967,6 +1018,29 @@ impl Mouth {
     /// Whether `\endinput` has ended the file at the end of its line.
     pub fn ending(&self) -> bool {
         self.force_eof.is_some()
+    }
+
+    /// Whether the flag `\endinput` set is still waiting for a new line.
+    /// tex.web's `force_eof` is one global, so a file opened before the flag
+    /// fires takes it over (tex.web § 362).
+    pub fn pending_eof(&self) -> bool {
+        self.force_eof.is_some_and(|line| line >= self.line)
+    }
+
+    /// Hand the pending flag to this mouth.  A file `start_input` opened
+    /// reads its first line without asking, so it ends after that line.  A
+    /// pseudo file asks before its first line, so it yields nothing
+    /// (tex.web § 362, etex.ch § 362).
+    pub fn inherit_eof(&mut self, asks_first_line: bool) {
+        self.force_eof = Some(match asks_first_line {
+            true => self.line.saturating_sub(1),
+            false => self.line,
+        });
+    }
+
+    /// Give up the pending flag, which another file has taken over.
+    pub fn release_eof(&mut self) {
+        self.force_eof = None;
     }
 
     /// How many characters of the file have been read.
@@ -1290,25 +1364,44 @@ impl ParameterText {
     /// [`parameterize`].
     pub fn from_tokens(toks: &[Token], mark: impl Fn(Sym) -> bool) -> ParameterText {
         let mut items = Vec::new();
-        let mut arity = 0;
+        let mut arity = 0u8;
         let mut brace_end = false;
         let mut i = 0;
         while i < toks.len() {
             let t = toks[i];
             if t.is_cat(Catcode::Param) || t.cs().is_some_and(&mark) {
                 match toks.get(i + 1).map(|n| n.tok) {
-                    Some(Tok::Chr(d, _)) if d.is_ascii_digit() && d != '0' => {
-                        arity = arity.max(d as u8 - b'0');
-                        items.push(ParamItem::Param(d as u8 - b'0'));
-                        i += 2;
-                        continue;
-                    }
+                    // tex.web § 476 (`hash_brace`): a `#` at the end of the
+                    // parameter text takes the body's `{` with it.
                     None => {
                         brace_end = true;
                         i += 1;
                         continue;
                     }
-                    _ => {}
+                    // tex.web § 479: the parameters are numbered as they
+                    // come, whatever digit stands there.  The digit is read
+                    // only when it is the one expected.
+                    Some(Tok::Chr(d, _)) if d.is_ascii_digit() && d as u8 - b'0' == arity + 1 && arity < 9 => {
+                        arity += 1;
+                        items.push(ParamItem::Param(arity));
+                        i += 2;
+                        continue;
+                    }
+                    // "Parameters must be numbered consecutively": the token
+                    // that is not the next number goes back and is read on,
+                    // while the parameter takes the number it should have
+                    // had.  Past nine, "You already have nine parameters"
+                    // drops the `#` and the token it read with it.
+                    Some(_) => {
+                        if arity < 9 {
+                            arity += 1;
+                            items.push(ParamItem::Param(arity));
+                            i += 1;
+                        } else {
+                            i += 2;
+                        }
+                        continue;
+                    }
                 }
             }
             items.push(ParamItem::Lit(t.tok));
@@ -1456,6 +1549,10 @@ pub enum RegKind {
     /// meanings, so `\ifx` tells them apart.
     Char,
     MathChar,
+    /// `\Umathchardef` and `\Umathcharnumdef`: a `\Umathchar` constant,
+    /// which `\ifx` and `\meaning` tell from a `\mathchar` one (XeTeX
+    /// reference; LuaTeX manual, "Math").
+    UMathChar,
 }
 
 /// The number of a register allocated by a modeled `\newcount` and its
@@ -1476,6 +1573,7 @@ impl RegKind {
             RegKind::Write => "write",
             RegKind::Char => "char",
             RegKind::MathChar => "mathchar",
+            RegKind::UMathChar => "Umathchar",
         }
     }
 }

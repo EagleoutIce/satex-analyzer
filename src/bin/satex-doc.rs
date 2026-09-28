@@ -33,7 +33,9 @@
 //!       Every TeX82/eTeX/pdfTeX/XeTeX/LuaTeX primitive `src/builtins.rs`
 //!       registers, sectioned by the engine that adds it, with the verdict
 //!       `src/builtins.rs::verdict` gives from what `src/exec.rs`,
-//!       `src/mode.rs` and `src/commands.rs` do with it.
+//!       `src/mode.rs` and `src/commands.rs` do with it. Each row links
+//!       to the deciding arm, from the `file!()`/`line!()` that arm
+//!       records in `builtins::Site`.
 //!
 //!   {{limits}}
 //!       A table of `config::Limits`' fields, their `Default` values and
@@ -50,7 +52,7 @@ use std::path::Path;
 use std::process::Command;
 
 use regex::Regex;
-use satex::builtins::{self, Primitive, Verdict};
+use satex::builtins::{self, Primitive, Site, Verdict};
 use satex::config::{Engine, Limits};
 use satex::lint::Source;
 use satex::tex::{Interner, Meaning};
@@ -289,17 +291,42 @@ fn linkify_citations(markdown: &str) -> String {
     let mut prose = String::new();
     let mut last_url: Option<String> = None;
     let mut in_fence = false;
+    let mut is_run_fence = false;
+    let mut fence_content = String::new();
     for line in markdown.split_inclusive('\n') {
         let trimmed = line.trim_start();
         if trimmed.starts_with("```") {
             out.push_str(&linkify_prose(&prose, &master, &aliases, &mut last_url));
             prose.clear();
-            in_fence = !in_fence;
-            out.push_str(line);
+            if in_fence {
+                // Closing fence: the opening line (whatever its language tag
+                // was) has already been written, so only the content and
+                // the real closing line remain. A run transcript gets its
+                // `§`-style citations linked; anything else passes through
+                // byte for byte.
+                if is_run_fence {
+                    let linkified = linkify_prose(&fence_content, &master, &aliases, &mut last_url);
+                    out.push_str(&linkified);
+                } else {
+                    out.push_str(&fence_content);
+                }
+                out.push_str(line);
+                fence_content.clear();
+                in_fence = false;
+                is_run_fence = false;
+            } else {
+                // Opening fence
+                out.push_str(line);
+                in_fence = true;
+            }
             continue;
         }
         if in_fence {
-            out.push_str(line);
+            // Check if this is the first line of a run fence
+            if fence_content.is_empty() && trimmed.starts_with("$") && trimmed.contains("satex") {
+                is_run_fence = true;
+            }
+            fence_content.push_str(line);
             continue;
         }
         if trimmed.starts_with('#') {
@@ -382,6 +409,18 @@ fn expand(directive: &str) -> Result<String, String> {
     if directive == "queries" {
         return queries_list();
     }
+    if directive == "engines" {
+        return enum_list(&Engine::ALL.iter().map(|e| e.as_str()).collect::<Vec<_>>());
+    }
+    if directive == "kernels" {
+        return enum_list(&satex::plugin::Kernel::ALL.iter().map(|k| k.as_str()).collect::<Vec<_>>());
+    }
+    if directive == "outputs" {
+        return enum_list(&satex::plugin::output::Output::ALL.iter().map(|o| o.as_str()).collect::<Vec<_>>());
+    }
+    if directive == "build-systems" {
+        return enum_list(&satex::plugin::build::BuildSystem::ALL.iter().map(|b| b.as_str()).collect::<Vec<_>>());
+    }
     if directive == "version" {
         return version();
     }
@@ -406,6 +445,41 @@ fn expand(directive: &str) -> Result<String, String> {
     Err(format!("unknown directive: {{{{{directive}}}}}"))
 }
 
+/// A `{{run: ...}}` transcript is real `satex` output against this
+/// checkout, on this machine, so it genuinely contains this machine's
+/// absolute paths: where the checkout sits, `$HOME`, the installation's
+/// personal and per-year texmf trees. None of that is the same for another
+/// reader, so it is rewritten to something everyone sees alike before it is
+/// embedded: the checkout's own path becomes relative, the way the rest of
+/// these docs already refer to `samples/paper.tex`; `$HOME` becomes `~`;
+/// and a TeX Live year, which would otherwise date the page to whichever
+/// installation generated it, becomes `YYYY`. A path that is the same on
+/// every installation (`/usr/local/texlive/texmf-local`, with no year) is
+/// left alone.
+fn redact_paths(line: &str) -> String {
+    let mut out = line.to_string();
+    // The checkout's own absolute path: strip its prefix so what remains
+    // reads the same as every other repo-relative path already in these
+    // docs (`samples/paper.tex:12`, not `/home/.../satex/samples/...`).
+    if let Ok(cwd) = std::env::current_dir() {
+        let prefix = format!("{}/", cwd.display());
+        out = out.replace(&prefix, "");
+    }
+    // Anything still under `$HOME` (a personal texmf tree, a per-user
+    // texlive var directory) is this machine's alone.
+    if let Some(home) = dirs::home_dir() {
+        let home = home.display().to_string();
+        if !home.is_empty() {
+            out = out.replace(&home, "~");
+        }
+    }
+    // `/usr/local/texlive/2026/...` and `.texlive2026` both name the year
+    // of the installation that generated the page; a reader still sees
+    // that there is a versioned texlive tree, just not which year.
+    let year = Regex::new(r"(texlive/?)20\d{2}").expect("redact_paths: invalid year regex");
+    year.replace_all(&out, "${1}YYYY").into_owned()
+}
+
 /// Run `command` (whose first word must be `satex`) with the built binary,
 /// and render its stdout as a fenced code block. `limit` caps the number of
 /// output lines kept.
@@ -424,12 +498,13 @@ fn run_command(command: &str, limit: Option<usize>) -> Result<String, String> {
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut lines: Vec<&str> = stdout
+    let mut lines: Vec<String> = stdout
         .lines()
         .map(|line| match line.starts_with("satex ") {
             true => line.find(" (").or_else(|| line.find(", built ")).map_or(line, |at| &line[..at]),
             false => line,
         })
+        .map(redact_paths)
         .collect();
     let omitted = match limit {
         Some(n) if lines.len() > n => {
@@ -502,20 +577,9 @@ fn inline_file(path: &str) -> Result<String, String> {
     Ok(block)
 }
 
+/// The rule list as a table, every code linked to its own section below.
 fn rules_table() -> Result<String, String> {
-    let output = Command::new(bin())
-        .args(["lint", "--rules", "--format", "json"])
-        .output()
-        .map_err(|e| format!("running `satex lint --rules`: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "`satex lint --rules` exited with {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let rules: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("parsing `satex lint --rules --format json`: {e}"))?;
+    let rules = lint_json(&["--rules", "--format", "json"])?;
     let mut out = String::new();
     out.push_str("| code | category | severity | summary |\n");
     out.push_str("| --- | --- | --- | --- |\n");
@@ -524,7 +588,7 @@ fn rules_table() -> Result<String, String> {
         let category = rule["category"].as_str().unwrap_or("");
         let severity = rule["severity"].as_str().unwrap_or("");
         let summary = rule["message"].as_str().unwrap_or("");
-        let _ = writeln!(out, "| `{code}` | {category} | {severity} | {summary} |");
+        let _ = writeln!(out, "| [`{code}`](#{code}) | {category} | {severity} | {summary} |");
     }
     Ok(out)
 }
@@ -544,38 +608,11 @@ fn lint_json(args: &[&str]) -> Result<Vec<serde_json::Value>, String> {
     serde_json::from_slice(&output.stdout).map_err(|e| format!("parsing `satex lint {}`: {e}", args.join(" ")))
 }
 
-/// One section per rule, grouped by category, so a new rule needs no edit
-/// to the template.
-fn explanations() -> Result<String, String> {
-    let rules = lint_json(&["--rules", "--format", "json"])?;
-    let mut out = String::new();
-    let mut category = String::new();
-    for rule in &rules {
-        let code = rule["code"].as_str().unwrap_or("");
-        let this = rule["category"].as_str().unwrap_or("").to_string();
-        if this != category {
-            let _ = writeln!(out, "## {this}\n");
-            category = this;
-        }
-        let _ = writeln!(out, "### `{code}`\n");
-        let _ = writeln!(out, "{}", explain_block(code)?);
-    }
-    Ok(out)
-}
-
-/// `satex lint --explain CODE`, shown as a fenced transcript like every
-/// other `{{run: ...}}` block in these docs — except its trailing `See
-/// [...].` line. `Ref::url()` already writes that one as real markdown
-/// (`src/cmd/lint.rs`), so it is pulled out of the fence and left to render
-/// on its own: a fenced code block shows exactly what the command printed,
-/// verbatim, which is honest but also means GitHub renders `[text](url)`
-/// inside one as literal brackets, not a link. The mid-explanation
-/// citations that stay inside the fence (`tex.web § 1047`, say) are still
-/// shown verbatim, backed by the same source's real link right below.
-fn explain_block(code: &str) -> Result<String, String> {
-    let command = format!("satex lint --explain {code}");
+/// `satex lint --explain CODE --format json`: one rule's whole record.
+fn explain_json(code: &str) -> Result<serde_json::Value, String> {
+    let command = format!("satex lint --explain {code} --format json");
     let output = Command::new(bin())
-        .args(["lint", "--explain", code])
+        .args(["lint", "--explain", code, "--format", "json"])
         .output()
         .map_err(|e| format!("running `{command}`: {e}"))?;
     if !output.status.success() {
@@ -585,24 +622,127 @@ fn explain_block(code: &str) -> Result<String, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stdout = stdout.trim_end_matches('\n');
-    let (body, sources) = match stdout.rsplit_once("\n\nSee ") {
-        Some((head, tail)) => (head, Some(format!("See {tail}"))),
-        None => (stdout, None),
-    };
-    let mut block = String::new();
-    let _ = writeln!(block, "```text");
-    let _ = writeln!(block, "$ {command}");
-    for line in body.lines() {
-        let _ = writeln!(block, "{line}");
+    serde_json::from_slice(&output.stdout).map_err(|e| format!("parsing `{command}`: {e}"))
+}
+
+/// One collapsible group per category, one section per rule inside it. The
+/// categories and the rules both come from the binary's own rule list, so a
+/// new rule or a new category needs no edit here.
+fn explanations() -> Result<String, String> {
+    let rules = lint_json(&["--rules", "--format", "json"])?;
+    let mut out = String::new();
+    let mut open: Option<String> = None;
+    for rule in &rules {
+        let code = rule["code"].as_str().unwrap_or("");
+        let category = rule["category"].as_str().unwrap_or("");
+        if open.as_deref() != Some(category) {
+            if open.is_some() {
+                out.push_str("</details>\n\n");
+            }
+            let count = rules.iter().filter(|r| r["category"].as_str() == Some(category)).count();
+            let plural = if count == 1 { "rule" } else { "rules" };
+            let _ = writeln!(out, "<details>");
+            // GitHub renders markdown inside `<details>` only when a blank
+            // line follows the `<summary>`, so the headings below need it.
+            let _ = writeln!(out, "<summary><b>{category}</b> — {count} {plural}</summary>\n");
+            open = Some(category.to_string());
+        }
+        out.push_str(&explain_section(code)?);
     }
-    let _ = writeln!(block, "```");
-    if let Some(sources) = sources {
-        let _ = writeln!(block);
-        let _ = writeln!(block, "{sources}");
+    if open.is_some() {
+        out.push_str("</details>\n");
     }
-    Ok(block)
+    Ok(out)
+}
+
+/// One rule's section: a heading carrying its anchor, the label and summary
+/// `--explain` prints above the text, the explanation as markdown, and the
+/// works it follows. Everything comes from `--explain CODE --format json`,
+/// so nothing here is written twice.
+fn explain_section(code: &str) -> Result<String, String> {
+    let rule = explain_json(code)?;
+    let category = rule["category"].as_str().unwrap_or("");
+    let severity = rule["severity"].as_str().unwrap_or("");
+    let summary = rule["summary"].as_str().unwrap_or("");
+    let mut out = String::new();
+    let _ = writeln!(out, "### `{code}`\n");
+    let _ = writeln!(out, "**{category} / {severity}** — {summary}\n");
+    out.push_str(&explanation_markdown(rule["explanation"].as_str().unwrap_or("")));
+    let sources: Vec<String> = rule["references"]
+        .as_array()
+        .map(|refs| {
+            refs.iter()
+                .map(|r| format!("[{}]({})", r["cite"].as_str().unwrap_or(""), r["url"].as_str().unwrap_or("")))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !sources.is_empty() {
+        let _ = writeln!(out, "\nSee {}.", sources.join(", "));
+    }
+    out.push('\n');
+    Ok(out)
+}
+
+/// A rule's explanation as markdown. The text is already written in it —
+/// code spans, links and `*…*` emphasis — but hard-wrapped, so the wraps
+/// come out and an indented example becomes a fenced block. Nothing is
+/// added to what the rule says.
+fn explanation_markdown(text: &str) -> String {
+    let mut out = String::new();
+    for block in text.split("\n\n") {
+        let block = block.trim_matches('\n');
+        if block.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        if block.lines().all(|line| line.trim().is_empty() || line.starts_with("    ")) {
+            let body: Vec<&str> = block.lines().map(|line| line.strip_prefix("    ").unwrap_or(line)).collect();
+            let _ = writeln!(out, "```{}", fence_language(&body));
+            for line in &body {
+                let _ = writeln!(out, "{line}");
+            }
+            let _ = writeln!(out, "```");
+        } else {
+            let _ = writeln!(out, "{}", unwrap_paragraph(block));
+        }
+    }
+    out
+}
+
+/// What an indented example is written in: `latex` once a control sequence
+/// appears in it, plain text otherwise.
+fn fence_language(body: &[&str]) -> &'static str {
+    for line in body {
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' && chars.peek().is_some_and(char::is_ascii_alphabetic) {
+                return "latex";
+            }
+        }
+    }
+    "text"
+}
+
+/// One hard-wrapped paragraph as a single line. Runs of spaces collapse,
+/// except inside a code span, where a space may be meant.
+fn unwrap_paragraph(block: &str) -> String {
+    let joined = block.lines().map(str::trim).collect::<Vec<_>>().join(" ");
+    let mut out = String::with_capacity(joined.len());
+    let mut code = false;
+    let mut chars = joined.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '`' {
+            code = !code;
+        } else if c == ' ' && !code {
+            while chars.peek() == Some(&' ') {
+                chars.next();
+            }
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Whether a lint rule fires by default: `satex.yaml`'s own `lint_off`
@@ -788,6 +928,8 @@ fn primitives_table() -> Result<String, String> {
         .collect();
 
     let bugs: std::collections::HashMap<&str, &str> = builtins::known_bugs().iter().copied().collect();
+    // Link label -> URL, so the same arm is defined once however many rows cite it.
+    let mut sites: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     let (mut total, mut modeled) = (0usize, 0usize);
     let mut bug_notes = Vec::new();
     let mut out = String::new();
@@ -816,13 +958,15 @@ fn primitives_table() -> Result<String, String> {
                 continue;
             }
             modeled += 1;
-            let (verdict, detail) = builtins::verdict(*p);
+            let (verdict, detail, site) = builtins::verdict(*p);
             let verdict = match verdict {
                 Verdict::Exact => "exact",
                 Verdict::Approximated => "approximated",
                 Verdict::Unsupported => "unsupported + diagnostic",
             };
-            let _ = writeln!(out, "| {display} | `{p:?}` | {verdict} | {} |", detail.replace('|', "\\|"));
+            let label = source_ref(&site);
+            sites.insert(label.clone(), source_url(&site));
+            let _ = writeln!(out, "| {display} | [`{p:?}`][{label}] | {verdict} | {} |", detail.replace('|', "\\|"));
         }
         out.push('\n');
     }
@@ -834,7 +978,29 @@ fn primitives_table() -> Result<String, String> {
             let _ = writeln!(out, "- `\\{name}`: {reason}.");
         }
     }
+    out.push('\n');
+    for (label, url) in &sites {
+        let _ = writeln!(out, "[{label}]: {url}");
+    }
     Ok(out)
+}
+
+/// The reference-link label for a [`Site`]: the file's stem and the line.
+/// Every row citing the same arm shares one label, so the table stays short
+/// and the URL is written once.
+fn source_ref(site: &Site) -> String {
+    let stem = Path::new(site.file).file_stem().map_or("src", |s| s.to_str().unwrap_or("src"));
+    format!("{stem}-{}", site.line)
+}
+
+/// The GitHub URL of the arm that decides a verdict, from `file!()`/`line!()`
+/// and `CARGO_PKG_REPOSITORY`. Pinned to `main`, not to `SATEX_COMMIT`: a
+/// commit in the URL would make this page stale the moment it is committed,
+/// and `tests/docs.rs` compares the checked-in output byte for byte.
+fn source_url(site: &Site) -> String {
+    let repo = env!("CARGO_PKG_REPOSITORY").trim_end_matches('/');
+    let file = site.file.replace('\\', "/");
+    format!("{repo}/blob/main/{file}#L{}", site.line)
 }
 
 /// `config::Limits`' fields, their `Default` value and their doc comment.
@@ -896,4 +1062,69 @@ fn struct_doc_fields(source: &str, name: &str) -> Result<Vec<(String, String)>, 
         }
     }
     Ok(fields)
+}
+
+/// Generate a comma-and-or-separated list of enum variants in backticks.
+/// For example, `["a", "b", "c"]` becomes `` `a`, `b`, or `c` ``.
+fn enum_list(variants: &[&str]) -> Result<String, String> {
+    match variants {
+        [] => Ok(String::new()),
+        [one] => Ok(format!("`{one}`")),
+        [first, second] => Ok(format!("`{first}` or `{second}`")),
+        [first, middle @ .., last] => {
+            let mut out = String::new();
+            out.push_str(&format!("`{first}`"));
+            for v in middle {
+                out.push_str(&format!(", `{v}`"));
+            }
+            out.push_str(&format!(", or `{last}`"));
+            Ok(out)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::linkify_citations;
+
+    /// A citation inside a `{{run: ...}}` transcript ("prints `tex.web §
+    /// 211` on success") must become a markdown link, exactly like the same
+    /// citation would outside a fenced block. No checked-in transcript
+    /// happens to contain one today, so this constructs the case directly.
+    #[test]
+    fn citation_inside_run_fence_is_linked() {
+        let markdown = "\
+Some prose.
+
+```text
+$ satex lint -f samples/paper.tex
+warning: see tex.web § 211 for the rule
+```
+";
+        let expected = "\
+Some prose.
+
+```text
+$ satex lint -f samples/paper.tex
+warning: see [tex.web § 211](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) for the rule
+```
+";
+        assert_eq!(linkify_citations(markdown), expected);
+    }
+
+    /// A citation-looking string inside a fence that is *not* a `{{run:
+    /// ...}}` transcript (no `$ satex ...` first line) must pass through
+    /// byte for byte: no linking, and the fence markers unchanged.
+    #[test]
+    fn non_run_fence_is_left_verbatim() {
+        let markdown = "\
+```yaml
+# see tex.web § 211
+depp:
+  file: DEPENDS.txt
+```
+";
+        let got = linkify_citations(markdown);
+        assert_eq!(got, markdown, "a non-run fence must be rendered byte for byte unchanged");
+    }
 }

@@ -157,7 +157,7 @@ fn scan(path: &str, text: &str) -> (FileSuppressions, Vec<Record>) {
         if let Some(codes) = &dir.codes {
             for code in codes {
                 if crate::lint::explanation(code).is_none() {
-                    let col = line.find(code.as_str()).map_or(1, |b| line[..b].chars().count() as u32 + 1);
+                    let col = line.find(code.as_str()).map_or(1, |b| crate::source::col_of_byte(line, b));
                     warnings.push(unknown_finding(path, ln, col, code));
                 }
             }

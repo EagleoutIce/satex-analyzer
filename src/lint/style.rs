@@ -29,9 +29,6 @@ Fix by deleting the first definition, or by checking which one was meant.",
         severity: Severity::Info,
         summary: "a label is never referenced",
         explanation: "\
-Nothing refers to this label.  Harmless, but usually a leftover or a typo in
-the reference.
-
 Fix by deleting the `\\label`, or by checking the `\\ref` that was meant to use it.",
         references: &[],
         run: unused_label,
@@ -66,7 +63,7 @@ aliased, tested or used — and the suggestion is
 [etoolbox](https://ctan.org/pkg/etoolbox)'s command for it when the document
 has it.
 
-Fix by using LaTeX's interface for the same job, if one exists.",
+Fix by using LaTeX's interface for the same job.",
         references: &[Ref { source: Source::Chktex, at: "41" }, Ref { source: Source::L2tabu, at: "1" }],
         run: primitive_tex_command,
     },
@@ -76,9 +73,9 @@ Fix by using LaTeX's interface for the same job, if one exists.",
         severity: Severity::Info,
         summary: "a macro defined in the document is never used",
         explanation: "\
-Nothing expands this name.  It may be intended for later, or it may be dead.
+Nothing expands this name.
 
-Fix by deleting it if it is dead.",
+Fix by deleting it, or by checking why nothing calls it yet.",
         references: &[],
         run: unused_definition,
     },
@@ -90,7 +87,7 @@ Fix by deleting it if it is dead.",
         explanation: "\
 Inside a macro's replacement text, TeX turns the end of a line into a space
 token unless a control word already skipped it or a `%` swallowed the rest
-of the line ([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) § 347).  This is the classic missing `%`.
+of the line (tex.web § 347).
 
 The finding follows the modes the run read that space in (§ 1043: a space is
 glue only in horizontal mode).  It says the macro *inserts* a space where
@@ -212,34 +209,36 @@ fn group_local_definition(report: &mut Report) {
     }
 }
 
-/// The primitives chktex's warning 41 flags (chktexrc's `Primitives` list), with the LaTeX command that
-/// does the same job where there is one (usrguide, the LaTeX Companion).  An
-/// empty replacement means LaTeX offers no direct equivalent, so the finding
-/// only says that the primitive is plain TeX.  `latex_alternatives` in
-/// `satex.yaml` adds to this or overrides an entry.
+/// The primitives chktex's warning 41 flags (chktexrc's `Primitives` list)
+/// for which LaTeX has a command that does the same job (usrguide, the LaTeX
+/// Companion).  `latex_alternatives` in `satex.yaml` adds to this or
+/// overrides an entry.
 const LATEX_ALTERNATIVES: &[(&str, &str)] = &[
     ("above", "\\frac"),
     ("advance", "\\addtocounter or \\addtolength"),
-    ("catcode", ""),
     ("chardef", "\\newcommand"),
-    ("closein", ""),
-    ("closeout", ""),
     ("copy", "\\usebox"),
     ("count", "\\newcounter and \\value"),
     ("countdef", "\\newcounter"),
     ("cr", "\\\\"),
     ("crcr", "\\\\"),
     ("csname", "\\@nameuse"),
-    ("delcode", ""),
     ("dimen", "\\newlength"),
     ("dimendef", "\\newlength"),
     ("divide", "\\setlength with calc"),
-    ("expandafter", ""),
     ("font", "\\newfont or \\selectfont"),
     ("hskip", "\\hspace"),
     ("vskip", "\\vspace"),
     ("openout", "\\newwrite"),
 ];
+
+// The rest of chktex's `Primitives` list has no LaTeX interface at all:
+// `\catcode`, `\closein`, `\closeout`, `\delcode`, `\expandafter` (and
+// `\noexpand`, `\relax` and the like, the same story, never listed above
+// either).  A finding for one of these could only repeat that back with
+// nothing to act on, so [`primitive_tex_command`] does not track them on its
+// own — a `latex_alternatives` entry naming one of these (even with an empty
+// value) asks for it by name, and is reported.
 
 /// A primitive is only worth reporting while it still means the primitive: a
 /// document that redefines `\count` as its own macro is using its own macro.
@@ -307,6 +306,12 @@ fn primitive_tex_command(report: &mut Report) {
                 Some(Fix::new(format!("use {alternative}"), Applicability::Unsafe, None)),
             ),
         };
+        // Nothing to act on: `\csname` here, say, whose role satex could not
+        // tie to a concrete replacement.  A `latex_alternatives` entry named
+        // this primitive on purpose, so its finding stays even with no fix.
+        if fix.is_none() && !overridden {
+            continue;
+        }
         match fix {
             Some(fix) => report.add_fix(expansion.span, &name, message, fix),
             None => report.add(expansion.span, &name, message, None),

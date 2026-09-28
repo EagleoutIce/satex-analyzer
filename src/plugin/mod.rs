@@ -278,6 +278,21 @@ impl Plugins {
         }
     }
 
+    /// The engine a run assumes before the project is read: the configured
+    /// one, else what a `% !TeX program` magic comment names, else pdfTeX,
+    /// the default [`Plugins::detect`] settles on.  Commands that tokenize
+    /// without an analysis need it to pick the input encoding.
+    pub fn sniff_engine(cfg: &Config, source: &str) -> Engine {
+        if let Some(engine) = cfg.engine {
+            return engine;
+        }
+        magic::scan(source)
+            .iter()
+            .find(|m| m.key.eq_ignore_ascii_case("TeX program"))
+            .and_then(|m| Engine::from_program(&m.value))
+            .unwrap_or(Engine::PdfTeX)
+    }
+
     /// What the source itself says: magic comments, and — since they name the
     /// program — the engine they ask for.
     pub fn read_magic(&mut self, source: &str) {

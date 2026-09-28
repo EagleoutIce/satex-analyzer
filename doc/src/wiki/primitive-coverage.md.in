@@ -6,13 +6,21 @@
 
 [tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) parts 24-49 define TeX82's primitives. The [eTeX manual](https://mirror.ctan.org/systems/e-tex/base/doc/etex_man.pdf), the [pdfTeX manual](https://mirror.ctan.org/systems/doc/pdftex/manual/pdftex-a.pdf), the [XeTeX reference](https://tug.org/xetex/) and the [LuaTeX manual](https://mirror.ctan.org/systems/doc/luatex/base/luatex.pdf) add the rest.
 
-`src/builtins.rs` maps every one of these names to a `Primitive`, and `builtins::verdict` judges each `Primitive` from what `src/exec.rs`, `src/mode.rs` and `src/commands.rs` do with it. This page is generated from both, so it cannot drift from the interpreter. See [Domains](Domains) for the values a primitive's operands and results are tracked as, and [Lints](Lints) and [Chktex-Coverage](Chktex-Coverage) for what a lint rule builds on top of a primitive's real effect.
+`src/builtins.rs` maps every one of these names to a `Primitive`, and `builtins::verdict` judges each `Primitive` from what `src/exec.rs`, `src/mode.rs` and `src/commands.rs` do with it. This page is generated from both, so it cannot drift from the interpreter. Every **modeled as** cell links to the arm of `builtins::verdict` that judges the primitive, built from `file!()` and `line!()` at that arm rather than from a table typed by hand. See [Domains](Domains) for the values a primitive's operands and results are tracked as, and [Lints](Lints) and [Chktex-Coverage](Chktex-Coverage) for what a lint rule builds on top of a primitive's real effect.
 
 Every primitive gets one of three verdicts:
 
 - **exact** — satex reproduces the engine's behaviour.
 - **approximated** — a sound over-approximation. The table says how.
 - **unsupported + diagnostic** — not modelled, but everything it could affect is widened and the run says so.
+
+Five answers in the **how** column repeat over many rows. They are written out once here and abbreviated in the table:
+
+- **widens the mode** — `Machine::note_gap` plus widening the mode. The primitive is a meaning of its own for `\ifx`, nothing else.
+- **the stored parameter table** — the value is read and written from the parameter table satex stores.
+- **scanned, not built** — the operand is scanned exactly. The effect is typesetting or PDF output satex does not build, so nothing reads the result back.
+- **scanned, answer unknown** — operands are scanned per the manual. The answer needs state satex does not build (regex captures, PDF pages, the page builder's marks, a clock, an RNG), so it widens to Unknown.
+- **the font's real tables** — read from a loaded font's real TFM or OpenType tables. Unknown once the font or its tables aren't resolved.
 
 A primitive that scans its operands and drops their effect with neither of the last two is a bug, not a fourth verdict. satex never rests at "unsupported" silently ([Domains § Soundness invariant](Domains#soundness-invariant)). Any found this way are fixed, not documented as sound, and listed separately below until they are.
 

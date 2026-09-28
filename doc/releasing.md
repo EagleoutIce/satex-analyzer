@@ -1,8 +1,8 @@
-# Releasing satex
+# Releasing SaTeX
 
 ## Overview
 
-satex releases are automated via GitHub Actions. The release process involves cutting a new version, building binaries for multiple platforms, and publishing them to GitHub Releases.
+SaTeX releases are automated via GitHub Actions. The release process involves cutting a new version, building binaries for multiple platforms, and publishing them to GitHub Releases.
 
 ## Cutting a Release
 

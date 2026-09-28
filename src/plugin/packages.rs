@@ -236,7 +236,7 @@ pub struct Missing {
 
 /// The file a `\usepackage`, `\RequirePackage` or `\documentclass` looks
 /// for: the name it names plus the extension of its kind.
-fn file_of(name: &str, kind: LoadKind) -> Option<String> {
+pub(crate) fn file_of(name: &str, kind: LoadKind) -> Option<String> {
     let name = name.trim();
     let extension = match kind {
         LoadKind::Class => "cls",

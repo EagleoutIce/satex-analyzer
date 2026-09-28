@@ -597,6 +597,148 @@ fn a_name_let_to_relax_counts_as_undefined() {
     assert_eq!(last_body(&analysis, "qqfoo"), "P");
 }
 
+/// `unguarded-recursion` findings as `(code, name, line, col)`, so a test can
+/// assert the exact place rather than just whether the code fired.
+fn recursion_findings(analysis: &Analysis) -> Vec<(String, String, u64, u64)> {
+    satex::lint::lint(analysis)
+        .into_iter()
+        .filter(|r| r["code"] == "unguarded-recursion")
+        .map(|r| {
+            (
+                r["code"].as_str().unwrap_or_default().to_string(),
+                r["name"].as_str().unwrap_or_default().to_string(),
+                r["line"].as_u64().unwrap_or_default(),
+                r["col"].as_u64().unwrap_or_default(),
+            )
+        })
+        .collect()
+}
+
+/// `\newcommand\foo[n][default]{body}` does not define `\foo` as `body`:
+/// ltdefns' `\@xargdef` defines it as a dispatcher that hands the optional
+/// argument to `\foo`'s own internal counterpart —
+/// `\def\foo{\@protected@testopt \foo \\foo {default}}` — so `\foo` names
+/// itself in its own replacement text for every optional-argument command
+/// that exists.  None of that is a real call.
+#[test]
+fn optional_argument_wrappers_are_not_unguarded_recursion() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        r"\newcommand*\foo[1][]{body #1}",
+        r"\newcommand\foo[2][x]{body #1 #2}",
+        r"\DeclareRobustCommand\foo[1][x]{body #1}",
+        r"\DeclareRobustCommand*\foo[1][x]{body #1}",
+        r"\providecommand\foo[1][x]{body #1}",
+        r"\newenvironment{foo}[1][x]{start #1}{end}",
+    ];
+    for body in cases {
+        let analysis = document(&format!("\\documentclass{{article}}\n{body}\n\\begin{{document}}\\end{{document}}"));
+        let findings = recursion_findings(&analysis);
+        assert!(findings.is_empty(), "{body}: {findings:?}");
+    }
+}
+
+/// `\NewDocumentCommand` (ltcmd) never puts `\foo` itself, unqualified, into
+/// its own replacement text for an optional argument: its dispatch macro
+/// carries the *space-suffixed* internal name instead, a different control
+/// sequence, so no self-reference to detect in the first place.
+#[test]
+fn newdocumentcommand_with_optional_argument_is_not_unguarded_recursion() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\usepackage{xparse}
+\NewDocumentCommand\foo{o m}{body #1 #2}
+\begin{document}
+\end{document}",
+    );
+    assert!(recursion_findings(&analysis).is_empty(), "{:?}", recursion_findings(&analysis));
+}
+
+/// `\def\loop{\loop}` is genuine, unconditional recursion and must still be
+/// caught, at the exact line the `\def` sits on.
+#[test]
+fn a_directly_recursive_def_is_still_reported() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\def\loop{\loop}
+\begin{document}
+\end{document}",
+    );
+    let findings = recursion_findings(&analysis);
+    assert_eq!(findings, [("unguarded-recursion".to_string(), "\\loop".to_string(), 2, 1)], "{findings:?}");
+}
+
+/// A mutually recursive pair, `\mutA` calling `\mutB` and back, is reported
+/// for both names.
+#[test]
+fn a_mutually_recursive_pair_is_reported_for_both_names() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\def\mutA{\mutB}
+\def\mutB{\mutA}
+\begin{document}
+\end{document}",
+    );
+    let mut findings = recursion_findings(&analysis);
+    findings.sort();
+    assert_eq!(
+        findings,
+        [
+            ("unguarded-recursion".to_string(), "\\mutA".to_string(), 2, 1),
+            ("unguarded-recursion".to_string(), "\\mutB".to_string(), 3, 1),
+        ],
+        "{findings:?}"
+    );
+}
+
+/// A `\newcommand` with an optional argument whose body genuinely calls
+/// itself with no conditional is still real recursion: `\foo`'s own
+/// wrapper is exempted, but its internal counterpart, which actually calls
+/// `\foo` back, is not.
+#[test]
+fn a_genuinely_recursive_newcommand_with_an_optional_argument_is_still_reported() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\newcommand\realrec[1][x]{\realrec{#1}}
+\begin{document}
+\end{document}",
+    );
+    let findings = recursion_findings(&analysis);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].0, "unguarded-recursion");
+}
+
+/// A `\newcommand` with no optional argument whose body calls itself is the
+/// plain case: no wrapper, so `\foo` itself is the self-reference.
+#[test]
+fn a_genuinely_recursive_plain_newcommand_is_still_reported() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\newcommand\realrec[1]{\realrec{#1}}
+\begin{document}
+\end{document}",
+    );
+    let findings = recursion_findings(&analysis);
+    assert_eq!(findings, [("unguarded-recursion".to_string(), "\\realrec".to_string(), 2, 12)], "{findings:?}");
+}
+
 /// latex.ltx defines `\@empty` as an empty macro, and a zero-argument
 /// `\newcommand` is not `\long` (`\@yargd@f`), so all of these compare
 /// equal.  `pdflatex`: `[T][T][T][T]`.

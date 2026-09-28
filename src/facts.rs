@@ -114,7 +114,7 @@ pub enum LoadStatus {
     TooDeep,
     NotFound,
     Unreadable,
-    CaseMismatch,
+    CaseMismatch { on_disk: Sym },
 }
 
 impl LoadStatus {
@@ -127,7 +127,7 @@ impl LoadStatus {
             LoadStatus::TooDeep => "too-deep",
             LoadStatus::NotFound => "not-found",
             LoadStatus::Unreadable => "unreadable",
-            LoadStatus::CaseMismatch => "case-mismatch",
+            LoadStatus::CaseMismatch { .. } => "case-mismatch",
         }
     }
 }
@@ -150,8 +150,6 @@ pub struct Load {
     pub provided: Option<String>,
     /// Nesting depth of the load, for the dependency tree.
     pub depth: u16,
-    /// For `CaseMismatch` status: the name as it appears on disk.
-    pub case_mismatch_disk_name: Option<String>,
 }
 
 /// Anything named that is not itself a control sequence: labels, citations,
