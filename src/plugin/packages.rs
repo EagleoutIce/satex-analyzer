@@ -103,7 +103,7 @@ impl Manager {
         if which::which(program).is_err() {
             return Err(Unasked::NoManager);
         }
-        let cache = cfg.cache.then(|| cfg.cache_dir.clone().or_else(crate::format::default_cache_dir)).flatten();
+        let cache = crate::format::enabled_cache_dir(cfg);
         Ok(Manager { provider, program, cache })
     }
 
