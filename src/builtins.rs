@@ -760,12 +760,10 @@ pub enum Primitive {
     Allocate(RegKind),
     Register(RegKind),
     RegisterDef(RegKind),
-    /// `\openin`, `\closein` and `\read`: the input streams `\ifeof` asks about.
-    /// A variant `\prg_new_conditional:Npnn` generates: the arguments of the
-    /// test, then its branches, of which satex analyzes every one.
     /// `\font\name=file at size`: defines the control sequence as a font
     /// identifier (tex.web § 1256).
     FontDef,
+    /// `\openin`, `\closein`, `\read`: the input streams `\ifeof` asks about.
     OpenIn,
     CloseIn,
     Read,
@@ -792,10 +790,10 @@ pub enum Primitive {
     /// `\numexpr`, `\dimexpr`, `\glueexpr`, `\muexpr` (eTeX manual § 3.5).
     Expr(RegKind),
     Relax,
-    /// A primitive that only sets material on the page: a box, a rule, glue,
-    /// a kern, a penalty (The TeXbook, chs. 11-14).  satex does not build
-    /// pages, so it runs none of them; the distinction is what tells a
-    /// command that contributes no text from one that does.
+    /// A primitive that only sets page material: a box, rule, glue, kern,
+    /// penalty (The TeXbook, chs. 11-14). satex does not build pages, so it
+    /// runs none of these; the distinction marks commands that contribute no
+    /// text.
     Typeset(Typeset),
     /// LuaTeX's Lua interface and the catcode tables that come with it
     /// (LuaTeX manual, "Lua related primitives", "Catcode tables");
@@ -809,17 +807,14 @@ pub enum Primitive {
     Accent,
     /// A primitive whose text goes to the PDF writer.
     Pdf(PdfOp),
-    /// A primitive of the engine this run models whose effect is not
-    /// interpreted.  It does nothing, but it is a meaning of its own: a
-    /// package asks `\ifx\csname expanded\endcsname\relax` to find out
-    /// whether the primitive exists, and `\ifx` compares meanings (The
-    /// TeXbook, ch. 20), so answering `\relax` would deny every engine
-    /// primitive this interpreter leaves alone.
+    /// An engine primitive this run doesn't interpret. It does nothing but
+    /// has a meaning of its own: `\ifx\csname expanded\endcsname\relax`
+    /// tests existence by comparing meanings (The TeXbook, ch. 20), so
+    /// answering `\relax` would deny every unmodeled primitive.
     Unmodeled,
-    /// LuaTeX's `\alignmark` and `\aligntab`, which stand for `#` and `&`
-    /// where a definition or an alignment is scanned (LuaTeX manual,
-    /// "Macros"): meanings of their own, so `\ifx` tells them apart, and
-    /// unmodeled otherwise.
+    /// LuaTeX's `\alignmark`/`\aligntab`, standing for `#`/`&` where a
+    /// definition or alignment is scanned (LuaTeX manual, "Macros"):
+    /// meanings of their own, so `\ifx` tells them apart.
     AlignMark,
     AlignTab,
     /// TeX's glue, muglue and token-list parameters (tex.web §§ 224, 230).
@@ -1000,11 +995,10 @@ pub fn takes(p: Primitive) -> (u8, Option<u8>) {
     }
 }
 
-/// Whether the gullet expands this primitive (tex.web § 366).
-/// The commands the gullet expands (tex.web § 366): conditionals, `\csname`,
-/// the convert commands, `\expandafter`, `\noexpand` and the eTeX
-/// re-injections.  Everything else is a command the stomach obeys, which an
-/// `\edef` body keeps as it stands rather than running.
+/// Whether the gullet expands this primitive (tex.web § 366): conditionals,
+/// `\csname`, the convert commands, `\expandafter`, `\noexpand`, eTeX
+/// re-injections. Everything else is stomach material an `\edef` body keeps
+/// unrun.
 pub fn gullet(p: Primitive) -> bool {
     use Primitive as P;
     matches!(
@@ -1093,12 +1087,10 @@ pub fn expandable(p: Primitive) -> bool {
 }
 
 /// What `\pdfstringdef` makes of a primitive the gullet left standing:
-/// `None` when it contributes text, otherwise the value it scans, which is
-/// dropped with it.  hyperref removes every unexpandable token from the
-/// string it builds and warns about it, scanning past the number, dimension
-/// or glue of `\penalty`, `\kern` and `\hskip` (hyperref.sty,
-/// `\HyPsd@CheckCatcodes`).  A box's contents are tokens of their own and
-/// stay.
+/// `None` when it contributes text, otherwise the value it scans (dropped
+/// with it). hyperref strips every unexpandable token from the string it
+/// builds, scanning past `\penalty`/`\kern`/`\hskip`'s operand (hyperref.sty,
+/// `\HyPsd@CheckCatcodes`). A box's contents are tokens of their own and stay.
 pub fn pdf_string_skip(p: Primitive) -> Option<Typeset> {
     match p {
         Primitive::Typeset(scan) => Some(scan),
@@ -1110,10 +1102,9 @@ pub fn pdf_string_skip(p: Primitive) -> Option<Typeset> {
 }
 
 /// Whether a primitive is one of TeX's assignments — a case of
-/// `prefixed_command` (tex.web § 1211) rather than of `main_control`.  Those
-/// are the commands `\afterassignment` waits for; `\afterassignment` itself
-/// is not one, which is why a second one overwrites the first token instead
-/// of releasing it.
+/// `prefixed_command` (tex.web § 1211) rather than of `main_control`. These
+/// are what `\afterassignment` waits for. `\afterassignment` itself is not
+/// one, so a second one overwrites the first token instead of releasing it.
 pub fn assignment(p: Primitive) -> bool {
     use Primitive as P;
     matches!(
@@ -1411,14 +1402,10 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         // number, so it belongs with `\pdfnoligatures` and the other
         // per-font switches, not with the integer parameters above.
         put(it, "pdfnobuiltintounicode", P::Command(Syntax::Font));
-        // pdfTeX manual: these are read-only "last" integers, not
-        // parameters; an assignment to one is an engine error, which
-        // leaves the "=…" it wrote unread and free to start a paragraph,
-        // as satex's own read-only `LastItem`s already do. The concrete
-        // value (0 while the run has made no annotations, objects, forms
-        // or links) is genuinely unknowable without the PDF writer satex
-        // does not run, so it widens rather than answering a specific
-        // number.
+        // pdfTeX manual: read-only "last" integers, not parameters; an
+        // assignment is an engine error, as with satex's own `LastItem`s.
+        // The value (0 until the run makes annotations/objects/forms/links)
+        // needs the PDF writer satex doesn't run, so it widens instead.
         for n in [
             "pdfretval",
             "pdflastannot",
@@ -1447,10 +1434,9 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     }
     matches!(engine, Engine::PdfTeX | Engine::XeTeX);
     if engine.has_unicode_math() {
-        // The Unicode-math, randomness and `\primitive` extensions XeTeX and
-        // LuaTeX share (XeTeX reference; LuaTeX manual, "Math").
-        // XeTeX reference and LuaTeX manual, "Math": 21-bit math codes,
-        // class, family and slot given apart or packed in one number.
+        // Unicode-math, randomness and `\primitive` extensions XeTeX and
+        // LuaTeX share (XeTeX reference; LuaTeX manual, "Math"): 21-bit math
+        // codes, class/family/slot given apart or packed in one number.
         put(it, "Umathcode", P::Special(Special::UCode { math: true, num: false }));
         put(it, "Umathcodenum", P::Special(Special::UCode { math: true, num: true }));
         put(it, "Udelcode", P::Special(Special::UCode { math: false, num: false }));
@@ -1576,24 +1562,20 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         ] {
             put(it, n, P::Lua(op));
         }
-        // Each of these takes a ⟨number⟩ naming a Lua function or a bytecode
-        // register, and runs it at once (LuaTeX manual, "Lua related
-        // primitives"): a command, not a parameter with a stored value, and
-        // an assignment to one (`\luafunction=3`) is not the engine's
-        // syntax at all, so satex must not accept it either.
+        // Each takes a ⟨number⟩ naming a Lua function or bytecode register
+        // and runs it at once (LuaTeX manual, "Lua related primitives"): a
+        // command, not a stored parameter, so `\luafunction=3` is not valid
+        // engine syntax.
         for n in ["luafunction", "lateluafunction", "luafunctioncall", "luabytecode", "luabytecodecall"] {
             put(it, n, P::Command(Syntax::Number));
         }
-        // `\attribute` is LuaTeX's own numbered register file (LuaTeX
-        // manual, "Attributes"), disjoint from `\count`, and `\attributedef`
-        // names one the way `\countdef` names a `\count`; `\luadef` names a
-        // Lua function the way `\chardef` names a character. satex has no
-        // register kind of its own for any of the three (`RegKind` lives in
-        // `src/tex.rs`, out of this module's reach), so modeling them as
-        // `\count`-alike would keep aliasing `\attribute255` onto
-        // `\count255`, which is the wrong classification the manual and
-        // `\ifx` both reject. Left unmodeled instead: satex widens rather
-        // than answering confidently for the wrong register.
+        // `\attribute` is LuaTeX's own register file (LuaTeX manual,
+        // "Attributes"), disjoint from `\count`. `\attributedef` names one
+        // like `\countdef`; `\luadef` names a Lua function like `\chardef`.
+        // satex has no `RegKind` for any of the three, and modeling them as
+        // `\count`-alike would misclassify `\attribute255` as `\count255`.
+        // Left unmodeled: satex widens rather than answering for the wrong
+        // register.
         put(it, "attribute", P::Unmodeled);
         put(it, "attributedef", P::Unmodeled);
         put(it, "luadef", P::Unmodeled);
@@ -1820,10 +1802,6 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         }
         put(it, "alignmark", P::AlignMark);
         put(it, "aligntab", P::AlignTab);
-        // LuaTeX manual, "Images": `\saveimageresource` is pdfTeX's
-        // `\pdfximage` under its engine-neutral name, with the same syntax.
-        // LuaTeX manual, "Fonts": fonts by their number, and pdfTeX's
-        // `\pdfcopyfont`, `\pdffontexpand`, `\pdfnoligatures` renamed.
         // pdfTeX's `\ifpdfabsnum` and `\ifpdfabsdim` renamed.
         put(it, "ifabsnum", P::If(Cond::AbsNum));
         put(it, "ifabsdim", P::If(Cond::AbsDim));
@@ -2316,13 +2294,12 @@ const MATH_CLASS_UNIT: i64 = MATH_SLOT_MASK + 1;
 /// The place its family sits at, just above the three class bits.
 const MATH_FAMILY_UNIT: i64 = MATH_CLASS_UNIT * 8;
 
-/// What an engine stores for an assigned math code.  XeTeX keeps whatever
-/// was written.  LuaTeX splits the code into a family, a class and a
-/// character and stores it recomposed (LuaTeX manual, "Math").  The family
-/// and the class come from a division that truncates towards zero while the
-/// character is the low 21 bits, so a negative code comes back changed.
-/// `-2147483647` is stored as `-2145386495`.  A non-negative code is
-/// unchanged under either engine.
+/// What an engine stores for an assigned math code. XeTeX keeps whatever was
+/// written. LuaTeX splits it into family, class and character and stores it
+/// recomposed (LuaTeX manual, "Math"), with family/class from a division that
+/// truncates towards zero, so a negative code comes back changed:
+/// `-2147483647` is stored as `-2145386495`. Non-negative codes are unchanged
+/// under either engine.
 fn recompose_math_code(code: i64, engine: Engine) -> i64 {
     if engine != Engine::LuaTeX {
         return code;
@@ -2346,12 +2323,11 @@ pub fn pack_math_code(code: i64, engine: Engine) -> i64 {
     ((code >> 8) & 0xf) << 24 | (code >> 12) << 21 | (code & 0xff)
 }
 
-/// The class, the family and the character `\meaning` shows for a packed
-/// math code, which the two engines split apart differently.  XeTeX takes
-/// the three as bits.  LuaTeX divides by the character's width truncating
-/// towards zero, so a negative code loses the borrow and shows a class one
-/// above its bits: `-14680063` is `"2"FF"000001` and not `"1"FF"000001`
-/// (measured on TeX Live 2026).
+/// The class, family and character `\meaning` shows for a packed math code;
+/// the two engines split it apart differently. XeTeX takes the three as
+/// bits. LuaTeX divides truncating towards zero, so a negative code loses
+/// the borrow and shows a class one above its bits: `-14680063` is
+/// `"2"FF"000001`, not `"1"FF"000001` (measured on TeX Live 2026).
 pub fn split_math_code(code: i64, engine: Engine) -> (i64, i64, i64) {
     let slot = code & MATH_SLOT_MASK;
     if engine != Engine::LuaTeX {
@@ -2519,11 +2495,11 @@ pub const IGNORE_DEPTH: i64 = -1000 * 65536;
 /// owner is not there is an error, so the answer is not what was assigned.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Owned {
-    /// The current list's, and only readable and writable while the mode is
-    /// one of `modes` (tex.web §§ 418, 1243).  Elsewhere a read is
-    /// "Improper" and gives zero, and a write is `report_illegal_case`,
-    /// which scans nothing, so the `=⟨value⟩` is left in the input.  A list
-    /// of its own starts at `fresh` (tex.web § 1083).
+    /// The current list's, readable and writable only while the mode is one
+    /// of `modes` (tex.web §§ 418, 1243). Elsewhere a read is "Improper" and
+    /// gives zero, and a write is `report_illegal_case`, which scans
+    /// nothing, so `=⟨value⟩` is left in the input. A list starts at
+    /// `fresh` (tex.web § 1083).
     List { modes: crate::mode::Modes, fresh: i64 },
     /// The page builder's (tex.web §§ 982, 986).  The write is an ordinary
     /// assignment, but while the page is empty the read gives this instead
@@ -2572,10 +2548,8 @@ pub fn known_bugs() -> &'static [(&'static str, &'static str)] {
 
 /// How faithfully satex models a primitive: generates
 /// `doc/wiki/primitive-coverage.md`. A primitive that scans its operands and
-/// then drops their effect, with neither a widening marker nor a
-/// diagnostic, is a bug to fix, not a fourth verdict; [`verdict`] never
-/// returns one, so a bug found this way is reported separately, not
-/// documented here as if it were sound.
+/// drops their effect, with neither a widening marker nor a diagnostic, is a
+/// bug to fix, not a fourth verdict — [`verdict`] never returns one.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Verdict {
     /// satex reproduces the engine's own behavior.
@@ -2696,10 +2670,7 @@ pub fn verdict(p: Primitive) -> Judgment {
 
         // File and job control.
         P::Load(_) => at!(V::Exact, "tex.web § 537 (`\\input`)"),
-        P::Endinput => at!(
-            V::Unsupported,
-            "exact when unconditional. Diagnosed (`conditional-endinput`) and the file read on when reached under an undecided conditional",
-        ),
+        P::Endinput => at!(V::Exact, "tex.web § 362: under an undecided conditional each path ends its own file"),
         P::End => at!(V::Exact, "tex.web § 1054 (`end_job`)"),
         P::Message { .. } => at!(V::Exact, "tex.web § 1279"),
         P::Write => at!(
@@ -2861,7 +2832,7 @@ fn syntax_verdict(s: Syntax) -> Judgment {
         S::PdfXImage => at!(V::Exact, "the file name reaches `observe::image`"),
         S::PdfColorStack => at!(
             V::Approximated,
-            "the operation and stack id are tracked. The colour text itself is a recorded occurrence, not replayed",
+            "the operation and stack id are tracked. The color text itself is a recorded occurrence, not replayed",
         ),
         S::VSplit => {
             at!(V::Exact, "unreachable in practice. `\\vsplit` is `ModeCmd::Box(BoxCmd::VSplit)`, not this arm")
@@ -2881,13 +2852,15 @@ fn convert_verdict(c: Convert) -> Judgment {
             at!(V::Exact, "the manual's own algorithm, run for real")
         }
         C::FileSize | C::FileDump | C::MdFiveSum => at!(V::Exact, "reads the real file"),
-        C::FileModDate => at!(V::Approximated, "always Unknown. satex does not read file modification times"),
+        C::FileModDate => {
+            at!(V::Approximated, "the form of a date, its digits unknown: satex does not read file modification times")
+        }
         C::Uchar { .. } => at!(V::Exact, "tex.web, eTeX and XeTeX's character and category-code construction rules"),
         C::PdfFontSize => at!(V::Exact, "the font's real design size"),
         C::PdfFontName | C::PdfFontObjNum => at!(V::Approximated, "widens to Unknown. No PDF font object is built"),
         C::ColorStackInit => at!(
             V::Approximated,
-            "`\\pdfcolorstackinit` hands out the next colour stack number, widened rather than counted exactly. The colour text is a recorded occurrence, not replayed",
+            "`\\pdfcolorstackinit` hands out the next color stack number, widened rather than counted exactly. The color text is a recorded occurrence, not replayed",
         ),
         C::Primitive => {
             at!(V::Exact, "re-injects the frozen meaning for normal expansion to re-process, as `\\pdfprimitive` does")

@@ -195,16 +195,18 @@ pub struct Quantity {
     pub via: Option<Sym>,
     /// The files the macro bodies running at the number live in.
     pub within: Rc<[FileId]>,
+    /// Set on every run: no undecided conditional or split path around it.
+    pub certain: bool,
 }
 
-/// A colour the run defined, read off the `\color@⟨name⟩` macro xcolor
+/// A color the run defined, read off the `\color@⟨name⟩` macro xcolor
 /// stores it in (xcolor § 2.5): `\definecolor`, `\providecolor`,
 /// `\colorlet` and `\definecolorset` all end in one of these, so the fact
 /// is what the interpreter did and not a list of names.
 #[derive(Clone)]
 pub struct ColorDef {
     pub name: String,
-    /// The colour as xcolor stored it, always in one of its core models
+    /// The color as xcolor stored it, always in one of its core models
     /// (`\XC@coremodel`).  `None` when satex could not read the macro.
     pub value: Option<crate::value::Colors>,
     /// The model and the spec the document's own call wrote, before xcolor
@@ -222,15 +224,15 @@ pub struct ColorDef {
     pub certain: bool,
 }
 
-/// A colour named by a `\csname\color@⟨name⟩\endcsname` the run formed:
-/// xcolor reaches every colour by that one control sequence, so a use, a
+/// A color named by a `\csname\color@⟨name⟩\endcsname` the run formed:
+/// xcolor reaches every color by that one control sequence, so a use, a
 /// test and a `\colorlet` source all arrive here (xcolor § 2.5).
 #[derive(Clone)]
 pub struct ColorUse {
     pub name: String,
     /// What the name was formed for ([`CsnameRole::Use`] for `\color`).
     pub role: CsnameRole,
-    /// Whether the colour was defined when the run reached the name.
+    /// Whether the color was defined when the run reached the name.
     pub defined: bool,
     /// Where the document's call stands.
     pub span: Span,
@@ -357,8 +359,13 @@ pub enum Severity {
     Imprecision,
     /// A construct satex cannot follow yet: an engine primitive it does not
     /// interpret, a scan that ran off its end, a budget it could not keep
-    /// within.  These are the analysis's real limits.
+    /// within.  These are the analysis's real limits: what follows may be
+    /// wrong.
     Unsupported,
+    /// A soundiness assumption the run made where it could not follow every
+    /// run (a loop is taken to end, a file to close the groups it opened):
+    /// the results are sound if it holds.
+    Assumption,
 }
 
 impl Severity {
@@ -368,6 +375,7 @@ impl Severity {
             Severity::Unsupported => "unsupported",
             Severity::Warning => "warning",
             Severity::Imprecision => "imprecision",
+            Severity::Assumption => "assumption",
         }
     }
 }
@@ -375,7 +383,7 @@ impl Severity {
 /// One thing the analysis wants the user to know: a message, a [`Severity`],
 /// and the [`Span`] it concerns. [`Facts::diagnostics`] is what `satex
 /// lint`'s correctness rules and `query diagnostics` read.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Diagnostic {
     pub severity: Severity,
     pub code: &'static str,
@@ -418,7 +426,7 @@ pub struct Facts {
     pub conditionals: Vec<Conditional>,
     /// Numbers with letters set right after them, outside package code.
     pub quantities: Vec<Quantity>,
-    /// The colours the run defined, in order.
+    /// The colors the run defined, in order.
     pub colors: Vec<ColorDef>,
     /// Every `\color@⟨name⟩` the run formed a control sequence for.
     pub color_uses: Vec<ColorUse>,
