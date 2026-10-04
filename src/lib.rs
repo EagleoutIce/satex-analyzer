@@ -54,6 +54,7 @@ pub mod overlay;
 pub mod paths;
 pub mod plugin;
 pub mod probe;
+pub mod progress;
 pub mod project;
 pub mod query;
 pub mod rename;

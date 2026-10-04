@@ -1,0 +1,188 @@
+//! Progress bars for long work: building a kernel, caching a package,
+//! analyzing a document. Each thread that works has its own line, redrawn
+//! in place on stderr (~10 Hz). Messages print above the bars, which stay
+//! visible. Silent unless stderr is a terminal, so tests, pipes and the LSP
+//! see nothing.
+
+use anstyle::{AnsiColor, Style};
+use std::io::{IsTerminal, Write};
+use std::sync::Mutex;
+use std::thread::ThreadId;
+
+/// The bars and how many lines of them are on the screen.
+struct Bars {
+    lines: Vec<(ThreadId, Vec<String>)>,
+    drawn: usize,
+    last_draw_ms: u64,
+}
+
+static BARS: Mutex<Bars> = Mutex::new(Bars { lines: Vec::new(), drawn: 0, last_draw_ms: 0 });
+const THROTTLE_MS: u64 = 100;
+/// Longest label shown, so a bar never wraps on an 80-column terminal.
+const LABEL: usize = 48;
+
+fn now_ms() -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
+}
+
+/// Off when the output is meant for a program (`--format json` and the like).
+static ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Shows no progress for the rest of the process.
+pub fn disable() {
+    ENABLED.store(false, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn active() -> bool {
+    ENABLED.load(std::sync::atomic::Ordering::Relaxed) && std::io::stderr().is_terminal()
+}
+
+impl Bars {
+    /// Move to the first bar line and clear from there to the end of the screen.
+    fn erase(&mut self, out: &mut impl Write) {
+        if self.drawn > 1 {
+            let _ = write!(out, "\x1b[{}A", self.drawn - 1);
+        }
+        if self.drawn > 0 {
+            let _ = write!(out, "\r\x1b[J");
+        }
+        self.drawn = 0;
+    }
+
+    /// Draw every bar, leaving the cursor at the end of the last one.
+    fn draw(&mut self, out: &mut impl Write) {
+        self.erase(out);
+        let all: Vec<&String> = self.lines.iter().flat_map(|(_, lines)| lines).collect();
+        for (i, line) in all.iter().enumerate() {
+            let _ = write!(out, "{}{line}", if i > 0 { "\n" } else { "" });
+        }
+        self.drawn = all.len();
+        let _ = out.flush();
+    }
+}
+
+fn lock() -> std::sync::MutexGuard<'static, Bars> {
+    BARS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// `####----` of width 20 for `pct` percent.
+fn cells(pct: usize) -> (String, String) {
+    let filled = pct.min(100) / 5;
+    ("#".repeat(filled), "-".repeat(20 - filled))
+}
+
+/// The file being read now, when it is not the job's own: its name, line
+/// and how much of it is read.
+pub struct Sub {
+    pub file: String,
+    /// The full path the name links to (OSC 8), so a terminal opens the file.
+    pub path: String,
+    pub line: u32,
+    pub reached: usize,
+    pub total: usize,
+}
+
+/// `label [####------] 40% 12s/600s` for this thread: `reached` of `total`
+/// characters of a file read, and under it `↳ file:line [##---] 24%` for the
+/// innermost file when it is another one. Approximate, since what a file
+/// loads is not counted, but cheap.
+pub fn bar(label: &str, reached: usize, total: usize, lines: (u64, u64), clock: Option<(u64, u64)>, subs: &[Sub]) {
+    if total == 0 || !active() {
+        return;
+    }
+    let pct = (reached * 100 / total).min(100);
+    let clip = |text: &str, max: usize| -> String {
+        if text.chars().count() > max {
+            text.chars().take(max - 1).chain(std::iter::once('…')).collect()
+        } else {
+            text.to_string()
+        }
+    };
+    let label = clip(label, LABEL);
+    let count = |n: u64| if n >= 10_000 { format!("{:.1}k", n as f64 / 1000.0) } else { n.to_string() };
+    let lines = match lines {
+        (0, _) => String::new(),
+        (all, 0) => format!(" {} lines", count(all)),
+        (all, cached) => format!(" {} lines ({} cached)", count(all), count(cached)),
+    };
+    let clock = format!("{lines}{}", clock.map(|(spent, limit)| format!(" {spent}/{limit}s")).unwrap_or_default());
+    let (dim, done, bold) =
+        (Style::new().dimmed(), Style::new().fg_color(Some(AnsiColor::Green.into())), Style::new().bold());
+    let paint = |text: String| {
+        let mut line = Vec::new();
+        let _ = write!(anstream::AutoStream::new(&mut line, anstream::stderr().current_choice()), "{text}");
+        String::from_utf8_lossy(&line).into_owned()
+    };
+    let (full, empty) = cells(pct);
+    let mut lines = vec![paint(format!(
+        "{dim}satex:{dim:#} {bold}{label}{bold:#} [{done}{full}{done:#}{dim}{empty}{dim:#}] {bold}{pct:>3}%{bold:#}{dim}{clock}{dim:#}"
+    ))];
+    for sub in subs.iter().filter(|s| s.total > 0) {
+        let pct = (sub.reached * 100 / sub.total).min(100);
+        let (full, empty) = cells(pct);
+        let name = clip(&format!("{}:{}", sub.file, sub.line), LABEL - 8);
+        let name = if sub.path.is_empty() {
+            name
+        } else {
+            let path = std::path::absolute(&sub.path).unwrap_or_else(|_| sub.path.clone().into());
+            format!("\x1b]8;;file://{}\x1b\\{name}\x1b]8;;\x1b\\", path.display())
+        };
+        lines.push(paint(format!("  {dim}↳{dim:#} {name} [{done}{full}{done:#}{dim}{empty}{dim:#}] {pct:>3}%")));
+    }
+    let me = std::thread::current().id();
+    let mut bars = lock();
+    match bars.lines.iter_mut().find(|(id, _)| *id == me) {
+        Some(slot) => slot.1 = lines,
+        None => bars.lines.push((me, lines)),
+    }
+    let now = now_ms();
+    if now.saturating_sub(bars.last_draw_ms) >= THROTTLE_MS {
+        bars.last_draw_ms = now;
+        bars.draw(&mut std::io::stderr().lock());
+    }
+}
+
+/// Print a message above the bars, which are drawn again below it.
+pub fn message(args: std::fmt::Arguments) {
+    if !active() {
+        eprintln!("{args}");
+        return;
+    }
+    let mut bars = lock();
+    let mut out = std::io::stderr().lock();
+    bars.erase(&mut out);
+    let _ = writeln!(out, "{args}");
+    bars.draw(&mut out);
+}
+
+/// A long step starting, above the bars: `satex:` dimmed, `what` bold
+/// yellow, `why` plain and `hint` dimmed, colored only where stderr takes it.
+pub fn step(what: &str, why: &str, hint: &str) {
+    let (dim, bold) = (Style::new().dimmed(), Style::new().bold().fg_color(Some(AnsiColor::Yellow.into())));
+    let mut line = Vec::new();
+    let _ = write!(
+        anstream::AutoStream::new(&mut line, anstream::stderr().current_choice()),
+        "{dim}satex:{dim:#} {bold}{what}{bold:#}: {why} {dim}({hint}){dim:#}"
+    );
+    message(format_args!("{}", String::from_utf8_lossy(&line)));
+}
+
+/// `eprintln!` that keeps the progress bars below what it prints.
+macro_rules! note {
+    ($($arg:tt)*) => {
+        $crate::progress::message(format_args!($($arg)*))
+    };
+}
+pub(crate) use note;
+
+/// This thread's work is done: its bar goes, the others stay.
+pub fn clear() {
+    if !active() {
+        return;
+    }
+    let me = std::thread::current().id();
+    let mut bars = lock();
+    bars.lines.retain(|(id, _)| *id != me);
+    bars.draw(&mut std::io::stderr().lock());
+}
