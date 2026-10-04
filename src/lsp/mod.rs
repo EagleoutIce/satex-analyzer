@@ -368,7 +368,8 @@ fn engine_loop(
             }
             EngineMsg::Definition(uri, pos, reply) => {
                 ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
-                let result = with_doc(&docs, &uri, |analysis, text| handlers::definition(analysis, text, pos));
+                let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result = with_doc(&docs, &uri, |analysis, text| handlers::definition(analysis, text, &path, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::References(uri, pos, decls, reply) => {
