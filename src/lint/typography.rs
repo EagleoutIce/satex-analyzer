@@ -165,6 +165,11 @@ fn ot1_font_encoding(report: &mut Report) {
 
 fn computer_modern_in_t1(report: &mut Report) {
     let analysis = report.analysis;
+    // Loading lmodern is the fix; once it is loaded, offering it again only
+    // hands `duplicate-package` a finding to take back.
+    if crate::lint::shared::loaded(analysis, "lmodern") {
+        return;
+    }
     let ec = set_in(report, report.text(), "T1", Some(KERNEL_ROMAN));
     let Some(first) = ec.first else { return };
     let span = document_start(analysis).unwrap_or(first);

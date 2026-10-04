@@ -452,6 +452,20 @@ impl<'a> Edits<'a> {
         Some(vec![Edit { path, start: pos, end: pos, replacement: "%".to_string() }])
     }
 
+    /// Delete the line end at `span` and the next line's indentation, so
+    /// the `}` that starts the next line closes the body on this one.
+    pub fn join_next_line(&self, span: Span) -> Option<Vec<Edit>> {
+        let (path, text) = self.text(span.file)?;
+        let indent = text.line(span.line + 1).chars().take_while(|c| c.is_whitespace()).count() as u32;
+        let blanks = text.line(span.line).trim_end_matches(' ').chars().count() as u32 + 1;
+        Some(vec![Edit {
+            path,
+            start: Pos::new(span.line, span.col.min(blanks)),
+            end: Pos::new(span.line + 1, indent + 1),
+            replacement: String::new(),
+        }])
+    }
+
     pub fn path(&self, path: &str) -> Option<(String, Rc<Text>)> {
         if !self.sources.editable(self.analysis, path) {
             return None;

@@ -123,7 +123,7 @@ enum Kind {
     Acute,
 }
 
-/// Where the mark stands in the sentence, decided by its neighbours.
+/// Where the mark stands in the sentence, decided by its neighbors.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Side {
     Open,

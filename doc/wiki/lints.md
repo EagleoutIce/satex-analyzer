@@ -45,14 +45,14 @@ Every rule, with a link to its explanation below.
 | [`not-defined`](#not-defined) | correctness | error | \renewcommand targets a name that does not exist |
 | [`option-clash`](#option-clash) | correctness | error | a package is loaded twice with different options |
 | [`raised-error`](#raised-error) | correctness | error | the document's code raises a TeX error |
-| [`undefined-color`](#undefined-color) | correctness | error | a colour is used, or aliased from, before xcolor ever defines it |
+| [`undefined-color`](#undefined-color) | correctness | error | a color is used, or aliased from, before xcolor ever defines it |
 | [`undefined-control-sequence`](#undefined-control-sequence) | correctness | error | a control sequence is used that nothing defines |
 | [`undefined-environment`](#undefined-environment) | correctness | error | \begin names an environment that is not defined |
 | [`undefined-glossary-entry`](#undefined-glossary-entry) | correctness | error | a glossary or acronym entry is used but never declared |
 | [`unguarded-recursion`](#unguarded-recursion) | correctness | error | a recursive macro has nothing that can stop it |
 | [`build-missing-custom-dependency`](#build-missing-custom-dependency) | correctness | warning | the document writes glossary files, but latexmk has no rule to process them |
 | [`catcode-escapes-group`](#catcode-escapes-group) | correctness | warning | a category code change is still in force at the end of the run |
-| [`conflicting-color-definition`](#conflicting-color-definition) | correctness | warning | the same colour name is defined twice with different colours |
+| [`conflicting-color-definition`](#conflicting-color-definition) | correctness | warning | the same color name is defined twice with different colors |
 | [`delimiter-not-followed`](#delimiter-not-followed) | correctness | warning | \left, \right or \middle is followed by a brace or a math shift |
 | [`duplicate-bibliography-entry`](#duplicate-bibliography-entry) | correctness | warning | the same key is declared by two bibliography entries |
 | [`environment-mismatch`](#environment-mismatch) | correctness | warning | \end names an environment other than the one that is open |
@@ -101,7 +101,7 @@ Every rule, with a link to its explanation below.
 | [`computer-modern-in-t1`](#computer-modern-in-t1) | style | info | T1 text in Computer Modern relies on cm-super for scalable fonts |
 | [`csquotes-available`](#csquotes-available) | style | info | the document sets quotation marks by hand instead of loading csquotes |
 | [`dead-definition`](#dead-definition) | style | info | a definition is replaced before anything uses it |
-| [`duplicate-color-value`](#duplicate-color-value) | style | info | two colour names store the exact same colour |
+| [`duplicate-color-value`](#duplicate-color-value) | style | info | two color names store the exact same color |
 | [`hand-set-quantity`](#hand-set-quantity) | style | info | a number and its unit are set by hand where siunitx would set them |
 | [`math-punctuation`](#math-punctuation) | style | info | punctuation sits on the wrong side of a formula |
 | [`microtype-available`](#microtype-available) | style | info | the engine can protrude characters and expand fonts, but microtype is not loaded |
@@ -112,7 +112,7 @@ Every rule, with a link to its explanation below.
 | [`stray-space`](#stray-space) | style | info | a macro body picked up a space from an unescaped line end |
 | [`unreferenced-numbered-display`](#unreferenced-numbered-display) | style | info | a display that stepped a counter is never referenced, so its number is spent for nothing |
 | [`unused-bibitem`](#unused-bibitem) | style | info | a \bibitem written in the document is never cited |
-| [`unused-color`](#unused-color) | style | info | a colour the document defines is never used |
+| [`unused-color`](#unused-color) | style | info | a color the document defines is never used |
 | [`unused-definition`](#unused-definition) | style | info | a macro defined in the document is never used |
 | [`unused-label`](#unused-label) | style | info | a label is never referenced |
 | [`package-after-preamble`](#package-after-preamble) | performance | warning | a package is loaded after \begin{document} |
@@ -194,13 +194,13 @@ See [source2e § ltxref.dtx](https://ctan.org/pkg/source2e).
 
 **correctness / error** — the run is still in math mode where the text ends
 
-A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) `insert_dollar_sign`), and everything up to there is set as mathematics.
+A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047][tw-1047] `insert_dollar_sign`), and everything up to there is set as mathematics.
 
 The rule reports what the interpreter already saw: the `missing-dollar` diagnostic it raised, or, where no `\par` followed, a last character still carrying a math mode. It reports one finding, never both.
 
 Fix by closing the formula.
 
-See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web).
+See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20410).
 
 ### `missing-graphic`
 
@@ -240,11 +240,11 @@ Running the document reaches `\errmessage`, which every LaTeX error (`\PackageEr
 
 ### `undefined-color`
 
-**correctness / error** — a colour is used, or aliased from, before xcolor ever defines it
+**correctness / error** — a color is used, or aliased from, before xcolor ever defines it
 
-xcolor reaches every colour through `\color@⟨name⟩` ([xcolor § 2.5](https://ctan.org/pkg/xcolor)). A name the run never defined there raises `Undefined color` when xcolor itself looks it up. The rule reads the same lookup the run made: a name a `\color`, `\textcolor` or `\colorlet` reached while nothing had defined it.
+xcolor reaches every color through `\color@⟨name⟩` ([xcolor § 2.5](https://ctan.org/pkg/xcolor)). A name the run never defined there raises `Undefined color` when xcolor itself looks it up. The rule reads the same lookup the run made: a name a `\color`, `\textcolor` or `\colorlet` reached while nothing had defined it.
 
-Fix by defining the colour first, or by correcting its name.
+Fix by defining the color first, or by correcting its name.
 
 See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
@@ -311,11 +311,11 @@ See [The TeXbook § chapter 5](https://ctan.org/pkg/texbook).
 
 ### `conflicting-color-definition`
 
-**correctness / warning** — the same colour name is defined twice with different colours
+**correctness / warning** — the same color name is defined twice with different colors
 
-Two `\definecolor`-family calls store different colours under the same name. Only the last one is ever read back.
+Two `\definecolor`-family calls store different colors under the same name. Only the last one is ever read back.
 
-Fix by giving the second colour its own name, or by removing the earlier definition.
+Fix by giving the second color its own name, or by removing the earlier definition.
 
 See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
@@ -323,13 +323,13 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 **correctness / warning** — \left, \right or \middle is followed by a brace or a math shift
 
-`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
+`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161][tw-1161]). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
 
 The rule asks what each command means rather than matching its name, so it covers `\middle` and any `\let` alias, which chktex's name list does not.
 
 Fix by writing `\{` and `\}` for brace delimiters, or `\left.` where no delimiter is wanted.
 
-See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web).
+See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22057).
 
 ### `duplicate-bibliography-entry`
 
@@ -431,7 +431,7 @@ See [pdftex § 8.9.8](https://ctan.org/pkg/pdftex).
 
 **correctness / warning** — a PDF literal opens marked content or a graphics state that is never closed
 
-`\pdfliteral` and `\special{pdf:…}` (what ocgx2, ocg-p and pdfbase use to write raw PDF) drop `q`/`Q` and `BMC`/`BDC`/`EMC` straight into the page's content stream. `q`/`Q` save and restore the graphics state — colour, line width, the current transform; `BMC`/`BDC`/`EMC` bracket marked content, an optional content group among them. Both have to nest within the page ([PDF 32000, §§ 8.4.2, 14.6](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf)). One left open leaks its state into everything typeset after it; a viewer may also just reject the page.
+`\pdfliteral` and `\special{pdf:…}` (what ocgx2, ocg-p and pdfbase use to write raw PDF) drop `q`/`Q` and `BMC`/`BDC`/`EMC` straight into the page's content stream. `q`/`Q` save and restore the graphics state — color, line width, the current transform; `BMC`/`BDC`/`EMC` bracket marked content, an optional content group among them. Both have to nest within the page ([PDF 32000, §§ 8.4.2, 14.6](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf)). One left open leaks its state into everything typeset after it; a viewer may also just reject the page.
 
 satex does not break pages into content streams itself, so it checks the order the run executes the literals in.
 
@@ -485,7 +485,7 @@ See [TeX Live manual § tlmgr](https://tug.org/texlive/doc.html), [MiKTeX manual
 
 The file was searched for in the document's directory, the configured search paths and the TEXMF trees, and not found. Case mismatches on case-insensitive filesystems are also reported: they work on Windows or macOS but break on Linux. `satex query distribution` shows which installation was searched.
 
-Fix by installing the package, adding its directory to `search_paths` in `satex.yaml`, pointing `texmf_roots` at the right installation, or (for case mismatches) renaming the file to match the requested name.
+Fix by installing the package, adding its directory to `search_paths` in `satex.yaml`, pointing `texmf.roots` at the right installation, or (for case mismatches) renaming the file to match the requested name.
 
 See [chktex 27](https://www.nongnu.org/chktex/).
 
@@ -647,7 +647,7 @@ satex compares each character's `\f@shape` against the kernel's `\itdefault` and
 
 Fix by writing `\/` after the last slanted character.
 
-See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook § chapter 4](https://ctan.org/pkg/texbook), [tex.web § 1113](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web).
+See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook § chapter 4](https://ctan.org/pkg/texbook), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21365).
 
 ### `missing-nonbreaking-space`
 
@@ -655,11 +655,11 @@ See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook § chapter 4](https
 
 A reference should not begin a line on its own, so a tie belongs in front of it. `~` is an interword space TeX may not break at ([The TeXbook](https://ctan.org/pkg/texbook), chapter 14).
 
-The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)).
+The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043][tw-1043]).
 
 Fix by writing `Figure~\ref{fig:one}`.
 
-See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook § chapter 14](https://ctan.org/pkg/texbook), [tex.web § 1043](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web).
+See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook § chapter 14](https://ctan.org/pkg/texbook), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20358).
 
 ### `parenthesis-spacing`
 
@@ -689,13 +689,13 @@ See [chktex 32](https://www.nongnu.org/chktex/), [chktex 33](https://www.nongnu.
 
 **style / warning** — a period set the wrong width of space for the sentence around it
 
-How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000.
+How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034][tw-1034]). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000.
 
 So `etc. and` gets a sentence space and `the ABC. Next` a word space, both the wrong way round. The rule reads the characters the run set and reports only where a real space token became glue.
 
 Fix by writing `etc.\ and`, or `the ABC\@. Next`.
 
-See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web).
+See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20114).
 
 ### `space-before-command`
 
@@ -715,23 +715,23 @@ See [chktex 24](https://www.nongnu.org/chktex/), [chktex 42](https://www.nongnu.
 
 Punctuation belongs against the word it follows. A space in front of a comma or a period is glue, and the reader sees it on the page.
 
-The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
+The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043][tw-1043]). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
 
 Fix by deleting the space.
 
-See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web).
+See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20358).
 
 ### `stray-italic-correction`
 
 **style / warning** — a repeated italic correction, or one in front of a period or comma
 
-`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook](https://ctan.org/pkg/texbook), chapter 4). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) [§ 1113](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)), and one in front of a period or a comma (chktex 28).
+`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook](https://ctan.org/pkg/texbook), chapter 4). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113][tw-1113]), and one in front of a period or a comma (chktex 28).
 
 satex reads the characters the document set, so it sees through a closing brace: in `\textit{word\/}.` the next character set is the period.
 
 Fix by deleting the `\/`.
 
-See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web).
+See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21365).
 
 ### `unknown-suppress-code`
 
@@ -781,13 +781,13 @@ See [chktex 18](https://www.nongnu.org/chktex/), [chktex 19](https://www.nongnu.
 
 **style / warning** — the italic correction is zero here, so `\/` changes nothing
 
-`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) [§ 1113](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)). Where that correction is zero the `\/` does nothing.
+`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web § 1113][tw-1113]). Where that correction is zero the `\/` does nothing.
 
 Every character carries the font it was set in ([fntguide § 2](https://ctan.org/pkg/fntguide)), and satex reads the correction out of that font's TFM. That is a measurement, where chktex decides from a list of command names. In math, and after a space, the kern is zero whatever the font.
 
 Fix by deleting the `\/`.
 
-See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web), [The TeXbook § chapter 4](https://ctan.org/pkg/texbook).
+See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21365), [The TeXbook § chapter 4](https://ctan.org/pkg/texbook).
 
 ### `build-bibliography-unneeded`
 
@@ -865,11 +865,11 @@ Fix by deleting the first definition, or by checking which one was meant.
 
 ### `duplicate-color-value`
 
-**style / info** — two colour names store the exact same colour
+**style / info** — two color names store the exact same color
 
 Two `\definecolor`-family calls, at least one of them the document's own, store the same model and components under different names. Not wrong, but one name likely means to be the other.
 
-Silent unless the run could read both colours back exactly.
+Silent unless the run could read both colors back exactly.
 
 See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
@@ -957,13 +957,13 @@ See [chktex 38](https://www.nongnu.org/chktex/).
 
 **style / info** — a macro body picked up a space from an unescaped line end
 
-Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)).
+Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347][tw-347]).
 
-The finding follows the modes the run read that space in ([§ 1043](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been.
+The finding follows the modes the run read that space in ([§ 1043][tw-1043]: a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been.
 
 Fix by writing `%` at the end of that line.
 
-See [tex.web § 347](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web), [tex.web § 1043](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web).
+See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7326), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20358).
 
 ### `unreferenced-numbered-display`
 
@@ -989,11 +989,11 @@ See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
 
 ### `unused-color`
 
-**style / info** — a colour the document defines is never used
+**style / info** — a color the document defines is never used
 
-The document names a colour with `\definecolor`, `\providecolor` or `\colorlet` and never reads it back through `\color`, `\textcolor` or a `\colorlet` source.
+The document names a color with `\definecolor`, `\providecolor` or `\colorlet` and never reads it back through `\color`, `\textcolor` or a `\colorlet` source.
 
-Silent for a colour a package defines: a library may define more colours than any one document uses.
+Silent for a color a package defines: a library may define more colors than any one document uses.
 
 See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
@@ -1083,6 +1083,13 @@ Fix, if the package really is unused, by deleting the `\usepackage`: it is read 
 
 Undecided conditionals are analyzed arm by arm, so they are not reported here. This rule reports the two places where the analysis is incomplete instead: a recursion that was widened, and a budget that was reached. Findings that depend on such a point may be incomplete.
 
-There is nothing to fix in the document. Raising the limits in `satex.yaml` or narrowing the analysis with `load_packages: false` can reduce it.
+There is nothing to fix in the document. Raising the limits in `satex.yaml` or narrowing the analysis with `load.packages: false` can reduce it.
 
 </details>
+
+[tw-347]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7326
+[tw-1034]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20114
+[tw-1043]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20358
+[tw-1047]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20410
+[tw-1113]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21365
+[tw-1161]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22057

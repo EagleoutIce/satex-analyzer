@@ -1,4 +1,4 @@
-//! Colours xcolor stores and reads through `\color@⟨name⟩` (xcolor § 2.5),
+//! Colors xcolor stores and reads through `\color@⟨name⟩` (xcolor § 2.5),
 //! and the `\pdfcolorstack`s the run executed (pdfTeX manual § 8.9.8), as
 //! [`crate::observe`] recorded them.
 
@@ -13,15 +13,15 @@ pub static RULES: &[Rule] = &[
         code: "undefined-color",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "a colour is used, or aliased from, before xcolor ever defines it",
+        summary: "a color is used, or aliased from, before xcolor ever defines it",
         explanation: "\
-xcolor reaches every colour through `\\color@⟨name⟩` (xcolor § 2.5). A name
+xcolor reaches every color through `\\color@⟨name⟩` (xcolor § 2.5). A name
 the run never defined there raises `Undefined color` when xcolor itself
 looks it up.  The rule reads the same lookup the run made: a name a
 `\\color`, `\\textcolor` or `\\colorlet` reached while nothing had defined
 it.
 
-Fix by defining the colour first, or by correcting its name.",
+Fix by defining the color first, or by correcting its name.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
         run: undefined_color,
     },
@@ -29,13 +29,13 @@ Fix by defining the colour first, or by correcting its name.",
         code: "unused-color",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a colour the document defines is never used",
+        summary: "a color the document defines is never used",
         explanation: "\
-The document names a colour with `\\definecolor`, `\\providecolor` or
+The document names a color with `\\definecolor`, `\\providecolor` or
 `\\colorlet` and never reads it back through `\\color`, `\\textcolor` or a
 `\\colorlet` source.
 
-Silent for a colour a package defines: a library may define more colours
+Silent for a color a package defines: a library may define more colors
 than any one document uses.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
         run: unused_color,
@@ -44,12 +44,12 @@ than any one document uses.",
         code: "conflicting-color-definition",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "the same colour name is defined twice with different colours",
+        summary: "the same color name is defined twice with different colors",
         explanation: "\
-Two `\\definecolor`-family calls store different colours under the same
+Two `\\definecolor`-family calls store different colors under the same
 name. Only the last one is ever read back.
 
-Fix by giving the second colour its own name, or by removing the earlier
+Fix by giving the second color its own name, or by removing the earlier
 definition.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
         run: conflicting_color_definition,
@@ -58,13 +58,13 @@ definition.",
         code: "duplicate-color-value",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "two colour names store the exact same colour",
+        summary: "two color names store the exact same color",
         explanation: "\
 Two `\\definecolor`-family calls, at least one of them the document's own,
 store the same model and components under different names.  Not wrong, but
 one name likely means to be the other.
 
-Silent unless the run could read both colours back exactly.",
+Silent unless the run could read both colors back exactly.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
         run: duplicate_color_value,
     },
@@ -86,8 +86,8 @@ Fix by balancing every push with a pop in the same group.",
     },
 ];
 
-/// Whether colour-definition findings apply here: a document defines
-/// colours for its own prose, but so does a package meant to be loaded by
+/// Whether color-definition findings apply here: a document defines
+/// colors for its own prose, but so does a package meant to be loaded by
 /// one. Only the profiles [`crate::lint::text`] also treats as code stay
 /// silent.
 fn definitions_matter(analysis: &Analysis) -> bool {
@@ -101,7 +101,7 @@ fn undefined_color(report: &mut Report) {
     }
     for use_ in &analysis.facts.color_uses {
         // A `\ifx`/`\@ifundefinedcolor`-style test deliberately asks
-        // whether the colour exists. Only reading or aliasing it assumes
+        // whether the color exists. Only reading or aliasing it assumes
         // that it does.
         if use_.defined || matches!(use_.role, CsnameRole::Test) {
             continue;
@@ -111,7 +111,7 @@ fn undefined_color(report: &mut Report) {
             severity,
             use_.span,
             &use_.name,
-            format!("colour `{}` is used but never defined", use_.name),
+            format!("color `{}` is used but never defined", use_.name),
             None,
         );
     }
@@ -133,7 +133,7 @@ fn unused_color(report: &mut Report) {
         if def.package.is_some() || used.contains(def.name.as_str()) {
             continue;
         }
-        report.add(def.span, &def.name, format!("colour `{}` is never used", def.name), None);
+        report.add(def.span, &def.name, format!("color `{}` is never used", def.name), None);
     }
 }
 
@@ -157,7 +157,7 @@ fn conflicting_color_definition(report: &mut Report) {
                 second.span,
                 name,
                 format!(
-                    "colour `{name}` is redefined here as {}, but was {} at {}",
+                    "color `{name}` is redefined here as {}, but was {} at {}",
                     b.hull.spell(),
                     a.hull.spell(),
                     report.place(first.span)
@@ -196,7 +196,7 @@ fn duplicate_color_value(report: &mut Report) {
                 doc.span,
                 &doc.name,
                 format!(
-                    "colour `{}` is exactly `{}` ({})",
+                    "color `{}` is exactly `{}` ({})",
                     doc.name,
                     other.name,
                     doc.value.as_ref().unwrap().hull.spell()
