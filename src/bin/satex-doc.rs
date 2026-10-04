@@ -37,6 +37,11 @@
 //!       to the deciding arm, from the `file!()`/`line!()` that arm
 //!       records in `builtins::Site`.
 //!
+//!   {{fields: STRUCT key}}
+//!       One paragraph per field of `config::STRUCT`: its dotted key under
+//!       `key`, its default from `Config::default()` and its doc comment,
+//!       so a setting's explanation lives next to its code.
+//!
 //!   {{limits}}
 //!       A table of `config::Limits`' fields, their `Default` values and
 //!       their doc comments, so a tuned or added limit cannot go stale in
@@ -44,12 +49,26 @@
 //!
 //! Run with `--check` to verify the generated files are up to date without
 //! writing anything; exits non-zero if any file is stale. Used by
-//! tests/docs.rs and in CI.
+//! `tests/it/docs.rs` and in CI.
+//!
+//! `--refresh-citations` / `--check-citations` keep the pinned tex.web,
+//! etex.ch, latex2e and expl3 links current: a `tex.web § N` (or
+//! `etex.ch \`identifier\``) citation names a module number or an
+//! identifier, never a line, and this resolves it against the *live*
+//! upstream file (the `trunk`/`main` branch, fetched fresh each run) to
+//! build a commit-pinned permalink. `--refresh-citations` writes the
+//! result (`doc/src/tex-web-sections.tsv`/`tex-web-sha.txt`, the build-time
+//! cache `src/lint/mod.rs` embeds, and the `[tw-N]:`/`[ech-<name>]:`
+//! definitions in SEMANTICS.md); `--check-citations` (CI) only reports
+//! drift and fails if a citation no longer resolves, or resolves to a
+//! different line than what is checked in. See [`refresh_citations`].
 
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::sync::OnceLock;
 
 use regex::Regex;
 use satex::builtins::{self, Primitive, Site, Verdict};
@@ -69,8 +88,15 @@ const TEMPLATES: &[(&str, &str)] = &[
 ];
 
 fn main() {
-    let check = std::env::args().skip(1).any(|arg| arg == "--check");
-    if let Err(message) = run(check) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let result = if args.iter().any(|a| a == "--refresh-citations") {
+        refresh_citations(false)
+    } else if args.iter().any(|a| a == "--check-citations") {
+        refresh_citations(true)
+    } else {
+        run(args.iter().any(|a| a == "--check"))
+    };
+    if let Err(message) = result {
         eprintln!("satex-doc: {message}");
         std::process::exit(1);
     }
@@ -171,6 +197,298 @@ fn run(check: bool) -> Result<(), String> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------
+// Citation resolution: `tex.web § N` / `etex.ch \`identifier\`` and the
+// LaTeX2e/expl3 kernel links resolve the *name* (a module number or an
+// identifier, the source of truth kept in prose) against the current
+// upstream commit, rather than a line number hand-typed once and left to
+// rot. See the module doc comment for `--refresh-citations`/`--check-citations`.
+// ---------------------------------------------------------------------
+
+/// One upstream source these docs cite by module number (`tex.web`) or by
+/// identifier (`etex.ch`), or without either (`expl3-code`/`latex.ltx`,
+/// cited as a directory: LaTeX2e/expl3 are many `.dtx` files, not one
+/// numbered source).
+struct CiteSource {
+    name: &'static str,
+    repo: &'static str,
+    git_ref: &'static str,
+    path: &'static str,
+    kind: CiteKind,
+}
+
+#[derive(PartialEq, Eq)]
+enum CiteKind {
+    /// Has WEB modules; `tw-N` citations resolve against it.
+    Web,
+    /// Addressed by identifier; `ech-<name>` citations resolve against it.
+    Ident,
+    /// A directory: no per-line citations, only the bare source name.
+    Tree,
+}
+
+const CITE_SOURCES: &[CiteSource] = &[
+    CiteSource {
+        name: "tex.web",
+        repo: "TeX-Live/texlive-source",
+        git_ref: "trunk",
+        path: "texk/web2c/tex.web",
+        kind: CiteKind::Web,
+    },
+    CiteSource {
+        name: "etex.ch",
+        repo: "TeX-Live/texlive-source",
+        git_ref: "trunk",
+        path: "texk/web2c/etexdir/etex.ch",
+        kind: CiteKind::Ident,
+    },
+    CiteSource { name: "expl3-code", repo: "latex3/latex3", git_ref: "main", path: "l3kernel", kind: CiteKind::Tree },
+    CiteSource { name: "latex.ltx", repo: "latex3/latex2e", git_ref: "main", path: "base", kind: CiteKind::Tree },
+];
+
+/// A WEB module (what tex.web calls a "section") starts on a line
+/// beginning with `@ ` or `@*` (also a bare `@` at end of line or
+/// followed by a tab).
+fn is_web_module_start(line: &str) -> bool {
+    line == "@" || line.starts_with("@*") || line.starts_with("@ ") || line.starts_with("@\t")
+}
+
+/// `{module number: 1-based line it starts on}`, numbered from 1 in file order.
+fn tex_web_sections(content: &str) -> BTreeMap<u32, u32> {
+    let mut sections = BTreeMap::new();
+    let mut n = 0u32;
+    for (i, line) in content.lines().enumerate() {
+        if is_web_module_start(line) {
+            n += 1;
+            sections.insert(n, i as u32 + 1);
+        }
+    }
+    sections
+}
+
+/// The line `identifier` is defined on in a WEB source, preferring an
+/// actual declaration (`function`/`procedure identifier`, `@d identifier=`,
+/// `@!identifier:`) to an incidental mention; `None` if it does not appear
+/// at all.
+fn find_identifier_line(content: &str, identifier: &str) -> Option<u32> {
+    let def = Regex::new(&format!(
+        r"^\s*(?:(?:function|procedure)\s+{ident}\b|@d\s+{ident}\s*=|@!{ident}\s*:)",
+        ident = regex::escape(identifier)
+    ))
+    .expect("valid regex");
+    let any = Regex::new(&format!(r"\b{}\b", regex::escape(identifier))).expect("valid regex");
+    let mut fallback = None;
+    for (i, line) in content.lines().enumerate() {
+        if def.is_match(line) {
+            return Some(i as u32 + 1);
+        }
+        if fallback.is_none() && any.is_match(line) {
+            fallback = Some(i as u32 + 1);
+        }
+    }
+    fallback
+}
+
+/// `curl`s `url`, failing on a non-2xx response or a transport error. The
+/// only network access in this binary; everything else in `satex-doc` (and
+/// the `satex` binary it drives) works offline.
+fn curl(url: &str) -> Result<String, String> {
+    let mut cmd = Command::new("curl");
+    cmd.args(["-sSL", "--max-time", "30", "--fail"]);
+    if url.starts_with("https://api.github.com/")
+        && let Some(token) = std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty())
+    {
+        cmd.args(["-H", &format!("Authorization: Bearer {token}")]);
+    }
+    cmd.arg(url);
+    let out = cmd.output().map_err(|e| format!("curl {url}: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("curl {url}: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn github_commit_sha(repo: &str, git_ref: &str) -> Result<String, String> {
+    let url = format!("https://api.github.com/repos/{repo}/commits/{git_ref}");
+    let body = curl(&url)?;
+    let json: serde_json::Value = serde_json::from_str(&body).map_err(|e| format!("{url}: {e}"))?;
+    json["sha"].as_str().map(str::to_string).ok_or_else(|| format!("{url}: response had no `sha`"))
+}
+
+/// Fetches and caches each [`CiteSource`]'s current commit and content, so
+/// resolving many citations against the same source hits the network once.
+#[derive(Default)]
+struct CitationResolver {
+    shas: HashMap<String, String>,
+    contents: HashMap<String, String>,
+    sections: Option<BTreeMap<u32, u32>>,
+}
+
+impl CitationResolver {
+    fn source(name: &str) -> Result<&'static CiteSource, String> {
+        CITE_SOURCES.iter().find(|s| s.name == name).ok_or_else(|| format!("unknown citation source `{name}`"))
+    }
+
+    /// Caches `f()`'s result in `map` under `key`, so a repeated lookup skips
+    /// the network; shared by [`Self::sha`] and [`Self::content`].
+    fn cached<'a>(
+        map: &'a mut HashMap<String, String>,
+        key: &str,
+        f: impl FnOnce() -> Result<String, String>,
+    ) -> Result<&'a str, String> {
+        if !map.contains_key(key) {
+            map.insert(key.to_string(), f()?);
+        }
+        Ok(&map[key])
+    }
+
+    fn sha(&mut self, name: &str) -> Result<String, String> {
+        let src = Self::source(name)?;
+        Self::cached(&mut self.shas, name, || github_commit_sha(src.repo, src.git_ref)).map(str::to_string)
+    }
+
+    fn content(&mut self, name: &str) -> Result<&str, String> {
+        let sha = self.sha(name)?;
+        let src = Self::source(name)?;
+        Self::cached(&mut self.contents, name, || {
+            curl(&format!("https://raw.githubusercontent.com/{}/{sha}/{}", src.repo, src.path))
+        })
+    }
+
+    fn sections(&mut self) -> Result<&BTreeMap<u32, u32>, String> {
+        if self.sections.is_none() {
+            let sections = tex_web_sections(self.content("tex.web")?);
+            self.sections = Some(sections);
+        }
+        Ok(self.sections.as_ref().expect("just set"))
+    }
+
+    /// `name`'s GitHub URL at its current commit: a `blob` link to its file,
+    /// or (for a [`CiteKind::Tree`] source) a `tree` link to its directory.
+    fn source_url(&mut self, name: &str, tree: bool) -> Result<String, String> {
+        let sha = self.sha(name)?;
+        let src = Self::source(name)?;
+        Ok(format!("https://github.com/{}/{}/{sha}/{}", src.repo, if tree { "tree" } else { "blob" }, src.path))
+    }
+
+    /// `ref_id` is `tw-N`, `ech-<identifier>`, or one of [`CITE_SOURCES`]'
+    /// own names (the bare, whole-document form).
+    fn resolve(&mut self, ref_id: &str) -> Result<String, String> {
+        if let Some(rest) = ref_id.strip_prefix("tw-") {
+            let n: u32 = rest.parse().map_err(|_| format!("bad citation id `{ref_id}`"))?;
+            let line = *self
+                .sections()?
+                .get(&n)
+                .ok_or_else(|| format!("tex.web § {n}: no such module at the current upstream commit"))?;
+            return Ok(format!("{}#L{line}", self.source_url("tex.web", false)?));
+        }
+        if let Some(identifier) = ref_id.strip_prefix("ech-") {
+            let line = find_identifier_line(self.content("etex.ch")?, identifier).ok_or_else(|| {
+                format!("etex.ch: identifier `{identifier}` not found at the current upstream commit")
+            })?;
+            return Ok(format!("{}#L{line}", self.source_url("etex.ch", false)?));
+        }
+        let src = Self::source(ref_id)?;
+        self.source_url(ref_id, src.kind == CiteKind::Tree)
+    }
+}
+
+static REF_ID_RE: OnceLock<Regex> = OnceLock::new();
+static DEF_LINE_RE: OnceLock<Regex> = OnceLock::new();
+
+fn ref_id_re() -> &'static Regex {
+    REF_ID_RE.get_or_init(|| {
+        let names = CITE_SOURCES.iter().map(|s| regex::escape(s.name)).collect::<Vec<_>>().join("|");
+        Regex::new(&format!(r"\]\[(tw-\d+|ech-[A-Za-z_][A-Za-z0-9_]*|{names})\]")).expect("valid regex")
+    })
+}
+
+fn def_line_re() -> &'static Regex {
+    DEF_LINE_RE.get_or_init(|| Regex::new(r"(?m)^\[([A-Za-z0-9_.-]+)\]:[ \t]*(\S+)[ \t]*$").expect("valid regex"))
+}
+
+/// Re-resolves every `[tw-N]`/`[ech-<identifier>]`/named-source citation
+/// used in `path` against the current upstream commit, and rewrites (or,
+/// with `write: false`, just diffs) that file's `[id]: url` definitions.
+/// Returns whether anything would change; fails outright if any citation
+/// used in the file can no longer be resolved at all.
+fn resolve_file_citations(path: &str, resolver: &mut CitationResolver, write: bool) -> Result<bool, String> {
+    let text = fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut used: Vec<String> = ref_id_re().captures_iter(&text).map(|c| c[1].to_string()).collect();
+    used.sort();
+    used.dedup();
+    let mut new_urls: HashMap<String, String> = HashMap::new();
+    for ref_id in &used {
+        let url = resolver.resolve(ref_id).map_err(|e| format!("{path}: {e}"))?;
+        new_urls.insert(ref_id.clone(), url);
+    }
+    let new_text = def_line_re()
+        .replace_all(&text, |caps: &regex::Captures| match new_urls.get(&caps[1]) {
+            Some(url) => format!("[{}]: {url}", &caps[1]),
+            None => caps[0].to_string(),
+        })
+        .into_owned();
+    let changed = new_text != text;
+    if write && changed {
+        fs::write(path, &new_text).map_err(|e| format!("{path}: {e}"))?;
+    }
+    Ok(changed)
+}
+
+/// The tex.web module -> line table `src/lint/mod.rs` and this binary
+/// embed with `include_str!`, so a normal `satex` build and a normal
+/// `satex-doc` run need no network access: only `--refresh-citations`
+/// (writing it) and `--check-citations` (verifying it is not stale) fetch
+/// tex.web itself.
+const TEX_WEB_SECTIONS_TSV: &str = "doc/src/tex-web-sections.tsv";
+const TEX_WEB_SHA_TXT: &str = "doc/src/tex-web-sha.txt";
+/// Hand-written files (not rendered from a `doc/src/**/*.md.in` template)
+/// that carry their own `[tw-N]:`/`[ech-<identifier>]:` citations.
+const HAND_WRITTEN_CITATION_FILES: &[&str] = &["SEMANTICS.md"];
+
+fn refresh_citations(check_only: bool) -> Result<(), String> {
+    let mut resolver = CitationResolver::default();
+    let sections = resolver.sections()?.clone();
+    let sha = resolver.sha("tex.web")?;
+    let mut tsv = String::new();
+    for (n, line) in &sections {
+        let _ = writeln!(tsv, "{n}\t{line}");
+    }
+    let sha_txt = format!("{sha}\n");
+
+    let stale = fs::read_to_string(TEX_WEB_SECTIONS_TSV).unwrap_or_default() != tsv
+        || fs::read_to_string(TEX_WEB_SHA_TXT).unwrap_or_default() != sha_txt;
+    const RERUN: &str = "run `cargo run --features doc --bin satex-doc -- --refresh-citations`";
+    if check_only && stale {
+        return Err(format!(
+            "{TEX_WEB_SECTIONS_TSV}/{TEX_WEB_SHA_TXT} are stale against the current upstream commit ({sha}); {RERUN}"
+        ));
+    } else if stale {
+        fs::write(TEX_WEB_SECTIONS_TSV, &tsv).map_err(|e| format!("{TEX_WEB_SECTIONS_TSV}: {e}"))?;
+        fs::write(TEX_WEB_SHA_TXT, &sha_txt).map_err(|e| format!("{TEX_WEB_SHA_TXT}: {e}"))?;
+        println!("wrote {TEX_WEB_SECTIONS_TSV}, {TEX_WEB_SHA_TXT} (tex.web trunk {sha}, {} modules)", sections.len());
+    }
+
+    let mut any_changed = false;
+    for path in HAND_WRITTEN_CITATION_FILES {
+        let changed = resolve_file_citations(path, &mut resolver, !check_only)?;
+        any_changed |= changed;
+        if check_only && changed {
+            return Err(format!("{path}: citations resolve differently against the current upstream commit; {RERUN}"));
+        }
+        if !check_only && changed {
+            println!("updated {path}");
+        }
+    }
+
+    if check_only {
+        println!("citations up to date with the current upstream commit");
+    } else if !stale && !any_changed {
+        println!("up to date");
+    }
+    Ok(())
+}
+
 /// One name a citation in the generated docs may use for a [`Source`], and
 /// the URL that name resolves to (always `Source::url()`, never a URL typed
 /// here by hand). `etex_url`/`xetex_url` cover the two names the docs cite
@@ -182,7 +500,7 @@ struct Alias {
     /// Whether the bare name, with no section or quoted title after it, is
     /// still unambiguously a citation. `tex.web` and `pdfTeX manual` only
     /// ever name the document; `xcolor` and `chktex` are also ordinary
-    /// words this repo uses on their own (a colour, a linter), so those
+    /// words this repo uses on their own (a color, a linter), so those
     /// need a section or quote after them before they are worth a link.
     always: bool,
 }
@@ -190,7 +508,7 @@ struct Alias {
 /// eTeX has no [`Source`] variant of its own (nothing in `src/lint/mod.rs`
 /// follows it directly), so its manual's URL is kept here, matching the one
 /// `doc/src/wiki/primitive-coverage.md.in` already cites by hand.
-const ETEX_MANUAL_URL: &str = "https://mirror.ctan.org/systems/e-tex/base/doc/etex_man.pdf";
+const ETEX_MANUAL_URL: &str = "https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf";
 /// Same reasoning as [`ETEX_MANUAL_URL`], for the XeTeX reference.
 const XETEX_REFERENCE_URL: &str = "https://tug.org/xetex/";
 
@@ -293,10 +611,15 @@ fn linkify_citations(markdown: &str) -> String {
     let mut in_fence = false;
     let mut is_run_fence = false;
     let mut fence_content = String::new();
+    // tex.web citations are pinned to an exact line (§ N -> `#L<line>`,
+    // never the whole file), so each one becomes its own reference-style
+    // link; the definitions collected here are appended once, at the end
+    // of the page, sorted by section number.
+    let mut tex_web_refs: BTreeMap<u32, String> = BTreeMap::new();
     for line in markdown.split_inclusive('\n') {
         let trimmed = line.trim_start();
         if trimmed.starts_with("```") {
-            out.push_str(&linkify_prose(&prose, &master, &aliases, &mut last_url));
+            out.push_str(&linkify_prose(&prose, &master, &aliases, &mut last_url, &mut tex_web_refs));
             prose.clear();
             if in_fence {
                 // Closing fence: the opening line (whatever its language tag
@@ -305,7 +628,7 @@ fn linkify_citations(markdown: &str) -> String {
                 // `§`-style citations linked; anything else passes through
                 // byte for byte.
                 if is_run_fence {
-                    let linkified = linkify_prose(&fence_content, &master, &aliases, &mut last_url);
+                    let linkified = linkify_prose(&fence_content, &master, &aliases, &mut last_url, &mut tex_web_refs);
                     out.push_str(&linkified);
                 } else {
                     out.push_str(&fence_content);
@@ -330,20 +653,86 @@ fn linkify_citations(markdown: &str) -> String {
             continue;
         }
         if trimmed.starts_with('#') {
-            out.push_str(&linkify_prose(&prose, &master, &aliases, &mut last_url));
+            out.push_str(&linkify_prose(&prose, &master, &aliases, &mut last_url, &mut tex_web_refs));
             prose.clear();
             last_url = None;
         }
         prose.push_str(line);
     }
-    out.push_str(&linkify_prose(&prose, &master, &aliases, &mut last_url));
+    out.push_str(&linkify_prose(&prose, &master, &aliases, &mut last_url, &mut tex_web_refs));
+    if !tex_web_refs.is_empty() {
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push('\n');
+        for (section, url) in &tex_web_refs {
+            let _ = writeln!(out, "[tw-{section}]: {url}");
+        }
+    }
     out
+}
+
+/// `Source::TeXWeb.url()`, pinned to `section`'s own line via
+/// [`satex::lint::tex_web_section_line`] (the table `Ref::url()` uses for
+/// the same citations found structurally, in a `Rule`'s `references`).
+/// Falls back to the whole file when the number is not a real module (a
+/// version number the citation regex picked up, say), so a citation always
+/// still resolves.
+fn tex_web_url(section: u32) -> String {
+    match satex::lint::tex_web_section_line(section) {
+        Some(line) => format!("{}#L{line}", Source::TeXWeb.url()),
+        None => Source::TeXWeb.url().to_string(),
+    }
+}
+
+/// Every `§`-numbered module in a tex.web citation, in the order it was
+/// written, with whether it is joined to the previous one by a range dash
+/// (`–`/`-`) rather than a comma or "and".
+fn tex_web_numbers(cite: &str) -> Vec<(u32, bool)> {
+    static NUM: OnceLock<Regex> = OnceLock::new();
+    let num_re = NUM.get_or_init(|| Regex::new(r"[0-9]+").expect("valid regex"));
+    let mut out = Vec::new();
+    let mut last_end = 0;
+    for m in num_re.find_iter(cite) {
+        let between = &cite[last_end..m.start()];
+        let is_range = !out.is_empty() && (between.contains('-') || between.contains('\u{2013}'));
+        if let Ok(n) = m.as_str().parse() {
+            out.push((n, is_range));
+        }
+        last_end = m.end();
+    }
+    out
+}
+
+/// Renders a tex.web citation (`prefix` is `"tex.web"` or `""` for a bare
+/// continuation) as one reference-style link per module, recording each
+/// module used in `refs` so [`linkify_citations`] can emit its definition.
+fn tex_web_citation(prefix: &str, cite: &str, refs: &mut BTreeMap<u32, String>) -> Option<String> {
+    let numbers = tex_web_numbers(cite);
+    let (first, _) = *numbers.first()?;
+    let mark = if numbers.len() > 1 { "§§" } else { "§" };
+    let mut out = String::new();
+    let first_label = if prefix.is_empty() { format!("{mark} {first}") } else { format!("{prefix} {mark} {first}") };
+    refs.entry(first).or_insert_with(|| tex_web_url(first));
+    let _ = write!(out, "[{first_label}][tw-{first}]");
+    for &(n, is_range) in &numbers[1..] {
+        out.push_str(if is_range { "\u{2013}" } else { ", " });
+        refs.entry(n).or_insert_with(|| tex_web_url(n));
+        let _ = write!(out, "[{n}][tw-{n}]");
+    }
+    Some(out)
 }
 
 /// The citation-linking pass over one run of non-fenced markdown, threading
 /// `last_url` through so a bare `§ N` after a real citation resolves to the
 /// same source. See [`linkify_citations`] for the forms this handles.
-fn linkify_prose(text: &str, master: &Regex, aliases: &[Alias], last_url: &mut Option<String>) -> String {
+fn linkify_prose(
+    text: &str,
+    master: &Regex,
+    aliases: &[Alias],
+    last_url: &mut Option<String>,
+    tex_web_refs: &mut BTreeMap<u32, String>,
+) -> String {
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
     for caps in master.captures_iter(text) {
@@ -358,17 +747,34 @@ fn linkify_prose(text: &str, master: &Regex, aliases: &[Alias], last_url: &mut O
         } else if let Some(code) = caps.name("code") {
             out.push_str(code.as_str());
         } else if let Some(alias) = caps.name("alias") {
+            // A `/`-preceded match is a URL path segment shown as output
+            // (`https://texdoc.org/serve/source2e/0`), not a citation: a
+            // `\b` word boundary alone does not tell those apart.
+            if text[..m.start()].ends_with('/') {
+                out.push_str(m.as_str());
+                continue;
+            }
             let entry = aliases.iter().find(|a| a.name == alias.as_str()).expect("matched alias is in the table");
-            if entry.always || caps.name("cite").is_some() {
+            let tex_web_cite = (alias.as_str() == "tex.web").then(|| caps.name("cite")).flatten().and_then(|cite| {
+                *last_url = Some(entry.url.clone());
+                tex_web_citation(alias.as_str(), cite.as_str(), tex_web_refs)
+            });
+            if let Some(rendered) = tex_web_cite {
+                out.push_str(&rendered);
+            } else if entry.always || caps.name("cite").is_some() {
                 *last_url = Some(entry.url.clone());
                 out.push_str(&format!("[{}]({})", m.as_str(), entry.url));
             } else {
                 out.push_str(m.as_str());
             }
         } else if let Some(bare) = caps.name("bare") {
-            match last_url {
-                Some(url) => out.push_str(&format!("[{}]({url})", bare.as_str())),
-                None => out.push_str(bare.as_str()),
+            if last_url.as_deref() == Some(Source::TeXWeb.url()) {
+                let rendered = tex_web_citation("", bare.as_str(), tex_web_refs);
+                out.push_str(rendered.as_deref().unwrap_or(bare.as_str()));
+            } else if let Some(url) = &last_url {
+                out.push_str(&format!("[{}]({url})", bare.as_str()));
+            } else {
+                out.push_str(bare.as_str());
             }
         }
     }
@@ -429,6 +835,10 @@ fn expand(directive: &str) -> Result<String, String> {
     }
     if directive == "limits" {
         return limits_table();
+    }
+    if let Some(rest) = directive.strip_prefix("fields:") {
+        let (name, key) = rest.trim().split_once(' ').ok_or_else(|| format!("bad directive: {{{{{directive}}}}}"))?;
+        return fields_text(name, key.trim());
     }
     if let Some(path) = directive.strip_prefix("file:") {
         return inline_file(path.trim());
@@ -996,16 +1406,22 @@ fn source_ref(site: &Site) -> String {
 /// The GitHub URL of the arm that decides a verdict, from `file!()`/`line!()`
 /// and `CARGO_PKG_REPOSITORY`. Pinned to `main`, not to `SATEX_COMMIT`: a
 /// commit in the URL would make this page stale the moment it is committed,
-/// and `tests/docs.rs` compares the checked-in output byte for byte.
+/// and `tests/it/docs.rs` compares the checked-in output byte for byte.
 fn source_url(site: &Site) -> String {
     let repo = env!("CARGO_PKG_REPOSITORY").trim_end_matches('/');
     let file = site.file.replace('\\', "/");
     format!("{repo}/blob/main/{file}#L{}", site.line)
 }
 
-/// `config::Limits`' fields, their `Default` value and their doc comment.
-/// `limits.*` is described in full on the configuration page; every row
-/// links there, so this table only has to give the number.
+/// The `limits` that trade precision for a bounded search: past them a value
+/// goes up the lattice. The others (time, memory, threads, record sizes) only
+/// stop or pace a run and never make a result coarser.
+const PRECISION_LIMITS: &[&str] =
+    &["choices", "paths", "meaning_splits", "widen_after", "recursion_depth", "meaning_set", "value_set"];
+
+/// `config::Limits`' precision fields, their `Default` value and their doc
+/// comment. `limits.*` is described in full on the configuration page; every
+/// row links there, so this table only has to give the number.
 fn limits_table() -> Result<String, String> {
     let source = fs::read_to_string("src/config.rs").map_err(|e| format!("src/config.rs: {e}"))?;
     let fields = struct_doc_fields(&source, "Limits")?;
@@ -1016,7 +1432,7 @@ fn limits_table() -> Result<String, String> {
     let mut out = String::new();
     let _ = writeln!(out, "| setting | default | what it bounds |");
     let _ = writeln!(out, "| --- | --- | --- |");
-    for (name, doc) in fields {
+    for (name, doc) in fields.into_iter().filter(|(name, _)| PRECISION_LIMITS.contains(&name.as_str())) {
         // `ByteSize` prints as "4 GiB"; everything else round-trips through JSON.
         let value = match name.as_str() {
             "memory" => limits.memory.to_string(),
@@ -1034,6 +1450,50 @@ fn limits_table() -> Result<String, String> {
         );
     }
     Ok(out)
+}
+
+/// `{{fields: NAME key}}`: each field of `config::NAME` as `` `key.field`
+/// (default `…`): doc ``, the default read from `Config::default()` at the
+/// dotted `key`.
+fn fields_text(name: &str, key: &str) -> Result<String, String> {
+    fn strip_nulls(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(map) => {
+                map.retain(|_, v| !v.is_null());
+                map.values_mut().for_each(strip_nulls);
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(strip_nulls),
+            _ => {}
+        }
+    }
+    /// A value the way `satex.yaml` would write it, in flow style.
+    fn flow(value: &serde_json::Value) -> String {
+        match value {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Array(items) => format!("[{}]", items.iter().map(flow).collect::<Vec<_>>().join(", ")),
+            serde_json::Value::Object(map) => {
+                format!("{{{}}}", map.iter().map(|(k, v)| format!("{k}: {}", flow(v))).collect::<Vec<_>>().join(", "))
+            }
+            other => other.to_string(),
+        }
+    }
+    let source = fs::read_to_string("src/config.rs").map_err(|e| format!("src/config.rs: {e}"))?;
+    let mut defaults =
+        serde_json::to_value(satex::config::Config::default()).map_err(|e| format!("Config::default(): {e}"))?;
+    strip_nulls(&mut defaults);
+    let block = key
+        .split('.')
+        .try_fold(&defaults, |v, k| v.get(k))
+        .ok_or_else(|| format!("no `{key}` in Config::default()"))?;
+    let mut out = String::new();
+    for (field, doc) in struct_doc_fields(&source, name)? {
+        let value = block.get(&field).map(|v| format!(" (default `{}`)", flow(v))).unwrap_or_default();
+        if doc.is_empty() {
+            return Err(format!("`{name}::{field}` has no doc comment"));
+        }
+        let _ = writeln!(out, "`{key}.{field}`{value}: {doc}\n");
+    }
+    Ok(out.trim_end().to_string())
 }
 
 /// The `pub name: Type,` fields of `struct NAME { ... }` in `source`, each
@@ -1106,8 +1566,10 @@ Some prose.
 
 ```text
 $ satex lint -f samples/paper.tex
-warning: see [tex.web § 211](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) for the rule
+warning: see [tex.web § 211][tw-211] for the rule
 ```
+
+[tw-211]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4220
 ";
         assert_eq!(linkify_citations(markdown), expected);
     }
