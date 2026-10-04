@@ -1,13 +1,63 @@
 //! TeX's basic scanning routines (tex.web part 26): ⟨number⟩, ⟨dimen⟩,
-//! ⟨glue⟩ and keywords, read with `get_x_token` the way `scan_int`,
-//! `scan_dimen`, `scan_glue` and `scan_keyword` read them.  A value satex
-//! cannot know is `None`, but the tokens that spell it are consumed all the
-//! same, so the input stays in step with the engine's.
+//! ⟨glue⟩ and keywords, read with `get_x_token` like `scan_int`,
+//! `scan_dimen`, `scan_glue` and `scan_keyword`. A value satex cannot know
+//! is `None`, but its tokens are still consumed, keeping the input in step
+//! with the engine's.
 
 use crate::builtins::Primitive;
 use crate::machine::Machine;
 use crate::tex::{Catcode, Meaning, RegKind, Span, Sym, Tok, Token};
 use crate::value::{Glue, MAX_DIMEN, MAX_INT, Num, Scaled, Stretch, UNIT, Value, WORD_MAX, WORD_MIN, mult_and_add};
+
+/// The prefix of the names of unknown digits typed with their interval
+/// ([`Machine::digits_in`]).
+pub(crate) const TYPED_DIGITS: &str = "\u{2}unknown digits:";
+
+/// The number places `[i, j)` of a `k`-digit number in `num` spell.
+fn places(num: Num, (k, i, j): (u32, u32, u32)) -> Num {
+    let (p, m) = (10i64.pow(k - j), 10i64.pow(j - i));
+    let (lo, hi) = (num.lo.max(0) / p, num.hi.max(0) / p);
+    match lo / m == hi / m {
+        true => Num::range(lo % m, hi % m),
+        false => Num::range(0, m - 1),
+    }
+}
+
+/// The digits a number in `num` may begin with, after its `-` when it is
+/// negative: those of its non-negative part and of the magnitudes of its
+/// negative part.
+pub(crate) fn first_digits(num: Num) -> Vec<char> {
+    let mut out: Vec<char> = Vec::new();
+    if num.lo < 0 {
+        let negative = Num::range(1.max(num.hi.saturating_neg()), num.lo.saturating_neg());
+        out.extend(first_digits(negative));
+        if num.hi < 0 {
+            return out;
+        }
+    }
+    let (lo, hi) = (num.lo.max(0), num.hi.max(0));
+    if lo == 0 && !out.contains(&'0') {
+        out.push('0');
+    }
+    // Numbers of one length at a time: their first digits are a run.
+    let mut p = 1i64;
+    while p <= hi {
+        let (a, b) = (lo.max(p), hi.min(p.saturating_mul(10) - 1));
+        if a <= b {
+            for d in (a / p)..=(b / p) {
+                let c = char::from(b'0' + d as u8);
+                if !out.contains(&c) {
+                    out.push(c);
+                }
+            }
+        }
+        if p > i64::MAX / 10 {
+            break;
+        }
+        p *= 10;
+    }
+    out
+}
 
 /// tex.web § 438: the radix a constant is written in.
 const DECIMAL: i64 = 10;
@@ -127,8 +177,17 @@ impl Machine<'_> {
     }
 
     /// "Scan an optional space" (tex.web § 443).
+    /// [`Machine::next_x_token`], as paths that join where it ends in the
+    /// scan of a `\romannumeral` ([`Machine::joined_scan`]).
+    fn lookahead_x_token(&mut self) -> Option<Token> {
+        // The joined look ahead (`next_x_token_joined`) is unfinished: it
+        // followed only one arm where paths did not meet, and made every
+        // f-expansion a nested drive. Off until it is sound and cheap.
+        self.next_x_token()
+    }
+
     fn scan_optional_x_space(&mut self) {
-        if let Some(token) = self.next_x_token()
+        if let Some(token) = self.lookahead_x_token()
             && !self.is_spacer(token)
         {
             self.unread(token);
@@ -138,15 +197,15 @@ impl Machine<'_> {
     /// The next non-blank token after expansion.
     fn next_non_blank_x_token(&mut self) -> Option<Token> {
         loop {
-            let token = self.next_x_token()?;
+            let token = self.lookahead_x_token()?;
             if !self.is_spacer(token) {
                 return Some(token);
             }
         }
     }
 
-    /// tex.web § 441: optional signs, spaces between them skipped; returns
-    /// whether they negate and the first token after them.
+    /// tex.web § 441: optional signs, spaces between them skipped.
+    /// Returns whether they negate and the first token after them.
     fn scan_signs(&mut self) -> Option<(bool, Token)> {
         let mut negative = false;
         loop {
@@ -154,10 +213,9 @@ impl Machine<'_> {
             match token.tok {
                 Tok::Chr('-', Catcode::Other) => negative = !negative,
                 Tok::Chr('+', Catcode::Other) => {}
-                // A name a join left one of several macros that each give
-                // signs (pgfmath's `\pgfmath@sign`, empty or `-`): signs
-                // of which it is not known whether they negate, so the
-                // value is unknown and the number is read on.
+                // A name-a-join may resolve to one of several sign macros
+                // (pgfmath's `\pgfmath@sign`, empty or `-`). Not knowing
+                // which makes the negation unknown, so the number is read on.
                 Tok::Cs(sym) if self.signs_only(sym) => self.scan_undecided = true,
                 _ => return Some((negative, token)),
             }
@@ -225,22 +283,30 @@ impl Machine<'_> {
         self.probe_scans(token, "number");
         // Only a register read as the whole number leaves its members to
         // the test that scans it (see `Machine::register_value`).
-        let register = token.cs().is_some_and(|sym| {
-            matches!(self.env.meaning(sym), Meaning::Register(..))
-                || matches!(
-                    self.env.meaning(sym).prim(),
-                    Some(
-                        Primitive::Register(_)
-                            | Primitive::IntegerParameter
-                            | Primitive::DimenParameter
-                            | Primitive::Expr(_)
+        let register = token.tok == Tok::Chr('`', Catcode::Other)
+            || token.cs().is_some_and(|sym| {
+                self.typed_digits_of(sym).is_some()
+                    || matches!(self.env.meaning(sym), Meaning::Register(..))
+                    || matches!(
+                        self.env.meaning(sym).prim(),
+                        Some(
+                            Primitive::Register(_)
+                                | Primitive::LastItem(_)
+                                | Primitive::IntegerParameter
+                                | Primitive::DimenParameter
+                                | Primitive::Expr(_)
+                        )
                     )
-                )
-        });
+            });
         self.abs = None;
+        self.abs_exact = None;
         let magnitude = self.scan_int_from(token).0;
-        let abs = self.abs.take().filter(|_| register && magnitude.is_none());
+        let keep = register && magnitude.is_none();
+
+        let abs = self.abs.take().filter(|_| keep);
+        let exact = self.abs_exact.take().filter(|_| keep && !negative);
         self.abs = abs.map(|num| if negative { num.neg() } else { num });
+        self.abs_exact = exact;
         if negative || self.abs.is_none() {
             self.abs_from = None;
         }
@@ -253,11 +319,55 @@ impl Machine<'_> {
     /// was a decimal constant whose terminating token is back in the input
     /// (the case in which `scan_dimen` looks for a decimal point).
     fn scan_int_from(&mut self, token: Token) -> (Option<i64>, bool) {
-        // A command whose meaning is unknown may be any quantity, or the
-        // digits of any number, which a decimal point may follow.
-        // Unknown digits are read on with the digits after them (the whole
-        // number they are part of is unknown); other unknown text may be
-        // anything, a quantity or digits.
+        // An unknown command may stand for any quantity or for digits that
+        // a decimal point may follow. Unknown digits are read on with the
+        // rest of the number, making the whole number unknown.
+        // Typed unknown digits leave their interval to the test or
+        // assignment, as a register read as the whole number does.
+        if let Some(mut num) = token.cs().and_then(|sym| self.typed_digits_of(sym)) {
+            // Reading on may expand a scan of its own, which leaves its own
+            // interval, so this one is set once the constant has ended.
+            let mut next = self.next_x_token();
+            let mut from = token.cs();
+            // Slices of one number's spelling, in order from its first
+            // place: that number, or the number its first places make.
+            if let Some((whole, k, i, mut j)) = token.cs().and_then(|sym| self.typed_slice(sym)) {
+                while let Some((w, l, i, e)) = next.and_then(|t| self.typed_slice(t.cs()?))
+                    && (w, l, i) == (whole, k, j)
+                {
+                    j = e;
+                    next = self.next_x_token();
+                }
+                if let Some(n) = self.typed_digits_of(whole) {
+                    num = places(n, (k, i, j));
+                    from = (i == 0 && j == k).then_some(whole);
+                }
+            }
+            let more = next.is_some_and(|t| {
+                self.digit(t, DECIMAL).is_some()
+                    || t.tok == Tok::Chr(crate::tex::UNKNOWN_DIGIT, Catcode::Other)
+                    || t.cs().is_some_and(|sym| self.is_unknown_digits(sym))
+            });
+            if more {
+                // More digits after them: any number.
+                let scanned = self.scan_digits(DECIMAL, next);
+                (self.abs, self.abs_exact, self.abs_from) = (None, None, None);
+                return scanned;
+            }
+            // tex.web § 445: one trailing space is part of the constant.
+            let backed_up = match next {
+                Some(t) if self.is_spacer(t) => false,
+                Some(t) => {
+                    self.unread(t);
+                    true
+                }
+                None => true,
+            };
+            // The test that reads it narrows it on each arm, as a register's.
+            let from = from.map(|sym| (sym, crate::value::Quantity::Int));
+            (self.abs, self.abs_exact, self.abs_from) = (Some(num), None, from);
+            return (Some(num.lo).filter(|_| num.lo == num.hi), backed_up);
+        }
         let digits = token.tok == Tok::Cs(self.unknown_digits) || token.tok == Tok::Cs(self.unknown_more);
         if digits {
             return self.scan_digits(DECIMAL, Some(token));
@@ -285,6 +395,8 @@ impl Machine<'_> {
     fn scan_alphabetic_constant(&mut self) -> Option<i64> {
         let token = self.next_token()?;
         let code = match token.tok {
+            // An unknown character has no known code.
+            Tok::Chr(crate::tex::UNKNOWN_DIGIT | crate::tex::UNKNOWN_CHAR, _) => None,
             Tok::Chr(c, _) => Some(c as i64),
             Tok::Cs(sym) => {
                 let mut chars = self.name(sym).chars();
@@ -297,11 +409,39 @@ impl Machine<'_> {
                 self.scan_optional_x_space();
                 Some(code)
             }
+            // One of several characters, or one digit of typed digits: a
+            // code in their hull, left as the interval read ([`Machine::abs`]).
+            None if let Some(codes) = self.char_codes(token) => {
+                self.scan_optional_x_space();
+                (self.abs, self.abs_exact, self.abs_from) = (Some(codes), None, None);
+                None
+            }
             None => {
                 self.unread(token);
                 Some(IMPROPER_ALPHABETIC)
             }
         }
+    }
+
+    /// The codes a token that stands for one character may have.
+    fn char_codes(&self, token: Token) -> Option<Num> {
+        let digit = |t: &Token| {
+            let num = self.typed_digits_of(t.cs()?)?;
+            ((0..=9).contains(&num.lo) && num.hi <= 9).then(|| Num::range(48 + num.lo, 48 + num.hi))
+        };
+        if let Some(codes) = digit(&token) {
+            return Some(codes);
+        }
+        let mut hull: Option<Num> = None;
+        for text in self.one_of_members(token)? {
+            let n = match &*text {
+                [Token { tok: Tok::Chr(c, _), .. }] if !crate::tex::is_unknown_char(*c) => Num::exact(*c as i64),
+                [t] => digit(t)?,
+                _ => return None,
+            };
+            hull = Some(hull.map_or(n, |h| h.join(&n)));
+        }
+        hull
     }
 
     fn digit(&self, token: Token, radix: i64) -> Option<i64> {
@@ -315,8 +455,8 @@ impl Machine<'_> {
     }
 
     /// tex.web §§ 444-445: the digits of a constant, the first possibly read
-    /// already.  One space after them is part of the constant; any other
-    /// token that ends it goes back, and then the second result is true.
+    /// already. One trailing space is part of the constant. Any other
+    /// ending token goes back, and the second result is then true.
     /// Past 2^31-1 TeX says "Number too big" and uses the limit.
     fn scan_digits(&mut self, radix: i64, first: Option<Token>) -> (Option<i64>, bool) {
         let mut value: i64 = 0;
@@ -327,20 +467,24 @@ impl Machine<'_> {
         while let Some(token) = next {
             let digits = match token.tok {
                 Tok::Chr(crate::tex::UNKNOWN_DIGIT, Catcode::Other) => true,
-                Tok::Cs(sym) => sym == self.unknown_digits || sym == self.unknown_more,
+                Tok::Cs(sym) => self.is_unknown_digits(sym),
                 _ => false,
             };
-            // Unknown text after a digit may be more digits, so it is read
-            // on with them and makes the number unknown; it may also be
-            // empty, so it is no digit of its own.
-            let maybe = !digits && any && self.is_unknown(token);
-            if (digits || maybe) && radix == DECIMAL {
+            // Unknown text may be digits, read on and making the number
+            // unknown. It may also be empty, so it is not itself a digit.
+            let maybe = !digits && self.is_unknown(token);
+            if digits || maybe {
                 any |= !maybe && token.tok != Tok::Cs(self.unknown_more);
                 unknown = true;
                 next = self.next_x_token();
                 continue;
             }
             let Some(d) = self.digit(token, radix) else {
+                // Only unknown text so far: it may have been the digits.
+                if !any && unknown {
+                    self.unread(token);
+                    return (None, true);
+                }
                 if !any {
                     self.unread(token);
                     return (self.missing_number(Some(token)), true);
@@ -355,7 +499,7 @@ impl Machine<'_> {
             value = (value * radix + d).min(MAX_INT);
             next = self.next_x_token();
         }
-        if unknown && any {
+        if unknown {
             return (None, false);
         }
         (any.then_some(value).or_else(|| self.missing_number(None)), false)
@@ -395,6 +539,7 @@ impl Machine<'_> {
         let scanned = self.scan_dimen_parts(mu, inf, shortcut);
         if !std::mem::take(&mut self.abs_whole) {
             self.abs = None;
+            self.abs_exact = None;
             self.abs_from = None;
         }
         scanned
@@ -408,6 +553,7 @@ impl Machine<'_> {
             None => {
                 let Some((signs, token)) = self.scan_signs() else { return (None, 0) };
                 self.abs = None;
+                self.abs_exact = None;
                 self.probe_scans(token, if mu { "mudimen" } else { "dimen" });
                 negative = signs;
                 match self.scan_internal(token) {
@@ -422,8 +568,9 @@ impl Machine<'_> {
                         if value.is_some() || kind != RegKind::Dimen {
                             self.abs = None;
                         }
+                        self.abs_exact = None;
                         // `attach_sign` clamps before the sign is attached,
-                        // so the interval is clamped here too; what it
+                        // so the interval is clamped here too. What it
                         // clamped is no longer the register's own value, so
                         // no test may narrow the register by it.
                         if let Some(num) = self.abs.take() {
@@ -468,6 +615,7 @@ impl Machine<'_> {
         let (value, order) = self.scan_units(mu, inf, integer, fraction);
         if negative {
             self.abs = self.abs.take().map(|num| num.neg());
+            self.abs_exact = None;
         }
         (value.map(|v| self.attach_sign(v, negative)), order)
     }
@@ -502,9 +650,104 @@ impl Machine<'_> {
     /// A token whose meaning is unknown: it may stand for any text.
     fn is_unknown(&mut self, token: Token) -> bool {
         let sym = token.cs().or_else(|| self.active_cs(token));
-        sym.is_some_and(|sym| {
-            sym == self.unknown_digits || sym == self.unknown_more || matches!(self.env.meaning(sym), Meaning::Unknown)
-        })
+        let unknown = sym.is_some_and(|sym| {
+            self.is_unknown_digits(sym)
+                || self.is_unknown_name(sym)
+                || matches!(self.env.meaning(sym), Meaning::Unknown)
+        });
+        self.approximated |= unknown;
+        unknown
+    }
+
+    /// Whether `sym` stands for digits that are not known: the plain
+    /// markers, or digits typed with the interval they lie in.
+    pub(crate) fn is_unknown_digits(&self, sym: Sym) -> bool {
+        sym == self.unknown_digits || sym == self.unknown_more || self.name(sym).starts_with(TYPED_DIGITS)
+    }
+
+    /// The interval typed unknown digits lie in.
+    pub(crate) fn typed_digits_of(&self, sym: Sym) -> Option<Num> {
+        if !self.name(sym).starts_with(TYPED_DIGITS) {
+            return None;
+        }
+        // A test may have narrowed it on this path, to one value or few.
+        self.env.slot(sym)?.value.num().map(|(_, num)| num)
+    }
+
+    /// A slice of typed digits: the number it is cut from, the length of
+    /// that number's spelling, and the places `[i, j)` it holds.
+    pub(crate) fn typed_slice(&self, sym: Sym) -> Option<(Sym, u32, u32, u32)> {
+        let (_, cut) = self.name(sym).strip_prefix(TYPED_DIGITS)?.split_once('@')?;
+        let mut it = cut.split(':').map(|x| x.parse::<u32>().ok());
+        Some((Sym(it.next()??), it.next()??, it.next()??, it.next()??))
+    }
+
+    /// Places `[i, j)` of the `k`-digit spelling of the number `whole`
+    /// names, which lies in `num`: one token that a scan joins back to
+    /// `whole` when the slices before and after it stand next to it.
+    pub(crate) fn slice_token(&mut self, whole: Sym, num: Num, (k, i, j): (u32, u32, u32), span: Span) -> Token {
+        let num = places(num, (k, i, j));
+        let sym = self.intern(&format!("{TYPED_DIGITS}{}..{}@{}:{k}:{i}:{j}", num.lo, num.hi, whole.0));
+        if self.env.slot(sym).is_none() {
+            let mut binding = crate::env::Binding::builtin(Meaning::Char(crate::tex::UNKNOWN_CHAR, Catcode::Other));
+            binding.value = Value::Num { quantity: crate::value::Quantity::Int, num };
+            self.env.constant(sym, binding);
+        }
+        Token::new(Tok::Cs(sym), span)
+    }
+
+    /// What TeX may read as the first token of the digits `whole` stands
+    /// for, which lie in `num`: one arm per sign, zero and length, each
+    /// with the interval `whole` has on it and the tokens it spells. In
+    /// an arm of `k > 1` digits these are its first place and the rest,
+    /// slices of `whole` ([`Machine::slice_token`]).
+    pub(crate) fn digit_arms(&mut self, whole: Sym, num: Num, span: Span) -> Vec<(Num, Vec<Token>)> {
+        let mut arms = Vec::new();
+        if num.lo < 0 {
+            let magnitude = Num::range(1.max(num.hi.saturating_neg()), num.lo.saturating_neg());
+            let mut text = self.text_tokens("-", span);
+            text.extend(self.digits_in(magnitude, span));
+            arms.push((Num::range(num.lo, num.hi.min(-1)), text));
+        }
+        if num.lo <= 0 && num.hi >= 0 {
+            arms.push((Num::exact(0), self.text_tokens("0", span)));
+        }
+        for k in 1..=19u32 {
+            let p = 10i64.saturating_pow(k - 1);
+            let (a, b) = (num.lo.max(p), num.hi.min(p.saturating_mul(10) - 1));
+            if a > b {
+                continue;
+            }
+            let part = Num::range(a, b);
+            let text = match k {
+                1 => vec![Token::new(Tok::Cs(whole), span)],
+                _ => {
+                    vec![self.slice_token(whole, part, (k, 0, 1), span), self.slice_token(whole, part, (k, 1, k), span)]
+                }
+            };
+            arms.push((part, text));
+        }
+        arms
+    }
+
+    /// The digits of a number in `num`: the number itself when it is one,
+    /// else one token of unknown digits typed with the interval (its `-`,
+    /// when the number may be negative, is part of the token), which a
+    /// scan reading it back keeps ([`Machine::abs`]), so `\number\numexpr`
+    /// of a bounded value stays bounded through text.
+    pub(crate) fn digits_in(&mut self, num: Num, span: Span) -> Vec<Token> {
+        if num.lo == num.hi {
+            return self.text_tokens(&num.lo.to_string(), span);
+        }
+        // One name per number made: a test that narrows it narrows this
+        // number on its path, never another one with the same interval.
+        let sym = self.intern(&format!("{TYPED_DIGITS}{}..{}#{}", num.lo, num.hi, self.out.interner.len()));
+        if self.typed_digits_of(sym).is_none() {
+            let mut binding = crate::env::Binding::builtin(Meaning::Char(crate::tex::UNKNOWN_CHAR, Catcode::Other));
+            binding.value = Value::Num { quantity: crate::value::Quantity::Int, num };
+            self.env.constant(sym, binding);
+        }
+        vec![Token::new(Tok::Cs(sym), span)]
     }
 
     /// tex.web §§ 453-458: the ⟨unit of measure⟩, applied to
@@ -541,6 +784,7 @@ impl Machine<'_> {
                             crate::value::Num::full(true)
                         })
                     });
+                    self.abs_exact = None;
                     self.abs_from = None;
                     self.abs_whole = self.abs.is_some();
                     return (value, 0);
@@ -550,7 +794,7 @@ impl Machine<'_> {
         }
         if mu {
             // tex.web § 456: "Illegal unit of measure (mu inserted)" when the
-            // keyword is missing; the value is taken as mu either way.
+            // keyword is missing. The value is taken as mu either way.
             self.scan_keyword("mu");
             let value = integer.map(|n| attach_fraction(n, fraction));
             self.scan_optional_x_space();
@@ -658,8 +902,8 @@ impl Machine<'_> {
     }
 
     /// tex.web § 407 (`scan_keyword`): the letters of `keyword`, in either
-    /// case and any category but active, read with expansion; blanks are
-    /// skipped only before the first letter.  On a mismatch everything read
+    /// case and any category but active, read with expansion. Blanks are
+    /// skipped only before the first letter. On a mismatch everything read
     /// goes back.
     pub fn scan_keyword_x(&mut self, keyword: &str) -> bool {
         let mut read: Vec<Token> = Vec::new();
@@ -691,19 +935,15 @@ impl Machine<'_> {
 }
 
 /// tex.web § 460 (`attach_sign`): a magnitude of 2^30 or more is
-/// "Dimension too large" and reads as `\maxdimen`, whatever its sign — so
-/// the clamp is not monotone and an interval that passes it may only be
+/// "Dimension too large" and reads as `\maxdimen`, whatever its sign.
+/// The clamp is not monotone, so an interval that passes it may only be
 /// `\maxdimen`.
 fn clamp_dimen(num: &Num) -> Num {
-    let clamp = |v: i64| if v.abs() >= DIMEN_LIMIT { MAX_DIMEN } else { v };
-    if let Some(set) = &num.set {
-        return Num::of_set(set.iter().map(|&v| clamp(v)).collect());
-    }
     if num.lo > -DIMEN_LIMIT && num.hi < DIMEN_LIMIT {
-        return num.clone();
+        return *num;
     }
     let (lo, hi) = (num.lo.max(-MAX_DIMEN), num.hi.min(MAX_DIMEN));
-    if lo > hi { Num::exact(MAX_DIMEN) } else { Num::range(lo, hi).join(&Num::exact(MAX_DIMEN), usize::MAX) }
+    if lo > hi { Num::exact(MAX_DIMEN) } else { Num::range(lo, hi).join(&Num::exact(MAX_DIMEN)) }
 }
 
 /// tex.web § 453 (`attach_fraction`): an integer part of 2^14 points or
@@ -759,8 +999,8 @@ fn quotient(n: i64, d: i64) -> Option<i64> {
     Some(if negative { -a } else { a })
 }
 
-/// `x*n/d` rounded, ties away from zero, on unbounded integers; `None`
-/// for `d = 0`.
+/// `x*n/d` rounded, ties away from zero, on unbounded integers.
+/// `None` for `d = 0`.
 fn fract_ideal(x: i64, n: i64, d: i64) -> Option<i64> {
     if d == 0 {
         return None;
@@ -794,7 +1034,7 @@ fn normalize_glue(mut g: Glue) -> Glue {
 /// An abstract step of `scan_expr` settled the way `num_error` settles a
 /// concrete one: an error makes the value 0 and the whole expression 0.
 /// `err` is (may err, must err).
-fn settle((num, may): (Option<Num>, bool), members: usize, err: &mut (bool, bool)) -> Num {
+fn settle((num, may): (Option<Num>, bool), err: &mut (bool, bool)) -> Num {
     match num {
         None => {
             *err = (true, true);
@@ -802,7 +1042,7 @@ fn settle((num, may): (Option<Num>, bool), members: usize, err: &mut (bool, bool
         }
         Some(num) if may => {
             err.0 = true;
-            num.join(&Num::exact(0), members)
+            num.join(&Num::exact(0))
         }
         Some(num) => num,
     }
@@ -812,15 +1052,49 @@ fn unbounded() -> (i64, i64) {
     (i64::MIN, i64::MAX)
 }
 
+/// One abstract step of `scan_expr`: the exact result over every
+/// combination of bounded exact operands, while there are few enough
+/// (`Num::lift_points`, the set lift applied to the running example), else
+/// the interval result on their hulls (`Num::lift`, then [`settle`]). An
+/// error joins in a definite zero either way, the way `settle` already does
+/// for intervals.
+#[allow(clippy::too_many_arguments)]
+fn step(
+    nums: &[&Num],
+    points: &[Option<&[i64]>],
+    members: usize,
+    range: (i64, i64),
+    wrap: bool,
+    exact: impl Fn(&[i64]) -> Option<i64>,
+    ideal: impl Fn(&[i64]) -> Option<i64>,
+    err: &mut (bool, bool),
+) -> (Num, Option<Vec<i64>>) {
+    if let Some(sets) = points.iter().copied().collect::<Option<Vec<&[i64]>>>()
+        && let Some((mut out, any_err)) = Num::lift_points(&sets, members, &exact)
+    {
+        if any_err {
+            err.0 = true;
+            if !out.contains(&0) {
+                out.push(0);
+            }
+        }
+        if out.len() <= members {
+            out.sort_unstable();
+            return (Num::range(out[0], out[out.len() - 1]), Some(out));
+        }
+    }
+    (settle(Num::lift(nums, range, wrap, exact, ideal), err), None)
+}
+
 impl Machine<'_> {
     /// e-TeX's `scan_expr`: `\numexpr`, `\dimexpr`, `\glueexpr`,
     /// `\muexpr` (etex.ch "Declare procedures needed for expressions").
-    /// Overflow anywhere makes the whole expression zero, with "Arithmetic
-    /// overflow".  Alongside the concrete evaluation the natural widths of
-    /// the count and dimension levels are evaluated on intervals
-    /// ([`Num::lift`]), so `\numexpr` of registers of unknown value is the
-    /// interval of its results (0 joined when some may overflow); a glue
-    /// expression with an unknown operand is unknown.
+    /// Overflow anywhere zeroes the whole expression, with "Arithmetic
+    /// overflow". Alongside the concrete evaluation, count and dimen levels
+    /// are also evaluated on intervals ([`Num::lift`]), so `\numexpr` of an
+    /// unknown register is the interval of its results, joined with 0 when
+    /// some may overflow. A glue expression with an unknown operand is
+    /// unknown.
     pub(crate) fn scan_expr(&mut self, kind: RegKind) -> Value {
         struct Frame {
             l: RegKind,
@@ -832,6 +1106,9 @@ impl Machine<'_> {
             ea: Num,
             ta: Num,
             na: Num,
+            ea_x: Option<Vec<i64>>,
+            ta_x: Option<Vec<i64>>,
+            na_x: Option<Vec<i64>>,
         }
         let level = |k: RegKind| match k {
             RegKind::Count => 0,
@@ -846,19 +1123,22 @@ impl Machine<'_> {
         let mut err = (false, false);
         let mut unknown = false;
         let zero = Glue::default();
-        let (e, ea) = 'restart: loop {
+        let (e, ea, ea_x) = 'restart: loop {
             let (mut r, mut e, mut s, mut t, mut n) = (ExprOp::None, zero, ExprOp::None, zero, 0i64);
             let (mut ea, mut ta, mut na) = (Num::exact(0), Num::exact(0), Num::exact(0));
+            let (mut ea_x, mut ta_x, mut na_x) = (Some(vec![0i64]), Some(vec![0i64]), Some(vec![0i64]));
             'next: loop {
                 let o_level = if s == ExprOp::None { l } else { RegKind::Count };
-                let Some(token) = self.next_non_blank_x_token() else { break 'restart (e, ea) };
+                let Some(token) = self.next_non_blank_x_token() else { break 'restart (e, ea, ea_x) };
                 if token.is_char('(') && token.is_cat(Catcode::Other) {
-                    stack.push(Frame { l, s, r, e, t, n, ea, ta, na });
+                    stack.push(Frame { l, s, r, e, t, n, ea, ta, na, ea_x, ta_x, na_x });
                     l = o_level;
                     continue 'restart;
                 }
                 self.unread(token);
                 self.abs = None;
+                self.abs_exact = None;
+                self.abs_from = None;
                 let f = match o_level {
                     RegKind::Count => self.scan_int().map(|v| Glue { width: v, ..zero }),
                     RegKind::Dimen => self.scan_dimension().map(|v| Glue { width: v, ..zero }),
@@ -866,12 +1146,20 @@ impl Machine<'_> {
                     _ => self.scan_glue_spec(true),
                 };
                 // A register of unknown value leaves its interval; anything
-                // else unknown may be any 32-bit number.
+                // else unknown may be any 32-bit number. A register (or
+                // sub-expression) a join left one of a few exact values
+                // keeps them (`fa_x`), the set lift for the arithmetic below.
+                let mut fa_x = match &f {
+                    Some(g) => Some(vec![g.width]),
+                    None => self.abs_exact.take(),
+                };
                 let mut fa = match &f {
                     Some(g) => Num::exact(g.width),
                     None => self.abs.take().unwrap_or_else(|| Num::range(WORD_MIN, WORD_MAX)),
                 };
+
                 self.abs = None;
+                self.abs_exact = None;
                 let mut f = f.unwrap_or_else(|| {
                     unknown = true;
                     zero
@@ -915,16 +1203,14 @@ impl Machine<'_> {
                         arith = true;
                         f = zero;
                     }
-                    fa = settle(
-                        Num::lift(
-                            &[&fa],
-                            members,
-                            unbounded(),
-                            false,
-                            |v| (v[0].abs() <= limit).then_some(v[0]),
-                            |v| (v[0].abs() <= limit).then_some(v[0]),
-                        ),
+                    (fa, fa_x) = step(
+                        &[&fa],
+                        &[fa_x.as_deref()],
                         members,
+                        unbounded(),
+                        false,
+                        |v| (v[0].abs() <= limit).then_some(v[0]),
+                        |v| (v[0].abs() <= limit).then_some(v[0]),
                         &mut err,
                     );
                     let mut num_error = |v: Option<i64>| {
@@ -944,47 +1230,52 @@ impl Machine<'_> {
                         ExprOp::None => {
                             t = if lv >= 2 && o != ExprOp::None { normalize_glue(f) } else { f };
                             ta = fa.clone();
+                            ta_x = fa_x.clone();
                         }
                         ExprOp::Mult if o == ExprOp::Div => {
                             n = f.width;
                             na = fa.clone();
+                            na_x = fa_x.clone();
                             o = ExprOp::Scale;
                         }
                         ExprOp::Mult => {
                             t = each(t, &mut |x| num_error(mult_and_add(x, f.width, 0, max)));
-                            let lifted = Num::lift(
+                            (ta, ta_x) = step(
                                 &[&ta, &fa],
+                                &[ta_x.as_deref(), fa_x.as_deref()],
                                 members,
                                 (-max, max),
                                 false,
                                 |v| mult_and_add(v[0], v[1], 0, max),
                                 |v| Some(v[0] * v[1]),
+                                &mut err,
                             );
-                            ta = settle(lifted, members, &mut err);
                         }
                         ExprOp::Div => {
                             t = each(t, &mut |x| num_error(quotient(x, f.width)));
-                            let lifted = Num::lift(
+                            (ta, ta_x) = step(
                                 &[&ta, &fa],
+                                &[ta_x.as_deref(), fa_x.as_deref()],
                                 members,
                                 unbounded(),
                                 false,
                                 |v| quotient(v[0], v[1]),
                                 |v| quotient(v[0], v[1]),
+                                &mut err,
                             );
-                            ta = settle(lifted, members, &mut err);
                         }
                         ExprOp::Scale => {
                             t = each(t, &mut |x| num_error(fract(x, n, f.width, max)));
-                            let lifted = Num::lift(
+                            (ta, ta_x) = step(
                                 &[&ta, &na, &fa],
+                                &[ta_x.as_deref(), na_x.as_deref(), fa_x.as_deref()],
                                 members,
                                 (-max, max),
                                 false,
                                 |v| fract(v[0], v[1], v[2], max),
                                 |v| fract_ideal(v[0], v[1], v[2]),
+                                &mut err,
                             );
-                            ta = settle(lifted, members, &mut err);
                         }
                         ExprOp::Add | ExprOp::Sub => {}
                     }
@@ -997,18 +1288,20 @@ impl Machine<'_> {
                         if r == ExprOp::None {
                             e = t;
                             ea = ta.clone();
+                            ea_x = ta_x.clone();
                         } else {
                             let max = if lv == 0 { INFINITY } else { MAX_DIMEN };
                             e.width = num_error(add_or_sub(e.width, t.width, max, sub));
-                            let lifted = Num::lift(
+                            (ea, ea_x) = step(
                                 &[&ea, &ta],
+                                &[ea_x.as_deref(), ta_x.as_deref()],
                                 members,
                                 (-max, max),
                                 false,
                                 |v| add_or_sub(v[0], v[1], max, sub),
                                 |v| Some(if sub { v[0] - v[1] } else { v[0] + v[1] }),
+                                &mut err,
                             );
-                            ea = settle(lifted, members, &mut err);
                             if lv >= 2 {
                                 // e-TeX's quirk: a higher order replaces a
                                 // lower one unnegated, even when subtracted.
@@ -1027,10 +1320,11 @@ impl Machine<'_> {
                     if o != ExprOp::None {
                         continue 'next;
                     }
-                    let Some(saved) = stack.pop() else { break 'restart (e, ea) };
+                    let Some(saved) = stack.pop() else { break 'restart (e, ea, ea_x) };
                     f = e;
                     fa = ea;
-                    Frame { l, s, r, e, t, n, ea, ta, na } = saved;
+                    fa_x = ea_x;
+                    Frame { l, s, r, e, t, n, ea, ta, na, ea_x, ta_x, na_x } = saved;
                     continue 'found;
                 }
             }
@@ -1043,21 +1337,29 @@ impl Machine<'_> {
                 "arithmetic overflow".into(),
             );
         }
-        let dimen = match kind {
-            RegKind::Count => false,
-            RegKind::Dimen => true,
+        let quantity = match kind {
+            RegKind::Count => crate::value::Quantity::Int,
+            RegKind::Dimen => crate::value::Quantity::Dimen,
             _ if unknown => return Value::Unknown,
             _ => {
                 let e = if arith { zero } else { e };
                 return if kind == RegKind::Skip { Value::Glue(e) } else { Value::MuGlue(e) };
             }
         };
+        if !err.1
+            && let Some(members) = ea_x
+        {
+            return match members[..] {
+                [n] => Value::from_num(quantity, Num::exact(n)),
+                _ => Value::OneOf(members.into_iter().map(|n| Value::from_num(quantity, Num::exact(n))).collect()),
+            };
+        }
         let num = match err {
             (_, true) => Num::exact(0),
-            (true, false) => ea.join(&Num::exact(0), members),
+            (true, false) => ea.join(&Num::exact(0)),
             _ => ea,
         };
-        Value::from_num(dimen, num)
+        Value::from_num(quantity, num)
     }
 }
 
@@ -1069,16 +1371,15 @@ mod tests {
     const EDGES: [i64; 14] =
         [0, 1, -1, 7, -7, 1 << 15, 46341, 65536, MAX_DIMEN, -MAX_DIMEN, WORD_MAX, WORD_MIN, WORD_MIN + 1, 1 << 30];
 
-    /// Intervals around TeX's edge values, as ranges and as sets.
+    /// Intervals around TeX's edge values, each with the concrete values it
+    /// stands for.
     fn boxes() -> Vec<(Num, Vec<i64>)> {
         let mut out = Vec::new();
         for &c in &EDGES {
             for w in [0i64, 1, 3, 9] {
                 let lo = (c - w).max(WORD_MIN);
                 let hi = (c + w).min(WORD_MAX);
-                let all: Vec<i64> = (lo..=hi).collect();
-                out.push((Num::range(lo, hi), all.clone()));
-                out.push((Num { lo, hi, set: Some(vec![lo, hi]) }, vec![lo, hi]));
+                out.push((Num::range(lo, hi), (lo..=hi).collect()));
             }
         }
         out
@@ -1096,8 +1397,7 @@ mod tests {
             match exact(&c) {
                 Some(v) => {
                     let num = got.0.as_ref().unwrap_or_else(|| panic!("{c:?} gives {v}, abstract says error"));
-                    let inside = num.lo <= v && v <= num.hi && num.set.as_ref().is_none_or(|s| s.contains(&v));
-                    assert!(inside, "{c:?} gives {v}, not in {num:?}");
+                    assert!(num.lo <= v && v <= num.hi, "{c:?} gives {v}, not in {num:?}");
                 }
                 None => assert!(got.1, "{c:?} errs, not flagged"),
             }
@@ -1114,7 +1414,7 @@ mod tests {
                              wrap_: bool,
                              exact: &dyn Fn(&[i64]) -> Option<i64>,
                              ideal: &dyn Fn(&[i64]) -> Option<i64>| {
-                    let got = Num::lift(&[&a.0, &b.0], 64, range, wrap_, exact, ideal);
+                    let got = Num::lift(&[&a.0, &b.0], range, wrap_, exact, ideal);
                     sound(&two, &got, exact);
                 };
                 // \advance, \multiply (count and dimen), \divide.
@@ -1141,7 +1441,7 @@ mod tests {
             for b in &few {
                 for d in &few {
                     let exact = |v: &[i64]| fract(v[0], v[1], v[2], MAX_DIMEN);
-                    let got = Num::lift(&[&a.0, &b.0, &d.0], 64, (-MAX_DIMEN, MAX_DIMEN), false, exact, |v| {
+                    let got = Num::lift(&[&a.0, &b.0, &d.0], (-MAX_DIMEN, MAX_DIMEN), false, exact, |v| {
                         fract_ideal(v[0], v[1], v[2])
                     });
                     sound(&[a, b, d], &got, &exact);
