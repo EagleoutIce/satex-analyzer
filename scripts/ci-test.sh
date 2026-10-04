@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Runs one shard of the integration test suite.  The shards are balanced by
-# how long their targets take; `rest` is every target the other shards do not
-# claim, so a new test file lands in a shard instead of being dropped.
+# Runs one shard of the integration test suite.  All integration tests build
+# into one binary (`tests/it/main.rs`, one `mod` per former test file), so
+# shards select by module path instead of by `--test` target.  The shards are
+# balanced by how long their modules take; `rest` is every module the other
+# shards do not claim, so a new test file lands in a shard instead of being
+# dropped.
 set -euo pipefail
 
 usage() {
@@ -9,7 +12,7 @@ usage() {
     exit 2
 }
 
-# `package_cache` interprets the kernel twice; the `slow` targets each drive
+# `package_cache` interprets the kernel twice; the `slow` modules each drive
 # the engine or a whole installation.  Together they are half the wall time.
 CACHE_SHARD=(package_cache)
 SLOW_SHARD=(no_hang l3build build_lints mutation corpus)
@@ -20,34 +23,42 @@ COMPLIANCE_SHARD=(compliance_matrix)
 cd "$(dirname "$0")/.."
 
 all=()
-for file in tests/*.rs; do
-    all+=("$(basename "$file" .rs)")
+for file in tests/it/*.rs; do
+    name="$(basename "$file" .rs)"
+    [[ "$name" == "main" ]] && continue
+    all+=("$name")
 done
 
 claimed=("${CACHE_SHARD[@]}" "${SLOW_SHARD[@]}" "${COMPLIANCE_SHARD[@]}")
 for target in "${claimed[@]}"; do
-    [[ " ${all[*]} " == *" $target "* ]] || { echo "$0: no tests/$target.rs; fix the shards" >&2; exit 1; }
+    [[ " ${all[*]} " == *" $target "* ]] || { echo "$0: no tests/it/$target.rs; fix the shards" >&2; exit 1; }
 done
 
-args=()
+run_lib=0
 case "${1-}" in
-    cache) targets=("${CACHE_SHARD[@]}") ;;
-    slow) targets=("${SLOW_SHARD[@]}") ;;
-    compliance) targets=("${COMPLIANCE_SHARD[@]}") ;;
+    cache) modules=("${CACHE_SHARD[@]}") ;;
+    slow) modules=("${SLOW_SHARD[@]}") ;;
+    compliance) modules=("${COMPLIANCE_SHARD[@]}") ;;
     rest)
-        targets=()
+        modules=()
         for target in "${all[@]}"; do
-            [[ " ${claimed[*]} " == *" $target "* ]] || targets+=("$target")
+            [[ " ${claimed[*]} " == *" $target "* ]] || modules+=("$target")
         done
-        # The unit tests are quick and ride along with the small targets.
-        args+=(--lib)
+        # The unit tests are quick and ride along with the small modules.
+        # A filter after `--` applies to every target in the invocation, so
+        # `--lib` gets its own unfiltered `cargo test` call.
+        run_lib=1
         ;;
     *) usage ;;
 esac
 
-for target in "${targets[@]}"; do
-    args+=(--test "$target")
+filters=()
+for module in "${modules[@]}"; do
+    filters+=("${module}::")
 done
 
 set -x
-cargo test --locked --profile "${CARGO_PROFILE:-ci}" --features doc --no-fail-fast "${args[@]}"
+if [[ "$run_lib" == 1 ]]; then
+    cargo test --locked --profile "${CARGO_PROFILE:-ci}" --features doc --no-fail-fast --lib
+fi
+cargo test --locked --profile "${CARGO_PROFILE:-ci}" --features doc --no-fail-fast --test it -- "${filters[@]}"

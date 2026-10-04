@@ -1,3 +1,6 @@
 [env]
 LUA_LIB_NAME = "lua53"
 LUA_LINK = "static"
+# Test threads get the 8 MiB the binary's main thread has: a kernel build
+# nests `drive` per command and needs more than the 2 MiB test default.
+RUST_MIN_STACK = "8388608"
