@@ -188,6 +188,28 @@ pub fn effective(variable: &'static str, project: &Project, config_value: &[Stri
     Effective { variable, raw: String::new(), source: Source::Unset, dirs: Vec::new() }
 }
 
+/// The directory the build writes to, which TeX searches first for a
+/// relative name it opens (web2c `open_input`, `-output-directory`).
+#[derive(Clone, Debug)]
+pub struct OutputDir {
+    pub raw: String,
+    pub source: Source,
+    pub dir: PathBuf,
+}
+
+/// The output directory: the project's build files (`$aux_dir`, `$out_dir`,
+/// an `-output-directory=` flag), then `config_value` (`paths.output_directory`
+/// in `satex.yaml`).  `TEXMFOUTPUT` is not read: web2c only uses it to allow
+/// writes, not to search.  Relative values resolve against `cwd`.
+pub fn output_dir(project: &Project, config_value: &str, cwd: &Path) -> Option<OutputDir> {
+    let (raw, source) = project.output_dir().or_else(|| {
+        let value = config_value.trim();
+        (!value.is_empty()).then(|| (value.to_string(), Source::Config))
+    })?;
+    let dir = cwd.join(&raw);
+    Some(OutputDir { raw, source, dir })
+}
+
 /// Every tracked variable, resolved for `project`/`config`/`cwd`, in
 /// [`VARIABLES`] order.
 pub fn effective_all(project: &Project, config: &crate::config::PathsConfig, cwd: &Path) -> Vec<Effective> {

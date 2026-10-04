@@ -46,10 +46,15 @@ impl Project {
             if !path.is_file() {
                 continue;
             }
-            let settings = match tool {
+            let mut settings = match tool {
                 "latexmk" => latexmk_settings(&path),
                 _ => Vec::new(),
             };
+            if matches!(tool, "latexmk" | "make")
+                && let Some(dir) = std::fs::read_to_string(&path).ok().as_deref().and_then(output_directory_flag)
+            {
+                settings.push((OUTPUT_FLAG.to_string(), dir));
+            }
             let paths = match tool {
                 "latexmk" => latexmkrc_paths(&path),
                 "make" => makefile_paths(&path),
@@ -99,6 +104,21 @@ impl Project {
             }
         }
         None
+    }
+
+    /// The directory the build writes its output to, as the build files spell it
+    /// and where it was read: latexmk's `$aux_dir`, then `$out_dir`, then an
+    /// `-output-directory=` flag in a latexmkrc or Makefile.  `$aux_dir` is first
+    /// because TeX Live's latexmk passes it as `-output-directory` when set.
+    pub fn output_dir(&self) -> Option<(String, crate::paths::Source)> {
+        ["aux_dir", "out_dir", OUTPUT_FLAG].iter().find_map(|key| {
+            self.files.iter().find_map(|file| {
+                let (_, value) = file.settings.iter().find(|(name, _)| name == key)?;
+                let source =
+                    if file.tool == "latexmk" { crate::paths::Source::Latexmkrc } else { crate::paths::Source::Make };
+                (!value.is_empty()).then(|| (value.clone(), source))
+            })
+        })
     }
 
     /// Where a build finds the files the project itself provides, beyond the
@@ -152,7 +172,7 @@ impl Project {
 
 /// The latexmk settings that change what the run is: the engine selector and
 /// the programs it names (latexmk manual, "List of configuration variables").
-const LATEXMK_KEYS: [&str; 5] = ["pdf_mode", "pdflatex", "lualatex", "xelatex", "latex"];
+const LATEXMK_KEYS: [&str; 7] = ["pdf_mode", "pdflatex", "lualatex", "xelatex", "latex", "out_dir", "aux_dir"];
 
 /// latexmk rc is Perl; only plain `$key = value;` can be read without running it.
 fn latexmk_settings(path: &Path) -> Vec<(String, String)> {
@@ -171,6 +191,32 @@ fn latexmk_settings(path: &Path) -> Vec<(String, String)> {
         out.push((key.to_string(), value.to_string()));
     }
     out
+}
+
+/// Settings key for an output-directory flag found in a build file's text.
+const OUTPUT_FLAG: &str = "output_directory";
+
+/// The value of an `-output-directory=dir`, `--output-directory dir`,
+/// `-outdir=dir` or `-auxdir=dir` flag in `text`, quotes stripped.  A value
+/// built from a variable (`$(OUT)`) cannot be read without running the build.
+fn output_directory_flag(text: &str) -> Option<String> {
+    let mut words = text.split_whitespace();
+    while let Some(word) = words.next() {
+        let Some(flag) = word.strip_prefix("--").or_else(|| word.strip_prefix('-')) else { continue };
+        let (name, inline) = match flag.split_once('=') {
+            Some((name, value)) => (name, Some(value)),
+            None => (flag, None),
+        };
+        if !matches!(name, "output-directory" | "outdir" | "auxdir") {
+            continue;
+        }
+        let value = inline.or_else(|| words.clone().next())?;
+        let value = value.trim_matches(['"', '\'', ';', ')']);
+        if !value.is_empty() && !value.contains('$') {
+            return Some(value.to_string());
+        }
+    }
+    None
 }
 
 /// A `'…'`/`"…"` literal's contents, unquoted; `None` when `text` does not

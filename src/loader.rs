@@ -20,6 +20,8 @@ fn extensions(kind: LoadKind) -> &'static [&'static str] {
 /// command.
 pub struct Resolver {
     local: Vec<PathBuf>,
+    /// The build's output directory, searched first for a relative name.
+    output: Option<PathBuf>,
     request: Request,
     /// Built on first lookup (lazy: resolving nothing avoids indexing cost).
     trees: OnceCell<Trees>,
@@ -35,12 +37,19 @@ impl Resolver {
     pub fn new(local: Vec<PathBuf>, request: Request) -> Self {
         Self {
             local,
+            output: None,
             request,
             trees: OnceCell::new(),
             cache: HashMap::new(),
             unpacked: Default::default(),
             case_mismatches: RefCell::new(HashMap::new()),
         }
+    }
+
+    /// Like web2c with `-output-directory`: a relative name is tried in `dir` first.
+    pub fn with_output(mut self, dir: Option<PathBuf>) -> Self {
+        self.output = dir;
+        self
     }
 
     pub fn with_unpacked(mut self, unpacked: std::collections::BTreeMap<String, (PathBuf, Vec<String>)>) -> Self {
@@ -93,7 +102,10 @@ impl Resolver {
     fn search_internal(&self, name: &str, kind: LoadKind, base: &Path) -> Option<PathBuf> {
         let candidates = candidates(name, kind);
         for file in &candidates {
-            for directory in std::iter::once(base).chain(self.local.iter().map(PathBuf::as_path)) {
+            let output = self.output.as_deref().filter(|_| !Path::new(file).is_absolute());
+            for directory in
+                output.into_iter().chain(std::iter::once(base)).chain(self.local.iter().map(PathBuf::as_path))
+            {
                 if let Some(path) = exact_file(directory, file, HOST) {
                     return Some(path);
                 }

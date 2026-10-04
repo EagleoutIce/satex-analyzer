@@ -166,7 +166,7 @@ pub fn current_table(m: &mut Machine) -> i64 {
 /// `\luatexversion` of the installed engine, as `luatex --version` states
 /// it: version 1.24.0 is 124.
 pub fn engine_version(cfg: &crate::config::Config) -> Option<i64> {
-    let cache = cfg.cache.then(|| cfg.cache_dir.clone().or_else(crate::format::default_cache_dir)).flatten();
+    let cache = crate::format::enabled_cache_dir(cfg);
     let answer = crate::distribution::probed("luatex", "version", cache.as_deref(), || {
         let Ok(output) = std::process::Command::new("luatex").arg("--version").output() else {
             return Vec::new();

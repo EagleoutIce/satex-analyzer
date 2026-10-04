@@ -345,12 +345,9 @@ fn enter_environment(machine: &mut Machine, env: Sym) {
 
 fn sandbox_config(base: &Config) -> Config {
     Config {
-        load_packages: false,
-        load_classes: false,
-        load_inputs: false,
-        load_format: false,
-        use_kpsewhich: false,
-        cache: false,
+        load: crate::config::Load { packages: false, classes: false, inputs: false, format: false, skip: Vec::new() },
+        texmf: crate::config::Texmf { kpsewhich: false, ..base.texmf.clone() },
+        cache: crate::config::Cache { enabled: false, ..base.cache.clone() },
         record_arguments: false,
         verbose: 0,
         trace: false,

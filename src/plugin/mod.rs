@@ -175,10 +175,9 @@ impl Plugins {
                 (Some(provider), None)
             }
             None => {
-                let detected = cfg.use_kpsewhich.then(Provider::detect).flatten();
+                let detected = cfg.texmf.kpsewhich.then(Provider::detect).flatten();
                 note(Kind::Provider, if detected.is_some() { "detected" } else { "none found" });
-                let cache =
-                    cfg.cache.then(|| cfg.cache_dir.clone().or_else(crate::format::default_cache_dir)).flatten();
+                let cache = crate::format::enabled_cache_dir(cfg);
                 let version = detected.and_then(|p| p.version(cache.as_deref()));
                 (detected, version)
             }
