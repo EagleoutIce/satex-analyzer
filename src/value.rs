@@ -13,7 +13,7 @@ pub const MAX_DIMEN: Scaled = (1 << 30) - 1;
 /// tex.web § 445: `scan_int` refuses to go past this and says "Number too
 /// big", using the limit itself in place of what was written.
 pub const MAX_INT: i64 = (1 << 31) - 1;
-/// The range of TeX's `integer` (32 bits in web2c).  Additions without an
+/// The range of TeX's `integer` (32 bits in web2c). Additions without an
 /// overflow check (`\advance`, tex.web § 1238) wrap within it, so a count
 /// or dimension register may hold any of these.
 pub const WORD_MIN: i64 = i32::MIN as i64;
@@ -106,6 +106,26 @@ pub struct Glue {
     pub shrink: Stretch,
 }
 
+/// What kind of TeX quantity an abstract number stands for. A count and a
+/// dimension are one [`Num`] (`Value::Num`); glue and muglue have
+/// components (tex.web § 150), so their abstract form is one [`Num`] per
+/// component ([`Value::GlueNum`]). The tag names the family both share.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum Quantity {
+    Int,
+    Dimen,
+    Glue,
+    MuGlue,
+}
+
+impl Quantity {
+    /// Whether the quantity is measured in scaled points, so its full
+    /// range is `±MAX_DIMEN` rather than `±MAX_INT`.
+    pub fn is_dimen(self) -> bool {
+        !matches!(self, Quantity::Int)
+    }
+}
+
 /// The value a `\count`/`\dimen`/`\skip`/`\toks`-family register can hold, or
 /// `Unknown` when the interpreter cannot pin it down.
 /// [`crate::env::Env::value`] reads one per [`crate::tex::Sym`].
@@ -118,42 +138,53 @@ pub enum Value {
     Toks(Rc<[Token]>),
     #[default]
     Unknown,
-    /// A colour, as xcolor stores one in `\\color@⟨name⟩` (xcolor § 2.5).
+    /// A color, as xcolor stores one in `\\color@⟨name⟩` (xcolor § 2.5).
     Color(Colors),
-    /// A count (`dimen: false`) or dimension whose value is not known but
-    /// lies in an interval, and is one of a few values when `set` says so:
-    /// what a join, arithmetic on such a value, or a typesetting result
-    /// leaves.  Read as a number it is unknown ([`crate::env::Env::value`]
-    /// reads it so). A test that looks at it decides by the interval.
-    Range {
-        dimen: bool,
+    /// A count or dimension whose value is not known but lies in an
+    /// interval: what a join past `limits.value_set`, arithmetic on such a
+    /// value, or a typesetting result leaves. Read as a number it is
+    /// unknown ([`crate::env::Env::value`] reads it so). A test that looks
+    /// at it decides by the interval.
+    Num {
+        quantity: Quantity,
         num: Num,
     },
+    /// A glue or muglue whose components are not known exactly: one
+    /// interval per component. [`Value::Num`]'s counterpart for glue.
+    GlueNum {
+        quantity: Quantity,
+        hull: GlueHull,
+    },
+    /// A few exact values of one kind this may be: what a join keeps while
+    /// it has at most `limits.value_set` of them, in a fixed order. This is
+    /// TeX's one set lift ([`Value::join`]), for every kind above. Read as
+    /// a value it is unknown, as a [`Value::Num`] is.
+    OneOf(Rc<[Value]>),
 }
 
-/// How many values a [`Num`] lists before it is only an interval, unless
+/// How many values a join lists before it widens to an interval, unless
 /// `limits.value_set` says otherwise.
 pub const MAY_VALUES: usize = 5;
 
-/// An abstract number (a count or a dimension in scaled points): the
-/// interval `[lo, hi]` it lies in and, when they are few, the values it may
-/// be.  TeX's numbers are bounded (`MAX_INT`, `MAX_DIMEN`), so the full
-/// interval of its kind is the top of the lattice, which widening reaches.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// An abstract number (a count or a dimension in scaled points, or one
+/// component of a glue): the interval `[lo, hi]` it lies in. TeX's numbers
+/// are bounded (`MAX_INT`, `MAX_DIMEN`), so the full interval of its kind is
+/// the top of the lattice, which widening reaches. The exact values a
+/// binding may be, while there are few, are not `Num`'s to keep: that is
+/// [`Value::OneOf`], the one set lift every kind shares.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Num {
     pub lo: i64,
     pub hi: i64,
-    /// Sorted, deduplicated, within `[lo, hi]` and holding both ends.
-    pub set: Option<Vec<i64>>,
 }
 
 impl Num {
     pub fn exact(n: i64) -> Num {
-        Num { lo: n, hi: n, set: Some(vec![n]) }
+        Num { lo: n, hi: n }
     }
 
     pub fn range(lo: i64, hi: i64) -> Num {
-        Num { lo: lo.min(hi), hi: hi.max(lo), set: None }
+        Num { lo: lo.min(hi), hi: hi.max(lo) }
     }
 
     /// Every value of the kind: what an unknown typesetting result is.
@@ -162,57 +193,34 @@ impl Num {
         Num::range(-max, max)
     }
 
-    /// Exactly the values in `set`, however many they are.
-    pub fn of_set(set: Vec<i64>) -> Num {
-        Num::of_set_capped(set, usize::MAX)
-    }
-
-    fn of_set_capped(mut set: Vec<i64>, members: usize) -> Num {
-        set.sort_unstable();
-        set.dedup();
-        let (lo, hi) = (set[0], set[set.len() - 1]);
-        Num { lo, hi, set: (set.len() <= members).then_some(set) }
-    }
-
-    /// Least upper bound, listing at most `members` values.
-    pub fn join(&self, other: &Num, members: usize) -> Num {
-        match (&self.set, &other.set) {
-            (Some(a), Some(b)) => Num::of_set_capped(a.iter().chain(b).copied().collect(), members),
-            _ => Num::range(self.lo.min(other.lo), self.hi.max(other.hi)),
-        }
+    /// Least upper bound: the interval spanning both.
+    pub fn join(&self, other: &Num) -> Num {
+        Num::range(self.lo.min(other.lo), self.hi.max(other.hi))
     }
 
     /// Widening: a bound that grew goes to the end of TeX's 32-bit range,
     /// not `\maxdimen`, which `\advance` may pass (tex.web § 1238), so a
     /// loop that keeps advancing a dimension stays covered.
-    pub fn widen(&self, next: &Num, _dimen: bool) -> Num {
+    pub fn widen(&self, next: &Num) -> Num {
         let lo = if next.lo < self.lo { WORD_MIN } else { self.lo };
         let hi = if next.hi > self.hi { WORD_MAX } else { self.hi };
         Num::range(lo, hi)
     }
 
     pub fn neg(&self) -> Num {
-        match &self.set {
-            Some(set) => Num::of_set_capped(set.iter().map(|n| -n).collect(), usize::MAX),
-            None => Num::range(-self.hi, -self.lo),
-        }
+        Num::range(-self.hi, -self.lo)
     }
 
-    /// TeX arithmetic lifted to abstract numbers: the values `exact` gives
-    /// on every combination of `args`, and whether a combination may be
-    /// TeX's `arith_error` (`exact` is `None`).  Few members: each
-    /// combination.  Otherwise `ideal`, the operation on unbounded
-    /// integers (`None` only at a zero divisor), is taken at the corners
-    /// of the box with every argument cut at zero: each operation here is
-    /// monotone in each argument on a part of constant sign (a product is
-    /// bilinear, `x/n` and its roundings are monotone in both), so the
-    /// corners bound it.  An ideal result outside `range` is an error
-    /// (then the in-range results lie in the clipped hull) or, with
-    /// `wrap`, a 32-bit wrap-around (then any 32-bit number).  `None`
-    /// when every combination is an error.
+    /// TeX arithmetic lifted to an interval: `exact` at a point when both
+    /// ends agree, otherwise `ideal` (the unbounded-integer operation,
+    /// `None` only at a zero divisor) taken at the box's corners cut at
+    /// zero: each operation here is monotone per argument on a part of
+    /// constant sign, so the corners bound it. An ideal result outside
+    /// `range` is either an error (in-range results lie in the clipped
+    /// hull) or, with `wrap`, a 32-bit wrap-around. `None` when every
+    /// combination errors.
     pub fn lift(
         args: &[&Num],
-        members: usize,
         range: (i64, i64),
         wrap: bool,
         exact: impl Fn(&[i64]) -> Option<i64>,
@@ -225,24 +233,11 @@ impl Num {
                 None => (None, true),
             };
         }
-        let sets: Option<Vec<&Vec<i64>>> = args.iter().map(|a| a.set.as_ref()).collect();
         let combos = |pts: &[Vec<i64>]| -> Vec<Vec<i64>> {
             pts.iter().fold(vec![Vec::new()], |acc, xs| {
                 acc.iter().flat_map(|c| xs.iter().map(move |&x| [c.clone(), vec![x]].concat())).collect()
             })
         };
-        if let Some(sets) = sets.filter(|s| s.iter().map(|v| v.len()).product::<usize>() <= 64) {
-            let pts: Vec<Vec<i64>> = sets.into_iter().cloned().collect();
-            let mut out = Vec::new();
-            let mut err = false;
-            for c in combos(&pts) {
-                match exact(&c) {
-                    Some(v) => out.push(v),
-                    None => err = true,
-                }
-            }
-            return ((!out.is_empty()).then(|| Num::of_set_capped(out, members)), err);
-        }
         let pts: Vec<Vec<i64>> = args
             .iter()
             .map(|a| {
@@ -274,18 +269,41 @@ impl Num {
         (any.then(|| Num::range(lo, hi)), err)
     }
 
-    /// `self relation other` when every pair of values gives the same
-    /// answer. `None` when they differ.
-    pub fn compare(&self, relation: char, other: &Num) -> Option<bool> {
-        if let (Some(a), Some(b)) = (&self.set, &other.set) {
-            let mut answers = a.iter().flat_map(|&x| b.iter().map(move |&y| (x, y))).map(|(x, y)| match relation {
-                '<' => x < y,
-                '>' => x > y,
-                _ => x == y,
-            });
-            let first = answers.next()?;
-            return answers.all(|v| v == first).then_some(first);
+    /// The set lift for arithmetic (`Set_k`, TeX's one set lift, applied to
+    /// exact numbers rather than to whole [`Value`]s): every combination
+    /// `exact` gives from bounded sets of exact numbers, deduplicated,
+    /// while there are at most `members` of them and the combinations are
+    /// few enough to try (≤ 64 combined points). `None` once that fails: the
+    /// caller falls back to [`Num::lift`] on the sets' own hulls.
+    pub fn lift_points(
+        sets: &[&[i64]],
+        members: usize,
+        exact: impl Fn(&[i64]) -> Option<i64>,
+    ) -> Option<(Vec<i64>, bool)> {
+        if sets.iter().map(|s| s.len()).product::<usize>() > 64 {
+            return None;
         }
+        let combos = sets.iter().fold(vec![Vec::new()], |acc, xs| {
+            acc.iter().flat_map(|c: &Vec<i64>| xs.iter().map(move |&x| [c.clone(), vec![x]].concat())).collect()
+        });
+        let mut out = Vec::new();
+        let mut err = false;
+        for c in combos {
+            match exact(&c) {
+                Some(v) => {
+                    if !out.contains(&v) {
+                        out.push(v);
+                    }
+                }
+                None => err = true,
+            }
+        }
+        (!out.is_empty() && out.len() <= members).then_some((out, err))
+    }
+
+    /// `self relation other` when the interval alone decides it. `None`
+    /// otherwise: some pair of concrete values may disagree.
+    pub fn compare(&self, relation: char, other: &Num) -> Option<bool> {
         match relation {
             '<' if self.hi < other.lo => Some(true),
             '<' if self.lo >= other.hi => Some(false),
@@ -297,50 +315,80 @@ impl Num {
         }
     }
 
-    /// Whether it is odd, when every value agrees.
+    /// Whether it is odd, when the interval is a single value.
     pub fn odd(&self) -> Option<bool> {
-        if self.lo == self.hi {
-            return Some(self.lo % 2 != 0);
-        }
-        match &self.set {
-            Some(set) => {
-                let first = set[0] % 2 != 0;
-                set.iter().all(|n| (n % 2 != 0) == first).then_some(first)
-            }
-            None => None,
-        }
+        (self.lo == self.hi).then(|| self.lo % 2 != 0)
     }
 
     /// What `self relation bound` being `holds` leaves of `self`: the
-    /// narrowing a test teaches the arm it chooses.  `None` when no value
+    /// narrowing a test teaches the arm it chooses. `None` when no value
     /// satisfies it.
     pub fn narrow(&self, relation: char, bound: i64, holds: bool) -> Option<Num> {
-        let keep = |n: i64| {
-            let v = match relation {
-                '<' => n < bound,
-                '>' => n > bound,
-                _ => n == bound,
-            };
-            v == holds
-        };
-        if let Some(set) = &self.set {
-            let set: Vec<i64> = set.iter().copied().filter(|&n| keep(n)).collect();
-            return (!set.is_empty()).then(|| Num::of_set_capped(set, usize::MAX));
-        }
         let (lo, hi) = match (relation, holds) {
             ('<', true) => (self.lo, self.hi.min(bound.saturating_sub(1))),
             ('<', false) => (self.lo.max(bound), self.hi),
             ('>', true) => (self.lo.max(bound.saturating_add(1)), self.hi),
             ('>', false) => (self.lo, self.hi.min(bound)),
             ('=', true) => (bound.max(self.lo), bound.min(self.hi)),
+            // Not the bound: an end at it moves in.
+            ('=', false) => (
+                if self.lo == bound { self.lo.saturating_add(1) } else { self.lo },
+                if self.hi == bound { self.hi.saturating_sub(1) } else { self.hi },
+            ),
             _ => (self.lo, self.hi),
         };
         (lo <= hi).then(|| Num::range(lo, hi))
     }
 }
 
-/// One of xcolor's colour models (xcolor, table 3), with the two pseudo
-/// models that name a colour instead of measuring one.
+/// A glue's abstract form (tex.web § 150): one interval per component.
+/// [`Value::GlueNum`]'s payload, [`Num`] lifted componentwise the way
+/// [`Colors`] lifts one per color component.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GlueHull {
+    pub width: Num,
+    pub stretch: Num,
+    pub stretch_order: Num,
+    pub shrink: Num,
+    pub shrink_order: Num,
+}
+
+impl GlueHull {
+    pub fn exact(g: &Glue) -> GlueHull {
+        GlueHull {
+            width: Num::exact(g.width),
+            stretch: Num::exact(g.stretch.amount),
+            stretch_order: Num::exact(i64::from(g.stretch.order)),
+            shrink: Num::exact(g.shrink.amount),
+            shrink_order: Num::exact(i64::from(g.shrink.order)),
+        }
+    }
+
+    /// Every glue of the kind: what an unknown typesetting result is.
+    pub fn full() -> GlueHull {
+        GlueHull {
+            width: Num::full(true),
+            stretch: Num::full(true),
+            stretch_order: Num::range(0, i64::from(MAX_FIL_ORDER)),
+            shrink: Num::full(true),
+            shrink_order: Num::range(0, i64::from(MAX_FIL_ORDER)),
+        }
+    }
+
+    /// Least upper bound, componentwise.
+    pub fn join(&self, other: &GlueHull) -> GlueHull {
+        GlueHull {
+            width: self.width.join(&other.width),
+            stretch: self.stretch.join(&other.stretch),
+            stretch_order: self.stretch_order.join(&other.stretch_order),
+            shrink: self.shrink.join(&other.shrink),
+            shrink_order: self.shrink_order.join(&other.shrink_order),
+        }
+    }
+}
+
+/// One of xcolor's color models (xcolor, table 3), with the two pseudo
+/// models that name a color instead of measuring one.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
 pub enum Model {
     Rgb,
@@ -435,7 +483,7 @@ impl Model {
 
     /// The range component `i` lies in, in scaled points, with xcolor's own
     /// `\rangeRGB`, `\rangeHSB`, `\rangeHsb` and `\rangeGray` defaults where
-    /// the model is scaled by one.  `None` for a model without components.
+    /// the model is scaled by one. `None` for a model without components.
     pub fn bounds(self, i: usize) -> Option<(Scaled, Scaled)> {
         let top = match self {
             Model::Rgb | Model::Cmy | Model::Cmyk | Model::Hsb | Model::Gray => UNIT,
@@ -457,7 +505,7 @@ impl Model {
     }
 }
 
-/// A colour as xcolor holds one: a model and one abstract number per
+/// A color as xcolor holds one: a model and one abstract number per
 /// component, in scaled points, the units xcolor's own arithmetic works in
 /// (`\strip@pt` of a `\dimen`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -471,7 +519,7 @@ impl Color {
         Color { model, components: components.into() }
     }
 
-    /// The colour exactly, when every component is one value.
+    /// The color exactly, when every component is one value.
     pub fn exact(&self) -> Option<Vec<Scaled>> {
         self.components.iter().map(|c| (c.lo == c.hi).then_some(c.lo)).collect()
     }
@@ -504,35 +552,31 @@ fn spell_component(c: &Num) -> String {
     }
 }
 
-/// What a colour-valued binding may hold: one model, each component bounded
-/// by a [`Num`], and the exact colours it may be while they are few.
-/// [`Num`]'s own shape lifted to a tuple, so a join keeps a set and a join
-/// past the limit keeps the component bounds alone.
+/// What a color-valued binding may hold: one model, each component bounded
+/// by a [`Num`]. An exact color is one whose components are all points
+/// ([`Color::exact`]); a few exact colors this may be are, like every
+/// other kind, [`Value::OneOf`] of them, not a set of `Colors`'s own.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Colors {
     /// Component-wise bounds over every member.
     pub hull: Color,
-    /// The colours it may be, each of `hull`'s model.
-    pub set: Option<Rc<[Rc<[Num]>]>>,
 }
 
 impl Colors {
     pub fn exact(color: Color) -> Colors {
-        let members = Rc::from([Rc::clone(&color.components)]);
-        Colors { hull: color, set: Some(members) }
+        Colors { hull: color }
     }
 
     pub fn model(&self) -> Model {
         self.hull.model
     }
 
-    /// Least upper bound, listing at most `members` colours.  Two models
-    /// have no common bound: xcolor converts between them through
-    /// `\XC@calc@`, which rounds to scaled points, so a converted spec is
-    /// not the spec the other model would have stored, and claiming it
-    /// would invent a value.  `None` is that, and the caller goes to
+    /// Least upper bound. Two models have no common bound: xcolor's
+    /// `\XC@calc@` conversion rounds to scaled points, so a converted spec
+    /// is not what the other model would have stored, and claiming one
+    /// would invent a value. `None` is that, and the caller goes to
     /// [`Value::Unknown`].
-    pub fn join(&self, other: &Colors, members: usize) -> Option<Colors> {
+    pub fn join(&self, other: &Colors) -> Option<Colors> {
         if self.hull.model != other.hull.model {
             return None;
         }
@@ -540,21 +584,8 @@ impl Colors {
         if arity != other.hull.components.len() {
             return None;
         }
-        let hull: Vec<Num> =
-            (0..arity).map(|i| self.hull.components[i].join(&other.hull.components[i], members)).collect();
-        let set = match (&self.set, &other.set) {
-            (Some(a), Some(b)) => {
-                let mut out: Vec<Rc<[Num]>> = a.to_vec();
-                for member in b.iter() {
-                    if !out.iter().any(|m| m == member) {
-                        out.push(Rc::clone(member));
-                    }
-                }
-                (out.len() <= members).then(|| Rc::from(out))
-            }
-            _ => None,
-        };
-        Some(Colors { hull: Color::new(self.hull.model, hull), set })
+        let hull: Vec<Num> = (0..arity).map(|i| self.hull.components[i].join(&other.hull.components[i])).collect();
+        Some(Colors { hull: Color::new(self.hull.model, hull) })
     }
 }
 
@@ -565,7 +596,7 @@ pub fn parse_component(s: &str) -> Option<Scaled> {
 }
 
 /// `⟨model⟩{⟨spec⟩}` as the run wrote it, with each component an exact
-/// [`Num`].  `None` when the model carries no components or the spec is not
+/// [`Num`]. `None` when the model carries no components or the spec is not
 /// the numbers the model takes.
 pub fn parse_color(model: Model, spec: &str) -> Option<Color> {
     if model.arity() == 0 {
@@ -594,8 +625,10 @@ impl PartialEq for Value {
             (Value::Toks(a), Value::Toks(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.tok == y.tok)
             }
-            (Value::Range { dimen: x, num: a }, Value::Range { dimen: y, num: b }) => x == y && a == b,
+            (Value::Num { quantity: x, num: a }, Value::Num { quantity: y, num: b }) => x == y && a == b,
+            (Value::GlueNum { quantity: x, hull: a }, Value::GlueNum { quantity: y, hull: b }) => x == y && a == b,
             (Value::Color(a), Value::Color(b)) => a == b,
+            (Value::OneOf(a), Value::OneOf(b)) => a == b,
             _ => false,
         }
     }
@@ -618,23 +651,96 @@ impl Value {
         }
     }
 
-    /// Least upper bound: equal values stay, different counts or
-    /// different dimensions become their [`Num`] join (listing at most
-    /// `members` values), anything else unknown.
+    /// The exact values of one kind this may be, when there are few:
+    /// itself, when it is one already; [`Value::OneOf`]'s members. `None`
+    /// once it is only an interval or hull (already past `limits.value_set`
+    /// or a typesetting result), or [`Value::Unknown`].
+    pub(crate) fn exacts(&self) -> Option<Vec<Value>> {
+        match self {
+            Value::Unknown | Value::Num { .. } | Value::GlueNum { .. } => None,
+            Value::Color(c) if c.hull.exact().is_none() => None,
+            Value::OneOf(set) => Some(set.to_vec()),
+            other => Some(vec![other.clone()]),
+        }
+    }
+
+    /// [`Value::exacts`], as plain numbers: a count or dimension's exact
+    /// members. `None` for anything that is not a bounded set of numbers.
+    pub(crate) fn exact_ints(&self) -> Option<Vec<i64>> {
+        self.exacts()?.iter().map(Value::as_dimen).collect()
+    }
+
+    /// The interval or hull an exact value widens to; every other kind is
+    /// already one. [`Value::OneOf`]'s widening once it grows past
+    /// `limits.value_set`.
+    fn hull(&self) -> Value {
+        match self {
+            Value::Int(n) => Value::Num { quantity: Quantity::Int, num: Num::exact(*n) },
+            Value::Dimen(d) => Value::Num { quantity: Quantity::Dimen, num: Num::exact(*d) },
+            Value::Glue(g) => Value::GlueNum { quantity: Quantity::Glue, hull: GlueHull::exact(g) },
+            Value::MuGlue(g) => Value::GlueNum { quantity: Quantity::MuGlue, hull: GlueHull::exact(g) },
+            // A token list has no interval domain: nothing narrower than
+            // unknown once it is not one of a few exact lists.
+            Value::Toks(_) => Value::Unknown,
+            // A set of numbers joins with an interval as its own interval.
+            Value::OneOf(_) => match self.num() {
+                Some((quantity, num)) => Value::Num { quantity, num },
+                None => self.clone(),
+            },
+            other => other.clone(),
+        }
+    }
+
+    /// Least upper bound of two already-widened values (a [`Value::Num`],
+    /// [`Value::GlueNum`], non-exact [`Value::Color`] or
+    /// [`Value::Unknown`]) of the same kind. [`Value::Unknown`] when the
+    /// kinds differ.
+    fn join_hulls(a: &Value, b: &Value) -> Value {
+        match (a, b) {
+            (Value::Num { quantity: x, num: p }, Value::Num { quantity: y, num: q }) if x == y => {
+                Value::Num { quantity: *x, num: p.join(q) }
+            }
+            (Value::GlueNum { quantity: x, hull: p }, Value::GlueNum { quantity: y, hull: q }) if x == y => {
+                Value::GlueNum { quantity: *x, hull: p.join(q) }
+            }
+            (Value::Color(p), Value::Color(q)) => p.join(q).map_or(Value::Unknown, Value::Color),
+            _ => Value::Unknown,
+        }
+    }
+
+    /// The set lift every kind shares (`limits.value_set`): the union of
+    /// two bounded sets of exact values, however large.
+    fn union(mut a: Vec<Value>, b: Vec<Value>) -> Vec<Value> {
+        for v in b {
+            if !a.contains(&v) {
+                a.push(v);
+            }
+        }
+        a
+    }
+
+    /// Least upper bound: equal values stay; while both sides are bounded
+    /// exact sets, their union while it has at most `members` values
+    /// ([`Value::OneOf`], TeX's one set lift), else the join of every
+    /// member's hull; otherwise the join of both hulls directly. Kinds that
+    /// do not match join to [`Value::Unknown`].
     pub fn join(self, other: &Value, members: usize) -> Value {
         if &self == other {
             return self;
         }
-        match (self.num(), other.num()) {
-            (Some((x, a)), Some((y, b))) if x == y => Value::Range { dimen: x, num: a.join(&b, members) },
-            _ => match (&self, other) {
-                (Value::Color(a), Value::Color(b)) => a.join(b, members).map_or(Value::Unknown, Value::Color),
-                _ => Value::Unknown,
-            },
+        let Some(a) = self.exacts() else { return Value::join_hulls(&self.hull(), &other.hull()) };
+        let Some(b) = other.exacts() else { return Value::join_hulls(&self.hull(), &other.hull()) };
+        let set = Value::union(a, b);
+        if set.len() <= members {
+            let mut set = set;
+            // One order for one set, so that equal joins compare equal.
+            set.sort_by_cached_key(|v| format!("{v:?}"));
+            return if set.len() == 1 { set.into_iter().next().unwrap() } else { Value::OneOf(set.into()) };
         }
+        set.into_iter().map(|v| v.hull()).reduce(|a, b| Value::join_hulls(&a, &b)).unwrap_or(Value::Unknown)
     }
 
-    /// The colour this holds, when it is one.
+    /// The color this holds, when it is one.
     pub fn as_color(&self) -> Option<&Colors> {
         match self {
             Value::Color(c) => Some(c),
@@ -642,23 +748,44 @@ impl Value {
         }
     }
 
-    /// The abstract number this is, with whether it is a dimension: a
-    /// known count or dimension exactly, a [`Value::Range`] as it stands.
-    pub fn num(&self) -> Option<(bool, Num)> {
+    /// The abstract number this is, with what kind of quantity it is: a
+    /// known count or dimension exactly, a [`Value::Num`] as it stands, or
+    /// the join of a [`Value::OneOf`] of numbers. `None` for anything
+    /// else, including glue and muglue ([`Value::GlueNum`]'s width is not
+    /// this: a test reads it through [`Value::as_dimen`]).
+    pub fn num(&self) -> Option<(Quantity, Num)> {
         match self {
-            Value::Int(n) => Some((false, Num::exact(*n))),
-            Value::Dimen(d) => Some((true, Num::exact(*d))),
-            Value::Range { dimen, num } => Some((*dimen, num.clone())),
+            Value::Int(n) => Some((Quantity::Int, Num::exact(*n))),
+            Value::Dimen(d) => Some((Quantity::Dimen, Num::exact(*d))),
+            Value::Num { quantity, num } => Some((*quantity, num.clone())),
+            Value::OneOf(set) => {
+                let mut nums = set.iter().filter_map(Value::num);
+                let first = nums.next()?;
+                nums.try_fold(first, |(q, acc), (q2, n2)| (q == q2).then(|| (q, acc.join(&n2))))
+            }
             _ => None,
         }
     }
 
+    /// Whether it is odd, decided by every exact member when there are
+    /// few, else by the interval (only when that is a single value).
+    pub fn odd(&self) -> Option<bool> {
+        match self.exact_ints() {
+            Some(ints) => {
+                let mut odds = ints.iter().map(|n| n % 2 != 0);
+                let first = odds.next()?;
+                odds.all(|o| o == first).then_some(first)
+            }
+            None => self.num()?.1.odd(),
+        }
+    }
+
     /// The value an abstract number stands for: known when it is one.
-    pub fn from_num(dimen: bool, num: Num) -> Value {
-        match (num.lo == num.hi, dimen) {
-            (true, false) => Value::Int(num.lo),
-            (true, true) => Value::Dimen(num.lo),
-            (false, _) => Value::Range { dimen, num },
+    pub fn from_num(quantity: Quantity, num: Num) -> Value {
+        match (num.lo == num.hi, quantity) {
+            (true, Quantity::Int) => Value::Int(num.lo),
+            (true, Quantity::Dimen) => Value::Dimen(num.lo),
+            _ => Value::Num { quantity, num },
         }
     }
 
@@ -670,7 +797,7 @@ impl Value {
             Value::MuGlue(g) => render_glue(g, "mu"),
             Value::Toks(t) => format!("<{} tokens>", t.len()),
             Value::Color(c) => format!("{} {}", c.model().as_str(), c.hull.spell()),
-            Value::Unknown | Value::Range { .. } => "?".into(),
+            Value::Unknown | Value::Num { .. } | Value::GlueNum { .. } | Value::OneOf(_) => "?".into(),
         }
     }
 }
@@ -991,42 +1118,30 @@ mod tests {
         for c in [0i64, 1, -1, 5, -5, MAX_DIMEN, -MAX_DIMEN, MAX_INT, WORD_MIN, WORD_MIN + 1] {
             for w in [0i64, 1, 2] {
                 let (lo, hi) = ((c - w).max(WORD_MIN), (c + w).min(WORD_MAX));
-                let all: Vec<i64> = (lo..=hi).collect();
-                out.push((Num::range(lo, hi), all.clone()));
-                out.push((Num::of_set_capped(all.clone(), MAY_VALUES), all));
+                out.push((Num::range(lo, hi), (lo..=hi).collect()));
             }
         }
-        out.push((Num::of_set_capped(vec![-7, 0, 9], MAY_VALUES), vec![-7, 0, 9]));
-        out.push((Num::of_set_capped(vec![WORD_MIN, 0, MAX_INT], MAY_VALUES), vec![WORD_MIN, 0, MAX_INT]));
         out
     }
 
-    /// Whether `num` stands for `v`: inside the interval, and listed when
-    /// there is a list.
+    /// Whether `num` stands for `v`: inside the interval.
     fn holds(num: &Num, v: i64) -> bool {
-        num.lo <= v && v <= num.hi && num.set.as_ref().is_none_or(|s| s.contains(&v))
+        num.lo <= v && v <= num.hi
     }
 
-    /// A [`Num`] keeps what it promises: sorted, deduplicated, inside the
-    /// interval, and holding both ends.
+    /// A [`Num`] keeps what it promises: `lo <= hi`.
     fn well_formed(num: &Num) {
         assert!(num.lo <= num.hi, "{num:?}");
-        if let Some(set) = &num.set {
-            assert!(!set.is_empty() && set.windows(2).all(|w| w[0] < w[1]), "{num:?}");
-            assert_eq!((set[0], set[set.len() - 1]), (num.lo, num.hi), "{num:?}");
-        }
     }
 
     #[test]
     fn join_is_an_upper_bound_of_both() {
         for (a, xs) in nums() {
             for (b, ys) in nums() {
-                for members in [0, 1, MAY_VALUES, 64] {
-                    let j = a.join(&b, members);
-                    well_formed(&j);
-                    for v in xs.iter().chain(&ys) {
-                        assert!(holds(&j, *v), "{v} lost joining {a:?} and {b:?} at {members}");
-                    }
+                let j = a.join(&b);
+                well_formed(&j);
+                for v in xs.iter().chain(&ys) {
+                    assert!(holds(&j, *v), "{v} lost joining {a:?} and {b:?}");
                 }
             }
         }
@@ -1036,12 +1151,10 @@ mod tests {
     fn widening_only_grows() {
         for (a, xs) in nums() {
             for (b, ys) in nums() {
-                for dimen in [false, true] {
-                    let w = a.widen(&a.join(&b, MAY_VALUES), dimen);
-                    well_formed(&w);
-                    for v in xs.iter().chain(&ys) {
-                        assert!(holds(&w, *v), "{v} lost widening {a:?} past {b:?}");
-                    }
+                let w = a.widen(&a.join(&b));
+                well_formed(&w);
+                for v in xs.iter().chain(&ys) {
+                    assert!(holds(&w, *v), "{v} lost widening {a:?} past {b:?}");
                 }
             }
         }
@@ -1132,16 +1245,13 @@ mod tests {
         for (a, xs) in &ns {
             for (b, ys) in &ns {
                 for (name, range, wrap_on, exact, ideal) in ops() {
-                    let (got, err) = Num::lift(&[a, b], MAY_VALUES, range, wrap_on, exact, ideal);
+                    let (got, err) = Num::lift(&[a, b], range, wrap_on, exact, ideal);
                     let mut got = got;
                     // `Machine::abs_arith`: -2^31 negated stays negative, so
                     // the corners do not bound the 32-bit answer.
-                    let enumerated = match (&a.set, &b.set) {
-                        (Some(p), Some(q)) => p.len() * q.len() <= 64,
-                        _ => a.lo == a.hi && b.lo == b.hi,
-                    };
+                    let enumerated = a.lo == a.hi && b.lo == b.hi;
                     if name != "advance" && !enumerated && (a.lo == WORD_MIN || b.lo == WORD_MIN) {
-                        got = got.map(|n| n.join(&Num::range(WORD_MIN, 0), MAY_VALUES));
+                        got = got.map(|n| n.join(&Num::range(WORD_MIN, 0)));
                     }
                     for &x in xs {
                         for &y in ys {
