@@ -1,7 +1,6 @@
-//! Facts the interpreter notes while a construct runs, rather than by
-//! modeling the command that caused it: the lines a `\write` hands a file
-//! and the keys they declare, what a `\csname` was formed for, the payloads
-//! handed to the PDF writer.
+//! Facts the interpreter notes as a construct runs, rather than by
+//! modeling the command that caused it: `\write` lines and their keys,
+//! what a `\csname` was formed for, payloads handed to the PDF writer.
 
 use crate::builtins::{Cond, OccKind, PdfOp, Primitive};
 use crate::facts::CsnameRole;
@@ -12,17 +11,14 @@ use crate::tex::{Catcode, Span, Tok, Token};
 pub fn csname(m: &mut Machine, name: &str, span: Span) {
     let role = role(m, span);
     m.note_csname(span, role);
-    // `\let\x=\csname…\endcsname` reads the name as surely as a use
-    // does: cleveref's `\cref@getref` takes `\r@⟨label⟩@cref` so.
+    // `\let\x=\csname…\endcsname` reads the name like a use: cleveref's
+    // `\cref@getref` takes `\r@⟨label⟩@cref` this way.
     if matches!(role, CsnameRole::Use | CsnameRole::Test | CsnameRole::LetTo) {
         read_name(m, name);
     }
-    // xcolor's own core-model dispatch macros are named "color@rgb" and
-    // the like. A colour the document names gets an extra literal
-    // backslash character baked into its control sequence's name ahead
-    // of that, from `\@backslashchar` (xcolor `\XC@definec@lor` and
-    // `\XC@declaredc@lor`), so `COLOR_NAME_PREFIX` alone tells the two
-    // apart. A `\csname` forming one is read, tested, or aliased from.
+    // A document color's control sequence carries an extra literal
+    // backslash before `color@` (`\@backslashchar`), unlike xcolor's own
+    // dispatch macros like "color@rgb" — COLOR_NAME_PREFIX tells them apart.
     if let Some(color_name) = name.strip_prefix(COLOR_NAME_PREFIX)
         && !color_name.is_empty()
         && matches!(role, CsnameRole::Use | CsnameRole::Test | CsnameRole::LetTo)
@@ -31,15 +27,14 @@ pub fn csname(m: &mut Machine, name: &str, span: Span) {
     }
 }
 
-/// The prefix a colour's own control sequence carries in its name text: a
-/// literal backslash character (`\@backslashchar`) followed by `color@`.
+/// A color control sequence's name prefix: `\@backslashchar` then `color@`.
 const COLOR_NAME_PREFIX: &str = "\\color@";
 
-/// A use, test, or `\colorlet` source of `\color@⟨name⟩`.  `full` is the
+/// A use, test, or `\colorlet` source of `\color@⟨name⟩`. `full` is the
 /// control sequence's own name text, for looking its meaning up.
 fn color_use(m: &mut Machine, full: &str, color_name: &str, role: CsnameRole, span: Span) {
-    // A package's own use counts: its cache carries the fact and a replay
-    // pushes it again, so a cache hit and a cache miss report the same.
+    // A package's own use is recorded too: the cache carries the fact and
+    // a replay pushes it again, so cache hit and miss report the same.
     if m.out.facts.color_uses.len() >= m.cfg.limits.facts {
         return;
     }
@@ -57,15 +52,13 @@ fn color_use(m: &mut Machine, full: &str, color_name: &str, role: CsnameRole, sp
 }
 
 /// `\color@⟨name⟩` was just (re)defined or `\let`-aliased: xcolor stores
-/// every colour there, always as `\xcolor@{cls}{drv}{model}{spec}` in one
-/// of its core models (xcolor § 2.5, `\XC@definec@lor`).  Fired from
-/// [`crate::machine::Machine::define`], which already resolves `meaning`
-/// for both `\def` and `\let`, so `\definecolor`, `\providecolor`,
+/// every color as `\xcolor@{cls}{drv}{model}{spec}` in one of its core
+/// models (xcolor § 2.5, `\XC@definec@lor`). Fired from
+/// [`crate::machine::Machine::define`], so `\definecolor`, `\providecolor`,
 /// `\colorlet` and `\definecolorset` all arrive here alike.
 pub fn color_def(m: &mut Machine, name: &str, meaning: &crate::tex::Meaning, span: Span) {
     let Some(color_name) = name.strip_prefix(COLOR_NAME_PREFIX) else { return };
-    // A colour a package defines is recorded too: its cache carries the
-    // fact and a replay pushes it again (see `color_use`).
+    // A package-defined color is recorded too (see `color_use`).
     if color_name.is_empty() || m.out.facts.colors.len() >= m.cfg.limits.facts {
         return;
     }
@@ -87,7 +80,7 @@ pub fn color_def(m: &mut Machine, name: &str, meaning: &crate::tex::Meaning, spa
 }
 
 /// `\xcolor@{cls}{drv}{model}{spec}`, as `\XC@definec@lor` stores every
-/// colour (xcolor.sty): read the last two groups back as a [`Colors`].
+/// color (xcolor.sty): read the last two groups back as a [`Colors`].
 fn parse_stored_color(m: &Machine, body: &[Token]) -> Option<crate::value::Colors> {
     let xcolor_at = m.out.interner.lookup("xcolor@")?;
     let start = body.iter().position(|t| matches!(t.tok, Tok::Cs(sym) if sym == xcolor_at))?;
@@ -99,10 +92,9 @@ fn parse_stored_color(m: &Machine, body: &[Token]) -> Option<crate::value::Color
     Some(crate::value::Colors::exact(color))
 }
 
-/// The model and spec text `\XC@definec@lor` read for `color_name`, from
-/// the argument capture kept when the run is asked for it (`query trace`
-/// and the like): `None` when arguments are not being kept, so `declared`
-/// is left unclaimed rather than guessed.
+/// The model and spec text `\XC@definec@lor` read for `color_name`, from the
+/// kept argument capture. `None` when arguments aren't kept, so `declared`
+/// stays unclaimed rather than guessed.
 fn declared_spec(m: &Machine, color_name: &str) -> Option<(crate::value::Model, String, Span)> {
     let target = m.out.interner.lookup("XC@definec@lor")?;
     m.out.facts.expansions.iter().rev().find_map(|e| {
@@ -154,8 +146,8 @@ fn brace_groups(toks: &[Token], n: usize) -> Option<Vec<&[Token]>> {
 /// `None` when [`Machine::scan_int`] could not decide it.
 pub fn color_stack(m: &mut Machine, stack: Option<i64>, op: crate::facts::StackOp, span: Span) {
     // A driver's own `\pdfcolorstack` (pdftex.def sets the page's starting
-    // colour this way) is recorded as well: the package cache carries it,
-    // so an unbalanced push inside a package is reported either way.
+    // color this way) is recorded too, so an unbalanced push inside a
+    // package is still reported.
     if m.out.facts.color_stack.len() >= m.cfg.limits.facts {
         return;
     }
@@ -196,7 +188,7 @@ impl WrittenLine {
     }
 
     /// Where an occurrence of `key` belongs: at the key's own text, with the
-    /// writing call kept as what expanded it.  amsmath defers a display's
+    /// writing call kept as what expanded it. amsmath defers a display's
     /// `\label` to the `\end`, so the write is not where the key stands.
     fn at(&self, key: &str) -> (Span, OccContext) {
         let Some(span) = self.keys.iter().find(|(k, _)| k == key).map(|(_, s)| *s) else {
@@ -319,7 +311,7 @@ pub fn read_name(m: &mut Machine, name: &str) {
 
 /// The kernel's warning for a reference to a label no `.aux` line defined
 /// (latex.ltx `\@setref`, and cleveref's own): `Reference `⟨key⟩' on page
-/// ⟨n⟩ undefined`.  On a first run it is the only trace a reference leaves.
+/// ⟨n⟩ undefined`. On a first run it is the only trace a reference leaves.
 pub fn warned(m: &mut Machine, text: &str, span: Span) {
     // latex.ltx's `\@latex@warning` and cleveref's `\PackageWarning`
     // prefix the text with who says it.
@@ -342,7 +334,7 @@ pub fn current_environment(m: &mut Machine) -> Option<String> {
 }
 
 /// `\begin{x}` sets `\@currenvir` to `x` in the group it opens (latex.ltx):
-/// a new value there is an environment beginning.  `\begin{document}`
+/// a new value there is an environment beginning. `\begin{document}`
 /// starts the document.
 pub fn environment_opened(m: &mut Machine, outer: Option<String>, span: Span) {
     let Some(name) = current_environment(m).filter(|n| !n.is_empty()) else { return };
@@ -364,7 +356,7 @@ pub fn environment_opened(m: &mut Machine, outer: Option<String>, span: Span) {
         m.out.preamble = Some(Box::new((m.env.snapshot(), m.catcodes.clone())));
     } else {
         // `document` itself is not on the stack: `document_depth` already
-        // answers the preamble/document axis, so this is only the user
+        // answers the preamble/document axis. This is only user
         // environments nested inside it.
         let sym = m.intern(&name);
         m.out.env_stack.push(sym);
@@ -414,9 +406,9 @@ pub fn environment_closed(m: &mut Machine, inner: Option<String>, span: Span) {
 }
 
 /// `\@ifundefined{⟨name⟩}` tests the name `\csname` would build from its
-/// argument: the characters up to the first control sequence that is left.
-/// The kernel's empty macros, `\@empty` among them, are no-ops in this
-/// interpreter, so they are passed over as their expansion would be.
+/// argument: characters up to the first remaining control sequence.
+/// Kernel no-op macros (`\@empty` among them) are passed over as their
+/// expansion would be.
 pub fn tested_tokens(m: &mut Machine, tokens: &[Token]) {
     let mut name = String::new();
     for token in tokens {
@@ -470,10 +462,10 @@ pub fn write(m: &mut Machine, tokens: &[Token], stream: i64, immediate: bool) {
         return;
     }
     let Some((_, span)) = m.file_call else { return };
-    // A stream never opened writes to the log (tex.web § 1370), but a
-    // fragment run without `\begin{document}` never opens `\@auxout`: what
-    // the fragment itself writes there stands for a line of it.  A package
-    // writing to a closed stream (`\typeout` to `\@unused`) only logs.
+    // A stream never opened writes to the log (tex.web § 1370). A fragment
+    // run without `\begin{document}` never opens `\@auxout`, so what it
+    // writes there stands in for a line of it. A package writing to a
+    // closed stream (`\typeout` to `\@unused`) only logs.
     match m.stream_files.get(&stream).cloned() {
         Some(file) => {
             m.out.facts.written_files.insert(file);
@@ -499,7 +491,7 @@ fn shipped(m: &mut Machine, tokens: &[Token]) -> Vec<Token> {
 }
 
 /// A written line, run where its file is read back: the kernel's state at
-/// `\begin{document}`, where the `.aux` file is read.  A line an argument
+/// `\begin{document}`, where the `.aux` file is read. A line an argument
 /// carries (`\@writefile{toc}{\contentsline…}`) is written onward.
 fn line(m: &mut Machine, tokens: &[Token], span: Span) {
     let context = m.occurrence_context();
@@ -567,16 +559,18 @@ fn own_text(call: Span, text: &str) -> Span {
     Span::new(call.file, line, col)
 }
 
-/// The keys the document gave a written argument: runs of characters
-/// whose tokens stand in the calling file no later than it has been read,
-/// split at commas (`\citation{a,b}`, cite.sty).  What a package adds to
-/// them (cleveref's `@cref`) ends a run.
+/// The keys the document gave a written argument: what the write leaves
+/// after full expansion, split at commas (`\citation{a,b}`, cite.sty). A
+/// run with a character from the calling file, no later than it has been
+/// read, is kept whole, so a counter or macro lands in the key it names
+/// (`\label{sec:\thechapter}`). A run only a package wrote is no key.
 fn given(group: &[Token], call: Span, here: Option<Span>) -> Vec<(String, Span)> {
     let Some(here) = here else { return Vec::new() };
     let mut keys = Vec::new();
     let mut run: Vec<(char, Span)> = Vec::new();
-    let mut flush = |run: &mut Vec<(char, Span)>| {
-        for part in run.split(|(c, _)| *c == ',') {
+    let mut ours = false;
+    let mut flush = |run: &mut Vec<(char, Span)>, ours: &mut bool| {
+        for part in run.split(|(c, _)| *c == ',').filter(|_| *ours) {
             let key = part.iter().map(|(c, _)| *c).collect::<String>().trim().to_string();
             let at = part.iter().find(|(c, _)| !c.is_whitespace()).map(|(_, s)| *s);
             match at {
@@ -585,15 +579,18 @@ fn given(group: &[Token], call: Span, here: Option<Span>) -> Vec<(String, Span)>
             }
         }
         run.clear();
+        *ours = false;
     };
     for token in group {
-        let ours = token.span.file == call.file && (token.span.line, token.span.col) <= (here.line, here.col);
         match token.tok {
-            Tok::Chr(c, cat) if ours && !matches!(cat, Catcode::Begin | Catcode::End) => run.push((c, token.span)),
-            _ => flush(&mut run),
+            Tok::Chr(c, cat) if !matches!(cat, Catcode::Begin | Catcode::End) => {
+                run.push((c, token.span));
+                ours |= token.span.file == call.file && (token.span.line, token.span.col) <= (here.line, here.col);
+            }
+            _ => flush(&mut run, &mut ours),
         }
     }
-    flush(&mut run);
+    flush(&mut run, &mut ours);
     keys
 }
 
@@ -668,19 +665,16 @@ fn shape(shapes: &mut Vec<Shape>, prefix: &str, suffix: &str) -> usize {
     }
 }
 
-/// Relates what was written to what was read, once the run has ended.  A
+/// Relates what was written to what was read, once the run has ended. A
 /// name a written line defined (`\newlabel{k}` defines `\r@k`) is a key the
-/// writing call declares, and a name of the same shape (`r@⟨key⟩`) a body
-/// call reads is a use of that key, declared or not.  A line that defines
-/// nothing but whose argument its own call reads in such a name (`\cite{k}`
-/// writes `\citation{k}` and reads `\b@k`) names the key for the program
-/// that reads the file: a citation, and the declarations of that shape are
-/// bibliography entries.  What is left names files: the databases.
+/// writing call declares. A name of the same shape (`r@⟨key⟩`) a body call
+/// reads is a use of that key, declared or not. A line that defines nothing
+/// but whose argument its own call reads in such a name (`\cite{k}` writes
+/// `\citation{k}` and reads `\b@k`) is a citation, and declarations of that
+/// shape are bibliography entries. What is left names files: the databases.
 pub fn relate(m: &mut Machine) {
     let lines = std::mem::take(&mut m.written_lines);
     let reads = std::mem::take(&mut m.name_reads);
-    // A shape `prefix⟨key⟩suffix`, the command whose line declares names of
-    // it and the one whose line names keys of it.
     let mut shapes: Vec<Shape> = Vec::new();
     let mut declared: Vec<(usize, String, usize)> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
@@ -700,10 +694,39 @@ pub fn relate(m: &mut Machine) {
             declared.push((at, key, i));
         }
     }
+    // Two lines from one call (`\label` and cleveref's `\newlabel{⟨key⟩@cref}`)
+    // each give a key: one inside the other is the key the document gave,
+    // and the rest a package's addition around it.
+    let spans: Vec<Span> = declared.iter().map(|d| lines[d.2].span).collect();
+    let canon: Vec<String> = (0..declared.len())
+        .map(|j| {
+            (0..declared.len())
+                .filter(|&k| spans[k] == spans[j] && declared[j].1.len() > declared[k].1.len())
+                .map(|k| &declared[k].1)
+                .filter(|shorter| declared[j].1.contains(shorter.as_str()))
+                .min_by_key(|shorter| shorter.len())
+                .cloned()
+                .unwrap_or_else(|| declared[j].1.clone())
+        })
+        .collect();
+    for (d, key) in declared.iter_mut().zip(canon) {
+        d.1 = key;
+    }
     for &(at, _, i) in &declared {
         shapes[at].2.get_or_insert_with(|| lines[i].head.clone());
     }
     let declaring: std::collections::HashSet<usize> = declared.iter().map(|d| d.2).collect();
+    // Text a `\documentclass` or `\usepackage` call was given as an option
+    // is that option wherever it is written again (babel writes its
+    // languages to the `.aux`), never a key a read name was made from.
+    let options: std::collections::HashSet<(crate::tex::FileId, u32, &str)> = m
+        .out
+        .facts
+        .occurrences
+        .iter()
+        .filter(|o| o.kind == OccKind::PassedOption)
+        .map(|o| (o.span.file, o.span.line, o.key.as_str()))
+        .collect();
     let mut named: Vec<(usize, String, usize)> = Vec::new();
     for (i, line) in lines.iter().enumerate().filter(|(i, l)| !declaring.contains(i) && !l.head.is_empty()) {
         let keys = line.keys();
@@ -713,7 +736,9 @@ pub fn relate(m: &mut Machine) {
             {
                 let at = shape(&mut shapes, &prefix, &suffix);
                 shapes[at].3.get_or_insert_with(|| line.head.clone());
-                if !named.iter().any(|n| n.1 == key && n.2 == i) {
+                let written = line.at(&key).0;
+                let option = options.contains(&(written.file, written.line, key.as_str()));
+                if !option && !named.iter().any(|n| n.1 == key && n.2 == i) {
                     named.push((at, key, i));
                 }
             }
@@ -927,11 +952,10 @@ fn group_span(tokens: &[Token], start: usize) -> Option<(Vec<Token>, usize)> {
 }
 
 /// An image primitive (`\pdfximage`, pdfTeX manual § "Graphics") opens a
-/// file: the image the call it stands in includes, under the name the
-/// driver handed the engine and where that name resolves.  Which names the
-/// driver tried first, and in which directories, is the package's business
-/// (`\Ginput@path`, `\Gin@extensions`). Only the file the engine opens is
-/// recorded.
+/// file: the image the call includes, under the name the driver handed the
+/// engine and where that name resolves. Names the driver tried first
+/// (`\Ginput@path`, `\Gin@extensions`) are the package's business. Only the
+/// file the engine opens is recorded.
 pub fn image(m: &mut Machine, name: &str, span: Span) {
     let name = name.trim();
     if name.is_empty() {
@@ -1023,7 +1047,7 @@ fn characters(tokens: &[Token]) -> String {
 
 /// `\ver@⟨file⟩` was defined: the kernel's record of what a file says it is
 /// (clsguide, "Identification"; `\ProvidesPackage`, `\ProvidesClass` and
-/// `\ProvidesFile` write it, `\@ifpackagelater` reads it).  Made by the call
+/// `\ProvidesFile` write it, `\@ifpackagelater` reads it). Made by the call
 /// the file itself read, it identifies that file.
 pub fn version_record(m: &mut Machine, name: &str, meaning: &crate::tex::Meaning) {
     let Some(file) = name.strip_prefix("ver@") else { return };
@@ -1051,7 +1075,7 @@ pub fn version_record(m: &mut Machine, name: &str, meaning: &crate::tex::Meaning
 }
 
 /// A number typeset, while letters may still follow it.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Run {
     number: String,
     unit: String,
@@ -1060,10 +1084,12 @@ struct Run {
     unit_span: Span,
     via: Option<crate::tex::Sym>,
     within: std::rc::Rc<[crate::tex::FileId]>,
+    /// Every character of it was set on every run.
+    certain: bool,
 }
 
 /// The number and unit tracker's state, held by the [`Machine`].
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Quantities {
     run: Option<Run>,
     /// `H2O` is a word, not a quantity.
@@ -1071,7 +1097,7 @@ pub struct Quantities {
 }
 
 /// A character typeset outside package code: a digit run and the letters set
-/// right after it become a [`crate::facts::Quantity`].  A space token ends
+/// right after it become a [`crate::facts::Quantity`]. A space token ends
 /// the run, so `2 ms` is not one.
 pub fn typeset(m: &mut Machine, c: char, span: Span) {
     if m.package().is_some() || m.reading_format() {
@@ -1096,6 +1122,7 @@ pub fn typeset(m: &mut Machine, c: char, span: Span) {
                     number_end: span,
                     unit_span: span,
                     within: m.within_files(),
+                    certain: m.exact(),
                     ..Run::default()
                 });
             }
@@ -1108,8 +1135,16 @@ pub fn typeset(m: &mut Machine, c: char, span: Span) {
             }
         }
     } else if (c.is_alphabetic() || c == '%' || c == '\u{b0}') && run.is_some() {
+        // A separator with no digit after it ends the number: `$N_1,N_2$`
+        // lists, it sets no `1,` newton.
+        if run.as_ref().is_some_and(|q| q.unit.is_empty() && q.number.ends_with(['.', ','])) {
+            m.quantity.run = None;
+            return;
+        }
         let via = m.file_call.map(|(sym, _)| sym);
+        let exact = m.exact();
         if let Some(q) = run.as_mut() {
+            q.certain &= exact;
             if q.unit.is_empty() {
                 q.unit_span = span;
                 q.via = via;
@@ -1160,12 +1195,13 @@ fn flush(m: &mut Machine, run: Option<Run>) {
         unit_span: q.unit_span,
         via: q.via,
         within: q.within,
+        certain: q.certain,
     });
 }
 
 /// Add `c` to [`crate::facts::Text`], the characters the document set in
-/// order.  A character is `broken` from the one before when something that
-/// is not a character came between them, or when the two do not stand side
+/// order. A character is `broken` from the one before it when something
+/// that is not a character came between them, or the two don't stand side
 /// by side in one line of one file: TeX's ligature program joins neither
 /// (tex.web § 1034).
 fn set(m: &mut Machine, c: char, span: Span) {

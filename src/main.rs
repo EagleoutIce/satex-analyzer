@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use clap::{Parser, ValueEnum};
 
 use satex::cmd::{Command, Context, Format, Output};
-use satex::config::Config;
+use satex::config::{Config, Engine};
 use satex::machine::{Analysis, Machine};
 use satex::query;
 use satex::render::{self, Links};
@@ -43,7 +43,7 @@ struct Cli {
     profile: Option<String>,
 
     /// Overrides an option of `satex.yaml` by its dotted path, the value
-    /// written as there: `--set limits.memory=8GiB --set load_inputs=false`.
+    /// written as there: `--set limits.memory=8GiB --set load.inputs=false`.
     /// Repeatable; the flags below win over it.
     #[arg(long = "set", global = true, value_name = "PATH=VALUE", help_heading = "Input")]
     set: Vec<String>,
@@ -160,6 +160,10 @@ fn main() {
 fn run() -> Result<(), String> {
     let mut cli = Cli::parse();
     anstream::ColorChoice::from(cli.color).write_global();
+    // Progress is for a person reading text, not for a program reading output.
+    if !matches!(cli.format, Format::Text) {
+        satex::progress::disable();
+    }
 
     if cli.version || cli.command.is_none() {
         if !matches!(cli.format, Format::Text | Format::Json) {
@@ -237,14 +241,23 @@ fn run() -> Result<(), String> {
         return satex::cmd::query::run_request(request, &cfg, cli.file.as_deref(), &mut out).map(drop);
     }
 
+    satex::machine::HOT.store(cli.stats, std::sync::atomic::Ordering::Relaxed);
     let started = std::time::Instant::now();
     let analysis = if cli.command().needs_analysis() {
         Machine::analyze(&source, cli.file.as_deref(), &cfg)
     } else {
         Analysis::empty()
     };
+    if cli.stats || cfg.verbose >= 1 {
+        for line in analysis.cache_report() {
+            anstream::eprintln!("satex: {line}");
+        }
+    }
     if cli.stats {
         anstream::eprintln!("{}", analysis.stats(started.elapsed()));
+        for line in analysis.hotspots(10) {
+            anstream::eprintln!("{line}");
+        }
     }
     log_gaps(&analysis, &cfg);
     for note in analysis.limit_notes() {
@@ -252,7 +265,7 @@ fn run() -> Result<(), String> {
     }
     // What the run could not follow reads as a note on the answer, so it goes
     // after it.
-    let unfollowed = match cfg.report_gaps && cli.format.is_text() {
+    let unfollowed = match cfg.gaps.report && cli.format.is_text() {
         true => render::gaps(&analysis),
         false => String::new(),
     };
@@ -331,6 +344,11 @@ fn resolve_profile(cli: &Cli, cfg: &Config, source: Option<&str>) -> Result<sate
     if let Some(profile) = cfg.profile {
         return Ok(profile);
     }
+    // `cache build` analyzes the documents it writes itself: a class and
+    // its packages, never plain TeX.
+    if cli.file.is_none() && matches!(cli.command, Some(satex::cmd::Command::Cache { .. })) {
+        return Ok(Profile::Document);
+    }
     let owned;
     let text = match source {
         Some(text) => text,
@@ -368,8 +386,8 @@ fn configure(cli: &Cli, source: Option<&str>) -> Result<(Config, Vec<PathBuf>), 
             assignment.split_once('=').ok_or_else(|| format!("--set {assignment}: expected PATH=VALUE"))?;
         cfg.set(path.trim(), value)?;
     }
-    cfg.load_packages &= !cli.no_packages;
-    cfg.load_classes &= !cli.no_classes;
+    cfg.load.packages &= !cli.no_packages;
+    cfg.load.classes &= !cli.no_classes;
     if let Some(memory) = cli.max_memory {
         cfg.limits.memory = memory;
     }
@@ -460,8 +478,8 @@ fn effective_paths(cfg: &Config, project: &satex::project::Project) -> Vec<satex
 }
 
 /// What TeX installation `cfg` resolves to here, without indexing its files:
-/// "no installation" when nothing was found (`use_kpsewhich: false` and
-/// `use_fallback_roots: false` simulate that on a machine that has one), or
+/// "no installation" when nothing was found (`texmf.kpsewhich: false` and
+/// `texmf.fallback: false` simulate that on a machine that has one), or
 /// how many trees and by what means otherwise.
 fn installation_summary(cfg: &Config, project: &satex::project::Project) -> String {
     let mut request = cfg.distribution_request();
@@ -500,6 +518,9 @@ fn environment_text(cfg: &Config, project: &satex::project::Project) -> String {
         );
         row(&mut out, effective.variable, &value);
     }
+    if let Some(output) = satex::paths::output_dir(project, &cfg.paths.output_directory, &project.root) {
+        row(&mut out, "output dir", &format!("{} ({})", output.raw, output.source.as_str()));
+    }
     if !unset.is_empty() {
         row(&mut out, "not set", &unset.join(", "));
     }
@@ -533,6 +554,24 @@ fn overview_text(cfg: &Config, layers: &[PathBuf]) -> String {
         render::label(&format!("{:width$}", "discovery")),
         if discovery.is_empty() { "off".to_string() } else { discovery.join(", ") }
     );
+    let _ = writeln!(out, "\n{}", render::heading("primitives"));
+    for (engine, [all, exact, approximated, unsupported]) in primitive_counts() {
+        let padded = format!("{:width$}", engine.as_str());
+        let _ = writeln!(
+            out,
+            "  {}  {all:>4}  {exact} exact, {approximated} approximated, {unsupported} unsupported",
+            render::label(&padded)
+        );
+    }
+    let _ = writeln!(out, "\n{}", render::heading(&format!("stubs in effect: {}", cfg.stubs.len())));
+    match cfg.stubs.is_empty() {
+        true => {
+            let _ = writeln!(out, "  none");
+        }
+        false => {
+            let _ = writeln!(out, "  {}", cfg.stubs.keys().cloned().collect::<Vec<_>>().join(", "));
+        }
+    }
     let _ = writeln!(out, "\n{}", render::heading("configuration"));
     if layers.is_empty() {
         let _ = writeln!(out, "  built-in defaults; write satex.yaml to change them");
@@ -543,6 +582,29 @@ fn overview_text(cfg: &Config, layers: &[PathBuf]) -> String {
         }
     }
     out
+}
+
+/// Per engine: its primitives, and how many satex runs exactly,
+/// approximates soundly or leaves unmodeled ([`satex::builtins::verdict`]).
+fn primitive_counts() -> Vec<(Engine, [usize; 4])> {
+    use satex::builtins::Verdict;
+    let mut it = satex::tex::Interner::default();
+    Engine::ALL
+        .iter()
+        .map(|&engine| {
+            let mut counts = [0; 4];
+            for meaning in satex::builtins::initial_meanings(&mut it, engine).values() {
+                let Some(p) = meaning.prim() else { continue };
+                counts[0] += 1;
+                counts[match satex::builtins::verdict(p).0 {
+                    Verdict::Exact => 1,
+                    Verdict::Approximated => 2,
+                    Verdict::Unsupported => 3,
+                }] += 1;
+            }
+            (engine, counts)
+        })
+        .collect()
 }
 
 /// The same as [`overview_text`], structured for `--format json`.
@@ -558,6 +620,12 @@ fn overview_json(cfg: &Config, project: &satex::project::Project, layers: &[Path
         "plugin_count": plugins.values().filter_map(|items| items.as_array()).map(Vec::len).sum::<usize>(),
         "plugins": plugins,
         "discovery": discovery_list(cfg),
+        "primitives": primitive_counts().into_iter().map(|(engine, [all, exact, approximated, unsupported])| {
+            (engine.as_str().to_string(), serde_json::json!({
+                "all": all, "exact": exact, "approximated": approximated, "unsupported": unsupported,
+            }))
+        }).collect::<serde_json::Map<_, _>>(),
+        "stubs": cfg.stubs.keys().collect::<Vec<_>>(),
         "configuration": layers.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
         "installation": installation_summary(cfg, project),
         "profile": cfg.profile.map(|p| p.as_str()),
@@ -567,14 +635,19 @@ fn overview_json(cfg: &Config, project: &satex::project::Project, layers: &[Path
             "source": e.source.as_str(),
             "dirs": e.dirs.iter().map(|d| d.display().to_string()).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
+        "output_directory": satex::paths::output_dir(project, &cfg.paths.output_directory, &project.root).map(|o| serde_json::json!({
+            "value": o.raw,
+            "source": o.source.as_str(),
+            "dir": o.dir.display().to_string(),
+        })),
     })
 }
 
 /// Append what this run could not follow to the gap log: one JSON object per
 /// cause, with the document it came from, so the limits met across many
-/// documents accumulate in one file.  `log_gaps: false` turns it off.
+/// documents accumulate in one file.  `gaps.log: false` turns it off.
 fn log_gaps(analysis: &Analysis, cfg: &Config) {
-    if !cfg.log_gaps {
+    if !cfg.gaps.log {
         return;
     }
     let records = query::run(analysis, query::Query::Gaps, &query::Filter::Always);
@@ -582,7 +655,7 @@ fn log_gaps(analysis: &Analysis, cfg: &Config) {
         return;
     }
     let Some(path) =
-        cfg.gaps_log.clone().or_else(|| satex::format::default_cache_dir().map(|dir| dir.join("gaps.ndjson")))
+        cfg.gaps.file.clone().or_else(|| satex::format::default_cache_dir().map(|dir| dir.join("gaps.ndjson")))
     else {
         return;
     };

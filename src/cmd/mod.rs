@@ -266,7 +266,7 @@ pub enum Command {
 #[derive(Subcommand)]
 pub enum CacheAction {
     /// Interpret the kernel, replacing its cache, and the given packages —
-    /// or `cache_index`'s configured ones when none are given.  Builds only
+    /// or `cache.index`'s configured ones when none are given.  Builds only
     /// what is missing or stale; `--refresh` rebuilds everything.
     Build {
         /// Packages to prepare instead of the configured ones.
