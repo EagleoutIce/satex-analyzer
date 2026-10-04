@@ -12,10 +12,11 @@ use crate::tex::{Interner, Meaning, Span, Sym};
 use crate::value::Value;
 
 /// Cache version: different encodings get different files.
-const ENCODING_VERSION: u32 = 2;
+const ENCODING_VERSION: u32 = 3;
 
 /// [`Severity`] by index, so a cache stores a byte and not a name.
-const SEVERITIES: [Severity; 4] = [Severity::Info, Severity::Warning, Severity::Imprecision, Severity::Unsupported];
+const SEVERITIES: [Severity; 5] =
+    [Severity::Info, Severity::Warning, Severity::Imprecision, Severity::Unsupported, Severity::Assumption];
 
 /// One diagnostic the kernel build raised: severity index, code, message,
 /// span and how often it was raised.
@@ -67,9 +68,19 @@ fn leak(text: &str) -> &'static str {
     leaked
 }
 
+/// A file's size and when it last changed, to the nanosecond: an edit that
+/// keeps the size within the second a cache was built still shows. On Unix
+/// the inode change time joins in, which no tool can set back (`cp -p`,
+/// `touch -r` restore only the modification time).
 pub(crate) fn stamp(path: &Path) -> Option<(u64, u64)> {
     let meta = std::fs::metadata(path).ok()?;
-    let modified = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    let modified = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos() as u64;
+    #[cfg(unix)]
+    let modified = {
+        use std::os::unix::fs::MetadataExt;
+        let changed = (meta.ctime() as u64).wrapping_mul(1_000_000_000).wrapping_add(meta.ctime_nsec() as u64);
+        modified.rotate_left(32) ^ changed
+    };
     Some((meta.len(), modified))
 }
 
@@ -81,6 +92,12 @@ pub fn default_cache_dir() -> Option<PathBuf> {
         Some(value) => Some(PathBuf::from(value)),
         None => dirs::cache_dir().map(|base| base.join("satex")),
     }
+}
+
+/// The cache directory to use, when `cfg.cache.enabled`: `cfg.cache.dir` or
+/// the platform default.
+pub fn enabled_cache_dir(cfg: &crate::config::Config) -> Option<PathBuf> {
+    cfg.cache.enabled.then(|| cfg.cache.dir.clone().or_else(default_cache_dir)).flatten()
 }
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -138,9 +155,9 @@ fn miss_reason(dir: &Path, wanted: &Path) -> String {
     }
     match (mine.is_empty(), others) {
         (true, 0) => "none built yet for this satex build and engine".into(),
-        (true, n) => format!("the {n} kernel cache(s) here were built by another satex build"),
+        (true, n) => format!("the {n} kernel cache(s) found were built by another satex build"),
         (false, _) => format!(
-            "this satex build has {} kernel cache(s) here under another key: the kernel file, the \
+            "this satex build has {} kernel cache(s) under another key: the kernel file, the \
 engine or the preloaded format differs",
             mine.len()
         ),
@@ -236,24 +253,40 @@ fn cache_name_parts(name: &str) -> Option<(&str, &str, &str)> {
 }
 
 /// Delete the caches no build can use any more: kernel caches of another
-/// encoding, package caches of another encoding (`package_encoding` is
-/// current) or of an interpreter that has no kernel cache left, and then the
-/// least recently used package caches beyond `bound` bytes (0: no bound).
+/// encoding or beyond the [`KEEP_OTHER_VERSIONS`] newest of other
+/// interpreters, package caches of another encoding (`package_encoding` is
+/// current) or of an interpreter that has no kernel cache left, lock files
+/// no cache and no process holds, and then the least recently used caches
+/// beyond `bound` bytes over the whole directory (0: no bound).  This
+/// build's own kernel cache is never dropped for size.
 pub fn prune_caches(dir: &Path, package_encoding: u32, bound: u64) -> Pruned {
     let mut pruned = Pruned::default();
     let Ok(entries) = std::fs::read_dir(dir) else { return pruned };
     let mut kernels = Vec::new();
     let mut packages = Vec::new();
+    let mut locks = Vec::new();
+    let mut others = Vec::new();
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let Some(meta) = entry.metadata().ok() else { continue };
-        let Some((family, version, interpreter)) = cache_name_parts(&name) else { continue };
         let stamp = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+        if name.ends_with(".lock") {
+            locks.push((stamp, entry.path()));
+            continue;
+        }
+        let Some((family, version, interpreter)) = cache_name_parts(&name) else {
+            if name.ends_with(".postcard") {
+                others.push((stamp, meta.len(), entry.path()));
+            }
+            continue;
+        };
         let item = (stamp, meta.len(), entry.path(), interpreter.to_string());
         if family.starts_with("format-") {
             kernels.push((version == ENCODING_VERSION.to_string(), item));
         } else if family.starts_with("package-") {
             packages.push((version == package_encoding.to_string(), item));
+        } else {
+            others.push((stamp, meta.len(), entry.path()));
         }
     }
     let mut remove = |path: &Path, bytes: u64| {
@@ -263,28 +296,52 @@ pub fn prune_caches(dir: &Path, package_encoding: u32, bound: u64) -> Pruned {
         }
     };
     let mut live: std::collections::HashSet<String> = [INTERPRETER.to_string()].into();
-    for (current, (_, bytes, path, interpreter)) in kernels {
-        if current {
+    let mut current = Vec::new();
+    for (ok, item) in kernels {
+        if ok { current.push(item) } else { remove(&item.2, item.1) }
+    }
+    current.sort_by_key(|(stamp, ..)| std::cmp::Reverse(*stamp));
+    let mut foreign = 0;
+    // (stamp, bytes, path, may be dropped for size)
+    let mut kept: Vec<(std::time::SystemTime, u64, PathBuf, bool)> = Vec::new();
+    for (stamp, bytes, path, interpreter) in current {
+        if interpreter == INTERPRETER {
+            kept.push((stamp, bytes, path, false));
+        } else if foreign < KEEP_OTHER_VERSIONS {
+            foreign += 1;
             live.insert(interpreter);
+            kept.push((stamp, bytes, path, true));
         } else {
             remove(&path, bytes);
         }
     }
-    let mut kept = Vec::new();
-    for (current, (stamp, bytes, path, interpreter)) in packages {
-        if current && live.contains(&interpreter) {
-            kept.push((stamp, bytes, path));
+    for (ok, (stamp, bytes, path, interpreter)) in packages {
+        if ok && live.contains(&interpreter) {
+            kept.push((stamp, bytes, path, true));
         } else {
             remove(&path, bytes);
         }
     }
+    kept.extend(others.into_iter().map(|(s, b, p)| (s, b, p, true)));
     if bound > 0 {
         kept.sort_by_key(|(stamp, ..)| std::cmp::Reverse(*stamp));
         let mut total = 0u64;
-        for (_, bytes, path) in kept {
+        for (_, bytes, path, droppable) in kept {
             total += bytes;
-            if total > bound {
+            if droppable && total > bound {
                 remove(&path, bytes);
+            }
+        }
+    }
+    // A lock whose cache is gone: a writer creates the lock before its cache,
+    // so only locks older than a minute that nothing holds go.
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+    for (stamp, path) in locks {
+        let cache = path.with_extension("postcard");
+        if stamp < old && !cache.exists() {
+            if let Some(lock) = StoreLock::try_take(&cache) {
+                drop(lock);
+                let _ = std::fs::remove_file(&path);
             }
         }
     }
@@ -562,7 +619,7 @@ mod tests {
             gaps: vec![("unsupported-primitive".into(), 0)],
             wild: {
                 let mut wild = crate::machine::Wild::default();
-                wild.add("MT@inh@".into(), String::new());
+                wild.add("MT@inh@".into(), String::new(), true);
                 wild
             },
         }
