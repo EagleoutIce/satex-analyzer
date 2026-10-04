@@ -33,11 +33,11 @@ Every name the document or its packages define. `origin` is `document` for files
 ```text
 $ satex query definitions -f samples/paper.tex --filter 'tag=macro and arity>0'
 tag    name                              paramet…  body      file                  
+macro  \__sys_tmp:w                      #1        \str_if…  expl3-code.tex        @ expl3-code.tex:1539:17
+macro  \sys_gset_rand_seed:n             #1        \tex_se…  expl3-code.tex        @ expl3-code.tex:1531:34
 macro  \reserved@c                       #1.sty\…  \def \r…  latex.ltx             @ latex.ltx:18742:20
 macro  \reserved@a                       #10#2#{   \expand…  latex.ltx             @ latex.ltx:1277:3
 macro  \reserved@a                       #1\@nil   \@for \…  latex.ltx             @ latex.ltx:18611:3
-macro  \in@@                             #1cmtt              latex.ltx             @ latex.ltx:12883:6
-macro  \reserved@a                       #1,,#2\…  #1,#2\r…  latex.ltx             @ latex.ltx:8765:3
 … 2476 more lines omitted
 ```
 
@@ -123,12 +123,12 @@ The dependency graph as records. `satex dependencies` renders it as DOT or JSON.
 ```text
 $ satex query dependency-graph -f samples/paper.tex
 tag                  name      file                            
-macro-call           \docume…  paper.tex                       @ paper.tex:1:1
-variable-definition  \docume…  latex.ltx                       @ latex.ltx:18618:3
-macro-definition     \docume…  latex.ltx                       @ latex.ltx:18618:3
-variable-definition  \usepac…  latex.ltx                       @ latex.ltx:18619:25
-macro-definition     \usepac…  latex.ltx                       @ latex.ltx:18619:25
-… 38896 more lines omitted
+macro-call           \show@r…  latex.ltx                       @ latex.ltx:731:7
+macro-call           \fmtname  latex.ltx                       @ latex.ltx:731:26
+macro-call           \space    latex.ltx                       @ latex.ltx:731:34
+macro-call           \fmtver…  latex.ltx                       @ latex.ltx:731:42
+use                  LaTeX2e…  latex.ltx                       @ latex.ltx:129:24
+… 38900 more lines omitted
 ```
 
 ## trace
@@ -138,11 +138,11 @@ Every step: which macro expanded, which primitive ran, what changed. Use `satex 
 ```text
 $ satex trace -f samples/paper.tex
 index   step       name            detail                                             file       
-0       expand     \documentclass                                                     paper.tex  @ paper.tex:1:1
-7734    open-file  \article        /usr/local/texlive/YYYY/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
-16002   expand     \value                                                             paper.tex  @ paper.tex:0:0
-29937   expand     \par                                                               paper.tex  @ paper.tex:2:1
-29944   expand     \newif                                                             paper.tex  @ paper.tex:3:1
+678     expand     \documentclass                                                     paper.tex  @ paper.tex:1:1
+8412    open-file  \article        /usr/local/texlive/YYYY/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
+16680   expand     \value                                                             paper.tex  @ paper.tex:0:0
+30615   expand     \par                                                               paper.tex  @ paper.tex:2:1
+30622   expand     \newif                                                             paper.tex  @ paper.tex:3:1
 … 12 more lines omitted
 ```
 
@@ -176,9 +176,8 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
-severity     code                 count  message                 file                
-imprecision  undecided-condition  2      \ifx could not be dec…  rerunfilecheck.sty  @ rerunfilecheck.sty:312:11
-imprecision  undecided-condition  1      \ifx could not be dec…  rerunfilecheck.sty  @ rerunfilecheck.sty:311:11
+severity    code           count  message                               file            
+assumption  clock-assumed  1      the document is assumed to be compi…  expl3-code.tex  @ expl3-code.tex:8203:38
 ```
 
 ## distribution
@@ -211,12 +210,12 @@ Definitions and assignments a macro makes as a side effect of being called, rath
 ```text
 $ satex query side-effects -f samples/paper.tex
 tag                  name      detail    file                  
-variable-definition  \@class…  while e…  latex.ltx             @ latex.ltx:1450:4
-variable-definition  \@raw@c…  while e…  latex.ltx             @ latex.ltx:18718:7
-variable-definition  \g__fil…  while e…  expl3-code.tex        @ expl3-code.tex:5901:5
-variable-definition  \g_file…  while e…  expl3-code.tex        @ expl3-code.tex:3545:19
-variable-definition  \g_file…  while e…  expl3-code.tex        @ expl3-code.tex:3545:19
-… 1698 more lines omitted
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:2104:42
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6668:27
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6668:27
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6668:27
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6668:27
+… 1704 more lines omitted
 ```
 
 ## project
@@ -266,7 +265,7 @@ code args  /demo/label                                          \def \demola… 
 
 ## gaps
 
-What the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `log_gaps` use the same list.
+What the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `gaps.log` use the same list.
 
 ```text
 $ satex query gaps -f samples/mypackage.sty
@@ -326,7 +325,7 @@ $ satex explain '\itshape'
   by             \def
   documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
   body           \not@math@alphabet \itshape \mathit \fontshape \itdefault \selectfont 
-  reference      https://texdoc.org/serve/[source2e](https://ctan.org/pkg/source2e)/0
+  reference      https://texdoc.org/serve/source2e/0
 … 1 more line omitted
 ```
 
@@ -431,7 +430,7 @@ $ satex controls my@draft my@wide -f samples/mypackage.sty
 `satex query --request FILE` (`-` for stdin) runs several queries on one analysis and prints one JSON answer per query. The request is a JSON object:
 
 * `file` — the document to analyze. Falls back to `-f` when omitted.
-* `config` — optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load_packages": false}`.
+* `config` — optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load.packages": false}`.
 * `queries` — an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, or `options`, with their own arguments:
   * `explain`: `names` (array), `all` (bool).
   * `controls`: `names` (array), `all` (bool).

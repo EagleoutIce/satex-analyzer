@@ -47,7 +47,7 @@ plugins: 46 in 11 kinds
   build system        5  latexmk, make, tectonic, arara, l3build
   tools               7  biber, bibtex, makeindex, xindy, makeglossaries, dvips, ps2pdf
   magic comments      3  % !TeX, % !BIB, % arara:
-… 7 more lines omitted
+… 16 more lines omitted
 ```
 
 <details>
@@ -96,7 +96,7 @@ Input:
           Which defaults to apply (usually auto-detected): document, package, class, literate or plain
 
       --set <PATH=VALUE>
-          Overrides an option of `satex.yaml` by its dotted path, the value written as there: `--set limits.memory=8GiB --set load_inputs=false`. Repeatable; the flags below win over it
+          Overrides an option of `satex.yaml` by its dotted path, the value written as there: `--set limits.memory=8GiB --set load.inputs=false`. Repeatable; the flags below win over it
 
       --no-packages
           Do not load packages; analyze the document and the kernel only
@@ -168,11 +168,11 @@ errors (1)
   paper.tex:24:1  error    already-defined  \repeat is already defined
     [unsafe fix] use \renewcommand{\repeat} instead
 
-warnings (3)
-  paper.tex:62:53  warning  missing-nonbreaking-space  an ordinary space stands in front of the reference, so the line
-                                                       may break between the word and it
-    [unsafe fix] write a tie, `~`, instead of the space
-… 33 more lines omitted
+suggestions (7)
+  paper.tex:14:1  info     unused-definition  \WeirdMore is never used
+    [unsafe fix] delete \WeirdMore
+  paper.tex:16:1  info     unused-definition  \Weird is never used
+… 22 more lines omitted
 ```
 
 <details>
@@ -192,14 +192,14 @@ error     correctness  missing-graphic                  an included image is not
 error     correctness  not-defined                      \renewcommand targets a name that does not exist                
 error     correctness  option-clash                     a package is loaded twice with different options                
 error     correctness  raised-error                     the document's code raises a TeX error                          
-error     correctness  undefined-color                  a colour is used, or aliased from, before xcolor ever defines…  
+error     correctness  undefined-color                  a color is used, or aliased from, before xcolor ever defines …  
 error     correctness  undefined-control-sequence       a control sequence is used that nothing defines                 
 error     correctness  undefined-environment            \begin names an environment that is not defined                 
 error     correctness  undefined-glossary-entry         a glossary or acronym entry is used but never declared          
 error     correctness  unguarded-recursion              a recursive macro has nothing that can stop it                  
 warning   correctness  build-missing-custom-dependency  the document writes glossary files, but latexmk has no rule t…  
 warning   correctness  catcode-escapes-group            a category code change is still in force at the end of the run  
-warning   correctness  conflicting-color-definition     the same colour name is defined twice with different colours    
+warning   correctness  conflicting-color-definition     the same color name is defined twice with different colors      
 warning   correctness  delimiter-not-followed           \left, \right or \middle is followed by a brace or a math shi…  
 warning   correctness  duplicate-bibliography-entry     the same key is declared by two bibliography entries            
 warning   correctness  environment-mismatch             \end names an environment other than the one that is open       
@@ -248,7 +248,7 @@ info      style        comment-marker                   a comment still carries 
 info      style        computer-modern-in-t1            T1 text in Computer Modern relies on cm-super for scalable fo…  
 info      style        csquotes-available               the document sets quotation marks by hand instead of loading …  
 info      style        dead-definition                  a definition is replaced before anything uses it                
-info      style        duplicate-color-value            two colour names store the exact same colour                    
+info      style        duplicate-color-value            two color names store the exact same color                      
 info      style        hand-set-quantity                a number and its unit are set by hand where siunitx would set…  
 info      style        math-punctuation                 punctuation sits on the wrong side of a formula                 
 info      style        microtype-available              the engine can protrude characters and expand fonts, but micr…  
@@ -259,7 +259,7 @@ info      style        quote-punctuation                punctuation stands insid
 info      style        stray-space                      a macro body picked up a space from an unescaped line end       
 info      style        unreferenced-numbered-display    a display that stepped a counter is never referenced, so its …  
 info      style        unused-bibitem                   a \bibitem written in the document is never cited               
-info      style        unused-color                     a colour the document defines is never used                     
+info      style        unused-color                     a color the document defines is never used                      
 info      style        unused-definition                a macro defined in the document is never used                   
 info      style        unused-label                     a label is never referenced                                     
 warning   performance  package-after-preamble           a package is loaded after \begin{document}                      
@@ -307,7 +307,7 @@ $ satex lint -f samples/paper.tex --format github
 ::notice file=samples/paper.tex,line=22,col=1,title=primitive-tex-command::\csname is plain TeX; here it uses a control sequence by name
 ::notice file=samples/preamble.tex,line=1,col=1,title=unused-definition::\hello is never used
 ::notice file=samples/paper.tex,line=14,col=1,title=unused-definition::\WeirdMore is never used
-… 7 more lines omitted
+… 4 more lines omitted
 ```
 
 </details>
@@ -331,14 +331,13 @@ $ satex explain -f samples/paper.tex '\usepackage'
   tag            alias
   when           preamble
   context        outside environments
-  effective      \usepackage[1]{2}[3]
-  signature      omo
-  takes          1-3
+  effective      \usepackage
+  takes          0
   uses           4 times, in this run
   by             \let
   documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
   body           \@fileswithoptions \@pkgextension 
-  reference      https://texdoc.org/serve/[source2e](https://ctan.org/pkg/source2e)/0
+  reference      https://texdoc.org/serve/source2e/0
   file           /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx:18619
 
 \usepackage @ latex.ltx:9521:22
@@ -352,7 +351,7 @@ $ satex explain -f samples/paper.tex '\usepackage'
   by             \let
   documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
   body           \@latex@error {Can be used only in preamble}\@eha 
-  reference      https://texdoc.org/serve/[source2e](https://ctan.org/pkg/source2e)/0
+  reference      https://texdoc.org/serve/source2e/0
   file           /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx:9521
 ```
 </details>
@@ -411,9 +410,9 @@ The `controls` command shows the switches and options a package or class defines
 $ satex controls -f samples/paper.tex
 tag     name       count  value                                   governs  file           
 option  article           11pt                                             paper.tex      @ paper.tex:1:1
-switch  \ifdraft          false                                   270      paper.tex      @ paper.tex:3:7
+switch  \ifdraft          false                                   237      paper.tex      @ paper.tex:3:7
 offers  amsmath    15     alignedleftspaceno, alignedleftspacey…           amsmath.sty    @ amsmath.sty:45:16
-… 11 more lines omitted
+… 9 more lines omitted
 ```
 
 </details>
@@ -471,7 +470,7 @@ performance (2)
 ```
 
 `--timings` breaks the time down per phase and file, `--stats` sums up counts and wall time. Both measure the run itself and change between runs.
-The kernel and the packages are interpreted once and cached. `satex cache build` prepares the packages in `cache_index` ahead of time.
+The kernel and the packages are interpreted once and cached. `satex cache build` prepares the packages in `cache.index` ahead of time.
 
 <details>
 <summary>The cached kernel with <code>cache</code></summary>
@@ -480,7 +479,7 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache
   source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
-  holds 182312 definitions
+  holds 182314 definitions
   state cached
 … 2 more lines omitted
 ```
@@ -558,10 +557,10 @@ options
 ```text
 $ satex trace -f samples/paper.tex
 index   step       name            detail                                             file       
-0       expand     \documentclass                                                     paper.tex  @ paper.tex:1:1
-7734    open-file  \article        /usr/local/texlive/YYYY/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
-16002   expand     \value                                                             paper.tex  @ paper.tex:0:0
-29937   expand     \par                                                               paper.tex  @ paper.tex:2:1
+678     expand     \documentclass                                                     paper.tex  @ paper.tex:1:1
+8412    open-file  \article        /usr/local/texlive/YYYY/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
+16680   expand     \value                                                             paper.tex  @ paper.tex:0:0
+30615   expand     \par                                                               paper.tex  @ paper.tex:2:1
 … 13 more lines omitted
 ```
 
@@ -589,7 +588,7 @@ Every command prints text by default. You can use `--format json`, `csv` or `mar
 
 ## Configuration
 
-SaTeX merges its built-in defaults, your global `~/.config/satex/satex.yaml`, every `satex.yaml` from the filesystem root down to the document, `--config FILE`, and `--set PATH=VALUE`, each overriding the one before. `satex --version` lists what was used. Plugins detect the installation, engine, output and build system (latexmk, make, l3build, …). TeX, e-TeX, pdfTeX and LaTeX2e are modelled in full. XeTeX, LuaTeX and ConTeXt are experimental. See the [configuration wiki page](doc/wiki/configuration.md).
+SaTeX merges its built-in defaults, your global `~/.config/satex/satex.yaml`, every `satex.yaml` from the filesystem root down to the document, `--config FILE`, and `--set PATH=VALUE`, each overriding the one before. `satex --version` lists what was used. Plugins detect the installation, engine, output and build system (latexmk, make, l3build, …). TeX, e-TeX, pdfTeX and LaTeX2e are modeled in full. XeTeX, LuaTeX and ConTeXt are experimental. See the [configuration wiki page](doc/wiki/configuration.md).
 
 ## How it works
 

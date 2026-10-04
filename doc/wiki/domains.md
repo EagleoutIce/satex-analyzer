@@ -23,85 +23,69 @@ real outcome, and it says so in a diagnostic.
 
 [`src/value.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/value.rs) defines:
 
-| Variant | Abstracts | Top element |
-| --- | --- | --- |
-| `Int(i64)` | a `\count`, `\numexpr` result, or other exact integer | n/a (always exact) |
-| `Dimen(Scaled)` | a `\dimen`, exact, in scaled points | n/a |
-| `Glue(Glue)` | a `\skip`: width plus stretch/shrink with order | n/a |
-| `MuGlue(Glue)` | a `\muskip`, same shape as `Glue`, math units | n/a |
-| `Toks(Rc<[Token]>)` | a `\toks` register's exact token list | n/a |
-| `Range { dimen, num }` | a count or dimension known only within an interval, or as one of a few values | `Num::full(dimen)`: the whole `[-MAX_INT, MAX_INT]` or `[-MAX_DIMEN, MAX_DIMEN]` |
-| `Color(Colors)` | an xcolor colour (`\color@⟨name⟩`) | hull spanning the model's full range, `set: None` |
-| `Unknown` | anything else: unresolved typesetting output, text with unknown digits, a read through an unpinned index | the domain's top. `Env::value` also reads a fully-covering `Range` as `Unknown` |
+Every kind of quantity has one lattice: an exact value, a bounded set of
+exact values that a join of different ones leaves, and a top. The set is
+the same mechanism for every kind ([the set lift](#the-set-lift-onef),
+below), so the table has no gaps.
 
-A register read always goes through `Env::value` ([`src/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/env.rs)).
-A `Range` is only visible to code that specifically inspects the interval (a
-comparison in `\ifnum`/`\ifdim`), never to a plain `\the`.
+| Kind | Exact value | Interval / hull | Bounded set (≤ `limits.value_set`) | Top |
+| --- | --- | --- | --- | --- |
+| count (`\count`, `\numexpr`, integer parameters) | `Int(i64)` | `Num { lo, hi }` | `OneOf([Int, …])` | `Num::full(false)`, `[-MAX_INT, MAX_INT]`, read as `Unknown` |
+| dimension (`\dimen`, `\dimexpr`) | `Dimen(Scaled)` | `Num { lo, hi }`, scaled points | `OneOf([Dimen, …])` | `Num::full(true)`, `[-MAX_DIMEN, MAX_DIMEN]`, read as `Unknown` |
+| glue (`\skip`) | `Glue(Glue)` | `GlueHull`: one `Num` per component ([tex.web § 150][tw-150]) | `OneOf([Glue, …])` | `GlueHull::full()`, read as `Unknown` |
+| muglue (`\muskip`) | `MuGlue(Glue)` | `GlueHull` | `OneOf([MuGlue, …])` | `GlueHull::full()`, read as `Unknown` |
+| token list (`\toks`) | `Toks(Rc<[Token]>)` | none (no interval domain) | `OneOf([Toks, …])` | `Unknown` |
+| color (`\color@⟨name⟩`) | `Color(Colors)`, every component a point | `Colors { hull: Color }`, one `Num` per component | `OneOf([Color, …])` | the hull over the model's full range |
 
-## `Num`: interval plus bounded may-set
+`Unknown` is the top of every kind: unresolved typesetting output, text with unknown digits, a read through an unpinned index.
+A bounded number that becomes text (`\the`, `\number`, `\pdfuniformdeviate`) is one token of unknown digits typed with its `Num`, which a later scan reads back as that `Num`, so a bound survives `\numexpr` through text and a recursion over it ends.
+A register read goes through `Env::value` ([`src/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/env.rs)), which reads a `Num`, `GlueNum` or `OneOf` as `Unknown`.
+Only code that inspects the abstract value sees it. A comparison in `\ifnum`/`\ifdim` decides by the interval; a join or loop head compares the hulls.
 
-```rust
-pub struct Num {
-    pub lo: i64,
-    pub hi: i64,
-    pub set: Option<Vec<i64>>,  // sorted, deduped, within [lo, hi], holds both ends
-}
-```
+A count and dimension share one payload shape, `Num`, tagged by `Quantity` (`Int`, `Dimen`, `Glue`, `MuGlue`).
+Glue and muglue use a `GlueHull` instead: one `Num` per component, because glue has components ([tex.web § 150][tw-150]) that a single interval cannot carry.
+`Value::Num` and `Value::GlueNum` form one family, split only where the shape differs.
 
-Two abstractions are carried together, not one:
+## The set lift: `OneOf`
 
-- **The interval** `[lo, hi]` decides monotone comparisons (`\ifnum`,
-  `\ifdim`) cheaply even when the exact members are unknown or too many to
-  list.
-- **The may-set** `set` (bounded by [`MAY_VALUES`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/value.rs),
-  or `limits.value_set` below where a join is in play) keeps the *exact*
-  values when there are few, so
-  `\ifodd`, equality tests and further arithmetic stay exact through a small
-  join instead of falling back to interval reasoning immediately.
+`Value::OneOf(Rc<[Value]>)` is TeX's *one* set lift, `Set_k(D)`: at most `k`
+(`limits.value_set`) exact concrete values of one kind, standing in for the
+join of a domain `D` (a `Num`, a `GlueHull`, a `Colors` hull, or `Unknown`
+for token lists, which have none). It replaces what used to be three
+separate copies of the same idea (a set living inside `Num`, another inside
+`Colors`, a third as `OneOf` itself for glue and token lists); now there is
+one implementation (`Value::join`, `Value::exacts`, `Value::hull`) that
+every kind goes through.
 
-When a join's members would exceed the cap, `set` becomes `None` and the
-value falls back to interval-only (`Num::join`, `Num::of_set_capped`):
-nothing is lost, the domain just widens to a coarser member of the same
-lattice.
+- **Concretization**: a `OneOf` stands for exactly its listed members; `D`
+  stands for every concrete value its interval or hull admits.
+- **Join**: while both sides reduce to bounded exact sets (a single exact value counts as a set of one), their union has at most `k` members.
+  Past `k`, or once either side is already a `D`, the join widens: every member's own `D` (`Value::hull`), joined together (`Value::join_hulls`).
+- **Widening** (`α(members)`): the same operation a join-past-`k` does, applied once — the interval hull of every member, componentwise for a `GlueHull`.
+  Only exact membership is lost; the hull still contains every value the set did.
 
-**Worked example** (`Num::join`): a run has `\count0=1` on one path and
-`\count0=2` on the other (say, from two arms of an undecided `\ifodd`).
-Joining gives `Num { lo: 1, hi: 2, set: Some([1, 2]) }`, a two-element
-may-set, not the interval `[1,2]` alone, so `\ifodd\count0` downstream is
-still undecided (both members disagree) but `\ifnum\count0=3` is decided
-false (neither member is 3), which a bare interval could not tell you.
+Arithmetic (`Num::lift`) and conditionals (`Num::compare`, `Num::odd`,
+`Num::narrow`) work on the widened `D` directly: exact at a point, otherwise
+the corners of the interval box (cut at zero, since TeX's arithmetic is
+monotone on each side of zero) bound the ideal result. An overflow of the
+exact range is TeX's arithmetic error, kept in-range by clipping. A 32-bit
+wraparound (`\advance` past the register's own width, [tex.web § 1238][tw-1238])
+instead widens to the *entire* 32-bit range (`WORD_MIN..=WORD_MAX`), not
+`\maxdimen`, since `\advance` can pass that too.
 
-Arithmetic (`Num::lift`) mirrors this: exact per point when every input is a
-point, exact over every combination when the sets are small (≤ 64 combined
-points), and otherwise the corners of the interval boxes (cut at zero, since
-TeX's arithmetic is monotone on each side of zero) bound the ideal result.
-An overflow of the exact range is TeX's arithmetic error, kept in-range by
-clipping. A 32-bit wraparound (`\advance` past the register's own width,
-[tex.web § 1238](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)) instead widens to the *entire* 32-bit range
-(`WORD_MIN..=WORD_MAX`), not `\maxdimen`, since `\advance` can pass that
-too.
+## Colors: `Color` and `Colors`
 
-## Colours: `Color` and `Colors`
+xcolor colors are recorded the same way as a count or dimension, one abstraction level up:
 
-xcolor colours are recorded the same way as `Num`, one abstraction level up:
+- `Color { model, components: Rc<[Num]> }` is one color: an xcolor model (`Model`, xcolor table 3) and one `Num` per component, in scaled points (xcolor's arithmetic units).
+- `Colors { hull: Color }` is what a binding holds: a component-wise interval hull.
+  An exact color has every component as a point (`Color::exact`); a few exact colors a binding may be are, like every other kind, `Value::OneOf` of them, not a set `Colors` keeps.
 
-- `Color { model, components: Rc<[Num]> }` is one colour: an xcolor model
-  (`Model`, xcolor table 3) and one `Num` per
-  component, in scaled points (the units xcolor's own arithmetic uses).
-- `Colors { hull: Color, set: Option<Rc<[Rc<[Num]>]>> }` is what a binding
-  actually holds: a component-wise interval hull (each component's `Num`
-  already an interval) plus a bounded may-set of whole colours, the same
-  "interval plus small may-set" shape as `Num`, lifted from one number to a
-  tuple of them.
+`Colors::join` takes the hull component-wise (`Num::join` per component).
+Two colors of different models have no common bound. Converting one model to another would invent a value xcolor never stored, so joining across models gives `None`.
+The caller then widens to `Value::Unknown` instead of fabricating a converted spec.
 
-`Colors::join` takes the hull component-wise (`Num::join` per component) and
-unions the may-sets, capped the same way `value_set` caps `Num`. Two
-colours of different models have no common bound. Converting one into the
-other's model would invent a value xcolor never actually stored, so joining
-across models gives `None`, and the caller widens to `Value::Unknown`
-instead of fabricating a converted spec.
-
-This domain lives entirely in `src/value.rs` already. The colour lints and
+This domain lives entirely in `src/value.rs` already. The color lints and
 producers that populate it are being finished separately from this page.
 
 ## Meaning sets: what a control sequence may mean
@@ -132,16 +116,16 @@ the arms of an undecided conditional.
 ## Modes and box dimensions
 
 `Modes` ([`src/mode.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/mode.rs)) is a bitset over TeX's six
-modes ([tex.web § 211](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web): vertical, internal vertical, horizontal, restricted
+modes ([tex.web § 211][tw-211]: vertical, internal vertical, horizontal, restricted
 horizontal, display math, math). The run keeps the *set* of modes it may be
 in. `Modes::test` decides an `\ifvmode`/`\ifhmode`/`\ifmmode`/`\ifinner`
 only when every mode in the set answers alike, and disagreeing paths join
-by `union`. `INNER` picks out the three "-mode" (inner) variants [tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)
+by `union`. `INNER` picks out the three "-mode" (inner) variants [tex.web](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web)
 distinguishes from their outer counterparts.
 
 `Dim { lo, hi }` is the analogous domain for a single length: box
-dimensions and node sizes, added up the way `hpack` ([tex.web § 649](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)) and
-`vpack` ([§ 668](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)) add a list's items. `Dim::ANY` (`±MAX_DIMEN`) is the top of
+dimensions and node sizes, added up the way `hpack` ([tex.web § 649][tw-649]) and
+`vpack` ([§ 668][tw-668]) add a list's items. `Dim::ANY` (`±MAX_DIMEN`) is the top of
 the lattice. What an item `satex` cannot follow widens the running size to,
 rather than leaving the item out, which would under-approximate. `Natural`
 bundles the running `along`/`height`/`depth`/`wide` dimensions plus the
@@ -149,13 +133,67 @@ list's tail, mirroring the fields `hpack`/`vpack` compute.  The tail's items
 (`Last`: a character, glue, a kern, a penalty, anything else) have
 `Last::Unknown` as their top, and whether a character node is a ligature is
 a flag whose top is "not known".  `\lastnodetype` reads both (etex.ch), so it
-is exact where the font's ligature/kerning program was followed ([tex.web
-§§ 1034-1040](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web), boundary characters included) and unknown where the font has
+is exact where the font's ligature/kerning program was followed ([tex.web §§ 1034][tw-1034]–[1040][tw-1040], boundary characters included) and unknown where the font has
 no metrics.
+
+## Unknown text: the `TextClass` lattice
+
+Unknown text is not one element. `TextClass` ([`src/tex.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/tex.rs)) is a set of seven token kinds, and unknown text of a class holds only tokens of those kinds.
+The order is set inclusion.
+
+| Kind | Letter | Tokens |
+| --- | --- | --- |
+| `DIGIT` | `d` | `0` to `9` of category 12 |
+| `SIGN` | `s` | `+`, `-`, `.` and `,` of category 12 |
+| `LETTER` | `l` | category 11 |
+| `OTHER` | `o` | any other character that does not open a group |
+| `SPACE` | `_` | category 10 |
+| `BRACE` | `b` | balanced braces |
+| `CS` | `c` | control sequences and active characters, so anything |
+
+Named elements, from the bottom:
+
+```text
+unknown text          any class (all seven kinds, `TextClass::ANY`)
+  |
+cs-free text          d s l o _ b        no control sequence
+  |
+dimension text        d s l              a number and unit letters
+  |
+number text           d s                signed, with a point or comma
+  |
+typed digits          d                  [lo, hi], at least one digit
+```
+
+Each step down rules out more.
+Text of a class holds a token only if the class holds its kind (`TextClass::holds`).
+So a scan delimited by `}` finds none in text without `b`, a scan delimited by a space finds none without `_`, a `\futurelet` look-ahead or an `\ifx` against a letter cannot match without `l`, and nothing without `c` can be a control sequence or an active character.
+Typed digits do more. A later `\ifnum`, `\numexpr` or `\csname` reads their `Num` back, so the test is decided by the interval and the name is one of a bounded set.
+Every class also says whether it has at least one token.
+
+The join of two classes is the union of their kinds, and the text is non-empty only if both are.
+A run of unknown text collapses into one token of the class the run spans, and a class that holds `c` is plain unknown text, the top.
+Widening therefore moves up this lattice and stops at the top.
+
+Stubs (`stubs:` in [Configuration](Configuration#stubs)) use these elements for what a macro leaves:
+
+| `result` | Element |
+| --- | --- |
+| `nothing` | the empty text |
+| `number` | typed digits over the range of a TeX integer |
+| `{ number: [lo, hi] }` | typed digits `[lo, hi]` |
+| `dimen` | dimension text |
+| `{ text: digits }` | typed digits with no range |
+| `{ text: number }` | number text |
+| `{ text: dimension }` | dimension text |
+| `{ text: cs-free }` | cs-free text, possibly empty |
+| `text` or `{ text: any }` | unknown text |
+| `box` | a box of unknown size |
+| `{ box: { width, height, depth } }` | a box within the given `Dim` intervals |
 
 ## `CatcodeTable::unknown`: unknown category as a lattice element
 
-`CatcodeTable` ([`src/tex.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/tex.rs)) ([tex.web § 232](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)) tracks, per character, a
+`CatcodeTable` ([`src/tex.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/tex.rs)) ([tex.web § 232][tw-232]) tracks, per character, a
 set `unknown` of characters whose `\catcode` was set to a number satex
 cannot interpret. This is not a missing table entry: `CatcodeTable::get`
 still returns a best-guess category (the last one known), but any caller
@@ -175,17 +213,19 @@ configured cap, drop to the coarser hull-only element instead of failing.
 Execution around an undecided split (conditional, meaning-set dispatch, an
 undecided mode test) runs **each arm to completion separately**, then joins
 the resulting environments, globals included, rather than letting one arm's
-effects overwrite the other's. A name only one arm defined exists
+effects overwrite the other's. With `arm_joins` on (the default), inside a body read while expanding (an `\edef`) the
+arms part at the split and join where they meet again in the body. What the body holds so far is part of the path: the join keeps the
+text both arms share and puts one token for either arm's text between. So
+twelve independent tests in one body are twelve splits, not 4096 runs. A name only one arm defined exists
 afterwards holding that definition. A register the arms leave with
 different values holds their `Num`/`Value` join. Category codes or a
 pending `\afterassignment`/`\aftergroup` token that disagree keep the paths
-running apart until they agree again or the join's token budget
-(`limits.join_tokens` below) runs out.  Paths are compared by what is left to read, not
-by which copy of a token list holds it, and the path that is furthest behind
-(then the one that has run least) runs next, so paths that can meet do.
-When the budget runs out, the first path's control goes on and every path's
-bindings are joined into it.  Their save stacks cannot be joined where the
-paths stand in different groups, which the `paths-diverged` gap records.
+apart, up to two per place. Past that they are joined too: category codes by
+their join, the token lists into one token that stands for either list. Paths
+are compared by what is left to read, not by which copy of a token list holds
+it. The path furthest behind runs next, so paths that can meet do. Paths that
+never meet run on to the end separately. No path is dropped. Where they stand
+in different groups, their save stacks are joined entry by entry.
 
 A loop whose exit is undecided (`\loop … \ifhbox … \repeat`, or pgfmath's
 tail-recursive dispatch) is analyzed to a **fixpoint**: each round's result
@@ -200,35 +240,18 @@ run that still grows past that says so (`undecided-loop`).
 ## `limits`: where the domains stop being precise
 
 From [`src/config.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/config.rs), the knobs that turn precision
-into a bounded search. Full description of each on [Configuration](Configuration#what-a-run-may-use).
+into a bounded search. The other limits (time, memory, threads, record sizes)
+never make a result coarser: they only stop a run, and the run says so. Full description of each on [Configuration](Configuration#what-a-run-may-use).
 
 | setting | default | what it bounds |
 | --- | --- | --- |
-| [`limits.steps`](Configuration#what-a-run-may-use) | 1000000000 | Tokens the document may digest, and the kernel on top of that. |
-| [`limits.format_steps`](Configuration#what-a-run-may-use) | 9000000000 |  |
-| [`limits.file_depth`](Configuration#what-a-run-may-use) | 64 | How deep `\input` may nest. |
-| [`limits.expansion_depth`](Configuration#what-a-run-may-use) | 32 | How often a macro may re-enter itself, and how often one call site may expand without the source moving on — TeX loops are tail recursive. |
-| [`limits.site_expansions`](Configuration#what-a-run-may-use) | 16384 |  |
-| [`limits.stall_tokens`](Configuration#what-a-run-may-use) | 200000000 | Tokens a run may digest without reading from a file before the expansion it is in is given up as a loop that does not end. |
-| [`limits.repeat_failures`](Configuration#what-a-run-may-use) | 8 | How often one construct satex cannot follow may be met at one place before the expansion it is in is given up the same way.  A path that fails at a site once fails there again on every round, so counting the failure into the millions says nothing the first one did not. |
-| [`limits.seconds`](Configuration#what-a-run-may-use) | 300 | Wall-clock seconds a run may take before it stops and says so; 0 for no limit.  A safety net: no document should come near it. |
-| [`limits.branch_depth`](Configuration#what-a-run-may-use) | 8 | How deep undecided conditions may nest before only one arm is read. |
-| [`limits.join_tokens`](Configuration#what-a-run-may-use) | 65536 | Tokens the arms of one undecided conditional may read, together, before they have to meet again in the input. |
-| [`limits.meaning_splits`](Configuration#what-a-run-may-use) | 4 | How deep in nested paths a name that a join left with one of several meanings still splits the run into a path per meaning when it is executed or compared by `\ifx`; deeper, and with 0 everywhere, it is read as a name of unknown meaning. |
+| [`limits.choices`](Configuration#what-a-run-may-use) | 8 | Undecided choices one command may make on one path.  Past them a conditional follows only its first arm, reported as an `unsupported` gap. |
+| [`limits.paths`](Configuration#what-a-run-may-use) | 16 | Paths one drive keeps waiting before it joins the input of two that stand alike: what their token lists differ in becomes one token that stands for either text. |
+| [`limits.meaning_splits`](Configuration#what-a-run-may-use) | 4 | Choices one command may have made on one path for a name that a join left with one of several meanings to still split the run into a path per meaning; past them, and with 0 everywhere, it is read as a name of unknown meaning. |
 | [`limits.widen_after`](Configuration#what-a-run-may-use) | 3 | How many rounds a loop head analyzes its paths again from a grown joined state before what still grows is widened (SEMANTICS [§ 14](Configuration#what-a-run-may-use)). |
+| [`limits.recursion_depth`](Configuration#what-a-run-may-use) | 100 | How many levels deep a recursion whose continuation is undecided is followed before it is assumed to end within them. |
 | [`limits.meaning_set`](Configuration#what-a-run-may-use) | 8 | How many meanings a join leaves a name with as a set (one of them) before it has an unknown meaning. |
 | [`limits.value_set`](Configuration#what-a-run-may-use) | 8 | How many values a join leaves a count or dimension register with as a set before only their interval is kept. |
-| [`limits.expansion_tokens`](Configuration#what-a-run-may-use) | 1048576 | Tokens one expansion, argument or conditional may span.  TeX itself has no such limit, so these only stop a single pathological read from taking all of `memory`; what makes a run terminate is `steps`, `held_tokens` and the recursion widening.  Only tokens an expansion produces count: source read straight from a file is bounded by the file, so a document body is never cut short by this. |
-| [`limits.conditional_tokens`](Configuration#what-a-run-may-use) | 1048576 |  |
-| [`limits.held_tokens`](Configuration#what-a-run-may-use) | 4000000 | Tokens the input stack may hold at once. |
-| [`limits.expansion_stack`](Configuration#what-a-run-may-use) | 4000 | How many token lists may be open at once: one per macro being expanded, argument being read or file being input. |
-| [`limits.vertices`](Configuration#what-a-run-may-use) | 400000 | Ceilings on what the run records. |
-| [`limits.facts`](Configuration#what-a-run-may-use) | 2000000 |  |
-| [`limits.trace`](Configuration#what-a-run-may-use) | 200000 |  |
-| [`limits.save_stack`](Configuration#what-a-run-may-use) | 2000000 | Entries on the save stack: one per assignment a group may have to undo ([tex.web § 268](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)). |
-| [`limits.memory`](Configuration#what-a-run-may-use) | 4.0 GiB | What this run may hold at once, written the way `ulimit` takes it (`512M`, `4GiB`); zero lifts the limit.  Only the `satex` binary counts allocations, so a library user gets no limit. |
-| [`limits.threads`](Configuration#what-a-run-may-use) | 0 | Threads any parallel work may use; 0 lets satex choose.  The interpreter runs on one thread because TeX's state is one machine, so this bounds the file walks around it. |
-| [`limits.cache_size`](Configuration#what-a-run-may-use) | 2.0 GiB | How much the package caches in the cache directory may take together; the least recently used go first.  Zero lifts the bound. |
 
 Each is a place `satex` chooses breadth of exploration over runtime, never a
 place it silently drops soundness. Past the limit the value goes up the
@@ -242,12 +265,12 @@ A write through a register index `satex` cannot pin to one number
 so it must be sound for *every* register that index could have named
 (`Machine::weaken_registers`, [`src/exec.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/exec.rs)):
 
-- When the index's `Num` still lists few enough candidates
-  (`index_targets`, capped by `limits.value_set`), each candidate register
+- When the index's `Num` interval is still narrow enough
+  (`index_targets`, capped by `limits.value_set`), each register in it
   is joined with the written value.
 - Otherwise every register of that kind is weakened: registers already seen
   are joined with the value, and any register not yet seen can no longer be
-  assumed to hold its [tex.web § 232](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) zero default. A further unseen-register
+  assumed to hold its [tex.web § 232][tw-232] zero default. A further unseen-register
   read (`unseen_register`) then answers with the whole range of the kind
   (`register_top`) instead of zero.
 
@@ -263,7 +286,7 @@ it does not yet reach it. They are stated here rather than left implicit.
 ### Text `satex` could not follow, once it is executed
 
 A character whose category `satex` cannot pin down runs a meaning of its own
-only when its category is 13, and [tex.web §§ 232 and 344](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) say that meaning is
+only when its category is 13, and [tex.web §§ 232][tw-232], [344][tw-344] say that meaning is
 the one bound for that character. None of the other categories runs
 anything. So executing such a character joins in what that one binding could
 assign, and a character nothing binds leaves the run exactly as precise as it
@@ -286,7 +309,7 @@ What that does not cover:
 ### Expansion that is widened away
 
 A recursion that is stopped at its bound has its remaining rounds widened:
-the call reads as text that is not known ([tex.web § 366](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)), and what those
+the call reads as text that is not known ([tex.web § 366][tw-366]), and what those
 rounds would have assigned is widened with it. Category codes, groups,
 files, streams and `\write` are not widened there. The sound answer for
 category codes is the top of that table, which leaves nothing tokenizable,
@@ -311,6 +334,20 @@ silently skipped or guessed at. This is what makes every finding `satex`
 reports trustworthy: it may miss nothing it should have flagged, though it
 may (and, at a stated limit, does) flag something a real run would not.
 
-Sources cited above: [tex.web § 211](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) (modes), [§ 232](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) (category codes), [§ 433](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)
-(register codes), [§§ 448–460](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) (`scan_dimen`), [§ 649](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) (`hpack`), [§ 668](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web)
-(`vpack`), [§ 1238](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) (`\advance` wraps without an overflow check).
+Sources cited above: [tex.web § 211][tw-211] (modes), [§ 232][tw-232] (category codes), [§ 433][tw-433]
+(register codes), [§§ 448][tw-448]–[460][tw-460] (`scan_dimen`), [§ 649][tw-649] (`hpack`), [§ 668][tw-668]
+(`vpack`), [§ 1238][tw-1238] (`\advance` wraps without an overflow check).
+
+[tw-150]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L3147
+[tw-211]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4220
+[tw-232]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4811
+[tw-344]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7286
+[tw-366]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7636
+[tw-433]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L8617
+[tw-448]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L8829
+[tw-460]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9056
+[tw-649]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L12910
+[tw-668]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L13152
+[tw-1034]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20114
+[tw-1040]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20271
+[tw-1238]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L23134

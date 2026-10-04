@@ -146,7 +146,7 @@ Shows what a build costs: which packages and files dominate, and what to do abou
 {{run(6): satex lint -f samples/paper.tex --filter 'category=performance'}}
 
 `--timings` breaks the time down per phase and file, `--stats` sums up counts and wall time. Both measure the run itself and change between runs.
-The kernel and the packages are interpreted once and cached. `satex cache build` prepares the packages in `cache_index` ahead of time.
+The kernel and the packages are interpreted once and cached. `satex cache build` prepares the packages in `cache.index` ahead of time.
 
 <details>
 <summary>The cached kernel with <code>cache</code></summary>
@@ -199,7 +199,7 @@ Every command prints text by default. You can use `--format json`, `csv` or `mar
 
 ## Configuration
 
-SaTeX merges its built-in defaults, your global `~/.config/satex/satex.yaml`, every `satex.yaml` from the filesystem root down to the document, `--config FILE`, and `--set PATH=VALUE`, each overriding the one before. `satex --version` lists what was used. Plugins detect the installation, engine, output and build system (latexmk, make, l3build, …). TeX, e-TeX, pdfTeX and LaTeX2e are modelled in full. XeTeX, LuaTeX and ConTeXt are experimental. See the [configuration wiki page](doc/wiki/configuration.md).
+SaTeX merges its built-in defaults, your global `~/.config/satex/satex.yaml`, every `satex.yaml` from the filesystem root down to the document, `--config FILE`, and `--set PATH=VALUE`, each overriding the one before. `satex --version` lists what was used. Plugins detect the installation, engine, output and build system (latexmk, make, l3build, …). TeX, e-TeX, pdfTeX and LaTeX2e are modeled in full. XeTeX, LuaTeX and ConTeXt are experimental. See the [configuration wiki page](doc/wiki/configuration.md).
 
 ## How it works
 
