@@ -196,12 +196,34 @@ pub fn hover(analysis: &Analysis, doc: &Text, position: Position) -> Option<Hove
     })
 }
 
-/// `textDocument/definition`: every definition site [`query::explain`]
-/// knows for the control sequence under the cursor, or the `\label`,
-/// `\bibitem` or bibliography entry a key names.
-pub fn definition(analysis: &Analysis, doc: &Text, position: Position) -> Option<GotoDefinitionResponse> {
+/// `\input`/`\include`/`\usepackage`/`\documentclass`: the resolved file for
+/// the load whose command or argument the cursor sits on, from
+/// `analysis.facts.loads` (the run's own resolution). `None` off a load line
+/// or if it never resolved.
+fn load_target(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<GotoDefinitionResponse> {
+    let candidates: Vec<_> = analysis
+        .facts
+        .loads
+        .iter()
+        .filter(|l| l.span.line == pos.line && analysis.file_name(l.span.file) == path)
+        .collect();
+    let single = if let [one] = candidates.as_slice() { Some(one) } else { None };
+    let load = *candidates.iter().find(|l| l.name == word).or(single)?;
+    let zero = Position { line: 0, character: 0 };
+    let uri = path_uri(load.path.as_deref()?);
+    Some(GotoDefinitionResponse::Array(vec![Location { uri, range: Range { start: zero, end: zero } }]))
+}
+
+/// `textDocument/definition`: the load target ([`load_target`]) if the
+/// cursor sits on one; else every definition site [`query::explain`] knows
+/// for the control sequence under the cursor, or the `\label`, `\bibitem`
+/// or bibliography entry a key names.
+pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Option<GotoDefinitionResponse> {
     let pos = to_pos(doc, position);
     let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
+    if let Some(target) = load_target(analysis, path, pos, &name) {
+        return Some(target);
+    }
     let sources = Sources::default();
     let mut records = if is_command {
         query::explain(analysis, std::slice::from_ref(&name), true).ok()?.0
