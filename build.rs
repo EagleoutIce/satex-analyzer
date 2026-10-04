@@ -35,7 +35,18 @@ fn main() {
 
 /// Code that only reports on an analysis — lints, subcommands, rendering —
 /// does not change what a cache holds, so editing it keeps the caches.
-const REPORTING: &[&str] = &["src/lint", "src/cmd", "src/bin", "src/render.rs", "src/main.rs"];
+const REPORTING: &[&str] = &[
+    "src/lint",
+    "src/cmd",
+    "src/bin",
+    "src/lsp",
+    "src/render.rs",
+    "src/main.rs",
+    "src/progress.rs",
+    "src/query.rs",
+    "src/rename.rs",
+    "src/timing.rs",
+];
 
 /// FNV-1a over the interpreter's source files, in path order: the binary and
 /// every test binary built from the same source share one format cache.
@@ -58,11 +69,42 @@ fn source_digest() -> u64 {
     walk(std::path::Path::new("src"), &mut files);
     files.sort();
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in files.iter().filter_map(|f| std::fs::read(f).ok()).flatten() {
+    for byte in files.iter().filter_map(|f| std::fs::read(f).ok()).flat_map(|text| code_only(&text)) {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
     hash
+}
+
+/// The bytes that make up the code: `//` comments and whitespace outside
+/// string literals dropped, so a comment or a reformat keeps the caches.
+fn code_only(text: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    let (mut i, mut string) = (0, false);
+    while i < text.len() {
+        let c = text[i];
+        if string {
+            out.push(c);
+            if c == b'\\' && i + 1 < text.len() {
+                out.push(text[i + 1]);
+                i += 1;
+            } else if c == b'"' {
+                string = false;
+            }
+        } else if c == b'/' && text.get(i + 1) == Some(&b'/') {
+            while i < text.len() && text[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        } else if c == b'"' && !(i > 0 && text[i - 1] == b'\'' && text.get(i + 1) == Some(&b'\'')) {
+            string = true;
+            out.push(c);
+        } else if !c.is_ascii_whitespace() {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Lua 5.3 with satex's unknown value made untestable (vendor/lua/SATEX.patch).
