@@ -752,7 +752,7 @@ fn escape(s: &str) -> String {
 }
 
 /// The call graph's adjacency lists as petgraph sees them.  `DiGraph` walks
-/// a node's edges newest first, so the neighbours come out reversed.
+/// a node's edges newest first, so the neighbors come out reversed.
 #[derive(Clone, Copy)]
 struct Adjacency<'a>(&'a [Vec<usize>]);
 

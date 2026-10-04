@@ -90,9 +90,9 @@ fn reference(record: &Record) -> &str {
     record.get("reference").and_then(Json::as_str).unwrap_or_default()
 }
 
-/// The link target of a record's place: the file, as a `file://` URL.  A
-/// `file:` URL has no standard way to name a line, and a fragment makes the
-/// opener look for a file of that name, so the line stays in the link's text.
+/// The link target of a record's place: the file, as a `file://` URL. A
+/// `file:` URL has no standard way to name a line, so the line stays in the
+/// link's text instead of a fragment.
 fn location(record: &Record) -> String {
     let Some(Json::String(path)) = record.get("path") else { return String::new() };
     file_url(path)
@@ -635,10 +635,9 @@ fn findings_section(out: &mut String, title: &str, records: &[&Record], links: L
     out.push('\n');
 }
 
-/// What the analysis could not fully resolve, collapsed to the count and the
-/// distinct causes rather than one line per site: the detail is a widened
-/// recursion or a reached budget, never a defect in the document, so it does
-/// not deserve a place among the findings above it.
+/// What the analysis could not fully resolve, collapsed to a count and the
+/// distinct causes rather than one line per site. It is a widened recursion
+/// or a reached budget, never a defect in the document.
 fn precision_line(records: &[&Record]) -> String {
     let mut causes: Vec<String> = records.iter().map(|r| r.get("name").map(plain).unwrap_or_default()).collect();
     causes.sort();
@@ -655,8 +654,8 @@ fn precision_line(records: &[&Record]) -> String {
 }
 
 /// `satex lint`'s text output: findings grouped by severity, with build-cost
-/// observations and what the analysis could not follow kept apart from them
-/// rather than mixed into one flat, truncated table.
+/// observations and unresolved cases kept apart rather than mixed into one
+/// flat, truncated table.
 pub fn lint(records: &[Record], links: Links, group: bool) -> String {
     let mut document: Vec<&Record> = Vec::new();
     let mut performance: Vec<&Record> = Vec::new();
@@ -883,8 +882,8 @@ fn concept(tag: &str) -> &str {
 }
 
 /// "3 commands, 2 environments, 1 switch": what the document's own file
-/// defines, one clause per tag the facts recorded — generic, so a tag this
-/// does not already have a word for still reads, just pluralized plainly.
+/// defines, one clause per tag the facts recorded. Generic, so a tag with
+/// no word of its own still reads, pluralized plainly.
 fn defines_line(root: &crate::query::Node) -> Option<String> {
     let parts: Vec<String> = root
         .provides
@@ -914,8 +913,8 @@ fn defines_line(root: &crate::query::Node) -> Option<String> {
 }
 
 /// How often the document's own environments (`root`'s `environment`
-/// provides) were actually opened in the main file — `\begin{name}`, from
-/// the run's own occurrences, not a count of the definitions themselves.
+/// provides) were actually opened in the main file, from the run's own
+/// `\begin{name}` occurrences, not a count of the definitions themselves.
 fn environment_uses_line(analysis: &crate::machine::Analysis, root: &crate::query::Node) -> Option<String> {
     let owned = root.provides.get("environment")?;
     if owned.is_empty() {
@@ -1004,10 +1003,9 @@ pub fn timings(analysis: &crate::machine::Analysis, links: Links) -> String {
     if rows.is_empty() {
         return out;
     }
-    // `flatten` folds a file read twice under one parent into a row, and a
-    // file read again under a different one is no more informative, so it is
-    // pulled into one line too.  A frame this run opened counts at least the
-    // token that finds its end, so zero tokens on `read` means no frame.
+    // `flatten` folds repeat reads of a file, even under a different parent,
+    // into one line. A frame this run opened counts at least the token that
+    // finds its end, so zero tokens on `read` means no frame.
     let mut again: Vec<&str> = Vec::new();
     rows.retain(|(_, node)| {
         let repeat = node.tokens == 0 && matches!(node.status, "already-loaded" | "read");
@@ -1078,8 +1076,8 @@ fn flatten<'a>(
     };
     rows.push((name, node));
     let inner = if root { String::new() } else { format!("{prefix}{}", if last { "   " } else { "│  " }) };
-    // A file read once is listed once: the repeats that follow, in any order,
-    // are gathered into the row of the first of them.
+    // A file read once is listed once. Repeats, in any order, are gathered
+    // into the row of the first of them.
     let mut shown: Vec<usize> = Vec::new();
     let mut repeats: Vec<&str> = Vec::new();
     for (i, child) in node.children.iter().enumerate() {
@@ -1133,15 +1131,16 @@ fn tail(text: &str, limit: usize) -> String {
 }
 
 /// A path shown by its name and linked to the file itself, when the terminal
-/// takes links; the whole path otherwise.
+/// takes links. The whole path otherwise.
 fn linked_file(path: &str, links: Links) -> String {
     let name = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path);
     if links.0 { hyperlink(name, &file_url(path), links) } else { path.to_string() }
 }
 
 pub(crate) fn file_url(path: &str) -> String {
-    // Absolute, not canonical: resolving symlinks would name `/private/var` for the
-    // `/var` an editor opened on macOS, and the URL has to be the one the client knows.
+    // Absolute, not canonical: resolving symlinks would name `/private/var`
+    // for the `/var` an editor opened on macOS. The URL must match what the
+    // client knows.
     let absolute = std::path::absolute(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
     crate::paths::file_url(&absolute)
 }
@@ -1270,7 +1269,7 @@ fn lsp_severity(record: &Record) -> u8 {
 /// Findings as a language server publishes them: per file, the
 /// `Diagnostic`s and the `quickfix` `CodeAction`s that repair them, with
 /// positions 0-based and columns in UTF-16 code units, as the protocol
-/// counts them.  An editor integration hands these on unchanged.
+/// counts them. An editor integration hands these on unchanged.
 pub fn lsp(records: &[Record]) -> String {
     lsp_with(records, file_url)
 }
@@ -1345,8 +1344,7 @@ pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
 }
 
 /// What the run could not follow, in a few lines: every cause with how often
-/// it happened and where it first did.  A reader sees the analysis's limits
-/// without having to ask for them; `report_gaps: false` turns it off.
+/// it happened and where it first did. `gaps.report: false` turns it off.
 pub fn gaps(analysis: &crate::machine::Analysis) -> String {
     /// Enough to show the causes that matter without burying the answer.
     const SHOWN: usize = 5;
