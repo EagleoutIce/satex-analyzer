@@ -1,0 +1,24 @@
+# Config for the "Check documentation links" CI job (.github/workflows/ci.yml)
+# and for `lychee` run by hand: `lychee --config lychee.toml *.md doc/**/*.md`.
+
+# GitHub line-anchored blobs (`#L1234`) and CTAN mirrors occasionally answer
+# slowly or rate-limit; retry a few times before failing the run.
+max_retries = 3
+retry_wait_time = 5
+
+# Anchors like `#L1234` are GitHub's client-side rendering, not part of the
+# HTML lychee fetches, so it cannot verify them; the page returning 200 is
+# checked instead (scripts/tex-web-links.py's own section map is how the
+# repository keeps `#L<line>` itself honest, see SEMANTICS.md's footer).
+include_fragments = false
+
+# Never touches anything outside the repository's own docs, so no reason to
+# skip localhost or private hosts here.
+exclude_all_private = false
+
+# The header banner links to this repository's own `main` branch, which
+# does not exist until this branch is merged there; checking it here would
+# fail on every branch and pull request that has not shipped yet.
+exclude = [
+  "^https://raw\\.githubusercontent\\.com/EagleoutIce/satex-analyzer/main/",
+]
