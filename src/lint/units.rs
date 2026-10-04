@@ -167,9 +167,15 @@ fn hand_set_quantity(report: &mut Report) {
         .facts
         .quantities
         .iter()
-        .filter(|q| !q.within.iter().any(|file| packages.contains(file)))
-        .filter(|q| document(q.span.file) && document(q.unit_span.file))
-        .filter(|q| !plural(&q.number, &q.unit))
+        // Set on every run (a path that lost track of a key may typeset a
+        // length no real run does), in the document's own text, not a count.
+        .filter(|q| {
+            q.certain
+                && document(q.span.file)
+                && document(q.unit_span.file)
+                && !q.within.iter().any(|file| packages.contains(file))
+                && !plural(&q.number, &q.unit)
+        })
         .cloned()
         .collect();
     // Only the first finding brings the package in.  The rest would overlap it.

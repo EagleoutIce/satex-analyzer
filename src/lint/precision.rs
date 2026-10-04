@@ -14,7 +14,7 @@ a recursion that was widened, and a budget that was reached.  Findings that
 depend on such a point may be incomplete.
 
 There is nothing to fix in the document.  Raising the limits in `satex.yaml` or
-narrowing the analysis with `load_packages: false` can reduce it.",
+narrowing the analysis with `load.packages: false` can reduce it.",
     references: &[],
     run: imprecision,
 }];

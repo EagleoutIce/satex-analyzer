@@ -161,14 +161,17 @@ fn unbalanced_brackets(report: &mut Report) {
     let mut counts: HashMap<FileId, [[usize; 2]; 2]> = HashMap::new();
     let mut opened: HashMap<FileId, [Vec<Span>; 2]> = HashMap::new();
     let mut surplus: HashMap<FileId, [Option<Span>; 2]> = HashMap::new();
+    // A bracket the run could not place proves nothing, and neither does
+    // any count in its file: its partner may be the one that was placed.
+    let mut unplaced: HashSet<FileId> = HashSet::new();
     for i in view.prose_text() {
         let Some(c) = view.char_at(i) else { continue };
         let Some(pair) = PAIRS.iter().position(|(open, close)| *open == c || *close == c) else { continue };
-        // A bracket the run could not place proves nothing.
+        let Some(span) = view.span(i) else { continue };
         if !view.modes(i).is_known() {
+            unplaced.insert(span.file);
             continue;
         }
-        let Some(span) = view.span(i) else { continue };
         let count = counts.entry(span.file).or_default();
         let stack = opened.entry(span.file).or_default();
         if c == PAIRS[pair].0 {
@@ -182,7 +185,7 @@ fn unbalanced_brackets(report: &mut Report) {
             }
         }
     }
-    for file in &files {
+    for file in files.iter().filter(|file| !unplaced.contains(&file.id)) {
         for (pair, (open, close)) in PAIRS.iter().enumerate() {
             let [opens, closes] = counts.get(&file.id).map_or([0, 0], |count| count[pair]);
             if opens == closes {

@@ -119,9 +119,50 @@ impl Ref {
         }
     }
 
+    /// URL pinned to the exact line for [`Source::TeXWeb`] (`at` is a WEB
+    /// module number), so the citation lands on the paragraph, not the
+    /// file's top. Falls back to the file's own URL otherwise.
     pub fn url(&self) -> String {
+        if self.source == Source::TeXWeb
+            && let Ok(section) = self.at.parse::<u32>()
+            && let Some(line) = tex_web_section_line(section)
+        {
+            return format!("{}#L{line}", self.source.url());
+        }
         self.source.url().to_string()
     }
+}
+
+/// tex.web's URL at the commit `doc/src/tex-web-sha.txt` names, written
+/// together with `doc/src/tex-web-sections.tsv` by
+/// `scripts/tex-web-links.py --dump-sections --dump-sha`; CI re-resolves
+/// both against upstream `trunk` and fails on drift.
+fn tex_web_base_url() -> &'static str {
+    static URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    URL.get_or_init(|| {
+        let sha = include_str!("../../doc/src/tex-web-sha.txt").trim();
+        format!("https://github.com/TeX-Live/texlive-source/blob/{sha}/texk/web2c/tex.web")
+    })
+    .as_str()
+}
+
+/// The line `section` starts on in the pinned tex.web
+/// (`doc/src/tex-web-sections.tsv`). Exposed so `satex-doc` can also pin a
+/// `tex.web § N` citation found in prose, not just a [`Ref`].
+pub fn tex_web_section_line(section: u32) -> Option<u32> {
+    static SECTIONS: std::sync::OnceLock<std::collections::HashMap<u32, u32>> = std::sync::OnceLock::new();
+    SECTIONS
+        .get_or_init(|| {
+            const TSV: &str = include_str!("../../doc/src/tex-web-sections.tsv");
+            TSV.lines()
+                .filter_map(|line| {
+                    let (n, l) = line.split_once('\t')?;
+                    Some((n.parse().ok()?, l.parse().ok()?))
+                })
+                .collect()
+        })
+        .get(&section)
+        .copied()
 }
 
 /// The works satex's rules follow.
@@ -207,7 +248,7 @@ impl Source {
             Source::Chktex => "https://www.nongnu.org/chktex/",
             Source::Csquotes => "https://ctan.org/pkg/csquotes",
             Source::TeXbook => "https://ctan.org/pkg/texbook",
-            Source::TeXWeb => "https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web",
+            Source::TeXWeb => tex_web_base_url(),
             Source::Source2e => "https://ctan.org/pkg/source2e",
             Source::Fntguide => "https://ctan.org/pkg/fntguide",
             Source::Usrguide => "https://ctan.org/pkg/usrguide",
@@ -435,6 +476,24 @@ pub fn lint(analysis: &Analysis) -> Vec<Record> {
         out.retain(|_| {
             at += 1;
             keep[at - 1]
+        });
+    }
+    let frozen: Vec<glob::Pattern> =
+        analysis.settings.project.frozen.iter().filter_map(|g| glob::Pattern::new(g).ok()).collect();
+    // The repository a file belongs to: its nearest ancestor holding a
+    // `.git` (a directory, or the file a submodule checkout has).
+    let repository =
+        |path: &std::path::Path| path.ancestors().skip(1).find(|d| d.join(".git").exists()).map(|d| d.to_path_buf());
+    let main = std::path::Path::new(analysis.file_name(analysis.main_file));
+    let main = main.canonicalize().unwrap_or_else(|_| main.to_path_buf());
+    let home = analysis.settings.project.freeze_other_repositories.then(|| repository(&main)).flatten();
+    if !frozen.is_empty() || home.is_some() {
+        out.retain(|r| {
+            let Some(path) = r.get("path").and_then(|v| v.as_str()) else { return true };
+            let path = std::path::Path::new(path);
+            let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+            let foreign = home.as_ref().is_some_and(|home| repository(&path).is_some_and(|r| &r != home));
+            !foreign && !frozen.iter().any(|g| g.matches_path(&path))
         });
     }
     suppress::apply(analysis, out)

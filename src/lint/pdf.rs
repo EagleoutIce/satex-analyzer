@@ -19,7 +19,7 @@ pub static RULES: &[Rule] = &[
         explanation: "\
 `\\pdfliteral` and `\\special{pdf:…}` (what ocgx2, ocg-p and pdfbase use to
 write raw PDF) drop `q`/`Q` and `BMC`/`BDC`/`EMC` straight into the page's
-content stream.  `q`/`Q` save and restore the graphics state — colour, line
+content stream.  `q`/`Q` save and restore the graphics state — color, line
 width, the current transform; `BMC`/`BDC`/`EMC` bracket marked content, an
 optional content group among them.  Both have to nest within the page (PDF
 32000, §§ 8.4.2, 14.6).  One left open leaks its state into everything
@@ -62,14 +62,21 @@ fn emitter(detail: &str) -> &'static str {
 
 /// Every payload in run order, parsed by what it is, alongside the construct
 /// that wrote it.  A literal the interpreter reaches by more than one path is
-/// recorded once per path, all under the same graph node: only the first of
-/// those is real content.
+/// recorded once per path, under the same graph node and call site: only
+/// the first of those is real content. One macro's literal used at many
+/// call sites (accsupp's `\EndAccSupp`) is one node, but a payload at each.
 fn payloads(analysis: &Analysis) -> impl Iterator<Item = (Span, &'static str, Payload<'_>)> {
-    let mut seen = BTreeSet::new();
-    analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Pdf).filter(move |o| seen.insert(o.node)).map(|o| {
-        let detail = o.detail.as_deref().unwrap_or("");
-        (o.span, emitter(detail), classify(detail, &o.key))
-    })
+    let mut seen = std::collections::HashSet::new();
+    analysis
+        .facts
+        .occurrences
+        .iter()
+        .filter(|o| o.kind == OccKind::Pdf)
+        .filter(move |o| seen.insert((o.node, o.span)))
+        .map(|o| {
+            let detail = o.detail.as_deref().unwrap_or("");
+            (o.span, emitter(detail), classify(detail, &o.key))
+        })
 }
 
 /// What a `q`/`Q` or `BMC`/`BDC`/`EMC` pair holds, in words a document
@@ -86,7 +93,7 @@ fn holds(operator: &Operator) -> &'static str {
 fn leaks(operator: &Operator) -> &'static str {
     match operator {
         Operator::Save | Operator::Restore => {
-            "colour, line width and the current transform leak into everything typeset after it"
+            "color, line width and the current transform leak into everything typeset after it"
         }
         Operator::BeginMarked { .. } | Operator::EndMarked => {
             "its optional content layer stays applied to everything typeset after it"

@@ -171,6 +171,12 @@ fn run(
         let message = format!("a hyphen between numbers is read as a minus sign, which is set in math mode{more}");
         return Some(Rewrite::new(start..end, "minus", message, "\\(-\\)"));
     }
+    // Digits joined by more than one run of hyphens, or with letters or
+    // slashes in the same word, are an identifier (an ISBN, a DOI, an ISO
+    // date), whose hyphens are part of it: a range has one dash.
+    if between == Between::Digits && identifier(view, start, end) {
+        return None;
+    }
     let allowed: &[usize] = match between {
         Between::Letters => &settings.letters,
         Between::Digits => &settings.digits,
@@ -194,4 +200,26 @@ fn run(
         dash(want.len())
     );
     Some(Rewrite::new(start..end, between.what(), message, want))
+}
+
+/// Whether the word around the hyphens `start..end` is an identifier:
+/// another run of hyphens, a letter or a `/` stands in it.
+fn identifier(view: &View, start: usize, end: usize) -> bool {
+    let part = |c: char| !c.is_whitespace() && !matches!(c, ',' | ';' | '(' | ')' | '[' | ']');
+    let odd = |c: char| c == '-' || c == '/' || c.is_alphabetic();
+    let mut i = start;
+    while let Some(c) = i.checked_sub(1).and_then(|j| view.char_at(j)).filter(|&c| part(c)) {
+        if odd(c) {
+            return true;
+        }
+        i -= 1;
+    }
+    let mut i = end;
+    while let Some(c) = view.char_at(i).filter(|&c| part(c)) {
+        if odd(c) {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }

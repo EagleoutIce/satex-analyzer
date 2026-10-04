@@ -27,7 +27,7 @@ pub static RULES: &[Rule] = &[
 `\\/` appends a kern as wide as the italic correction of the last character
 on the current list ([The TeXbook](https://ctan.org/pkg/texbook), chapter 4).  The rule reports two places where
 that kern does not belong: a second `\\/` with nothing typeset in between,
-which finds a kern rather than a character ([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) § 1113), and one in front of
+which finds a kern rather than a character (tex.web § 1113), and one in front of
 a period or a comma (chktex 28).
 
 satex reads the characters the document set, so it sees through a closing
@@ -48,7 +48,7 @@ Fix by deleting the `\\/`.",
         summary: "the italic correction is zero here, so `\\/` changes nothing",
         explanation: "\
 `\\/` appends a kern as wide as the italic correction the font gives the last
-character on the current list ([tex.web](https://mirrors.ctan.org/systems/knuth/dist/tex/tex.web) § 1113).  Where that correction is zero
+character on the current list (tex.web § 1113).  Where that correction is zero
 the `\\/` does nothing.
 
 Every character carries the font it was set in (fntguide § 2), and satex
@@ -351,7 +351,7 @@ fn missing_italic_correction(report: &mut Report) {
     let closed = &analysis.facts.text.closed;
     let mut fonts = Fonts::of(analysis);
     let mut findings = Vec::new();
-    // Neighbours as TeX set them, not as the source lists them: a title set
+    // Neighbors as TeX set them, not as the source lists them: a title set
     // once upright and once in italics is two runs of characters.
     for a in view.ours() {
         let b = a + 1;

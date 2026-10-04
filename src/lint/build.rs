@@ -430,7 +430,7 @@ fn shell_escape_unneeded(report: &mut Report) {
     let analysis = report.analysis();
     // A run that did not read the packages cannot say that none of them
     // calls the shell.
-    if used(analysis, &[OccKind::ShellEscape]) || !analysis.settings.load_packages {
+    if used(analysis, &[OccKind::ShellEscape]) || !analysis.settings.load.packages {
         return;
     }
     for rc in latexmkrcs(analysis) {
@@ -603,7 +603,7 @@ fn bibliography_disabled(report: &mut Report) {
 
 fn bibliography_unneeded(report: &mut Report) {
     let analysis = report.analysis();
-    if has_bibliography(analysis) || !analysis.settings.load_packages {
+    if has_bibliography(analysis) || !analysis.settings.load.packages {
         return;
     }
     for rc in latexmkrcs(analysis) {
@@ -645,7 +645,7 @@ fn missing_custom_dependency(report: &mut Report) {
 
 fn unused_custom_dependency(report: &mut Report) {
     let analysis = report.analysis();
-    if !analysis.settings.load_packages {
+    if !analysis.settings.load.packages {
         return;
     }
     for rc in latexmkrcs(analysis) {

@@ -160,7 +160,25 @@ Fix by moving the space to the other side of the parenthesis.",
 
 /// chktex's `Linker`: the commands a tie belongs in front of.  chktex's own
 /// policy, not a claim about what the names mean.
-const LINKER: &[&str] = &[r"\ref", r"\vref", r"\pageref", r"\eqref", r"\cite"];
+const LINKER: &[&str] = &[r"\ref", r"\pageref", r"\eqref", r"\cite"];
+
+/// References that typeset the name in front of the number themselves
+/// (cleveref, hyperref, varioref), so the space before them is the word
+/// space of the sentence, not a tie.
+const NAMING: &[&str] = &[
+    r"\cref",
+    r"\Cref",
+    r"\crefrange",
+    r"\Crefrange",
+    r"\cpageref",
+    r"\Cpageref",
+    r"\autoref",
+    r"\vref",
+    r"\Vref",
+    r"\vrefrange",
+    r"\nameref",
+    r"\Nameref",
+];
 
 /// The command chktex's warning 24 names beside `\label`, which the run
 /// finds for itself.
@@ -321,7 +339,17 @@ fn sites(
 fn missing_nonbreaking_space(report: &mut Report) {
     let analysis = report.analysis;
     let edits = report.edits();
+    let naming: HashSet<Span> = analysis
+        .facts
+        .expansions
+        .iter()
+        .filter(|e| NAMING.contains(&analysis.interner.cs(e.name).as_str()))
+        .map(|e| e.span)
+        .collect();
     for (span, what) in sites(analysis, report.text(), &[OccKind::Ref, OccKind::Cite], &[LINKER], false) {
+        if naming.contains(&span) {
+            continue;
+        }
         let Some((path, source)) = edits.text(span.file) else { continue };
         let Some((at, width, modes)) = space_before(analysis, &source, span) else { continue };
         if !glue(modes) {
@@ -387,7 +415,10 @@ fn sentence_spacing(report: &mut Report) {
             findings.push(rewrite_space(i..i + 1, "intersentence", message, r"\@."));
         } else if (before.is_lowercase() || before.is_numeric()) && after.is_lowercase() {
             let message = format!("the period in `{spelled}` set a sentence space, where the sentence runs on");
-            findings.push(rewrite_space(i + 1..i + 2, "interword", message, r"\ "));
+            // `\ ` is a control space: the fix names it with its period, since
+            // a lone backslash reads as a typo.
+            let fix = format!(r"write `{spelled}\ ` (a control space), so the space stays a word space");
+            findings.push(Rewrite::new(i + 1..i + 2, "interword", message, r"\ ").fix(fix));
         }
     }
     for finding in findings {

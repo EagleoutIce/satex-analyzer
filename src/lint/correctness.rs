@@ -141,7 +141,7 @@ filesystems are also reported: they work on Windows or macOS but break on Linux.
 `satex query distribution` shows which installation was searched.
 
 Fix by installing the package, adding its directory to `search_paths` in
-`satex.yaml`, pointing `texmf_roots` at the right installation, or
+`satex.yaml`, pointing `texmf.roots` at the right installation, or
 (for case mismatches) renaming the file to match the requested name.",
         references: &[Ref { source: Source::Chktex, at: "27" }],
         run: unresolved_files,
@@ -457,7 +457,7 @@ fn unresolved_files(report: &mut Report) {
             _ => continue,
         };
         let fix = if empty {
-            Some("set texmf_roots or texlive_root in satex.yaml".to_string())
+            Some("set texmf.roots or texlive.root in satex.yaml".to_string())
         } else if let LoadStatus::CaseMismatch { on_disk } = load.status {
             let on_disk_name = report.analysis.interner.name(on_disk);
             Some(format!("rename `{on_disk_name}` to match the requested name `{}`", load.name))
@@ -686,6 +686,19 @@ fn missing_graphic(report: &mut Report) {
         .filter(|found| seen.insert(found.clone()))
         .collect();
     for (span, name) in missing {
+        // epstopdf writes `<base>-eps-converted-to.pdf` while compiling, from
+        // `<base>.eps`, so the converted file is missing only until then.
+        if let Some(base) = name.strip_suffix("-eps-converted-to.pdf") {
+            let edits = report.edits();
+            let dirs = [span.file, report.analysis.main_file].into_iter().filter_map(|file| {
+                edits.text(file).and_then(|(path, _)| std::path::Path::new(&path).parent().map(|p| p.to_path_buf()))
+            });
+            if dirs.into_iter().any(|dir| {
+                dir.join(format!("{base}.eps")).is_file() || std::path::Path::new(&format!("{base}.eps")).is_file()
+            }) {
+                continue;
+            }
+        }
         report.add(span, &name, format!("no file for `{name}` in any format the graphics driver reads"), None);
     }
 }

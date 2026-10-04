@@ -2,7 +2,7 @@
 //! so a formula a macro or an environment opened counts like one a `$`
 //! opened.  The source is read only where the spelling is the finding.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::builtins::{ModeCmd, Primitive, Typeset};
 use crate::lint::fix::{Applicability, Edit, Edits, Fix, Lexeme, Pos, Scan};
@@ -596,13 +596,17 @@ fn math_mode_mismatch(report: &mut Report) {
         .filter(|(name, _, _)| defined(analysis, name))
         .filter_map(|(name, modes, on)| Some((analysis.interner.lookup(name)?, *modes, *on)))
         .collect();
-    let errors: HashSet<Span> = analysis
-        .facts
-        .occurrences
-        .iter()
-        .filter(|o| o.certain && crate::lint::shared::is_error(analysis, o))
-        .map(|o| o.span)
-        .collect();
+    // Only a use that raised the error counts: an expansion-only context
+    // (`\edef`, `\write`, a glossary's stored text) expands `\)` without
+    // ever running `\@badmath`, whatever mode the run is in around it.
+    let errors: HashMap<Span, bool> =
+        analysis.facts.occurrences.iter().filter(|o| crate::lint::shared::is_error(analysis, o)).fold(
+            HashMap::new(),
+            |mut errors, o| {
+                *errors.entry(o.span).or_insert(false) |= o.certain;
+                errors
+            },
+        );
     let mut findings = Vec::new();
     for expansion in &analysis.facts.expansions {
         let Some((_, modes, on)) = wanted.iter().find(|(sym, _, _)| *sym == expansion.name) else { continue };
@@ -610,7 +614,7 @@ fn math_mode_mismatch(report: &mut Report) {
         if !view.document(expansion.span.file) || !mode.is_known() || mode.is_empty() {
             continue;
         }
-        if mode.meets(*modes) == *on {
+        if mode.meets(*modes) == *on || !errors.contains_key(&expansion.span) {
             continue;
         }
         let name = report.cs(expansion.name);
@@ -629,7 +633,7 @@ fn math_mode_mismatch(report: &mut Report) {
     }
     for (span, message) in findings {
         // The run reached `\@badmath` here, so this is the error itself.
-        let severity = match errors.contains(&span) {
+        let severity = match errors.get(&span) == Some(&true) {
             true => Severity::Error,
             false => Severity::Info,
         };

@@ -6,7 +6,7 @@ use crate::lint::fix::{Applicability, Fix};
 use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 use crate::machine::Analysis;
 use crate::mode::Modes;
-use crate::tex::{Span, Sym, Tok, Token};
+use crate::tex::{Catcode, Span, Sym, Tok, Token};
 
 pub static RULES: &[Rule] = &[
     Rule {
@@ -112,7 +112,24 @@ fn bsphacked(body: &[Token], bsphack: Option<Sym>, esphack: Option<Sym>) -> bool
 /// where an explicit space's does not.
 fn line_end_space(text: Option<&crate::lint::fix::Text>, span: Span) -> bool {
     let Some(text) = text else { return false };
-    span.col == text.line(span.line).chars().count() as u32 + 1
+    // Only blanks, which tex.web § 31 drops, may stand between it and the end.
+    let line = text.line(span.line);
+    (line.trim_end_matches(' ').chars().count() as u32 + 1..=line.chars().count() as u32 + 1).contains(&span.col)
+}
+
+/// A line end between two characters separates two words, as meant. One
+/// right before a paragraph end is the paragraph's last glue, which `\par`
+/// removes (tex.web § 1096).
+fn harmless_space(
+    body: &[Token],
+    i: usize,
+    par: Option<crate::tex::Sym>,
+    starts_par: &std::collections::HashSet<crate::tex::Sym>,
+) -> bool {
+    let word = |t: Option<&Token>| t.is_some_and(|t| t.is_cat(Catcode::Letter) || t.is_cat(Catcode::Other));
+    let next = body.get(i + 1);
+    let ends_par = next.and_then(|t| t.cs()).is_some_and(|c| Some(c) == par || starts_par.contains(&c));
+    (word(i.checked_sub(1).and_then(|j| body.get(j))) && word(next)) || ends_par
 }
 
 fn stray_space(report: &mut Report) {
@@ -121,6 +138,17 @@ fn stray_space(report: &mut Report) {
     let bsphack = analysis.interner.lookup("@bsphack");
     let esphack = analysis.interner.lookup("@esphack");
     let used = index.expanded();
+    let par = analysis.interner.lookup("par");
+    // Macros whose text starts a new paragraph (`\def\blk#1{\par…}`).
+    let starts_par: std::collections::HashSet<crate::tex::Sym> = analysis
+        .facts
+        .defs
+        .iter()
+        .filter(|d| {
+            d.mac.as_ref().and_then(|m| m.replacement_text.first()).and_then(|t| t.cs()).is_some_and(|c| Some(c) == par)
+        })
+        .map(|d| d.name)
+        .collect();
     let mut texts: std::collections::HashMap<crate::tex::FileId, Option<std::rc::Rc<crate::lint::fix::Text>>> =
         std::collections::HashMap::new();
     for def in &analysis.facts.defs {
@@ -134,8 +162,8 @@ fn stray_space(report: &mut Report) {
         }
         // tex.web § 347: two space tokens never sit next to each other in a
         // replacement text, so each has real material beside it.
-        for tok in body.iter() {
-            if !tok.is_space() {
+        for (i, tok) in body.iter().enumerate() {
+            if !tok.is_space() || harmless_space(body, i, par, &starts_par) {
                 continue;
             }
             let text = texts
@@ -151,13 +179,23 @@ fn stray_space(report: &mut Report) {
                 };
                 let name = report.cs(def.name);
                 let message = format!("{name}'s body ends a line without `%`; using {name} {verb} a space there");
-                let edits = report.edits().insert_percent(tok.span);
-                report.add_fix(
-                    tok.span,
-                    &name,
-                    message,
-                    Fix::new("write % at the end of this line", Applicability::Safe, edits),
-                );
+                // A body whose `}` starts the next line closes on this one instead.
+                let closes = i + 1 == body.len()
+                    && text.as_deref().is_some_and(|t| t.line(tok.span.line + 1).trim_start().starts_with('}'));
+                let fix = if closes {
+                    Fix::new(
+                        "move the `}` up to this line",
+                        Applicability::Safe,
+                        report.edits().join_next_line(tok.span),
+                    )
+                } else {
+                    Fix::new(
+                        "write % at the end of this line",
+                        Applicability::Safe,
+                        report.edits().insert_percent(tok.span),
+                    )
+                };
+                report.add_fix(tok.span, &name, message, fix);
             }
         }
     }
@@ -388,6 +426,29 @@ fn unused_definition(report: &mut Report) {
             continue;
         }
         let name = report.cs(def.name);
+        // An internal name (`@`) of a package, class or config file is the
+        // implementation of that file, often built with `\csname`: not
+        // something its user can act on.
+        if name.contains('@')
+            && report.edits().text(def.span.file).is_some_and(|(path, _)| {
+                std::path::Path::new(&path)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| matches!(e, "sty" | "cls" | "cfg" | "def" | "clo"))
+            })
+        {
+            continue;
+        }
+        // A name not written where it is defined was built there (`\csname`
+        // in a macro the line calls, like a `\cite` wrapper): the line holds
+        // nothing to delete, and the name is looked up the same way.
+        let written = report.edits().text(def.span.file).is_none_or(|(_, text)| {
+            let needle = if name.starts_with('\\') { name.clone() } else { format!("\\{name}") };
+            text.line(def.span.line).contains(&needle)
+        });
+        if !written {
+            continue;
+        }
         if (!rule.pgf_keys && is_pgf_key(&name))
             || (!rule.report_public && !looks_private(&name))
             || ignore.iter().any(|re| re.is_match(&name))
