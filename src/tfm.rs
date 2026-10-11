@@ -2,8 +2,8 @@
 //! `\fontdimen`, `\fontcharwd` and `\iffontchar` answer with the numbers the
 //! engine would read.
 
+use crate::fixed::{HashMap, HashSet};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -238,8 +238,8 @@ pub fn store_scaled(fix: i64, z: Scaled) -> Scaled {
 type SearchIndex = HashMap<Vec<PathBuf>, Rc<HashMap<String, PathBuf>>>;
 
 thread_local! {
-    static INDEX: RefCell<SearchIndex> = RefCell::new(HashMap::new());
-    static LOADED: RefCell<HashMap<PathBuf, Option<Rc<Metrics>>>> = RefCell::new(HashMap::new());
+    static INDEX: RefCell<SearchIndex> = RefCell::new(HashMap::default());
+    static LOADED: RefCell<HashMap<PathBuf, Option<Rc<Metrics>>>> = RefCell::new(HashMap::default());
     static INSTALLED: RefCell<Option<Option<HashSet<String>>>> = const { RefCell::new(None) };
 }
 
@@ -265,7 +265,7 @@ pub fn locate(base: &Path, roots: &[PathBuf], name: &str, ext: &str) -> Option<P
 }
 
 fn index(roots: &[PathBuf]) -> HashMap<String, PathBuf> {
-    let mut found = HashMap::new();
+    let mut found = HashMap::default();
     let wanted = |relative: &str| FONT_DIRECTORIES.iter().any(|d| relative.starts_with(d));
     for root in roots.iter().rev() {
         if let Ok(text) = std::fs::read_to_string(root.join("ls-R")) {
