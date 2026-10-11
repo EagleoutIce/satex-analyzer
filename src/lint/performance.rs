@@ -8,7 +8,7 @@ use crate::tex::{Span, Sym};
 pub static RULES: &[Rule] = &[
     Rule {
         code: "duplicate-package",
-        category: Category::Performance,
+        category: Category::Style,
         severity: Severity::Info,
         summary: "a package is loaded more than once",
         explanation: "\
@@ -18,6 +18,7 @@ not have is an option clash instead (`option-clash`).
 
 Fix by deleting the later `\\usepackage`.",
         references: &[Ref { source: Source::Source2e, at: "ltclass.dtx" }],
+        fixes: &[Applicability::Safe],
         run: duplicate_package,
     },
     Rule {
@@ -33,6 +34,7 @@ is a hint, not a verdict.
 Fix, if the package really is unused, by deleting the `\\usepackage`: it is read
 on every build.",
         references: &[],
+        fixes: &[Applicability::Unsafe],
         run: unused_package,
     },
     Rule {
@@ -48,6 +50,7 @@ have defined becomes unknown.
 Fix, if the recursion is unintended, by breaking the cycle.  Otherwise make sure
 a conditional terminates it.",
         references: &[],
+        fixes: &[],
         run: recursive_macro,
     },
     Rule {
@@ -61,6 +64,7 @@ a conditional terminates it.",
 
 Fix by moving the load into the preamble.",
         references: &[Ref { source: Source::Source2e, at: "ltclass.dtx" }],
+        fixes: &[Applicability::Unsafe],
         run: package_after_preamble,
     },
     Rule {
@@ -77,6 +81,7 @@ document.
 
 Fix by adding the package to the dependency file, or by rerunning depp.",
         references: &[],
+        fixes: &[Applicability::Safe],
         run: missing_dependency,
     },
     Rule {
@@ -92,6 +97,7 @@ hint, not a verdict.
 
 Fix, if the package really is unused, by deleting its line.",
         references: &[],
+        fixes: &[Applicability::Unsafe],
         run: unused_dependency,
     },
     Rule {
@@ -110,6 +116,7 @@ before anything else (web2c manual, \"Format files\").
 
 Fix by dumping the preamble into a format and starting every build from it.",
         references: &[Ref { source: Source::Companion, at: "formats" }],
+        fixes: &[Applicability::Unsafe],
         run: preamble_cost,
     },
 ];

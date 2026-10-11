@@ -1,9 +1,10 @@
 //! Hyphen, en-dash and em-dash, read off the characters the run set rather
 //! than off the source: a dash a macro produced is checked like any other.
 
-use std::collections::HashSet;
+use crate::fixed::HashSet;
 
 use crate::config::Engine;
+use crate::lint::fix::Applicability;
 use crate::lint::text::{Rewrite, View};
 use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 
@@ -14,7 +15,7 @@ pub static RULES: &[Rule] = &[Rule {
     summary: "a run of hyphens sets a dash of the wrong length for what stands around it",
     explanation: "\
 TeX's text fonts turn `-` into a hyphen, `--` into an en-dash and `---` into
-an em-dash ([The TeXbook](https://ctan.org/pkg/texbook), chapter 2).
+an em-dash (The TeXbook, chapter 2).
 
 The rule reads the characters the document set, following chktex's counts:
 one or three hyphens between letters, two between digits, three between
@@ -25,6 +26,7 @@ math is a minus sign.
 
 Fix by writing the run of hyphens the surrounding text calls for.",
     references: &[Ref { source: Source::Chktex, at: "8" }, Ref { source: Source::TeXbook, at: "chapter 2" }],
+    fixes: &[Applicability::Unsafe],
     run: wrong_dash,
 }];
 

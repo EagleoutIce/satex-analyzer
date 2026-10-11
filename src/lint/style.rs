@@ -21,6 +21,7 @@ every path, so this is not a conditional fallback.
 
 Fix by deleting the first definition, or by checking which one was meant.",
         references: &[],
+        fixes: &[Applicability::Safe, Applicability::Unsafe],
         run: dead_definition,
     },
     Rule {
@@ -31,6 +32,7 @@ Fix by deleting the first definition, or by checking which one was meant.",
         explanation: "\
 Fix by deleting the `\\label`, or by checking the `\\ref` that was meant to use it.",
         references: &[],
+        fixes: &[Applicability::Unsafe],
         run: unused_label,
     },
     Rule {
@@ -45,6 +47,7 @@ an environment, the definition disappears at the closing brace.
 Fix by moving the definition out of the group, or by prefixing it with
 `\\global`.",
         references: &[Ref { source: Source::TeXbook, at: "chapter 5" }],
+        fixes: &[],
         run: group_local_definition,
     },
     Rule {
@@ -65,6 +68,7 @@ has it.
 
 Fix by using LaTeX's interface for the same job.",
         references: &[Ref { source: Source::Chktex, at: "41" }, Ref { source: Source::L2tabu, at: "1" }],
+        fixes: &[Applicability::Unsafe],
         run: primitive_tex_command,
     },
     Rule {
@@ -77,6 +81,7 @@ Nothing expands this name.
 
 Fix by deleting it, or by checking why nothing calls it yet.",
         references: &[],
+        fixes: &[Applicability::Unsafe],
         run: unused_definition,
     },
     Rule {
@@ -95,6 +100,7 @@ every reading was horizontal, and that it *may* where some might have been.
 
 Fix by writing `%` at the end of that line.",
         references: &[Ref { source: Source::TeXWeb, at: "347" }, Ref { source: Source::TeXWeb, at: "1043" }],
+        fixes: &[Applicability::Safe],
         run: stray_space,
     },
 ];
@@ -124,7 +130,7 @@ fn harmless_space(
     body: &[Token],
     i: usize,
     par: Option<crate::tex::Sym>,
-    starts_par: &std::collections::HashSet<crate::tex::Sym>,
+    starts_par: &crate::fixed::HashSet<crate::tex::Sym>,
 ) -> bool {
     let word = |t: Option<&Token>| t.is_some_and(|t| t.is_cat(Catcode::Letter) || t.is_cat(Catcode::Other));
     let next = body.get(i + 1);
@@ -140,7 +146,7 @@ fn stray_space(report: &mut Report) {
     let used = index.expanded();
     let par = analysis.interner.lookup("par");
     // Macros whose text starts a new paragraph (`\def\blk#1{\par…}`).
-    let starts_par: std::collections::HashSet<crate::tex::Sym> = analysis
+    let starts_par: crate::fixed::HashSet<crate::tex::Sym> = analysis
         .facts
         .defs
         .iter()
@@ -149,8 +155,8 @@ fn stray_space(report: &mut Report) {
         })
         .map(|d| d.name)
         .collect();
-    let mut texts: std::collections::HashMap<crate::tex::FileId, Option<std::rc::Rc<crate::lint::fix::Text>>> =
-        std::collections::HashMap::new();
+    let mut texts: crate::fixed::HashMap<crate::tex::FileId, Option<std::rc::Rc<crate::lint::fix::Text>>> =
+        crate::fixed::HashMap::default();
     for def in &analysis.facts.defs {
         let Some(mac) = &def.mac else { continue };
         if def.package.is_some() || !used.contains(def.name) || !index.written_definition(def) {
@@ -205,21 +211,29 @@ fn unused_label(report: &mut Report) {
     let analysis = report.analysis();
     let referenced: BTreeSet<&str> =
         analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Ref).map(|o| o.key.as_str()).collect();
-    let unused: Vec<(Span, String)> = report
+    let unused: Vec<(Span, Option<String>, String)> = report
         .index()
         .labels()
         .iter()
         .filter(|(key, _)| !referenced.contains(*key))
-        .map(|(key, span)| (*span, key.to_string()))
+        .map(|(key, o)| {
+            let (span, via) = report.site(o);
+            (span, via, key.to_string())
+        })
         .collect();
-    for (span, key) in unused {
+    for (span, via, key) in unused {
+        let message = format!("label `{key}` is never referenced{}", via.as_deref().unwrap_or_default());
+        if let Some(note) = report.unread("referenced") {
+            report.add(span, &key, format!("{message}{note}"), None);
+            continue;
+        }
+        // Deleting the call would take what else it does with it.
+        if via.is_some() {
+            report.add(span, &key, message, Some(format!("reference `{key}`, or stop the macro writing it")));
+            continue;
+        }
         let edits = report.edits().delete_command(span, &key);
-        report.add_fix(
-            span,
-            &key,
-            format!("label `{key}` is never referenced"),
-            Fix::new(format!("delete \\label{{{key}}}"), Applicability::Unsafe, edits),
-        );
+        report.add_fix(span, &key, message, Fix::new(format!("delete \\label{{{key}}}"), Applicability::Unsafe, edits));
     }
 }
 
@@ -453,6 +467,10 @@ fn unused_definition(report: &mut Report) {
             || (!rule.report_public && !looks_private(&name))
             || ignore.iter().any(|re| re.is_match(&name))
         {
+            continue;
+        }
+        if let Some(note) = report.unread("used") {
+            report.add(def.span, &name, format!("{name} is never used{note}"), None);
             continue;
         }
         let edits = report.edits().delete_definition(def);

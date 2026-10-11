@@ -47,7 +47,7 @@ pub fn run(
                 "category": rule.category.as_str(),
                 "severity": rule.severity.as_str(),
                 "summary": rule.summary,
-                "explanation": rule.explanation,
+                "explanation": lint::cite::linkify_citations(rule.explanation),
                 "references": rule.references.iter()
                     .map(|r| serde_json::json!({"cite": r.cite(), "url": r.url()}))
                     .collect::<Vec<_>>(),

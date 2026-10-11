@@ -10,8 +10,8 @@
 //! this character", and [`Rewrite`] the one way to say what belongs there
 //! instead.
 
+use crate::fixed::HashMap;
 use std::cell::OnceCell;
-use std::collections::HashMap;
 
 use crate::facts::{FontState, Spot};
 use crate::lint::Severity;
@@ -81,7 +81,7 @@ impl<'a> View<'a> {
     /// The character the run set at a source position.
     pub fn at_span(&self, span: Span) -> Option<usize> {
         let map = self.at_span.get_or_init(|| {
-            let mut out: HashMap<Span, usize> = HashMap::with_capacity(self.len());
+            let mut out: HashMap<Span, usize> = HashMap::with_capacity_and_hasher(self.len(), Default::default());
             for i in 0..self.len() {
                 if let Some(span) = self.span(i) {
                     out.entry(span).or_insert(i);
@@ -185,6 +185,12 @@ impl<'a> View<'a> {
     /// ligature between the two is the one the reader gets.
     pub fn joined(&self, index: usize) -> bool {
         self.spot(index).is_some_and(|spot| !spot.broken)
+    }
+
+    /// Whether the character stands right after the one before it on the
+    /// page, as far as the run knows ([`crate::facts::Spot::apart`]).
+    pub fn beside(&self, index: usize) -> bool {
+        self.spot(index).is_some_and(|spot| !spot.apart)
     }
 
     pub fn char_at(&self, index: usize) -> Option<char> {

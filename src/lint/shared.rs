@@ -1,7 +1,9 @@
+use crate::fixed::{HashMap, HashSet};
 use std::cell::{OnceCell, RefCell};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
 
 use crate::builtins::OccKind;
+use crate::facts::Occurrence;
 use crate::machine::{Analysis, Recursion};
 use crate::tex::{FileId, Span, Sym};
 
@@ -12,6 +14,27 @@ pub fn is_error(analysis: &Analysis, o: &crate::facts::Occurrence) -> bool {
     o.kind == OccKind::Message
         && o.detail.as_deref().and_then(|d| analysis.interner.lookup(d)).and_then(|d| analysis.env.meaning(d).prim())
             == Some(crate::builtins::Primitive::Message { error: true })
+}
+
+/// The first place before the `index`th occurrence in run order where the
+/// run could not follow TeX (an `Unsupported` diagnostic: a limit, a cut,
+/// an engine error on an approximated path).  An error raised after it may
+/// be its echo rather than TeX's.
+pub fn doubt(analysis: &Analysis, index: usize) -> Option<String> {
+    gap_between(analysis, 0, index)
+}
+
+/// [`doubt`] between the `from`th and the `to`th occurrence: what the run
+/// may have lost there (a closer an open operator waits for).
+pub fn gap_between(analysis: &Analysis, from: usize, to: usize) -> Option<String> {
+    let d = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == crate::facts::Severity::Unsupported && (from..=to).contains(&d.after))
+        .min_by_key(|d| d.after)?;
+    let at = d.origin.unwrap_or(d.span);
+    Some(format!("the analysis gap at {}:{}:{} ({})", analysis.short_name(at.file), at.line, at.col, d.code))
 }
 
 /// Whether the document loaded a package.
@@ -31,7 +54,7 @@ pub fn macro_text(analysis: &Analysis, name: &str) -> Option<String> {
 }
 
 pub fn first_loads(analysis: &Analysis) -> HashMap<&str, (Vec<String>, Span)> {
-    let mut seen: HashMap<&str, (Vec<String>, Span)> = HashMap::new();
+    let mut seen: HashMap<&str, (Vec<String>, Span)> = HashMap::default();
     for load in &analysis.facts.loads {
         if load.kind.is_package() {
             seen.entry(&load.name).or_insert_with(|| (load.options.clone(), load.span));
@@ -41,18 +64,18 @@ pub fn first_loads(analysis: &Analysis) -> HashMap<&str, (Vec<String>, Span)> {
 }
 
 pub fn definition_order(analysis: &Analysis) -> HashMap<Sym, Span> {
-    let mut first: HashMap<Sym, Span> = HashMap::new();
+    let mut first: HashMap<Sym, Span> = HashMap::default();
     for def in &analysis.facts.defs {
         first.entry(def.name).or_insert(def.span);
     }
     first
 }
 
-pub fn labels(analysis: &Analysis) -> BTreeMap<&str, Span> {
+pub fn labels(analysis: &Analysis) -> BTreeMap<&str, &Occurrence> {
     let mut out = BTreeMap::new();
     for occurrence in &analysis.facts.occurrences {
         if occurrence.kind == OccKind::Label {
-            out.entry(occurrence.key.as_str()).or_insert(occurrence.span);
+            out.entry(occurrence.key.as_str()).or_insert(occurrence);
         }
     }
     out
@@ -97,7 +120,8 @@ pub struct Index<'a> {
     expanded: OnceCell<Names>,
     first_loads: OnceCell<HashMap<&'a str, (Vec<String>, Span)>>,
     definition_order: OnceCell<HashMap<Sym, Span>>,
-    labels: OnceCell<BTreeMap<&'a str, Span>>,
+    labels: OnceCell<BTreeMap<&'a str, &'a Occurrence>>,
+    bodies: OnceCell<HashSet<Span>>,
     document_start: OnceCell<Option<Span>>,
     recursion: OnceCell<Vec<Recursion>>,
     load_spans: OnceCell<HashSet<Span>>,
@@ -109,7 +133,7 @@ pub struct Index<'a> {
 
 impl<'a> Index<'a> {
     pub fn of(analysis: &'a Analysis) -> Index<'a> {
-        let mut load_col: HashMap<(FileId, u32), u32> = HashMap::new();
+        let mut load_col: HashMap<(FileId, u32), u32> = HashMap::default();
         for load in &analysis.facts.loads {
             load_col
                 .entry((load.span.file, load.span.line))
@@ -123,6 +147,7 @@ impl<'a> Index<'a> {
             first_loads: OnceCell::new(),
             definition_order: OnceCell::new(),
             labels: OnceCell::new(),
+            bodies: OnceCell::new(),
             document_start: OnceCell::new(),
             recursion: OnceCell::new(),
             load_spans: OnceCell::new(),
@@ -155,8 +180,19 @@ impl<'a> Index<'a> {
         self.definition_order.get_or_init(|| definition_order(self.analysis))
     }
 
-    pub fn labels(&self) -> &BTreeMap<&'a str, Span> {
+    pub fn labels(&self) -> &BTreeMap<&'a str, &'a Occurrence> {
         self.labels.get_or_init(|| labels(self.analysis))
+    }
+
+    /// The document call an occurrence came out of, when its own text is
+    /// not the document's: a macro body or a package's code.
+    pub fn call(&self, o: &Occurrence) -> Option<(Sym, Span)> {
+        let bodies = self.bodies.get_or_init(|| {
+            let defs = self.analysis.facts.defs.iter().filter(|d| self.origin(d.span.file) == "document");
+            defs.filter_map(|d| d.mac.as_ref()).flat_map(|m| m.replacement_text.iter().map(|t| t.span)).collect()
+        });
+        let foreign = self.origin(o.span.file) != "document" || bodies.contains(&o.span);
+        o.call.filter(|(_, at)| foreign && *at != o.span && self.origin(at.file) == "document")
     }
 
     pub fn document_start(&self) -> Option<Span> {
@@ -226,7 +262,7 @@ struct Sites {
 impl Sites {
     fn of(analysis: &Analysis) -> Sites {
         let defs = &analysis.facts.defs;
-        let mut head: HashMap<(Span, Sym), u32> = HashMap::with_capacity(defs.len());
+        let mut head: HashMap<(Span, Sym), u32> = HashMap::with_capacity_and_hasher(defs.len(), Default::default());
         let mut next = vec![u32::MAX; defs.len()];
         for (i, def) in defs.iter().enumerate().rev() {
             next[i] = head.insert((def.span, def.by), i as u32).unwrap_or(u32::MAX);

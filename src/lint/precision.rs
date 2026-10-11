@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use crate::fixed::HashMap;
 
 use crate::lint::{Category, Report, Rule, Severity};
 
@@ -16,12 +16,13 @@ depend on such a point may be incomplete.
 There is nothing to fix in the document.  Raising the limits in `satex.yaml` or
 narrowing the analysis with `load.packages: false` can reduce it.",
     references: &[],
+    fixes: &[],
     run: imprecision,
 }];
 
 fn imprecision(report: &mut Report) {
     let mut order: Vec<(crate::tex::Span, &'static str, String)> = Vec::new();
-    let mut counts: HashMap<(&'static str, String), usize> = HashMap::new();
+    let mut counts: HashMap<(&'static str, String), usize> = HashMap::default();
     for diagnostic in &report.analysis.facts.diagnostics {
         if matches!(diagnostic.code, "undefined-environment" | "already-defined" | "environment-mismatch") {
             continue;

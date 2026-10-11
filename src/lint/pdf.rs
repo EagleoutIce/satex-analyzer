@@ -31,6 +31,7 @@ order the run executes the literals in.
 Fix by closing what is opened in the same group, or by using one environment
 for both ends.",
         references: &[Ref { source: Source::Pdf, at: "8.4.2" }, Ref { source: Source::Pdf, at: "14.6" }],
+        fixes: &[],
         run: unbalanced_pdf_content,
     },
     Rule {
@@ -47,6 +48,7 @@ while the run observed no such resources at all.
 
 Fix by declaring the group, or by correcting the name.",
         references: &[Ref { source: Source::Pdf, at: "8.11.3.2" }],
+        fixes: &[],
         run: undefined_optional_content,
     },
 ];
@@ -65,18 +67,27 @@ fn emitter(detail: &str) -> &'static str {
 /// recorded once per path, under the same graph node and call site: only
 /// the first of those is real content. One macro's literal used at many
 /// call sites (accsupp's `\EndAccSupp`) is one node, but a payload at each.
-fn payloads(analysis: &Analysis) -> impl Iterator<Item = (Span, &'static str, Payload<'_>)> {
-    let mut seen = std::collections::HashSet::new();
-    analysis
-        .facts
-        .occurrences
-        .iter()
-        .filter(|o| o.kind == OccKind::Pdf)
-        .filter(move |o| seen.insert((o.node, o.span)))
-        .map(|o| {
-            let detail = o.detail.as_deref().unwrap_or("");
-            (o.span, emitter(detail), classify(detail, &o.key))
-        })
+/// Payloads of nested macros share the outermost call site, so a repeat is
+/// recognized as a whole: a site's sequence that repeats its own prefix
+/// (`B E B E`) is one pass, while `B B E E` is not a repeat of anything.
+fn payloads(analysis: &Analysis) -> impl Iterator<Item = (usize, Span, &'static str, Payload<'_>)> {
+    let pdf: Vec<_> = analysis.facts.occurrences.iter().enumerate().filter(|(_, o)| o.kind == OccKind::Pdf).collect();
+    let mut sites: crate::fixed::HashMap<Span, Vec<usize>> = Default::default();
+    for (i, (_, o)) in pdf.iter().enumerate() {
+        sites.entry(o.span).or_default().push(i);
+    }
+    let mut real = vec![true; pdf.len()];
+    for at in sites.values() {
+        let same = |i: usize, j: usize| pdf[at[i]].1.node == pdf[at[j]].1.node && pdf[at[i]].1.key == pdf[at[j]].1.key;
+        let Some(period) = (1..at.len()).find(|&p| (p..at.len()).all(|i| same(i, i - p))) else { continue };
+        for &i in &at[period..] {
+            real[i] = false;
+        }
+    }
+    pdf.into_iter().zip(real).filter(|(_, real)| *real).map(|((index, o), _)| {
+        let detail = o.detail.as_deref().unwrap_or("");
+        (index, o.span, emitter(detail), classify(detail, &o.key))
+    })
 }
 
 /// What a `q`/`Q` or `BMC`/`BDC`/`EMC` pair holds, in words a document
@@ -102,22 +113,24 @@ fn leaks(operator: &Operator) -> &'static str {
 }
 
 fn unbalanced_pdf_content(report: &mut Report) {
-    let mut open: Vec<(Operator, Span, &'static str)> = Vec::new();
+    let analysis = report.analysis;
+    let mut open: Vec<(Operator, Span, &'static str, usize)> = Vec::new();
     let mut findings = Vec::new();
-    for (span, emitter, payload) in payloads(report.analysis) {
+    for (index, span, emitter, payload) in payloads(analysis) {
         let Payload::Content(content) = payload else { continue };
         for operator in operators(content) {
             if operator.opens() {
-                open.push((operator, span, emitter));
+                open.push((operator, span, emitter, index));
                 continue;
             }
-            match open.iter().rposition(|(o, _, _)| o.closer() == operator.closer()) {
+            match open.iter().rposition(|(o, _, _, _)| o.closer() == operator.closer()) {
                 Some(at) if at == open.len() - 1 => {
                     open.pop();
                 }
                 Some(at) => {
-                    let (inner, inner_span, inner_emitter) = &open[open.len() - 1];
+                    let (inner, inner_span, inner_emitter, inner_index) = &open[open.len() - 1];
                     findings.push((
+                        crate::lint::shared::gap_between(analysis, *inner_index, index),
                         span,
                         operator.name(),
                         format!(
@@ -139,6 +152,7 @@ fn unbalanced_pdf_content(report: &mut Report) {
                     open.truncate(at);
                 }
                 None => findings.push((
+                    crate::lint::shared::doubt(analysis, index),
                     span,
                     operator.name(),
                     format!(
@@ -152,8 +166,10 @@ fn unbalanced_pdf_content(report: &mut Report) {
             }
         }
     }
-    for (operator, span, emitter) in open {
+    // What the run lost after an opener may hold its closer.
+    for (operator, span, emitter, index) in open {
         findings.push((
+            crate::lint::shared::gap_between(analysis, index, usize::MAX),
             span,
             operator.name(),
             format!(
@@ -166,8 +182,11 @@ fn unbalanced_pdf_content(report: &mut Report) {
             format!("add the matching `{}` in the same group before it ends", operator.closer()),
         ));
     }
-    for (span, name, message, fix) in findings {
-        report.add(span, name, message, Some(fix));
+    for (doubt, span, name, message, fix) in findings {
+        match doubt {
+            Some(cause) => report.add_doubted(span, name, message, &cause),
+            None => report.add(span, name, message, Some(fix)),
+        }
     }
 }
 
@@ -182,7 +201,7 @@ fn undefined_optional_content(report: &mut Report) {
     let analysis = report.analysis;
     let mut known = BTreeSet::new();
     let mut references = Vec::new();
-    for (span, _, payload) in payloads(analysis) {
+    for (_, span, _, payload) in payloads(analysis) {
         match payload {
             Payload::Object(object) => known.extend(names(object)),
             Payload::Content(content) => {

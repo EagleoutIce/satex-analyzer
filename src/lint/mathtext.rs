@@ -2,7 +2,7 @@
 //! so a formula a macro or an environment opened counts like one a `$`
 //! opened.  The source is read only where the spelling is the finding.
 
-use std::collections::{HashMap, HashSet};
+use crate::fixed::{HashMap, HashSet};
 
 use crate::builtins::{ModeCmd, Primitive, Typeset};
 use crate::lint::fix::{Applicability, Edit, Edits, Fix, Lexeme, Pos, Scan};
@@ -34,6 +34,7 @@ Fix by writing `\\[ … \\]` and `\\( … \\)`.",
             Ref { source: Source::Chktex, at: "46" },
             Ref { source: Source::Source2e, at: "ltmath.dtx" },
         ],
+        fixes: &[Applicability::Safe],
         run: math_shift_dollars,
     },
     Rule {
@@ -42,7 +43,7 @@ Fix by writing `\\[ … \\]` and `\\( … \\)`.",
         severity: Severity::Warning,
         summary: "`^` and `_` take one token, so what follows needs braces",
         explanation: "\
-`^` and `_` attach the single next token to the atom before them ([The TeXbook](https://ctan.org/pkg/texbook),
+`^` and `_` attach the single next token to the atom before them (The TeXbook,
 chapter 16).  `x^12` sets the exponent 1 and then a 2 of its own size, and
 `(a+b)^2` puts the exponent on the closing parenthesis alone.
 
@@ -56,6 +57,7 @@ Fix by putting the script between `{` and `}`.",
             Ref { source: Source::Chktex, at: "25" },
             Ref { source: Source::TeXbook, at: "chapter 16" },
         ],
+        fixes: &[Applicability::Safe],
         run: math_script_braces,
     },
     Rule {
@@ -75,6 +77,7 @@ covers `\\middle` and any `\\let` alias, which chktex's name list does not.
 Fix by writing `\\{` and `\\}` for brace delimiters, or `\\left.` where no
 delimiter is wanted.",
         references: &[Ref { source: Source::Chktex, at: "43" }, Ref { source: Source::TeXWeb, at: "1161" }],
+        fixes: &[Applicability::Unsafe],
         run: delimiter_not_followed,
     },
     Rule {
@@ -93,6 +96,7 @@ carrying a math mode.  It reports one finding, never both.
 
 Fix by closing the formula.",
         references: &[Ref { source: Source::Chktex, at: "16" }, Ref { source: Source::TeXWeb, at: "1047" }],
+        fixes: &[],
         run: math_still_open,
     },
     Rule {
@@ -112,6 +116,7 @@ source and misses both.
 
 Fix by pairing each delimiter with its own partner.",
         references: &[Ref { source: Source::Chktex, at: "49" }, Ref { source: Source::Source2e, at: "ltmath.dtx" }],
+        fixes: &[],
         run: math_mode_mismatch,
     },
     Rule {
@@ -121,7 +126,7 @@ Fix by pairing each delimiter with its own partner.",
         summary: "an operator name is set in math italic instead of by its command",
         explanation: "\
 Letters in math mode are set in math italic, one variable per letter, with
-the spacing of a product ([The TeXbook](https://ctan.org/pkg/texbook), chapter 18), so `$sin(x)$` sets a product of
+the spacing of a product (The TeXbook, chapter 18), so `$sin(x)$` sets a product of
 three variables.
 
 satex decides this from the run, not from a list of names: the name the
@@ -131,6 +136,7 @@ and `\\mathrm{sin}` is left alone.
 
 Fix by writing the command.",
         references: &[Ref { source: Source::Chktex, at: "35" }, Ref { source: Source::TeXbook, at: "chapter 18" }],
+        fixes: &[Applicability::Unsafe],
         run: math_operator_name,
     },
     Rule {
@@ -140,7 +146,7 @@ Fix by writing the command.",
         summary: "three periods set three periods, not an ellipsis",
         explanation: "\
 Three `.` characters are set with the spacing of three periods, which is
-tighter than an ellipsis ([The TeXbook](https://ctan.org/pkg/texbook), chapter 18).  `\\ldots` sets them on the
+tighter than an ellipsis (The TeXbook, chapter 18).  `\\ldots` sets them on the
 baseline and `\\cdots` at the height of a binary operator.
 
 The rule reads the periods that reached the page, so an ellipsis a command
@@ -149,6 +155,7 @@ operators chktex lists.
 
 Fix by writing the command.",
         references: &[Ref { source: Source::Chktex, at: "11" }, Ref { source: Source::TeXbook, at: "chapter 18" }],
+        fixes: &[Applicability::Unsafe],
         run: ellipsis_dots,
     },
     Rule {
@@ -158,7 +165,7 @@ Fix by writing the command.",
         summary: "the letter x stands between two numbers where a multiplication sign belongs",
         explanation: "\
 `640x480` sets the letter x between the numbers.  The sign for a product is
-`\\times`, a binary operator with the spacing of one ([The TeXbook](https://ctan.org/pkg/texbook), chapter 16).
+`\\times`, a binary operator with the spacing of one (The TeXbook, chapter 16).
 
 The rule reads the characters the run set, so it finds a dimension a macro
 assembled as well as one typed out.  It names `\\times` where the letter was
@@ -166,6 +173,7 @@ already in math mode and `$\\times$` where it was in text.
 
 Fix by writing the operator.",
         references: &[Ref { source: Source::Chktex, at: "29" }, Ref { source: Source::TeXbook, at: "chapter 16" }],
+        fixes: &[Applicability::Unsafe],
         run: dimension_times,
     },
     Rule {
@@ -176,7 +184,7 @@ Fix by writing the operator.",
         explanation: "\
 A formula is part of the sentence around it.  Punctuation that ends the
 sentence goes after the closing delimiter of inline math, and inside a
-display, where it is set on the display's own line ([The TeXbook](https://ctan.org/pkg/texbook), chapter 18).
+display, where it is set on the display's own line (The TeXbook, chapter 18).
 
 The rule reads the mode, so it treats every display alike, whether it came
 from `\\[`, from `$$` or from an `equation` environment, where chktex follows
@@ -184,6 +192,7 @@ only `\\]` and `$$`.
 
 Fix by moving the punctuation to the other side of the delimiter.",
         references: &[Ref { source: Source::Chktex, at: "40" }, Ref { source: Source::TeXbook, at: "chapter 18" }],
+        fixes: &[],
         run: math_punctuation,
     },
 ];
@@ -294,7 +303,7 @@ impl Lexed {
 
 /// The document files the rule reads, each lexed once.
 #[derive(Default)]
-struct Files(std::collections::HashMap<FileId, Option<Lexed>>);
+struct Files(crate::fixed::HashMap<FileId, Option<Lexed>>);
 
 impl Files {
     fn get(&mut self, edits: &Edits, file: FileId) -> Option<&Lexed> {
@@ -322,7 +331,7 @@ fn math_shift_dollars(report: &mut Report) {
     let view = report.text();
     let edits = report.edits();
     let mut files = Files::default();
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::default();
     let mut findings = Vec::new();
     for region in regions(view) {
         let Some(lexed) = files.get(&edits, region.first.file) else { continue };
@@ -422,7 +431,7 @@ fn math_script_braces(report: &mut Report) {
     let view = report.text();
     let edits = report.edits();
     let mut files = Files::default();
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::default();
     let mut findings = Vec::new();
     for region in regions(view) {
         let Some(lexed) = files.get(&edits, region.first.file) else { continue };
@@ -601,7 +610,7 @@ fn math_mode_mismatch(report: &mut Report) {
     // ever running `\@badmath`, whatever mode the run is in around it.
     let errors: HashMap<Span, bool> =
         analysis.facts.occurrences.iter().filter(|o| crate::lint::shared::is_error(analysis, o)).fold(
-            HashMap::new(),
+            HashMap::default(),
             |mut errors, o| {
                 *errors.entry(o.span).or_insert(false) |= o.certain;
                 errors

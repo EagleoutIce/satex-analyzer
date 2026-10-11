@@ -37,6 +37,7 @@ Fix by adding `-shell-escape` to the command, e.g.
             Ref { source: Source::Latexmk, at: "$pdf_mode" },
             Ref { source: Source::Arara, at: "The official rules" },
         ],
+        fixes: &[],
         run: shell_escape_missing,
     },
     Rule {
@@ -52,6 +53,7 @@ permission buys nothing and only widens what a hostile input file can do.
 Fix by removing `-shell-escape` from the engine command (or `shell: yes` from
 the arara directive).",
         references: &[Ref { source: Source::Pdftex, at: "-shell-escape" }],
+        fixes: &[],
         run: shell_escape_unneeded,
     },
     Rule {
@@ -69,6 +71,7 @@ than latexmk waits for.
 
 Fix by setting `$pdf_mode` to the engine the document is written for.",
         references: &[Ref { source: Source::Latexmk, at: "$pdf_mode" }],
+        fixes: &[],
         run: engine_mismatch,
     },
     Rule {
@@ -84,6 +87,7 @@ and every citation stays undefined.
 Fix by removing the setting.  latexmk's default, 1, runs them whenever the
 `.bib` files exist.",
         references: &[Ref { source: Source::Latexmk, at: "$bibtex_use" }],
+        fixes: &[],
         run: bibliography_disabled,
     },
     Rule {
@@ -98,6 +102,7 @@ never takes effect (latexmk(1), `$bibtex_use`).
 
 Fix by removing the setting.",
         references: &[Ref { source: Source::Latexmk, at: "$bibtex_use" }],
+        fixes: &[],
         run: bibliography_unneeded,
     },
     Rule {
@@ -118,6 +123,7 @@ The glossaries manual gives the rule, e.g.
             Ref { source: Source::Latexmk, at: "CUSTOM DEPENDENCIES" },
             Ref { source: Source::Glossaries, at: "bib2gls" },
         ],
+        fixes: &[],
         run: missing_custom_dependency,
     },
     Rule {
@@ -133,6 +139,7 @@ DEPENDENCIES\").  The document writes no glossary or index, and no file with the
 
 Fix by removing the rule, or keep it if another document of the project needs it.",
         references: &[Ref { source: Source::Latexmk, at: "CUSTOM DEPENDENCIES" }],
+        fixes: &[],
         run: unused_custom_dependency,
     },
     Rule {
@@ -148,6 +155,7 @@ without `%S` compiles nothing, and one without `%O` loses `-jobname`,
 
 Fix by ending the command with `%O %S`.",
         references: &[Ref { source: Source::Latexmk, at: "FORMAT OF COMMAND SPECIFICATIONS" }],
+        fixes: &[],
         run: command_placeholders,
     },
     Rule {
@@ -166,6 +174,7 @@ Fix by adding them to the command, e.g.
             Ref { source: Source::Pdftex, at: "-file-line-error" },
             Ref { source: Source::Luatex, at: "-synctex" },
         ],
+        fixes: &[],
         run: engine_options,
     },
 ];
@@ -469,7 +478,7 @@ fn shell_escape_unneeded(report: &mut Report) {
 /// calls `\directlua` needs LuaTeX whatever it was compiled with.
 fn engines_needed(analysis: &Analysis) -> Vec<(Engine, String)> {
     let mut it = Interner::default();
-    let tables: Vec<(Engine, std::collections::HashMap<crate::tex::Sym, crate::tex::Meaning>)> =
+    let tables: Vec<(Engine, crate::fixed::HashMap<crate::tex::Sym, crate::tex::Meaning>)> =
         [Engine::PdfTeX, Engine::LuaTeX, Engine::XeTeX]
             .into_iter()
             .map(|engine| (engine, crate::builtins::initial_meanings(&mut it, engine)))

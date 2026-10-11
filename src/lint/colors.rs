@@ -2,7 +2,7 @@
 //! and the `\pdfcolorstack`s the run executed (pdfTeX manual § 8.9.8), as
 //! [`crate::observe`] recorded them.
 
-use std::collections::HashMap;
+use crate::fixed::HashMap;
 
 use crate::facts::{ColorDef, CsnameRole, StackOp};
 use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
@@ -23,6 +23,7 @@ it.
 
 Fix by defining the color first, or by correcting its name.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
+        fixes: &[],
         run: undefined_color,
     },
     Rule {
@@ -38,6 +39,7 @@ The document names a color with `\\definecolor`, `\\providecolor` or
 Silent for a color a package defines: a library may define more colors
 than any one document uses.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
+        fixes: &[],
         run: unused_color,
     },
     Rule {
@@ -52,6 +54,7 @@ name. Only the last one is ever read back.
 Fix by giving the second color its own name, or by removing the earlier
 definition.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
+        fixes: &[],
         run: conflicting_color_definition,
     },
     Rule {
@@ -66,6 +69,7 @@ one name likely means to be the other.
 
 Silent unless the run could read both colors back exactly.",
         references: &[Ref { source: Source::Xcolor, at: "2.5" }],
+        fixes: &[],
         run: duplicate_color_value,
     },
     Rule {
@@ -82,6 +86,7 @@ push or pop belongs to.
 
 Fix by balancing every push with a pop in the same group.",
         references: &[Ref { source: Source::Pdftex, at: "8.9.8" }],
+        fixes: &[],
         run: unbalanced_color_stack,
     },
 ];
@@ -122,7 +127,7 @@ fn unused_color(report: &mut Report) {
     if !definitions_matter(analysis) {
         return;
     }
-    let used: std::collections::HashSet<&str> = analysis
+    let used: crate::fixed::HashSet<&str> = analysis
         .facts
         .color_uses
         .iter()
@@ -133,7 +138,8 @@ fn unused_color(report: &mut Report) {
         if def.package.is_some() || used.contains(def.name.as_str()) {
             continue;
         }
-        report.add(def.span, &def.name, format!("color `{}` is never used", def.name), None);
+        let note = report.unread("used").unwrap_or_default();
+        report.add(def.span, &def.name, format!("color `{}` is never used{note}", def.name), None);
     }
 }
 
@@ -142,7 +148,7 @@ fn conflicting_color_definition(report: &mut Report) {
     if !definitions_matter(analysis) {
         return;
     }
-    let mut by_name: HashMap<&str, Vec<&ColorDef>> = HashMap::new();
+    let mut by_name: HashMap<&str, Vec<&ColorDef>> = HashMap::default();
     for def in &analysis.facts.colors {
         by_name.entry(def.name.as_str()).or_default().push(def);
     }
@@ -174,7 +180,7 @@ fn duplicate_color_value(report: &mut Report) {
         return;
     }
     let exact: Vec<&ColorDef> = analysis.facts.colors.iter().filter(|d| d.certain && d.value.is_some()).collect();
-    let mut seen: std::collections::HashSet<(&str, &str)> = std::collections::HashSet::new();
+    let mut seen: crate::fixed::HashSet<(&str, &str)> = crate::fixed::HashSet::default();
     for (i, a) in exact.iter().enumerate() {
         if a.package.is_none() {
             continue;
@@ -209,7 +215,7 @@ fn duplicate_color_value(report: &mut Report) {
 
 fn unbalanced_color_stack(report: &mut Report) {
     let analysis = report.analysis();
-    let mut open: HashMap<i64, Vec<crate::tex::Span>> = HashMap::new();
+    let mut open: HashMap<i64, Vec<crate::tex::Span>> = HashMap::default();
     let mut findings = Vec::new();
     for entry in &analysis.facts.color_stack {
         let Some(stack) = entry.stack else { continue };

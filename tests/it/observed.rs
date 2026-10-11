@@ -229,6 +229,45 @@ Sch\"on.
 \end{document}"#,
     );
     assert!(findings(&lmodern, "computer-modern-in-t1").is_empty());
+
+    // Vertical mode ignores a space (tex.web § 1043): the preamble sets nothing.
+    let preamble = analyze(
+        r"\documentclass{article}
+\usepackage[T1]{fontenc}
+\def\foo{x}
+\begin{document}
+\end{document}",
+    );
+    assert!(findings(&preamble, "computer-modern-in-t1").is_empty());
+}
+
+/// After `\clearpage` ships the page out, the page is empty again and
+/// `\pagegoal` reads `\maxdimen` (tex.web §§ 987, 1017). article.cls runs
+/// `\onecolumn`, so `\clearpage`, at its end.
+#[test]
+fn the_page_is_empty_after_a_forced_page_break() {
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\ifdim\pagegoal=\maxdimen \gdef\PageEmpty{}\else\gdef\PageTouched{}\fi
+\end{document}",
+    );
+    assert!(crate::support::defined(&analysis, "PageEmpty"));
+    assert!(!crate::support::defined(&analysis, "PageTouched"), "the page room is not known");
+}
+
+/// tex.web § 370: an undefined name is an error and adds nothing, so the
+/// formula is empty and the box is 0pt wide.
+#[test]
+fn an_undefined_name_in_math_sets_nothing() {
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\setbox0\hbox{$\nosuchmacro$}\ifdim\wd0=0pt \gdef\WdZero{}\else\gdef\WdOther{}\fi
+\end{document}",
+    );
+    assert!(crate::support::defined(&analysis, "WdZero"));
+    assert!(!crate::support::defined(&analysis, "WdOther"), "the width is not known");
 }
 
 #[test]
@@ -316,6 +355,26 @@ fn accsupp_used_twice_is_balanced() {
 \newcommand\alt[1]{\BeginAccSupp{method=escape,ActualText={}}#1\EndAccSupp{}}
 \begin{document}
 One \alt{a} and two \alt{b}.
+\end{document}",
+    );
+    assert!(findings(&analysis, "unbalanced-pdf-content").is_empty());
+}
+
+/// The wrapper's `BDC` and the one inside a listings literate replacement
+/// share the call site: `B B E E` is balanced, not a repeat of one pair.
+#[test]
+fn nested_accsupp_at_one_call_site_is_balanced() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{listings,accsupp,amssymb,amsmath}
+\def\Arrow{\text{\BeginAccSupp{method=escape,ActualText={<-}}\(\leftarrow\)\EndAccSupp{}}}
+\lstset{literate={<-}{{{\!\Arrow\!}}}2}
+\newcommand*\code[1]{\BeginAccSupp{method=escape,ActualText={#1}}\lstinline`#1`\EndAccSupp{}}
+\begin{document}
+Use \code{x <- 2} and \code{y <- 3}.
 \end{document}",
     );
     assert!(findings(&analysis, "unbalanced-pdf-content").is_empty());

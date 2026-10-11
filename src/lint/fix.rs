@@ -2,8 +2,9 @@
 //! a command starts, so the extent of what to change is read from the source
 //! there, tokenized the way TeX's mouth tokenizes it.
 
+use crate::fixed::HashMap;
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::path::Path;
 use std::rc::Rc;
 
