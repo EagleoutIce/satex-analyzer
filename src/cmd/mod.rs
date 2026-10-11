@@ -56,6 +56,9 @@ pub enum Command {
     Query {
         /// The query to run; see `satex query --list`.
         #[arg(value_name = "NAME")]
+        #[cfg_attr(not(target_os = "emscripten"), arg(add = clap_complete::ArgValueCandidates::new(|| {
+            crate::query::Query::ALL.iter().map(|(n, _)| clap_complete::CompletionCandidate::new(*n)).collect::<Vec<_>>()
+        })))]
         name: Option<String>,
         /// Filter expression, for example `tag=switch and package~^my`.
         #[arg(long, value_name = "EXPR")]
@@ -249,6 +252,19 @@ pub enum Command {
     },
     /// The token stream the mouth produces.
     Tokens,
+    /// Print the shell completion script: bash, zsh, fish, elvish or
+    /// powershell.  Values complete from the running binary.  `install
+    /// [bash|zsh|fish]` registers it in that shell's startup file; without a
+    /// shell, the one running satex, else `$SHELL`.
+    Completions {
+        #[arg(value_name = "SHELL", value_parser = clap::builder::PossibleValuesParser::new(
+            ["bash", "zsh", "fish", "elvish", "powershell", "install"].map(clap::builder::PossibleValue::new)
+                .into_iter().chain([clap::builder::PossibleValue::new("json").hide(true)])))]
+        shell: String,
+        /// The shell `install` sets up.
+        #[arg(value_name = "TARGET", value_parser = ["bash", "zsh", "fish"])]
+        target: Option<String>,
+    },
     /// A Language Server Protocol server: a thin facade over the queries and
     /// lints above, driven by `initialize`/`didOpen`/`didChange` instead of
     /// one-shot arguments.  Stdio by default; `--port` switches to TCP.
@@ -284,6 +300,20 @@ pub enum CacheAction {
         #[arg(long, value_name = "PATH")]
         preamble: Option<std::path::PathBuf>,
     },
+    /// Write the valid caches of the cache directory into one archive.
+    Export {
+        /// The archive to write.
+        #[arg(value_name = "ARCHIVE")]
+        archive: std::path::PathBuf,
+    },
+    /// Unpack an archive into the cache directory. A cache it holds that
+    /// this build cannot use is skipped with a line saying why. A directory
+    /// names its `satex-cache.bin`.
+    Import {
+        /// The archive, or a bundle directory holding one.
+        #[arg(value_name = "ARCHIVE")]
+        archive: std::path::PathBuf,
+    },
     /// Delete every cache: the interpreted kernel and the package caches.
     Clear,
     /// Apply the size and staleness pruning now.
@@ -301,6 +331,7 @@ impl Command {
                 | Command::Lint { chktex: true, .. }
                 | Command::Cache { action: Some(_) }
                 | Command::Lsp { .. }
+                | Command::Completions { .. }
         )
     }
 
@@ -357,6 +388,7 @@ impl Command {
                 (matches!(format, Format::Text | Format::Json), "text or json")
             }
             Command::Dependencies => (matches!(format, Format::Text | Format::Json | Format::Dot), "text, json or dot"),
+            Command::Trace { .. } => (generic || format == Format::Compact, "text, json, csv, markdown or compact"),
             _ => (generic, "text, json, csv or markdown"),
         };
         if ok { Ok(()) } else { Err(format!("`--format {}` does not apply here; try {hint}", format.as_str())) }
@@ -386,6 +418,9 @@ impl Command {
                 *list,
                 out,
             ),
+            Command::Trace { .. } if context.format == crate::plugin::format::Format::Compact => {
+                query::trace_compact(context, out)
+            }
             Command::Trace { filter, interactive, from, to, lines, include_internal, .. } => {
                 let file = trace_file(&[from.as_deref(), to.as_deref(), lines.as_deref()])?;
                 query::trace(context, filter.as_deref(), *interactive, *include_internal, file.as_deref(), out)
@@ -420,7 +455,7 @@ impl Command {
             // `Lsp` before a `Context` exists, the same way it does
             // `Query { request: Some(_) }`.
             Command::Cache { action: Some(_) } => Ok(Output::Done),
-            Command::Lsp { .. } => Ok(Output::Done),
+            Command::Lsp { .. } | Command::Completions { .. } => Ok(Output::Done),
             Command::Install { packages, yes, dry_run, usermode } => {
                 let options = install::Options { yes: *yes, dry_run: *dry_run, usermode: *usermode };
                 install::run(context, packages, options, out)
