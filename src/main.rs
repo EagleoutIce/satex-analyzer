@@ -46,6 +46,9 @@ struct Cli {
     /// written as there: `--set limits.memory=8GiB --set load.inputs=false`.
     /// Repeatable; the flags below win over it.
     #[arg(long = "set", global = true, value_name = "PATH=VALUE", help_heading = "Input")]
+    #[cfg_attr(not(target_os = "emscripten"), arg(add = clap_complete::ArgValueCandidates::new(|| {
+        satex::config::keys().into_iter().map(|(k, _)| k).map(|k| clap_complete::CompletionCandidate::new(format!("{k}="))).collect::<Vec<_>>()
+    })))]
     set: Vec<String>,
 
     /// Do not load packages; analyze the document and the kernel only.
@@ -157,8 +160,143 @@ fn main() {
     }
 }
 
+fn completions(shell: &str, target: Option<&str>) -> Result<(), String> {
+    let mut cmd = <Cli as clap::CommandFactory>::command();
+    cmd.build();
+    let mut out = io::stdout().lock();
+    if shell == "install" {
+        return install_completions(target);
+    }
+    if let Some(target) = target {
+        return Err(format!("`{target}` applies to `satex completions install` only"));
+    }
+    if shell == "json" {
+        let json = command_json(&cmd);
+        let text = serde_json::to_string_pretty(&serde_json::json!({
+            "command": json,
+            "queries": query::Query::ALL.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+            "config_keys": satex::config::keys(),
+            "rules": satex::lint::rules().iter().filter_map(|r| r.get("code").cloned()).collect::<Vec<_>>(),
+        }));
+        return writeln!(out, "{}", text.map_err(|e| e.to_string())?).map_err(|e| e.to_string());
+    }
+    #[cfg(target_os = "emscripten")]
+    return Err(format!("no shell completion in this build: `{shell}`"));
+    #[cfg(not(target_os = "emscripten"))]
+    let shells = clap_complete::env::Shells::builtins();
+    #[cfg(not(target_os = "emscripten"))]
+    let sh = shells.completer(shell).ok_or_else(|| format!("unknown shell `{shell}`"))?;
+    #[cfg(not(target_os = "emscripten"))]
+    sh.write_registration("COMPLETE", "satex", "satex", "satex", &mut out).map_err(|e| e.to_string())
+}
+
+/// The startup file of `shell` under `home` and the completion hook line.
+fn completion_file(home: &std::path::Path, shell: &str) -> Option<(std::path::PathBuf, &'static str)> {
+    match shell {
+        "bash" => Some((home.join(".bashrc"), "source <(COMPLETE=bash satex)")),
+        "zsh" => Some((home.join(".zshrc"), "source <(COMPLETE=zsh satex)")),
+        "fish" => Some((home.join(".config/fish/completions/satex.fish"), "COMPLETE=fish satex | source")),
+        _ => None,
+    }
+}
+
+/// The shell that started satex, by its parent's process name.
+fn parent_shell() -> Option<String> {
+    #[cfg(unix)]
+    {
+        let comm = std::fs::read_to_string(format!("/proc/{}/comm", std::os::unix::process::parent_id())).ok()?;
+        let name = comm.trim().trim_start_matches('-');
+        return ["bash", "zsh", "fish"].contains(&name).then(|| name.to_string());
+    }
+    #[allow(unreachable_code)]
+    None
+}
+
+/// The `$SHELL` name.
+fn env_shell() -> String {
+    std::env::var("SHELL").unwrap_or_default().rsplit('/').next().unwrap_or("").to_string()
+}
+
+/// Whether `shell`'s startup file under `home` loads the completion.
+fn completion_set_up(home: &std::path::Path, shell: &str) -> bool {
+    match completion_file(home, shell) {
+        Some((file, _)) if shell == "fish" => file.exists(),
+        Some((file, _)) => std::fs::read_to_string(file).is_ok_and(|t| t.contains(&format!("COMPLETE={shell} satex"))),
+        None => true,
+    }
+}
+
+/// After `--version`: a hint on stderr for every shell in use without the completion.
+fn completion_hints() {
+    let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else { return };
+    let used = [env_shell(), parent_shell().unwrap_or_default()];
+    let has = |f: &str| home.join(f).exists();
+    for (shell, rc) in [("bash", ".bashrc"), ("zsh", ".zshrc"), ("fish", ".config/fish")] {
+        if (used.iter().any(|u| u == shell) || has(rc)) && !completion_set_up(&home, shell) {
+            eprintln!("shell completion is not set up for {shell}: run `satex completions install {shell}`");
+        }
+    }
+}
+
+/// Adds the completion hook to a shell's startup file, once: `target`, else
+/// the shell running satex, else `$SHELL`.
+fn install_completions(target: Option<&str>) -> Result<(), String> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).ok_or("HOME is not set")?;
+    let (shell, how) = match (target, parent_shell()) {
+        (Some(t), _) => (t.to_string(), "given"),
+        (None, Some(p)) => (p, "the parent process"),
+        (None, None) => (env_shell(), "$SHELL"),
+    };
+    let (file, line) = completion_file(&home, &shell)
+        .ok_or_else(|| format!("no automatic setup for the shell `{shell}`; see `satex completions --help`"))?;
+    println!("shell: {shell} ({how})");
+    let text = std::fs::read_to_string(&file).unwrap_or_default();
+    if text.lines().any(|l| l.trim() == line) {
+        println!("completion already set up in {}", file.display());
+        return Ok(());
+    }
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
+    std::fs::write(&file, format!("{text}{sep}# satex shell completion\n{line}\n")).map_err(|e| e.to_string())?;
+    println!("added to {}; open a new shell to use it", file.display());
+    Ok(())
+}
+
+fn command_json(cmd: &clap::Command) -> serde_json::Value {
+    use serde_json::json;
+    let args: Vec<_> = cmd
+        .get_arguments()
+        .filter(|a| !a.is_hide_set())
+        .map(|a| {
+            json!({
+                "id": a.get_id().as_str(),
+                "long": a.get_long(),
+                "short": a.get_short().map(String::from),
+                "positional": a.is_positional(),
+                "takes_value": a.get_action().takes_values(),
+                "value_names": a.get_value_names().map(|v| v.iter().map(|s| s.as_str()).collect::<Vec<_>>()),
+                "possible_values": a.get_possible_values().iter().filter(|p| !p.is_hide_set()).map(|p| p.get_name()).collect::<Vec<_>>(),
+                "help": a.get_help().map(|h| h.to_string()),
+            })
+        })
+        .collect();
+    json!({
+        "name": cmd.get_name(),
+        "about": cmd.get_about().map(|h| h.to_string()),
+        "args": args,
+        "subcommands": cmd.get_subcommands().filter(|c| !c.is_hide_set()).map(command_json).collect::<Vec<_>>(),
+    })
+}
+
 fn run() -> Result<(), String> {
+    #[cfg(not(target_os = "emscripten"))]
+    clap_complete::CompleteEnv::with_factory(<Cli as clap::CommandFactory>::command).complete();
     let mut cli = Cli::parse();
+    if let Some(Command::Completions { shell, target }) = &cli.command {
+        return completions(shell, target.as_deref());
+    }
     anstream::ColorChoice::from(cli.color).write_global();
     // Progress is for a person reading text, not for a program reading output.
     if !matches!(cli.format, Format::Text) {
@@ -184,6 +322,9 @@ fn run() -> Result<(), String> {
             _ => overview_text(&cfg, &layers),
         };
         let _ = write!(out, "{text}");
+        if cli.version {
+            completion_hints();
+        }
         return Ok(());
     }
     cli.command().check_format(cli.format)?;
@@ -232,6 +373,8 @@ fn run() -> Result<(), String> {
                     .collect::<Result<Vec<_>, _>>()?;
                 satex::cmd::cache::build::run(&cfg, *refresh, packages, &engines, preamble.as_deref(), json, &mut out)
             }
+            satex::cmd::CacheAction::Export { archive } => satex::cmd::cache::export(&cfg, archive, json, &mut out),
+            satex::cmd::CacheAction::Import { archive } => satex::cmd::cache::import(&cfg, archive, json, &mut out),
             satex::cmd::CacheAction::Clear => satex::cmd::cache::clear(&cfg, json, &mut out),
             satex::cmd::CacheAction::Prune => satex::cmd::cache::prune(&cfg, json, &mut out),
         };
@@ -250,18 +393,18 @@ fn run() -> Result<(), String> {
     };
     if cli.stats || cfg.verbose >= 1 {
         for line in analysis.cache_report() {
-            anstream::eprintln!("satex: {line}");
+            anstream::eprintln!("{}", render::status(&format!("satex: {line}")));
         }
     }
     if cli.stats {
-        anstream::eprintln!("{}", analysis.stats(started.elapsed()));
+        anstream::eprintln!("{}", render::status(&analysis.stats(started.elapsed())));
         for line in analysis.hotspots(10) {
-            anstream::eprintln!("{line}");
+            anstream::eprintln!("{}", render::status(&line));
         }
     }
     log_gaps(&analysis, &cfg);
     for note in analysis.limit_notes() {
-        anstream::eprintln!("satex: {note}");
+        anstream::eprintln!("{}", render::status(&format!("satex: {note}")));
     }
     // What the run could not follow reads as a note on the answer, so it goes
     // after it.
@@ -345,12 +488,15 @@ fn resolve_profile(cli: &Cli, cfg: &Config, source: Option<&str>) -> Result<sate
         return Ok(profile);
     }
     // `cache build` analyzes the documents it writes itself: a class and
-    // its packages, never plain TeX.
-    if cli.file.is_none() && matches!(cli.command, Some(satex::cmd::Command::Cache { .. })) {
+    // its packages, never plain TeX. `lsp` serves LaTeX documents and reads
+    // no source up front.
+    if cli.file.is_none()
+        && matches!(cli.command, Some(satex::cmd::Command::Cache { .. } | satex::cmd::Command::Lsp { .. }))
+    {
         return Ok(Profile::Document);
     }
     let owned;
-    let text = match source {
+    let text = match source.filter(|s| !s.is_empty()) {
         Some(text) => text,
         None => {
             owned = cli.file.as_deref().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
@@ -399,7 +545,8 @@ fn configure(cli: &Cli, source: Option<&str>) -> Result<(Config, Vec<PathBuf>), 
     }
     cfg.verbose = cli.verbose;
     cfg.trace |= cli.command.as_ref().is_some_and(Command::wants_trace);
-    if let Some(Command::Trace { lines, steps, from, to, .. }) = &cli.command {
+    if let Some(Command::Trace { lines, steps, from, to, include_internal, interactive, .. }) = &cli.command {
+        cfg.trace_document_only = !include_internal && !interactive;
         cfg.trace_file = satex::cmd::trace_file(&[from.as_deref(), to.as_deref(), lines.as_deref()])?;
         if let Some(from) = from {
             let (_, from) = satex::cmd::split_file(from);

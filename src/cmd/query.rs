@@ -17,7 +17,7 @@ pub fn run(
     prefix: Option<&str>,
     for_: Option<&str>,
     list: bool,
-    _out: &mut impl Write,
+    out: &mut impl Write,
 ) -> Result<Output, String> {
     if list {
         let names: Vec<Record> = Query::ALL
@@ -56,7 +56,35 @@ pub fn run(
     if prefix.is_some() {
         return Err(format!("`--prefix` narrows the `pgfkeys` query, not `{name}`"));
     }
-    Ok(Output::Records(query::run(context.analysis, query, &filter)))
+    let records = query::run(context.analysis, query, &filter);
+    if query == Query::Typeset && context.format.is_text() {
+        for r in &records {
+            let field = |k: &str| r.get(k).and_then(Json::as_str).unwrap_or("");
+            let (kind, detail) = (field("kind"), field("detail"));
+            // A library's own line says nothing about the document.
+            match (r.get("line"), r.get("col"), field("origin")) {
+                (Some(l), Some(c), origin) if origin != "library" => {
+                    let _ = writeln!(out, "{l}:{c}  {kind}  {detail}");
+                }
+                _ => {
+                    let _ = writeln!(out, "{kind}  {detail}");
+                }
+            }
+        }
+        return Ok(Output::Done);
+    }
+    Ok(Output::Records(records))
+}
+
+/// `trace --compact`: [`query::compact_trace`] of the whole run, as text.
+pub fn trace_compact(context: &Context, out: &mut impl Write) -> Result<Output, String> {
+    let analysis = context.analysis;
+    let rows = query::run(analysis, Query::Trace, &parse_filter(None)?);
+    let file = analysis.short_name(analysis.main_file);
+    for line in query::compact_trace(&rows, file, context.source) {
+        let _ = writeln!(out, "{line}");
+    }
+    Ok(Output::Done)
 }
 
 pub fn trace(
@@ -110,7 +138,7 @@ fn step_through(
     );
     let bold = anstyle::Style::new().bold();
     let mut stdin = std::io::stdin().lock();
-    let mut sources: std::collections::HashMap<String, Option<Vec<String>>> = Default::default();
+    let mut sources: crate::fixed::HashMap<String, Option<Vec<String>>> = Default::default();
     let mut run_on = false;
     // The events the default view hides since the last one shown.
     let mut hidden: Option<(u32, u32)> = None;
@@ -295,7 +323,7 @@ fn step_through(
 /// token at `col` (1-based, `width` characters), and the rest of the line.
 /// Long lines are cut around the token.
 fn window(
-    cache: &mut std::collections::HashMap<String, Option<Vec<String>>>,
+    cache: &mut crate::fixed::HashMap<String, Option<Vec<String>>>,
     path: &str,
     line: u32,
     col: u32,

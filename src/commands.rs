@@ -11,7 +11,7 @@ use std::rc::Rc;
 use crate::builtins::DefMode;
 use crate::builtins::{CodeTable, Cond, Convert, FontParam, LastItem, Primitive, Special, Syntax};
 use crate::env::GroupKind;
-use crate::machine::{CondLimit, Machine};
+use crate::machine::{CondLimit, Machine, Unk};
 use crate::mode::group;
 use crate::tex::{Catcode, Meaning, RegKind, Span, Sym, Tok, Token};
 use crate::value::{Scaled, UNIT, Value};
@@ -133,7 +133,7 @@ enum FontSource {
 }
 
 impl Machine<'_> {
-    fn engine_sym(&mut self, key: &str) -> Sym {
+    pub(crate) fn engine_sym(&mut self, key: &str) -> Sym {
         self.intern(&format!("{ENGINE}{key}"))
     }
 
@@ -142,7 +142,18 @@ impl Machine<'_> {
         self.env.value(sym).as_int()
     }
 
-    fn set_engine(&mut self, key: &str, value: Value, global: bool) {
+    /// `\pdfrefximage⟨n⟩`: a box of the image's size, depth zero, where
+    /// the size is known.
+    fn ref_ximage(&mut self, n: Option<i64>) {
+        let dim = |m: &mut Self, k: &str| Some(crate::mode::Dim::exact(m.engine_int(&format!("ximage.{}.{k}", n?))?));
+        let item = match (dim(self, "w"), dim(self, "h")) {
+            (Some(w), Some(h)) => crate::mode::Item::Box([w, h, crate::mode::Dim::exact(0)]),
+            _ => crate::mode::Item::Unknown,
+        };
+        self.append_item(item);
+    }
+
+    pub(crate) fn set_engine(&mut self, key: &str, value: Value, global: bool) {
         let sym = self.engine_sym(key);
         self.env.set_value(sym, value, global);
     }
@@ -233,20 +244,11 @@ impl Machine<'_> {
 
     /// `scan_optional_equals` (tex.web § 405).
     pub fn scan_optional_equals(&mut self) {
-        if let Some(token) = self.next_non_blank_x()
+        if let Some(token) = self.next_non_blank_x_token()
             && !matches!(token.tok, Tok::Chr('=', Catcode::Other))
         {
             self.probe_scans(token, "=");
             self.unread(token);
-        }
-    }
-
-    fn next_non_blank_x(&mut self) -> Option<Token> {
-        loop {
-            let token = self.next_x_token()?;
-            if !token.is_space() {
-                return Some(token);
-            }
         }
     }
 
@@ -283,7 +285,13 @@ impl Machine<'_> {
             None if tokens.iter().any(|t| t.cs().is_some()) => return None,
             None => None,
         };
-        Some(crate::tex::detokenize_in(tokens, &self.out.interner, escape, &self.catcodes))
+        Some(crate::tex::detokenize_in(
+            tokens,
+            &self.out.interner,
+            escape,
+            &self.catcodes,
+            crate::tex::Selector::NewString,
+        ))
     }
 
     // ---- parameters ------------------------------------------------------
@@ -341,6 +349,12 @@ impl Machine<'_> {
             // index the engine keeps, under `\maxdimen`, so an expl3 store
             // of one (`\intarray_gset:Nnn`) does not overflow.
             Primitive::LastItem(_)
+                if self.name(self.env.identity(sym)) == "pdflastximage"
+                    && let Some(n) = self.engine_slot_int("ximages", "ximages", 0) =>
+            {
+                Some(Value::Int(n))
+            }
+            Primitive::LastItem(_)
                 if matches!(
                     self.name(self.env.identity(sym)),
                     "pdflastobj"
@@ -377,15 +391,29 @@ impl Machine<'_> {
             // penalty, read off the tail of the list.
             L::NodeType => {
                 let n = self.natural?;
-                match n.tail[0] {
-                    crate::mode::Last::Char(_) => n.ligature.map(|lig| Value::Int(if lig { 7 } else { 0 })),
+                // A word being set ends in its character (tex.web § 1034).
+                let (tail, ligature) = match n.pending {
+                    Some(_) => (crate::mode::Last::Char(None), None),
+                    None => (n.tail[0], n.ligature),
+                };
+                match tail {
+                    // Not known which: 0 or 7, never glue, a kern or a penalty.
+                    crate::mode::Last::Char(_) => Some(ligature.map_or(
+                        Value::Num { quantity: crate::value::Quantity::Int, num: crate::value::Num::range(0, 7) },
+                        |lig| Value::Int(if lig { 7 } else { 0 }),
+                    )),
                     crate::mode::Last::Glue(..) => int(11),
                     crate::mode::Last::Kern(_) => int(12),
                     crate::mode::Last::Penalty(_) => int(13),
                     // -1 an empty list, 1 an hlist.
                     crate::mode::Last::Empty => int(-1),
                     crate::mode::Last::Box => int(1),
-                    crate::mode::Last::Other | crate::mode::Last::Unknown => None,
+                    crate::mode::Last::Whatsit => int(9),
+                    // A box, rule, insertion, mark, adjust, discretionary or math node.
+                    crate::mode::Last::Other => {
+                        Some(Value::Num { quantity: crate::value::Quantity::Int, num: crate::value::Num::range(1, 10) })
+                    }
+                    crate::mode::Last::Unknown => None,
                 }
             }
             L::Badness => None,
@@ -710,7 +738,12 @@ impl Machine<'_> {
                         }
                     }
                     // Any character may be the one assigned.
-                    None => self.weaken_code_table(table, None, global),
+                    None => {
+                        // A checked code may be stored as something else.
+                        let value =
+                            if limit.is_some() { Value::Unknown } else { code.map_or(Value::Unknown, Value::Int) };
+                        self.weaken_code_table(table, None, &value, global, span)
+                    }
                 }
             }
             Special::CharClass => {
@@ -864,7 +897,7 @@ impl Machine<'_> {
     /// `scan_font_ident`): `\font` for the current one, a font identifier,
     /// or `\textfont⟨n⟩` and its relatives.
     pub fn scan_font_ident(&mut self) -> Option<u32> {
-        let token = self.next_non_blank_x()?;
+        let token = self.next_non_blank_x_token()?;
         let meaning = match token.cs().or_else(|| self.active_cs(token)) {
             Some(sym) => self.env.meaning(sym),
             None => Meaning::Undefined,
@@ -896,6 +929,13 @@ impl Machine<'_> {
     /// selection satex could not follow left the current font unknown.
     pub(crate) fn current_font(&mut self) -> Option<u32> {
         u32::try_from(self.engine_slot_int("font", "font", 0)?).ok()
+    }
+
+    /// Whether the current font is known to be `\nullfont`: no character
+    /// set in it shows.
+    pub(crate) fn in_nullfont(&mut self) -> bool {
+        let Some(sym) = self.out.interner.lookup(FONT_SLOT) else { return false };
+        self.env.slot_value(sym) == Some(0)
     }
 
     /// The font id for [`crate::facts::FontState`]. Read with
@@ -977,7 +1017,7 @@ impl Machine<'_> {
     }
 
     /// tex.web § 232: every math family starts at `\nullfont`.
-    fn family_font(&mut self, by: Sym, family: i64) -> Option<u32> {
+    pub(crate) fn family_font(&mut self, by: Sym, family: i64) -> Option<u32> {
         let name = self.name(by).to_string();
         u32::try_from(self.engine_slot_int(&format!("{name}."), &format!("{name}.{family}"), 0)?).ok()
     }
@@ -1148,7 +1188,7 @@ impl Machine<'_> {
         self.font_dimen(font, k)?.as_dimen()
     }
 
-    fn font_dimen(&mut self, font: u32, k: usize) -> Option<Value> {
+    pub(crate) fn font_dimen(&mut self, font: u32, k: usize) -> Option<Value> {
         let stored = self.font_field(font, &format!("p{k}"));
         if !matches!(stored, Value::Unknown) {
             return Some(stored);
@@ -1371,7 +1411,16 @@ impl Machine<'_> {
 
     fn obey_command(&mut self, syntax: Syntax, by: Sym, span: Span) {
         match syntax {
-            Syntax::Nothing => {}
+            Syntax::Nothing | Syntax::Whatsit | Syntax::Limits => {}
+            Syntax::MathComp(t) => {
+                if self.mode.meets(crate::mode::Modes::ANY_MATH) {
+                    self.math_comp(t);
+                }
+            }
+            Syntax::Number if self.name(self.env.identity(by)) == "pdfrefximage" => {
+                let n = self.scan_int();
+                self.ref_ximage(n);
+            }
             Syntax::Number => {
                 self.scan_int();
             }
@@ -1390,7 +1439,12 @@ impl Machine<'_> {
                 self.env.set_value(sym, Value::Int(mode.into()), true);
             }
             Syntax::GeneralText => {
-                self.read_general_text();
+                let text = self.read_general_text();
+                let name = self.name(by);
+                let patterns = name == "patterns";
+                if patterns || name == "hyphenation" {
+                    self.store_hyphenation(patterns, &text);
+                }
             }
             Syntax::NumberText => {
                 self.scan_int();
@@ -1450,10 +1504,12 @@ impl Machine<'_> {
                         // (the `.aux` file at `\end{document}`) finds.
                         self.set_engine(&format!("written.{}", name.trim()), Value::Int(1), true);
                         self.stream_files.insert(stream, name.trim().to_string());
+                        self.open_output(&name, true);
                     }
                     // Any stream may be the one opened.
                     (true, None) => {
                         self.set_engine(&format!("written.{}", name.trim()), Value::Int(1), true);
+                        self.open_output(&name, false);
                         self.weaken_engine("write_open.", true);
                     }
                     _ => {}
@@ -1627,26 +1683,54 @@ impl Machine<'_> {
                 self.scan_int();
             }
             Syntax::PdfXImage => {
-                self.scan_rule_spec();
+                let spec = self.scan_rule_spec();
                 self.scan_attr();
+                let mut first = true;
                 if self.scan_keyword("named") {
                     self.read_general_text();
+                    first = false;
                 } else if self.scan_keyword("page") {
-                    self.scan_int();
+                    first = self.scan_int() == Some(1);
                 }
                 if self.scan_keyword("colorspace") {
                     self.scan_int();
                 }
-                for pagebox in ["mediabox", "cropbox", "bleedbox", "trimbox", "artbox"] {
-                    if self.scan_keyword(pagebox) {
-                        break;
-                    }
+                // The pdfTeX manual: the crop box unless `\pdfpagebox` or a
+                // keyword names another (1 media, 2 crop).
+                let boxes = ["mediabox", "cropbox", "bleedbox", "trimbox", "artbox"];
+                let param = self.intern("pdfpagebox");
+                let mut which = match self.env.get(param) {
+                    None => Some(0),
+                    Some(_) => self.env.value(param).as_int().map(|n| n.max(0) as usize),
+                };
+                if let Some(k) = boxes.iter().position(|b| self.scan_keyword(b)) {
+                    which = Some(k + 1);
                 }
                 // pdfTeX reads the file name as an expanded general text.
                 let file = self.read_general_text();
                 let file = self.expand_tokens(file.into());
                 let name = self.text_of(&file);
-                crate::observe::image(self, &name, span);
+                let path = crate::observe::image(self, &name, span);
+                let which = match which {
+                    Some(1) => Some("media"),
+                    Some(0 | 2) => Some("crop"),
+                    _ => None,
+                };
+                let size = path
+                    .filter(|p| {
+                        first && spec == [None; 3] && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
+                    })
+                    .zip(which)
+                    .and_then(|(p, w)| crate::pdfbox::page_box(&std::fs::read(p).ok()?, w));
+                // pdfTeX numbers images from 1 and keeps their sizes for
+                // `\pdfrefximage`.
+                let n = self.engine_slot_int("ximages", "ximages", 0).map(|n| n + 1);
+                self.set_engine("ximages", n.map_or(Value::Unknown, Value::Int), true);
+                if let Some(n) = n {
+                    for (k, sp) in [("w", size.map(|s| s.0)), ("h", size.map(|s| s.1))] {
+                        self.set_engine(&format!("ximage.{n}.{k}"), sp.map_or(Value::Unknown, Value::Int), true);
+                    }
+                }
             }
             Syntax::PdfColorStack => {
                 let stack = self.scan_int();
@@ -1679,7 +1763,7 @@ impl Machine<'_> {
     /// its 27-bit code.
     fn scan_delimiter(&mut self) {
         loop {
-            let Some(token) = self.next_non_blank_x() else { return };
+            let Some(token) = self.next_non_blank_x_token() else { return };
             let meaning = token.cs().map(|sym| self.env.meaning(sym));
             match meaning {
                 Some(Meaning::Primitive(Primitive::Relax)) => continue,
@@ -1778,7 +1862,7 @@ impl Machine<'_> {
         // tex.web § 482: the character appended is the one `\endlinechar`
         // names, which is not known.
         if end_line.is_none() {
-            let unknown = self.unknown_token(span);
+            let unknown = self.unknown_text(Unk::Any, span);
             body.push(unknown);
         }
         let meaning = self.make_macro(Default::default(), None, body);
@@ -1814,8 +1898,22 @@ impl Machine<'_> {
                 // whatever their unknown rest holds.
                 let order = match ka && kb {
                     true => Some(pa.cmp(&pb)),
-                    false => pa.chars().zip(pb.chars()).find(|(x, y)| x != y).map(|(x, y)| x.cmp(&y)),
+                    false => pa.chars().zip(pb.chars()).find(|(x, y)| x != y).map(|(x, y)| x.cmp(&y)).or_else(|| {
+                        // A known text that is a proper prefix of the other's known part comes first.
+                        match (ka, kb) {
+                            (true, _) if pb.len() > pa.len() => Some(std::cmp::Ordering::Less),
+                            (_, true) if pa.len() > pb.len() => Some(std::cmp::Ordering::Greater),
+                            _ => None,
+                        }
+                    }),
                 };
+                // Undecided: one of the three results, one split where it is tested.
+                if order.is_none() {
+                    let texts = ["-1", "0", "1"].map(|r| {
+                        r.chars().map(|c| Token::new(Tok::Chr(c, Catcode::Other), span)).collect::<Rc<[Token]>>()
+                    });
+                    return vec![self.one_of(texts.into(), span)];
+                }
                 order.map(|order| {
                     match order {
                         std::cmp::Ordering::Less => "-1",
@@ -1870,11 +1968,11 @@ impl Machine<'_> {
                 // web2c drops the quotes a name may carry, and a file the
                 // engine cannot find gives the empty string.
                 let name = self.expanded_text().map(|name| name.replace('"', ""));
-                let path = name.map(|name| self.locate_input(&name));
-                match (convert, path) {
+                let bytes = name.and_then(|name| self.input_bytes(&name));
+                match (convert, bytes) {
                     (_, None) => None,
                     (_, Some(None)) => Some(String::new()),
-                    (C::FileSize, Some(Some(p))) => std::fs::metadata(p).ok().map(|m| m.len().to_string()),
+                    (C::FileSize, Some(Some(b))) => Some(b.len().to_string()),
                     // The date of a file that exists: its time is not
                     // read, its form is known (unknown text instead lets a
                     // parse of it run past its end).
@@ -1885,7 +1983,7 @@ impl Machine<'_> {
                 let offset = if self.scan_keyword("offset") { self.scan_int() } else { Some(0) };
                 let length = if self.scan_keyword("length") { self.scan_int() } else { Some(0) };
                 let name = self.expanded_text();
-                let bytes = name.and_then(|name| self.locate_input(&name)).and_then(|p| std::fs::read(p).ok());
+                let bytes = name.and_then(|name| self.input_bytes(&name)).flatten();
                 match (bytes, offset, length) {
                     (Some(bytes), Some(offset), Some(length)) => {
                         let start = (offset.max(0) as usize).min(bytes.len());
@@ -1899,7 +1997,7 @@ impl Machine<'_> {
                 let file = self.scan_keyword("file");
                 let text = self.expanded_text();
                 let bytes = match text {
-                    Some(text) if file => self.locate_input(&text).and_then(|p| std::fs::read(p).ok()),
+                    Some(text) if file => self.input_bytes(&text).flatten(),
                     Some(text) => Some(text.into_bytes()),
                     None => None,
                 };
@@ -1917,7 +2015,7 @@ impl Machine<'_> {
             C::LastMatch => {
                 return match self.scan_int() {
                     Some(n) => self.pdf_last_match(n, span),
-                    None => vec![self.unknown_token(span)],
+                    None => vec![self.unknown_text(Unk::Any, span)],
                 };
             }
             // The pdfTeX manual: `\pdfuniformdeviate n` is a number in [0, n)
@@ -1928,7 +2026,7 @@ impl Machine<'_> {
                     Some(n) if n > 0 => self.digits_in(crate::value::Num::range(0, n - 1), span),
                     Some(n) if n < 0 => self.digits_in(crate::value::Num::range(n + 1, 0), span),
                     Some(_) => self.text_tokens("0", span),
-                    None => vec![self.unknown_token(span)],
+                    None => self.digits_in(crate::value::Num::range(-2_147_483_646, 2_147_483_646), span),
                 };
             }
             C::PageRef | C::XFormName | C::InsertHt | C::MarginKern | C::Marks => {
@@ -1960,7 +2058,7 @@ impl Machine<'_> {
         // What the engine gives and satex cannot know is unknown text.
         match text {
             Some(t) => chars(&t, span),
-            None => vec![self.unknown_token(span)],
+            None => vec![self.unknown_text(Unk::Any, span)],
         }
     }
 
@@ -1977,7 +2075,7 @@ impl Machine<'_> {
     ) -> Vec<Token> {
         let (Some(pattern), Some(subject), Some(subcount)) = (pattern, subject, subcount) else {
             self.set_engine(LAST_MATCH_COUNT, Value::Unknown, true);
-            return vec![self.unknown_token(span)];
+            return vec![self.unknown_text(Unk::Any, span)];
         };
         let Ok(re) = regex::RegexBuilder::new(&pattern).case_insensitive(icase).build() else {
             return chars("-1", span);
@@ -2002,13 +2100,13 @@ impl Machine<'_> {
     /// match, `-1->` for a group there is none of.
     fn pdf_last_match(&mut self, n: i64, span: Span) -> Vec<Token> {
         match self.engine_slot_int(LAST_MATCH, LAST_MATCH_COUNT, 0) {
-            None => vec![self.unknown_token(span)],
+            None => vec![self.unknown_text(Unk::Any, span)],
             Some(count) if n < 0 || n >= count => chars(NO_MATCH, span),
             Some(_) => {
                 let sym = self.engine_sym(&format!("{LAST_MATCH}{n}"));
                 match self.env.value(sym) {
                     Value::Toks(text) => text.iter().map(|t| Token::new(t.tok, span)).collect(),
-                    _ => vec![self.unknown_token(span)],
+                    _ => vec![self.unknown_text(Unk::Any, span)],
                 }
             }
         }
@@ -2035,7 +2133,7 @@ impl Machine<'_> {
             {
                 vec![Token::new(Tok::Chr(c, cat), span)]
             }
-            _ => vec![self.unknown_token(span)],
+            _ => vec![self.unknown_text(Unk::Any, span)],
         }
     }
 
@@ -2048,6 +2146,18 @@ impl Machine<'_> {
     pub(crate) fn locate_input(&mut self, name: &str) -> Option<std::path::PathBuf> {
         let base = self.base().to_path_buf();
         self.resolver_mut().resolve(name, crate::builtins::LoadKind::Input, &base)
+    }
+
+    /// The bytes of the file the engine finds by `name`: what this run wrote
+    /// to it, else what is on disk. `Some(None)` when there is none, `None`
+    /// when the run wrote it with what it holds unknown.
+    pub(crate) fn input_bytes(&mut self, name: &str) -> Option<Option<Vec<u8>>> {
+        match (self.written_text(name), self.locate_input(name)) {
+            (Some(Some(text)), _) => Some(Some(text.into_bytes())),
+            (_, Some(path)) => Some(crate::overlay::read_bytes(&path).ok()),
+            (Some(None), None) => None,
+            (None, None) => Some(None),
+        }
     }
 
     /// `\pdfprimitive⟨cs⟩`: the primitive of that name, whatever the name
@@ -2116,7 +2226,7 @@ impl Machine<'_> {
     /// tex.web § 503: the relation of `\ifnum`/`\ifdim`, a character of
     /// category 12 after expansion and blanks.
     pub fn scan_relation_x(&mut self) -> Option<char> {
-        let token = self.next_non_blank_x()?;
+        let token = self.next_non_blank_x_token()?;
         match token.tok {
             Tok::Chr(c @ ('<' | '=' | '>'), Catcode::Other) => Some(c),
             _ => {
