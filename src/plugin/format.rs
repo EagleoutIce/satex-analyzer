@@ -14,6 +14,9 @@ use crate::render::{self, Links};
 pub enum Format {
     /// Aligned table for a terminal, with color and links.
     Text,
+    /// A short text view. For `satex trace`: what each call of the main
+    /// file expands to and each conditional's outcome, at most 8 lines.
+    Compact,
     /// One JSON array of objects, one object per record.
     Json,
     /// Comma-separated, one record per line.
@@ -34,6 +37,7 @@ impl Format {
     /// Every output format, for `--version`.
     pub const ALL: &'static [Format] = &[
         Format::Text,
+        Format::Compact,
         Format::Json,
         Format::Csv,
         Format::Markdown,
@@ -45,6 +49,7 @@ impl Format {
     pub fn as_str(self) -> &'static str {
         match self {
             Format::Text => "text",
+            Format::Compact => "compact",
             Format::Json => "json",
             Format::Csv => "csv",
             Format::Markdown => "markdown",
@@ -63,7 +68,7 @@ impl Format {
 
     pub fn render(self, records: &[Record], links: Links, version: &str) -> String {
         match self {
-            Format::Text => render::table(records, links),
+            Format::Text | Format::Compact => render::table(records, links),
             Format::Json => crate::query::render_json(records),
             Format::Csv => render::csv(records),
             Format::Markdown => render::markdown(records),

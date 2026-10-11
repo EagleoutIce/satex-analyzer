@@ -21,25 +21,34 @@ pub struct Limits {
     /// expand without the source moving on — TeX loops are tail recursive.
     pub expansion_depth: u16,
     pub site_expansions: u32,
-    /// Tokens a run may digest without reading from a file before the
-    /// expansion it is in is given up as a loop that does not end.
-    pub stall_tokens: u64,
+    /// Steps the run may spend while it reads one source line (the
+    /// innermost file's line; a cache replay is charged to no line) before
+    /// the expansion above that line is cut: what it wrote is widened, an
+    /// unknown token stands for the rest, and the line reads on. A second overrun skips the rest of the line, a
+    /// third stops the run. The termination guard: the run spends at most
+    /// 3 times this per line read. 0 turns it off.
+    pub line_steps: u64,
     /// How often one construct satex cannot follow may be met at one place
     /// before the expansion it is in is given up the same way.  A path that
     /// fails at a site once fails there again on every round, so counting
     /// the failure into the millions says nothing the first one did not.
     pub repeat_failures: u32,
     /// Wall-clock seconds a run may take before it stops and says so; 0 for
-    /// no limit.  A safety net: no document should come near it.
+    /// no limit.  A safety net: no document should come near it.  Like
+    /// `memory`, it never changes where a path is cut before that stop.
     pub seconds: u64,
     /// Undecided choices one command may make on one path.  Past them a
     /// conditional follows only its first arm, reported as an `unsupported`
     /// gap.
     pub choices: u16,
-    /// Paths one drive keeps waiting before it joins the input of two that
-    /// stand alike: what their token lists differ in becomes one token
-    /// that stands for either text.
+    /// Paths one drive keeps waiting before the two furthest back at one
+    /// source position are cut to the input levels they share and joined.
     pub paths: u16,
+    /// Paths one drive keeps waiting before it joins those that stand
+    /// alike (one source position, the same conditionals, groups and
+    /// scans): what their token lists differ in becomes one token that
+    /// stands for either text.
+    pub alike: u16,
     /// Choices one command may have made on one path for a name that a
     /// join left with one of several meanings to still split the run into a
     /// path per meaning; past them, and with 0 everywhere, it is read as a
@@ -51,14 +60,32 @@ pub struct Limits {
     /// How many levels deep a recursion whose continuation is undecided is
     /// followed before it is assumed to end within them.
     pub recursion_depth: u16,
+    /// How many loop heads and loop entries one drive keeps with their
+    /// joined states; past them the oldest is forgotten. Its count stays
+    /// in the load's loop summaries, so it is summarized when met again.
+    pub loop_heads: u16,
+    /// How many runs of one call, at one site with the same names handed
+    /// to it, are recorded before a later call with unknown operands applies
+    /// their join instead of running; 0 never summarizes a call.
+    pub call_summary_after: u16,
+    /// How many times in a row one call may meet the state it met before,
+    /// with the same arguments, input, nesting and bindings, before its
+    /// path is ended (the only path is summarized instead): TeX repeats
+    /// that state forever; 0 never ends one.
+    pub cycle_after: u16,
     /// How many meanings a join leaves a name with as a set (one of them)
     /// before it has an unknown meaning.
     pub meaning_set: u16,
     /// How many values a join leaves a count or dimension register with as
     /// a set before only their interval is kept.
     pub value_set: u16,
-    /// Past this percentage of `seconds` or `memory`, precision is lowered so
-    /// the run finishes (`precision-degraded`); 100 never degrades.
+    /// How many members a join leaves a number with as a set once
+    /// intervals are among them (`{[0,10], [100,120]}`) before only their
+    /// hull is kept.
+    pub interval_set: u16,
+    /// Past this percentage of `steps`, precision is lowered so the run
+    /// finishes (`precision-degraded`); 100 never degrades.  Seconds and
+    /// memory never steer the run: they only stop it.
     #[serde(deserialize_with = "percent")]
     pub degrade_at_percent: u8,
     /// Tokens one expansion may add, and tokens one undecided conditional may
@@ -113,13 +140,17 @@ impl Limits {
             "file_depth" => self.file_depth.into(),
             "expansion_depth" => self.expansion_depth.into(),
             "site_expansions" => self.site_expansions.into(),
-            "stall_tokens" => self.stall_tokens,
+            "line_steps" => self.line_steps,
             "repeat_failures" => self.repeat_failures.into(),
             "seconds" => self.seconds,
             "choices" => self.choices.into(),
             "paths" => self.paths.into(),
+            "alike" => self.alike.into(),
             "widen_after" => self.widen_after.into(),
             "recursion_depth" => self.recursion_depth.into(),
+            "loop_heads" => self.loop_heads.into(),
+            "call_summary_after" => self.call_summary_after.into(),
+            "cycle_after" => self.cycle_after.into(),
             "degrade_at_percent" => self.degrade_at_percent.into(),
             "expansion_tokens" => self.expansion_tokens as u64,
             "conditional_tokens" => self.conditional_tokens as u64,
@@ -150,10 +181,9 @@ impl Limits {
 impl Default for Limits {
     fn default() -> Limits {
         Limits {
-            steps: 1_000_000_000,
+            steps: 4_000_000_000,
             // The real expl3 reads the Unicode data files while the kernel
-            // is built; that is done once and then cached, and a runaway is
-            // cut short by `stall_tokens` long before this bound.
+            // is built; that is done once and then cached.
             format_steps: 9_000_000_000,
             file_depth: 64,
             expansion_depth: 512,
@@ -166,9 +196,9 @@ impl Default for Limits {
             // without looping, and widening it there costs more tokens
             // than following it.
             site_expansions: 16_384,
-            // Measured: a tikzpicture read as one argument (`\resizebox`) digests
-            // over 100 million tokens without reading on.
-            stall_tokens: 200_000_000,
+            // Measured: the heaviest line of a long thesis takes 34-67M
+            // steps (about 30 s); a stuck line costs at most 3 times this.
+            line_steps: 100_000_000,
             // Measured: the kernel's own `\if` chains report a handful of
             // the same gap while they are still making progress, and no
             // document needed more than a few before the path repeated
@@ -177,12 +207,17 @@ impl Default for Limits {
             seconds: 300,
             choices: 8,
             paths: 16,
+            alike: 8,
             meaning_splits: 4,
             widen_after: 3,
             recursion_depth: 100,
+            loop_heads: 512,
+            call_summary_after: 2,
+            cycle_after: 2,
             meaning_set: 8,
             value_set: 8,
-            degrade_at_percent: 70,
+            interval_set: 4,
+            degrade_at_percent: 100,
             // A `Token` is 16 bytes, so a million of them is 16 MiB: enough
             // for any argument an expansion really writes, and far below
             // `memory`.
@@ -465,6 +500,11 @@ pub struct Texlive {
 #[serde(default, deny_unknown_fields)]
 pub struct Texmf {
     pub roots: Vec<PathBuf>,
+    /// A directory of TeX sources laid out like `texmf-dist`, searched after
+    /// `roots`. Without `roots` it is the whole installation: no
+    /// `kpsewhich`, no fallback paths. Its cache archive is
+    /// `satex-cache.bin` (`satex cache import <bundle>`).
+    pub bundle: Option<PathBuf>,
     /// May run `kpsewhich` to find them.
     pub kpsewhich: bool,
     /// Whether an unresolved installation may fall back to well-known
@@ -477,7 +517,7 @@ pub struct Texmf {
 
 impl Default for Texmf {
     fn default() -> Texmf {
-        Texmf { roots: Vec::new(), kpsewhich: true, fallback: true }
+        Texmf { roots: Vec::new(), bundle: None, kpsewhich: true, fallback: true }
     }
 }
 
@@ -731,6 +771,9 @@ pub struct Config {
     #[serde(default)]
     pub verbose: u8,
     pub trace: bool,
+    /// Record no events while a package or kernel file is read.
+    #[serde(default)]
+    pub trace_document_only: bool,
     /// Record only these lines of the main file, and what their calls do.
     pub trace_lines: Option<(u32, u32)>,
     /// Within the first traced line, skip what stands left of this column.
@@ -791,6 +834,7 @@ impl Default for Config {
             profiles: Profiles::default(),
             verbose: 0,
             trace: false,
+            trace_document_only: false,
             trace_lines: None,
             trace_col: 0,
             trace_file: None,
@@ -1319,6 +1363,7 @@ impl Config {
     pub fn distribution_request(&self) -> crate::distribution::Request {
         crate::distribution::Request {
             roots: self.texmf.roots.clone(),
+            bundle: self.texmf.bundle.clone(),
             install_root: self.texlive.root.clone(),
             year: self.texlive.year,
             use_kpsewhich: self.texmf.kpsewhich,
@@ -1496,14 +1541,60 @@ fn merge_file(base: &mut serde_yaml_ng::Value, path: &Path, files: &mut Vec<Path
         Err(e) => return eprintln!("satex: {}: ignored: {e}", path.display()),
     };
     anchor_frozen(&mut incoming, path);
-    let mut candidate = base.clone();
-    merge_value(&mut candidate, &incoming);
-    match serde_yaml_ng::from_value::<Config>(candidate.clone()) {
-        Ok(_) => {
-            *base = candidate;
-            files.push(path.to_path_buf());
+    let fits = |incoming: &serde_yaml_ng::Value| {
+        let mut candidate = base.clone();
+        merge_value(&mut candidate, incoming);
+        serde_yaml_ng::from_value::<Config>(candidate.clone()).map(|_| candidate).map_err(|e| e.to_string())
+    };
+    // An unknown (or removed) key is dropped with a warning naming it; the
+    // rest of the file applies.
+    loop {
+        let e = match fits(&incoming) {
+            Ok(candidate) => {
+                *base = candidate;
+                return files.push(path.to_path_buf());
+            }
+            Err(e) => e,
+        };
+        let name = e.strip_prefix("unknown field `").and_then(|r| r.split('`').next()).map(str::to_string);
+        let dropped = name.and_then(|name| {
+            key_paths(&incoming, &name, &mut Vec::new()).into_iter().find_map(|at| {
+                let mut without = incoming.clone();
+                remove_key(&mut without, &at, &name);
+                (fits(&without).err().as_ref() != Some(&e))
+                    .then(|| (without, [at, vec![name.clone()]].concat().join(".")))
+            })
+        });
+        let Some((without, key)) = dropped else { return eprintln!("satex: {}: ignored: {e}", path.display()) };
+        eprintln!("satex: {}: warning: unknown key `{key}` ignored; the rest of the file applies", path.display());
+        incoming = without;
+    }
+}
+
+/// The paths of the mappings in `value` that hold the key `name`.
+fn key_paths(value: &serde_yaml_ng::Value, name: &str, at: &mut Vec<String>) -> Vec<Vec<String>> {
+    let serde_yaml_ng::Value::Mapping(map) = value else { return Vec::new() };
+    let mut found = Vec::new();
+    for (k, v) in map {
+        let Some(k) = k.as_str() else { continue };
+        if k == name {
+            found.push(at.clone());
         }
-        Err(e) => eprintln!("satex: {}: ignored: {e}", path.display()),
+        at.push(k.to_string());
+        found.extend(key_paths(v, name, at));
+        at.pop();
+    }
+    found
+}
+
+fn remove_key(value: &mut serde_yaml_ng::Value, at: &[String], name: &str) {
+    let mut v = value;
+    for k in at {
+        let Some(next) = v.get_mut(k.as_str()) else { return };
+        v = next;
+    }
+    if let serde_yaml_ng::Value::Mapping(map) = v {
+        map.remove(name);
     }
 }
 
@@ -1574,11 +1665,11 @@ mod tests {
     #[test]
     fn degrade_at_percent_is_a_percentage() {
         let mut cfg = Config::default();
+        assert_eq!(cfg.limits.degrade_at_percent, 100);
+        cfg.set("limits.degrade_at_percent", "70").unwrap();
         assert_eq!(cfg.limits.degrade_at_percent, 70);
-        cfg.set("limits.degrade_at_percent", "100").unwrap();
-        assert_eq!(cfg.limits.degrade_at_percent, 100);
         assert!(cfg.set("limits.degrade_at_percent", "120").is_err());
-        assert_eq!(cfg.limits.degrade_at_percent, 100);
+        assert_eq!(cfg.limits.degrade_at_percent, 70);
     }
 
     #[test]
@@ -1611,7 +1702,24 @@ mod tests {
         assert!(!cfg.load.packages);
         assert!(!cfg.load.classes);
         assert_eq!(cfg.load.skip, vec!["b".to_string()]);
-        assert_eq!(files, vec![dir.join("satex.yaml"), inner.join("satex.yaml")]);
+        assert!(files.ends_with(&[dir.join("satex.yaml"), inner.join("satex.yaml")]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unknown_key_is_dropped_and_the_rest_applies() {
+        let dir = std::env::temp_dir().join("satex-config-unknown-key-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        write(
+            &dir,
+            "satex.yaml",
+            "limits: {stall_tokens: 5, widen_after: 7, region_share: 3}\nload: {classes: false}\n",
+        );
+        let (cfg, files) = Config::discover_layers(&dir);
+        assert_eq!(cfg.limits.widen_after, 7);
+        assert!(!cfg.load.classes);
+        assert_eq!(files.last(), Some(&dir.join("satex.yaml")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1672,10 +1780,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&inner).unwrap();
         write(&dir, "satex.yaml", "load_packages: false\n");
-        write(&inner, "satex.yaml", "not_a_real_key: 1\n");
+        write(&inner, "satex.yaml", "load: {classes: [1]}\n");
         let (cfg, files) = Config::discover_layers(&inner);
         assert!(!cfg.load.packages);
-        assert_eq!(files, vec![dir.join("satex.yaml")]);
+        assert!(files.ends_with(&[dir.join("satex.yaml")]));
         let _ = std::fs::remove_dir_all(&dir);
     }
     #[test]
@@ -1692,4 +1800,21 @@ mod tests {
         assert!(!cfg.load.classes);
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// Every dotted key path `satex.yaml` takes, with its default, read off the defaults.
+pub fn keys() -> serde_json::Map<String, serde_json::Value> {
+    fn walk(prefix: &str, v: &serde_json::Value, out: &mut serde_json::Map<String, serde_json::Value>) {
+        match v {
+            serde_json::Value::Object(m) if !m.is_empty() => {
+                for (k, v) in m {
+                    walk(&if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") }, v, out);
+                }
+            }
+            _ => drop(out.insert(prefix.to_string(), v.clone())),
+        }
+    }
+    let mut out = serde_json::Map::new();
+    walk("", &serde_json::to_value(Config::default()).unwrap_or_default(), &mut out);
+    out
 }

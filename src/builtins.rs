@@ -1,6 +1,6 @@
 //! Primitives the interpreter models (behavior in exec.rs).
 
-use std::collections::HashMap;
+use crate::fixed::HashMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -274,6 +274,11 @@ pub enum FontParam {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum Syntax {
     Nothing,
+    /// `\mathord` … `\mathinner`: the next atom's type, tex.web § 1156
+    /// (0 ord, 1 op, 2 bin, 3 rel, 4 open, 5 close, 6 punct, 7 inner).
+    MathComp(u8),
+    /// `\limits`, `\nolimits`, `\displaylimits` (tex.web § 1159).
+    Limits,
     Number,
     Dimen,
     /// `\abovewithdelims` and relatives: two delimiters, then for
@@ -344,6 +349,10 @@ pub enum Syntax {
     /// `\XeTeXpicfile⟨file name⟩` and `\XeTeXpdffile`, with the page, box
     /// and scaling keywords of the XeTeX reference.
     PicFile,
+    /// No operands, a whatsit node on the list: pdfTeX's `\pdfendlink`,
+    /// `\pdfsave`, `\pdfrestore`, `\pdfendthread` (none can be
+    /// `\immediate`).
+    Whatsit,
 }
 
 /// An expandable primitive that yields text (tex.web § 468, `convert`; the
@@ -898,8 +907,8 @@ pub enum Material {
     Rule,
     /// `\hskip`, `\vskip`: glue.
     Glue,
-    /// `\hfil`, `\hfill`, `\hss`, `\hfilneg` and the vertical ones.
-    Fil,
+    /// `\hfil`, `\hfill`, `\hss`, `\hfilneg` and the vertical ones, by `fil_code` and relatives.
+    Fil(u8),
     /// `\discretionary{…}{…}{…}` (tex.web § 1117).
     Discretionary,
     /// `\-`.
@@ -1131,7 +1140,7 @@ pub fn assignment(p: Primitive) -> bool {
 
 pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meaning> {
     use Primitive as P;
-    let mut table: HashMap<Sym, Meaning> = HashMap::with_capacity(512);
+    let mut table: HashMap<Sym, Meaning> = HashMap::with_capacity_and_hasher(512, Default::default());
     let mut put = |it: &mut Interner, name: &str, p: Primitive| {
         let s = it.intern(name);
         let previous = table.insert(s, Meaning::Primitive(p));
@@ -1994,21 +2003,21 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "span", P::Command(Syntax::Nothing));
     put(it, "omit", P::Command(Syntax::Nothing));
     put(it, "noalign", P::Mode(ModeCmd::NoAlign));
-    put(it, "displaylimits", P::Command(Syntax::Nothing));
-    put(it, "limits", P::Command(Syntax::Nothing));
-    put(it, "nolimits", P::Command(Syntax::Nothing));
+    put(it, "displaylimits", P::Command(Syntax::Limits));
+    put(it, "limits", P::Command(Syntax::Limits));
+    put(it, "nolimits", P::Command(Syntax::Limits));
     put(it, "displaystyle", P::Command(Syntax::Nothing));
     put(it, "textstyle", P::Command(Syntax::Nothing));
     put(it, "scriptstyle", P::Command(Syntax::Nothing));
     put(it, "scriptscriptstyle", P::Command(Syntax::Nothing));
-    put(it, "mathord", P::Command(Syntax::Nothing));
-    put(it, "mathop", P::Command(Syntax::Nothing));
-    put(it, "mathbin", P::Command(Syntax::Nothing));
-    put(it, "mathrel", P::Command(Syntax::Nothing));
-    put(it, "mathopen", P::Command(Syntax::Nothing));
-    put(it, "mathclose", P::Command(Syntax::Nothing));
-    put(it, "mathpunct", P::Command(Syntax::Nothing));
-    put(it, "mathinner", P::Command(Syntax::Nothing));
+    put(it, "mathord", P::Command(Syntax::MathComp(0)));
+    put(it, "mathop", P::Command(Syntax::MathComp(1)));
+    put(it, "mathbin", P::Command(Syntax::MathComp(2)));
+    put(it, "mathrel", P::Command(Syntax::MathComp(3)));
+    put(it, "mathopen", P::Command(Syntax::MathComp(4)));
+    put(it, "mathclose", P::Command(Syntax::MathComp(5)));
+    put(it, "mathpunct", P::Command(Syntax::MathComp(6)));
+    put(it, "mathinner", P::Command(Syntax::MathComp(7)));
     put(it, "underline", P::Command(Syntax::Nothing));
     put(it, "overline", P::Command(Syntax::Nothing));
     put(it, "over", P::Command(Syntax::Nothing));
@@ -2025,11 +2034,12 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "shipout", P::Mode(ModeCmd::ShipOut));
     put(it, "discretionary", P::Mode(ModeCmd::Horizontal(Material::Discretionary)));
     put(it, "mathchoice", P::Mode(ModeCmd::MathChoice));
-    for n in ["hfil", "hfill", "hss", "hfilneg"] {
-        put(it, n, P::Mode(ModeCmd::Horizontal(Material::Fil)));
+    // tex.web § 1058: `fil_code` to `fil_neg_code`.
+    for (code, n) in ["hfil", "hfill", "hss", "hfilneg"].into_iter().enumerate() {
+        put(it, n, P::Mode(ModeCmd::Horizontal(Material::Fil(code as u8))));
     }
-    for n in ["vfil", "vfill", "vss", "vfilneg"] {
-        put(it, n, P::Mode(ModeCmd::Vertical(Material::Fil)));
+    for (code, n) in ["vfil", "vfill", "vss", "vfilneg"].into_iter().enumerate() {
+        put(it, n, P::Mode(ModeCmd::Vertical(Material::Fil(code as u8))));
     }
     put(it, "hskip", P::Mode(ModeCmd::Horizontal(Material::Glue)));
     put(it, "vskip", P::Mode(ModeCmd::Vertical(Material::Glue)));
@@ -2125,16 +2135,16 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "knbscode", P::FontParam(FontParam::CharCode(0)));
         put(it, "shbscode", P::FontParam(FontParam::CharCode(0)));
         put(it, "stbscode", P::FontParam(FontParam::CharCode(0)));
-        put(it, "pdfsave", P::Command(Syntax::Nothing));
-        put(it, "pdfrestore", P::Command(Syntax::Nothing));
+        put(it, "pdfsave", P::Command(Syntax::Whatsit));
+        put(it, "pdfrestore", P::Command(Syntax::Whatsit));
         put(it, "pdfresettimer", P::Command(Syntax::Nothing));
         put(it, "pdfrunninglinkoff", P::Command(Syntax::Nothing));
         put(it, "pdfrunninglinkon", P::Command(Syntax::Nothing));
         put(it, "pdfinterwordspaceoff", P::Command(Syntax::Nothing));
         put(it, "pdfinterwordspaceon", P::Command(Syntax::Nothing));
         put(it, "pdffakespace", P::Command(Syntax::Nothing));
-        put(it, "pdfendlink", P::Command(Syntax::Nothing));
-        put(it, "pdfendthread", P::Command(Syntax::Nothing));
+        put(it, "pdfendlink", P::Command(Syntax::Whatsit));
+        put(it, "pdfendthread", P::Command(Syntax::Whatsit));
         put(it, "pdfrefobj", P::Command(Syntax::Number));
         put(it, "pdfrefxform", P::Command(Syntax::Number));
         put(it, "pdfrefximage", P::Command(Syntax::Number));
@@ -2813,6 +2823,9 @@ fn syntax_verdict(s: Syntax) -> Judgment {
     use Verdict as V;
     match s {
         S::Nothing => at!(V::Exact, "no operand"),
+        S::MathComp(_) => at!(V::Exact, "sets the class of the next atom, whose size and spacing are followed"),
+        S::Limits => at!(V::Exact, "no operand"),
+        S::Whatsit => at!(V::Exact, "no operand, a whatsit on the current list"),
         S::Interaction(_) => at!(V::Exact, "sets `\\interactionmode`"),
         S::Token => at!(V::Exact, "`\\show`"),
         S::Internal => at!(V::Exact, "`\\showthe`"),
@@ -2910,7 +2923,7 @@ fn material_verdict(m: Material) -> Judgment {
     use Material as M;
     use Verdict as V;
     match m {
-        M::Char | M::Rule | M::Glue | M::Fil | M::Discretionary | M::Space | M::NoBoundary => {
+        M::Char | M::Rule | M::Glue | M::Fil(_) | M::Discretionary | M::Space | M::NoBoundary => {
             at!(V::Exact, "a real item, appended to the list satex tracks")
         }
         M::Unpackage { .. } => at!(

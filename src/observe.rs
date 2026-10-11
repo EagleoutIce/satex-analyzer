@@ -159,6 +159,7 @@ pub fn color_stack(m: &mut Machine, stack: Option<i64>, op: crate::facts::StackO
 pub struct OccContext {
     pub package: Option<crate::tex::Sym>,
     pub expanded: Option<Span>,
+    pub call: Option<(crate::tex::Sym, Span)>,
     pub within: Option<crate::env::NodeId>,
     pub cds: Vec<crate::graph::ControlDep>,
     pub section: Option<std::rc::Rc<str>>,
@@ -391,7 +392,7 @@ pub fn environment_closed(m: &mut Machine, inner: Option<String>, span: Span) {
         .rev()
         .find(|o| o.kind == OccKind::BeginEnvironment && o.key == inner)
         .map(|o| o.span);
-    let at = match (call, m.absorbed) {
+    let at = match (call, m.carried.absorbed) {
         (Some(call), Some(end))
             if begun == Some(call) && end.file == call.file && (end.line, end.col) > (call.line, call.col) =>
         {
@@ -715,11 +716,11 @@ pub fn relate(m: &mut Machine) {
     for &(at, _, i) in &declared {
         shapes[at].2.get_or_insert_with(|| lines[i].head.clone());
     }
-    let declaring: std::collections::HashSet<usize> = declared.iter().map(|d| d.2).collect();
+    let declaring: crate::fixed::HashSet<usize> = declared.iter().map(|d| d.2).collect();
     // Text a `\documentclass` or `\usepackage` call was given as an option
     // is that option wherever it is written again (babel writes its
     // languages to the `.aux`), never a key a read name was made from.
-    let options: std::collections::HashSet<(crate::tex::FileId, u32, &str)> = m
+    let options: crate::fixed::HashSet<(crate::tex::FileId, u32, &str)> = m
         .out
         .facts
         .occurrences
@@ -761,7 +762,7 @@ pub fn relate(m: &mut Machine) {
     // it. A later one in another shape (`\ac{k}` marking `k` used) uses it,
     // and one in the same shape declares it again.
     let order = |s: &Span| (s.file != m.out.main_file, s.file, s.line, s.col);
-    let mut first: std::collections::HashMap<String, (Span, bool)> = std::collections::HashMap::new();
+    let mut first: crate::fixed::HashMap<String, (Span, bool)> = crate::fixed::HashMap::default();
     let written = declared.iter().map(|(_, k, i)| (k.clone(), lines[*i].span, false));
     for (key, span, running) in written.chain(names.iter().map(|n| (n.1.clone(), n.3, true))) {
         let at = first.entry(key).or_insert((span, running));
@@ -771,7 +772,7 @@ pub fn relate(m: &mut Machine) {
             at.1 &= running;
         }
     }
-    let mut first_shapes: std::collections::HashSet<(String, (String, String))> = std::collections::HashSet::new();
+    let mut first_shapes: crate::fixed::HashSet<(String, (String, String))> = crate::fixed::HashSet::default();
     for (at, key, i) in &declared {
         if first.get(key).is_some_and(|f| f.0 == lines[*i].span) {
             first_shapes.insert((key.clone(), (shapes[*at].0.clone(), shapes[*at].1.clone())));
@@ -788,15 +789,15 @@ pub fn relate(m: &mut Machine) {
     named.retain(|n| !running(&n.1));
     let use_kind = |key: &str| if running(key) { OccKind::KeyUse } else { OccKind::Ref };
     // A reference the kernel warned about is recorded already.
-    let mut seen: std::collections::HashSet<(OccKind, String, Span)> = m
+    let mut seen: crate::fixed::HashSet<(OccKind, String, Span, Option<Span>)> = m
         .out
         .facts
         .occurrences
         .iter()
         .filter(|o| o.kind == OccKind::Ref)
-        .map(|o| (o.kind, o.key.clone(), o.span))
+        .map(|o| (o.kind, o.key.clone(), o.span, o.call.map(|c| c.1)))
         .collect();
-    let written_at: std::collections::HashSet<(String, Span)> =
+    let written_at: crate::fixed::HashSet<(String, Span)> =
         declared.iter().map(|(_, k, i)| (k.clone(), lines[*i].span)).collect();
     for (at, key, i) in declared {
         let line = &lines[i];
@@ -809,14 +810,14 @@ pub fn relate(m: &mut Machine) {
         } else {
             continue;
         };
-        if seen.insert((kind, key.clone(), line.span)) {
+        if seen.insert((kind, key.clone(), line.span, line.context.call.map(|c| c.1))) {
             let (at, context) = line.at(&key);
             m.occurrence_in(kind, key, Some(line.head.clone()), at, &context);
         }
     }
     for (_, key, i) in &named {
         let line = &lines[*i];
-        if seen.insert((OccKind::Cite, key.clone(), line.span)) {
+        if seen.insert((OccKind::Cite, key.clone(), line.span, line.context.call.map(|c| c.1))) {
             let (at, context) = line.at(key);
             m.occurrence_in(OccKind::Cite, key.clone(), Some(line.head.clone()), at, &context);
         }
@@ -824,7 +825,7 @@ pub fn relate(m: &mut Machine) {
     // The uses: a read of a name of a declared shape by a call given the
     // key, not by the line of the file being read back, nor by the call
     // that declares the key.
-    let heads: std::collections::HashSet<&str> =
+    let heads: crate::fixed::HashSet<&str> =
         shapes.iter().flat_map(|s| [s.2.as_deref(), s.3.as_deref()]).flatten().collect();
     let mut every: Vec<(String, String, bool)> =
         shapes.iter().filter(|s| s.2.is_some() && s.3.is_none()).map(|s| (s.0.clone(), s.1.clone(), false)).collect();
@@ -852,8 +853,8 @@ pub fn relate(m: &mut Machine) {
         };
         let related = [OccKind::Ref, OccKind::KeyUse, OccKind::Label, OccKind::BibItem, OccKind::Key]
             .iter()
-            .any(|k| seen.contains(&(*k, key.clone(), read.span)));
-        if !related && seen.insert((kind, key.clone(), read.span)) {
+            .any(|k| seen.contains(&(*k, key.clone(), read.span, read.context.call.map(|c| c.1))));
+        if !related && seen.insert((kind, key.clone(), read.span, read.context.call.map(|c| c.1))) {
             uses.push((kind, key, read));
         }
     }
@@ -864,7 +865,7 @@ pub fn relate(m: &mut Machine) {
     for (shape, key, call, span, context) in &names {
         let related = [OccKind::Ref, OccKind::KeyUse, OccKind::Label, OccKind::BibItem]
             .iter()
-            .any(|k| seen.contains(&(*k, key.clone(), *span)));
+            .any(|k| seen.contains(&(*k, key.clone(), *span, context.call.map(|c| c.1))));
         if written_at.contains(&(key.clone(), *span)) || related {
             continue;
         }
@@ -874,20 +875,20 @@ pub fn relate(m: &mut Machine) {
             } else {
                 OccKind::KeyUse
             };
-        if seen.insert((kind, key.clone(), *span)) {
+        if seen.insert((kind, key.clone(), *span, context.call.map(|c| c.1))) {
             let head = m.name(*call).to_string();
             m.occurrence_in(kind, key.clone(), Some(head), *span, context);
         }
     }
     // The keys the other lines carry are entries for the program that
     // reads their file. The rest names files, the bibliography databases.
-    let mut tried = std::collections::HashSet::new();
+    let mut tried = crate::fixed::HashSet::default();
     for (i, line) in lines.iter().enumerate() {
         if declaring.contains(&i) || named.iter().any(|n| n.2 == i) {
             continue;
         }
         for (key, at) in &line.keys {
-            if seen.insert((OccKind::Entry, key.clone(), line.span)) {
+            if seen.insert((OccKind::Entry, key.clone(), line.span, line.context.call.map(|c| c.1))) {
                 let context = line.at(key).1;
                 m.occurrence_in(OccKind::Entry, key.clone(), Some(line.head.clone()), *at, &context);
             }
@@ -956,16 +957,16 @@ fn group_span(tokens: &[Token], start: usize) -> Option<(Vec<Token>, usize)> {
 /// engine and where that name resolves. Names the driver tried first
 /// (`\Ginput@path`, `\Gin@extensions`) are the package's business. Only the
 /// file the engine opens is recorded.
-pub fn image(m: &mut Machine, name: &str, span: Span) {
+pub fn image(m: &mut Machine, name: &str, span: Span) -> Option<std::path::PathBuf> {
     let name = name.trim();
     if name.is_empty() {
-        return;
+        return None;
     }
     let at = m.file_call.map_or(span, |(_, at)| at);
     let base = m.base().to_path_buf();
-    let found =
-        m.resolver_mut().resolve(name, crate::builtins::LoadKind::Input, &base).map(|p| p.display().to_string());
-    m.occurrence(OccKind::Graphics, name.to_string(), found, at);
+    let path = m.resolver_mut().resolve(name, crate::builtins::LoadKind::Input, &base);
+    m.occurrence(OccKind::Graphics, name.to_string(), path.as_ref().map(|p| p.display().to_string()), at);
+    path
 }
 
 /// `\accent⟨8-bit number⟩⟨character⟩` (tex.web § 1123): the accent is
@@ -1105,6 +1106,10 @@ pub fn typeset(m: &mut Machine, c: char, span: Span) {
         m.text_broken = true;
         return;
     }
+    if m.in_nullfont() {
+        m.text_broken = true;
+        return;
+    }
     set(m, c, span);
     let after_letter = std::mem::replace(&mut m.quantity.after_letter, c.is_alphabetic());
     let mut run = m.quantity.run.take();
@@ -1173,6 +1178,13 @@ pub fn word_break(m: &mut Machine) {
     m.text_broken = true;
 }
 
+/// A box began or ended, or a box's list was placed: the next character
+/// set may stand anywhere on the page relative to the last one.
+pub fn box_break(m: &mut Machine) {
+    m.text_apart = true;
+    text_break(m);
+}
+
 /// The same, and the number-and-unit run ends too: `\sum_{i=1}^{N}` sets a
 /// `1` and an `N`, not one newton.
 pub fn text_break(m: &mut Machine) {
@@ -1210,10 +1222,19 @@ fn set(m: &mut Machine, c: char, span: Span) {
     }
     let font_state = m.observed_font_state();
     let certain = m.exact();
+    let first = m.cds.first().copied();
+    let site = m.call_site(span);
     let text = &mut m.out.facts.text;
     // Both paths through an undecided conditional digest what follows it,
     // so the one character on the page arrives here once per path.
     if !certain && text.at.last().is_some_and(|last| last.span == span) && text.chars.ends_with(c) {
+        // The same arm setting it again is a loop pass.
+        let last = text.at.len() as u32 - 1;
+        if first.is_some_and(|cd| text.arms.last() == Some(&(last, cd.on, cd.taken)))
+            && text.repeats.last() != Some(&last)
+        {
+            text.repeats.push(last);
+        }
         return;
     }
     let side_by_side = text
@@ -1221,6 +1242,11 @@ fn set(m: &mut Machine, c: char, span: Span) {
         .last()
         .is_some_and(|last| (last.span.file, last.span.line, last.span.col + 1) == (span.file, span.line, span.col));
     let broken = std::mem::take(&mut m.text_broken) || !side_by_side;
+    if let Some(cd) = first.filter(|_| !certain) {
+        text.arms.push((text.at.len() as u32, cd.on, cd.taken));
+    }
+    let apart = std::mem::take(&mut m.text_apart);
     text.chars.push(c);
-    text.at.push(crate::facts::Spot { span, font_state, modes: m.mode, broken, certain });
+    text.at.push(crate::facts::Spot { span, font_state, modes: m.mode, broken, apart, certain });
+    text.site.push(site);
 }

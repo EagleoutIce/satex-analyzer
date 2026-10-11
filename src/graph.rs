@@ -1,6 +1,6 @@
 //! The dependency graph: vertices, edges, data and control dependencies.
 
-use std::collections::HashMap;
+use crate::fixed::HashMap;
 
 use serde::Serialize;
 
@@ -144,7 +144,7 @@ pub struct DependencyGraph {
     pub reader: Option<NodeId>,
     /// While a package cache is being captured: the vertices it reached, new
     /// or not, in the order it first reached them.
-    touched: Option<(std::collections::HashSet<NodeId>, Vec<NodeId>)>,
+    touched: Option<(crate::fixed::HashSet<NodeId>, Vec<NodeId>)>,
     /// The call read from a file when each touched vertex was first
     /// reached, in the same order.
     touched_readers: Vec<Option<NodeId>>,
@@ -305,7 +305,7 @@ impl DependencyGraph {
             let vertex = &mut self.vertices[id as usize];
             if vertex.cds != cds {
                 if cds.len() > 16 {
-                    let keep: std::collections::HashSet<(NodeId, bool)> = cds.iter().map(|c| (c.on, c.taken)).collect();
+                    let keep: crate::fixed::HashSet<(NodeId, bool)> = cds.iter().map(|c| (c.on, c.taken)).collect();
                     vertex.cds.retain(|c| keep.contains(&(c.on, c.taken)));
                 } else {
                     vertex.cds.retain(|c| cds.contains(c));
@@ -503,14 +503,14 @@ impl DependencyGraph {
 
     /// The names the run defines over and over, like `\toks@` or `\reserved@a`:
     /// a definition of one is only ever read soon after it is made.
-    fn scratch_names(&self) -> std::collections::HashSet<Sym> {
+    fn scratch_names(&self) -> crate::fixed::HashSet<Sym> {
         self.defs_of.iter().filter(|&(_, &n)| n >= SCRATCH_DEFS).map(|(&name, _)| name).collect()
     }
 
     /// As [`DependencyGraph::slice`], within `bound`.
     pub fn slice_until(&self, criteria: &[NodeId], kinds: EdgeKind, forward: bool, bound: &SliceBound) -> Vec<NodeId> {
         let transposed = forward.then(|| self.transposed());
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = crate::fixed::HashSet::default();
         let mut kept = vec![false; self.vertices.len()];
         // Each vertex travels with the call of the home file it was reached
         // from: a body vertex stands for every expansion, and only the call
@@ -641,7 +641,7 @@ pub struct CallGraph {
     pub edges: Vec<Vec<usize>>,
     /// While a package cache is being captured: every distinct `node` and
     /// `add` since the last `clear` of its name, and every `clear`, in order.
-    log: Option<(std::collections::HashSet<CallEvent>, Vec<CallEvent>)>,
+    log: Option<(crate::fixed::HashSet<CallEvent>, Vec<CallEvent>)>,
 }
 
 /// One change to a [`CallGraph`], as a package cache replays it.

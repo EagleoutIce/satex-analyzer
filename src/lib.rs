@@ -42,6 +42,8 @@ pub mod exec;
 pub mod facts;
 pub mod format;
 pub mod graph;
+pub mod hyph;
+pub mod linebreak;
 pub mod lint;
 pub mod literate;
 pub mod loader;
@@ -52,6 +54,7 @@ pub mod observe;
 pub mod otf;
 pub mod overlay;
 pub mod paths;
+pub mod pdfbox;
 pub mod plugin;
 pub mod probe;
 pub mod progress;
@@ -73,4 +76,12 @@ use std::path::Path;
 
 pub fn analyze(source: &str, path: Option<&Path>, cfg: &Config) -> Analysis {
     Machine::analyze(source, path, cfg)
+}
+
+/// Hash collections with fixed keys, so iteration order is the same every
+/// run: with the std's random keys one run in about eight took other paths.
+pub mod fixed {
+    pub type Hasher = std::hash::BuildHasherDefault<std::collections::hash_map::DefaultHasher>;
+    pub type HashMap<K, V> = std::collections::HashMap<K, V, Hasher>;
+    pub type HashSet<K> = std::collections::HashSet<K, Hasher>;
 }

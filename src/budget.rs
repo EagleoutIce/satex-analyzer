@@ -112,7 +112,11 @@ fn take(bytes: usize) -> bool {
     let now = counter.live.fetch_add(bytes as isize, Ordering::Relaxed) + bytes as isize;
     let total = TOTAL.fetch_add(bytes as isize, Ordering::Relaxed) + bytes as isize;
     let ceiling = ceiling();
-    if ceiling > 0 && !std::ptr::eq(counter, &PROCESS) && now.max(total) > ceiling as isize {
+    if ceiling > 0
+        && !std::ptr::eq(counter, &PROCESS)
+        // A ceiling past `isize::MAX` (on wasm32) is no ceiling, not a negative one.
+        && now.max(total) > isize::try_from(ceiling).unwrap_or(isize::MAX)
+    {
         counter.live.fetch_sub(bytes as isize, Ordering::Relaxed);
         TOTAL.fetch_sub(bytes as isize, Ordering::Relaxed);
         return false;
@@ -169,13 +173,6 @@ pub fn in_use() -> usize {
 /// process's where runs side by side hold more together.
 pub fn held() -> usize {
     in_use().max(TOTAL.load(Ordering::Relaxed).max(0) as usize)
-}
-
-/// Whether the run, or the process, holds `limits.memory` or more: no new
-/// paths may start.
-pub fn pressed() -> bool {
-    let limit = LIMIT.load(Ordering::Relaxed);
-    limit > 0 && held() >= limit
 }
 
 /// The most this run has held at once.

@@ -170,6 +170,9 @@ pub struct Occurrence {
     /// Where `span` was reached from: the call that expanded the full
     /// target, or the `\write` whose line declared the key.
     pub expanded: Option<Span>,
+    /// The call read straight from a file that was running: the site a
+    /// key built in a macro body belongs to.
+    pub call: Option<(Sym, Span)>,
     pub package: Option<Sym>,
     pub node: NodeId,
     /// The sectioning unit this stands in, or `None` before the first one.
@@ -318,6 +321,10 @@ pub struct Spot {
     /// TeX starts a new word and no ligature joins it to the character
     /// before (tex.web § 1034).
     pub broken: bool,
+    /// Whether a box began or ended, or a box's list was placed, since the
+    /// character before it.  Characters are kept in the order TeX set them,
+    /// so the two may not stand side by side on the page.
+    pub apart: bool,
     /// Whether every run sets it: not on one of several paths through an
     /// undecided conditional, and not after the mode was widened.
     pub certain: bool,
@@ -335,6 +342,22 @@ pub struct Text {
     /// `\/` (tex.web § 1113) or at a paragraph's end, as the number of
     /// characters set before it, ascending.
     pub closed: Vec<u32>,
+    /// For a character set under an undecided conditional: its index, the
+    /// outermost conditional's node and the arm taken.
+    pub arms: Vec<(u32, crate::env::NodeId, bool)>,
+    /// Characters a loop set again, so any number of times, ascending.
+    pub repeats: Vec<u32>,
+    /// Characters a discretionary hyphen may precede (tex.web § 923), ascending.
+    pub hyphens: Vec<u32>,
+    /// How many characters [`crate::hyph`] has looked at.
+    pub hyphenated: u32,
+    /// One per character: the place in the user's own files whose reading
+    /// set it, the innermost such file being read (the call site, not the
+    /// macro body).
+    pub site: Vec<Span>,
+    /// Character ranges (start, end) of boxes placed on a list or shipped,
+    /// so their text reaches the page.
+    pub placed: Vec<(u32, u32)>,
 }
 
 impl Text {
@@ -392,6 +415,12 @@ pub struct Diagnostic {
     /// How many times the run raised it: identical diagnostics at one place
     /// are one row.
     pub count: u32,
+    /// The innermost place in the user's own files that led here: `span`
+    /// itself when it is one, `None` when nothing on the input stack is.
+    pub origin: Option<Span>,
+    /// How many [`Occurrence`]s the run had recorded when it first raised
+    /// this: its place in run order among them.
+    pub after: usize,
 }
 
 /// What a run observed: [`Definition`]s, [`Expansion`]s, [`Occurrence`]s and
@@ -404,14 +433,14 @@ pub struct Facts {
     /// What each command was seen to read, as `{}` for a mandatory argument,
     /// `[]` for an optional one and `*` for a star: observed while it ran,
     /// not declared anywhere.
-    pub shapes: std::collections::HashMap<Sym, String>,
+    pub shapes: crate::fixed::HashMap<Sym, String>,
     pub expansions: Vec<Expansion>,
     pub loads: Vec<Load>,
     pub occurrences: Vec<Occurrence>,
     pub diagnostics: Vec<Diagnostic>,
     /// What each `\csname` site formed its control sequence for, the first
     /// time it ran.
-    pub csnames: std::collections::HashMap<Span, CsnameRole>,
+    pub csnames: crate::fixed::HashMap<Span, CsnameRole>,
     /// `\begingroup … \endgroup` read straight from a file over several
     /// lines: where each opened and where it closed.
     pub groups: Vec<(Span, Span)>,
@@ -421,7 +450,7 @@ pub struct Facts {
     pub raised: Vec<RaisedError>,
     /// The modes each space token was read in outside package code
     /// (tex.web § 1043: glue in horizontal mode, nothing otherwise).
-    pub spaces: std::collections::HashMap<Span, crate::mode::Modes>,
+    pub spaces: crate::fixed::HashMap<Span, crate::mode::Modes>,
     /// Every conditional the run evaluated outside package code.
     pub conditionals: Vec<Conditional>,
     /// Numbers with letters set right after them, outside package code.
@@ -451,6 +480,8 @@ pub struct Conditional {
     pub taken: Vec<Option<u32>>,
     /// Whether some test was undecided, so that every arm ran.
     pub undecided: bool,
+    /// Where the first undecided test ended: the first token after it.
+    pub test_end: Option<Span>,
 }
 
 /// What a `\csname…\endcsname` was formed for, read off the command an

@@ -155,16 +155,20 @@ pub enum Value {
         quantity: Quantity,
         hull: GlueHull,
     },
-    /// A few exact values of one kind this may be: what a join keeps while
-    /// it has at most `limits.value_set` of them, in a fixed order. This is
-    /// TeX's one set lift ([`Value::join`]), for every kind above. Read as
-    /// a value it is unknown, as a [`Value::Num`] is.
+    /// A few values of one kind this may be, in a fixed order: exact ones
+    /// up to `limits.value_set`, or intervals and hulls among them up to
+    /// `limits.interval_set`. This is TeX's one set lift ([`Value::join`]),
+    /// for every kind above. Read as a value it is unknown, as a
+    /// [`Value::Num`] is.
     OneOf(Rc<[Value]>),
 }
 
 /// How many values a join lists before it widens to an interval, unless
 /// `limits.value_set` says otherwise.
 pub const MAY_VALUES: usize = 5;
+/// How many members a set with intervals among them keeps before it widens
+/// to their hull, unless `limits.interval_set` says otherwise.
+pub const MAY_INTERVALS: usize = 4;
 
 /// An abstract number (a count or a dimension in scaled points, or one
 /// component of a glue): the interval `[lo, hi]` it lies in. TeX's numbers
@@ -670,6 +674,15 @@ impl Value {
         self.exacts()?.iter().map(Value::as_dimen).collect()
     }
 
+    /// A [`Value::OneOf`] of numbers as its members' intervals, exact ones
+    /// as intervals of one: a test decides it member by member and narrows
+    /// each. `None` for anything else.
+    pub(crate) fn member_nums(&self) -> Option<Vec<Num>> {
+        let Value::OneOf(set) = self else { return None };
+        let nums: Vec<(Quantity, Num)> = set.iter().map(Value::num).collect::<Option<_>>()?;
+        nums.iter().all(|(q, _)| *q == nums[0].0).then(|| nums.into_iter().map(|(_, n)| n).collect())
+    }
+
     /// The interval or hull an exact value widens to; every other kind is
     /// already one. [`Value::OneOf`]'s widening once it grows past
     /// `limits.value_set`.
@@ -708,10 +721,35 @@ impl Value {
         }
     }
 
-    /// The set lift every kind shares (`limits.value_set`): the union of
-    /// two bounded sets of exact values, however large.
+    /// The members of the set lift this is: [`Value::OneOf`]'s, else
+    /// itself. `None` for [`Value::Unknown`], which no set holds.
+    fn members(&self) -> Option<Vec<Value>> {
+        match self {
+            Value::Unknown => None,
+            Value::OneOf(set) => Some(set.to_vec()),
+            other => Some(vec![other.clone()]),
+        }
+    }
+
+    /// The set lift every kind shares: the union of two sets. A number a
+    /// member's interval holds is left out, and intervals that overlap or
+    /// touch become one.
     fn union(mut a: Vec<Value>, b: Vec<Value>) -> Vec<Value> {
-        for v in b {
+        for mut v in b {
+            loop {
+                let Some((q, n)) = v.num() else { break };
+                let near = |w: &Value| {
+                    w.num().is_some_and(|(p, m)| {
+                        p == q
+                            && m.lo <= n.hi.saturating_add(1)
+                            && n.lo <= m.hi.saturating_add(1)
+                            && (w.exacts().is_none() || v.exacts().is_none())
+                    })
+                };
+                let Some(i) = a.iter().position(near) else { break };
+                let (_, m) = a.swap_remove(i).num().expect("a number");
+                v = Value::Num { quantity: q, num: m.join(&n) };
+            }
             if !a.contains(&v) {
                 a.push(v);
             }
@@ -719,19 +757,19 @@ impl Value {
         a
     }
 
-    /// Least upper bound: equal values stay; while both sides are bounded
-    /// exact sets, their union while it has at most `members` values
-    /// ([`Value::OneOf`], TeX's one set lift), else the join of every
-    /// member's hull; otherwise the join of both hulls directly. Kinds that
-    /// do not match join to [`Value::Unknown`].
-    pub fn join(self, other: &Value, members: usize) -> Value {
+    /// Least upper bound: equal values stay; otherwise the union of both
+    /// sides' members ([`Value::OneOf`], TeX's one set lift) while it has
+    /// at most `sets.values` exact members, or `sets.intervals` with an
+    /// interval or hull among them, else the join of every member's hull.
+    /// Kinds that do not match join to [`Value::Unknown`].
+    pub fn join(self, other: &Value, sets: crate::env::SetLimits) -> Value {
         if &self == other {
             return self;
         }
-        let Some(a) = self.exacts() else { return Value::join_hulls(&self.hull(), &other.hull()) };
-        let Some(b) = other.exacts() else { return Value::join_hulls(&self.hull(), &other.hull()) };
+        let (Some(a), Some(b)) = (self.members(), other.members()) else { return Value::Unknown };
         let set = Value::union(a, b);
-        if set.len() <= members {
+        let exact = set.iter().all(|v| v.exacts().is_some());
+        if set.len() <= if exact { sets.values } else { sets.intervals } {
             let mut set = set;
             // One order for one set, so that equal joins compare equal.
             set.sort_by_cached_key(|v| format!("{v:?}"));
@@ -759,7 +797,7 @@ impl Value {
             Value::Dimen(d) => Some((Quantity::Dimen, Num::exact(*d))),
             Value::Num { quantity, num } => Some((*quantity, num.clone())),
             Value::OneOf(set) => {
-                let mut nums = set.iter().filter_map(Value::num);
+                let mut nums = set.iter().map(Value::num).collect::<Option<Vec<_>>>()?.into_iter();
                 let first = nums.next()?;
                 nums.try_fold(first, |(q, acc), (q2, n2)| (q == q2).then(|| (q, acc.join(&n2))))
             }

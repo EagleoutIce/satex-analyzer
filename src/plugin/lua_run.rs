@@ -82,7 +82,7 @@ struct Shared {
     failed: Cell<bool>,
     /// Globals a run satex could not finish may have set: missing, they
     /// are unknown, not nil.  `all` stands for every name.
-    tainted: RefCell<std::collections::HashSet<String>>,
+    tainted: RefCell<crate::fixed::HashSet<String>>,
     all: Cell<bool>,
 }
 
@@ -281,7 +281,15 @@ fn new_state(memory: u64) -> R<State> {
 fn state(m: &mut Machine) -> Option<State> {
     if m.lua.state.is_none() {
         let memory = m.cfg.limits.memory.as_u64() / 4;
-        m.lua.state = Some(new_state(memory).ok()?);
+        let lua = new_state(memory).ok()?;
+        // The platform the document is built on, as kpathsea lookups assume.
+        let kind = match m.out.plugins.platform {
+            super::Platform::Linux | super::Platform::Macos => "unix",
+            super::Platform::Windows => "windows",
+        };
+        let os: Table = lua.globals().raw_get("os").ok()?;
+        os.raw_set("type", kind).ok()?;
+        m.lua.state = Some(lua);
     }
     m.lua.state.clone()
 }
@@ -300,36 +308,84 @@ fn taint(m: &mut Machine, texts: &[Option<String>]) {
 }
 
 /// The globals Lua text may assign: `name =` and `name.field =` outside a
-/// `local`, and `function name`; `None` when it may assign any.
+/// `local`, `function name`, `_G.name`, `_G["name"]` and
+/// `rawset(_G, "name", …)`; `None` when it may assign any: `_G` or `_ENV`
+/// used otherwise than these or `__index = _G`, or `load` of a chunk
+/// without its own environment.
 fn globals(text: &str) -> Option<Vec<String>> {
     let t = super::lua::lex(text);
+    let is_name = |s: &str| s.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_');
+    let at = |j: usize| t.get(j).map(String::as_str);
+    let before = |j: usize| (j > 0).then(|| t[j - 1].as_str());
     let mut names = Vec::new();
     for k in 0..t.len() {
-        if matches!(t[k].as_str(), "_G" | "_ENV" | "rawset" | "load" | "loadstring") {
-            return None;
+        let field = matches!(before(k), Some("." | ":"));
+        match t[k].as_str() {
+            "\"_G" | "_ENV" => return None,
+            "_G" if field => return None,
+            // A table that reads through to `_G` writes to itself.
+            "_G" if before(k) == Some("=") && k >= 2 && t[k - 2] == "__index" => continue,
+            "_G" => {
+                let lit = |j: usize| at(j).and_then(|s| s.strip_prefix('"')).map(str::to_string);
+                let reached = match at(k + 1) {
+                    Some(".") => at(k + 2).filter(|n| is_name(n)).map(str::to_string),
+                    Some("[") => lit(k + 2).filter(|_| at(k + 3) == Some("]")),
+                    Some(",") if k >= 2 && t[k - 1] == "(" && matches!(t[k - 2].as_str(), "rawset" | "rawget") => {
+                        lit(k + 2).filter(|_| at(k + 3) == Some(","))
+                    }
+                    _ => None,
+                };
+                names.push(reached?);
+                continue;
+            }
+            "load" | "loadstring" if !field && !matches!(before(k), Some("local" | "function")) => {
+                // A chunk `load` makes assigns globals of the environment it is given.
+                if t[k] == "loadstring" || at(k + 1) != Some("(") || arguments(&t, k + 1) < 4 {
+                    return None;
+                }
+                continue;
+            }
+            _ => {}
         }
-        let named = t[k].chars().next().is_some_and(|c| c.is_alphabetic() || c == '_');
-        if !named {
+        if !is_name(&t[k]) {
             continue;
         }
-        let before = |j: usize| (j > 0).then(|| t[j - 1].as_str());
         // The first name of a list `a, b =`.
         let mut first = k;
-        while before(first) == Some(",")
-            && first >= 2
-            && t[first - 2].chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
-        {
+        while before(first) == Some(",") && first >= 2 && is_name(&t[first - 2]) {
             first -= 2;
         }
-        let assigned = t.get(k + 1).is_some_and(|n| n == "=" || n == "," || n == ".")
+        let assigned = at(k + 1).is_some_and(|n| n == "=" || n == "," || n == ".")
             && !matches!(before(first), Some("local" | "for"))
-            && !matches!(before(k), Some("." | ":"));
+            && !field;
         let defined = before(k) == Some("function") && !(k >= 2 && t[k - 2] == "local");
         if assigned || defined {
             names.push(t[k].clone());
         }
     }
     Some(names)
+}
+
+/// How many arguments the call whose `(` is at `open` passes.
+fn arguments(t: &[String], open: usize) -> usize {
+    let (mut depth, mut count) = (0usize, 0usize);
+    for s in &t[open..] {
+        if depth >= 1 && count == 0 && s != ")" {
+            count = 1;
+        }
+        match s.as_str() {
+            "(" | "[" | "{" => depth += 1,
+            ")" | "]" | "}" => {
+                depth -= 1;
+                if depth == 0 {
+                    return count;
+                }
+            }
+            "," if depth == 1 => count += 1,
+            _ => {}
+        }
+    }
+    count
 }
 
 /// The line of `source` the innermost frame of `trace` stopped at: 1 when
@@ -414,6 +470,9 @@ fn enter(
         // What did not run: the chunk or function from where it stopped,
         // and the modules whose loading stopped, from where they did.
         let trace = result.as_ref().err().map(ToString::to_string).unwrap_or_default();
+        if failed && m.cfg.verbose >= 3 {
+            crate::progress::note!("satex: Lua at {}:{} stopped: {trace}", m.out.file_name(span.file), span.line);
+        }
         let mut texts = vec![(text, stopped_at(&trace, "[\\directlua]"))];
         for file in stopped {
             let path = m.out.files.get(file as usize).map(|f| f.path.clone()).unwrap_or_default();
