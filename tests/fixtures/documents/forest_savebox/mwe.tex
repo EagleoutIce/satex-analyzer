@@ -1,0 +1,128 @@
+\documentclass{article}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage{forest}
+\usepackage{commalists-tools}
+\usepackage{fontawesome}
+\usepackage{hyperref}
+\usepackage{csquotes}
+\usetikzlibrary{decorations.pathmorphing,shadows,arrows.meta}
+\pgfdeclarelayer{background}\pgfdeclarelayer{foreground}\pgfdeclarelayer{middle}
+\pgfdeclarelayer{very-background}
+\pgfsetlayers{very-background,background,main,middle,foreground}
+
+\tikzset{
+   Soft/.style={line join=round,line cap=round},
+   All Soft/.style={every path/.append style={Soft}},
+   Blob/.style={
+      draw=black,
+      circle,
+      outer sep=2pt,
+      minimum size=1.8em
+   },
+   Blobs/.style={
+      every node/.append style={Blob}
+   },
+   Use/.style={Blob},
+   RectRounding/.style={rounded corners=3pt},
+   RawRect/.style={
+      draw=black,
+      rectangle,
+      RectRounding,
+      minimum size=1.8em,
+      inner sep=5pt,
+      fill=white,
+   },
+   Rect/.style={
+      draw=black,
+      rectangle,
+      RectRounding,
+      outer sep=2pt,
+      minimum size=1.8em
+   },
+   Def/.style={Rect},
+   Rects/.style={
+      every node/.append style={Rect,minimum width=#1}
+   },
+   Rects/.default={1.5em},
+   Link/.style={
+      draw,
+      Soft,
+      rounded corners=2.5pt,
+      -Kite
+   },
+   Links/.style={
+      every path/.append style={Link}
+   },
+   % for dataflow graphs
+   comm/.style={rectangle,draw=gray,text width=9mm,align=center,minimum height=5mm,font=\ttfamily,fill=white,fill opacity=1,drop shadow={fill=lightgray!50}},
+   d/.style={comm,rounded corners=2pt}, % variable def
+   u/.style={comm,rounded corners=2.5mm}, % variable use % rounded rectangle breaks anchors
+   v/.style={comm,signal, signal to=east and west, gray, text=black, inner sep=-4pt, text width=5mm,fill=lightgray!22!white}, % values
+   e/.style={comm,rounded corners=2.5mm,densely dotted,thick,fill=white}, % exit point
+   F/.style={comm,draw=gray,rounded corners=2pt,fill=white,inner xsep=.5em},
+   fc/.style={comm,double,rounded corners=2pt},
+   w-back/.style={fill=white,inner sep=1pt},
+   T/.style={font=\footnotesize\ttfamily,text=gray},
+   code/.style={font=\ttfamily},
+   dfidn/.style={
+      circle,darkgray,fill opacity=.925,xshift=-1mm,yshift=.15mm,fill=white,draw,minimum size=1.8em,scale=.8,inner sep=-1pt
+   },
+   klabel/.style={font=\scriptsize\sffamily, inner sep=1pt,text=black,above,execute at begin node={\strut}},
+   olabel/.style={midway,fill=white,fill opacity=.75,text opacity=1,rounded corners=2pt,inner sep=1pt,font=\tiny\sffamily},
+   pos at/.style={above #1=-.5mm,yshift=-.4\baselineskip},
+	Line-Of-Text/.style={
+      fill=#1,
+      draw=none,
+      rounded corners=1.5pt,
+      inner sep=1pt,
+      minimum width=1cm,
+      minimum height=6.5pt
+   },
+   % code sub-styles
+   A/.style={Line-Of-Text=SoftTextGray!93!black},
+   B/.style={},
+   C/.style={Line-Of-Text=SoftGray!93!black},
+	ActiveBlob/.style={
+      Blob,
+      draw=BaseGray, fill=BaseGray
+   },
+      graph-frame-style/.style={very thick,rounded corners=1.5pt,draw,black},
+   graph-cd/.style={gray,font=\scriptsize,line cap=round}, 
+   graph-cd-in/.style={graph-cd,{Kite[scale=.7]}-},
+   graph-cd-out/.style={graph-cd,-{Kite[scale=.7]}},
+   href node/.style={
+      alias=sourcenode,
+      append after command={
+         let     \p1 = (sourcenode.north west),
+               \p2=(sourcenode.south east),
+               \n1={\x2-\x1},
+               \n2={\y1-\y2} in
+         node [inner sep=0pt, outer sep=0pt,anchor=north west,at=(\p1)] {\href{#1}{\XeTeXLinkBox{\phantom{\rule{\n1}{\n2}}}}}
+                  %xelatex needs \XeTeXLinkBox, won't create a link unless it
+                  %finds text --- rules don't work without \XeTeXLinkBox.
+                  %Still builds correctly with pdflatex and lualatex
+      }
+   }
+}
+\definecolor{BaseGray}{RGB}{66,66,66} % rgb(66,66,66)
+
+\colorlet{SoftGray}{BaseGray!60}
+\colorlet{BackGray}{BaseGray!2}
+\colorlet{SoftTextGray}{BackGray!60!SoftGray}
+
+\forestset{T/.style={for tree={font=\ttfamily,align=center,l sep=0pt,l sep-=5mm,child anchor=north}}}
+\newsavebox\DataFlow
+\setbox\DataFlow=\hbox{\resizebox*!{1.25cm}{\color{lightgray!80!BaseGray}\begin{tikzpicture}[Link/.style={draw,line cap=round,gray,thick},comm/.append style={very thick}]
+   \node[d] (0) at (0,0) {};
+   \node[u,right=4mm] (1) at (0.east) {};
+   \node[v,above=4mm] (2) at (0.north) {~~~~};
+   \node[u,below=4mm] (3) at (0.south) {};
+   \draw[Link,-Kite] (3) -- (0);
+   \draw[Link,-Kite] (0) -- (1);
+   \draw[Link,dotted] (1) to[bend right] (2);
+\end{tikzpicture}}}
+\begin{document}
+Text
+\gdef\SatexReachedEnd{}
+\end{document}

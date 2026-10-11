@@ -1,0 +1,51 @@
+\ifthesis@marginpar
+\thesis@info{Enable marginpar support}
+\RequirePackage{mparhack}
+\thesis@info{Providing \string\sidenote\space macro for \string\marginpar.}
+
+\RequirePackage{ragged2e}
+
+\def\thesis@marginpar@font{\scriptsize\color{black}}
+\def\setmarginfont#1{\def\thesis@marginpar@font{#1}}
+\def\marginfont{\thesis@marginpar@font}
+\ifthesis@draft
+\PassOptionsToPackage{fulladjust,parboxrestore}{marginnote}
+\RequirePackage{marginnote}
+% safety override
+\def\marginfont{\thesis@marginpar@font}
+\else
+\RequirePackage[draft=false,autoclearnotecolumns]{scrlayer-notecolumn}
+\setkomafont{notecolumn.marginpar}{\thesis@marginpar@font}
+\fi
+
+\RequirePackage{ifoddpage}
+\newcommand*\sidenote{\@ifstar\@sidenote\@@sidenote}
+\newif\ifinsidenote
+\ifthesis@oneside
+\def\thesis@ragged@do#1#2{#1}
+\else
+\def\thesis@ragged@do#1#2{\checkoddpage\ifoddpage#1\else#2\fi}
+\fi
+\let\thesisifodd\thesis@ragged@do
+\def\thesis@ragged{\thesis@ragged@do{\RaggedRight}{\RaggedLeft}}% \captionsetup{justification=RaggedLeft}
+\def\thesisinverseragged{\thesis@ragged@do{\RaggedLeft}{\RaggedRight}}
+\def\thesissidebarhook{\urlstyle{rm}}
+\long\def\thesis@sn@gd#1#2{\raisebox{#1}{\thesis@sn@gd@{#2}}}
+\long\def\thesis@sn@gd@#1{\parbox\linewidth{\insidenotetrue\thesis@ragged\thesissidebarhook#1\vskip2.25pt}}
+\def\@sidenote{\@ifnextchar[{\s@sidenote}{\s@sidenote[\z@]}}
+\def\@@sidenote{\@ifnextchar[{\s@@sidenote}{\s@@sidenote[\z@]}}
+\def\noside#1{\begingroup\disablesidetrue#1\endgroup}
+
+% We want nested sidenotes to appear exactly where they should be and not in a second or third run. Currently i will not do this recursively but just for one level at a time.
+\ifthesis@draft
+\long\def\s@sidenote[#1]#2{\marginnote{\normalfont\scriptsize\itshape\thesis@sn@gd{#1}{#2}}}
+\long\def\s@@sidenote[#1]#2{\marginnote{\normalfont\scriptsize\itshape\thesis@sn@gd{#1}{#2}}}
+\else
+\long\def\s@sidenote[#1]#2{\ifx#1\z@ \makenote*{\thesis@sn@gd@{#2}}\else\makenote*{\thesis@sn@gd{#1}{#2}}\fi}
+\long\def\s@@sidenote[#1]#2{\ifx#1\z@ \makenote{\protect\thesis@sn@gd@{#2}}\else\makenote{\protect\thesis@sn@gd{#1}{#2}}\fi}
+\fi
+\else
+\thesis@info{Disable marginpar support, still supplying sidenote foots}
+\long\def\s@sidenote[#1]#2{\footnote{#2}}
+\long\def\s@@sidenote[#1]#2{\footnote{#2}}
+\fi

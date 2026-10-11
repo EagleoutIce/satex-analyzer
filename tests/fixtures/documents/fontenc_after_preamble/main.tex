@@ -1,0 +1,34 @@
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{shapes.symbols,shadows,arrows.meta}
+\tikzset{
+  comm/.style={rectangle,draw=gray,text width=9mm,align=center,minimum height=5mm,font=\ttfamily,fill=white,drop shadow={fill=lightgray!50}},
+  d/.style={comm,rounded corners=2pt},
+  u/.style={comm,rounded corners=2.5mm},
+  v/.style={comm,signal,signal to=east and west,inner sep=-4pt,text width=5mm},
+  Link/.style={draw,line cap=round,gray,thick}
+}
+\setbox0=\hbox{\resizebox*!{1.25cm}{\begin{tikzpicture}
+  \scope
+    \node[d] (0) at (0,0) {};
+    \node[u,right=4mm] (1) at (0.east) {};
+    \node[v,above=4mm] (2) at (0.north) {~~~~};
+    \node[u,below=4mm] (3) at (0.south) {};
+    \draw[Link,-Kite] (3) -- (0);
+    \draw[Link,-Kite] (0) -- (1);
+    \draw[Link,dotted] (1) to[bend right] (2);
+  \endscope
+  \scope[transparency group,opacity=.5,yshift=1cm,xshift=5.5mm]
+    \node[d] (0) at (0,0) {};
+    \node[d,below left=4mm] (1) at (0.south) {};
+    \node[d,below right=4mm] (2) at (0.south) {};
+    \path (1.south) -- (2.south) coordinate[midway] (@);
+    \node[u,below=4mm] (3) at (@.south) {};
+    \draw[Link,-Kite] (0) -- (1);
+    \draw[Link,-Kite] (1.south) -- (3);
+  \endscope
+\end{tikzpicture}}}
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

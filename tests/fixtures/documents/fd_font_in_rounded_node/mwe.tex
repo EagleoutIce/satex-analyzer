@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\renewcommand\sfdefault{lmss}
+\usepackage{tikz}
+% A sans font first loaded inside a node: its .fd file writes to the log
+% (\wlog) inside the box. The node's size stays known, so pgfmath does not
+% run on unknown dimensions.
+\setbox0=\hbox{\tikz\node[rounded corners=3pt,draw]{\textsf{\strut x}};}
+\gdef\AfterSansNode{}
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

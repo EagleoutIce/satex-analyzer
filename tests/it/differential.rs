@@ -32,9 +32,10 @@ fn engine() -> Option<PathBuf> {
 }
 
 fn scratch() -> PathBuf {
-    let directory = std::env::temp_dir().join("satex-differential");
+    let directory = std::env::temp_dir().join(format!("satex-differential-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a scratch directory");
-    directory
+    // Absolute: the engine runs inside it, so a relative TMPDIR would point elsewhere.
+    directory.canonicalize().expect("a scratch directory")
 }
 
 fn engine_verdict(binary: &Path, source: &str, name: &str) -> Verdict {
@@ -55,13 +56,18 @@ fn engine_verdict(binary: &Path, source: &str, name: &str) -> Verdict {
         .map_or(Verdict::Compiles, |(_, verdict)| verdict)
 }
 
-fn satex_verdict(source: &str, name: &str) -> Verdict {
+/// `Err` names the limits that cut the run: a cut run predicts nothing.
+fn satex_verdict(source: &str, name: &str) -> Result<Verdict, String> {
     let directory = scratch();
     let file = directory.join(format!("{name}.tex"));
     std::fs::write(&file, source).expect("writing the document");
     let cfg = crate::support::discover(&directory);
     let analysis = Machine::analyze(source, Some(&file), &cfg);
-    satex::lint::lint(&analysis)
+    if !analysis.limits.is_empty() {
+        let hits: Vec<String> = analysis.limits.iter().map(|h| format!("limits.{} x{}", h.key, h.count)).collect();
+        return Err(hits.join(", "));
+    }
+    Ok(satex::lint::lint(&analysis)
         .into_iter()
         .filter(|record| record["origin"] == "document")
         .filter_map(|record| {
@@ -71,7 +77,7 @@ fn satex_verdict(source: &str, name: &str) -> Verdict {
             Some((line, verdict))
         })
         .min_by_key(|(line, _)| *line)
-        .map_or(Verdict::Compiles, |(_, verdict)| verdict)
+        .map_or(Verdict::Compiles, |(_, verdict)| verdict))
 }
 
 const CASES: [(&str, &str, Verdict); 7] = [
@@ -157,7 +163,7 @@ fn satex_predicts_what_the_engine_does() {
         let engine = engine_verdict(&binary, source, name);
         assert_eq!(engine, expected, "the case `{name}` does not describe the engine's behavior");
         let satex = satex_verdict(source, name);
-        if satex != engine {
+        if satex.as_ref() != Ok(&engine) {
             disagreements.push(format!("{name}: satex said {satex:?}, the engine said {engine:?}"));
         }
     }
@@ -178,6 +184,25 @@ const TYPESET_CASES: &[(&str, &str)] = &[
     ("hbox-kern", r"\setbox0=\hbox{\kern3pt}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"),
     ("hbox-negative-kern", r"\setbox0=\hbox{\kern-3pt}\xdef\r{\the\wd0}"),
     ("hbox-space", r"\setbox0=\hbox{a b}\xdef\r{\the\wd0}"),
+    // tex.web §§ 755-758: a character script on a character nucleus.
+    (
+        "math-subscript",
+        concat!(
+            r"\font\mi=cmmi10 \font\ms=cmmi7 \font\sy=cmsy10 \font\ss=cmsy7 \font\ex=cmex10 \font\rs=cmr7 \textfont0=\f \scriptfont0=\rs ",
+            r"\textfont2=\sy \scriptfont2=\ss \scriptscriptfont2=\ss \textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex ",
+            r"\textfont1=\mi \scriptfont1=\ms \catcode`\$=3 \catcode`\_=8 \scriptspace=0.5pt ",
+            r"\setbox0=\hbox{$A_1$}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"
+        ),
+    ),
+    (
+        "math-superscript",
+        concat!(
+            r"\font\mi=cmmi10 \font\ms=cmmi7 \font\sy=cmsy10 \font\ss=cmsy7 \font\ex=cmex10 \font\rs=cmr7 \textfont0=\f \scriptfont0=\rs ",
+            r"\textfont2=\sy \scriptfont2=\ss \scriptscriptfont2=\ss \textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex ",
+            r"\textfont1=\mi \scriptfont1=\ms \catcode`\$=3 \scriptspace=0.5pt ",
+            r"\setbox0=\hbox{$f^2x$}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"
+        ),
+    ),
     ("hbox-ligature", r"\setbox0=\hbox{ff}\xdef\r{\the\wd0}"),
     ("hbox-kern-pair", r"\setbox0=\hbox{Vo}\xdef\r{\the\wd0}"),
     ("hbox-nested", r"\setbox0=\hbox{\hbox{a}\hbox{b}}\xdef\r{\the\wd0,\the\ht0,\the\dp0}"),
@@ -343,4 +368,109 @@ fn box_dimensions_never_disagree_with_the_engine() {
     // Every case in `TYPESET_CASES` is one satex is meant to follow exactly.
     vague.retain(|name| TYPESET_CASES.iter().any(|(c, _)| c == name));
     assert!(vague.is_empty(), "satex could not follow: {vague:?}");
+}
+
+/// The text satex computes a challenge typesets equals or covers what one
+/// pdflatex run set (kept beside it as `.pdflatex.txt`). `DIFFERS` is
+/// unsound.
+fn typeset_covers(stem: &str) {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/src/wiki/challenges");
+    let engine = std::fs::read_to_string(dir.join(format!("{stem}.pdflatex.txt"))).expect("kept pdflatex text");
+    let engine: Vec<&str> = engine.lines().filter(|l| !l.starts_with("! ")).collect();
+    let out = Command::new(env!("CARGO_BIN_EXE_satex"))
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", &format!("{stem}.tex"), "--format", "json"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let computed: Vec<&str> =
+        rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
+    let verdict = satex::query::typeset_verdict(&computed.join(" "), &engine.join(" "));
+    assert_ne!(verdict, "DIFFERS", "{stem}: pdflatex sets {engine:?}, satex computes {computed:?}");
+}
+
+/// Capability: typesetting feedback. The hyphenation points satex marks
+/// are the ones pdflatex's `\showhyphens` shows (tex.web § 923), from the
+/// format's own `\patterns` and `\hyphenation`.
+#[test]
+fn hyphenation_points_match_showhyphens() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("hyphenation");
+    std::fs::create_dir_all(&dir).unwrap();
+    let words = "dependencies hyphenation typesetting paragraph analysis Uncertainty associate";
+    std::fs::write(
+        dir.join("h.tex"),
+        format!("\\documentclass{{article}}\n\\begin{{document}}\n\\hsize=1cm\n{words}\n\\end{{document}}\n"),
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_satex"))
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "h.tex", "--format", "json"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let text: Vec<&str> =
+        rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
+    // pdflatex: de-pen-den-cies hy-phen-ation type-set-ting para-graph anal-y-sis Un-cer-tainty as-so-ciate
+    assert_eq!(text, ["de·pen·den·cies hy·phen·ation type·set·ting para·graph anal·y·sis Un·cer·tainty as·so·ciate"]);
+}
+
+/// Capability: typesetting feedback. Knuth-Plass (tex.web §§ 813-890):
+/// a paragraph whose items are all known breaks into the lines pdflatex
+/// makes, so `\ht`, `\dp` and `\prevgraf` of its `\vbox` are exact.
+#[test]
+fn paragraph_lines_match_pdflatex() {
+    let par = |t: &str, r: &str| {
+        format!(
+            "\\setbox0=\\vbox{{\\hsize=3cm {t}\\par\\xdef\\p{{\\the\\prevgraf}}}}\\xdef\\{r}{{\\the\\ht0,\\the\\dp0,\\p}}\n"
+        )
+    };
+    let source = format!(
+        "\\documentclass{{article}}\n\\begin{{document}}\n{}{}{}\\end{{document}}\n",
+        par("The quick brown fox jumps over the lazy dog and keeps running far away.", "rA"),
+        par("Typesetting paragraphs with dependencies requires careful hyphenation of words.", "rB"),
+        par("\\centering files, dependencies, more", "rC"),
+    );
+    let analysis = Machine::analyze(&source, None, &crate::support::config());
+    let value = |name: &str| {
+        let sym = analysis.interner.lookup(name);
+        let def = sym.and_then(|sym| analysis.facts.defs.iter().rev().find(|d| d.name == sym));
+        def.and_then(|d| d.mac.as_ref())
+            .map_or("<none>".into(), |m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+    };
+    // pdflatex 2025: \showbox gives 4, 4 and 2 lines.
+    assert_eq!(
+        ["rA", "rB", "rC"].map(value),
+        ["42.94444pt,1.94444pt,4", "42.83331pt,1.94444pt,4", "18.94444pt,0.0pt,2"]
+    );
+}
+
+/// One test per challenge, named by its capability.
+macro_rules! challenges {
+    ($($test:ident: $stem:literal,)*) => {
+        $(#[test]
+        fn $test() {
+            typeset_covers($stem);
+        })*
+    };
+}
+
+challenges! {
+    typeset_catcode: "01-catcode",
+    typeset_code_as_data: "02-code-is-data",
+    typeset_run_time_arguments: "03-arguments",
+    typeset_typesetting_feedback: "04-typesetting",
+    typeset_package_interpreters: "05-packages",
+    typeset_unknown_inputs: "06-unknown",
+    typeset_termination: "07-termination",
+    typeset_global_state: "08-global-state",
+    typeset_progressive_recursion: "09-progressive",
+    typeset_engine: "10-engine",
+    typeset_termination_input_stack: "r1-input-stack",
+    typeset_termination_growing_key: "r2-growing-key",
+    typeset_unknown_inputs_choice: "r3-choice",
+    typeset_code_as_data_self_modifying: "r4-self-modifying",
+    typeset_unknown_inputs_token_domain: "r5-token-domain",
+    typeset_unknown_inputs_relational: "r6-relational",
+    typeset_termination_merge_cost: "r7-merge-cost",
+    typeset_typesetting_feedback_hyphenation: "s2-rounded-paragraph",
 }

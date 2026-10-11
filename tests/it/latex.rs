@@ -825,6 +825,39 @@ fn a_box_has_its_natural_size() {
     );
 }
 
+/// An inline formula's size with scripts: a braced one-character script, a
+/// box nucleus (tex.web § 756 uses the box's height and depth), and a
+/// `\color` whatsit inside the script. The expectations are what pdflatex
+/// printed for the same source.
+#[test]
+fn math_braced_script_box_nucleus_size() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{xcolor}
+\begin{document}
+\def\m#1{\setbox0\hbox{#1}\typeout{mark \the\wd0,\the\ht0,\the\dp0}}
+\m{\(x^{0}\)}\m{\(\textrm{cellR}^0\)}\m{\(x^{\color{gray}0}\)}\m{\(\textrm{cellR}^{\color{gray}0}\)}
+\m{\(\textrm{cellR}_0\)}\m{\(x_{0}\)}\m{\(x^{0}y\)}\m{\(x^0y\)}
+\end{document}",
+    );
+    assert_eq!(
+        marks(&analysis),
+        [
+            "mark 10.2014pt,8.14003pt,0.0pt",
+            "mark 26.2917pt,8.98335pt,0.0pt",
+            "mark 10.2014pt,8.14003pt,0.0pt",
+            "mark 26.2917pt,8.98335pt,0.0pt",
+            "mark 26.2917pt,6.94444pt,1.49998pt",
+            "mark 10.2014pt,4.30554pt,1.49998pt",
+            "mark 15.463pt,8.14003pt,1.94444pt",
+            "mark 15.463pt,8.14003pt,1.94444pt",
+        ]
+    );
+}
+
 /// A variant expl3 generates is `\protected` only when its base is: the
 /// kernel tells them apart with `\exp_not:N` and `\if_meaning:w`, and the
 /// class a package like xkeyval finds in `\@filelist` depends on it.
@@ -1734,7 +1767,7 @@ x\label{after}
     assert_eq!(year.chars().count(), 4, "{year:?}");
     assert!(year.chars().all(|c| c == satex::tex::UNKNOWN_DIGIT), "{year:?}");
     let gaps = broken_gaps(&analysis);
-    for code in ["extra-fi", "extra-else", "budget-exhausted", "stalled-loop", "repeated-failure"] {
+    for code in ["extra-fi", "extra-else", "budget-exhausted", "line-budget-cut", "repeated-failure"] {
         assert!(!gaps.iter().any(|g| g.starts_with(code)), "{gaps:?}");
     }
     assert!(!analysis.facts.diagnostics.iter().any(|d| d.code == "clock-assumed"));
@@ -1764,7 +1797,7 @@ x\label{after}
     assert_eq!(keys(&analysis, OccKind::Label), vec!["after"]);
     let gaps = broken_gaps(&analysis);
     for code in [
-        "stalled-loop",
+        "line-budget-cut",
         "missing-endcsname",
         "budget-exhausted",
         "undecided-condition",
@@ -1799,7 +1832,7 @@ fn an_error_in_the_document_is_recovered_like_tex() {
     };
     assert!(count("missing-endcsname") >= 51 && count("extra-endcsname") >= 50, "{:?}", analysis.facts.diagnostics);
     assert!(count("too-many-errors") >= 1, "the hundredth error is reported");
-    for code in ["repeated-failure", "limit-reached", "budget-exhausted", "stalled-loop", "unbalanced-argument"] {
+    for code in ["repeated-failure", "limit-reached", "budget-exhausted", "line-budget-cut", "unbalanced-argument"] {
         assert_eq!(count(code), 0, "{code}");
     }
     let raised = |text: &str| analysis.facts.raised.iter().any(|r| r.text == text);
@@ -2047,4 +2080,205 @@ x\label{after}\end{document}",
     }
     assert_eq!(keys(&analysis, OccKind::Label), vec!["after".to_string()]);
     assert!(analysis.steps < 2_500_000, "{} steps", analysis.steps);
+}
+
+/// tex.web §§ 764-766, 1155: a `\mathchardef` symbol is one atom with its
+/// font's width, and relations and punctuation are spaced by their muskips.
+/// The widths are what `pdflatex` prints for the same boxes.
+#[test]
+fn inline_math_of_relations_and_math_chars_has_its_width() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\setbox0\hbox{$\leftarrow$}\xdef\wa{\the\wd0}
+\setbox0\hbox{$a\leftarrow b$}\xdef\wb{\the\wd0}
+\setbox0\hbox{$(a,b)=x$}\xdef\wc{\the\wd0}
+\end{document}",
+    );
+    assert_eq!(body(&analysis, "wa"), "10.00002pt");
+    assert_eq!(body(&analysis, "wb"), "25.13298pt");
+    assert_eq!(body(&analysis, "wc"), "40.84825pt");
+}
+
+/// tex.web §§ 651, 1119-1120: a discretionary's break texts do not count
+/// for its box, its text without a break does. Widths as `pdflatex` prints.
+#[test]
+fn a_discretionary_counts_only_its_text_without_a_break() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\setbox0\hbox{a\discretionary{x}{}{}b}\xdef\da{\the\wd0}
+\setbox0\hbox{a\discretionary{\rlap{x}}{}{yy}b}\xdef\db{\the\wd0}
+\end{document}",
+    );
+    assert_eq!(body(&analysis, "da"), "10.55559pt");
+    assert_eq!(body(&analysis, "db"), "21.11119pt");
+}
+
+/// A formula that loads its math fonts at a new size: the font files run in
+/// math mode (`\lowercase`, `\pdffontexpand` leave no node, tex.web §§ 1285,
+/// pdfTeX manual), so the formula keeps its width. As `pdflatex` prints.
+#[test]
+fn a_formula_that_loads_its_fonts_keeps_its_width() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{microtype}
+\usepackage{newtxmath}
+\begin{document}
+\setbox0\hbox{\footnotesize\(\leftarrow\)}\xdef\wa{\the\wd0}
+\end{document}",
+    );
+    assert_eq!(body(&analysis, "wa"), "8.192pt");
+}
+
+/// tex.web §§ 728-729, 749, 764-766, 1156: binary atoms that turn ordinary,
+/// operators, groups and `\mathrel`/`\mathinner` keep the formula's width.
+/// Widths as `pdflatex` prints.
+#[test]
+fn binary_operator_and_group_atoms_have_their_width() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (r"$a+b$", "21.79968pt"),
+        (r"$-a$", "13.06369pt"),
+        (r"$a+=b$", "30.68857pt"),
+        (r"$\sum x$", "17.93748pt"),
+        (r"$(N_1,N_2,\dots)$", "53.37492pt"),
+        (r"$a{=}b$", "17.35535pt"),
+        (r"$a\mathrel{x}b$", "20.84824pt"),
+        (r"$a+$", "13.06369pt"),
+        (r"$f\mathinner{xy}$", "18.61575pt"),
+    ];
+    let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!("\\setbox0\\hbox{{{f}}}\\xdef\\W{}{{\\the\\wd0}}\n", (b'a' + i as u8) as char));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    let got: Vec<(String, String)> = cases
+        .iter()
+        .enumerate()
+        .map(|(i, (f, _))| (f.to_string(), body(&analysis, &format!("W{}", (b'a' + i as u8) as char))))
+        .collect();
+    let want: Vec<(String, String)> = cases.iter().map(|(f, w)| (f.to_string(), w.to_string())).collect();
+    assert_eq!(got, want);
+}
+
+/// `\unhbox` of any hbox adds its list's natural width (tex.web § 1110),
+/// whatever it was packed to, and an `\unskip` after it takes away the
+/// glue the list ended in: tikz's `align` lines in an `\halign`. Widths
+/// as `pdflatex` prints.
+#[test]
+fn an_unhboxed_list_keeps_its_natural_width() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (
+            r"\setbox1\hbox{Aa b }\setbox0\vbox{\halign{\hfil#\hfil\cr\hbox{X}\cr\noalign{\vskip0pt}\unhbox1\unskip\cr}}",
+            "21.38893pt",
+        ),
+        (r"\setbox1\hbox{word}\setbox0\hbox{\unhbox1}", "21.4167pt"),
+        (r"\setbox1\hbox to 50pt{a\hfil b}\setbox0\hbox{\unhbox1}", "10.55559pt"),
+        (r"\setbox1\hbox{Ab }\setbox0\hbox{x\unhbox1\unskip}", "18.33339pt"),
+    ];
+    let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!("{f}\\xdef\\W{}{{\\the\\wd0}}\n", (b'a' + i as u8) as char));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    let got: Vec<(String, String)> = cases
+        .iter()
+        .enumerate()
+        .map(|(i, (f, _))| (f.to_string(), body(&analysis, &format!("W{}", (b'a' + i as u8) as char))))
+        .collect();
+    let want: Vec<(String, String)> = cases.iter().map(|(f, w)| (f.to_string(), w.to_string())).collect();
+    assert_eq!(got, want);
+}
+
+/// Glue and kerns in inline math, `\mskip` and `\mkern` in math units
+/// (tex.web §§ 716-717, 732), are no atoms: the spacing passes over them
+/// (§ 761) and the character before takes its italic correction (§ 755).
+/// amsmath's `\dots` ends in `\,`. Widths as `pdflatex` prints.
+#[test]
+fn math_glue_and_kerns_have_their_width() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (r"$a\,b$", "11.24417pt"),
+        (r"$a\mkern3mu b$", "11.24417pt"),
+        (r"$f\kern1pt b$", "11.26392pt"),
+        (r"$f\mskip 6mu plus 2mu b$", "13.59717pt"),
+        (r"$(N_1,N_2,\dots)$", "55.04155pt"),
+        (r"$a\!+b$", "20.13306pt"),
+    ];
+    let mut src = String::from("\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!("\\setbox0\\hbox{{{f}}}\\xdef\\W{}{{\\the\\wd0}}\n", (b'a' + i as u8) as char));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    let got: Vec<(String, String)> = cases
+        .iter()
+        .enumerate()
+        .map(|(i, (f, _))| (f.to_string(), body(&analysis, &format!("W{}", (b'a' + i as u8) as char))))
+        .collect();
+    let want: Vec<(String, String)> = cases.iter().map(|(f, w)| (f.to_string(), w.to_string())).collect();
+    assert_eq!(got, want);
+}
+
+/// One finding per source site: one use of a macro that writes three
+/// labels is one unused-label there, not three.
+#[test]
+fn a_label_in_a_macro_body_is_one_finding() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\newcommand\cell[1]{\section{#1}\label{nb:#1}}
+\newcommand\three{\cell{A}\cell{B}\cell{R}}
+\begin{document}
+\three
+\end{document}",
+    );
+    assert_eq!(codes(&analysis).iter().filter(|c| *c == "unused-label").count(), 1);
+}
+
+/// `satex lint` text lists correctness before style, grouped by rule, not
+/// in file order.
+#[test]
+fn lint_text_puts_correctness_first_grouped_by_rule() {
+    let record = |code: &str, category: &str, line: u64| {
+        let mut r = serde_json::Map::new();
+        for (k, v) in
+            [("code", code), ("category", category), ("severity", "warning"), ("file", "a.tex"), ("message", "m")]
+        {
+            r.insert(k.into(), serde_json::json!(v));
+        }
+        r.insert("line".into(), serde_json::json!(line));
+        r.insert("col".into(), serde_json::json!(1));
+        r
+    };
+    let records = vec![
+        record("zstyle", "style", 1),
+        record("bug", "correctness", 9),
+        record("astyle", "style", 2),
+        record("bug", "correctness", 3),
+    ];
+    let text = satex::render::lint(&records, satex::render::Links::default(), true);
+    let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("{s} missing in {text}"));
+    assert!(at("bug") < at("astyle") && at("astyle") < at("zstyle"), "{text}");
 }

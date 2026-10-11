@@ -1,0 +1,11 @@
+\documentclass{article}
+\usepackage{hyperref}
+\usepackage{pdfcomment}
+\begin{document}
+% A markup annotation in math mode: pdfcomment converts four unknown
+% positions with \strip@pt, which satex summarizes as one loop.
+A $\pdfmarkupcomment[markup=Highlight]{\mbox{12}}{note}$ B.
+\gdef\AfterMarkup{}
+\section{After}\label{after}
+\gdef\SatexReachedEnd{}
+\end{document}

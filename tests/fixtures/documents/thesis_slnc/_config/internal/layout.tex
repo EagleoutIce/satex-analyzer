@@ -1,0 +1,10 @@
+\IfFileExists{widows-and-orphans.sty}{
+    \thesis@info{Loading widows-and-orphans to improve layout}
+    \RequirePackage[check=warning,avoid-all]{widows-and-orphans}
+}{
+    \thesis@warn{Could not find widows-and-orphans, using nowidow}
+    \RequirePackage[defaultlines=3,all]{nowidow}
+}
+
+\parskip\medskipamount
+\parindent\z@

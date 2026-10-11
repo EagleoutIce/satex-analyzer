@@ -1,0 +1,10 @@
+\documentclass{article}
+% Two macros that call each other until an unknown bound.
+\def\a{\ifnum\count255<\pdfrandomseed \b\fi}
+\def\b{\advance\count255 1 \a}
+\count255=0 \a
+\gdef\AfterLoop{}
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

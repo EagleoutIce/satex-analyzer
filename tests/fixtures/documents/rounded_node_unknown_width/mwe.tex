@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{tikz}
+% A rounded node around text of unknown width: pgfmath runs on unknown
+% dimensions. What follows must still be read, in budget.
+\setbox0=\hbox{\tikz{\node[rounded corners=3pt,draw] {\number\pdfuniformdeviate 1000};}}
+\gdef\AfterRoundedNode{}
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

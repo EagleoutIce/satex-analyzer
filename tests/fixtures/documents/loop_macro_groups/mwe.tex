@@ -1,0 +1,17 @@
+\documentclass{article}
+\usepackage{calc}
+\begin{document}
+% A recursion cut past the expansion depth: each level opens a group and
+% closes it through macros, and sets a length with calc.
+\newlength\len
+\def\open{\begingroup}
+\def\close{\endgroup}
+\def\rec{\open\setlength\len{(\len+1pt)*2}%
+  \global\advance\count255 1 \ifnum\count255<1000 \rec\fi\close}
+\begingroup
+\global\count255=0 \rec
+\ifnum\currentgrouplevel=1 \else\gdef\Leaked{}\fi
+\endgroup
+\ifnum\currentgrouplevel=0 \else\gdef\Leaked{}\fi
+\gdef\SatexReachedEnd{}
+\end{document}

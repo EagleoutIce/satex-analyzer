@@ -1,0 +1,16 @@
+\documentclass{article}
+\usepackage{fancyvrb}
+\begin{document}
+\begin{verbatim}
+% { \end{x} \undefinedmacro \end {verbatim}
+\end{verbatim}
+\gdef\AfterA{}
+\verb|%{\x|\gdef\AfterB{}
+\verb*+a b{+\gdef\AfterC{}
+\begin{Verbatim}
+% { \end{x} \undefinedmacro
+\end{Verbatim}
+\gdef\AfterD{}
+\section{After}\label{after}
+\gdef\SatexReachedEnd{}
+\end{document}

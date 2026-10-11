@@ -1,0 +1,11 @@
+\documentclass{article}
+\newread\data
+\newcount\n
+\newcount\k
+\def\work{\ifnum\k<10000 \advance\k by 1 \expandafter\work\fi}
+\begin{document}
+\openin\data=data.txt
+\loop\unless\ifeof\data \read\data to\line \advance\n by 1 \k=0 \work\repeat
+\closein\data
+\gdef\SatexReachedEnd{}
+\end{document}

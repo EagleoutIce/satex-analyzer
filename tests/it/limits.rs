@@ -809,7 +809,7 @@ fn an_outer_name_ending_a_scan_is_read_again() {
     assert_eq!((body(&run, "zR"), body(&run, "zS")), ("undefined".into(), "\\outer macro:#1->[#1]".into()));
 }
 
-/// Past `limits.degrade_at_percent` of `limits.seconds` the run lowers its
+/// Past `limits.degrade_at_percent` of `limits.steps` the run lowers its
 /// precision limits once and says so; at 100 it never does.
 #[test]
 fn a_run_degrades_its_precision_once_past_the_soft_limit() {

@@ -164,3 +164,48 @@ pub fn pair_rows(rows: &[PairRow], check: impl Fn(&str, &str) -> Option<String>)
         },
     );
 }
+
+/// A TeX tree of its own under `root`: a small kernel as `latex.ltx` and a
+/// package, enough for a kernel cache and a package cache, and no file of
+/// the installation. Returns the tree's `texmf-dist`.
+pub fn mini_texmf(root: &Path) -> PathBuf {
+    let tree = root.join("texmf-dist");
+    let base = tree.join("tex/latex/base");
+    let demo = tree.join("tex/latex/demo");
+    std::fs::create_dir_all(&base).expect("a kernel directory");
+    std::fs::create_dir_all(&demo).expect("a package directory");
+    std::fs::write(base.join("latex.ltx"), MINI_KERNEL).expect("latex.ltx");
+    std::fs::write(base.join("minipart.ltx"), "\\def\\fromkernelpart#1{\\kernelmacro{#1}}\n").expect("minipart.ltx");
+    std::fs::write(demo.join("demo.sty"), MINI_PACKAGE).expect("demo.sty");
+    tree
+}
+
+const MINI_KERNEL: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7\n\
+\\catcode`\\@=11\n\
+\\def\\@pkgextension{sty}\n\
+\\def\\@clsextension{cls}\n\
+\\count10=22\n\
+\\def\\newcount#1{\\global\\advance\\count10 by 1 \\global\\countdef#1=\\count10 }\n\
+\\def\\ProvidesPackage#1{\\expandafter\\gdef\\csname ver@#1.sty\\endcsname{}}\n\
+\\def\\usepackage#1{\\def\\@currname{#1}\\def\\@currext{sty}\\input #1.sty \\relax}\n\
+\\newcount\\kernelcount \\kernelcount=3\n\
+\\def\\kernelmacro#1{\\ifnum#1>0 [#1]\\else\\relax\\fi}\n\
+\\edef\\kernelcopy{\\noexpand\\kernelmacro{\\the\\kernelcount}}\n\
+\\input minipart.ltx\n\
+\\def\\kernelend{}\n";
+
+const MINI_PACKAGE: &str = "\\ProvidesPackage{demo}\n\
+\\newcount\\democount \\democount=7\n\
+\\def\\demomacro{\\kernelmacro{\\the\\democount}}\n\
+\\expandafter\\def\\csname demo@x\\endcsname{\\fromkernelpart{x}}\n\
+\\def\\demoend{}\n";
+
+/// A run against [`mini_texmf`] `tree` alone: no `kpsewhich`, no
+/// installation, caches in `cache`.
+pub fn mini_config(tree: &Path, cache: &Path) -> Config {
+    Config {
+        texmf: Texmf { roots: vec![tree.to_path_buf()], bundle: None, kpsewhich: false, fallback: false },
+        cache: satex::config::Cache { dir: Some(cache.to_path_buf()), ..Default::default() },
+        ..config()
+    }
+}

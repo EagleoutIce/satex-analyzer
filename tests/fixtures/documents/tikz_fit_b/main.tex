@@ -1,0 +1,42 @@
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{positioning,fit}
+\newcommand\toolxv[1]{toolX}
+\begin{document}
+\begin{figure}[hbt]
+    \resizebox{\textwidth}{!}{%
+    \begin{tikzpicture}[
+         stage/.style={draw=gray!50, rounded corners, inner sep = 8pt, thick},
+    ]
+
+        \node[stage, minimum height=2cm] (notebook) { Notebook $N$};
+
+        \node[stage, right=of notebook] (adapter) { Adapter };
+        \node[above=2mm of adapter] (l1) {Stage 1};
+
+        \node[stage, right=2cm of adapter] (graph) { Graph Construction };
+        \node[above=2mm of graph] (l2) {Stage 2};
+
+        \node[stage, right=3.5cm of graph] (order) { Order Generation };
+        \node[above=2mm of order] (l3) {Stage 3};
+
+        \node[stage, right=of order, minimum height=2cm, align=center] (output) { $(N_1,N_2,\dots)$\\$(N_4,N_3,\dots)$\\$\dots$ };
+
+        \node[below=1mm of adapter] (spacer) {};
+
+        \node [stage, inner sep=10pt, fit={(adapter) (graph) (order) (l1) (l2) (l3) (spacer)}] (toolx) {};
+
+
+        \node[above=0mm of toolx, gray!80] {\large \toolxv{0}};
+
+        \draw[->] (notebook) -- (adapter);
+        \draw[->] (adapter) -- (graph) node [midway, align=center] {use/def\\list};
+        \draw[->] (graph) -- (order) node [midway, align=center] {interdependency\\graph};
+        \draw[->] (order) -- (output);
+
+    \end{tikzpicture}
+    }
+\end{figure}
+\gdef\SatexReachedEnd{}
+\end{document}

@@ -356,6 +356,20 @@ fn certain_error_drops_its_path() {
     assert!(with_code(&kept, "assumed-compiles").is_empty());
 }
 
+/// Once the running path raises a certain error too, nothing compiles: the
+/// dropped path runs on at once and joins it, so the text after is read
+/// once. Before, it ran on only after the end, and read the rest again.
+#[test]
+fn a_dropped_path_rejoins_once_nothing_compiles() {
+    let source = r"\ifnum\pdfuniformdeviate2=0 \def\m{a}\undefinedcs\else\def\m{b}\fi
+        \def\n{x}\undefinedtoo \def\w{\m}\edef\z{\m}";
+    let analysis = analyze(source);
+    let z = body(&analysis, "z");
+    assert!(z.contains('a') && z.contains('b'), "{z}");
+    let w = names(&analysis).iter().filter(|n| *n == "w").count();
+    assert_eq!(w, 1, "the text after the errors was read {w} times");
+}
+
 /// Undecided loops run one after another from one macro's text, with no
 /// source read in between (a hook's code), on paths a group keeps apart:
 /// the heads of the loops already
@@ -442,4 +456,220 @@ fn an_argument_over_joined_text_leaves_no_open_conditional() {
         assert!(defined.contains(&name.to_string()), "{name}: {defined:?}");
     }
     assert!(!with_code(&analysis, "argument-ends-in-unknown").is_empty(), "{:?}", broken_gaps(&analysis));
+}
+
+/// How many times `name` is defined: once per path that reaches it.
+fn defined_times(analysis: &Analysis, name: &str) -> usize {
+    analysis.facts.defs.iter().filter(|d| analysis.interner.name(d.name) == name).count()
+}
+
+const PICK2: &str = r"\ifnum\pdfuniformdeviate2=0 ";
+
+/// Typed digits are digits of category 12: `\ifcat\noexpand` against `0`
+/// is true and `\if` against a letter or an unsigned `-` false, decided.
+#[test]
+fn if_and_ifcat_decide_typed_digits() {
+    let analysis = analyze(
+        r"\edef\a{\pdfuniformdeviate 100}
+          \expandafter\ifcat\expandafter\noexpand\a 0\def\cat{}\else\def\nocat{}\fi
+          \expandafter\if\a x\def\letter{}\else\def\noletter{}\fi
+          \expandafter\if\a -\def\minus{}\else\def\nominus{}\fi",
+    );
+    let defined = names(&analysis);
+    for (yes, no) in [("cat", "nocat"), ("noletter", "letter"), ("nominus", "minus")] {
+        assert!(defined.contains(&yes.to_string()) && !defined.contains(&no.to_string()), "{yes}: {defined:?}");
+    }
+    assert!(with_code(&analysis, "undecided-condition").is_empty());
+}
+
+/// One-of texts whose first tokens all agree decide `\if`, `\ifcat`
+/// (behind `\noexpand` too) and `\ifx` on one path.
+#[test]
+fn one_of_texts_that_agree_decide_the_test() {
+    let analysis = analyze(&format!(
+        r"\def\x{{}}\let\y=\x
+          \edef\r{{{PICK2}a\else b\fi}}
+          \expandafter\ifcat\expandafter\noexpand\r x\def\cat{{}}\else\def\nocat{{}}\fi
+          \expandafter\if\r 0\def\zero{{}}\else\def\nozero{{}}\fi
+          \edef\s{{{PICK2}\noexpand\x\else\noexpand\y\fi}}
+          \expandafter\ifx\s\x\def\same{{}}\else\def\notsame{{}}\fi"
+    ));
+    let defined = names(&analysis);
+    for (yes, no) in [("cat", "nocat"), ("nozero", "zero"), ("same", "notsame")] {
+        assert!(defined.contains(&yes.to_string()) && !defined.contains(&no.to_string()), "{yes}: {defined:?}");
+    }
+    assert!(with_code(&analysis, "undecided-condition").is_empty());
+}
+
+/// One-of texts that disagree part into one path per answer, never one
+/// per text: three texts, two answers, two paths.
+#[test]
+fn one_of_texts_that_disagree_split_per_answer() {
+    let analysis = analyze(&format!(
+        r"\edef\r{{\ifnum\pdfuniformdeviate3=0 a\else\ifnum\pdfuniformdeviate2=0 b\else 1\fi\fi}}
+          \expandafter\ifcat\expandafter\noexpand\r x\def\yes{{}}\else\def\no{{}}\fi
+          \expandafter\if\r b\def\isb{{}}\else\def\notb{{}}\fi"
+    ));
+    for name in ["yes", "no", "isb", "notb"] {
+        assert_eq!(defined_times(&analysis, name), 1, "{name}: {:?}", names(&analysis));
+    }
+    assert!(with_code(&analysis, "undecided-condition").is_empty());
+}
+
+/// A one-of text that may be empty leaves the operand unknown: undecided,
+/// both arms run.
+#[test]
+fn one_of_text_that_may_be_empty_is_undecided() {
+    let analysis = analyze(&format!(
+        r"\edef\r{{{PICK2}a\fi}}\expandafter\ifcat\expandafter\noexpand\r x\def\yes{{}}\else\def\no{{}}\fi"
+    ));
+    let defined = names(&analysis);
+    assert!(defined.contains(&"yes".to_string()) && defined.contains(&"no".to_string()), "{defined:?}");
+}
+
+/// A delimited scan over a one-of token where only some texts hold the
+/// delimiter: the argument ends inside those texts, after the token for
+/// the others.
+#[test]
+fn delimited_scan_over_one_of_where_some_texts_hold_the_delimiter() {
+    let analysis = analyze(&format!(
+        r"\edef\r{{{PICK2}a.b\else c\fi}}
+          \def\get#1.#2\end{{\expandafter\def\csname got#1/#2\endcsname{{}}}}\expandafter\get\r.\end"
+    ));
+    let defined = names(&analysis);
+    assert!(defined.contains(&"gota/b.".to_string()) && defined.contains(&"gotc/".to_string()), "{defined:?}");
+}
+
+// Joins at `\fi`: both arms of an undecided conditional that reach the same
+// `\fi` go on as one path (SEMANTICS.md § 14).
+
+const UNKNOWN_DIMS: &str = r"\setbox0\hbox{x}\dimen1=\wd0 \setbox2\hbox{y}\dimen3=\wd2 ";
+
+/// Arms that only set data join at their `\fi`: the next undecided test
+/// parts one path in two, not two in four, and the joined register is an
+/// interval that decides what lies outside it.
+#[test]
+fn data_only_arms_join_at_fi_into_an_interval() {
+    let analysis = analyze(&format!(
+        r"{UNKNOWN_DIMS}\def\run{{\ifdim\dimen1>5pt \dimen2=1pt \else \dimen2=3pt \fi
+          \ifdim\dimen3>5pt \count1=1 \else \count1=2 \fi
+          \ifdim\dimen2<4pt \def\below{{}}\else\def\above{{}}\fi
+          \ifdim\dimen2>2pt \def\big{{}}\fi \ifdim\dimen2<2pt \def\small{{}}\fi}}\run"
+    ));
+    let defined = names(&analysis);
+    assert!(analysis.peak_paths <= 2, "{} paths", analysis.peak_paths);
+    assert!(defined.contains(&"below".to_string()) && !defined.contains(&"above".to_string()), "{defined:?}");
+    assert!(defined.contains(&"big".to_string()) && defined.contains(&"small".to_string()), "{defined:?}");
+}
+
+/// A macro defined differently in the arms is a meaning set of both
+/// bodies after `\fi`: `\ifx` against either is undecided.
+#[test]
+fn arms_defining_a_macro_differently_join_into_a_meaning_set() {
+    let analysis = analyze(&format!(
+        r"{UNKNOWN_DIMS}\def\a{{a}}\def\b{{b}}
+          \def\run{{\ifdim\dimen1>5pt \def\x{{a}}\else \def\x{{b}}\fi
+          \ifdim\dimen3>5pt \count1=1 \else \count1=2 \fi
+          \ifx\x\a \def\isa{{}}\fi \ifx\x\b \def\isb{{}}\fi}}\run"
+    ));
+    let defined = names(&analysis);
+    assert!(analysis.peak_paths <= 2, "{} paths", analysis.peak_paths);
+    assert!(defined.contains(&"isa".to_string()) && defined.contains(&"isb".to_string()), "{defined:?}");
+}
+
+/// A macro one arm defines is maybe defined after `\fi`: a later
+/// `\ifdefined` takes both arms.
+#[test]
+fn a_macro_one_arm_defines_is_maybe_defined_after_fi() {
+    let analysis = analyze(&format!(
+        r"{UNKNOWN_DIMS}\def\run{{\ifdim\dimen1>5pt \def\y{{}}\fi
+          \ifdim\dimen3>5pt \count1=1 \else \count1=2 \fi
+          \ifdefined\y \def\has{{}}\else\def\hasnot{{}}\fi}}\run"
+    ));
+    let defined = names(&analysis);
+    assert!(analysis.peak_paths <= 2, "{} paths", analysis.peak_paths);
+    assert!(defined.contains(&"has".to_string()) && defined.contains(&"hasnot".to_string()), "{defined:?}");
+}
+
+/// A test whose interval straddles the constant splits it: each arm holds
+/// its part, so a test inside an arm that the part decides is decided.
+#[test]
+fn a_straddling_test_splits_the_interval() {
+    let analysis = analyze(&format!(
+        r"{UNKNOWN_DIMS}\ifdim\dimen1<0pt \dimen1=0pt \fi \ifdim\dimen1>345pt \dimen1=345pt \fi
+          \ifdim\dimen1>100pt \ifdim\dimen1>99pt \def\hi{{}}\else\def\nohi{{}}\fi
+          \else \ifdim\dimen1>100pt \def\lo{{}}\else\def\nolo{{}}\fi\fi
+          \ifdim\dimen1>345pt \def\over{{}}\fi"
+    ));
+    let defined = names(&analysis);
+    assert!(defined.contains(&"hi".to_string()) && !defined.contains(&"nohi".to_string()), "{defined:?}");
+    assert!(defined.contains(&"nolo".to_string()) && !defined.contains(&"lo".to_string()), "{defined:?}");
+    assert!(!defined.contains(&"over".to_string()), "{defined:?}");
+}
+
+/// A recursion whose test is undecided on each level still ends: the arms
+/// join at each level's `\fi`.
+#[test]
+fn a_recursive_undecided_conditional_terminates() {
+    let analysis = analyze(&format!(
+        r"{UNKNOWN_DIMS}\count1=0
+          \def\r{{\advance\count1 1 \ifdim\dimen1>\count1 pt \ifnum\count1<30 \expandafter\expandafter\expandafter\r\fi\fi}}\r
+          \def\done{{}}"
+    ));
+    assert!(names(&analysis).contains(&"done".to_string()), "{:?}", names(&analysis));
+    assert!(!analysis.exhausted);
+}
+
+/// A pgf-like bounding box update: 50 undecided `\ifdim` in a row, each
+/// arm a `\global` assignment that reads on to its `\fi`, stay at most two
+/// paths.
+#[test]
+fn fifty_sequential_bbox_updates_stay_two_paths() {
+    let mut body = String::new();
+    for i in 0..50 {
+        body.push_str(&format!(
+            r"\dimen5={i}pt \advance\dimen5 by \dimen1 \ifdim\dimen5>\dimen7 \global\dimen7=\dimen5\fi "
+        ));
+    }
+    let analysis = analyze(&format!(r"{UNKNOWN_DIMS}\dimen7=0pt \def\update{{{body}}}\update \def\done{{}}"));
+    assert!(names(&analysis).contains(&"done".to_string()), "{:?}", names(&analysis));
+    assert!(analysis.peak_paths <= 2, "{} paths", analysis.peak_paths);
+}
+
+/// Arms that leave different category codes stand apart by what a join
+/// loses, yet both closed the same `\fi`: they join there, so twelve
+/// such conditionals in a row stay two paths.
+#[test]
+fn arms_with_different_catcodes_join_at_their_fi() {
+    let mut body = String::new();
+    for i in 0..12 {
+        body.push_str(&format!(r"\ifdim\dimen1>{i}pt \catcode`\~=13 \fi "));
+    }
+    let analysis = analyze(&format!(r"{UNKNOWN_DIMS}\def\update{{{body}}}\update \def\done{{}}"));
+    assert!(names(&analysis).contains(&"done".to_string()), "{:?}", names(&analysis));
+    assert!(analysis.peak_paths <= 2, "{} paths", analysis.peak_paths);
+}
+
+/// Arms that leave a number in disjoint intervals join to a set of
+/// intervals, not their hull: a test splits it per member, so a value
+/// between them never shows up (`limits.interval_set`).
+#[test]
+fn disjoint_intervals_join_to_an_interval_set() {
+    let source = format!(
+        r"{UNKNOWN_DIMS}\ifdim\dimen1<0pt \dimen1=0pt\fi \ifdim\dimen1>10pt \dimen1=10pt\fi
+          \dimen2=\dimen1 \ifdim\dimen3>5pt \advance\dimen2 by 100pt \fi
+          \ifdim\dimen2>50pt \def\big{{}}\else\def\small{{}}\fi
+          \ifdim\dimen2>20pt \ifdim\dimen2<90pt \def\middle{{}}\fi\fi
+          \ifdim\dimen2<120pt \def\below{{}}\else\def\above{{}}\fi"
+    );
+    let analysis = analyze(&source);
+    let defined = names(&analysis);
+    assert!(defined.contains(&"big".to_string()) && defined.contains(&"small".to_string()), "{defined:?}");
+    assert!(!defined.contains(&"middle".to_string()), "{defined:?}");
+    assert!(defined.contains(&"below".to_string()) && !defined.contains(&"above".to_string()), "{defined:?}");
+    // One member keeps only the hull, which holds values between them.
+    let mut cfg = satex::config::Config { arm_joins: true, ..crate::support::bare() };
+    cfg.limits.interval_set = 1;
+    let hull = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
+    assert!(names(&hull).contains(&"middle".to_string()), "{:?}", names(&hull));
 }

@@ -1,0 +1,39 @@
+\RequirePackage{tikz}
+\PassOptionsToPackage{calc, en-US}{datetime2}
+\RequirePackage{datetime2}
+
+\tikzset{sigshift/.style={}}
+\newcommand*\signature[2][]{\def\@signature{#2}\tikzset{sigshift/.style={#1}}}
+\newcommand*\signaturelocation[1]{\def\@location{#1}} \let\@location\@empty
+\newcommand*\signaturedate[1]{\DTMsavedate{submissiondate}{#1}\DTMmakeglobal{submissiondate}}
+
+\def\@signarea{\def\lw{1.1pt}%
+	\tikzset{inline/.style={inner sep=0pt,outer sep=0pt},
+	lcr/.style={line cap=round},lw/.style={line width=\lw},
+	name/.style={anchor=north west,inline,yshift=-5pt},
+	content/.style={anchor=base west,baseline,inline,yshift=\lw/2+.5pt}}%
+	\begin{minipage}[b]{.5\textwidth-5mm}
+		\begin{tikzpicture}
+			\draw[lcr,lw] (0,0) -- (\textwidth,0);
+			\node[name] at (0,0) {\strut\translate{location}, \translate{date}};
+			\node[content,sigshift, yshift=\lw/2+3.5pt] at (0,0) {\LiningFigures\large\itshape\@location\ifx\@location\@empty\else\DTMifsaveddate{submissiondate}{,}{}\fi \quad \DTMifsaveddate{submissiondate}{\DTMusedate{submissiondate}}{}};
+		\end{tikzpicture}
+	\end{minipage}\hfill
+	\begin{minipage}[b]{.5\textwidth-5mm}
+		\begin{tikzpicture}
+			\draw[lcr,lw] (0,0) -- (\textwidth,0);
+			\node[name] at (0,0) {\strut\@author};
+			\@ifundefined{@signature}{}{\node[content,sigshift] at (0,0) {\includegraphics[width=4cm]{\@signature}};}
+		\end{tikzpicture}
+	\end{minipage}
+}
+\def\@sigskip{\vskip32\p@ plus 7\p@ minus 7\p@}
+
+\newenvironment{declarationofauthenticity}
+	{\cleardoublepage\thispagestyle{plain}\begingroup\section*{\translate{authenticity}}}
+	{\par\@sigskip\@signarea\thesis@voidpar\endgroup\bigskip\thesis@voidpar}
+
+
+\def\makedeclarationofauthenticity{\AtEndDocument{\begin{declarationofauthenticity}
+	\translate{declaration-of-authenticity}
+\end{declarationofauthenticity}}}

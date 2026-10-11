@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{pdfcomment}
+\begin{document}
+% Positions known from the .aux: the four \strip@pt calls of one \xdef
+% are sibling calls, not a loop.
+A \ensuremath{\pdfmarkupcomment[markup=Underline,color=purple]{\mbox{12}}{note}} B.
+\gdef\AfterMarkup{}
+\section{After}\label{after}
+\gdef\SatexReachedEnd{}
+\end{document}

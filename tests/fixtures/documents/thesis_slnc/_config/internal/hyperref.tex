@@ -1,0 +1,192 @@
+\ifthesis@hyperref\else
+   \thesis@info{Disable automatic hyperref configuration (disabled)}
+   \endinput
+\fi
+
+\thesis@info{Apply hyperref configuration}
+
+\PassOptionsToPackage{
+   unicode=true,
+   draft=false,
+   pdftex,
+   backref,
+   pagebackref=false,
+   bookmarks=true,
+   bookmarksopen=false,
+   bookmarksdepth=5,
+   pdfdisplaydoctitle,
+   pdfborder={0 0 0},
+   % breaklinks,
+   colorlinks,
+   hyperindex,%
+   % linktocpage=true,
+   urlcolor=@url,
+   linkcolor=@link,
+   citecolor=@cite
+}{hyperref}
+% TODO: custom toc colors so that name has none but page has
+
+\PassOptionsToPackage{hyphens}{url}
+\RequirePackage{hyperref}
+\RequirePackage{bookmark}
+\ifthesis@draft\else\PassOptionsToPackage{all}{hypcap}\RequirePackage{hypcap}\fi
+
+\def\thesis@@disablehyper{\hypersetup{allcolors=.}}
+\def\thesis@disablehyper#1{\begingroup\thesis@@disablehyper#1\endgroup}
+\let\nohyper\thesis@disablehyper
+\ifthesis@draft\else
+\AtBeginDocument{%
+   {\protected@edef\@subject{\translate{\thesis@type}}\def\nl{\space}%
+   \hypersetup{%
+      pdftitle={\@title},
+      pdfauthor={\@author},
+      pdfsubject={\@subject}
+   }}%
+}
+\fi
+% set hyperlinks in tableofcontents, based on https://tex.stackexchange.com/a/588878
+\newcommand*\thesis@toc@entrynumber[1]{\bgroup
+   \thesis@@disablehyper\itshape\ifx\Hy@tocdestname\ltx@empty #1\else
+   \hyper@linkstart{link}{\Hy@tocdestname}#1\hyper@linkend
+  \fi\egroup
+}
+% linked by configuration
+\newcommand*\thesis@toc@entry[1]{\bgroup\thesis@@disablehyper#1\egroup}
+\newcommand*\thesis@toc@pagenumber[1]{%
+  \ifx\Hy@tocdestname\ltx@empty #1\else
+   \hypersetup{linkcolor=@link}\hyper@linkstart{link}{\Hy@tocdestname}#1\hyper@linkend
+  \fi
+}
+
+\DeclareTOCStyleEntries[
+  entrynumberformat=\thesis@toc@entrynumber,
+  entryformat=\thesis@toc@entry,
+  pagenumberformat=\thesis@toc@pagenumber
+]{tocline}{part,chapter,section,subsection,subsubsection,paragraph,subparagraph,figure,table}
+
+\newcommand*\thesis@toc@chap@entry[1]{\bgroup\thesis@@disablehyper\textit{#1}\egroup}
+\DeclareTOCStyleEntries[
+  entrynumberformat=\thesis@toc@entrynumber,
+  entryformat=\thesis@toc@chap@entry,
+  pagenumberformat=\thesis@toc@pagenumber,
+  beforeskip=.5em plus 1pt
+]{tocline}{chapter}
+
+\RequirePackage{varioref}
+\RequirePackage[capitalise,noabbrev,nameinlink]{cleveref}
+\RequirePackage{fontawesome}
+% append the format so that it produces something in the margin
+\LetLtxMacro\basicCref\Cref% NOTE: i capitalize this way, so varioref is not affected.
+\LetLtxMacro\basiccref\cref
+\def\cref{\@ifstar\basicCref\modifiedcref} \robustify\cref
+\def\Cref{\cref} \robustify\Cref% brrrh -- but as we capitalise anyway with calling basicCref
+
+\newcount\crefsidebarcounter
+\newif\ifcrefsidebarfirst
+\def\hyperlinksymbol{\smash{\scalebox{-.75}[.75]{\faLink}}}
+% #1 is link #2 potential override mark, #3 is first prefix, #4 is afterward
+\def\crefmultipleref#1#2#3#4{%
+   \crefsidebarcounter0\relax
+   \@for\lnk:={#1}\do{\global\advance\crefsidebarcounter1}%
+   \crefsidebarfirsttrue\hyperlinksymbol~%
+   \@for\lnk:={#1}\do{%
+      \thesis@disablehyper{%
+         \global\advance\crefsidebarcounter-1%
+         \ifcsname r@\lnk\endcsname
+            \ifcrefsidebarfirst
+               \crefsidebarfirstfalse
+               \smash{#3}%
+            \else
+               \smash{#4}%
+            \fi
+            \smash{~}%
+            \ifx!#2!\relax%
+               \vpageref{\lnk}%
+            \else
+               \vpageref[#2]{\lnk}%
+            \fi
+         \fi
+         \smash{%
+            \ifnum\crefsidebarcounter>0\relax
+               \ifnum\crefsidebarcounter=1\relax
+                  \smash{,~and }%
+               \else
+                  \smash{,~}%
+               \fi
+            \else.\fi
+         }%
+      }%
+   }%
+}
+
+% optional argument is ONLY for varioref in case of the same page
+\newcommand*\modifiedcref[2][\reftextcurrent]{%
+   \thesis@disablehyper{%
+      \hyperref[#2]{\basicCref*{#2}}%
+         \ifinsidenote
+            \space(\vpageref[#1]{#2})%
+         \else
+            \sideref[#1]{#2}%
+      \fi
+   }%
+}
+\newcommand*\sideref[2][]{\protect\siderefhelper{#2}{#1}}
+\def\siderefhelperDo#1#2{\vskip-2.25pt\strut\crefmultipleref{#1}{#2}{\basicCref{\lnk}}{\basiccref{\lnk}}\strut}
+\def\siderefhelper#1#2{\smash{\sidenote*[-5\p@]{\siderefhelperDo{#1}{#2}}}}
+% focuses on single #3 is text
+\newcommand*\customref[3][]{\protect\customrefhelper{#2}{#1}{#3}\thesis@disablehyper{\hyperref[#2]{#3}}}
+\newcommand*\customsideref[3][]{\protect\customrefhelper{#2}{#1}{#3}}
+\def\sidewordis{}
+\def\customrefhelper#1#2#3{\smash{\sidenote*[-5\p@]{\vskip-2.25pt\crefmultipleref{#1}{#2}{\MakeUppercase#3\sidewordis}{#3\sidewordis}}}}
+\robustify\sideref
+
+% #3 guard
+\newcommand*\guardedSideref[3][]{\protect\guardedSiderefhelper{#2}{#1}{#3}}
+\def\guardedSiderefDo#1#2#3{%
+\checkoddpage % for the guard TODO: deal with spaces if not present?
+\ifcsname#3\endcsname\vskip\dimexpr-\baselineskip-3pt\relax\else
+   \thesis@sn@gd{-3\p@}{\csxdef{#3}{}%
+      \crefmultipleref{#1}{#2}{\basicCref{\lnk}}{\basiccref{\lnk}}%
+   }%
+\fi
+}
+\def\guardedSiderefhelper#1#2#3{\smash{%
+   \makenote*{\guardedSiderefDo{#1}{#2}{#3}}%
+}}
+\robustify\guardedSideref
+
+\def\plainlink#1#2{\thesis@disablehyper{\hyperref[#1]{\itshape#2}}}
+\newcommand\sidelink[3][]{\smash{\sidenote*{\crefmultipleref{#2}{#1}{\MakeUppercase #3}{#3}}}\plainlink{#2}{#3}}
+\def\link{\@ifstar\plainlink\sidelink}
+
+% TODO: join, like 'section 1.5 and 2.3 can be found on pages 31 and 52.
+% TODO: add flags for notation glossary that is used for e.g. E_A etc.
+
+\AtEndPreamble{\def\multicitedelim{,~}}% do not break!
+\PassOptionsToPackage{super}{nth}
+\RequirePackage{nth}
+% the raise is wayyy to much:
+\def\nthscript#1{\smash{\textsuperscript{\raisebox{-2pt}{#1}}}}
+\def\nthpagelink#1{\hyperlink{page.#1}{\nth{#1}}}
+\hypersetup{pageanchor=true}
+% TODO: german
+\vref@addto\extrasenglish{%
+\def\reftextcurrent{on this page}%
+\def\reftextfaraway#1{on page\smash{~\pageref{#1}}}%
+\def\reftextfaceafter{on the \reftextvario{next}{facing} page}%
+\def\reftextfacebefore{on the previous page}%
+\def\reftextafter{on \reftextvario{page~\smash{\hyperpage{\thevpagerefnum}}}{page~\smash{\hyperpage{\thevpagerefnum}}}}% the~\smash{\nthpagelink{\thevpagerefnum}} page
+\def\reftextbefore{on \reftextvario{page~\smash{\hyperpage{\thevpagerefnum}}}{page~\smash{\hyperpage{\thevpagerefnum}}}}% the~\smash{\nthpagelink{\thevpagerefnum}} page
+\def\reftextpagerange#1#2{pages~\smash{\pageref{#1}}--\smash{\pageref{#2}}}%
+\def\reftextlabelrange#1#2{\smash{\ref{#1}} to~\smash{\ref{#2}}}%
+}
+
+\appto\extrasngerman{%
+   \Crefname{eq}{Gleichung}{Gleichungen}%
+   \Crefname{algocfline}{Zeile}{Zeilen}%
+}
+\appto\extrasenglish{%
+   \Crefname{eq}{Equation}{Equations}%
+   \Crefname{algocfline}{Line}{Lines}%
+}
+

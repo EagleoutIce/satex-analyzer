@@ -89,7 +89,7 @@ const INPUTS: &[(&str, &str)] = &[
 fn cfg(steps: u64) -> Config {
     let mut cfg = Config { engine: Some(Engine::PdfTeX), kernel: Some(Kernel::None), ..crate::support::config() };
     cfg.limits.steps = steps;
-    cfg.limits.stall_tokens = steps / 4;
+    cfg.limits.line_steps = steps / 4;
     cfg.limits.seconds = 0;
     cfg
 }
@@ -118,7 +118,7 @@ mod repeated_failures {
     fn cfg(bound: u32) -> Config {
         let mut cfg = Config { engine: Some(Engine::PdfTeX), kernel: Some(Kernel::None), ..crate::support::config() };
         cfg.limits.steps = 200_000;
-        cfg.limits.stall_tokens = 50_000;
+        cfg.limits.line_steps = 50_000;
         cfg.limits.seconds = 0;
         cfg.limits.repeat_failures = bound;
         cfg
@@ -196,7 +196,7 @@ mod self_referential_macros {
     fn cfg() -> Config {
         let mut cfg = Config { engine: Some(Engine::PdfTeX), kernel: Some(Kernel::None), ..crate::support::config() };
         cfg.limits.steps = 200_000;
-        cfg.limits.stall_tokens = 50_000;
+        cfg.limits.line_steps = 50_000;
         cfg.limits.seconds = 0;
         cfg
     }
@@ -266,7 +266,7 @@ mod self_referential_macros {
 fn unknown_marker_through_expandafter_terminates_with_one_gap() {
     let mut cfg = Config { engine: Some(Engine::PdfTeX), kernel: Some(Kernel::None), ..crate::support::config() };
     cfg.limits.steps = 200_000;
-    cfg.limits.stall_tokens = 50_000;
+    cfg.limits.line_steps = 50_000;
     cfg.limits.seconds = 0;
     // The creation date stands for text satex cannot know only when the
     // clock is not assumed.
@@ -356,7 +356,7 @@ fn diverging_meanings(n: usize) -> String {
 
 /// Loops that still end by a limit, where they should widen: a recursion
 /// that keeps a `\fi` per level is cut at `limits.recursion_depth`, nested
-/// groups at `limits.stall_tokens`, and an argument that grows every pass
+/// groups at `limits.line_steps`, and an argument that grows every pass
 /// makes a new loop head each time.
 const OPEN: &[&str] = &["recursing", "nesting groups", "mutual recursion", "afterassignment", "growing argument"];
 
@@ -417,4 +417,208 @@ fn converge(pick: impl Fn(&str) -> bool) {
         eprintln!("{what}: {:?}", started.elapsed());
     }
     assert!(failed.is_empty(), "ended by a limit, not a fixpoint:\n{}", failed.join("\n"));
+}
+
+/// A recursion that consumes digits of unknown count one by one, with an
+/// accumulator that grows each pass, reaches its fixpoint well inside a
+/// small step budget, with no limit reached.
+#[test]
+fn digit_consuming_recursion_with_an_accumulator_converges() {
+    let source = r"\catcode`\{=1 \catcode`\}=2 \catcode`\#=6 \count1=\pdfelapsedtime \edef\n{\the\count1}
+        \def\stop{}\def\r{}\def\a#1{\ifx\stop#1\else\advance\count2 1 \edef\r{\r#1}\expandafter\a\fi}
+        \expandafter\a\n\stop\def\after{}";
+    let analysis = Machine::analyze(source, None, &cfg(20_000));
+    let limits: Vec<&str> = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| ["budget-exhausted", "limit-reached", "repeated-failure"].contains(&d.code))
+        .map(|d| d.message.as_str())
+        .collect();
+    assert!(limits.is_empty(), "{limits:?}");
+    assert!(analysis.steps < 10_000, "{} steps", analysis.steps);
+}
+
+/// A call re-entered with the same arguments and input, one conditional
+/// deeper each time (its `\fi` taken as its argument), never ends: it is
+/// cut after a few rounds, not at `limits.site_expansions`.
+#[test]
+fn reentry_nested_deeper_each_round_is_cut_early() {
+    let source = r"\catcode`\{=1 \catcode`\}=2 \catcode`\#=6 \def\x{0}\let\expandafter\x
+        \def\a#1{\ifx\stop#1\relax\else\expandafter\a\fi}\a\fi\stop";
+    let analysis = Machine::analyze(source, None, &cfg(200_000));
+    assert!(analysis.steps < 2_000, "{} steps", analysis.steps);
+    assert!(analysis.facts.diagnostics.iter().any(|d| d.message.contains("nested deeper each time")));
+}
+
+/// Paths joined at unequal input depth: code the deeper one still has to
+/// run is not one data token, which an x-expansion would store unexpanded
+/// and which later breaks the braces ("Argument has an extra }").
+#[test]
+fn a_join_never_folds_code_into_data() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = r"\documentclass{article}
+\ExplSyntaxOn
+\str_set:Ne \l_tmpb_str { a \int_to_Hex:n{\int_rand:n{255}} b }
+\exp_args:NNo \str_set_convert:Nnnn \l_tmpa_str \l_tmpb_str {utf8}{}
+\ExplSyntaxOff
+\begin{document}x\end{document}";
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/termination/join-code");
+    let cfg = Config {
+        cache: satex::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
+        load: satex::config::Load { packages: true, classes: true, ..Default::default() },
+        ..crate::support::config()
+    };
+    crate::support::seed_kernel(&cfg);
+    let analysis = Machine::analyze(source, None, &cfg);
+    let bad: Vec<String> = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.message.contains("extra }")
+                || d.code == "budget-exhausted"
+                || (d.code == "limit-reached"
+                    && ["limits.steps", "limits.seconds"].iter().any(|l| d.message.contains(l)))
+        })
+        .map(|d| format!("{} {}", d.code, d.message))
+        .collect();
+    assert!(bad.is_empty(), "{bad:?}");
+}
+
+/// A summarized loop never ends the analysis: the input after it, here
+/// a second file, is still read, and nothing ends early.
+#[test]
+fn a_summarized_loop_leaves_the_rest_of_the_document_read() {
+    if !crate::support::installed() {
+        return;
+    }
+    let dir = crate::support::scratch_dir(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/termination/rest-read"),
+    );
+    std::fs::write(dir.join("rest.tex"), r"\def\reached{yes}").unwrap();
+    let source = format!(
+        r"\documentclass{{article}}
+\countdef\n=9 \n=\pdfelapsedtime
+\def\a{{\ifnum\count1<\n \advance\count1 1 \begingroup\expandafter\a\fi}}
+\begin{{document}}
+\a{{}}
+\input{{{}/rest.tex}}
+\ifdefined\reached \else\errmessage{{not reached}}\fi
+\end{{document}}",
+        dir.display()
+    );
+    let cfg = Config {
+        cache: satex::config::Cache { dir: Some(dir.join("cache")), ..Default::default() },
+        load: satex::config::Load { packages: true, classes: true, ..Default::default() },
+        ..crate::support::config()
+    };
+    crate::support::seed_kernel(&cfg);
+    let analysis = Machine::analyze(&source, None, &cfg);
+    let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
+    assert!(!codes.contains(&"analysis-ended-early"), "{codes:?}");
+    assert!(codes.contains(&"recursion-widened"), "the loop is summarized: {codes:?}");
+    let reached = analysis.facts.diagnostics.iter().any(|d| d.message.contains("not reached"));
+    assert!(!reached, "the second file was not read");
+    assert!(analysis.files.iter().any(|f| f.path.ends_with("rest.tex")), "rest.tex is read");
+}
+
+/// A summarized loop in the body consumes no source: the text and the
+/// `\section` after it are still read.
+#[test]
+fn a_summarized_loop_consumes_no_source_text() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = r"\documentclass{article}
+\countdef\n=9 \n=\pdfelapsedtime
+\def\a{\ifnum\count1<\n \advance\count1 1 \begingroup\expandafter\a\fi}
+\begin{document}
+\a{}
+Plain text after the loop.
+\section{After}\label{sec:after}
+\end{document}";
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/termination/no-gobble");
+    let cfg = Config {
+        cache: satex::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
+        load: satex::config::Load { packages: true, classes: true, ..Default::default() },
+        ..crate::support::config()
+    };
+    crate::support::seed_kernel(&cfg);
+    let analysis = Machine::analyze(source, None, &cfg);
+    let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&"recursion-widened"), "the loop is summarized: {codes:?}");
+    assert!(!codes.contains(&"analysis-ended-early"), "{codes:?}");
+    let label = analysis.interner.lookup("r@sec:after").or_else(|| analysis.interner.lookup("sec:after"));
+    let seen = format!("{:?}", analysis.facts.diagnostics).contains("sec:after")
+        || label.is_some()
+        || analysis.document_depth.is_some();
+    assert!(seen, "the \\section after the loop is read: {codes:?}");
+}
+
+/// The termination guard (`limits.line_steps`). Each loop ends within the
+/// bound with the next line read, once as the precision cuts leave it and
+/// once with them all off: then the guard alone cuts it, a second loop on
+/// the line skips its rest, and the next line is read. The run takes at
+/// most 3 times the budget per line read.
+mod line_guard {
+    use satex::machine::{Analysis, Machine};
+
+    const LINE: u64 = 100_000;
+    const HEAD: &str =
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\count1=\\pdfelapsedtime \\edef\\u{\\the\\count1}";
+
+    fn run(defs: &str, call: &str, alone: bool) -> Analysis {
+        let mut cfg = super::cfg(1_000_000_000);
+        cfg.limits.line_steps = LINE;
+        cfg.limits.seconds = 60;
+        if alone {
+            let l = &mut cfg.limits;
+            (l.widen_after, l.cycle_after, l.recursion_depth, l.expansion_depth) =
+                (u16::MAX, u16::MAX, u16::MAX, u16::MAX);
+            (l.call_summary_after, l.site_expansions, l.repeat_failures) = (0, u32::MAX, u32::MAX);
+            (l.expansion_stack, l.held_tokens) = (usize::MAX, usize::MAX);
+        }
+        let source = format!("{HEAD}\n{defs}\n{call}{call}\\def\\Lost{{}}\n\\def\\Next{{}}\n");
+        let lines = source.lines().count() as u64;
+        let a = Machine::analyze(&source, None, &cfg);
+        assert!(a.steps <= lines * 3 * LINE + 10_000, "{} steps over the bound", a.steps);
+        a
+    }
+
+    fn check(defs: &str, call: &str) {
+        for alone in [false, true] {
+            let a = run(defs, call, alone);
+            let codes: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).collect();
+            let defined = |name: &str| a.facts.defs.iter().any(|d| a.interner.name(d.name) == name);
+            assert!(defined("Next"), "the next line is read ({alone}): {codes:?}");
+            assert!(!a.exhausted, "{codes:?}");
+            if alone {
+                assert!(codes.contains(&"line-budget-cut") && codes.contains(&"stalled-line-skipped"), "{codes:?}");
+                assert!(!defined("Lost"), "{codes:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn endless_recursion_on_an_unknown_test() {
+        check("\\def\\x{\\advance\\count2 1 \\ifx\\u\\relax\\expandafter\\x\\else\\expandafter\\x\\fi}", "\\x");
+    }
+
+    #[test]
+    fn char_loop_over_unknown_text_of_unknown_length() {
+        check("\\def\\c#1{\\expandafter\\c\\u#1}", "\\expandafter\\c\\u");
+    }
+
+    #[test]
+    fn recursion_inside_setbox() {
+        check("\\def\\r{\\advance\\count2 1 \\r}", "\\setbox0\\hbox{\\r}");
+    }
+
+    #[test]
+    fn endless_loop_in_an_edef() {
+        check("\\def\\l{\\ifnum\\count1>0 x\\expandafter\\l\\else\\expandafter\\l\\fi}", "\\edef\\e{\\l}");
+    }
 }

@@ -20,7 +20,10 @@ fn rows(analysis: &Analysis) -> Vec<String> {
         .facts
         .diagnostics
         .iter()
-        .map(|d| format!("{:?}|{}|{}|{}|{}", d.severity, d.code, at(analysis, d.span), d.count, d.message))
+        .map(|d| {
+            let origin = d.origin.map(|o| at(analysis, o)).unwrap_or_default();
+            format!("{:?}|{}|{}|{}|{}|{origin}", d.severity, d.code, at(analysis, d.span), d.count, d.message)
+        })
         .collect()
 }
 
@@ -85,22 +88,39 @@ fn one_process_analyzing_twice_says_the_same() {
     assert!(facts(&first).len() > 100, "the run should record something for the comparison to mean anything");
 }
 
-/// The first analysis builds the kernel cache and the second reads it: a
-/// message `\everyjob` prints must carry the same span in both (the build
-/// once left its `\input` call set, dating the banner to latex.ltx).
+/// A package that opens a stream while loading.
+const STREAM_STY: &str = r"\ProvidesPackage{detstream}
+\newread\det@in
+\immediate\openin\det@in=detstream.sty
+\immediate\closein\det@in
+\newcommand\detmacro[1]{(#1)}
+";
+
+/// The run that builds the kernel goes on as one that loads it: a format
+/// keeps no streams (tex.web § 1299). The kernel once left its streams set
+/// in the building run only, so the next run keyed its package caches apart,
+/// read the packages again, and only the third replayed them.
 #[test]
-fn building_the_cache_and_reading_it_say_the_same() {
+fn the_runs_that_build_and_extend_the_cache_say_the_same() {
     if !installed() {
         return;
     }
-    let dir = scratch("cold");
+    let dir = scratch("generations");
+    std::fs::write(dir.join("detstream.sty"), STREAM_STY).expect("write package");
+    let doc =
+        "\\documentclass{article}\n\\usepackage{detstream}\n\\begin{document}\n\\detmacro{x} -- y\n\\end{document}\n";
+    let path = dir.join("d.tex");
+    std::fs::write(&path, doc).expect("write document");
     let mut cfg = crate::support::config();
     cfg.cache.enabled = true;
     cfg.cache.dir = Some(dir.join("cache"));
-    let built = Machine::analyze(EXPL3, None, &cfg);
-    let read = Machine::analyze(EXPL3, None, &cfg);
-    assert_eq!(rows(&built), rows(&read), "the run that built the cache and the run that read it diagnose differently");
-    assert_eq!(facts(&built), facts(&read), "the run that built the cache and the run that read it record differently");
+    let runs: Vec<Analysis> = (0..3).map(|_| Machine::analyze(doc, Some(&path), &cfg)).collect();
+    let rebuilt: Vec<String> = runs[1].cache_report().into_iter().filter(|l| l.contains("rebuilt")).collect();
+    assert!(rebuilt.is_empty(), "the second run did not reuse what the first stored: {rebuilt:?}");
+    for (i, run) in runs.iter().enumerate().skip(1) {
+        assert_eq!(rows(&runs[0]), rows(run), "run {i} diagnoses unlike the run that built the cache");
+        assert_eq!(facts(&runs[0]), facts(run), "run {i} records unlike the run that built the cache");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -236,4 +256,45 @@ fn a_parallel_project_walk_reports_one_thing() {
     assert_eq!(first.declared_root, single.declared_root, "the walkers disagree on the `% !TeX root`");
     assert_eq!(first.inputs, single.inputs, "the walkers disagree on the inputs");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Forks over unknown numbers, for the load test below.
+const FORKS: &str = r"\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\count1=\pdfuniformdeviate 1000 \advance\count1 by -500
+\dimen1=\pdfuniformdeviate 200000000sp \advance\dimen1 by -100000000sp
+\def\d#1#2\end{\if\noexpand#10\if\relax\detokenize{#2}\relax\def\alone{}\else\def\follow{}\fi\fi}
+\def\c#1#2\end{\if\noexpand#1-\d#2\end\else\d#1#2\end\fi}
+\count2=0
+\def\loop{\advance\count2 by 1 \edef\u{\the\count1}\expandafter\c\u\end
+  \edef\t{\the\dimen1}\expandafter\c\t\end
+  \ifnum\count2<\pdfuniformdeviate 400 \expandafter\loop\fi}
+\loop";
+
+/// Cuts, widenings and the degrading of precision count steps, never
+/// seconds or bytes: a busy machine gives the same paths and findings as an
+/// idle one. The time limit is low, so a cut that read the clock would fall
+/// elsewhere under load.
+#[test]
+fn load_does_not_change_the_analysis() {
+    let mut cfg = crate::support::bare();
+    cfg.limits.seconds = 3;
+    let idle = Machine::analyze(FORKS, None, &cfg);
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let spinners: Vec<_> = (0..std::thread::available_parallelism().map_or(4, |n| n.get()) * 2)
+        .map(|_| {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let mut x = 0u64;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    x = std::hint::black_box(x.wrapping_mul(6364136223846793005).wrapping_add(1));
+                }
+            })
+        })
+        .collect();
+    let busy = Machine::analyze(FORKS, None, &cfg);
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    spinners.into_iter().for_each(|s| s.join().unwrap());
+    assert!(!idle.exhausted, "the run must end before the time limit for the comparison to mean anything");
+    assert_eq!(rows(&idle), rows(&busy), "load changed the diagnostics");
+    assert_eq!(facts(&idle), facts(&busy), "load changed the facts");
 }
