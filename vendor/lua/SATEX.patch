@@ -45,6 +45,14 @@ diff -ru /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-ae
 diff -ru /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lauxlib.c lua-5.3.6/lauxlib.c
 --- /tmp/claude-1000/-home-ostwind-git-phd-satex/5c2eb730-c0a0-45d7-b880-aefdcb7071f7/scratchpad/lua-orig/lauxlib.c	2026-09-24 12:54:16.299353267 +0200
 +++ lua-5.3.6/lauxlib.c	2026-09-24 12:54:29.180152429 +0200
+@@ -48,8 +48,10 @@
+   lua_pushnil(L);  /* start 'next' loop */
+   while (lua_next(L, -2)) {  /* for each pair in table */
+-    if (lua_type(L, -2) == LUA_TSTRING) {  /* ignore non-string keys */
++    if (lua_type(L, -2) == LUA_TSTRING &&  /* ignore non-string keys */
++        !(lua_type(L, -1) == LUA_TLIGHTUSERDATA &&  /* satex: and the unknown value */
++          lua_touserdata(L, -1) == (void *)&satex_unknown_tag)) {
+       if (lua_rawequal(L, objidx, -1)) {  /* found object? */
 @@ -161,7 +161,15 @@
  ** =======================================================
  */

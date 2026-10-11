@@ -19,52 +19,46 @@ jobs:
     runs-on: ubuntu-latest
     container: texlive/texlive:latest
     steps:
-      # Lua and LPeg are compiled from C; the TeX Live image has no compiler.
-      - name: Install a C toolchain
-        run: apt-get update && apt-get install -y --no-install-recommends build-essential
+      # Lua and LPeg are compiled from C; pandoc renders the Markdown,
+      # pdftocairo turns the logo into SVG.
+      - name: Install the build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential git xz-utils ca-certificates python3 pandoc poppler-utils
 
       - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-emscripten
       - uses: Swatinem/rust-cache@v2
+      # Compiles Lua for the browser; see `.cargo/config.toml`.
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Generate the documentation
         run: |
           cargo build --release
           cargo run --release --features doc --bin satex-doc
 
-      - name: Collect the site
-        run: |
-          mkdir -p site/doc
-          cp README.md site/index.md
-          cp SEMANTICS.md site/
-          cp -r doc/wiki site/wiki
-          cp -r doc/wiki site/doc/wiki
-          cp doc/chktex-coverage.md site/
-          cp doc/chktex-coverage.md site/doc/
-          # A project page is served under /<repository>, which the theme's
-          # own asset links follow through `baseurl`.
-          cat > site/_config.yml <<YAML
-          theme: jekyll-theme-cayman
-          title: satex
-          description: An abstract interpreter for TeX and LaTeX
-          baseurl: /${{ github.event.repository.name }}
-          YAML
-          # `{% raw %}` keeps Liquid off the page bodies: the samples contain
-          # TeX like `\def\Weird ...{%`, which Liquid reads as a tag.
-          # The image has no bash, so this stays POSIX sh.
-          find site -name '*.md' -exec sh -c 'for page do
-            {
-              printf "%s\n" "---" "layout: default" "---" "{% raw %}"
-              cat "$page"
-              printf "\n%s\n" "{% endraw %}"
-            } > "$page.tmp"
-            mv "$page.tmp" "$page"
-          done' sh {} +
+      - name: Build satex for the browser
+        run: cargo build --release --target wasm32-unknown-emscripten --bin satex
 
-      - uses: actions/upload-artifact@v4
+      - name: Build the site
+        run: python3 doc/site/build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site
+
+      - name: Test the playground
+        run: |
+          python3 -m http.server -d site 8000 > /dev/null 2>&1 &
+          sleep 2
+          node doc/site/test.mjs http://localhost:8000/
+
+      - uses: actions/upload-pages-artifact@v3
         with:
-          name: site-sources
           path: site
 
   publish:
@@ -74,18 +68,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: site-sources
-          path: site
-
       - uses: actions/configure-pages@v5
-      - uses: actions/jekyll-build-pages@v1
-        with:
-          source: ./site
-          destination: ./_site
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
       - id: deploy
         uses: actions/deploy-pages@v4
