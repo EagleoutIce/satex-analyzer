@@ -1,0 +1,7 @@
+# The playground's satex.yaml, next to the samples in the browser's file system.
+# texmf.bundle alone stands for the installation: no kpsewhich, no system paths.
+texmf: {bundle: /texmf.bundle, kpsewhich: false, fallback: false}
+project: {ignore_other_configs: true}
+limits: {memory: 2GiB, threads: 1}
+# Notes about the build, not the document: noise in short snippets.
+lint_off: [microtype-available, preamble-cost]
