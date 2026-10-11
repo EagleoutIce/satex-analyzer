@@ -1,1 +1,4 @@
 /target
+/site-out/
+/site-work/
+__pycache__/
