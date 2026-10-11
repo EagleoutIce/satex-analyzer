@@ -19,6 +19,10 @@
 //!   {{file: satex.yaml}}
 //!       Inlines that file's content in a fenced code block.
 //!
+//!   {{example: doc/src/wiki/challenges/01-catcode.tex}}
+//!       Inlines the file, then shows side by side the text pdflatex
+//!       typesets (one run, random seed 7) and what `satex lint` reports.
+//!
 //!   {{rules}}
 //!       A Markdown table of the lint rules (code, category, severity,
 //!       summary), from `satex lint --rules --format json`.
@@ -73,7 +77,7 @@ use std::sync::OnceLock;
 use regex::Regex;
 use satex::builtins::{self, Primitive, Site, Verdict};
 use satex::config::{Engine, Limits};
-use satex::lint::Source;
+use satex::lint::cite::linkify_citations;
 use satex::tex::{Interner, Meaning};
 
 const TEMPLATES: &[(&str, &str)] = &[
@@ -83,6 +87,7 @@ const TEMPLATES: &[(&str, &str)] = &[
     ("doc/src/wiki/configuration.md.in", "doc/wiki/configuration.md"),
     ("doc/src/wiki/lsp.md.in", "doc/wiki/lsp.md"),
     ("doc/src/wiki/domains.md.in", "doc/wiki/domains.md"),
+    ("doc/src/wiki/challenges.md.in", "doc/wiki/challenges.md"),
     ("doc/src/chktex-coverage.md.in", "doc/chktex-coverage.md"),
     ("doc/src/wiki/primitive-coverage.md.in", "doc/wiki/primitive-coverage.md"),
 ];
@@ -489,299 +494,6 @@ fn refresh_citations(check_only: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// One name a citation in the generated docs may use for a [`Source`], and
-/// the URL that name resolves to (always `Source::url()`, never a URL typed
-/// here by hand). `etex_url`/`xetex_url` cover the two names the docs cite
-/// that have no `Source` variant at all: they reuse, verbatim, the URLs
-/// `doc/src/wiki/primitive-coverage.md.in` already cited by hand for them.
-struct Alias {
-    name: &'static str,
-    url: String,
-    /// Whether the bare name, with no section or quoted title after it, is
-    /// still unambiguously a citation. `tex.web` and `pdfTeX manual` only
-    /// ever name the document; `xcolor` and `chktex` are also ordinary
-    /// words this repo uses on their own (a color, a linter), so those
-    /// need a section or quote after them before they are worth a link.
-    always: bool,
-}
-
-/// eTeX has no [`Source`] variant of its own (nothing in `src/lint/mod.rs`
-/// follows it directly), so its manual's URL is kept here, matching the one
-/// `doc/src/wiki/primitive-coverage.md.in` already cites by hand.
-const ETEX_MANUAL_URL: &str = "https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf";
-/// Same reasoning as [`ETEX_MANUAL_URL`], for the XeTeX reference.
-const XETEX_REFERENCE_URL: &str = "https://tug.org/xetex/";
-
-/// Every name the generated docs use for a source, built from
-/// [`Source::as_str`]/[`Source::url`] so the URL always comes from that one
-/// place. A source gets more than one entry here when the docs spell it
-/// more than one way (`pdftex` inline, `pdfTeX manual` in a citation).
-fn source_aliases() -> Vec<Alias> {
-    let known: &[(&str, Source, bool)] = &[
-        ("tex.web", Source::TeXWeb, true),
-        ("The TeXbook", Source::TeXbook, true),
-        ("source2e", Source::Source2e, true),
-        ("fntguide", Source::Fntguide, true),
-        ("usrguide", Source::Usrguide, true),
-        ("clsguide", Source::Clsguide, true),
-        ("interface3", Source::Interface3, true),
-        ("l2tabu", Source::L2tabu, true),
-        ("The LaTeX Companion", Source::Companion, true),
-        ("siunitx", Source::Siunitx, false),
-        ("microtype", Source::Microtype, false),
-        ("babel", Source::Babel, false),
-        ("biblatex", Source::Biblatex, false),
-        ("amsmath", Source::Amsmath, false),
-        ("hyperref", Source::Hyperref, false),
-        ("latexmk", Source::Latexmk, false),
-        ("arara", Source::Arara, false),
-        ("glossaries", Source::Glossaries, false),
-        ("graphics", Source::Graphics, false),
-        ("btxdoc", Source::Bibtex, true),
-        ("lmodern", Source::Lmodern, false),
-        ("pdftex", Source::Pdftex, false),
-        ("pdfTeX manual", Source::Pdftex, true),
-        ("luatex", Source::Luatex, false),
-        ("LuaTeX manual", Source::Luatex, true),
-        ("PDF 32000", Source::Pdf, true),
-        ("SI brochure", Source::SiBrochure, true),
-        ("TeX Live manual", Source::TexLive, true),
-        ("MiKTeX manual", Source::MikTeX, true),
-        ("xcolor", Source::Xcolor, false),
-        ("chktex", Source::Chktex, false),
-        ("ChkTeX", Source::Chktex, true),
-        ("csquotes", Source::Csquotes, false),
-    ];
-    let mut aliases: Vec<Alias> = known
-        .iter()
-        .map(|(name, source, always)| Alias { name, url: source.url().to_string(), always: *always })
-        .collect();
-    aliases.push(Alias { name: "eTeX manual", url: ETEX_MANUAL_URL.to_string(), always: true });
-    aliases.push(Alias { name: "etex_man", url: ETEX_MANUAL_URL.to_string(), always: true });
-    aliases.push(Alias { name: "XeTeX reference", url: XETEX_REFERENCE_URL.to_string(), always: true });
-    aliases
-}
-
-/// The `url` an already-rendered `[label](url)` markdown link points to.
-fn link_href(link: &str) -> Option<&str> {
-    let open = link.find("](")?;
-    link[open + 2..].strip_suffix(')')
-}
-
-/// Turns a citation of a [`Source`] into a markdown link, over the fully
-/// rendered text of one page, so a reader can check a claim against the
-/// actual page instead of trusting satex's word for it. Recognizes:
-///
-/// - `tex.web § 211`, and the double-section mark for more than one:
-///   `tex.web §§ 1211, 1`, `tex.web §§ 448–460`, `tex.web §§ 232 and 344`.
-/// - a quoted section title instead of a number: `LuaTeX manual, "Macros"`.
-/// - a versioned source: `ChkTeX 1.7.9 manual, § 8`.
-/// - a bare source name with no section at all (only for a name in
-///   [`Alias`] that is unambiguously a citation on its own, `always: true`):
-///   `Source: the LuaTeX manual.`
-/// - a section mark with no source name of its own, read as citing
-///   whichever source was last named: `hpack (tex.web § 649) and vpack
-///   (§ 668)`.
-///
-/// Leaves an existing markdown link and an inline code span exactly as they
-/// are, and never opens a second link inside one already there. A fenced
-/// code block is skipped outright: a `§` inside shown command output is not
-/// a citation. The "last named source" resets at every heading, so a stray
-/// `§` cannot ever be attributed to a citation several sections back.
-fn linkify_citations(markdown: &str) -> String {
-    let aliases = source_aliases();
-    let mut by_len: Vec<&Alias> = aliases.iter().collect();
-    by_len.sort_by_key(|a| std::cmp::Reverse(a.name.len()));
-    let alias_pattern = by_len.iter().map(|a| regex::escape(a.name)).collect::<Vec<_>>().join("|");
-
-    const NUM: &str = r"[0-9]+(?:\.[0-9]+)*";
-    let range = format!(r"{NUM}(?:\s*[-\u{{2013}}]\s*{NUM})?");
-    let list = format!(r"{range}(?:\s*(?:,|and)\s*{range})*");
-    let word = r#"[^\s,)."]+"#;
-    let quoted = r#""[^"]+""#;
-    let cite = format!(r#"(?:,?\s*§§?\s*(?:{list}|{word}))|(?:,\s*{quoted})"#);
-    let master = Regex::new(&format!(
-        r#"(?P<link>\[[^\]]*\]\([^)]*\))|(?P<code>`[^`]*`)|\b(?P<alias>{alias_pattern})\b(?P<qual>(?:\s+[0-9][0-9.]*)?(?:\s+(?:manual|reference))?)(?P<cite>{cite})?|(?P<bare>§§?\s*(?:{list}|{word}))"#
-    ))
-    .expect("linkify_citations: invalid citation regex");
-
-    let mut out = String::with_capacity(markdown.len());
-    let mut prose = String::new();
-    let mut last_url: Option<String> = None;
-    let mut in_fence = false;
-    let mut is_run_fence = false;
-    let mut fence_content = String::new();
-    // tex.web citations are pinned to an exact line (§ N -> `#L<line>`,
-    // never the whole file), so each one becomes its own reference-style
-    // link; the definitions collected here are appended once, at the end
-    // of the page, sorted by section number.
-    let mut tex_web_refs: BTreeMap<u32, String> = BTreeMap::new();
-    for line in markdown.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
-            out.push_str(&linkify_prose(&prose, &master, &aliases, &mut last_url, &mut tex_web_refs));
-            prose.clear();
-            if in_fence {
-                // Closing fence: the opening line (whatever its language tag
-                // was) has already been written, so only the content and
-                // the real closing line remain. A run transcript gets its
-                // `§`-style citations linked; anything else passes through
-                // byte for byte.
-                if is_run_fence {
-                    let linkified = linkify_prose(&fence_content, &master, &aliases, &mut last_url, &mut tex_web_refs);
-                    out.push_str(&linkified);
-                } else {
-                    out.push_str(&fence_content);
-                }
-                out.push_str(line);
-                fence_content.clear();
-                in_fence = false;
-                is_run_fence = false;
-            } else {
-                // Opening fence
-                out.push_str(line);
-                in_fence = true;
-            }
-            continue;
-        }
-        if in_fence {
-            // Check if this is the first line of a run fence
-            if fence_content.is_empty() && trimmed.starts_with("$") && trimmed.contains("satex") {
-                is_run_fence = true;
-            }
-            fence_content.push_str(line);
-            continue;
-        }
-        if trimmed.starts_with('#') {
-            out.push_str(&linkify_prose(&prose, &master, &aliases, &mut last_url, &mut tex_web_refs));
-            prose.clear();
-            last_url = None;
-        }
-        prose.push_str(line);
-    }
-    out.push_str(&linkify_prose(&prose, &master, &aliases, &mut last_url, &mut tex_web_refs));
-    if !tex_web_refs.is_empty() {
-        if !out.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push('\n');
-        for (section, url) in &tex_web_refs {
-            let _ = writeln!(out, "[tw-{section}]: {url}");
-        }
-    }
-    out
-}
-
-/// `Source::TeXWeb.url()`, pinned to `section`'s own line via
-/// [`satex::lint::tex_web_section_line`] (the table `Ref::url()` uses for
-/// the same citations found structurally, in a `Rule`'s `references`).
-/// Falls back to the whole file when the number is not a real module (a
-/// version number the citation regex picked up, say), so a citation always
-/// still resolves.
-fn tex_web_url(section: u32) -> String {
-    match satex::lint::tex_web_section_line(section) {
-        Some(line) => format!("{}#L{line}", Source::TeXWeb.url()),
-        None => Source::TeXWeb.url().to_string(),
-    }
-}
-
-/// Every `§`-numbered module in a tex.web citation, in the order it was
-/// written, with whether it is joined to the previous one by a range dash
-/// (`–`/`-`) rather than a comma or "and".
-fn tex_web_numbers(cite: &str) -> Vec<(u32, bool)> {
-    static NUM: OnceLock<Regex> = OnceLock::new();
-    let num_re = NUM.get_or_init(|| Regex::new(r"[0-9]+").expect("valid regex"));
-    let mut out = Vec::new();
-    let mut last_end = 0;
-    for m in num_re.find_iter(cite) {
-        let between = &cite[last_end..m.start()];
-        let is_range = !out.is_empty() && (between.contains('-') || between.contains('\u{2013}'));
-        if let Ok(n) = m.as_str().parse() {
-            out.push((n, is_range));
-        }
-        last_end = m.end();
-    }
-    out
-}
-
-/// Renders a tex.web citation (`prefix` is `"tex.web"` or `""` for a bare
-/// continuation) as one reference-style link per module, recording each
-/// module used in `refs` so [`linkify_citations`] can emit its definition.
-fn tex_web_citation(prefix: &str, cite: &str, refs: &mut BTreeMap<u32, String>) -> Option<String> {
-    let numbers = tex_web_numbers(cite);
-    let (first, _) = *numbers.first()?;
-    let mark = if numbers.len() > 1 { "§§" } else { "§" };
-    let mut out = String::new();
-    let first_label = if prefix.is_empty() { format!("{mark} {first}") } else { format!("{prefix} {mark} {first}") };
-    refs.entry(first).or_insert_with(|| tex_web_url(first));
-    let _ = write!(out, "[{first_label}][tw-{first}]");
-    for &(n, is_range) in &numbers[1..] {
-        out.push_str(if is_range { "\u{2013}" } else { ", " });
-        refs.entry(n).or_insert_with(|| tex_web_url(n));
-        let _ = write!(out, "[{n}][tw-{n}]");
-    }
-    Some(out)
-}
-
-/// The citation-linking pass over one run of non-fenced markdown, threading
-/// `last_url` through so a bare `§ N` after a real citation resolves to the
-/// same source. See [`linkify_citations`] for the forms this handles.
-fn linkify_prose(
-    text: &str,
-    master: &Regex,
-    aliases: &[Alias],
-    last_url: &mut Option<String>,
-    tex_web_refs: &mut BTreeMap<u32, String>,
-) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut last = 0;
-    for caps in master.captures_iter(text) {
-        let m = caps.get(0).expect("regex match always has group 0");
-        out.push_str(&text[last..m.start()]);
-        last = m.end();
-        if let Some(link) = caps.name("link") {
-            if let Some(url) = link_href(link.as_str()) {
-                *last_url = Some(url.to_string());
-            }
-            out.push_str(link.as_str());
-        } else if let Some(code) = caps.name("code") {
-            out.push_str(code.as_str());
-        } else if let Some(alias) = caps.name("alias") {
-            // A `/`-preceded match is a URL path segment shown as output
-            // (`https://texdoc.org/serve/source2e/0`), not a citation: a
-            // `\b` word boundary alone does not tell those apart.
-            if text[..m.start()].ends_with('/') {
-                out.push_str(m.as_str());
-                continue;
-            }
-            let entry = aliases.iter().find(|a| a.name == alias.as_str()).expect("matched alias is in the table");
-            let tex_web_cite = (alias.as_str() == "tex.web").then(|| caps.name("cite")).flatten().and_then(|cite| {
-                *last_url = Some(entry.url.clone());
-                tex_web_citation(alias.as_str(), cite.as_str(), tex_web_refs)
-            });
-            if let Some(rendered) = tex_web_cite {
-                out.push_str(&rendered);
-            } else if entry.always || caps.name("cite").is_some() {
-                *last_url = Some(entry.url.clone());
-                out.push_str(&format!("[{}]({})", m.as_str(), entry.url));
-            } else {
-                out.push_str(m.as_str());
-            }
-        } else if let Some(bare) = caps.name("bare") {
-            if last_url.as_deref() == Some(Source::TeXWeb.url()) {
-                let rendered = tex_web_citation("", bare.as_str(), tex_web_refs);
-                out.push_str(rendered.as_deref().unwrap_or(bare.as_str()));
-            } else if let Some(url) = &last_url {
-                out.push_str(&format!("[{}]({url})", bare.as_str()));
-            } else {
-                out.push_str(bare.as_str());
-            }
-        }
-    }
-    out.push_str(&text[last..]);
-    out
-}
-
 /// Replace every `{{directive}}` in `template` with its expansion, passing
 /// everything else through unchanged.
 fn render(template: &str) -> Result<String, String> {
@@ -805,6 +517,9 @@ fn render(template: &str) -> Result<String, String> {
 fn expand(directive: &str) -> Result<String, String> {
     if directive == "rules" {
         return rules_table();
+    }
+    if directive == "fixes" {
+        return fixes_list();
     }
     if directive == "explanations" {
         return explanations();
@@ -839,6 +554,9 @@ fn expand(directive: &str) -> Result<String, String> {
     if let Some(rest) = directive.strip_prefix("fields:") {
         let (name, key) = rest.trim().split_once(' ').ok_or_else(|| format!("bad directive: {{{{{directive}}}}}"))?;
         return fields_text(name, key.trim());
+    }
+    if let Some(path) = directive.strip_prefix("example:") {
+        return example(path.trim());
     }
     if let Some(path) = directive.strip_prefix("file:") {
         return inline_file(path.trim());
@@ -987,18 +705,330 @@ fn inline_file(path: &str) -> Result<String, String> {
     Ok(block)
 }
 
+/// A document, then one row per paragraph: the text pdflatex ships, the
+/// text satex computes, and how they compare. A compact trace follows.
+/// Both run on a copy in `target/doc-examples`.
+fn example(path: &str) -> Result<String, String> {
+    let source = inline_file(path)?;
+    let name = Path::new(path).file_stem().and_then(|s| s.to_str()).ok_or_else(|| format!("bad path: {path}"))?;
+    let dir = Path::new("target/doc-examples");
+    fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    fs::copy(path, dir.join(format!("{name}.tex"))).map_err(|e| format!("{path}: {e}"))?;
+    // Both sides read the same `.aux`: the one kept beside the example, or
+    // none. The file a previous build left behind is the next run's input.
+    let aux = || {
+        let (kept, staged) = (Path::new(path).with_extension("aux"), dir.join(format!("{name}.aux")));
+        let _ = if kept.exists() { fs::copy(&kept, &staged).map(drop) } else { fs::remove_file(&staged) };
+    };
+    aux();
+    let shipped = typeset_text(path, name, dir);
+    aux();
+    let file = format!("{name}.tex");
+    let json = |args: &[&str]| -> Vec<serde_json::Value> {
+        let args: Vec<&str> =
+            args.iter().copied().chain(["-f", &file, "--format", "json", "--set", "limits.seconds=60"]).collect();
+        Command::new(bin())
+            .current_dir(dir)
+            .args(&args)
+            .output()
+            .ok()
+            .and_then(|o| serde_json::from_slice(&o.stdout).ok())
+            .unwrap_or_default()
+    };
+    let rows = json(&["query", "typeset"]);
+    let of = |kind: &str| -> Vec<String> {
+        rows.iter().filter(|r| r["kind"] == kind).filter_map(|r| r["detail"].as_str().map(String::from)).collect()
+    };
+    let computed = of("paragraph");
+    let paragraphs: Vec<&serde_json::Value> = rows.iter().filter(|r| r["kind"] == "paragraph").collect();
+    let record = |c: &str| paragraphs.iter().find(|r| r["detail"] == c).copied();
+    let mark = |v: &str| match v {
+        "equal" => "✓",
+        "covers" => "⊇",
+        _ => "✗",
+    };
+    // Pair paragraphs in order. A computed one that may be empty and does
+    // not match the next shipped one stands alone.
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    let mut engine = shipped.iter().peekable();
+    for c in &computed {
+        let alone = satex::query::typeset_verdict(c, "") != "DIFFERS"
+            && engine.peek().is_none_or(|e| satex::query::typeset_verdict(c, e) == "DIFFERS");
+        let e = if alone { String::new() } else { engine.next().cloned().unwrap_or_default() };
+        pairs.push((e, c.clone()));
+    }
+    pairs.extend(engine.map(|e| (e.clone(), String::new())));
+    // An assumption the document's own code made, not one a package made
+    // while loading (the clock, for example).
+    let assumed: Vec<String> = rows
+        .iter()
+        .filter(|r| r["kind"] == "assumption" && r["file"] == file.as_str())
+        .filter_map(|r| r["detail"].as_str().map(String::from))
+        .collect();
+    if !assumed.is_empty() {
+        pairs.push((String::new(), format!("assumes {}", assumed.join(", "))));
+    }
+    let escape = |l: &str| l.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    // satex's notation (choice, repeat, box, unknown) is bold, text is plain.
+    let styled = |c: &str| {
+        let marked = record(c).and_then(|r| r["marked"].as_str()).unwrap_or(c);
+        let mut html = String::new();
+        for (i, part) in marked.split('\u{E000}').enumerate() {
+            match part.split_once('\u{E001}') {
+                Some((notation, text)) if i > 0 => {
+                    let _ = write!(html, "<b>{}</b>{}", escape(notation), escape(text));
+                }
+                _ => html.push_str(&escape(part)),
+            }
+        }
+        html
+    };
+    // A box that is never shipped is not on the page.
+    let boxes = Regex::new("⟦[^⟧]*⟧").expect("boxes regex");
+    let boxed_only = |c: &str| c.contains('⟦') && boxes.replace_all(c, "").trim().is_empty();
+    pairs.retain(|(e, c)| (!e.is_empty() || !c.is_empty()) && !(e.is_empty() && boxed_only(c)));
+    let mut table = String::from("<table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>\n");
+    let mut wrong = None;
+    let mut why: Vec<String> = Vec::new();
+    for (e, c) in &pairs {
+        let m = if c.starts_with("assumes ") { "" } else { mark(satex::query::typeset_verdict(c, e)) };
+        if m == "✗" && wrong.is_none() {
+            wrong = Some((e.clone(), c.clone()));
+        }
+        if !m.is_empty() && m != "✓" {
+            for cause in record(c).and_then(|r| r["causes"].as_array()).into_iter().flatten() {
+                let (mark, line) = (cause["mark"].as_str().unwrap_or(""), &cause["line"]);
+                let test = cause["test"].as_str().unwrap_or("");
+                let reads: Vec<String> = cause["reads"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| r.as_str())
+                    .map(|r| format!("`{r}`"))
+                    .collect();
+                why.push(match (test.is_empty(), reads.is_empty()) {
+                    (true, _) => format!("- `{mark}`: l.{line} sets a character the run could not compute."),
+                    (false, true) => format!("- `{mark}`: l.{line} `{test}` is undecided."),
+                    (false, false) => {
+                        format!("- `{mark}`: l.{line} `{test}` is undecided, it reads {}.", reads.join(", "))
+                    }
+                });
+            }
+        }
+        let _ = writeln!(
+            table,
+            "<tr><td><code>{}</code></td><td><code>{}</code></td><td>{m}</td></tr>",
+            escape(e),
+            styled(c)
+        );
+    }
+    table.push_str("</table>\n");
+    why.truncate(5);
+    let mut out = format!("{source}\n{table}\n");
+    if let Some((e, c)) = wrong {
+        let _ = writeln!(out, "Differs: pdflatex ships `{e}` where satex computes `{c}`.\n");
+    }
+    if !why.is_empty() {
+        let _ = writeln!(out, "Why:\n\n{}\n", why.join("\n"));
+    }
+    // The commands a reader can run, with their text output verbatim.
+    let text = |args: &[&str]| -> (String, String) {
+        let args: Vec<&str> = args.iter().copied().chain(["-f", &file, "--set", "limits.seconds=60"]).collect();
+        let output = Command::new(bin()).current_dir(dir).args(&args).output().expect("satex runs");
+        // A command that fails must break the build, never show up as an empty block.
+        assert!(output.status.success(), "satex {}: {}", args.join(" "), String::from_utf8_lossy(&output.stderr));
+        let stdout = output.stdout;
+        let shown = String::from_utf8_lossy(&stdout).lines().map(redact_paths).collect::<Vec<_>>().join("\n");
+        (format!("satex {}", args.join(" ")), shown)
+    };
+    for (title, args) in
+        [("Computed text", &["query", "typeset"][..]), ("Trace", &["trace", "--format", "compact"][..])]
+    {
+        let (command, shown) = text(args);
+        let shown = if shown.trim().is_empty() { "(no output)".to_string() } else { shown };
+        let _ =
+            write!(out, "<details><summary>{title}</summary>\n\n```sh\n$ {command}\n{shown}\n```\n\n</details>\n\n");
+    }
+    Ok(out)
+}
+
+/// The text one pdflatex run ships out from `path`, one entry per
+/// paragraph, read from the boxes `\tracingoutput` writes to the log, so
+/// characters are the font's char codes, not glyph names. Kept beside the
+/// example as `<name>.pdflatex.txt`: without pdflatex the kept text is
+/// used, so the docs build anywhere.
+fn typeset_text(path: &str, name: &str, dir: &Path) -> Vec<String> {
+    let kept = Path::new(path).with_extension("pdflatex.txt");
+    let tex = format!(
+        "\\showboxdepth=\\maxdimen \\showboxbreadth=\\maxdimen \\tracingoutput=1 \\tracingonline=0 \\pdfsetrandomseed 7 \\input{{{name}.tex}}"
+    );
+    let ran = Command::new("pdflatex")
+        .current_dir(dir)
+        .env("max_print_line", "100000")
+        .args(["-interaction=nonstopmode", &tex])
+        .output()
+        .is_ok();
+    let log = ran.then(|| fs::read_to_string(dir.join(format!("{name}.log"))).ok()).flatten();
+    let Some(log) = log.filter(|l| l.contains("Completed box being shipped out")) else {
+        return match fs::read_to_string(&kept) {
+            Ok(k) => k.lines().map(String::from).collect(),
+            Err(_) => vec!["(pdflatex output not available)".into()],
+        };
+    };
+    let mut lines: Vec<String> =
+        shipped(&log).into_iter().filter(|l| !l.is_empty() && !l.chars().all(|c| c.is_ascii_digit())).collect();
+    if lines.is_empty() {
+        lines.push("(no text)".into());
+    }
+    let _ = fs::write(&kept, lines.join("\n") + "\n");
+    lines
+}
+
+/// One node of a shipped box as the log shows it: its nesting depth and
+/// what follows the dots. Box dimensions stay in `item` for a later reader.
+fn box_nodes(log: &str) -> Vec<(usize, &str)> {
+    let mut nodes = Vec::new();
+    let mut inside = false;
+    for line in log.lines() {
+        if line.starts_with("Completed box being shipped out") {
+            inside = true;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        let item = line.trim_start_matches('.');
+        if !item.starts_with('\\') {
+            inside = !line.is_empty() && line.starts_with('.');
+            continue;
+        }
+        nodes.push((line.len() - item.len(), item));
+    }
+    nodes
+}
+
+/// The text of shipped boxes, one entry per paragraph: characters by char
+/// code (`^^` notation decoded, ligatures as their characters), interword
+/// glue as a space, `\parskip` and each part of the page as a break.
+fn shipped(log: &str) -> Vec<String> {
+    let mut paragraphs = vec![String::new()];
+    // The depth of the line being read, and of the last line read.
+    let (mut line, mut last_line) = (None::<usize>, None::<usize>);
+    for (depth, item) in box_nodes(log) {
+        let (head, rest) = item.split_once(' ').unwrap_or((item, ""));
+        let starts_line = head.starts_with("\\hbox") && line.is_none_or(|d| depth <= d);
+        if line.is_some_and(|d| depth <= d) && !starts_line {
+            line = None;
+        }
+        if depth == 0 || head == "\\glue(\\parskip)" || (starts_line && last_line.is_some_and(|d| depth < d)) {
+            paragraphs.push(String::new());
+        }
+        let last = paragraphs.last_mut().expect("one paragraph");
+        if starts_line {
+            (line, last_line) = (Some(depth), Some(depth));
+            if !last.is_empty() && !last.ends_with(' ') {
+                last.push(' ');
+            }
+        } else if head == "\\glue" || head == "\\glue(\\spaceskip)" || head == "\\glue(\\xspaceskip)" {
+            if !last.ends_with(' ') {
+                last.push(' ');
+            }
+        } else if head.contains('/') && !rest.is_empty() {
+            match rest.split_once(" (ligature ") {
+                Some((_, lig)) => last.push_str(lig.trim_end_matches(')')),
+                None => last.push_str(&caret_decode(rest)),
+            }
+        }
+    }
+    paragraphs.into_iter().map(|p| p.trim().to_string()).collect()
+}
+
+/// TeX's `^^` notation: `^^3e` or `^^M` back to the character.
+fn caret_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    if b.len() == 4 && s.starts_with("^^") && b[2..].iter().all(u8::is_ascii_hexdigit) {
+        return u8::from_str_radix(&s[2..], 16).map_or(s.to_string(), |c| char::from(c).to_string());
+    }
+    if b.len() == 3 && s.starts_with("^^") {
+        return char::from(b[2] ^ 0x40).to_string();
+    }
+    s.to_string()
+}
+
+/// The chktex warnings each rule follows, from `--chktex`.
+fn chktex_origins() -> Result<std::collections::BTreeMap<String, Vec<String>>, String> {
+    let mut chktex: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for row in lint_json(&["--chktex", "--format", "json"])? {
+        for code in row["rules"].as_str().unwrap_or("").split(", ").filter(|c| !c.is_empty()) {
+            chktex.entry(code.to_string()).or_default().push(row["warning"].to_string());
+        }
+    }
+    Ok(chktex)
+}
+
+/// A rule's badges: its default severity as a shape (and its title), its
+/// category, its quick-fix kinds and the chktex warnings it follows. `wide`
+/// also spells the severity out, for a rule's own section.
+fn badges(
+    rule: &serde_json::Value,
+    chktex: &std::collections::BTreeMap<String, Vec<String>>,
+    wide: bool,
+) -> [String; 3] {
+    let [code, category, severity] = ["code", "category", "severity"].map(|k| rule[k].as_str().unwrap_or(""));
+    let shape = match severity {
+        "error" => "◆",
+        "warning" => "▲",
+        _ => "●",
+    };
+    let label = if wide { format!("{shape} default: {severity}") } else { shape.to_string() };
+    let origin = chktex.get(code).map_or("—".into(), |n| {
+        format!(
+            "<a class=\"from\" href=\"Chktex-Coverage\" title=\"follows chktex warning {}\">chktex {}</a>",
+            n.join(", "),
+            n.join(", ")
+        )
+    });
+    [
+        format!(
+            "<span class=\"sev sev-{severity}\" title=\"default: {severity}\">{label}</span> <span class=\"cat\">{category}</span>"
+        ),
+        fix_kinds(rule).unwrap_or_else(|| "—".into()),
+        origin,
+    ]
+}
+
 /// The rule list as a table, every code linked to its own section below.
+/// Severity reads as a shape (and its title), not only as a color.
 fn rules_table() -> Result<String, String> {
-    let rules = lint_json(&["--rules", "--format", "json"])?;
+    let chktex = chktex_origins()?;
+    let mut out = String::from("| code | kind | quick fix | origin | summary |\n| --- | --- | --- | --- | --- |\n");
+    for rule in lint_json(&["--rules", "--format", "json"])? {
+        let [code, summary] = ["code", "message"].map(|k| rule[k].as_str().unwrap_or(""));
+        let [kind, fixes, origin] = badges(&rule, &chktex, false);
+        let _ = writeln!(out, "| [`{code}`](#{code}) | {kind} | {fixes} | {origin} | {summary} |");
+    }
+    Ok(out)
+}
+
+/// The rule's quick-fix kinds as badges, `None` when it has none.
+fn fix_kinds(rule: &serde_json::Value) -> Option<String> {
+    let kinds: Vec<String> = rule["fixes"]
+        .as_array()?
+        .iter()
+        .filter_map(|k| k.as_str())
+        .map(|k| format!("<span class=\"fix fix-{k}\">{k}</span>"))
+        .collect();
+    (!kinds.is_empty()).then(|| kinds.join(" "))
+}
+
+/// The rules whose findings carry a quick fix, with its kinds.
+fn fixes_list() -> Result<String, String> {
     let mut out = String::new();
-    out.push_str("| code | category | severity | summary |\n");
-    out.push_str("| --- | --- | --- | --- |\n");
-    for rule in &rules {
-        let code = rule["code"].as_str().unwrap_or("");
-        let category = rule["category"].as_str().unwrap_or("");
-        let severity = rule["severity"].as_str().unwrap_or("");
-        let summary = rule["message"].as_str().unwrap_or("");
-        let _ = writeln!(out, "| [`{code}`](#{code}) | {category} | {severity} | {summary} |");
+    for rule in lint_json(&["--rules", "--format", "json"])? {
+        if let Some(kinds) = fix_kinds(&rule) {
+            let code = rule["code"].as_str().unwrap_or("");
+            let _ = writeln!(out, "* [`{code}`](#{code}) {kinds} — {}", rule["message"].as_str().unwrap_or(""));
+        }
     }
     Ok(out)
 }
@@ -1040,10 +1070,10 @@ fn explain_json(code: &str) -> Result<serde_json::Value, String> {
 /// new rule or a new category needs no edit here.
 fn explanations() -> Result<String, String> {
     let rules = lint_json(&["--rules", "--format", "json"])?;
+    let chktex = chktex_origins()?;
     let mut out = String::new();
     let mut open: Option<String> = None;
     for rule in &rules {
-        let code = rule["code"].as_str().unwrap_or("");
         let category = rule["category"].as_str().unwrap_or("");
         if open.as_deref() != Some(category) {
             if open.is_some() {
@@ -1057,7 +1087,7 @@ fn explanations() -> Result<String, String> {
             let _ = writeln!(out, "<summary><b>{category}</b> — {count} {plural}</summary>\n");
             open = Some(category.to_string());
         }
-        out.push_str(&explain_section(code)?);
+        out.push_str(&explain_section(rule, &chktex)?);
     }
     if open.is_some() {
         out.push_str("</details>\n");
@@ -1065,18 +1095,22 @@ fn explanations() -> Result<String, String> {
     Ok(out)
 }
 
-/// One rule's section: a heading carrying its anchor, the label and summary
-/// `--explain` prints above the text, the explanation as markdown, and the
-/// works it follows. Everything comes from `--explain CODE --format json`,
-/// so nothing here is written twice.
-fn explain_section(code: &str) -> Result<String, String> {
+/// One rule's section: a heading carrying its anchor, the rules table's
+/// badges, the summary in bold, the explanation as markdown, and the works
+/// it follows. Everything comes from `--explain CODE --format json`, so
+/// nothing here is written twice.
+fn explain_section(
+    listed: &serde_json::Value,
+    chktex: &std::collections::BTreeMap<String, Vec<String>>,
+) -> Result<String, String> {
+    let code = listed["code"].as_str().unwrap_or("");
     let rule = explain_json(code)?;
-    let category = rule["category"].as_str().unwrap_or("");
-    let severity = rule["severity"].as_str().unwrap_or("");
     let summary = rule["summary"].as_str().unwrap_or("");
     let mut out = String::new();
-    let _ = writeln!(out, "### `{code}`\n");
-    let _ = writeln!(out, "**{category} / {severity}** — {summary}\n");
+    let _ = writeln!(out, "### {code}\n");
+    let shown: Vec<String> = badges(listed, chktex, true).into_iter().filter(|b| b != "—").collect();
+    let _ = writeln!(out, "<p class=\"badges\">{}</p>\n", shown.join(" "));
+    let _ = writeln!(out, "**{summary}**\n");
     out.push_str(&explanation_markdown(rule["explanation"].as_str().unwrap_or("")));
     let sources: Vec<String> = rule["references"]
         .as_array()
@@ -1313,7 +1347,7 @@ fn primitives_table() -> Result<String, String> {
     let luatex_table = builtins::initial_meanings(&mut it, Engine::LuaTeX);
 
     let prim_map =
-        |table: &std::collections::HashMap<satex::tex::Sym, Meaning>| -> std::collections::BTreeMap<String, Primitive> {
+        |table: &satex::fixed::HashMap<satex::tex::Sym, Meaning>| -> std::collections::BTreeMap<String, Primitive> {
             table.iter().filter_map(|(s, m)| m.prim().map(|p| (it.name(*s).to_string(), p))).collect()
         };
     let core = prim_map(&core_table);
@@ -1416,8 +1450,17 @@ fn source_url(site: &Site) -> String {
 /// The `limits` that trade precision for a bounded search: past them a value
 /// goes up the lattice. The others (time, memory, threads, record sizes) only
 /// stop or pace a run and never make a result coarser.
-const PRECISION_LIMITS: &[&str] =
-    &["choices", "paths", "meaning_splits", "widen_after", "recursion_depth", "meaning_set", "value_set"];
+const PRECISION_LIMITS: &[&str] = &[
+    "choices",
+    "paths",
+    "meaning_splits",
+    "widen_after",
+    "recursion_depth",
+    "loop_heads",
+    "call_summary_after",
+    "meaning_set",
+    "value_set",
+];
 
 /// `config::Limits`' precision fields, their `Default` value and their doc
 /// comment. `limits.*` is described in full on the configuration page; every
@@ -1566,10 +1609,8 @@ Some prose.
 
 ```text
 $ satex lint -f samples/paper.tex
-warning: see [tex.web § 211][tw-211] for the rule
+warning: see [tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4220) for the rule
 ```
-
-[tw-211]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4220
 ";
         assert_eq!(linkify_citations(markdown), expected);
     }

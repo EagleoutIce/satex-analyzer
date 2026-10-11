@@ -23,7 +23,7 @@
 
 \makeatletter
 \newdimen\RT@kern \newdimen\RT@raise \newbox\RT@line
-\newsavebox\BoxWord \newsavebox\BoxTag
+\newsavebox\BoxWord \newsavebox\BoxTag \newsavebox\BoxLineA \newsavebox\BoxLineB
 \def\bt{\transparent{.65}}
 \newcommand\MBox[2][framen]{{\bt\color{#1}\fbox{\transparent{1}\color{inkn}#2}}}
 \newcommand\LBox[1]{{\bt\fcolorbox{line}{linebg}{\transparent{1}\color{inkn}#1}}}
@@ -78,13 +78,13 @@
     \LBox{\rlap{\transparent{.4}\color{base}\rule[-.035em]{\wd\RT@line}{.07em}}\box\RT@line}}
 \makeatother
 
-% pages: 1 stacked, 2 wide, 3 wordmark
+% pages: 1 stacked, 2 wide, 3 wordmark, 4 and 5 the tagline lines (the site animates them), 6 the favicon text
 \begin{document}\pagecolor{white}
 \sbox\BoxWord{\fontsize{48}{48}\selectfont\RTInit\RenderText{\hl\SaTeX}}
 % tagline, first line stretched and filled to the second; it shows its own source
 \sbox\BoxTag{\RTInit\setbox1\hbox{\RenderText{(\La)\bs\hl\TeX\ and\ Friends}}%
     \setbox0\hbox{\RenderText[to\dimexpr\wd1-2\fboxrule]{\hl Static\ \hl Analysis\ for}}%
-    \MBox{\vbox{\copy0\box1}}}
+    \global\sbox\BoxLineA{\copy0}\global\sbox\BoxLineB{\copy1}\MBox{\vbox{\copy0\box1}}}
 
 \begin{preview}
 \MBox{\vbox{\offinterlineskip\copy\BoxWord\kern4.8pt\hbox{\resizebox{\wd\BoxWord}{!}{\usebox\BoxTag}}}}
@@ -94,4 +94,8 @@
     \vcenter{\hbox{\resizebox*{!}{\dimexpr\ht\BoxWord+\dp\BoxWord}{\usebox\BoxTag}}}$}
 \end{preview}
 \begin{preview}\usebox\BoxWord\end{preview}
+\begin{preview}\usebox\BoxLineA\end{preview}
+\begin{preview}\usebox\BoxLineB\end{preview}
+\begin{preview}\fontsize{48}{48}\bfseries\selectfont\sbox0{T}\sbox2{\fontsize{34}{34}\selectfont A}%
+S\kern-.1em\raisebox{\dimexpr\ht0-\ht2}{\usebox2}\kern-.12em T\kern-.17em\lower.5ex\hbox{E}\kern-.13em X\end{preview}
 \end{document}
