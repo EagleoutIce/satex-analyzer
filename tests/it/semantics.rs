@@ -58,6 +58,11 @@ const BODIES: &[crate::support::BodyRow] = &[
     ),
     ("ifx_compares_meanings", r"\def\a{x}\def\b{x}\ifx\a\b\def\same{yes}\else\def\same{no}\fi", &[("same", "yes")]),
     (
+        "ifx_of_a_name_with_itself_is_true_whatever_it_means",
+        r"\expandafter\let\expandafter\s\csname x\the\pdfelapsedtime\endcsname\def\w#1{\ifx#1\s\def\r{yes}\else\def\r{no}\fi}\w\s",
+        &[("r", "yes")],
+    ),
+    (
         "etex_expressions_are_evaluated",
         r"\ifnum\numexpr 2*3+1\relax>6 \def\big{yes}\else\def\big{no}\fi",
         &[("big", "yes")],
@@ -100,6 +105,13 @@ const BODIES: &[crate::support::BodyRow] = &[
         "undecided_arms_do_not_see_each_other",
         r"\ifnum\pdfuniformdeviate2=0 \def\x{a}\else\ifx\x\undefined\def\clean{yes}\fi\fi",
         &[("clean", "yes")],
+    ),
+    // tex.web § 1224: `\Z` is `\relax` while its number is scanned, so it
+    // does not expand to `3` and the register is `\count1`.
+    (
+        "shorthand_def_name_is_relax_while_its_number_is_scanned",
+        r"\def\Z{3}\countdef\Z=1\Z=5 \edef\seen{\the\count1}",
+        &[("seen", "5")],
     ),
 ];
 
@@ -153,6 +165,21 @@ fn a_switch_decides_its_conditional() {
     assert_eq!(body(&analysis, "mode"), "draft");
     let analysis = analyze_kernel(r"\newif\ifdraft \ifdraft\def\mode{draft}\else\def\mode{final}\fi");
     assert_eq!(body(&analysis, "mode"), "final", "\\newif starts false");
+}
+
+/// Capabilities: termination, unknown inputs, progressive recursion. The
+/// empty arm expands the undefined `\stop`, an error: under assume_compiles
+/// that path is dropped, so the walk never reads on into the caller's code.
+#[test]
+fn a_walk_never_reads_past_an_undefined_stop_on_an_erroring_path() {
+    let analysis = analyze(
+        r"\def\walk#1{\ifx#1\stop\else\edef\rev{\rev#1}\expandafter\walk\fi}\def\conv#1{\def\rev{}\expandafter\walk#1\stop}\ifnum\pdfuniformdeviate2=0 \conv{12}\else\conv{}\fi\def\after{x}",
+    );
+    let bodies: Vec<String> = (analysis.facts.defs.iter())
+        .filter(|d| analysis.interner.name(d.name) == "rev")
+        .filter_map(|d| d.mac.as_ref().map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner)))
+        .collect();
+    assert!(bodies.iter().all(|b| ["", "1", "12"].contains(&b.as_str())), "{bodies:?}");
 }
 
 #[test]
@@ -951,10 +978,11 @@ const OUTS: &[crate::support::PairRow] = &[
     ("a_font_identifier_means_the_font_it_selects", &[
         (r"\font\a=cmr10 at 2sp \edef\out{\meaning\a|\meaning\nullfont}", "select font cmr10 at 0.00003pt|select font nullfont"),
     ]),
-    // etex with expl3: `\cs_set_eq:NN \a \relax x|undefined`: `\cs_set_eq:NN`
-    // is `\protected` (l3basics), so the `\edef` stores it and defines
-    // nothing.
+    // etex: `\cs_set_eq:NN \a \relax x|undefined`: `\cs_set_eq:NN` is
+    // `\protected` (as in l3basics), so the `\edef` stores it and defines
+    // nothing. Undefined, it would expand to nothing (tex.web § 370).
     ("an_edef_copies_the_expl3_definition_functions", &[(r"\catcode`\_=11 \catcode`\:=11
+            \protected\def\cs_set_eq:NN#1#2{\let#1=#2}
             \edef\t{\cs_set_eq:NN \noexpand\a \relax x}
             \edef\out{\meaning\t|\meaning\a}", r"macro:->\cs_set_eq:NN \a \relax x|undefined")]),
     // tex: `[4][7][7]`: a local assignment saves the old meaning once per
@@ -1028,6 +1056,51 @@ fn an_expansion_gives_up_only_over_a_gap_satex_invented() {
     assert_eq!(out(brace), "\\par ");
 }
 
+/// tex.web § 392: only the text before the first delimiter is free of it.
+/// Unknown text split at `macro:` leaves a rest that may still hold `->`,
+/// so expl3's `\__cs_prefix_arg_replacement:wN` may find a replacement
+/// text in the `\meaning` of an unknown name.
+#[test]
+fn the_rest_of_split_unknown_text_may_hold_the_next_delimiter() {
+    let source = r"\edef\next{\def\noexpand\parse##1\detokenize{macro:}##2\detokenize{->}##3\noexpand\stop
+            {\edef\noexpand\out{\noexpand\if\relax\noexpand\detokenize{##3}\relax E\noexpand\else N\noexpand\fi}}}\next
+        \expandafter\let\expandafter\x\csname u\number\pdfuniformdeviate 9\endcsname
+        \expandafter\parse\meaning\x\stop";
+    let analysis = analyze(source);
+    let outs: Vec<String> = analysis
+        .facts
+        .defs
+        .iter()
+        .filter(|d| analysis.interner.name(d.name) == "out")
+        .filter_map(|d| d.mac.as_ref())
+        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .collect();
+    // `E` alone (an empty replacement text for sure) or no `\out` at all
+    // (a runaway) drops the paths the engine may take.
+    assert!(outs.iter().any(|o| o != "E"), "{outs:?}");
+}
+
+/// tex.web § 392: the argument read so far ends in `\mark`, and unknown
+/// digits may begin with the `1` that completes the delimiter `\mark1`.
+/// A path ends the argument before `\mark`; none ends it inside the digits
+/// with the `\mark` kept in the argument.
+#[test]
+fn a_delimiter_may_begin_before_unknown_text_and_end_in_it() {
+    let source = r"\def\p#1\mark1#2\stop{\edef\out{[\detokenize{#1}]}}
+        \edef\n{\number\pdfuniformdeviate 20}
+        \expandafter\p\expandafter\mark\n\mark1\stop";
+    let analysis = analyze(source);
+    let outs: Vec<String> = analysis
+        .facts
+        .defs
+        .iter()
+        .filter(|d| analysis.interner.name(d.name) == "out")
+        .filter_map(|d| d.mac.as_ref())
+        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .collect();
+    assert!(outs.iter().any(|o| o == "[]"), "{outs:?}");
+}
+
 #[test]
 fn a_brace_after_no_parameter_is_a_delimiter_put_back() {
     // etex: `xy`, `wv`.  tex.web § 476: `\def\m#{…}` matches the `{` and
@@ -1056,6 +1129,21 @@ fn undecided_arms_meet_after_the_arguments_they_take() {
         .collect();
     assert!(bodies.contains(&"A".to_string()) && bodies.contains(&"B".to_string()), "{bodies:?}");
     assert_eq!(analysis.facts.defs.iter().filter(|d| analysis.interner.name(d.name) == "after").count(), 1);
+}
+
+/// Macros whose texts begin with tokens of disjoint classes differ: unknown
+/// digits are never `\egroup`, so `\ifx` decides false (pgfmathparser).
+#[test]
+fn ifx_on_digits_and_a_control_sequence_decides_false() {
+    let analysis = analyze(
+        r"\edef\a{\pdfuniformdeviate 100}\def\e{\egroup}\let\l\egroup
+          \ifx\a\e\def\same{}\else\def\differ{}\fi
+          \ifx\a\l\def\samel{}\else\def\differl{}\fi",
+    );
+    let defined = names(&analysis);
+    for (yes, no) in [("differ", "same"), ("differl", "samel")] {
+        assert!(defined.contains(&yes.to_string()) && !defined.contains(&no.to_string()), "{yes}: {defined:?}");
+    }
 }
 
 /// A name the arms define differently has no known meaning after the join,
@@ -1367,7 +1455,6 @@ fn a_loop_over_unknown_text_ends() {
 \def\rem#1 #2{#1\ifx\stop#2\else\space\expandafter\rem\expandafter#2\fi}
 \edef\R{\expandafter\expandafter\expandafter\rem\expandafter\strip\meaning\u \stop}",
     );
-    assert!(diagnosed(&analysis, "recursion-widened").is_empty());
     assert!(diagnosed(&analysis, "unbalanced-argument").is_empty());
     assert!(definition(&analysis, "R").is_some());
 }
@@ -1449,17 +1536,94 @@ fn expressions_keep_the_interval_of_a_register() {
 
 /// Unknown digits taken as one token are one digit, 0 to 9: a name built
 /// from it is one of ten names, and `\ifx` against `\relax` is decided
-/// when all ten are defined (pgfmath's number check).
+/// when all ten are defined (pgfmath's number check). The test leaves
+/// the dimension not negative, so it has no sign.
 #[test]
 fn one_unknown_digit_names_one_of_ten_names() {
     let analysis = analyze(
-        r"\setbox0\hbox{x}\def\d#1{\expandafter\def\csname d@#1\endcsname{}}
+        r"\setbox0\hbox{x}\dimen1=\wd0 \def\d#1{\expandafter\def\csname d@#1\endcsname{}}
           \d0\d1\d2\d3\d4\d5\d6\d7\d8\d9
           \def\a#1{\expandafter\ifx\csname d@\string#1\endcsname\relax\def\no{}\else\def\yes{}\fi}
-          \edef\t{\the\wd0}\expandafter\a\t",
+          \ifdim\dimen1<0pt \else\edef\t{\the\dimen1}\expandafter\a\t\fi",
     );
     let defined = names(&analysis);
     assert!(defined.contains(&"yes".to_string()) && !defined.contains(&"no".to_string()), "{defined:?}");
+}
+
+/// `\the` never prints a leading zero (tex.web § 103): a dimension of at
+/// least 1pt begins with a digit 1-9, so `\if` against `0` is false
+/// (pgfmath's octal-prefix test).
+#[test]
+fn the_of_a_dimension_of_at_least_1pt_does_not_begin_with_0() {
+    let analysis = analyze(
+        r"\setbox0\hbox{x}\dimen1=\wd0 \def\a#1#2\end{\if\noexpand#10\def\zero{}\else\def\other{}\fi}
+          \ifdim\dimen1<1pt \else\ifdim\dimen1>100pt \else\edef\t{\the\dimen1}\expandafter\a\t\end\fi\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"other".to_string()) && !defined.contains(&"zero".to_string()), "{defined:?}");
+}
+
+/// `\the` prints integer digits without a leading zero (tex.web §§ 103,
+/// 104): after a sign or alone, a `0` is the whole integer part, so a
+/// dimension's `0` is followed by `.` and a count's `0` by nothing.
+#[test]
+fn the_of_an_unknown_number_has_nothing_after_a_leading_0() {
+    leading_0_with(crate::support::bare());
+}
+
+/// The same with few paths before a join: what the joined code may define
+/// still counts.
+#[test]
+fn the_of_an_unknown_number_has_nothing_after_a_leading_0_when_joined_early() {
+    let mut cfg = crate::support::bare();
+    cfg.limits.alike = 4;
+    leading_0_with(cfg);
+}
+
+/// Joined past `limits.paths`, the code a path had left becomes unknown
+/// text. What it may define is still defined: a name it, or a macro it
+/// calls, may `\def` that had no meaning before.
+#[test]
+fn joined_code_counts_what_it_may_define() {
+    let mut cfg = crate::support::bare();
+    (cfg.limits.alike, cfg.limits.paths) = (1, 1);
+    let analysis = Machine::analyze(
+        &format!(
+            "{PRELUDE}{}",
+            r"\count1=\pdfuniformdeviate 1000 \advance\count1 by -500
+          \def\d#1#2\end{\if\noexpand#10\if\relax\detokenize{#2}\relax\def\alone{}\else\def\follow{}\fi\fi}
+          \def\c#1#2\end{\if\noexpand#1-\d#2\end\else\d#1#2\end\fi}
+          \edef\u{\the\count1}\expandafter\c\u\end"
+        ),
+        None,
+        &cfg,
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"alone".to_string()), "{defined:?}");
+}
+
+fn leading_0_with(cfg: Config) {
+    let analysis = Machine::analyze(
+        &format!(
+            "{PRELUDE}{}",
+            r"\dimen1=\pdfuniformdeviate 200000000sp \advance\dimen1 by -100000000sp
+          \count1=\pdfuniformdeviate 1000 \advance\count1 by -500
+          \def\b#1#2#3\end{\if\noexpand#10\if\noexpand#2.\def\dot{}\else\def\more{}\fi\else\def\nz{}\fi}
+          \def\a#1#2\end{\if\noexpand#1-\def\neg{}\b#2\end\else\b#1#2\end\fi}
+          \edef\t{\the\dimen1}\expandafter\a\t\end
+          \def\d#1#2\end{\if\noexpand#10\if\relax\detokenize{#2}\relax\def\alone{}\else\def\follow{}\fi\fi}
+          \def\c#1#2\end{\if\noexpand#1-\d#2\end\else\d#1#2\end\fi}
+          \edef\u{\the\count1}\expandafter\c\u\end"
+        ),
+        None,
+        &cfg,
+    );
+    let defined = names(&analysis);
+    let has = |n: &str| defined.contains(&n.to_string());
+    for n in ["dot", "nz", "neg", "alone"] {
+        assert!(has(n), "{n}: {defined:?}");
+    }
+    assert!(!has("more") && !has("follow"), "{defined:?}");
 }
 
 /// TeX's arithmetic on joined values, member by member: `\advance` wraps,
@@ -1643,7 +1807,7 @@ fn a_catcode_of_a_character_in_a_narrow_interval_widens_only_that_interval() {
           \ifnum\catcode250=12 \def\stillother{1}\else\def\changed{1}\fi",
     );
     let said = diagnosed(&analysis, "unknown-catcode");
-    assert!(said.iter().any(|m| m.contains("every category it may name")), "{said:?}");
+    assert!(said.iter().any(|m| m.contains("each category it may name")), "{said:?}");
     assert!(!said.iter().any(|m| m.contains("no category is known")), "{said:?}");
     assert_eq!(body(&analysis, "letter"), "11", "a is still a letter");
     // The real state past the `\fi`, not just what the run said about it:
@@ -1651,6 +1815,28 @@ fn a_catcode_of_a_character_in_a_narrow_interval_widens_only_that_interval() {
     // read back at the one it had.
     let defined = names(&analysis);
     assert!(defined.contains(&"stillother".to_string()) && defined.contains(&"changed".to_string()), "{defined:?}");
+}
+
+/// An assignment through an unpinned character number leaves each
+/// character it may name at its old category or the new one: a character
+/// already of the assigned category stays known, the others do not. This
+/// holds for a narrow interval (each character) and a wide one (the reach).
+#[test]
+fn a_catcode_through_an_unpinned_number_keeps_categories_equal_to_the_new_one() {
+    for most in ["999", "99999"] {
+        let analysis = analyze(&format!(
+            r"\catcode250=11 \catcode251=12 \count0=\pdfuniformdeviate {most}\relax
+              \ifnum\count0>200 \catcode\count0=11 \fi
+              \ifnum\catcode250=11 \def\same{{1}}\else\def\lost{{1}}\fi
+              \ifnum\catcode251=12 \def\other{{1}}\else\def\letter{{1}}\fi"
+        ));
+        let defined = names(&analysis);
+        assert!(defined.contains(&"same".to_string()) && !defined.contains(&"lost".to_string()), "{most}: {defined:?}");
+        assert!(
+            defined.contains(&"other".to_string()) && defined.contains(&"letter".to_string()),
+            "{most}: {defined:?}"
+        );
+    }
 }
 
 /// tex.web §§ 232, 498: the arms of an undecided conditional may part
@@ -1792,7 +1978,7 @@ fn a_recursion_that_only_assigns_is_bounded_before_the_stall() {
     let analysis = analyze(r"\def\spin{\count255=1 \spin}\spin");
     let codes: Vec<_> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
     assert!(codes.contains(&"recursion-widened"), "the loop is widened where it is found: {codes:?}");
-    assert!(!codes.contains(&"stalled-loop"), "and not left to the stall limit: {codes:?}");
+    assert!(!codes.contains(&"line-budget-cut"), "and not left to the line guard: {codes:?}");
 }
 
 /// The same cut must not touch a loop that decides its test: `\@tfor` over
@@ -1804,7 +1990,7 @@ fn an_ordinary_loop_over_twenty_items_is_not_cut() {
         analyze_kernel(r"\makeatletter\def\acc{}\@tfor\itm:=abcdefghijklmnopqrst\do{\edef\acc{\acc\itm}}\makeatother");
     assert_eq!(last_body(&analysis, "acc"), "abcdefghijklmnopqrst");
     assert_eq!(diagnosed(&analysis, "recursion-widened").len(), 0);
-    assert_eq!(diagnosed(&analysis, "stalled-loop").len(), 0);
+    assert_eq!(diagnosed(&analysis, "line-budget-cut").len(), 0);
 }
 
 /// tex.web §§ 232, 344: of the categories a character may have, only 13
@@ -1878,4 +2064,400 @@ fn digit_reversal_over_unknown_digits_converges() {
     // Two digits exactly is what reading the rest as one digit gave.
     let r = last_body(&analysis, "r");
     assert!(r.contains("one of") || r.contains("unknown digits"), "{r}");
+}
+
+/// The errors, warnings and precision notes, as (code, severity, line,
+/// column, message).
+fn problems(analysis: &Analysis) -> Vec<(String, String, u64, u64, String)> {
+    let s = |f: &satex::query::Record, k: &str| f.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let n = |f: &satex::query::Record, k: &str| f.get(k).and_then(|v| v.as_u64()).unwrap_or_default();
+    satex::lint::lint(analysis)
+        .iter()
+        .filter(|f| s(f, "severity") != "info" || s(f, "code") == "analysis-imprecision")
+        .map(|f| (s(f, "code"), s(f, "severity"), n(f, "line"), n(f, "col"), s(f, "message")))
+        .collect()
+}
+
+/// tex.web §§ 338, 396: a file that ends inside an argument is one certain
+/// error at the call. `\newcommand` makes `\long` macros, so it is not
+/// "Paragraph ended", and the unclosed group is the same cause.
+#[test]
+fn an_argument_the_file_ends_in_is_one_error_at_the_call() {
+    let analysis =
+        analyze_kernel("\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\n\\greet{world\n\\end{document}\n");
+    let found = problems(&analysis);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let (code, severity, line, col, message) = &found[0];
+    assert_eq!((code.as_str(), severity.as_str(), *line, *col), ("raised-error", "error", 3, 1), "{found:?}");
+    assert!(message.starts_with("File ended while scanning use of \\greet"), "{message}");
+}
+
+/// tex.web § 396: `\par` in the argument of a macro not `\long` is one
+/// error at the call.
+#[test]
+fn a_paragraph_end_in_a_short_argument_is_one_error() {
+    let analysis = analyze_kernel("\\def\\g#1{}\n\\g{a\\par}\n");
+    let found = problems(&analysis);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let (code, severity, line, col, message) = &found[0];
+    assert_eq!((code.as_str(), severity.as_str(), *line, *col), ("raised-error", "error", 2, 1), "{found:?}");
+    assert!(message.starts_with("Paragraph ended before \\g was complete"), "{message}");
+}
+
+/// `\the` of an unknown dimension is a sign, digits, `.`, digits and `pt`
+/// of category 12. A loop taking it apart a character at a time, and a
+/// macro delimited by `pt`, leave the text after it intact.
+#[test]
+fn the_of_an_unknown_dimen_read_by_characters_keeps_what_follows() {
+    let analysis = analyze(
+        r"\dimen1=\pdfuniformdeviate 100000sp
+          \def\eat#1{\ifx#1\stop \else \expandafter\eat\fi}
+          \edef\x{\the\dimen1}
+          \expandafter\eat\x\stop
+          {\catcode`\P=12 \catcode`\T=12 \lccode`\P=`\p \lccode`\T=`\t
+           \lowercase{\gdef\getpt#1PT}{\gdef\num{#1}}}
+          \expandafter\getpt\the\dimen1
+          \def\after{ok}",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"num".to_string()), "{defined:?}");
+    assert_eq!(last_body(&analysis, "after"), "ok");
+}
+
+/// A box of text has the size its font's metrics give (`\showthe\wd0` in
+/// pdflatex: 15.27782pt, 6.94444pt, 0.0pt), and an hbox's height and depth
+/// are never negative (tex.web § 649).
+#[test]
+fn a_box_of_text_has_the_size_of_its_characters() {
+    let analysis = analyze_kernel(
+        r"\font\tenrm=cmr10 \tenrm \setbox0\hbox{abc}
+          \ifdim\wd0>0pt \def\wide{}\else\def\boxnowidth{}\fi
+          \ifdim\wd0>15.27pt \ifdim\wd0<15.28pt \def\exact{}\fi\fi
+          \ifdim\ht0<0pt \def\boxneg{}\fi \ifdim\dp0<0pt \def\boxneg{}\fi
+          \ifdim\ht0>6.94pt \def\high{}\fi",
+    );
+    let defined = names(&analysis);
+    for name in ["wide", "exact", "high"] {
+        assert!(defined.contains(&name.to_string()), "{name}: {defined:?}");
+    }
+    assert!(!defined.iter().any(|n| n == "boxnowidth" || n == "boxneg"), "{defined:?}");
+}
+
+/// Inline math of plain characters adds their boxes: `$N$` is 9.12497pt
+/// wide (with its italic correction) and 6.83331pt high in pdflatex.
+/// Math satex does not follow still leaves the height non-negative.
+#[test]
+fn inline_math_of_characters_has_a_bounded_size() {
+    let analysis = analyze_kernel(
+        r"\setbox0\hbox{$N$}
+          \ifdim\wd0>8pt \ifdim\wd0<9.13pt \def\wide{}\fi\fi
+          \ifdim\ht0>6.83pt \ifdim\ht0<6.84pt \def\high{}\fi\fi
+          \setbox2\hbox{$\alpha_i^2$}
+          \ifdim\ht2<0pt \def\boxneg{}\fi \ifdim\dp2<0pt \def\boxneg{}\fi",
+    );
+    let defined = names(&analysis);
+    for name in ["wide", "high"] {
+        assert!(defined.contains(&name.to_string()), "{name}: {defined:?}");
+    }
+    assert!(!defined.iter().any(|n| n == "boxneg"), "{defined:?}");
+}
+
+/// A loop counting the characters of `\the` of an unknown dimension
+/// cannot know the count: it is a range or unknown, never one number.
+#[test]
+fn a_character_loop_over_an_unknown_dimen_leaves_one_path() {
+    let analysis = analyze(
+        r"\dimen1=\pdfuniformdeviate 100000sp \count1=0
+          \def\eat#1{\ifx#1\stop \else \advance\count1 1 \expandafter\eat\fi}
+          \edef\x{\the\dimen1}
+          \expandafter\eat\x\stop
+          \edef\n{\the\count1}",
+    );
+    let n = last_body(&analysis, "n");
+    assert!(n.parse::<i64>().is_err(), "an exact count: {n}");
+}
+
+/// Two rests printed by one macro are two texts: a test on the first
+/// teaches nothing about the second.
+#[test]
+fn a_test_on_one_rest_leaves_another_alone() {
+    let analysis = analyze(
+        r"\dimen1=-\pdfuniformdeviate 100000sp \advance\dimen1 50000sp
+          \dimen2=-\pdfuniformdeviate 100000sp \advance\dimen2 50000sp
+          \def\pr{\the\dimen1;\the\dimen2;}
+          \edef\p{\pr}
+          \def\a#1#2{\ifx#2.\expandafter\b\fi}
+          \def\b#1;#2#3{\ifx#3.\else\gdef\mixed{}\fi}
+          \expandafter\a\p",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"mixed".to_string()), "{defined:?}");
+}
+
+/// The box sizes an article document leaves in `\out`.
+fn article_sizes(body: &str) -> String {
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let source = format!("\\documentclass{{article}}\\begin{{document}}{body}\\end{{document}}");
+    last_body(&Machine::analyze(&source, None, &cfg), "out")
+}
+
+/// A paragraph in a `\vbox` is broken into lines (tex.web §§ 813-890) and
+/// stacked with interline glue (§ 679). `\showthe` in pdflatex: 16.30554pt,
+/// 0.0pt, 113.81102pt.
+#[test]
+fn a_paragraph_with_a_forced_break_has_its_lines_height() {
+    let out = article_sizes(r"\setbox0\vbox{\hsize=4cm p\\r}\xdef\out{\the\ht0/\the\dp0/\the\wd0}");
+    assert_eq!(out, "16.30554pt/0.0pt/113.81102pt");
+}
+
+/// LaTeX's `\par` after `\strut` asks `\lastnodetype` (a character: 0 or
+/// 7, never 11) and may add `\hskip0pt`; § 816 makes a final glue
+/// `\penalty10000`, no breakpoint. With finite stretch (TikZ's `align=center`)
+/// it stays one line. pdflatex: 8.39996pt, 3.60004pt, 56.9055pt.
+#[test]
+fn a_final_glue_is_no_breakpoint() {
+    let skips = r"\leftskip0pt plus2em\rightskip0pt plus2em\parfillskip=0pt ";
+    let out = article_sizes(&format!(
+        r"\setbox0\vbox{{\hsize=2cm{skips}B\strut\par}}\xdef\out{{\the\ht0/\the\dp0/\the\wd0}}"
+    ));
+    assert_eq!(out, "8.39996pt/3.60004pt/56.9055pt");
+    let out = article_sizes(&format!(
+        r"\setbox0\vbox{{\hsize=2cm{skips}B\hskip3pt\par}}\xdef\out{{\the\ht0/\the\dp0/\the\wd0}}"
+    ));
+    assert_eq!(out, "6.83331pt/0.0pt/56.9055pt");
+    // 3pt short of the line with 2em of stretch: badness 0 (§ 108), one
+    // line beats any break (§ 859). pdflatex: 6.94444pt, 0.0pt, 26.88893pt.
+    let out = article_sizes(&format!(
+        r"\setbox2\hbox{{ab cd}}\setbox0\vbox{{\hsize=\wd2 \advance\hsize 3pt{skips}\noindent ab cd\par}}\xdef\out{{\the\ht0/\the\dp0/\the\wd0}}"
+    ));
+    assert_eq!(out, "6.94444pt/0.0pt/26.88893pt");
+}
+
+/// pdfTeX's `\pdfendlink` and `\pdfstartlink` append a whatsit (pdfTeX
+/// manual): `\unskip` after a link takes nothing. pdflatex: 9, 7.50002pt.
+#[test]
+fn a_link_ends_in_a_whatsit() {
+    let out = article_sizes(
+        r"\setbox0\hbox{\pdfstartlink user{/S}A\pdfendlink\xdef\t{\the\lastnodetype}\unskip}\xdef\out{\t/\the\wd0}",
+    );
+    assert_eq!(out, "9/7.50002pt");
+}
+
+/// Expanding `\ifdim\lastkern` inside a word does not end it: `A` and `V`
+/// still kern (tex.web §§ 1034-1036), as csquotes relies on. A `\write`
+/// is a whatsit, nothing after `\immediate` (§§ 1348, 1375); a font
+/// setting is nothing. pdflatex: 13.8889pt twice, -1, 9, -1.
+#[test]
+fn expansion_inside_a_word_keeps_its_kerning() {
+    let out = article_sizes(
+        r"\setbox0\hbox{AV}\xdef\a{\the\wd0}\setbox0\hbox{A\ifdim\lastkern=0pt \fi V}\xdef\b{\the\wd0}
+          \setbox0\hbox{\immediate\write-1{x}\xdef\c{\the\lastnodetype}}
+          \setbox0\hbox{\write-1{x}\xdef\d{\the\lastnodetype}}
+          \setbox0\hbox{\pdffontexpand\font 20 20 5 autoexpand\xdef\e{\the\lastnodetype}}\xdef\out{\a/\b/\c/\d/\e}",
+    );
+    assert_eq!(out, "13.8889pt/13.8889pt/-1/9/-1");
+}
+
+/// A centred minipage of two short lines is a `\vcenter` on the axis
+/// (tex.web § 736): pdflatex gives 12.94444pt, 7.94444pt, 85.35826pt. Two
+/// paragraphs stack the same way.
+#[test]
+fn a_minipage_of_two_lines_has_its_exact_size() {
+    let out =
+        article_sizes(r"\setbox0\hbox{\begin{minipage}{3cm}ab\\cg\end{minipage}}\xdef\out{\the\ht0/\the\dp0/\the\wd0}");
+    assert_eq!(out, "12.94444pt/7.94444pt/85.35826pt");
+    let out = article_sizes(r"\setbox0\vbox{\hsize=4cm p\par r}\xdef\out{\the\ht0/\the\dp0/\the\wd0}");
+    assert_eq!(out, "16.30554pt/0.0pt/113.81102pt");
+}
+
+/// Where the line width is not known, the breaks are not either: the
+/// height is a range from one line to one per breakpoint (four words, nine
+/// breakpoints with hyphenation, ten lines of 12pt at most), never one
+/// number and never negative.
+#[test]
+fn a_paragraph_of_uncertain_breaks_has_a_bounded_height() {
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let analysis = Machine::analyze(
+        r"\documentclass{article}\begin{document}
+          \setbox0\vbox{\hsize=\pdfuniformdeviate 300pt aa bb cc dd}
+          \ifdim\ht0<0pt \gdef\negative{}\fi \ifdim\ht0>120pt \gdef\high{}\fi
+          \xdef\out{\the\ht0}\end{document}",
+        None,
+        &cfg,
+    );
+    let out = last_body(&analysis, "out");
+    assert!(out.contains("unknown"), "{out}");
+    let defined = names(&analysis);
+    assert!(!defined.iter().any(|n| n == "negative" || n == "high"), "{defined:?}");
+}
+
+/// Past `limits.choices` the reversal of unknown digits still gives an
+/// over-approximation: never an empty or partial body without notice.
+#[test]
+fn digit_reversal_past_the_choices_limit_is_not_empty() {
+    for choices in [4, 8] {
+        let cfg = Config {
+            limits: satex::config::Limits { choices, ..crate::support::bare().limits },
+            ..crate::support::bare()
+        };
+        let analysis = Machine::analyze(
+            &format!(
+                "{PRELUDE}{}",
+                concat!(
+                    r"\def\empty{}\def\gobble#1{}\def\firstofone#1{#1}",
+                    r"\def\rev#1#2#3\nil{\ifx\empty#3\empty#2#1\expandafter\gobble\else\expandafter\firstofone\fi{\rev{#2#1}#3\nil}}",
+                    r"\count1=\pdfuniformdeviate 2000000000 \advance\count1 by -1000000000 ",
+                    r"\edef\h{\the\count1}",
+                    r"\edef\q{\expandafter\rev\expandafter{\expandafter}\h\nil}",
+                )
+            ),
+            None,
+            &cfg,
+        );
+        let q = last_body(&analysis, "q");
+        let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
+        assert!(!q.is_empty(), "choices {choices}: \\q is empty, {codes:?}");
+        assert!(q.contains("one of") || q.contains("unknown"), "choices {choices}: \\q is {q}");
+    }
+}
+
+/// tex.web deviations, each checked against pdfTeX (`target/scratch/tw/u*.tex`).
+const TEXWEB: &[crate::support::BodyRow] = &[
+    // § 1069: a `}` that meets `\begingroup` is deleted; the group stays open.
+    (
+        "brace_meeting_begingroup_is_deleted",
+        r"\begingroup } \def\y{b} \endgroup \ifx\y\undefined\def\r{u}\else\def\r{d}\fi",
+        &[("r", "u")],
+    ),
+    // § 1064: `\endgroup` meeting `{` inserts `}`, then closes its own group.
+    (
+        "endgroup_meeting_brace_inserts_one",
+        r"\begingroup{\endgroup \def\y{b}}\ifx\y\undefined\def\r{u}\else\def\r{d}\fi",
+        &[("r", "d")],
+    ),
+    // § 1193: a `$` meeting `{` in math inserts `}`, then ends the math.
+    (
+        "math_shift_meeting_brace_inserts_one",
+        r"\catcode`\$=3 $a{\def\y{b}$\ifx\y\undefined\def\r{u}\else\def\r{d}\fi",
+        &[("r", "u")],
+    ),
+    // § 59: `\meaning` and `\detokenize` print to a string, raw characters.
+    (
+        "meaning_and_detokenize_print_raw_characters",
+        r"\def\c#1{\ifx#1\end\else\advance\count1 1 \expandafter\c\fi}{\catcode1=12 \gdef\x{^^A}}\edef\y{\meaning\x}\expandafter\c\y\end\edef\a{\the\count1}\count1=0 \edef\d{\detokenize{^^e9^^c3}}\expandafter\c\d\end\edef\b{\the\count1}",
+        &[("a", "9"), ("b", "2")],
+    ),
+    // etex.ch `pseudo_start` splits the raw string at `\newlinechar`.
+    (
+        "scantokens_splits_at_an_unprintable_newlinechar",
+        r"{\catcode1=12 \gdef\x{a^^Ab}}\newlinechar=1 \everyeof{\noexpand}\edef\r{\expandafter\scantokens\expandafter{\x}}",
+        &[("r", "a b ")],
+    ),
+    // § 59: a file line breaks at `\newlinechar` before `^^` notation.
+    (
+        "write_splits_at_an_unprintable_newlinechar",
+        r"\newlinechar=10 \immediate\openout3=twnl.tex \immediate\write3{a^^Jb}\immediate\closeout3 \openin1=twnl.tex \read1 to\x \read1 to\y",
+        &[("x", "a "), ("y", "b ")],
+    ),
+    // §§ 63, 262: `\escapechar`, and a space after `\@` when `@` is a letter now.
+    (
+        "scantokens_prints_with_escapechar_and_current_letters",
+        r"\def\t{\@x}\catcode`\@=11 \def\@{AT}\def\@x{WRONG}\everyeof{\noexpand}\edef\r{\expandafter\scantokens\expandafter{\t}}{\escapechar=-1 \xdef\s{\scantokens{\relax}}}",
+        &[("r", "ATx "), ("s", "relax ")],
+    ),
+    // § 483: an unmatched `}` aborts the line `\read` reads.
+    (
+        "read_drops_the_line_after_an_unmatched_brace",
+        r"\begingroup\lccode`\]=`\} \lowercase{\endgroup\def\rb{]}}\immediate\openout3=twrb.tex \immediate\write3{a\rb b}\immediate\closeout3 \openin1=twrb.tex \read1 to\x",
+        &[("x", "a")],
+    ),
+    // § 1212: a prefix before a non-assignment is dropped.
+    (
+        "prefix_before_a_non_assignment_is_dropped",
+        r"\begingroup\global\hskip1pt \def\x{a}\endgroup\ifx\x\undefined\def\r{u}\else\def\r{d}\fi",
+        &[("r", "u")],
+    ),
+    // §§ 405, 443: a name or active character `\let` to a space is a spacer.
+    (
+        "implicit_spaces_are_spacers",
+        r"\def\:{\let\sp= }\: \catcode`\~=13 \let~= \sp \count0~=7 \count1 \sp=6 \count2\sp=5 \edef\r{\the\count0,\the\count1,\the\count2}",
+        &[("r", "7,6,5")],
+    ),
+    // etex.ch `scan_expr` swallows any `cur_cmd = relax`.
+    ("numexpr_swallows_an_active_relax", r"\catcode`\~=13 \let~\relax \edef\x{\the\numexpr1~}", &[("x", "1")]),
+    // § 288 `prepare_mag` resets an illegal `\mag` to 1000.
+    ("true_resets_an_illegal_mag", r"\mag=0 \dimen0=1truept \edef\m{\the\mag}", &[("m", "1000")]),
+];
+
+#[test]
+fn texweb_deviations_agree_with_tex() {
+    crate::support::body_rows(TEXWEB, analyze);
+}
+
+#[test]
+fn immediate_covers_only_the_next_command() {
+    // tex.web § 1375: `\immediate\relax\write` is a deferred write.
+    let analysis = analyze(
+        r"\immediate\openout3=twim.tex \immediate\relax\write3{x}\immediate\closeout3 \openin1=twim.tex \read1 to\y",
+    );
+    assert_ne!(body(&analysis, "y"), "x ");
+}
+
+#[test]
+fn if_tells_a_control_sequence_from_char_256() {
+    // tex.web § 506; XeTeX's `too_big_usv` is past every character (probed with xetex).
+    let cfg = Config { engine: Some(satex::config::Engine::XeTeX), ..crate::support::bare() };
+    let analysis =
+        Machine::analyze(&format!("{PRELUDE}\\if \u{100}\\relax\\def\\r{{T}}\\else\\def\\r{{F}}\\fi"), None, &cfg);
+    assert_eq!(body(&analysis, "r"), "F");
+}
+
+/// An image is its PDF page's crop box, else its media box (the pdfTeX
+/// manual, "Graphics"): pdflatex gives 10.0375pt square.
+#[test]
+fn a_pdf_image_has_its_page_size() {
+    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/documents/includegraphics/title-banner-image.pdf");
+    let raw = article_sizes(&format!(
+        r"\pdfximage{{{file}}}\setbox0\hbox{{\pdfrefximage\pdflastximage}}\xdef\out{{\the\wd0/\the\ht0/\the\dp0}}"
+    ));
+    assert_eq!(raw, "10.0375pt/10.0375pt/0.0pt");
+}
+
+/// An `\halign`'s rows are packed naturally (tex.web §§ 796, 799), so its
+/// height and depth are never negative, and exact where its entries are
+/// known. pdflatex: 18.30554pt/0.0pt/11.55557pt, 16.30554pt/0.0pt/50.0pt,
+/// 6.94444pt/1.94444pt for two columns.
+#[test]
+fn an_halign_of_two_rows_has_its_exact_height() {
+    let out = article_sizes(
+        r"\setbox0\vbox{\tabskip=3pt\halign{\hfil#\hfil\cr g\cr\noalign{\kern2pt}b\cr}}\xdef\out{\the\ht0/\the\dp0/\the\wd0}",
+    );
+    assert_eq!(out, "18.30554pt/0.0pt/11.55557pt");
+    let out = article_sizes(r"\setbox0\vbox{\halign to 50pt{#\cr g\cr b\cr}}\xdef\out{\the\ht0/\the\dp0/\the\wd0}");
+    assert_eq!(out, "16.30554pt/0.0pt/50.0pt");
+    let out = article_sizes(r"\setbox0\vbox{\halign{#&#\cr g&b\cr}}\xdef\out{\the\ht0/\the\dp0}");
+    assert_eq!(out, "6.94444pt/1.94444pt");
+}
+
+/// tex.web § 372: `\meaning` of a name built from unknown digits is the
+/// meaning of a name of its family it may spell, or `\relax`: a path each,
+/// so the text is one of those two, never unknown text.
+#[test]
+fn meaning_of_a_built_name_is_a_family_member_or_relax() {
+    let source = r"\def\zq1#1#2{}
+        \edef\h{\number\pdfuniformdeviate 20}
+        \edef\out{\expandafter\meaning\csname zq\h\endcsname}";
+    let text = out(source);
+    assert!(!text.contains("text of") && text.contains("one of"), "{text}");
+}
+
+/// tex.web § 294: `\meaning` prints unknown text in a body as characters
+/// of its class, never as the name that stands for it, so a delimited
+/// split of the meaning sees only the real delimiters (xcolor's sanitize).
+#[test]
+fn meaning_of_an_unknown_body_hides_no_delimiter() {
+    let analysis = analyze(
+        r"\edef\a{x\number\pdfuniformdeviate 9 y}\def\b#1:#2:#3\stop{\def\c{#3}}\expandafter\b\meaning\a:\stop",
+    );
+    assert_eq!(last_body(&analysis, "c"), "");
 }

@@ -643,3 +643,51 @@ fn engine_error_after_unknown_text_is_a_gap() {
         (Severity::Unsupported, false)
     );
 }
+
+/// tex.web § 1110: `\unhcopy` of an hbox of rules adds their natural width,
+/// whatever `\wd` was set to since (`\strut` in a box, LaTeX's `\strutbox`).
+#[test]
+fn unhcopy_of_rules_adds_their_natural_width() {
+    check(
+        r"\setbox1\hbox{\vrule width 3pt height 2pt depth 1pt}\setbox0\hbox{\unhcopy1}\edef\R{\the\wd0/\the\ht0/\the\dp0}",
+        "3.0pt/2.0pt/1.0pt",
+    );
+    check(r"\setbox1\hbox{\vrule width 3pt}\wd1=7pt \setbox0\hbox{\unhcopy1}\edef\R{\the\wd0}", "3.0pt");
+    // The list's last node is the new tail: `\unskip` finds a rule there and
+    // takes nothing; an empty list leaves the tail as it was.
+    check(
+        r"\setbox1\hbox{\vrule width 3pt height 2pt depth 1pt}\setbox0\hbox{\hskip2pt\unhcopy1\unskip}\edef\R{\the\wd0/\the\ht0/\the\dp0}",
+        "5.0pt/2.0pt/1.0pt",
+    );
+    check(r"\setbox1\hbox{}\setbox0\hbox{\vrule width 1pt\kern2pt\unhcopy1\unkern}\edef\R{\the\wd0}", "1.0pt");
+}
+
+/// tex.web § 1375: `\immediate\write` and `\immediate\openout` leave the
+/// list as it was; a deferred `\write` puts a whatsit at its end (§ 1352).
+/// LaTeX's `\wlog` in a font's `.fd` file read inside a box is the case.
+#[test]
+fn immediate_write_leaves_the_tail() {
+    check(r"\setbox0\hbox{\kern3pt\immediate\write-1{}\unkern}\edef\R{\the\wd0}", "0.0pt");
+    check(r"\setbox0\hbox{\kern3pt\write-1{}\unkern}\edef\R{\the\wd0}", "3.0pt");
+}
+
+/// etex.ch: after a rule `\lastnodetype` is 3, never glue (11). LaTeX's
+/// `\par` asks this, and a line of one rule stays one line.
+#[test]
+fn lastnodetype_after_a_rule_is_not_glue() {
+    check(r"\setbox0\hbox{\vrule\edef\R{\ifnum\lastnodetype=11 G\else N\fi}}", "N");
+    check(
+        r"\setbox0\vbox{\hsize=100pt\parfillskip=0pt\noindent\vrule height 1pt\ifnum\lastnodetype=11 \hskip0pt\fi\par}\edef\R{\the\ht0}",
+        "1.0pt",
+    );
+}
+
+/// tex.web §§ 868, 1096: glue after a penalty is no breakpoint, and glue
+/// alone makes a paragraph not null: `~~` in a narrow box is one line.
+#[test]
+fn glue_after_a_penalty_is_no_breakpoint() {
+    check(
+        r"\setbox0\vbox{\hsize=10pt\parfillskip=0pt\noindent\vrule height 1pt\penalty10000\hskip 5pt\penalty10000\hskip 5pt\vrule height 2pt\par}\edef\R{\the\wd0/\the\ht0}",
+        "10.0pt/2.0pt",
+    );
+}

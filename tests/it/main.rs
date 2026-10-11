@@ -11,8 +11,10 @@ mod budgets;
 mod build_lints;
 mod cache_agreement;
 mod cache_concurrency;
+mod cache_semantics;
 mod chktex;
 mod colors;
+mod completions;
 mod compliance_matrix;
 mod corpus;
 mod counterexamples;
@@ -23,6 +25,7 @@ mod distribution_guard;
 // `satex-doc`, this module's target, is only built with the `doc` feature.
 #[cfg(feature = "doc")]
 mod docs;
+mod documents;
 mod encoding;
 mod endinput;
 mod engine;

@@ -1,0 +1,17 @@
+\documentclass{article}
+% A branch on an unknown inside a helper, met once shallow and then deeper in
+% groups within one call: the deeper meets are later calls, not passes of a
+% loop entered at the first, so no group the caller opened may be unwound.
+\newcount\mode \mode=7
+\edef\v{\ifodd\pdfuniformdeviate 2 x\else y\fi}
+\def\w{x}
+\def\style{\ifx\v\w\relax\fi}
+\def\out{\bgroup\style\egroup}
+\def\leaveall{\ifnum\mode=0 \expandafter\endgroup\else\egroup\expandafter\leaveall\fi}
+\newcommand*\code[1]{\begingroup\mode=0 \style\bgroup\mode=1 \out\out\out\out #1\leaveall}
+\begin{document}
+Some text \code{a}, \code{b} and \code{c}.
+\gdef\AfterCode{}
+\input{zzlater}
+\gdef\SatexReachedEnd{}
+\end{document}

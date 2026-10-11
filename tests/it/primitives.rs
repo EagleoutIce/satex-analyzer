@@ -2,7 +2,7 @@
 //! Which engine has which name was probed against the TeX Live 2026 binaries
 //! (see `engine_catalogs_match_the_installed_engines` in `tests/it/engine.rs`).
 
-use std::collections::HashMap;
+use satex::fixed::HashMap;
 
 use satex::builtins::{Primitive, initial_meanings};
 use satex::config::Engine;

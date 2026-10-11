@@ -37,7 +37,7 @@ fn budget(name: &str, source: &str, measured: u64) -> Option<Analysis> {
     }
     let analysis = run(name, source);
     eprintln!("budget {name}: {} steps", analysis.steps);
-    without(name, &analysis, &["stalled-loop", "budget-exhausted"]);
+    without(name, &analysis, &["line-budget-cut", "budget-exhausted"]);
     within(name, analysis.steps, measured);
     Some(analysis)
 }
@@ -62,6 +62,8 @@ const NOTEBOOK: u64 = 10772145;
 const OVERFULL: u64 = 9091922;
 const PGFMATH_TYPED: u64 = 2329093;
 const GRAPHIC: u64 = 1856715;
+// measured 2026-10-11
+const REGEX_SCAN: u64 = 11077529;
 
 #[test]
 fn kernel_build() {
@@ -73,15 +75,12 @@ fn kernel_build() {
         cache: Cache { dir: Some(dir.clone()), rebuild: true, ..Default::default() },
         ..crate::support::config()
     };
-    // Strict on purpose: the kernel decides everything it runs, so no stall
-    // bound may cut it, however low (a 20M bound once cut its Unicode data).
-    cfg.limits.stall_tokens = 20_000_000;
     let analysis = Machine::analyze("", Some(&dir.join("kernel.tex")), &cfg);
     let format = analysis.format.as_ref().expect("a format");
     assert!(!format.cached, "the kernel was read from a cache");
     assert!(format.complete(), "the kernel was not read to the end");
-    let cut: Vec<_> = analysis.facts.diagnostics.iter().filter(|d| d.code == "stalled-loop").collect();
-    assert!(cut.is_empty(), "the kernel build was cut as a stalled loop: {cut:?}");
+    let cut: Vec<_> = analysis.facts.diagnostics.iter().filter(|d| d.code == "line-budget-cut").collect();
+    assert!(cut.is_empty(), "the kernel build was cut: {cut:?}");
     within("kernel", format.steps, KERNEL);
 }
 
@@ -313,4 +312,42 @@ fn notebook_cell_with_an_inline_listing() {
         cell(3, 2, "x <- 2"),
     );
     budget("notebook_cell", &src, NOTEBOOK);
+}
+
+/// Capabilities: termination.
+/// A run past `limits.seconds` stops there: the clock is read every
+/// `CHECK_INTERVAL` steps, whichever step lands on the interval.
+#[test]
+fn a_seconds_limit_stops_the_run() {
+    use satex::{
+        config::{Config, Engine},
+        plugin::Kernel,
+    };
+    let mut cfg = Config { engine: Some(Engine::PdfTeX), kernel: Some(Kernel::None), ..crate::support::config() };
+    (cfg.limits.steps, cfg.limits.line_steps, cfg.limits.site_expansions) = (u64::MAX, 0, u32::MAX);
+    (cfg.limits.facts, cfg.limits.vertices, cfg.limits.seconds) = (usize::MAX, usize::MAX, 1);
+    let started = std::time::Instant::now();
+    // Millions of tokens, read in seconds: only the clock stops it early.
+    let source = "\\relax\n".repeat(8_000_000);
+    let analysis = Machine::analyze(&source, None, &cfg);
+    assert!(started.elapsed().as_secs() < 20, "ran {:?}", started.elapsed());
+    assert!(
+        analysis.facts.diagnostics.iter().any(|d| d.code == "budget-exhausted" && d.message.contains("limits.seconds")),
+        "{} steps in {:?}: {:?}",
+        analysis.steps,
+        started.elapsed(),
+        analysis.facts.diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+}
+
+/// Capabilities: termination, package interpreters. A concrete l3regex scan
+/// over many lines, as a documentation package reads defaults from its own
+/// source: deep input under every call, one path. Its steps are TeX's own
+/// work; the shape memo must leave them and the end unchanged.
+#[test]
+fn expl3_regex_scan_of_lines() {
+    let source = "\\documentclass{article}\n\\ExplSyntaxOn\n\\seq_new:N \\l_m_seq \\prop_new:N \\g_d_prop\n\\cs_new_protected:Npn \\scan:n #1 { \\regex_extract_once:nnNT { \\A \\s* ([^=]+?) \\s* / \\. default \\s* = \\s* (.*?) \\s* \\Z } {#1} \\l_m_seq { \\prop_gput:Nxx \\g_d_prop { \\seq_item:Nn \\l_m_seq { 2 } } { \\seq_item:Nn \\l_m_seq { 3 } } } }\n\\int_step_inline:nn { 40 } { \\scan:n { key ##1 /.default = value~##1 } }\n\\ExplSyntaxOff\n\\begin{document}x\\end{document}";
+    if let Some(analysis) = budget("regex-scan", source, REGEX_SCAN) {
+        without("regex-scan", &analysis, &["limit-reached", "endless-loop"]);
+    }
 }

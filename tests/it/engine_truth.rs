@@ -403,7 +403,10 @@ fn an_unknown_dimension_prints_as_digits_point_digits_pt() {
     assert!(!body(&analysis, "one").contains('.'));
     assert!(defined(&analysis, "after"));
     let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
-    assert!(!codes.iter().any(|c| ["missing-number", "runaway-argument", "stalled-loop"].contains(&&**c)), "{codes:?}");
+    assert!(
+        !codes.iter().any(|c| ["missing-number", "runaway-argument", "line-budget-cut"].contains(&&**c)),
+        "{codes:?}"
+    );
 }
 
 /// What `pdftex -ini -etex` prints as `[…]` messages for `source`, when it

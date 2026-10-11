@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{etoolbox}
+\makeatletter
+% a thesis class adds input directories this way
+\def\InputFrom#1{\appto\input@path{{#1/}}}
+\makeatother
+\InputFrom{sections}
+\begin{document}
+\input{intro}
+\gdef\SatexReachedEnd{}\end{document}

@@ -58,7 +58,7 @@ fn markers(text: &str, kind: &str) -> Vec<String> {
 }
 
 /// Diagnostics that say a limit, not a fixpoint, ended something.
-const CUT: &[&str] = &["limit-reached", "stalled-loop", "nesting-widened", "recursion-widened", "budget-exhausted"];
+const CUT: &[&str] = &["limit-reached", "line-budget-cut", "nesting-widened", "recursion-widened", "budget-exhausted"];
 
 fn problems(analysis: &Analysis, text: &str) -> Option<String> {
     let defs = defined(analysis);

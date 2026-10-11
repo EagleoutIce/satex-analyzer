@@ -1,0 +1,11 @@
+% A node of fixed text width, centred, with struts at both ends: LaTeX's
+% \par asks \lastnodetype after \strut, and its line must stay one line.
+\documentclass{article}
+\usepackage{tikz}
+\begin{document}
+\begin{tikzpicture}
+\node[draw,rounded corners=10pt,text width=1.9cm,align=center,
+  execute at begin node=\strut,execute at end node=\strut] (d) at (0,0) {A\\B};
+\end{tikzpicture}
+\gdef\SatexReachedEnd{}
+\end{document}

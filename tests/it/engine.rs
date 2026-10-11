@@ -669,6 +669,43 @@ fn the_lualatex_kernel_builds_without_broken_gaps() {
     assert!(broken.is_empty(), "{broken:#?}");
 }
 
+/// LuaTeX dumps no Lua state, so the LuaLaTeX kernel is cached like any
+/// other: the next run installs it, `\everyjob` runs the kernel's Lua
+/// again, and expl3's Lua-defined `\tex_strcmp:D` decides
+/// `\str_if_eq:nnTF`. Skipped without `lualatex`.
+#[test]
+fn the_lualatex_kernel_is_cached_and_expl3_works() {
+    if !crate::support::installed() || which::which("lualatex").is_err() {
+        eprintln!("no lualatex found; skipping the LuaLaTeX kernel cache");
+        return;
+    }
+    let dir = crate::support::scratch_dir(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/it-lualatex-cache"),
+    );
+    let source = "% !TeX program = lualatex\n\\documentclass{article}\n\\ExplSyntaxOn\n\
+\\str_if_eq:nnTF {a} {a} { \\def\\same{} } { \\def\\different{} }\n\\ExplSyntaxOff\n\
+\\begin{document}\nText.\n\\end{document}\n";
+    let path = dir.join("main.tex");
+    std::fs::write(&path, source).unwrap();
+    let cache = satex::config::Cache { dir: Some(dir.join("cache")), ..Default::default() };
+    let cfg = Config { cache, ..crate::support::config() };
+    let cold = Machine::analyze(source, Some(&path), &cfg);
+    let warm = Machine::analyze(source, Some(&path), &cfg);
+    assert!(cold.format.as_ref().is_some_and(|f| !f.cached), "the first run interpreted the kernel");
+    assert!(warm.format.as_ref().is_some_and(|f| f.cached), "the second run installed the cached kernel");
+    for a in [&cold, &warm] {
+        assert!(crate::support::defined(a, "same") && !crate::support::defined(a, "different"));
+        let missing: Vec<String> = a
+            .facts
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "missing-number" && a.file_name(d.span.file).ends_with("expl3-code.tex"))
+            .map(|d| format!("{}:{} {}", a.file_name(d.span.file), d.span.line, d.message))
+            .collect();
+        assert!(missing.is_empty(), "{missing:#?}");
+    }
+}
+
 /// XeTeX's case codes reach the whole of Unicode too (XeTeX reference
 /// guide, "Character codes"), while pdfTeX stops at 255 (tex.web § 1232).
 #[test]

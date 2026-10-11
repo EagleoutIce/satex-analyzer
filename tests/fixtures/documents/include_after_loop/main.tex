@@ -1,0 +1,7 @@
+\documentclass{article}
+\begin{document}
+% An endless macro before an \include: the file is still read.
+\def\z{\z}\z
+\include{ch1}
+\gdef\SatexReachedEnd{}
+\end{document}

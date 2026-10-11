@@ -105,3 +105,13 @@ fn a_typed_text_class_and_typed_sets_carry_their_type() {
     let Some(a) = run("typedsets", vec![("\\stubset", s)], source) else { return };
     assert_eq!(crate::support::body(&a, "r"), "Y");
 }
+
+/// tex.web § 464: `\detokenize` prints letters as category 12, so no
+/// letter of typed text survives it.
+#[test]
+fn detokenized_typed_text_holds_no_letter() {
+    let source = "\\edef\\r{\\expandafter\\ifcat\\expandafter a\\detokenize\\expandafter{\\stubdim}!Y\\else N\\fi}";
+    let dim = StubResult::Text { text: "dimension".into() };
+    let Some(a) = run("detok", vec![("\\stubdim", stub("", dim, &[]))], source) else { return };
+    assert_eq!(crate::support::body(&a, "r"), "N");
+}

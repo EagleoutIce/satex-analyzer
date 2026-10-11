@@ -1,0 +1,80 @@
+\RequirePackage[T1]{fontenc}
+\PassOptionsToPackage{protrusion=true,expansion=true,tracking=true,nopatch=toc}{microtype}
+\RequirePackage{microtype}
+
+\ifluatex
+\thesis@debug{Loading fontspec for LuaLaTeX fonts}
+\RequirePackage{fontspec}
+\ifthesis@palatino
+    \thesis@debug{Loading Palatino font}
+    \setmainfont[Ligatures=TeX,Numbers=OldStyle]{TeX Gyre Pagella}
+\fi
+\ifthesis@beramono
+    \thesis@debug{Loading Beramono font}% used by classicthesis
+    \setmonofont[Scale=0.85]{DejaVu Sans Mono}
+\fi
+\else
+\RequirePackage[utf8]{inputenc}
+\ifthesis@palatino
+    \thesis@debug{Loading Palatino font}
+    \RequirePackage{tgpagella}
+    % \PassOptionsToPackage{}{mathpazo}
+    \RequirePackage[osf]{mathpazo}
+    % bold small caps definition by https://tex.stackexchange.com/a/418097
+    \AtBeginDocument{%
+        \DeclareFontShape{T1}{pplj}{b}{sc}{<-> ec-qplb-sc}{}
+        \DeclareFontShape{T1}{pplj}{bx}{sc}{<->ssub * qpl/b/sc}{}
+    }
+\fi
+\ifthesis@beramono
+    \thesis@debug{Loading Beramono font}
+    \PassOptionsToPackage{scaled=.85}{beramono}
+    \RequirePackage{beramono}
+\fi
+\fi
+
+\ifthesis@enhanceMath
+    \thesis@debug{Enhancing mat typesetting}
+    \DeclareMathAlphabet{\mathcal}{OMS}{cmsy}{m}{n}
+\fi
+
+\ifthesis@fira
+    \thesis@debug{Loading fira sans-serif font}%
+    \RequirePackage{FiraSans}
+\fi
+
+% % use lining figures in tables
+\ifluatex
+\RequirePackage{unicode-math}\def\LiningFigures{\addfontfeatures{Numbers=Lining}\sisetup{text-font-command=\addfontfeatures{Numbers=Lining}}}
+\else\def\LiningFigures{\figureversion{lf}\selectfont\sisetup{text-font-command=\figureversion{lf}\selectfont}}
+\fi
+
+\AtBeginEnvironment{tabular}{\LiningFigures}
+\AtBeginEnvironment{tabularx}{\LiningFigures}
+\AtBeginEnvironment{longtable}{\LiningFigures}
+
+% more space to breathe
+\DeclareRobustCommand{\scshapespaced}{\SetTracking{encoding=*}{95}\scshape}
+
+% TODO: make customizable
+% \addtokomafont{disposition}{\rmfamily\scshapespaced}
+% \SetTracking{encoding=*}{125}\fontseries{sb}\selectfont
+\ifthesis@sftitle
+\addtokomafont{disposition}{\normalfont\sffamily\itshape}
+\else
+\addtokomafont{disposition}{\normalfont\itshape}
+\fi
+\RedeclareSectionCommand[font=\usekomafont{disposition}\huge]{chapter}
+\RedeclareSectionCommand[afterskip=\medskipamount,beforeskip=1.75em]{section}
+\RedeclareSectionCommand[afterskip=\smallskipamount,beforeskip=\bigskipamount]{subsection}
+\RedeclareSectionCommand[afterskip=\smallskipamount,beforeskip=\medskipamount]{subsubsection}
+
+\setkomafont{partentry}{\rmfamily}
+\setkomafont{chapterentry}{\rmfamily}
+\setkomafont{descriptionlabel}{\normalfont\bfseries}
+% \setkomafont{sectionentry}{\rmfamily}
+
+\def\sbseries{\fontseries{sb}\selectfont}
+\def\textsb#1{\begingroup\sbseries#1\endgroup}
+
+\def\thesis@liningnumbers{\fontfamily{ppl}\selectfont}

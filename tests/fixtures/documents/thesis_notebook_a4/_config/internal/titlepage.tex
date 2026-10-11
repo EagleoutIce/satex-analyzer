@@ -1,0 +1,70 @@
+\newcommand*\titleimage[2][width=\linewidth]{\def\@titleimage{#2}\def\@titleimageoptions{#1}}
+\def\thesisinserttitleimage{%
+   \ifcsname @titleimage\endcsname
+      % expand the options before includegraphics
+      \expandafter\includegraphics\expandafter[\@titleimageoptions]{\@titleimage}%
+   \else
+      \begin{minipage}[c][7cm][c]{\linewidth}%
+         \centering\textcolor{purple}{\textbf{Please specify a title image with \texttt{\textbackslash titleimage}}}%
+      \end{minipage}
+   \fi
+}
+
+\def\institute#1{\def\@institute{#1}}
+\def\studentnumber#1{\def\@studentnumber{[#1]}}
+\def\@studentnumber{}
+\def\@institute{\textcolor{purple}{\textbf{Please specify an institute with \texttt{\textbackslash institute}}}}
+
+\newcounter{thesis@examiners}
+\newcounter{thesis@supervisors}
+% name | university
+\def\examiner#1#2{\stepcounter{thesis@examiners}\appto\@examiners{\item #1\\\textit{#2}}}
+\def\supervisor#1#2{\stepcounter{thesis@supervisors}\appto\@supervisors{\item #1\\\textit{#2}}}
+\def\university#1{\def\@university{#1}}
+\def\thesisYear#1{\def\@year{#1}}
+\thesisYear{\the\year}
+
+\RequirePackage{graphicx,ragged2e,enumitem,tabularx}
+
+\newenvironment{full-titlepage}{\begingroup
+   % manually reconstructed initialization of koma script
+   % if twoside
+   \if@twoside 
+   \setcounter{page}{-1}%
+   \thispdfpagelabel{Coverpage}%
+   \fi
+   \thispagestyle{empty}%
+   \edef\titlepage@restore{%
+      \noexpand\endgroup
+      \noexpand\global\noexpand\@colht\the\@colht
+      \noexpand\global\noexpand\@colroom\the\@colroom
+      \noexpand\global\vsize\the\vsize
+      \noexpand\let\noexpand\titlepage@restore\noexpand\relax
+   }%
+   % newgeometry fails currently with the next page :/
+   \topmargin=-1in\relax
+   \oddsidemargin=-1in\relax
+   \evensidemargin=-1in\relax
+   \textwidth=\paperwidth\relax
+   \textheight=\paperheight\relax
+   \headheight=0pt\relax
+   \headsep=0pt\relax
+   \footskip=0pt\relax
+   \@colht=\textheight\relax
+   \@colroom=\textheight\relax
+   \columnwidth=\textwidth\relax
+   \vsize=\textheight\relax
+   \hsize=\columnwidth\relax
+   \linewidth=\hsize
+}{%
+   \clearpage\titlepage@restore
+}
+
+\ifthesis@draft
+\renewcommand*{\maketitle}[1][-1]{}
+\else
+\renewcommand*{\maketitle}[1][0]{\begingroup
+   \setcounter{page}{#1}\thispdfpagelabel{Cover}%
+   \thesis@load@profile{titlepage}%
+\endgroup}
+\fi

@@ -1,0 +1,12 @@
+\documentclass{article}
+\begin{document}
+% A loop summarized inside a group that changed \protect.
+\def\m{\begingroup\let\protect\string
+  \count255=\pdfrandomseed
+  \loop\advance\count255 1 \ifnum\count255<100 \repeat
+  \endgroup}
+\m
+\ifx\protect\string \gdef\ProtectLeaked{}\fi
+\include{ch1}
+\gdef\SatexReachedEnd{}
+\end{document}

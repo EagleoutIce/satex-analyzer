@@ -404,10 +404,12 @@ fn template(name: &str, p: Primitive) -> Result<Template, &'static str> {
             t(format!("\\setbox%I%=\\vbox{{{cs}%D% }}\\edef\\zR{{\\the\\ht%I%}}"))
         }
         // `\hfil` and its relatives take no dimension (tex.web § 1058).
-        P::Mode(ModeCmd::Horizontal(Material::Fil)) => {
+        P::Mode(ModeCmd::Horizontal(Material::Fil(_))) => {
             t(format!("\\setbox%I%=\\hbox{{{cs}}}\\edef\\zR{{\\the\\wd%I%}}"))
         }
-        P::Mode(ModeCmd::Vertical(Material::Fil)) => t(format!("\\setbox%I%=\\vbox{{{cs}}}\\edef\\zR{{\\the\\ht%I%}}")),
+        P::Mode(ModeCmd::Vertical(Material::Fil(_))) => {
+            t(format!("\\setbox%I%=\\vbox{{{cs}}}\\edef\\zR{{\\the\\ht%I%}}"))
+        }
         P::Mode(ModeCmd::Horizontal(Material::Rule)) | P::Mode(ModeCmd::Vertical(Material::Rule)) => {
             t(format!("\\setbox%I%=\\vbox{{{cs} height %D% width %D% }}\\edef\\zR{{\\the\\ht%I%,\\the\\wd%I%}}"))
         }

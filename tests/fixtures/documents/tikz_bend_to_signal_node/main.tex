@@ -1,0 +1,13 @@
+% A bent path to a signal node with text width, centered `~~~~` and
+% negative inner sep: the node's size must be known to place the path.
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{shapes.symbols}
+\begin{document}
+\setbox0=\hbox{\begin{tikzpicture}
+\node[draw] (1) at (0,0) {};
+\node[draw,signal,signal to=east and west,inner sep=-4pt,text width=5mm,align=center,font=\ttfamily] (2) at (1,1) {~~~~};
+\draw (1) to[bend right] (2);
+\end{tikzpicture}}
+\gdef\SatexReachedEnd{}
+\end{document}

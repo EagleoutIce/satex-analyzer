@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{tikz}
+% A rounded node around a strut in a saved box; the local package after it
+% must still be read (it was silently skipped).
+\setbox0=\hbox{\tikz{\node[rounded corners=3pt,draw] {\strut};}}
+\usepackage{zzlocal}
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

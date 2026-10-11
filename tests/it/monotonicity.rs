@@ -78,8 +78,16 @@ fn undecided_count(analysis: &Analysis) -> u32 {
     analysis.facts.diagnostics.iter().filter(|d| d.code == "undecided-condition").map(|d| d.count).sum()
 }
 
-const LIMIT_NAMES: &[&str] =
-    &["choices", "paths", "meaning_splits", "widen_after", "recursion_depth", "meaning_set", "value_set"];
+const LIMIT_NAMES: &[&str] = &[
+    "choices",
+    "paths",
+    "meaning_splits",
+    "widen_after",
+    "recursion_depth",
+    "meaning_set",
+    "value_set",
+    "interval_set",
+];
 
 fn get(limits: &Limits, name: &str) -> u16 {
     match name {
@@ -90,6 +98,7 @@ fn get(limits: &Limits, name: &str) -> u16 {
         "recursion_depth" => limits.recursion_depth,
         "meaning_set" => limits.meaning_set,
         "value_set" => limits.value_set,
+        "interval_set" => limits.interval_set,
         _ => unreachable!("{name}"),
     }
 }
@@ -103,6 +112,7 @@ fn set(limits: &mut Limits, name: &str, value: u16) {
         "recursion_depth" => limits.recursion_depth = value,
         "meaning_set" => limits.meaning_set = value,
         "value_set" => limits.value_set = value,
+        "interval_set" => limits.interval_set = value,
         _ => unreachable!("{name}"),
     }
 }
