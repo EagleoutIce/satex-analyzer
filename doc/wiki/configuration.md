@@ -149,7 +149,7 @@ arm_joins: true  # arms of a choice inside an \edef or \csname join where they m
 
 # Limits: the termination argument. Reaching one stops that part of the run
 # and records a diagnostic. Only choices, paths, meaning_splits, widen_after, recursion_depth,
-# meaning_set and value_set trade precision for time; the rest only stop a run.
+# call_summary_after, meaning_set and value_set trade precision for time; the rest only stop a run.
 limits:
   memory: 8GiB  # what one run may hold at once; 0 lifts the limit
   threads: 0  # threads for the project walk; the interpreter runs on one
@@ -157,19 +157,23 @@ limits:
   steps: 1000000000  # tokens the document may digest
   format_steps: 9000000000  # tokens latex.ltx may digest (built once, then cached)
   file_depth: 64  # how deep \input and \usepackage may nest
-  expansion_depth: 128  # how often one macro may be nested in itself before its recursion is widened
+  expansion_depth: 512  # how often one macro may be nested in itself before its recursion is widened
   site_expansions: 16384  # how often one call site may expand without reading on
-  seconds: 600  # wall-clock limit per run, 0 for none
-  stall_tokens: 200000000  # tokens an undecided loop may run without reading input before it is widened
+  seconds: 300  # wall-clock limit per run, 0 for none
   repeat_failures: 8  # times one gap may be met at one place before the expansion is dropped
   choices: 8  # undecided choices one command may make on one path
-  paths: 16  # waiting paths before two that stand alike have their input widened
+  paths: 16  # waiting paths before the two furthest back are cut to the input they share and joined
+  alike: 8  # waiting paths before those at one place in the same conditionals and groups have their input widened
   meaning_splits: 4  # choices a command may have made for a name joined to several meanings to split per meaning
   widen_after: 3  # rounds a loop head reanalyzes a grown state before widening it
-  recursion_depth: 25  # levels an undecided recursion is followed before it is assumed to end
+  recursion_depth: 100  # levels an undecided recursion is followed before it is assumed to end
+  loop_heads: 512  # loop heads and entries one drive keeps with their joined states; the oldest goes first
+  call_summary_after: 2  # runs of one call recorded before an unknown-operand call applies their join; 0 = never
+  cycle_after: 2  # repeats of one call in the same state before its path ends (the only path is summarized); 0 = never
   meaning_set: 8  # meanings a join keeps as a set before the meaning is unknown
   value_set: 8  # values a join keeps for a count or dimension before only the interval
-  degrade_at_percent: 70  # of limits.seconds and limits.memory; 100 = stop without degrading first
+  interval_set: 4  # members a join keeps for a number once intervals are among them, before only their hull
+  degrade_at_percent: 100  # of limits.steps; 100 = never degrade
   expansion_tokens: 1048576  # tokens one expansion may add
   conditional_tokens: 1048576  # tokens one undecided conditional may copy into its arms
   held_tokens: 4000000  # tokens waiting to be read
@@ -340,7 +344,7 @@ A value follows kpathsea's own path syntax (kpathsea manual, "Path searching"): 
 
 ## The clock
 
-`clock` is what `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` hold when the run starts ([tex.web § 241][tw-241]), and so what `\today` and the date packages print. The default `now` is the time the analysis runs, said once as the `clock-assumed` assumption the first time the document reads it. An ISO date-time (`2026-09-29`, `2026-09-29T14:30`, `2026-09-29T14:30:00+02:00`; without a zone, the machine's) pins the date, for a run that must agree with another. `unknown` leaves the date unknown: every digit of it is an unknown digit, so what a document decides by the date is analyzed for every outcome. A package cache that read the clock replays the clock of the run that made it, said as the `clock-cached` assumption; the caches are kept per `clock` setting.
+`clock` is what `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` hold when the run starts ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L5240)), and so what `\today` and the date packages print. The default `now` is the time the analysis runs, said once as the `clock-assumed` assumption the first time the document reads it. An ISO date-time (`2026-09-29`, `2026-09-29T14:30`, `2026-09-29T14:30:00+02:00`; without a zone, the machine's) pins the date, for a run that must agree with another. `unknown` leaves the date unknown: every digit of it is an unknown digit, so what a document decides by the date is analyzed for every outcome. A package cache that read the clock replays the clock of the run that made it, and the `clock-assumed` assumption names it; the caches are kept per `clock` setting.
 
 ### Output directory
 
@@ -400,5 +404,3 @@ A stub stands for the macro only while the package's definition is in force. A d
 `limits.threads` bounds the file walks: `0` (the default) lets SaTeX choose `min(4, cores)`, `1` keeps everything on one thread, any other number is the cap. `--threads N` sets it for one run. The interpreter itself always runs on one thread, because TeX's state is one machine: catcodes, the save stack and the macro table are global, and every token can change them.
 
 Startup asks the installation two questions, `kpsewhich --expand-var` for the texmf roots and the engine for its version. Both answers are cached against the program's own path and timestamp, so only the first run after an installation changes pays for them.
-
-[tw-241]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L5240

@@ -1,0 +1,6 @@
+\documentclass{article}
+\begin{document}
+\setbox0\hbox{\textit{f}}
+\ifdim\wd0>3pt wide\else narrow\fi,
+\ifdim\pagegoal=\maxdimen empty page\else page started\fi
+\end{document}

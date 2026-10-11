@@ -24,11 +24,19 @@ Yet, please avoid AI-only contributions. Humans are still considered responsible
 
 ## Install
 
-Prebuilt binaries for Linux, macOS and Windows (x86-64 and ARM64) are attached to every [release](../../releases). With Rust installed, `cargo install satex-analyzer` installs the `satex` command. To build from source:
+Prebuilt binaries for Linux and macOS (x86-64 and ARM64) and Windows (x86-64) are attached to every [release](../../releases). With Rust installed, `cargo install satex-analyzer` installs the `satex` command. `cargo install --git https://github.com/EagleoutIce/satex-analyzer` installs the latest version from the repository. To build from source:
 
 ```sh
 cargo build --release
 ./target/release/satex --help
+```
+
+Shell completion: after installing, run `satex completions install` once. It adds the hook to the startup file of your shell (bash, zsh or fish). `satex completions <shell>` prints the script for bash, zsh, fish, elvish or powershell. Query names and `--set` keys complete from the program itself. See the [command line page](doc/wiki/cli.md).
+
+```sh
+source <(satex completions bash)                          # bash: add to ~/.bashrc
+source <(satex completions zsh)                           # zsh: add to ~/.zshrc
+satex completions fish > ~/.config/fish/completions/satex.fish
 ```
 
 Current version: 0.1.0. `satex --version` also lists the plugins included in this build and the configuration in effect:
@@ -38,7 +46,7 @@ $ satex --version
 satex 0.1.0
 https://github.com/EagleoutIce/satex-analyzer
 
-plugins: 46 in 11 kinds
+plugins: 47 in 11 kinds
   provider            3  texlive, miktex, tectonic
   platform            3  linux, macos, windows
   engine              4  tex, pdftex, luatex, xetex
@@ -72,6 +80,7 @@ Commands:
   cache         The interpreted LaTeX2e kernel and the package caches.  Without a further command, prints their status
   install       Install the packages the document loads that this machine does not have.  Asks first, never elevates, and is never run by `lint --fix`
   tokens        The token stream the mouth produces
+  completions   Print the shell completion script: bash, zsh, fish, elvish or powershell.  Values complete from the running binary.  `install [bash|zsh|fish]` registers it in that shell's startup file; without a shell, the one running satex, else `$SHELL`
   lsp           A Language Server Protocol server: a thin facade over the queries and lints above, driven by `initialize`/`didOpen`/`didChange` instead of one-shot arguments.  Stdio by default; `--port` switches to TCP
   help          Print this message or the help of the given subcommand(s)
 
@@ -123,6 +132,7 @@ Output:
 
           Possible values:
           - text:     Aligned table for a terminal, with color and links
+          - compact:  A short text view. For `satex trace`: what each call of the main file expands to and each conditional's outcome, at most 8 lines
           - json:     One JSON array of objects, one object per record
           - csv:      Comma-separated, one record per line
           - markdown: A Markdown table, for a report or a pull request
@@ -169,9 +179,9 @@ errors (1)
     [unsafe fix] use \renewcommand{\repeat} instead
 
 suggestions (7)
-  paper.tex:14:1  info     unused-definition  \WeirdMore is never used
-    [unsafe fix] delete \WeirdMore
-  paper.tex:16:1  info     unused-definition  \Weird is never used
+  paper.tex:26:1  info     microtype-available  pdftex writes PDF and can protrude characters and expand fonts, but
+                                                microtype is not loaded
+    [unsafe fix] load \usepackage{microtype}
 … 22 more lines omitted
 ```
 
@@ -186,6 +196,7 @@ error     correctness  build-bibliography-disabled      the document has a bibli
 error     correctness  build-command-placeholders       an engine command in the latexmkrc lacks %S or %O               
 error     correctness  build-engine-mismatch            the build runs another engine, or another output, than the do…  
 error     correctness  build-shell-escape-missing       the document runs programs through \write18, but the build do…  
+error     correctness  caused-library-error             the document makes package code raise a TeX error               
 error     correctness  duplicate-label                  the same label is defined twice                                 
 error     correctness  math-still-open                  the run is still in math mode where the text ends               
 error     correctness  missing-graphic                  an included image is not there for this output target           
@@ -249,10 +260,12 @@ info      style        computer-modern-in-t1            T1 text in Computer Mode
 info      style        csquotes-available               the document sets quotation marks by hand instead of loading …  
 info      style        dead-definition                  a definition is replaced before anything uses it                
 info      style        duplicate-color-value            two color names store the exact same color                      
+info      style        duplicate-package                a package is loaded more than once                              
 info      style        hand-set-quantity                a number and its unit are set by hand where siunitx would set…  
 info      style        math-punctuation                 punctuation sits on the wrong side of a formula                 
 info      style        microtype-available              the engine can protrude characters and expand fonts, but micr…  
 info      style        ot1-font-encoding                accented letters are built with \accent because the text is s…  
+info      style        prefer-cleveref                  a hand-written name in front of `\ref` is what cleveref sets …  
 info      style        primitive-tex-command            a plain TeX primitive is used where LaTeX has its own interfa…  
 info      style        quote-ligature                   three quotation marks in a row set a double and a single mark…  
 info      style        quote-punctuation                punctuation stands inside the closing quotation mark            
@@ -263,7 +276,6 @@ info      style        unused-color                     a color the document def
 info      style        unused-definition                a macro defined in the document is never used                   
 info      style        unused-label                     a label is never referenced                                     
 warning   performance  package-after-preamble           a package is loaded after \begin{document}                      
-info      performance  duplicate-package                a package is loaded more than once                              
 info      performance  preamble-cost                    what the preamble costs on every build                          
 info      performance  recursive-macro                  a macro calls itself, directly or through others                
 info      performance  unused-dependency                the dependency file lists a TeX Live package no file of the r…  
@@ -412,7 +424,7 @@ tag     name       count  value                                   governs  file
 option  article           11pt                                             paper.tex      @ paper.tex:1:1
 switch  \ifdraft          false                                   237      paper.tex      @ paper.tex:3:7
 offers  amsmath    15     alignedleftspaceno, alignedleftspacey…           amsmath.sty    @ amsmath.sty:45:16
-… 9 more lines omitted
+… 11 more lines omitted
 ```
 
 </details>
@@ -421,6 +433,13 @@ offers  amsmath    15     alignedleftspaceno, alignedleftspacey…           ams
 
 ```text
 $ satex query options -f samples/paper.tex --for itemize
+key           default  package         file                
+expand        true     gettitlestring  gettitlestring.sty  @ gettitlestring.sty:159:20
+append        @VOID@   epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:513:20
+disable       true     epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:242:22
+enable        true     epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:243:31
+outdir                 epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:238:24
+… 5 more lines omitted
 ```
 
 </details>
@@ -449,7 +468,7 @@ $ satex scope -f samples/paper.tex --at 20:1
 tag          name                                      effecti…  file                
 macro        \Weird                                    \Weird …  paper.tex           @ paper.tex:16:1
 macro        \WeirdMore                                \WeirdM…  paper.tex           @ paper.tex:14:1
-… 7767 more lines omitted
+… 7766 more lines omitted
 ```
 
 </details>
@@ -479,7 +498,7 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache
   source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
-  holds 182314 definitions
+  holds 189418 definitions
   state cached
 … 2 more lines omitted
 ```
@@ -530,6 +549,7 @@ produces
 gaps              
 pgfkeys           
 options           
+typeset           
 ```
 
 </details>
@@ -556,12 +576,12 @@ options
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step       name            detail                                             file       
-678     expand     \documentclass                                                     paper.tex  @ paper.tex:1:1
-8412    open-file  \article        /usr/local/texlive/YYYY/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
-16680   expand     \value                                                             paper.tex  @ paper.tex:0:0
-30615   expand     \par                                                               paper.tex  @ paper.tex:2:1
-… 13 more lines omitted
+index   step         name                        detail                     file           
+678     expand       \documentclass                                         paper.tex      @ paper.tex:1:1
+8412    open-file    \article                    /usr/local/texlive/YYYY/…  paper.tex      @ paper.tex:1:1
+10261   expand       \par                                                   paper.tex      @ paper.tex:2:1
+10268   expand       \newif                                                 paper.tex      @ paper.tex:3:1
+… 209 more lines omitted
 ```
 
 </details>
@@ -616,7 +636,7 @@ There are various preexisting analysis approaches for TeX, albeit none offer ful
 - [unravel](https://ctan.org/pkg/unravel) steps through TeX's expansion as a debugger, but runs one concrete execution for this.
 - [TexLab](https://github.com/latex-lsp/texlab) is a language server that gives editor features from a syntax tree, without expanding macros.
 - [unified-latex](https://github.com/siefkenj/unified-latex) parses LaTeX into a syntax tree for transformation, and does not expand macros in general.
-- [ChkTeX](https://www.nongnu.org/chktex/) is a token-level linter for typographic and style mistakes (it does not expand macros). [Which of its 49 warnings satex covers](https://eagleoutice.github.io/satex-analyzer/chktex-coverage), and what running the document adds to each.
+- [ChkTeX](https://www.nongnu.org/chktex/) is a token-level linter for typographic and style mistakes (it does not expand macros). The [chktex coverage table](https://eagleoutice.github.io/satex-analyzer/chktex-coverage) lists its 49 warnings and the satex rule for each.
 
 
 [concrete semantics]: https://eagleoutice.github.io/satex-analyzer/SEMANTICS

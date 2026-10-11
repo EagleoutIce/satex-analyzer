@@ -1,0 +1,9 @@
+\documentclass{article}
+\makeatletter
+\def\opt{\@ifnextchar[\opt@with\opt@without}
+\def\opt@with[#1]{(#1)}
+\def\opt@without{(none)}
+\def\upto#1.{[#1]}
+\begin{document}
+\opt[a] \opt b \upto everything up to the dot. after
+\end{document}
