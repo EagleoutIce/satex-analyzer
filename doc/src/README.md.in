@@ -24,11 +24,19 @@ Yet, please avoid AI-only contributions. Humans are still considered responsible
 
 ## Install
 
-Prebuilt binaries for Linux, macOS and Windows (x86-64 and ARM64) are attached to every [release](../../releases). With Rust installed, `cargo install satex-analyzer` installs the `satex` command. To build from source:
+Prebuilt binaries for Linux and macOS (x86-64 and ARM64) and Windows (x86-64) are attached to every [release](../../releases). With Rust installed, `cargo install satex-analyzer` installs the `satex` command. `cargo install --git https://github.com/EagleoutIce/satex-analyzer` installs the latest version from the repository. To build from source:
 
 ```sh
 cargo build --release
 ./target/release/satex --help
+```
+
+Shell completion: after installing, run `satex completions install` once. It adds the hook to the startup file of your shell (bash, zsh or fish). `satex completions <shell>` prints the script for bash, zsh, fish, elvish or powershell. Query names and `--set` keys complete from the program itself. See the [command line page](doc/wiki/cli.md).
+
+```sh
+source <(satex completions bash)                          # bash: add to ~/.bashrc
+source <(satex completions zsh)                           # zsh: add to ~/.zshrc
+satex completions fish > ~/.config/fish/completions/satex.fish
 ```
 
 Current version: {{version}}. `satex --version` also lists the plugins included in this build and the configuration in effect:
@@ -227,7 +235,7 @@ There are various preexisting analysis approaches for TeX, albeit none offer ful
 - [unravel](https://ctan.org/pkg/unravel) steps through TeX's expansion as a debugger, but runs one concrete execution for this.
 - [TexLab](https://github.com/latex-lsp/texlab) is a language server that gives editor features from a syntax tree, without expanding macros.
 - [unified-latex](https://github.com/siefkenj/unified-latex) parses LaTeX into a syntax tree for transformation, and does not expand macros in general.
-- [ChkTeX](https://www.nongnu.org/chktex/) is a token-level linter for typographic and style mistakes (it does not expand macros). [Which of its 49 warnings satex covers](https://eagleoutice.github.io/satex-analyzer/chktex-coverage), and what running the document adds to each.
+- [ChkTeX](https://www.nongnu.org/chktex/) is a token-level linter for typographic and style mistakes (it does not expand macros). The [chktex coverage table](https://eagleoutice.github.io/satex-analyzer/chktex-coverage) lists its 49 warnings and the satex rule for each.
 
 
 [concrete semantics]: https://eagleoutice.github.io/satex-analyzer/SEMANTICS

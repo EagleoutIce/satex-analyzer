@@ -1,0 +1,17 @@
+\documentclass{article}
+\begin{document}
+\ref{later}
+\pdfuniformdeviate 100
+
+\def\foo{\ifx\bar\undefined\else\bar\fi}
+\def\bar#1{baz}
+\foo{x}
+
+\def\possibilityA{1}
+\def\possibilityB{12}
+\def\doubletaker#1#2{#2#1#2}
+\expandafter\expandafter\expandafter\doubletaker
+  \csname possibility\ifcsname pdftexversion\endcsname A\else B\fi\endcsname{X}%
+Hehe
+\section{Later}\label{later}
+\end{document}

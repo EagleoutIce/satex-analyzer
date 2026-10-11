@@ -25,6 +25,7 @@
 - [gaps](#gaps)
 - [pgfkeys](#pgfkeys)
 - [options](#options)
+- [typeset](#typeset)
 
 ## definitions
 
@@ -128,7 +129,7 @@ macro-call           \fmtname  latex.ltx                       @ latex.ltx:731:2
 macro-call           \space    latex.ltx                       @ latex.ltx:731:34
 macro-call           \fmtver…  latex.ltx                       @ latex.ltx:731:42
 use                  LaTeX2e…  latex.ltx                       @ latex.ltx:129:24
-… 38900 more lines omitted
+… 38899 more lines omitted
 ```
 
 ## trace
@@ -137,16 +138,16 @@ Every step: which macro expanded, which primitive ran, what changed. Use `satex 
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step       name            detail                                             file       
-678     expand     \documentclass                                                     paper.tex  @ paper.tex:1:1
-8412    open-file  \article        /usr/local/texlive/YYYY/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
-16680   expand     \value                                                             paper.tex  @ paper.tex:0:0
-30615   expand     \par                                                               paper.tex  @ paper.tex:2:1
-30622   expand     \newif                                                             paper.tex  @ paper.tex:3:1
-… 12 more lines omitted
+index   step         name                        detail                     file           
+678     expand       \documentclass                                         paper.tex      @ paper.tex:1:1
+8412    open-file    \article                    /usr/local/texlive/YYYY/…  paper.tex      @ paper.tex:1:1
+10261   expand       \par                                                   paper.tex      @ paper.tex:2:1
+10268   expand       \newif                                                 paper.tex      @ paper.tex:3:1
+10272   define       \ifdraft                                               paper.tex      @ paper.tex:3:7
+… 208 more lines omitted
 ```
 
-`--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile; `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown; `--include-internal` adds packages, classes and the kernel. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
+`--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile; `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown; `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
 
 ```text
 $ satex trace -f samples/paper.tex --lines 10:11
@@ -281,6 +282,16 @@ This needs call arguments recorded (`record_arguments`). `query options` and `--
 
 ```text
 $ satex query options --for mybanner -f samples/mypackage.sty
+```
+
+## typeset
+
+The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. The [challenges](Challenges) compare it with what pdflatex sets.
+
+```text
+$ satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex
+3:25  paragraph  ⟦f⟧wide, {empty page|page started}
+assumption  clock-assumed
 ```
 
 ## produces

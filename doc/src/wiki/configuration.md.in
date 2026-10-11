@@ -158,7 +158,7 @@ A value follows kpathsea's own path syntax (kpathsea manual, "Path searching"): 
 
 ## The clock
 
-`clock` is what `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` hold when the run starts (tex.web § 241), and so what `\today` and the date packages print. The default `now` is the time the analysis runs, said once as the `clock-assumed` assumption the first time the document reads it. An ISO date-time (`2026-09-29`, `2026-09-29T14:30`, `2026-09-29T14:30:00+02:00`; without a zone, the machine's) pins the date, for a run that must agree with another. `unknown` leaves the date unknown: every digit of it is an unknown digit, so what a document decides by the date is analyzed for every outcome. A package cache that read the clock replays the clock of the run that made it, said as the `clock-cached` assumption; the caches are kept per `clock` setting.
+`clock` is what `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` hold when the run starts (tex.web § 241), and so what `\today` and the date packages print. The default `now` is the time the analysis runs, said once as the `clock-assumed` assumption the first time the document reads it. An ISO date-time (`2026-09-29`, `2026-09-29T14:30`, `2026-09-29T14:30:00+02:00`; without a zone, the machine's) pins the date, for a run that must agree with another. `unknown` leaves the date unknown: every digit of it is an unknown digit, so what a document decides by the date is analyzed for every outcome. A package cache that read the clock replays the clock of the run that made it, and the `clock-assumed` assumption names it; the caches are kept per `clock` setting.
 
 ### Output directory
 

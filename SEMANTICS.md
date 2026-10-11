@@ -57,6 +57,12 @@ moment the character is tokenized, not when the token is used. ([*TeXbook*][texb
 * `^^X`, where `X` has a code below 128, denotes the character whose code
   differs from `X`'s in bit 6; `^^XY` with two lower-case hex digits denotes
   that code directly. Above 127 no substitution happens. ([tex.web § 352][tw-352].)
+* `\catcode` through a character number `satex` cannot pin down leaves each
+  character it may name at its old category or the new one. A write through
+  an *unknown* number (no interval, or one past every character code) is
+  assumed never to name `\ { } % # $ & ^ _`, space or end-of-line; the same
+  holds for `\lccode`, `\uccode`, `\sfcode` and `\mathcode`. This named
+  assumption is reported as `unknown-char-catcode-assumed`.
 * `\makeatletter` sets `@` to category 11, `\makeatother` to 12.
   ([*clsguide*][clsguide] § 2.)
 * `\ExplSyntaxOn` sets tab and space to ignored (9), `"` and `|` to other
@@ -147,6 +153,12 @@ and `\c` in the input. ([*TeXbook*][texbook] ch. 20.)
   scanned while it is expanded and ends at the `}` that balances the braces
   expansion leaves, so `\edef\a{\iffalse}\fi b}` is `b`. pdfTeX's
   `\expanded` reads its text the same way. ([tex.web § 473][tw-473], [§ 477][tw-477].)
+* Assumption (`unknown-name-defines-fresh`): a definition whose name is
+  wholly unknown text (`\expandafter\def\csname\x\endcsname` with `\x`
+  unknown) makes a new name. It redefines no name that has a meaning and
+  no name spelled out elsewhere. A lookup of unknown text stays unknown,
+  so it may still find that definition. A name with a known prefix or
+  suffix stays one of its family (`Wild`): those names may be defined.
 * `\long`, `\outer` and `\protected` are prefixes that apply to the next
   definition. ([*TeXbook*][texbook] ch. 20; [*etex_man*][etex_man] for `\protected`.)
 
@@ -192,7 +204,9 @@ and pdfTeX adds `\expanded`. Everything else is executed by the stomach.
   irrelevant, only the character codes count. If the name was undefined it
   becomes `\relax`, **locally**, and is thereafter defined — which changes
   later `\ifdefined` and `\@ifundefined` results. ([*TeXbook*][texbook] ch. 7;
-  [tex.web § 372][tw-372].)
+  [tex.web § 372][tw-372].) A name built from unknown text is, on a path
+  each, a name of its family it may spell or `\relax`. Executing it or
+  taking its `\meaning` fixes that meaning for the rest of its path.
 * LuaTeX's `\begincsname` builds a name the same way but leaves an undefined
   one undefined and expands to nothing then; `\lastnamedcs` is the name the
   last `\csname`, `\begincsname` or `\ifcsname` built. (*LuaTeX manual*.)
@@ -733,7 +747,10 @@ on, and it never invents a meaning.
   category codes, `\endlinechar`, a waiting `\afterassignment` token,
   `\openin` streams, waiting `\aftergroup` tokens) are kept apart, at most
   two per place and only inside an expansion: between two lines of a file
-  the statement is over and they join. Different waiting `\aftergroup`
+  the statement is over and they join. Both arms of a conditional that
+  closed the same `\fi` (the same `\if…` at the same depth of the
+  conditional stack, [tex.web § 498][tw-498]) join there too, whatever else
+  tells them apart, as long as they wait to run the same code. Different waiting `\aftergroup`
   tokens join into one token that holds each list as one of its meanings.
   The save stacks join too: a group end puts back what either path saved
   in it ([tex.web §§ 268][tw-268]–[283][tw-283]). The path furthest back in the source and in
@@ -762,8 +779,23 @@ on, and it never invents a meaning.
   leaves no name known to be undefined. Unknown text may hold a delimiter: a delimited argument that
   meets it at brace level 0 ends in it, and required text before an
   argument is taken to begin it; the rest of that text is read next as
-  unknown text that holds no delimiter, so it is split once and a loop
-  taking it apart ends. Unknown digits taken as one token (an
+  unknown text of the same class, shorter by the delimiter. Only the text
+  before the first delimiter is free of it (tex.web § 392), so the rest
+  may hold it, or the next one (`macro:#2->#3` of a `\meaning`). The
+  delimiter begins in the text only where its class may be the
+  delimiter's first token. Where the argument read so far ends in the
+  delimiter's first tokens and the text may begin with the rest, a path
+  ends the argument before those tokens. On the path where the text
+  holds no delimiter the argument is exactly what was read. A runaway on
+  that path (§§ 395-396) refutes it, since the document compiles. So does
+  a runaway on any path that took an arm over unknown text in the same
+  command, an undelimited one included: the path is dropped while another
+  arm goes on, and kept with its error when it is the last. So does an
+  error whose cause is exact whatever was approximated, a name certainly
+  undefined expanded or run (§ 370): named assumption "the document
+  compiles". A loop
+  taking bounded text apart ends as the text shrinks; one over unbounded
+  text ends at its loop head. Unknown digits taken as one token (an
   undelimited argument, the token `\futurelet` looks at) are one digit,
   0 to 9, followed by unknown digits that may be none; where `\futurelet`
   looks at those, the run splits into a path on which it sees one more
@@ -874,6 +906,17 @@ finding that depends on such a point says so.
   capacity — expansion nested 300 deep inside scans, a token list longer than
   the held-token bound, more than 15 open (pseudo) files — stops the run.
 
+**Termination** does not rest on any of these. One guard sees every step:
+each token read, each pass of the path driver, each replay. It charges the
+steps to the source line being read, paired with the data line `\read`
+took last, over all paths. A line past
+`limits.line_steps` has the expansion above it cut and widened, and the
+line reads on after an unknown token. A second overrun skips the rest of
+the line (`stalled-line-skipped`). A third stops the run. So a run takes at
+most `3 × limits.line_steps` steps per line read, whatever the input:
+unknown text of unknown length, fully unknown values, or a loop TeX itself
+would never leave.
+
 `satex query diagnostics` lists every such point in a run, and
 `satex lint --filter 'code=analysis-imprecision'` groups them by reason.
 
@@ -884,7 +927,30 @@ what the run that wrote it did.
 
 * The **kernel cache** holds the meanings and catcodes [`latex.ltx`][latex.ltx] leaves. It
   is keyed on the installation, the engine, the preloaded format and the
-  interpreter's source, and rejected when [`latex.ltx`][latex.ltx] changed.
+  semantic version, and rejected when a file it was read from changed.
+* Every cache is keyed on `SEMANTIC_VERSION` (`src/format.rs`), bumped by
+  hand when cache semantics change. A golden test fails when the analysis
+  changes without a bump. Builds outside the `release` profile add their
+  source digest, so local edits never replay a stale cache.
+* Paths are stored relative to a root tag: `$TEXMF-DIST/…`, `$TEXMF-LOCAL/…`,
+  `$PROJECT/…`. A load resolves them against its own roots, so a copied or
+  unpacked tree reuses its caches.
+* The kernel cache family is named by the release of the kernel itself: the
+  year of `\fmtversion` in `latex.ltx`, and the path's year or the file
+  stem only when it has none. A tree at any path is named alike.
+* `satex cache export ARCHIVE` writes the caches this build can use, and the
+  content hashes, into one postcard file keyed by the semantic version and
+  key. `satex cache import ARCHIVE` unpacks them into the cache directory.
+  An archive of another version or key is skipped whole, an entry it cannot
+  use alone, each with one line naming the reason. A directory argument
+  names its `satex-cache.bin`.
+* A **bundle** (`texmf.bundle`) is a directory laid out like `texmf-dist`
+  with such an archive. Its root takes the tag `TEXMF-DIST` when no other
+  root has it, else `SATEX-BUNDLE`, so caches built against an installation
+  serve it. Alone, it replaces `kpsewhich` and the fallback paths, so a run
+  needs no TeX installation.
+* A file counts as changed when its content does. Its hash is kept per
+  size and modification time, so an unchanged file is read once.
 * A **package cache** holds what one `\usepackage` or `\documentclass` of
   the document did, and the *read set* it did it from: every meaning and
   register value the package consulted before assigning it. Hooks, options

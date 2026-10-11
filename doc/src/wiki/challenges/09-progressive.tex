@@ -1,0 +1,6 @@
+\documentclass{article}
+\def\a#1{\ifnum#1<3 \expandafter\def\csname b#1\endcsname{\c{#1}}\csname b#1\endcsname\else end#1\fi}
+\def\c#1{\expandafter\def\csname a\the\numexpr#1+1\endcsname{\a{\the\numexpr#1+1}}\csname a\the\numexpr#1+1\endcsname}
+\begin{document}
+\a{0}
+\end{document}

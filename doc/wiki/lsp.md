@@ -28,9 +28,13 @@ A document is re-analyzed `lsp.debounce_ms` after its last edit. Requests wait f
 | Rename | `textDocument/prepareRename`, `textDocument/rename` | `satex query definitions`/`expansions`/`occurrences` |
 | Run any query | `workspace/executeCommand` (`satex/query`) | `satex query --request` |
 
+A run can stop before a later file defines a name. Then go-to-definition scans the source instead. It follows the `\input`, `\include`, `\subfile`, `\usepackage`, `\RequirePackage`, `\documentclass` and `\LoadClass` the files spell out. Each name resolves beside the document first, then through the same search as a run. The scan reads at most 200 files, breadth first. In each file it looks for definition commands: `\def` and its relatives, `\let`, `\newcommand` and its relatives, the `\NewDocumentCommand` family, `\cs_new:Npn` style and `\csdef`. Hover marks such a site as not reached by the analysis, and the server log names it. A name the analysis knows never takes this path.
+
 Rename moves every name one declaration made from one key. `\newcounter{step}` allocates `\c@step`, `\thestep`, `\p@step`, `\cl@step` and `\theHstep`, so renaming the counter rewrites the key inside all of them, in `\stepcounter{step}` and in `\thestep`. `\newenvironment{note}` defines `\note` and `\endnote`, so its key, `\begin{note}` and `\end{note}` move together. A name `\csname` builds is rewritten where the file spells it out character for character. The rename is refused, with the site named, when a name it would build is already defined, when a definition or use lies in a file satex may not edit, or when a name is built while the document runs and no site spells it.
 
 Completion looks at the text before the cursor: after `\` it offers the commands in scope there, with a snippet for their arguments. Inside `\begin{` environment names. Inside a reference or citation argument the document's labels or keys.
+A built-in list of common commands (`\ref`, `\cref`, the `cite` family, `\begin`, `\usepackage`, `\input`) says what their argument takes, so the first `\ref{` of a document already offers its labels.
+What the run saw a command do adds to that list, so a package's or your own wrapper gets the same completion once it is used.
 
 `workspace/executeCommand` runs `satex/query` with one argument, a [query request](queries.md#json-requests). Without `file` it applies to the open document.
 

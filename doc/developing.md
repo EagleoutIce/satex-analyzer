@@ -121,6 +121,54 @@ CI also checks every link in the documentation with
 
 Write the documentation in American English, in short sentences.
 
+### The site and the playground
+
+`.github/workflows/pages.yml` builds the site from scratch on every push to `main`.
+`doc/site/build.py` does the work. It reads only the tree:
+
+- The pages are the README, `SEMANTICS.md`, `doc/chktex-coverage.md`, this file and `doc/wiki/*.md`, rendered by pandoc into `doc/site/template.html`.
+  The side navigation is `doc/wiki/_Sidebar.md`. The version comes from `Cargo.toml`.
+- The logo is `doc/logo/logo.tex`, typeset and converted with `pdftocairo`, its white page removed. Page 3 is the wordmark.
+  Pages 4 and 5 are the tagline's lines. The landing page sets them beside the wordmark, as page 2 does, and animates them. Page 6 is the plain name for the header and the favicon.
+  In dark mode a CSS filter inverts the logo's lightness and keeps its hues.
+- `doc/site/examples/*.tex` are the landing page's examples. `examples/commands.txt` names the command of each one that does not run `lint`.
+  The build runs it with the native `satex` and shows the output as it is. The examples are also the playground's first files.
+  `site.js` colors them with the editor's tokenizer, CodeMirror's stex mode.
+- `site.js` holds the light/dark toggle (kept in `localStorage`) and the running table of contents of every page.
+- The playground runs the `satex` binary itself, built for `wasm32-unknown-emscripten`.
+  Emscripten compiles the vendored Lua. `.cargo/config.toml` holds the link flags.
+- Its TeX files are what `satex query files` reports for each sample in `samples/`, once per kernel (pdfTeX, XeTeX, LuaTeX, plain TeX), copied into a `texmf.bundle`.
+  The samples are then linted against that bundle alone with each kernel, and `satex cache export` packs the caches each one built.
+  Built against the installation, the package caches would not serve the bundle: their key names the roots.
+- pdfTeX's files, its caches and the samples are one gzip file. Each other kernel is a gzip file of what it adds, fetched when it is chosen.
+  Every asset name carries its content hash, so browsers cache it for good.
+- The page also carries data from satex itself: `satex query --list`, the rules with their explanations (`satex lint --rules`, `satex lint --explain`),
+  and `satex completions json` (the command tree, the config keys and the rule codes) for the argument line's completion.
+
+In the browser, `doc/site/worker.js` fetches the wasm and the bundle and imports the caches once.
+Every run is a fresh instance over an in-memory file system, as a process would be.
+The language server is one more instance that stays alive. Under Emscripten `satex lsp` has no threads and no stdio.
+It sets up the engine and returns, and `src/lsp/wasm.rs` exports `satex_lsp`, which takes one JSON-RPC message and returns the replies.
+`doc/site/playground.js` sends the edits, debounced, and asks for completion, hover, code actions and rename. The editor is CodeMirror 6 from esm.sh.
+The command line is the one way to act. `lint`, `explain`, `query` and the rest are runs. `rename` and `fix` are language server edits applied in the editor.
+Plain `lint` runs only on Enter: the findings panel already shows the language server's.
+F2, the context menu and Ctrl+click rename, explain and go to a definition. A definition in a bundle file opens read-only.
+Uploaded files join the open project. A folder or a zip is unpacked in the page and goes to `/work/upload`. A permalink is the open file, the arguments, the kernel and the selection, deflated into the URL's hash.
+`doc/site/playground.yaml` is the satex.yaml of those runs.
+
+To build and test it locally you need the native and the wasm build, the
+[Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html) (the version in the workflow), pandoc and pdftocairo:
+
+```sh
+cargo build --release
+cargo build --release --target wasm32-unknown-emscripten --bin satex
+python3 doc/site/build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site-out
+python3 -m http.server -d site-out 8000 &
+node doc/site/test.mjs http://localhost:8000/   # lints every sample through the served playground, then asks the language server
+```
+
+Both builds must use the same profile: a cache is keyed on the build that wrote it.
+
 ## Regression checks
 
 Two local safeguards keep fixed problems from returning.

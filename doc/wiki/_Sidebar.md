@@ -9,6 +9,9 @@
 - [Slice](Queries#slice)
 - [JSON requests](Queries#json-requests)
 
+**[⌨️ Command line](Cli)**
+- [Shell completion](Cli#shell-completion)
+
 **[⚙️ Configuration](Configuration)**
 - [Profiles](Configuration#profiles)
 - [What plugins decide](Configuration#what-plugins-decide)
@@ -20,7 +23,12 @@
 - [Where satex is not exact](Semantics#14-where-satex-is-not-exact)
 - [Caches](Semantics#15-caches)
 
+**[🧗 Why LaTeX is hard](Challenges)**
+
 **[🔬 Abstract domains](Domains)**
-- [`Num`: interval plus bounded may-set](Domains#num-interval-plus-bounded-may-set)
+- [`Value` and `OneOf`](Domains#value-what-a-control-sequence-or-register-holds)
+- [Boxes and paragraphs](Domains#modes-and-box-dimensions)
+- [Unknown text](Domains#unknown-text-the-textclass-lattice)
+- [Files written in the run](Domains#files-written-in-the-run)
 - [The join, in general](Domains#the-join-in-general)
 - [`limits`](Domains#limits-where-the-domains-stop-being-precise)

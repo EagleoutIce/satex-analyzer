@@ -1,0 +1,7 @@
+\documentclass{article}
+\begin{document}
+\dimen0=\pdfuniformdeviate 1000 sp
+\dimen2=-\dimen0
+\advance\dimen2\dimen0
+\ifdim\dimen2=0pt always\else never\fi
+\end{document}
