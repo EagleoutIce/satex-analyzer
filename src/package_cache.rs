@@ -25,14 +25,14 @@
 //! that numbers them differently. Every file a segment opened is stamped,
 //! and every file name it looked up must still resolve the same.
 
+use crate::fixed::{HashMap, HashSet};
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Frame, Machine, Metadata, RECENT_FILE_SPANS, Site};
+use super::{Carried, CarriedDelta, Frame, Machine, Metadata, RECENT_FILE_SPANS, Site};
 use crate::builtins::{DefMode, LoadKind, OccKind};
 use crate::env::{Binding, NodeId, ReadKind};
 use crate::facts::{
@@ -44,8 +44,7 @@ use crate::tex::codec::{self, Mode};
 use crate::tex::{CatcodeTable, EndLineChar, FileId, LineMark, MacroDef, Meaning, Mouth, RegKind, Span, Sym, Token};
 use crate::value::Value;
 
-const ENCODING_VERSION: u32 = 3;
-const INTERPRETER: &str = env!("SATEX_SOURCE_DIGEST");
+const ENCODING_VERSION: u32 = 4;
 /// The file number that stands for "the site of this load" in a cached span.
 const LOAD_SITE: FileId = FileId::MAX;
 /// A file number no run hands out: a file a segment names that this run has
@@ -144,6 +143,7 @@ fn node_id(node: &Node) -> u64 {
 }
 
 /// What a store says when the file changed under it.
+const DEGRADED: &str = "the run lowered its precision to finish";
 const REWRITTEN: &str = "not stored: another instance rewrote it first";
 
 /// Where a recording may be appended: the tree whose root is `root`, if the
@@ -217,6 +217,16 @@ fn note_append(name: &str, parent: Option<u32>, target: Option<usize>, chain: us
 
 #[cfg(not(test))]
 fn note_append(_name: &str, _parent: Option<u32>, _target: Option<usize>, _chain: usize) {}
+
+/// Per cacheable load's end, its [`Carried`] state, in a fixed order.
+#[cfg(test)]
+pub(super) static LOAD_ENDS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+pub(super) fn note_load_end(carried: &Carried, guarded_lines: usize) {
+    let state = format!("{:?} lines {guarded_lines}", carried.delta(&Carried::default()));
+    LOAD_ENDS.lock().unwrap_or_else(|e| e.into_inner()).push(state);
+}
 
 /// A vertex the segment refers to: one in its table or before the load (found by name).
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
@@ -341,8 +351,6 @@ struct Scalars {
     steps: u64,
     progress: u64,
     assignments: u64,
-    /// Tokens since the last file token (for stall detection).
-    stalled: u64,
     recent: Vec<Sym>,
     after_assignment: Option<Token>,
     last_file: Option<Span>,
@@ -354,6 +362,8 @@ struct Scalars {
     last_named_cs: Option<Sym>,
     /// File spans yielded back (lookahead from files); before are the run's own.
     recent_file_spans: Vec<Span>,
+    /// Whether material may have reached the page (tex.web § 986).
+    page_touched: bool,
 }
 
 /// The state a checkpoint leaves that changes now and then: stored only
@@ -369,6 +379,7 @@ struct Lists {
     lua: Vec<PathBuf>,
     counter_namespace: Option<String>,
     streams: Vec<(i64, Vec<String>, usize)>,
+    outputs: Vec<(String, Option<String>)>,
     aliases: Vec<(Sym, Sym)>,
     wild: crate::machine::Wild,
 }
@@ -403,6 +414,73 @@ struct CachedColorUse {
 
 /// A `\pdfcolorstack` the segment executed: stack, operation index, span.
 type CachedColorStack = (Option<i64>, u8, Span, bool);
+
+/// What a load changed in one field of [`Carried`]: a cache stores the
+/// change, a replay applies it. Changes are sorted, so their bytes do not
+/// depend on hashing.
+pub(crate) trait Delta {
+    type Change;
+    fn delta(&self, before: &Self) -> Self::Change;
+    fn apply(&mut self, change: &Self::Change);
+}
+
+/// Members added (`true`) and removed (`false`).
+impl<T: std::hash::Hash + Ord + Clone> Delta for HashSet<T> {
+    type Change = Vec<(T, bool)>;
+    fn delta(&self, before: &Self) -> Self::Change {
+        let mut change: Vec<_> = self.symmetric_difference(before).map(|t| (t.clone(), self.contains(t))).collect();
+        change.sort();
+        change
+    }
+    fn apply(&mut self, change: &Self::Change) {
+        for (t, added) in change {
+            if *added {
+                self.insert(t.clone())
+            } else {
+                self.remove(t)
+            };
+        }
+    }
+}
+
+/// Entries set to a new value, or removed (`None`).
+impl<K: std::hash::Hash + Ord + Clone, V: PartialEq + Clone> Delta for HashMap<K, V> {
+    type Change = Vec<(K, Option<V>)>;
+    fn delta(&self, before: &Self) -> Self::Change {
+        let keys = self.keys().chain(before.keys().filter(|k| !self.contains_key(*k)));
+        let mut change: Vec<_> =
+            keys.filter(|k| self.get(*k) != before.get(*k)).map(|k| (k.clone(), self.get(k).cloned())).collect();
+        change.sort_by(|a, b| a.0.cmp(&b.0));
+        change
+    }
+    fn apply(&mut self, change: &Self::Change) {
+        for (k, v) in change {
+            if let Some(v) = v {
+                self.insert(k.clone(), v.clone())
+            } else {
+                self.remove(k)
+            };
+        }
+    }
+}
+
+/// A scalar: its new value, when it changed.
+macro_rules! scalar_delta {
+    ($($ty:ty),*) => {$(
+        impl Delta for $ty {
+            type Change = Option<Self>;
+            fn delta(&self, before: &Self) -> Self::Change {
+                (self != before).then(|| self.clone())
+            }
+            fn apply(&mut self, change: &Self::Change) {
+                if let Some(value) = change {
+                    *self = value.clone();
+                }
+            }
+        }
+    )*};
+}
+scalar_delta!(u32, Option<Span>, Option<(i64, usize, usize, u64)>);
 
 /// Head of an [`Effect`]: what the first pass needs to relocate the segment's names.
 /// Decoded with `take_from_bytes` so the rest is read once.
@@ -455,6 +533,7 @@ struct Effect {
     gaps: Vec<(String, Sym)>,
     scalars: Scalars,
     lists: Option<Lists>,
+    carried: CarriedDelta,
 }
 
 /// An [`Effect`] with its bulk lists cut into chunks, so a replay decodes them in parallel.
@@ -582,7 +661,9 @@ struct Node<'a> {
     last: bool,
     /// Tokens the segment read.
     steps: u64,
-    stamps: Vec<(String, u64, u64)>,
+    /// Every file the segment opened, as [`crate::format::Roots`] writes
+    /// it, with its [`crate::format::content_hash`].
+    stamps: Vec<(String, u64)>,
     lookups: Vec<(String, LoadKind, Option<PathBuf>)>,
     names: Vec<String>,
     paths: Vec<String>,
@@ -652,6 +733,7 @@ struct Before {
     recent_file_spans: Vec<Span>,
     /// Call the load is read on behalf of.
     reader: Option<NodeId>,
+    carried: Carried,
 }
 
 /// Where each log stood at the last checkpoint.
@@ -693,7 +775,7 @@ struct Rest {
     testing: usize,
     prefixes: (bool, bool, bool, bool),
     long_argument: bool,
-    runaway: bool,
+    runaway: crate::machine::Runaway,
     within: usize,
     held: usize,
     edef_depth: usize,
@@ -770,7 +852,7 @@ pub fn prune(dir: &Path, bound: u64) -> crate::format::Pruned {
 }
 
 fn cache_file(dir: &Path, name: &str, key: u64) -> PathBuf {
-    dir.join(format!("{}{INTERPRETER}-{key:016x}.postcard", family(name)))
+    dir.join(format!("{}{}-{key:016x}.postcard", family(name), crate::format::cache_key()))
 }
 
 fn span_out(span: Span, site: Span) -> Span {
@@ -895,8 +977,12 @@ const KINDS: [(u8, &str); 8] = [
 
 /// The codec mode that writes names and paths out in full.
 fn hash_mode(m: &Machine) -> Mode {
+    let roots = m.cache_roots();
     let files = (0..m.out.files.len())
-        .map(|i| if i as FileId == m.out.main_file { Rc::from(MAIN) } else { Rc::from(m.out.files[i].path.as_str()) })
+        .map(|i| match i as FileId == m.out.main_file {
+            true => Rc::from(MAIN),
+            false => Rc::from(roots.canonical(&m.out.files[i].path)),
+        })
         .collect();
     Mode::Hash { names: m.out.interner.names(), files }
 }
@@ -965,6 +1051,16 @@ fn storage_register(name: &str) -> Option<(RegKind, i64)> {
 }
 
 impl Machine<'_> {
+    /// The roots cached paths are written against: this run's TeX trees
+    /// and the document's directory.
+    pub(crate) fn cache_roots(&self) -> crate::format::Roots {
+        crate::format::Roots::new(
+            &self.out.distribution.roots,
+            self.out.distribution.bundle.as_deref(),
+            Some(&self.base),
+        )
+    }
+
     /// Whether the file can be served from or recorded into cache: outer-level package/class, no conditionals.
     fn cacheable_at_push(&self, kind: LoadKind) -> bool {
         let reason = if !matches!(kind, LoadKind::Package | LoadKind::Class)
@@ -985,6 +1081,8 @@ impl Machine<'_> {
             "it is loaded while a test is read"
         } else if self.halted || self.out.exhausted {
             "the analysis ran out of budget"
+        } else if self.degraded {
+            DEGRADED
         } else {
             return true;
         };
@@ -1004,7 +1102,7 @@ impl Machine<'_> {
         let (digest, _) = codec::with(hash_mode(self), || {
             let mut parts: Vec<(String, u64)> = Vec::new();
             let mut hash = Fnv::new();
-            hash.put(&(INTERPRETER, self.out.plugins.engine.as_str()));
+            hash.put(&(crate::format::cache_key(), self.out.plugins.engine.as_str()));
             parts.push(("engine".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             let mut settings = self.cfg.clone();
             settings.source = None;
@@ -1025,11 +1123,20 @@ impl Machine<'_> {
             settings.depp = defaults.depp.clone();
             settings.lsp = defaults.lsp.clone();
             settings.engine = None;
+            // Where the trees are is no part of what a package does: each
+            // segment checks its lookups and file contents itself.
+            let roots = self.cache_roots();
+            settings.texlive.root = None;
+            settings.texmf.bundle = None;
+            settings.texmf.roots.clear();
+            let local = |p: &PathBuf| PathBuf::from(roots.canonical(&p.display().to_string()));
+            settings.search_paths = settings.search_paths.iter().map(local).collect();
+            settings.preload = settings.preload.as_ref().map(local);
             (settings.trace, settings.trace_lines, settings.trace_col, settings.trace_file) = (false, None, 0, None);
             (settings.trace_end_col, settings.trace_steps) = (0, None);
             let l = &mut settings.limits;
             (l.seconds, l.memory, l.threads, l.cache_size) = (0, Default::default(), 0, Default::default());
-            (l.degrade_at_percent, l.facts, l.vertices, l.trace) = (0, 0, 0, 0);
+            (l.degrade_at_percent, l.facts, l.vertices, l.trace, l.steps) = (0, 0, 0, 0, 0);
             hash.write(serde_json::to_string(&settings).unwrap_or_default().as_bytes());
             parts.push(("configuration".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             hash.put(&(self.prefixes.global, self.prefixes.long, self.prefixes.outer, self.prefixes.protected));
@@ -1040,7 +1147,10 @@ impl Machine<'_> {
             let mut streams: Vec<_> = self.streams.iter().collect();
             streams.sort();
             hash.put(&streams);
-            hash.put(&self.docstrip_dir);
+            let mut outputs: Vec<_> = self.outputs.iter().collect();
+            outputs.sort();
+            hash.put(&outputs);
+            hash.put(&self.docstrip_dir.as_ref().map(|d| roots.canonical(d)));
             parts.push(("section and streams".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             let mut pinned: Vec<Sym> = self.pinned.iter().copied().collect();
             pinned.sort();
@@ -1086,11 +1196,13 @@ impl Machine<'_> {
             self.end_line.0,
         ));
         parts.push(("category codes".into(), hash.0));
+        let roots = self.cache_roots();
         let mut hash = Fnv::new();
-        hash.put(&(path, crate::format::stamp(Path::new(path))));
+        hash.put(&(roots.canonical(path), crate::format::content_hash(Path::new(path))));
         parts.push(("the package file".into(), hash.0));
         let mut hash = Fnv::new();
-        hash.put(&self.lua.files());
+        let lua: Vec<String> = self.lua.files().iter().map(|f| roots.canonical(&f.display().to_string())).collect();
+        hash.put(&lua);
         parts.push(("the Lua files read".into(), hash.0));
         parts
     }
@@ -1099,7 +1211,7 @@ impl Machine<'_> {
     fn before_state(&self) -> Before {
         let slots: Vec<Option<Binding>> =
             (0..self.out.interner.len() as u32).map(|i| self.env.get(Sym(i)).cloned()).collect();
-        let mut def_owner = HashMap::new();
+        let mut def_owner = HashMap::default();
         for (i, slot) in slots.iter().enumerate() {
             for def in slot.iter().flat_map(|b| b.defs.iter()) {
                 def_owner.entry(*def).or_insert(Sym(i as u32));
@@ -1123,36 +1235,45 @@ impl Machine<'_> {
             progress: self.source_progress,
             assignments: self.env.assignments,
             recent_file_spans: self.recent_file_spans.clone(),
+            carried: self.carried.clone(),
         }
     }
 
     /// Interpreter state that must match for checkpoints. Every machine field is listed with its cache role.
     fn rest_state(&self, input: usize) -> Rest {
         let Machine {
+            // Their own roles: [`Carried`] in the effect, [`Scratch`] forgotten at the end.
+            carried: _,
+            scratch: _,
             // Same throughout a load.
             cfg: _,
             limits: _,
             degraded: _,
+            hyph_cache: _,
+            kp: _,
             degraded_at: _,
             base: _,
             resolver: _,
             dont_expand: _,
             unknown: _,
-            unknown_rest: _,
-            summarized: _,
+            call_runs: _,
+            call_recs: _,
+            guard_seen: _,
+            checked_at: _,
             unknown_digits: _,
             unknown_more: _,
             typed_syms: _,
             clock: _,
             clock_read_at: _,
+            clock_cached: _,
             stubs: _,
             stub_said: _,
             // Recorded (facts, graph, names, files, bindings).
             out: _,
             env,
             definition_sites: _,
-            own_switches: _,
             expansion_sites: _,
+            shape_memo: _,
             cond_sites: _,
             // In segment's lists and scalars.
             catcodes: _,
@@ -1163,39 +1284,34 @@ impl Machine<'_> {
             wild: _,
             section: _,
             streams: _,
+            outputs: _,
             loaded: _,
             class_options: _,
             identifying: _,
             last_named_cs: _,
             font_watch: _,
             source_progress: _,
+            lines_read: _,
             call_shape: _,
             gaps: _,
             last_file: _,
             recent_file_spans: _,
             file_call: _,
             project_site: _,
-            absorbed: _,
             file_calls: _,
             counter_namespace: _,
-            progress_step: _,
             name_token: _,
-            foreign_names: _,
             own_files: _,
-            progress_depth: _,
-            progress_conds: _,
             gaps_raised: _,
             tex_errors: _,
-            approximations: _,
-            joined_scan: _,
-            approximations_at_command: _,
             join_commands: _,
             join_hooks: _,
             at_join: _,
+            fi_mark: _,
             dropping: _,
             keep_errors: _,
             approximated: _,
-            cond_gaps: _,
+            cut_taint: _,
             gap_depth: _,
             // Part of tree root.
             docstrip_dir: _,
@@ -1208,6 +1324,8 @@ impl Machine<'_> {
             runaway,
             scan_abandoned: _,
             scan_fuzzy: _,
+            delimiter_met: _,
+            arm_assumed: _,
             unknown_chars: _,
             cds,
             conds,
@@ -1239,16 +1357,16 @@ impl Machine<'_> {
             abs_exact: _,
             abs_from: _,
             abs_whole: _,
+            ranged: _,
             narrowing: _,
             halted,
             budget,
             format_progress: _,
-            stream_paths: _,
-            undecided_at: _,
-            lines_seen: _,
+            region: _,
+            guard: _,
+            scan_starts: _,
+            scan_cut: _,
             cached_lines: _,
-            stream_lines: _,
-            stream_read: _,
             held_tokens,
             noexpanded,
             def_body_depth,
@@ -1277,17 +1395,22 @@ impl Machine<'_> {
             started: _,
             step_depth: _,
             stack_base: _,
-            work: _,
             scanner: _,
             pseudo_file: _,
             probe: _,
             // Used at next step, never across load.
-            repeat_cut: _,
+            cacheable_load: _,
+            par_inserted: _,
             // Output bookkeeping, not runtime state.
             diag_seen: _,
             diag_floor: _,
             quantity: _,
             text_broken: _,
+            box_chars: _,
+            fetched: _,
+            carried_chars: _,
+            redefines_hint: _,
+            text_apart: _,
         } = self;
         Rest {
             input,
@@ -1338,15 +1461,17 @@ impl Machine<'_> {
         if !self.cacheable_at_push(kind) {
             return Mouth::file(source, id);
         }
+        self.cacheable_load = Some(id);
+        self.guard.held = std::mem::take(&mut self.guard.lines);
         let Some(dir) = self.cache_dir() else { return Mouth::file(source, id) };
         let path = self.out.files[id as usize].path.clone();
         if kind == LoadKind::Class {
             self.out.class_caches.insert(name.to_string());
         }
+        crate::format::load_hashes(&dir);
+        let roots = self.cache_roots();
         let mut key = Fnv::new();
-        key.put(&(INTERPRETER, name, kind, &path));
-        let distribution = &self.out.distribution;
-        key.put(&(&distribution.roots, distribution.indexed, distribution.year));
+        key.put(&(crate::format::cache_key(), name, kind, roots.canonical(&path)));
         // A segment that read the clock replays that run's clock: only
         // under the same `clock:` setting.
         key.put(&self.cfg.clock.to_string());
@@ -1364,7 +1489,6 @@ impl Machine<'_> {
         let mut written: Vec<(Sym, u8)> = Vec::new();
         let mut origins: Vec<((RegKind, u16), u8)> = Vec::new();
         let mut carried: Vec<Sym> = Vec::new();
-        let mut clock_said = false;
         let replaying = !self.cfg.cache.rebuild && !self.cfg.cache.index.refresh;
         let bytes = replaying.then(|| std::fs::read(&cache).ok()).flatten();
         match bytes.as_deref().map(|bytes| decode(&cache, bytes)) {
@@ -1379,11 +1503,14 @@ impl Machine<'_> {
                         .zip(&root)
                         .find(|(a, b)| a != b)
                         .map_or("its root", |(a, _)| a.0.as_str());
-                    reason = Some(format!("root differs: {differs}"));
+                    reason = Some(match differs {
+                        "the package file" => format!("content changed: {path}"),
+                        _ => format!("root differs: {differs}"),
+                    });
                 }
                 Some(t) => {
                     let tree = &file.trees[t];
-                    let mut children: HashMap<Option<u32>, Vec<u32>> = HashMap::new();
+                    let mut children: HashMap<Option<u32>, Vec<u32>> = HashMap::default();
                     for (i, node) in tree.nodes.iter().enumerate() {
                         children.entry(node.parent).or_default().push(i as u32);
                     }
@@ -1402,15 +1529,9 @@ impl Machine<'_> {
                         }
                         let Some((k, clock)) = chosen else { break };
                         reason = None;
-                        if clock && !clock_said {
-                            clock_said = true;
+                        if clock {
                             self.clock_read(span);
-                            self.diagnose(
-                                Severity::Assumption,
-                                "clock-cached",
-                                span,
-                                format!("{name} read the clock (\\time, \\day, \\month or \\year) when it was cached; its effect is that run's"),
-                            );
+                            self.clock_cached.get_or_insert_with(|| name.to_string());
                         }
                         let node = &tree.nodes[k as usize];
                         if self.out.steps + node.steps >= self.cfg.limits.steps {
@@ -1493,10 +1614,10 @@ impl Machine<'_> {
             seg_vertices: 0,
             seg_call: None,
             seg_call_finished: false,
-            seg_start: HashMap::new(),
-            seg_prior: HashMap::new(),
+            seg_start: HashMap::default(),
+            seg_prior: HashMap::default(),
             seg_assigned: Vec::new(),
-            seg_copies: HashMap::new(),
+            seg_copies: HashMap::default(),
             served,
         };
         recorder.log.origins = origins;
@@ -1521,13 +1642,16 @@ impl Machine<'_> {
     /// Whether the segment can be replayed here, and if so whether it read
     /// the clock ([`is_clock`]); else why not.
     fn segment_fits(&self, node: &Node, base: &Path) -> Result<bool, String> {
-        for (path, size, modified) in &node.stamps {
-            if crate::format::stamp(Path::new(path)) != Some((*size, *modified)) {
-                return Err(format!("stamp changed: {path}"));
+        let roots = self.cache_roots();
+        for (path, hash) in &node.stamps {
+            let path = roots.decode(path);
+            if crate::format::content_hash(Path::new(&path)) != Some(*hash) {
+                return Err(format!("content changed: {path}"));
             }
         }
         for (looked, kind, found) in &node.lookups {
-            if self.resolver.search_again(looked, *kind, base) != *found {
+            let found = found.as_ref().map(|f| PathBuf::from(roots.decode(&f.display().to_string())));
+            if self.resolver.search_again(looked, *kind, base) != found {
                 return Err(format!("lookup changed: {looked}"));
             }
         }
@@ -1579,12 +1703,16 @@ impl Machine<'_> {
 
     /// This run's file numbers for a segment's paths (unregistered).
     fn lookup_files(&self, paths: &[String]) -> Vec<FileId> {
+        let roots = self.cache_roots();
         paths
             .iter()
             .map(|p| match p.as_str() {
                 SITE => LOAD_SITE,
                 MAIN => self.out.main_file,
-                path => self.out.files.iter().position(|f| f.path == path).map_or(UNREAD, |i| i as FileId),
+                path => {
+                    let path = roots.decode(path);
+                    self.out.files.iter().position(|f| f.path == path).map_or(UNREAD, |i| i as FileId)
+                }
             })
             .collect()
     }
@@ -1613,7 +1741,7 @@ impl Machine<'_> {
                 .and_then(|s| postcard::take_from_bytes::<EffectHead>(&s.rest).map(|(head, _)| head))
         });
         let provisional = provisional.ok()?;
-        let mut shift: HashMap<u8, i64> = HashMap::new();
+        let mut shift: HashMap<u8, i64> = HashMap::default();
         for (counter, from, ..) in &provisional.moved {
             let now = before.counters.iter().find(|(c, _)| c == counter).and_then(|(_, v)| *v)?;
             shift.insert(*counter, now - from);
@@ -1646,14 +1774,15 @@ impl Machine<'_> {
             .enumerate()
             .map(|(i, s)| s.unwrap_or_else(|| self.out.interner.intern(&names[i])))
             .collect();
+        let roots = self.cache_roots();
         for (path, kind, _) in &provisional.files {
-            self.register_file(path.clone(), *kind);
+            self.register_file(roots.decode(path), *kind);
         }
         // Segment's files registered above (in order read); unread files stay unread.
         let files = self.lookup_files(&node.paths);
         let st = decode_effect(&node.effect, &syms, &files)?;
         // Texts the segment copied, as this run has them at segment start.
-        let mut origs: HashMap<Sym, Rc<[Token]>> = HashMap::new();
+        let mut origs: HashMap<Sym, Rc<[Token]>> = HashMap::default();
         let spliced =
             st.bindings.iter().filter(|(_, b, _)| b.as_ref().is_some_and(|b| b.splice.is_some())).map(|(sym, ..)| *sym);
         for sym in spliced.chain(st.definitions.iter().filter(|d| d.splice.is_some()).map(|d| d.name)) {
@@ -1662,7 +1791,8 @@ impl Machine<'_> {
         }
         origins.extend(st.origins.iter().copied());
         for (path, _, entry) in &st.files {
-            if let Some(id) = self.out.files.iter().position(|f| f.path == *path)
+            let path = roots.decode(path);
+            if let Some(id) = self.out.files.iter().position(|f| f.path == path)
                 && let Some(slot) = self.out.entry.get_mut(id)
             {
                 *slot = entry.map(|s| span_in(s, site));
@@ -1895,14 +2025,28 @@ impl Machine<'_> {
                 count: e.count,
                 mode: e.mode,
             });
-            self.expansion_sites
-                .insert(key, Site { fact, repeats: e.repeats, progress: 0, size: usize::MAX, source: 0, unread: 1 });
+            self.expansion_sites.insert(
+                key,
+                Site {
+                    fact,
+                    repeats: e.repeats,
+                    progress: 0,
+                    size: usize::MAX,
+                    source: 0,
+                    unread: 1,
+                    ..Site::fresh(fact)
+                },
+            );
             sites.push((key, fact, e.repeats, e.current));
         }
         let base_loads = before.loads as i64;
         for l in &st.loads {
-            let file =
-                l.path.as_ref().and_then(|p| self.out.files.iter().position(|f| f.path == *p)).map(|i| i as FileId);
+            let file = l
+                .path
+                .as_ref()
+                .map(|p| roots.decode(p))
+                .and_then(|p| self.out.files.iter().position(|f| f.path == p))
+                .map(|i| i as FileId);
             self.out.facts.loads.push(Load {
                 name: l.name.clone(),
                 kind: l.kind,
@@ -1910,7 +2054,7 @@ impl Machine<'_> {
                 span: span_in(l.span, site),
                 by: l.by,
                 file,
-                path: l.path.clone(),
+                path: l.path.as_ref().map(|p| roots.decode(p)),
                 status: {
                     let mut s = STATUSES[l.status as usize];
                     if let (LoadStatus::CaseMismatch { on_disk: od }, Some(actual_on_disk)) =
@@ -1930,6 +2074,9 @@ impl Machine<'_> {
                 entry.provided = provided.clone();
             }
         }
+        // The cache keeps no order between occurrences and diagnostics:
+        // a replayed diagnostic counts as raised before the load's occurrences.
+        let replayed_from = self.out.facts.occurrences.len();
         for o in &st.occurrences {
             let Some(node_id) = self.resolve_vertex(&st, &mut ids, &reached, before, site, o.node, 0).first().copied()
             else {
@@ -1941,6 +2088,7 @@ impl Machine<'_> {
                 detail: o.detail.as_deref().map(|d| relocate_text(d, &relocate)),
                 span: span_in(o.span, site),
                 expanded: None,
+                call: None,
                 package: o.package,
                 node: node_id,
                 section: o.section.as_deref().map(Rc::from),
@@ -1987,12 +2135,17 @@ impl Machine<'_> {
             {
                 continue;
             }
+            let span = span_in(*span, site);
+            // Loading stops the origin search: only an own file is one.
+            let origin = self.own_file(span.file).then_some(span);
             self.out.facts.diagnostics.push(Diagnostic {
                 severity: SEVERITIES[*severity as usize],
                 code: leak(code),
                 message: relocate_text(message, &relocate),
-                span: span_in(*span, site),
+                span,
                 count: *count,
+                origin,
+                after: replayed_from,
             });
         }
         self.diag_floor = self.out.facts.diagnostics.len();
@@ -2023,12 +2176,17 @@ impl Machine<'_> {
             self.wild = lists.wild.clone();
             self.verbatim_environments = lists.verbatim.iter().cloned().collect();
             self.section = lists.section.as_deref().map(Rc::from);
-            self.lua.set_files(lists.lua.clone());
+            self.lua
+                .set_files(lists.lua.iter().map(|f| PathBuf::from(roots.decode(&f.display().to_string()))).collect());
             self.counter_namespace = lists.counter_namespace.clone();
             self.streams =
                 Rc::new(lists.streams.iter().map(|(n, lines, at)| (*n, (Rc::new(lines.clone()), *at))).collect());
+            self.outputs = Rc::new(lists.outputs.iter().cloned().collect());
             self.env.aliases = lists.aliases.iter().copied().collect();
         }
+        // Changes count from the load's start, like the scalars.
+        self.carried = before.carried.clone();
+        self.carried.apply(&st.carried);
         let s = &st.scalars;
         self.after_assignment = s.after_assignment;
         self.last_file = s.last_file.map(|span| span.file);
@@ -2040,20 +2198,24 @@ impl Machine<'_> {
                 s.call_shape.clone().map(|(sym, span, shape, depth)| Rc::new((sym, span_in(span, site), shape, depth)));
         }
         self.last_named_cs = s.last_named_cs;
+        self.page_touched |= s.page_touched;
         let mut recent = before.recent_file_spans.clone();
         recent.extend(s.recent_file_spans.iter().map(|span| span_in(*span, site)));
         let excess = recent.len().saturating_sub(RECENT_FILE_SPANS);
         recent.drain(..excess);
         self.recent_file_spans = recent;
         self.out.steps = before.steps + s.steps;
+        self.skip_replayed_steps(s.steps);
         self.source_progress = before.progress + s.progress;
         self.env.assignments = before.assignments + s.assignments;
-        self.progress_step = self.out.steps.saturating_sub(s.stalled);
         self.env.set_recent(s.recent.clone());
         let now = self.site_progress();
         for (key, fact, repeats, current) in sites {
             let progress = if current { now } else { !now };
-            self.expansion_sites.insert(key, Site { fact, repeats, progress, size: usize::MAX, source: 0, unread: 1 });
+            self.expansion_sites.insert(
+                key,
+                Site { fact, repeats, progress, size: usize::MAX, source: 0, unread: 1, ..Site::fresh(fact) },
+            );
         }
         Some(written)
     }
@@ -2229,7 +2391,7 @@ impl Machine<'_> {
     }
 
     /// Whether defining `name` redefines it, decided by initial state (no read; replay re-decides).
-    pub(super) fn redefines(&self, name: Sym) -> (bool, bool) {
+    pub(crate) fn redefines(&self, name: Sym) -> (bool, bool) {
         if self.package_capture.is_some() && !self.env.meaning_written(name) {
             let defined = self.env.slot(name).is_some_and(|b| b.meaning != Meaning::Undefined);
             return (defined, true);
@@ -2411,6 +2573,14 @@ impl Machine<'_> {
 
     /// End the segment at `mark` and begin the next.
     fn checkpoint(&mut self, mark: LineMark) {
+        // A degraded run's state is one no full-precision run reaches: its
+        // segments would be keyed by a root they were not recorded against.
+        if self.degraded {
+            if let Some(rec) = self.package_capture.as_mut() {
+                rec.log.spoiled.get_or_insert(DEGRADED);
+            }
+            return;
+        }
         let Some(node) = self.encode_segment(mark) else {
             if let Some(rec) = self.package_capture.as_mut() {
                 rec.log.spoiled.get_or_insert("a segment could not be written");
@@ -2490,8 +2660,18 @@ impl Machine<'_> {
         });
         drop(file);
         drop(bytes);
-        if written.is_some() && std::fs::rename(&temporary, &rec.cache).is_ok() {
-            crate::format::prune_family(dir, &family(&rec.name), INTERPRETER, self.cfg.limits.cache_size.as_u64());
+        let stored = written.is_some() && std::fs::rename(&temporary, &rec.cache).is_ok();
+        if !stored {
+            let _ = std::fs::remove_file(&temporary);
+        }
+        if stored {
+            crate::format::save_hashes(dir);
+            crate::format::prune_family(
+                dir,
+                &family(&rec.name),
+                crate::format::cache_key(),
+                self.cfg.limits.cache_size.as_u64(),
+            );
             prune(dir, self.cfg.limits.cache_size.as_u64());
             let recorded = total.saturating_sub(rec.served);
             let _ = recorded;
@@ -2519,6 +2699,7 @@ impl Machine<'_> {
 
     /// Segment from last checkpoint to `mark`, encoded against its own tables.
     fn encode_segment(&mut self, mark: LineMark) -> Option<Node<'static>> {
+        let roots = self.cache_roots();
         let mut reads = self.env.take_read_marks();
         let dirty = self.env.take_dirty();
         if let Some(rec) = self.package_capture.as_mut() {
@@ -2809,7 +2990,7 @@ impl Machine<'_> {
                     options: l.options.clone(),
                     span: span_out(l.span, site),
                     by: l.by,
-                    path: l.path.clone(),
+                    path: l.path.as_ref().map(|p| roots.encode(p)),
                     status: status_index(&l.status),
                     required: l.required.clone(),
                     provided: l.provided.clone(),
@@ -2834,13 +3015,18 @@ impl Machine<'_> {
                 v
             },
             section: self.section.as_deref().map(str::to_string),
-            lua: self.lua.files(),
+            lua: self.lua.files().iter().map(|f| PathBuf::from(roots.encode(&f.display().to_string()))).collect(),
             counter_namespace: self.counter_namespace.clone(),
             streams: {
                 let mut s: Vec<_> =
                     self.streams.iter().map(|(n, (lines, at))| (*n, lines.as_ref().clone(), *at)).collect();
                 s.sort_by_key(|(n, ..)| *n);
                 s
+            },
+            outputs: {
+                let mut o: Vec<_> = self.outputs.iter().map(|(n, t)| (n.clone(), t.clone())).collect();
+                o.sort();
+                o
             },
             aliases: {
                 let mut a: Vec<_> = self.env.aliases.iter().map(|(k, v)| (*k, *v)).collect();
@@ -2854,7 +3040,6 @@ impl Machine<'_> {
             steps: self.out.steps - before.steps,
             progress: self.source_progress - before.progress,
             assignments: self.env.assignments - before.assignments,
-            stalled: self.out.steps.saturating_sub(self.progress_step),
             recent: self.env.recent(),
             after_assignment: self.after_assignment,
             last_file: self.last_file.map(|f| Span::new(f, 0, 0)),
@@ -2868,6 +3053,7 @@ impl Machine<'_> {
                 .map(|(sym, span, shape, depth)| (sym, span_out(span, site), shape, depth)),
             finished_call: rec.seg_call_finished,
             last_named_cs: self.last_named_cs,
+            page_touched: self.page_touched,
             recent_file_spans: {
                 let before = &rec.before.recent_file_spans;
                 let kept = (0..=before.len())
@@ -2903,7 +3089,7 @@ impl Machine<'_> {
                 .enumerate()
                 .map(|(i, f)| {
                     (
-                        f.path.clone(),
+                        roots.encode(&f.path),
                         f.kind,
                         self.out.entry.get(m.files + i).copied().flatten().map(|s| span_out(s, site)),
                     )
@@ -2942,6 +3128,7 @@ impl Machine<'_> {
             gaps: rec.log.gaps_new[m.gaps_new..].iter().map(|(code, sym, _)| (code.to_string(), *sym)).collect(),
             scalars,
             lists: lists.clone(),
+            carried: self.carried.delta(&before.carried),
         };
 
         // Reads against initial state (allocation counters are no dependencies; replay uses its own).
@@ -2976,28 +3163,30 @@ impl Machine<'_> {
 
         // Files opened and new ones, and first-time name lookups.
         let mut stamps = Vec::new();
-        let mut seen = HashSet::new();
+        let mut seen = HashSet::default();
         let opened = rec.log.opened[m.opened..].iter().cloned();
         let new_files = self.out.files[m.files..].iter().map(|f| f.path.clone());
         for path in opened.chain(new_files) {
             if path.starts_with('<') || !seen.insert(path.clone()) {
                 continue;
             }
-            let (size, modified) = crate::format::stamp(Path::new(&path))?;
-            stamps.push((path, size, modified));
+            let hash = crate::format::content_hash(Path::new(&path))?;
+            stamps.push((roots.encode(&path), hash));
         }
         let lookups: Vec<(String, LoadKind, Option<PathBuf>)> = self
             .resolver
             .lookups()
             .filter(|(key, _)| !rec.lookups.contains(*key))
-            .map(|((name, kind), found)| (name.clone(), *kind, found.clone()))
+            .map(|((name, kind), found)| {
+                (name.clone(), *kind, found.as_ref().map(|f| PathBuf::from(roots.encode(&f.display().to_string()))))
+            })
             .collect();
         let steps = self.out.steps - m.steps;
 
         let encode = || Mode::Encode {
-            syms: HashMap::new(),
+            syms: HashMap::default(),
             sym_order: Vec::new(),
-            files: HashMap::new(),
+            files: HashMap::default(),
             file_order: Vec::new(),
         };
         let ((reads, effect), mode) = codec::with(encode(), || (postcard::to_allocvec(&reads), encode_effect(&effect)));
@@ -3008,7 +3197,7 @@ impl Machine<'_> {
             .map(|f| match *f {
                 LOAD_SITE => SITE.to_string(),
                 f if f == main => MAIN.to_string(),
-                f => self.out.files.get(f as usize).map_or_else(String::new, |i| i.path.clone()),
+                f => self.out.files.get(f as usize).map_or_else(String::new, |i| roots.encode(&i.path)),
             })
             .collect();
         let node = Node {
@@ -3231,12 +3420,10 @@ mod tests {
     const FLAGGED: &str =
         "\\documentclass{article}\n\\def\\userflag{}\n\\usepackage{guard}\n\\begin{document}\\relax\\end{document}\n";
 
-    fn cache_of(dir: &Path) -> Option<PathBuf> {
-        std::fs::read_dir(dir.join("cache"))
-            .ok()?
-            .flatten()
-            .map(|e| e.path())
-            .find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("package-guard-")))
+    /// The cache file the run used for `package`: never its lock or a
+    /// temporary, which share its name's start.
+    fn cache_of(analysis: &Analysis, package: &str) -> Option<PathBuf> {
+        analysis.package_caches.iter().find(|(name, ..)| name == package).map(|(_, path, _)| PathBuf::from(path))
     }
 
     fn state_of(analysis: &Analysis, package: &str) -> Option<String> {
@@ -3281,7 +3468,7 @@ mod tests {
         // First run records package; second replays what fits, records rest (holds tree index).
         let first = analyze(&dir, PLAIN);
         assert_eq!(state_of(&first, "guard").as_deref(), Some("stored"), "{:?}", first.package_caches);
-        let target_file = cache_of(&dir).expect("a cache for guard");
+        let target_file = cache_of(&first, "guard").expect("a cache for guard");
         let once = std::sync::atomic::AtomicBool::new(false);
         LAST_APPEND.lock().unwrap_or_else(|e| e.into_inner()).clear();
         let _hooked = hook(move |path: &Path| {
@@ -3349,5 +3536,39 @@ mod tests {
             return;
         }
         grafting("truncate", MAX_TREES, false);
+    }
+
+    /// A package that leaves an `\openin` stream half read, a counter
+    /// stepped, a switch of its own and a name built in part.
+    const STREAMY: &str = "\\ProvidesPackage{streamy}[2020/01/01 v1]\n\\newread\\streamyin\n\
+\\openin\\streamyin=streamy-data.tex\n\\read\\streamyin to\\streamyline\n\\stepcounter{section}\n\
+\\newif\\ifstreamy\n\\expandafter\\def\\csname streamy@\\streamyline\\endcsname{}\n\\relax\n";
+
+    #[test]
+    fn a_replay_leaves_the_root_a_read_leaves() {
+        if !installed() {
+            return;
+        }
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = project("streamy");
+        std::fs::write(dir.join("streamy.sty"), STREAMY).expect("streamy.sty");
+        std::fs::write(dir.join("streamy-data.tex"), "first\nsecond\nthird\n").expect("data");
+        let doc = "\\documentclass{article}\n\\usepackage{streamy}\n\\usepackage{guard}\n\
+\\begin{document}\\read\\streamyin to\\x\\section{A}\\relax\\end{document}\n";
+        let runs: Vec<(Analysis, Vec<String>)> = (0..3)
+            .map(|_| {
+                LOAD_ENDS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                let run = analyze(&dir, doc);
+                (run, std::mem::take(&mut *LOAD_ENDS.lock().unwrap_or_else(|e| e.into_inner())))
+            })
+            .collect();
+        for (run, ends) in &runs[1..] {
+            for package in ["streamy", "guard"] {
+                assert_eq!(state_of(run, package).as_deref(), Some("cached"), "{:?}", run.package_caches);
+            }
+            assert_eq!(facts(run), facts(&runs[0].0));
+            assert_eq!(ends, &runs[0].1, "what each load carries on");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

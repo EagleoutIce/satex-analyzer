@@ -7,6 +7,7 @@ use super::{Context, Format, Output};
 use crate::config::Config;
 use crate::render;
 
+pub mod archive;
 pub mod build;
 
 /// The cache directory in effect: `cache.dir:`/`--set cache.dir=...`, or the
@@ -111,6 +112,18 @@ pub fn status(context: &Context, out: &mut impl Write) -> Result<Output, String>
         );
     }
     Ok(Output::Done)
+}
+
+/// `satex cache export`: write the valid caches to `target`.
+pub fn export(cfg: &Config, target: &std::path::Path, json: bool, out: &mut impl Write) -> Result<(), String> {
+    let Some(directory) = directory(cfg) else { return Err("no cache directory".into()) };
+    archive::export(&directory, target, json, out)
+}
+
+/// `satex cache import`: unpack an archive into the cache directory.
+pub fn import(cfg: &Config, source: &std::path::Path, json: bool, out: &mut impl Write) -> Result<(), String> {
+    let Some(directory) = directory(cfg) else { return Err("no cache directory".into()) };
+    archive::import(&directory, source, json, out)
 }
 
 /// `satex cache clear`: delete every cache satex keeps.

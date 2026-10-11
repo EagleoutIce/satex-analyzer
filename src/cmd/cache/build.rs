@@ -122,7 +122,7 @@ fn package_name_of(file_name: &str) -> Option<&str> {
 /// list of names; a fresh cache directory has nothing to discover, which is
 /// the honest answer until some document has loaded a package for real.
 pub(crate) fn discover_expensive(dir: &Path, threshold: u64) -> Vec<(String, u64)> {
-    let mut totals: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    let mut totals: crate::fixed::HashMap<String, u64> = crate::fixed::HashMap::default();
     let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
     for entry in entries.flatten() {
         let file_name = entry.file_name();

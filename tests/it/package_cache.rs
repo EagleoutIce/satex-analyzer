@@ -269,10 +269,9 @@ fn a_changed_package_file_is_read_again() {
     let again = run(&dir, DOCUMENT);
     assert_eq!(served(&again, "outer"), Some(false));
     assert!(
-        again
-            .package_caches
-            .iter()
-            .any(|(name, _, state)| name == "outer" && state.contains("stamp changed") && state.contains("inner.sty")),
+        again.package_caches.iter().any(|(name, _, state)| name == "outer"
+            && state.contains("content changed")
+            && state.contains("inner.sty")),
         "the stale cache says why: {:?}",
         again.package_caches
     );
@@ -297,6 +296,31 @@ fn a_same_size_edit_in_the_same_second_is_read_again() {
     let again = run(&dir, DOCUMENT);
     assert_eq!(served(&again, "outer"), Some(false), "{:?}", again.package_caches);
     assert!(defined(&again, "innermacrx"));
+}
+
+/// A name the cached package defined, gone from the edited file, is
+/// undefined where the document uses it: the replay carries no stale
+/// definition.
+#[test]
+fn a_name_the_package_no_longer_defines_is_undefined() {
+    let dir = project("gone");
+    let path = dir.join("inner.sty");
+    let text = std::fs::read_to_string(&path).expect("inner.sty");
+    let source = "\\documentclass{article}\n\\usepackage{outer}\n\\begin{document}\\innermacro{x}\\end{document}\n";
+    let undefined = |a: &Analysis| {
+        let named = |r: &serde_json::Map<String, serde_json::Value>| {
+            r["message"].as_str().is_some_and(|m| m.contains("\\innermacro "))
+        };
+        satex::lint::lint(a).iter().any(|r| r["code"] == "undefined-control-sequence" && named(r))
+    };
+    let warm = run(&dir, source);
+    assert!(!undefined(&warm));
+    let modified = std::fs::metadata(&path).and_then(|m| m.modified()).expect("a modification time");
+    std::fs::write(&path, text.replacen("innermacro", "innermacrx", 1)).expect("inner.sty");
+    std::fs::File::options().write(true).open(&path).and_then(|f| f.set_modified(modified)).expect("set mtime");
+    let again = run(&dir, source);
+    assert!(!defined(&again, "innermacro"));
+    assert!(undefined(&again), "{:?}", again.package_caches);
 }
 
 #[test]
@@ -787,10 +811,30 @@ fn a_local_class_is_reused_by_a_second_run_and_the_report_says_so() {
     std::fs::write(dir.join("part.tex"), "\\def\\frompart{yy}\n").expect("part.tex");
     let third = run(&dir, source);
     assert!(
-        third.cache_report().iter().any(|l| l.contains("class mine: rebuilt") && l.contains("stamp changed")),
+        third.cache_report().iter().any(|l| l.contains("class mine: rebuilt") && l.contains("content changed")),
         "{:?}",
         third.cache_report()
     );
+}
+
+/// A package that reads the clock is replayed from its cache with the
+/// cached date. The replay says so in the one clock assumption, not in a
+/// diagnostic of its own, so the cached run diagnoses as the cold one.
+#[test]
+fn a_cached_package_that_read_the_clock_diagnoses_as_the_cold_run() {
+    if !installed() {
+        return;
+    }
+    let dir = project("clock");
+    std::fs::write(dir.join("dated.sty"), "\\ProvidesPackage{dated}\n\\edef\\stamp{\\the\\year}\n").expect("dated.sty");
+    let source = "\\documentclass{article}\\usepackage{dated}\\begin{document}\\stamp\\end{document}\n";
+    let codes = |a: &Analysis| {
+        a.facts.diagnostics.iter().map(|d| format!("{}|{}|{}", d.code, d.span.line, d.message)).collect::<Vec<_>>()
+    };
+    let built = run(&dir, source);
+    let read = run(&dir, source);
+    assert!(read.cache_report().iter().any(|l| l.contains("segments: 1 reused")), "{:?}", read.cache_report());
+    assert_eq!(codes(&built), codes(&read));
 }
 
 fn files_of(cache: &Path) -> Vec<String> {
@@ -921,4 +965,336 @@ fn a_class_assigning_register_values_is_reused_whole() {
         assert_eq!(size, stored, "run {run}: the cache file grew");
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Caches carry paths relative to their tree and check file contents, not
+/// times: a tree copied elsewhere, with new modification times, reuses them,
+/// and an edit in the copy is still seen.
+#[test]
+fn caches_built_against_one_tree_are_reused_from_a_copy_and_an_edit_rebuilds_them() {
+    let dir = crate::support::scratch_dir(
+        std::env::temp_dir().join(format!("satex-package-cache-moved-{}", std::process::id())),
+    );
+    let (first, cache, doc) = (dir.join("a"), dir.join("cache"), dir.join("doc"));
+    let tree_a = crate::support::mini_texmf(&first);
+    std::fs::create_dir_all(&doc).expect("doc");
+    let source = "\\usepackage{demo}\n\\demomacro\n";
+    let run = |tree: &Path| {
+        let path = doc.join("doc.tex");
+        std::fs::write(&path, source).expect("doc.tex");
+        Machine::analyze(source, Some(&path), &crate::support::mini_config(tree, &cache))
+    };
+    let built = run(&tree_a);
+    assert_eq!(served(&built, "demo"), Some(false), "{:?}", built.package_caches);
+    // Copied without `-p`, and the original gone: nothing can be read from it.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let second = dir.join("b");
+    let copied = std::process::Command::new("cp").arg("-r").arg(&first).arg(&second).status().expect("cp");
+    assert!(copied.success());
+    std::fs::remove_dir_all(&first).expect("the first tree removed");
+    let tree_b = second.join("texmf-dist");
+    let moved = run(&tree_b);
+    let report = moved.cache_report();
+    assert!(report.iter().any(|l| l.ends_with("kernel pdftex: reused")), "{report:?}");
+    assert_eq!(served(&moved, "demo"), Some(true), "{:?}", moved.package_caches);
+    assert!(defined(&moved, "demomacro") && defined(&moved, "kernelend"));
+    // Provenance resolves to the copy.
+    let site = crate::support::definition(&moved, "demomacro").expect("\\demomacro defined");
+    assert!(
+        moved.file_name(site.span.file).starts_with(&*tree_b.to_string_lossy()),
+        "{}",
+        moved.file_name(site.span.file)
+    );
+    let kernel = crate::support::definition(&moved, "kernelmacro").map(|d| moved.file_name(d.span.file).to_string());
+    assert!(kernel.as_deref().is_none_or(|k| k.starts_with(&*tree_b.to_string_lossy())), "{kernel:?}");
+    // An edit in the copy.
+    let package = tree_b.join("tex/latex/demo/demo.sty");
+    let text = std::fs::read_to_string(&package).expect("demo.sty");
+    std::fs::write(&package, text.replace("\\def\\demoend{}", "\\def\\demoended{}")).expect("demo.sty");
+    let edited = run(&tree_b);
+    let report = edited.cache_report();
+    assert!(
+        report.iter().any(|l| l.contains("package demo: rebuilt (content changed: ") && l.contains("demo.sty")),
+        "{report:?}"
+    );
+    assert!(defined(&edited, "demoended"));
+    let kernel = tree_b.join("tex/latex/base/minipart.ltx");
+    std::fs::write(&kernel, "\\def\\fromkernelpart#1{\\kernelmacro{#1#1}}\n").expect("minipart.ltx");
+    let report = run(&tree_b).cache_report();
+    assert!(
+        report.iter().any(|l| l.contains("kernel pdftex: rebuilt (content changed: ") && l.contains("minipart.ltx")),
+        "{report:?}"
+    );
+}
+
+/// Trees A, a cache dir built against it, and a document, for the archive tests.
+struct Portable {
+    dir: PathBuf,
+    tree: PathBuf,
+    cache: PathBuf,
+    archive: PathBuf,
+}
+
+impl Portable {
+    fn new(name: &str) -> Portable {
+        let dir = crate::support::scratch_dir(
+            std::env::temp_dir().join(format!("satex-package-cache-{name}-{}", std::process::id())),
+        );
+        let tree = crate::support::mini_texmf(&dir.join("a"));
+        let cache = dir.join("cache");
+        let archive = dir.join("caches.bin");
+        std::fs::create_dir_all(dir.join("doc")).expect("doc");
+        Portable { dir, tree, cache, archive }
+    }
+
+    fn run(&self, cfg: &Config) -> Analysis {
+        let source = "\\usepackage{demo}\n\\demomacro\n";
+        let path = self.dir.join("doc/doc.tex");
+        std::fs::write(&path, source).expect("doc.tex");
+        Machine::analyze(source, Some(&path), cfg)
+    }
+
+    fn built(&self) -> Config {
+        let cfg = crate::support::mini_config(&self.tree, &self.cache);
+        let first = self.run(&cfg);
+        assert_eq!(served(&first, "demo"), Some(false), "{:?}", first.package_caches);
+        cfg
+    }
+
+    fn export(&self, cfg: &Config) {
+        let mut out = Vec::new();
+        satex::cmd::cache::export(cfg, &self.archive, false, &mut out).expect("export");
+    }
+
+    fn import(&self, cfg: &Config) -> String {
+        let mut out = Vec::new();
+        satex::cmd::cache::import(cfg, &self.archive, false, &mut out).expect("import");
+        String::from_utf8_lossy(&out).into_owned()
+    }
+}
+
+fn all_reused(analysis: &Analysis) {
+    let report = analysis.cache_report();
+    assert!(report.iter().any(|l| l.ends_with("kernel pdftex: reused")), "{report:?}");
+    assert_eq!(served(analysis, "demo"), Some(true), "{:?}", analysis.package_caches);
+    assert!(report.iter().all(|l| !l.contains("rebuilt")), "{report:?}");
+}
+
+/// An exported archive, imported after the cache directory is gone, serves every cache.
+#[test]
+fn an_exported_cache_archive_is_reused_after_import() {
+    let p = Portable::new("archive");
+    let cfg = p.built();
+    p.export(&cfg);
+    std::fs::remove_dir_all(&p.cache).expect("cache wiped");
+    let said = p.import(&cfg);
+    assert!(said.contains("imported ") && !said.contains("skipped"), "{said}");
+    all_reused(&p.run(&cfg));
+}
+
+/// A tree with one file changed rebuilds that cache after import.
+#[test]
+fn an_imported_cache_is_rebuilt_when_the_tree_differs() {
+    let p = Portable::new("archive-edit");
+    let cfg = p.built();
+    p.export(&cfg);
+    std::fs::remove_dir_all(&p.cache).expect("cache wiped");
+    p.import(&cfg);
+    let package = p.tree.join("tex/latex/demo/demo.sty");
+    let text = std::fs::read_to_string(&package).expect("demo.sty");
+    std::fs::write(&package, text.replace("\\def\\demoend{}", "\\def\\demoended{}")).expect("demo.sty");
+    let report = p.run(&cfg).cache_report();
+    assert!(report.iter().any(|l| l.contains("package demo: rebuilt (content changed: ")), "{report:?}");
+}
+
+/// An archive of another semantic version is skipped, with a line saying so.
+#[test]
+fn an_archive_of_another_semantic_version_is_skipped() {
+    let p = Portable::new("archive-version");
+    let cfg = p.built();
+    p.export(&cfg);
+    // The version is the first field after the magic string.
+    let mut bytes = std::fs::read(&p.archive).expect("archive");
+    let at = bytes.windows(19).position(|w| w == b"satex-cache-archive").expect("magic") + 19;
+    bytes[at] = bytes[at].wrapping_add(1);
+    std::fs::write(&p.archive, bytes).expect("archive");
+    std::fs::remove_dir_all(&p.cache).expect("cache wiped");
+    let said = p.import(&cfg);
+    assert!(said.contains("skipped ") && said.contains("built for semantic version"), "{said}");
+    assert!(said.contains("imported 0 cache file(s)"), "{said}");
+    let report = p.run(&cfg).cache_report();
+    assert!(report.iter().any(|l| l.contains("kernel pdftex: rebuilt")), "{report:?}");
+}
+
+/// A bundle as the only root, with the imported caches: no installation needed.
+#[test]
+fn a_bundle_is_the_only_root_and_reuses_the_imported_caches() {
+    let p = Portable::new("archive-bundle");
+    let cfg = p.built();
+    p.export(&cfg);
+    let bundle = p.dir.join("bundle");
+    let copied = std::process::Command::new("cp").arg("-r").arg(&p.tree).arg(&bundle).status().expect("cp");
+    assert!(copied.success());
+    std::fs::remove_dir_all(p.dir.join("a")).expect("the first tree removed");
+    std::fs::remove_dir_all(&p.cache).expect("cache wiped");
+    let mut cfg = crate::support::mini_config(&bundle, &p.cache);
+    cfg.texmf.roots.clear();
+    cfg.texmf.bundle = Some(bundle.clone());
+    p.import(&cfg);
+    let analysis = p.run(&cfg);
+    all_reused(&analysis);
+    assert_eq!(analysis.distribution.roots, vec![bundle]);
+    assert!(defined(&analysis, "demomacro") && defined(&analysis, "kernelend"));
+}
+
+/// Caches built against an installation of several trees serve a bundle that
+/// holds the same files: roots and their tags are no part of the input.
+#[test]
+fn caches_built_against_several_trees_serve_a_bundle_alone() {
+    let p = Portable::new("archive-trees");
+    let local = p.dir.join("texmf-local");
+    std::fs::create_dir_all(&local).expect("an empty local tree");
+    let mut cfg = crate::support::mini_config(&p.tree, &p.cache);
+    cfg.texmf.roots = vec![local, p.tree.clone()];
+    let first = p.run(&cfg);
+    assert_eq!(served(&first, "demo"), Some(false), "{:?}", first.package_caches);
+    p.export(&cfg);
+    let bundle = p.dir.join("bundle");
+    let copied = std::process::Command::new("cp").arg("-r").arg(&p.tree).arg(&bundle).status().expect("cp");
+    assert!(copied.success());
+    std::fs::remove_dir_all(&p.cache).expect("cache wiped");
+    let mut cfg = crate::support::mini_config(&bundle, &p.cache);
+    cfg.texmf.roots.clear();
+    cfg.texmf.bundle = Some(bundle);
+    p.import(&cfg);
+    let analysis = p.run(&cfg);
+    assert_eq!(served(&analysis, "demo"), Some(true), "{:?}", analysis.package_caches);
+}
+
+/// A kernel's cache family comes from its own release, not from its path.
+#[test]
+fn a_kernel_is_named_by_its_release_not_its_path() {
+    let dir =
+        crate::support::scratch_dir(std::env::temp_dir().join(format!("satex-release-name-{}", std::process::id())));
+    let kernel = dir.join("latex.ltx");
+    std::fs::write(&kernel, "\\edef\\fmtversion{2031-06-01}\n").expect("kernel");
+    assert_eq!(satex::format::release_name(&kernel), "2031");
+    let bare = dir.join("other.ltx");
+    std::fs::write(&bare, "\\relax\n").expect("kernel");
+    assert_eq!(satex::format::release_name(&bare), "other");
+}
+
+/// No state from an interrupted run: every package cache entry of `a`.
+fn no_leftover_misses(a: &Analysis) {
+    for (name, _, state) in &a.package_caches {
+        assert!(!state.contains("root differs"), "{name}: {state}");
+    }
+}
+
+#[test]
+fn a_run_that_lowered_its_precision_stores_nothing_the_next_run_replays() {
+    let dir = project("degraded");
+    let mut cfg = latex(&dir);
+    cfg.limits.degrade_at_percent = 0;
+    let degraded = analyze(&dir, DOCUMENT, &cfg);
+    assert_eq!(served(&degraded, "outer"), None, "{:?}", degraded.package_caches);
+    let next = run(&dir, DOCUMENT);
+    no_leftover_misses(&next);
+    assert_eq!(served(&next, "outer"), Some(false), "{:?}", next.package_caches);
+    assert_eq!(served(&run(&dir, DOCUMENT), "outer"), Some(true));
+}
+
+#[test]
+fn a_cache_file_cut_short_by_a_killed_run_is_replaced() {
+    let dir = project("killed");
+    let first = run(&dir, DOCUMENT);
+    let (_, cache, _) = first.package_caches.iter().find(|(name, ..)| name == "outer").expect("outer cached");
+    let cache = PathBuf::from(cache);
+    let bytes = std::fs::read(&cache).expect("cache file");
+    std::fs::write(&cache, &bytes[..bytes.len() / 2]).expect("truncated");
+    std::fs::write(cache.with_extension("1-0.tmp"), &bytes[..10]).expect("temporary");
+    let next = run(&dir, DOCUMENT);
+    no_leftover_misses(&next);
+    assert_eq!(served(&next, "outer"), Some(false), "{:?}", next.package_caches);
+    let third = run(&dir, DOCUMENT);
+    assert_eq!(served(&third, "outer"), Some(true), "{:?}", third.package_caches);
+    same_facts(&first, &third);
+}
+
+/// Paths, joins and loop heads per line of the document itself.
+fn path_stats(analysis: &Analysis) -> Vec<(&'static str, u32, u64)> {
+    let Some(hot) = &analysis.hot else { return Vec::new() };
+    let doc = |file| analysis.file_name(file).ends_with("doc.tex");
+    let mut out: Vec<_> = [("fork", &hot.forks), ("join", &hot.joins), ("head", &hot.heads)]
+        .into_iter()
+        .flat_map(|(kind, table)| {
+            table.iter().filter(|((file, _), _)| doc(*file)).map(move |((_, line), n)| (kind, *line, *n))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// A package read, stored, or replayed from its cache leaves the same state:
+/// the document after three packages reports the same findings and takes
+/// the same paths in each case.
+#[test]
+fn three_packages_read_or_replayed_give_the_same_findings_and_paths() {
+    if !installed() {
+        return;
+    }
+    satex::machine::HOT.store(true, std::sync::atomic::Ordering::Relaxed);
+    let dir = project("three");
+    let source = "\\documentclass{article}\n\\usepackage{tikz}\n\\usepackage{booktabs}\n\\usepackage{soul}\n\
+                  \\begin{document}\nSome text -- with ``quotes''.\n\
+                  \\begin{tikzpicture}\n\\node[draw, rounded corners] at (0,1) {\\rule{1pt}{\\pdfrandomseed sp}A};\n\
+                  \\node[draw] at (0,2) {\\rule{1pt}{\\pdfrandomseed sp}B};\n\\end{tikzpicture}\n\
+                  \\pgfmathparse{\\pdfuniformdeviate 100}\\pgfmathparse{\\pdfuniformdeviate 100}\\pgfmathparse{\\pdfuniformdeviate 100}\n\
+                  \\begin{tabular}{ll}\\toprule a & b\\\\\\bottomrule\\end{tabular}\n\\hl{marked} text.\n\\end{document}\n";
+    let with = |auto: bool, refresh: bool| {
+        let mut cfg = latex(&dir);
+        cfg.set("clock", "2026-01-01T12:00:00Z").expect("clock");
+        cfg.cache.index.auto = auto;
+        cfg.cache.index.refresh = refresh;
+        analyze(&dir, source, &cfg)
+    };
+    let read = with(false, true);
+    let stored = with(true, false);
+    let replayed = with(true, false);
+    for package in ["tikz", "booktabs", "soul"] {
+        assert_eq!(served(&stored, package), Some(false), "{package} stored: {:?}", stored.package_caches);
+        assert_eq!(served(&replayed, package), Some(true), "{package} replayed: {:?}", replayed.package_caches);
+    }
+    let findings = |a: &Analysis| serde_json::to_string(&satex::lint::lint(a)).unwrap_or_default();
+    assert_eq!(findings(&read), findings(&stored));
+    assert_eq!(findings(&stored), findings(&replayed));
+    assert_eq!(path_stats(&read), path_stats(&stored));
+    assert_eq!(path_stats(&stored), path_stats(&replayed));
+}
+
+/// A replayed package is the work of its own lines, not of the line that
+/// loads it: the termination guard (`limits.line_steps`) charges the
+/// replay to no line, so a package whose every line is cheap never cuts
+/// the `\usepackage` line that replays it.
+#[test]
+fn a_replay_is_not_charged_to_the_line_that_loads_it() {
+    let dir = project("guard");
+    let line = "\\count@=0 \\loop\\advance\\count@ 1 \\ifnum\\count@<3000 \\repeat\n";
+    std::fs::write(
+        dir.join("busy.sty"),
+        format!("\\ProvidesPackage{{busy}}\n{}\\def\\busydone{{}}\n", line.repeat(80)),
+    )
+    .expect("busy.sty");
+    let source = "\\documentclass{article}\n\\usepackage{busy}\n\\begin{document}\\end{document}\n";
+    let mut cfg = latex(&dir);
+    cfg.cache.index.auto = true;
+    cfg.limits.line_steps = 2_000_000;
+    for (run, cached) in [("first", false), ("second", true)] {
+        let a = analyze(&dir, source, &cfg);
+        assert_eq!(served(&a, "busy"), Some(cached), "{run} run: {:?} {:?}", a.package_caches, diagnostics(&a));
+        let cut: Vec<_> =
+            diagnostics(&a).into_iter().filter(|(code, _)| code.contains("budget") || code.contains("limit")).collect();
+        assert!(cut.is_empty(), "{run} run: {cut:?}");
+        assert!(definitions(&a).iter().any(|(name, _)| name == "busydone"), "{run} run");
+    }
 }
