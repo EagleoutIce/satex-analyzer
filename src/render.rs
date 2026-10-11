@@ -1,6 +1,6 @@
 //! Terminal output: aligned tables, color, and OSC 8 hyperlinks.
 
-use std::collections::HashMap;
+use crate::fixed::HashMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -614,12 +614,12 @@ fn findings_section(out: &mut String, title: &str, records: &[&Record], links: L
         return;
     }
     let code = |r: &&Record| r.get("code").map(plain).unwrap_or_default();
-    let mut total: HashMap<String, usize> = HashMap::new();
+    let mut total: HashMap<String, usize> = HashMap::default();
     for record in records {
         *total.entry(code(record)).or_default() += 1;
     }
     let _ = writeln!(out, "{}", heading(&format!("{title} ({})", records.len())));
-    let mut shown: HashMap<String, usize> = HashMap::new();
+    let mut shown: HashMap<String, usize> = HashMap::default();
     for record in records {
         let this = code(record);
         let seen = shown.entry(this.clone()).or_default();
@@ -667,7 +667,14 @@ pub fn lint(records: &[Record], links: Links, group: bool) -> String {
             _ => document.push(record),
         }
     }
-    document.sort_by_key(|r| place_key(r));
+    // Most important first: by category (correctness before style), then
+    // grouped by rule, each rule's findings in source order.
+    let rank = |r: &Record| match r.get("category").map(plain).as_deref() {
+        Some("correctness") => 0,
+        Some("security") => 1,
+        _ => 2,
+    };
+    document.sort_by_key(|r| (rank(r), r.get("code").map(plain).unwrap_or_default(), place_key(r)));
     performance.sort_by_key(|r| place_key(r));
 
     let severity = |r: &&Record| r.get("severity").map(plain).unwrap_or_default();
@@ -1274,6 +1281,50 @@ pub fn lsp(records: &[Record]) -> String {
     lsp_with(records, file_url)
 }
 
+/// The column just past what a finding at `col` is about: a command with
+/// the `{…}`/`[…]` groups that follow it on its line (to the line's end
+/// when one stays open, as a runaway argument does), else the word there.
+fn call_end(line: &str, col: u32) -> u32 {
+    let start = crate::source::byte_of_col(line, col).min(line.len());
+    let rest = &line[start..];
+    let mut chars = rest.char_indices().peekable();
+    let word = |c: char| c.is_alphanumeric() || c == '@';
+    let mut end = match chars.next() {
+        Some((_, '\\')) => {
+            let first = chars.next().map_or(1, |(i, c)| i + c.len_utf8());
+            let mut end = first;
+            while let Some(&(i, c)) = chars.peek().filter(|(_, c)| word(*c) && rest[1..first].chars().all(word)) {
+                end = i + c.len_utf8();
+                chars.next();
+            }
+            end
+        }
+        Some((_, c)) if word(c) => rest.find(|c: char| !word(c)).unwrap_or(rest.len()),
+        Some((_, c)) => c.len_utf8(),
+        None => 0,
+    };
+    if rest.starts_with('\\') {
+        let base = end;
+        let (mut depth, mut closed) = (0u32, base);
+        for (i, c) in rest[base..].char_indices() {
+            match c {
+                '{' | '[' => depth += 1,
+                '}' | ']' if depth > 0 => {
+                    depth -= 1;
+                    if depth == 0 {
+                        closed = base + i + 1;
+                    }
+                }
+                '*' | ' ' if depth == 0 => {}
+                _ if depth == 0 => break,
+                _ => {}
+            }
+        }
+        end = if depth > 0 { rest.len() } else { closed };
+    }
+    crate::source::col_of_byte(line, start + end)
+}
+
 /// [`lsp`] with the URI each path is published under.
 pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
     let sources = crate::lint::fix::Sources::default();
@@ -1289,8 +1340,9 @@ pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
         let line = record.get("line").and_then(Json::as_u64).unwrap_or(1);
         let col = record.get("col").and_then(Json::as_u64).unwrap_or(1);
         let at = position(&path, line, col);
+        let end = sources.get(&path).map_or(col, |text| call_end(text.line(line.max(1) as u32), col as u32) as u64);
         let diagnostic = serde_json::json!({
-            "range": { "start": at, "end": at },
+            "range": { "start": at, "end": position(&path, line, end) },
             "severity": lsp_severity(record),
             "code": record.get("code"),
             "source": "satex",
@@ -1488,4 +1540,63 @@ mod tests {
         assert!(out.contains(&long_message[long_message.len() - 10..]));
         assert!(out.contains("1 error, 1 warning, 1 suggestion, 1 performance note, 1 precision note"));
     }
+}
+
+fn paint(style: Style, text: &str) -> String {
+    format!("{style}{text}{style:#}")
+}
+
+/// Colors one `--stats`/`-v` status line (cache, stats, hotspot, limit),
+/// keeping its text. `anstream` drops the codes where color is off.
+pub fn status(line: &str) -> String {
+    let (lead, body) = line.split_at(line.len() - line.trim_start().len());
+    let colored = if let Some(rest) = body.strip_prefix("satex: ") {
+        format!("satex: {}", status(rest))
+    } else if let Some(rest) = body.strip_prefix("hot ") {
+        let (name, rows) = rest.split_once(' ').unwrap_or((rest, ""));
+        let label = match name {
+            "steps" => fg(AnsiColor::Blue).bold(),
+            "forks" => fg(AnsiColor::Magenta).bold(),
+            "joins" => fg(AnsiColor::Green).bold(),
+            _ => fg(AnsiColor::Yellow).bold(),
+        };
+        let rows = rows.split("  ").map(|r| match r.split_once(' ') {
+            Some((n, at)) => format!("{} {}", paint(BOLD, n), paint(NAME, at)),
+            None => r.to_string(),
+        });
+        format!("hot {} {}", paint(label, name), rows.collect::<Vec<_>>().join("  "))
+    } else if let Some(rest) = body.strip_prefix("limits.") {
+        let Some((key, rest)) = rest.split_once(" = ") else { return line.to_string() };
+        let (value, rest) = rest.split_once(" was reached ").unwrap_or((rest, ""));
+        let (count, rest) = rest.split_once(" (first at ").unwrap_or((rest, ""));
+        let (at, advice) = rest.split_once("); ").unwrap_or((rest, ""));
+        format!(
+            "limits.{} = {} was reached {} (first at {}); {}",
+            paint(WARNING, key),
+            paint(BOLD, value),
+            paint(BOLD, count),
+            paint(NAME, at),
+            paint(DIM, advice)
+        )
+    } else if body.starts_with("cache ") {
+        match body.split_once("rebuilt (") {
+            Some((head, why)) => format!("{head}{} {}", paint(WARNING, "rebuilt"), paint(DIM, &format!("({why}"))),
+            None => match body.rsplit_once("reused") {
+                Some((head, tail)) => format!("{head}{}{tail}", paint(GOOD, "reused")),
+                None => body.to_string(),
+            },
+        }
+    } else if body.starts_with(|c: char| c.is_ascii_digit()) && body.contains(" files") {
+        let mut parts = body.split("  |  ");
+        let first = parts.next().unwrap_or("");
+        let rest = parts.map(|p| match p {
+            "budget exhausted" => paint(ERROR, p),
+            _ => p.to_string(),
+        });
+        let all = std::iter::once(paint(BOLD, first)).chain(rest);
+        all.collect::<Vec<_>>().join("  |  ")
+    } else {
+        body.to_string()
+    };
+    format!("{lead}{colored}")
 }

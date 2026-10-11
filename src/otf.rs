@@ -3,8 +3,9 @@
 //! `\XeTeXcharglyph`, its layout scripts, languages and features, its
 //! glyph names, and what its eight `\fontdimen`s are made of.
 
+use crate::fixed::HashMap;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -154,7 +155,7 @@ impl CharMap {
 }
 
 thread_local! {
-    static LOADED: RefCell<HashMap<PathBuf, Option<Rc<CharMap>>>> = RefCell::new(HashMap::new());
+    static LOADED: RefCell<HashMap<PathBuf, Option<Rc<CharMap>>>> = RefCell::new(HashMap::default());
 }
 
 pub fn load(path: &Path) -> Option<Rc<CharMap>> {
