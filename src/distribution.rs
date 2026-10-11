@@ -1,6 +1,6 @@
 //! Which TeX installation to analyze against.
 
-use std::collections::HashMap;
+use crate::fixed::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -51,6 +51,8 @@ pub struct Distribution {
     pub index_cached: bool,
     /// The file the index was read from or written to.
     pub index_cache: Option<PathBuf>,
+    /// The bundle root among `roots`, if one was configured.
+    pub bundle: Option<PathBuf>,
 }
 
 impl Distribution {
@@ -73,6 +75,9 @@ impl Distribution {
 #[derive(Clone, Debug, Default)]
 pub struct Request {
     pub roots: Vec<PathBuf>,
+    /// A directory laid out like `texmf-dist`: searched after `roots`, and
+    /// on its own it replaces `kpsewhich` and the fallback paths.
+    pub bundle: Option<PathBuf>,
     pub install_root: Option<PathBuf>,
     pub year: Option<u32>,
     pub use_kpsewhich: bool,
@@ -104,6 +109,15 @@ impl Trees {
     }
 }
 
+/// The installation's file names ending in `ext` (`.cls`), sorted: the
+/// index a run searched, read from memory once it has been built.
+pub fn names_with(roots: &[PathBuf], ext: &str) -> Vec<String> {
+    let (index, _) = index_for(roots, None);
+    let mut names: Vec<String> = index.keys().filter_map(|n| n.strip_suffix(ext)).map(str::to_string).collect();
+    names.sort();
+    names
+}
+
 /// Where an installation would resolve from, without indexing its files:
 /// the roots [`discover`] would pick, cheap enough for `satex --version` to
 /// call on every run.
@@ -124,6 +138,7 @@ pub fn discover(request: &Request) -> Trees {
         indexed: index.len(),
         index_cached,
         index_cache,
+        bundle: request.bundle.clone().filter(|b| roots.contains(b)),
         roots,
         discovery,
     };
@@ -133,6 +148,21 @@ pub fn discover(request: &Request) -> Trees {
 type Roots = (Vec<PathBuf>, Discovery);
 
 fn roots_for(request: &Request, cache: Option<&Path>) -> Roots {
+    let Some(bundle) = request.bundle.as_ref().filter(|b| b.is_dir()) else {
+        return roots_without_bundle(request, cache);
+    };
+    let (mut roots, discovery) = match request.roots.is_empty() {
+        true => (Vec::new(), Discovery::None),
+        false => roots_without_bundle(request, cache),
+    };
+    if !roots.contains(bundle) {
+        roots.push(bundle.clone());
+    }
+    let discovery = if discovery == Discovery::None { Discovery::Configured } else { discovery };
+    (roots, discovery)
+}
+
+fn roots_without_bundle(request: &Request, cache: Option<&Path>) -> Roots {
     if !request.roots.is_empty() {
         let roots: Vec<PathBuf> = request.roots.iter().filter(|r| r.is_dir()).cloned().collect();
         if !roots.is_empty() {
@@ -276,11 +306,11 @@ fn index_for(roots: &[PathBuf], cache: Option<&Path>) -> (Index, bool) {
         remember(cache_entries(), roots, &index);
         return (index, true);
     }
-    let mut index = HashMap::new();
+    let mut index = HashMap::default();
     // Later roots must not shadow earlier ones, so they are read in order and
     // only fill in names that are still missing.
     for root in roots {
-        let mut tree: HashMap<String, (u8, PathBuf)> = HashMap::new();
+        let mut tree: HashMap<String, (u8, PathBuf)> = HashMap::default();
         if !read_ls_r(root, &mut tree) {
             walk(&root.join("tex"), &mut tree);
         }
@@ -403,7 +433,7 @@ fn format_version(index: &HashMap<String, PathBuf>) -> Option<String> {
 }
 
 /// The contents of the first `{…}` after `marker`.
-fn braced_after(text: &str, marker: &str) -> Option<String> {
+pub(crate) fn braced_after(text: &str, marker: &str) -> Option<String> {
     let at = text.find(marker)? + marker.len();
     let rest = &text[at..];
     let open = rest.find('{')?;

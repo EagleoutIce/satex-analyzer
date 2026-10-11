@@ -3,12 +3,12 @@
 //! files once the fixes have settled.  The interpreter runs on one thread,
 //! so the overlay is that thread's.
 
+use crate::fixed::HashMap;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 thread_local! {
-    static FILES: RefCell<HashMap<PathBuf, String>> = RefCell::new(HashMap::new());
+    static FILES: RefCell<HashMap<PathBuf, String>> = RefCell::new(HashMap::default());
 }
 
 pub fn read_to_string(path: &Path) -> std::io::Result<String> {

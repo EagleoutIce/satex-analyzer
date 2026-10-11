@@ -1,7 +1,7 @@
 //! The save stack: dense slot table plus undo journal (The TeXbook § 275).
 //! Drives conditional analysis: run branch, capture, rollback, join.
 
-use std::collections::HashMap;
+use crate::fixed::HashMap;
 
 use crate::mode::Nest;
 use crate::tex::{Catcode, CatcodeTable, Interner, Meaning, Span, Sym, TextClass, Tok, Token};
@@ -51,6 +51,8 @@ enum Entry {
         level: u32,
         /// The primitive `old` was a copy of ([`Env::aliases`]).
         alias: Option<Sym>,
+        /// When `old` was written ([`Env::stamp`]).
+        stamp: u64,
     },
     Catcode {
         character: char,
@@ -153,6 +155,8 @@ struct Mark {
     opened: Span,
     /// What the group saved of the semantic nest (tex.web § 216).
     nest: Option<Nest>,
+    /// Which group this is: ids grow with every opening.
+    id: u64,
 }
 
 /// The meaning table and the save stack: [`Binding`]s are pushed and undone
@@ -167,12 +171,14 @@ pub struct Env {
     level: Vec<u32>,
     journal: Journal,
     marks: Vec<Mark>,
+    /// The last group id given out.
+    group_ids: u64,
     /// While a path through an undecided conditional runs, every slot it
     /// changes, with what the slot held before, so that the next path can
     /// start from the same bindings. One entry per slot and fork: the
     /// first change under a fork saves what its rewind restores, and the
     /// entry names the slot's previous entry, put back on rewind.
-    trail: Vec<(u32, Option<Binding>, u32, u32)>,
+    trail: Vec<(u32, Option<Binding>, u32, u32, u64)>,
     /// Per slot, its latest trail entry, `NONE` for none.
     trailed: Vec<u32>,
     /// Per open fork, the fewest groups the running path stood in since.
@@ -188,6 +194,13 @@ pub struct Env {
     /// Names assigned since [`Env::clear_recent`], for widening a loop that
     /// does not end to every state it could have left.
     recent: Vec<u32>,
+    /// Per `recent` entry, [`Env::assignments`] when it was made; 0 when
+    /// unknown.
+    recent_at: Vec<u64>,
+    /// Per slot, [`Env::assignments`] at the write its binding came from.
+    /// A group end puts back the old one, so a name whose write a group
+    /// end undid is not widened.
+    stamp: Vec<u64>,
     /// `\let\tex_escapechar:D\escapechar`: the engine primitive a name was
     /// made equal to, for primitives satex models alike (tex.web keeps the
     /// primitive's `chr` code in the copy). A parameter's value lives with
@@ -196,12 +209,19 @@ pub struct Env {
     /// Assignments made so far: a loop that assigns is changing state, which
     /// a loop that only re-expands itself is not.
     pub assignments: u64,
+    /// Writes that changed what a name or register holds, and other
+    /// state a later read may see (catcodes, `\\read`): equal counts
+    /// mean an unchanged state.
+    pub effective: u64,
     /// How large a set of meanings or values a join keeps.
     pub sets: SetLimits,
     /// While a package cache is being captured: every slot read, as a bit
     /// set, which is what the package's effect may depend on.
     tracking: std::cell::Cell<bool>,
     reads: std::cell::RefCell<Reads>,
+    /// While calls are recorded: every name read, in order.
+    logging: std::cell::Cell<bool>,
+    read_log: std::cell::RefCell<Vec<u32>>,
 }
 
 /// Which part of a binding a read looked at.
@@ -258,19 +278,19 @@ struct Reads {
     written: HashMap<u32, u8>,
     /// Slots assigned since the last [`Env::take_dirty`], in order.
     dirty: Vec<u32>,
-    dirty_seen: std::collections::HashSet<u32>,
+    dirty_seen: crate::fixed::HashSet<u32>,
     /// Journal position, slot, and what was written of it when the journal
     /// saved it.
     saved: Vec<(usize, u32, u8)>,
     /// Slots whose text the load copied a text from before it into: a read
     /// of them reads that text, however the load has written them since.
-    carrying: std::collections::HashSet<u32>,
+    carrying: crate::fixed::HashSet<u32>,
     /// The slot whose meaning is being copied through, which a read of its
     /// meaning then is.
     copying: Option<u32>,
     /// Slots assigned since the segment began, and of those, the ones whose
     /// text holds what the slot held then, where and how long.
-    touched: std::collections::HashSet<u32>,
+    touched: crate::fixed::HashSet<u32>,
     splices: HashMap<u32, (usize, usize)>,
 }
 
@@ -311,7 +331,13 @@ impl PathEnv {
 
 impl Env {
     pub fn with_capacity(n: usize) -> Self {
-        Self { slots: vec![None; n], level: vec![0; n], trailed: vec![NONE; n], ..Default::default() }
+        Self {
+            slots: vec![None; n],
+            level: vec![0; n],
+            trailed: vec![NONE; n],
+            stamp: vec![0; n],
+            ..Default::default()
+        }
     }
 
     #[inline]
@@ -321,6 +347,7 @@ impl Env {
             self.slots.resize_with(n, || None);
             self.level.resize(n, 0);
             self.trailed.resize(n, NONE);
+            self.stamp.resize(n, 0);
         }
     }
 
@@ -336,6 +363,7 @@ impl Env {
     /// The whole binding: its meaning and its value.
     #[inline]
     pub fn get(&self, sym: Sym) -> Option<&Binding> {
+        self.log_read(sym);
         if self.tracking.get() {
             self.note_read(sym, ReadKind::Meaning);
             self.note_read(sym, ReadKind::Value);
@@ -502,12 +530,42 @@ impl Env {
 
     /// Start or stop recording which slots are read.
     /// Returns whether it was recording before.
+    #[inline]
+    fn log_read(&self, sym: Sym) {
+        if self.logging.get() {
+            self.read_log.borrow_mut().push(sym.0);
+        }
+    }
+
+    /// Log every name read from now on (`on`), or stop and forget the log.
+    pub fn log_reads(&self, on: bool) {
+        self.logging.set(on);
+        if !on {
+            self.read_log.borrow_mut().clear();
+        }
+    }
+
+    pub fn read_log_len(&self) -> usize {
+        self.read_log.borrow().len()
+    }
+
+    /// The names read since the log was `from` long, each once, sorted;
+    /// `None` when the log does not reach back that far.
+    pub fn reads_since(&self, from: usize) -> Option<Vec<Sym>> {
+        let log = self.read_log.borrow();
+        let mut syms: Vec<u32> = log.get(from..)?.to_vec();
+        syms.sort_unstable();
+        syms.dedup();
+        Some(syms.into_iter().map(Sym).collect())
+    }
+
     pub fn track_reads(&self, on: bool) -> bool {
         self.tracking.replace(on)
     }
 
     #[inline]
     pub fn meaning(&self, sym: Sym) -> Meaning {
+        self.log_read(sym);
         if self.tracking.get() {
             self.note_read(sym, ReadKind::Meaning);
         }
@@ -582,6 +640,11 @@ impl Env {
         self.journal.len()
     }
 
+    /// Trail, journal, recent names and open forks, for the memory report.
+    pub fn sizes(&self) -> [usize; 4] {
+        [self.trail.len(), self.journal.len(), self.recent.len(), self.floors.len()]
+    }
+
     /// Group depth.  0 is the outer, "global" level.
     pub fn depth(&self) -> usize {
         self.marks.len()
@@ -602,8 +665,15 @@ impl Env {
     fn set_tracked(&mut self, sym: Sym, mut binding: Binding, global: bool, writes: u8) {
         let i = sym.0 as usize;
         self.log(i);
-        self.recent.push(sym.0);
         self.assignments += 1;
+        if !self.slots.get(i).and_then(Option::as_ref).is_some_and(|b| {
+            b.meaning == binding.meaning && same_value(&b.value, &binding.value) && b.may == binding.may
+        }) {
+            self.effective += 1;
+        }
+        self.recent.push(sym.0);
+        self.recent_at.push(self.assignments);
+        let stamp = std::mem::replace(&mut self.stamp[i], self.assignments);
         if global {
             self.note_write(sym.0, writes);
             binding.global = true;
@@ -621,7 +691,7 @@ impl Env {
                 reads.saved.push((self.journal.len(), sym.0, written));
             }
             let alias = self.aliases.get(&sym).copied();
-            self.journal.push(Entry::Meaning { sym: sym.0, old, level: self.level[i], alias });
+            self.journal.push(Entry::Meaning { sym: sym.0, old, level: self.level[i], alias, stamp });
         }
         self.note_write(sym.0, writes);
         self.level[i] = current;
@@ -630,6 +700,7 @@ impl Env {
     }
 
     pub fn value(&self, sym: Sym) -> Value {
+        self.log_read(sym);
         if self.tracking.get() {
             self.note_read(sym, ReadKind::Value);
         }
@@ -642,6 +713,7 @@ impl Env {
     /// The abstract number a register holds (whether it is a dimension,
     /// and its interval): exact when known, `None` when not a number.
     pub fn num(&self, sym: Sym) -> Option<(crate::value::Quantity, crate::value::Num)> {
+        self.log_read(sym);
         if self.tracking.get() {
             self.note_read(sym, ReadKind::Value);
         }
@@ -651,6 +723,7 @@ impl Env {
     /// What a test taught a path of a register: that its value is `value`.
     /// Not an assignment, so the save stack is not told.
     pub fn refine_value(&mut self, sym: Sym, value: Value) {
+        self.effective += 1;
         let i = sym.0 as usize;
         let Some(Some(binding)) = self.slots.get(i) else { return };
         let binding = Binding { value, ..binding.clone() };
@@ -663,6 +736,7 @@ impl Env {
     /// of the old value, only what is kept (an empty slot keeps what a new
     /// register slot has).
     pub fn set_value(&mut self, sym: Sym, value: Value, global: bool) {
+        self.effective += 1;
         if self.tracking.get() {
             self.note_read(sym, ReadKind::Kept);
         }
@@ -679,11 +753,11 @@ impl Env {
     /// (tex.web § 1079), which a group that saved the register undoes and
     /// one that did not keeps.
     pub fn set_value_in_place(&mut self, sym: Sym, value: Value) {
+        self.effective += 1;
         self.grow(sym);
         let i = sym.0 as usize;
         self.log(i);
-        self.recent.push(sym.0);
-        self.assignments += 1;
+        self.wrote_in_place(i);
         self.note_write(sym.0, ReadKind::Value.bit());
         match &mut self.slots[i] {
             Some(binding) => binding.value = value,
@@ -697,7 +771,55 @@ impl Env {
     }
 
     pub fn push_group(&mut self, kind: GroupKind, opened: Span) {
-        self.marks.push(Mark { journal: self.journal.len(), kind, after: Vec::new(), opened, nest: None });
+        self.group_ids += 1;
+        self.marks.push(Mark {
+            journal: self.journal.len(),
+            kind,
+            after: Vec::new(),
+            opened,
+            nest: None,
+            id: self.group_ids,
+        });
+    }
+
+    /// The innermost open group's id, 0 outside every group.
+    pub fn group_id(&self) -> u64 {
+        self.marks.last().map_or(0, |m| m.id)
+    }
+
+    /// The id of the group `depth` groups deep, or of the innermost one
+    /// when fewer are open.
+    pub fn group_id_at(&self, depth: usize) -> u64 {
+        match depth {
+            0 => 0,
+            d => self.marks.get(d - 1).map_or(self.group_id(), |m| m.id),
+        }
+    }
+
+    /// Close the groups opened after group `id`, innermost first, as
+    /// `\endgroup` would (tex.web §§ 281-283), up to a math group. A value
+    /// they put back that was itself written since assignment `since` may
+    /// hold anything: the dropped text would have run on and written again.
+    /// Returns how many closed.
+    pub fn close_since(&mut self, id: u64, since: u64, catcodes: &mut CatcodeTable, typed: &Typed) -> usize {
+        let mut n = 0;
+        while let Some(mark) = self.marks.last()
+            && mark.id > id
+            && matches!(mark.kind, GroupKind::Simple | GroupKind::SemiSimple)
+        {
+            let mut restored = Vec::new();
+            self.effective += 1;
+            let mark = self.marks.pop().expect("checked");
+            self.lower();
+            self.unwind_into(mark.journal, Some(&mut *catcodes), Some(&mut restored));
+            for (sym, stamp) in restored {
+                if stamp >= since {
+                    self.widen_in_place(Sym(sym), typed);
+                }
+            }
+            n += 1;
+        }
+        n
     }
 
     /// Record what the innermost group saved of the semantic nest.
@@ -724,6 +846,7 @@ impl Env {
 
     /// Pop a group, restoring assignments. Returns `\aftergroup` tokens (tex.web § 269).
     pub fn pop_group(&mut self, catcodes: &mut CatcodeTable) -> Option<Vec<Token>> {
+        self.effective += 1;
         self.group_kind()?;
         let mark = self.marks.pop()?;
         self.lower();
@@ -742,6 +865,7 @@ impl Env {
     /// Discard a group without undoing it: its assignments join the enclosing
     /// group (for file-end inside open groups).
     pub fn discard_group(&mut self) -> bool {
+        self.effective += 1;
         let popped = self.marks.pop().is_some();
         self.lower();
         popped
@@ -761,6 +885,7 @@ impl Env {
     /// [`Env::save_catcode`] keeping whether the category was one satex
     /// could not follow, so that the group end puts that back too.
     pub fn save_catcode_state(&mut self, character: char, old: Catcode, old_unknown: bool) {
+        self.effective += 1;
         if !self.marks.is_empty() {
             self.journal.push(Entry::Catcode { character, old, old_unknown });
         }
@@ -772,13 +897,23 @@ impl Env {
         Env {
             slots: self.slots.clone(),
             level: vec![0; self.level.len()],
+            stamp: vec![0; self.level.len()],
             trailed: vec![NONE; self.level.len()],
             aliases: self.aliases.clone(),
             ..Default::default()
         }
     }
 
-    fn unwind(&mut self, to: usize, mut catcodes: Option<&mut CatcodeTable>) {
+    fn unwind(&mut self, to: usize, catcodes: Option<&mut CatcodeTable>) {
+        self.unwind_into(to, catcodes, None);
+    }
+
+    fn unwind_into(
+        &mut self,
+        to: usize,
+        mut catcodes: Option<&mut CatcodeTable>,
+        mut restored: Option<&mut Vec<(u32, u64)>>,
+    ) {
         if self.tracking.get() {
             // What a group puts back is what the parts held before, and it
             // came from before the load exactly when it did then.
@@ -795,7 +930,7 @@ impl Env {
             match self.journal.pop().expect("journal length checked") {
                 // tex.web § 283: a binding made global since is retained.
                 Entry::Meaning { sym, .. } if self.level[sym as usize] == 0 => {}
-                Entry::Meaning { sym, old, level, alias } => {
+                Entry::Meaning { sym, old, level, alias, stamp } => {
                     let index = sym as usize;
                     match alias {
                         Some(alias) => self.aliases.insert(Sym(sym), alias),
@@ -804,8 +939,12 @@ impl Env {
 
                     self.log(index);
                     self.level[index] = level;
+                    self.stamp[index] = stamp;
                     self.slots[index] = old;
                     self.changed(index);
+                    if let Some(r) = restored.as_deref_mut() {
+                        r.push((sym, stamp));
+                    }
                     if self.tracking.get() {
                         let mut reads = self.reads.borrow_mut();
                         if reads.dirty_seen.insert(sym) {
@@ -830,31 +969,102 @@ impl Env {
 
     pub fn set_recent(&mut self, recent: Vec<Sym>) {
         self.recent = recent.into_iter().map(|s| s.0).collect();
+        self.recent_at = vec![0; self.recent.len()];
     }
 
     pub fn clear_recent(&mut self) {
         self.recent.clear();
+        self.recent_at.clear();
+    }
+
+    pub fn recent_len(&self) -> usize {
+        self.recent.len()
+    }
+
+    /// The names assigned since `recent_len` was `from`, each once; all of
+    /// them when the list was cleared since.
+    /// A write a group end or a rewind undid since is left out.
+    pub fn recent_since(&self, from: usize) -> Vec<Sym> {
+        let from = if from > self.recent.len() { 0 } else { from };
+        let mut syms: Vec<(u32, u64)> =
+            self.recent[from..].iter().copied().zip(self.recent_at[from..].iter().copied()).collect();
+        syms.sort_unstable();
+        syms.dedup_by_key(|(sym, _)| *sym);
+        syms.into_iter()
+            .filter(|&(sym, at)| self.stamp.get(sym as usize).is_none_or(|&s| s >= at))
+            .map(|(sym, _)| Sym(sym))
+            .collect()
+    }
+
+    /// `syms` joined with what `other` holds for them, widened: an
+    /// accumulator stays typed. A name `other` never wrote may hold anything.
+    pub fn widen_to(&mut self, syms: &[Sym], other: &PathEnv, typed: &Typed) {
+        self.effective += 1;
+        for &sym in syms {
+            let i = sym.0 as usize;
+            let Some((theirs, _)) = other.slots.get(&sym.0).cloned() else {
+                self.widen_in_place(sym, typed);
+                continue;
+            };
+            let Some(Some(mine)) = self.slots.get(i).cloned() else { continue };
+            let joined = join(theirs.clone(), Some(mine.clone()), self.sets, Some(typed));
+            let Some(mut joined) = widen_slot(&theirs, joined, self.sets, typed) else {
+                self.widen_in_place(sym, typed);
+                continue;
+            };
+            if same_slot(&Some(mine.clone()), &Some(joined.clone())) {
+                continue;
+            }
+            joined.certain = false;
+            self.log(i);
+            self.wrote_in_place(i);
+            self.note_write(sym.0, ReadKind::Meaning.bit() | ReadKind::Value.bit());
+            self.slots[i] = Some(joined);
+            self.changed(i);
+        }
     }
 
     /// Every name assigned since [`Env::clear_recent`] may hold anything:
-    /// its value is unknown, and so is its meaning if that is a macro.
-    pub fn widen_recent(&mut self) {
-        let mut recent = std::mem::take(&mut self.recent);
-        recent.sort_unstable();
-        recent.dedup();
-        for sym in recent {
-            if let Some(mut binding) = self.get(Sym(sym)).cloned() {
-                binding.value = Value::Unknown;
-                if matches!(binding.meaning, Meaning::Macro(_)) || binding.may.is_some() {
-                    binding.meaning = Meaning::Unknown;
-                    binding.may = None;
-                }
-                binding.certain = false;
-                let global = binding.global;
-                self.set(Sym(sym), binding, global);
-            }
+    /// its value is unknown, and a macro holds text of its texts' classes.
+    pub fn widen_recent(&mut self, typed: &Typed) {
+        self.widen_written_after(0, typed);
+    }
+
+    /// [`Env::widen_recent`] for the names written after assignment `mark`.
+    pub fn widen_written_after(&mut self, mark: u64, typed: &Typed) {
+        self.effective += 1;
+        let syms: Vec<Sym> = self
+            .recent_since(0)
+            .into_iter()
+            .filter(|s| self.stamp.get(s.0 as usize).is_none_or(|&at| at > mark))
+            .collect();
+        for sym in syms {
+            self.widen_in_place(sym, typed);
         }
-        self.recent.clear();
+        self.clear_recent();
+    }
+
+    /// Slot `i` was changed where it stands, at its own level.
+    fn wrote_in_place(&mut self, i: usize) {
+        self.assignments += 1;
+        self.effective += 1;
+        self.recent.push(i as u32);
+        self.recent_at.push(self.assignments);
+        self.stamp[i] = self.assignments;
+    }
+
+    /// `sym` may hold anything, at the group level it was last written at:
+    /// a group end still puts back what it saved, and a local write never
+    /// becomes a global one (`binding.global` only says some write was).
+    fn widen_in_place(&mut self, sym: Sym, typed: &Typed) {
+        let i = sym.0 as usize;
+        let Some(Some(binding)) = self.slots.get(i).cloned() else { return };
+        let binding = widened(binding, typed);
+        self.log(i);
+        self.wrote_in_place(i);
+        self.note_write(sym.0, ReadKind::Meaning.bit() | ReadKind::Value.bit());
+        self.slots[i] = Some(binding);
+        self.changed(i);
     }
 
     #[inline]
@@ -868,7 +1078,7 @@ impl Env {
             let prev = self.trailed[i];
             if prev == NONE || (prev as usize) < floor {
                 self.trailed[i] = self.trail.len() as u32;
-                self.trail.push((i as u32, self.slots[i].clone(), self.level[i], prev));
+                self.trail.push((i as u32, self.slots[i].clone(), self.level[i], prev, self.stamp[i]));
             }
         }
     }
@@ -934,9 +1144,12 @@ impl Env {
 
     /// Back to the bindings `fork` saw.
     pub fn rewind(&mut self, fork: &Fork) {
+        self.effective += 1;
+
         let mut popped = Vec::new();
         while self.trail.len() > fork.trail {
-            let (sym, slot, saved, prev) = self.trail.pop().expect("trail length checked");
+            let (sym, slot, saved, prev, stamp) = self.trail.pop().expect("trail length checked");
+            self.stamp[sym as usize] = stamp;
             self.slots[sym as usize] = slot;
             self.level[sym as usize] = saved;
             self.trailed[sym as usize] = prev;
@@ -972,14 +1185,25 @@ impl Env {
 
     /// Continue `path` from `fork`.
     pub fn resume(&mut self, fork: &Fork, path: &PathEnv) {
+        self.effective += 1;
         self.rewind(fork);
+        RESUMES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        RESUME_SLOTS.fetch_add(path.slots.size() as u64, std::sync::atomic::Ordering::Relaxed);
 
+        // The fork's own map is the path's, shared: rebuilt per resume, every
+        // head and parked path would hold a copy of its own.
+        let own = (self.changed.len() == fork.level + 1).then(|| self.changed.pop()).flatten();
         for (sym, (slot, saved)) in path.slots.iter() {
             let i = *sym as usize;
             self.log(i);
             self.slots[i] = slot.clone();
             self.level[i] = *saved;
+            // What the path wrote counts as written now.
+            self.stamp[i] = self.assignments;
             self.changed(i);
+        }
+        if own.is_some() {
+            self.changed.push(path.slots.clone());
         }
         self.journal = path.journal.clone();
         self.marks = path.marks.clone();
@@ -994,6 +1218,7 @@ impl Env {
     /// bindings stay as the running path has them. False when the running
     /// path changed nothing since `fork`.
     pub fn rebase(&mut self, fork: &Fork, paths: &mut [&mut PathEnv]) -> bool {
+        self.effective += 1;
         let live = self.path(fork);
         if live.slots.is_empty() {
             return false;
@@ -1022,7 +1247,7 @@ impl Env {
     /// The slots changed since `mark`, each with what it held at `mark`
     /// and what it holds now.
     pub fn changed_since(&self, mark: usize) -> Vec<(u32, Option<Binding>, Option<Binding>)> {
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = crate::fixed::HashSet::default();
         let mut out = Vec::new();
         for (sym, old, ..) in self.trail.get(mark..).unwrap_or_default() {
             if seen.insert(*sym) {
@@ -1041,6 +1266,7 @@ impl Env {
     /// what the loop reached there, which holds more than this path knows.
     /// Not an assignment, so the save stack is not told.
     pub fn assume(&mut self, sym: u32, slot: Option<Binding>) {
+        self.effective += 1;
         let i = sym as usize;
         self.grow(Sym(sym));
         self.log(i);
@@ -1052,6 +1278,7 @@ impl Env {
     /// meanings: that it holds `meaning`.  Not an assignment, so the save
     /// stack is not told.
     pub fn refine(&mut self, sym: Sym, meaning: Meaning) {
+        self.effective += 1;
         let i = sym.0 as usize;
         let Some(Some(binding)) = self.slots.get(i) else { return };
         let binding = Binding { meaning, may: None, ..binding.clone() };
@@ -1069,6 +1296,7 @@ impl Env {
     /// Give `sym` a meaning its name determines, so that it is the same on
     /// every path and no rewind undoes it.
     pub fn constant(&mut self, sym: Sym, binding: Binding) {
+        self.effective += 1;
         self.grow(sym);
         let i = sym.0 as usize;
         self.slots[i] = Some(Binding { global: true, ..binding });
@@ -1097,7 +1325,8 @@ impl Env {
         touched.sort_unstable();
         touched.dedup();
         let mut grown = Vec::new();
-        let mut slots = Changed::new();
+        // `a`'s map, shared where the join keeps its binding.
+        let mut slots = a.slots.clone();
         for sym in touched {
             self.grow(Sym(sym));
             let i = sym as usize;
@@ -1114,6 +1343,9 @@ impl Env {
             };
             if !same_slot(&old, &joined) {
                 grown.push(Sym(sym));
+            }
+            if a.slots.get(&sym).is_some_and(|(kept, l)| *l == level && identical(kept, &joined)) {
+                continue;
             }
             slots.insert_mut(sym, (joined, level));
         }
@@ -1159,7 +1391,7 @@ impl Env {
             let mut merged: Vec<Entry> = Vec::with_capacity(mine.len() + theirs.len());
             for (entry, other) in mine.into_iter().map(|e| (e, b)).chain(theirs.into_iter().map(|e| (e, a))) {
                 let entry = match entry {
-                    Entry::Meaning { sym, old, level, alias } => {
+                    Entry::Meaning { sym, old, level, alias, stamp } => {
                         let old = match global(other, sym) {
                             Some(kept) => join(old, Some(kept), self.sets, None),
                             // A name the other path did not save in this
@@ -1178,7 +1410,7 @@ impl Env {
                             }
                             None => old,
                         };
-                        Entry::Meaning { sym, old, level, alias }
+                        Entry::Meaning { sym, old, level, alias, stamp }
                     }
                     catcode => catcode,
                 };
@@ -1208,8 +1440,9 @@ impl Entry {
     /// Two paths saved the same slot: what either may put back.
     fn join(&mut self, other: Entry, sets: SetLimits) {
         match (self, other) {
-            (Entry::Meaning { old, .. }, Entry::Meaning { old: theirs, .. }) => {
-                *old = join(old.clone(), theirs, sets, None)
+            (Entry::Meaning { old, stamp, .. }, Entry::Meaning { old: theirs, stamp: at, .. }) => {
+                *old = join(old.clone(), theirs, sets, None);
+                *stamp = (*stamp).max(at);
             }
             (Entry::Catcode { old, old_unknown, .. }, Entry::Catcode { old: theirs, old_unknown: unknown, .. }) => {
                 *old_unknown |= unknown || *old != theirs;
@@ -1265,22 +1498,32 @@ fn groups(marks: &[Mark]) -> Vec<(GroupKind, Vec<Tok>)> {
 pub const MAY_MEANINGS: usize = 5;
 
 /// How many meanings and how many values a join keeps as a set
-/// (`limits.meaning_set`, `limits.value_set`).
+/// (`limits.meaning_set`, `limits.value_set`, `limits.interval_set`).
 #[derive(Clone, Copy, Debug)]
 pub struct SetLimits {
     pub meanings: usize,
     pub values: usize,
+    pub intervals: usize,
 }
 
 impl Default for SetLimits {
     fn default() -> Self {
-        SetLimits { meanings: MAY_MEANINGS, values: crate::value::MAY_VALUES }
+        SetLimits { meanings: MAY_MEANINGS, values: crate::value::MAY_VALUES, intervals: crate::value::MAY_INTERVALS }
     }
 }
 
 /// Whether two slots hold the same abstract state: the same meaning (or
 /// set of meanings), value and certainty.  Which definitions made them does
 /// not count: it is what a use depends on, not what it sees.
+/// The same binding in every part a join looks at, definition sites too.
+fn identical(a: &Option<Binding>, b: &Option<Binding>) -> bool {
+    same_slot(a, b)
+        && match (a, b) {
+            (Some(x), Some(y)) => x.defs == y.defs && x.global == y.global && x.may == y.may,
+            _ => true,
+        }
+}
+
 pub fn same_slot(a: &Option<Binding>, b: &Option<Binding>) -> bool {
     match (a, b) {
         (None, None) => true,
@@ -1325,7 +1568,7 @@ pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits, 
             _ if switch => (Meaning::Primitive(Primitive::If(Cond::Opaque)), None),
             Some(mut texts) if texts.len() == 1 => (texts.pop().expect("one text"), None),
             Some(texts) => (Meaning::Unknown, Some(texts.into())),
-            None => (Meaning::Unknown, None),
+            None => (macro_hull(&joined, typed).unwrap_or(Meaning::Unknown), None),
         };
     }
     if value_grows {
@@ -1338,6 +1581,44 @@ pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits, 
         };
     }
     Some(joined)
+}
+
+/// A macro without parameters whose text is any text of the classes its
+/// texts have, when every meaning `b` may have is such a macro with the
+/// same prefixes: widened, it stays one, which `\ifx` can still tell from
+/// other kinds. Its length is not bounded: a widened write may repeat.
+fn macro_hull(b: &Binding, typed: &Typed) -> Option<Meaning> {
+    let members = b.may.as_deref().unwrap_or(std::slice::from_ref(&b.meaning));
+    let mut first: Option<&crate::tex::MacroDef> = None;
+    for m in members {
+        let Meaning::Macro(d) = m else { return None };
+        let plain = d.parameter_text.items.is_empty() && !d.parameter_text.brace_end && d.arg_spec.is_none();
+        let f = *first.get_or_insert(d);
+        if !plain || (d.long, d.outer, d.protected) != (f.long, f.outer, f.protected) {
+            return None;
+        }
+    }
+    let def = first?;
+    let texts = members.iter().filter_map(|m| match m {
+        Meaning::Macro(d) => Some(&d.replacement_text[..]),
+        _ => None,
+    });
+    let text: std::rc::Rc<[Token]> = [text_hull(texts, typed)].into();
+    Some(Meaning::Macro(std::rc::Rc::new(crate::tex::MacroDef { replacement_text: text, ..def.clone() })))
+}
+
+/// One typed token for any text of the classes `texts` have, at least
+/// one token when each has one.
+fn text_hull<'t>(texts: impl Iterator<Item = &'t [Token]>, typed: &Typed) -> Token {
+    let (mut one, mut class, mut span) = (true, TextClass::EMPTY, None);
+    for text in texts {
+        one &= !text.is_empty();
+        for t in text {
+            span = span.or(Some(t.span));
+            class = class.union(typed.classify(t).map_or_else(|| TextClass::of(t.tok), |c| c.0));
+        }
+    }
+    Token::new(Tok::Cs(typed.make(class, one, None)), span.unwrap_or_default())
 }
 
 /// The meanings `b` may have, each a macro without parameters, with every
@@ -1365,6 +1646,49 @@ fn numbers(b: &Binding, sets: SetLimits, typed: &Typed) -> Option<Vec<Meaning>> 
 
 /// The names of typed unknown text, for widening without the machine:
 /// what a token stands for, and the token for a class.
+/// What parts a typed name from its bound: the most tokens it may hold.
+pub const LEN_MARK: char = '\u{5}';
+/// The longest bound a typed name carries: a sign and 19 digits.
+pub const MAX_LEN: u32 = 20;
+/// The classes whose text carries a bound: what `\the` and `\number`
+/// print (tex.web §§ 65, 103).
+pub const BOUNDED: [TextClass; 2] = [TextClass::DIGIT, TextClass::NUMBER];
+
+/// Where the typed name of `class`, lower bound `one`, at most `len`
+/// tokens and `serial` (0 the canonical one) stands in the typed names.
+pub fn bounded_index(class: TextClass, one: bool, len: u32, serial: usize) -> Option<usize> {
+    let b = BOUNDED.iter().position(|c| *c == class)?;
+    let serials = crate::machine::REST_SERIALS + 1;
+    (1..=MAX_LEN).contains(&len).then(|| {
+        crate::machine::BOUNDED_BASE
+            + (((b * 2 + usize::from(one)) * MAX_LEN as usize + len as usize - 1) * serials + serial)
+    })
+}
+
+/// The most tokens unknown text `t` may hold: one for an unknown
+/// character, the bound a typed name carries, or the length of the
+/// spelling of the interval typed digits lie in. Known digits have none:
+/// a loop's counter is any digits, whatever its length.
+pub fn text_len(interner: &Interner, t: &Token) -> Option<u32> {
+    let name = match t.tok {
+        Tok::Chr(c, _) if crate::tex::is_unknown_char(c) => return Some(1),
+        Tok::Cs(sym) => interner.name(sym),
+        _ => return None,
+    };
+    if let Some((_, len)) = name.rsplit_once(LEN_MARK) {
+        return len.parse().ok();
+    }
+    let typed = name.strip_prefix(crate::scan::TYPED_DIGITS)?;
+    if let Some((_, cut)) = typed.split_once('@') {
+        let places: Vec<u32> = cut.split(':').filter_map(|x| x.parse().ok()).collect();
+        return Some(places.get(3)? - places.get(2)?);
+    }
+    let (lo, hi) = typed.split_once('#')?.0.split_once("..")?;
+    let (lo, hi): (i64, i64) = (lo.parse().ok()?, hi.parse().ok()?);
+    let digits = |n: i64| n.unsigned_abs().checked_ilog10().unwrap_or(0) + 1;
+    Some(digits(lo).max(digits(hi)) + u32::from(lo < 0))
+}
+
 pub struct Typed<'a> {
     pub interner: &'a Interner,
     /// The name per class and lower bound, `class * 2 + one`.
@@ -1377,6 +1701,10 @@ impl Typed<'_> {
     /// The class, lower bound and control sequences a typed name spells,
     /// `None` for any other name.
     pub fn parse_name(name: &str) -> Option<(TextClass, bool, Vec<&str>)> {
+        let name = name.split_once(crate::machine::REST_SERIAL).map_or(name, |(name, _)| name);
+        if name == crate::machine::MORE_DIGITS {
+            return Some((TextClass::DIGIT, false, Vec::new()));
+        }
         let rest = name.strip_prefix(crate::machine::UNKNOWN_NAME)?.strip_prefix(crate::machine::TYPED_TEXT)?;
         let mut parts = rest.split(crate::machine::UNKNOWN_NAME_GAP);
         let head = parts.next()?;
@@ -1408,7 +1736,10 @@ impl Typed<'_> {
         }
     }
 
-    pub fn make(&self, class: TextClass, one: bool) -> Sym {
+    pub fn make(&self, class: TextClass, one: bool, len: Option<u32>) -> Sym {
+        if let Some(i) = len.and_then(|len| bounded_index(class, one, len, 0)) {
+            return self.syms[i];
+        }
         match (class, one) {
             (TextClass::DIGIT, true) => self.digits,
             (TextClass::DIGIT, false) => self.more,
@@ -1423,18 +1754,19 @@ impl Typed<'_> {
 /// § 465 prints a number as such characters).
 pub fn unknown_runs(text: &[Token], typed: &Typed) -> std::rc::Rc<[Token]> {
     let mut out: Vec<Token> = Vec::with_capacity(text.len());
-    let mut run: Option<(TextClass, bool, Span)> = None;
-    let flush = |run: &mut Option<(TextClass, bool, Span)>, out: &mut Vec<Token>| {
-        if let Some((class, one, span)) = run.take() {
-            out.push(Token::new(Tok::Cs(typed.make(class, one)), span));
+    let mut run: Option<(TextClass, bool, Option<u32>, Span)> = None;
+    let flush = |run: &mut Option<(TextClass, bool, Option<u32>, Span)>, out: &mut Vec<Token>| {
+        if let Some((class, one, len, span)) = run.take() {
+            out.push(Token::new(Tok::Cs(typed.make(class, one, len)), span));
         }
     };
     for t in text {
         match typed.classify(t) {
             Some((class, one)) => {
+                let len = text_len(typed.interner, t);
                 run = Some(match run {
-                    Some((c, o, span)) => (c.union(class), o || one, span),
-                    None => (class, one, t.span),
+                    Some((c, o, l, span)) => (c.union(class), o || one, l.zip(len).map(|(a, b)| a + b), span),
+                    None => (class, one, len, t.span),
                 });
             }
             None => {
@@ -1448,6 +1780,18 @@ pub fn unknown_runs(text: &[Token], typed: &Typed) -> std::rc::Rc<[Token]> {
 }
 
 /// [`join`] for the loop heads in [`crate::machine`].
+/// `binding` with any value, and where it held a macro the [`macro_hull`]
+/// of its meanings, else any meaning.
+fn widened(mut binding: Binding, typed: &Typed) -> Binding {
+    binding.value = Value::Unknown;
+    if matches!(binding.meaning, Meaning::Macro(_)) || binding.may.is_some() {
+        binding.meaning = macro_hull(&binding, typed).unwrap_or(Meaning::Unknown);
+        binding.may = None;
+    }
+    binding.certain = false;
+    binding
+}
+
 pub fn join_slot(a: Option<Binding>, b: Option<Binding>, sets: SetLimits) -> Option<Binding> {
     join(a, b, sets, None)
 }
@@ -1499,7 +1843,13 @@ fn join(a: Option<Binding>, b: Option<Binding>, sets: SetLimits, typed: Option<&
             defs.extend(y.defs.iter().copied());
             defs.sort_unstable();
             defs.dedup();
-            let value = x.value.clone().join(&y.value, sets.values);
+            let mut value = x.value.clone().join(&y.value, sets);
+            if matches!(value, Value::Unknown)
+                && let Some(typed) = typed
+                && let Some(text) = typed_toks_join(&[&x.value, &y.value], typed)
+            {
+                value = Value::Toks(text);
+            }
             // A switch set on one path and not on another is still a
             // conditional, only an undecided one. So is a join of switches.
             use crate::builtins::{Cond, Primitive};
@@ -1567,9 +1917,13 @@ fn typed_join(set: &[Meaning], typed: &Typed) -> Option<Meaning> {
         .count();
     let mut class = TextClass::EMPTY;
     let mut one = true;
+    // The hull of the middles' bounds, each the sum of its tokens'.
+    let mut len = Some(0);
     for t in &texts {
         let middle = &t[head..t.len() - tail];
         one &= !middle.is_empty();
+        let sum = middle.iter().try_fold(0, |n, x| Some(n + text_len(typed.interner, x)?));
+        len = len.zip(sum).map(|(a, b)| a.max(b));
         let mut depth = 0i32;
         for x in middle {
             match x.tok {
@@ -1591,10 +1945,45 @@ fn typed_join(set: &[Meaning], typed: &Typed) -> Option<Meaning> {
     }
     let span = first.get(head).or(first.last()).map_or(Span::default(), |t| t.span);
     let mut text = first[..head].to_vec();
-    text.push(Token::new(Tok::Cs(typed.make(class, one)), span));
+    text.push(Token::new(Tok::Cs(typed.make(class, one, len)), span));
     text.extend_from_slice(&first[first.len() - tail..]);
     let def = def?;
     Some(Meaning::Macro(std::rc::Rc::new(crate::tex::MacroDef { replacement_text: text.into(), ..(**def).clone() })))
+}
+
+/// Path switches and the slots they carried, for `--stats -vvvv`.
+pub static RESUMES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static RESUME_SLOTS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Token lists past `limits.value_set`: their common beginning and end
+/// around typed unknown text, as [`typed_join`] widens macros. A pgfmath
+/// stack keeps its braces and its numbers stay digits (tex.web § 1227).
+fn typed_toks_join(values: &[&Value], typed: &Typed) -> Option<std::rc::Rc<[Token]>> {
+    let mut set = Vec::new();
+    for v in values {
+        let lists = match v {
+            Value::Toks(t) => vec![t.clone()],
+            Value::OneOf(m) => {
+                m.iter().map(|v| if let Value::Toks(t) = v { Some(t.clone()) } else { None }).collect::<Option<_>>()?
+            }
+            _ => return None,
+        };
+        for t in lists {
+            let def = crate::tex::MacroDef {
+                parameter_text: Default::default(),
+                arg_spec: None,
+                replacement_text: t,
+                long: false,
+                outer: false,
+                protected: false,
+            };
+            set.push(Meaning::Macro(std::rc::Rc::new(def)));
+        }
+    }
+    match typed_join(&set, typed)? {
+        Meaning::Macro(d) => Some(d.replacement_text.clone()),
+        _ => None,
+    }
 }
 
 /// The text a meaning copies through: a macro without parameters, not
@@ -1619,6 +2008,28 @@ pub fn copied_text(meaning: &Meaning) -> Option<&std::rc::Rc<[Token]>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A widened macro of digits stays a parameterless macro of unknown
+    /// digits: its class survives, `\ifx` still sees a macro.
+    #[test]
+    fn widened_macro_keeps_its_text_class() {
+        let interner = Interner::default();
+        let syms: Vec<Sym> = (0..256).map(|i| Sym(1000 + i)).collect();
+        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2) };
+        let digit = |c| Token::new(Tok::Chr(c, crate::tex::Catcode::Other), Span::default());
+        let def = crate::tex::MacroDef {
+            parameter_text: Default::default(),
+            arg_spec: None,
+            replacement_text: vec![digit('1'), digit('2')].into(),
+            long: false,
+            outer: false,
+            protected: false,
+        };
+        let b = widened(Binding::builtin(Meaning::Macro(std::rc::Rc::new(def))), &typed);
+        let Meaning::Macro(d) = &b.meaning else { panic!("not a macro: {:?}", b.meaning) };
+        assert_eq!(d.replacement_text.iter().map(|t| t.tok).collect::<Vec<_>>(), vec![Tok::Cs(Sym(1))]);
+        assert!(!b.certain);
+    }
 
     fn int(n: i64) -> Binding {
         let mut b = Binding::builtin(Meaning::Unknown);

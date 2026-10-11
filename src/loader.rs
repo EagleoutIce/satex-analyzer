@@ -1,5 +1,5 @@
+use crate::fixed::HashMap;
 use std::cell::{OnceCell, RefCell};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::builtins::LoadKind;
@@ -40,10 +40,22 @@ impl Resolver {
             output: None,
             request,
             trees: OnceCell::new(),
-            cache: HashMap::new(),
+            cache: HashMap::default(),
             unpacked: Default::default(),
-            case_mismatches: RefCell::new(HashMap::new()),
+            case_mismatches: RefCell::new(HashMap::default()),
         }
+    }
+
+    /// The resolver a run of `cfg` on `project` searches with: TEXINPUTS
+    /// and the rest in kpathsea's precedence, then the distribution.
+    pub fn for_project(cfg: &crate::config::Config, project: &crate::project::Project) -> Self {
+        let kpse = crate::paths::effective_all(project, &cfg.paths, &project.root);
+        let texinputs = kpse.iter().find(|e| e.variable == "TEXINPUTS").map(|e| e.dirs.clone()).unwrap_or_default();
+        let search = cfg.search_paths.iter().cloned().chain(project.search_paths()).chain(texinputs).collect();
+        let mut request = cfg.distribution_request();
+        request.kpse_env = crate::paths::env_vars(&kpse);
+        let output = crate::paths::output_dir(project, &cfg.paths.output_directory, &project.root).map(|o| o.dir);
+        Self::new(search, request).with_output(output).with_unpacked(project.unpacked())
     }
 
     /// Like web2c with `-output-directory`: a relative name is tried in `dir` first.

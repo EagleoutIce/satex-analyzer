@@ -16,8 +16,6 @@ use crate::tex::{ArgSpec, ArgType, FileId, Sym, Token};
 /// thousand, or a million where hyperref's `\\GetTitleString` loops over
 /// its title; a runaway loop is cut off here.
 const PROBE_STEPS: u64 = 2_000_000;
-/// And the time it may take, whatever it reads.
-const PROBE_SECONDS: u64 = 5;
 /// Mandatory arguments offered: TeX's parameter texts stop at nine (The
 /// TeXbook, chapter 20), so reading all of these means reading on.
 const TAIL: usize = 10;
@@ -83,7 +81,7 @@ pub struct Watch {
     pub(crate) file: FileId,
     pub demand: Option<Demand>,
     /// Names `\let` or `\futurelet` to a probe character, by its offset.
-    peeked: std::collections::HashMap<Sym, usize>,
+    peeked: crate::fixed::HashMap<Sym, usize>,
     /// Characters a peeked probe character was compared with by `\ifx`:
     /// what the command looks for there (`\@ifnextchar`, ltcmd's `t`, `d`,
     /// `e`), by offset.
@@ -208,7 +206,7 @@ const CLOSURE_CAP: usize = 500;
 
 /// The names reachable from `start` in `analysis.calls`, breadth first,
 /// bounded by `CLOSURE_DEPTH`/`CLOSURE_CAP`.
-pub(crate) fn closure(analysis: &Analysis, start: Sym) -> std::collections::HashSet<Sym> {
+pub(crate) fn closure(analysis: &Analysis, start: Sym) -> crate::fixed::HashSet<Sym> {
     closure_bounded(analysis, start, CLOSURE_DEPTH, CLOSURE_CAP)
 }
 
@@ -218,13 +216,8 @@ pub(crate) fn closure(analysis: &Analysis, start: Sym) -> std::collections::Hash
 /// defines a command reaches eventually) — the two answer different
 /// questions, so callers that want "the mechanism a definition site is
 /// specific to" ask shallow.
-pub(crate) fn closure_bounded(
-    analysis: &Analysis,
-    start: Sym,
-    depth: usize,
-    cap: usize,
-) -> std::collections::HashSet<Sym> {
-    let mut seen = std::collections::HashSet::new();
+pub(crate) fn closure_bounded(analysis: &Analysis, start: Sym, depth: usize, cap: usize) -> crate::fixed::HashSet<Sym> {
+    let mut seen = crate::fixed::HashSet::default();
     seen.insert(start);
     let mut frontier = vec![start];
     for _ in 0..depth {
@@ -352,7 +345,7 @@ fn sandbox_config(base: &Config) -> Config {
         verbose: 0,
         trace: false,
         timings: false,
-        limits: Limits { steps: PROBE_STEPS, seconds: PROBE_SECONDS, ..base.limits.clone() },
+        limits: Limits { steps: PROBE_STEPS, seconds: 0, ..base.limits.clone() },
         ..base.clone()
     }
 }
@@ -367,7 +360,7 @@ struct Prober<'c, 'a> {
     /// that environment instead of outside every one.
     context: Option<Sym>,
     /// Runs already made, by probe text.
-    seen: std::cell::RefCell<std::collections::HashMap<String, Option<Rc<Watch>>>>,
+    seen: std::cell::RefCell<crate::fixed::HashMap<String, Option<Rc<Watch>>>>,
 }
 
 impl Prober<'_, '_> {

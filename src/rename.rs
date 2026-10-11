@@ -5,7 +5,8 @@
 //! definitions recorded at one declaration span, the key their subject.
 //! A site the source does not spell stops the rename.
 
-use std::collections::{BTreeSet, HashSet};
+use crate::fixed::HashSet;
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use crate::builtins::{LoadKind, OccKind, Primitive};
@@ -329,7 +330,7 @@ fn bodies(
     readers: &BTreeSet<String>,
 ) -> Vec<Site> {
     let spelled: BTreeSet<&str> = members.iter().map(|d| analysis.interner.name(d.name)).collect();
-    let mut seen: HashSet<Span> = HashSet::new();
+    let mut seen: HashSet<Span> = HashSet::default();
     let mut out = Vec::new();
     for def in analysis.facts.defs.iter().filter(|d| d.mac.is_some()) {
         if !seen.insert(def.span) {

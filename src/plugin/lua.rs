@@ -9,13 +9,13 @@
 //! does not run to its end leaves unknown output, and the names its text
 //! defines through the token library unknown.
 
-use std::collections::HashSet;
+use crate::fixed::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::builtins::{LoadKind, LuaOp, OccKind};
 use crate::facts::{Load, LoadStatus};
-use crate::machine::Machine;
+use crate::machine::{Machine, Unk};
 use crate::tex::{Catcode, CatcodeTable, Span, Sym, Tok, Token};
 use crate::value::Value;
 
@@ -75,7 +75,7 @@ pub fn primitive(m: &mut Machine, op: LuaOp, by: Sym, span: Span) {
                 None => {
                     unfinished(m, &code, span, 0);
                     m.note_gap("lua-output", by, span);
-                    let unknown = m.unknown_token(span);
+                    let unknown = m.unknown_text(Unk::Any, span);
                     m.push_tokens(Rc::from(vec![unknown]), None);
                 }
             }
@@ -414,7 +414,7 @@ fn defining_call(tokens: &[String], at: usize, definers: &HashSet<String>) -> Op
 /// and of functions that pass their first parameter on to one (expl3.lua's
 /// `luacmd`).
 fn defined_names(tokens: &[String]) -> Vec<String> {
-    let mut definers: HashSet<String> = HashSet::new();
+    let mut definers: HashSet<String> = HashSet::default();
     for at in 1..tokens.len() {
         if tokens[at] != "=" || !is_name(&tokens[at - 1]) {
             continue;
@@ -466,7 +466,7 @@ pub fn call(m: &mut Machine, id: u32, by: Sym, span: Span) {
         None => {
             m.note_gap("lua-function", by, span);
             m.widen_mode();
-            let unknown = m.unknown_token(span);
+            let unknown = m.unknown_text(Unk::Any, span);
             m.push_tokens(Rc::from(vec![unknown]), None);
         }
     }

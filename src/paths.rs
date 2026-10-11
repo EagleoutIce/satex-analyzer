@@ -11,7 +11,7 @@
 //! [`env_vars`] hands the raw, unexpanded value to a `kpsewhich` child
 //! process so kpathsea resolves it the same way a real build would.
 
-use std::collections::HashSet;
+use crate::fixed::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::project::Project;
@@ -163,7 +163,7 @@ fn expand(component: &Component, cwd: &Path) -> Vec<PathBuf> {
 }
 
 fn build(raw: String, source: Source, variable: &'static str, cwd: &Path) -> Effective {
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::default();
     let dirs: Vec<PathBuf> =
         parse(&raw).iter().flat_map(|c| expand(c, cwd)).filter(|d| seen.insert(d.clone())).collect();
     Effective { variable, raw, source, dirs }

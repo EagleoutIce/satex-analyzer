@@ -167,27 +167,30 @@ impl Machine<'_> {
         next
     }
 
-    /// `cur_cmd = spacer`: a space token, or a control sequence `\let` to one.
+    /// `cur_cmd = spacer`: a space token, or a control sequence or active
+    /// character `\let` to one (tex.web § 344).
     fn is_spacer(&self, token: Token) -> bool {
-        match token.tok {
-            Tok::Chr(_, Catcode::Space) => true,
-            Tok::Cs(sym) => matches!(self.env.meaning(sym), Meaning::Char(_, Catcode::Space)),
-            _ => false,
-        }
+        let sym = match token.tok {
+            Tok::Chr(_, Catcode::Space) => return true,
+            Tok::Cs(sym) => Some(sym),
+            Tok::Chr(c, Catcode::Active) => self.out.interner.lookup(&format!("{}{c}", crate::tex::ACTIVE)),
+            _ => None,
+        };
+        sym.is_some_and(|sym| matches!(self.env.meaning(sym), Meaning::Char(_, Catcode::Space)))
+    }
+
+    /// `cur_cmd = relax`: a token meaning `\relax`, or an expandable one
+    /// behind `\noexpand`'s marker (tex.web § 358).
+    fn is_relax(&mut self, token: Token) -> bool {
+        let Some(sym) = self.active_cs(token).or(token.cs()) else { return false };
+        let meaning = self.env.meaning(sym);
+        matches!(meaning.prim(), Some(Primitive::Relax))
+            || (self.read_noexpanded(token) && self.expandable_meaning(&meaning))
     }
 
     /// "Scan an optional space" (tex.web § 443).
-    /// [`Machine::next_x_token`], as paths that join where it ends in the
-    /// scan of a `\romannumeral` ([`Machine::joined_scan`]).
-    fn lookahead_x_token(&mut self) -> Option<Token> {
-        // The joined look ahead (`next_x_token_joined`) is unfinished: it
-        // followed only one arm where paths did not meet, and made every
-        // f-expansion a nested drive. Off until it is sound and cheap.
-        self.next_x_token()
-    }
-
     fn scan_optional_x_space(&mut self) {
-        if let Some(token) = self.lookahead_x_token()
+        if let Some(token) = self.next_x_token()
             && !self.is_spacer(token)
         {
             self.unread(token);
@@ -195,9 +198,9 @@ impl Machine<'_> {
     }
 
     /// The next non-blank token after expansion.
-    fn next_non_blank_x_token(&mut self) -> Option<Token> {
+    pub(crate) fn next_non_blank_x_token(&mut self) -> Option<Token> {
         loop {
-            let token = self.lookahead_x_token()?;
+            let token = self.next_x_token()?;
             if !self.is_spacer(token) {
                 return Some(token);
             }
@@ -217,6 +220,15 @@ impl Machine<'_> {
                 // (pgfmath's `\pgfmath@sign`, empty or `-`). Not knowing
                 // which makes the negation unknown, so the number is read on.
                 Tok::Cs(sym) if self.signs_only(sym) => self.scan_undecided = true,
+                // A digit or `-` (`\the` of an unknown dimension): the sign
+                // is unknown, and so is the number its digits start.
+                Tok::Chr(crate::tex::UNKNOWN_CHAR, Catcode::Other) => {
+                    self.scan_undecided = true;
+                    return Some((
+                        negative,
+                        Token::new(Tok::Chr(crate::tex::UNKNOWN_DIGIT, Catcode::Other), token.span),
+                    ));
+                }
                 _ => return Some((negative, token)),
             }
         }
@@ -345,7 +357,7 @@ impl Machine<'_> {
             }
             let more = next.is_some_and(|t| {
                 self.digit(t, DECIMAL).is_some()
-                    || t.tok == Tok::Chr(crate::tex::UNKNOWN_DIGIT, Catcode::Other)
+                    || matches!(t.tok, Tok::Chr(c, Catcode::Other) if crate::tex::is_unknown_digit(c))
                     || t.cs().is_some_and(|sym| self.is_unknown_digits(sym))
             });
             if more {
@@ -368,7 +380,8 @@ impl Machine<'_> {
             (self.abs, self.abs_exact, self.abs_from) = (Some(num), None, from);
             return (Some(num.lo).filter(|_| num.lo == num.hi), backed_up);
         }
-        let digits = token.tok == Tok::Cs(self.unknown_digits) || token.tok == Tok::Cs(self.unknown_more);
+        let digits =
+            token.tok == Tok::Cs(self.unknown_digits) || token.cs().is_some_and(|sym| self.is_more_digits(sym));
         if digits {
             return self.scan_digits(DECIMAL, Some(token));
         }
@@ -396,7 +409,7 @@ impl Machine<'_> {
         let token = self.next_token()?;
         let code = match token.tok {
             // An unknown character has no known code.
-            Tok::Chr(crate::tex::UNKNOWN_DIGIT | crate::tex::UNKNOWN_CHAR, _) => None,
+            Tok::Chr(crate::tex::UNKNOWN_DIGIT | crate::tex::UNKNOWN_NONZERO | crate::tex::UNKNOWN_CHAR, _) => None,
             Tok::Chr(c, _) => Some(c as i64),
             Tok::Cs(sym) => {
                 let mut chars = self.name(sym).chars();
@@ -410,10 +423,11 @@ impl Machine<'_> {
                 Some(code)
             }
             // One of several characters, or one digit of typed digits: a
-            // code in their hull, left as the interval read ([`Machine::abs`]).
-            None if let Some(codes) = self.char_codes(token) => {
+            // code in their hull, left as the interval read ([`Machine::abs`]),
+            // with the exact codes while each member is one character.
+            None if let Some((codes, exact)) = self.char_codes(token) => {
                 self.scan_optional_x_space();
-                (self.abs, self.abs_exact, self.abs_from) = (Some(codes), None, None);
+                (self.abs, self.abs_exact, self.abs_from) = (Some(codes), exact, None);
                 None
             }
             None => {
@@ -423,25 +437,31 @@ impl Machine<'_> {
         }
     }
 
-    /// The codes a token that stands for one character may have.
-    fn char_codes(&self, token: Token) -> Option<Num> {
+    /// The codes a token that stands for one character may have: their
+    /// hull, and each code while every member is one known character.
+    fn char_codes(&self, token: Token) -> Option<(Num, Option<Vec<i64>>)> {
         let digit = |t: &Token| {
             let num = self.typed_digits_of(t.cs()?)?;
             ((0..=9).contains(&num.lo) && num.hi <= 9).then(|| Num::range(48 + num.lo, 48 + num.hi))
         };
         if let Some(codes) = digit(&token) {
-            return Some(codes);
+            return Some((codes, None));
         }
         let mut hull: Option<Num> = None;
+        let mut exact = Some(Vec::new());
         for text in self.one_of_members(token)? {
             let n = match &*text {
                 [Token { tok: Tok::Chr(c, _), .. }] if !crate::tex::is_unknown_char(*c) => Num::exact(*c as i64),
                 [t] => digit(t)?,
                 _ => return None,
             };
+            exact = exact.filter(|_| n.lo == n.hi).map(|mut e: Vec<i64>| {
+                e.push(n.lo);
+                e
+            });
             hull = Some(hull.map_or(n, |h| h.join(&n)));
         }
-        hull
+        Some((hull?, exact))
     }
 
     fn digit(&self, token: Token, radix: i64) -> Option<i64> {
@@ -466,7 +486,7 @@ impl Machine<'_> {
         let mut next = first.or_else(|| self.next_x_token());
         while let Some(token) = next {
             let digits = match token.tok {
-                Tok::Chr(crate::tex::UNKNOWN_DIGIT, Catcode::Other) => true,
+                Tok::Chr(c, Catcode::Other) => crate::tex::is_unknown_digit(c),
                 Tok::Cs(sym) => self.is_unknown_digits(sym),
                 _ => false,
             };
@@ -474,7 +494,7 @@ impl Machine<'_> {
             // unknown. It may also be empty, so it is not itself a digit.
             let maybe = !digits && self.is_unknown(token);
             if digits || maybe {
-                any |= !maybe && token.tok != Tok::Cs(self.unknown_more);
+                any |= !maybe && !token.cs().is_some_and(|sym| self.is_more_digits(sym));
                 unknown = true;
                 next = self.next_x_token();
                 continue;
@@ -548,6 +568,10 @@ impl Machine<'_> {
     fn scan_dimen_parts(&mut self, mu: bool, inf: bool, shortcut: Option<Option<i64>>) -> (Option<Scaled>, u8) {
         let mut negative = false;
         let mut fraction = 0;
+        // The integer part's interval where its digits are typed, and
+        // whether the digits after the point are unknown.
+        let mut range: Option<crate::value::Num> = None;
+        let mut fraction_unknown = false;
         let integer = match shortcut {
             Some(integer) => integer,
             None => {
@@ -557,7 +581,11 @@ impl Machine<'_> {
                 self.probe_scans(token, if mu { "mudimen" } else { "dimen" });
                 negative = signs;
                 match self.scan_internal(token) {
-                    Some((RegKind::Count, value)) => value.and_then(|v| v.as_int()),
+                    Some((RegKind::Count, value)) => {
+                        let integer = value.and_then(|v| v.as_int());
+                        range = integer.map(crate::value::Num::exact).or_else(|| self.abs.take());
+                        integer
+                    }
                     Some((RegKind::Toks, _)) => None,
                     // tex.web § 449: an internal dimension or glue is the
                     // whole value; no unit follows.
@@ -590,14 +618,21 @@ impl Machine<'_> {
                     None if matches!(token.tok, Tok::Chr('.' | ',', Catcode::Other)) => {
                         let digits = self.scan_fraction();
                         fraction = digits.unwrap_or(0);
+                        fraction_unknown = digits.is_none();
+                        range = Some(crate::value::Num::exact(0));
                         digits.map(|_| 0)
                     }
                     None => {
                         let (mut integer, backed_up) = self.scan_int_from(token);
+                        range = match integer {
+                            Some(n) => Some(crate::value::Num::exact(n)),
+                            None => self.abs.take(),
+                        };
                         if backed_up && let Some(point) = self.next_token() {
                             if matches!(point.tok, Tok::Chr('.' | ',', Catcode::Other)) {
                                 let digits = self.scan_fraction();
                                 fraction = digits.unwrap_or(0);
+                                fraction_unknown = digits.is_none();
                                 integer = integer.filter(|_| digits.is_some());
                             } else {
                                 self.unread(point);
@@ -612,7 +647,10 @@ impl Machine<'_> {
             Some(n) if n < 0 => (Some(-n), !negative),
             other => (other, negative),
         };
-        let (value, order) = self.scan_units(mu, inf, integer, fraction);
+        self.abs = None;
+        let fractions = if fraction_unknown { (0, UNIT - 1) } else { (fraction, fraction) };
+        let range = range.filter(|_| integer.is_none()).map(|r| (r, fractions));
+        let (value, order) = self.scan_units(mu, inf, integer, fraction, range);
         if negative {
             self.abs = self.abs.take().map(|num| num.neg());
             self.abs_exact = None;
@@ -662,7 +700,7 @@ impl Machine<'_> {
     /// Whether `sym` stands for digits that are not known: the plain
     /// markers, or digits typed with the interval they lie in.
     pub(crate) fn is_unknown_digits(&self, sym: Sym) -> bool {
-        sym == self.unknown_digits || sym == self.unknown_more || self.name(sym).starts_with(TYPED_DIGITS)
+        sym == self.unknown_digits || self.is_more_digits(sym) || self.name(sym).starts_with(TYPED_DIGITS)
     }
 
     /// The interval typed unknown digits lie in.
@@ -752,7 +790,59 @@ impl Machine<'_> {
 
     /// tex.web §§ 453-458: the ⟨unit of measure⟩, applied to
     /// `integer + fraction/2^16`.
-    fn scan_units(&mut self, mu: bool, inf: bool, integer: Option<i64>, fraction: i64) -> (Option<Scaled>, u8) {
+    ///
+    /// `range`: an integer part in an interval with the fraction in
+    /// another; each unit is monotone in both, so the value's interval,
+    /// left in [`Machine::abs`], is the hull of the corners' values.
+    fn scan_units(
+        &mut self,
+        mu: bool,
+        inf: bool,
+        integer: Option<i64>,
+        fraction: i64,
+        range: Option<(crate::value::Num, (i64, i64))>,
+    ) -> (Option<Scaled>, u8) {
+        // The optional space after the unit may expand a scan of its own.
+        let outer = self.ranged.take();
+        let (value, order) = self.scan_unit_of(mu, inf, integer, fraction, range);
+        let ranged = std::mem::replace(&mut self.ranged, outer);
+        if value.is_none()
+            && let Some(num) = ranged
+        {
+            self.abs = Some(num);
+            self.abs_exact = None;
+            self.abs_from = None;
+            self.abs_whole = true;
+        }
+        (value, order)
+    }
+
+    /// The value at the corners of `range`, through `conv` of a magnitude
+    /// and fraction, with the sign attached (tex.web § 448).
+    fn set_ranged(
+        &mut self,
+        range: Option<(crate::value::Num, (i64, i64))>,
+        conv: impl Fn(i64, i64) -> Option<Scaled>,
+    ) {
+        self.ranged = range.and_then(|(r, (flo, fhi))| {
+            let at = |n: i64, f: i64| {
+                let v = conv(n.checked_abs()?, f)?;
+                let v = if v.abs() >= DIMEN_LIMIT { MAX_DIMEN } else { v };
+                Some(if n < 0 { -v } else { v })
+            };
+            let ends = [at(r.lo, flo)?, at(r.lo, fhi)?, at(r.hi, flo)?, at(r.hi, fhi)?];
+            Some(crate::value::Num::range(*ends.iter().min()?, *ends.iter().max()?))
+        });
+    }
+
+    fn scan_unit_of(
+        &mut self,
+        mu: bool,
+        inf: bool,
+        integer: Option<i64>,
+        fraction: i64,
+        range: Option<(crate::value::Num, (i64, i64))>,
+    ) -> (Option<Scaled>, u8) {
         if inf && self.scan_keyword("fil") {
             let mut order = 1;
             while self.scan_keyword("l") {
@@ -768,6 +858,9 @@ impl Machine<'_> {
                 Some((kind, unit)) => {
                     let unit = unit.and_then(|v| v.as_dimen());
                     let value = integer.zip(unit).map(|(n, v)| scale_unit(n, v, fraction));
+                    if let Some(v) = unit {
+                        self.set_ranged(range, |n, f| Some(scale_unit(n, v, f)));
+                    }
                     // A known factor (at least zero: its sign is attached
                     // after) times a dimension in an interval: the product
                     // is monotone in the dimension, so its interval is that
@@ -797,6 +890,7 @@ impl Machine<'_> {
             // keyword is missing. The value is taken as mu either way.
             self.scan_keyword("mu");
             let value = integer.map(|n| attach_fraction(n, fraction));
+            self.set_ranged(range, |n, f| Some(attach_fraction(n, f)));
             self.scan_optional_x_space();
             return (value, 0);
         }
@@ -813,6 +907,9 @@ impl Machine<'_> {
             let unit = self.current_font_dimen(k);
             // tex.web § 460: "Dimension too large" gives `\maxdimen`.
             let value = integer.zip(unit).map(|(n, v)| scale_unit(n, v, fraction));
+            if let Some(v) = unit {
+                self.set_ranged(range, |n, f| Some(scale_unit(n, v, f)));
+            }
             self.scan_optional_x_space();
             return (value, 0);
         }
@@ -822,14 +919,24 @@ impl Machine<'_> {
             let unit = self.env.value(sym).as_dimen();
             self.scan_optional_x_space();
             let value = integer.zip(unit).map(|(n, v)| scale_unit(n, v, fraction));
+            if let Some(v) = unit {
+                self.set_ranged(range, |n, f| Some(scale_unit(n, v, f)));
+            }
             return (value, 0);
         }
         let (mut integer, mut fraction) = (integer, fraction);
+        let mut range = range;
         if self.scan_keyword("true") {
             let sym = self.intern("mag");
-            let mag = self.env.value(sym).as_int().filter(|m| (1..=MAX_MAG).contains(m)).unwrap_or(MAG_UNITY);
-            if mag != MAG_UNITY {
-                integer = integer.map(|n| {
+            let mut mag = self.env.value(sym).as_int();
+            // tex.web § 288 `prepare_mag`: an illegal `\mag` becomes 1000, globally.
+            if mag.is_some_and(|m| !(1..=MAX_MAG).contains(&m)) {
+                self.env.set_value(sym, Value::Int(MAG_UNITY), true);
+                mag = Some(MAG_UNITY);
+            }
+            if mag != Some(MAG_UNITY) {
+                range = None;
+                integer = integer.zip(mag).map(|(n, mag)| {
                     let (q, r) = xn_over_d(n, MAG_UNITY, mag);
                     let f = (MAG_UNITY * fraction + UNIT * r) / mag;
                     fraction = f % UNIT;
@@ -837,18 +944,22 @@ impl Machine<'_> {
                 });
             }
         }
-        let value = if self.scan_keyword("pt") {
-            integer.map(|n| attach_fraction(n, fraction))
-        } else if let Some(&(_, num, denom)) = UNITS.iter().find(|(unit, _, _)| self.scan_keyword(unit)) {
-            integer.map(|n| {
+        let pt = self.scan_keyword("pt");
+        let ratio = if pt { None } else { UNITS.iter().find(|(unit, _, _)| self.scan_keyword(unit)) };
+        let value = if let Some(&(_, num, denom)) = ratio {
+            let conv = |n: i64, fraction: i64| {
                 let (q, r) = xn_over_d(n, num, denom);
                 let f = (num * fraction + UNIT * r) / denom;
-                attach_fraction(q + f / UNIT, f % UNIT)
-            })
-        } else if self.scan_keyword("sp") {
+                Some(attach_fraction(q + f / UNIT, f % UNIT))
+            };
+            self.set_ranged(range, conv);
+            integer.and_then(|n| conv(n, fraction))
+        } else if !pt && self.scan_keyword("sp") {
+            self.set_ranged(range, |n, _| Some(n));
             integer
         } else {
-            // "Illegal unit of measure (pt inserted)" (tex.web § 459).
+            // `pt`, or "Illegal unit of measure (pt inserted)" (tex.web § 459).
+            self.set_ranged(range, |n, f| Some(attach_fraction(n, f)));
             integer.map(|n| attach_fraction(n, fraction))
         };
         self.scan_optional_x_space();
@@ -961,6 +1072,34 @@ pub fn compare_abs(a: Option<i64>, relation: Option<char>, b: Option<i64>) -> Op
         '>' => Some(a > b),
         _ => Some(a == b),
     }
+}
+
+/// What a `scan_expr` term is in terms of one unknown operand `x` (a
+/// register or typed digits, read twice as one value): `x + c`,
+/// `round((x + c)/d)`, or that times `d`, with the interval of `x + c`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Form {
+    None,
+    Lin(Sym, i64),
+    Quot(Sym, i64, i64, (i64, i64)),
+    Rem(Sym, i64, i64, (i64, i64)),
+}
+
+/// The range of `y - round(y/d)*d` for `y` in `[lo, hi]`.  Ties round
+/// away from zero (e-TeX's `\numexpr`), so for an even `|d|` the
+/// remainder `|d|/2` needs `y <= -|d|/2` and `-|d|/2` needs `y >= |d|/2`.
+fn remainder(d: i64, (lo, hi): (i64, i64)) -> (i64, i64) {
+    let a = d.abs();
+    let h = a / 2;
+    if a % 2 == 1 {
+        return (-h, h);
+    }
+    (if hi >= h { -h } else { 1 - h }, if lo <= -h { h } else { h - 1 })
+}
+
+/// The value of an interval holding one number.
+fn exact(n: &Num) -> Option<i64> {
+    (n.lo == n.hi).then_some(n.lo)
 }
 
 /// e-TeX's expression operators (etex.ch, `expr_none` … `expr_scale`).
@@ -1109,6 +1248,8 @@ impl Machine<'_> {
             ea_x: Option<Vec<i64>>,
             ta_x: Option<Vec<i64>>,
             na_x: Option<Vec<i64>>,
+            ef: Form,
+            tf: Form,
         }
         let level = |k: RegKind| match k {
             RegKind::Count => 0,
@@ -1127,11 +1268,12 @@ impl Machine<'_> {
             let (mut r, mut e, mut s, mut t, mut n) = (ExprOp::None, zero, ExprOp::None, zero, 0i64);
             let (mut ea, mut ta, mut na) = (Num::exact(0), Num::exact(0), Num::exact(0));
             let (mut ea_x, mut ta_x, mut na_x) = (Some(vec![0i64]), Some(vec![0i64]), Some(vec![0i64]));
+            let (mut ef, mut tf) = (Form::None, Form::None);
             'next: loop {
                 let o_level = if s == ExprOp::None { l } else { RegKind::Count };
                 let Some(token) = self.next_non_blank_x_token() else { break 'restart (e, ea, ea_x) };
                 if token.is_char('(') && token.is_cat(Catcode::Other) {
-                    stack.push(Frame { l, s, r, e, t, n, ea, ta, na, ea_x, ta_x, na_x });
+                    stack.push(Frame { l, s, r, e, t, n, ea, ta, na, ea_x, ta_x, na_x, ef, tf });
                     l = o_level;
                     continue 'restart;
                 }
@@ -1158,6 +1300,11 @@ impl Machine<'_> {
                     None => self.abs.take().unwrap_or_else(|| Num::range(WORD_MIN, WORD_MAX)),
                 };
 
+                // One unknown read twice is one value: `x - (x/d)*d`.
+                let mut ff = match self.abs_from {
+                    Some((sym, _)) if f.is_none() && o_level == RegKind::Count => Form::Lin(sym, 0),
+                    _ => Form::None,
+                };
                 self.abs = None;
                 self.abs_exact = None;
                 let mut f = f.unwrap_or_else(|| {
@@ -1173,9 +1320,7 @@ impl Machine<'_> {
                         Some(t) if t.is_char('/') && t.is_cat(Catcode::Other) => ExprOp::Div,
                         other => {
                             if let Some(t) = other {
-                                let relax = t
-                                    .cs()
-                                    .is_some_and(|sym| matches!(self.env.meaning(sym).prim(), Some(Primitive::Relax)));
+                                let relax = self.is_relax(t);
                                 let close = t.is_char(')') && t.is_cat(Catcode::Other);
                                 if stack.is_empty() {
                                     if !relax {
@@ -1229,6 +1374,7 @@ impl Machine<'_> {
                     match s {
                         ExprOp::None => {
                             t = if lv >= 2 && o != ExprOp::None { normalize_glue(f) } else { f };
+                            tf = ff;
                             ta = fa.clone();
                             ta_x = fa_x.clone();
                         }
@@ -1239,6 +1385,11 @@ impl Machine<'_> {
                             o = ExprOp::Scale;
                         }
                         ExprOp::Mult => {
+                            tf = match (tf, ff) {
+                                (Form::Quot(x, c, d, y), _) if exact(&fa) == Some(d) => Form::Rem(x, c, d, y),
+                                (_, Form::Quot(x, c, d, y)) if exact(&ta) == Some(d) => Form::Rem(x, c, d, y),
+                                _ => Form::None,
+                            };
                             t = each(t, &mut |x| num_error(mult_and_add(x, f.width, 0, max)));
                             (ta, ta_x) = step(
                                 &[&ta, &fa],
@@ -1252,6 +1403,10 @@ impl Machine<'_> {
                             );
                         }
                         ExprOp::Div => {
+                            tf = match (tf, exact(&fa)) {
+                                (Form::Lin(x, c), Some(d)) if d != 0 => Form::Quot(x, c, d, (ta.lo, ta.hi)),
+                                _ => Form::None,
+                            };
                             t = each(t, &mut |x| num_error(quotient(x, f.width)));
                             (ta, ta_x) = step(
                                 &[&ta, &fa],
@@ -1265,6 +1420,7 @@ impl Machine<'_> {
                             );
                         }
                         ExprOp::Scale => {
+                            tf = Form::None;
                             t = each(t, &mut |x| num_error(fract(x, n, f.width, max)));
                             (ta, ta_x) = step(
                                 &[&ta, &na, &fa],
@@ -1287,9 +1443,25 @@ impl Machine<'_> {
                         let sub = r == ExprOp::Sub;
                         if r == ExprOp::None {
                             e = t;
+                            ef = tf;
                             ea = ta.clone();
                             ea_x = ta_x.clone();
                         } else {
+                            let sign = if sub { -1 } else { 1 };
+                            // `x + c1 - round((x + c)/d)*d` is `c1 - c` plus
+                            // the remainder `r` of rounding `y = x + c`.
+                            let bound = match (ef, tf) {
+                                (Form::Lin(x, c1), Form::Rem(z, c, d, y)) if sub && x == z => {
+                                    let (lo, hi) = remainder(d, y);
+                                    Some((c1 - c + lo, c1 - c + hi))
+                                }
+                                _ => None,
+                            };
+                            ef = match (ef, tf, exact(&ea), exact(&ta)) {
+                                (Form::Lin(x, c), _, _, Some(k)) => Form::Lin(x, c + sign * k),
+                                (_, Form::Lin(x, c), Some(k), _) if !sub => Form::Lin(x, c + k),
+                                _ => Form::None,
+                            };
                             let max = if lv == 0 { INFINITY } else { MAX_DIMEN };
                             e.width = num_error(add_or_sub(e.width, t.width, max, sub));
                             (ea, ea_x) = step(
@@ -1302,6 +1474,15 @@ impl Machine<'_> {
                                 |v| Some(if sub { v[0] - v[1] } else { v[0] + v[1] }),
                                 &mut err,
                             );
+                            if let Some((lo, hi)) = bound
+                                && !err.0
+                                && lo.max(ea.lo) <= hi.min(ea.hi)
+                            {
+                                ea = Num::range(lo.max(ea.lo), hi.min(ea.hi));
+                                if let Some(xs) = ea_x.as_mut() {
+                                    xs.retain(|v| (lo..=hi).contains(v));
+                                }
+                            }
                             if lv >= 2 {
                                 // e-TeX's quirk: a higher order replaces a
                                 // lower one unnegated, even when subtracted.
@@ -1324,7 +1505,8 @@ impl Machine<'_> {
                     f = e;
                     fa = ea;
                     fa_x = ea_x;
-                    Frame { l, s, r, e, t, n, ea, ta, na, ea_x, ta_x, na_x } = saved;
+                    ff = ef;
+                    Frame { l, s, r, e, t, n, ea, ta, na, ea_x, ta_x, na_x, ef, tf } = saved;
                     continue 'found;
                 }
             }
