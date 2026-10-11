@@ -1,6 +1,6 @@
 //! Numbers set next to their unit by hand, which siunitx does properly.
 
-use std::collections::HashSet;
+use crate::fixed::HashSet;
 
 use crate::builtins::LoadKind;
 use crate::facts::Quantity;
@@ -28,6 +28,7 @@ set it itself.
 
 Fix by loading `\\usepackage{siunitx}` and writing `\\qty{⟨number⟩}{⟨unit⟩}`.",
     references: &[Ref { source: Source::SiBrochure, at: "5.4.3" }, Ref { source: Source::Siunitx, at: "\\qty" }],
+    fixes: &[Applicability::Unsafe],
     run: hand_set_quantity,
 }];
 

@@ -82,6 +82,22 @@ fn an_environment_never_closed_is_reported() {
     assert!(found[0].contains(r"\begin{itemize}") && found[0].contains(r"ended by \end{document}"), "{found:?}");
 }
 
+/// An error inside the environment may have ended it: the mismatch after
+/// it is a note that names the error, never a certain warning.
+#[test]
+fn a_mismatch_after_an_error_names_the_error() {
+    let Some(analysis) = latex(
+        "\\documentclass{article}\n\\begin{document}\n\\begin{center}\n\\count0=x\n\\end{itemize}\n\\end{document}\n",
+    ) else {
+        return;
+    };
+    let rows: Vec<_> =
+        satex::lint::lint(&analysis).into_iter().filter(|r| r["code"] == "environment-mismatch").collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["severity"], "info", "{rows:?}");
+    assert!(rows[0]["message"].as_str().is_some_and(|m| m.contains("may follow from the error at")), "{rows:?}");
+}
+
 /// Documents read without an installation, each with a lint code and what it reports: `None` for
 /// nothing, else one finding whose message holds every listed text.
 const BARE: &[FindingRow] = &[
@@ -802,6 +818,90 @@ fn a_reference_that_opens_a_paragraph_is_not_reported() {
     assert!(findings(&doc.analysis, "space-before-command").is_empty());
 }
 
+fn cleveref_records(name: &str, body: &str) -> Vec<satex::query::Record> {
+    let source = format!("\\documentclass{{article}}\n{body}");
+    let Some(doc) = on_disk(name, &source, true) else { return Vec::new() };
+    satex::lint::lint(&doc.analysis).into_iter().filter(|r| r["code"] == "prefer-cleveref").collect()
+}
+
+fn replacements(record: &satex::query::Record) -> Vec<String> {
+    let edits = record.get("edits").and_then(|e| e.as_array()).cloned().unwrap_or_default();
+    edits.iter().filter_map(|e| e["replacement"].as_str().map(str::to_string)).collect()
+}
+
+#[test]
+fn a_hand_written_name_is_fixed_to_cref_when_cleveref_is_loaded() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\usepackage{cleveref}\n\\begin{document}\n\\section{A}\\label{sec:x}\n\
+                Section~\\ref{sec:x}, Sec.~\\ref{sec:x}, see section~\\ref{sec:x} here.\n\
+                Sections~\\ref{sec:x} and~\\ref{sec:x}.\n\\end{document}\n";
+    let found = cleveref_records("cleveref-loaded", body);
+    let fixes: Vec<String> = found.iter().flat_map(replacements).collect();
+    assert_eq!(fixes, [r"\Cref{sec:x}", r"\Cref{sec:x}", r"\cref{sec:x}", r"\Cref{sec:x,sec:x}"], "{found:?}");
+    assert!(found[0]["message"].as_str().unwrap().contains(r"`\Cref{sec:x}`"), "{found:?}");
+}
+
+#[test]
+fn a_hand_written_name_asks_for_cleveref_when_it_is_missing() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\usepackage{hyperref}\n\\begin{document}\n\\section{A}\\label{sec:x}\nSection~\\ref{sec:x}.\n\\end{document}\n";
+    let found = cleveref_records("cleveref-missing", body);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let message = found[0]["message"].as_str().unwrap();
+    assert!(message.contains("load cleveref (after hyperref)") && message.contains(r"\Cref{sec:x}"), "{message}");
+    assert!(replacements(&found[0]).is_empty(), "{found:?}");
+}
+
+#[test]
+fn the_name_must_fit_the_kind_of_the_label() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\usepackage{cleveref}\n\\begin{document}\n\\begin{figure}\\caption{c}\\label{f:y}\\end{figure}\n\
+                Fig.~\\ref{f:y} is one.\nSee table~\\ref{f:y} and in~\\ref{f:y}.\n\\end{document}\n";
+    let found = cleveref_records("cleveref-kind", body);
+    let fixes: Vec<String> = found.iter().flat_map(replacements).collect();
+    assert_eq!(fixes, [r"\Cref{f:y}"], "{found:?}");
+}
+
+#[test]
+fn names_and_lists_follow_the_kind_and_the_plural() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\usepackage{hyperref}\n\\usepackage{cleveref}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\
+                \\begin{figure}\\caption{F}\\label{fig:f}\\end{figure}\n\\section{B}\\label{sec:b}\n\
+                Section~\\ref{sec:a} and Fig.~\\ref{fig:f}, see~\\ref{sec:b}, \
+                Sections~\\ref{sec:a} and~\\ref{sec:b}.\n\\end{document}\n";
+    let found = cleveref_records("cleveref-repro", body);
+    let fixes: Vec<String> = found.iter().flat_map(replacements).collect();
+    assert_eq!(fixes, [r"\Cref{sec:a}", r"\Cref{fig:f}", r"\Cref{sec:a,sec:b}"], "{found:?}");
+}
+
+#[test]
+fn a_plain_document_is_told_to_load_cleveref_for_a_named_reference() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\begin{document}\n\\section{A}\\label{sec:a}\nSection~\\ref{sec:a}.\nWe see~\\ref{sec:a} and in~\\ref{sec:a}.\n\\end{document}\n";
+    let found = cleveref_records("cleveref-plain", body);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0]["message"].as_str().unwrap().contains("load cleveref"), "{found:?}");
+    assert!(replacements(&found[0]).is_empty(), "{found:?}");
+}
+
+#[test]
+fn a_reference_without_a_name_is_not_a_cleveref_candidate() {
+    let body = "\\usepackage{amsmath}\n\\begin{document}\n\\section{A}\\label{x}\n\
+                \\eqref{x} (\\ref{x}) \\pageref{x} \\ref{x} and e.g.~\\ref{x} \\foo~\\ref{x} see~\\ref{x} in~\\ref{x}.\n\\end{document}\n";
+    let found = cleveref_records("cleveref-negative", body);
+    assert!(found.is_empty(), "{found:?}");
+}
+
 // chktex warnings 24 and 42: `Delete this space to maintain correct
 // pagereferences.` and `You should remove spaces in front of '%s'`.
 #[test]
@@ -857,6 +957,25 @@ fn spaces_inside_parentheses_are_reported() {
     let found = findings(&analysis, "parenthesis-spacing");
     assert_eq!(found.len(), 2, "{found:?}");
     assert!(found.iter().all(|f| f.contains("inside the parentheses")), "{found:?}");
+}
+
+/// A tie or a control space is interword glue: a space on the page.
+#[test]
+fn a_tie_after_a_parenthesis_is_a_space() {
+    let source =
+        "\\documentclass{article}\n\\begin{document}\nSee (a)~one and (b)\\ two, but (c)three.\n\\end{document}\n";
+    let Some(doc) = on_disk("tie-paren", source, true) else { return };
+    let found = findings(&doc.analysis, "parenthesis-spacing");
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+/// An inline list sets its label in a box placed later: the label's `)`
+/// and the item's first word are not neighbours in the order TeX set them.
+#[test]
+fn an_inline_list_label_is_not_set_against_the_item() {
+    let source = "\\documentclass{article}\n\\usepackage[inline]{enumitem}\n\\begin{document}\n\\begin{enumerate*}[label=(\\arabic*)]\n\\item one \\item two\n\\end{enumerate*}\n\\end{document}\n";
+    let Some(doc) = on_disk("inline-list-paren", source, true) else { return };
+    assert!(findings(&doc.analysis, "parenthesis-spacing").is_empty());
 }
 
 /// Math needs the real catcode of `$`, so this one runs the kernel.
@@ -1099,6 +1218,67 @@ fn a_bracket_after_a_macro_argument_is_counted() {
     assert!(found.is_empty(), "{found:?}");
 }
 
+/// A part the run never read may reference the label: the finding says
+/// so and deletes nothing.
+#[test]
+fn an_unused_label_may_be_used_in_a_file_not_read() {
+    if which::which("kpsewhich").is_err() {
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("satex-chktex-unread-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temporary directory");
+    std::fs::write(dir.join("part.tex"), "See \\ref{s}.\n").expect("part");
+    let source = "\\documentclass{article}\n\\begin{document}\n\\section{S}\\label{s}\n\\iffalse\n\\input{part}\n\\fi\n\\end{document}\n";
+    let path = dir.join("doc.tex");
+    std::fs::write(&path, source).expect("doc");
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let doc = OnDisk { analysis: Machine::analyze(source, Some(&path), &cfg), dir };
+    let rows: Vec<_> = satex::lint::lint(&doc.analysis).into_iter().filter(|r| r["code"] == "unused-label").collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert!(rows[0]["message"].as_str().is_some_and(|m| m.contains("may be referenced later")), "{rows:?}");
+    assert!(rows[0].get("edits").is_none(), "{rows:?}");
+}
+
+/// A word with a suffix in parentheses is one word, not a parenthetical
+/// remark set against it.
+#[test]
+fn a_word_with_a_part_in_parentheses_is_not_reported() {
+    let source = "\\documentclass{article}\n\\begin{document}\nCells hold file(s) and print(x) too, but text(like this) is not.\n\\end{document}\n";
+    let Some(doc) = on_disk("paren-word", source, true) else { return };
+    let found = findings(&doc.analysis, "parenthesis-spacing");
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+/// The next `\item`'s label is set in its own box: a sentence ending
+/// before it does not run on.
+#[test]
+fn a_sentence_before_an_item_label_ends() {
+    let source = "\\documentclass{article}\n\\begin{document}\n\\begin{description}\n\\item[error] It is set by default.\n\\item[eval] The eval option.\n\\end{description}\nSee e.g. the end.\n\\end{document}\n";
+    let Some(doc) = on_disk("sentence-item", source, true) else { return };
+    let found = findings(&doc.analysis, "sentence-spacing");
+    assert!(found.len() == 1 && found[0].contains("e.g."), "{found:?}");
+}
+
+/// `::` and `:=` are operators: the space in front is not one before a colon.
+#[test]
+fn a_space_before_a_doubled_colon_is_not_reported() {
+    let source = "\\documentclass{article}\n\\begin{document}\nThe input is pointers :: List, x := 1, and the output : none.\n\\end{document}\n";
+    let Some(doc) = on_disk("double-colon", source, true) else { return };
+    let found = findings(&doc.analysis, "space-before-punctuation");
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+/// An inline reader covers its argument, not the rest of the line, and a
+/// macro that sets `\` back to an escape reads nothing verbatim.
+#[test]
+fn a_bracket_after_an_inline_reader_is_counted() {
+    let source = "\\documentclass{article}\n\\newcommand\\esc[1]{{\\catcode`\\\\=0 #1}}\n\\begin{document}\n\
+                  A (\\verb|x|) b and (see \\esc{y}) c.\n\\end{document}\n";
+    let Some(doc) = on_disk("bracket-inline-reader", source, true) else { return };
+    let found = findings(&doc.analysis, "unbalanced-brackets");
+    assert!(found.is_empty(), "{found:?}");
+}
+
 #[test]
 fn an_open_bracket_is_still_reported_after_lookahead_macros() {
     let source = "\\documentclass{article}\n\\usepackage{cleveref}\n\\begin{document}\n\
@@ -1228,4 +1408,89 @@ fn a_line_end_between_words_is_not_a_stray_space() {
     let found = findings(&doc.analysis, "stray-space");
     assert!(found.iter().all(|f| !f.contains("txt")), "{found:?}");
     assert!(found.iter().any(|f| f.contains("bad")), "{found:?}");
+}
+
+/// An engine error in package code that a document line causes is shown at
+/// that line, naming where in the package it arose.
+#[test]
+fn a_package_error_the_document_causes_is_shown_at_the_cause() {
+    let Some(analysis) = latex(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\str_set:Ne \l_tmpb_str { a \int_to_Hex:n{\int_rand:n{255}} b }
+\exp_args:NNo \str_set_convert:Nnnn \l_tmpa_str \l_tmpb_str {utf8}{}
+\ExplSyntaxOff
+\begin{document}x\end{document}",
+    ) else {
+        return;
+    };
+    let rows: Vec<_> = satex::lint::lint(&analysis)
+        .into_iter()
+        .filter(|r| r["code"] == "caused-library-error" && r["origin"] == "document")
+        .collect();
+    let brace = rows.iter().find(|r| r["message"].as_str().is_some_and(|m| m.contains("Argument has an extra }")));
+    let brace = brace.unwrap_or_else(|| panic!("no extra-brace row: {rows:?}"));
+    assert_eq!(brace["line"], 4, "{brace:?}");
+    assert!(brace["message"].as_str().unwrap().starts_with("error in expl3-code.tex:"), "{brace:?}");
+    // One row per origin line and code.
+    let mut keys: Vec<_> = rows.iter().map(|r| (r["line"].to_string(), r["name"].to_string())).collect();
+    let all = keys.len();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), all, "{rows:?}");
+}
+
+/// A document that calls package code correctly causes no such rows.
+#[test]
+fn a_clean_document_causes_no_package_error() {
+    let Some(analysis) = latex(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\str_set:Nn \l_tmpb_str { ab }
+\tl_set:Nx \l_tmpa_tl { \str_upper_case:n { \l_tmpb_str } }
+\ExplSyntaxOff
+\begin{document}x\end{document}",
+    ) else {
+        return;
+    };
+    assert_eq!(findings(&analysis, "caused-library-error"), Vec::<String>::new());
+}
+
+/// Each finding of `code` as `line:col message`.
+fn placed(analysis: &Analysis, code: &str) -> Vec<String> {
+    satex::lint::lint(analysis)
+        .into_iter()
+        .filter(|r| r["code"] == code)
+        .map(|r| format!("{}:{} {}", r["line"], r["col"], r["message"].as_str().unwrap_or_default()))
+        .collect()
+}
+
+const GREET: &str =
+    "\\documentclass{article}\n\\newcommand{\\greet}[1]{\\label{hello:#1}Hello, #1!}\n\\begin{document}\n";
+
+/// A label a macro body builds stands at the document's call.
+#[test]
+fn a_label_from_a_macro_body_is_reported_at_the_call() {
+    let Some(analysis) = latex(&format!("{GREET}\\greet{{world}}\n\\end{{document}}\n")) else { return };
+    let found = placed(&analysis, "unused-label");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].starts_with("4:1 ") && found[0].contains("via \\greet"), "{found:?}");
+}
+
+#[test]
+fn a_label_written_in_the_text_is_reported_where_it_stands() {
+    let Some(analysis) = latex("\\documentclass{article}\n\\begin{document}\nx \\label{own}\n\\end{document}\n") else {
+        return;
+    };
+    let found = placed(&analysis, "unused-label");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].starts_with("3:3 ") && !found[0].contains("via"), "{found:?}");
+}
+
+#[test]
+fn a_duplicate_label_from_two_calls_is_reported_at_the_second() {
+    let Some(analysis) = latex(&format!("{GREET}\\greet{{x}}\n\\greet{{x}}\n\\end{{document}}\n")) else { return };
+    let found = placed(&analysis, "duplicate-label");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].starts_with("5:1 ") && found[0].contains("via \\greet"), "{found:?}");
 }

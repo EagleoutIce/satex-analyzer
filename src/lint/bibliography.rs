@@ -25,6 +25,7 @@ be found.
 
 Fix by adding the entry, or by correcting the key.",
         references: &[Ref { source: Source::Source2e, at: "ltbibl.dtx" }],
+        fixes: &[],
         run: undefined_citation,
     },
     Rule {
@@ -39,6 +40,7 @@ BibTeX stop with `Repeated entry`.
 
 Fix by renaming or deleting one of them.",
         references: &[Ref { source: Source::Bibtex, at: "Using BibTeX" }],
+        fixes: &[],
         run: duplicate_bibliography_entry,
     },
     Rule {
@@ -53,6 +55,7 @@ database only contributes what is cited, so its entries are not reported.
 
 Fix by citing the entry, or by deleting it.",
         references: &[Ref { source: Source::Bibtex, at: "Using BibTeX" }],
+        fixes: &[],
         run: unused_bibitem,
     },
 ];
@@ -114,19 +117,22 @@ fn undefined_citation(report: &mut Report) {
     if !bibliography.complete || bibliography.declared.is_empty() {
         return;
     }
-    let missing: Vec<(Span, String)> = analysis
+    let missing: Vec<(Span, Option<String>, String)> = analysis
         .facts
         .occurrences
         .iter()
         .filter(|o| o.kind == OccKind::Cite && o.key != EVERY_ENTRY)
         .filter(|o| !bibliography.declared.contains_key(&o.key))
-        .map(|o| (o.span, o.key.clone()))
+        .map(|o| {
+            let (span, via) = report.site(o);
+            (span, via, o.key.clone())
+        })
         .collect();
-    for (span, key) in missing {
+    for (span, via, key) in missing {
         report.add(
             span,
             &key,
-            format!("no bibliography entry declares `{key}`"),
+            format!("no bibliography entry declares `{key}`{}", via.unwrap_or_default()),
             Some(format!("add an entry `{key}`, or correct the key")),
         );
     }
@@ -183,7 +189,7 @@ fn unused_bibitem(report: &mut Report) {
         report.add(
             span,
             &key,
-            format!("\\bibitem `{key}` is never cited"),
+            format!("\\bibitem `{key}` is never cited{}", report.unread("cited").unwrap_or_default()),
             Some(format!("cite `{key}`, or delete its \\bibitem")),
         );
     }

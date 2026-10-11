@@ -16,7 +16,7 @@ pub static RULES: &[Rule] = &[
         summary: "a character that is not a quotation mark stands in for one",
         explanation: "\
 TeX sets a quotation from two backticks and two apostrophes, which the
-font's ligature program pairs into the marks ([The TeXbook](https://ctan.org/pkg/texbook), chapter 2).
+font's ligature program pairs into the marks (The TeXbook, chapter 2).
 
 What a straight `\"` sets depends on the encoding, so the rule reads
 `\\encodingdefault`: OT1 has a right double quote there, T1 and TU the
@@ -31,6 +31,7 @@ Fix by opening with two backticks and closing with two apostrophes, or with
             Ref { source: Source::Chktex, at: "19" },
             Ref { source: Source::TeXbook, at: "chapter 2" },
         ],
+        fixes: &[Applicability::Unsafe],
         run: wrong_quote_character,
     },
     Rule {
@@ -39,7 +40,7 @@ Fix by opening with two backticks and closing with two apostrophes, or with
         severity: Severity::Warning,
         summary: "a quotation mark points the wrong way, or a run of them mixes both directions",
         explanation: "\
-A backtick opens a quotation and an apostrophe closes it ([The TeXbook](https://ctan.org/pkg/texbook), chapter 2).
+A backtick opens a quotation and an apostrophe closes it (The TeXbook, chapter 2).
 A mark the other way round sets the wrong glyph, and `` `' `` sets an empty
 quotation.
 
@@ -55,6 +56,7 @@ Fix by turning the mark the right way round.",
             Ref { source: Source::Chktex, at: "34" },
             Ref { source: Source::TeXbook, at: "chapter 2" },
         ],
+        fixes: &[Applicability::Unsafe],
         run: quote_direction,
     },
     Rule {
@@ -64,7 +66,7 @@ Fix by turning the mark the right way round.",
         summary: "three quotation marks in a row set a double and a single mark with nothing between them",
         explanation: "\
 Three backticks in a row set a left double quote followed by a left single
-quote, glued together ([The TeXbook](https://ctan.org/pkg/texbook), chapter 2).  The reader cannot tell which
+quote, glued together (The TeXbook, chapter 2).  The reader cannot tell which
 quotation is the outer one.
 
 satex counts only marks TeX really joined, so a group between two of them
@@ -73,6 +75,7 @@ already keeps them apart and the rule says nothing.
 Fix by putting a thin space `\\,` between the double mark and the single one,
 with the double mark on the outside.",
         references: &[Ref { source: Source::Chktex, at: "23" }, Ref { source: Source::TeXbook, at: "chapter 2" }],
+        fixes: &[Applicability::Unsafe],
         run: quote_ligature,
     },
     Rule {
@@ -90,6 +93,7 @@ suggestion.
 
 Fix by moving the punctuation after the closing mark.",
         references: &[Ref { source: Source::Chktex, at: "38" }],
+        fixes: &[Applicability::Unsafe],
         run: quote_punctuation,
     },
     Rule {
@@ -107,6 +111,7 @@ loaded.  Apostrophes inside a word and primes in math do not count.
 
 Fix by loading `\\usepackage{csquotes}` and writing `\\enquote{…}`.",
         references: &[Ref { source: Source::Chktex, at: "18" }, Ref { source: Source::Csquotes, at: "3.1" }],
+        fixes: &[Applicability::Unsafe],
         run: csquotes_available,
     },
 ];

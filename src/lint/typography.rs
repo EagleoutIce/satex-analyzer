@@ -2,7 +2,7 @@
 //! the font encoding in force, the accents it had to build, the engine and
 //! the output target.
 
-use std::collections::HashSet;
+use crate::fixed::HashSet;
 
 use crate::builtins::OccKind;
 use crate::config::Engine;
@@ -22,7 +22,7 @@ pub static RULES: &[Rule] = &[
         explanation: "\
 OT1, LaTeX's default text encoding, has no accented letters: it builds each
 one with the `\\accent` primitive (ot1enc.def, fntguide § 5).  TeX does not
-hyphenate a word holding an `\\accent` ([The TeXbook](https://ctan.org/pkg/texbook), appendix H), and the PDF's text
+hyphenate a word holding an `\\accent` (The TeXbook, appendix H), and the PDF's text
 layer holds an accent and a letter instead of the character.
 
 Every character carries the encoding it was set in, so a document whose
@@ -35,6 +35,7 @@ Fix by loading `\\usepackage[T1]{fontenc}`.",
             Ref { source: Source::Fntguide, at: "5" },
             Ref { source: Source::TeXbook, at: "appendix H" },
         ],
+        fixes: &[Applicability::Unsafe],
         run: ot1_font_encoding,
     },
     Rule {
@@ -54,6 +55,7 @@ set, so it fires on the characters really set in T1 `cmr`.
 Fix by loading `\\usepackage{lmodern}`, or by making sure cm-super is
 installed.",
         references: &[Ref { source: Source::Lmodern, at: "Latin Modern" }, Ref { source: Source::Fntguide, at: "5" }],
+        fixes: &[Applicability::Unsafe],
         run: computer_modern_in_t1,
     },
     Rule {
@@ -74,6 +76,7 @@ Fix by loading `\\usepackage{microtype}`.",
             Ref { source: Source::Microtype, at: "1" },
             Ref { source: Source::Pdftex, at: "\\pdfprotrudechars" },
         ],
+        fixes: &[Applicability::Unsafe],
         run: microtype_available,
     },
 ];

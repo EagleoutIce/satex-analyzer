@@ -4,6 +4,7 @@ pub mod apply;
 pub mod bibliography;
 pub mod build;
 pub mod chktex;
+pub mod cite;
 pub mod colors;
 pub mod correctness;
 pub mod dashes;
@@ -114,6 +115,9 @@ impl Ref {
     /// How a finding cites it: `chktex 8`, `tex.web § 1034`.
     pub fn cite(&self) -> String {
         match self.source.numbered() {
+            _ if self.at.starts_with("chapter ") || self.at.starts_with("appendix ") => {
+                format!("{}, {}", self.source.as_str(), self.at)
+            }
             true => format!("{} {}", self.source.as_str(), self.at),
             false => format!("{} § {}", self.source.as_str(), self.at),
         }
@@ -128,6 +132,12 @@ impl Ref {
             && let Some(line) = tex_web_section_line(section)
         {
             return format!("{}#L{line}", self.source.url());
+        }
+        if self.source == Source::TeXbook
+            && let Some((kind, n)) = self.at.split_once(' ')
+            && matches!(kind, "chapter" | "appendix")
+        {
+            return format!("{}#{kind}-{}", self.source.url(), n.to_lowercase());
         }
         self.source.url().to_string()
     }
@@ -150,7 +160,7 @@ fn tex_web_base_url() -> &'static str {
 /// (`doc/src/tex-web-sections.tsv`). Exposed so `satex-doc` can also pin a
 /// `tex.web § N` citation found in prose, not just a [`Ref`].
 pub fn tex_web_section_line(section: u32) -> Option<u32> {
-    static SECTIONS: std::sync::OnceLock<std::collections::HashMap<u32, u32>> = std::sync::OnceLock::new();
+    static SECTIONS: std::sync::OnceLock<crate::fixed::HashMap<u32, u32>> = std::sync::OnceLock::new();
     SECTIONS
         .get_or_init(|| {
             const TSV: &str = include_str!("../../doc/src/tex-web-sections.tsv");
@@ -200,6 +210,7 @@ pub enum Source {
     TexLive,
     MikTeX,
     Xcolor,
+    Cleveref,
 }
 
 impl Source {
@@ -235,6 +246,7 @@ impl Source {
             Source::TexLive => "TeX Live manual",
             Source::MikTeX => "MiKTeX manual",
             Source::Xcolor => "xcolor",
+            Source::Cleveref => "cleveref",
         }
     }
 
@@ -275,6 +287,7 @@ impl Source {
             Source::TexLive => "https://tug.org/texlive/doc.html",
             Source::MikTeX => "https://docs.miktex.org/manual/",
             Source::Xcolor => "https://ctan.org/pkg/xcolor",
+            Source::Cleveref => "https://ctan.org/pkg/cleveref",
         }
     }
 }
@@ -291,6 +304,8 @@ pub struct Rule {
     /// What the rule is derived from, for `--explain` and the coverage
     /// tables the documentation generates.
     pub references: &'static [Ref],
+    /// The quick-fix kinds its findings can carry; empty when none.
+    pub fixes: &'static [fix::Applicability],
     pub run: fn(&mut Report),
 }
 
@@ -388,6 +403,12 @@ impl<'a> Report<'a> {
         let advice = edits.is_some() || origin == "document";
         record.insert("fix".into(), json!(fix.filter(|_| advice)));
         if let Some((applicability, edits)) = edits {
+            debug_assert!(
+                self.rule.fixes.contains(&applicability),
+                "{} emits an undeclared {} fix",
+                self.rule.code,
+                applicability.as_str()
+            );
             record.insert("applicability".into(), json!(applicability.as_str()));
             record.insert("edits".into(), edits.iter().map(fix::Edit::to_json).collect());
         }
@@ -398,6 +419,38 @@ impl<'a> Report<'a> {
     /// column, so that it names somewhere whichever file the finding is in.
     pub fn place(&self, span: Span) -> String {
         format!("{}:{}:{}", self.analysis.short_name(span.file), span.line, span.col)
+    }
+
+    /// Where a finding about an occurrence stands: the document's call it
+    /// came out of, named in the returned note, or its own place.
+    pub fn site(&self, o: &crate::facts::Occurrence) -> (Span, Option<String>) {
+        let Some((sym, at)) = self.index().call(o) else { return (o.span, None) };
+        let name = self.cs(sym);
+        let defs = &self.analysis.facts.defs;
+        let def = defs.iter().find(|d| d.name == sym && self.index().origin(d.span.file) == "document");
+        let note = match def {
+            Some(d) => format!(" (via {name}, defined at {})", self.place(d.span)),
+            None => format!(" (via {name})"),
+        };
+        (at, Some(note))
+    }
+
+    /// A finding on an error raised after `cause`, which may have led to
+    /// it: one severity lower, naming the cause, without edits.
+    pub fn add_doubted(&mut self, span: Span, name: &str, message: String, cause: &str) {
+        let severity = if self.rule.severity == Severity::Error { Severity::Warning } else { Severity::Info };
+        self.add_as(severity, span, name, format!("{message} (may follow from {cause}: check that first)"), None);
+    }
+
+    /// The note for a finding that something is absent from the whole
+    /// document, when the run did not read all of it: the part it left
+    /// may hold what is missing.  `None` when the run read everything.
+    pub fn unread(&self, later: &str) -> Option<String> {
+        let unread = |d: &&crate::facts::Diagnostic| {
+            matches!(d.code, "file-not-read" | "analysis-ended-early" | "limit-reached")
+        };
+        let d = self.analysis.facts.diagnostics.iter().find(unread)?;
+        Some(format!(" (it may be {later} later: at {}, {})", self.place(d.span), d.message))
     }
 
     pub fn cs(&self, sym: Sym) -> String {
@@ -430,7 +483,7 @@ pub fn lint(analysis: &Analysis) -> Vec<Record> {
     let sources = fix::Sources::default();
     let text = text::View::of(analysis, &sources);
     let index = Index::of(analysis);
-    let mut raised: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut raised: crate::fixed::HashSet<usize> = crate::fixed::HashSet::default();
     for rule in all().filter(|rule| !analysis.settings.lint_off.iter().any(|code| code == rule.code)) {
         let mut report = Report {
             analysis,
@@ -442,6 +495,13 @@ pub fn lint(analysis: &Analysis) -> Vec<Record> {
             out: Vec::new(),
         };
         (rule.run)(&mut report);
+        // One finding per source site: a rule met again there (a macro body
+        // used several times) says nothing new.
+        let mut sites = crate::fixed::HashSet::default();
+        report.out.retain(|r| match (r.get("path"), r.get("line").and_then(|v| v.as_u64())) {
+            (Some(path), Some(line)) => sites.insert((path.clone(), line, r.get("col").and_then(|v| v.as_u64()))),
+            _ => true,
+        });
         let start = out.len();
         out.append(&mut report.out);
         if rule.code == "raised-error" {
@@ -460,8 +520,8 @@ pub fn lint(analysis: &Analysis) -> Vec<Record> {
             )
         }
         let line = |r: &Record| r.get("line").and_then(|v| v.as_u64());
-        let lines: std::collections::HashSet<_> = raised.iter().map(|i| line(&out[*i])).collect();
-        let mut explained: std::collections::HashSet<_> = std::collections::HashSet::new();
+        let lines: crate::fixed::HashSet<_> = raised.iter().map(|i| line(&out[*i])).collect();
+        let mut explained: crate::fixed::HashSet<_> = crate::fixed::HashSet::default();
         for (i, record) in out.iter().enumerate() {
             if !raised.contains(&i) && lines.contains(&line(record)) {
                 explained.insert(place(record));
@@ -512,6 +572,7 @@ pub fn rules() -> Vec<Record> {
             record.insert("severity".into(), json!(rule.severity.as_str()));
             record.insert("message".into(), json!(rule.summary));
             record.insert("reference".into(), json!(cites(rule)));
+            record.insert("fixes".into(), json!(rule.fixes.iter().map(|a| a.as_str()).collect::<Vec<_>>()));
             record
         })
         .collect()

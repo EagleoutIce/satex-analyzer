@@ -18,6 +18,7 @@ with `Glossary entry ... has not been defined`.
 
 Fix by declaring the entry, or by correcting the key.",
         references: &[Ref { source: Source::Glossaries, at: "Defining glossary entries" }],
+        fixes: &[],
         run: undefined_glossary_entry,
     },
     Rule {
@@ -33,6 +34,7 @@ the three this build is.
 
 Fix by running with the flag the document needs, or by removing the call.",
         references: &[Ref { source: Source::Pdftex, at: "-shell-escape" }],
+        fixes: &[],
         run: shell_escape,
     },
     Rule {
@@ -48,6 +50,7 @@ follows the output.
 
 Fix by adding the file, or by producing the format the driver reads.",
         references: &[Ref { source: Source::Graphics, at: "pdftex.def" }],
+        fixes: &[],
         run: missing_graphic,
     },
     Rule {
@@ -68,6 +71,7 @@ one argument leaves the second for whatever follows.
 Fix by renaming the function to the signature it has, or its parameter
 text.",
         references: &[Ref { source: Source::Interface3, at: "Naming conventions" }],
+        fixes: &[],
         run: expl3_signature_mismatch,
     },
     Rule {
@@ -84,6 +88,7 @@ holds.  A real run expands until TeX runs out of memory:
 
 Fix by adding the test that stops it, or by removing the self-reference.",
         references: &[],
+        fixes: &[],
         run: unguarded_recursion,
     },
     Rule {
@@ -99,6 +104,7 @@ definition sits in a conditional arm that this use does not depend on.
 Fix by loading the package that provides it, defining it before the use, or
 correcting the spelling.",
         references: &[Ref { source: Source::TeXbook, at: "chapter 27" }],
+        fixes: &[],
         run: undefined_control_sequences,
     },
     Rule {
@@ -113,7 +119,26 @@ stops there.  A more specific rule that explains the same error reports it
 instead.  An error reached only on a path satex could not decide, or after it
 lost track of the mode, is not one a real run need reach, and is not reported.",
         references: &[],
+        fixes: &[],
         run: raised_errors,
+    },
+    Rule {
+        code: "caused-library-error",
+        category: Category::Correctness,
+        severity: Severity::Error,
+        summary: "the document makes package code raise a TeX error",
+        explanation: "\
+An engine error such as `Argument has an extra }` arises inside package code.
+The cause is the document's own call into that code.  The finding sits at
+that call and names the package line where the error arose.  Each call and
+error code is one finding, with a count when it repeats.
+
+When satex had to approximate on the way, the error may not be TeX's.  Nor
+may any error after such a one: TeX's recovery left a state that may not be
+TeX's.  The finding is then a warning that names the earlier error.",
+        references: &[Ref { source: Source::TeXbook, at: "chapter 27" }],
+        fixes: &[],
+        run: caused_library_errors,
     },
     Rule {
         code: "undefined-environment",
@@ -127,6 +152,7 @@ lost track of the mode, is not one a real run need reach, and is not reported.",
 Fix by loading the package that provides the environment or by defining it with
 `\\newenvironment{name}{…}{…}`.",
         references: &[Ref { source: Source::Source2e, at: "ltmiscen.dtx" }],
+        fixes: &[],
         run: undefined_environments,
     },
     Rule {
@@ -144,6 +170,7 @@ Fix by installing the package, adding its directory to `search_paths` in
 `satex.yaml`, pointing `texmf.roots` at the right installation, or
 (for case mismatches) renaming the file to match the requested name.",
         references: &[Ref { source: Source::Chktex, at: "27" }],
+        fixes: &[],
         run: unresolved_files,
     },
     Rule {
@@ -158,6 +185,7 @@ did not have raises `Option clash for package`.
 Fix by giving all the options to the first load, or by using
 `\\PassOptionsToPackage` before it.",
         references: &[Ref { source: Source::Source2e, at: "ltclass.dtx" }],
+        fixes: &[Applicability::Unsafe],
         run: option_clash,
     },
     Rule {
@@ -170,6 +198,7 @@ Fix by giving all the options to the first load, or by using
 
 Fix with `\\renewcommand` if the redefinition is intended, or pick another name.",
         references: &[Ref { source: Source::Source2e, at: "ltdefns.dtx" }],
+        fixes: &[Applicability::Unsafe],
         run: already_defined,
     },
     Rule {
@@ -183,6 +212,7 @@ Fix with `\\renewcommand` if the redefinition is intended, or pick another name.
 
 Fix with `\\newcommand`, or load the package that was supposed to define it.",
         references: &[Ref { source: Source::Source2e, at: "ltdefns.dtx" }],
+        fixes: &[Applicability::Safe],
         run: not_defined,
     },
     Rule {
@@ -196,6 +226,7 @@ prints `??`.
 
 Fix by adding the `\\label`, or by correcting the key.",
         references: &[Ref { source: Source::Source2e, at: "ltxref.dtx" }],
+        fixes: &[],
         run: undefined_reference,
     },
     Rule {
@@ -209,6 +240,7 @@ later one.
 
 Fix by renaming one of them.",
         references: &[Ref { source: Source::Source2e, at: "ltxref.dtx" }],
+        fixes: &[],
         run: duplicate_label,
     },
     Rule {
@@ -224,6 +256,7 @@ level, and everything read after it is tokenized differently.
 Fix by wrapping the change in `{…}` or `\\begingroup…\\endgroup`, or by restoring
 the old value explicitly.  `satex query catcodes` shows the current table.",
         references: &[Ref { source: Source::TeXbook, at: "chapter 5" }],
+        fixes: &[],
         run: catcode_escapes_group,
     },
     Rule {
@@ -239,6 +272,11 @@ expected, found '%s'`), 10 (`Solo '%s' found`) and 15 (`No match found for
 occurrences, so this rule covers environments and not generic `{}`, `[]` or
 `()` nesting.
 
+An error raised inside the environment before the `\\end` may have ended it
+early, through TeX's recovery or the analysis's approximation of its input.
+The finding is then a note that names that error, as is one the analysis
+reached on only some of its paths.
+
 Fix by naming the environment that is actually open, or by closing the inner
 environments first.",
         references: &[
@@ -247,6 +285,7 @@ environments first.",
             Ref { source: Source::Chktex, at: "15" },
             Ref { source: Source::Source2e, at: "ltmiscen.dtx" },
         ],
+        fixes: &[Applicability::Unsafe],
         run: environment_mismatch,
     },
     Rule {
@@ -260,6 +299,7 @@ ordinary text stops working.
 
 Fix by adding `\\ExplSyntaxOff` after the code that needs it.",
         references: &[Ref { source: Source::Source2e, at: "ltfiles.dtx" }],
+        fixes: &[],
         run: expl_syntax_left_on,
     },
 ];
@@ -271,9 +311,9 @@ fn unguarded_recursion(report: &mut Report) {
     let analysis = report.analysis();
     let recursive: std::collections::BTreeMap<Sym, bool> =
         report.index().recursion().iter().map(|r| (r.name, r.observed)).collect();
-    let sites: std::collections::HashSet<crate::tex::Span> =
+    let sites: crate::fixed::HashSet<crate::tex::Span> =
         analysis.facts.diagnostics.iter().filter(|d| d.code == "recursion-widened").map(|d| d.span).collect();
-    let widened: std::collections::HashSet<Sym> =
+    let widened: crate::fixed::HashSet<Sym> =
         analysis.facts.expansions.iter().filter(|e| sites.contains(&e.span)).map(|e| e.name).collect();
     for def in &analysis.facts.defs {
         let Some(&observed) = recursive.get(&def.name) else { continue };
@@ -394,8 +434,8 @@ fn undefined_control_sequences(report: &mut Report) {
 fn raised_errors(report: &mut Report) {
     let analysis = report.analysis();
     let view = report.text();
-    let mut seen = std::collections::HashSet::new();
-    for o in &analysis.facts.occurrences {
+    let mut seen = crate::fixed::HashSet::default();
+    for (i, o) in analysis.facts.occurrences.iter().enumerate() {
         if !crate::lint::shared::is_error(analysis, o) || !o.certain || !seen.insert((o.span, o.key.as_str())) {
             continue;
         }
@@ -416,7 +456,56 @@ fn raised_errors(report: &mut Report) {
             Some(name) => format!("reading {name}: {text}"),
             None => text,
         };
-        report.add(span, "", message, None);
+        match crate::lint::shared::doubt(analysis, i) {
+            Some(cause) => report.add_doubted(span, "", message, &cause),
+            None => report.add(span, "", message, None),
+        }
+    }
+}
+
+/// Engine errors in library files, shown at the user's call that led there.
+fn caused_library_errors(report: &mut Report) {
+    let analysis = report.analysis();
+    let view = report.text();
+    // The error, the call it is shown at, its count, and the first error on
+    // an approximated path that the run raised before it, if any.
+    type Row<'a> = (&'a crate::facts::Diagnostic, crate::tex::Span, u32, Option<crate::tex::Span>);
+    let mut rows: Vec<Row> = Vec::new();
+    // TeX's recovery from an error that may not be TeX's leaves a state
+    // that may not be TeX's either: every error after it may be its echo.
+    let mut doubt = None;
+    for d in &analysis.facts.diagnostics {
+        let before = doubt;
+        if d.severity == crate::facts::Severity::Unsupported {
+            doubt = doubt.or(Some(d.origin.unwrap_or(d.span)));
+        }
+        if !crate::machine::TEX_ERRORS.iter().any(|(c, _)| *c == d.code) {
+            continue;
+        }
+        let Some(origin) = d.origin else { continue };
+        if view.document(d.span.file) || !view.document(origin.file) {
+            continue;
+        }
+        let same = |(e, o, _, _): &&mut Row| e.code == d.code && o.file == origin.file && o.line == origin.line;
+        match rows.iter_mut().find(same) {
+            Some(row) => row.2 += d.count,
+            None => rows.push((d, origin, d.count, before)),
+        }
+    }
+    for (d, origin, count, before) in rows {
+        let times = if count > 1 { format!(" ({count} times)") } else { String::new() };
+        let at = format!("{}:{}", analysis.short_name(d.span.file), d.span.line);
+        let mut message = format!("error in {at}: {}, caused here{times}", d.message);
+        // An error on an approximated path, or after one, may not be TeX's.
+        let exact = d.severity == crate::facts::Severity::Warning;
+        match before {
+            _ if !exact => message.push_str(" (the analysis approximated on the way: may not be TeX's)"),
+            Some(first) => message
+                .push_str(&format!(" (may follow from the analysis gap at {}: check that first)", report.place(first))),
+            None => {}
+        }
+        let severity = if exact && before.is_none() { Severity::Error } else { Severity::Warning };
+        report.add_as(severity, origin, d.code, message, None);
     }
 }
 
@@ -427,8 +516,12 @@ fn undefined_environments(report: &mut Report) {
         let rest = &text[text.find("LaTeX Error: Environment ")? + "LaTeX Error: Environment ".len()..];
         Some(rest[..rest.find(" undefined")?].to_string())
     });
-    for (span, name) in found {
+    for (span, name, doubt) in found {
         let message = format!("LaTeX Error: Environment {name} undefined");
+        if let Some(cause) = doubt {
+            report.add_doubted(span, &name, message, &cause);
+            continue;
+        }
         report.add(span, &name, message, Some(format!("\\newenvironment{{{name}}}{{…}}{{…}}")));
     }
 }
@@ -472,7 +565,7 @@ fn unresolved_files(report: &mut Report) {
         let rest = &text[text.find("LaTeX Error: File `")? + "LaTeX Error: File `".len()..];
         Some(rest[..rest.find("' not found")?].to_string())
     });
-    for (span, name) in missing {
+    for (span, name, _) in missing {
         if crate::plugin::packages::installable(analysis, &name).is_some() {
             continue;
         }
@@ -517,7 +610,11 @@ fn already_defined(report: &mut Report) {
         let rest = &text[text.find("Command \\")? + "Command ".len()..];
         Some(rest[..rest.find(" already defined")?].to_string())
     });
-    for (span, name) in refused {
+    for (span, name, doubt) in refused {
+        if let Some(cause) = doubt {
+            report.add_doubted(span, &name, format!("{name} is already defined"), &cause);
+            continue;
+        }
         let edits = renamed(report, span, "new", "renew");
         report.add_fix(
             span,
@@ -526,16 +623,20 @@ fn already_defined(report: &mut Report) {
             Fix::new(format!("use \\renewcommand{{{name}}} instead"), Applicability::Unsafe, edits),
         );
     }
-    let refused: Vec<(Span, String)> = report
-        .analysis
+    let analysis = report.analysis();
+    let refused: Vec<(Span, String, Option<String>)> = analysis
         .facts
         .diagnostics
         .iter()
         .filter(|d| d.code == "already-defined")
-        .map(|d| (d.span, d.message.clone()))
+        .map(|d| (d.span, d.message.clone(), crate::lint::shared::doubt(analysis, d.after)))
         .collect();
-    for (span, message) in refused {
+    for (span, message, doubt) in refused {
         let name = message.split('`').nth(1).unwrap_or_default().to_string();
+        if let Some(cause) = doubt {
+            report.add_doubted(span, &name, message, &cause);
+            continue;
+        }
         let edits = renamed(report, span, "new", "renew");
         report.add_fix(
             span,
@@ -559,7 +660,11 @@ fn not_defined(report: &mut Report) {
         let rest = &text[text.find("Command \\")? + "Command ".len()..];
         Some(rest[..rest.find(" undefined")?].to_string())
     });
-    for (span, name) in missing {
+    for (span, name, doubt) in missing {
+        if let Some(cause) = doubt {
+            report.add_doubted(span, &name, format!("{name} is not defined here"), &cause);
+            continue;
+        }
         let edits = renamed(report, span, "renew", "new");
         report.add_fix(
             span,
@@ -571,57 +676,64 @@ fn not_defined(report: &mut Report) {
 }
 
 /// The messages that match `parse`, once per place.
-fn kernel_errors(report: &Report, parse: impl Fn(&str) -> Option<String>) -> Vec<(Span, String)> {
-    let mut seen = std::collections::HashSet::new();
-    report
-        .analysis
+/// With each, the place the run could not follow before it, if any.
+fn kernel_errors(report: &Report, parse: impl Fn(&str) -> Option<String>) -> Vec<(Span, String, Option<String>)> {
+    let analysis = report.analysis();
+    let mut seen = crate::fixed::HashSet::default();
+    analysis
         .facts
         .occurrences
         .iter()
-        .filter(|o| o.kind == OccKind::Message)
-        .filter_map(|o| Some((o.span, parse(&o.key)?)))
-        .filter(|found| seen.insert(found.clone()))
+        .enumerate()
+        .filter(|(_, o)| o.kind == OccKind::Message)
+        .filter_map(|(i, o)| Some((i, o.span, parse(&o.key)?)))
+        .filter(|(_, span, name)| seen.insert((*span, name.clone())))
+        .map(|(i, span, name)| (span, name, crate::lint::shared::doubt(analysis, i)))
         .collect()
 }
 
 fn undefined_reference(report: &mut Report) {
     let known = report.index().labels();
-    let missing: Vec<(Span, String)> = report
+    let missing: Vec<(Span, Option<String>, String)> = report
         .analysis
         .facts
         .occurrences
         .iter()
         .filter(|o| o.kind == OccKind::Ref && !known.contains_key(o.key.as_str()))
-        .map(|o| (o.span, o.key.clone()))
+        .map(|o| {
+            let (span, via) = report.site(o);
+            (span, via, o.key.clone())
+        })
         .collect();
-    for (span, key) in missing {
-        report.add(
-            span,
-            &key,
-            format!("no \\label{{{key}}} anywhere in the document"),
-            Some(format!("add \\label{{{key}}} where it belongs")),
-        );
+    for (span, via, key) in missing {
+        let message = format!("no \\label{{{key}}} anywhere in the document{}", via.unwrap_or_default());
+        if let Some(note) = report.unread("defined") {
+            report.add_as(Severity::Info, span, &key, format!("{message}{note}"), None);
+            continue;
+        }
+        report.add(span, &key, message, Some(format!("add \\label{{{key}}} where it belongs")));
     }
 }
 
 fn duplicate_label(report: &mut Report) {
     let first = report.index().labels();
-    let repeats: Vec<(Span, String, Span)> = report
+    let repeats: Vec<(Span, Option<String>, String, Span)> = report
         .analysis
         .facts
         .occurrences
         .iter()
         .filter(|o| o.kind == OccKind::Label)
         .filter_map(|o| {
-            let at = *first.get(o.key.as_str())?;
-            (at != o.span).then(|| (o.span, o.key.clone(), at))
+            let at = report.site(first.get(o.key.as_str())?).0;
+            let (span, via) = report.site(o);
+            (at != span).then(|| (span, via, o.key.clone(), at))
         })
         .collect();
-    for (span, key, at) in repeats {
+    for (span, via, key, at) in repeats {
         report.add(
             span,
             &key,
-            format!("label `{key}` is already defined at {}", report.place(at)),
+            format!("label `{key}` is already defined at {}{}", report.place(at), via.unwrap_or_default()),
             Some("rename one of the two labels".into()),
         );
     }
@@ -668,7 +780,7 @@ fn expl_syntax_left_on(report: &mut Report) {
 /// when no extension in `\Gin@extensions` names a file on `\Ginput@path`.
 /// The lint reports what the real code said, once per call.
 fn missing_graphic(report: &mut Report) {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = crate::fixed::HashSet::default();
     let missing: Vec<(Span, String)> = report
         .analysis
         .facts
@@ -773,18 +885,45 @@ fn environment_mismatch(report: &mut Report) {
         let rest = &text[text.find(open)? + open.len()..];
         Some(rest[..rest.find('}')?].to_string())
     };
-    let mismatches: Vec<(Span, String, String, String)> = report
-        .analysis
-        .facts
+    let facts = &report.analysis.facts;
+    let mismatches: Vec<(Span, String, String, String, bool, usize)> = facts
         .occurrences
         .iter()
-        .filter(|o| o.kind == OccKind::Message && o.key.contains(" ended by "))
-        .filter_map(|o| {
+        .enumerate()
+        .filter(|(_, o)| o.kind == OccKind::Message && o.key.contains(" ended by "))
+        .filter_map(|(i, o)| {
             let open = between(&o.key, "\\begin{")?;
             let found = between(&o.key, "\\end{")?;
-            Some((o.span, open, found, o.key.clone()))
+            Some((o.span, open, found, o.key.clone(), o.certain, i))
         })
         .collect();
+    // Every other error the run raised, where the document led to it.
+    let errors: Vec<Span> = facts
+        .diagnostics
+        .iter()
+        .filter(|d| crate::machine::TEX_ERRORS.iter().any(|(c, _)| *c == d.code))
+        .filter_map(|d| d.origin)
+        .chain(
+            facts
+                .occurrences
+                .iter()
+                .filter(|o| crate::lint::shared::is_error(report.analysis, o) && !o.key.contains(" ended by "))
+                .map(|o| o.span),
+        )
+        .collect();
+    // The error raised inside the environment before its `\end`: TeX's
+    // recovery from it (or the analysis's over-approximation of the input
+    // that caused it) can end the environment early, so the mismatch may
+    // be its consequence.
+    let cascade = |open: &str, end: Span| {
+        let begin = facts
+            .occurrences
+            .iter()
+            .filter(|o| o.kind == OccKind::BeginEnvironment && o.key == open && o.span.file == end.file && o.span < end)
+            .map(|o| o.span)
+            .max()?;
+        errors.iter().filter(|e| begin < **e && **e < end).min().copied()
+    };
     // `\@currenvir` starts out as `document`, so an `\end` in the preamble
     // is "ended by" a document that was never begun: it closes nothing, and
     // TeX follows up with `Extra \endgroup`.
@@ -801,7 +940,22 @@ fn environment_mismatch(report: &mut Report) {
         };
         count(OccKind::BeginEnvironment) > count(OccKind::EndEnvironment)
     };
-    for (span, open, found, message) in mismatches {
+    for (span, open, found, message, certain, i) in mismatches {
+        let message = message.split("\n\n").next().unwrap_or_default().to_string();
+        // Over-approximated: reported, but as a consequence to check after
+        // its cause, never as a certain fault.
+        let cause = cascade(&open, span)
+            .map(|at| format!("the error at {}", report.place(at)))
+            .or_else(|| crate::lint::shared::doubt(report.analysis(), i));
+        if let Some(cause) = cause {
+            report.add_doubted(span, &found, message, &cause);
+            continue;
+        }
+        if !certain {
+            let message = format!("{message} (on some of the paths the analysis followed)");
+            report.add_as(Severity::Info, span, &found, message, None);
+            continue;
+        }
         if !begun(&open, span) {
             let edits = report.edits().delete_command(span, &found);
             report.add_fix(
@@ -830,7 +984,7 @@ fn undefined_glossary_entry(report: &mut Report) {
         let rest = &text[text.find(after)? + after.len()..];
         Some(rest[..rest.find('\'')?].to_string())
     };
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = crate::fixed::HashSet::default();
     let missing: Vec<(Span, String)> = report
         .analysis
         .facts

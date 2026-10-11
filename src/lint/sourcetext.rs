@@ -3,7 +3,7 @@
 //! a bracket in math is not structure, a pattern in a comment is not text,
 //! and a verbatim tail is reported only where the run set none of it.
 
-use std::collections::{HashMap, HashSet};
+use crate::fixed::{HashMap, HashSet};
 
 use regex::Regex;
 
@@ -33,6 +33,7 @@ first bracket left over.
 
 Fix by adding the bracket that is missing.",
         references: &[Ref { source: Source::Chktex, at: "17" }, Ref { source: Source::TeXbook, at: "chapter 2" }],
+        fixes: &[],
         run: unbalanced_brackets,
     },
     Rule {
@@ -54,6 +55,7 @@ reported.
 Fix by writing what the project's own rule asks for, or by removing the
 pattern from `satex.yaml`.",
         references: &[Ref { source: Source::Chktex, at: "20" }, Ref { source: Source::Chktex, at: "44" }],
+        fixes: &[],
         run: user_pattern,
     },
     Rule {
@@ -72,6 +74,7 @@ and where the run really did set that mark there.
 
 Fix by removing the backslash.",
         references: &[Ref { source: Source::Chktex, at: "21" }, Ref { source: Source::TeXbook, at: "chapter 9" }],
+        fixes: &[Applicability::Unsafe],
         run: unintended_escape,
     },
     Rule {
@@ -91,6 +94,7 @@ a character, not a comment.
 
 Fix by doing what the note asks and deleting it.",
         references: &[Ref { source: Source::Chktex, at: "22" }],
+        fixes: &[],
         run: comment_marker,
     },
     Rule {
@@ -109,6 +113,7 @@ code of `\\`, and reports the tail only where the run set none of it.
 
 Fix by moving the text to the next line.",
         references: &[Ref { source: Source::Chktex, at: "31" }],
+        fixes: &[Applicability::Unsafe],
         run: ignored_verbatim_tail,
     },
 ];
@@ -124,7 +129,7 @@ fn comment_marker_settings(analysis: &Analysis) -> CommentMarker {
 /// Every character the run set, by file and line, with its column and its
 /// index in the view, columns ascending.
 fn by_line(view: &View) -> HashMap<(FileId, u32), Vec<(u32, usize)>> {
-    let mut out: HashMap<(FileId, u32), Vec<(u32, usize)>> = HashMap::new();
+    let mut out: HashMap<(FileId, u32), Vec<(u32, usize)>> = HashMap::default();
     for i in 0..view.len() {
         if let Some(span) = view.span(i) {
             out.entry((span.file, span.line)).or_default().push((span.col, i));
@@ -158,18 +163,23 @@ fn unbalanced_brackets(report: &mut Report) {
     let files = files(report.analysis, report.edits().sources);
     let diagnosed: HashSet<(FileId, u32)> =
         analysis.facts.diagnostics.iter().map(|d| (d.span.file, d.span.line)).collect();
-    let mut counts: HashMap<FileId, [[usize; 2]; 2]> = HashMap::new();
-    let mut opened: HashMap<FileId, [Vec<Span>; 2]> = HashMap::new();
-    let mut surplus: HashMap<FileId, [Option<Span>; 2]> = HashMap::new();
+    let mut counts: HashMap<FileId, [[usize; 2]; 2]> = HashMap::default();
+    let mut opened: HashMap<FileId, [Vec<Span>; 2]> = HashMap::default();
+    let mut surplus: HashMap<FileId, [Option<Span>; 2]> = HashMap::default();
     // A bracket the run could not place proves nothing, and neither does
     // any count in its file: its partner may be the one that was placed.
-    let mut unplaced: HashSet<FileId> = HashSet::new();
-    for i in view.prose_text() {
+    let mut unplaced: HashSet<FileId> = HashSet::default();
+    // Prose, not prose text: a bracket that may have been set in math or
+    // in text is unplaced, not math.
+    for i in view.prose() {
         let Some(c) = view.char_at(i) else { continue };
         let Some(pair) = PAIRS.iter().position(|(open, close)| *open == c || *close == c) else { continue };
         let Some(span) = view.span(i) else { continue };
         if !view.modes(i).is_known() {
             unplaced.insert(span.file);
+            continue;
+        }
+        if view.math(i) {
             continue;
         }
         let count = counts.entry(span.file).or_default();
@@ -313,7 +323,7 @@ fn unintended_escape(report: &mut Report) {
     let view = report.text();
     let files = files(report.analysis, report.edits().sources);
     let bodies = Bodies::of(&verbatims(report.analysis, &files));
-    let mut set: HashMap<(FileId, u32, u32), char> = HashMap::new();
+    let mut set: HashMap<(FileId, u32, u32), char> = HashMap::default();
     for i in 0..view.len() {
         if let (Some(span), Some(c)) = (view.span(i), view.char_at(i)) {
             set.insert((span.file, span.line, span.col), c);

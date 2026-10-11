@@ -27,6 +27,7 @@ Fix by running the command the finding gives, or `satex install`, which never
 runs as part of `lint --fix`.  The question is off by default because it reads
 the package repository: turn on `plugins.packages` in `satex.yaml`.",
     references: &[Ref { source: Source::TexLive, at: "tlmgr" }, Ref { source: Source::MikTeX, at: "miktex packages" }],
+    fixes: &[],
     run: uninstalled_packages,
 }];
 

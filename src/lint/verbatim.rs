@@ -9,7 +9,7 @@
 //! typography has to leave it alone.  [`crate::lint::text::View::verbatim`]
 //! is how a rule asks, and it is built once per lint run.
 
-use std::collections::{HashMap, HashSet};
+use crate::fixed::{HashMap, HashSet};
 use std::rc::Rc;
 
 use crate::builtins::OccKind;
@@ -25,7 +25,7 @@ pub struct File {
 
 /// Every file of the document the run read, each path once.
 pub fn files(analysis: &Analysis, sources: &Sources) -> Vec<File> {
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::default();
     let mut out = Vec::new();
     for id in 0..analysis.files.len() as FileId {
         if crate::query::origin(analysis, id) != "document" {
@@ -58,18 +58,19 @@ pub struct Verbatim {
 #[derive(Default)]
 pub struct Verbatims {
     pub bodies: Vec<Verbatim>,
-    /// A `\verb` and its kin: from this column to the end of the line
-    /// nothing was read as TeX.  Such a reader has to finish on its line.
-    pub inline: Vec<(FileId, u32, u32)>,
+    /// A `\verb` and its kin: from this column to the closing delimiter
+    /// (to the end of the line when none is found) nothing was read as TeX.
+    /// Such a reader has to finish on its line.
+    pub inline: Vec<(FileId, u32, u32, u32)>,
 }
 
 pub fn verbatims(analysis: &Analysis, files: &[File]) -> Verbatims {
     let texts: HashMap<FileId, Rc<Text>> = files.iter().map(|f| (f.id, f.text.clone())).collect();
-    let mut escaped: HashSet<Span> = HashSet::new();
-    let mut begins: HashMap<Span, &str> = HashMap::new();
+    let mut escaped: HashSet<Span> = HashSet::default();
+    let mut begins: HashMap<Span, &str> = HashMap::default();
     for occ in &analysis.facts.occurrences {
         match occ.kind {
-            OccKind::Catcode if occ.key == "\\" && texts.contains_key(&occ.span.file) => {
+            OccKind::Catcode if verbatim_reader(occ) && texts.contains_key(&occ.span.file) => {
                 escaped.insert(occ.span);
             }
             OccKind::BeginEnvironment if texts.contains_key(&occ.span.file) => {
@@ -82,7 +83,8 @@ pub fn verbatims(analysis: &Analysis, files: &[File]) -> Verbatims {
     for span in escaped {
         let Some(text) = texts.get(&span.file) else { continue };
         let Some(name) = begins.get(&span) else {
-            out.inline.push((span.file, span.line, span.col));
+            let end = reader_end(text.line(span.line), span.col).unwrap_or(u32::MAX);
+            out.inline.push((span.file, span.line, span.col, end));
             continue;
         };
         if let Some((to, after)) = closing(text, name, span.line) {
@@ -90,6 +92,37 @@ pub fn verbatims(analysis: &Analysis, files: &[File]) -> Verbatims {
         }
     }
     out
+}
+
+/// The column just past an inline reader's argument: `\name`, a star,
+/// `[…]`, then `{…}` or a text between two equal delimiters.  `None` when
+/// the line does not spell it so.
+fn reader_end(line: &str, col: u32) -> Option<u32> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = col.checked_sub(1)? as usize;
+    (chars.get(i) == Some(&'\\')).then_some(())?;
+    i += 1;
+    while chars.get(i).is_some_and(|c| c.is_alphabetic() || *c == '@') {
+        i += 1;
+    }
+    while chars.get(i).is_some_and(|c| *c == '*' || *c == ' ') {
+        i += 1;
+    }
+    if chars.get(i) == Some(&'[') {
+        i += chars[i..].iter().position(|c| *c == ']')? + 1;
+    }
+    let open = *chars.get(i)?;
+    let mut depth = 0usize;
+    for (j, c) in chars.iter().enumerate().skip(i + 1) {
+        match *c {
+            '}' if open == '{' && depth == 0 => return Some(j as u32 + 2),
+            '}' if open == '{' => depth -= 1,
+            '{' if open == '{' => depth += 1,
+            c if c == open && open != '{' => return Some(j as u32 + 2),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Where the `\end{name}` that closes a body opened on `from` stands: its
@@ -122,8 +155,8 @@ pub struct Bodies {
     inside: HashSet<(FileId, u32)>,
     /// The closing line of each body, with the column its text ends at.
     last: HashMap<(FileId, u32), u32>,
-    /// A line an inline reader ran on, with the column it started at.
-    from: HashMap<(FileId, u32), u32>,
+    /// A line inline readers ran on, with the columns each covered.
+    from: HashMap<(FileId, u32), Vec<(u32, u32)>>,
 }
 
 impl Bodies {
@@ -136,9 +169,8 @@ impl Bodies {
             let at = bodies.last.entry((v.file, v.to)).or_insert(v.after);
             *at = (*at).max(v.after);
         }
-        for (file, line, col) in &verbatims.inline {
-            let at = bodies.from.entry((*file, *line)).or_insert(*col);
-            *at = (*at).min(*col);
+        for (file, line, col, end) in &verbatims.inline {
+            bodies.from.entry((*file, *line)).or_default().push((*col, *end));
         }
         bodies
     }
@@ -146,7 +178,10 @@ impl Bodies {
     pub fn holds(&self, file: FileId, line: u32, col: u32) -> bool {
         self.inside.contains(&(file, line))
             || self.last.get(&(file, line)).is_some_and(|after| col < *after)
-            || self.from.get(&(file, line)).is_some_and(|start| col >= *start)
+            || self
+                .from
+                .get(&(file, line))
+                .is_some_and(|runs| runs.iter().any(|&(from, end)| (from..end).contains(&col)))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -157,7 +192,13 @@ impl Bodies {
 /// Whether the run read any source verbatim at all, asked before the
 /// document's files are read from disk for a document that has none.
 fn any(analysis: &Analysis) -> bool {
-    analysis.facts.occurrences.iter().any(|occ| occ.kind == OccKind::Catcode && occ.key == "\\")
+    analysis.facts.occurrences.iter().any(verbatim_reader)
+}
+
+/// A category code change that stops `\` from being an escape: setting it
+/// to 0 (`\ref`'s sanitizing restores it) reads nothing verbatim.
+fn verbatim_reader(occ: &crate::facts::Occurrence) -> bool {
+    occ.kind == OccKind::Catcode && occ.key == "\\" && occ.detail.as_deref() != Some("0")
 }
 
 /// Every position the run read verbatim, built once per lint run.

@@ -8,7 +8,7 @@
 //! has produced its findings, so every output format and `--fix` (which
 //! relints after each round) see the same filtered set.
 
-use std::collections::{HashMap, HashSet};
+use crate::fixed::{HashMap, HashSet};
 use std::path::Path;
 
 use serde_json::json;
@@ -33,6 +33,7 @@ never existed.",
     // every magic comment while it builds the suppression map.  A second,
     // ordinary rule pass would just repeat that scan.
     references: &[],
+    fixes: &[],
     run: |_| {},
 }];
 
@@ -105,7 +106,7 @@ impl FileSuppressions {
         // seen, `exceptions` the codes an `enable` carved back out of it,
         // and `specific` the codes a `disable` named directly outside an
         // `all`.  Recomputed per query, because regions are few.
-        let (mut all, mut specific, mut exceptions) = (false, HashSet::<&str>::new(), HashSet::<&str>::new());
+        let (mut all, mut specific, mut exceptions) = (false, HashSet::<&str>::default(), HashSet::<&str>::default());
         for (at, dir) in &self.regions {
             if *at > line {
                 break;
@@ -183,7 +184,7 @@ fn scan(path: &str, text: &str) -> (FileSuppressions, Vec<Record>) {
 /// `records`, with everything a magic comment suppressed removed, and a
 /// warning added for every code such a comment named that no rule has.
 pub fn apply(analysis: &Analysis, records: Vec<Record>) -> Vec<Record> {
-    let mut by_file: HashMap<String, FileSuppressions> = HashMap::new();
+    let mut by_file: HashMap<String, FileSuppressions> = HashMap::default();
     let mut extra = Vec::new();
     for id in 0..analysis.files.len() as crate::tex::FileId {
         if crate::query::origin(analysis, id) != "document" {

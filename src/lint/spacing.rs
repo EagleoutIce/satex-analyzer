@@ -2,7 +2,7 @@
 //! rule here reads `facts.spaces` and the characters the document set, so a
 //! space that never reached the page is never reported.
 
-use std::collections::{HashMap, HashSet};
+use crate::fixed::{HashMap, HashSet};
 
 use crate::builtins::OccKind;
 use crate::lint::fix::{Applicability, Edit, Fix, Pos, Text};
@@ -19,7 +19,7 @@ pub static RULES: &[Rule] = &[
         severity: Severity::Warning,
         summary: "a control word ate the space after it and the next word is set against what it produced",
         explanation: "\
-TeX reads a control word and then discards the spaces after it ([The TeXbook](https://ctan.org/pkg/texbook),
+TeX reads a control word and then discards the spaces after it (The TeXbook,
 chapter 3), so `\\TeX ok` sets `TEXok`.
 
 A space the source has after a control word and the run never turned into
@@ -29,6 +29,7 @@ character on the page and the next word starts against it, so `\\rm text` and
 
 Fix by writing `\\TeX{} ok`, or `\\TeX\\ ok` where a space belongs.",
         references: &[Ref { source: Source::Chktex, at: "1" }, Ref { source: Source::TeXbook, at: "chapter 3" }],
+        fixes: &[Applicability::Safe],
         run: command_terminated_space,
     },
     Rule {
@@ -38,7 +39,7 @@ Fix by writing `\\TeX{} ok`, or `\\TeX\\ ok` where a space belongs.",
         summary: "an ordinary space in front of a reference lets the line break before the number",
         explanation: "\
 A reference should not begin a line on its own, so a tie belongs in front of
-it.  `~` is an interword space TeX may not break at ([The TeXbook](https://ctan.org/pkg/texbook), chapter 14).
+it.  `~` is an interword space TeX may not break at (The TeXbook, chapter 14).
 
 The rule reads the reference and citation sites the run recorded, so it
 follows a `\\ref` inside a macro of yours without a list of names, and it
@@ -50,6 +51,7 @@ Fix by writing `Figure~\\ref{fig:one}`.",
             Ref { source: Source::TeXbook, at: "chapter 14" },
             Ref { source: Source::TeXWeb, at: "1043" },
         ],
+        fixes: &[Applicability::Unsafe],
         run: missing_nonbreaking_space,
     },
     Rule {
@@ -73,6 +75,7 @@ Fix by writing `etc.\\ and`, or `the ABC\\@. Next`.",
             Ref { source: Source::Chktex, at: "13" },
             Ref { source: Source::TeXWeb, at: "1034" },
         ],
+        fixes: &[Applicability::Unsafe],
         run: sentence_spacing,
     },
     Rule {
@@ -96,6 +99,7 @@ Fix by deleting the space, so the command touches the word.",
             Ref { source: Source::Chktex, at: "42" },
             Ref { source: Source::Source2e, at: "ltxref.dtx" },
         ],
+        fixes: &[Applicability::Unsafe],
         run: space_before_command,
     },
     Rule {
@@ -114,6 +118,7 @@ typography is not reported.
 
 Fix by deleting the space.",
         references: &[Ref { source: Source::Chktex, at: "26" }, Ref { source: Source::TeXWeb, at: "1043" }],
+        fixes: &[Applicability::Safe],
         run: space_before_punctuation,
     },
     Rule {
@@ -122,7 +127,7 @@ Fix by deleting the space.",
         severity: Severity::Warning,
         summary: "two interword spaces reached the page, one of them from a tie",
         explanation: "\
-TeX reads a run of spaces as one space token ([The TeXbook](https://ctan.org/pkg/texbook), chapter 8), so two spaces
+TeX reads a run of spaces as one space token (The TeXbook, chapter 8), so two spaces
 in the source set one on the page.  satex reports only the spaces that really
 reached it.
 
@@ -136,6 +141,7 @@ Fix by deleting the ordinary space.",
             Ref { source: Source::Chktex, at: "30" },
             Ref { source: Source::TeXbook, at: "chapter 8" },
         ],
+        fixes: &[Applicability::Safe, Applicability::Unsafe],
         run: double_space,
     },
     Rule {
@@ -154,6 +160,7 @@ ordinary English, so those findings come as notes.
 
 Fix by moving the space to the other side of the parenthesis.",
         references: &[Ref { source: Source::Chktex, at: "36" }, Ref { source: Source::Chktex, at: "37" }],
+        fixes: &[Applicability::Unsafe],
         run: parenthesis_spacing,
     },
 ];
@@ -298,12 +305,12 @@ fn sites(
     names: &[&[&str]],
     wrappers: bool,
 ) -> Vec<(Span, String)> {
-    let mut seen: HashSet<Span> = HashSet::new();
+    let mut seen: HashSet<Span> = HashSet::default();
     let mut out = Vec::new();
     // A command the document defines around a listed one is a wrapper: it
     // stands where the word in front of the number does, not the number.
-    let mut own: HashSet<Sym> = HashSet::new();
-    let mut called: HashMap<Span, Sym> = HashMap::new();
+    let mut own: HashSet<Sym> = HashSet::default();
+    let mut called: HashMap<Span, Sym> = HashMap::default();
     if !wrappers {
         own.extend(analysis.facts.defs.iter().filter(|d| view.document(d.span.file)).map(|d| d.name));
         called.extend(analysis.facts.expansions.iter().map(|e| (e.span, e.name)));
@@ -400,7 +407,10 @@ fn sentence_spacing(report: &mut Report) {
             continue;
         }
         let before = i.checked_sub(1).and_then(|k| view.char_at(k));
-        let (Some(before), Some(after)) = (before, view.char_at(i + 2)) else { continue };
+        // What follows in another box (an `\item` label) or paragraph is
+        // not the rest of this sentence.
+        let next = view.char_at(i + 2).filter(|_| view.beside(i + 1) && view.beside(i + 2));
+        let (Some(before), Some(after)) = (before, next) else { continue };
         // tex.web § 1034: two capitals hold the space factor below 1000, so
         // the period cannot raise it and the space stays a word space.
         let capitals = before.is_uppercase()
@@ -464,6 +474,10 @@ fn space_before_punctuation(report: &mut Report) {
         // The mark must have been set straight after the space: a command
         // between the two left the page unlike what the text reads.
         if !PUNCTUATION.contains(mark) || view.char_at(i - 1) == Some(' ') || !view.joined(i + 1) {
+            continue;
+        }
+        // `x :: T` and `x := 1` are operators, not a colon.
+        if mark == ':' && matches!(view.char_at(i + 2), Some(':' | '=')) {
             continue;
         }
         if !plain_space(report, i) || !view.is_ours(i + 1) {
@@ -554,7 +568,9 @@ fn parenthesis_spacing(report: &mut Report) {
             true => Some(i + 1),
             false => i.checked_sub(1),
         };
-        if inside.is_some_and(|k| plain_space(report, k)) {
+        // Characters set in another box may stand elsewhere on the page.
+        let near = |k: usize| view.beside(k.max(i));
+        if inside.is_some_and(|k| plain_space(report, k) && near(k)) {
             let side = if open { "after" } else { "in front of" };
             let message = format!("a space stands {side} the `{paren}`, inside the parentheses");
             let at = inside.unwrap_or(i);
@@ -565,7 +581,16 @@ fn parenthesis_spacing(report: &mut Report) {
             true => i.checked_sub(1),
             false => Some(i + 1),
         };
-        if outside.and_then(|k| view.char_at(k)).is_some_and(char::is_alphabetic) {
+        // A word with a suffix in parentheses, `file(s)` or `f(x)`, is one
+        // word: its parentheses hold no space.  (`(c)three` is a label.)
+        let partner = |k: usize| match view.char_at(k) {
+            Some(')') => Some(true),
+            Some(c) if c.is_whitespace() => Some(false),
+            Some(_) => None,
+            None => Some(false),
+        };
+        let one_word = open && (i + 1..i + 32).find_map(partner).unwrap_or(false);
+        if !one_word && outside.filter(|&k| near(k)).and_then(|k| view.char_at(k)).is_some_and(char::is_alphabetic) {
             let side = if open { "in front of" } else { "after" };
             let message = format!("no space stands {side} the `{paren}`, so it is set against the word");
             let want = if open { format!(" {paren}") } else { format!("{paren} ") };

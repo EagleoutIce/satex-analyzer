@@ -3,7 +3,7 @@
 //! gives it, which characters stand around a `\/`, and which letter the
 //! `\accent` primitive really took.
 
-use std::collections::HashMap;
+use crate::fixed::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -25,7 +25,7 @@ pub static RULES: &[Rule] = &[
         summary: "a repeated italic correction, or one in front of a period or comma",
         explanation: "\
 `\\/` appends a kern as wide as the italic correction of the last character
-on the current list ([The TeXbook](https://ctan.org/pkg/texbook), chapter 4).  The rule reports two places where
+on the current list (The TeXbook, chapter 4).  The rule reports two places where
 that kern does not belong: a second `\\/` with nothing typeset in between,
 which finds a kern rather than a character (tex.web § 1113), and one in front of
 a period or a comma (chktex 28).
@@ -39,6 +39,7 @@ Fix by deleting the `\\/`.",
             Ref { source: Source::Chktex, at: "28" },
             Ref { source: Source::TeXWeb, at: "1113" },
         ],
+        fixes: &[Applicability::Safe, Applicability::Unsafe],
         run: stray_italic_correction,
     },
     Rule {
@@ -62,6 +63,7 @@ Fix by deleting the `\\/`.",
             Ref { source: Source::TeXWeb, at: "1113" },
             Ref { source: Source::TeXbook, at: "chapter 4" },
         ],
+        fixes: &[Applicability::Safe],
         run: zero_italic_correction,
     },
     Rule {
@@ -71,7 +73,7 @@ Fix by deleting the `\\/`.",
         summary: "a slanted letter runs into upright text with no `\\/` between them",
         explanation: "\
 A slanted letter leans over the space after it, and `\\/` adds the kern the
-font asks for ([The TeXbook](https://ctan.org/pkg/texbook), chapter 4).
+font asks for (The TeXbook, chapter 4).
 
 satex compares each character's `\\f@shape` against the kernel's
 `\\itdefault` and `\\sldefault` (fntguide § 2), and the character's italic
@@ -85,6 +87,7 @@ Fix by writing `\\/` after the last slanted character.",
             Ref { source: Source::TeXbook, at: "chapter 4" },
             Ref { source: Source::TeXWeb, at: "1113" },
         ],
+        fixes: &[Applicability::Unsafe],
         run: missing_italic_correction,
     },
     Rule {
@@ -94,7 +97,7 @@ Fix by writing `\\/` after the last slanted character.",
         summary: "an accent sits on top of the dot of an `i` or a `j`",
         explanation: "\
 An accent is placed over the whole character, so an `i` keeps its dot under
-it ([The TeXbook](https://ctan.org/pkg/texbook), chapter 9).  `\\i` and `\\j` are the dotless letters, and math has
+it (The TeXbook, chapter 9).  `\\i` and `\\j` are the dotless letters, and math has
 `\\imath` and `\\jmath` (fntguide § 5).
 
 The rule reads the character the `\\accent` or `\\mathaccent` primitive really
@@ -108,6 +111,7 @@ Fix by writing the dotless letter under the accent.",
             Ref { source: Source::TeXbook, at: "chapter 9" },
             Ref { source: Source::Fntguide, at: "5" },
         ],
+        fixes: &[Applicability::Unsafe],
         run: accent_on_dotted_letter,
     },
 ];
@@ -165,7 +169,7 @@ struct Fonts<'a> {
 impl<'a> Fonts<'a> {
     fn of(analysis: &'a Analysis) -> Fonts<'a> {
         let base = crate::paths::dir_of(Path::new(analysis.file_name(analysis.main_file)));
-        Fonts { analysis, base, read: HashMap::new() }
+        Fonts { analysis, base, read: HashMap::default() }
     }
 
     /// The TFM the engine had loaded for a font state, and the size it was
