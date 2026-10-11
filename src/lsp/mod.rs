@@ -21,8 +21,12 @@
 #![allow(clippy::mutable_key_type)]
 
 mod handlers;
+mod primitives;
+mod unreached;
+#[cfg(target_os = "emscripten")]
+mod wasm;
 
-use std::collections::HashMap;
+use crate::fixed::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -46,7 +50,10 @@ use crate::machine::{Analysis, Machine};
 /// minus `file` when the request means the document that sent it.
 const EXECUTE_COMMAND: &str = "satex/query";
 
+#[cfg_attr(target_os = "emscripten", allow(unreachable_code))]
 pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), String> {
+    #[cfg(target_os = "emscripten")]
+    wasm::serve(cfg, root, main);
     let (connection, io_threads) = match cfg.lsp.port {
         Some(port) => Connection::listen((cfg.lsp.host.as_str(), port)).map_err(|e| e.to_string())?,
         None => Connection::stdio(),
@@ -62,10 +69,14 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
     let (engine_tx, engine_rx) = crossbeam_channel::unbounded::<EngineMsg>();
     let (diagnostics_tx, diagnostics_rx) = crossbeam_channel::unbounded::<PublishDiagnosticsParams>();
     let debounce = Duration::from_millis(cfg.lsp.debounce_ms.max(1));
-    let engine = std::thread::spawn(move || {
-        handlers::VIEW.with_borrow_mut(|view| named.iter().for_each(|r| view.add(r)));
-        engine_loop(engine_rx, diagnostics_tx, cfg, root, main, debounce)
-    });
+    // The stack the command line's main thread has: deep expansion nests that far.
+    let engine = std::thread::Builder::new()
+        .stack_size(8 << 20)
+        .spawn(move || {
+            handlers::VIEW.with_borrow_mut(|view| named.iter().for_each(|r| view.add(r)));
+            engine_loop(engine_rx, Engine::new(cfg, root, main, diagnostics_tx), debounce)
+        })
+        .map_err(|e| e.to_string())?;
 
     let result = main_loop(&connection, &engine_tx, &diagnostics_rx);
     let _ = engine_tx.send(EngineMsg::Shutdown);
@@ -121,7 +132,7 @@ fn main_loop(
                         }
                         handle_request(connection, engine_tx, req);
                     }
-                    Ok(Message::Notification(not)) => handle_notification(engine_tx, not),
+                    Ok(Message::Notification(not)) => handle_notification(&mut |m| engine_tx.send(m).is_ok(), not),
                     Ok(Message::Response(_)) => {}
                     Err(_) => return Ok(()),
                 }
@@ -137,26 +148,35 @@ fn main_loop(
 }
 
 fn handle_request(connection: &Connection, engine_tx: &Sender<EngineMsg>, req: Request) {
+    let _ = connection.sender.send(Message::Response(respond(&mut |m| engine_tx.send(m).is_ok(), req)));
+}
+
+/// `req` answered through `send`, which hands a message to the engine.
+fn respond(send: Send<'_>, req: Request) -> Response {
     let id = req.id.clone();
     let method = req.method.clone();
-    let outcome = dispatch(engine_tx, req);
-    let response = match outcome {
+    match dispatch(send, req) {
         Ok(value) => Response::new_ok(id, value),
         Err(message) => Response::new_err(id, ErrorCode::InternalError as i32, format!("{method}: {message}")),
-    };
-    let _ = connection.sender.send(Message::Response(response));
+    }
 }
+
+/// Hands one message to the engine: a channel to its thread, or the engine itself.
+type Send<'a> = &'a mut dyn FnMut(EngineMsg) -> bool;
 
 /// Sends `msg` to the engine and blocks on its one-shot reply — the engine
 /// answers every read from its own thread rather than handing out its
 /// `Analysis`, so this is the only way to ask it anything.
-fn ask<T>(engine_tx: &Sender<EngineMsg>, build: impl FnOnce(Sender<T>) -> EngineMsg) -> Result<T, String> {
+fn ask<T>(engine_tx: Send<'_>, build: impl FnOnce(Sender<T>) -> EngineMsg) -> Result<T, String> {
     let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
-    engine_tx.send(build(reply_tx)).map_err(|_| "the analysis engine has stopped".to_string())?;
-    reply_rx.recv().map_err(|_| "the analysis engine has stopped".to_string())
+    let stopped = || "the analysis engine has stopped".to_string();
+    if !engine_tx(build(reply_tx)) {
+        return Err(stopped());
+    }
+    reply_rx.recv().map_err(|_| stopped())
 }
 
-fn dispatch(engine_tx: &Sender<EngineMsg>, req: Request) -> Result<Json, String> {
+fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
     let params = req.params;
     match req.method.as_str() {
         "textDocument/hover" => {
@@ -234,7 +254,7 @@ fn dispatch(engine_tx: &Sender<EngineMsg>, req: Request) -> Result<Json, String>
     }
 }
 
-fn handle_notification(engine_tx: &Sender<EngineMsg>, not: Notification) {
+fn handle_notification(engine_tx: Send<'_>, not: Notification) {
     let sent = match not.method.as_str() {
         "textDocument/didOpen" => serde_json::from_value::<DidOpenTextDocumentParams>(not.params).ok().and_then(|p| {
             let uri = p.text_document.uri;
@@ -257,7 +277,7 @@ fn handle_notification(engine_tx: &Sender<EngineMsg>, not: Notification) {
         _ => None,
     };
     if let Some(msg) = sent {
-        let _ = engine_tx.send(msg);
+        engine_tx(msg);
     }
 }
 
@@ -308,87 +328,112 @@ fn client_roots(params: &Json) -> Vec<PathBuf> {
         .collect()
 }
 
-fn engine_loop(
-    rx: Receiver<EngineMsg>,
-    diagnostics_tx: Sender<PublishDiagnosticsParams>,
+/// The analysis state: open documents, their analyses and quick fixes.
+struct Engine {
+    docs: HashMap<Uri, Doc>,
+    actions: HashMap<Uri, Vec<Json>>,
+    dirty: Vec<Uri>,
     cfg: Config,
     root: PathBuf,
     main: Option<PathBuf>,
-    debounce: Duration,
-) {
-    // The document an input file is read as part of (`satex lsp -f`, else
-    // the one discovery would start from).
-    let main = main.or_else(|| crate::plugin::discovery::scan(&root).root_document());
-    let mut docs: HashMap<Uri, Doc> = HashMap::new();
-    let mut actions: HashMap<Uri, Vec<Json>> = HashMap::new();
-    let mut dirty: Vec<Uri> = Vec::new();
-    loop {
-        let received = if dirty.is_empty() {
-            rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
-        } else {
-            rx.recv_timeout(debounce)
-        };
-        let msg = match received {
-            Ok(msg) => msg,
-            Err(RecvTimeoutError::Timeout) => {
-                for uri in dirty.drain(..) {
-                    analyze(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx);
-                }
-                continue;
-            }
-            Err(RecvTimeoutError::Disconnected) => return,
-        };
+    diagnostics_tx: Sender<PublishDiagnosticsParams>,
+}
+
+impl Engine {
+    fn new(
+        mut cfg: Config,
+        root: PathBuf,
+        main: Option<PathBuf>,
+        diagnostics_tx: Sender<PublishDiagnosticsParams>,
+    ) -> Self {
+        // The document an input file is read as part of (`satex lsp -f`, else
+        // the one discovery would start from).
+        let main = main.or_else(|| crate::plugin::discovery::scan(&root).root_document());
+        // Completion reads the key family an argument feeds off the calls.
+        cfg.record_arguments = true;
+        Engine {
+            docs: HashMap::default(),
+            actions: HashMap::default(),
+            dirty: Vec::new(),
+            cfg,
+            root,
+            main,
+            diagnostics_tx,
+        }
+    }
+
+    /// Analyzes every document edited since the last call.
+    fn flush(&mut self) {
+        for uri in std::mem::take(&mut self.dirty) {
+            analyze(&mut self.docs, &mut self.actions, &uri, &self.cfg, self.main.as_deref(), &self.diagnostics_tx);
+        }
+    }
+
+    /// Analyzes `uri` right away when it has no [`Analysis`] yet, so the first
+    /// request after `didOpen` does not have to wait out the debounce.
+    fn ensure(&mut self, uri: &Uri) {
+        if self.docs.get(uri).is_some_and(|d| d.analysis.is_some()) {
+            return;
+        }
+        analyze(&mut self.docs, &mut self.actions, uri, &self.cfg, self.main.as_deref(), &self.diagnostics_tx);
+        self.dirty.retain(|d| d != uri);
+    }
+
+    fn step(&mut self, msg: EngineMsg) {
         match msg {
-            EngineMsg::Shutdown => return,
+            EngineMsg::Shutdown => {}
             EngineMsg::Open(uri, path, text) => {
                 handlers::VIEW.with_borrow_mut(|view| view.add(&path));
-                docs.insert(uri.clone(), Doc { text, path, analysis: None });
-                if !dirty.contains(&uri) {
-                    dirty.push(uri);
+                self.docs.insert(uri.clone(), Doc { text, path, analysis: None });
+                if !self.dirty.contains(&uri) {
+                    self.dirty.push(uri);
                 }
             }
             EngineMsg::Change(uri, text) => {
-                if let Some(doc) = docs.get_mut(&uri) {
+                if let Some(doc) = self.docs.get_mut(&uri) {
                     doc.text = text;
                     doc.analysis = None;
-                    if !dirty.contains(&uri) {
-                        dirty.push(uri);
+                    if !self.dirty.contains(&uri) {
+                        self.dirty.push(uri);
                     }
                 }
             }
             EngineMsg::Close(uri) => {
-                docs.remove(&uri);
-                actions.remove(&uri);
-                dirty.retain(|d| d != &uri);
+                self.docs.remove(&uri);
+                self.actions.remove(&uri);
+                self.dirty.retain(|d| d != &uri);
             }
             EngineMsg::Hover(uri, pos, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
-                let result = with_doc(&docs, &uri, |analysis, text| handlers::hover(analysis, text, pos));
+                self.ensure(&uri);
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result = with_doc(&self.docs, &uri, |analysis, text| handlers::hover(analysis, text, &path, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::Definition(uri, pos, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
-                let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc(&docs, &uri, |analysis, text| handlers::definition(analysis, text, &path, pos));
+                self.ensure(&uri);
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result =
+                    with_doc(&self.docs, &uri, |analysis, text| handlers::definition(analysis, text, &path, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::References(uri, pos, decls, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
-                let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result =
-                    with_doc(&docs, &uri, |analysis, text| handlers::references(analysis, text, &path, pos, decls));
+                self.ensure(&uri);
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result = with_doc(&self.docs, &uri, |analysis, text| {
+                    handlers::references(analysis, text, &path, pos, decls)
+                });
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::Completion(uri, pos, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
-                let result = with_doc(&docs, &uri, |analysis, text| handlers::completion(analysis, text, pos));
+                self.ensure(&uri);
+                let result = with_doc(&self.docs, &uri, |analysis, text| handlers::completion(analysis, text, pos));
                 let _ = reply.send(result.unwrap_or(lsp_types::CompletionResponse::Array(Vec::new())));
             }
             EngineMsg::DocumentSymbol(uri, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
-                let path = docs.get(&uri).map(|d| d.path.display().to_string());
+                self.ensure(&uri);
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string());
                 let result = match path {
-                    Some(path) => with_doc(&docs, &uri, |analysis, text| {
+                    Some(path) => with_doc(&self.docs, &uri, |analysis, text| {
                         handlers::document_symbols(analysis, &path, text).map(lsp_types::DocumentSymbolResponse::Flat)
                     })
                     .flatten(),
@@ -397,65 +442,64 @@ fn engine_loop(
                 let _ = reply.send(result);
             }
             EngineMsg::Highlight(uri, pos, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
-                let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc(&docs, &uri, |analysis, text| handlers::highlights(analysis, text, &path, pos));
+                self.ensure(&uri);
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result =
+                    with_doc(&self.docs, &uri, |analysis, text| handlers::highlights(analysis, text, &path, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::PrepareRename(uri, pos, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
-                let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                self.ensure(&uri);
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
                 let result =
-                    with_doc(&docs, &uri, |analysis, text| handlers::prepare_rename(analysis, text, &path, pos));
+                    with_doc(&self.docs, &uri, |analysis, text| handlers::prepare_rename(analysis, text, &path, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::Rename(uri, pos, new_name, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
-                let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result =
-                    with_doc(&docs, &uri, |analysis, text| handlers::rename(analysis, text, &path, pos, &new_name))
-                        .unwrap_or_else(|| Err("document is not open".to_string()));
+                self.ensure(&uri);
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result = with_doc(&self.docs, &uri, |analysis, text| {
+                    handlers::rename(analysis, text, &path, pos, &new_name)
+                })
+                .unwrap_or_else(|| Err("document is not open".to_string()));
                 let _ = reply.send(result);
             }
             EngineMsg::WorkspaceSymbol(query, reply) => {
-                let uri = docs.keys().next().cloned();
+                let uri = self.docs.keys().next().cloned();
                 if let Some(uri) = &uri {
-                    ensure_analyzed(&mut docs, &mut actions, uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
+                    self.ensure(uri);
                 }
                 let result = uri
-                    .and_then(|u| with_doc(&docs, &u, |analysis, _| handlers::workspace_symbols(analysis, &query)))
+                    .and_then(|u| with_doc(&self.docs, &u, |analysis, _| handlers::workspace_symbols(analysis, &query)))
                     .unwrap_or_default();
                 let _ = reply.send(result);
             }
             EngineMsg::CodeAction(uri, reply) => {
-                ensure_analyzed(&mut docs, &mut actions, &uri, &cfg, main.as_deref(), &diagnostics_tx, &mut dirty);
-                let _ = reply.send(actions.get(&uri).cloned().unwrap_or_default());
+                self.ensure(&uri);
+                let _ = reply.send(self.actions.get(&uri).cloned().unwrap_or_default());
             }
             EngineMsg::ExecuteCommand(body, reply) => {
-                let active = docs.values().next().map(|d| d.path.clone()).unwrap_or_else(|| root.clone());
-                let result = crate::cmd::query::run_request_value(&body, &cfg, Some(&active));
+                let active = self.docs.values().next().map(|d| d.path.clone()).unwrap_or_else(|| self.root.clone());
+                let result = crate::cmd::query::run_request_value(&body, &self.cfg, Some(&active));
                 let _ = reply.send(result);
             }
         }
     }
 }
 
-/// Analyzes `uri` right away when it has no [`Analysis`] yet, so the first
-/// request after `didOpen` does not have to wait out the debounce.
-fn ensure_analyzed(
-    docs: &mut HashMap<Uri, Doc>,
-    actions: &mut HashMap<Uri, Vec<Json>>,
-    uri: &Uri,
-    cfg: &Config,
-    main: Option<&Path>,
-    diagnostics_tx: &Sender<PublishDiagnosticsParams>,
-    dirty: &mut Vec<Uri>,
-) {
-    if docs.get(uri).is_some_and(|d| d.analysis.is_some()) {
-        return;
+fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) {
+    loop {
+        let received = if engine.dirty.is_empty() {
+            rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
+        } else {
+            rx.recv_timeout(debounce)
+        };
+        match received {
+            Ok(EngineMsg::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
+            Ok(msg) => engine.step(msg),
+            Err(RecvTimeoutError::Timeout) => engine.flush(),
+        }
     }
-    analyze(docs, actions, uri, cfg, main, diagnostics_tx);
-    dirty.retain(|d| d != uri);
 }
 
 /// Re-analyzes `uri`'s current text, publishes its diagnostics, and stashes
@@ -473,6 +517,8 @@ fn analyze(
     diagnostics_tx: &Sender<PublishDiagnosticsParams>,
 ) {
     let Some((text, path)) = docs.get(uri).map(|d| (d.text.clone(), d.path.clone())) else { return };
+    // Rules and handlers read the buffer, not the file on disk.
+    crate::overlay::set(&path, text.clone());
     for (other_uri, other) in docs.iter() {
         if other_uri != uri {
             crate::overlay::set(&other.path, other.text.clone());
@@ -480,7 +526,6 @@ fn analyze(
     }
     let input = path.extension().is_some_and(|e| e == "tex") && !text.contains("\\documentclass");
     let whole = main.filter(|main| input && !same_file(main, &path)).and_then(|main| {
-        crate::overlay::set(&path, text.clone());
         let source = crate::overlay::read_to_string(main).ok()?;
         let analysis = Machine::analyze(&source, Some(main), cfg);
         // Only a document that reads the file speaks for it.
