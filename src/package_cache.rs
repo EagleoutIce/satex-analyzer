@@ -1251,6 +1251,7 @@ impl Machine<'_> {
             call_runs: _,
             call_recs: _,
             guard_seen: _,
+            job_ended: _,
             checked_at: _,
             unknown_digits: _,
             unknown_more: _,

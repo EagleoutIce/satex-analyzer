@@ -1238,6 +1238,8 @@ pub struct Machine<'a> {
     /// Calls being recorded, innermost last.
     call_recs: Vec<calls::CallRec>,
     guard_seen: GuardSeen,
+    /// This path ran `\end` (tex.web § 1054), not off the end of its input.
+    pub(crate) job_ended: bool,
     /// The step count the budget was last checked at. A distance, not a
     /// multiple: a read can step onto a multiple the charge then passes.
     checked_at: u64,
@@ -1500,6 +1502,7 @@ struct PathState {
     cut_taint: Option<usize>,
     call_recs: Vec<calls::CallRec>,
     guard_seen: GuardSeen,
+    job_ended: bool,
 }
 
 /// Where a path stands in the input, for telling when two paths meet: a
@@ -1870,6 +1873,7 @@ impl<'a> Machine<'a> {
             call_runs: HashMap::default(),
             call_recs: Vec::new(),
             guard_seen: GuardSeen::default(),
+            job_ended: false,
             checked_at: 0,
             unknown_digits,
             unknown_more,
@@ -5776,9 +5780,10 @@ will look undefined",
 
     /// A choice at `site`: counted per source line, over all paths and
     /// replays. Past `limits.site_forks` the expansion above the line is
-    /// cut as the guard cuts it ([`Machine::cut`]) instead of parting
-    /// again: what it assigned is unknown, and the line reads on after an
-    /// unknown token. Whether it was cut.
+    /// cut as the guard cuts it ([`Machine::cut`]) on every path that
+    /// stands on the line, instead of parting again: what it assigned is
+    /// unknown, and the line reads on after an unknown token. Whether it
+    /// was cut.
     pub(crate) fn hot_site(&mut self, site: Span) -> bool {
         let limit = self.limits.site_forks;
         if limit == 0 || self.budget.is_some() {
@@ -5793,6 +5798,14 @@ will look undefined",
         if !self.guard_seen.cut {
             let file = self.out.short_name(site.file).to_string();
             let at = self.position_span();
+            if self.cfg.verbose >= 4 {
+                crate::progress::note!(
+                    "satex: site {file}:{}:{} cut at {at:?}, {} paths waiting",
+                    site.line,
+                    site.col,
+                    self.waiting
+                );
+            }
             self.diagnose(
                 Severity::Imprecision,
                 "site-forks-cut",
@@ -5802,6 +5815,14 @@ will look undefined",
                     site.line, at.line
                 ),
             );
+            // The line's first overrun, as the guard counts it: every path
+            // parked on it takes the cut when it runs again.
+            let line = self.guard_key(at);
+            let entry = self.guard.lines.entry(line).or_default();
+            if entry.1 == 0 {
+                *entry = (0, 1);
+            }
+            (self.guard_seen.line, self.guard_seen.level) = (line, entry.1);
             self.cut();
         }
         true
@@ -8831,6 +8852,7 @@ will look undefined",
             cut_taint: self.cut_taint,
             call_recs: self.call_recs.clone(),
             guard_seen: self.guard_seen,
+            job_ended: self.job_ended,
         }
     }
 
@@ -8872,6 +8894,7 @@ will look undefined",
         self.cut_taint = state.cut_taint;
         self.call_recs = state.call_recs;
         self.guard_seen = state.guard_seen;
+        self.job_ended = state.job_ended;
         if self.call_recs.is_empty() {
             self.env.log_reads(false);
         }
@@ -9476,6 +9499,7 @@ will look undefined",
     /// The engine's `\end`: nothing after it is read, whatever file or
     /// token list it stood in (tex.web § 1335).
     pub fn end_job(&mut self) {
+        self.job_ended = true;
         // `\end{document}` ends the job inside the environment it names.
         if let Some((_, at)) = self.file_call
             && let Some(name) = crate::observe::current_environment(self).filter(|n| !n.is_empty())
