@@ -4,6 +4,8 @@
 //! (`limits.call_summary_after` of them; 0 never summarizes).
 //! Forced convergence for parsers that walk unknown text a token at a time.
 
+use std::rc::Rc;
+
 use super::Machine;
 use crate::env::{Binding, NodeId};
 use crate::facts::Severity;
@@ -103,7 +105,7 @@ impl Machine<'_> {
                 leaky: false,
                 unknown,
             };
-            self.call_recs.push(rec);
+            Rc::make_mut(&mut self.call_recs).push(rec);
         }
     }
 
@@ -196,7 +198,7 @@ impl Machine<'_> {
         while let Some(rec) = self.call_recs.last()
             && self.input.len() <= rec.base
         {
-            let rec = self.call_recs.pop().expect("one");
+            let rec = Rc::make_mut(&mut self.call_recs).pop().expect("one");
             let main = self.reading_command && self.step_depth == 1;
             let clean = main
                 && !rec.leaky
@@ -250,8 +252,10 @@ impl Machine<'_> {
     /// The running calls read text that is not theirs, or changed state a
     /// summary does not carry.
     pub(crate) fn leak_call_recs(&mut self) {
-        for rec in &mut self.call_recs {
-            rec.leaky = true;
+        if self.call_recs.iter().any(|rec| !rec.leaky) {
+            for rec in Rc::make_mut(&mut self.call_recs) {
+                rec.leaky = true;
+            }
         }
     }
 }
