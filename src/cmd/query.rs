@@ -20,35 +20,26 @@ pub fn run(
     out: &mut impl Write,
 ) -> Result<Output, String> {
     if list {
-        let names: Vec<Record> = Query::ALL
-            .iter()
-            .map(|(name, _)| {
-                let mut record = Record::new();
-                record.insert("name".into(), json!(*name));
-                record
-            })
-            .collect();
-        return Ok(Output::Records(names));
+        let names = Query::ALL.iter().map(|(name, _)| Record::from_iter([("name".to_string(), json!(*name))]));
+        return Ok(Output::Records(names.collect()));
     }
     let name = name.ok_or("expected a query name; try --list")?;
     let query = Query::parse(name).ok_or_else(|| format!("unknown query `{name}`"))?;
     let filter = parse_filter(filter)?;
+    let kept = |found: Vec<Record>| Ok(Output::Records(found.into_iter().filter(|r| filter.accepts(r)).collect()));
     if query == Query::Produces {
         let text = text.ok_or("the `produces` query needs the text to look for: --text TEXT")?;
-        let found = query::produces(context.analysis, context.source, text);
-        return Ok(Output::Records(found.into_iter().filter(|r| filter.accepts(r)).collect()));
+        return kept(query::produces(context.analysis, context.source, text));
     }
     if text.is_some() {
         return Err(format!("`--text` is what the `produces` query looks for, not `{name}`"));
     }
     if query == Query::Pgfkeys {
-        let found = query::pgfkeys(context.analysis, prefix);
-        return Ok(Output::Records(found.into_iter().filter(|r| filter.accepts(r)).collect()));
+        return kept(query::pgfkeys(context.analysis, prefix));
     }
     if query == Query::Options {
         let for_ = for_.ok_or("the `options` query needs a name: --for NAME")?;
-        let found = query::options(context.analysis, for_);
-        return Ok(Output::Records(found.into_iter().filter(|r| filter.accepts(r)).collect()));
+        return kept(query::options(context.analysis, for_));
     }
     if let Some(for_) = for_ {
         return Err(format!("`--for {for_}` is what the `options` query takes, not `{name}`"));
@@ -425,10 +416,9 @@ fn answer(analysis: &crate::machine::Analysis, source: &str, entry: &Json) -> Js
             _ => Vec::new(),
         }
     };
-    let filter = match entry.get("filter").and_then(Json::as_str).map(query::Filter::parse) {
-        Some(Ok(filter)) => filter,
-        Some(Err(message)) => return error(message),
-        None => query::Filter::Always,
+    let filter = match parse_filter(entry.get("filter").and_then(Json::as_str)) {
+        Ok(filter) => filter,
+        Err(message) => return error(message),
     };
     let flag = |key: &str| entry.get(key).and_then(Json::as_bool).unwrap_or(false);
     let records = match kind {
@@ -442,23 +432,7 @@ fn answer(analysis: &crate::machine::Analysis, source: &str, entry: &Json) -> Js
                 Err(message) => error(message),
             };
         }
-        "controls" => {
-            let names = strings("names");
-            let mut out = if names.is_empty() {
-                query::switches(analysis, flag("all"))
-            } else {
-                let mut out = Vec::new();
-                for name in &names {
-                    for mut record in query::controls(analysis, name) {
-                        record.insert("for".into(), json!(name.trim_start_matches('\\')));
-                        out.push(record);
-                    }
-                }
-                out
-            };
-            query::in_document_order(analysis, &mut out);
-            out
-        }
+        "controls" => query::controls_of(analysis, &strings("names"), flag("all")),
         "slice" => {
             let at = match entry.get("at").and_then(Json::as_str).map(super::parse_place) {
                 Some(Ok(at)) => Some(at),

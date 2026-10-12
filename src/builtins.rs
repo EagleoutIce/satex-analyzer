@@ -600,22 +600,6 @@ pub enum TextOf {
     JobName,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
-pub enum HookOp {
-    Add,
-    AddNext,
-    AddLegacy,
-    AddEnvironment,
-    New,
-    NewPair,
-    Use,
-    UseOnce,
-    Remove,
-    Rule,
-    IfEmpty,
-    Show,
-}
-
 /// One of TeX's per-character code tables (tex.web § 230).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum CodeTable {

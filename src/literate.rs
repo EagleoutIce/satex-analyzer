@@ -281,7 +281,7 @@ pub fn docstrip(m: &mut Machine, op: DocstripOp, span: Span) {
             });
             // The preamble is text, not TeX to run: docstrip reads it line by
             // line and writes it into every file it generates.
-            while let Some(token) = m.read_raw() {
+            while let Some(token) = m.next_token() {
                 if token.cs() == Some(stop) {
                     break;
                 }

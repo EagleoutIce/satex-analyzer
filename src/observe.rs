@@ -406,23 +406,6 @@ pub fn environment_closed(m: &mut Machine, inner: Option<String>, span: Span) {
     }
 }
 
-/// `\@ifundefined{⟨name⟩}` tests the name `\csname` would build from its
-/// argument: characters up to the first remaining control sequence.
-/// Kernel no-op macros (`\@empty` among them) are passed over as their
-/// expansion would be.
-pub fn tested_tokens(m: &mut Machine, tokens: &[Token]) {
-    let mut name = String::new();
-    for token in tokens {
-        match token.tok {
-            Tok::Chr(c, cat) if cat != Catcode::Active => name.push(c),
-            Tok::Param(_) => {}
-            Tok::Cs(sym) if m.env.meaning(sym).prim() == Some(Primitive::Relax) => {}
-            _ => break,
-        }
-    }
-    read_name(m, &name);
-}
-
 /// What the command an `\expandafter` held back does with the name: only a
 /// `\csname` that `\expandafter` expanded directly is its operand.
 fn role(m: &mut Machine, span: Span) -> CsnameRole {

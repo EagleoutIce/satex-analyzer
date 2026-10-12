@@ -466,10 +466,7 @@ impl Command {
 }
 
 pub fn parse_filter(text: Option<&str>) -> Result<crate::query::Filter, String> {
-    match text {
-        None => Ok(crate::query::Filter::Always),
-        Some(text) => crate::query::Filter::parse(text),
-    }
+    text.map_or(Ok(crate::query::Filter::Always), crate::query::Filter::parse)
 }
 
 pub fn parse_position(text: &str) -> Result<(u32, u32), String> {

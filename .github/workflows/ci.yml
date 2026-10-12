@@ -98,7 +98,7 @@ jobs:
       # scheme-basic is the smallest tree with a real LaTeX in it, and it
       # carries pdfTeX, XeTeX and LuaTeX: what the engine-dependent tests
       # drive.  A bigger scheme buys packages, not platform coverage.
-      - uses: teatimeguest/setup-texlive-action@v3
+      - uses: TeX-Live/setup-texlive-action@v4
         with:
           packages: scheme-basic
           cache: true
@@ -236,7 +236,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: teatimeguest/setup-texlive-action@v3
+      - uses: TeX-Live/setup-texlive-action@v4
         with:
           packages: scheme-basic
           cache: true
@@ -329,9 +329,12 @@ jobs:
           # github.com/.../blob/<sha>/...#L<line> citations would otherwise hit.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          # Links into this repository's `main` are checked against the
+          # checkout (see lychee.toml).
           args: >-
             --config lychee.toml
             --no-progress
+            --remap 'https://github\.com/EagleoutIce/satex-analyzer/blob/main/([^#]*)(#.*)? file://${{ github.workspace }}/$1'
             *.md
             doc/**/*.md
           fail: true

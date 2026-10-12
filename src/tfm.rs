@@ -143,13 +143,6 @@ impl Metrics {
         self.info(c).map_or(-1, |info| [0, 1, 2, 4][usize::from(info[2] & 3)])
     }
 
-    /// Whether the font has a boundary character or a program for the left
-    /// boundary (tex.web § 545: a first or last instruction with a
-    /// `skip_byte` of 255).
-    pub fn has_boundary(&self) -> bool {
-        self.lig_kern.first().is_some_and(|i| i[0] == 255) || self.lig_kern.last().is_some_and(|i| i[0] == 255)
-    }
-
     /// The instruction of `left`'s ligature/kerning program for `right`
     /// (tex.web §§ 557, 1039), its kern scaled to `z`.
     pub fn lig_kern(&self, left: u32, right: u32, z: Scaled) -> Option<LigKern> {

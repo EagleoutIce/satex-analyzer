@@ -71,12 +71,12 @@ pub fn primitive(m: &mut Machine, op: LuaOp, by: Sym, span: Span) {
                 return;
             }
             match super::lua_run::chunk(m, &code, span) {
-                Some(tokens) => m.push_tokens(Rc::from(tokens), None),
+                Some(tokens) => m.push_tokens(Rc::from(tokens)),
                 None => {
                     unfinished(m, &code, span, 0);
                     m.note_gap("lua-output", by, span);
                     let unknown = m.unknown_text(Unk::Any, span);
-                    m.push_tokens(Rc::from(vec![unknown]), None);
+                    m.push_tokens(Rc::from(vec![unknown]));
                 }
             }
         }
@@ -84,7 +84,7 @@ pub fn primitive(m: &mut Machine, op: LuaOp, by: Sym, span: Span) {
             let text = chunk_text(m);
             let escaped = escape(&text);
             let tokens = string_tokens(&escaped, span);
-            m.push_tokens(Rc::from(tokens), None);
+            m.push_tokens(Rc::from(tokens));
         }
         LuaOp::InitCatcodes => {
             if let Some(n) = m.scan_number() {
@@ -462,12 +462,12 @@ fn defined_names(tokens: &[String]) -> Vec<String> {
 /// it reads and what it puts back are unknown.
 pub fn call(m: &mut Machine, id: u32, by: Sym, span: Span) {
     match super::lua_run::function(m, id, span) {
-        Some(tokens) => m.push_tokens(Rc::from(tokens), None),
+        Some(tokens) => m.push_tokens(Rc::from(tokens)),
         None => {
             m.note_gap("lua-function", by, span);
             m.widen_mode();
             let unknown = m.unknown_text(Unk::Any, span);
-            m.push_tokens(Rc::from(vec![unknown]), None);
+            m.push_tokens(Rc::from(vec![unknown]));
         }
     }
 }

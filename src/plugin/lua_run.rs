@@ -971,7 +971,7 @@ fn put_next<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) -
             tokens.append(captured);
             *captured = tokens;
         }
-        None => run.m.push_tokens(Rc::from(tokens), None),
+        None => run.m.push_tokens(Rc::from(tokens)),
     }
     ret(lua, ())
 }

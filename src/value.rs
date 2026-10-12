@@ -313,7 +313,7 @@ impl Num {
 
     /// Whether it is odd, when the interval is a single value.
     pub fn odd(&self) -> Option<bool> {
-        (self.lo == self.hi).then(|| self.lo % 2 != 0)
+        (self.lo == self.hi).then_some(self.lo % 2 != 0)
     }
 
     /// What `self relation bound` being `holds` leaves of `self`: the
@@ -409,11 +409,6 @@ pub enum Model {
     Named,
     Ps,
 }
-
-/// The models `\XC@coremodel` leaves alone, in the order [`Model`] lists
-/// them. Every other model is converted into one of these before xcolor
-/// stores it.
-pub const CORE_MODELS: [Model; 5] = [Model::Rgb, Model::Cmy, Model::Cmyk, Model::Hsb, Model::Gray];
 
 impl Model {
     pub fn as_str(self) -> &'static str {
@@ -719,8 +714,7 @@ impl Value {
     /// touch become one.
     fn union(mut a: Vec<Value>, b: Vec<Value>) -> Vec<Value> {
         for mut v in b {
-            loop {
-                let Some((q, n)) = v.num() else { break };
+            while let Some((q, n)) = v.num() {
                 let near = |w: &Value| {
                     w.num().is_some_and(|(p, m)| {
                         p == q
@@ -770,7 +764,7 @@ impl Value {
         match self {
             Value::Int(n) => Some((Quantity::Int, Num::exact(*n))),
             Value::Dimen(d) => Some((Quantity::Dimen, Num::exact(*d))),
-            Value::Num { quantity, num } => Some((*quantity, num.clone())),
+            Value::Num { quantity, num } => Some((*quantity, *num)),
             Value::OneOf(set) => {
                 let mut nums = set.iter().map(Value::num).collect::<Option<Vec<_>>>()?.into_iter();
                 let first = nums.next()?;

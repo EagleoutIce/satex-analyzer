@@ -109,22 +109,7 @@ fn write_project(
 }
 
 pub fn controls(context: &Context, names: &[String], all: bool) -> Result<Output, String> {
-    let mut records = if names.is_empty() {
-        query::switches(context.analysis, all)
-    } else {
-        // Several names answer in one table: each row keeps the switch or
-        // option it belongs to in `for`, so one answer is still traceable
-        // to the name that asked for it.
-        let mut out = Vec::new();
-        for name in names {
-            for mut record in query::controls(context.analysis, name) {
-                record.insert("for".into(), serde_json::json!(name.trim_start_matches('\\')));
-                out.push(record);
-            }
-        }
-        out
-    };
-    query::in_document_order(context.analysis, &mut records);
+    let records = query::controls_of(context.analysis, names, all);
     Ok(match (names.is_empty(), all) {
         (true, false) => {
             Output::Partial(records, "`--all` adds the switches and options the kernel and the packages bring".into())

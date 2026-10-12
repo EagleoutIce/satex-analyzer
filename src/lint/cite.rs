@@ -235,6 +235,8 @@ fn tex_web_citation(prefix: &str, cite: &str) -> Option<String> {
 /// `last_url` through so a bare `§ N` after a real citation resolves to the
 /// same source. See [`linkify_citations`] for the forms this handles.
 fn linkify_prose(text: &str, master: &Regex, aliases: &[Alias], last_url: &mut Option<String>) -> String {
+    static CHAPTER: OnceLock<Regex> = OnceLock::new();
+    let chapter = CHAPTER.get_or_init(|| Regex::new(r"(chapter|appendix)\s+([0-9A-Z]+)").expect("valid regex"));
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
     for caps in master.captures_iter(text) {
@@ -265,7 +267,6 @@ fn linkify_prose(text: &str, master: &Regex, aliases: &[Alias], last_url: &mut O
                 out.push_str(&rendered);
             } else if entry.always || caps.name("cite").is_some() {
                 *last_url = Some(entry.url.clone());
-                let chapter = Regex::new(r"(chapter|appendix)\s+([0-9A-Z]+)").expect("valid regex");
                 let url = match (entry.name, chapter.captures(m.as_str())) {
                     ("The TeXbook", Some(c)) => format!("{}#{}-{}", entry.url, &c[1], c[2].to_lowercase()),
                     _ => entry.url.clone(),

@@ -3,9 +3,10 @@
 //! space that never reached the page is never reported.
 
 use crate::fixed::{HashMap, HashSet};
+use std::rc::Rc;
 
 use crate::builtins::OccKind;
-use crate::lint::fix::{Applicability, Edit, Fix, Pos, Text};
+use crate::lint::fix::{Applicability, Edit, Edits, Fix, Pos, Text};
 use crate::lint::text::{PUNCTUATION, Rewrite, View};
 use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 use crate::machine::Analysis;
@@ -220,6 +221,14 @@ fn space_before(analysis: &Analysis, source: &Text, span: Span) -> Option<(Span,
     analysis.facts.spaces.get(&at).map(|modes| (at, 1, *modes))
 }
 
+/// [`space_before`] `span` where it became glue, with the path and text of
+/// the file it stands in.
+fn glue_before(analysis: &Analysis, edits: &Edits<'_>, span: Span) -> Option<(String, Rc<Text>, Span, u32)> {
+    let (path, source) = edits.text(span.file)?;
+    let (at, width, modes) = space_before(analysis, &source, span)?;
+    glue(modes).then_some((path, source, at, width))
+}
+
 fn write_over(path: &str, at: Span, width: u32, with: &str) -> Vec<Edit> {
     vec![Edit {
         path: path.to_string(),
@@ -357,11 +366,7 @@ fn missing_nonbreaking_space(report: &mut Report) {
         if naming.contains(&span) {
             continue;
         }
-        let Some((path, source)) = edits.text(span.file) else { continue };
-        let Some((at, width, modes)) = space_before(analysis, &source, span) else { continue };
-        if !glue(modes) {
-            continue;
-        }
+        let Some((path, source, at, width)) = glue_before(analysis, &edits, span) else { continue };
         // A tie only helps where a word stands in front of the space.
         let line: Vec<char> = source.line(at.line).chars().collect();
         let word = at.col.checked_sub(2).and_then(|k| line.get(k as usize)).copied();
@@ -446,11 +451,7 @@ fn space_before_command(report: &mut Report) {
     let analysis = report.analysis;
     let edits = report.edits();
     for (span, what) in sites(analysis, report.text(), &[OccKind::Label], &[INDEXING, FOOTNOTE], true) {
-        let Some((path, source)) = edits.text(span.file) else { continue };
-        let Some((at, width, modes)) = space_before(analysis, &source, span) else { continue };
-        if !glue(modes) {
-            continue;
-        }
+        let Some((path, _, at, width)) = glue_before(analysis, &edits, span) else { continue };
         let footnote = FOOTNOTE.contains(&what.as_str());
         let cost = match footnote {
             true => "so the mark can be set away from the word it belongs to",

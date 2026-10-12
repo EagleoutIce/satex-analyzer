@@ -37,7 +37,7 @@ pub(crate) enum Kp {
     Whatsit,
     /// A discretionary with an empty replacement and post-break list, and
     /// this pre-break box (none after a `\hyphenchar`, § 1039).
-    Disc(Option<(Scaled, Scaled, Scaled)>),
+    Disc(Option<Dims>),
 }
 
 impl Kp {
@@ -64,6 +64,9 @@ pub(crate) struct Arena {
 }
 
 /// Longest paragraph segment and largest arena followed.
+/// A box's width, height and depth.
+type Dims = (Scaled, Scaled, Scaled);
+
 const MAX_ITEMS: u32 = 4000;
 const MAX_NODES: usize = 1 << 21;
 const INF_BAD: i64 = 10000;
@@ -223,7 +226,7 @@ impl Machine<'_> {
         let (left, right) = self.hyphen_mins();
         let tables = self.hyph_tables();
         let mut out: Vec<Kp> = items[..start].to_vec();
-        let mut points: HashMap<usize, (Scaled, Scaled, Scaled)> = HashMap::new();
+        let mut points: HashMap<usize, Dims> = HashMap::new();
         for i in start..items.len() {
             if !matches!(items[i], Kp::Glue { .. }) {
                 continue;
@@ -390,7 +393,7 @@ impl Pass {
             add(&mut pre[i + 1], *k);
         }
         // Break positions: (item, prev passive, pre-break box).
-        let mut passive: Vec<(usize, Option<usize>, Option<(Scaled, Scaled, Scaled)>)> = Vec::new();
+        let mut passive: Vec<(usize, Option<usize>, Option<Dims>)> = Vec::new();
         let mut active = vec![Active { start: self.start, fit: self.fit0, hyphenated: false, total: 0, passive: None }];
         let [line_pen, adj, double, fin, hyph, ex] = self.dem;
         for e in self.start..=n {

@@ -127,10 +127,6 @@ struct Head {
     bound: Option<u32>,
 }
 
-/// A loop head without its content: call site, deciding command, source
-/// progress.
-type LoopId = (Span, Sym, u64);
-
 /// Where a loop was entered: its input levels, conditionals and groups
 /// then.
 struct Loop {
@@ -223,8 +219,11 @@ struct Shelved {
     config: Config,
     error: String,
     at: Span,
-    counts: Vec<(usize, u32)>,
+    counts: Counts,
 }
+
+/// Diagnostics made, as (counter, how many).
+type Counts = Vec<(usize, u32)>;
 
 /// What one command left.
 enum Next {
@@ -513,7 +512,7 @@ impl Machine<'_> {
 
     /// By how much the running command raised the counts of diagnostics
     /// seen before, from `undo[mark..]`.
-    fn made_counts(&self, mark: usize) -> Vec<(usize, u32)> {
+    fn made_counts(&self, mark: usize) -> Counts {
         let mut counts: Vec<(usize, u32)> = Vec::new();
         for u in &self.undo[mark..] {
             if let Undo::Count(i, old) = u
@@ -566,7 +565,7 @@ impl Machine<'_> {
         self.runs = 0;
         let mut outcomes = Vec::new();
         let mut first = None;
-        let mut dropped: Vec<(Config, String, Vec<(usize, u32)>)> = Vec::new();
+        let mut dropped: Vec<(Config, String, Counts)> = Vec::new();
         // Each run and each re-entry after a cut is paid, as in the drive.
         let mut mark = if head { self.out.steps.wrapping_sub(1) } else { self.out.steps };
         loop {
@@ -753,7 +752,7 @@ impl Machine<'_> {
             self.approximated = true;
             self.taint_after_cut();
             let unknown = self.unknown_text(Unk::Any, span);
-            self.push_tokens(Rc::from(vec![unknown]), None);
+            self.push_tokens(Rc::from(vec![unknown]));
             return self.explore(paths, false);
         }
         if let Some(l) = paths.stopped.iter().position(reentry) {
@@ -850,8 +849,11 @@ impl Machine<'_> {
         });
         let folded = folded_exact || (folded_alike && alike.is_some());
         // Alike after folding is the fixpoint already: forced at once.
-        let forced = forced || (folded && entry.is_some_and(|e| e.2 >= 1));
-        let (forced_new, forced_join) = (forced, forced);
+        // Otherwise the count of passes forces only a pass that meets no
+        // head: one that does is joined, and widening, with `diverges`
+        // below, ends it by a fixpoint rather than by the count.
+        let forced_join = folded && entry.is_some_and(|e| e.2 >= 1);
+        let forced_new = forced || forced_join;
         // What the head compares with: here, its `\fi` tail dropped.
         let here_input = match folded {
             true => fi_frames_dropped(&here.state.input, entry.map_or(0, |e| e.0), &is_fi),
@@ -873,7 +875,7 @@ impl Machine<'_> {
                 && a.places.iter().zip(&b.places).all(|(x, y)| x == y || (text(x) && text(y)))
         };
         let alike = alike.or_else(|| {
-            let kins = exact.is_none().then(|| paths.heads.iter().filter(|h| kin(h)).count()).unwrap_or(0);
+            let kins = if exact.is_none() { paths.heads.iter().filter(|h| kin(h)).count() } else { 0 };
             (kins > usize::from(self.limits.widen_after)).then(|| paths.heads.iter().rposition(kin)).flatten()
         });
         // Whether the head's input grew by the widening: what it reads
@@ -945,7 +947,7 @@ impl Machine<'_> {
                 }
                 let unknown = self.unknown_text(Unk::Any, span);
                 self.scratch.summarized.insert(span);
-                self.push_tokens(Rc::from(vec![unknown]), None);
+                self.push_tokens(Rc::from(vec![unknown]));
                 // Every path cut here joins one summary, widened, so the
                 // cuts reach a fixpoint instead of each running on.
                 let cut = Config::new(self.save_path(), self.env.path(&fork), false);
@@ -1035,7 +1037,7 @@ impl Machine<'_> {
         self.explore(paths, false)
     }
 
-    /// A loop met `widen_after` times is not run again: what it could
+    /// A loop forced to converge is not run again: what it could
     /// write may hold anything, the input it read on unwinds to where it
     /// was entered and reads one unknown token, and conditionals and groups
     /// it opened are assumed closed. Met again in this drive, it stops.
@@ -1160,7 +1162,7 @@ impl Machine<'_> {
             Rc::make_mut(&mut self.scratch.summary_of).push(id);
         }
         let unknown = self.unknown_text(Unk::Any, span);
-        self.push_tokens(Rc::from(vec![unknown]), None);
+        self.push_tokens(Rc::from(vec![unknown]));
         self.explore(paths, false)
     }
 

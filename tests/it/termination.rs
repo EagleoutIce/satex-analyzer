@@ -107,12 +107,14 @@ mod repeated_failures {
     /// How often the input below reaches the one failing site.
     const USES: usize = 40;
 
-    /// A code table entry satex cannot pin down (the engine's clock names
-    /// the character), always the one in `\x`'s body, so every occurrence
-    /// carries the same code and the same span. The engine's own errors
-    /// (`extra-fi`) are recovered as TeX recovers them and never cut.
+    /// A `\parshape` whose line count satex cannot pin down (the engine's
+    /// clock gives it), always the one in `\x`'s body, so every occurrence
+    /// carries the same code and the same span (tex.web § 1248: the count
+    /// says how much follows, so what is read after it is unknown). The
+    /// engine's own errors (`extra-fi`) are recovered as TeX recovers them
+    /// and never cut.
     fn same_gap_n_times() -> String {
-        format!("\\catcode`\\{{=1 \\catcode`\\}}=2 \\def\\x{{\\lccode\\pdfelapsedtime=11 }}{}", "\\x".repeat(USES))
+        format!("\\catcode`\\{{=1 \\catcode`\\}}=2 \\def\\x{{\\parshape\\pdfelapsedtime }}{}", "\\x".repeat(USES))
     }
 
     fn cfg(bound: u32) -> Config {
@@ -146,7 +148,7 @@ mod repeated_failures {
     #[test]
     fn one_site_reports_the_gap_exactly_the_bound_of_times() {
         let analysis = Machine::analyze(&same_gap_n_times(), None, &cfg(8));
-        assert_eq!(rows(&analysis, "unknown-char-code"), vec![8]);
+        assert_eq!(rows(&analysis, "unknown-parshape"), vec![8]);
         assert_eq!(rows(&analysis, "repeated-failure"), vec![1]);
     }
 
@@ -154,7 +156,7 @@ mod repeated_failures {
     #[test]
     fn the_bound_follows_the_limit() {
         let analysis = Machine::analyze(&same_gap_n_times(), None, &cfg(3));
-        assert_eq!(rows(&analysis, "unknown-char-code"), vec![3]);
+        assert_eq!(rows(&analysis, "unknown-parshape"), vec![3]);
         assert_eq!(rows(&analysis, "repeated-failure"), vec![1]);
     }
 
@@ -163,7 +165,7 @@ mod repeated_failures {
     #[test]
     fn zero_lifts_the_bound() {
         let analysis = Machine::analyze(&same_gap_n_times(), None, &cfg(0));
-        assert_eq!(rows(&analysis, "unknown-char-code"), vec![USES as u32]);
+        assert_eq!(rows(&analysis, "unknown-parshape"), vec![USES as u32]);
         assert_eq!(rows(&analysis, "repeated-failure"), Vec::<u32>::new());
     }
 

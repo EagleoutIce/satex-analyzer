@@ -3,7 +3,7 @@ use std::cell::{OnceCell, RefCell};
 use std::collections::BTreeMap;
 
 use crate::builtins::OccKind;
-use crate::facts::Occurrence;
+use crate::facts::{Load, Occurrence};
 use crate::machine::{Analysis, Recursion};
 use crate::tex::{FileId, Span, Sym};
 
@@ -174,6 +174,17 @@ impl<'a> Index<'a> {
 
     pub fn first_loads(&self) -> &HashMap<&'a str, (Vec<String>, Span)> {
         self.first_loads.get_or_init(|| first_loads(self.analysis))
+    }
+
+    /// Each package load after that package's first, with the options the
+    /// first load gave, where it stands, and that load itself.
+    pub fn reloads(&'a self) -> impl Iterator<Item = (&'a Load, &'a [String], Span, Option<&'a Load>)> {
+        let loads = &self.analysis.facts.loads;
+        loads.iter().filter(|load| load.kind.is_package()).filter_map(|load| {
+            let (options, at) = self.first_loads().get(load.name.as_str()).filter(|(_, at)| *at != load.span)?;
+            let first = loads.iter().find(|l| l.span == *at && l.name == load.name);
+            Some((load, options.as_slice(), *at, first))
+        })
     }
 
     pub fn definition_order(&self) -> &HashMap<Sym, Span> {

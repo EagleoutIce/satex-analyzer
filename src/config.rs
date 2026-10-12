@@ -1299,7 +1299,7 @@ fn migrate_legacy(value: &mut serde_yaml_ng::Value, context: &str) {
     for (old_key, new_path) in LEGACY_KEYS {
         for suffix in ["", "+"] {
             let key_name = format!("{old_key}{suffix}");
-            let Some(old) = map.remove(&Value::String(key_name.clone())) else { continue };
+            let Some(old) = map.remove(Value::String(key_name.clone())) else { continue };
             let mut path: Vec<String> = new_path.iter().map(|s| (*s).to_string()).collect();
             *path.last_mut().expect("non-empty path") += suffix;
             eprintln!("{FILE_NAME}: {context}: {key_name} is now {}", path.join("."));
@@ -1636,6 +1636,23 @@ pub fn names_file(path: &str, name: &str) -> bool {
     path.ends_with(name) || path.ends_with(format!("{name}.tex"))
 }
 
+/// Every dotted key path `satex.yaml` takes, with its default, read off the defaults.
+pub fn keys() -> serde_json::Map<String, serde_json::Value> {
+    fn walk(prefix: &str, v: &serde_json::Value, out: &mut serde_json::Map<String, serde_json::Value>) {
+        match v {
+            serde_json::Value::Object(m) if !m.is_empty() => {
+                for (k, v) in m {
+                    walk(&if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") }, v, out);
+                }
+            }
+            _ => drop(out.insert(prefix.to_string(), v.clone())),
+        }
+    }
+    let mut out = serde_json::Map::new();
+    walk("", &serde_json::to_value(Config::default()).unwrap_or_default(), &mut out);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1800,21 +1817,4 @@ mod tests {
         assert!(!cfg.load.classes);
         let _ = std::fs::remove_dir_all(&dir);
     }
-}
-
-/// Every dotted key path `satex.yaml` takes, with its default, read off the defaults.
-pub fn keys() -> serde_json::Map<String, serde_json::Value> {
-    fn walk(prefix: &str, v: &serde_json::Value, out: &mut serde_json::Map<String, serde_json::Value>) {
-        match v {
-            serde_json::Value::Object(m) if !m.is_empty() => {
-                for (k, v) in m {
-                    walk(&if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") }, v, out);
-                }
-            }
-            _ => drop(out.insert(prefix.to_string(), v.clone())),
-        }
-    }
-    let mut out = serde_json::Map::new();
-    walk("", &serde_json::to_value(Config::default()).unwrap_or_default(), &mut out);
-    out
 }

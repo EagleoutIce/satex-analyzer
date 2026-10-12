@@ -123,29 +123,18 @@ Fix by dumping the preamble into a format and starting every build from it.",
 
 fn duplicate_package(report: &mut Report) {
     let analysis = report.analysis();
-    let first = report.index().first_loads();
-    for load in &analysis.facts.loads {
-        if !load.kind.is_package() {
-            continue;
-        }
-        let Some((options, at)) = first.get(load.name.as_str()) else { continue };
-        if *at == load.span || load.options.iter().any(|o| !options.contains(o)) {
+    for (load, options, at, first_load) in report.index().reloads() {
+        if load.options.iter().any(|o| !options.contains(o)) {
             continue;
         }
         let edits = report.edits().delete_load(load);
         // The first load may be a package's own request (`tikz` loads `pgf`).
-        let by = analysis
-            .facts
-            .loads
-            .iter()
-            .find(|l| l.span == *at && l.name == load.name)
-            .and_then(|l| l.by)
-            .map(|by| format!(" by {}", analysis.interner.name(by)))
-            .unwrap_or_default();
+        let by =
+            first_load.and_then(|l| l.by).map(|by| format!(" by {}", analysis.interner.name(by))).unwrap_or_default();
         report.add_fix(
             load.span,
             &load.name,
-            format!("{} is already loaded{by} at {}", load.name, report.place(*at)),
+            format!("{} is already loaded{by} at {}", load.name, report.place(at)),
             Fix::new(format!("delete this \\usepackage{{{}}}", load.name), Applicability::Safe, edits),
         );
     }

@@ -369,13 +369,12 @@ impl std::hash::BuildHasher for NameHash {
 impl std::hash::Hasher for NameHasher {
     fn write(&mut self, bytes: &[u8]) {
         const K: u64 = 0x517c_c1b7_2722_0a95;
-        let mut chunks = bytes.chunks_exact(8);
-        for c in &mut chunks {
-            let w = u64::from_le_bytes(c.try_into().expect("eight bytes"));
-            self.0 = (self.0.rotate_left(5) ^ w).wrapping_mul(K);
+        let (chunks, remainder) = bytes.as_chunks::<8>();
+        for &c in chunks {
+            self.0 = (self.0.rotate_left(5) ^ u64::from_le_bytes(c)).wrapping_mul(K);
         }
         let mut tail = 0u64;
-        for &b in chunks.remainder() {
+        for &b in remainder {
             tail = tail << 8 | u64::from(b);
         }
         self.0 = (self.0.rotate_left(5) ^ tail).wrapping_mul(K);

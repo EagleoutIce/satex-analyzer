@@ -108,8 +108,7 @@ impl CharMap {
 
     /// Font units at `size`, the way XeTeX turns them into a dimension.
     pub fn points(&self, units: u32, size: i64) -> i64 {
-        let p = units as f32 * (size as f32 / 65536.0) / self.units_per_em as f32;
-        (f64::from(p) * 65536.0 + 0.5) as i64
+        self.scale(units as f32, size)
     }
 
     /// xetex.web `load_native_font`: slant, space, stretch (space/2),
@@ -135,7 +134,7 @@ impl CharMap {
                 let v = *math.get(n)?;
                 match n {
                     0 | 1 | 55 => i64::from(v),
-                    _ => self.signed_points(v, size),
+                    _ => self.scale(v as f32, size),
                 }
             }
             _ => return None,
@@ -147,8 +146,8 @@ impl CharMap {
         self.math.as_ref().map_or(8, |m| 9 + m.len())
     }
 
-    fn signed_points(&self, units: i32, size: i64) -> i64 {
-        let p = units as f32 * (size as f32 / 65536.0) / self.units_per_em as f32;
+    fn scale(&self, units: f32, size: i64) -> i64 {
+        let p = units * (size as f32 / 65536.0) / self.units_per_em as f32;
         // `D2Fix`: adds a half and truncates toward zero.
         (f64::from(p) * 65536.0 + 0.5) as i64
     }

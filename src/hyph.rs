@@ -109,8 +109,8 @@ impl Machine<'_> {
                 (Some(t), Some(w)) => self.hyf(t, &w),
                 _ => vec![1u8; n + 1],
             };
-            for j in left..=n - right {
-                if hyf[j] % 2 == 1 {
+            for (j, h) in (left..).zip(&hyf[left..=n - right]) {
+                if h % 2 == 1 {
                     marks.push((from + start + j) as u32);
                 }
             }
