@@ -103,10 +103,84 @@ pub fn body(analysis: &Analysis, name: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The last definition of `name` in analysis order.
+pub fn last_definition<'a>(analysis: &'a Analysis, name: &str) -> Option<&'a satex::facts::Definition> {
+    analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == name)
+}
+
+/// The replacement text of the last definition of `name`, detokenized.
+pub fn last_body(analysis: &Analysis, name: &str) -> String {
+    last_definition(analysis, name)
+        .and_then(|d| d.mac.as_ref())
+        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
+        .unwrap_or_default()
+}
+
 /// Whether `name` has any meaning at all in the environment `analysis` ended
 /// with.
 pub fn defined(analysis: &Analysis, name: &str) -> bool {
     analysis.interner.lookup(name).is_some_and(|sym| analysis.env.is_defined(sym))
+}
+
+// Without a format the catcodes are INITEX's (tex.web § 232).
+pub const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
+
+/// `source` after [`PRELUDE`], run on [`bare`].
+pub fn analyze_plain(source: &str) -> Analysis {
+    satex::machine::Machine::analyze(&format!("{PRELUDE}{source}"), None, &bare())
+}
+
+/// The LaTeX kernel read for real (and cached): expl3 is `expl3-code.tex`
+/// itself, which only a format run has.
+pub fn analyze_kernel(source: &str) -> Analysis {
+    let cfg = Config { load: Load { packages: false, classes: false, ..Default::default() }, ..config() };
+    satex::machine::Machine::analyze(source, None, &cfg)
+}
+
+/// Every name the run defined, on any path.
+pub fn names(analysis: &Analysis) -> Vec<String> {
+    analysis.facts.defs.iter().map(|d| analysis.interner.name(d.name).to_string()).collect()
+}
+
+/// The group depth of the first definition of `name`.
+pub fn depth_of(analysis: &Analysis, name: &str) -> Option<u16> {
+    definition(analysis, name).map(|d| d.depth)
+}
+
+/// The messages of the diagnostics with `code`.
+pub fn diagnosed(analysis: &Analysis, code: &str) -> Vec<String> {
+    analysis.facts.diagnostics.iter().filter(|d| d.code == code).map(|d| d.message.clone()).collect()
+}
+
+/// Every broken gap of a run.
+pub fn broken_gaps(analysis: &Analysis) -> Vec<String> {
+    analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
+        .map(|d| format!("{}: {}", d.code, d.message))
+        .collect()
+}
+
+/// The lint codes found in the document itself.
+pub fn codes(analysis: &Analysis) -> Vec<String> {
+    satex::lint::lint(analysis)
+        .iter()
+        .filter(|f| f.get("origin").and_then(|o| o.as_str()) == Some("document"))
+        .filter_map(|f| f.get("code").and_then(|c| c.as_str()).map(str::to_string))
+        .collect()
+}
+
+/// The `mark …` messages a run recorded.
+pub fn marks(analysis: &Analysis) -> Vec<String> {
+    analysis
+        .facts
+        .occurrences
+        .iter()
+        .filter(|o| o.kind == satex::builtins::OccKind::Message && o.key.starts_with("mark "))
+        .map(|o| o.key.clone())
+        .collect()
 }
 
 /// A table row: the case's name, then its data.

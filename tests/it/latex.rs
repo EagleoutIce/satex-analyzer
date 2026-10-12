@@ -1,6 +1,7 @@
 //! LaTeX2e as documented: what the kernel's own interfaces do.
 
-use crate::support::{defined, installed};
+use crate::support::{broken_gaps, codes, marks};
+use crate::support::{defined, installed, last_body as body};
 use satex::builtins::OccKind;
 use satex::machine::{Analysis, Machine};
 
@@ -9,30 +10,8 @@ fn analyze(source: &str) -> Analysis {
     Machine::analyze(source, None, &cfg)
 }
 
-fn body(analysis: &Analysis, name: &str) -> String {
-    analysis
-        .facts
-        .defs
-        .iter()
-        .rev()
-        .find(|d| analysis.interner.name(d.name) == name)
-        .and_then(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
-        .unwrap_or_default()
-}
-
 fn keys(analysis: &Analysis, kind: OccKind) -> Vec<String> {
     analysis.facts.occurrences.iter().filter(|o| o.kind == kind).map(|o| o.key.clone()).collect()
-}
-
-/// The findings for the document itself; `satex lint` needs `--all` to show
-/// the ones that come from the packages it read.
-fn codes(analysis: &Analysis) -> Vec<String> {
-    satex::lint::lint(analysis)
-        .iter()
-        .filter(|f| f.get("origin").and_then(|o| o.as_str()) == Some("document"))
-        .filter_map(|f| f.get("code").and_then(|c| c.as_str()).map(str::to_string))
-        .collect()
 }
 
 #[test]
@@ -219,18 +198,6 @@ fn document_class_options_reach_the_class() {
     let class = analysis.facts.loads.iter().find(|l| l.name == "article").expect("the class");
     assert!(class.options.contains(&"12pt".to_string()), "{:?}", class.options);
     assert!(class.options.contains(&"twocolumn".to_string()), "{:?}", class.options);
-}
-
-/// The `\typeout` texts the run produced, in the order it produced them: the
-/// execution order of whatever wrote them.
-fn marks(analysis: &Analysis) -> Vec<String> {
-    analysis
-        .facts
-        .occurrences
-        .iter()
-        .filter(|o| o.kind == OccKind::Message && o.key.starts_with("mark "))
-        .map(|o| o.key.clone())
-        .collect()
 }
 
 #[test]
@@ -1509,17 +1476,6 @@ fn natbib_reads_every_key_of_one_cite_and_no_options() {
     let mut found = keys(&analysis, OccKind::Cite);
     found.sort();
     assert_eq!(found, vec!["knuth".to_string(), "lamport".to_string()]);
-}
-
-/// Every broken gap of a run, in any file.
-fn broken_gaps(analysis: &Analysis) -> Vec<String> {
-    analysis
-        .facts
-        .diagnostics
-        .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
-        .map(|d| format!("{}: {}", d.code, d.message))
-        .collect()
 }
 
 /// A node of unknown height makes pgfmath divide unknown numbers. The paths

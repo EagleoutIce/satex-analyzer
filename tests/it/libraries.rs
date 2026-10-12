@@ -3,14 +3,12 @@
 //! stands alone; the `#[ignore]`d one at the end runs the libraries
 //! themselves when they are checked out.
 
+use crate::support::PRELUDE;
 use crate::support::bare;
 use satex::config::{Config, Load, Texmf};
 use satex::facts::Severity;
 use satex::machine::{Analysis, Machine};
 use satex::tex::Meaning;
-
-// Without a format the catcodes are INITEX's (tex.web § 232).
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
 
 fn analyze(source: &str) -> Analysis {
     Machine::analyze(&format!("{PRELUDE}{source}"), None, &bare())

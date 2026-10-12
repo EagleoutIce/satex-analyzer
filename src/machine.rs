@@ -2597,7 +2597,7 @@ impl<'a> Machine<'a> {
         self.run();
         let kernel_steps = self.out.steps;
         self.budget = None;
-        // The kernel build is bounded by format_steps; the document's clock starts after it.
+        // The kernel build has a clock of its own; the document's starts after it.
         self.started = std::time::Instant::now();
         self.format_progress = None;
         crate::progress::clear();
@@ -3826,16 +3826,6 @@ will look undefined",
         change(&mut self.catcodes);
         for (character, _) in self.catcodes.diff(&before) {
             self.env.save_catcode_state(character, before.get(character), before.is_unknown(character));
-        }
-    }
-
-    /// [`Machine::with_catcodes`] for a command at `span`: each change is an
-    /// occurrence there, as `\catcode` makes one.
-    pub fn with_catcodes_at(&mut self, span: Span, change: impl FnOnce(&mut CatcodeTable)) {
-        let before = self.catcodes.clone();
-        self.with_catcodes(change);
-        for (character, code) in self.catcodes.diff(&before) {
-            self.occurrence(OccKind::Catcode, character.to_string(), Some(code.to_string()), span);
         }
     }
 
@@ -5204,7 +5194,7 @@ will look undefined",
                 "That makes 100 errors; please try again: TeX would stop here (tex.web § 82); satex gives up the expansion and reads on".into(),
             );
             self.tex_errors = 0;
-            self.widen_recent();
+            self.widen_since(0);
             self.give_up_lists();
         }
     }
@@ -5523,10 +5513,7 @@ will look undefined",
             ("dependency graph size", "vertices")
         } else if used >= self.cfg.limits.facts {
             ("fact budget", "facts")
-        } else if self.budget.is_none()
-            && self.cfg.limits.seconds > 0
-            && self.started.elapsed().as_secs() >= self.cfg.limits.seconds
-        {
+        } else if self.cfg.limits.seconds > 0 && self.started.elapsed().as_secs() >= self.cfg.limits.seconds {
             ("time limit", "seconds")
         } else if self.cfg.limits.memory.as_u64() > 0
             && crate::budget::in_use() as u64 >= self.cfg.limits.memory.as_u64()
@@ -5574,12 +5561,7 @@ will look undefined",
             self.pop_conditional();
         }
         let syms = self.typed_syms();
-        let typed = crate::env::Typed {
-            interner: &self.out.interner,
-            syms: &syms,
-            digits: self.unknown_digits,
-            more: self.unknown_more,
-        };
+        let typed = crate::env::typed!(self, syms);
         let groups = self.env.close_since(at.1, at.2, &mut self.catcodes, &typed);
         (groups, conds)
     }
@@ -5640,7 +5622,7 @@ will look undefined",
     /// An expansion nested deeper than satex follows: its assignments become
     /// unknown, its pending lists are dropped, and the run reads on.
     fn abandon_nesting(&mut self) {
-        self.widen_recent();
+        self.widen_since(0);
         let balanced = Self::closed_note(self.give_up_lists());
         let (file, line) = self.position();
         self.diagnose(
@@ -5775,7 +5757,7 @@ will look undefined",
     /// assumption.
     fn resync(&mut self) {
         self.leak_call_recs();
-        self.widen_recent();
+        self.widen_since(0);
         self.give_up_lists();
         if std::mem::take(&mut self.guard_seen.cut) {
             let at = self.position_span();
@@ -6448,7 +6430,7 @@ will look undefined",
                     });
                     self.assign_register(sym, kind, span);
                     if let Some(recent) = recent {
-                        self.widen_recent();
+                        self.widen_since(0);
                         self.env.set_recent(recent);
                     }
                     // tex.web § 1269: a register assignment is a prefixed
@@ -6756,7 +6738,7 @@ will look undefined",
         // the names written since this recursion began are widened. A
         // write before it, or one a closed group undid, is not the call's.
         let mark = self.expansion_sites.get(&(span, sym)).map_or(0, |site| site.recent);
-        self.widen_written_after(mark);
+        self.widen_since(mark);
         self.taint_after_cut();
         let unknown = self.unknown_text(Unk::Any, span);
         self.push_tokens(Rc::from(vec![unknown]), None);
@@ -7319,15 +7301,6 @@ will look undefined",
         true
     }
 
-    /// tex.web § 443: a constant is followed by one optional space.
-    pub fn skip_optional_space(&mut self) {
-        if let Some(t) = self.peek()
-            && t.is_space()
-        {
-            self.next_token();
-        }
-    }
-
     pub fn skip_spaces(&mut self) {
         while let Some(t) = self.next_token() {
             if !t.is_space() {
@@ -7863,7 +7836,7 @@ will look undefined",
         // texts were joined apart from the tests that shaped them, so that
         // is the join's artifact: the argument ends in that text instead.
         let mut joined_at: Option<usize> = None;
-        let mut nesting = 0usize;
+        let mut nesting = CondDepth::default();
         // Unknown or one-of tokens of the delimiter match any token they
         // may be, so the argument ends at the earliest possible end.
         let span = self.position_span();
@@ -8002,24 +7975,12 @@ will look undefined",
                     unknown_at = unknown_at.or(Some(out.len()));
                 }
             }
-            if let Tok::Cs(sym) = t.tok {
-                match self.env.skip_meaning(sym).prim() {
-                    Some(Primitive::If(_)) => nesting += 1,
-                    Some(Primitive::Fi) if nesting > 0 => nesting -= 1,
-                    Some(Primitive::Fi | Primitive::Else | Primitive::Or) if nesting == 0 && !self.conds.is_empty() => {
-                        if let Some(k) = joined_at.or(unknown_at) {
-                            self.unread(t);
-                            return ends_in_unknown(
-                                self,
-                                &mut out,
-                                k,
-                                t.span,
-                                "the end of a conditional open around it",
-                            );
-                        }
-                    }
-                    _ => {}
-                }
+            if nesting.feed(self.cond_prim(t)).is_some()
+                && !self.conds.is_empty()
+                && let Some(k) = joined_at.or(unknown_at)
+            {
+                self.unread(t);
+                return ends_in_unknown(self, &mut out, k, t.span, "the end of a conditional open around it");
             }
             if depth == 0 && joined_at.is_none() && self.one_of_members(t).is_some() {
                 joined_at = Some(out.len());
@@ -8548,12 +8509,6 @@ will look undefined",
         text_of(toks, &self.out.interner)
     }
 
-    /// An argument read for its structure rather than its text value.
-    pub fn read_structured(&mut self) -> String {
-        let raw = self.read_undelimited();
-        crate::tex::text_with_groups(&raw, &self.out.interner)
-    }
-
     /// Expand parameterless macros so that `\usepackage{\mypackages}` and
     /// `\csname\@currname\endcsname` yield their text, and so that `\edef`
     /// stores what it would really store.
@@ -8685,10 +8640,17 @@ will look undefined",
         }
     }
 
+    /// What skipped text sees of `t` (tex.web § 494): only control
+    /// sequences, by [`Env::skip_meaning`].
+    pub(crate) fn cond_prim(&self, t: Token) -> Option<Primitive> {
+        let Tok::Cs(sym) = t.tok else { return None };
+        self.env.skip_meaning(sym).prim()
+    }
+
     /// Skipping holds and expands nothing, so it reads only what the input
     /// stack holds or a file, and no token budget cuts it short.
     fn pass_text_in(&mut self, to_fi: bool, at: Span) -> Option<(Primitive, Span)> {
-        let mut nesting = 0usize;
+        let mut nesting = CondDepth::default();
         loop {
             let Some(t) = self.next_token() else { break };
             // Skipping crossed into another file's text: a misjudged test or
@@ -8708,25 +8670,16 @@ will look undefined",
                     t.span,
                     format!("skipping a conditional begun at {name}:{} reached another file's text; both its end there and the skip on are analyzed", at.line),
                 );
-                let nested = u8::try_from(nesting).unwrap_or(u8::MAX);
+                let nested = u8::try_from(nesting.0).unwrap_or(u8::MAX);
                 let marker = self.intern(&format!("\u{2}skip crossing:{nested}:{to_fi}"));
                 let meaning = Meaning::Primitive(Primitive::SkipCrossing { nested, to_fi });
                 self.env.set(marker, crate::env::Binding::builtin(meaning), true);
                 self.unread(Token::new(Tok::Cs(marker), t.span));
                 return Some((Primitive::Fi, t.span));
             }
-            let Tok::Cs(sym) = t.tok else { continue };
-            match self.env.skip_meaning(sym).prim() {
-                Some(Primitive::If(_)) => nesting += 1,
-                Some(Primitive::Fi) => {
-                    if nesting == 0 {
-                        return Some((Primitive::Fi, t.span));
-                    }
-                    nesting -= 1;
-                }
-                Some(kind @ (Primitive::Else | Primitive::Or)) if nesting == 0 && !to_fi => {
-                    return Some((kind, t.span));
-                }
+            match nesting.feed(self.cond_prim(t)) {
+                Some(Primitive::Fi) => return Some((Primitive::Fi, t.span)),
+                Some(kind) if !to_fi => return Some((kind, t.span)),
                 _ => {}
             }
         }
@@ -8737,65 +8690,6 @@ will look undefined",
             "no matching \\fi before the input ends".into(),
         );
         None
-    }
-
-    /// Split the material up to the matching `\fi` into its alternatives, and
-    /// whether an `\else` closed the last one (without one, "none of the arms
-    /// runs" is a further outcome the merge must account for).
-    ///
-    /// Returns `None` when no matching `\fi` turns up within
-    /// `Config::max_conditional_tokens`; the tokens are put back and the
-    /// conditional left alone, as happens when a package hides its `\fi`
-    /// behind `\expandafter`.
-    pub fn read_alternatives(&mut self, at: Span) -> Option<(Vec<Rc<[Token]>>, bool)> {
-        let mut body: Vec<Token> = Vec::new();
-        let mut cuts: Vec<usize> = Vec::new();
-        let mut nesting = 0usize;
-        let mut closed = false;
-        let mut has_else = false;
-        while body.len() < self.cfg.limits.conditional_tokens {
-            let Some(t) = self.next_token() else { break };
-            if let Tok::Cs(sym) = t.tok {
-                match self.env.skip_meaning(sym).prim() {
-                    Some(Primitive::If(_)) => nesting += 1,
-                    Some(Primitive::Fi) => {
-                        if nesting == 0 {
-                            closed = true;
-                            break;
-                        }
-                        nesting -= 1;
-                    }
-                    Some(kind @ (Primitive::Else | Primitive::Or)) if nesting == 0 => {
-                        has_else = kind == Primitive::Else;
-                        cuts.push(body.len());
-                    }
-                    _ => {}
-                }
-            }
-            body.push(t);
-        }
-        if !closed {
-            let full = body.len() >= self.cfg.limits.conditional_tokens;
-            self.unread_all(&body);
-            self.diagnose(
-                Severity::Unsupported,
-                "unterminated-conditional",
-                at,
-                "no matching \\fi within the conditional budget".into(),
-            );
-            if full {
-                self.limit_reached("conditional_tokens", at);
-            }
-            return None;
-        }
-        let mut alternatives = Vec::with_capacity(cuts.len() + 1);
-        let mut start = 0;
-        for cut in cuts.into_iter().chain(std::iter::once(body.len())) {
-            alternatives.push(Rc::from(&body[start..cut]));
-            // Step over the `\else` or `\or` that ended this alternative.
-            start = (cut + 1).min(body.len());
-        }
-        Some((alternatives, has_else))
     }
 
     fn save_path(&self) -> PathState {
@@ -9904,29 +9798,20 @@ impl Machine<'_> {
         Some((prefix.to_string(), suffix.to_string()))
     }
 
+    /// What was assigned after assignment `mark` (and since the recent list
+    /// was cleared) may hold anything of its kind; 0 widens all of it.
+    pub(crate) fn widen_since(&mut self, mark: u64) {
+        let syms = self.typed_syms();
+        let written = self.env.written_after(mark);
+        self.env.widen(&written, None, &crate::env::typed!(self, syms));
+        // After: widening writes, and those are no news.
+        self.env.clear_recent();
+    }
+
     /// The names of typed unknown text, all classes and both lower bounds,
     /// each bound to the one character it may be when its class has one
     /// category (an `\ifx` then sees a character, as it does for unknown
     /// digits), else to an unknown meaning.
-    /// What was assigned since the recent list was cleared may hold
-    /// anything of its kind ([`Env::widen_recent`]).
-    pub(crate) fn widen_recent(&mut self) {
-        self.widen_written_after(0);
-    }
-
-    /// What was assigned after assignment `mark` (and since the recent list
-    /// was cleared) may hold anything of its kind.
-    pub(crate) fn widen_written_after(&mut self, mark: u64) {
-        let syms = self.typed_syms();
-        let typed = crate::env::Typed {
-            interner: &self.out.interner,
-            syms: &syms,
-            digits: self.unknown_digits,
-            more: self.unknown_more,
-        };
-        self.env.widen_written_after(mark, &typed);
-    }
-
     pub(crate) fn typed_syms(&mut self) -> Rc<[Sym]> {
         // A path resumed from before the bindings were made lost them:
         // make them again.
@@ -10408,4 +10293,37 @@ impl Machine<'_> {
 /// The tokens of `delimiter` but its last: what may begin a match.
 fn delimiter_prefix(delimiter: &[Tok]) -> &[Tok] {
     &delimiter[..delimiter.len().saturating_sub(1)]
+}
+
+/// Conditional nesting of text passed over unexpanded (tex.web § 494).
+/// A name of unknown meaning counts as no conditional: unknown text is
+/// assumed balanced, as a cut assumes closed what it opened
+/// (`unbalanced-path`). A caller that counts `\or`s at its own level
+/// cannot rule one out there, and gives up (`case_arms`).
+#[derive(Default)]
+pub(crate) struct CondDepth(pub usize);
+
+impl CondDepth {
+    /// What skipping sees of `p`: 1 a conditional, 2 `\fi`, 3 `\else`,
+    /// 4 `\or`, 0 anything else.
+    pub(crate) fn role(p: Option<Primitive>) -> u8 {
+        match p {
+            Some(Primitive::If(_)) => 1,
+            Some(Primitive::Fi) => 2,
+            Some(Primitive::Else) => 3,
+            Some(Primitive::Or) => 4,
+            _ => 0,
+        }
+    }
+
+    /// Counts `p`; `\fi`, `\else` or `\or` at level 0 is returned.
+    pub(crate) fn feed(&mut self, p: Option<Primitive>) -> Option<Primitive> {
+        match (Self::role(p), self.0) {
+            (1, _) => self.0 += 1,
+            (2, d) if d > 0 => self.0 -= 1,
+            (2..=4, 0) => return p,
+            _ => {}
+        }
+        None
+    }
 }

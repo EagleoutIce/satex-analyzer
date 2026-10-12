@@ -7,6 +7,7 @@
 //! didn't have (a *new* one is fine to shrink, never to grow), lose a fact
 //! the lower run recorded, or leave more conditionals undecided.
 
+use crate::support::PRELUDE;
 use std::collections::BTreeSet;
 
 use crate::support::installed;
@@ -16,7 +17,6 @@ use satex::machine::{Analysis, Machine};
 
 // INITEX catcodes, as tests/it/semantics.rs's `analyze` uses them: no
 // format, no packages, so these MWEs run in milliseconds.
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
 
 fn base_initex() -> Config {
     let mut cfg = Config {

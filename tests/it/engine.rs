@@ -3,23 +3,13 @@
 //! defining a macro on one branch and a different one on the other, then
 //! reading the body back.
 
+use crate::support::{PRELUDE, analyze_plain as analyze, depth_of};
 use crate::support::{body, definition};
 use satex::config::{Config, Engine, Load, Texmf};
 use satex::machine::{Analysis, Machine};
 
-// Without a format the catcodes are INITEX's (tex.web § 232).
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
-
-fn analyze(source: &str) -> Analysis {
-    Machine::analyze(&format!("{PRELUDE}{source}"), None, &crate::support::bare())
-}
-
 fn defined(analysis: &Analysis, name: &str) -> bool {
     definition(analysis, name).is_some()
-}
-
-fn depth_of(analysis: &Analysis, name: &str) -> Option<u16> {
-    definition(analysis, name).map(|d| d.depth)
 }
 
 // Conditionals

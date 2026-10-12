@@ -71,7 +71,7 @@ fn kernel_build() {
         return;
     }
     let dir = fresh("kernel");
-    let mut cfg = satex::config::Config {
+    let cfg = satex::config::Config {
         cache: Cache { dir: Some(dir.clone()), rebuild: true, ..Default::default() },
         ..crate::support::config()
     };
@@ -82,6 +82,27 @@ fn kernel_build() {
     let cut: Vec<_> = analysis.facts.diagnostics.iter().filter(|d| d.code == "line-budget-cut").collect();
     assert!(cut.is_empty(), "the kernel build was cut: {cut:?}");
     within("kernel", format.steps, KERNEL);
+}
+
+// termination: a kernel build is bounded by `limits.seconds` too.
+#[test]
+fn a_kernel_build_over_the_seconds_limit_stops_with_the_limit_named() {
+    if !crate::support::installed() {
+        return;
+    }
+    let dir = fresh("kernel-seconds");
+    let mut cfg = satex::config::Config {
+        cache: Cache { dir: Some(dir.clone()), rebuild: true, ..Default::default() },
+        ..crate::support::config()
+    };
+    cfg.limits.seconds = 1;
+    let start = std::time::Instant::now();
+    let analysis = Machine::analyze("", Some(&dir.join("kernel.tex")), &cfg);
+    assert!(start.elapsed().as_secs() < 20, "the build took {:?}", start.elapsed());
+    let hit =
+        analysis.facts.diagnostics.iter().any(|d| d.code == "limit-reached" && d.message.contains("limits.seconds"));
+    assert!(hit, "no seconds limit named");
+    assert!(!analysis.format.as_ref().expect("a format").complete(), "the kernel was read to the end");
 }
 
 #[test]

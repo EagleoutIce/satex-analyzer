@@ -4,6 +4,7 @@
 //! prefix and suffix.  Each expectation is what `pdftex -ini -etex` and
 //! `xetex -ini -etex` print for the same input.
 
+use crate::support::PRELUDE;
 use crate::support::defined;
 use satex::config::{Config, Engine};
 use satex::machine::{Analysis, Machine};
@@ -14,10 +15,9 @@ fn run(source: &str, path: Option<&std::path::Path>, engine: Option<Engine>) -> 
     Machine::analyze(source, path, &cfg)
 }
 
-// Without a format the catcodes are INITEX's (tex.web § 232); each probe
+// `PRELUDE` (INITEX catcodes, tex.web § 232): each probe
 // below carries this prelude in its own source, so a probe stays
 // byte-identical to what `pdftex -ini -etex`/`xetex -ini -etex` would see.
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
 
 fn body(analysis: &Analysis, name: &str) -> String {
     let def = analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == name).unwrap();

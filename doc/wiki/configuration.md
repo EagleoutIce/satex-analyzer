@@ -175,7 +175,7 @@ limits:
   interval_set: 4  # members a join keeps for a number once intervals are among them, before only their hull
   degrade_at_percent: 100  # of limits.steps; 100 = never degrade
   expansion_tokens: 1048576  # tokens one expansion may add
-  conditional_tokens: 1048576  # tokens one undecided conditional may copy into its arms
+  conditional_tokens: 1048576  # tokens read ahead to count the arms of an \ifcase
   held_tokens: 4000000  # tokens waiting to be read
   expansion_stack: 4000  # token lists open at once: expansions, arguments, files
   save_stack: 2000000  # assignments a group may have to undo (~200 MB)

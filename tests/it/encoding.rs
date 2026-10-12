@@ -4,7 +4,7 @@
 //! characters.  Every expectation below is what `pdftex -ini`, `xetex -ini`
 //! and `luatex -ini` print for the same input.
 
-use crate::support::installed;
+use crate::support::{installed, last_body as body};
 use satex::cmd::{Command, Context, Format, Output};
 use satex::config::{Config, Encoding, Engine, Load, Texmf};
 use satex::machine::{Analysis, Machine};
@@ -32,18 +32,6 @@ fn run(source: &str, engine: Engine) -> Analysis {
         ..crate::support::config()
     };
     Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg)
-}
-
-fn body(analysis: &Analysis, name: &str) -> String {
-    analysis
-        .facts
-        .defs
-        .iter()
-        .rev()
-        .find(|d| analysis.interner.name(d.name) == name)
-        .and_then(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
-        .unwrap_or_default()
 }
 
 /// Byte `n` of `text` as the engine prints the character it reads: a byte
@@ -108,6 +96,15 @@ fn luatex_and_xetex_take_the_unicode_branch_of_the_hyph_utf8_probe() {
         // xetex and luatex: `\meaning\secondarg` is `macro:->`.
         let analysis = run(&engine_probe(), engine);
         assert_eq!(body(&analysis, "secondarg"), "", "{engine:?}");
+    }
+}
+
+#[test]
+fn a_unicode_engine_chardefs_the_largest_code_point() {
+    // xetex -ini, luatex -ini: `\number\c` is 1114111, no error.
+    for engine in [Engine::LuaTeX, Engine::XeTeX] {
+        let analysis = run("\\chardef\\c=1114111 \\edef\\x{\\number\\c}", engine);
+        assert_eq!(body(&analysis, "x"), "1114111", "{engine:?}");
     }
 }
 

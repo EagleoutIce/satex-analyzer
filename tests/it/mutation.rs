@@ -1,5 +1,6 @@
 //! Mutation testing: find blind spots in the analysis.
 
+use crate::support::bare as config;
 use satex::config::{Config, Load, Texmf};
 use satex::machine::{Analysis, Machine};
 
@@ -38,14 +39,6 @@ See \ref{a} and \ref{b}.
 \catcode`\!=11 \def\bang!{x}
 \makeatother",
 ];
-
-fn config() -> Config {
-    Config {
-        load: Load { packages: false, classes: false, inputs: false, format: false, ..Default::default() },
-        texmf: Texmf { kpsewhich: false, ..Default::default() },
-        ..crate::support::config()
-    }
-}
 
 /// The corpus is LaTeX, so it runs on the (cached) kernel: `\\newif`,
 /// `\\makeatletter` and expl3 are the kernel's own code.

@@ -1,30 +1,12 @@
 //! `satex explain`: what a control sequence means, and where it comes from.
 
+use crate::support::{analyze_kernel, analyze_plain as analyze};
 use serde_json::{Value as Json, json};
 
 use crate::support::installed;
 use satex::config::{Config, Load};
 use satex::machine::{Analysis, Machine};
 use satex::query::{self, Record};
-
-// Without a format the catcodes are INITEX's (tex.web § 232).
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
-
-/// No format, no packages: fast, and enough for anything the interpreted
-/// kernel set (primitives) already answers without a real TeX installation.
-fn analyze(source: &str) -> Analysis {
-    Machine::analyze(&format!("{PRELUDE}{source}"), None, &crate::support::bare())
-}
-
-/// The LaTeX kernel read for real (and cached): a command's signature is
-/// what running it in a sandbox shows it consumes (src/probe.rs), so a
-/// macro built with `\newcommand` or `\NewDocumentCommand` needs the code
-/// that reads its arguments, the format, loaded to explain.
-fn analyze_kernel(source: &str) -> Analysis {
-    let cfg =
-        Config { load: Load { packages: false, classes: false, ..Default::default() }, ..crate::support::config() };
-    Machine::analyze(source, None, &cfg)
-}
 
 fn explain_one(analysis: &Analysis, name: &str) -> Record {
     query::explain(analysis, &[name.to_string()], false)

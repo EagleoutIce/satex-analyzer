@@ -4,30 +4,10 @@
 //!
 //! Follows the `analyze()`/`body()` helper pattern from `tests/it/semantics.rs`.
 
+use crate::support::{analyze_plain as analyze, last_body, names};
 use crate::support::{body, installed};
 use satex::config::{Config, Load};
 use satex::machine::{Analysis, Machine};
-
-// Without a format the catcodes are INITEX's (tex.web § 232).
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
-
-fn analyze(source: &str) -> Analysis {
-    Machine::analyze(&format!("{PRELUDE}{source}"), None, &crate::support::bare())
-}
-
-/// The *last* definition of `name`: some of the inputs below redefine a
-/// control sequence more than once (e.g. inside a group closed by
-/// `\aftergroup`), and it is the final meaning that a real run would show.
-fn last_definition<'a>(analysis: &'a Analysis, name: &str) -> Option<&'a satex::facts::Definition> {
-    analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == name)
-}
-
-fn last_body(analysis: &Analysis, name: &str) -> String {
-    last_definition(analysis, name)
-        .and_then(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
-        .unwrap_or_default()
-}
 
 /// Probes that each define macros, with the body TeX gives each one.
 const BODIES: &[crate::support::BodyRow] = &[
@@ -793,11 +773,6 @@ fn an_environment_left_open_is_ended_by_the_document() {
     );
     let all = findings(&analysis);
     assert!(all.contains(&"environment-mismatch document".to_string()), "{all:?}");
-}
-
-/// Every name the run defined, on any path.
-fn names(analysis: &Analysis) -> Vec<String> {
-    analysis.facts.defs.iter().map(|d| analysis.interner.name(d.name).to_string()).collect()
 }
 
 /// A count register whose value satex cannot pin down, for a register

@@ -2903,7 +2903,6 @@ impl Machine<'_> {
     /// `right` in text style (0 ord … 7 inner): none, or `\thinmuskip`,
     /// `\medmuskip` or `\thickmuskip` at their natural width.
     fn math_space(&mut self, left: Option<i8>, right: u8) -> Dim {
-        const UNIT: i64 = 1 << 16;
         const TABLE: [&[u8; 8]; 8] =
             [b"02340001", b"22*40001", b"33**3**3", b"44*04004", b"00*00000", b"02340001", b"11*11111", b"12341011"];
         let Some(left) = left else { return Dim::exact(0) };

@@ -906,15 +906,7 @@ fn binding_digest(binding: Option<&Binding>, alias: Option<&str>, kinds: u8) -> 
         hash.put(&binding.is_some_and(|b| !b.defs.is_empty()));
     }
     if kinds & SKIP != 0 {
-        use crate::builtins::Primitive;
-        let role = match binding.and_then(|b| b.meaning.prim()) {
-            Some(Primitive::If(_)) => 1u8,
-            Some(Primitive::Fi) => 2,
-            Some(Primitive::Else) => 3,
-            Some(Primitive::Or) => 4,
-            _ => 0,
-        };
-        hash.put(&role);
+        hash.put(&crate::machine::CondDepth::role(binding.and_then(|b| b.meaning.prim())));
     }
     if kinds & DEFINED != 0 {
         hash.put(&binding.is_some_and(|b| b.meaning != Meaning::Undefined));
