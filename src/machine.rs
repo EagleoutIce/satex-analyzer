@@ -700,7 +700,10 @@ pub enum Scanner {
 /// tex.web § 392 `long_state`: why an argument scan ran away. Only `\par`
 /// in a macro that is not `\long` prints "Paragraph ended" (§ 396); an
 /// `\outer` token or the file's end set `outer_call` and report their own
-/// error (§§ 336-338).
+/// error (§§ 336-338). `Cut` is satex's own: an argument met a `}` in
+/// text a cut left after its `\unknown` ([`Machine::after_cut`]), whose `{`
+/// the summarized code may have taken. The call is dropped as TeX's
+/// recovery would drop it, but no error is TeX's there.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize)]
 pub enum Runaway {
     #[default]
@@ -708,6 +711,7 @@ pub enum Runaway {
     Par,
     Outer,
     FileEnded,
+    Cut,
 }
 
 /// One run of [`Machine::drive`]: a main-loop command, or one token of
@@ -740,6 +744,9 @@ pub(crate) struct NameAccum {
     pub(crate) files: Vec<FileId>,
     pub(crate) closed: bool,
     pub(crate) stopped: Option<Sym>,
+    /// Whether every unknown part, and what the names differ in, is
+    /// digits: the name is then the text around a number.
+    pub(crate) gap_digits: bool,
 }
 
 impl Default for NameAccum {
@@ -751,6 +758,7 @@ impl Default for NameAccum {
             files: Vec::new(),
             closed: false,
             stopped: None,
+            gap_digits: true,
         }
     }
 }
@@ -762,10 +770,15 @@ impl NameAccum {
         }
     }
 
-    /// An unknown part: what came before it is the prefix, and the name
-    /// goes on after it.
-    pub(crate) fn unknown_part(&mut self) {
+    /// An unknown part, digits or not: what came before it is the
+    /// prefix, and the name goes on after it. Text between two unknown
+    /// parts becomes part of the gap.
+    pub(crate) fn unknown_part(&mut self, digits: bool) {
+        self.gap_digits &= digits;
         for (prefix, name) in &mut self.names {
+            if prefix.is_some() && !name.chars().all(|c| c.is_ascii_digit()) {
+                self.gap_digits = false;
+            }
             prefix.get_or_insert_with(|| name.clone());
             name.clear();
         }
@@ -774,11 +787,20 @@ impl NameAccum {
     /// The names as one: what they all begin with, an unknown part, and
     /// what they all end with after it.
     pub(crate) fn collapse(&mut self) {
-        let mut all = std::mem::take(&mut self.names).into_iter();
-        let mut one = all.next().expect("a name");
+        let names = std::mem::take(&mut self.names);
+        let mut all = names.iter();
+        let mut one = all.next().expect("a name").clone();
         for other in all {
             let (p, n) = explore::join_name_parts((&one.0, &one.1), (&other.0, &other.1));
             one = (Some(p), n);
+        }
+        // What a name has between the shared ends is the gap, too.
+        if let (Some(p), n) = &one {
+            for (prefix, name) in &names {
+                let text = prefix.as_deref().map_or_else(|| name.clone(), |prefix| format!("{prefix}{name}"));
+                let middle = text.strip_prefix(p.as_str()).and_then(|t| t.strip_suffix(n.as_str()));
+                self.gap_digits &= middle.is_some_and(|m| m.chars().all(|c| c.is_ascii_digit()));
+            }
         }
         self.names = vec![one];
     }
@@ -837,12 +859,14 @@ impl Accum {
 
     /// The name a name scan built: what stands around its unknown part
     /// when it has one.
-    pub(crate) fn built(&self) -> Result<String, (String, String)> {
+    /// The name built, or the text around its unknown part and whether
+    /// that part is digits.
+    pub(crate) fn built(&self) -> Result<String, (String, String, bool)> {
         let mut n = self.name.as_deref().cloned().unwrap_or_default();
         n.collapse();
         match n.names.remove(0) {
             (None, name) => Ok(name),
-            (Some(prefix), name) => Err((prefix, name)),
+            (Some(prefix), name) => Err((prefix, name, n.gap_digits)),
         }
     }
 
@@ -1170,6 +1194,11 @@ pub struct Machine<'a> {
     /// and `\numexpr` apply the operation member by member before falling
     /// back to the interval. Always set or cleared together with `abs`.
     pub(crate) abs_exact: Option<Vec<i64>>,
+    /// [`Machine::abs`] as the few intervals it is the hull of, when an
+    /// expression left a set of them (`\numexpr` past its range is 0, not
+    /// every number down to 0). Only the number scan that read it may
+    /// leave it: [`Machine::scan_int`] clears it first.
+    pub(crate) abs_parts: Option<Vec<crate::value::Num>>,
     /// The register that interval was read from, and what quantity it is.
     pub(crate) abs_from: Option<(Sym, crate::value::Quantity)>,
     pub(crate) abs_whole: bool,
@@ -1545,10 +1574,14 @@ struct Site {
     source: u64,
     unread: u32,
     /// The arguments and the input the last expansion here had, hashed,
-    /// with its conditional and group depth.
+    /// with how many input levels that input stood on and its conditional
+    /// and group depth.
     shape: u64,
+    levels: usize,
     nest: (usize, usize),
-    /// Expansions in a row that had that shape, each nested deeper.
+    /// Expansions in a row that had that shape, each nested deeper: in
+    /// conditionals or groups, or on the input stack, with that input
+    /// still below.
     deeper: u32,
     /// [`Env::effective`] at the last expansion here, and how many in a
     /// row met the same shape, nesting and bindings.
@@ -1570,6 +1603,7 @@ impl Site {
             source: u64::MAX,
             unread: 0,
             shape: 0,
+            levels: usize::MAX,
             nest: (0, 0),
             deeper: 0,
             effective: u64::MAX,
@@ -1838,6 +1872,7 @@ impl<'a> Machine<'a> {
             parted: false,
             abs: None,
             abs_exact: None,
+            abs_parts: None,
             abs_from: None,
             abs_whole: false,
             ranged: None,
@@ -3452,20 +3487,21 @@ will look undefined",
         }
     }
 
-    pub fn unread(&mut self, token: Token) {
-        // A token given back right after being read from behind a `\noexpand`
-        // marker keeps the marker, so reading it again treats it the same way.
-        if self.read_noexpanded(token) {
-            self.noexpanded = None;
-            self.unread_plain(token);
-            let marker = Token::new(Tok::Cs(self.dont_expand), token.span);
-            self.unread_plain(marker);
-            return;
-        }
-        self.unread_plain(token);
+    /// `\noexpand`'s give-back (tex.web § 369): `token` goes back behind the
+    /// `dont_expand` marker, so its next read acts as `\relax` (§ 358). A
+    /// look-ahead TeX does not make uses it to leave a marked token as it was.
+    pub fn unread_noexpanded(&mut self, token: Token) {
+        self.unread(token);
+        self.unread(Token::new(Tok::Cs(self.dont_expand), token.span));
     }
 
-    fn unread_plain(&mut self, token: Token) {
+    /// `back_input` (tex.web § 325). A token read from behind `\noexpand`'s
+    /// marker goes back without it: the marker is consumed by the read, so
+    /// `\count1=1\noexpand\x` expands `\x` afterwards.
+    pub fn unread(&mut self, token: Token) {
+        if self.read_noexpanded(token) {
+            self.noexpanded = None;
+        }
         if self.last_file == Some(token.span.file) {
             self.note_given_back(token.span);
         }
@@ -5186,6 +5222,25 @@ will look undefined",
         self.diagnose(Severity::Warning, "extra-right-brace", t.span, format!("Argument{of} has an extra }}"));
     }
 
+    /// An unmatched `}` an argument scan meets in text a cut left after its
+    /// `\unknown` ([`Machine::after_cut`]): the summarized code may have
+    /// taken the `{` it closes as an argument, so this is no engine error.
+    /// The call is dropped and `\par }` read next, as TeX's recovery
+    /// (§ 395) leaves it, but without the error. The `}` is given back.
+    fn cut_right_brace(&mut self, at: Span) -> Vec<Token> {
+        let par = self.intern("par");
+        self.unread(Token::new(Tok::Cs(par), at));
+        self.runaway = Runaway::Cut;
+        self.diagnose(
+            Severity::Imprecision,
+            "argument-ends-in-unknown",
+            at,
+            "an argument ran into a `}` of text a cut left, which the code cut may have taken; the call is dropped"
+                .into(),
+        );
+        Vec::new()
+    }
+
     /// tex.web § 94 `overflow`: "TeX capacity exceeded", which ends the run.
     pub(crate) fn halt_capacity(&mut self, what: &str) {
         if !self.halted {
@@ -6641,20 +6696,38 @@ will look undefined",
         true
     }
 
-    /// A hash of a call's arguments and of the input left after them.
+    /// A hash of a call's arguments and of the input left after them, the
+    /// number of input levels that input stands on, and the same hash of
+    /// its lowest `below` levels, if it has that many: what a call met a
+    /// level deeper would hash to if the input under it were unchanged.
+    /// A level is a list with tokens left, a file or a boundary; a used-up
+    /// list holds nothing a later read could meet.
     /// A token list counts by its length and first [`SHAPE_TOKENS`] tokens.
-    fn call_shape_hash(&self, arguments: &[Vec<Token>]) -> u64 {
+    fn call_shape_hash(&self, arguments: &[Vec<Token>], below: usize) -> (u64, usize, Option<u64>) {
         use std::hash::{BuildHasher, Hash, Hasher};
         let mut h = crate::tex::NameHash.build_hasher();
         for a in arguments {
             a.len().hash(&mut h);
             a.iter().for_each(|t| h.write_u64(t.tok.word()));
         }
+        let (mut levels, mut under) = (0, None);
         for frame in &self.input {
+            let level = match frame {
+                Frame::Tokens { toks, pos, .. } => *pos < toks.len(),
+                Frame::Returned(t) => !t.is_empty(),
+                _ => true,
+            };
+            if !level {
+                continue;
+            }
+            if levels == below {
+                under = Some(h.finish());
+            }
+            levels += 1;
             match frame {
                 // By content, never by address: a freed list's address is
                 // reused, and where depends on allocation order.
-                Frame::Tokens { toks, pos, .. } if *pos < toks.len() => {
+                Frame::Tokens { toks, pos, .. } => {
                     // The memo holds the list, so its address names this content.
                     let slot = ((toks.as_ptr() as usize / 8) ^ pos.wrapping_mul(0x9e37)) % SHAPE_MEMO;
                     let mut memo = self.shape_memo.borrow_mut();
@@ -6672,21 +6745,20 @@ will look undefined",
                     };
                     sub.hash(&mut h);
                 }
-                Frame::Tokens { .. } => {}
                 Frame::Returned(t) => t.iter().for_each(|t| h.write_u64(t.tok.word())),
                 Frame::File { mouth, .. } => (mouth.file, mouth.offset()).hash(&mut h),
                 Frame::Pseudo { mouth, at, pos, .. } => (at, mouth.offset() + pos).hash(&mut h),
                 Frame::Boundary => 0u8.hash(&mut h),
             }
         }
-        h.finish()
+        (h.finish(), levels, under)
     }
 
     /// The one summary of a call: what it would expand to is unknown text,
     /// and what the rounds before it assigned may hold anything of its
     /// kind (tex.web § 366: the call is replaced by its expansion, so
     /// dropping it would claim it expanded to nothing).
-    fn cut_call(&mut self, sym: Sym, span: Span, key: &'static str, reason: String) {
+    fn cut_call(&mut self, sym: Sym, span: Span, key: &'static str, nested: bool, reason: String) {
         self.record_with(Step::Widen, sym, span, || Some("recursion"));
         if self.cfg.verbose >= 4 {
             crate::progress::note!("satex: call \\{} at {span:?} cut: {reason}", self.name(sym));
@@ -6697,11 +6769,14 @@ will look undefined",
             span,
             format!("\\{}: {reason}; what it would expand to and what it would assign are not known", self.name(sym)),
         );
-        // Nesting past `expansion_depth` is a limit, cut where the
-        // recursion began, never past a file; a site that repeats is
-        // summarized, as a loop is.
+        // A recursion that nests is cut where it began, never past a
+        // file: what its rounds stacked would run only once it returned,
+        // which it never does. Nesting past `expansion_depth` is also a
+        // limit. A site that repeats is summarized, as a loop is.
         if key == "expansion_depth" {
             self.limit_reached(key, span);
+        }
+        if nested {
             let file = self.input.iter().rposition(|f| matches!(f, Frame::File { .. })).map_or(0, |i| i + 1);
             let first =
                 self.input.iter().position(|f| matches!(f, Frame::Tokens { expanding: Some(s), .. } if *s == sym));
@@ -6768,7 +6843,14 @@ will look undefined",
             .map_or(0, |site| site.repeats);
         if depth >= self.limits.expansion_depth || site > self.limits.site_expansions {
             let key = if depth >= self.limits.expansion_depth { "expansion_depth" } else { "site_expansions" };
-            self.cut_call(sym, span, key, format!("re-entered {depth} times, expanded {site} times at this call"));
+            let nested = depth >= self.limits.expansion_depth;
+            self.cut_call(
+                sym,
+                span,
+                key,
+                nested,
+                format!("re-entered {depth} times, expanded {site} times at this call"),
+            );
             return;
         }
 
@@ -6868,16 +6950,24 @@ will look undefined",
         // was: a recursion that keeps re-entering the same site without
         // reading on is only running out if this is getting smaller.
         let size: usize = arguments.iter().map(Vec::len).sum();
-        let (shape, nest) = (self.call_shape_hash(&arguments), (self.conds.len(), self.env.depth()));
+        let below = self.expansion_sites.get(&(span, sym)).map_or(usize::MAX, |site| site.levels);
+        let (shape, levels, under) = self.call_shape_hash(&arguments, below);
+        let nest = (self.conds.len(), self.env.depth());
         let effective = self.env.effective;
         let (shrinking, unread, deeper, cycled) = match self.expansion_sites.get_mut(&(span, sym)) {
             Some(site) => {
                 self.undo.push(Undo::Site((span, sym), *site));
-                let grew = site.shape == shape && nest.0 >= site.nest.0 && nest.1 >= site.nest.1 && nest != site.nest;
+                let outside = nest.0 >= site.nest.0 && nest.1 >= site.nest.1;
+                // Deeper on the input stack: the last round's input is all
+                // still there, unread, under what that round left on top,
+                // and nothing was written since, so this round reads what
+                // the last did and stacks the same again (tex.web § 366).
+                let stacked = under == Some(site.shape) && levels > site.levels && site.effective == effective;
+                let grew = outside && (stacked || site.shape == shape && nest != site.nest);
                 site.deeper = if grew { site.deeper + 1 } else { 0 };
                 let same = site.shape == shape && nest == site.nest && site.effective == effective;
                 site.cycled = if same { site.cycled + 1 } else { 0 };
-                (site.shape, site.nest, site.effective) = (shape, nest, effective);
+                (site.shape, site.levels, site.nest, site.effective) = (shape, levels, nest, effective);
                 (size < std::mem::replace(&mut site.size, size), site.unread, site.deeper, site.cycled)
             }
             None => (true, 1, 0, 0),
@@ -6897,7 +6987,7 @@ will look undefined",
                 format!("\\{} meets the state it was in before: possible endless loop", self.name(sym)),
             );
             match alone {
-                true => self.cut_call(sym, span, "cycle_after", "it meets the state it was in before".into()),
+                true => self.cut_call(sym, span, "cycle_after", false, "it meets the state it was in before".into()),
                 false => self.no_arm(),
             }
             return;
@@ -6955,7 +7045,7 @@ will look undefined",
                 _ if stuck => "recursion_depth",
                 _ => "site_expansions",
             };
-            self.cut_call(sym, span, key, reason);
+            self.cut_call(sym, span, key, nesting || depth >= self.limits.expansion_depth, reason);
             return;
         }
 
@@ -7368,6 +7458,11 @@ will look undefined",
                 self.note_shape(t.span, "{}");
 
                 self.read_group_body()
+            }
+            // In text a cut left, no error ([`Machine::cut_right_brace`]).
+            Some(t) if t.is_cat(Catcode::End) && self.after_cut() => {
+                self.unread(t);
+                self.cut_right_brace(t.span)
             }
             // An unmatched `}` can never become an argument (tex.web § 395):
             // the `\par` inserted before it is read instead.
@@ -7991,10 +8086,13 @@ will look undefined",
                     // group that text opened. The engine never met this
                     // end; reporting it as the engine's error would be one
                     // satex invented.
-                    let Some(_) = fuzzy else {
+                    if fuzzy.is_none() {
+                        if self.after_cut() {
+                            return self.cut_right_brace(t.span);
+                        }
                         self.extra_right_brace(t);
                         continue;
-                    };
+                    }
                     self.diagnose(
                         Severity::Imprecision,
                         "argument-ends-in-unknown",
@@ -8843,6 +8941,7 @@ will look undefined",
             return false;
         }
         let Some((prefix, suffix)) = self.name_pattern(sym) else { return false };
+        let digits = self.name_gap_is_digits(sym);
         let limit = usize::from(self.limits.meaning_set);
         let mut members: Vec<(Sym, Meaning)> = Vec::new();
         for s in self.env.bound() {
@@ -8851,6 +8950,7 @@ will look undefined",
                 || name.len() < prefix.len() + suffix.len()
                 || !name.starts_with(prefix.as_str())
                 || !name.ends_with(suffix.as_str())
+                || (digits && !name[prefix.len()..name.len() - suffix.len()].chars().all(|c| c.is_ascii_digit()))
             {
                 continue;
             }
@@ -8880,6 +8980,39 @@ will look undefined",
         let Some(sym) = t.cs() else { return false };
         let Some(texts) = self.one_of_members(t) else { return false };
         self.split(sym, t.span, texts.len(), |m, arm| {
+            m.unread_all(&texts[arm]);
+            true
+        })
+    }
+
+    /// [`Machine::split_one_of`] for a token a parameterless macro's whole
+    /// text is, read just now from its expansion: each path also takes the
+    /// macro to hold its text alone, as a name a join left several
+    /// meanings does ([`Machine::split_meaning`]), so what a use of the
+    /// value refines sticks to the macro.
+    pub(crate) fn split_one_of_refining(&mut self, t: Token) -> bool {
+        let owner = match self.input.last() {
+            Some(Frame::Tokens { toks, pos, expanding: Some(sym), .. })
+                if *pos == toks.len() && matches!(&toks[..], [only] if only.tok == t.tok) =>
+            {
+                Some(*sym)
+            }
+            _ => None,
+        };
+        let owned = owner.and_then(|sym| match self.env.meaning(sym) {
+            Meaning::Macro(m)
+                if m.parameter_text.items.is_empty()
+                    && matches!(&m.replacement_text[..], [only] if only.tok == t.tok) =>
+            {
+                Some((sym, m))
+            }
+            _ => None,
+        });
+        let (Some((owner, def)), Some(sym)) = (owned, t.cs()) else { return self.split_one_of(t) };
+        let Some(texts) = self.one_of_members(t) else { return false };
+        self.split(sym, t.span, texts.len(), |m, arm| {
+            let text = MacroDef { replacement_text: texts[arm].clone(), ..(*def).clone() };
+            m.env.refine(owner, Meaning::Macro(Rc::new(text)));
             m.unread_all(&texts[arm]);
             true
         })
@@ -9736,6 +9869,9 @@ enum OneOfScan {
 
 pub(crate) const UNKNOWN_NAME: &str = "\u{2}unknown name:";
 pub(crate) const UNKNOWN_NAME_GAP: char = '\u{3}';
+/// [`UNKNOWN_NAME_GAP`] where the unknown part is digits.
+pub(crate) const UNKNOWN_DIGITS_GAP: char = '\u{7}';
+const GAPS: [char; 2] = [UNKNOWN_NAME_GAP, UNKNOWN_DIGITS_GAP];
 /// After [`UNKNOWN_NAME`]: the names of typed unknown text, the class as
 /// its letters and `+` (at least one token) or `*` (perhaps none).
 pub(crate) const TYPED_TEXT: &str = "text of:";
@@ -9771,13 +9907,19 @@ impl Machine<'_> {
     /// not a name built around a gap: defining it defines some fresh name,
     /// never the token itself, whose expansion would then name itself.
     pub(crate) fn unknown_text_name(&self, sym: Sym) -> bool {
-        self.out.interner.name(sym).strip_prefix(UNKNOWN_NAME).is_some_and(|rest| !rest.contains(UNKNOWN_NAME_GAP))
+        self.out.interner.name(sym).strip_prefix(UNKNOWN_NAME).is_some_and(|rest| !rest.contains(GAPS))
     }
 
     pub(crate) fn name_pattern(&self, sym: Sym) -> Option<(String, String)> {
         let rest = self.out.interner.name(sym).strip_prefix(UNKNOWN_NAME)?;
-        let (prefix, suffix) = rest.split_once(UNKNOWN_NAME_GAP)?;
+        let (prefix, suffix) = rest.split_once(GAPS)?;
         Some((prefix.to_string(), suffix.to_string()))
+    }
+
+    /// Whether a name [`Machine::name_pattern`] reads has digits for its
+    /// unknown part.
+    pub(crate) fn name_gap_is_digits(&self, sym: Sym) -> bool {
+        self.out.interner.name(sym).strip_prefix(UNKNOWN_NAME).is_some_and(|rest| rest.contains(UNKNOWN_DIGITS_GAP))
     }
 
     /// What was assigned after assignment `mark` (and since the recent list
@@ -10141,8 +10283,9 @@ impl Machine<'_> {
     }
 
     /// The one control sequence `\csname` builds from partly unknown text.
-    pub(crate) fn unknown_name_token(&mut self, prefix: &str, suffix: &str, span: Span) -> Token {
-        let sym = self.intern(&format!("{UNKNOWN_NAME}{prefix}{UNKNOWN_NAME_GAP}{suffix}"));
+    pub(crate) fn unknown_name_token(&mut self, prefix: &str, suffix: &str, digits: bool, span: Span) -> Token {
+        let gap = if digits { UNKNOWN_DIGITS_GAP } else { UNKNOWN_NAME_GAP };
+        let sym = self.intern(&format!("{UNKNOWN_NAME}{prefix}{gap}{suffix}"));
         if !matches!(self.env.meaning(sym), Meaning::Unknown) {
             self.env.set(sym, Binding::builtin(Meaning::Unknown), true);
         }

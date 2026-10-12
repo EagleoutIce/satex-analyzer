@@ -311,6 +311,18 @@ pub struct PathEnv {
 }
 
 impl PathEnv {
+    /// The names this path and `other` bind differently, both taken from
+    /// their one fork: what one of them changed that the other does not
+    /// hold.
+    pub fn differing(&self, other: &PathEnv) -> Vec<Sym> {
+        let mut out: Vec<Sym> = (self.slots.iter())
+            .filter(|(k, (mine, _))| other.slots.get(k).is_none_or(|(theirs, _)| !same_slot(mine, theirs)))
+            .map(|(k, _)| Sym(*k))
+            .collect();
+        out.extend(other.slots.keys().filter(|k| !self.slots.contains_key(k)).map(|k| Sym(*k)));
+        out
+    }
+
     /// How many slots the path changed since its fork.
     pub fn len(&self) -> usize {
         self.slots.size()
@@ -994,7 +1006,6 @@ impl Env {
     /// joined with what `toward` holds and widened (an accumulator stays
     /// typed); a name `toward` never wrote may hold anything.
     pub fn widen(&mut self, syms: &[Sym], toward: Option<&PathEnv>, typed: &Typed) {
-        self.effective += 1;
         for &sym in syms {
             let i = sym.0 as usize;
             let Some((theirs, _)) = toward.and_then(|t| t.slots.get(&sym.0).cloned()) else {
@@ -1035,6 +1046,11 @@ impl Env {
         let i = sym.0 as usize;
         let Some(Some(binding)) = self.slots.get(i).cloned() else { return };
         let binding = widened(binding, typed);
+        // A slot already as wide as it gets is not written: widening it
+        // again changes nothing a later read could see.
+        if same_slot(&self.slots[i], &Some(binding.clone())) {
+            return;
+        }
         self.log(i);
         self.wrote_in_place(i);
         self.note_write(sym.0, ReadKind::Meaning.bit() | ReadKind::Value.bit());

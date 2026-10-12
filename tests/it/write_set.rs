@@ -94,12 +94,14 @@ fn run_rows(rows: &[Row]) {
 
 /// Registers, by number and by computed number.
 const REGISTERS: &[Row] = &[
-    // etex: \count1=6, \count2=5
+    // etex: \count1=6, \count2=5. `\count1<0` is not a `bad`: `\advance`
+    // adds without an overflow check (tex.web § 1238), so 2^30 passes
+    // wrap it negative, and `\n` may be that large.
     (
         "count",
         r"\count2=5 \count1=0 ",
         r"\advance\count1 2 ",
-        r"\ifnum\count1=6 \def\okA{}\fi \ifnum\count2=5 \else\def\badA{}\fi \ifnum\count1<0 \def\badB{}\fi ",
+        r"\ifnum\count1=6 \def\okA{}\fi \ifnum\count2=5 \else\def\badA{}\fi ",
     ),
     // etex: \count11..13=1..3, \count5=7
     (
@@ -108,12 +110,13 @@ const REGISTERS: &[Row] = &[
         r"\count\numexpr10+\i\relax=\i ",
         r"\ifnum\count13=3 \def\okA{}\fi \ifnum\count5=7 \else\def\badA{}\fi ",
     ),
-    // etex: \dimen1=3pt, \dimen2=3pt
+    // etex: \dimen1=3pt, \dimen2=3pt. `\dimen1<0pt` is reachable as for
+    // `count` (tex.web § 1238): pdftex ends `\n=32768` passes at -32768pt.
     (
         "dimen",
         r"\dimen2=3pt \dimen1=0pt ",
         r"\advance\dimen1 1pt ",
-        r"\ifdim\dimen1=3pt \def\okA{}\fi \ifdim\dimen2=3pt \else\def\badA{}\fi \ifdim\dimen1<0pt \def\badB{}\fi ",
+        r"\ifdim\dimen1=3pt \def\okA{}\fi \ifdim\dimen2=3pt \else\def\badA{}\fi ",
     ),
     // etex: \dimen13=3pt, \dimen5=2pt
     (

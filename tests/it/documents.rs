@@ -21,6 +21,12 @@ fn dir(id: &str) -> PathBuf {
 /// Analyzes `<id>/<main>`, then checks the shared expectations. `also` names
 /// files besides the `\input`s that must have been read.
 fn check(id: &str, main: &str, also: &[&str]) -> Option<Analysis> {
+    check_allowing(id, main, also, &[])
+}
+
+/// `check`, where the diagnostics coded `allowed` are what the fixture
+/// should raise, not failures.
+fn check_allowing(id: &str, main: &str, also: &[&str], allowed: &[&str]) -> Option<Analysis> {
     if !installed() {
         return None;
     }
@@ -71,6 +77,7 @@ fn check(id: &str, main: &str, also: &[&str]) -> Option<Analysis> {
         .diagnostics
         .iter()
         .filter(|d| !matches!(d.severity, Severity::Info | Severity::Imprecision | Severity::Assumption))
+        .filter(|d| !allowed.contains(&d.code))
         .filter(|d| own(&d.span) || d.origin.as_ref().is_some_and(own))
         .collect();
     for d in bad.iter().take(10) {
@@ -305,10 +312,13 @@ fn rule_of_unknown_height_before_clearpage() {
     assert!(count(&a, "recursion-widened") <= 1, "{}", count(&a, "recursion-widened"));
 }
 
-fixtures! {
-    /// `\catcode<unknown>=11` from a summarized loop leaves `\ { }` alone
-    /// (`unknown-char-catcode-assumed`), so the `\include` still reads its file.
-    include_after_unknown_char_catcode_loop_is_read("catcode_loop_include", "main.tex", "ch1");
+/// `\catcode<unknown>=11` from a summarized loop leaves `\ { }` alone
+/// (`unknown-char-catcode-assumed`), so the `\include` still reads its file.
+/// Both `\u` and `\z` loop forever in TeX (pdflatex never gets past
+/// them), so each is reported as an `endless-loop` before it is summarized.
+#[test]
+fn include_after_unknown_char_catcode_loop_is_read() {
+    check_allowing("catcode_loop_include", "main.tex", &["ch1"], &["endless-loop"]);
 }
 
 /// A recursion cut inside a group that set `\escapechar` before it began:
@@ -324,8 +334,12 @@ fn cut_widens_only_what_the_recursion_wrote() {
     assert!(defined(&a, "SatexReachedEnd") && !defined(&a, "EscapeWidened"));
 }
 
-fixtures! {
-    include_after_endless_macro_is_read("include_after_loop", "main.tex", "ch1");
+/// `\def\z{\z}\z` loops forever in TeX (tex.web § 390), so it is
+/// reported as an `endless-loop`, summarized, and the `\include` still
+/// reads its file.
+#[test]
+fn include_after_endless_macro_is_read() {
+    check_allowing("include_after_loop", "main.tex", &["ch1"], &["endless-loop"]);
 }
 
 /// A loop summarized inside `\begingroup\let\protect\string ... \endgroup`:

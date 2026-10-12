@@ -995,7 +995,10 @@ impl Machine<'_> {
             self.out.loop_heads = self.out.loop_heads.max(paths.heads.len());
             return Next::Many(outcomes);
         }
-        let widen = paths.heads[h].passes >= widen_after;
+        // A pass forced by the count of passes is joined widened first: if
+        // that adds nothing the loop is at its fixpoint, and one widened
+        // pass more may reach it; only one still growing is summarized.
+        let widen = paths.heads[h].passes >= widen_after || forced_join;
         let (joined, mut growth) = self.join_configs(&fork, &paths.heads[h].config, &here, widen);
         if input_grew {
             growth.parts.push("input");
@@ -1003,6 +1006,7 @@ impl Machine<'_> {
         if !growth.any() {
             return Next::None;
         }
+        let forced_join = forced_join && paths.heads[h].passes > widen_after;
         // Still growing when widened, pass after pass: the widening does
         // not converge, so the loop is summarized (forced convergence).
         let diverges = widen && paths.heads[h].passes >= widen_after.saturating_mul(2);
@@ -1050,10 +1054,20 @@ impl Machine<'_> {
         // agree on keeps its value, one they differ in may hold any of them
         // or more.
         let (joined, _) = self.join_configs(fork, &summarized.joined, &here, true);
-        summarized.joined = here.clone_config();
+        // What a name the passes began with and this one disagree on would
+        // hold after the passes not run is not known: the passes need not
+        // have met a head to widen at (each deeper in conditionals or
+        // groups), so their join only lists what they held so far.
+        let began = std::mem::replace(&mut summarized.joined, here.clone_config());
+        let written = here.env.differing(&began.env);
         paths.stopped.push(summarized);
         keep_last(&mut paths.stopped, self.limits.loop_heads);
-        self.cut_loop(paths, fork, here, joined.env, id, depth, span, by)
+        self.resume_config(fork, Config::new(here.state, joined.env, false));
+        let syms = self.typed_syms();
+        self.env.widen(&written, None, &crate::env::typed!(self, syms));
+        let here = Config::new(self.save_path(), self.env.path(fork), false);
+        let env = here.env.clone();
+        self.cut_loop(paths, fork, here, env, id, depth, span, by)
     }
 
     /// A pass of a loop already summarized, met again: the summary's path
@@ -2194,6 +2208,7 @@ fn join_names(a: &Accum, b: &Accum, limit: usize) -> Option<Accum> {
     n.at = n.at.or(other.at);
     n.closed = n.closed && other.closed;
     n.stopped = n.stopped.or(other.stopped);
+    n.gap_digits &= other.gap_digits;
     n.names = all;
     if n.names.len() > limit {
         n.collapse();

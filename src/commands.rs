@@ -496,8 +496,16 @@ impl Machine<'_> {
                 crate::config::ShellEscape::Full => 1,
                 crate::config::ShellEscape::Restricted => 2,
             }),
-            // The clock, the random generator and the output position.
-            L::ElapsedTime | L::RandomSeed | L::LastXPos | L::LastYPos => None,
+            // pdfTeX's clock: scaled seconds since the run began, stopping
+            // at 2^31-1, so never negative. Its interval is left to the
+            // test or assignment that reads it, as a register's is.
+            L::ElapsedTime => {
+                (self.abs, self.abs_exact, self.abs_from) =
+                    (Some(crate::value::Num::range(0, crate::value::MAX_INT)), None, None);
+                None
+            }
+            // The random generator and the output position.
+            L::RandomSeed | L::LastXPos | L::LastYPos => None,
             L::XetexVersion => int(XETEX_VERSION),
             // Unlike the other engines' version primitives, LuaTeX's varies
             // meaningfully across installs, so it is read from the real
@@ -2235,7 +2243,10 @@ impl Machine<'_> {
     /// `\the` of a font-valued quantity: the font identifier (tex.web § 465).
     pub fn font_identifier(&mut self, p: Primitive, sym: Sym, span: Span) -> Option<Vec<Token>> {
         let font = match p {
-            Primitive::FontDef => self.current_font()?,
+            Primitive::FontDef => match self.current_font() {
+                Some(font) => font,
+                None => return self.current_font_identifiers(span),
+            },
             Primitive::FontIdent(font) => font,
             Primitive::Command(Syntax::FamilyFont) => {
                 let family = self.scan_int()?;
@@ -2243,12 +2254,29 @@ impl Machine<'_> {
             }
             _ => return None,
         };
-        let cs = if font == 0 {
-            self.intern("nullfont")
-        } else {
-            let index = self.font_field(font, "cs").as_int()?;
-            Sym(u32::try_from(index).ok()?)
-        };
-        Some(vec![Token::new(Tok::Cs(cs), span)])
+        Some(vec![Token::new(Tok::Cs(self.font_cs(font)?), span)])
+    }
+
+    /// The current font a join left one of a few: a token for one of
+    /// their identifiers, which a path parts on where it matters.
+    fn current_font_identifiers(&mut self, span: Span) -> Option<Vec<Token>> {
+        if self.engine_unpinned("font") {
+            return None;
+        }
+        let slot = self.engine_sym("font");
+        let fonts = self.env.get(slot)?.value.exact_ints()?;
+        let texts = (fonts.into_iter())
+            .map(|font| Some(Rc::from([Token::new(Tok::Cs(self.font_cs(u32::try_from(font).ok()?)?), span)])))
+            .collect::<Option<Vec<Rc<[Token]>>>>()?;
+        Some(vec![self.one_of(texts, span)])
+    }
+
+    /// The identifier font `font` was loaded under.
+    fn font_cs(&mut self, font: u32) -> Option<Sym> {
+        if font == 0 {
+            return Some(self.intern("nullfont"));
+        }
+        let index = self.font_field(font, "cs").as_int()?;
+        Some(Sym(u32::try_from(index).ok()?))
     }
 }

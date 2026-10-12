@@ -190,13 +190,12 @@ impl Machine<'_> {
                 let outer = std::mem::replace(&mut self.scanner, crate::machine::Scanner::Normal);
                 let next = self.next_token();
                 self.scanner = outer;
-                if let Some(token) = next {
-                    let guarded = token.cs().is_some() || self.active_cs(token).is_some();
-                    self.unread(token);
-                    if guarded {
-                        let marker = Token::new(Tok::Cs(self.dont_expand), token.span);
-                        self.unread(marker);
+                match next {
+                    Some(token) if token.cs().is_some() || self.active_cs(token).is_some() => {
+                        self.unread_noexpanded(token)
                     }
+                    Some(token) => self.unread(token),
+                    None => {}
                 }
             }
             P::Text(kind) => self.produce_text(kind, by, span),
@@ -1302,8 +1301,8 @@ impl Machine<'_> {
         // A name built from unknown text is known by the text around it.
         let name = match name {
             Ok(name) => name,
-            Err((prefix, suffix)) => {
-                let token = self.unknown_name_token(&prefix, &suffix, at);
+            Err((prefix, suffix, digits)) => {
+                let token = self.unknown_name_token(&prefix, &suffix, digits, at);
                 return self.unread(token);
             }
         };
@@ -1394,14 +1393,22 @@ impl Machine<'_> {
 
     /// The name, where its first character was written, and the files its
     /// characters came from. An unknown part leaves only the text around it.
-    fn scan_csname_at(&mut self, span: Span) -> (Result<String, (String, String)>, Span, Vec<crate::tex::FileId>) {
+    #[allow(clippy::type_complexity)]
+    fn scan_csname_at(
+        &mut self,
+        span: Span,
+    ) -> (Result<String, (String, String, bool)>, Span, Vec<crate::tex::FileId>) {
         let depth = crate::commands::enter_csname();
         let found = self.scan_csname_chars(span);
         crate::commands::leave_csname(depth);
         found
     }
 
-    fn scan_csname_chars(&mut self, span: Span) -> (Result<String, (String, String)>, Span, Vec<crate::tex::FileId>) {
+    #[allow(clippy::type_complexity)]
+    fn scan_csname_chars(
+        &mut self,
+        span: Span,
+    ) -> (Result<String, (String, String, bool)>, Span, Vec<crate::tex::FileId>) {
         let mut acc = match self.cfg.arm_joins {
             true => self.scan_paths(Unit::Name, Accum::for_name()),
             false => {
@@ -1511,7 +1518,8 @@ impl Machine<'_> {
             self.split_meaning(sym, t.span);
         }
         if self.is_unknown_digits(sym) || matches!(self.env.meaning(sym), Meaning::Unknown) {
-            self.scans.last_mut().and_then(|a| a.name.as_deref_mut()).expect("the name scan").unknown_part();
+            let digits = self.is_unknown_digits(sym);
+            self.scans.last_mut().and_then(|a| a.name.as_deref_mut()).expect("the name scan").unknown_part(digits);
             return false;
         }
         // tex.web § 370: expanding an undefined control sequence reports
@@ -1720,17 +1728,19 @@ impl Machine<'_> {
             return self.split_ifx();
         }
         let b = self.next_token();
+        let b_marked = b.is_some_and(|b| self.read_noexpanded(b));
         let split_b = b.is_some_and(|b| self.split_one_of(b));
+        // A look-ahead TeX does not make: both operands go back as they
+        // were read, behind their markers.
+        let back = |m: &mut Self, t: Token, marked: bool| {
+            if marked { m.unread_noexpanded(t) } else { m.unread(t) }
+        };
         if let Some(b) = b
             && !split_b
         {
-            self.unread(b);
+            back(self, b, b_marked);
         }
-        // Reading `b` forgot that `a` stood behind a `\noexpand` marker.
-        if marked {
-            self.noexpanded = Some(a);
-        }
-        self.unread(a);
+        back(self, a, marked);
         if split_b {
             return self.split_ifx();
         }
@@ -2725,6 +2735,7 @@ impl Machine<'_> {
                 value @ (Value::Num { .. } | Value::OneOf(_)) => {
                     self.abs = value.num().map(|(_, n)| n);
                     self.abs_exact = value.exact_ints();
+                    self.abs_parts = value.member_nums().filter(|_| self.abs_exact.is_none());
                     self.abs_from = None;
                     Some(Value::Unknown)
                 }
@@ -2940,10 +2951,22 @@ impl Machine<'_> {
         Some(out)
     }
 
-    /// A write through an unpinned register number. Every register it may
+    /// A write through an unpinned register number, which may lie in any of
+    /// `index`'s intervals (any register at all for `None`): each is
+    /// weakened in turn.
+    pub(crate) fn weaken_registers(&mut self, kind: RegKind, index: Option<&[Num]>, value: Value, global: bool) {
+        match index {
+            Some(parts) => {
+                parts.iter().for_each(|part| self.weaken_register_range(kind, Some(part), value.clone(), global))
+            }
+            None => self.weaken_register_range(kind, None, value, global),
+        }
+    }
+
+    /// A write through a register number in `index`. Every register it may
     /// name is joined with the value, and unseen ones are no longer known to
     /// be zero (tex.web §§ 232, 1224).
-    pub(crate) fn weaken_registers(&mut self, kind: RegKind, index: Option<&Num>, value: Value, global: bool) {
+    fn weaken_register_range(&mut self, kind: RegKind, index: Option<&Num>, value: Value, global: bool) {
         let members = self.env.sets;
         let weaken = |m: &mut Self, sym: Sym, base: Value| {
             let bound = m.env.slot(sym).is_some();
@@ -3012,6 +3035,21 @@ impl Machine<'_> {
             (Some(num), _) => Value::from_num(quantity, num),
             (None, _) => Value::Unknown,
         }
+    }
+
+    /// The index a number scan read without pinning it, as the intervals it
+    /// may lie in: its exact members while a join left few, the parts an
+    /// expression left ([`Machine::abs_parts`]), else its one interval.
+    /// `None` when it may be any number. What the scan left is cleared.
+    pub(crate) fn take_index(&mut self) -> Option<Vec<Num>> {
+        let (abs, exact, parts) = (self.abs.take(), self.abs_exact.take(), self.abs_parts.take());
+        self.abs_from = None;
+        let abs = abs?;
+        Some(match (exact, parts) {
+            (Some(xs), _) if !xs.is_empty() => xs.into_iter().map(Num::exact).collect(),
+            (_, Some(parts)) if hull(&parts) == Some(abs) => parts,
+            _ => vec![abs],
+        })
     }
 
     fn allocate(&mut self, by: Sym, span: Span, kind: RegKind) {
@@ -3271,7 +3309,7 @@ impl Machine<'_> {
         let index = self.scan_number();
         // An unpinned number names any register. The value is still read before
         // it is spread over them.
-        let spread = index.is_none().then(|| self.abs.take());
+        let spread = index.is_none().then(|| self.take_index());
         self.abs = None;
         self.abs_exact = None;
         self.abs_from = None;
@@ -3296,7 +3334,7 @@ impl Machine<'_> {
         let global = self.take_global();
         match target {
             Some(target) => self.assign(target, value, global, span),
-            None => self.weaken_registers(kind, spread.as_ref(), value, global),
+            None => self.weaken_registers(kind, spread.as_deref(), value, global),
         }
     }
 
@@ -3319,7 +3357,7 @@ impl Machine<'_> {
                 }
             }
             let global = self.take_global();
-            return self.weaken_registers(kind, spread.as_ref(), Value::Unknown, global);
+            return self.weaken_registers(kind, spread.as_deref(), Value::Unknown, global);
         };
         // tex.web § 1236: the `by` is an optional keyword.
         self.scan_keyword("by");
@@ -3398,7 +3436,7 @@ impl Machine<'_> {
     /// The register an arithmetic command names: the source's name, the
     /// storage it stands for, and its kind.
     #[allow(clippy::type_complexity)]
-    fn read_register(&mut self) -> Option<(Option<Sym>, Option<Sym>, RegKind, Option<Num>)> {
+    fn read_register(&mut self) -> Option<(Option<Sym>, Option<Sym>, RegKind, Option<Vec<Num>>)> {
         // tex.web § 1237 reads the register with `get_x_token`, so
         // `\advance\csname c@page\endcsname` reaches the register.
         let token = loop {
@@ -3418,13 +3456,13 @@ impl Machine<'_> {
         {
             self.next_token();
             let index = self.scan_number();
-            let spread = index.is_none().then(|| self.abs.take()).flatten();
+            let spread = index.is_none().then(|| self.take_index()).flatten();
             self.abs = None;
             self.abs_exact = None;
             self.abs_from = None;
             let target = index.and_then(|n| self.one_register(kind, n));
             let spread = match index {
-                Some(n) if target.is_none() => Some(Num::range(n.min(0), n.max(0))),
+                Some(n) if target.is_none() => Some(vec![Num::range(n.min(0), n.max(0))]),
                 _ => spread,
             };
             return Some((target, target, kind, spread));
@@ -3514,8 +3552,8 @@ impl Machine<'_> {
         self.abs = None;
         self.abs_exact = None;
         let code = self.scan_number();
-        let abs = self.abs.take();
-        self.abs_exact = None;
+        let parts = self.take_index();
+        let abs = parts.as_deref().and_then(hull);
         let chars = self.scanned_chars(code, abs);
         self.read_equals();
         self.abs = None;
@@ -3555,28 +3593,34 @@ impl Machine<'_> {
         self.abs_exact = None;
         let global = self.take_global();
         let Some(chars) = chars else {
-            // Any character in the interval may be the one assigned. With no
-            // interval, any at all, and no entry is known.
-            let Some(widened) = Self::interval_chars(abs) else {
-                self.weaken_code_table(table, abs.as_ref(), &value, global, span);
-                return self.diagnose(
-                    Severity::Imprecision,
-                    "unknown-char-code",
-                    span,
-                    format!("\\{} of a character satex could not pin down; each entry it may name holds its old code or the new", table.as_str()),
-                );
-            };
+            // Any character in the intervals may be the one assigned, each
+            // interval apart. With no interval, any at all, and no entry is
+            // known.
+            let (mut widened, mut reach) = (Vec::new(), Vec::new());
+            for part in parts.iter().flatten() {
+                match Self::interval_chars(Some(*part)) {
+                    Some(chars) => widened.extend(chars),
+                    None => reach.push(*part),
+                }
+            }
             for character in widened {
                 self.join_code(table, character, &value, global, span);
             }
+            match parts {
+                Some(_) => {
+                    reach.iter().for_each(|part| self.weaken_code_table(table, Some(part), &value, global, span))
+                }
+                None => self.weaken_code_table(table, None, &value, global, span),
+            }
+            let what = match parts.is_none() || !reach.is_empty() {
+                true => "each entry it may name holds its old code or the new",
+                false => "every code it may name is unknown",
+            };
             return self.diagnose(
                 Severity::Imprecision,
                 "unknown-char-code",
                 span,
-                format!(
-                    "\\{} of a character satex could not pin down; every code it may name is unknown",
-                    table.as_str()
-                ),
+                format!("\\{} of a character satex could not pin down; {what}", table.as_str()),
             );
         };
         // Any may be the one assigned, so each holds its old code or the new.
@@ -3749,8 +3793,8 @@ impl Machine<'_> {
         self.abs_exact = None;
         let id = self.scan_begin();
         let code = self.scan_number();
-        let abs = self.abs.take();
-        self.abs_exact = None;
+        let parts = self.take_index();
+        let abs = parts.as_deref().and_then(hull);
         let chars = self.scanned_chars(code, abs);
         self.read_equals();
         self.abs = None;
@@ -3780,18 +3824,25 @@ impl Machine<'_> {
             _ => u16::MAX,
         };
         let (Some(ch), Some(catcode)) = (chars.as_ref().filter(|c| c.len() == 1).map(|c| c[0]), catcode) else {
-            // Each character it may name keeps its category or takes one of `cats`.
-            match chars.or_else(|| Self::interval_chars(abs)) {
-                Some(chars) => {
-                    for ch in chars {
-                        if self.catcodes.is_unknown(ch) || cats != 1 << self.catcodes.get(ch) as u8 {
-                            self.set_catcode_unknown(ch);
+            // Each character it may name keeps its category or takes one of
+            // `cats`, each interval of them apart.
+            let parts: Vec<Option<Num>> = match (&chars, parts) {
+                (None, Some(parts)) => parts.into_iter().map(Some).collect(),
+                _ => vec![abs],
+            };
+            for part in parts {
+                match chars.clone().or_else(|| Self::interval_chars(part)) {
+                    Some(chars) => {
+                        for ch in chars {
+                            if self.catcodes.is_unknown(ch) || cats != 1 << self.catcodes.get(ch) as u8 {
+                                self.set_catcode_unknown(ch);
+                            }
                         }
                     }
-                }
-                None => {
-                    if self.set_catcodes_reach(abs, cats) {
-                        self.assume_structural(span);
+                    None => {
+                        if self.set_catcodes_reach(part, cats) {
+                            self.assume_structural(span);
+                        }
                     }
                 }
             }
@@ -4148,6 +4199,11 @@ fn scale_glue(g: Glue, n: i64, op: Arith) -> Option<Glue> {
 /// word, since `\advance` wraps (tex.web § 1238). An unfollowed dimension is
 /// within `\maxdimen`: assignments pass `attach_sign` (tex.web § 460), and
 /// `\advance` past it leaves its own interval.
+/// The interval spanning every part.
+fn hull(parts: &[Num]) -> Option<Num> {
+    parts.iter().copied().reduce(|a, b| a.join(&b))
+}
+
 fn register_top(kind: RegKind) -> Option<Num> {
     match kind {
         RegKind::Count => Some(Num::range(value::WORD_MIN, value::WORD_MAX)),
