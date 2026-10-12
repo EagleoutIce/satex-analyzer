@@ -1389,6 +1389,9 @@ pub struct Machine<'a> {
     /// The call whose argument parts [`crate::observe::defined_name`] last
     /// computed, and those parts.
     pub call_parts: Option<(Span, Span, std::rc::Rc<[String]>)>,
+    /// Where [`Machine::read_group_body`] collects a body, kept between
+    /// calls so a long body is not grown anew each time.
+    body: Vec<Token>,
     /// Names document calls defined from their arguments: the name, the key,
     /// the calling command and the call.
     pub key_names: Vec<(String, String, Sym, Span, crate::observe::OccContext)>,
@@ -1956,6 +1959,7 @@ impl<'a> Machine<'a> {
             line_defined: None,
             stream_files: HashMap::default(),
             call_parts: None,
+            body: Vec::new(),
             key_names: Vec::new(),
             counter_namespace: None,
             held: Vec::new(),
@@ -7069,7 +7073,7 @@ will look undefined",
         if self.out.graph.reader.is_none() {
             self.out.graph.reader = Some(node);
         }
-        Rc::make_mut(&mut self.within).push((sym, node));
+        crate::push_shared(&mut self.within, (sym, node));
         let before = self.input.len();
         self.record_call(call_key, unknown_operands);
         self.push_parts(body, sym);
@@ -7374,19 +7378,24 @@ will look undefined",
     /// stack already holds or a file: they cannot run away, and no token
     /// budget cuts them short. Every read still costs a step.
     pub fn read_group_body(&mut self) -> Vec<Token> {
-        let mut out = Vec::new();
+        let mut out = std::mem::take(&mut self.body);
+        out.clear();
         let mut depth = 1usize;
         loop {
             let Some(t) = self.next_token() else { break };
             if self.runaway_argument(t) {
-                return self.unknown_argument(&out, t.span);
+                let unknown = self.unknown_argument(&out, t.span);
+                self.body = out;
+                return unknown;
             }
             match t.tok {
                 Tok::Chr(_, Catcode::Begin) => depth += 1,
                 Tok::Chr(_, Catcode::End) => {
                     depth -= 1;
                     if depth == 0 {
-                        return out;
+                        let body = out.to_vec();
+                        self.body = out;
+                        return body;
                     }
                 }
                 _ => {}
@@ -7399,7 +7408,9 @@ will look undefined",
             self.diagnose(Severity::Unsupported, "unbalanced-group", at, "group never closes".into());
         }
         self.unread_all(&out);
-        self.unknown_argument(&out, at)
+        let unknown = self.unknown_argument(&out, at);
+        self.body = out;
+        unknown
     }
 
     /// Note an argument the call being described just read, if it read it
@@ -9537,7 +9548,8 @@ pub fn substitute_parts(m: &MacroDef, args: &[Vec<Token>], limit: usize) -> Opti
     }
     let mut shared: Vec<Option<Rc<[Token]>>> = vec![None; args.len()];
     let mut parts = Vec::new();
-    let mut run: Vec<Token> = Vec::new();
+    let copied: usize = args.iter().map(Vec::len).filter(|&n| n < SHARED_ARGUMENT).sum();
+    let mut run: Vec<Token> = Vec::with_capacity(m.replacement_text.len() + copied);
     let mut held = 0;
     for t in m.replacement_text.iter() {
         match t.tok {

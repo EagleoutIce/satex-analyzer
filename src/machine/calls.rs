@@ -105,7 +105,7 @@ impl Machine<'_> {
                 leaky: false,
                 unknown,
             };
-            Rc::make_mut(&mut self.call_recs).push(rec);
+            crate::push_shared(&mut self.call_recs, rec);
         }
     }
 

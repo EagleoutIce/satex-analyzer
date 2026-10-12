@@ -78,6 +78,19 @@ pub fn analyze(source: &str, path: Option<&Path>, cfg: &Config) -> Analysis {
     Machine::analyze(source, path, cfg)
 }
 
+/// Push onto a stack the path snapshots share. A shared stack is copied
+/// with room to grow, so that the push does not copy it a second time.
+pub(crate) fn push_shared<T: Clone>(stack: &mut std::rc::Rc<Vec<T>>, item: T) {
+    if let Some(own) = std::rc::Rc::get_mut(stack) {
+        own.push(item);
+        return;
+    }
+    let mut copy = Vec::with_capacity(stack.len() * 2 + 1);
+    copy.extend_from_slice(stack);
+    copy.push(item);
+    *stack = std::rc::Rc::new(copy);
+}
+
 /// Hash collections with fixed keys, so iteration order is the same every
 /// run: with the std's random keys one run in about eight took other paths.
 pub mod fixed {
