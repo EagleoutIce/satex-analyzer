@@ -253,8 +253,14 @@ impl Machine<'_> {
         if !self.replayable || i >= usize::from(self.cfg.limits.choices) || (!scripted && self.runs >= RUNS) {
             return None;
         }
+        // Replays count: each is work at the site. Only a new choice is
+        // refused, so a replay follows the run it repeats.
+        if self.hot_site(span) && !scripted {
+            return None;
+        }
         let arm = self.script.get(i).copied().unwrap_or(0);
         self.out.heat(|h| &mut h.forks, span);
+        self.out.forks += 1;
         self.choices.push(Choice { span, by, arms, arm });
         Some(arm)
     }
@@ -357,7 +363,15 @@ impl Machine<'_> {
                     false
                 }
                 Some(Next::None) => false,
-                None if paths.fork.is_none() => break,
+                // The one path left is no run: it is never where the
+                // analysis ends while input is left.
+                None if paths.fork.is_none() => match self.infeasible && self.halted && self.input_left() {
+                    true => {
+                        self.read_on_dropped(Vec::new());
+                        continue;
+                    }
+                    false => break,
+                },
                 None => {
                     self.parted |= ended || self.halted;
                     if !ended && !self.halted {
@@ -389,15 +403,19 @@ impl Machine<'_> {
             } else if !live {
                 let configs = std::mem::take(&mut paths.done);
                 if configs.is_empty() {
-                    let open = self.input.iter().any(|f| matches!(f, Frame::File { mouth, .. } if !mouth.ending()));
-                    if open && !self.out.exhausted {
-                        let span = self.position_span();
-                        self.diagnose(
-                            Severity::Unsupported,
-                            "analysis-ended-early",
-                            span,
-                            "analysis ended early here: all paths were dropped before the input ended".into(),
-                        );
+                    if !ended && self.input_left() {
+                        // Paths dropped for an error are the runs left:
+                        // they go on ([`Machine::settle`]).
+                        if !paths.shelved.is_empty() {
+                            (paths.failed, self.halted) = (true, true);
+                            paths.fork = Some(fork);
+                            continue;
+                        }
+                        let written = self.env.path(&fork).syms();
+                        self.env.unfork(fork);
+                        self.read_on_dropped(written);
+                        paths.heads.clear();
+                        continue;
                     }
                     self.halted = true;
                     self.env.unfork(fork);
@@ -483,6 +501,33 @@ impl Machine<'_> {
         self.keep_errors = keep_errors;
         (self.script, self.choices, self.runs, self.replayable) = outer;
         (self.unit, self.lone) = outer_unit;
+    }
+
+    /// Whether a file is still being read and the budget is not spent.
+    fn input_left(&self) -> bool {
+        !self.out.exhausted && self.input.iter().any(|f| matches!(f, Frame::File { mouth, .. } if !mouth.ending()))
+    }
+
+    /// Every path was dropped before the input ended: none was a run of the
+    /// document as satex followed it, so what was approximated on the way
+    /// went wrong. The run never ends there. It goes on from the last path
+    /// as the guard reads on after a cut: what that path changed since the
+    /// paths parted (`written`) and what the region assigned is unknown,
+    /// the token lists left are given up down to the file, and an unknown
+    /// token stands for what they would have done.
+    fn read_on_dropped(&mut self, written: Vec<Sym>) {
+        let span = self.position_span();
+        self.diagnose(
+            Severity::Imprecision,
+            "analysis-ended-early",
+            span,
+            "every path was dropped here before the input ended; the run goes on after the expansion they were in, and what it assigned is unknown".into(),
+        );
+        let syms = self.typed_syms();
+        self.env.widen(&written, None, &crate::env::typed!(self, syms));
+        (self.halted, self.infeasible) = (false, false);
+        self.taint_after_cut();
+        self.resync_now();
     }
 
     /// No other path waits, and the running one is finished or went on

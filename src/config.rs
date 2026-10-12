@@ -41,6 +41,13 @@ pub struct Limits {
     /// conditional follows only its first arm, reported as an `unsupported`
     /// gap.
     pub choices: u16,
+    /// Undecided choices one site (a conditional, a name of several
+    /// meanings) may make, over all paths, while the run reads one source
+    /// line. Past them the expansion above that line is cut as `line_steps`
+    /// cuts it (`site-forks-cut`): what it assigned is unknown, and the
+    /// line reads on after an unknown token. Many paths through one
+    /// place say little the join of a few did not. 0 turns it off.
+    pub site_forks: u32,
     /// Paths one drive keeps waiting before the two furthest back at one
     /// source position are cut to the input levels they share and joined.
     pub paths: u16,
@@ -83,9 +90,14 @@ pub struct Limits {
     /// intervals are among them (`{[0,10], [100,120]}`) before only their
     /// hull is kept.
     pub interval_set: u16,
-    /// Past this percentage of `steps`, precision is lowered so the run
-    /// finishes (`precision-degraded`); 100 never degrades.  Seconds and
-    /// memory never steer the run: they only stop it.
+    /// A fallback, off by default: past this percentage of `steps`, and
+    /// again at each further third of what is left, the limits that only
+    /// cost time (paths, sets, choices, loop and recursion widening, call
+    /// summaries, `site_forks`, `line_steps`) are halved, so the run
+    /// degrades its precision and finishes (`precision-degraded`); 100
+    /// never degrades. Steps are counted the same on every machine, so the
+    /// result does not depend on its speed. Seconds and memory never steer
+    /// the run: they only stop it.
     #[serde(deserialize_with = "percent")]
     pub degrade_at_percent: u8,
     /// Tokens one expansion may add, and tokens one undecided conditional may
@@ -144,6 +156,7 @@ impl Limits {
             "repeat_failures" => self.repeat_failures.into(),
             "seconds" => self.seconds,
             "choices" => self.choices.into(),
+            "site_forks" => self.site_forks.into(),
             "paths" => self.paths.into(),
             "alike" => self.alike.into(),
             "widen_after" => self.widen_after.into(),
@@ -206,6 +219,7 @@ impl Default for Limits {
             repeat_failures: 8,
             seconds: 300,
             choices: 8,
+            site_forks: 4_096,
             paths: 16,
             alike: 8,
             meaning_splits: 4,

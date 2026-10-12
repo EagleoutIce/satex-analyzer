@@ -579,7 +579,7 @@ mod line_guard {
             (l.widen_after, l.cycle_after, l.recursion_depth, l.expansion_depth) =
                 (u16::MAX, u16::MAX, u16::MAX, u16::MAX);
             (l.call_summary_after, l.site_expansions, l.repeat_failures) = (0, u32::MAX, u32::MAX);
-            (l.expansion_stack, l.held_tokens) = (usize::MAX, usize::MAX);
+            (l.expansion_stack, l.held_tokens, l.site_forks) = (usize::MAX, usize::MAX, 0);
         }
         let source = format!("{HEAD}\n{defs}\n{call}{call}\\def\\Lost{{}}\n\\def\\Next{{}}\n");
         let lines = source.lines().count() as u64;
@@ -620,5 +620,173 @@ mod line_guard {
     #[test]
     fn endless_loop_in_an_edef() {
         check("\\def\\l{\\ifnum\\count1>0 x\\expandafter\\l\\else\\expandafter\\l\\fi}", "\\edef\\e{\\l}");
+    }
+}
+
+/// Documents whose values are unknown still converge: each reaches its end
+/// with few paths, by the abstraction (exact `\relax` for a `\csname` that
+/// can spell no defined name) or by the per-site fork budget, never by
+/// running out of steps.
+mod convergence {
+    use satex::config::Config;
+    use satex::machine::{Analysis, Machine};
+
+    fn latex(name: &str, source: &str, tune: impl Fn(&mut Config)) -> Option<Analysis> {
+        if !crate::support::installed() {
+            return None;
+        }
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/convergence").join(name);
+        let mut cfg = Config {
+            cache: satex::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
+            load: satex::config::Load { packages: true, classes: true, ..Default::default() },
+            ..crate::support::config()
+        };
+        tune(&mut cfg);
+        crate::support::seed_kernel(&cfg);
+        Some(Machine::analyze(source, None, &cfg))
+    }
+
+    /// The run read `\end{document}`, cut nowhere by a budget, within
+    /// `forks` undecided choices.
+    fn converged(a: &Analysis, forks: u64) {
+        let cut: Vec<String> = a
+            .facts
+            .diagnostics
+            .iter()
+            .filter(|d| ["budget-exhausted", "limit-reached", "analysis-ended-early"].contains(&d.code))
+            .map(|d| format!("{} {}", d.code, d.message))
+            .collect();
+        assert!(cut.is_empty(), "{cut:?}");
+        assert!(crate::support::defined(a, "SatexReachedEnd"), "the end was not reached");
+        assert!(a.forks <= forks, "{} forks, at most {forks} expected", a.forks);
+    }
+
+    fn document(preamble: &str, body: &str) -> String {
+        format!(
+            "\\documentclass{{article}}\n{preamble}\n\\AtEndDocument{{\\gdef\\SatexReachedEnd{{}}}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"
+        )
+    }
+
+    /// (1) Three nested maps over constant lists whose body defines a name
+    /// built with an unknown: `\cs_new:cpe` finds each name free, as no
+    /// defined name has its known prefix and suffix, so it never takes the
+    /// error path (which wraps its message over the unknown text).
+    #[test]
+    fn nested_expl3_maps_defining_names_with_an_unknown_part() {
+        let preamble = r"\ExplSyntaxOn
+\tl_new:N \l_my_unknown_tl
+\tl_set:Nx \l_my_unknown_tl { \int_eval:n { \pdfuniformdeviate 100 } }
+\tl_map_inline:nn { a b c d e f } {
+  \tl_map_inline:nn { g h i j k l } {
+    \tl_map_inline:nn { m n o p q r } {
+      \cs_new:cpe { my_ #1 ##1 ####1 \l_my_unknown_tl :n } ########1 { #1 ##1 ####1 ########1 }
+    }
+  }
+}
+\ExplSyntaxOff";
+        let Some(a) = latex("expl3-maps", &document(preamble, "Text."), |_| {}) else { return };
+        converged(&a, 0);
+        assert!(crate::support::diagnosed(&a, "site-forks-cut").is_empty());
+    }
+
+    /// (2) Thirty TikZ nodes whose text width depends on a random number,
+    /// with pgfmath, `\colorlet` and positioning on them.
+    #[test]
+    fn tikz_nodes_of_unknown_width() {
+        let preamble = "\\usepackage{tikz}\n\\usetikzlibrary{positioning}";
+        let body = r"\begin{tikzpicture}
+\foreach \i [count=\n from 0] in {1,...,30} {
+  \pgfmathsetmacro{\w}{1+\pdfuniformdeviate 5}
+  \pgfmathparse{\w*2+\i}
+  \colorlet{c\i}{blue!\pgfmathresult!red}
+  \ifnum\i=1
+    \node[draw, text width=\w cm, fill=c\i] (n\i) {Node \i};
+  \else
+    \node[draw, text width=\w cm, fill=c\i, right=of n\n] (n\i) {Node \i};
+  \fi
+}
+\end{tikzpicture}";
+        let Some(a) = latex("tikz-nodes", &document(preamble, body), |_| {}) else { return };
+        converged(&a, 40_000);
+    }
+
+    /// (3) An expl3 loop whose bound is `\pdfelapsedtime`.
+    #[test]
+    fn expl3_loop_to_the_elapsed_time() {
+        let preamble = r"\ExplSyntaxOn
+\int_new:N \l_my_i_int
+\int_new:N \l_my_bound_int
+\int_set:Nn \l_my_bound_int { \pdfelapsedtime }
+\int_do_while:nNnn { \l_my_i_int } < { \l_my_bound_int }
+  {
+    \int_incr:N \l_my_i_int
+    \tl_set:Nx \l_tmpa_tl { \int_use:N \l_my_i_int }
+  }
+\int_step_inline:nn { \l_my_bound_int } { \tl_put_right:Nn \l_tmpb_tl { #1 } }
+\ExplSyntaxOff";
+        let Some(a) = latex("expl3-elapsed", &document(preamble, "Text."), |_| {}) else { return };
+        converged(&a, 500);
+    }
+
+    /// (4) A beamer frame with microtype and a font size that is not known.
+    #[test]
+    fn beamer_frame_with_microtype_at_an_unknown_size() {
+        let source = r"\documentclass{beamer}
+\usepackage{microtype}
+\newdimen\mysize
+\mysize=\pdfuniformdeviate 20pt
+\AtEndDocument{\gdef\SatexReachedEnd{}}
+\begin{document}
+\begin{frame}{A title}
+\fontsize{\mysize}{1.2\mysize}\selectfont
+Some text with microtype protrusion and expansion.
+\begin{itemize}
+\item One
+\item Two
+\end{itemize}
+\end{frame}
+\end{document}
+";
+        let Some(a) = latex("beamer-microtype", source, |_| {}) else { return };
+        converged(&a, 3_000);
+    }
+
+    /// `\csname` of a name with an unknown part that can spell no defined
+    /// name makes it `\relax`, as TeX makes every undefined name (tex.web
+    /// § 372): a test of it is decided. Once a name of that shape may be
+    /// defined, or one is, the test is undecided again.
+    #[test]
+    fn a_csname_that_can_spell_no_defined_name_is_relax() {
+        const HEAD: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\count1=\\pdfelapsedtime \\edef\\u{\\the\\count1}";
+        const TEST: &str = "\\expandafter\\ifx\\csname a\\u b\\endcsname\\relax\\def\\Free{}\\else\\def\\Taken{}\\fi";
+        let run = |defs: &str| {
+            let a = Machine::analyze(&format!("{HEAD}{defs}{TEST}"), None, &super::cfg(1_000_000));
+            (crate::support::defined(&a, "Free"), crate::support::defined(&a, "Taken"))
+        };
+        assert_eq!(run(""), (true, false));
+        assert_eq!(run("\\def\\axyb{}"), (true, true));
+        assert_eq!(run("\\expandafter\\def\\csname a\\u b\\endcsname{}"), (true, true));
+        assert_eq!(run("\\def\\cxyd{}\\def\\xab{}"), (true, false));
+    }
+
+    /// One place that keeps parting the paths is cut once it passed
+    /// `limits.site_forks` while one line is read: the expansion it is in
+    /// is widened and the run reads on, instead of spending the budget.
+    #[test]
+    fn a_site_past_its_fork_budget_cuts_its_expansion() {
+        let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\count1=\\pdfelapsedtime
+\\def\\x{\\advance\\count2 1 \\ifnum\\count1>\\count2 \\expandafter\\x\\else\\expandafter\\x\\fi}\\x\\def\\Lost{}
+\\def\\Next{}
+";
+        let mut cfg = super::cfg(1_000_000_000);
+        let l = &mut cfg.limits;
+        (l.widen_after, l.cycle_after, l.recursion_depth) = (u16::MAX, u16::MAX, u16::MAX);
+        (l.call_summary_after, l.site_expansions, l.site_forks) = (0, u32::MAX, 64);
+        let a = Machine::analyze(source, None, &cfg);
+        let codes: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).collect();
+        assert!(codes.contains(&"site-forks-cut"), "{codes:?}");
+        assert!(!codes.contains(&"line-budget-cut"), "{codes:?}");
+        assert!(crate::support::defined(&a, "Next"), "{codes:?}");
+        assert!(a.forks <= 64 * 2, "{} forks", a.forks);
     }
 }

@@ -327,6 +327,11 @@ impl PathEnv {
     pub fn is_empty(&self) -> bool {
         self.slots.is_empty()
     }
+
+    /// The names the path changed since its fork.
+    pub fn syms(&self) -> Vec<Sym> {
+        self.slots.keys().map(|&s| Sym(s)).collect()
+    }
 }
 
 impl Env {
