@@ -542,27 +542,13 @@ pub enum Catcode {
 }
 
 impl Catcode {
-    pub fn from_u8(n: u8) -> Option<Catcode> {
+    const BY_CODE: [Catcode; 16] = {
         use Catcode::*;
-        Some(match n {
-            0 => Escape,
-            1 => Begin,
-            2 => End,
-            3 => Math,
-            4 => Tab,
-            5 => Eol,
-            6 => Param,
-            7 => Sup,
-            8 => Sub,
-            9 => Ignored,
-            10 => Space,
-            11 => Letter,
-            12 => Other,
-            13 => Active,
-            14 => Comment,
-            15 => Invalid,
-            _ => return None,
-        })
+        [Escape, Begin, End, Math, Tab, Eol, Param, Sup, Sub, Ignored, Space, Letter, Other, Active, Comment, Invalid]
+    };
+
+    pub fn from_u8(n: u8) -> Option<Catcode> {
+        Self::BY_CODE.get(n as usize).copied()
     }
 }
 
@@ -1840,52 +1826,36 @@ pub fn expl3_arity(name: &str) -> Option<u8> {
     Some(signature.len() as u8)
 }
 
-/// Which TeX register kind a `\countdef`-style name addresses: count, dimen,
-/// skip, muskip, toks, box, or a read/write stream. [`Meaning::Register`]
-/// pairs it with the register number.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
-pub enum RegKind {
-    Count,
-    Dimen,
-    Skip,
-    MuSkip,
-    Toks,
-    Box,
-    Read,
-    Write,
-    /// `\chardef` and `\mathchardef`: a constant, not a register, whose
-    /// number is its value (tex.web § 1224). The two are different
-    /// meanings, so `\ifx` tells them apart.
-    Char,
-    MathChar,
-    /// `\Umathchardef` and `\Umathcharnumdef`: a `\Umathchar` constant,
-    /// which `\ifx` and `\meaning` tell from a `\mathchar` one (XeTeX
-    /// reference; LuaTeX manual, "Math").
-    UMathChar,
+named_enum! {
+    /// Which TeX register kind a `\countdef`-style name addresses: count, dimen,
+    /// skip, muskip, toks, box, or a read/write stream. [`Meaning::Register`]
+    /// pairs it with the register number.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+    pub enum RegKind {
+        Count => "count",
+        Dimen => "dimen",
+        Skip => "skip",
+        MuSkip => "muskip",
+        Toks => "toks",
+        Box => "box",
+        Read => "read",
+        Write => "write",
+        /// `\chardef` and `\mathchardef`: a constant, not a register, whose
+        /// number is its value (tex.web § 1224). The two are different
+        /// meanings, so `\ifx` tells them apart.
+        Char => "char",
+        MathChar => "mathchar",
+        /// `\Umathchardef` and `\Umathcharnumdef`: a `\Umathchar` constant,
+        /// which `\ifx` and `\meaning` tell from a `\mathchar` one (XeTeX
+        /// reference; LuaTeX manual, "Math").
+        UMathChar => "Umathchar",
+    }
 }
 
 /// The number of a register allocated by a modeled `\newcount` and its
 /// relatives, which satex does not number: its value lives on its own name
 /// rather than on the numbered register.
 pub const UNNUMBERED: u16 = u16::MAX;
-
-impl RegKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            RegKind::Count => "count",
-            RegKind::Dimen => "dimen",
-            RegKind::Skip => "skip",
-            RegKind::MuSkip => "muskip",
-            RegKind::Toks => "toks",
-            RegKind::Box => "box",
-            RegKind::Read => "read",
-            RegKind::Write => "write",
-            RegKind::Char => "char",
-            RegKind::MathChar => "mathchar",
-            RegKind::UMathChar => "Umathchar",
-        }
-    }
-}
 
 /// The compiled meaning of a macro: [`ParameterText`] to match, replacement
 /// [`Token`]s to substitute into, and the `\long`/`\outer`/`\protected`

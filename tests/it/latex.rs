@@ -10,6 +10,21 @@ fn analyze(source: &str) -> Analysis {
     Machine::analyze(source, None, &cfg)
 }
 
+/// Tests that the last body of `\key` after the document is `want`.
+macro_rules! body_cases {
+    ($($(#[$doc:meta])* $name:ident($source:literal, $key:literal, $want:literal);)*) => {$(
+        $(#[$doc])*
+        #[test]
+        fn $name() {
+            if !installed() {
+                return;
+            }
+            let analysis = analyze($source);
+            assert_eq!(body(&analysis, $key), $want);
+        }
+    )*};
+}
+
 fn keys(analysis: &Analysis, kind: OccKind) -> Vec<String> {
     analysis.facts.occurrences.iter().filter(|o| o.kind == kind).map(|o| o.key.clone()).collect()
 }
@@ -77,19 +92,12 @@ fn a_counter_brings_its_printer_and_its_register() {
     assert!(defined(&analysis, "thewidget"), "the printer");
 }
 
-#[test]
-fn a_length_can_be_set_and_added_to() {
-    if !installed() {
-        return;
-    }
-    let analysis = analyze(
-        r"\documentclass{article}
+body_cases! {
+    a_length_can_be_set_and_added_to(r"\documentclass{article}
 \newlength{\gap}
 \setlength{\gap}{2pt}
 \addtolength{\gap}{3pt}
-\begin{document}\edef\seen{\the\gap}\end{document}",
-    );
-    assert_eq!(body(&analysis, "seen"), "5.0pt");
+\begin{document}\edef\seen{\the\gap}\end{document}", "seen", "5.0pt");
 }
 
 #[test]
@@ -143,31 +151,14 @@ fn package_options_are_recorded_and_a_clash_is_reported() {
     );
 }
 
-#[test]
-fn a_switch_made_by_newif_decides_a_conditional() {
-    if !installed() {
-        return;
-    }
-    let analysis = analyze(
-        r"\documentclass{article}
+body_cases! {
+    a_switch_made_by_newif_decides_a_conditional(r"\documentclass{article}
 \newif\ifdraft
 \drafttrue
-\begin{document}\ifdraft\def\seen{on}\else\def\seen{off}\fi\end{document}",
-    );
-    assert_eq!(body(&analysis, "seen"), "on");
-}
-
-#[test]
-fn at_begin_document_runs_before_the_body() {
-    if !installed() {
-        return;
-    }
-    let analysis = analyze(
-        r"\documentclass{article}
+\begin{document}\ifdraft\def\seen{on}\else\def\seen{off}\fi\end{document}", "seen", "on");
+    at_begin_document_runs_before_the_body(r"\documentclass{article}
 \AtBeginDocument{\def\seen{hook}}
-\begin{document}\end{document}",
-    );
-    assert_eq!(body(&analysis, "seen"), "hook");
+\begin{document}\end{document}", "seen", "hook");
 }
 
 #[test]
@@ -2077,23 +2068,16 @@ fn a_discretionary_counts_only_its_text_without_a_break() {
     assert_eq!(body(&analysis, "db"), "21.11119pt");
 }
 
-/// A formula that loads its math fonts at a new size: the font files run in
-/// math mode (`\lowercase`, `\pdffontexpand` leave no node, tex.web §§ 1285,
-/// pdfTeX manual), so the formula keeps its width. As `pdflatex` prints.
-#[test]
-fn a_formula_that_loads_its_fonts_keeps_its_width() {
-    if !installed() {
-        return;
-    }
-    let analysis = analyze(
-        r"\documentclass{article}
+body_cases! {
+    /// A formula that loads its math fonts at a new size: the font files run in
+    /// math mode (`\lowercase`, `\pdffontexpand` leave no node, tex.web §§ 1285,
+    /// pdfTeX manual), so the formula keeps its width. As `pdflatex` prints.
+    a_formula_that_loads_its_fonts_keeps_its_width(r"\documentclass{article}
 \usepackage{microtype}
 \usepackage{newtxmath}
 \begin{document}
 \setbox0\hbox{\footnotesize\(\leftarrow\)}\xdef\wa{\the\wd0}
-\end{document}",
-    );
-    assert_eq!(body(&analysis, "wa"), "8.192pt");
+\end{document}", "wa", "8.192pt");
 }
 
 /// tex.web §§ 728-729, 749, 764-766, 1156: binary atoms that turn ordinary,

@@ -8886,6 +8886,14 @@ will look undefined",
         self.choices.len() < usize::from(self.limits.meaning_splits)
     }
 
+    /// A file the run reads without loading it as TeX source (`\openin`, an
+    /// image): it is one of the analysis's files all the same.
+    pub(crate) fn note_read_file(&mut self, path: &Path) {
+        let path = path.display().to_string();
+        self.note_opened(&path);
+        self.register_file(path, LoadKind::Input);
+    }
+
     pub fn register_file(&mut self, path: String, kind: LoadKind) -> FileId {
         if let Some(i) = self.out.files.iter().position(|f| f.path == path) {
             return i as FileId;

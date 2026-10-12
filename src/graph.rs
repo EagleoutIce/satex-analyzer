@@ -7,27 +7,17 @@ use serde::Serialize;
 use crate::env::NodeId;
 use crate::tex::{Interner, Span, Sym};
 
-/// What kind of program point a [`Vertex`] stands for: a value, a use, a
-/// macro call, or the definition of a variable or macro.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum VertexTag {
-    Value,
-    Use,
-    MacroCall,
-    VariableDefinition,
-    MacroDefinition,
-}
-
-impl VertexTag {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            VertexTag::Value => "value",
-            VertexTag::Use => "use",
-            VertexTag::MacroCall => "macro-call",
-            VertexTag::VariableDefinition => "variable-definition",
-            VertexTag::MacroDefinition => "macro-definition",
-        }
+named_enum! {
+    /// What kind of program point a [`Vertex`] stands for: a value, a use, a
+    /// macro call, or the definition of a variable or macro.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum VertexTag {
+        Value => "value",
+        Use => "use",
+        MacroCall => "macro-call",
+        VariableDefinition => "variable-definition",
+        MacroDefinition => "macro-definition",
     }
 }
 

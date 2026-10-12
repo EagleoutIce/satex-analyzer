@@ -850,29 +850,21 @@ impl Default for Config {
     }
 }
 
-/// Which TeX engine's primitive set the run assumes: plain TeX, pdfTeX,
-/// LuaTeX or XeTeX. [`crate::plugin::Plugins::engine`] and `\ifpdf`-style
-/// tests key on it.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Engine {
-    Tex,
-    PdfTeX,
-    LuaTeX,
-    XeTeX,
+named_enum! {
+    /// Which TeX engine's primitive set the run assumes: plain TeX, pdfTeX,
+    /// LuaTeX or XeTeX. [`crate::plugin::Plugins::engine`] and `\ifpdf`-style
+    /// tests key on it.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Engine {
+        Tex => "tex",
+        PdfTeX => "pdftex",
+        LuaTeX => "luatex",
+        XeTeX => "xetex",
+    }
 }
 
 impl Engine {
-    /// Every engine satex knows, for `--version`.
-    pub const ALL: &'static [Engine] = &[Engine::Tex, Engine::PdfTeX, Engine::LuaTeX, Engine::XeTeX];
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Engine::Tex => "tex",
-            Engine::PdfTeX => "pdftex",
-            Engine::LuaTeX => "luatex",
-            Engine::XeTeX => "xetex",
-        }
-    }
     /// The program that starts this engine with the LaTeX format, which is
     /// also latexmk's setting for it (latexmk manual, "$pdflatex").
     /// The engine a program name drives: `lualatex` is LuaTeX with the LaTeX
@@ -952,44 +944,26 @@ pub enum Encoding {
     Utf8,
 }
 
-/// Which kind of input a run analyzes, and so which `profiles.*` block in
-/// `satex.yaml` its sensible defaults come from: `document` (the default),
-/// `package` (`.sty`), `class` (`.cls`), `literate` (`.dtx`/`.ins`) or
-/// `plain` (plain TeX, no LaTeX). Chosen from the input's extension and,
-/// where that says nothing, what it starts with ([`Profile::detect`]);
-/// `--profile NAME` and `profile:` in `satex.yaml` override the automatic
-/// choice.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Profile {
-    Document,
-    Package,
-    Class,
-    Literate,
-    Plain,
+named_enum! {
+    /// Which kind of input a run analyzes, and so which `profiles.*` block in
+    /// `satex.yaml` its sensible defaults come from: `document` (the default),
+    /// `package` (`.sty`), `class` (`.cls`), `literate` (`.dtx`/`.ins`) or
+    /// `plain` (plain TeX, no LaTeX). Chosen from the input's extension and,
+    /// where that says nothing, what it starts with ([`Profile::detect`]);
+    /// `--profile NAME` and `profile:` in `satex.yaml` override the automatic
+    /// choice.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Profile {
+        Document => "document",
+        Package => "package",
+        Class => "class",
+        Literate => "literate",
+        Plain => "plain",
+    }
 }
 
 impl Profile {
-    /// Every profile satex knows, for `--version` and error messages.
-    pub const ALL: &'static [Profile] =
-        &[Profile::Document, Profile::Package, Profile::Class, Profile::Literate, Profile::Plain];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Profile::Document => "document",
-            Profile::Package => "package",
-            Profile::Class => "class",
-            Profile::Literate => "literate",
-            Profile::Plain => "plain",
-        }
-    }
-
-    /// The profile named `name` (`--profile`, `profile:`), or `None` for an
-    /// unknown one.
-    pub fn parse(name: &str) -> Option<Profile> {
-        Profile::ALL.iter().copied().find(|profile| profile.as_str() == name)
-    }
-
     /// What `path`'s extension makes a file, `None` where it says nothing:
     /// a `.dtx`/`.fdd` is a class or a package by the `\Provides…` line of
     /// `code`, the text docstrip extracts (doc.dtx, "The driver").

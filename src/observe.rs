@@ -949,6 +949,9 @@ pub fn image(m: &mut Machine, name: &str, span: Span) -> Option<std::path::PathB
     let base = m.base().to_path_buf();
     let path = m.resolver_mut().resolve(name, crate::builtins::LoadKind::Input, &base);
     m.occurrence(OccKind::Graphics, name.to_string(), path.as_ref().map(|p| p.display().to_string()), at);
+    if let Some(path) = &path {
+        m.note_read_file(path);
+    }
     path
 }
 

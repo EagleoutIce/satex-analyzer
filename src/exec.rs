@@ -3877,7 +3877,7 @@ impl Machine<'_> {
         let base = self.base().to_path_buf();
         let path = self.resolver_mut().resolve(&name, LoadKind::Input, &base);
         if let Some(path) = &path {
-            self.note_opened(&path.display().to_string());
+            self.note_read_file(path);
             if let Some(stream) = stream {
                 self.carried.stream_paths.insert(stream, path.display().to_string());
             }

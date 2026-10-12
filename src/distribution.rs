@@ -12,29 +12,20 @@ use crate::plugin::{Platform, Provider};
 const TEXMF_VARIABLES: [&str; 8] =
     ["TEXMFHOME", "TEXMFCONFIG", "TEXMFVAR", "TEXMFLOCAL", "TEXMFSYSCONFIG", "TEXMFSYSVAR", "TEXMFDIST", "TEXMFMAIN"];
 
-/// How the TeX installation's roots were found: configured in `satex.yaml`,
-/// reported by `kpsewhich`, guessed at a well-known path, or not found at
-/// all. Part of [`Distribution`].
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Discovery {
-    /// Roots named in `satex.yaml`.
-    Configured,
-    /// Reported by `kpsewhich`.
-    Kpsewhich,
-    /// Found at a well-known installation path.
-    Fallback,
-    /// Nothing found.
-    None,
-}
-
-impl Discovery {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Discovery::Configured => "configured",
-            Discovery::Kpsewhich => "kpsewhich",
-            Discovery::Fallback => "fallback",
-            Discovery::None => "none",
-        }
+named_enum! {
+    /// How the TeX installation's roots were found: configured in `satex.yaml`,
+    /// reported by `kpsewhich`, guessed at a well-known path, or not found at
+    /// all. Part of [`Distribution`].
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Discovery {
+        /// Roots named in `satex.yaml`.
+        Configured => "configured",
+        /// Reported by `kpsewhich`.
+        Kpsewhich => "kpsewhich",
+        /// Found at a well-known installation path.
+        Fallback => "fallback",
+        /// Nothing found.
+        None => "none",
     }
 }
 
@@ -462,7 +453,7 @@ struct CachedProbe {
     answer: Vec<String>,
 }
 
-const PROBE_VERSION: u32 = 1;
+const PROBE_VERSION: u32 = 2;
 
 fn probe_cache_file(dir: &Path, program: &Path, topic: &str) -> PathBuf {
     let hash = digest(program.as_os_str().as_encoded_bytes());
@@ -525,7 +516,18 @@ fn kpse_roots(locator: &str, cache: Option<&Path>, env: &[(String, String)]) -> 
             return Vec::new();
         };
         let Ok(text) = String::from_utf8(output.stdout) else { return Vec::new() };
-        text.trim().split(KPSE_SEPARATOR).map(|field| field.trim().to_string()).collect()
+        let mut fields: Vec<String> = text.trim().split(KPSE_SEPARATOR).map(|field| field.trim().to_string()).collect();
+        // A distribution may add trees no variable above names (Debian's
+        // `/usr/share/texmf`), but its `$TEXMF` search list holds them all.
+        if let Ok(output) = std::process::Command::new(locator)
+            .arg("--expand-path=$TEXMF")
+            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .output()
+        {
+            let list = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            fields.extend(std::env::split_paths(&list).map(|tree| tree.display().to_string()));
+        }
+        fields
     });
     let mut roots: Vec<PathBuf> = Vec::new();
     for field in fields {

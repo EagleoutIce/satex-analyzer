@@ -23,6 +23,9 @@ pub fn discover(dir: &Path) -> Config {
 /// alone instead of taking the machine's memory.
 fn bounded(mut cfg: Config) -> Config {
     cfg.limits.seconds = 0;
+    // The checkout's own `satex.yaml` stubs macros while their internals do
+    // not run; a test judges the interpreter, not that stand-in.
+    cfg.stubs.clear();
     // One fixed clock: runs a second apart, cached or not, agree.
     cfg.clock = satex::config::Clock::At(time::OffsetDateTime::from_unix_timestamp(1_767_268_800).expect("a date"));
     cfg.limits.steps = 300_000_000;

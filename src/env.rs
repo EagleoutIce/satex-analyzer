@@ -226,6 +226,7 @@ pub struct Env {
 
 /// Which part of a binding a read looked at.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
 pub enum ReadKind {
     /// The meaning, with the flags and definition sites that go with it.
     Meaning,
@@ -254,16 +255,7 @@ pub enum ReadKind {
 
 impl ReadKind {
     fn bit(self) -> u8 {
-        match self {
-            ReadKind::Meaning => 1,
-            ReadKind::Value => 2,
-            ReadKind::Kept => 4,
-            ReadKind::Defined => 8,
-            ReadKind::Skip => 16,
-            ReadKind::Defs => 32,
-            ReadKind::Copy => 64,
-            ReadKind::Shape => 128,
-        }
+        1 << self as u8
     }
 }
 

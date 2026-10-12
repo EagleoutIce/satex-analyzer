@@ -17,6 +17,42 @@ fn findings(analysis: &Analysis, code: &str) -> Vec<String> {
         .collect()
 }
 
+/// Tests that the lint `code` has no finding on a document run with the kernel.
+macro_rules! file_none {
+    ($($(#[$doc:meta])* $name:ident($file:literal, $source:literal, $code:literal);)*) => {$(
+        $(#[$doc])*
+        #[test]
+        fn $name() {
+            let Some(analysis) = latex_file($file, $source) else { return };
+            assert!(findings(&analysis, $code).is_empty());
+        }
+    )*};
+}
+
+/// Tests that the lint `code` has no finding on a document run without one.
+macro_rules! bare_none {
+    ($($(#[$doc:meta])* $name:ident($dir:literal, $source:literal, $code:literal);)*) => {$(
+        $(#[$doc])*
+        #[test]
+        fn $name() {
+            let doc = on_disk($dir, $source, false).expect("temporary directory");
+            assert!(findings(&doc.analysis, $code).is_empty());
+        }
+    )*};
+}
+
+/// Tests that the lint `code` has no finding on a math document.
+macro_rules! math_none {
+    ($($(#[$doc:meta])* $name:ident($dir:literal, $body:expr, $code:literal);)*) => {$(
+        $(#[$doc])*
+        #[test]
+        fn $name() {
+            let Some(doc) = on_disk($dir, &math_document($body), true) else { return };
+            assert!(findings(&doc.analysis, $code).is_empty());
+        }
+    )*};
+}
+
 /// Name, document, lint code, and the texts its one finding holds (`None`:
 /// no finding).
 type FindingRow = (&'static str, &'static str, &'static str, Option<&'static [&'static str]>);
@@ -313,15 +349,8 @@ fn a_text_accent_on_a_dotted_letter_is_reported() {
     assert!(found[0].contains('j'), "{found:?}");
 }
 
-#[test]
-fn a_text_accent_the_encoding_composes_is_not_reported() {
-    let Some(analysis) = latex_file(
-        "composed.tex",
-        "\\documentclass{article}\n\\begin{document}\nna\\'ive and \\'{\\i}dem and \\^{}i\n\\end{document}\n",
-    ) else {
-        return;
-    };
-    assert!(findings(&analysis, "accent-on-dotted-letter").is_empty());
+file_none! {
+    a_text_accent_the_encoding_composes_is_not_reported("composed.tex", "\\documentclass{article}\n\\begin{document}\nna\\'ive and \\'{\\i}dem and \\^{}i\n\\end{document}\n", "accent-on-dotted-letter");
 }
 
 #[test]
@@ -336,15 +365,8 @@ fn a_math_accent_on_a_dotted_letter_is_reported() {
     assert!(found[0].contains('i'), "{found:?}");
 }
 
-#[test]
-fn a_math_accent_on_the_dotless_letter_is_not_reported() {
-    let Some(analysis) = latex_file(
-        "dotless.tex",
-        "\\documentclass{article}\n\\begin{document}\n$\\hat\\imath$ and $\\bar x$\n\\end{document}\n",
-    ) else {
-        return;
-    };
-    assert!(findings(&analysis, "accent-on-dotted-letter").is_empty());
+file_none! {
+    a_math_accent_on_the_dotless_letter_is_not_reported("dotless.tex", "\\documentclass{article}\n\\begin{document}\n$\\hat\\imath$ and $\\bar x$\n\\end{document}\n", "accent-on-dotted-letter");
 }
 
 // chktex warning 17: `Number of 'character' doesn't match the number of
@@ -394,11 +416,8 @@ fn a_file_with_more_openers_than_closers_is_reported() {
     assert!(found.iter().any(|m| m.contains("1 `[` and 0 `]`")), "{found:?}");
 }
 
-#[test]
-fn brackets_that_match_are_not_reported() {
-    let doc = on_disk("match", "\\begin{document}\nBalanced (ok) and [ok].\n\\end{document}\n", false)
-        .expect("temporary directory");
-    assert!(findings(&doc.analysis, "unbalanced-brackets").is_empty());
+bare_none! {
+    brackets_that_match_are_not_reported("match", "\\begin{document}\nBalanced (ok) and [ok].\n\\end{document}\n", "unbalanced-brackets");
 }
 
 /// A bracket in math mode is a delimiter, so a half-open interval is not a
@@ -415,15 +434,12 @@ fn a_half_open_interval_is_not_a_mismatch() {
     assert!(findings(&doc.analysis, "unbalanced-brackets").is_empty());
 }
 
-// chktex warnings 20 and 44: `User-specified pattern found: %s` and
-// `User Regex: %s`.
-/// Both lists are empty until `satex.yaml` carries them, so the rule is
-/// silent here; `lint::sourcetext`'s own tests drive the matcher with a list.
-#[test]
-fn no_user_pattern_is_configured_by_default() {
-    let doc = on_disk("patterns", "\\begin{document}\nChkTeX is spelled Chk\\TeX.\n\\end{document}\n", false)
-        .expect("temporary directory");
-    assert!(findings(&doc.analysis, "user-pattern").is_empty());
+bare_none! {
+    // chktex warnings 20 and 44: `User-specified pattern found: %s` and
+    // `User Regex: %s`.
+    /// Both lists are empty until `satex.yaml` carries them, so the rule is
+    /// silent here; `lint::sourcetext`'s own tests drive the matcher with a list.
+    no_user_pattern_is_configured_by_default("patterns", "\\begin{document}\nChkTeX is spelled Chk\\TeX.\n\\end{document}\n", "user-pattern");
 }
 
 // chktex warning 21: `This command might not be intended`.
@@ -436,19 +452,10 @@ fn an_escaped_period_after_a_command_is_reported() {
     assert!(found[0].contains("\\TeX") && found[0].contains("\\."), "{found:?}");
 }
 
-#[test]
-fn a_plain_period_after_a_command_is_not_reported() {
-    let doc =
-        on_disk("period", "\\begin{document}\nA \\TeX. Right?\n\\end{document}\n", false).expect("temporary directory");
-    assert!(findings(&doc.analysis, "unintended-escape").is_empty());
-}
-
-/// `\,` is a thin space in math, where chktex reports it all the same.
-#[test]
-fn an_escaped_mark_in_math_is_not_reported() {
-    let doc = on_disk("mathmark", "\\begin{document}\n$\\alpha\\, dx$\n\\end{document}\n", false)
-        .expect("temporary directory");
-    assert!(findings(&doc.analysis, "unintended-escape").is_empty());
+bare_none! {
+    a_plain_period_after_a_command_is_not_reported("period", "\\begin{document}\nA \\TeX. Right?\n\\end{document}\n", "unintended-escape");
+    /// `\,` is a thin space in math, where chktex reports it all the same.
+    an_escaped_mark_in_math_is_not_reported("mathmark", "\\begin{document}\n$\\alpha\\, dx$\n\\end{document}\n", "unintended-escape");
 }
 
 // chktex warning 22: `Comment displayed.`
@@ -462,11 +469,8 @@ fn a_todo_marker_in_a_comment_is_reported() {
     assert!(found[0].contains("TODO") && found[0].contains("fix this later"), "{found:?}");
 }
 
-#[test]
-fn a_comment_without_a_marker_is_not_reported() {
-    let doc = on_disk("remark", "\\begin{document}\nHello. % a remark about TODOS\n\\end{document}\n", false)
-        .expect("temporary directory");
-    assert!(findings(&doc.analysis, "comment-marker").is_empty());
+bare_none! {
+    a_comment_without_a_marker_is_not_reported("remark", "\\begin{document}\nHello. % a remark about TODOS\n\\end{document}\n", "comment-marker");
 }
 
 // chktex warning 31: `This text may be ignored`.
@@ -564,12 +568,8 @@ fn dollars_around_math_are_reported() {
     assert!(found.iter().any(|m| m.contains("$ … $") && m.contains(r"\( … \)")), "{found:?}");
 }
 
-#[test]
-fn latex_math_delimiters_are_not_reported() {
-    let Some(doc) = on_disk("delimiters", &math_document(r"Display \[a+b\] and inline \(c+d\) here."), true) else {
-        return;
-    };
-    assert!(findings(&doc.analysis, "math-shift-dollars").is_empty());
+math_none! {
+    latex_math_delimiters_are_not_reported("delimiters", r"Display \[a+b\] and inline \(c+d\) here.", "math-shift-dollars");
 }
 
 // chktex warnings 3 and 25: `You should enclose the previous parenthesis
@@ -594,14 +594,10 @@ fn a_script_on_a_closing_bracket_is_reported() {
     assert!(found.iter().any(|m| m.contains("`_` attaches only to the `]`")), "{found:?}");
 }
 
-/// `\left … \right` is one atom, so the script takes all of it; chktex
-/// reports this one.
-#[test]
-fn a_script_after_right_is_not_reported() {
-    let Some(doc) = on_disk("right", &math_document(r"Math $\left(a+b\right)^2$ and $x^{12}$ here."), true) else {
-        return;
-    };
-    assert!(findings(&doc.analysis, "math-script-braces").is_empty());
+math_none! {
+    /// `\left … \right` is one atom, so the script takes all of it; chktex
+    /// reports this one.
+    a_script_after_right_is_not_reported("right", r"Math $\left(a+b\right)^2$ and $x^{12}$ here.", "math-script-braces");
 }
 
 // chktex warning 43: `'%s' is normally not followed by '%c'.`
@@ -635,12 +631,8 @@ fn math_left_open_is_reported() {
     assert!(found[0].contains("math mode was still on"), "{found:?}");
 }
 
-#[test]
-fn closed_math_is_not_reported() {
-    let Some(doc) = on_disk("closed", &math_document(r"Text $x + y$ here."), true) else {
-        return;
-    };
-    assert!(findings(&doc.analysis, "math-still-open").is_empty());
+math_none! {
+    closed_math_is_not_reported("closed", r"Text $x + y$ here.", "math-still-open");
 }
 
 // chktex warning 49: `Expected math mode to be %s here.`
@@ -653,23 +645,11 @@ fn a_math_delimiter_in_the_wrong_mode_is_reported() {
     assert!(found.iter().any(|m| m.contains(r"`\)` expects math mode to be on here")), "{found:?}");
 }
 
-/// `\protected@edef` stores `\(x\)` without running it, as a glossary
-/// stores an entry's description: no `\@badmath`, whatever the mode around.
-#[test]
-fn a_math_delimiter_that_is_only_stored_is_not_reported() {
-    let Some(doc) = on_disk("stored", &math_document(r"\makeatletter\protected@edef\e{\(x\)}\makeatother Text."), true)
-    else {
-        return;
-    };
-    assert!(findings(&doc.analysis, "math-mode-mismatch").is_empty());
-}
-
-#[test]
-fn paired_math_delimiters_are_not_reported() {
-    let Some(doc) = on_disk("paired", &math_document(r"Text \(a\) and \[b\] here."), true) else {
-        return;
-    };
-    assert!(findings(&doc.analysis, "math-mode-mismatch").is_empty());
+math_none! {
+    /// `\protected@edef` stores `\(x\)` without running it, as a glossary
+    /// stores an entry's description: no `\@badmath`, whatever the mode around.
+    a_math_delimiter_that_is_only_stored_is_not_reported("stored", r"\makeatletter\protected@edef\e{\(x\)}\makeatother Text.", "math-mode-mismatch");
+    paired_math_delimiters_are_not_reported("paired", r"Text \(a\) and \[b\] here.", "math-mode-mismatch");
 }
 
 // chktex warning 35: `You should perhaps use 'cmd' instead.`
@@ -683,21 +663,10 @@ fn an_operator_name_in_math_italic_is_reported() {
     assert!(found[0].contains(r"`\sin`"), "{found:?}");
 }
 
-/// chktex reports `\mathrm{sin}`, which is already upright.
-#[test]
-fn an_operator_set_by_its_command_is_not_reported() {
-    let Some(doc) = on_disk("upright", &math_document(r"Write $\sin(x)$ and $\mathrm{sin}(x)$ here."), true) else {
-        return;
-    };
-    assert!(findings(&doc.analysis, "math-operator-name").is_empty());
-}
-
-#[test]
-fn letters_with_no_command_behind_them_are_not_reported() {
-    let Some(doc) = on_disk("letters", &math_document(r"Write $abc$ here."), true) else {
-        return;
-    };
-    assert!(findings(&doc.analysis, "math-operator-name").is_empty());
+math_none! {
+    /// chktex reports `\mathrm{sin}`, which is already upright.
+    an_operator_set_by_its_command_is_not_reported("upright", r"Write $\sin(x)$ and $\mathrm{sin}(x)$ here.", "math-operator-name");
+    letters_with_no_command_behind_them_are_not_reported("letters", r"Write $abc$ here.", "math-operator-name");
 }
 
 // chktex warning 11: `You should use '%s' to achieve an ellipsis.`
@@ -711,12 +680,8 @@ fn three_periods_are_reported() {
     assert!(found.iter().any(|m| m.contains(r"`\cdots`")), "{found:?}");
 }
 
-#[test]
-fn an_ellipsis_command_is_not_reported() {
-    let Some(doc) = on_disk("ldots", &math_document(r"Text \dots{} here and $x_1, \ldots, x_n$ there."), true) else {
-        return;
-    };
-    assert!(findings(&doc.analysis, "ellipsis-dots").is_empty());
+math_none! {
+    an_ellipsis_command_is_not_reported("ldots", r"Text \dots{} here and $x_1, \ldots, x_n$ there.", "ellipsis-dots");
 }
 
 // chktex warning 29: `$\times$ may look prettier here.`
@@ -730,12 +695,8 @@ fn an_x_between_numbers_is_reported() {
     assert!(found.iter().any(|m| m.contains("`3x4`") && m.contains(r"`\times`")), "{found:?}");
 }
 
-#[test]
-fn an_x_beside_letters_is_not_reported() {
-    let Some(doc) = on_disk("letter-x", &math_document(r"Screen 640 by 480 and ax4 and 4xa here."), true) else {
-        return;
-    };
-    assert!(findings(&doc.analysis, "dimension-times").is_empty());
+math_none! {
+    an_x_beside_letters_is_not_reported("letter-x", r"Screen 640 by 480 and ax4 and 4xa here.", "dimension-times");
 }
 
 // chktex warning 40: `You should put punctuation outside inner/inside
@@ -760,12 +721,8 @@ fn punctuation_after_an_equation_environment_is_reported() {
     assert!(found.iter().any(|m| m.contains("set after the display")), "{found:?}");
 }
 
-#[test]
-fn punctuation_on_the_right_side_is_not_reported() {
-    let Some(doc) = on_disk("inside", &math_document("Inline $a+b$, here.\n\\[ c+d. \\]"), true) else {
-        return;
-    };
-    assert!(findings(&doc.analysis, "math-punctuation").is_empty());
+math_none! {
+    punctuation_on_the_right_side_is_not_reported("inside", "Inline $a+b$, here.\n\\[ c+d. \\]", "math-punctuation");
 }
 
 // chktex warnings 1, 2, 12, 13, 24, 26, 30, 36, 37, 39 and 42: the spacing
@@ -1013,16 +970,9 @@ fn an_italic_correction_after_a_space_is_reported() {
     assert!(found[0].contains("glue"), "{found:?}");
 }
 
-/// chktex reports this one, because `\textit` is not on its italic list.
-#[test]
-fn an_italic_correction_the_font_really_has_is_not_reported() {
-    let Some(analysis) = latex_file(
-        "wanted.tex",
-        "\\documentclass{article}\n\\begin{document}\n\\textit{word\\/} after and \\emph{more\\/} here\n\\end{document}\n",
-    ) else {
-        return;
-    };
-    assert!(findings(&analysis, "zero-italic-correction").is_empty());
+file_none! {
+    /// chktex reports this one, because `\textit` is not on its italic list.
+    an_italic_correction_the_font_really_has_is_not_reported("wanted.tex", "\\documentclass{article}\n\\begin{document}\n\\textit{word\\/} after and \\emph{more\\/} here\n\\end{document}\n", "zero-italic-correction");
 }
 
 // chktex warning 6: leaving a slanted shape with no italic correction.
@@ -1041,27 +991,10 @@ fn leaving_a_slanted_shape_without_a_correction_is_reported() {
     assert!(found[0].contains("cmti10") && found[0].contains("`f`"), "{found:?}");
 }
 
-#[test]
-fn a_slanted_shape_that_ends_with_a_correction_is_not_reported() {
-    let Some(analysis) = latex_file(
-        "corrected.tex",
-        "\\documentclass{article}\n\\begin{document}\nThe \\emph{f\\/} before roman text\n\\end{document}\n",
-    ) else {
-        return;
-    };
-    assert!(findings(&analysis, "missing-italic-correction").is_empty());
-}
-
-/// A correction in front of a period or a comma is chktex 28's business.
-#[test]
-fn a_slanted_shape_before_small_punctuation_is_not_reported() {
-    let Some(analysis) = latex_file(
-        "punctuated.tex",
-        "\\documentclass{article}\n\\begin{document}\nThe \\emph{word}, and \\emph{another}.\n\\end{document}\n",
-    ) else {
-        return;
-    };
-    assert!(findings(&analysis, "missing-italic-correction").is_empty());
+file_none! {
+    a_slanted_shape_that_ends_with_a_correction_is_not_reported("corrected.tex", "\\documentclass{article}\n\\begin{document}\nThe \\emph{f\\/} before roman text\n\\end{document}\n", "missing-italic-correction");
+    /// A correction in front of a period or a comma is chktex 28's business.
+    a_slanted_shape_before_small_punctuation_is_not_reported("punctuated.tex", "\\documentclass{article}\n\\begin{document}\nThe \\emph{word}, and \\emph{another}.\n\\end{document}\n", "missing-italic-correction");
 }
 
 #[test]

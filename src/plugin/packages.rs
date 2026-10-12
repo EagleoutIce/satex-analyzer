@@ -22,25 +22,17 @@ use crate::tex::Span;
 /// on every run.
 const NOTHING: &str = "-";
 
-/// Why no question was put to a package manager.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Unasked {
-    /// `plugins.packages` is off, so no lint run reaches the network.
-    Disabled,
-    /// No provider was detected, or its manager is not on PATH.
-    NoManager,
-    /// Tectonic carries one bundle and takes what a document needs out of
-    /// it, so nothing is installable and nothing is missing.
-    Bundled,
-}
-
-impl Unasked {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Unasked::Disabled => "plugins.packages is off",
-            Unasked::NoManager => "no package manager on this machine",
-            Unasked::Bundled => "this distribution bundles every package",
-        }
+named_enum! {
+    /// Why no question was put to a package manager.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Unasked {
+        /// `plugins.packages` is off, so no lint run reaches the network.
+        Disabled => "plugins.packages is off",
+        /// No provider was detected, or its manager is not on PATH.
+        NoManager => "no package manager on this machine",
+        /// Tectonic carries one bundle and takes what a document needs out of
+        /// it, so nothing is installable and nothing is missing.
+        Bundled => "this distribution bundles every package",
     }
 }
 

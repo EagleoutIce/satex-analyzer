@@ -383,74 +383,36 @@ impl GlueHull {
     }
 }
 
-/// One of xcolor's color models (xcolor, table 3), with the two pseudo
-/// models that name a color instead of measuring one.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
-pub enum Model {
-    Rgb,
-    Cmy,
-    Cmyk,
-    Hsb,
-    Gray,
-    /// `RGB`, whole numbers up to `\rangeRGB`.
-    IntRgb,
-    /// `HTML`, six hexadecimal digits.
-    Html,
-    /// `HSB`, whole numbers up to `\rangeHSB`.
-    IntHsb,
-    /// `Gray`, whole numbers up to `\rangeGray`.
-    IntGray,
-    /// `Hsb`, a hue in degrees up to `\rangeHsb`.
-    DegHsb,
-    /// `tHsb`, `Hsb` with the hue transformed by `\rangetHsb`.
-    DegTHsb,
-    /// `wave`, a wavelength in nanometres.
-    Wave,
-    Named,
-    Ps,
+named_enum! {
+    /// One of xcolor's color models (xcolor, table 3), with the two pseudo
+    /// models that name a color instead of measuring one.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+    pub enum Model {
+        Rgb => "rgb",
+        Cmy => "cmy",
+        Cmyk => "cmyk",
+        Hsb => "hsb",
+        Gray => "gray",
+        /// `RGB`, whole numbers up to `\rangeRGB`.
+        IntRgb => "RGB",
+        /// `HTML`, six hexadecimal digits.
+        Html => "HTML",
+        /// `HSB`, whole numbers up to `\rangeHSB`.
+        IntHsb => "HSB",
+        /// `Gray`, whole numbers up to `\rangeGray`.
+        IntGray => "Gray",
+        /// `Hsb`, a hue in degrees up to `\rangeHsb`.
+        DegHsb => "Hsb",
+        /// `tHsb`, `Hsb` with the hue transformed by `\rangetHsb`.
+        DegTHsb => "tHsb",
+        /// `wave`, a wavelength in nanometres.
+        Wave => "wave",
+        Named => "named",
+        Ps => "ps",
+    }
 }
 
 impl Model {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Model::Rgb => "rgb",
-            Model::Cmy => "cmy",
-            Model::Cmyk => "cmyk",
-            Model::Hsb => "hsb",
-            Model::Gray => "gray",
-            Model::IntRgb => "RGB",
-            Model::Html => "HTML",
-            Model::IntHsb => "HSB",
-            Model::IntGray => "Gray",
-            Model::DegHsb => "Hsb",
-            Model::DegTHsb => "tHsb",
-            Model::Wave => "wave",
-            Model::Named => "named",
-            Model::Ps => "ps",
-        }
-    }
-
-    pub fn parse(name: &str) -> Option<Model> {
-        [
-            Model::Rgb,
-            Model::Cmy,
-            Model::Cmyk,
-            Model::Hsb,
-            Model::Gray,
-            Model::IntRgb,
-            Model::Html,
-            Model::IntHsb,
-            Model::IntGray,
-            Model::DegHsb,
-            Model::DegTHsb,
-            Model::Wave,
-            Model::Named,
-            Model::Ps,
-        ]
-        .into_iter()
-        .find(|m| m.as_str() == name)
-    }
-
     /// How many components the model takes. `HTML` counts the three bytes
     /// its six digits spell.
     pub fn arity(self) -> usize {

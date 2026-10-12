@@ -125,96 +125,54 @@ fn read(analysis: &Analysis, name: &str) -> bool {
     analysis.files.iter().any(|f| f.path.ends_with(&name))
 }
 
-#[test]
-fn tikz_figure_with_math_nodes_t3() {
-    check("tikz_t3", "main.tex", &[]);
+/// One `#[test]` per fixture: `name(id, main, files also read…)`.
+macro_rules! fixtures {
+    ($($(#[$doc:meta])* $name:ident($id:literal, $main:literal $(, $also:literal)*);)*) => {$(
+        $(#[$doc])*
+        #[test]
+        fn $name() {
+            check($id, $main, &[$($also),*]);
+        }
+    )*};
 }
 
-#[test]
-fn tikz_figure_with_fit_node_in_resizebox_b() {
-    check("tikz_fit_b", "main.tex", &[]);
+/// Like [`fixtures!`], and the run keeps to three paths at most.
+macro_rules! peak_fixtures {
+    ($($(#[$doc:meta])* $name:ident($id:literal, $main:literal);)*) => {$(
+        $(#[$doc])*
+        #[test]
+        fn $name() {
+            let Some(a) = check($id, $main, &[]) else { return };
+            assert!(a.peak_paths <= 3, "{} paths", a.peak_paths);
+        }
+    )*};
 }
 
-#[test]
-fn tikz_picture_in_resizebox_v2() {
-    check("tikz_resizebox_v2", "main.tex", &[]);
-}
-
-#[test]
-fn includegraphics_of_pdf_banner() {
-    check("includegraphics", "main.tex", &["title-banner-image.pdf"]);
-}
-
-#[test]
-fn tikz_notebook_environment_from_input_file() {
-    check("notebook", "main.tex", &[]);
-}
-
-#[test]
-fn expl3_hex_string_to_utf16_conversion_h4() {
-    check("expl3_hex_h4", "main.tex", &[]);
-}
-
-#[test]
-fn expl3_hex_string_with_empty_target_encoding_h6() {
-    check("expl3_hex_h6", "main.tex", &[]);
-}
-
-#[test]
-fn notecolumn_loop_over_slnc_file() {
-    check("thesis_slnc", "mwe.tex", &["mwe.slnc"]);
-}
-
-/// A math label `$A_1$` sizes a node exactly; the frame around the
-/// bounding box then parses known numbers.
-#[test]
-fn tikz_frame_around_math_label() {
-    check("tikz_math_label", "main.tex", &[]);
-}
-
-#[test]
-fn thesis_class_with_notebook_figure_a4() {
-    check("thesis_notebook_a4", "main.tex", &[]);
-}
-
-#[test]
-fn tikz_custom_shape_and_saveboxes_ma() {
-    check("tikz_shapes_ma", "mwe.tex", &[]);
-}
-
-#[test]
-fn tikz_styles_forest_and_dataflow_savebox() {
-    check("forest_savebox", "mwe.tex", &[]);
-}
-
-#[test]
-fn tcolorbox_with_tikz_overlay_fse() {
-    check("tcolorbox_fse", "mwe.tex", &[]);
-}
-
-/// A breakable box at the top of the page: tcolorbox reads the page room
-/// (tcbbreakable.code.tex, `\tcb@comp@h@page`), and pgf draws the frame.
-#[test]
-fn tcolorbox_breakable_without_overlay() {
-    check("tcolorbox_breakable_plain", "mwe.tex", &[]);
-}
-
-/// A `\ref` to a label not yet written, inside tikz nodes: `??` is exact text.
-#[test]
-fn tikz_node_with_a_ref() {
-    check("tikz_node_with_ref", "mwe.tex", &[]);
-}
-
-/// An arrow tip toward a point with an unknown coordinate.
-#[test]
-fn tikz_arrow_to_an_unknown_point() {
-    check("tikz_arrow_to_unknown_point", "mwe.tex", &[]);
-}
-
-/// An undefined name in a node's formula: the node's size must stay known.
-#[test]
-fn tikz_node_with_an_undefined_name_in_math() {
-    check("tikz_node_undefined_in_math", "mwe.tex", &[]);
+fixtures! {
+    tikz_figure_with_math_nodes_t3("tikz_t3", "main.tex");
+    tikz_figure_with_fit_node_in_resizebox_b("tikz_fit_b", "main.tex");
+    tikz_picture_in_resizebox_v2("tikz_resizebox_v2", "main.tex");
+    includegraphics_of_pdf_banner("includegraphics", "main.tex", "title-banner-image.pdf");
+    tikz_notebook_environment_from_input_file("notebook", "main.tex");
+    expl3_hex_string_to_utf16_conversion_h4("expl3_hex_h4", "main.tex");
+    expl3_hex_string_with_empty_target_encoding_h6("expl3_hex_h6", "main.tex");
+    notecolumn_loop_over_slnc_file("thesis_slnc", "mwe.tex", "mwe.slnc");
+    /// A math label `$A_1$` sizes a node exactly; the frame around the
+    /// bounding box then parses known numbers.
+    tikz_frame_around_math_label("tikz_math_label", "main.tex");
+    thesis_class_with_notebook_figure_a4("thesis_notebook_a4", "main.tex");
+    tikz_custom_shape_and_saveboxes_ma("tikz_shapes_ma", "mwe.tex");
+    tikz_styles_forest_and_dataflow_savebox("forest_savebox", "mwe.tex");
+    tcolorbox_with_tikz_overlay_fse("tcolorbox_fse", "mwe.tex");
+    /// A breakable box at the top of the page: tcolorbox reads the page room
+    /// (tcbbreakable.code.tex, `\tcb@comp@h@page`), and pgf draws the frame.
+    tcolorbox_breakable_without_overlay("tcolorbox_breakable_plain", "mwe.tex");
+    /// A `\ref` to a label not yet written, inside tikz nodes: `??` is exact text.
+    tikz_node_with_a_ref("tikz_node_with_ref", "mwe.tex");
+    /// An arrow tip toward a point with an unknown coordinate.
+    tikz_arrow_to_an_unknown_point("tikz_arrow_to_unknown_point", "mwe.tex");
+    /// An undefined name in a node's formula: the node's size must stay known.
+    tikz_node_with_an_undefined_name_in_math("tikz_node_undefined_in_math", "mwe.tex");
 }
 
 /// Capabilities: unknown inputs, global state, typesetting feedback.
@@ -226,76 +184,26 @@ fn tcolorbox_of_unknown_height_keeps_its_anchors_local() {
     assert!(!defined(&analysis, "southwest"), "\\southwest leaked out of the box's groups");
 }
 
-#[test]
-fn tikz_bent_path_on_background_layer() {
-    check("tikz_bend_pingus", "mwe.tex", &[]);
-}
-
-#[test]
-fn notecolumn_slnc_on_master_thesis_title_page() {
-    check("notecolumn_slnc_ma", "mwe.tex", &["mwe.slnc"]);
-}
-
-#[test]
-fn notecolumn_slnc_at_cleardoublepage_koma() {
-    check("notecolumn_slnc_koma", "mwe.tex", &["mwe.slnc"]);
-}
-
-#[test]
-fn input_path_extended_with_etoolbox_appto() {
-    check("input_path_appto", "main.tex", &[]);
-}
-
-#[test]
-fn resizebox_tikz_scopes_keep_font_known() {
-    check("fontenc_after_preamble", "main.tex", &[]);
-}
-
-#[test]
-fn notecolumn_read_loop_at_frontmatter_clearpage() {
-    check("notecolumn_read_loop", "mwe.tex", &["mwe.slnc"]);
-}
-
-#[test]
-fn notecolumn_clear_with_unknown_page_height() {
-    check("notecolumn_unknown_height", "mwe.tex", &[]);
+fixtures! {
+    tikz_bent_path_on_background_layer("tikz_bend_pingus", "mwe.tex");
+    notecolumn_slnc_on_master_thesis_title_page("notecolumn_slnc_ma", "mwe.tex", "mwe.slnc");
+    notecolumn_slnc_at_cleardoublepage_koma("notecolumn_slnc_koma", "mwe.tex", "mwe.slnc");
+    input_path_extended_with_etoolbox_appto("input_path_appto", "main.tex");
+    resizebox_tikz_scopes_keep_font_known("fontenc_after_preamble", "main.tex");
+    notecolumn_read_loop_at_frontmatter_clearpage("notecolumn_read_loop", "mwe.tex", "mwe.slnc");
+    notecolumn_clear_with_unknown_page_height("notecolumn_unknown_height", "mwe.tex");
 }
 
 // Gobblers must stop at their real end: text after them is never lost.
 
-#[test]
-fn gobble_listings_stop_at_their_delimiter() {
-    check("gobble_listings", "main.tex", &["code.c"]);
-}
-
-#[test]
-fn gobble_comment_environments_stop_at_their_end() {
-    check("gobble_comment", "main.tex", &[]);
-}
-
-#[test]
-fn gobble_environ_body_stops_at_its_end() {
-    check("gobble_environ", "main.tex", &[]);
-}
-
-#[test]
-fn gobble_verbatim_stops_at_its_delimiter() {
-    check("gobble_verbatim", "main.tex", &[]);
-}
-
-#[test]
-fn gobble_with_unknown_catcodes_and_comments_never_reads_past_the_end() {
-    check("gobble_unknown", "main.tex", &[]);
-}
-
-#[test]
-fn gobble_verbatim_of_unknown_environment_name_stops_at_its_end() {
-    check("gobble_unknown_name", "main.tex", &[]);
-}
-
-#[test]
-fn gobble_lstinline_with_unknown_delimiter_stops_at_its_end() {
-    check("gobble_unknown_delim", "main.tex", &[]);
+fixtures! {
+    gobble_listings_stop_at_their_delimiter("gobble_listings", "main.tex", "code.c");
+    gobble_comment_environments_stop_at_their_end("gobble_comment", "main.tex");
+    gobble_environ_body_stops_at_its_end("gobble_environ", "main.tex");
+    gobble_verbatim_stops_at_its_delimiter("gobble_verbatim", "main.tex");
+    gobble_with_unknown_catcodes_and_comments_never_reads_past_the_end("gobble_unknown", "main.tex");
+    gobble_verbatim_of_unknown_environment_name_stops_at_its_end("gobble_unknown_name", "main.tex");
+    gobble_lstinline_with_unknown_delimiter_stops_at_its_end("gobble_unknown_delim", "main.tex");
 }
 
 /// A missing `\lstinputlisting` file asks the terminal for a name, which
@@ -315,24 +223,11 @@ fn gobble_lstinputlisting_of_missing_file_halts_the_run() {
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "terminal-read-fatal"));
 }
 
-#[test]
-fn pdfcomment_markup_in_math_with_unknown_positions() {
-    check("pdfcomment_math", "main.tex", &[]);
-}
-
-#[test]
-fn pdfcomment_markup_in_math_with_aux_positions() {
-    check("pdfcomment_math_aux", "main.tex", &[]);
-}
-
-#[test]
-fn pgfmath_seed_from_unknown_random_seed() {
-    check("pgfmath_random_seed", "mwe.tex", &[]);
-}
-
-#[test]
-fn pgfmath_operator_on_unknown_integer_and_rounded_strut_node() {
-    check("pgfmath_unknown_operand", "mwe.tex", &[]);
+fixtures! {
+    pdfcomment_markup_in_math_with_unknown_positions("pdfcomment_math", "main.tex");
+    pdfcomment_markup_in_math_with_aux_positions("pdfcomment_math_aux", "main.tex");
+    pgfmath_seed_from_unknown_random_seed("pgfmath_random_seed", "mwe.tex");
+    pgfmath_operator_on_unknown_integer_and_rounded_strut_node("pgfmath_unknown_operand", "mwe.tex");
 }
 
 /// xinttrig's `\xintdeffloatfunc @Arg` nests expansion about 80 levels
@@ -352,17 +247,12 @@ fn xintexpr_loads_without_giving_up_nesting() {
     assert!(widened.is_empty(), "{}", widened.iter().map(|d| d.message.as_str()).collect::<Vec<_>>().join("\n"));
 }
 
-/// A node with `text width`, `align=center` and rounded corners: its text
-/// box has a known size, so the corners are computed, not forked over.
-#[test]
-fn tikz_centered_text_width_node_with_rounded_corners() {
-    check("tikz_centered_text_width_node", "main.tex", &[]);
-}
-
-/// A bent path to a signal node holding centered `~~~~`: a known size.
-#[test]
-fn tikz_bend_to_signal_node_with_tildes() {
-    check("tikz_bend_to_signal_node", "main.tex", &[]);
+fixtures! {
+    /// A node with `text width`, `align=center` and rounded corners: its text
+    /// box has a known size, so the corners are computed, not forked over.
+    tikz_centered_text_width_node_with_rounded_corners("tikz_centered_text_width_node", "main.tex");
+    /// A bent path to a signal node holding centered `~~~~`: a known size.
+    tikz_bend_to_signal_node_with_tildes("tikz_bend_to_signal_node", "main.tex");
 }
 
 // Termination: every loop point is summarized at most once per entry cap,
@@ -374,10 +264,8 @@ fn loop_with_unknown_bound_is_summarized() {
     assert_eq!(count(&a, "unbalanced-path"), 0);
 }
 
-#[test]
-fn mutual_recursion_with_unknown_bound_is_summarized_once() {
-    let Some(a) = check("loop_mutual_random", "main.tex", &[]) else { return };
-    assert!(a.peak_paths <= 3, "{} paths", a.peak_paths);
+peak_fixtures! {
+    mutual_recursion_with_unknown_bound_is_summarized_once("loop_mutual_random", "main.tex");
 }
 
 #[test]
@@ -400,10 +288,8 @@ fn map_over_unknown_token_list_is_summarized_once() {
     assert!(strays.is_empty(), "{strays:?}");
 }
 
-#[test]
-fn pgfmath_of_unknown_integer_stays_a_number() {
-    let Some(a) = check("pgfmath_unknown_seed", "main.tex", &[]) else { return };
-    assert!(a.peak_paths <= 3, "{} paths", a.peak_paths);
+peak_fixtures! {
+    pgfmath_of_unknown_integer_stays_a_number("pgfmath_unknown_seed", "main.tex");
 }
 
 #[test]
@@ -419,11 +305,10 @@ fn rule_of_unknown_height_before_clearpage() {
     assert!(count(&a, "recursion-widened") <= 1, "{}", count(&a, "recursion-widened"));
 }
 
-/// `\catcode<unknown>=11` from a summarized loop leaves `\ { }` alone
-/// (`unknown-char-catcode-assumed`), so the `\include` still reads its file.
-#[test]
-fn include_after_unknown_char_catcode_loop_is_read() {
-    check("catcode_loop_include", "main.tex", &["ch1"]);
+fixtures! {
+    /// `\catcode<unknown>=11` from a summarized loop leaves `\ { }` alone
+    /// (`unknown-char-catcode-assumed`), so the `\include` still reads its file.
+    include_after_unknown_char_catcode_loop_is_read("catcode_loop_include", "main.tex", "ch1");
 }
 
 /// A recursion cut inside a group that set `\escapechar` before it began:
@@ -439,9 +324,8 @@ fn cut_widens_only_what_the_recursion_wrote() {
     assert!(defined(&a, "SatexReachedEnd") && !defined(&a, "EscapeWidened"));
 }
 
-#[test]
-fn include_after_endless_macro_is_read() {
-    check("include_after_loop", "main.tex", &["ch1"]);
+fixtures! {
+    include_after_endless_macro_is_read("include_after_loop", "main.tex", "ch1");
 }
 
 /// A loop summarized inside `\begingroup\let\protect\string ... \endgroup`:
@@ -474,30 +358,17 @@ fn loop_entry_met_deeper_keeps_caller_groups() {
     assert_eq!((count(&a, "endless-loop"), count(&a, "mismatched-group")), (0, 0));
 }
 
-#[test]
-fn local_package_after_rounded_node_in_box_is_read() {
-    check("input_after_rounded_node", "mwe.tex", &["zzlocal.sty"]);
-}
-
-/// Capabilities: typesetting feedback, unknown inputs, termination.
-/// A rounded node around a broken paragraph: no limit, no fork explosion.
-#[test]
-fn rounded_node_around_a_broken_paragraph_ends() {
-    check("rounded_node_broken_paragraph", "mwe.tex", &[]);
-}
-
-/// pgfmath on a node of unknown width: summarized, never exploding.
-#[test]
-fn rounded_node_of_unknown_width_ends() {
-    check("rounded_node_unknown_width", "mwe.tex", &[]);
-}
-
-/// Capabilities: termination, engine.
-/// A loop over a data file read with `\read`: each data line has its own
-/// step budget, so cheap lines that add up past one budget are never cut.
-#[test]
-fn read_loop_has_a_budget_per_data_line() {
-    check("read_loop_line_budget", "mwe.tex", &[]);
+fixtures! {
+    local_package_after_rounded_node_in_box_is_read("input_after_rounded_node", "mwe.tex", "zzlocal.sty");
+    /// Capabilities: typesetting feedback, unknown inputs, termination.
+    /// A rounded node around a broken paragraph: no limit, no fork explosion.
+    rounded_node_around_a_broken_paragraph_ends("rounded_node_broken_paragraph", "mwe.tex");
+    /// pgfmath on a node of unknown width: summarized, never exploding.
+    rounded_node_of_unknown_width_ends("rounded_node_unknown_width", "mwe.tex");
+    /// Capabilities: termination, engine.
+    /// A loop over a data file read with `\read`: each data line has its own
+    /// step budget, so cheap lines that add up past one budget are never cut.
+    read_loop_has_a_budget_per_data_line("read_loop_line_budget", "mwe.tex");
 }
 
 /// A project file that exists is either read or said not to be.
@@ -515,11 +386,10 @@ fn include_is_read_or_said_unread() {
     assert!(read(&analysis, "ch2") != (unread > 0), "read {} unread {unread}", read(&analysis, "ch2"));
 }
 
-/// A two-line `align=center` node with rounded corners: its \halign box
-/// must have a known size (tex.web §§ 785-812).
-#[test]
-fn tikz_halign_node_with_rounded_corners() {
-    check("tikz_halign_node_rounded", "main.tex", &[]);
+fixtures! {
+    /// A two-line `align=center` node with rounded corners: its \halign box
+    /// must have a known size (tex.web §§ 785-812).
+    tikz_halign_node_with_rounded_corners("tikz_halign_node_rounded", "main.tex");
 }
 
 /// Twenty nodes of unknown height in a `\foreach`: calls met again with
@@ -532,47 +402,33 @@ fn tikz_loop_of_unknown_height_nodes_converges() {
     assert!(count(&a, "call-summarized") <= 20, "{}", count(&a, "call-summarized"));
 }
 
-/// `\pgfmathparse` of an unknown integer three times: a typed result.
-#[test]
-fn pgfmath_of_unknown_integer_three_times() {
-    let Some(a) = check("call_summary_pgfmath_thrice", "main.tex", &[]) else { return };
-    assert!(a.peak_paths <= 3, "{} paths", a.peak_paths);
+peak_fixtures! {
+    /// `\pgfmathparse` of an unknown integer three times: a typed result.
+    pgfmath_of_unknown_integer_three_times("call_summary_pgfmath_thrice", "main.tex");
 }
 
-/// Notebook-like cells of `obeylines` text with inline code in nodes.
-#[test]
-fn notebook_cells_with_inline_code_end() {
-    check("call_summary_cells", "main.tex", &[]);
+fixtures! {
+    /// Notebook-like cells of `obeylines` text with inline code in nodes.
+    notebook_cells_with_inline_code_end("call_summary_cells", "main.tex");
 }
 
-/// An inline listing with a two-character literate, through a macro
-/// argument, whose break mark and literate load math fonts at a new size:
-/// its lost space stays exact, so no conditional on it parts paths.
-#[test]
-fn inline_listing_with_two_char_literate_converges() {
-    let Some(a) = check("inline_listing_two_char_literate", "main.tex", &[]) else { return };
-    assert!(a.peak_paths <= 3, "{} paths", a.peak_paths);
+peak_fixtures! {
+    /// An inline listing with a two-character literate, through a macro
+    /// argument, whose break mark and literate load math fonts at a new size:
+    /// its lost space stays exact, so no conditional on it parts paths.
+    inline_listing_with_two_char_literate_converges("inline_listing_two_char_literate", "main.tex");
 }
 
-/// A quotation in a small-font node with a frame fitted around it: its
-/// size stays known (tex.web §§ 1034-1036, 1375).
-#[test]
-fn tikz_fit_around_quotation_node() {
-    check("tikz_fit_enquote_small_node", "main.tex", &[]);
-}
-
-/// A rounded node of finite-stretch centred lines that may break more than
-/// one way: pgfmath runs on its uncertain height and must not explode.
-#[test]
-fn tikz_rounded_node_of_uncertain_lines() {
-    check("tikz_rounded_node_uncertain_lines", "main.tex", &[]);
-}
-
-/// `\date{\today}` in the body with hyperref and siunitx raises no error:
-/// satex's own rendering of the date is no part of the run.
-#[test]
-fn date_today_with_siunitx_units() {
-    check("date_today_siunitx", "main.tex", &[]);
+fixtures! {
+    /// A quotation in a small-font node with a frame fitted around it: its
+    /// size stays known (tex.web §§ 1034-1036, 1375).
+    tikz_fit_around_quotation_node("tikz_fit_enquote_small_node", "main.tex");
+    /// A rounded node of finite-stretch centred lines that may break more than
+    /// one way: pgfmath runs on its uncertain height and must not explode.
+    tikz_rounded_node_of_uncertain_lines("tikz_rounded_node_uncertain_lines", "main.tex");
+    /// `\date{\today}` in the body with hyperref and siunitx raises no error:
+    /// satex's own rendering of the date is no part of the run.
+    date_today_with_siunitx_units("date_today_siunitx", "main.tex");
 }
 
 /// Rounding never stalls: pgfmath's `round`, `floor` and `int`, and

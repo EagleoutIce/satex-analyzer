@@ -244,23 +244,14 @@ pub struct ColorUse {
     pub certain: bool,
 }
 
-/// What a `\pdfcolorstack` does to its stack (pdfTeX manual, § 8.9.8).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum StackOp {
-    Push,
-    Pop,
-    Set,
-    Current,
-}
-
-impl StackOp {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            StackOp::Push => "push",
-            StackOp::Pop => "pop",
-            StackOp::Set => "set",
-            StackOp::Current => "current",
-        }
+named_enum! {
+    /// What a `\pdfcolorstack` does to its stack (pdfTeX manual, § 8.9.8).
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum StackOp {
+        Push => "push",
+        Pop => "pop",
+        Set => "set",
+        Current => "current",
     }
 }
 

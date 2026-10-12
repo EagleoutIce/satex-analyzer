@@ -17,12 +17,14 @@ use crate::builtins::{DocstripOp, OccKind};
 use crate::machine::Machine;
 use crate::tex::Span;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Literate {
-    /// A documented source: documentation and code in one file.
-    Dtx,
-    /// A batch file that drives the extraction.
-    Ins,
+named_enum! {
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Literate {
+        /// A documented source: documentation and code in one file.
+        Dtx => "documented source (.dtx), read as docstrip extracts it",
+        /// A batch file that drives the extraction.
+        Ins => "docstrip installation script (.ins)",
+    }
 }
 
 impl Literate {
@@ -31,13 +33,6 @@ impl Literate {
             "dtx" | "fdd" => Some(Literate::Dtx),
             "ins" => Some(Literate::Ins),
             _ => None,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Literate::Dtx => "documented source (.dtx), read as docstrip extracts it",
-            Literate::Ins => "docstrip installation script (.ins)",
         }
     }
 }

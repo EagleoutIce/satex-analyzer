@@ -155,18 +155,10 @@ impl Machine<'_> {
         }
         let width = self.line_width().known()?;
         let int = |m: &mut Self, name| m.int_parameter(name);
+        #[rustfmt::skip]
         let [loose, line, adj, double, fin, hyph, ex, tol, fit, pretol, uc] = [
-            "looseness",
-            "linepenalty",
-            "adjdemerits",
-            "doublehyphendemerits",
-            "finalhyphendemerits",
-            "hyphenpenalty",
-            "exhyphenpenalty",
-            "tolerance",
-            "lastlinefit",
-            "pretolerance",
-            "uchyph",
+            "looseness", "linepenalty", "adjdemerits", "doublehyphendemerits", "finalhyphendemerits",
+            "hyphenpenalty", "exhyphenpenalty", "tolerance", "lastlinefit", "pretolerance", "uchyph",
         ]
         .map(|name| int(self, name));
         let (loose, fit, adj) = (loose?, fit?, adj?);
