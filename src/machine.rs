@@ -591,16 +591,12 @@ impl Analysis {
 pub(crate) const RECENT_FILE_SPANS: usize = 64;
 
 #[derive(Clone)]
-enum Frame {
-    /// A file being read. `catcodes` is the table to restore when it ends:
-    /// `\usepackage` makes `@` a letter for the package only, without
-    /// opening a TeX group, since a package must be able to define things.
-    /// `depth` is the group nesting the file started at, so a group it
-    /// leaves open can be reported and given up.
+pub(crate) enum Frame {
+    /// A file being read. `depth` is the group nesting the file started
+    /// at, so a group it leaves open can be reported and given up.
     File {
         mouth: Mouth,
         package: Option<Sym>,
-        catcodes: Option<Box<CatcodeTable>>,
         depth: usize,
         /// The conditional nesting the file started at, so that one it leaves
         /// open does not govern the rest of the run.
@@ -1228,7 +1224,7 @@ pub struct Machine<'a> {
     /// Recorded runs per call ([`calls`]).
     call_runs: HashMap<calls::CallKey, calls::CallRuns>,
     /// Calls being recorded, innermost last.
-    call_recs: Vec<calls::CallRec>,
+    call_recs: Rc<Vec<calls::CallRec>>,
     guard_seen: GuardSeen,
     /// The step count the budget was last checked at. A distance, not a
     /// multiple: a read can step onto a multiple the charge then passes.
@@ -1490,7 +1486,7 @@ struct PathState {
     fi_mark: Option<(Span, usize)>,
     approximated: bool,
     cut_taint: Option<usize>,
-    call_recs: Vec<calls::CallRec>,
+    call_recs: Rc<Vec<calls::CallRec>>,
     guard_seen: GuardSeen,
 }
 
@@ -1855,7 +1851,7 @@ impl<'a> Machine<'a> {
             dont_expand,
             unknown,
             call_runs: HashMap::default(),
-            call_recs: Vec::new(),
+            call_recs: Rc::default(),
             guard_seen: GuardSeen::default(),
             checked_at: 0,
             unknown_digits,
@@ -2061,14 +2057,7 @@ impl<'a> Machine<'a> {
         m.out.timings.start(Phase::Document);
         m.document_file_depth = m.file_depth;
         m.out.timings.enter_file(id);
-        m.input.push(Frame::File {
-            mouth: Mouth::file(code, id),
-            package: None,
-            catcodes: None,
-            depth: 0,
-            conds: 0,
-            eof_seen: false,
-        });
+        m.input.push(Frame::File { mouth: Mouth::file(code, id), package: None, depth: 0, conds: 0, eof_seen: false });
         // tex.web § 1337: `\everyjob` is read first, after the format is in
         // place: what it sets from the clock (expl3's `\c_sys_year_int`) is
         // the run's, not the kernel cache's.
@@ -2586,7 +2575,6 @@ impl<'a> Machine<'a> {
         self.input.push(Frame::File {
             mouth: Mouth::file(&text, id),
             package: None,
-            catcodes: None,
             depth: 0,
             conds: 0,
             eof_seen: false,
@@ -2762,7 +2750,6 @@ will look undefined",
         self.input.push(Frame::File {
             mouth: Mouth::file(&text, id),
             package: None,
-            catcodes: None,
             depth: 0,
             conds: 0,
             eof_seen: false,
@@ -2846,7 +2833,7 @@ will look undefined",
         // visit counts, summaries, counters and the typed-name table (kept,
         // a built run forked 50x more than a cached one on the same document).
         self.call_runs.clear();
-        self.call_recs.clear();
+        self.call_recs = Rc::default();
         self.scratch = Scratch::default();
         self.carried = Carried::default();
         self.unknown_chars.clear();
@@ -3362,14 +3349,11 @@ will look undefined",
                 }
             }
             Some(Frame::Pseudo { .. }) => self.bump_expanding(self.pseudo_file, -1),
-            Some(Frame::File { mouth, package, catcodes, depth, conds, .. }) => {
+            Some(Frame::File { mouth, package, depth, conds, .. }) => {
                 self.out.timings.leave_file();
                 self.out.lines += u64::from(mouth.here().line);
                 self.balance_file(mouth.file, depth);
                 self.balance_conditionals(mouth.file, conds);
-                if let Some(table) = catcodes {
-                    self.catcodes = *table;
-                }
                 if package.is_some() {
                     Rc::make_mut(&mut self.packages).pop();
                 }
@@ -4674,7 +4658,6 @@ will look undefined",
         self.input.push(Frame::File {
             mouth: Mouth::new(text, file),
             package: None,
-            catcodes: None,
             depth: 0,
             conds: 0,
             eof_seen: false,
@@ -4699,7 +4682,6 @@ will look undefined",
         self.input.push(Frame::File {
             mouth: Mouth::new(text, file),
             package: None,
-            catcodes: None,
             depth: 0,
             conds: 0,
             eof_seen: false,
@@ -9128,7 +9110,7 @@ will look undefined",
         if self.take_pending_eof() {
             mouth.inherit_eof(false);
         }
-        self.input.push(Frame::File { mouth, package, catcodes: None, depth, conds, eof_seen: false });
+        self.input.push(Frame::File { mouth, package, depth, conds, eof_seen: false });
     }
 
     /// A `\documentclass`, `\usepackage` or `\RequirePackage` whose file the
