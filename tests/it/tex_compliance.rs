@@ -582,6 +582,18 @@ fn ifx_sees_a_noexpanded_macro_as_no_macro() {
     assert_eq!(r(joined), ["F"], "probe: {joined}");
 }
 
+/// tex.web § 358, § 325: the `\noexpand` marker goes with the read, so a
+/// token a scan gives back is expanded when read again (pdfTeX, XeTeX and
+/// LuaTeX agree).
+#[test]
+fn a_noexpanded_token_given_back_loses_the_marker() {
+    let x = r"\def\R{}\def\x{\def\R{X}}";
+    check(&format!(r"{x}\count1=1\noexpand\x "), "X");
+    check(&format!(r"{x}\skip0=1pt plus 1pt\noexpand\x "), "X");
+    check(&format!(r"{x}\expandafter\afterassignment\noexpand\x \count1=3 "), "X");
+    check(&format!(r"{x}\def\z{{}}\expandafter\futurelet\expandafter\y\expandafter\z\noexpand\x "), "X");
+}
+
 /// tex.web § 420: what `\wd` reads for a box whose list satex could not
 /// follow is unknown, never zero — a document that asks `\ifdim\wd0=0pt`
 /// would otherwise take an arm with confidence.

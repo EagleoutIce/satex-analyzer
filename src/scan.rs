@@ -314,13 +314,16 @@ impl Machine<'_> {
             });
         self.abs = None;
         self.abs_exact = None;
+        self.abs_parts = None;
         let magnitude = self.scan_int_from(token).0;
         let keep = register && magnitude.is_none();
 
         let abs = self.abs.take().filter(|_| keep);
         let exact = self.abs_exact.take().filter(|_| keep && !negative);
+        let parts = self.abs_parts.take().filter(|_| keep && !negative);
         self.abs = abs.map(|num| if negative { num.neg() } else { num });
         self.abs_exact = exact;
+        self.abs_parts = parts;
         if negative || self.abs.is_none() {
             self.abs_from = None;
         }
@@ -386,6 +389,12 @@ impl Machine<'_> {
             token.tok == Tok::Cs(self.unknown_digits) || token.cs().is_some_and(|sym| self.is_more_digits(sym));
         if digits {
             return self.scan_digits(DECIMAL, Some(token));
+        }
+        if self.split_scanned(token) {
+            return match self.next_x_token() {
+                Some(token) => self.scan_int_from(token),
+                None => (self.missing_number(None), false),
+            };
         }
         if self.is_unknown(token) {
             return (None, true);
@@ -466,6 +475,51 @@ impl Machine<'_> {
         Some((hull?, exact))
     }
 
+    /// A token a join left one of several texts, or parameterless macros,
+    /// met by a number scan: a path per text, each read as TeX would read
+    /// it, so an error is the one path's and a name keeps the meaning its
+    /// path read ([`Machine::split_meaning`]). Only texts satex read in
+    /// full: one with unknown parts reads as unknown digits, as before.
+    /// `true` when the run parted; the scan then reads on.
+    fn split_scanned(&mut self, token: Token) -> bool {
+        let texts: Option<Vec<std::rc::Rc<[Token]>>> = self.one_of_members(token).or_else(|| {
+            let may = token.cs().and_then(|sym| self.env.slot(sym)?.may.clone())?;
+            (may.iter())
+                .map(|m| match m {
+                    Meaning::Macro(d) if d.parameter_text.items.is_empty() => Some(d.replacement_text.clone()),
+                    _ => None,
+                })
+                .collect()
+        });
+        if !texts.is_some_and(|texts| texts.iter().all(|t| self.exact_text(t))) {
+            return false;
+        }
+        if self.split_one_of_refining(token) {
+            return true;
+        }
+        let split = token.cs().is_some_and(|sym| self.split_meaning(sym, token.span));
+        if split {
+            self.unread(token);
+        }
+        split
+    }
+
+    /// Whether TeX would read `text` as satex has it: no unknown name,
+    /// digits or character in it. A token for one of several texts is
+    /// read as each of them.
+    fn exact_text(&self, text: &[Token]) -> bool {
+        text.iter().all(|t| match t.tok {
+            Tok::Chr(c, _) => !crate::tex::is_unknown_char(c),
+            Tok::Cs(_) if let Some(texts) = self.one_of_members(*t) => texts.iter().all(|t| self.exact_text(t)),
+            Tok::Cs(sym) => {
+                !self.is_unknown_digits(sym)
+                    && !self.is_unknown_name(sym)
+                    && !matches!(self.env.meaning(sym), Meaning::Unknown)
+            }
+            Tok::Param(_) => true,
+        })
+    }
+
     fn digit(&self, token: Token, radix: i64) -> Option<i64> {
         match token.tok {
             Tok::Chr(c @ '0'..='9', Catcode::Other) => Some(c as i64 - '0' as i64).filter(|d| *d < radix),
@@ -487,6 +541,10 @@ impl Machine<'_> {
         let mut unknown = false;
         let mut next = first.or_else(|| self.next_x_token());
         while let Some(token) = next {
+            if self.split_scanned(token) {
+                next = self.next_x_token();
+                continue;
+            }
             let digits = match token.tok {
                 Tok::Chr(c, Catcode::Other) => crate::tex::is_unknown_digit(c),
                 Tok::Cs(sym) => self.is_unknown_digits(sym),
@@ -1173,7 +1231,8 @@ fn normalize_glue(mut g: Glue) -> Glue {
 }
 
 /// An abstract step of `scan_expr` settled the way `num_error` settles a
-/// concrete one: an error makes the value 0 and the whole expression 0.
+/// concrete one: an error makes the whole expression 0, so what may err
+/// is flagged and the step goes on with the results that do not.
 /// `err` is (may err, must err).
 fn settle((num, may): (Option<Num>, bool), err: &mut (bool, bool)) -> Num {
     match num {
@@ -1181,11 +1240,10 @@ fn settle((num, may): (Option<Num>, bool), err: &mut (bool, bool)) -> Num {
             *err = (true, true);
             Num::exact(0)
         }
-        Some(num) if may => {
-            err.0 = true;
-            num.join(&Num::exact(0))
+        Some(num) => {
+            err.0 |= may;
+            num
         }
-        Some(num) => num,
     }
 }
 
@@ -1197,8 +1255,8 @@ fn unbounded() -> (i64, i64) {
 /// combination of bounded exact operands, while there are few enough
 /// (`Num::lift_points`, the set lift applied to the running example), else
 /// the interval result on their hulls (`Num::lift`, then [`settle`]). An
-/// error joins in a definite zero either way, the way `settle` already does
-/// for intervals.
+/// error is only flagged: it zeroes the whole expression, which joins
+/// that 0 in once, at the end.
 #[allow(clippy::too_many_arguments)]
 fn step(
     nums: &[&Num],
@@ -1213,12 +1271,7 @@ fn step(
     if let Some(sets) = points.iter().copied().collect::<Option<Vec<&[i64]>>>()
         && let Some((mut out, any_err)) = Num::lift_points(&sets, members, &exact)
     {
-        if any_err {
-            err.0 = true;
-            if !out.contains(&0) {
-                out.push(0);
-            }
-        }
+        err.0 |= any_err;
         if out.len() <= members {
             out.sort_unstable();
             return (Num::range(out[0], out[out.len() - 1]), Some(out));
@@ -1530,20 +1583,21 @@ impl Machine<'_> {
                 return if kind == RegKind::Skip { Value::Glue(e) } else { Value::MuGlue(e) };
             }
         };
-        if !err.1
-            && let Some(members) = ea_x
-        {
-            return match members[..] {
-                [n] => Value::from_num(quantity, Num::exact(n)),
-                _ => Value::OneOf(members.into_iter().map(|n| Value::from_num(quantity, Num::exact(n))).collect()),
-            };
+        let zero = Value::from_num(quantity, Num::exact(0));
+        if err.1 {
+            return zero;
         }
-        let num = match err {
-            (_, true) => Num::exact(0),
-            (true, false) => ea.join(&Num::exact(0)),
-            _ => ea,
+        let value = match ea_x {
+            Some(members) => members
+                .into_iter()
+                .map(|n| Value::from_num(quantity, Num::exact(n)))
+                .reduce(|a, b| a.join(&b, self.env.sets))
+                .unwrap_or(Value::Unknown),
+            None => Value::from_num(quantity, ea),
         };
-        Value::from_num(quantity, num)
+        // Overflow zeroes the whole expression: that 0 is one more member,
+        // not a bound the interval stretches to.
+        if err.0 { value.join(&zero, self.env.sets) } else { value }
     }
 }
 

@@ -276,11 +276,12 @@ const BODIES: &[crate::support::BodyRow] = &[
         &[("later", "L")],
     ),
     // `\expandafter\expandafter\expandafter` expands the token two places
-    // ahead, which is how a macro's meaning reaches a `\def` body.
+    // ahead twice: `\a` becomes `\b`, then `B`, before `\y` reads it
+    // (pdfTeX: `\x=macro:->B`).
     (
         "a_tripled_expandafter_reaches_the_third_token",
-        r"\def\a{A}\expandafter\expandafter\expandafter\def\expandafter\x\expandafter{\a}",
-        &[("x", "A")],
+        r"\def\a{\b}\def\b{B}\def\y#1{\def\x{#1}}\expandafter\expandafter\expandafter\y\a",
+        &[("x", "B")],
     ),
     // `\expandafter\noexpand\csname a\endcsname` stores the control sequence
     // itself, not what it means (The TeXbook, ch. 20).

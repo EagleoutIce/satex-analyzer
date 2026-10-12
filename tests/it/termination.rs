@@ -214,9 +214,11 @@ mod self_referential_macros {
     }
 
     /// `\q`'s call inside `\edef` is reached by `\expandafter`, exactly as
-    /// `\exp_after:wN` reaches a quark in the real bug: one
-    /// `recursion-widened` gap, raised after `recursion_depth + 1` rounds,
-    /// never after the full 16384.
+    /// `\exp_after:wN` reaches a quark in the real bug. Each call meets the
+    /// state the last one did (tex.web § 390 drops the used-up body before
+    /// feeding the next, so TeX loops forever in constant space): the cycle
+    /// cut ends it after `cycle_after` repeats, with one `endless-loop`
+    /// warning and one `recursion-widened` gap, never after the full 16384.
     #[test]
     fn a_self_referential_macro_through_expandafter_widens_cheaply() {
         let analysis = Machine::analyze(
@@ -226,15 +228,18 @@ mod self_referential_macros {
         );
         let widened = messages(&analysis, "recursion-widened");
         assert_eq!(widened.len(), 1, "{widened:?}");
-        let rounds = format!("\\q: expanded {} times", cfg().limits.recursion_depth + 1);
-        assert!(widened[0].contains(&rounds), "{widened:?}");
-        assert!(!widened[0].contains("16385"), "{widened:?}");
+        assert!(widened[0].contains("\\q: it meets the state it was in before"), "{widened:?}");
+        let endless = analysis.facts.diagnostics.iter().filter(|d| d.code == "endless-loop").count();
+        assert_eq!(endless, 1);
     }
 
-    /// The bound follows `recursion_depth`, not a hardcoded constant.
+    /// With the cycle cut off (`cycle_after: 0`), the quark rule bounds the
+    /// same fixed point, and it follows `recursion_depth`, not a hardcoded
+    /// constant.
     #[test]
     fn the_bound_follows_recursion_depth() {
         let mut c = cfg();
+        c.limits.cycle_after = 0;
         c.limits.recursion_depth = 6;
         let analysis = Machine::analyze(
             "\\catcode`\\{=1 \\catcode`\\}=2 \\def\\q{\\q}\\edef\\b{\\expandafter\\relax\\q}",
@@ -453,6 +458,59 @@ fn reentry_nested_deeper_each_round_is_cut_early() {
     assert!(analysis.facts.diagnostics.iter().any(|d| d.message.contains("nested deeper each time")));
 }
 
+/// A call re-entered with the same arguments, the input below it as it
+/// was and nothing assigned, only with the rest of the last round's text
+/// stacked on top, is the same nesting one level deeper: it is cut after a
+/// few rounds, not at `limits.expansion_depth`. The second input is what
+/// pgf's `\pgfmath@parse@numexpr` does in an error message once a join
+/// made `\pgfmath@token` one of its own parser macros.
+#[test]
+fn reentry_deeper_on_the_input_stack_is_cut_early() {
+    for source in [
+        r"\catcode`\{=1 \catcode`\}=2 \def\a{\a x}\edef\b{\a}",
+        r"\catcode`\{=1 \catcode`\}=2 \def\n{}\def\p{\expandafter\expandafter\expandafter\relax\expandafter\t\n x}
+          \let\t\p\message{\p}",
+    ] {
+        let analysis = Machine::analyze(source, None, &cfg(200_000));
+        let codes: Vec<_> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
+        assert!(!codes.contains(&"limit-reached"), "{source}: {codes:?}");
+        assert!(
+            analysis.facts.diagnostics.iter().any(|d| d.message.contains("nested deeper each time")),
+            "{source}: {codes:?}"
+        );
+        assert!(analysis.steps < 2_000, "{source}: {} steps", analysis.steps);
+    }
+}
+
+/// A cut inside each round widens nothing new, so it changes no state:
+/// the recursion around it is still the same one nested deeper and is cut
+/// early too. This is LaTeX's `\par` death cycle in a list under an unknown
+/// `\if@newlist` (`\par` → `\@noitemerr` → `\@latex@error`, each cut).
+#[test]
+fn a_cut_inside_each_round_hides_no_outer_nesting() {
+    let source = r"\catcode`\{=1 \catcode`\}=2 \def\b{\b x}\def\a{\b\a y}\edef\c{\a}";
+    let analysis = Machine::analyze(source, None, &cfg(200_000));
+    let codes: Vec<_> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
+    assert!(!codes.contains(&"limit-reached"), "{codes:?}");
+    let nested: Vec<_> = (analysis.facts.diagnostics.iter())
+        .filter(|d| d.message.contains("nested deeper each time"))
+        .map(|d| d.message.clone())
+        .collect();
+    assert!(nested.iter().any(|m| m.starts_with("\\a:")), "{nested:?}");
+}
+
+/// A recursion that nests deeper while assigning is getting somewhere:
+/// it runs to its end, uncut.
+#[test]
+fn reentry_deeper_while_assigning_runs_to_its_end() {
+    let source = r"\catcode`\{=1 \catcode`\}=2 \count1=0
+        \def\a{\advance\count1 1 \ifnum\count1<40 \a x\fi}\setbox0\hbox{\a}";
+    let analysis = Machine::analyze(source, None, &cfg(200_000));
+    let codes: Vec<_> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
+    assert!(!codes.contains(&"recursion-widened"), "{codes:?}");
+    assert!(!codes.contains(&"limit-reached"), "{codes:?}");
+}
+
 /// Paths joined at unequal input depth: code the deeper one still has to
 /// run is not one data token, which an x-expansion would store unexpanded
 /// and which later breaks the braces ("Argument has an extra }").
@@ -488,6 +546,32 @@ fn a_join_never_folds_code_into_data() {
         .map(|d| format!("{} {}", d.code, d.message))
         .collect();
     assert!(bad.is_empty(), "{bad:?}");
+}
+
+/// A cut ends a recursion that reads its terminator from the list below
+/// it, here the `{\stop…}` group and the `\stoppoint` that `\stop` is
+/// delimited by. What the cut left after its `\unknown` may have been
+/// taken as arguments, so a `}` an argument scan meets there is not TeX's
+/// "Argument has an extra }": the argument is unknown, the braces stay
+/// balanced and the definition ends at its own `}`.
+#[test]
+fn text_a_cut_left_raises_no_extra_brace() {
+    let prelude = r"\catcode`\{=1 \catcode`\}=2 \catcode`\#=6 \catcode`\ =10
+        \def\empty{}\def\start#1{#1\start\empty}";
+    // A delimited argument and an undelimited one.
+    for tail in [
+        r"\def\stop#1\stoppoint{}\edef\result{\start abcdef{\stop x}\stoppoint}",
+        r"\def\stop#1{}\edef\result{\start abcdef{\stop}}",
+    ] {
+        let source = format!("{prelude}{tail}\\def\\after{{}}");
+        let analysis = Machine::analyze(&source, None, &cfg(200_000));
+        let ds = &analysis.facts.diagnostics;
+        assert!(ds.iter().any(|d| d.code == "recursion-widened"), "no cut: {source}");
+        assert!(!ds.iter().any(|d| d.message.contains("extra }") || d.code == "runaway-argument"), "{source}: {ds:?}");
+        for name in ["result", "after"] {
+            assert!(analysis.facts.defs.iter().any(|d| analysis.interner.name(d.name) == name), "{name}: {source}");
+        }
+    }
 }
 
 /// A summarized loop never ends the analysis: the input after it, here
