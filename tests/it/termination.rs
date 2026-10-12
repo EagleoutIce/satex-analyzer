@@ -774,8 +774,9 @@ Some text with microtype protrusion and expansion.
     /// is widened and the run reads on, instead of spending the budget.
     #[test]
     fn a_site_past_its_fork_budget_cuts_its_expansion() {
-        let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\count1=\\pdfelapsedtime
-\\def\\x{\\advance\\count2 1 \\ifnum\\count1>\\count2 \\expandafter\\x\\else\\expandafter\\x\\fi}\\x\\def\\Lost{}
+        let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\count1=\\pdfelapsedtime \\count3=0
+\\def\\x{\\advance\\count2 1 \\ifnum\\count1>\\count2 \\count3=1 \\expandafter\\x\\else\\expandafter\\x\\fi}\\x
+\\ifnum\\count3=0 \\def\\Zero{}\\else\\def\\One{}\\fi
 \\def\\Next{}
 ";
         let mut cfg = super::cfg(1_000_000_000);
@@ -787,6 +788,7 @@ Some text with microtype protrusion and expansion.
         assert!(codes.contains(&"site-forks-cut"), "{codes:?}");
         assert!(!codes.contains(&"line-budget-cut"), "{codes:?}");
         assert!(crate::support::defined(&a, "Next"), "{codes:?}");
+        assert!(crate::support::defined(&a, "Zero") && crate::support::defined(&a, "One"), "{codes:?}");
         assert!(a.forks <= 64 * 2, "{} forks", a.forks);
     }
 }

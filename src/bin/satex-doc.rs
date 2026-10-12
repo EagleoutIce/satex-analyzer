@@ -1452,6 +1452,7 @@ fn source_url(site: &Site) -> String {
 /// stop or pace a run and never make a result coarser.
 const PRECISION_LIMITS: &[&str] = &[
     "choices",
+    "site_forks",
     "paths",
     "meaning_splits",
     "widen_after",
