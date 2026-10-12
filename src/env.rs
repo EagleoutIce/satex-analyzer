@@ -770,14 +770,10 @@ impl Env {
 
     pub fn push_group(&mut self, kind: GroupKind, opened: Span) {
         self.group_ids += 1;
-        Rc::make_mut(&mut self.marks).push(Mark {
-            journal: self.journal.len(),
-            kind,
-            after: Vec::new(),
-            opened,
-            nest: None,
-            id: self.group_ids,
-        });
+        crate::push_shared(
+            &mut self.marks,
+            Mark { journal: self.journal.len(), kind, after: Vec::new(), opened, nest: None, id: self.group_ids },
+        );
     }
 
     /// The innermost open group's id, 0 outside every group.

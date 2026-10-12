@@ -1995,7 +1995,7 @@ impl Machine<'_> {
         // tex.web § 509 ends with `change_if_limit(or_code, save_cond_ptr)`:
         // the frame belongs below the ones the test left open.
         if let Some(on) = on {
-            Rc::make_mut(&mut self.cds).push(ControlDep { on, taken: n == 0 });
+            crate::push_shared(&mut self.cds, ControlDep { on, taken: n == 0 });
         }
         Rc::make_mut(&mut self.conds).insert(base, CondFrame { limit, dep: on.is_some(), at: span, kind });
     }
