@@ -2,10 +2,9 @@
 //! is and join where they meet again, inside the command, instead of the
 //! command running once per sequence of arms (SEMANTICS.md § 14).
 
+use crate::support::{PRELUDE, broken_gaps, names};
 use crate::support::{body, installed};
 use satex::machine::{Analysis, Machine};
-
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
 
 fn analyze(source: &str) -> Analysis {
     let cfg = satex::config::Config { arm_joins: true, ..crate::support::bare() };
@@ -17,24 +16,9 @@ fn analyze_latex(source: &str) -> Analysis {
     Machine::analyze(source, None, &cfg)
 }
 
-fn names(analysis: &Analysis) -> Vec<String> {
-    analysis.facts.defs.iter().map(|d| analysis.interner.name(d.name).to_string()).collect()
-}
-
 /// Diagnostics with `code`, as `code: message`.
 fn with_code(analysis: &Analysis, code: &str) -> Vec<String> {
     analysis.facts.diagnostics.iter().filter(|d| d.code == code).map(|d| format!("{}: {}", d.code, d.message)).collect()
-}
-
-/// Every broken gap of a run.
-fn broken_gaps(analysis: &Analysis) -> Vec<String> {
-    analysis
-        .facts
-        .diagnostics
-        .iter()
-        .filter(|d| d.severity == satex::facts::Severity::Unsupported)
-        .map(|d| format!("{}: {}", d.code, d.message))
-        .collect()
 }
 
 /// Twelve independent undecided tests in one `\edef` body: 2^12 sequences
@@ -406,7 +390,6 @@ fn alternating_heads_of_a_tail_loop_meet_again() {
         ..crate::support::config()
     };
     cfg.limits.steps = 2_000_000;
-    cfg.limits.seconds = 0;
     let source = r"\catcode`\{=1 \catcode`\}=2 \catcode`\#=6 \countdef\n=9 \n=\pdfelapsedtime
 \def\first#1#2{#1}\def\second#1#2{#2}
 \def\ifdimpos#1{\ifdim#1>0pt \expandafter\first\else\expandafter\second\fi}

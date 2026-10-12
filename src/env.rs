@@ -617,11 +617,6 @@ impl Env {
         !matches!(self.slot(sym).map(|b| &b.meaning), None | Some(Meaning::Undefined))
     }
 
-    /// How many names currently have a meaning.
-    pub fn defined_count(&self) -> usize {
-        self.slots.iter().filter(|s| s.is_some()).count()
-    }
-
     /// Slots that hold a meaning, which is what a format cache stores: a
     /// rebuild and a cache hit then report the same number.
     pub fn meaning_count(&self) -> usize {
@@ -996,13 +991,21 @@ impl Env {
             .collect()
     }
 
-    /// `syms` joined with what `other` holds for them, widened: an
-    /// accumulator stays typed. A name `other` never wrote may hold anything.
-    pub fn widen_to(&mut self, syms: &[Sym], other: &PathEnv, typed: &Typed) {
+    /// The names written after assignment `mark` since [`Env::clear_recent`],
+    /// each once.
+    pub fn written_after(&self, mark: u64) -> Vec<Sym> {
+        let syms = self.recent_since(0);
+        syms.into_iter().filter(|s| self.stamp.get(s.0 as usize).is_none_or(|&at| at > mark)).collect()
+    }
+
+    /// `syms` may hold anything of their kind. With `toward`, each is
+    /// joined with what `toward` holds and widened (an accumulator stays
+    /// typed); a name `toward` never wrote may hold anything.
+    pub fn widen(&mut self, syms: &[Sym], toward: Option<&PathEnv>, typed: &Typed) {
         self.effective += 1;
         for &sym in syms {
             let i = sym.0 as usize;
-            let Some((theirs, _)) = other.slots.get(&sym.0).cloned() else {
+            let Some((theirs, _)) = toward.and_then(|t| t.slots.get(&sym.0).cloned()) else {
                 self.widen_in_place(sym, typed);
                 continue;
             };
@@ -1022,26 +1025,6 @@ impl Env {
             self.slots[i] = Some(joined);
             self.changed(i);
         }
-    }
-
-    /// Every name assigned since [`Env::clear_recent`] may hold anything:
-    /// its value is unknown, and a macro holds text of its texts' classes.
-    pub fn widen_recent(&mut self, typed: &Typed) {
-        self.widen_written_after(0, typed);
-    }
-
-    /// [`Env::widen_recent`] for the names written after assignment `mark`.
-    pub fn widen_written_after(&mut self, mark: u64, typed: &Typed) {
-        self.effective += 1;
-        let syms: Vec<Sym> = self
-            .recent_since(0)
-            .into_iter()
-            .filter(|s| self.stamp.get(s.0 as usize).is_none_or(|&at| at > mark))
-            .collect();
-        for sym in syms {
-            self.widen_in_place(sym, typed);
-        }
-        self.clear_recent();
     }
 
     /// Slot `i` was changed where it stands, at its own level.
@@ -1236,25 +1219,6 @@ impl Env {
         }
         self.resume(fork, &live);
         true
-    }
-
-    /// Where the trail stands: the names changed after this are what a
-    /// path did since, for comparing states at a loop head.
-    pub fn trail_mark(&self) -> usize {
-        self.trail.len()
-    }
-
-    /// The slots changed since `mark`, each with what it held at `mark`
-    /// and what it holds now.
-    pub fn changed_since(&self, mark: usize) -> Vec<(u32, Option<Binding>, Option<Binding>)> {
-        let mut seen = crate::fixed::HashSet::default();
-        let mut out = Vec::new();
-        for (sym, old, ..) in self.trail.get(mark..).unwrap_or_default() {
-            if seen.insert(*sym) {
-                out.push((*sym, old.clone(), self.slots[*sym as usize].clone()));
-            }
-        }
-        out
     }
 
     /// The slot `sym` now holds.
@@ -1688,6 +1652,15 @@ pub fn text_len(interner: &Interner, t: &Token) -> Option<u32> {
     let digits = |n: i64| n.unsigned_abs().checked_ilog10().unwrap_or(0) + 1;
     Some(digits(lo).max(digits(hi)) + u32::from(lo < 0))
 }
+
+/// [`Typed`] of machine `$m` over `$syms` (its `typed_syms`); a macro so
+/// the borrow of `$m` splits by field.
+macro_rules! typed {
+    ($m:expr, $syms:expr) => {
+        crate::env::Typed { interner: &$m.out.interner, syms: &$syms, digits: $m.unknown_digits, more: $m.unknown_more }
+    };
+}
+pub(crate) use typed;
 
 pub struct Typed<'a> {
     pub interner: &'a Interner,

@@ -10,10 +10,9 @@
 //! on some path (cover) and no `bad` on any (untouched stays exact).
 //! Failing rows are the to-do list: never ignore them.
 
+use crate::support::PRELUDE;
 use satex::config::Config;
 use satex::machine::{Analysis, Machine};
-
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
 
 /// `\i` counts passes, `\n` is the unknown bound.
 const HEAD: &str = r"\countdef\i=200 \countdef\n=201 \n=\N \i=0 ";

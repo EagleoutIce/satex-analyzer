@@ -838,12 +838,7 @@ impl Machine<'_> {
         // pass is a new head and none ever meets. Texts that differ in
         // more (pgfmath's parser, its expression shrinking) are new heads,
         // bounded by `recursion_depth` as before.
-        let typed = crate::env::Typed {
-            interner: &self.out.interner,
-            syms: &syms,
-            digits: self.unknown_digits,
-            more: self.unknown_more,
-        };
+        let typed = crate::env::typed!(self, syms);
         let alike = exact
             .is_none()
             .then(|| paths.heads.iter().position(|h| same(h) && alike_places(&h.config.key, &here.key, &typed)))
@@ -954,12 +949,7 @@ impl Machine<'_> {
                 // Every path cut here joins one summary, widened, so the
                 // cuts reach a fixpoint instead of each running on.
                 let cut = Config::new(self.save_path(), self.env.path(&fork), false);
-                let typed = crate::env::Typed {
-                    interner: &self.out.interner,
-                    syms: &syms,
-                    digits: self.unknown_digits,
-                    more: self.unknown_more,
-                };
+                let typed = crate::env::typed!(self, syms);
                 let met = paths
                     .cut
                     .iter()
@@ -995,12 +985,7 @@ impl Machine<'_> {
             // A head every path read on past is left behind: nothing meets
             // it again. Without reading source (a hook's code) progress
             // alone never retires one.
-            let typed = crate::env::Typed {
-                interner: &self.out.interner,
-                syms: &syms,
-                digits: self.unknown_digits,
-                more: self.unknown_more,
-            };
+            let typed = crate::env::typed!(self, syms);
             let live = |h: &Head| {
                 let on = |key: &Key| !left(&h.config.key, key, &typed);
                 on(&here.key) || paths.parked.iter().chain(&paths.arrived).any(|p| on(&p.key))
@@ -1087,8 +1072,6 @@ impl Machine<'_> {
         let written = self.env.recent_since(paths.stopped[l].recent);
         let summary = paths.stopped[l].joined.env.clone();
         let syms = self.typed_syms();
-        let unknown_digits = self.unknown_digits;
-        let unknown_more = self.unknown_more;
         if self.cfg.verbose >= 4 {
             crate::progress::note!("satex: loop at {span:?} met again at {depth:?}, covered by its summary");
         }
@@ -1118,13 +1101,7 @@ impl Machine<'_> {
                 self.skip_line(at);
             }
             self.resume_config(fork, here);
-            let typed = crate::env::Typed {
-                interner: &self.out.interner,
-                syms: &syms,
-                digits: unknown_digits,
-                more: unknown_more,
-            };
-            self.env.widen_to(&written, &summary, &typed);
+            self.env.widen(&written, Some(&summary), &crate::env::typed!(self, syms));
             let here = Config::new(self.save_path(), self.env.path(fork), false);
             let env = here.env.clone();
             return self.cut_loop(paths, fork, here, env, id, entry, span, id.1);
@@ -1138,13 +1115,7 @@ impl Machine<'_> {
             };
             let ended = c.ended;
             self.resume_config(fork, c.clone_config());
-            let typed = crate::env::Typed {
-                interner: &self.out.interner,
-                syms: &syms,
-                digits: unknown_digits,
-                more: unknown_more,
-            };
-            self.env.widen_to(&written, &summary, &typed);
+            self.env.widen(&written, Some(&summary), &crate::env::typed!(self, syms));
             let c = Config::new(self.save_path(), self.env.path(fork), ended);
             match i {
                 i if i < n => paths.parked[i] = c,
@@ -1222,21 +1193,9 @@ impl Machine<'_> {
     /// The closers in `text` of conditionals opened before it (`\fi`,
     /// `\else`, `\or`), and how many conditionals it leaves open.
     fn strays(&self, text: &[Token]) -> (Vec<usize>, usize) {
-        let (mut open, mut strays) = (0usize, Vec::new());
-        for (i, t) in text.iter().enumerate() {
-            match self.cond_prim(*t) {
-                Some(Primitive::If(_)) => open += 1,
-                Some(Primitive::Fi) if open > 0 => open -= 1,
-                Some(Primitive::Fi | Primitive::Else | Primitive::Or) if open == 0 => strays.push(i),
-                _ => {}
-            }
-        }
-        (strays, open)
-    }
-
-    fn cond_prim(&self, t: Token) -> Option<Primitive> {
-        let Tok::Cs(sym) = t.tok else { return None };
-        self.env.skip_meaning(sym).prim()
+        let mut open = crate::machine::CondDepth::default();
+        let strays = (0..text.len()).filter(|&i| open.feed(self.cond_prim(text[i])).is_some()).collect();
+        (strays, open.0)
     }
 
     /// Whether `text` can be one token: its braces and its conditionals
@@ -1419,11 +1378,9 @@ impl Machine<'_> {
         }
     }
 
-    /// More paths wait than `path_bound`: paths that differ only in their
-    /// text are joined, then, while still too many, the two furthest back
-    /// at one source position are cut to the levels they share
-    /// ([`Machine::force_join`]). Paths in different source places or scans
-    /// cannot be one: they wait on, said once.
+    /// More paths wait than `alike_bound`: pairs that are `alike` (same
+    /// stacks, texts may differ) are joined with their input widened. Paths
+    /// that are not alike cannot be one: they wait on, said once.
     fn crowd(&mut self, paths: &mut Paths, fork: &Fork) {
         let bound = self.alike_bound();
         let span = self.position_span();
@@ -1564,12 +1521,7 @@ impl Machine<'_> {
         // it is. Between paths, digits in code are code: one of either
         // ([`Machine::join_texts`]), and unknown text once widened.
         let syms = self.typed_syms();
-        let typed = crate::env::Typed {
-            interner: &self.out.interner,
-            syms: &syms,
-            digits: self.unknown_digits,
-            more: self.unknown_more,
-        };
+        let typed = crate::env::typed!(self, syms);
         let (p, q) = (crate::env::unknown_runs(head, &typed), crate::env::unknown_runs(other, &typed));
         if pass && same_text(&p, &q) {
             let mut text = p.to_vec();
@@ -2036,12 +1988,7 @@ impl Machine<'_> {
             })
             .collect();
         let syms = self.typed_syms();
-        let typed = crate::env::Typed {
-            interner: &self.out.interner,
-            syms: &syms,
-            digits: self.unknown_digits,
-            more: self.unknown_more,
-        };
+        let typed = crate::env::typed!(self, syms);
         self.out.joined_slots += (a.env.len() + b.env.len()) as u64;
         let (env, slots, waiting) = self.env.join_paths(fork, &a.env, &b.env, &typed, widen, &after);
         // Widened, a name the loop makes from a number (`\flag test 12`)

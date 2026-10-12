@@ -118,14 +118,6 @@ pub enum Quantity {
     MuGlue,
 }
 
-impl Quantity {
-    /// Whether the quantity is measured in scaled points, so its full
-    /// range is `±MAX_DIMEN` rather than `±MAX_INT`.
-    pub fn is_dimen(self) -> bool {
-        !matches!(self, Quantity::Int)
-    }
-}
-
 /// The value a `\count`/`\dimen`/`\skip`/`\toks`-family register can hold, or
 /// `Unknown` when the interpreter cannot pin it down.
 /// [`crate::env::Env::value`] reads one per [`crate::tex::Sym`].
@@ -532,15 +524,6 @@ impl Color {
     pub fn spell(&self) -> String {
         self.components.iter().map(spell_component).collect::<Vec<_>>().join(",")
     }
-
-    /// The component that lies outside the model's range, with the range,
-    /// when one does on every path.
-    pub fn out_of_range(&self) -> Option<(usize, Num, (Scaled, Scaled))> {
-        self.components.iter().enumerate().find_map(|(i, c)| {
-            let (lo, hi) = self.model.bounds(i)?;
-            (c.lo < lo || c.hi > hi).then(|| (i, c.clone(), (lo, hi)))
-        })
-    }
 }
 
 /// `1`, `0.50195`, `?` for a component that is not one value.
@@ -776,14 +759,6 @@ impl Value {
             return if set.len() == 1 { set.into_iter().next().unwrap() } else { Value::OneOf(set.into()) };
         }
         set.into_iter().map(|v| v.hull()).reduce(|a, b| Value::join_hulls(&a, &b)).unwrap_or(Value::Unknown)
-    }
-
-    /// The color this holds, when it is one.
-    pub fn as_color(&self) -> Option<&Colors> {
-        match self {
-            Value::Color(c) => Some(c),
-            _ => None,
-        }
     }
 
     /// The abstract number this is, with what kind of quantity it is: a

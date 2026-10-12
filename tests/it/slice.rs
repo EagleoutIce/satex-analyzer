@@ -7,6 +7,7 @@
 //! still gives that name the same meaning.  Keeping something that cannot
 //! matter is imprecision; dropping something that can is a bug.
 
+use crate::support::{PRELUDE, analyze_kernel};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -22,23 +23,13 @@ fn analyze(source: &str) -> Analysis {
     Machine::analyze(source, None, &bare())
 }
 
-/// The LaTeX kernel read for real (and cached): `\newcommand`, `\newcounter`
-/// and the rest of the interfaces this file slices are `latex.ltx` macros,
-/// not primitives, so they need the format loaded.
-fn analyze_kernel(source: &str) -> Analysis {
-    let cfg =
-        Config { load: Load { packages: false, classes: false, ..Default::default() }, ..crate::support::config() };
-    Machine::analyze(source, None, &cfg)
-}
-
-// Without a format the catcodes are INITEX's (tex.web § 232).  Kept out of
+// `PRELUDE` (INITEX catcodes, tex.web § 232) is kept out of
 // `analyze()`/`bare()` themselves: `reconstruction()` below indexes back
 // into the exact `source` a test passed it, so a hidden prelude there would
 // offset every span it reads out of `analysis` against an unprefixed
 // `source`.  Each failing test instead carries the prelude in its own
 // literal, on line 1 with no newline so its line numbers stay put (moved to
 // a line of its own only where a test's own position names line 1).
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
 
 fn scratch(name: &str) -> PathBuf {
     let directory = std::env::temp_dir().join("satex-slice-test").join(name);

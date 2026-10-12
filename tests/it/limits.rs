@@ -4,6 +4,8 @@
 //! value here was measured with `\showthe` on the TeX Live 2026 binaries,
 //! engine by engine, not read off a manual.
 
+use crate::support::PRELUDE;
+use crate::support::body;
 use satex::builtins::{Primitive, initial_meanings};
 use satex::config::{Config, Engine, Interaction, Load, Texmf};
 use satex::machine::{Analysis, Machine};
@@ -11,9 +13,6 @@ use satex::plugin::Kernel;
 use satex::tex::Meaning;
 
 const ENGINES: [Engine; 4] = [Engine::Tex, Engine::PdfTeX, Engine::XeTeX, Engine::LuaTeX];
-
-/// Without a format the catcodes are INITEX's (tex.web § 232).
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
 
 /// The marker a widened text carries, which is what a value satex could not
 /// pin down reads back as.
@@ -28,17 +27,6 @@ fn analyze(engine: Engine, source: &str) -> Analysis {
         ..crate::support::config()
     };
     Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg)
-}
-
-fn body(analysis: &Analysis, name: &str) -> String {
-    analysis
-        .facts
-        .defs
-        .iter()
-        .find(|d| analysis.interner.name(d.name) == name)
-        .and_then(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
-        .unwrap_or_default()
 }
 
 /// What `\the⟨what⟩` reads after `source` has run under `engine`.

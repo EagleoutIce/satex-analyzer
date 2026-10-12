@@ -1,5 +1,6 @@
 //! `satex query produces`: everywhere a piece of text can come from.
 
+use crate::support::PRELUDE;
 use serde_json::Value as Json;
 
 use crate::support::installed;
@@ -22,10 +23,9 @@ fn sample() -> (Analysis, String) {
     (analysis, source)
 }
 
-// Without a format the catcodes are INITEX's (tex.web § 232); kept out of
+// `PRELUDE` (INITEX catcodes, tex.web § 232) is kept out of
 // `analyze()` itself since `query::produces` below needs the exact same
 // `source` text it was passed, columns included.
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
 
 fn field<'a>(record: &'a Record, name: &str) -> &'a str {
     record.get(name).and_then(Json::as_str).unwrap_or_default()

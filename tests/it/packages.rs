@@ -1,6 +1,6 @@
-use satex::builtins::OccKind;
+use crate::support::{codes, marks};
 
-use crate::support::{defined, installed};
+use crate::support::{defined, installed, last_body as body};
 use satex::config::{Config, Load};
 use satex::machine::{Analysis, Machine};
 
@@ -235,39 +235,6 @@ fn listings_and_minted_keep_their_bodies_out_of_the_analysis() {
             "{package}: the body of {environment} is text, not code"
         );
     }
-}
-
-fn body(analysis: &Analysis, name: &str) -> String {
-    analysis
-        .facts
-        .defs
-        .iter()
-        .rev()
-        .find(|def| analysis.interner.name(def.name) == name)
-        .and_then(|def| def.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
-        .unwrap_or_default()
-}
-
-/// The findings for the document itself, leaving out what the packages it
-/// read contribute.
-fn codes(analysis: &Analysis) -> Vec<String> {
-    satex::lint::lint(analysis)
-        .iter()
-        .filter(|f| f.get("origin").and_then(|o| o.as_str()) == Some("document"))
-        .filter_map(|f| f.get("code").and_then(|c| c.as_str()).map(str::to_string))
-        .collect()
-}
-
-/// The `\typeout` texts the run produced, in the order it produced them.
-fn marks(analysis: &Analysis) -> Vec<String> {
-    analysis
-        .facts
-        .occurrences
-        .iter()
-        .filter(|o| o.kind == OccKind::Message && o.key.starts_with("mark "))
-        .map(|o| o.key.clone())
-        .collect()
 }
 
 #[test]

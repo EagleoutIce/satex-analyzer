@@ -151,12 +151,7 @@ impl Machine<'_> {
         syms.sort_unstable();
         syms.dedup();
         let typed_syms = self.typed_syms();
-        let typed = crate::env::Typed {
-            interner: &self.out.interner,
-            syms: &typed_syms,
-            digits: self.unknown_digits,
-            more: self.unknown_more,
-        };
+        let typed = crate::env::typed!(self, typed_syms);
         let mut writes = Vec::with_capacity(syms.len());
         for &sym in &syms {
             let now = self.env.slot_at(sym.0);

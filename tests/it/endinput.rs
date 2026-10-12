@@ -7,18 +7,11 @@
 //! the same input, read with `\message` probes.  Each test says what the
 //! engine wrote.
 
-use crate::support::{defined, installed};
+use crate::support::{PRELUDE, analyze_plain as analyze, diagnosed};
+use crate::support::{defined, installed, last_body as body, last_definition as definition};
 use satex::config::{Cache, Config, Engine, Load, Texmf};
 use satex::machine::{Analysis, Machine};
 use satex::plugin::Kernel;
-
-// Without a format the catcodes are INITEX's (tex.web § 232).
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
-
-/// One file, no format: the primitives only.
-fn analyze(source: &str) -> Analysis {
-    Machine::analyze(&format!("{PRELUDE}{source}"), None, &crate::support::bare())
-}
 
 /// A document on disk, so that `\input` reads real files.
 fn analyze_files(source: &str, main: &std::path::Path) -> Analysis {
@@ -27,24 +20,9 @@ fn analyze_files(source: &str, main: &std::path::Path) -> Analysis {
     Machine::analyze(source, Some(main), &cfg)
 }
 
-fn definition<'a>(analysis: &'a Analysis, name: &str) -> Option<&'a satex::facts::Definition> {
-    analysis.facts.defs.iter().rev().find(|d| analysis.interner.name(d.name) == name)
-}
-
-fn body(analysis: &Analysis, name: &str) -> String {
-    definition(analysis, name)
-        .and_then(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
-        .unwrap_or_default()
-}
-
 /// Which of `names` are defined, as one string, so a failure names them all.
 fn state(analysis: &Analysis, names: &[&str]) -> String {
     names.iter().map(|n| format!("{n}={}", u8::from(defined(analysis, n)))).collect::<Vec<_>>().join(" ")
-}
-
-fn diagnosed(analysis: &Analysis, code: &str) -> Vec<String> {
-    analysis.facts.diagnostics.iter().filter(|d| d.code == code).map(|d| d.message.clone()).collect()
 }
 
 /// A scratch directory of its own per test.

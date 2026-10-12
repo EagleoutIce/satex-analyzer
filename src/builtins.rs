@@ -946,13 +946,6 @@ impl ModeCmd {
     }
 }
 
-/// The tags a definition can carry, as `category` gives them.
-pub fn definition_tag(tag: &str) -> Option<&'static str> {
-    ["macro", "alias", "environment", "register", "counter", "length", "switch", "option", "key", "variable"]
-        .into_iter()
-        .find(|known| *known == tag)
-}
-
 pub fn category(p: Primitive) -> &'static str {
     use Primitive as P;
     match p {

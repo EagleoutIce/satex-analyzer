@@ -86,7 +86,7 @@ impl Machine<'_> {
                 span,
                 "\\globaldefs holds a number satex does not know; what the assignment left is unknown".into(),
             );
-            self.widen_recent();
+            self.widen_since(0);
             self.env.set_recent(recent);
         }
         if p == Primitive::IntegerParameter && self.env.identity(by) == self.intern("spacefactor") {
@@ -1819,7 +1819,7 @@ impl Machine<'_> {
     /// name of unknown meaning may be a conditional, or no `\fi` is found.
     fn case_arms(&mut self) -> Option<usize> {
         let mut read: Vec<Token> = Vec::new();
-        let (mut nesting, mut ors) = (0usize, 0usize);
+        let (mut nesting, mut ors) = (crate::machine::CondDepth::default(), 0usize);
         let found = loop {
             if read.len() >= self.cfg.limits.conditional_tokens {
                 break false;
@@ -1829,11 +1829,9 @@ impl Machine<'_> {
             let Some(sym) = t.cs().or_else(|| self.active_cs(t)) else { continue };
             match self.env.meaning(sym) {
                 Meaning::Unknown => break false,
-                m => match m.prim() {
-                    Some(Primitive::If(_)) => nesting += 1,
-                    Some(Primitive::Fi) if nesting == 0 => break true,
-                    Some(Primitive::Fi) => nesting -= 1,
-                    Some(Primitive::Or) if nesting == 0 => ors += 1,
+                m => match nesting.feed(m.prim()) {
+                    Some(Primitive::Fi) => break true,
+                    Some(Primitive::Or) => ors += 1,
                     _ => {}
                 },
             }
@@ -3093,7 +3091,8 @@ impl Machine<'_> {
     fn register_def_number(&mut self, kind: RegKind, index: i64, span: Span) -> i64 {
         let unicode = self.out.plugins.engine.has_unicode_math() || self.out.plugins.engine.has_luatex();
         let (most, what) = match kind {
-            RegKind::Char if unicode => (i64::from(u16::MAX), "character code"),
+            // xetex.web, luatex: `biggest_usv` = 0x10FFFF.
+            RegKind::Char if unicode => (0x10FFFF, "character code"),
             RegKind::Char => (255, "character code"),
             RegKind::MathChar => (0x7fff, "mathchar"),
             RegKind::UMathChar => (crate::value::WORD_MAX, "Umathchar"),

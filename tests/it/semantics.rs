@@ -1,41 +1,10 @@
+use crate::support::{PRELUDE, analyze_kernel, analyze_plain as analyze, depth_of, diagnosed, last_body, names};
 use crate::support::{body, definition};
 use satex::builtins::OccKind;
 use satex::config::{Config, Load, Texmf};
 use satex::facts::MeaningKind;
 use satex::machine::{Analysis, Machine};
 use satex::query::{self, Filter, Query};
-
-/// The LaTeX kernel read for real (and cached): expl3 is `expl3-code.tex`
-/// itself, which only a format run has.
-fn analyze_kernel(source: &str) -> Analysis {
-    let cfg =
-        Config { load: Load { packages: false, classes: false, ..Default::default() }, ..crate::support::config() };
-    Machine::analyze(source, None, &cfg)
-}
-
-// Without a format the catcodes are INITEX's (tex.web § 232).
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 ";
-
-fn analyze(source: &str) -> Analysis {
-    Machine::analyze(&format!("{PRELUDE}{source}"), None, &crate::support::bare())
-}
-
-fn names(analysis: &Analysis) -> Vec<String> {
-    analysis.facts.defs.iter().map(|d| analysis.interner.name(d.name).to_string()).collect()
-}
-
-/// The last definition of `name`, for a macro a loop redefines every round.
-fn last_body(analysis: &Analysis, name: &str) -> String {
-    analysis
-        .facts
-        .defs
-        .iter()
-        .rev()
-        .find(|d| analysis.interner.name(d.name) == name)
-        .and_then(|d| d.mac.as_ref())
-        .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
-        .unwrap_or_default()
-}
 
 #[test]
 fn def_records_parameter_text_and_body() {
@@ -652,14 +621,6 @@ fn ifcat_sees_through_noexpand() {
     let analysis =
         analyze(r"\def\test#1{\ifcat\noexpand~\noexpand#1\def\seen{active}\else\def\seen{control}\fi}\test\relax");
     assert_eq!(body(&analysis, "seen"), "control");
-}
-
-fn depth_of(analysis: &Analysis, name: &str) -> Option<u16> {
-    definition(analysis, name).map(|d| d.depth)
-}
-
-fn diagnosed(analysis: &Analysis, code: &str) -> Vec<String> {
-    analysis.facts.diagnostics.iter().filter(|d| d.code == code).map(|d| d.message.clone()).collect()
 }
 
 #[test]
