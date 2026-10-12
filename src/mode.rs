@@ -474,6 +474,10 @@ pub struct Natural {
     /// In inline math: inside a `{…}` script, which holds one character
     /// here; any other atom in it loses the size (tex.web § 1176).
     pub script_group: bool,
+    /// In inline math: the formula is no rigid box to the line breaker. A
+    /// binary or relation atom came, after which it may break (tex.web
+    /// § 761), or glue that may stretch or shrink.
+    pub math_breaks: bool,
     /// A paragraph's lines so far (tex.web § 815).
     pub para: Para,
     /// A vertical list's `\prevdepth` (tex.web § 219), `None` at
@@ -684,6 +688,7 @@ impl Natural {
             script: if self.script == other.script { self.script } else { None },
             math_box: if self.math_box == other.math_box { self.math_box } else { None },
             script_group: self.script_group || other.script_group,
+            math_breaks: self.math_breaks || other.math_breaks,
             solid: self.solid.max(other.solid),
             para: self.para.join(other.para),
             prev_depth: join_prev(self.prev_depth, other.prev_depth),
@@ -957,6 +962,7 @@ impl Machine<'_> {
             script: None,
             math_box: None,
             script_group: false,
+            math_breaks: false,
             para: Para {
                 along: outer.along.extended_by(outer.depth).extended_by(skip),
                 below,
@@ -2297,6 +2303,7 @@ impl Machine<'_> {
                 return;
             }
             n.math_box = None;
+            n.math_breaks |= matches!(item, Item::Glue(_, spec) if spec.is_none_or(|g| g.stretch.amount != 0 || g.shrink.amount != 0));
             let italic = self.prev_italic(n.math_prev);
             n.along = n.along.extended_by(italic).extended_by(w.map_or(Dim::ANY, Dim::exact));
             n.math_prev = None;
@@ -2437,6 +2444,24 @@ impl Machine<'_> {
         self.natural = Some(n);
     }
 
+    /// The node that ends a formula, `w` wide (tex.web § 1196): a
+    /// breakpoint where glue follows (§ 866), its width gone at a break
+    /// (§ 881) and discarded after one (§ 879), as an explicit kern's. A
+    /// formula that is no `rigid` box breaks at its own penalties too
+    /// (§ 761), which are not followed.
+    fn math_off(&mut self, w: Dim, rigid: bool) {
+        let Some(mut n) = self.natural else { return };
+        n.advance(true, w);
+        let kern = w.known().filter(|_| rigid);
+        if let Some(w) = kern {
+            self.kp_push(&mut n.para.items, crate::linebreak::Kp::Kern { w, explicit: true });
+        }
+        self.natural = Some(n);
+        if kern.is_none() {
+            self.unfollowed_breaks();
+        }
+    }
+
     /// Material whose breakpoints and penalties are not followed went onto
     /// the line.
     fn unfollowed_breaks(&mut self) {
@@ -2574,8 +2599,11 @@ impl Machine<'_> {
                 self.align_cell(true);
             }
         }
-        // `\pdfrefximage` adds its box once its number is read.
-        if p == Primitive::Command(Syntax::Number) && self.name(self.env.identity(by)) == "pdfrefximage" {
+        // `\pdfrefximage` adds its box once its number is read, and so do
+        // `\mathchar` and `\delimiter` their atom in inline math.
+        if p == Primitive::Command(Syntax::Number)
+            && (self.name(self.env.identity(by)) == "pdfrefximage" || self.math_char_command(by).is_some())
+        {
             return;
         }
         let item = match p {
@@ -2740,11 +2768,9 @@ impl Machine<'_> {
                 Self::end_atoms(&mut m);
                 let surround = self.dimen_parameter("mathsurround");
                 let last = self.prev_italic(m.math_prev);
-                let width = m.along.extended_by(last).extended_by(surround).extended_by(surround);
+                let width = m.along.extended_by(last).extended_by(surround);
                 self.append_item(Item::Box([width, m.height, m.depth]));
-                // tex.web § 866, § 761: a formula breaks after it and at
-                // its own penalties.
-                self.unfollowed_breaks();
+                self.math_off(surround, !m.math_breaks);
                 if let Some(n) = self.natural.as_mut() {
                     n.space_factor = Some(1000);
                 }
@@ -2794,6 +2820,21 @@ impl Machine<'_> {
         self.math_atom(class, fam, ch);
     }
 
+    /// In inline math, `\mathchar` and `\delimiter` are atoms of the math
+    /// code their number gives: the number itself, and a delimiter's small
+    /// variant (tex.web §§ 1151, 1160). The shift that takes the code from
+    /// the number.
+    pub(crate) fn math_char_command(&self, by: Sym) -> Option<u32> {
+        if self.mode != Modes::MATH {
+            return None;
+        }
+        match self.name(self.env.identity(by)) {
+            "mathchar" => Some(0),
+            "delimiter" => Some(12),
+            _ => None,
+        }
+    }
+
     /// tex.web § 1155: `\mathchar` and a `\mathchardef` constant, in inline
     /// math: the atom of math code `code`, its family from `\fam` for class 7.
     pub(crate) fn math_code_char(&mut self, code: Option<i64>) {
@@ -2826,21 +2867,40 @@ impl Machine<'_> {
     /// `right` in text style (0 ord … 7 inner): none, or `\thinmuskip`,
     /// `\medmuskip` or `\thickmuskip` at their natural width.
     fn math_space(&mut self, left: Option<i8>, right: u8) -> Dim {
-        const TABLE: [&[u8; 8]; 8] =
-            [b"02340001", b"22*40001", b"33**3**3", b"44*04004", b"00*00000", b"02340001", b"11*11111", b"12341011"];
         let Some(left) = left else { return Dim::exact(0) };
-        let Some(row) = usize::try_from(left).ok().and_then(|l| TABLE.get(l)) else { return Dim::ANY };
-        let Some(&code) = row.get(usize::from(right)) else { return Dim::ANY };
-        let name = match code {
-            b'0' => return Dim::exact(0),
-            b'1' | b'2' => "thinmuskip",
-            b'3' => "medmuskip",
-            b'4' => "thickmuskip",
-            _ => return Dim::ANY,
-        };
+        if Self::space_code(left, right) == Some(b'0') {
+            return Dim::exact(0);
+        }
+        let Some(name) = Self::space_name(Some(left), right) else { return Dim::ANY };
         let sym = self.intern(name);
         let Value::MuGlue(g) = self.env.value(sym) else { return Dim::ANY };
         self.mu_width(g.width).map_or(Dim::ANY, Dim::exact)
+    }
+
+    /// tex.web § 764: the entry of the spacing table between atoms of
+    /// types `left` and `right`.
+    fn space_code(left: i8, right: u8) -> Option<u8> {
+        const TABLE: [&[u8; 8]; 8] =
+            [b"02340001", b"22*40001", b"33**3**3", b"44*04004", b"00*00000", b"02340001", b"11*11111", b"12341011"];
+        let row = usize::try_from(left).ok().and_then(|l| TABLE.get(l))?;
+        row.get(usize::from(right)).copied()
+    }
+
+    /// The muskip that spaces atoms of types `left` and `right` in text
+    /// style, where one does.
+    fn space_name(left: Option<i8>, right: u8) -> Option<&'static str> {
+        match Self::space_code(left?, right)? {
+            b'1' | b'2' => Some("thinmuskip"),
+            b'3' => Some("medmuskip"),
+            b'4' => Some("thickmuskip"),
+            _ => None,
+        }
+    }
+
+    /// Whether the muskip `name` neither stretches nor shrinks.
+    fn rigid_muskip(&mut self, name: &str) -> bool {
+        let sym = self.intern(name);
+        matches!(self.env.value(sym), Value::MuGlue(g) if g.stretch.amount == 0 && g.shrink.amount == 0)
     }
 
     /// A width in math units in text style (tex.web §§ 716-717, 732):
@@ -2889,6 +2949,7 @@ impl Machine<'_> {
             left = Some(0);
         }
         let space = self.math_space(left, t);
+        n.math_breaks |= Self::space_name(left, t).is_some_and(|name| !self.rigid_muskip(name));
         if t == 2 {
             let ord = self.math_space(left, 0);
             n.math_bin = Some(match (space.known(), ord.known()) {
@@ -2897,6 +2958,7 @@ impl Machine<'_> {
             });
         }
         n.math_class = Some(t as i8);
+        n.math_breaks |= matches!(t, 2 | 3);
         space
     }
 

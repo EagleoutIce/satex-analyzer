@@ -1350,8 +1350,16 @@ fn primitives_table() -> Result<String, String> {
         |table: &satex::fixed::HashMap<satex::tex::Sym, Meaning>| -> std::collections::BTreeMap<String, Primitive> {
             table.iter().filter_map(|(s, m)| m.prim().map(|p| (it.name(*s).to_string(), p))).collect()
         };
-    let core = prim_map(&core_table);
     let pdftex_all = prim_map(&pdftex_table);
+    // Knuth's `tex` has no eTeX; its primitives are listed with TeX82's,
+    // as every other engine has them.
+    let mut core = prim_map(&core_table);
+    core.extend(
+        pdftex_all
+            .iter()
+            .filter(|(n, _)| builtins::ETEX_PRIMITIVES.contains(&n.as_str()))
+            .map(|(n, p)| (n.clone(), *p)),
+    );
     let xetex_all = prim_map(&xetex_table);
     let luatex_all = prim_map(&luatex_table);
 
@@ -1381,7 +1389,7 @@ fn primitives_table() -> Result<String, String> {
     let sections: [(&str, &str, &std::collections::BTreeMap<String, Primitive>); 4] = [
         (
             "TeX82 & eTeX",
-            "tex.web parts 24-49. eTeX is in every format satex analyzes (`Engine::has_etex`), so its primitives are listed with TeX82's, not apart",
+            "tex.web parts 24-49. eTeX is in every engine but Knuth's `tex` (`Engine::has_etex`), so its primitives are listed with TeX82's, not apart",
             &core,
         ),
         ("pdfTeX extensions", "the pdfTeX manual, \"Primitives\"", &pdftex_extra),

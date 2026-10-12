@@ -290,6 +290,11 @@ impl Plugins {
         };
         if let Some(engine) = Engine::from_program(&program) {
             self.engine = engine;
+            if Engine::writes_dvi(&program) && !self.sources.contains(&(Kind::Output, "configured")) {
+                self.output = Output::Dvi;
+                self.sources.retain(|(kind, _)| *kind != Kind::Output);
+                self.sources.push((Kind::Output, "magic comment"));
+            }
             self.program = program;
             self.sources.retain(|(kind, _)| *kind != Kind::Engine);
             self.sources.push((Kind::Engine, "magic comment"));

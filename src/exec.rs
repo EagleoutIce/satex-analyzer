@@ -500,7 +500,11 @@ impl Machine<'_> {
                 match glue.filter(|_| self.math_followed()) {
                     Some(g) => {
                         let width = self.mu_width(g.width);
-                        self.append_item(crate::mode::Item::Glue(width, None));
+                        // Glue that neither stretches nor shrinks keeps its
+                        // formula one rigid box to the line breaker.
+                        let rigid = g.stretch.amount == 0 && g.shrink.amount == 0;
+                        let spec = width.filter(|_| rigid).map(|width| value::Glue { width, ..Default::default() });
+                        self.append_item(crate::mode::Item::Glue(width, spec));
                     }
                     None => self.append_item(crate::mode::Item::Unknown),
                 }

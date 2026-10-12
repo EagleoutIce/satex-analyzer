@@ -579,7 +579,14 @@ fn engine_primitives(engine: &str, names: &[String]) -> Option<std::collections:
         found
             .lines()
             .filter_map(|line| line.split_once(' '))
-            .filter(|(name, meaning)| meaning.trim() == format!("\\{name}"))
+            // A primitive prints its own name, or the name it is an alias
+            // of: `\meaning\XeTeXmathcode` is `\Umathcode`.
+            .filter(|(_, meaning)| {
+                meaning
+                    .trim()
+                    .strip_prefix('\\')
+                    .is_some_and(|m| !m.is_empty() && m.chars().all(|c| c.is_ascii_alphabetic()))
+            })
             .map(|(name, _)| name.to_string())
             .collect(),
     )

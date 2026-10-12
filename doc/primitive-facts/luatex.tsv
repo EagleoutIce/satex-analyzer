@@ -1,0 +1,722 @@
+name	command	value_class	expandable	meaning_ini	initial_ini	meaning_latex	initial_latex
+Uchar	convert	expandable	yes	\Uchar		\Uchar	
+Udelcode	extdef_del_code	int	no	\Udelcode	-1	\Udelcode	-1
+Udelcodenum	extdef_del_code	int	no	\Udelcodenum	-1	\Udelcodenum	-1
+Udelimiter	delim_num	nonvalue	no	\Udelimiter		\Udelimiter	
+Udelimiterover	radical	nonvalue	no	\Udelimiterover		\Udelimiterover	
+Udelimiterunder	radical	nonvalue	no	\Udelimiterunder		\Udelimiterunder	
+Uhextensible	radical	nonvalue	no	\Uhextensible		\Uhextensible	
+Uleft	left_right	nonvalue	no	\Uleft		\Uleft	
+Umathaccent	math_accent	nonvalue	no	\Umathaccent		\Umathaccent	
+Umathaxis	set_math_param	nonvalue	no	\Umathaxis		\Umathaxis	
+Umathbinbinspacing	set_math_param	crash	no	?		?	
+Umathbinclosespacing	set_math_param	crash	no	?		?	
+Umathbininnerspacing	set_math_param	crash	no	?		?	
+Umathbinopenspacing	set_math_param	crash	no	?		?	
+Umathbinopspacing	set_math_param	crash	no	?		?	
+Umathbinordspacing	set_math_param	crash	no	?		?	
+Umathbinpunctspacing	set_math_param	crash	no	?		?	
+Umathbinrelspacing	set_math_param	crash	no	?		?	
+Umathchar	math_char_num	nonvalue	no	\Umathchar		\Umathchar	
+Umathcharclass	convert	expandable	yes	\Umathcharclass		\Umathcharclass	
+Umathchardef	shorthand_def	nonvalue	no	\Umathchardef		\Umathchardef	
+Umathcharfam	convert	expandable	yes	\Umathcharfam		\Umathcharfam	
+Umathcharnum	math_char_num	nonvalue	no	\Umathcharnum		\Umathcharnum	
+Umathcharnumdef	shorthand_def	nonvalue	no	\Umathcharnumdef		\Umathcharnumdef	
+Umathcharslot	convert	expandable	yes	\Umathcharslot		\Umathcharslot	
+Umathclosebinspacing	set_math_param	crash	no	?		?	
+Umathcloseclosespacing	set_math_param	crash	no	?		?	
+Umathcloseinnerspacing	set_math_param	crash	no	?		?	
+Umathcloseopenspacing	set_math_param	crash	no	?		?	
+Umathcloseopspacing	set_math_param	crash	no	?		?	
+Umathcloseordspacing	set_math_param	crash	no	?		?	
+Umathclosepunctspacing	set_math_param	crash	no	?		?	
+Umathcloserelspacing	set_math_param	crash	no	?		?	
+Umathcode	extdef_math_code	int	no	\Umathcode	0	\Umathcode	0
+Umathcodenum	extdef_math_code	int	no	\Umathcodenum	0	\Umathcodenum	0
+Umathconnectoroverlapmin	set_math_param	nonvalue	no	\Umathconnectoroverlapmin		\Umathconnectoroverlapmin	
+Umathfractiondelsize	set_math_param	nonvalue	no	\Umathfractiondelsize		\Umathfractiondelsize	
+Umathfractiondenomdown	set_math_param	nonvalue	no	\Umathfractiondenomdown		\Umathfractiondenomdown	
+Umathfractiondenomvgap	set_math_param	nonvalue	no	\Umathfractiondenomvgap		\Umathfractiondenomvgap	
+Umathfractionnumup	set_math_param	nonvalue	no	\Umathfractionnumup		\Umathfractionnumup	
+Umathfractionnumvgap	set_math_param	nonvalue	no	\Umathfractionnumvgap		\Umathfractionnumvgap	
+Umathfractionrule	set_math_param	nonvalue	no	\Umathfractionrule		\Umathfractionrule	
+Umathinnerbinspacing	set_math_param	crash	no	?		?	
+Umathinnerclosespacing	set_math_param	crash	no	?		?	
+Umathinnerinnerspacing	set_math_param	crash	no	?		?	
+Umathinneropenspacing	set_math_param	crash	no	?		?	
+Umathinneropspacing	set_math_param	crash	no	?		?	
+Umathinnerordspacing	set_math_param	crash	no	?		?	
+Umathinnerpunctspacing	set_math_param	crash	no	?		?	
+Umathinnerrelspacing	set_math_param	crash	no	?		?	
+Umathlimitabovebgap	set_math_param	nonvalue	no	\Umathlimitabovebgap		\Umathlimitabovebgap	
+Umathlimitabovekern	set_math_param	nonvalue	no	\Umathlimitabovekern		\Umathlimitabovekern	
+Umathlimitabovevgap	set_math_param	nonvalue	no	\Umathlimitabovevgap		\Umathlimitabovevgap	
+Umathlimitbelowbgap	set_math_param	nonvalue	no	\Umathlimitbelowbgap		\Umathlimitbelowbgap	
+Umathlimitbelowkern	set_math_param	nonvalue	no	\Umathlimitbelowkern		\Umathlimitbelowkern	
+Umathlimitbelowvgap	set_math_param	nonvalue	no	\Umathlimitbelowvgap		\Umathlimitbelowvgap	
+Umathnolimitsubfactor	set_math_param	nonvalue	no	\Umathnolimitsubfactor		\Umathnolimitsubfactor	
+Umathnolimitsupfactor	set_math_param	nonvalue	no	\Umathnolimitsupfactor		\Umathnolimitsupfactor	
+Umathopbinspacing	set_math_param	crash	no	?		?	
+Umathopclosespacing	set_math_param	crash	no	?		?	
+Umathopenbinspacing	set_math_param	crash	no	?		?	
+Umathopenclosespacing	set_math_param	crash	no	?		?	
+Umathopeninnerspacing	set_math_param	crash	no	?		?	
+Umathopenopenspacing	set_math_param	crash	no	?		?	
+Umathopenopspacing	set_math_param	crash	no	?		?	
+Umathopenordspacing	set_math_param	crash	no	?		?	
+Umathopenpunctspacing	set_math_param	crash	no	?		?	
+Umathopenrelspacing	set_math_param	crash	no	?		?	
+Umathoperatorsize	set_math_param	nonvalue	no	\Umathoperatorsize		\Umathoperatorsize	
+Umathopinnerspacing	set_math_param	crash	no	?		?	
+Umathopopenspacing	set_math_param	crash	no	?		?	
+Umathopopspacing	set_math_param	crash	no	?		?	
+Umathopordspacing	set_math_param	crash	no	?		?	
+Umathoppunctspacing	set_math_param	crash	no	?		?	
+Umathoprelspacing	set_math_param	crash	no	?		?	
+Umathordbinspacing	set_math_param	crash	no	?		?	
+Umathordclosespacing	set_math_param	crash	no	?		?	
+Umathordinnerspacing	set_math_param	crash	no	?		?	
+Umathordopenspacing	set_math_param	crash	no	?		?	
+Umathordopspacing	set_math_param	crash	no	?		?	
+Umathordordspacing	set_math_param	crash	no	?		?	
+Umathordpunctspacing	set_math_param	crash	no	?		?	
+Umathordrelspacing	set_math_param	crash	no	?		?	
+Umathoverbarkern	set_math_param	nonvalue	no	\Umathoverbarkern		\Umathoverbarkern	
+Umathoverbarrule	set_math_param	nonvalue	no	\Umathoverbarrule		\Umathoverbarrule	
+Umathoverbarvgap	set_math_param	nonvalue	no	\Umathoverbarvgap		\Umathoverbarvgap	
+Umathoverdelimiterbgap	set_math_param	nonvalue	no	\Umathoverdelimiterbgap		\Umathoverdelimiterbgap	
+Umathoverdelimitervgap	set_math_param	nonvalue	no	\Umathoverdelimitervgap		\Umathoverdelimitervgap	
+Umathpunctbinspacing	set_math_param	crash	no	?		?	
+Umathpunctclosespacing	set_math_param	crash	no	?		?	
+Umathpunctinnerspacing	set_math_param	crash	no	?		?	
+Umathpunctopenspacing	set_math_param	crash	no	?		?	
+Umathpunctopspacing	set_math_param	crash	no	?		?	
+Umathpunctordspacing	set_math_param	crash	no	?		?	
+Umathpunctpunctspacing	set_math_param	crash	no	?		?	
+Umathpunctrelspacing	set_math_param	crash	no	?		?	
+Umathquad	set_math_param	nonvalue	no	\Umathquad		\Umathquad	
+Umathradicaldegreeafter	set_math_param	nonvalue	no	\Umathradicaldegreeafter		\Umathradicaldegreeafter	
+Umathradicaldegreebefore	set_math_param	nonvalue	no	\Umathradicaldegreebefore		\Umathradicaldegreebefore	
+Umathradicaldegreeraise	set_math_param	nonvalue	no	\Umathradicaldegreeraise		\Umathradicaldegreeraise	
+Umathradicalkern	set_math_param	nonvalue	no	\Umathradicalkern		\Umathradicalkern	
+Umathradicalrule	set_math_param	nonvalue	no	\Umathradicalrule		\Umathradicalrule	
+Umathradicalvgap	set_math_param	nonvalue	no	\Umathradicalvgap		\Umathradicalvgap	
+Umathrelbinspacing	set_math_param	crash	no	?		?	
+Umathrelclosespacing	set_math_param	crash	no	?		?	
+Umathrelinnerspacing	set_math_param	crash	no	?		?	
+Umathrelopenspacing	set_math_param	crash	no	?		?	
+Umathrelopspacing	set_math_param	crash	no	?		?	
+Umathrelordspacing	set_math_param	crash	no	?		?	
+Umathrelpunctspacing	set_math_param	crash	no	?		?	
+Umathrelrelspacing	set_math_param	crash	no	?		?	
+Umathskewedfractionhgap	set_math_param	nonvalue	no	\Umathskewedfractionhgap		\Umathskewedfractionhgap	
+Umathskewedfractionvgap	set_math_param	nonvalue	no	\Umathskewedfractionvgap		\Umathskewedfractionvgap	
+Umathspaceafterscript	set_math_param	nonvalue	no	\Umathspaceafterscript		\Umathspaceafterscript	
+Umathstackdenomdown	set_math_param	nonvalue	no	\Umathstackdenomdown		\Umathstackdenomdown	
+Umathstacknumup	set_math_param	nonvalue	no	\Umathstacknumup		\Umathstacknumup	
+Umathstackvgap	set_math_param	nonvalue	no	\Umathstackvgap		\Umathstackvgap	
+Umathsubshiftdown	set_math_param	nonvalue	no	\Umathsubshiftdown		\Umathsubshiftdown	
+Umathsubshiftdrop	set_math_param	nonvalue	no	\Umathsubshiftdrop		\Umathsubshiftdrop	
+Umathsubsupshiftdown	set_math_param	nonvalue	no	\Umathsubsupshiftdown		\Umathsubsupshiftdown	
+Umathsubsupvgap	set_math_param	nonvalue	no	\Umathsubsupvgap		\Umathsubsupvgap	
+Umathsubtopmax	set_math_param	nonvalue	no	\Umathsubtopmax		\Umathsubtopmax	
+Umathsupbottommin	set_math_param	nonvalue	no	\Umathsupbottommin		\Umathsupbottommin	
+Umathsupshiftdrop	set_math_param	nonvalue	no	\Umathsupshiftdrop		\Umathsupshiftdrop	
+Umathsupshiftup	set_math_param	nonvalue	no	\Umathsupshiftup		\Umathsupshiftup	
+Umathsupsubbottommax	set_math_param	nonvalue	no	\Umathsupsubbottommax		\Umathsupsubbottommax	
+Umathunderbarkern	set_math_param	nonvalue	no	\Umathunderbarkern		\Umathunderbarkern	
+Umathunderbarrule	set_math_param	nonvalue	no	\Umathunderbarrule		\Umathunderbarrule	
+Umathunderbarvgap	set_math_param	nonvalue	no	\Umathunderbarvgap		\Umathunderbarvgap	
+Umathunderdelimiterbgap	set_math_param	nonvalue	no	\Umathunderdelimiterbgap		\Umathunderdelimiterbgap	
+Umathunderdelimitervgap	set_math_param	nonvalue	no	\Umathunderdelimitervgap		\Umathunderdelimitervgap	
+Umiddle	left_right	nonvalue	no	\Umiddle		\Umiddle	
+Unosubscript	no_super_sub_script	nonvalue	no	\Unosubscript		\Unosubscript	
+Unosuperscript	no_super_sub_script	nonvalue	no	\Unosuperscript		\Unosuperscript	
+Uoverdelimiter	radical	nonvalue	no	\Uoverdelimiter		\Uoverdelimiter	
+Uradical	radical	nonvalue	no	\Uradical		\Uradical	
+Uright	left_right	nonvalue	no	\Uright		\Uright	
+Uroot	radical	nonvalue	no	\Uroot		\Uroot	
+Uskewed	above	nonvalue	no	\Uskewed		\Uskewed	
+Uskewedwithdelims	above	nonvalue	no	\Uskewedwithdelims		\Uskewedwithdelims	
+Ustack	math_choice	nonvalue	no	\Ustack		\Ustack	
+Ustartdisplaymath	math_shift_cs	nonvalue	no	\Ustartdisplaymath		\Ustartdisplaymath	
+Ustartmath	math_shift_cs	nonvalue	no	\Ustartmath		\Ustartmath	
+Ustopdisplaymath	math_shift_cs	nonvalue	no	\Ustopdisplaymath		\Ustopdisplaymath	
+Ustopmath	math_shift_cs	nonvalue	no	\Ustopmath		\Ustopmath	
+Usubscript	super_sub_script	nonvalue	no	\Usubscript		\Usubscript	
+Usuperscript	super_sub_script	nonvalue	no	\Usuperscript		\Usuperscript	
+Uunderdelimiter	radical	nonvalue	no	\Uunderdelimiter		\Uunderdelimiter	
+Uvextensible	left_right	nonvalue	no	\Uvextensible		\Uvextensible	
+above	above	nonvalue	no	\above		\above	
+abovedisplayshortskip	assign_glue	glue	no	\abovedisplayshortskip	0.0pt	\abovedisplayshortskip	0.0pt plus 3.0pt
+abovedisplayskip	assign_glue	glue	no	\abovedisplayskip	0.0pt	\abovedisplayskip	10.0pt plus 2.0pt minus 5.0pt
+abovewithdelims	above	nonvalue	no	\abovewithdelims		\abovewithdelims	
+accent	accent	nonvalue	no	\accent		\accent	
+adjdemerits	assign_int	int	no	\adjdemerits	0	\adjdemerits	10000
+adjustspacing	assign_int	int	no	\adjustspacing	0	\adjustspacing	0
+advance	advance	nonvalue	no	\advance		\advance	
+afterassignment	after_assignment	nonvalue	no	\afterassignment		\afterassignment	
+aftergroup	after_group	nonvalue	no	\aftergroup		\aftergroup	
+alignmark	mac_param	nonvalue	no	\alignmark		\alignmark	
+aligntab	tab_mark	nonvalue	no	\aligntab		\aligntab	
+atop	above	nonvalue	no	\atop		\atop	
+atopwithdelims	above	nonvalue	no	\atopwithdelims		\atopwithdelims	
+attribute	register	int	no	\attribute	-2147483647	\attribute	0
+attributedef	shorthand_def	nonvalue	no	\attributedef		\attributedef	
+automaticdiscretionary	discretionary	nonvalue	no	\automaticdiscretionary		\automaticdiscretionary	
+automatichyphenmode	assign_int	int	no	\automatichyphenmode	0	\automatichyphenmode	0
+automatichyphenpenalty	assign_int	int	no	\automatichyphenpenalty	0	\automatichyphenpenalty	0
+badness	last_item	int	no	\badness	0	\badness	0
+baselineskip	assign_glue	glue	no	\baselineskip	0.0pt	\baselineskip	12.0pt
+batchmode	set_interaction	nonvalue	no	\batchmode		\batchmode	
+begincsname	cs_name	expandable	yes	\begincsname		\begincsname	
+begingroup	begin_group	expandable	yes	\begingroup		\begingroup	
+belowdisplayshortskip	assign_glue	glue	no	\belowdisplayshortskip	0.0pt	\belowdisplayshortskip	6.0pt plus 3.0pt minus 3.0pt
+belowdisplayskip	assign_glue	glue	no	\belowdisplayskip	0.0pt	\belowdisplayskip	10.0pt plus 2.0pt minus 5.0pt
+binoppenalty	assign_int	int	no	\binoppenalty	0	\binoppenalty	700
+bodydir	assign_dir	toks/other	no	\bodydir	TLT	\bodydir	TLT
+bodydirection	assign_direction	int	no	\bodydirection	0	\bodydirection	0
+botmark	top_bot_mark	expandable	yes	\botmark:		\botmark:	
+botmarks	top_bot_mark	expandable	yes	\botmarks		\botmarks	
+boundary	boundary	nonvalue	no	\boundary		\boundary	
+box	make_box	nonvalue	no	\box		\box	
+boxdir	assign_box_dir	toks/other	no	\boxdir	TLT	\boxdir	TLT
+boxdirection	assign_box_direction	nonvalue	no	\boxdirection		\boxdirection	
+boxmaxdepth	assign_dimen	dimen	no	\boxmaxdepth	0sp	\boxmaxdepth	1073741823sp
+breakafterdirmode	assign_int	int	no	\breakafterdirmode	0	\breakafterdirmode	0
+brokenpenalty	assign_int	int	no	\brokenpenalty	0	\brokenpenalty	100
+catcode	def_char_code	int	no	\catcode	9	\catcode	15
+catcodetable	assign_int	int	no	\catcodetable	0	\catcodetable	0
+char	char_num	nonvalue	no	\char		\char	
+chardef	shorthand_def	nonvalue	no	\chardef		\chardef	
+cleaders	leader_ship	nonvalue	no	\cleaders		\cleaders	
+clearmarks	mark	nonvalue	no	\clearmarks		\clearmarks	
+closein	in_stream	nonvalue	no	\closein		\closein	
+closeout	extension	nonvalue	no	\closeout		\closeout	
+clubpenalties	set_etex_shape	int	no	\clubpenalties	0	\clubpenalties	0
+clubpenalty	assign_int	int	no	\clubpenalty	0	\clubpenalty	150
+compoundhyphenmode	assign_int	int	no	\compoundhyphenmode	1	\compoundhyphenmode	1
+copy	make_box	nonvalue	no	\copy		\copy	
+copyfont	copy_font	toks/other	no	\copyfont	\nullfont 	\copyfont	\TU/lmr/m/n/10 
+count	register	int	no	\count	0	\count	1
+countdef	shorthand_def	nonvalue	no	\countdef		\countdef	
+cr	car_ret	nonvalue	no	\cr		\cr	
+crampeddisplaystyle	math_style	int	no	\crampeddisplaystyle	1	\crampeddisplaystyle	1
+crampedscriptscriptstyle	math_style	int	no	\crampedscriptscriptstyle	7	\crampedscriptscriptstyle	7
+crampedscriptstyle	math_style	int	no	\crampedscriptstyle	5	\crampedscriptstyle	5
+crampedtextstyle	math_style	int	no	\crampedtextstyle	3	\crampedtextstyle	3
+crcr	car_ret	nonvalue	no	\crcr		\crcr	
+csname	cs_name	expandable	yes	\csname		\csname	
+csstring	convert	expandable	yes	\csstring		\csstring	
+currentgrouplevel	last_item	int	no	\currentgrouplevel	1	\currentgrouplevel	1
+currentgrouptype	last_item	int	no	\currentgrouptype	14	\currentgrouptype	14
+currentifbranch	last_item	int	no	\currentifbranch	1	\currentifbranch	1
+currentiflevel	last_item	int	no	\currentiflevel	1	\currentiflevel	1
+currentiftype	last_item	int	no	\currentiftype	13	\currentiftype	13
+day	assign_int	int	no	\day	12	\day	12
+deadcycles	set_page_int	int	no	\deadcycles	0	\deadcycles	1
+def	def	nonvalue	no	\def		\def	
+defaulthyphenchar	assign_int	int	no	\defaulthyphenchar	0	\defaulthyphenchar	45
+defaultskewchar	assign_int	int	no	\defaultskewchar	0	\defaultskewchar	-1
+deferred	extension	nonvalue	no	\deferred		\deferred	
+delcode	def_del_code	int	no	\delcode	-1	\delcode	-1
+delimiter	delim_num	nonvalue	no	\delimiter		\delimiter	
+delimiterfactor	assign_int	int	no	\delimiterfactor	0	\delimiterfactor	901
+delimitershortfall	assign_dimen	dimen	no	\delimitershortfall	0sp	\delimitershortfall	327680sp
+detokenize	the	expandable	yes	\detokenize		\detokenize	
+dimen	register	dimen	no	\dimen	0sp	\dimen	1630536sp
+dimendef	shorthand_def	nonvalue	no	\dimendef		\dimendef	
+dimexpr	last_item	nonvalue	no	\dimexpr		\dimexpr	
+directlua	convert	expandable	yes	\directlua		\directlua	
+discretionary	discretionary	nonvalue	no	\discretionary		\discretionary	
+discretionaryligaturemode	assign_int	int	no	\discretionaryligaturemode	0	\discretionaryligaturemode	0
+displayindent	assign_dimen	dimen	no	\displayindent	0sp	\displayindent	0sp
+displaylimits	limit_switch	nonvalue	no	\displaylimits		\displaylimits	
+displaystyle	math_style	int	no	\displaystyle	0	\displaystyle	0
+displaywidowpenalties	set_etex_shape	int	no	\displaywidowpenalties	0	\displaywidowpenalties	0
+displaywidowpenalty	assign_int	int	no	\displaywidowpenalty	0	\displaywidowpenalty	50
+displaywidth	assign_dimen	dimen	no	\displaywidth	0sp	\displaywidth	0sp
+divide	divide	nonvalue	no	\divide		\divide	
+doublehyphendemerits	assign_int	int	no	\doublehyphendemerits	0	\doublehyphendemerits	10000
+dp	set_box_dimen	dimen	no	\dp	0sp	\dp	0sp
+draftmode	assign_int	int	no	\draftmode	0	\draftmode	0
+dump	stop	expandable	yes	\dump		\dump	
+dviextension	extension	nonvalue	no	\dviextension		\dviextension	
+dvifeedback	feedback	expandable	yes	\dvifeedback		\dvifeedback	
+dvivariable	variable	expandable	yes	\dvivariable		\dvivariable	
+eTeXVersion	convert	expandable	yes	\eTeXVersion		\eTeXVersion	
+eTeXglueshrinkorder	last_item	nonvalue	no	\eTeXglueshrinkorder		\eTeXglueshrinkorder	
+eTeXgluestretchorder	last_item	nonvalue	no	\eTeXgluestretchorder		\eTeXgluestretchorder	
+eTeXminorversion	last_item	int	no	\eTeXminorversion	2	\eTeXminorversion	2
+eTeXrevision	convert	expandable	yes	\eTeXrevision		\eTeXrevision	
+eTeXversion	last_item	int	no	\eTeXversion	2	\eTeXversion	2
+edef	def	nonvalue	no	\edef		\edef	
+efcode	assign_font_int	nonvalue	no	\efcode		\efcode	
+else	fi_or_else	expandable	yes	\else		\else	
+emergencystretch	assign_dimen	dimen	no	\emergencystretch	0sp	\emergencystretch	0sp
+end	stop	expandable	yes	\end		macro:->\romannumeral \ifx \protect \@typeset@protect \expandafter \ex	
+endcsname	end_cs_name	expandable	yes	\endcsname		\endcsname	
+endgroup	end_group	expandable	yes	\endgroup		\endgroup	
+endinput	input	expandable	yes	\endinput		\endinput	
+endlinechar	assign_int	int	no	\endlinechar	13	\endlinechar	13
+endlocalcontrol	extension	nonvalue	no	\endlocalcontrol		\endlocalcontrol	
+eqno	eq_no	nonvalue	no	\eqno		\protected macro:->\@kernel@eqno \aftergroup \ignorespaces	
+errhelp	assign_toks	toks	no	\errhelp		\errhelp	
+errmessage	message	nonvalue	no	\errmessage		\errmessage	
+errorcontextlines	assign_int	int	no	\errorcontextlines	0	\errorcontextlines	-1
+errorstopmode	set_interaction	nonvalue	no	\errorstopmode		\errorstopmode	
+escapechar	assign_int	int	no	\escapechar	92	\escapechar	92
+etoksapp	combinetoks	nonvalue	no	\etoksapp		\etoksapp	
+etokspre	combinetoks	nonvalue	no	\etokspre		\etokspre	
+everycr	assign_toks	toks	no	\everycr		\everycr	
+everydisplay	assign_toks	toks	no	\everydisplay		\toks14	
+everyeof	assign_toks	toks	no	\everyeof		\everyeof	
+everyhbox	assign_toks	toks	no	\everyhbox		\everyhbox	
+everyjob	assign_toks	toks	no	\everyjob		\everyjob	
+everymath	assign_toks	toks	no	\everymath		\toks13	
+everypar	assign_toks	toks	no	\everypar		\toks12	
+everyvbox	assign_toks	toks	no	\everyvbox		\everyvbox	
+exceptionpenalty	assign_int	int	no	\exceptionpenalty	0	\exceptionpenalty	0
+exhyphenchar	assign_int	int	no	\exhyphenchar	45	\exhyphenchar	45
+exhyphenpenalty	assign_int	int	no	\exhyphenpenalty	0	\exhyphenpenalty	50
+expandafter	expand_after	expandable	yes	\expandafter		\expandafter	
+expanded	convert	expandable	yes	\expanded		\expanded	
+expandglyphsinfont	normal	nonvalue	no	\expandglyphsinfont		\expandglyphsinfont	
+explicitdiscretionary	discretionary	nonvalue	no	\explicitdiscretionary		\explicitdiscretionary	
+explicithyphenpenalty	assign_int	int	no	\explicithyphenpenalty	0	\explicithyphenpenalty	0
+fam	assign_int	int	no	\fam	0	\fam	0
+fi	fi_or_else	expandable	yes	\fi		\fi	
+finalhyphendemerits	assign_int	int	no	\finalhyphendemerits	0	\finalhyphendemerits	5000
+firstmark	top_bot_mark	expandable	yes	\firstmark:		\firstmark:	
+firstmarks	top_bot_mark	expandable	yes	\firstmarks		\firstmarks	
+firstvalidlanguage	assign_int	int	no	\firstvalidlanguage	0	\firstvalidlanguage	0
+fixupboxesmode	assign_int	int	no	\fixupboxesmode	0	\fixupboxesmode	0
+floatingpenalty	assign_int	int	no	\floatingpenalty	0	\floatingpenalty	0
+font	def_font	toks/other	no	\font	\nullfont 	\font	\TU/lmr/m/n/10 
+fontchardp	last_item	nonvalue	no	\fontchardp		\fontchardp	
+fontcharht	last_item	nonvalue	no	\fontcharht		\fontcharht	
+fontcharic	last_item	nonvalue	no	\fontcharic		\fontcharic	
+fontcharwd	last_item	nonvalue	no	\fontcharwd		\fontcharwd	
+fontdimen	assign_font_dimen	nonvalue	no	\fontdimen		\fontdimen	
+fontid	convert	expandable	yes	\fontid		\fontid	
+fontname	convert	expandable	yes	\fontname		\fontname	
+formatname	convert	expandable	yes	\formatname		\formatname	
+futurelet	let	nonvalue	no	\futurelet		\futurelet	
+gdef	def	nonvalue	no	\gdef		\gdef	
+gleaders	leader_ship	nonvalue	no	\gleaders		\gleaders	
+glet	let	nonvalue	no	\glet		\glet	
+global	prefix	nonvalue	no	\global		\global	
+globaldefs	assign_int	int	no	\globaldefs	0	\globaldefs	0
+glueexpr	last_item	nonvalue	no	\glueexpr		\glueexpr	
+glueshrink	last_item	nonvalue	no	\glueshrink		\glueshrink	
+glueshrinkorder	last_item	nonvalue	no	\glueshrinkorder		\glueshrinkorder	
+gluestretch	last_item	nonvalue	no	\gluestretch		\gluestretch	
+gluestretchorder	last_item	nonvalue	no	\gluestretchorder		\gluestretchorder	
+gluetomu	last_item	nonvalue	no	\gluetomu		\gluetomu	
+glyphdimensionsmode	assign_int	int	no	\glyphdimensionsmode	0	\glyphdimensionsmode	0
+gtoksapp	combinetoks	nonvalue	no	\gtoksapp		\gtoksapp	
+gtokspre	combinetoks	nonvalue	no	\gtokspre		\gtokspre	
+halign	halign	nonvalue	no	\halign		\halign	
+hangafter	assign_int	int	no	\hangafter	1	\hangafter	1
+hangindent	assign_dimen	dimen	no	\hangindent	0sp	\hangindent	0sp
+hbadness	assign_int	int	no	\hbadness	0	\hbadness	1000
+hbox	make_box	nonvalue	no	\hbox		\hbox	
+hfil	hskip	nonvalue	no	\hfil		\hfil	
+hfill	hskip	nonvalue	no	\hfill		\hfill	
+hfilneg	hskip	nonvalue	no	\hfilneg		\hfilneg	
+hfuzz	assign_dimen	dimen	no	\hfuzz	0sp	\hfuzz	6554sp
+hjcode	hyph_data	int	no	\hjcode	0	\hjcode	0
+hoffset	assign_dimen	dimen	no	\hoffset	0sp	\hoffset	0sp
+holdinginserts	assign_int	int	no	\holdinginserts	0	\holdinginserts	0
+hpack	make_box	nonvalue	no	\hpack		\hpack	
+hrule	hrule	nonvalue	no	\hrule		\hrule	
+hsize	assign_dimen	dimen	no	\hsize	0sp	\hsize	22609920sp
+hskip	hskip	nonvalue	no	\hskip		\hskip	
+hss	hskip	nonvalue	no	\hss		\hss	
+ht	set_box_dimen	dimen	no	\ht	0sp	\ht	0sp
+hyphenation	hyph_data	nonvalue	no	\hyphenation		\hyphenation	
+hyphenationbounds	assign_int	int	no	\hyphenationbounds	0	\hyphenationbounds	0
+hyphenationmin	hyph_data	int	no	\hyphenationmin	-1	\hyphenationmin	-1
+hyphenchar	assign_font_int	nonvalue	no	\hyphenchar		\hyphenchar	
+hyphenpenalty	assign_int	int	no	\hyphenpenalty	0	\hyphenpenalty	50
+hyphenpenaltymode	assign_int	int	no	\hyphenpenaltymode	0	\hyphenpenaltymode	0
+if	if_test	expandable	yes	\if		\if	
+ifabsdim	if_test	expandable	yes	\ifabsdim		\ifabsdim	
+ifabsnum	if_test	expandable	yes	\ifabsnum		\ifabsnum	
+ifcase	if_test	expandable	yes	\ifcase		\ifcase	
+ifcat	if_test	expandable	yes	\ifcat		\ifcat	
+ifcondition	if_test	expandable	yes	\ifcondition		\ifcondition	
+ifcsname	if_test	expandable	yes	\ifcsname		\ifcsname	
+ifdefined	if_test	expandable	yes	\ifdefined		\ifdefined	
+ifdim	if_test	expandable	yes	\ifdim		\ifdim	
+ifeof	if_test	expandable	yes	\ifeof		\ifeof	
+iffalse	if_test	expandable	yes	\iffalse		\iffalse	
+iffontchar	if_test	expandable	yes	\iffontchar		\iffontchar	
+ifhbox	if_test	expandable	yes	\ifhbox		\ifhbox	
+ifhmode	if_test	expandable	yes	\ifhmode		\ifhmode	
+ifincsname	if_test	expandable	yes	\ifincsname		\ifincsname	
+ifinner	if_test	expandable	yes	\ifinner		\ifinner	
+ifmmode	if_test	expandable	yes	\ifmmode		\ifmmode	
+ifnum	if_test	expandable	yes	\ifnum		\ifnum	
+ifodd	if_test	expandable	yes	\ifodd		\ifodd	
+ifprimitive	if_test	expandable	yes	\ifprimitive		\ifprimitive	
+iftrue	if_test	expandable	yes	\iftrue		\iftrue	
+ifvbox	if_test	expandable	yes	\ifvbox		\ifvbox	
+ifvmode	if_test	expandable	yes	\ifvmode		\ifvmode	
+ifvoid	if_test	expandable	yes	\ifvoid		\ifvoid	
+ifx	if_test	expandable	yes	\ifx		\ifx	
+ignoreligaturesinfont	assign_font_int	nonvalue	no	\ignoreligaturesinfont		\ignoreligaturesinfont	
+ignorespaces	ignore_spaces	int	no	\ignorespaces	16	\ignorespaces	0.00024pt
+immediate	extension	nonvalue	no	\immediate		\immediate	
+immediateassigned	convert	expandable	yes	\immediateassigned		\immediateassigned	
+immediateassignment	convert	expandable	yes	\immediateassignment		\immediateassignment	
+indent	start_par	nonvalue	no	\indent		\indent	
+initcatcodetable	normal	nonvalue	no	\initcatcodetable		\initcatcodetable	
+input	input	expandable	yes	\input		macro:->\@ifnextchar \bgroup \@iinput \@@input	
+inputlineno	last_item	int	no	\inputlineno	2	\inputlineno	2
+insert	insert	nonvalue	no	\insert		\insert	
+insertht	convert	expandable	yes	\insertht		\insertht	
+insertpenalties	set_page_int	int	no	\insertpenalties	0	\insertpenalties	0
+interactionmode	set_page_int	int	no	\interactionmode	2	\interactionmode	2
+interlinepenalties	set_etex_shape	int	no	\interlinepenalties	0	\interlinepenalties	0
+interlinepenalty	assign_int	int	no	\interlinepenalty	0	\interlinepenalty	0
+jobname	convert	expandable	yes	\jobname		\jobname	
+kern	kern	nonvalue	no	\kern		\kern	
+language	assign_int	int	no	\language	0	\language	0
+lastbox	make_box	nonvalue	no	\lastbox		\lastbox	
+lastkern	last_item	dimen	no	\lastkern	0sp	\lastkern	0sp
+lastlinefit	assign_int	int	no	\lastlinefit	0	\lastlinefit	0
+lastnamedcs	cs_name	expandable	yes	\lastnamedcs		\lastnamedcs	
+lastnodetype	last_item	int	no	\lastnodetype	-1	\lastnodetype	15
+lastpenalty	last_item	int	no	\lastpenalty	0	\lastpenalty	10000
+lastsavedboxresourceindex	last_item	int	no	\lastsavedboxresourceindex	0	\lastsavedboxresourceindex	0
+lastsavedimageresourceindex	last_item	int	no	\lastsavedimageresourceindex	0	\lastsavedimageresourceindex	0
+lastsavedimageresourcepages	last_item	int	no	\lastsavedimageresourcepages	0	\lastsavedimageresourcepages	0
+lastskip	last_item	dimen	no	\lastskip	0sp	\lastskip	0sp
+lastxpos	last_item	int	no	\lastxpos	0	\lastxpos	0
+lastypos	last_item	int	no	\lastypos	0	\lastypos	0
+latelua	normal	nonvalue	no	\latelua		\latelua	
+lateluafunction	normal	nonvalue	no	\lateluafunction		\lateluafunction	
+lccode	def_char_code	int	no	\lccode	0	\lccode	0
+leaders	leader_ship	nonvalue	no	\leaders		\leaders	
+left	left_right	nonvalue	no	\left		\left	
+leftghost	char_ghost	nonvalue	no	\leftghost		\leftghost	
+lefthyphenmin	assign_int	int	no	\lefthyphenmin	0	\lefthyphenmin	2
+leftmarginkern	convert	expandable	yes	\leftmarginkern		\leftmarginkern	
+leftskip	assign_glue	glue	no	\leftskip	0.0pt	\leftskip	0.0pt
+leqno	eq_no	nonvalue	no	\leqno		\protected macro:->\@kernel@leqno \aftergroup \ignorespaces	
+let	let	nonvalue	no	\let		\let	
+letcharcode	let	nonvalue	no	\letcharcode		\letcharcode	
+letterspacefont	letterspace_font	toks/other	no	\letterspacefont	\nullfont 	\letterspacefont	\TU/lmr/m/n/10 
+limits	limit_switch	nonvalue	no	\limits		\limits	
+linedir	assign_dir	toks/other	no	\linedir	TLT	\linedir	TLT
+linedirection	assign_direction	int	no	\linedirection	0	\linedirection	0
+linepenalty	assign_int	int	no	\linepenalty	0	\linepenalty	10
+lineskip	assign_glue	glue	no	\lineskip	0.0pt	\lineskip	1.0pt
+lineskiplimit	assign_dimen	dimen	no	\lineskiplimit	0sp	\lineskiplimit	0sp
+localbrokenpenalty	assign_int	int	no	\localbrokenpenalty	0	\localbrokenpenalty	0
+localinterlinepenalty	assign_int	int	no	\localinterlinepenalty	0	\localinterlinepenalty	0
+localleftbox	assign_local_box	nonvalue	no	\localleftbox		\localleftbox	
+localrightbox	assign_local_box	nonvalue	no	\localrightbox		\localrightbox	
+long	prefix	nonvalue	no	\long		\long	
+looseness	assign_int	int	no	\looseness	0	\looseness	0
+lower	vmove	nonvalue	no	\lower		\lower	
+lowercase	case_shift	nonvalue	no	\lowercase		\lowercase	
+lpcode	assign_font_int	nonvalue	no	\lpcode		\lpcode	
+luabytecode	convert	expandable	yes	\luabytecode		\luabytecode	
+luabytecodecall	lua_bytecode_call	nonvalue	no	\luabytecodecall		\luabytecodecall	
+luacopyinputnodes	assign_int	int	no	\luacopyinputnodes	0	\luacopyinputnodes	0
+luadef	def_lua_call	nonvalue	no	\luadef		\luadef	
+luaescapestring	convert	expandable	yes	\luaescapestring		\luaescapestring	
+luafunction	convert	expandable	yes	\luafunction		\luafunction	
+luafunctioncall	lua_function_call	nonvalue	no	\luafunctioncall		\luafunctioncall	
+luatexbanner	convert	expandable	yes	\luatexbanner		\luatexbanner	
+luatexrevision	convert	expandable	yes	\luatexrevision		\luatexrevision	
+luatexversion	last_item	int	no	\luatexversion	117	\luatexversion	117
+mag	assign_int	int	no	\mag	1000	\mag	1000
+mark	mark	nonvalue	no	\mark		\mark	
+marks	mark	nonvalue	no	\marks		\marks	
+mathaccent	math_accent	nonvalue	no	\mathaccent		\mathaccent	
+mathbin	math_comp	nonvalue	no	\mathbin		\mathbin	
+mathchar	math_char_num	nonvalue	no	\mathchar		\mathchar	
+mathchardef	shorthand_def	nonvalue	no	\mathchardef		\mathchardef	
+mathchoice	math_choice	nonvalue	no	\mathchoice		\mathchoice	
+mathclose	math_comp	nonvalue	no	\mathclose		\mathclose	
+mathcode	def_char_code	int	no	\mathcode	0	\mathcode	0
+mathdefaultsmode	assign_int	int	no	\mathdefaultsmode	0	\mathdefaultsmode	1
+mathdelimitersmode	assign_int	int	no	\mathdelimitersmode	0	\mathdelimitersmode	0
+mathdir	assign_dir	toks/other	no	\mathdir	TLT	\mathdir	TLT
+mathdirection	assign_direction	int	no	\mathdirection	0	\mathdirection	0
+mathdisplayskipmode	assign_int	int	no	\mathdisplayskipmode	0	\mathdisplayskipmode	0
+matheqdirmode	assign_int	int	no	\matheqdirmode	0	\matheqdirmode	0
+matheqnogapstep	assign_int	int	no	\matheqnogapstep	1000	\matheqnogapstep	1000
+mathflattenmode	assign_int	int	no	\mathflattenmode	1	\mathflattenmode	1
+mathinner	math_comp	nonvalue	no	\mathinner		\mathinner	
+mathitalicsmode	assign_int	int	no	\mathitalicsmode	0	\mathitalicsmode	0
+mathnolimitsmode	assign_int	int	no	\mathnolimitsmode	0	\mathnolimitsmode	0
+mathop	math_comp	nonvalue	no	\mathop		\mathop	
+mathopen	math_comp	nonvalue	no	\mathopen		\mathopen	
+mathoption	option	nonvalue	no	\mathoption		\mathoption	
+mathord	math_comp	nonvalue	no	\mathord		\mathord	
+mathpenaltiesmode	assign_int	int	no	\mathpenaltiesmode	0	\mathpenaltiesmode	0
+mathpunct	math_comp	nonvalue	no	\mathpunct		\mathpunct	
+mathrel	math_comp	nonvalue	no	\mathrel		\mathrel	
+mathrulesfam	assign_int	int	no	\mathrulesfam	0	\mathrulesfam	0
+mathrulesmode	assign_int	int	no	\mathrulesmode	0	\mathrulesmode	0
+mathrulethicknessmode	assign_int	int	no	\mathrulethicknessmode	0	\mathrulethicknessmode	0
+mathscriptboxmode	assign_int	int	no	\mathscriptboxmode	1	\mathscriptboxmode	1
+mathscriptcharmode	assign_int	int	no	\mathscriptcharmode	1	\mathscriptcharmode	1
+mathscriptsmode	assign_int	int	no	\mathscriptsmode	0	\mathscriptsmode	0
+mathstyle	convert	expandable	yes	\mathstyle		\mathstyle	
+mathsurround	assign_dimen	dimen	no	\mathsurround	0sp	\mathsurround	0sp
+mathsurroundmode	assign_int	int	no	\mathsurroundmode	0	\mathsurroundmode	0
+mathsurroundskip	assign_glue	glue	no	\mathsurroundskip	0.0pt	\mathsurroundskip	0.0pt
+maxdeadcycles	assign_int	int	no	\maxdeadcycles	25	\maxdeadcycles	100
+maxdepth	assign_dimen	dimen	no	\maxdepth	0sp	\maxdepth	327680sp
+meaning	convert	expandable	yes	\meaning		\meaning	
+medmuskip	assign_mu_glue	muglue	no	\medmuskip	0.0mu	\medmuskip	4.0mu plus 2.0mu minus 4.0mu
+message	message	nonvalue	no	\message		\message	
+middle	left_right	nonvalue	no	\middle		\middle	
+mkern	mkern	nonvalue	no	\mkern		\mkern	
+month	assign_int	int	no	\month	10	\month	10
+moveleft	hmove	nonvalue	no	\moveleft		\moveleft	
+moveright	hmove	nonvalue	no	\moveright		\moveright	
+mskip	mskip	nonvalue	no	\mskip		\mskip	
+muexpr	last_item	nonvalue	no	\muexpr		\muexpr	
+multiply	multiply	nonvalue	no	\multiply		\multiply	
+muskip	register	muglue	no	\muskip	0.0mu	\muskip	0.0mu
+muskipdef	shorthand_def	nonvalue	no	\muskipdef		\muskipdef	
+mutoglue	last_item	nonvalue	no	\mutoglue		\mutoglue	
+newlinechar	assign_int	int	no	\newlinechar	0	\newlinechar	10
+noalign	no_align	nonvalue	no	\noalign		\noalign	
+noboundary	boundary	nonvalue	no	\noboundary		\noboundary	
+noexpand	no_expand	expandable	yes	\noexpand		\noexpand	
+nohrule	nohrule	nonvalue	no	\nohrule		\nohrule	
+noindent	start_par	nonvalue	no	\noindent		\noindent	
+nokerns	assign_int	int	no	\nokerns	0	\nokerns	0
+noligs	assign_int	int	no	\noligs	0	\noligs	0
+nolimits	limit_switch	nonvalue	no	\nolimits		\nolimits	
+nonscript	non_script	nonvalue	no	\nonscript		\nonscript	
+nonstopmode	set_interaction	nonvalue	no	\nonstopmode		\nonstopmode	
+normaldeviate	convert	expandable	yes	\normaldeviate		\normaldeviate	
+nospaces	assign_int	int	no	\nospaces	0	\nospaces	0
+novrule	novrule	nonvalue	no	\novrule		\novrule	
+nulldelimiterspace	assign_dimen	dimen	no	\nulldelimiterspace	0sp	\nulldelimiterspace	78643sp
+nullfont	set_font	toks/other	no	select font nullfont	\nullfont 	select font nullfont	\nullfont 
+number	convert	expandable	yes	\number		\number	
+numexpr	last_item	int	no	\numexpr	0	\numexpr	0
+omit	omit	nonvalue	no	\omit		\omit	
+openin	in_stream	nonvalue	no	\openin		\openin	
+openout	extension	nonvalue	no	\openout		\openout	
+or	fi_or_else	expandable	yes	\or		\or	
+outer	prefix	nonvalue	no	\outer		\outer	
+output	assign_toks	toks	no	\output		\output	{\let \par \@@par \ifnum \outputpenalty <-\@M \@specialoutput \else \@makecol  \@opcol \@startcolumn \@whilesw \if@fcolmade \fi {\@opcol \@startcolumn }\fi \ ifnum \outputpenalty >-\@Miv \ifdim \@colroom <1.5\baselineskip \ifdim \@colroo m <\textheight \@latex@warning@no@line {Text page \thepage \space contains only  floats}\@emptycol \else \global \vsize \@colroom \fi \else \global \vsize \@co lroom \fi \else \global \vsize \maxdimen \fi }
+outputbox	assign_int	int	no	\outputbox	255	\outputbox	255
+outputmode	assign_int	int	no	\outputmode	0	\outputmode	1
+outputpenalty	assign_int	int	no	\outputpenalty	0	\outputpenalty	-10001
+over	above	nonvalue	no	\over		\over	
+overfullrule	assign_dimen	dimen	no	\overfullrule	0sp	\overfullrule	0sp
+overline	math_comp	nonvalue	no	\overline		\overline	
+overwithdelims	above	nonvalue	no	\overwithdelims		\overwithdelims	
+pagebottomoffset	assign_dimen	dimen	no	\pagebottomoffset	4736287sp	\pagebottomoffset	4736287sp
+pagedepth	set_page_dimen	dimen	no	\pagedepth	0sp	\pagedepth	0sp
+pagedir	assign_dir	toks/other	no	\pagedir	TLT	\pagedir	TLT
+pagedirection	assign_direction	int	no	\pagedirection	0	\pagedirection	0
+pagediscards	un_vbox	nonvalue	no	\pagediscards		\pagediscards	
+pagefilllstretch	set_page_dimen	dimen	no	\pagefilllstretch	0sp	\pagefilllstretch	0sp
+pagefillstretch	set_page_dimen	dimen	no	\pagefillstretch	0sp	\pagefillstretch	0sp
+pagefilstretch	set_page_dimen	dimen	no	\pagefilstretch	0sp	\pagefilstretch	0sp
+pagegoal	set_page_dimen	dimen	no	\pagegoal	1073741823sp	\pagegoal	1073741823sp
+pageheight	assign_dimen	dimen	no	\pageheight	0sp	\pageheight	55380990sp
+pageleftoffset	assign_dimen	dimen	no	\pageleftoffset	4736287sp	\pageleftoffset	4736287sp
+pagerightoffset	assign_dimen	dimen	no	\pagerightoffset	4736287sp	\pagerightoffset	4736287sp
+pageshrink	set_page_dimen	dimen	no	\pageshrink	0sp	\pageshrink	0sp
+pagestretch	set_page_dimen	dimen	no	\pagestretch	0sp	\pagestretch	0sp
+pagetopoffset	assign_dimen	dimen	no	\pagetopoffset	4736287sp	\pagetopoffset	4736287sp
+pagetotal	set_page_dimen	dimen	no	\pagetotal	0sp	\pagetotal	0sp
+pagewidth	assign_dimen	dimen	no	\pagewidth	0sp	\pagewidth	39158276sp
+par	par_end	nonvalue	no	\par		\protected\long macro:->\scan_stop: \mode_if_horizontal:TF {\mode_if_i	
+pardir	assign_dir	toks/other	no	\pardir	TLT	\pardir	TLT
+pardirection	assign_direction	int	no	\pardirection	0	\pardirection	0
+parfillskip	assign_glue	glue	no	\parfillskip	0.0pt	\parfillskip	0.0pt plus 1.0fil
+parindent	assign_dimen	dimen	no	\parindent	0sp	\parindent	983040sp
+parshape	set_tex_shape	int	no	\parshape	0	\parshape	0
+parshapedimen	last_item	dimen	no	\parshapedimen	0sp	\parshapedimen	0sp
+parshapeindent	last_item	dimen	no	\parshapeindent	0sp	\parshapeindent	0sp
+parshapelength	last_item	dimen	no	\parshapelength	0sp	\parshapelength	0sp
+parskip	assign_glue	glue	no	\parskip	0.0pt	\parskip	0.0pt plus 1.0pt
+partokencontext	assign_int	int	no	\partokencontext	0	\partokencontext	0
+partokenname	partoken_name	nonvalue	no	\partokenname		\partokenname	
+patterns	hyph_data	nonvalue	no	\patterns		\patterns	
+pausing	assign_int	int	no	\pausing	0	\pausing	0
+pdfextension	extension	nonvalue	no	\pdfextension		\pdfextension	
+pdffeedback	feedback	expandable	yes	\pdffeedback		\pdffeedback	
+pdfvariable	variable	expandable	yes	\pdfvariable		\pdfvariable	
+penalty	break_penalty	nonvalue	no	\penalty		\penalty	
+postdisplaypenalty	assign_int	int	no	\postdisplaypenalty	0	\postdisplaypenalty	0
+postexhyphenchar	hyph_data	int	no	\postexhyphenchar	0	\postexhyphenchar	0
+posthyphenchar	hyph_data	int	no	\posthyphenchar	0	\posthyphenchar	0
+prebinoppenalty	assign_int	int	no	\prebinoppenalty	10000	\prebinoppenalty	10000
+predisplaydirection	assign_int	int	no	\predisplaydirection	0	\predisplaydirection	0
+predisplaygapfactor	assign_int	int	no	\predisplaygapfactor	2000	\predisplaygapfactor	2000
+predisplaypenalty	assign_int	int	no	\predisplaypenalty	0	\predisplaypenalty	10000
+predisplaysize	assign_dimen	dimen	no	\predisplaysize	0sp	\predisplaysize	0sp
+preexhyphenchar	hyph_data	int	no	\preexhyphenchar	0	\preexhyphenchar	0
+prehyphenchar	hyph_data	int	no	\prehyphenchar	45	\prehyphenchar	45
+prerelpenalty	assign_int	int	no	\prerelpenalty	10000	\prerelpenalty	10000
+pretolerance	assign_int	int	no	\pretolerance	0	\pretolerance	100
+prevdepth	set_aux	dimen	no	\prevdepth	-65536000sp	\prevdepth	0sp
+prevgraf	set_prev_graf	int	no	\prevgraf	0	\prevgraf	0
+primitive	no_expand	expandable	yes	\primitive		\primitive	
+protected	prefix	nonvalue	no	\protected		\protected	
+protrudechars	assign_int	int	no	\protrudechars	0	\protrudechars	0
+protrusionboundary	boundary	nonvalue	no	\protrusionboundary		\protrusionboundary	
+pxdimen	assign_dimen	dimen	no	\pxdimen	65781sp	\pxdimen	65781sp
+quitvmode	start_par	nonvalue	no	\quitvmode		\quitvmode	
+radical	radical	nonvalue	no	\radical		\radical	
+raise	vmove	nonvalue	no	\raise		\raise	
+randomseed	last_item	int	no	\randomseed	526732522	\randomseed	376916676
+read	read_to_cs	nonvalue	no	\read		\read	
+readline	read_to_cs	nonvalue	no	\readline		\readline	
+relax	relax	nonvalue	no	\relax		\relax	
+relpenalty	assign_int	int	no	\relpenalty	0	\relpenalty	500
+right	left_right	nonvalue	no	\right		\right	
+rightghost	char_ghost	nonvalue	no	\rightghost		\rightghost	
+righthyphenmin	assign_int	int	no	\righthyphenmin	0	\righthyphenmin	3
+rightmarginkern	convert	expandable	yes	\rightmarginkern		\rightmarginkern	
+rightskip	assign_glue	glue	no	\rightskip	0.0pt	\rightskip	0.0pt
+romannumeral	convert	expandable	yes	\romannumeral		\romannumeral	
+rpcode	assign_font_int	nonvalue	no	\rpcode		\rpcode	
+saveboxresource	extension	nonvalue	no	\saveboxresource		\saveboxresource	
+savecatcodetable	normal	nonvalue	no	\savecatcodetable		\savecatcodetable	
+saveimageresource	extension	nonvalue	no	\saveimageresource		\saveimageresource	
+savepos	normal	nonvalue	no	\savepos		\savepos	
+savinghyphcodes	assign_int	int	no	\savinghyphcodes	0	\savinghyphcodes	0
+savingvdiscards	assign_int	int	no	\savingvdiscards	0	\savingvdiscards	0
+scantextokens	input	expandable	yes	\scantextokens		\scantextokens	
+scantokens	input	expandable	yes	\scantokens		\scantokens	
+scriptfont	def_family	toks/other	no	\scriptfont	\nullfont 	\scriptfont	\nullfont 
+scriptscriptfont	def_family	toks/other	no	\scriptscriptfont	\nullfont 	\scriptscriptfont	\nullfont 
+scriptscriptstyle	math_style	int	no	\scriptscriptstyle	6	\scriptscriptstyle	6
+scriptspace	assign_dimen	dimen	no	\scriptspace	0sp	\scriptspace	32768sp
+scriptstyle	math_style	int	no	\scriptstyle	4	\scriptstyle	4
+scrollmode	set_interaction	nonvalue	no	\scrollmode		\scrollmode	
+setbox	set_box	nonvalue	no	\setbox		\setbox	
+setfontid	set_font_id	toks/other	no	\setfontid	\nullfont 	\setfontid	\nullfont 
+setlanguage	assign_int	int	no	\setlanguage	0	\setlanguage	0
+setrandomseed	normal	nonvalue	no	\setrandomseed		\setrandomseed	
+sfcode	def_char_code	int	no	\sfcode	1000	\sfcode	1000
+shapemode	assign_int	int	no	\shapemode	0	\shapemode	0
+shipout	leader_ship	nonvalue	no	\shipout		\protected\long macro:->\tl_set:Nx \l__shipout_group_level_tl {\int_va	
+show	xray	nonvalue	no	\show		\show	
+showbox	xray	nonvalue	no	\showbox		\showbox	
+showboxbreadth	assign_int	int	no	\showboxbreadth	0	\showboxbreadth	-1
+showboxdepth	assign_int	int	no	\showboxdepth	0	\showboxdepth	-1
+showgroups	xray	nonvalue	no	\showgroups		\showgroups	
+showifs	xray	nonvalue	no	\showifs		\showifs	
+showlists	xray	nonvalue	no	\showlists		\showlists	
+showstream	assign_int	int	no	\showstream	-1	\showstream	-1
+showthe	xray	nonvalue	no	\showthe		\showthe	
+showtokens	xray	nonvalue	no	\showtokens		\showtokens	
+skewchar	assign_font_int	nonvalue	no	\skewchar		\skewchar	
+skip	register	dimen	no	\skip	0sp	\skip	0sp
+skipdef	shorthand_def	nonvalue	no	\skipdef		\skipdef	
+spacefactor	set_aux	nonvalue	no	\spacefactor		\spacefactor	
+spaceskip	assign_glue	glue	no	\spaceskip	0.0pt	\spaceskip	0.0pt
+span	tab_mark	nonvalue	no	\span		\span	
+special	extension	nonvalue	no	\special		\special	
+splitbotmark	top_bot_mark	expandable	yes	\splitbotmark:		\splitbotmark:	
+splitbotmarks	top_bot_mark	expandable	yes	\splitbotmarks		\splitbotmarks	
+splitdiscards	un_vbox	nonvalue	no	\splitdiscards		\splitdiscards	
+splitfirstmark	top_bot_mark	expandable	yes	\splitfirstmark:		\splitfirstmark:	
+splitfirstmarks	top_bot_mark	expandable	yes	\splitfirstmarks		\splitfirstmarks	
+splitmaxdepth	assign_dimen	dimen	no	\splitmaxdepth	0sp	\splitmaxdepth	1073741823sp
+splittopskip	assign_glue	glue	no	\splittopskip	0.0pt	\splittopskip	10.0pt
+string	convert	expandable	yes	\string		\string	
+suppressfontnotfounderror	assign_int	int	no	\suppressfontnotfounderror	0	\suppressfontnotfounderror	0
+suppressifcsnameerror	assign_int	int	no	\suppressifcsnameerror	0	\suppressifcsnameerror	0
+suppresslongerror	assign_int	int	no	\suppresslongerror	0	\suppresslongerror	0
+suppressmathparerror	assign_int	int	no	\suppressmathparerror	0	\suppressmathparerror	0
+suppressoutererror	assign_int	int	no	\suppressoutererror	0	\suppressoutererror	0
+suppressprimitiveerror	assign_int	int	no	\suppressprimitiveerror	0	\suppressprimitiveerror	0
+synctex	assign_int	int	no	\synctex	0	\synctex	0
+tabskip	assign_glue	glue	no	\tabskip	0.0pt	\tabskip	0.0pt
+tagcode	assign_font_int	nonvalue	no	\tagcode		\tagcode	
+textdir	assign_dir	toks/other	no	\textdir	TLT	\textdir	TLT
+textdirection	assign_direction	int	no	\textdirection	0	\textdirection	0
+textfont	def_family	toks/other	no	\textfont	\nullfont 	\textfont	\nullfont 
+textstyle	math_style	int	no	\textstyle	2	\textstyle	2
+the	the	expandable	yes	\the		\the	
+thickmuskip	assign_mu_glue	muglue	no	\thickmuskip	0.0mu	\thickmuskip	5.0mu plus 5.0mu
+thinmuskip	assign_mu_glue	muglue	no	\thinmuskip	0.0mu	\thinmuskip	3.0mu
+time	assign_int	int	no	\time	922	\time	924
+toks	toks_register	toks/other	no	\toks		\toks	\AtEndOfPackage {\renewcommand \@openbib@code {\advance \leftmargin \bibinden t \itemindent -\bibindent \listparindent \itemindent \parsep \z@ }\renewcommand  \newblock {\par }}
+toksapp	combinetoks	nonvalue	no	\toksapp		\toksapp	
+toksdef	shorthand_def	nonvalue	no	\toksdef		\toksdef	
+tokspre	combinetoks	nonvalue	no	\tokspre		\tokspre	
+tolerance	assign_int	int	no	\tolerance	10000	\tolerance	200
+topmark	top_bot_mark	expandable	yes	\topmark:		\topmark:	
+topmarks	top_bot_mark	expandable	yes	\topmarks		\topmarks	
+topskip	assign_glue	glue	no	\topskip	0.0pt	\topskip	10.0pt
+tpack	make_box	nonvalue	no	\tpack		\tpack	
+tracingassigns	assign_int	int	no	\tracingassigns	0	\tracingassigns	0
+tracingcommands	assign_int	int	no	\tracingcommands	0	\tracingcommands	0
+tracingfonts	assign_int	int	no	\tracingfonts	0	macro:->\@font@warning {Command \noexpand \tracingfonts not provided.\	
+tracinggroups	assign_int	int	no	\tracinggroups	0	\tracinggroups	0
+tracingifs	assign_int	int	no	\tracingifs	0	\tracingifs	0
+tracinglostchars	assign_int	int	no	\tracinglostchars	0	\tracinglostchars	2
+tracingmacros	assign_int	int	no	\tracingmacros	0	\tracingmacros	0
+tracingnesting	assign_int	int	no	\tracingnesting	0	\tracingnesting	0
+tracingonline	assign_int	int	no	\tracingonline	0	\tracingonline	0
+tracingoutput	assign_int	int	no	\tracingoutput	0	\tracingoutput	0
+tracingpages	assign_int	int	no	\tracingpages	0	\tracingpages	0
+tracingparagraphs	assign_int	int	no	\tracingparagraphs	0	\tracingparagraphs	0
+tracingrestores	assign_int	int	no	\tracingrestores	0	\tracingrestores	0
+tracingscantokens	assign_int	int	no	\tracingscantokens	0	\tracingscantokens	0
+tracingstats	assign_int	int	no	\tracingstats	0	\tracingstats	1
+uccode	def_char_code	int	no	\uccode	0	\uccode	0
+uchyph	assign_int	int	no	\uchyph	0	\uchyph	1
+underline	math_comp	nonvalue	no	\underline		macro:->\protect \underline	
+unexpanded	the	expandable	yes	\unexpanded		\unexpanded	
+unhbox	un_hbox	nonvalue	no	\unhbox		\unhbox	
+unhcopy	un_hbox	nonvalue	no	\unhcopy		\unhcopy	
+uniformdeviate	convert	expandable	yes	\uniformdeviate		\uniformdeviate	
+unkern	remove_item	nonvalue	no	\unkern		\unkern	
+unless	expand_after	expandable	yes	\unless		\unless	
+unpenalty	remove_item	nonvalue	no	\unpenalty		\unpenalty	
+unskip	remove_item	nonvalue	no	\unskip		\unskip	
+unvbox	un_vbox	nonvalue	no	\unvbox		\unvbox	
+unvcopy	un_vbox	nonvalue	no	\unvcopy		\unvcopy	
+uppercase	case_shift	nonvalue	no	\uppercase		\uppercase	
+useboxresource	extension	nonvalue	no	\useboxresource		\useboxresource	
+useimageresource	extension	nonvalue	no	\useimageresource		\useimageresource	
+vadjust	vadjust	nonvalue	no	\vadjust		\vadjust	
+valign	valign	nonvalue	no	\valign		\valign	
+variablefam	assign_int	int	no	\variablefam	-1	\variablefam	-1
+vbadness	assign_int	int	no	\vbadness	0	\vbadness	1000
+vbox	make_box	nonvalue	no	\vbox		\vbox	
+vcenter	vcenter	nonvalue	no	\vcenter		\vcenter	
+vfil	vskip	nonvalue	no	\vfil		\vfil	
+vfill	vskip	nonvalue	no	\vfill		\vfill	
+vfilneg	vskip	nonvalue	no	\vfilneg		\vfilneg	
+vfuzz	assign_dimen	dimen	no	\vfuzz	0sp	\vfuzz	6554sp
+voffset	assign_dimen	dimen	no	\voffset	0sp	\voffset	0sp
+vpack	make_box	nonvalue	no	\vpack		\vpack	
+vrule	vrule	nonvalue	no	\vrule		\vrule	
+vsize	assign_dimen	dimen	no	\vsize	0sp	\vsize	36044800sp
+vskip	vskip	nonvalue	no	\vskip		\vskip	
+vsplit	make_box	nonvalue	no	\vsplit		\vsplit	
+vss	vskip	nonvalue	no	\vss		\vss	
+vtop	make_box	nonvalue	no	\vtop		\vtop	
+wd	set_box_dimen	dimen	no	\wd	0sp	\wd	0sp
+widowpenalties	set_etex_shape	int	no	\widowpenalties	0	\widowpenalties	0
+widowpenalty	assign_int	int	no	\widowpenalty	0	\widowpenalty	150
+wordboundary	boundary	nonvalue	no	\wordboundary		\wordboundary	
+write	extension	nonvalue	no	\write		\write	
+xdef	def	nonvalue	no	\xdef		\xdef	
+xleaders	leader_ship	nonvalue	no	\xleaders		\xleaders	
+xspaceskip	assign_glue	glue	no	\xspaceskip	0.0pt	\xspaceskip	0.0pt
+xtoksapp	combinetoks	nonvalue	no	\xtoksapp		\xtoksapp	
+xtokspre	combinetoks	nonvalue	no	\xtokspre		\xtokspre	
+year	assign_int	int	no	\year	2026	\year	2026

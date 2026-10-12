@@ -13,6 +13,8 @@ use satex::plugin::Kernel;
 use satex::tex::Meaning;
 
 const ENGINES: [Engine; 4] = [Engine::Tex, Engine::PdfTeX, Engine::XeTeX, Engine::LuaTeX];
+/// The engines with ε-TeX's primitives: every one but Knuth's `tex`.
+const ETEX_ENGINES: [Engine; 3] = [Engine::PdfTeX, Engine::XeTeX, Engine::LuaTeX];
 
 /// The marker a widened text carries, which is what a value satex could not
 /// pin down reads back as.
@@ -136,7 +138,7 @@ fn prevgraf_out_of_range_keeps_the_old_value() {
 fn interactionmode_starts_at_the_engines_option() {
     // `Config::default()` is `-interaction=nonstopmode` (tex.web § 1337).
     assert_eq!(Config::default().interaction, Interaction::Nonstopmode);
-    for engine in ENGINES {
+    for engine in ETEX_ENGINES {
         assert_eq!(the(engine, "", "\\interactionmode"), "1", "{engine:?}");
         for mode in ["0", "1", "2", "3"] {
             let source = format!("\\interactionmode={mode} ");
@@ -148,7 +150,7 @@ fn interactionmode_starts_at_the_engines_option() {
 
 #[test]
 fn interactionmode_out_of_range_keeps_the_old_mode() {
-    for engine in ENGINES {
+    for engine in ETEX_ENGINES {
         for bad in ["9", "-1", "4"] {
             let source = format!("\\interactionmode=2 \\interactionmode={bad} ");
             assert_eq!(the(engine, &source, "\\interactionmode"), "2", "{engine:?} {bad}");
@@ -401,10 +403,12 @@ fn every_limited_name_is_a_primitive_of_that_engine() {
             }
         }
     }
-    // `\prevgraf`, `\interactionmode` and `\spacefactor` under four
-    // engines, `\outputbox` and the six read-only modes under LuaTeX,
-    // `\Umathcodenum` and `\Umathcharnumdef` under two each.
-    assert_eq!(found, 4 + 4 + 4 + 1 + 6 + 2 + 2);
+    // `\prevgraf` and `\spacefactor` under four engines, ε-TeX's
+    // `\interactionmode` under the three that have it, `\outputbox` and the
+    // six read-only modes under LuaTeX, `\Umathcodenum` and
+    // `\Umathcharnumdef` under two each, their `\XeTeX…` spellings, and
+    // LuaTeX's six directions.
+    assert_eq!(found, 4 + 3 + 4 + 1 + 6 + 2 + 2 + 2 + 6);
 }
 
 /// Every owned name is a parameter of every engine: these are TeX82's, so a
@@ -755,7 +759,7 @@ fn a_negative_math_char_shows_the_fields_its_engine_splits_it_into() {
 /// an unprintable one shows as `^^M`.  `\read` turns it into a space.
 #[test]
 fn readline_keeps_the_end_line_character() {
-    for engine in ENGINES {
+    for engine in ETEX_ENGINES {
         let read = "\\openin0=zprobe \\readline0 to\\zq \\edef\\zR{[\\zq]}";
         assert_eq!(body(&beside_a_file(engine, "readline", read), "zR"), "[hello^^M]", "{engine:?}");
         let read = "\\openin0=zprobe \\read0 to\\zq \\edef\\zR{[\\zq]}";

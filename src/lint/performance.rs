@@ -342,8 +342,8 @@ fn dump_command(engine: crate::config::Engine, job: &str, file: &str) -> String 
     let (ini, format) = match engine {
         Engine::LuaTeX => ("luahbtex", "lualatex"),
         Engine::XeTeX => ("xetex", "xelatex"),
-        Engine::Tex => ("tex", "latex"),
-        Engine::PdfTeX => ("pdftex", "pdflatex"),
+        // LaTeX needs ε-TeX, so a dump is always pdfTeX's.
+        Engine::Tex | Engine::PdfTeX => ("pdftex", "pdflatex"),
     };
     format!("{ini} -ini -jobname={job} \"&{format}\" mylatexformat.ltx \"\"\"{file}\"\"\"")
 }
