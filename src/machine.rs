@@ -633,6 +633,78 @@ pub(crate) enum Frame {
     Boundary,
 }
 
+/// The input stack (tex.web § 300), its frames shared with the path
+/// snapshots that saw them: a snapshot is taken before every command, and
+/// copies pointers. A frame is copied only when a command reads on in it
+/// while a snapshot still holds it.
+#[derive(Clone, Default)]
+pub(crate) struct Input(Vec<Rc<Frame>>);
+
+impl Input {
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = &Frame> + ExactSizeIterator {
+        self.0.iter().map(|f| &**f)
+    }
+
+    pub(crate) fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut Frame> {
+        self.0.iter_mut().map(Rc::make_mut)
+    }
+
+    pub(crate) fn get(&self, i: usize) -> Option<&Frame> {
+        self.0.get(i).map(|f| &**f)
+    }
+
+    pub(crate) fn last(&self) -> Option<&Frame> {
+        self.0.last().map(|f| &**f)
+    }
+
+    pub(crate) fn last_mut(&mut self) -> Option<&mut Frame> {
+        self.0.last_mut().map(Rc::make_mut)
+    }
+
+    pub(crate) fn push(&mut self, frame: Frame) {
+        self.0.push(Rc::new(frame));
+    }
+
+    pub(crate) fn pop(&mut self) -> Option<Frame> {
+        self.0.pop().map(Rc::unwrap_or_clone)
+    }
+}
+
+impl<'a> IntoIterator for &'a Input {
+    type Item = &'a Frame;
+    type IntoIter = std::iter::Map<std::slice::Iter<'a, Rc<Frame>>, fn(&Rc<Frame>) -> &Frame>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter().map(|f| &**f)
+    }
+}
+
+impl FromIterator<Frame> for Input {
+    fn from_iter<I: IntoIterator<Item = Frame>>(frames: I) -> Input {
+        Input(frames.into_iter().map(Rc::new).collect())
+    }
+}
+
+impl std::ops::Index<usize> for Input {
+    type Output = Frame;
+    fn index(&self, i: usize) -> &Frame {
+        &self.0[i]
+    }
+}
+
+impl std::ops::IndexMut<usize> for Input {
+    fn index_mut(&mut self, i: usize) -> &mut Frame {
+        Rc::make_mut(&mut self.0[i])
+    }
+}
+
 /// The `\global`, `\long`, `\outer` and `\protected` prefixes waiting to
 /// apply to the next definition or assignment. [`Machine::define`] consumes
 /// and resets them.
@@ -1044,7 +1116,7 @@ pub struct Machine<'a> {
     pub lua: crate::plugin::lua::Lua,
     /// `\endlinechar`, which expl3 changes.
     pub(crate) end_line: EndLineChar,
-    input: Vec<Frame>,
+    input: Input,
     pub prefixes: Prefixes,
     /// tex.web § 1269 (`after_token`): the one token `\afterassignment`
     /// holds until the next assignment is complete.  A second
@@ -1436,7 +1508,7 @@ pub struct Machine<'a> {
 /// the union of the paths.
 #[derive(Clone)]
 struct PathState {
-    input: Vec<Frame>,
+    input: Input,
     catcodes: CatcodeTable,
     end_line: EndLineChar,
     prefixes: Prefixes,
@@ -1782,7 +1854,7 @@ impl<'a> Machine<'a> {
             env,
             catcodes,
             end_line: EndLineChar::default(),
-            input: Vec::new(),
+            input: Input::default(),
             prefixes: Prefixes::default(),
             after_assignment: None,
             long_argument: true,
@@ -6713,7 +6785,7 @@ will look undefined",
             let first =
                 self.input.iter().position(|f| matches!(f, Frame::Tokens { expanding: Some(s), .. } if *s == sym));
             if let Some(i) = first.map(|i| i.max(file)) {
-                let places = self.input[..i].iter().filter_map(explore::place).count();
+                let places = self.input.iter().take(i).filter_map(explore::place).count();
                 self.unwind((places, self.conds.len(), self.env.depth()), span);
             }
         }
@@ -7612,7 +7684,7 @@ will look undefined",
     /// The most tokens `input`'s token lists may hold, typed text by its
     /// bound; `None` when none of it is bounded. A pass that begins with
     /// less than the one before ends by construction.
-    pub(crate) fn input_bound(&self, input: &[Frame]) -> Option<u32> {
+    pub(crate) fn input_bound(&self, input: &Input) -> Option<u32> {
         let lists = input.iter().rev().map_while(|frame| match frame {
             Frame::Tokens { toks, pos, .. } => Some(&toks[*pos..]),
             Frame::Returned(tokens) => Some(&tokens[..]),
@@ -7629,7 +7701,7 @@ will look undefined",
         bounded.then_some(sum)
     }
 
-    fn pending_in(input: &[Frame]) -> Vec<Token> {
+    fn pending_in(input: &Input) -> Vec<Token> {
         let mut rest = Vec::new();
         for frame in input.iter().rev() {
             match frame {
