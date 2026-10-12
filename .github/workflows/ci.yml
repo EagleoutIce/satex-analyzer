@@ -150,7 +150,7 @@ jobs:
         continue-on-error: true
         env:
           SATEX_REQUIRE_TEX: '1'
-        run: cargo test --locked --profile ci --no-fail-fast --test it -- compliance_matrix::
+        run: cargo test --locked --profile ci --no-fail-fast --test it -- 'compliance_matrix::'
 
   # ---------------------------------------------------------------------
   # Release tier: several TeX Live versions, the exhaustive compliance
@@ -279,7 +279,7 @@ jobs:
         continue-on-error: true
         env:
           SATEX_REQUIRE_TEX: '1'
-        run: cargo test --locked --profile ci --no-fail-fast --test it -- compliance_matrix::
+        run: cargo test --locked --profile ci --no-fail-fast --test it -- 'compliance_matrix::'
 
   lint:
     name: Lint ${{ matrix.os }}
