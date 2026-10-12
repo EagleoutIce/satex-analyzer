@@ -588,6 +588,14 @@ impl Analysis {
 /// file's.
 pub(crate) const RECENT_FILE_SPANS: usize = 64;
 
+/// Records which primitive each of the engine's second spellings copies,
+/// so that `\meaning` names the primitive, as it does for a `\let` copy.
+fn set_primitive_aliases(env: &mut Env, interner: &mut Interner, engine: crate::config::Engine) {
+    for (alias, primitive) in crate::builtins::primitive_aliases(engine) {
+        env.aliases.insert(interner.intern(alias), interner.intern(primitive));
+    }
+}
+
 /// A loop head without its content: call site, deciding command, source
 /// progress.
 pub(crate) type LoopId = (Span, Sym, u64);
@@ -1714,6 +1722,7 @@ impl<'a> Machine<'a> {
         for (sym, meaning) in table {
             env.set(sym, Binding::builtin(meaning), true);
         }
+        set_primitive_aliases(&mut env, &mut interner, engine);
         env.set(unknown, Binding::builtin(Meaning::Unknown), true);
         env.set(unknown_digits, Binding::builtin(Meaning::Char(crate::tex::UNKNOWN_CHAR, Catcode::Other)), true);
         env.set(unknown_more, Binding::builtin(Meaning::Char(crate::tex::UNKNOWN_CHAR, Catcode::Other)), true);
@@ -2021,6 +2030,7 @@ impl<'a> Machine<'a> {
             for (sym, meaning) in table {
                 m.env.set(sym, Binding::builtin(meaning), true);
             }
+            set_primitive_aliases(&mut m.env, &mut m.out.interner, m.out.plugins.engine);
         }
         // The engine is settled: every source read from here on, the kernel
         // and the document included, is decoded the way it reads a file.
@@ -2304,7 +2314,12 @@ impl<'a> Machine<'a> {
                 // engine starts it, which is not always zero.
                 Meaning::Primitive(P::IntegerParameter) => {
                     let name = self.out.interner.name(sym);
-                    Value::Int(crate::builtins::limit(name, engine).and_then(|l| l.start()).unwrap_or(0))
+                    Value::Int(
+                        crate::builtins::limit(name, engine)
+                            .and_then(|l| l.start())
+                            .or_else(|| crate::builtins::initial(name, engine))
+                            .unwrap_or(0),
+                    )
                 }
                 // tex.web § 215: the main vertical list also starts with
                 // `\prevdepth` at `ignore_depth`.
@@ -2312,7 +2327,7 @@ impl<'a> Machine<'a> {
                     let name = self.out.interner.name(sym);
                     Value::Dimen(match crate::builtins::owned(name) {
                         Some(crate::builtins::Owned::List { fresh, .. }) => fresh,
-                        _ => 0,
+                        _ => crate::builtins::initial(name, engine).unwrap_or(0),
                     })
                 }
                 Meaning::Primitive(P::GlueParameter { mu: false }) => Value::Glue(Default::default()),
@@ -2331,7 +2346,6 @@ impl<'a> Machine<'a> {
             ("hangafter", 1),
             ("maxdeadcycles", 25),
             ("mag", 1000),
-            ("errorcontextlines", -1),
         ] {
             let sym = self.intern(name);
             self.env.set_value(sym, crate::value::Value::Int(value), true);
@@ -5798,8 +5812,14 @@ will look undefined",
         use crate::builtins::Primitive as P;
         match self.env.meaning(sym) {
             Meaning::Primitive(P::Register(crate::tex::RegKind::MathChar | crate::tex::RegKind::UMathChar)) => false,
-            // A `\mathchardef` constant is one atom, which `math_code_char` adds.
+            // A `\mathchardef` constant is one atom, which `math_code_char`
+            // adds, and so are `\mathchar` and `\delimiter` in inline math.
             Meaning::Register(crate::tex::RegKind::MathChar, _) => true,
+            Meaning::Primitive(P::Command(crate::builtins::Syntax::Number))
+                if self.math_char_command(sym).is_some() =>
+            {
+                true
+            }
             Meaning::Primitive(
                 P::Prefix(_)
                 | P::BeginGroup

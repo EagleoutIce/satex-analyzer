@@ -849,11 +849,8 @@ impl Machine<'_> {
         });
         let folded = folded_exact || (folded_alike && alike.is_some());
         // Alike after folding is the fixpoint already: forced at once.
-        // Otherwise the count of passes forces only a pass that meets no
-        // head: one that does is joined, and widening, with `diverges`
-        // below, ends it by a fixpoint rather than by the count.
-        let forced_join = folded && entry.is_some_and(|e| e.2 >= 1);
-        let forced_new = forced || forced_join;
+        let forced = forced || (folded && entry.is_some_and(|e| e.2 >= 1));
+        let (forced_new, forced_join) = (forced, forced);
         // What the head compares with: here, its `\fi` tail dropped.
         let here_input = match folded {
             true => fi_frames_dropped(&here.state.input, entry.map_or(0, |e| e.0), &is_fi),
@@ -1037,7 +1034,7 @@ impl Machine<'_> {
         self.explore(paths, false)
     }
 
-    /// A loop forced to converge is not run again: what it could
+    /// A loop met `widen_after` times is not run again: what it could
     /// write may hold anything, the input it read on unwinds to where it
     /// was entered and reads one unknown token, and conditionals and groups
     /// it opened are assumed closed. Met again in this drive, it stops.

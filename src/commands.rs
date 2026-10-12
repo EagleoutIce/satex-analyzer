@@ -1417,6 +1417,10 @@ impl Machine<'_> {
                 let n = self.scan_int();
                 self.ref_ximage(n);
             }
+            Syntax::Number if let Some(shift) = self.math_char_command(by) => {
+                let code = self.scan_int().map(|v| v >> shift);
+                self.math_code_char(code);
+            }
             Syntax::Number => {
                 self.scan_int();
             }

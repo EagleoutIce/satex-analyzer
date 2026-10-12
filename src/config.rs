@@ -864,20 +864,27 @@ named_enum! {
     }
 }
 
+/// A program as a command names it: editors write `XeLaTeX` too, and
+/// Windows paths end in `.exe`.
+fn program_name(program: &str) -> String {
+    let name = program.trim().rsplit(['/', '\\']).next().unwrap_or_default().to_ascii_lowercase();
+    name.strip_suffix(".exe").map(str::to_string).unwrap_or(name)
+}
+
 impl Engine {
     /// The program that starts this engine with the LaTeX format, which is
     /// also latexmk's setting for it (latexmk manual, "$pdflatex").
     /// The engine a program name drives: `lualatex` is LuaTeX with the LaTeX
     /// format, and a magic comment names the program.
     pub fn from_program(program: &str) -> Option<Engine> {
-        // Editors write `XeLaTeX` too; Windows paths end in `.exe`.
-        let program = program.trim().rsplit(['/', '\\']).next()?.to_ascii_lowercase();
-        let program = program.strip_suffix(".exe").unwrap_or(&program);
-        Some(match program {
-            "pdflatex" | "pdftex" => Engine::PdfTeX,
-            "lualatex" | "luatex" | "lualatex-dev" => Engine::LuaTeX,
+        Some(match program_name(program).as_str() {
+            // `latex` and `etex` run pdfTeX writing DVI (TeX Live's
+            // `fmtutil.cnf`); `tex` is Knuth's TeX, which has no format
+            // for LaTeX.
+            "pdflatex" | "pdftex" | "latex" | "etex" => Engine::PdfTeX,
+            "lualatex" | "luatex" | "lualatex-dev" | "dvilualatex" | "dviluatex" => Engine::LuaTeX,
             "xelatex" | "xetex" => Engine::XeTeX,
-            "latex" | "tex" => Engine::Tex,
+            "tex" => Engine::Tex,
             // ConTeXt MkIV runs on LuaTeX and MkXL on LuaMetaTeX, a LuaTeX
             // derivative (ConTeXt "LMTX" documentation); satex models the
             // LuaTeX primitives for both, which is why ConTeXt is
@@ -890,15 +897,22 @@ impl Engine {
 
     pub fn program(self) -> &'static str {
         match self {
-            Engine::Tex => "latex",
+            Engine::Tex => "tex",
             Engine::PdfTeX => "pdflatex",
             Engine::LuaTeX => "lualatex",
             Engine::XeTeX => "xelatex",
         }
     }
-    /// ε-TeX is in every format in use today.
+    /// Whether a program writes DVI rather than PDF: `latex`, `etex` and
+    /// `dvilualatex` run pdfTeX or LuaTeX with `\pdfoutput` (`\outputmode`)
+    /// zero, and Knuth's `tex` knows no other output.
+    pub fn writes_dvi(program: &str) -> bool {
+        matches!(program_name(program).as_str(), "tex" | "latex" | "etex" | "dvilualatex" | "dviluatex")
+    }
+    /// ε-TeX's extensions: in every engine but Knuth's TeX, which is
+    /// `tex` (doc/primitive-facts.md).
     pub fn has_etex(self) -> bool {
-        true
+        self != Engine::Tex
     }
     /// pdfTeX's own `\pdf…` primitives.  LuaTeX dropped them for
     /// `\pdfextension` and friends (LuaTeX manual, "Changes from pdfTeX"),

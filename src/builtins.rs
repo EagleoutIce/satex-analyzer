@@ -1098,10 +1098,93 @@ pub fn assignment(p: Primitive) -> bool {
     )
 }
 
+/// The ε-TeX primitives (etex_man § 3), and `\tracingstacklevels`, which
+/// TeX Live gave every engine but Knuth's TeX: what `tex` lacks of the
+/// names registered below for every engine (doc/primitive-facts.md).
+pub const ETEX_PRIMITIVES: &[&str] = &[
+    "TeXXeTstate",
+    "beginL",
+    "beginR",
+    "botmarks",
+    "clubpenalties",
+    "currentgrouplevel",
+    "currentgrouptype",
+    "currentifbranch",
+    "currentiflevel",
+    "currentiftype",
+    "detokenize",
+    "dimexpr",
+    "displaywidowpenalties",
+    "eTeXrevision",
+    "eTeXversion",
+    "endL",
+    "endR",
+    "everyeof",
+    "firstmarks",
+    "fontchardp",
+    "fontcharht",
+    "fontcharic",
+    "fontcharwd",
+    "glueexpr",
+    "glueshrink",
+    "glueshrinkorder",
+    "gluestretch",
+    "gluestretchorder",
+    "gluetomu",
+    "ifcsname",
+    "ifdefined",
+    "iffontchar",
+    "interactionmode",
+    "interlinepenalties",
+    "lastlinefit",
+    "lastnodetype",
+    "marks",
+    "middle",
+    "muexpr",
+    "mutoglue",
+    "numexpr",
+    "pagediscards",
+    "parshapedimen",
+    "parshapeindent",
+    "parshapelength",
+    "predisplaydirection",
+    "protected",
+    "readline",
+    "savinghyphcodes",
+    "savingvdiscards",
+    "scantokens",
+    "showgroups",
+    "showifs",
+    "showtokens",
+    "splitbotmarks",
+    "splitdiscards",
+    "splitfirstmarks",
+    "topmarks",
+    "tracingassigns",
+    "tracinggroups",
+    "tracingifs",
+    "tracingnesting",
+    "tracingscantokens",
+    "tracingstacklevels",
+    "unexpanded",
+    "unless",
+    "widowpenalties",
+];
+
+/// ε-TeX's TeX--XeT and `\tracingstacklevels`, registered below for every
+/// eTeX engine, which LuaTeX does not have: its directions are
+/// `\textdirection` and the rest (LuaTeX manual, "Directions"), and
+/// LuaTeX 1.17 has no `\tracingstacklevels` (doc/primitive-facts.md).
+const NOT_IN_LUATEX: &[&str] = &["TeXXeTstate", "beginL", "beginR", "endL", "endR", "tracingstacklevels"];
+
 pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meaning> {
     use Primitive as P;
     let mut table: HashMap<Sym, Meaning> = HashMap::with_capacity_and_hasher(512, Default::default());
     let mut put = |it: &mut Interner, name: &str, p: Primitive| {
+        if !engine.has_etex() && ETEX_PRIMITIVES.contains(&name) || engine.has_luatex() && NOT_IN_LUATEX.contains(&name)
+        {
+            return;
+        }
         let s = it.intern(name);
         let previous = table.insert(s, Meaning::Primitive(p));
         debug_assert!(previous.is_none(), "{name} is registered twice, the later entry wins");
@@ -1263,7 +1346,9 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
 
     // What follows was probed against the TeX Live 2026 binaries: a name is
     // registered for an engine only where `\meaning` there reports the
-    // primitive itself.
+    // primitive itself.  doc/primitive-facts/*.tsv holds the TeX Live 2023
+    // engines; the few names newer than those are marked where they are
+    // registered.
     if engine.has_pdftex_extensions() {
         // pdftex manual, "Primitives" — the unprefixed extensions XeTeX and
         // LuaTeX inherited with the rest of pdfTeX's front end.
@@ -1286,11 +1371,17 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         for n in "pdfmajorversion pdfimageresolution pdfpkresolution pdfimagehicolor
             pdfimageapplygamma pdfgamma pdfimagegamma pdfinfoomitdate pdfomitcharset
             pdfsuppressptexinfo pdfptexuseunderscore pdfappendkern pdfprependkern pdfpagebox
-            pdftracingfonts pdfinclusioncopyfonts"
+            pdftracingfonts pdfinclusioncopyfonts pdfadjustinterwordglue pdfforcepagebox
+            pdfinclusionerrorlevel pdfmovechars pdfomitinfodict pdfomitprocset
+            pdfoptionalwaysusepdfpagebox pdfoptionpdfinclusionerrorlevel pdfsuppresswarningdupdest
+            pdfsuppresswarningdupmap pdfsuppresswarningpagegroup"
             .split_whitespace()
         {
             put(it, n, P::IntegerParameter);
         }
+        // `\pdfoptionpdfminorversion` is `\pdfminorversion` under an older
+        // name: one parameter ([`primitive_aliases`]).
+        put(it, "pdfoptionpdfminorversion", P::IntegerParameter);
         // pdfTeX manual: `\pdfnobuiltintounicode` takes a font, not a
         // number, so it belongs with `\pdfnoligatures` and the other
         // per-font switches, not with the integer parameters above.
@@ -1300,7 +1391,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         // The value (0 until the run makes annotations/objects/forms/links)
         // needs the PDF writer satex doesn't run, so it widens instead.
         for n in "pdfretval pdflastannot pdflastobj pdflastxform pdflastximage
-            pdflastximagepages pdflastlink"
+            pdflastximagepages pdflastximagecolordepth pdflastlink"
             .split_whitespace()
         {
             put(it, n, P::LastItem(LastItem::LastXPos));
@@ -1353,6 +1444,19 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "shellescape", P::LastItem(LastItem::ShellEscape));
         put(it, "resettimer", P::Command(Syntax::Nothing));
         put(it, "XeTeXversion", P::LastItem(LastItem::XetexVersion));
+        // XeTeX's older spellings of the `\U…` math primitives: the same
+        // primitive, `\meaning\XeTeXmathcode` is `\Umathcode`.
+        put(it, "XeTeXmathcode", P::Special(Special::UCode { math: true, num: false }));
+        put(it, "XeTeXmathcodenum", P::Special(Special::UCode { math: true, num: true }));
+        put(it, "XeTeXdelcode", P::Special(Special::UCode { math: false, num: false }));
+        put(it, "XeTeXdelcodenum", P::Special(Special::UCode { math: false, num: true }));
+        put(it, "XeTeXmathchardef", P::Command(Syntax::UMathCharDef { num: false }));
+        put(it, "XeTeXmathcharnumdef", P::Command(Syntax::UMathCharDef { num: true }));
+        put(it, "XeTeXmathchar", P::Command(Syntax::Numbers(3)));
+        put(it, "XeTeXmathcharnum", P::Command(Syntax::Numbers(1)));
+        put(it, "XeTeXdelimiter", P::Command(Syntax::Numbers(3)));
+        put(it, "XeTeXradical", P::Command(Syntax::Numbers(2)));
+        put(it, "XeTeXmathaccent", P::Command(Syntax::MathAccent));
         put(it, "XeTeXrevision", P::Convert(Convert::XetexRevision));
         for n in "XeTeXdashbreakstate XeTeXgenerateactualtext XeTeXhyphenatablelength
             XeTeXinputnormalization XeTeXinterchartokenstate XeTeXinterwordspaceshaping
@@ -1494,7 +1598,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
             Umathunderdelimiterbgap Umathunderdelimitervgap Umiddle Unosubscript
             Unosuperscript Uoverdelimiter Uright Uroot Uskewed Uskewedwithdelims Ustack
             Ustartdisplaymath Ustartmath Ustopdisplaymath Ustopmath Usubscript Usuperscript
-            Uunderdelimiter Uvextensible automaticdiscretionary bodydir bodydirection boundary
+            Uunderdelimiter Uvextensible automaticdiscretionary bodydir  boundary
             boxdir boxdirection clearmarks crampeddisplaystyle crampedscriptscriptstyle
             crampedscriptstyle crampedtextstyle deferred dviextension dvifeedback dvivariable
             eTeXVersion eTeXglueshrinkorder eTeXgluestretchorder eTeXminorversion
@@ -1502,15 +1606,22 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
             gtoksapp gtokspre hjcode hpack hyphenationmin ifcondition immediateassigned
             immediateassignment insertht lastsavedboxresourceindex lastsavedimageresourceindex
             lastsavedimageresourcepages lastxpos lastypos leftghost letcharcode linedir
-            linedirection localleftbox localrightbox luatexbanner luatexrevision mathdir
-            mathdirection mathoption mathstyle nohrule novrule pagedir pagedirection pardir
-            pardirection pdffeedback pdfvariable protrusionboundary rightghost saveboxresource
-            savepos textdir textdirection toksapp tokspre tpack useboxresource
+             localleftbox localrightbox luatexbanner luatexrevision mathdir
+             mathoption mathstyle nohrule novrule pagedir  pardir
+             pdffeedback pdfvariable protrusionboundary rightghost saveboxresource
+            savepos textdir  toksapp tokspre tpack useboxresource
             useimageresource vpack wordboundary xtoksapp xtokspre"
             .split_whitespace()
         {
             put(it, n, P::Unmodeled);
         }
+        // LuaTeX manual, "Directions": the numeric forms are integers
+        // (`assign_direction`), read with `\the` and assigned with `=`.
+        for n in ["bodydirection", "linedirection", "mathdirection", "pagedirection", "pardirection", "textdirection"] {
+            put(it, n, P::IntegerParameter);
+        }
+        // LuaTeX manual, "TeX and LuaTeX primitives": `\global\let`.
+        put(it, "glet", P::Let { global: true, future: false });
         put(it, "alignmark", P::AlignMark);
         put(it, "aligntab", P::AlignTab);
         // pdfTeX's `\ifpdfabsnum` and `\ifpdfabsdim` renamed.
@@ -1687,9 +1798,12 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "atopwithdelims", P::Command(Syntax::Delimiters { dimen: false }));
     put(it, "overwithdelims", P::Command(Syntax::Delimiters { dimen: false }));
     put(it, "char", P::Mode(ModeCmd::Horizontal(Material::Char)));
-    for n in "mathchar delimiter radical mathaccent setlanguage".split_whitespace() {
+    for n in "mathchar delimiter radical mathaccent".split_whitespace() {
         put(it, n, P::Command(Syntax::Number));
     }
+    // An extension that inserts a whatsit (tex.web part 53), except in
+    // LuaTeX, where it is an integer parameter (`assign_int`).
+    put(it, "setlanguage", if engine.has_luatex() { P::IntegerParameter } else { P::Command(Syntax::Number) });
     put(it, "closeout", P::Command(Syntax::CloseOut));
     put(it, "showbox", P::Command(Syntax::Number));
     put(it, "copy", P::Mode(ModeCmd::Box(BoxCmd::Copy)));
@@ -1809,6 +1923,8 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "ifpdfprimitive", P::If(Cond::Primitive));
     }
     if engine.has_pdftex_extensions() {
+        // New in TeX Live 2025 for all three; none of the TeX Live 2023
+        // engines has it.
         put(it, "ignoreprimitiveerror", P::IntegerParameter);
         put(it, "partokencontext", P::IntegerParameter);
         put(it, "lpcode", P::FontParam(FontParam::CharCode(0)));
@@ -1993,6 +2109,9 @@ pub enum Limit {
     /// stored: XeTeX's active marker where the low bits ask for it, zero
     /// otherwise.
     MathCode { engine: Engine },
+    /// The parameter takes `lo..=hi`, starts at `other` and silently
+    /// stores `other` for anything else: LuaTeX's directions.
+    Quiet { lo: i64, hi: i64, other: i64 },
 }
 
 /// What an engine does with one assigned value.
@@ -2000,8 +2119,9 @@ pub enum Limit {
 pub enum Taken {
     /// Stored as it is.
     Yes,
-    /// Taken, but stored as this.  The engine split the value into fields
-    /// and put them back together, which is not what it was given.
+    /// Taken without an error, but stored as this: the engine split the
+    /// value into fields and put them back together, or replaced a value
+    /// it does not take.
     Recomposed(i64),
     /// Refused, and the old value stays.
     Old,
@@ -2017,6 +2137,7 @@ impl Limit {
             Limit::Range { start, .. } => Some(start),
             Limit::Fixed(value) => Some(value),
             Limit::MathCode { .. } => None,
+            Limit::Quiet { other, .. } => Some(other),
         }
     }
 
@@ -2029,6 +2150,10 @@ impl Limit {
                 None => Taken::Old,
             },
             Limit::Fixed(_) => Taken::Old,
+            Limit::Quiet { lo, hi, other } => match (lo..=hi).contains(&value) {
+                true => Taken::Yes,
+                false => Taken::Recomposed(other),
+            },
             // Both engines check the low 21 bits alone, so a negative value
             // whose character fits is taken.  XeTeX takes `0x1FFFFF` as the
             // active marker and falls back to it for any other value that
@@ -2052,7 +2177,7 @@ impl Limit {
     /// satex could not pin down joins the old value with.
     pub fn reach(self) -> (i64, i64) {
         match self {
-            Limit::Range { lo, hi, .. } => (lo, hi),
+            Limit::Range { lo, hi, .. } | Limit::Quiet { lo, hi, .. } => (lo, hi),
             Limit::Fixed(value) => (value, value),
             Limit::MathCode { .. } => (crate::value::WORD_MIN, crate::value::WORD_MAX),
         }
@@ -2068,6 +2193,9 @@ impl Limit {
                     None => "the old value is kept".into(),
                 };
                 format!("invalid value ({value}) for \\{name}, which takes {lo}..{hi}; {after}")
+            }
+            Limit::Quiet { lo, hi, other } => {
+                format!("\\{name} takes {lo}..{hi}; {value} becomes {other} without an error")
             }
             Limit::Fixed(reads) => format!("\\{name} is read-only and reads {reads}; this assignment does nothing"),
             Limit::MathCode { .. } => {
@@ -2100,12 +2228,64 @@ pub fn limit(name: &str, engine: Engine) -> Option<Limit> {
         "mathdefaultsmode" | "mathscriptboxmode" | "mathscriptcharmode" if engine == Engine::LuaTeX => Limit::Fixed(1),
         // tex.web § 1243 (`alter_aux`): "Bad space factor", after which the
         // engine goes on with 1000, which is also a fresh list's.
+        // LuaTeX manual, "Directions": 0 to 3, and anything else is
+        // silently 0 (probed with LuaTeX).
+        "bodydirection" | "linedirection" | "mathdirection" | "pagedirection" | "pardirection" | "textdirection"
+            if engine == Engine::LuaTeX =>
+        {
+            Limit::Quiet { lo: 0, hi: 3, other: 0 }
+        }
         "spacefactor" => Limit::Range { start: 1000, lo: 1, hi: 32767, bad: Some(1000) },
         // XeTeX reference and LuaTeX manual, "Math": the packed form of a
         // math code, which only XeTeX gives an active marker.  A
         // `\Umathcharnumdef` takes the same packed code and recovers the
         // same way.
-        "Umathcodenum" | "Umathcharnumdef" if engine.has_unicode_math() => Limit::MathCode { engine },
+        "Umathcodenum" | "Umathcharnumdef" | "XeTeXmathcodenum" | "XeTeXmathcharnumdef"
+            if engine.has_unicode_math() =>
+        {
+            Limit::MathCode { engine }
+        }
+        _ => return None,
+    })
+}
+
+/// Where an engine's INITEX starts an integer or dimension parameter that
+/// is not zero, beyond the TeX82 ones `Machine` sets (tex.web § 240) and the
+/// starts in [`limit`]; dimensions in sp.  Measured with `\showthe`
+/// (doc/primitive-facts/*.tsv, `initial_ini`).  LuaTeX's
+/// `\mathdefaultsmode` reads 0 in LuaTeX 1.17 and is a fixed 1 in the
+/// newer engines [`limit`] was measured on, so it stays there.
+pub fn initial(name: &str, engine: Engine) -> Option<i64> {
+    const INCH: i64 = 4_736_287;
+    Some(match name {
+        // -1: `\show` and its kin write to the terminal and log.
+        "showstream" if engine.has_pdftex_extensions() => -1,
+        // pdfTeX's INITEX: PDF 1.4, compressed, and the DVI origin of one
+        // inch from the page corner.
+        "pdfcompresslevel" if engine.has_pdftex() => 9,
+        "pdfdecimaldigits" if engine.has_pdftex() => 3,
+        "pdfgamma" if engine.has_pdftex() => 1000,
+        "pdfimagegamma" if engine.has_pdftex() => 2200,
+        "pdfimagehicolor" if engine.has_pdftex() => 1,
+        "pdfimageresolution" if engine.has_pdftex() => 72,
+        "pdfmajorversion" if engine.has_pdftex() => 1,
+        "pdfminorversion" if engine.has_pdftex() => 4,
+        "pdfhorigin" | "pdfvorigin" if engine.has_pdftex() => INCH,
+        "pdfpxdimen" if engine.has_pdftex() => 65_782,
+        "pdfeachlineheight" | "pdfeachlinedepth" | "pdffirstlineheight" | "pdflastlinedepth" | "pdfignoreddimen"
+            if engine.has_pdftex() =>
+        {
+            IGNORE_DEPTH
+        }
+        "XeTeXhyphenatablelength" if engine.has_xetex() => 63,
+        "pagetopoffset" | "pagebottomoffset" | "pageleftoffset" | "pagerightoffset" if engine.has_luatex() => INCH,
+        "pxdimen" if engine.has_luatex() => 65_781,
+        "compoundhyphenmode" | "mathflattenmode" if engine.has_luatex() => 1,
+        "exhyphenchar" | "prehyphenchar" if engine.has_luatex() => i64::from(b'-'),
+        "matheqnogapstep" if engine.has_luatex() => 1000,
+        "predisplaygapfactor" if engine.has_luatex() => 2000,
+        "prebinoppenalty" | "prerelpenalty" if engine.has_luatex() => 10_000,
+        "variablefam" if engine.has_luatex() => -1,
         _ => return None,
     })
 }
@@ -2155,6 +2335,32 @@ pub fn owned(name: &str) -> Option<Owned> {
 /// `expl3-code.tex` defines.
 pub fn is_expl3_name(name: &str) -> bool {
     name.contains(':') || name.starts_with("q_") || name.starts_with("s__")
+}
+
+/// Second spellings of a primitive, as (alias, primitive): `\meaning`
+/// shows the primitive's own name, as it does for a `\let` copy
+/// ([`crate::env::Env::aliases`]).  XeTeX reference: `\XeTeXmathcode` is
+/// `\Umathcode`; pdfTeX manual: `\pdfoptionpdfminorversion` is
+/// `\pdfminorversion` (doc/primitive-facts.md).
+pub fn primitive_aliases(engine: Engine) -> &'static [(&'static str, &'static str)] {
+    const XETEX: &[(&str, &str)] = &[
+        ("XeTeXmathcode", "Umathcode"),
+        ("XeTeXmathcodenum", "Umathcodenum"),
+        ("XeTeXdelcode", "Udelcode"),
+        ("XeTeXdelcodenum", "Udelcodenum"),
+        ("XeTeXmathchardef", "Umathchardef"),
+        ("XeTeXmathcharnumdef", "Umathcharnumdef"),
+        ("XeTeXmathchar", "Umathchar"),
+        ("XeTeXmathcharnum", "Umathcharnum"),
+        ("XeTeXdelimiter", "Udelimiter"),
+        ("XeTeXradical", "Uradical"),
+        ("XeTeXmathaccent", "Umathaccent"),
+    ];
+    match engine {
+        Engine::XeTeX => XETEX,
+        Engine::PdfTeX => &[("pdfoptionpdfminorversion", "pdfminorversion")],
+        _ => &[],
+    }
 }
 
 pub fn kernel_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meaning> {

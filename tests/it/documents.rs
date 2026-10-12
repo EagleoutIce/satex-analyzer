@@ -402,6 +402,15 @@ fn tikz_loop_of_unknown_height_nodes_converges() {
     assert!(count(&a, "call-summarized") <= 20, "{}", count(&a, "call-summarized"));
 }
 
+/// Nodes of a set text width whose text is inline math, in a picture saved
+/// in a box: the paragraphs keep their height (tex.web §§ 866, 1196), so
+/// no anchor of the picture is unknown and no path parts on one.
+#[test]
+fn inline_math_nodes_in_a_saved_box_stay_known() {
+    let Some(a) = check("inline_math_nodes_in_a_saved_box", "main.tex", &[]) else { return };
+    assert_eq!(a.peak_paths, 1, "paths parted");
+}
+
 peak_fixtures! {
     /// `\pgfmathparse` of an unknown integer three times: a typed result.
     pgfmath_of_unknown_integer_three_times("call_summary_pgfmath_thrice", "main.tex");

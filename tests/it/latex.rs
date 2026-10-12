@@ -2114,6 +2114,81 @@ fn binary_operator_and_group_atoms_have_their_width() {
     assert_eq!(got, want);
 }
 
+/// tex.web §§ 1151, 1160: `\mathchar` and `\delimiter` in inline math are
+/// one atom each, a delimiter its small variant, so `\langle` and `\{`
+/// keep the formula's width. Widths as `pdflatex` prints.
+#[test]
+fn mathchar_and_delimiter_atoms_have_their_width() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (r#"$\mathchar"141$"#, "7.50002pt"),
+        (r#"$\delimiter"426830A$"#, "3.8889pt"),
+        (r"$\langle x\rangle$", "13.49307pt"),
+        (r"$\{x\}$", "15.7153pt"),
+        (r#"$a\delimiter"4162362 b$"#, "13.8692pt"),
+        (r"$O_2 = \langle A_1, A_2, A_4, A_3 \rangle$", "94.50273pt"),
+    ];
+    let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!("\\setbox0\\hbox{{{f}}}\\xdef\\W{}{{\\the\\wd0}}\n", (b'a' + i as u8) as char));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    let got: Vec<(String, String)> = cases
+        .iter()
+        .enumerate()
+        .map(|(i, (f, _))| (f.to_string(), body(&analysis, &format!("W{}", (b'a' + i as u8) as char))))
+        .collect();
+    let want: Vec<(String, String)> = cases.iter().map(|(f, w)| (f.to_string(), w.to_string())).collect();
+    assert_eq!(got, want);
+}
+
+/// tex.web §§ 866, 879, 881, 1196: a formula without binary or relation
+/// atoms or stretchable glue is one box to the line breaker, its end a
+/// breakpoint where glue follows, so a paragraph with inline math keeps its
+/// lines and their height. Heights and depths as `pdflatex` prints.
+#[test]
+fn a_paragraph_with_inline_math_keeps_its_height() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (r"\hsize=2cm $x$", "4.30554pt/0.0pt"),
+        (r"\hsize=2cm y$x$", "4.30554pt/1.94444pt"),
+        (r"\hsize=2cm $\dots$", "1.05554pt/0.0pt"),
+        (r"\hsize=2cm \begin{obeylines}$\dots$\end{obeylines}", "1.05554pt/0.0pt"),
+        (
+            r"\hsize=3cm Some words $x$ and $y_1$ then more words $\alpha\beta$ to wrap around lines $q$",
+            "42.94444pt/1.94444pt",
+        ),
+        (
+            r"\hsize=3cm \mathsurround=5pt Some words $x$ and $y$ then more words $z$ to wrap around lines",
+            "42.94444pt/0.0pt",
+        ),
+        (r"\hsize=2cm $xxxxxxxxxxxxxxxxxxxx$ $y$", "16.30554pt/1.94444pt"),
+        (r"\hsize=1cm $x$ $y$ $z$ $w$ $v$", "16.30554pt/0.0pt"),
+        (r"\hsize=1cm $x$$y$$z$$w$$v$ $u$", "16.30554pt/0.0pt"),
+    ];
+    let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!(
+            "\\setbox0\\vbox{{{f}}}\\xdef\\H{}{{\\the\\ht0/\\the\\dp0}}\n",
+            (b'a' + i as u8) as char
+        ));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    let got: Vec<(String, String)> = cases
+        .iter()
+        .enumerate()
+        .map(|(i, (f, _))| (f.to_string(), body(&analysis, &format!("H{}", (b'a' + i as u8) as char))))
+        .collect();
+    let want: Vec<(String, String)> = cases.iter().map(|(f, w)| (f.to_string(), w.to_string())).collect();
+    assert_eq!(got, want);
+}
+
 /// `\unhbox` of any hbox adds its list's natural width (tex.web § 1110),
 /// whatever it was packed to, and an `\unskip` after it takes away the
 /// glue the list ended in: tikz's `align` lines in an `\halign`. Widths
