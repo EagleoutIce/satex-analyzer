@@ -28,72 +28,46 @@ pub use provider::Provider;
 use crate::config::{Config, Engine};
 use crate::project::Project;
 
-/// The kind of thing a plugin describes, for reporting: which field of
-/// [`Plugins`] it names and how [`Plugins::source`] was decided.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Kind {
-    Provider,
-    Platform,
-    Engine,
-    Kernel,
-    Output,
-    BuildSystem,
-    Tool,
-    Magic,
-    Format,
-    Preload,
-    Depp,
-}
-
-impl Kind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Kind::Provider => "provider",
-            Kind::Platform => "platform",
-            Kind::Engine => "engine",
-            Kind::Kernel => "kernel",
-            Kind::Output => "output",
-            Kind::BuildSystem => "build system",
-            Kind::Tool => "tools",
-            Kind::Magic => "magic comments",
-            Kind::Format => "output format",
-            Kind::Preload => "preloaded format",
-            Kind::Depp => "TeX Live packages",
-        }
+named_enum! {
+    /// The kind of thing a plugin describes, for reporting: which field of
+    /// [`Plugins`] it names and how [`Plugins::source`] was decided.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Kind {
+        Provider => "provider",
+        Platform => "platform",
+        Engine => "engine",
+        Kernel => "kernel",
+        Output => "output",
+        BuildSystem => "build system",
+        Tool => "tools",
+        Magic => "magic comments",
+        Format => "output format",
+        Preload => "preloaded format",
+        Depp => "TeX Live packages",
     }
 }
 
-/// Which format the run starts from.  satex interprets the LaTeX2e kernel,
-/// `latex.ltx`; a ConTeXt run is only recognized, because its kernel is
-/// written for ConTeXt's own Lua layer and satex does not interpret it.
-/// ConTeXt support is therefore EXPERIMENTAL: the document is identified and
-/// its primitives are known, but nothing the ConTeXt kernel defines is.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Kernel {
-    #[serde(rename = "latex2e")]
-    Latex,
-    /// `plain.tex`: Knuth's macros, which satex interprets like the LaTeX
-    /// kernel because they are ordinary TeX (The TeXbook, appendix B).
-    Plain,
-    Context,
-    /// No kernel at all: the engine's primitives and nothing else.
-    None,
+named_enum! {
+    /// Which format the run starts from.  satex interprets the LaTeX2e kernel,
+    /// `latex.ltx`; a ConTeXt run is only recognized, because its kernel is
+    /// written for ConTeXt's own Lua layer and satex does not interpret it.
+    /// ConTeXt support is therefore EXPERIMENTAL: the document is identified and
+    /// its primitives are known, but nothing the ConTeXt kernel defines is.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Deserialize, serde::Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Kernel {
+        #[serde(rename = "latex2e")]
+        Latex => "latex2e",
+        /// `plain.tex`: Knuth's macros, which satex interprets like the LaTeX
+        /// kernel because they are ordinary TeX (The TeXbook, appendix B).
+        Plain => "plain",
+        Context => "context",
+        /// No kernel at all: the engine's primitives and nothing else.
+        None => "none",
+    }
 }
 
 impl Kernel {
-    /// Every kernel satex knows, for `--version`.
-    pub const ALL: &'static [Kernel] = &[Kernel::Latex, Kernel::Plain, Kernel::Context, Kernel::None];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Kernel::Latex => "latex2e",
-            Kernel::Plain => "plain",
-            Kernel::Context => "context",
-            Kernel::None => "none",
-        }
-    }
-
     /// Whether satex interprets this kernel at all, or only recognizes it.
     pub fn is_experimental(self) -> bool {
         self == Kernel::Context

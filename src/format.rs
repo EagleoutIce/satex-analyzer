@@ -323,42 +323,45 @@ pub(crate) fn cache_file(dir: &Path, source: &Path, engine: &str, preload: u64, 
 /// build wrote one under another key.  A rebuild takes minutes, so it says
 /// which.
 fn miss_reason(dir: &Path, wanted: &Path) -> String {
-    let Some(name) = wanted.file_name().and_then(|n| n.to_str()) else {
-        return "none built yet for this satex build and engine".into();
+    let none = || "none built yet for this satex build and engine".to_string();
+    let Some((family, _, hash)) = wanted.file_name().and_then(|n| n.to_str()).and_then(split_cache_name) else {
+        return none();
     };
-    let Some((family, rest)) = name.split_once(cache_key()) else {
-        return "none built yet for this satex build and engine".into();
-    };
-    let (mut others, mut mine) = (0usize, Vec::new());
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return "none built yet for this satex build and engine".into();
-    };
+    let (mut others, mut mine) = (0usize, 0usize);
+    let Ok(entries) = std::fs::read_dir(dir) else { return none() };
     for entry in entries.flatten() {
         let found = entry.file_name();
-        let Some(found) = found.to_str().filter(|f| f.starts_with("format-") && f.ends_with(".postcard")) else {
-            continue;
-        };
-        match found.strip_prefix(family).and_then(|r| r.strip_prefix(cache_key())) {
-            Some(key) if key != rest => mine.push(key.to_string()),
-            Some(_) => {}
-            None => others += 1,
+        let Some(found) = found.to_str().filter(|f| f.starts_with("format-")) else { continue };
+        match split_cache_name(found) {
+            Some((f, key, h)) if f == family && key == cache_key() => mine += usize::from(h != hash),
+            Some(_) => others += 1,
+            None => {}
         }
     }
-    match (mine.is_empty(), others) {
-        (true, 0) => "none built yet for this satex build and engine".into(),
-        (true, n) => format!("the {n} kernel cache(s) found were built by another satex build"),
-        (false, _) => format!(
-            "this satex build has {} kernel cache(s) under another key: the kernel file, the \
-engine or the preloaded format differs",
-            mine.len()
+    match (mine, others) {
+        (0, 0) => none(),
+        (0, n) => format!("the {n} kernel cache(s) found were built by another satex build"),
+        (n, _) => format!(
+            "this satex build has {n} kernel cache(s) under another key: the kernel file, the \
+engine or the preloaded format differs"
         ),
     }
+}
+
+/// A cache file name as `(family, key, hash)`: `⟨family⟩-⟨key⟩-⟨hash⟩.postcard`,
+/// the family ending in `-v⟨encoding⟩`.  The key is the whole segment, so
+/// `s1` is not the key of `s1d0123…`.
+fn split_cache_name(name: &str) -> Option<(&str, &str, &str)> {
+    let (rest, hash) = name.strip_suffix(".postcard")?.rsplit_once('-')?;
+    let (family, key) = rest.rsplit_once('-')?;
+    Some((family, key, hash))
 }
 
 /// Whether a cache file name is one this build can use: its key and encoding.
 pub(crate) fn is_current_cache(name: &str) -> bool {
     (name.starts_with("format-") || name.starts_with("package-"))
-        && name.contains(&format!("-v{ENCODING_VERSION}-{}", cache_key()))
+        && split_cache_name(name)
+            .is_some_and(|(family, key, _)| key == cache_key() && family.ends_with(&format!("-v{ENCODING_VERSION}")))
 }
 
 /// The part of a cache name every interpreter version shares.
@@ -415,7 +418,8 @@ pub(crate) fn prune_family(dir: &Path, family: &str, interpreter: &str, bound: u
         .filter(|entry| {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            name.ends_with(".postcard") && name.strip_prefix(family).is_some_and(|rest| !rest.starts_with(interpreter))
+            name.ends_with(".postcard")
+                && name.strip_prefix(family).is_some_and(|rest| rest.split('-').next() != Some(interpreter))
         })
         .filter_map(|entry| {
             let meta = entry.metadata().ok()?;
@@ -948,6 +952,27 @@ mod tests {
         // Once it is free, the same rule removes it.
         prune_family(&dir, family, "mine", 1);
         assert!(!path("held").exists(), "a cache kept only by its lock was kept after the lock went");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cache_key_is_a_whole_name_segment() {
+        let key = cache_key();
+        let name = |key: &str| format!("format-pdftex-2026-v{ENCODING_VERSION}-{key}-0123.postcard");
+        assert!(is_current_cache(&name(key)));
+        assert!(!is_current_cache(&name(&format!("{key}d0123456789abcdef"))));
+        assert!(!is_current_cache(&name(&key[..key.len() - 1])));
+        assert!(!is_current_cache(&format!("package-a-v{}-{key}-0123.postcard", ENCODING_VERSION + 1)));
+        // A build whose key extends this one's is another build to `miss_reason`.
+        let dir = std::env::temp_dir().join(format!("satex-miss-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(name(&format!("{key}x"))), b"").unwrap();
+        let reason = miss_reason(&dir, &dir.join(name(key)));
+        assert!(reason.contains("another satex build"), "{reason}");
+        std::fs::write(dir.join(name(key).replace("0123", "4567")), b"").unwrap();
+        let reason = miss_reason(&dir, &dir.join(name(key)));
+        assert!(reason.contains("under another key"), "{reason}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

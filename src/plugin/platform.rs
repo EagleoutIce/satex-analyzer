@@ -2,19 +2,16 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// The platform the document is being built on, which decides where
-/// [`Platform::roots`] and [`Platform::home_trees`] expect a TeX installation.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Platform {
-    Linux,
-    Macos,
-    Windows,
-}
-
-impl Platform {
-    /// Every platform satex knows, for `--version`.
-    pub const ALL: &'static [Platform] = &[Platform::Linux, Platform::Macos, Platform::Windows];
+named_enum! {
+    /// The platform the document is being built on, which decides where
+    /// [`Platform::roots`] and [`Platform::home_trees`] expect a TeX installation.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Platform {
+        Linux => "linux",
+        Macos => "macos",
+        Windows => "windows",
+    }
 }
 
 impl Default for Platform {
@@ -24,14 +21,6 @@ impl Default for Platform {
 }
 
 impl Platform {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Platform::Linux => "linux",
-            Platform::Macos => "macos",
-            Platform::Windows => "windows",
-        }
-    }
-
     /// Detect the current platform.
     pub fn current() -> Platform {
         if cfg!(target_os = "windows") {

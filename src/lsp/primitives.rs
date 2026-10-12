@@ -1,13 +1,8 @@
 //! TeXbook-style syntax of common primitives for hover (The TeXbook, ch. 24;
 //! e-TeX manual), shown only where the name still means the primitive.
 
-use crate::fixed::HashMap;
-use std::sync::OnceLock;
-
-use crate::builtins::Primitive;
-use crate::config::Engine;
 use crate::machine::Analysis;
-use crate::tex::{Interner, Meaning};
+use crate::tex::Meaning;
 
 const D: &str = "⟨control sequence⟩⟨parameter text⟩{⟨replacement text⟩}";
 const IF: &str = "⟨token₁⟩⟨token₂⟩";
@@ -70,24 +65,12 @@ const SYNTAX: &[(&str, &str, bool)] = &[
     ("dimexpr", "⟨dimen expression⟩\\relax", true),
 ];
 
-/// The primitive each name starts as, per engine.
-fn initial(engine: Engine) -> HashMap<String, Primitive> {
-    let mut it = Interner::from_names(Vec::new());
-    let table = crate::builtins::initial_meanings(&mut it, engine);
-    table.into_iter().filter_map(|(s, m)| Some((it.name(s).to_string(), m.prim()?))).collect()
-}
-
 /// The syntax line for `\name` hovered in `path` at `line`:`col`, when its
 /// meaning there is the primitive of that name: the document has no
 /// definition of it before that place, and the kernel left it alone.
 pub fn syntax(analysis: &Analysis, name: &str, path: &str, line: u32, col: u32) -> Option<String> {
     let (_, rest, etex) = SYNTAX.iter().find(|(n, ..)| *n == name)?;
-    static TABLES: OnceLock<std::sync::Mutex<HashMap<String, HashMap<String, Primitive>>>> = OnceLock::new();
-    let engine = analysis.plugins.engine;
-    let want = {
-        let mut tables = TABLES.get_or_init(Default::default).lock().ok()?;
-        *tables.entry(engine.as_str().to_string()).or_insert_with(|| initial(engine)).get(name)?
-    };
+    let want = *crate::builtins::primitive_names(analysis.plugins.engine).get(name)?;
     let sym = analysis.interner.lookup(name)?;
     let file = (0..analysis.file_names().len() as crate::tex::FileId).find(|&f| analysis.file_name(f) == path)?;
     let defs: Vec<_> = analysis.facts.defs.iter().filter(|d| d.name == sym).collect();

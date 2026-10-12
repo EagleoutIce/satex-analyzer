@@ -4,31 +4,20 @@ use std::time::{Duration, Instant};
 
 use crate::tex::FileId;
 
-/// One stage of a run: discovering the TeX installation, reading the format,
-/// reading the document, running end-of-document hooks. [`Timings::phases`]
-/// records how long each took.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Phase {
-    Discovery,
-    Format,
-    Document,
-    Hooks,
-    /// Running the lint rules over the finished analysis.
-    Lint,
-    /// Applying quick-fixes and re-analyzing.
-    Fix,
-}
-
-impl Phase {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Phase::Discovery => "discovery",
-            Phase::Format => "format",
-            Phase::Document => "document",
-            Phase::Hooks => "hooks",
-            Phase::Lint => "lint",
-            Phase::Fix => "fix",
-        }
+named_enum! {
+    /// One stage of a run: discovering the TeX installation, reading the format,
+    /// reading the document, running end-of-document hooks. [`Timings::phases`]
+    /// records how long each took.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Phase {
+        Discovery => "discovery",
+        Format => "format",
+        Document => "document",
+        Hooks => "hooks",
+        /// Running the lint rules over the finished analysis.
+        Lint => "lint",
+        /// Applying quick-fixes and re-analyzing.
+        Fix => "fix",
     }
 }
 

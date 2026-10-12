@@ -55,25 +55,15 @@ pub const SEPARATOR: char = NATIVE.list;
 /// bound keeps a `//` on a huge or cyclic tree from stalling a run.
 const MAX_RECURSE_DEPTH: usize = 8;
 
-/// Where an [`Effective`] value was read from, in the order satex tries them.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Source {
-    Env,
-    Latexmkrc,
-    Make,
-    Config,
-    Unset,
-}
-
-impl Source {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Source::Env => "environment",
-            Source::Latexmkrc => "latexmkrc",
-            Source::Make => "makefile",
-            Source::Config => "satex.yaml",
-            Source::Unset => "unset",
-        }
+named_enum! {
+    /// Where an [`Effective`] value was read from, in the order satex tries them.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Source {
+        Env => "environment",
+        Latexmkrc => "latexmkrc",
+        Make => "makefile",
+        Config => "satex.yaml",
+        Unset => "unset",
     }
 }
 

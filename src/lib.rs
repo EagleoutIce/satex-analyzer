@@ -31,6 +31,8 @@
 //! [`query`] answers questions about the result, [`lint`] reports findings,
 //! [`config::Config`] holds every setting of `satex.yaml`.
 
+#[macro_use]
+mod names;
 pub mod budget;
 pub mod builtins;
 pub mod cmd;

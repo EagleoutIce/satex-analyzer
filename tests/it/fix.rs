@@ -85,32 +85,30 @@ fn check(fixed: &Fixed, expected: &str) {
     compiles(&fixed.dir);
 }
 
-const BODY: &str = "\\begin{document}\nx\n\\end{document}\n";
-
-#[test]
-fn duplicate_package_drops_the_name_from_a_list() {
-    if !installed() {
-        return;
-    }
-    let source = format!(
-        "\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage{{amsmath,graphicx,amssymb}}\n{BODY}"
-    );
-    let fixed = fix("duplicate-list", &source, "duplicate-package", false);
-    check(
-        &fixed,
-        &format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage{{amsmath,amssymb}}\n{BODY}"),
-    );
+/// Tests that fixing `code` in `source` (`unsafe`: with the unsafe fixes too)
+/// gives exactly the expected text.
+macro_rules! fix_cases {
+    ($($(#[$doc:meta])* $name:ident($dir:literal, $source:expr, $code:literal, $unsafe:literal, $want:expr);)*) => {$(
+        $(#[$doc])*
+        #[test]
+        fn $name() {
+            if !installed() {
+                return;
+            }
+            let source = $source;
+            let fixed = fix($dir, AsRef::<str>::as_ref(&source), $code, $unsafe);
+            check(&fixed, $want);
+        }
+    )*};
 }
 
-#[test]
-fn duplicate_package_deletes_a_line_of_its_own() {
-    if !installed() {
-        return;
-    }
-    let source =
-        format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n  \\usepackage{{graphicx}} % again\n{BODY}");
-    let fixed = fix("duplicate-line", &source, "duplicate-package", false);
-    check(&fixed, &format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n{BODY}"));
+const BODY: &str = "\\begin{document}\nx\n\\end{document}\n";
+
+fix_cases! {
+    duplicate_package_drops_the_name_from_a_list("duplicate-list", format!(
+        "\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage{{amsmath,graphicx,amssymb}}\n{BODY}"
+    ), "duplicate-package", false, &format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\usepackage{{amsmath,amssymb}}\n{BODY}"));
+    duplicate_package_deletes_a_line_of_its_own("duplicate-line", format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n  \\usepackage{{graphicx}} % again\n{BODY}"), "duplicate-package", false, &format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n{BODY}"));
 }
 
 #[test]
@@ -151,127 +149,21 @@ fn option_clash_moves_the_options_to_the_first_load() {
     check(&fixed, &format!("\\documentclass{{article}}\n\\usepackage[draft]{{graphicx}}\n{BODY}"));
 }
 
-#[test]
-fn package_after_preamble_moves_into_the_preamble() {
-    if !installed() {
-        return;
-    }
-    let source = "\\documentclass{article}\n\\begin{document}\n\\usepackage[hyphens]{url}\nx\n\\end{document}\n";
-    let fixed = fix("after-preamble", source, "package-after-preamble", true);
-    check(&fixed, "\\documentclass{article}\n\\usepackage[hyphens]{url}\n\\begin{document}\nx\n\\end{document}\n");
-}
-
-#[test]
-fn already_defined_becomes_renewcommand() {
-    if !installed() {
-        return;
-    }
-    let source = "\\documentclass{article}\n\\newcommand{\\foo}{a}\n\\newcommand{\\foo}{b}\n\\begin{document}\n\\foo\n\\end{document}\n".to_string();
-    let fixed = fix("already-defined", &source, "already-defined", true);
-    check(
-        &fixed,
-        "\\documentclass{article}\n\\newcommand{\\foo}{a}\n\\renewcommand{\\foo}{b}\n\\begin{document}\n\\foo\n\\end{document}\n",
-    );
-}
-
-#[test]
-fn not_defined_becomes_newcommand() {
-    if !installed() {
-        return;
-    }
-    let source = "\\documentclass{article}\n\\renewcommand*{\\foo}{a}\n\\begin{document}\n\\foo\n\\end{document}\n";
-    let fixed = fix("not-defined", source, "not-defined", false);
-    check(&fixed, "\\documentclass{article}\n\\newcommand*{\\foo}{a}\n\\begin{document}\n\\foo\n\\end{document}\n");
-}
-
-#[test]
-fn environment_mismatch_names_the_open_environment() {
-    if !installed() {
-        return;
-    }
-    let source = "\\documentclass{article}\n\\begin{document}\n\\begin{center}\nx\n\\end{flushleft}\n\\end{document}\n";
-    let fixed = fix("env-mismatch", source, "environment-mismatch", true);
-    check(&fixed, "\\documentclass{article}\n\\begin{document}\n\\begin{center}\nx\n\\end{center}\n\\end{document}\n");
-}
-
-#[test]
-fn a_solo_end_is_deleted() {
-    if !installed() {
-        return;
-    }
-    let source = format!("\\documentclass{{article}}\n\\end{{center}}\n{BODY}");
-    let fixed = fix("env-solo", &source, "environment-mismatch", true);
-    check(&fixed, &format!("\\documentclass{{article}}\n{BODY}"));
-}
-
-#[test]
-fn unused_label_is_deleted_inline_and_as_a_line() {
-    if !installed() {
-        return;
-    }
-    let source = "\\documentclass{article}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\\section{B}\n  \\label{sec:b}\nx\n\\end{document}\n";
-    let fixed = fix("unused-label", source, "unused-label", true);
-    check(&fixed, "\\documentclass{article}\n\\begin{document}\n\\section{A}\n\\section{B}\nx\n\\end{document}\n");
-}
-
-/// amsmath writes the `\newlabel` at the end of a display, and reads an
-/// `align` body as one argument: the label is recorded at its own key, so
-/// the deletion finds the `\label` that carries it.
-#[test]
-fn unused_label_is_deleted_inside_a_display() {
-    if !installed() {
-        return;
-    }
-    let source = "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\begin{equation}\n  g = h\n  \\label{eq:b}\n\\end{equation}\n\\begin{align}\n  c &= d \\label{eq:a} \\\\\n  e &= f\n\\end{align}\n\\end{document}\n";
-    let fixed = fix("unused-label-display", source, "unused-label", true);
-    check(
-        &fixed,
-        "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\begin{equation}\n  g = h\n\\end{equation}\n\\begin{align}\n  c &= d  \\\\\n  e &= f\n\\end{align}\n\\end{document}\n",
-    );
-}
-
-#[test]
-fn dead_definition_before_a_def_is_a_safe_deletion() {
-    if !installed() {
-        return;
-    }
-    let source =
-        "\\documentclass{article}\n\\def\\x#1{[#1]}\n\\def\\x#1{(#1)}\n\\begin{document}\n\\x{a}\n\\end{document}\n";
-    let fixed = fix("dead-definition", source, "dead-definition", false);
-    check(&fixed, "\\documentclass{article}\n\\def\\x#1{(#1)}\n\\begin{document}\n\\x{a}\n\\end{document}\n");
-}
-
-#[test]
-fn unused_definition_deletes_the_whole_newcommand() {
-    if !installed() {
-        return;
-    }
-    let source = "\\documentclass{article}\n\\newcommand*{\\unused}[2][d]{%\n  #1 and #2%\n}\n\\begin{document}\nx\n\\end{document}\n";
-    let fixed = fix("unused-definition", source, "unused-definition", true);
-    check(&fixed, &format!("\\documentclass{{article}}\n{BODY}"));
-}
-
-#[test]
-fn csname_becomes_the_etoolbox_command_for_its_role() {
-    if !installed() {
-        return;
-    }
-    let source = "\\documentclass{article}\n\\usepackage{etoolbox}\n\\expandafter\\def\\csname my@x\\endcsname{X}\n\\expandafter\\let\\csname my@y\\endcsname\\relax\n\\begin{document}\n\\csname my@x\\endcsname \\csname my@x\\endcsname\n\\end{document}\n";
-    let fixed = fix("csname", source, "primitive-tex-command", true);
-    check(
-        &fixed,
-        "\\documentclass{article}\n\\usepackage{etoolbox}\n\\csdef{my@x}{X}\n\\cslet{my@y}\\relax\n\\begin{document}\n\\csuse{my@x}\\csuse{my@x}%\n\\end{document}\n",
-    );
-}
-
-#[test]
-fn microtype_is_loaded_before_the_document() {
-    if !installed() {
-        return;
-    }
-    let source = format!("\\documentclass{{article}}\n{BODY}");
-    let fixed = fix("microtype", &source, "microtype-available", true);
-    check(&fixed, &format!("\\documentclass{{article}}\n\\usepackage{{microtype}}\n{BODY}"));
+fix_cases! {
+    package_after_preamble_moves_into_the_preamble("after-preamble", "\\documentclass{article}\n\\begin{document}\n\\usepackage[hyphens]{url}\nx\n\\end{document}\n", "package-after-preamble", true, "\\documentclass{article}\n\\usepackage[hyphens]{url}\n\\begin{document}\nx\n\\end{document}\n");
+    already_defined_becomes_renewcommand("already-defined", "\\documentclass{article}\n\\newcommand{\\foo}{a}\n\\newcommand{\\foo}{b}\n\\begin{document}\n\\foo\n\\end{document}\n".to_string(), "already-defined", true, "\\documentclass{article}\n\\newcommand{\\foo}{a}\n\\renewcommand{\\foo}{b}\n\\begin{document}\n\\foo\n\\end{document}\n");
+    not_defined_becomes_newcommand("not-defined", "\\documentclass{article}\n\\renewcommand*{\\foo}{a}\n\\begin{document}\n\\foo\n\\end{document}\n", "not-defined", false, "\\documentclass{article}\n\\newcommand*{\\foo}{a}\n\\begin{document}\n\\foo\n\\end{document}\n");
+    environment_mismatch_names_the_open_environment("env-mismatch", "\\documentclass{article}\n\\begin{document}\n\\begin{center}\nx\n\\end{flushleft}\n\\end{document}\n", "environment-mismatch", true, "\\documentclass{article}\n\\begin{document}\n\\begin{center}\nx\n\\end{center}\n\\end{document}\n");
+    a_solo_end_is_deleted("env-solo", format!("\\documentclass{{article}}\n\\end{{center}}\n{BODY}"), "environment-mismatch", true, &format!("\\documentclass{{article}}\n{BODY}"));
+    unused_label_is_deleted_inline_and_as_a_line("unused-label", "\\documentclass{article}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\\section{B}\n  \\label{sec:b}\nx\n\\end{document}\n", "unused-label", true, "\\documentclass{article}\n\\begin{document}\n\\section{A}\n\\section{B}\nx\n\\end{document}\n");
+    /// amsmath writes the `\newlabel` at the end of a display, and reads an
+    /// `align` body as one argument: the label is recorded at its own key, so
+    /// the deletion finds the `\label` that carries it.
+    unused_label_is_deleted_inside_a_display("unused-label-display", "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\begin{equation}\n  g = h\n  \\label{eq:b}\n\\end{equation}\n\\begin{align}\n  c &= d \\label{eq:a} \\\\\n  e &= f\n\\end{align}\n\\end{document}\n", "unused-label", true, "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\begin{equation}\n  g = h\n\\end{equation}\n\\begin{align}\n  c &= d  \\\\\n  e &= f\n\\end{align}\n\\end{document}\n");
+    dead_definition_before_a_def_is_a_safe_deletion("dead-definition", "\\documentclass{article}\n\\def\\x#1{[#1]}\n\\def\\x#1{(#1)}\n\\begin{document}\n\\x{a}\n\\end{document}\n", "dead-definition", false, "\\documentclass{article}\n\\def\\x#1{(#1)}\n\\begin{document}\n\\x{a}\n\\end{document}\n");
+    unused_definition_deletes_the_whole_newcommand("unused-definition", "\\documentclass{article}\n\\newcommand*{\\unused}[2][d]{%\n  #1 and #2%\n}\n\\begin{document}\nx\n\\end{document}\n", "unused-definition", true, &format!("\\documentclass{{article}}\n{BODY}"));
+    csname_becomes_the_etoolbox_command_for_its_role("csname", "\\documentclass{article}\n\\usepackage{etoolbox}\n\\expandafter\\def\\csname my@x\\endcsname{X}\n\\expandafter\\let\\csname my@y\\endcsname\\relax\n\\begin{document}\n\\csname my@x\\endcsname \\csname my@x\\endcsname\n\\end{document}\n", "primitive-tex-command", true, "\\documentclass{article}\n\\usepackage{etoolbox}\n\\csdef{my@x}{X}\n\\cslet{my@y}\\relax\n\\begin{document}\n\\csuse{my@x}\\csuse{my@x}%\n\\end{document}\n");
+    microtype_is_loaded_before_the_document("microtype", format!("\\documentclass{{article}}\n{BODY}"), "microtype-available", true, &format!("\\documentclass{{article}}\n\\usepackage{{microtype}}\n{BODY}"));
 }
 
 #[test]
@@ -296,14 +188,8 @@ fn ot1_accents_load_t1_and_latin_modern() {
     );
 }
 
-#[test]
-fn computer_modern_in_t1_loads_latin_modern() {
-    if !installed() {
-        return;
-    }
-    let source = format!("\\documentclass{{article}}\n\\usepackage[T1]{{fontenc}}\n{BODY}");
-    let fixed = fix("cm-t1", &source, "computer-modern-in-t1", true);
-    check(&fixed, &format!("\\documentclass{{article}}\n\\usepackage[T1]{{fontenc}}\n\\usepackage{{lmodern}}\n{BODY}"));
+fix_cases! {
+    computer_modern_in_t1_loads_latin_modern("cm-t1", format!("\\documentclass{{article}}\n\\usepackage[T1]{{fontenc}}\n{BODY}"), "computer-modern-in-t1", true, &format!("\\documentclass{{article}}\n\\usepackage[T1]{{fontenc}}\n\\usepackage{{lmodern}}\n{BODY}"));
 }
 
 #[test]
@@ -374,26 +260,11 @@ fn lint_codes(name: &str, source: &str, code: &str) -> (Vec<Record>, PathBuf) {
     (records, dir)
 }
 
-#[test]
-fn stray_space_fires_and_is_fixed_by_appending_percent() {
-    if !installed() {
-        return;
-    }
-    let source = "\\documentclass{article}\n\\def\\x{a\n\\textbf{b}}\n\\begin{document}\n\\x\n\\end{document}\n";
-    let fixed = fix("stray-space", source, "stray-space", false);
-    check(&fixed, "\\documentclass{article}\n\\def\\x{a%\n\\textbf{b}}\n\\begin{document}\n\\x\n\\end{document}\n");
-}
-
-/// A body whose `}` starts the next line gets that `}` moved up, and the
-/// blanks the line ends with go with the line end.
-#[test]
-fn stray_space_before_a_closing_brace_moves_the_brace_up() {
-    if !installed() {
-        return;
-    }
-    let source = "\\documentclass{article}\n\\def\\x{\\textbf{b}  \n  }\n\\begin{document}\n\\x\n\\end{document}\n";
-    let fixed = fix("stray-brace", source, "stray-space", false);
-    check(&fixed, "\\documentclass{article}\n\\def\\x{\\textbf{b}}\n\\begin{document}\n\\x\n\\end{document}\n");
+fix_cases! {
+    stray_space_fires_and_is_fixed_by_appending_percent("stray-space", "\\documentclass{article}\n\\def\\x{a\n\\textbf{b}}\n\\begin{document}\n\\x\n\\end{document}\n", "stray-space", false, "\\documentclass{article}\n\\def\\x{a%\n\\textbf{b}}\n\\begin{document}\n\\x\n\\end{document}\n");
+    /// A body whose `}` starts the next line gets that `}` moved up, and the
+    /// blanks the line ends with go with the line end.
+    stray_space_before_a_closing_brace_moves_the_brace_up("stray-brace", "\\documentclass{article}\n\\def\\x{\\textbf{b}  \n  }\n\\begin{document}\n\\x\n\\end{document}\n", "stray-space", false, "\\documentclass{article}\n\\def\\x{\\textbf{b}}\n\\begin{document}\n\\x\n\\end{document}\n");
 }
 
 #[test]
@@ -520,30 +391,9 @@ fn a_quantity_set_on_only_some_paths_is_not_reported() {
     assert_eq!(records.len(), 1, "{records:?}");
 }
 
-#[test]
-fn hand_set_quantity_becomes_a_siunitx_call() {
-    if !installed() {
-        return;
-    }
-    let source = "\\documentclass{article}\n\\begin{document}\nA delay of 2ms and growth of 5\\%.\n\\end{document}\n";
-    let fixed = fix("hand-set-quantity", source, "hand-set-quantity", true);
-    check(
-        &fixed,
-        "\\documentclass{article}\n\\usepackage{siunitx}\n\\begin{document}\nA delay of \\qty{2}{\\milli\\second} and growth of \\qty{5}{\\percent}.\n\\end{document}\n",
-    );
-}
-
-#[test]
-fn hand_set_quantity_rewrites_a_macro_that_holds_the_unit() {
-    if !installed() {
-        return;
-    }
-    let source = "\\documentclass{article}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\begin{document}\nA delay of \\(3\\ms\\).\n\\end{document}\n";
-    let fixed = fix("hand-set-quantity-macro", source, "hand-set-quantity", true);
-    check(
-        &fixed,
-        "\\documentclass{article}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\usepackage{siunitx}\n\\begin{document}\nA delay of \\(\\qty{3}{\\milli\\second}\\).\n\\end{document}\n",
-    );
+fix_cases! {
+    hand_set_quantity_becomes_a_siunitx_call("hand-set-quantity", "\\documentclass{article}\n\\begin{document}\nA delay of 2ms and growth of 5\\%.\n\\end{document}\n", "hand-set-quantity", true, "\\documentclass{article}\n\\usepackage{siunitx}\n\\begin{document}\nA delay of \\qty{2}{\\milli\\second} and growth of \\qty{5}{\\percent}.\n\\end{document}\n");
+    hand_set_quantity_rewrites_a_macro_that_holds_the_unit("hand-set-quantity-macro", "\\documentclass{article}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\begin{document}\nA delay of \\(3\\ms\\).\n\\end{document}\n", "hand-set-quantity", true, "\\documentclass{article}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\usepackage{siunitx}\n\\begin{document}\nA delay of \\(\\qty{3}{\\milli\\second}\\).\n\\end{document}\n");
 }
 
 /// Documents exercising the typography lints that could plausibly disagree
