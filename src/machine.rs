@@ -400,6 +400,9 @@ const CHECK_INTERVAL: u64 = 256;
 const SHAPE_TOKENS: usize = 64;
 /// Slots of [`Machine::shape_memo`].
 const SHAPE_MEMO: usize = 1024;
+/// One slot of [`Machine::shape_memo`]: the list, the position in it, and
+/// the hash of what is pending there.
+type ShapeSlot = Option<(Rc<[Token]>, usize, u64)>;
 
 /// Peak resident set size in kibibytes, where the platform reports it.
 pub fn peak_memory() -> Option<u64> {
@@ -447,11 +450,6 @@ impl Analysis {
             ..Config::default()
         };
         Machine::new(&cfg, PathBuf::new()).out
-    }
-
-    /// Is a definition made at `span` in scope at `line:col` of the main file?
-    pub fn visible_at(&self, span: Span, line: u32, col: u32) -> bool {
-        self.visible_in(span, self.main_file, line, col)
     }
 
     /// Is a definition made at `span` in scope at `line:col` of `file`? Both
@@ -589,6 +587,10 @@ impl Analysis {
 /// lookahead's token has to be read again within to still count as the
 /// file's.
 pub(crate) const RECENT_FILE_SPANS: usize = 64;
+
+/// A loop head without its content: call site, deciding command, source
+/// progress.
+pub(crate) type LoopId = (Span, Sym, u64);
 
 #[derive(Clone)]
 enum Frame {
@@ -999,13 +1001,13 @@ pub(crate) struct Scratch {
     pub(crate) summarized: HashSet<Span>,
     /// Per loop identity, across drives: how often it was summarized, and
     /// how often it was entered afresh (capped in explore.rs).
-    pub(crate) loop_summaries: HashMap<(Span, Sym, u64), (u32, u32)>,
+    pub(crate) loop_summaries: HashMap<LoopId, (u32, u32)>,
     /// The loops this path continues the summary of: never dropped as
     /// their re-entry.
-    pub(crate) summary_of: Rc<Vec<(Span, Sym, u64)>>,
+    pub(crate) summary_of: Rc<Vec<LoopId>>,
     /// Per loop, the bounded text this path's last pass began with
     /// ([`Machine::input_bound`]).
-    pub(crate) loop_bounds: Rc<Vec<((Span, Sym, u64), u32)>>,
+    pub(crate) loop_bounds: Rc<Vec<(LoopId, u32)>>,
     /// The last loop cut with no path waiting: its head, the source
     /// progress, and how often it was met there since ([`Machine::end_covered`]).
     pub(crate) recut: Option<(Span, u64, u32)>,
@@ -1258,7 +1260,7 @@ pub struct Machine<'a> {
     expansion_sites: HashMap<(Span, Sym), Site>,
     /// Hashes of input lists' pending heads, by list and position: a deep
     /// input below a call is hashed once, not at every call.
-    shape_memo: std::cell::RefCell<Vec<Option<(Rc<[Token]>, usize, u64)>>>,
+    shape_memo: std::cell::RefCell<Vec<ShapeSlot>>,
     /// Each evaluated conditional's fact, by its `\if…`.
     cond_sites: HashMap<Span, usize>,
     /// Tokens taken from a file so far: the measure of progress through the
@@ -1456,10 +1458,10 @@ struct PathState {
     call_shape: Option<Rc<(Sym, Span, String, usize)>>,
     /// The loops this path continues the summary of: never dropped as
     /// their re-entry.
-    pub(crate) summary_of: Rc<Vec<(Span, Sym, u64)>>,
+    pub(crate) summary_of: Rc<Vec<LoopId>>,
     /// Per loop, the bounded text this path's last pass began with
     /// ([`Machine::input_bound`]).
-    pub(crate) loop_bounds: Rc<Vec<((Span, Sym, u64), u32)>>,
+    pub(crate) loop_bounds: Rc<Vec<(LoopId, u32)>>,
     edef_depth: usize,
     pdf_string: bool,
     last_file: Option<FileId>,
@@ -1996,7 +1998,7 @@ impl<'a> Machine<'a> {
             m.catcodes.at_letter(true);
         }
         if m.cfg.plugins.discovery {
-            m.out.plugins.discovery = crate::plugin::discovery::scan_with(&m.base, m.cfg.limits.threads);
+            m.out.plugins.discovery = crate::plugin::discovery::scan_with(&m.base, m.cfg.limits.thread_count());
         }
         m.out.plugins.read_build(m.cfg, &m.out.project, path);
         if m.cfg.plugins.magic {
@@ -2685,7 +2687,7 @@ will look undefined",
         if let (true, Some(directory), Some(captured)) = (
             cacheable,
             &cache_dir,
-            Format::capture(&source, &self.out.interner, &self.env, &[], files, sites, &self.wild, &roots)
+            Format::capture(&source, &self.out.interner, &self.env, files, sites, &self.wild, &roots)
                 .map(|format| format.diagnosed(&self.out.facts.diagnostics, &self.gaps)),
         ) {
             let stored = captured.store(
@@ -3076,12 +3078,6 @@ will look undefined",
         self.read(false)
     }
 
-    /// A token from the current file, with no expansion and no budget for the
-    /// tokens an expansion would have produced.
-    pub fn read_raw(&mut self) -> Option<Token> {
-        self.read(false)
-    }
-
     /// Every token read counts against the budget, so that a runaway loop in
     /// any reader terminates and not just the main one.
     fn read(&mut self, across_files: bool) -> Option<Token> {
@@ -3245,7 +3241,7 @@ will look undefined",
                             && !toks.is_empty()
                         {
                             let toks = toks.clone();
-                            self.push_tokens(toks, None);
+                            self.push_tokens(toks);
                             continue;
                         }
                     }
@@ -3321,24 +3317,13 @@ will look undefined",
             self.runaway = Runaway::FileEnded;
             return;
         }
-        let span = file.map_or_else(|| self.input_span(), |f| Span::new(f, 0, 0));
+        let span = file.map_or_else(|| self.position_span(), |f| Span::new(f, 0, 0));
         self.diagnose(
             Severity::Warning,
             "file-ended",
             span,
             format!("file ended while scanning {what}; {recovery} inserted"),
         );
-    }
-
-    pub(crate) fn input_span(&self) -> Span {
-        self.input
-            .iter()
-            .rev()
-            .find_map(|frame| match frame {
-                Frame::File { mouth, .. } => Some(mouth.here()),
-                _ => None,
-            })
-            .unwrap_or_default()
     }
 
     fn pop_frame(&mut self) {
@@ -3514,11 +3499,8 @@ will look undefined",
         Some(t)
     }
 
-    pub fn push_tokens(&mut self, toks: Rc<[Token]>, expanding: Option<Sym>) {
+    pub fn push_tokens(&mut self, toks: Rc<[Token]>) {
         if toks.is_empty() || self.held_tokens + toks.len() > self.cfg.limits.held_tokens {
-            if let Some(sym) = expanding {
-                self.bump_expanding(sym, -1);
-            }
             if !toks.is_empty() {
                 let at = toks[0].span;
                 self.limit_reached("held_tokens", at);
@@ -3526,12 +3508,10 @@ will look undefined",
             return;
         }
         self.held_tokens += toks.len();
-        if expanding.is_none() {
-            self.end_used_up_lists();
-        }
+        self.end_used_up_lists();
         let held = toks.len();
         let at = (self.conds.len(), self.env.group_id(), self.env.assignments);
-        self.input.push(Frame::Tokens { toks, pos: 0, expanding, held, upper: false, at });
+        self.input.push(Frame::Tokens { toks, pos: 0, expanding: None, held, upper: false, at });
     }
 
     /// [`Machine::push_tokens`] for an expansion standing on several lists,
@@ -3701,10 +3681,7 @@ will look undefined",
         // Assigning a register reads nothing of the value it held. A package
         // cache counts it as a read only when the name means something else.
         let tracking = self.env.track_reads(false);
-        let mut binding = match self.env.get(name) {
-            Some(b) => b.clone(),
-            None => Binding::builtin(Meaning::Unknown),
-        };
+        let mut binding = self.env.get(name).cloned().unwrap_or_else(|| Binding::builtin(Meaning::Unknown));
         self.env.track_reads(tracking);
         self.env.note_read(name, crate::env::ReadKind::Kept);
         if derived {
@@ -3817,15 +3794,6 @@ will look undefined",
         // cache keys on the copy itself.
         if let Some(value) = self.env.slot_value(sym).and_then(|v| i32::try_from(v).ok()) {
             self.end_line = EndLineChar(value);
-        }
-    }
-
-    /// `\makeatletter` and `\ExplSyntaxOn` change several at once.
-    pub fn with_catcodes(&mut self, change: impl FnOnce(&mut CatcodeTable)) {
-        let before = self.catcodes.clone();
-        change(&mut self.catcodes);
-        for (character, _) in self.catcodes.diff(&before) {
-            self.env.save_catcode_state(character, before.get(character), before.is_unknown(character));
         }
     }
 
@@ -4320,15 +4288,7 @@ will look undefined",
         Some(prefix)
     }
 
-    pub fn define(
-        &mut self,
-        name: Sym,
-        meaning: Meaning,
-        by: Sym,
-        mode: DefMode,
-        span: Span,
-        subject: Option<Sym>,
-    ) -> NodeId {
+    pub fn define(&mut self, name: Sym, meaning: Meaning, by: Sym, mode: DefMode, span: Span) -> NodeId {
         // A command that has defined something has read its arguments.
         self.finish_shape();
         if let Meaning::Register(kind, index) = &meaning {
@@ -4492,20 +4452,19 @@ will look undefined",
                     _ => None,
                 };
                 let (tag, subject) = match (register, counter) {
-                    (_, Some(rest)) => ("counter", subject.or_else(|| Some(self.intern(&rest)))),
-                    _ if switch.is_some() => ("switch", subject.or(switch)),
-                    (Some(crate::tex::RegKind::Skip), None) => ("length", subject),
+                    (_, Some(rest)) => ("counter", Some(self.intern(&rest))),
+                    _ if switch.is_some() => ("switch", switch),
+                    (Some(crate::tex::RegKind::Skip), None) => ("length", None),
                     // clsguide § 4.5: `\DeclareOption{⟨option⟩}` stores the
                     // option's code as `\ds@⟨option⟩`, which `\ProcessOptions`
                     // runs.
                     _ if mac.is_some() && spelled.starts_with("ds@") && spelled.len() > 3 => {
-                        let option = spelled[3..].to_string();
-                        ("option", subject.or_else(|| Some(self.intern(&option))))
+                        ("option", Some(self.intern(&spelled[3..])))
                     }
-                    _ => (self.env.meaning(by).prim().map_or("macro", category), subject),
+                    _ => (self.env.meaning(by).prim().map_or("macro", category), None),
                 };
                 let (tag, subject) = match self.environment_half(&spelled, span) {
-                    Some(base) if matches!(tag, "macro" | "alias") => ("environment", subject.or(Some(base))),
+                    Some(base) if matches!(tag, "macro" | "alias") => ("environment", Some(base)),
                     _ => (tag, subject),
                 };
                 // Made by the command the file called: `\newcommand` runs
@@ -4705,7 +4664,7 @@ will look undefined",
             eof_seen: false,
         });
         let call = Token { tok: Tok::Cs(sym), span: Span::default() };
-        self.push_tokens(Rc::from(vec![call]), None);
+        self.push_tokens(Rc::from(vec![call]));
         self.run();
         let mut watch = *self.probe.take().expect("set above");
         watch.exhausted = watch.reached.is_none() && (self.halted || self.out.exhausted);
@@ -5080,7 +5039,7 @@ will look undefined",
     }
 
     /// Where the innermost file being read stands.
-    fn position_span(&self) -> Span {
+    pub(crate) fn position_span(&self) -> Span {
         self.input
             .iter()
             .rev()
@@ -5589,7 +5548,7 @@ will look undefined",
         let cut = self.scan_starts.get(id).is_some_and(|s| s.1);
         self.scan_starts.truncate(id);
         if cut {
-            let at = self.input_span();
+            let at = self.position_span();
             self.diagnose(
                 Severity::Imprecision,
                 "scan-cut-at-resync",
@@ -5762,7 +5721,7 @@ will look undefined",
         if std::mem::take(&mut self.guard_seen.cut) {
             let at = self.position_span();
             let unknown = self.unknown_text(Unk::Any, at);
-            self.push_tokens(Rc::from(vec![unknown]), None);
+            self.push_tokens(Rc::from(vec![unknown]));
         }
         let changed = std::mem::take(&mut self.region.catcodes);
         for &(c, cat, unknown) in &changed {
@@ -5802,7 +5761,7 @@ will look undefined",
         }
         self.input.push(Frame::Boundary);
         let base = self.input.len();
-        self.push_tokens(toks, None);
+        self.push_tokens(toks);
         self.drive(Unit::Command, |m| m.input.len() <= base);
         while self.input.len() >= base {
             self.pop_frame();
@@ -5962,7 +5921,7 @@ will look undefined",
         let depth = self.edef_depth;
         self.input.push(Frame::Boundary);
         let base = self.input.len();
-        self.push_tokens(toks, None);
+        self.push_tokens(toks);
         let out = match self.cfg.arm_joins {
             true => self.scan_as_paths(Unit::Expand),
             false => {
@@ -6026,7 +5985,11 @@ will look undefined",
     /// ⟨number⟩ scanned as paths ([`Unit::Number`]): arms of choices inside
     /// it join where it ends, so a test on a bounded value leaves one path
     /// and the value's hull ([`Machine::abs`]) instead of a path per arm.
+    /// With `arm_joins` off it is a plain [`Machine::scan_number`].
     pub(crate) fn scan_number_joined(&mut self) -> Option<i64> {
+        if !self.cfg.arm_joins {
+            return self.scan_number();
+        }
         let acc = self.scan_paths(Unit::Number, Accum::default());
         let (value, abs) = acc.number.unwrap_or((None, None));
         self.abs = abs;
@@ -6216,24 +6179,19 @@ will look undefined",
         Some(going)
     }
 
-    /// The replacement text of an `\edef` or `\xdef` after its `{`, scanned while
-    /// expanded (tex.web § 477): the text ends at the `}` balancing the braces
-    /// expansion leaves, so `{\iffalse}\fi … }` spans what follows, which expl3's
-    /// `\tex_edef:D … { \if_false: } \fi:` relies on.
-    pub fn scan_expanded_def_body(&mut self) -> Vec<Token> {
-        self.scan_expanded_body(true)
-    }
-
     /// The ⟨balanced text⟩ after a `{` that `\expanded`, `\message` and
     /// their relatives read while expanding it (tex.web § 473, `scan_toks`
     /// with `xpand`): a replacement text when `def`, whose `#`s from `\the`
-    /// and `\unexpanded` stay characters.
+    /// and `\unexpanded` stay characters. The text ends at the `}` balancing
+    /// the braces expansion leaves (tex.web § 477), so `{\iffalse}\fi … }`
+    /// spans what follows, which expl3's `\tex_edef:D … { \if_false: } \fi:`
+    /// relies on.
     pub fn scan_expanded_body(&mut self, def: bool) -> Vec<Token> {
         let scanner = std::mem::replace(&mut self.scanner, if def { Scanner::Defining } else { Scanner::Absorbing });
         let id = self.scan_begin();
         let mut body = self.scan_expanded_body_in(def);
         if self.scan_end(id) {
-            body.push(self.unknown_text(Unk::Any, self.input_span()));
+            body.push(self.unknown_text(Unk::Any, self.position_span()));
         }
         self.scanner = scanner;
         body
@@ -6454,7 +6412,7 @@ will look undefined",
                     let bound = self.active_sym(c);
                     let runs = !matches!(self.env.meaning(bound), Meaning::Undefined | Meaning::Unknown);
                     if runs && self.branch(sym, 2, span) == Some(1) {
-                        self.push_tokens(Rc::from(vec![Token::new(Tok::Cs(bound), span)]), None);
+                        self.push_tokens(Rc::from(vec![Token::new(Tok::Cs(bound), span)]));
                         return;
                     }
                 }
@@ -6678,7 +6636,7 @@ will look undefined",
                 // reused, and where depends on allocation order.
                 Frame::Tokens { toks, pos, .. } if *pos < toks.len() => {
                     // The memo holds the list, so its address names this content.
-                    let slot = (toks.as_ptr() as usize / 8 ^ pos.wrapping_mul(0x9e37)) % SHAPE_MEMO;
+                    let slot = ((toks.as_ptr() as usize / 8) ^ pos.wrapping_mul(0x9e37)) % SHAPE_MEMO;
                     let mut memo = self.shape_memo.borrow_mut();
                     let sub = match &memo[slot] {
                         Some((list, at, sub)) if *at == *pos && Rc::ptr_eq(list, toks) => *sub,
@@ -6741,7 +6699,7 @@ will look undefined",
         self.widen_since(mark);
         self.taint_after_cut();
         let unknown = self.unknown_text(Unk::Any, span);
-        self.push_tokens(Rc::from(vec![unknown]), None);
+        self.push_tokens(Rc::from(vec![unknown]));
     }
 
     fn expand_macro(&mut self, sym: Sym, m: Rc<MacroDef>, span: Span) {
@@ -7142,7 +7100,7 @@ will look undefined",
                     self.env.set_value(cell, value, true);
                 }
                 (_, Some(body)) => {
-                    let meaning = self.make_macro(crate::tex::ParameterText::default(), None, body);
+                    let meaning = self.make_macro(crate::tex::ParameterText::default(), body);
                     self.env.set(target, crate::env::Binding::new(meaning, node), true);
                 }
                 _ => self.env.set(target, crate::env::Binding::new(Meaning::Unknown, node), true),
@@ -7160,7 +7118,7 @@ will look undefined",
             }
             result => {
                 if let Some(text) = self.stub_text(result, span).filter(|t| !t.is_empty()) {
-                    self.push_tokens(Rc::from(text), None);
+                    self.push_tokens(Rc::from(text));
                 }
             }
         }
@@ -7271,7 +7229,7 @@ will look undefined",
             None => self.match_parameter_text(&m.parameter_text),
         };
         if self.scan_end(id) {
-            let unknown = self.unknown_text(Unk::Any, self.input_span());
+            let unknown = self.unknown_text(Unk::Any, self.position_span());
             if let Some(last) = arguments.last_mut() {
                 last.push(unknown);
             }
@@ -7319,8 +7277,7 @@ will look undefined",
     pub fn read_group_body(&mut self) -> Vec<Token> {
         let mut out = Vec::new();
         let mut depth = 1usize;
-        loop {
-            let Some(t) = self.next_token() else { break };
+        while let Some(t) = self.next_token() {
             if self.runaway_argument(t) {
                 return self.unknown_argument(&out, t.span);
             }
@@ -7389,8 +7346,8 @@ will look undefined",
             None => Vec::new(),
             Some(t) if t.is_cat(Catcode::Begin) => {
                 self.note_shape(t.span, "{}");
-                let body = self.read_group_body();
-                body
+
+                self.read_group_body()
             }
             // An unmatched `}` can never become an argument (tex.web § 395):
             // the `\par` inserted before it is read instead.
@@ -7627,7 +7584,7 @@ will look undefined",
     /// The most tokens `input`'s token lists may hold, typed text by its
     /// bound; `None` when none of it is bounded. A pass that begins with
     /// less than the one before ends by construction.
-    pub(crate) fn input_bound(&self, input: &[Frame]) -> Option<u32> {
+    fn input_bound(&self, input: &[Frame]) -> Option<u32> {
         let lists = input.iter().rev().map_while(|frame| match frame {
             Frame::Tokens { toks, pos, .. } => Some(&toks[*pos..]),
             Frame::Returned(tokens) => Some(&tokens[..]),
@@ -8064,8 +8021,7 @@ will look undefined",
     /// which the replacement text puts back (tex.web § 476).
     fn read_before_group(&mut self) -> Vec<Token> {
         let mut out: Vec<Token> = Vec::new();
-        loop {
-            let Some(t) = self.next_token() else { break };
+        while let Some(t) = self.next_token() {
             if self.runaway_argument(t) {
                 return self.unknown_argument(&out, t.span);
             }
@@ -8315,8 +8271,7 @@ will look undefined",
         }
         let mut out = Vec::new();
         let mut depth = 0usize;
-        loop {
-            let Some(t) = self.next_token() else { break };
+        while let Some(t) = self.next_token() {
             match t.tok {
                 Tok::Chr(_, Catcode::Begin) => depth += 1,
                 Tok::Chr(_, Catcode::End) => depth = depth.saturating_sub(1),
@@ -8651,8 +8606,7 @@ will look undefined",
     /// stack holds or a file, and no token budget cuts it short.
     fn pass_text_in(&mut self, to_fi: bool, at: Span) -> Option<(Primitive, Span)> {
         let mut nesting = CondDepth::default();
-        loop {
-            let Some(t) = self.next_token() else { break };
+        while let Some(t) = self.next_token() {
             // Skipping crossed into another file's text: a misjudged test or
             // `\fi` would otherwise swallow the document. TeX inserts `\fi`
             // where a file ends inside a skip (tex.web § 336); satex ends the
@@ -10249,7 +10203,7 @@ impl Machine<'_> {
         regs.dedup_by_key(|&mut (reg, _)| reg);
         for &name in &fresh {
             self.prefixes.global = true;
-            self.define(name, Meaning::Unknown, by, DefMode::Declare, span, None);
+            self.define(name, Meaning::Unknown, by, DefMode::Declare, span);
         }
         for &(reg, kind) in &regs {
             let (quantity, num) = match kind {

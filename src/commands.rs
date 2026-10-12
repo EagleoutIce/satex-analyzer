@@ -182,15 +182,15 @@ impl Machine<'_> {
         self.env.get(sym).is_some()
     }
 
-    /// An engine integer, or the default a never-set key reads as.
+    /// An engine integer, 0 for a never-set key.
     /// `None` if the key, or an unpinned write, left it unknown.
-    fn engine_slot_int(&mut self, family: &str, key: &str, default: i64) -> Option<i64> {
+    fn engine_slot_int(&mut self, family: &str, key: &str) -> Option<i64> {
         if self.engine_unpinned(family) {
             return None;
         }
         let sym = self.engine_sym(key);
         match self.env.get(sym) {
-            None => Some(default),
+            None => Some(0),
             Some(_) => self.env.value(sym).as_int(),
         }
     }
@@ -198,7 +198,7 @@ impl Machine<'_> {
     /// Whether `\openout` left the stream open (tex.web § 1374).
     /// `None` if an unpinned number opened or closed one.
     pub(crate) fn write_open(&mut self, stream: i64) -> Option<bool> {
-        self.engine_slot_int("write_open.", &format!("write_open.{stream}"), 0).map(|n| n == 1)
+        self.engine_slot_int("write_open.", &format!("write_open.{stream}")).map(|n| n == 1)
     }
 
     /// `\globaldefs` (tex.web § 1214): positive makes every assignment
@@ -236,10 +236,8 @@ impl Machine<'_> {
         }
     }
 
-    fn take_global(&mut self) -> bool {
-        let global = self.prefixes.global;
-        self.prefixes = Default::default();
-        global
+    pub(crate) fn take_global(&mut self) -> bool {
+        std::mem::take(&mut self.prefixes).global
     }
 
     /// `scan_optional_equals` (tex.web § 405).
@@ -350,7 +348,7 @@ impl Machine<'_> {
             // of one (`\intarray_gset:Nnn`) does not overflow.
             Primitive::LastItem(_)
                 if self.name(self.env.identity(sym)) == "pdflastximage"
-                    && let Some(n) = self.engine_slot_int("ximages", "ximages", 0) =>
+                    && let Some(n) = self.engine_slot_int("ximages", "ximages") =>
             {
                 Some(Value::Int(n))
             }
@@ -625,9 +623,7 @@ impl Machine<'_> {
             }
             // tex.web § 1248: `\parshape` reads back the number of lines it
             // was given, 0 until it is given one.
-            Special::ParShape => {
-                Some(self.engine_slot_int("parshape", "parshape", 0).map_or(Value::Unknown, Value::Int))
-            }
+            Special::ParShape => Some(self.engine_slot_int("parshape", "parshape").map_or(Value::Unknown, Value::Int)),
             Special::UCode { math, num } => {
                 let c = self.scan_int().and_then(|c| u32::try_from(c).ok()).and_then(char::from_u32)?;
                 // "Can't use \Umathcode as a number (try \Umathcodenum)".
@@ -639,7 +635,7 @@ impl Machine<'_> {
             }
             Special::CharClass => {
                 let c = self.scan_int()?;
-                let class = self.engine_slot_int("charclass.", &format!("charclass.{c}"), 0);
+                let class = self.engine_slot_int("charclass.", &format!("charclass.{c}"));
                 Some(class.map_or(Value::Unknown, Value::Int))
             }
             Special::InterCharToks => {
@@ -658,7 +654,7 @@ impl Machine<'_> {
                 let n = self.scan_int()?;
                 let name = self.name(by).to_string();
                 let family = format!("{name}.");
-                let Some(count) = self.engine_slot_int(&family, &format!("{name}.count"), 0) else {
+                let Some(count) = self.engine_slot_int(&family, &format!("{name}.count")) else {
                     return Some(Value::Unknown);
                 };
                 if n <= 0 {
@@ -668,7 +664,7 @@ impl Machine<'_> {
                     return Some(Value::Int(0));
                 }
                 let k = n.min(count);
-                let value = self.engine_slot_int(&family, &format!("{name}.{k}"), 0);
+                let value = self.engine_slot_int(&family, &format!("{name}.{k}"));
                 Some(value.map_or(Value::Unknown, Value::Int))
             }
         }
@@ -928,7 +924,7 @@ impl Machine<'_> {
     /// tex.web § 232: `\nullfont` until a font is selected; `None` where a
     /// selection satex could not follow left the current font unknown.
     pub(crate) fn current_font(&mut self) -> Option<u32> {
-        u32::try_from(self.engine_slot_int("font", "font", 0)?).ok()
+        u32::try_from(self.engine_slot_int("font", "font")?).ok()
     }
 
     /// Whether the current font is known to be `\nullfont`: no character
@@ -1019,7 +1015,7 @@ impl Machine<'_> {
     /// tex.web § 232: every math family starts at `\nullfont`.
     pub(crate) fn family_font(&mut self, by: Sym, family: i64) -> Option<u32> {
         let name = self.name(by).to_string();
-        u32::try_from(self.engine_slot_int(&format!("{name}."), &format!("{name}.{family}"), 0)?).ok()
+        u32::try_from(self.engine_slot_int(&format!("{name}."), &format!("{name}.{family}"))?).ok()
     }
 
     /// `\font⟨cs⟩=⟨file name⟩⟨at clause⟩` (tex.web §§ 1257-1260). A font
@@ -1043,7 +1039,7 @@ impl Machine<'_> {
             self.set_font_field(font, "cs", Value::Int(i64::from(name_cs.0)));
         }
         self.prefixes.global = global;
-        self.define(name_cs, Meaning::Primitive(Primitive::FontIdent(font)), by, DefMode::Declare, span, None);
+        self.define(name_cs, Meaning::Primitive(Primitive::FontIdent(font)), by, DefMode::Declare, span);
     }
 
     /// Where the engine finds the font (tex.web § 563; xetex.web
@@ -1481,8 +1477,7 @@ impl Machine<'_> {
             Syntax::SetBox => {
                 let register = self.scan_int();
                 self.scan_optional_equals();
-                let global = self.prefixes.global;
-                self.prefixes = Default::default();
+                let global = self.take_global();
                 self.scan_box(crate::mode::BoxContext::Set { register, global }, span);
             }
             Syntax::VSplit => {
@@ -1550,11 +1545,11 @@ impl Machine<'_> {
                 // A copy of a font satex could not name is no font it
                 // knows, and not `\nullfont` either.
                 let Some(copy) = copy else {
-                    self.define(name_cs, Meaning::Unknown, by, DefMode::Declare, span, None);
+                    self.define(name_cs, Meaning::Unknown, by, DefMode::Declare, span);
                     return;
                 };
                 self.set_font_field(copy, "cs", Value::Int(i64::from(name_cs.0)));
-                self.define(name_cs, Meaning::Primitive(Primitive::FontIdent(copy)), by, DefMode::Declare, span, None);
+                self.define(name_cs, Meaning::Primitive(Primitive::FontIdent(copy)), by, DefMode::Declare, span);
             }
             Syntax::UMathCharDef { num } => {
                 let Some(name) = self.read_r_token() else { return };
@@ -1571,11 +1566,11 @@ impl Machine<'_> {
                     None => code,
                 };
                 let Some(code) = code else {
-                    self.define(name, Meaning::Unknown, by, DefMode::Declare, span, None);
+                    self.define(name, Meaning::Unknown, by, DefMode::Declare, span);
                     return;
                 };
                 let meaning = Meaning::Register(RegKind::UMathChar, code as u16);
-                self.define(name, meaning, by, DefMode::Declare, span, None);
+                self.define(name, meaning, by, DefMode::Declare, span);
                 self.env.set_value(name, Value::Int(code), true);
             }
             Syntax::SetFontId => {
@@ -1639,11 +1634,7 @@ impl Machine<'_> {
                 if self.scan_keyword("struct") {
                     self.scan_int();
                 }
-                if self.scan_keyword("num") {
-                    self.scan_int();
-                } else if self.scan_keyword("name") {
-                    self.read_general_text();
-                }
+                self.scan_id();
                 if self.scan_keyword("xyz") {
                     if self.scan_keyword("zoom") {
                         self.scan_int();
@@ -1669,11 +1660,7 @@ impl Machine<'_> {
             Syntax::PdfThread => {
                 self.scan_rule_spec();
                 self.scan_attr();
-                if self.scan_keyword("num") {
-                    self.scan_int();
-                } else if self.scan_keyword("name") {
-                    self.read_general_text();
-                }
+                self.scan_id();
             }
             Syntax::PdfXForm => {
                 self.scan_attr();
@@ -1724,7 +1711,7 @@ impl Machine<'_> {
                     .and_then(|(p, w)| crate::pdfbox::page_box(&std::fs::read(p).ok()?, w));
                 // pdfTeX numbers images from 1 and keeps their sizes for
                 // `\pdfrefximage`.
-                let n = self.engine_slot_int("ximages", "ximages", 0).map(|n| n + 1);
+                let n = self.engine_slot_int("ximages", "ximages").map(|n| n + 1);
                 self.set_engine("ximages", n.map_or(Value::Unknown, Value::Int), true);
                 if let Some(n) = n {
                     for (k, sp) in [("w", size.map(|s| s.0)), ("h", size.map(|s| s.1))] {
@@ -1793,6 +1780,15 @@ impl Machine<'_> {
         }
     }
 
+    /// The pdfTeX manual's `num ⟨integer⟩` or `name ⟨general text⟩`, if either.
+    fn scan_id(&mut self) {
+        if self.scan_keyword("num") {
+            self.scan_int();
+        } else if self.scan_keyword("name") {
+            self.read_general_text();
+        }
+    }
+
     /// The pdfTeX manual's ⟨action spec⟩.
     fn scan_action(&mut self) {
         if self.scan_keyword("user") {
@@ -1816,11 +1812,7 @@ impl Machine<'_> {
             if self.scan_keyword("file") {
                 self.read_general_text();
             }
-            if self.scan_keyword("num") {
-                self.scan_int();
-            } else if self.scan_keyword("name") {
-                self.read_general_text();
-            }
+            self.scan_id();
         }
     }
 
@@ -1848,7 +1840,7 @@ impl Machine<'_> {
             if open == Some(false) && self.terminal_read_is_fatal(span) {
                 return;
             }
-            self.define(name, Meaning::Unknown, by, DefMode::Declare, span, None);
+            self.define(name, Meaning::Unknown, by, DefMode::Declare, span);
             return;
         }
         let stream = stream.expect("an open stream has a number");
@@ -1865,8 +1857,8 @@ impl Machine<'_> {
             let unknown = self.unknown_text(Unk::Any, span);
             body.push(unknown);
         }
-        let meaning = self.make_macro(Default::default(), None, body);
-        self.define(name, meaning, by, DefMode::Declare, span, None);
+        let meaning = self.make_macro(Default::default(), body);
+        self.define(name, meaning, by, DefMode::Declare, span);
     }
 
     // ---- expandable ---------------------------------------------------------
@@ -1898,7 +1890,7 @@ impl Machine<'_> {
                 // whatever their unknown rest holds.
                 let order = match ka && kb {
                     true => Some(pa.cmp(&pb)),
-                    false => pa.chars().zip(pb.chars()).find(|(x, y)| x != y).map(|(x, y)| x.cmp(&y)).or_else(|| {
+                    false => pa.chars().zip(pb.chars()).find(|(x, y)| x != y).map(|(x, y)| x.cmp(&y)).or({
                         // A known text that is a proper prefix of the other's known part comes first.
                         match (ka, kb) {
                             (true, _) if pb.len() > pa.len() => Some(std::cmp::Ordering::Less),
@@ -2046,7 +2038,7 @@ impl Machine<'_> {
                 self.scan_keyword("page");
                 self.scan_keyword("direct");
                 self.read_general_text();
-                let next = self.engine_slot_int("colorstacks", "colorstacks", 0).map(|n| n + 1);
+                let next = self.engine_slot_int("colorstacks", "colorstacks").map(|n| n + 1);
                 self.set_engine("colorstacks", next.map_or(Value::Unknown, Value::Int), true);
                 next.map(|n| n.to_string())
             }
@@ -2099,7 +2091,7 @@ impl Machine<'_> {
     /// `\pdflastmatch n`: `⟨position⟩->⟨text⟩` of group `n` of the last
     /// match, `-1->` for a group there is none of.
     fn pdf_last_match(&mut self, n: i64, span: Span) -> Vec<Token> {
-        match self.engine_slot_int(LAST_MATCH, LAST_MATCH_COUNT, 0) {
+        match self.engine_slot_int(LAST_MATCH, LAST_MATCH_COUNT) {
             None => vec![self.unknown_text(Unk::Any, span)],
             Some(count) if n < 0 || n >= count => chars(NO_MATCH, span),
             Some(_) => {

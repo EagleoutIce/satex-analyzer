@@ -33,11 +33,7 @@ impl Applicability {
     }
 
     pub fn parse(text: &str) -> Option<Applicability> {
-        match text {
-            "safe" => Some(Applicability::Safe),
-            "unsafe" => Some(Applicability::Unsafe),
-            _ => None,
-        }
+        [Applicability::Safe, Applicability::Unsafe].into_iter().find(|a| a.as_str() == text)
     }
 }
 
@@ -54,7 +50,7 @@ impl Pos {
         Pos { line, col }
     }
 
-    fn of(span: Span) -> Pos {
+    pub(crate) fn of(span: Span) -> Pos {
         Pos::new(span.line, span.col)
     }
 }

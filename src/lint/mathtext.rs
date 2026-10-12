@@ -256,10 +256,6 @@ fn regions(view: &View) -> Vec<Region> {
     out
 }
 
-fn pos(span: Span) -> Pos {
-    Pos::new(span.line, span.col)
-}
-
 fn span_at(file: FileId, at: Pos) -> Span {
     Span::new(file, at.line, at.col)
 }
@@ -387,10 +383,10 @@ fn math_shift_dollars(report: &mut Report) {
 /// set before the region and the region's own first character.
 fn opening(lexed: &Lexed, region: &Region) -> Option<std::ops::Range<usize>> {
     let from = match region.after {
-        Some(before) => lexed.at(pos(before)),
+        Some(before) => lexed.at(Pos::of(before)),
         None => lexed.at(Pos::new(region.first.line, 1)),
     };
-    let stop = lexed.at(pos(region.first));
+    let stop = lexed.at(Pos::of(region.first));
     let mut run: Option<std::ops::Range<usize>> = None;
     for index in from..stop.min(from + NEAR) {
         match (lexed.shift(index), run.take()) {
@@ -405,7 +401,7 @@ fn opening(lexed: &Lexed, region: &Region) -> Option<std::ops::Range<usize>> {
 /// The first run of math shift characters after the region's last
 /// character.
 fn closing(lexed: &Lexed, region: &Region) -> Option<std::ops::Range<usize>> {
-    let from = lexed.exactly(pos(region.last))? + 1;
+    let from = lexed.exactly(Pos::of(region.last))? + 1;
     let start = (from..(from + NEAR).min(lexed.tokens.len())).find(|index| lexed.shift(*index))?;
     let mut end = start;
     while lexed.shift(end) {
@@ -435,7 +431,7 @@ fn math_script_braces(report: &mut Report) {
     let mut findings = Vec::new();
     for region in regions(view) {
         let Some(lexed) = files.get(&edits, region.first.file) else { continue };
-        let (from, to) = (lexed.at(pos(region.first)), lexed.at(pos(region.last)));
+        let (from, to) = (lexed.at(Pos::of(region.first)), lexed.at(Pos::of(region.last)));
         for k in from..=to.min(lexed.tokens.len().saturating_sub(1)) {
             let Some(Tok::Chr(script, Catcode::Sup | Catcode::Sub)) = lexed.tokens.get(k).map(|l| l.tok) else {
                 continue;
@@ -531,7 +527,7 @@ fn delimiter_not_followed(report: &mut Report) {
             continue;
         }
         let Some(lexed) = files.get(&edits, expansion.span.file) else { continue };
-        let Some(index) = lexed.exactly(pos(expansion.span)).filter(|k| lexed.name(*k).is_some()) else { continue };
+        let Some(index) = lexed.exactly(Pos::of(expansion.span)).filter(|k| lexed.name(*k).is_some()) else { continue };
         let mut next = index + 1;
         while matches!(lexed.tokens.get(next).map(|l| l.tok), Some(Tok::Chr(_, Catcode::Space))) {
             next += 1;

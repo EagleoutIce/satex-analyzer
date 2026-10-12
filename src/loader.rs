@@ -91,7 +91,7 @@ impl Resolver {
         if let Some(hit) = self.cache.get(&(name.to_string(), kind)) {
             return hit.clone();
         }
-        let found = self.search_internal(name, kind, base);
+        let found = self.search_uncached(name, kind, base);
         self.cache.insert((name.to_string(), kind), found.clone());
         found
     }
@@ -101,17 +101,13 @@ impl Resolver {
         self.cache.iter()
     }
 
-    /// Look a name up afresh, bypassing what earlier lookups found.
-    pub fn search_again(&self, name: &str, kind: LoadKind, base: &Path) -> Option<PathBuf> {
-        self.search_internal(name, kind, base)
-    }
-
     /// Returns the case mismatch detected for a name, if any: (asked, found).
     pub fn case_mismatch(&self, name: &str, kind: LoadKind) -> Option<(String, String)> {
         self.case_mismatches.borrow().get(&(name.to_string(), kind)).cloned()
     }
 
-    fn search_internal(&self, name: &str, kind: LoadKind, base: &Path) -> Option<PathBuf> {
+    /// Look a name up afresh, bypassing what earlier lookups found.
+    pub(crate) fn search_uncached(&self, name: &str, kind: LoadKind, base: &Path) -> Option<PathBuf> {
         let candidates = candidates(name, kind);
         for file in &candidates {
             let output = self.output.as_deref().filter(|_| !Path::new(file).is_absolute());

@@ -30,7 +30,7 @@ pub(crate) fn cache_key() -> &'static str {
 }
 
 /// [`Severity`] by index, so a cache stores a byte and not a name.
-const SEVERITIES: [Severity; 5] =
+pub(crate) const SEVERITIES: [Severity; 5] =
     [Severity::Info, Severity::Warning, Severity::Imprecision, Severity::Unsupported, Severity::Assumption];
 
 /// One diagnostic the kernel build raised: severity index, code, message,
@@ -71,9 +71,9 @@ pub struct Format {
     gaps: Vec<(String, u32)>,
 }
 
-/// A cached diagnostic code is `&'static str` in the run: interned once per
-/// process.
-fn leak(text: &str) -> &'static str {
+/// The run's diagnostic codes, fact tags and metadata fields are
+/// `&'static str`; a cached one is interned once per process.
+pub(crate) fn leak(text: &str) -> &'static str {
     static SEEN: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
     let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(found) = seen.iter().find(|s| **s == text) {
@@ -124,12 +124,12 @@ pub(crate) fn content_hash(path: &Path) -> Option<u64> {
 pub(crate) fn bytes_hash(bytes: &[u8]) -> u64 {
     const K: u64 = 0x9e37_79b9_7f4a_7c15;
     let mix = |h: u64, w: u64| (h ^ w).wrapping_mul(K).rotate_left(29);
-    let mut chunks = bytes.chunks_exact(8);
+    let (chunks, remainder) = bytes.as_chunks::<8>();
     let mut h = (bytes.len() as u64).wrapping_mul(K);
-    for chunk in &mut chunks {
-        h = mix(h, u64::from_le_bytes(chunk.try_into().unwrap_or_default()));
+    for &chunk in chunks {
+        h = mix(h, u64::from_le_bytes(chunk));
     }
-    for &byte in chunks.remainder() {
+    for &byte in remainder {
         h = mix(h, u64::from(byte) | 0x100);
     }
     h ^ (h >> 31)
@@ -274,16 +274,31 @@ pub fn enabled_cache_dir(cfg: &crate::config::Config) -> Option<PathBuf> {
     cfg.cache.enabled.then(|| cfg.cache.dir.clone().or_else(default_cache_dir)).flatten()
 }
 
-const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-const FNV_PRIME: u64 = 0x0100_0000_01b3;
+/// 64-bit FNV-1a, the hash every cache name and digest is built from.
+pub(crate) struct Fnv(pub(crate) u64);
+
+impl Fnv {
+    pub(crate) fn new() -> Fnv {
+        Fnv(0xcbf2_9ce4_8422_2325)
+    }
+    pub(crate) fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.0 ^= u64::from(*byte);
+            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    /// A value as its length-prefixed postcard encoding.
+    pub(crate) fn put<T: Serialize + ?Sized>(&mut self, value: &T) {
+        let bytes = postcard::to_allocvec(value).unwrap_or_default();
+        self.write(&(bytes.len() as u64).to_le_bytes());
+        self.write(&bytes);
+    }
+}
 
 pub(crate) fn digest(bytes: &[u8]) -> u64 {
-    let mut hash = FNV_OFFSET;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash
+    let mut hash = Fnv::new();
+    hash.write(bytes);
+    hash.0
 }
 
 /// Cache file per installation, engine, semantic version and preload. The
@@ -531,11 +546,12 @@ pub fn prune_caches(dir: &Path, package_encoding: u32, bound: u64) -> Pruned {
     let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
     for (stamp, path) in locks {
         let cache = path.with_extension("postcard");
-        if stamp < old && !cache.exists() {
-            if let Some(lock) = StoreLock::try_take(&cache) {
-                drop(lock);
-                let _ = std::fs::remove_file(&path);
-            }
+        if stamp < old
+            && !cache.exists()
+            && let Some(lock) = StoreLock::try_take(&cache)
+        {
+            drop(lock);
+            let _ = std::fs::remove_file(&path);
         }
     }
     pruned
@@ -635,7 +651,6 @@ impl Format {
         source: &Path,
         interner: &Interner,
         env: &Env,
-        catcodes: &[(char, u8)],
         files: Vec<(String, LoadKind)>,
         sites: Vec<(u32, u16, u32)>,
         wild: &crate::machine::Wild,
@@ -659,7 +674,7 @@ impl Format {
             source: roots.encode(&source.display().to_string()),
             names: (0..interner.len()).map(|i| interner.name(Sym(i as u32)).to_string()).collect(),
             bindings,
-            catcodes: catcodes.to_vec(),
+            catcodes: Vec::new(),
             files,
             hashes,
             sites,

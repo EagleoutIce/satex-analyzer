@@ -1439,6 +1439,65 @@ pub fn good(text: &str) -> String {
     format!("{GOOD}{text}{GOOD:#}")
 }
 
+fn paint(style: Style, text: &str) -> String {
+    format!("{style}{text}{style:#}")
+}
+
+/// Colors one `--stats`/`-v` status line (cache, stats, hotspot, limit),
+/// keeping its text. `anstream` drops the codes where color is off.
+pub fn status(line: &str) -> String {
+    let (lead, body) = line.split_at(line.len() - line.trim_start().len());
+    let colored = if let Some(rest) = body.strip_prefix("satex: ") {
+        format!("satex: {}", status(rest))
+    } else if let Some(rest) = body.strip_prefix("hot ") {
+        let (name, rows) = rest.split_once(' ').unwrap_or((rest, ""));
+        let label = match name {
+            "steps" => fg(AnsiColor::Blue).bold(),
+            "forks" => fg(AnsiColor::Magenta).bold(),
+            "joins" => fg(AnsiColor::Green).bold(),
+            _ => fg(AnsiColor::Yellow).bold(),
+        };
+        let rows = rows.split("  ").map(|r| match r.split_once(' ') {
+            Some((n, at)) => format!("{} {}", paint(BOLD, n), paint(NAME, at)),
+            None => r.to_string(),
+        });
+        format!("hot {} {}", paint(label, name), rows.collect::<Vec<_>>().join("  "))
+    } else if let Some(rest) = body.strip_prefix("limits.") {
+        let Some((key, rest)) = rest.split_once(" = ") else { return line.to_string() };
+        let (value, rest) = rest.split_once(" was reached ").unwrap_or((rest, ""));
+        let (count, rest) = rest.split_once(" (first at ").unwrap_or((rest, ""));
+        let (at, advice) = rest.split_once("); ").unwrap_or((rest, ""));
+        format!(
+            "limits.{} = {} was reached {} (first at {}); {}",
+            paint(WARNING, key),
+            paint(BOLD, value),
+            paint(BOLD, count),
+            paint(NAME, at),
+            paint(DIM, advice)
+        )
+    } else if body.starts_with("cache ") {
+        match body.split_once("rebuilt (") {
+            Some((head, why)) => format!("{head}{} {}", paint(WARNING, "rebuilt"), paint(DIM, &format!("({why}"))),
+            None => match body.rsplit_once("reused") {
+                Some((head, tail)) => format!("{head}{}{tail}", paint(GOOD, "reused")),
+                None => body.to_string(),
+            },
+        }
+    } else if body.starts_with(|c: char| c.is_ascii_digit()) && body.contains(" files") {
+        let mut parts = body.split("  |  ");
+        let first = parts.next().unwrap_or("");
+        let rest = parts.map(|p| match p {
+            "budget exhausted" => paint(ERROR, p),
+            _ => p.to_string(),
+        });
+        let all = std::iter::once(paint(BOLD, first)).chain(rest);
+        all.collect::<Vec<_>>().join("  |  ")
+    } else {
+        body.to_string()
+    };
+    format!("{lead}{colored}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1540,63 +1599,4 @@ mod tests {
         assert!(out.contains(&long_message[long_message.len() - 10..]));
         assert!(out.contains("1 error, 1 warning, 1 suggestion, 1 performance note, 1 precision note"));
     }
-}
-
-fn paint(style: Style, text: &str) -> String {
-    format!("{style}{text}{style:#}")
-}
-
-/// Colors one `--stats`/`-v` status line (cache, stats, hotspot, limit),
-/// keeping its text. `anstream` drops the codes where color is off.
-pub fn status(line: &str) -> String {
-    let (lead, body) = line.split_at(line.len() - line.trim_start().len());
-    let colored = if let Some(rest) = body.strip_prefix("satex: ") {
-        format!("satex: {}", status(rest))
-    } else if let Some(rest) = body.strip_prefix("hot ") {
-        let (name, rows) = rest.split_once(' ').unwrap_or((rest, ""));
-        let label = match name {
-            "steps" => fg(AnsiColor::Blue).bold(),
-            "forks" => fg(AnsiColor::Magenta).bold(),
-            "joins" => fg(AnsiColor::Green).bold(),
-            _ => fg(AnsiColor::Yellow).bold(),
-        };
-        let rows = rows.split("  ").map(|r| match r.split_once(' ') {
-            Some((n, at)) => format!("{} {}", paint(BOLD, n), paint(NAME, at)),
-            None => r.to_string(),
-        });
-        format!("hot {} {}", paint(label, name), rows.collect::<Vec<_>>().join("  "))
-    } else if let Some(rest) = body.strip_prefix("limits.") {
-        let Some((key, rest)) = rest.split_once(" = ") else { return line.to_string() };
-        let (value, rest) = rest.split_once(" was reached ").unwrap_or((rest, ""));
-        let (count, rest) = rest.split_once(" (first at ").unwrap_or((rest, ""));
-        let (at, advice) = rest.split_once("); ").unwrap_or((rest, ""));
-        format!(
-            "limits.{} = {} was reached {} (first at {}); {}",
-            paint(WARNING, key),
-            paint(BOLD, value),
-            paint(BOLD, count),
-            paint(NAME, at),
-            paint(DIM, advice)
-        )
-    } else if body.starts_with("cache ") {
-        match body.split_once("rebuilt (") {
-            Some((head, why)) => format!("{head}{} {}", paint(WARNING, "rebuilt"), paint(DIM, &format!("({why}"))),
-            None => match body.rsplit_once("reused") {
-                Some((head, tail)) => format!("{head}{}{tail}", paint(GOOD, "reused")),
-                None => body.to_string(),
-            },
-        }
-    } else if body.starts_with(|c: char| c.is_ascii_digit()) && body.contains(" files") {
-        let mut parts = body.split("  |  ");
-        let first = parts.next().unwrap_or("");
-        let rest = parts.map(|p| match p {
-            "budget exhausted" => paint(ERROR, p),
-            _ => p.to_string(),
-        });
-        let all = std::iter::once(paint(BOLD, first)).chain(rest);
-        all.collect::<Vec<_>>().join("  |  ")
-    } else {
-        body.to_string()
-    };
-    format!("{lead}{colored}")
 }

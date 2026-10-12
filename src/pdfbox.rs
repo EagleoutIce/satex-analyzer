@@ -144,7 +144,7 @@ fn huffman(lengths: &[u8]) -> (Vec<u16>, Vec<u16>) {
         counts[l as usize] += 1;
     }
     counts[0] = 0;
-    let mut offs = vec![0u16; 16];
+    let mut offs = [0u16; 16];
     for len in 1..15 {
         offs[len + 1] = offs[len] + counts[len];
     }

@@ -1,5 +1,13 @@
 # Config for the "Check documentation links" CI job (.github/workflows/ci.yml)
-# and for `lychee` run by hand: `lychee --config lychee.toml *.md doc/**/*.md`.
+# and for `lychee` run by hand:
+#
+#   lychee --config lychee.toml \
+#     --remap "https://github\.com/EagleoutIce/satex-analyzer/blob/main/([^#]*)(#.*)? file://$PWD/\$1" \
+#     *.md doc/**/*.md
+#
+# The remap checks links into this repository's `main` against the checkout,
+# so a file added on a branch is found before it is merged; it needs the
+# absolute path, which a config file cannot spell.
 
 # GitHub line-anchored blobs (`#L1234`) and CTAN mirrors occasionally answer
 # slowly or rate-limit; retry a few times before failing the run.
@@ -10,7 +18,7 @@ retry_wait_time = 5
 # HTML lychee fetches, so it cannot verify them; the page returning 200 is
 # checked instead (scripts/tex-web-links.py's own section map is how the
 # repository keeps `#L<line>` itself honest, see SEMANTICS.md's footer).
-include_fragments = false
+include_fragments = "none"
 
 # Never touches anything outside the repository's own docs, so no reason to
 # skip localhost or private hosts here.
@@ -19,6 +27,15 @@ exclude_all_private = false
 # The header banner links to this repository's own `main` branch, which
 # does not exist until this branch is merged there; checking it here would
 # fail on every branch and pull request that has not shipped yet.
+# The wiki pages (doc/wiki, README.md, SEMANTICS.md, doc/chktex-coverage.md)
+# link to each other by wiki page name (`Domains`, `Chktex-Coverage`), and
+# README.md to `../../releases`: they resolve once .github/workflows/wiki.yml
+# publishes them, never as files in the checkout.
+#
+# The ACM digital library answers lychee's requests with 403.
 exclude = [
   "^https://raw\\.githubusercontent\\.com/EagleoutIce/satex-analyzer/main/",
+  "^file://.*/doc/(wiki/)?[A-Z][A-Za-z-]*(#.*)?$",
+  "^file://.*/releases$",
+  "^https://doi\\.org/10\\.1145/",
 ]

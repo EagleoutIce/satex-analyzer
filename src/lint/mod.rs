@@ -145,8 +145,8 @@ impl Ref {
 
 /// tex.web's URL at the commit `doc/src/tex-web-sha.txt` names, written
 /// together with `doc/src/tex-web-sections.tsv` by
-/// `scripts/tex-web-links.py --dump-sections --dump-sha`; CI re-resolves
-/// both against upstream `trunk` and fails on drift.
+/// `satex-doc --refresh-citations`; CI re-resolves both against upstream
+/// `trunk` (`--check-citations`) and fails on drift.
 fn tex_web_base_url() -> &'static str {
     static URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     URL.get_or_init(|| {
@@ -214,40 +214,47 @@ pub enum Source {
 }
 
 impl Source {
-    pub fn as_str(self) -> &'static str {
+    /// The name a citation gives the work, and where to read it.
+    fn entry(self) -> (&'static str, &'static str) {
         match self {
-            Source::Chktex => "chktex",
-            Source::Csquotes => "csquotes",
-            Source::TeXbook => "The TeXbook",
-            Source::TeXWeb => "tex.web",
-            Source::Source2e => "source2e",
-            Source::Fntguide => "fntguide",
-            Source::Usrguide => "usrguide",
-            Source::Clsguide => "clsguide",
-            Source::Interface3 => "interface3",
-            Source::L2tabu => "l2tabu",
-            Source::Companion => "The LaTeX Companion",
-            Source::Siunitx => "siunitx",
-            Source::Microtype => "microtype",
-            Source::Babel => "babel",
-            Source::Biblatex => "biblatex",
-            Source::Amsmath => "amsmath",
-            Source::Hyperref => "hyperref",
-            Source::Latexmk => "latexmk",
-            Source::Arara => "arara",
-            Source::Glossaries => "glossaries",
-            Source::Graphics => "graphics",
-            Source::Bibtex => "btxdoc",
-            Source::Lmodern => "lmodern",
-            Source::Pdftex => "pdftex",
-            Source::Luatex => "luatex",
-            Source::Pdf => "PDF 32000",
-            Source::SiBrochure => "SI brochure",
-            Source::TexLive => "TeX Live manual",
-            Source::MikTeX => "MiKTeX manual",
-            Source::Xcolor => "xcolor",
-            Source::Cleveref => "cleveref",
+            Source::Chktex => ("chktex", "https://www.nongnu.org/chktex/"),
+            Source::Csquotes => ("csquotes", "https://ctan.org/pkg/csquotes"),
+            Source::TeXbook => ("The TeXbook", "https://ctan.org/pkg/texbook"),
+            Source::TeXWeb => ("tex.web", tex_web_base_url()),
+            Source::Source2e => ("source2e", "https://ctan.org/pkg/source2e"),
+            Source::Fntguide => ("fntguide", "https://ctan.org/pkg/fntguide"),
+            Source::Usrguide => ("usrguide", "https://ctan.org/pkg/usrguide"),
+            Source::Clsguide => ("clsguide", "https://ctan.org/pkg/clsguide"),
+            Source::Interface3 => ("interface3", "https://ctan.org/pkg/l3kernel"),
+            Source::L2tabu => ("l2tabu", "https://ctan.org/pkg/l2tabu"),
+            Source::Companion => ("The LaTeX Companion", "https://ctan.org/pkg/tlc3-examples"),
+            Source::Siunitx => ("siunitx", "https://ctan.org/pkg/siunitx"),
+            Source::Microtype => ("microtype", "https://ctan.org/pkg/microtype"),
+            Source::Babel => ("babel", "https://ctan.org/pkg/babel"),
+            Source::Biblatex => ("biblatex", "https://ctan.org/pkg/biblatex"),
+            Source::Amsmath => ("amsmath", "https://ctan.org/pkg/amsmath"),
+            Source::Hyperref => ("hyperref", "https://ctan.org/pkg/hyperref"),
+            Source::Latexmk => ("latexmk", "https://ctan.org/pkg/latexmk"),
+            Source::Arara => ("arara", "https://ctan.org/pkg/arara"),
+            Source::Glossaries => ("glossaries", "https://ctan.org/pkg/glossaries"),
+            Source::Graphics => ("graphics", "https://ctan.org/pkg/graphics"),
+            Source::Bibtex => ("btxdoc", "https://ctan.org/pkg/bibtex"),
+            Source::Lmodern => ("lmodern", "https://ctan.org/pkg/lm"),
+            Source::Pdftex => ("pdftex", "https://ctan.org/pkg/pdftex"),
+            Source::Luatex => ("luatex", "https://ctan.org/pkg/luatex"),
+            Source::Pdf => {
+                ("PDF 32000", "https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf")
+            }
+            Source::SiBrochure => ("SI brochure", "https://www.bipm.org/en/publications/si-brochure"),
+            Source::TexLive => ("TeX Live manual", "https://tug.org/texlive/doc.html"),
+            Source::MikTeX => ("MiKTeX manual", "https://docs.miktex.org/manual/"),
+            Source::Xcolor => ("xcolor", "https://ctan.org/pkg/xcolor"),
+            Source::Cleveref => ("cleveref", "https://ctan.org/pkg/cleveref"),
         }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        self.entry().0
     }
 
     /// Whether `at` is a plain number rather than a section.
@@ -256,39 +263,7 @@ impl Source {
     }
 
     pub fn url(self) -> &'static str {
-        match self {
-            Source::Chktex => "https://www.nongnu.org/chktex/",
-            Source::Csquotes => "https://ctan.org/pkg/csquotes",
-            Source::TeXbook => "https://ctan.org/pkg/texbook",
-            Source::TeXWeb => tex_web_base_url(),
-            Source::Source2e => "https://ctan.org/pkg/source2e",
-            Source::Fntguide => "https://ctan.org/pkg/fntguide",
-            Source::Usrguide => "https://ctan.org/pkg/usrguide",
-            Source::Clsguide => "https://ctan.org/pkg/clsguide",
-            Source::Interface3 => "https://ctan.org/pkg/l3kernel",
-            Source::L2tabu => "https://ctan.org/pkg/l2tabu",
-            Source::Companion => "https://ctan.org/pkg/tlc3-examples",
-            Source::Siunitx => "https://ctan.org/pkg/siunitx",
-            Source::Microtype => "https://ctan.org/pkg/microtype",
-            Source::Babel => "https://ctan.org/pkg/babel",
-            Source::Biblatex => "https://ctan.org/pkg/biblatex",
-            Source::Amsmath => "https://ctan.org/pkg/amsmath",
-            Source::Hyperref => "https://ctan.org/pkg/hyperref",
-            Source::Latexmk => "https://ctan.org/pkg/latexmk",
-            Source::Arara => "https://ctan.org/pkg/arara",
-            Source::Glossaries => "https://ctan.org/pkg/glossaries",
-            Source::Graphics => "https://ctan.org/pkg/graphics",
-            Source::Bibtex => "https://ctan.org/pkg/bibtex",
-            Source::Lmodern => "https://ctan.org/pkg/lm",
-            Source::Pdftex => "https://ctan.org/pkg/pdftex",
-            Source::Luatex => "https://ctan.org/pkg/luatex",
-            Source::Pdf => "https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf",
-            Source::SiBrochure => "https://www.bipm.org/en/publications/si-brochure",
-            Source::TexLive => "https://tug.org/texlive/doc.html",
-            Source::MikTeX => "https://docs.miktex.org/manual/",
-            Source::Xcolor => "https://ctan.org/pkg/xcolor",
-            Source::Cleveref => "https://ctan.org/pkg/cleveref",
-        }
+        self.entry().1
     }
 }
 

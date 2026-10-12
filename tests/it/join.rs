@@ -488,11 +488,11 @@ fn one_of_texts_that_agree_decide_the_test() {
 /// per text: three texts, two answers, two paths.
 #[test]
 fn one_of_texts_that_disagree_split_per_answer() {
-    let analysis = analyze(&format!(
-        r"\edef\r{{\ifnum\pdfuniformdeviate3=0 a\else\ifnum\pdfuniformdeviate2=0 b\else 1\fi\fi}}
-          \expandafter\ifcat\expandafter\noexpand\r x\def\yes{{}}\else\def\no{{}}\fi
-          \expandafter\if\r b\def\isb{{}}\else\def\notb{{}}\fi"
-    ));
+    let analysis = analyze(
+        r"\edef\r{\ifnum\pdfuniformdeviate3=0 a\else\ifnum\pdfuniformdeviate2=0 b\else 1\fi\fi}
+          \expandafter\ifcat\expandafter\noexpand\r x\def\yes{}\else\def\no{}\fi
+          \expandafter\if\r b\def\isb{}\else\def\notb{}\fi",
+    );
     for name in ["yes", "no", "isb", "notb"] {
         assert_eq!(defined_times(&analysis, name), 1, "{name}: {:?}", names(&analysis));
     }

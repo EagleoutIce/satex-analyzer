@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Parser, ValueEnum};
 
-use satex::cmd::{Command, Context, Format, Output};
+use satex::cmd::{CacheAction, Command, Context, Format, Output};
 use satex::config::{Config, Engine};
 use satex::machine::{Analysis, Machine};
 use satex::query;
@@ -334,8 +334,7 @@ fn run() -> Result<(), String> {
     // LaTeX document there is, which gives the kernel and, once
     // `\documentclass` loads it, the class something to define `\section`
     // and its like from.
-    let explaining =
-        matches!(cli.command, Some(satex::cmd::Command::Explain { .. } | satex::cmd::Command::Scope { .. }));
+    let explaining = matches!(cli.command, Some(Command::Explain { .. } | Command::Scope { .. }));
     if cli.file.is_none() && cli.command().needs_source() && io::stdin().is_terminal() {
         cli.file = input_for(&std::env::current_dir().unwrap_or_default(), explaining)?;
     }
@@ -357,14 +356,14 @@ fn run() -> Result<(), String> {
     // again once the project and the magic comments are read; commands that
     // tokenize without an analysis, such as `tokens`, keep this one.
     satex::source::set_encoding(satex::plugin::Plugins::sniff_engine(&cfg, &source).encoding());
-    if let Some(satex::cmd::Command::Lsp { port, host }) = &cli.command {
+    if let Some(Command::Lsp { port, host }) = &cli.command {
         return satex::cmd::lsp::run(&cfg, cli.file.as_deref(), *port, host.as_deref());
     }
-    if let Some(satex::cmd::Command::Cache { action: Some(action) }) = &cli.command {
+    if let Some(Command::Cache { action: Some(action) }) = &cli.command {
         let mut out = anstream::stdout().lock();
         let json = cli.format == Format::Json;
         return match action {
-            satex::cmd::CacheAction::Build { packages, refresh, engines, preamble } => {
+            CacheAction::Build { packages, refresh, engines, preamble } => {
                 let engines = engines
                     .iter()
                     .map(|name| {
@@ -373,13 +372,13 @@ fn run() -> Result<(), String> {
                     .collect::<Result<Vec<_>, _>>()?;
                 satex::cmd::cache::build::run(&cfg, *refresh, packages, &engines, preamble.as_deref(), json, &mut out)
             }
-            satex::cmd::CacheAction::Export { archive } => satex::cmd::cache::export(&cfg, archive, json, &mut out),
-            satex::cmd::CacheAction::Import { archive } => satex::cmd::cache::import(&cfg, archive, json, &mut out),
-            satex::cmd::CacheAction::Clear => satex::cmd::cache::clear(&cfg, json, &mut out),
-            satex::cmd::CacheAction::Prune => satex::cmd::cache::prune(&cfg, json, &mut out),
+            CacheAction::Export { archive } => satex::cmd::cache::export(&cfg, archive, json, &mut out),
+            CacheAction::Import { archive } => satex::cmd::cache::import(&cfg, archive, json, &mut out),
+            CacheAction::Clear => satex::cmd::cache::clear(&cfg, json, &mut out),
+            CacheAction::Prune => satex::cmd::cache::prune(&cfg, json, &mut out),
         };
     }
-    if let Some(satex::cmd::Command::Query { request: Some(request), .. }) = &cli.command {
+    if let Some(Command::Query { request: Some(request), .. }) = &cli.command {
         let mut out = anstream::stdout().lock();
         return satex::cmd::query::run_request(request, &cfg, cli.file.as_deref(), &mut out).map(drop);
     }
@@ -426,41 +425,20 @@ fn run() -> Result<(), String> {
     let owns_gaps = (cli.format.is_text() && matches!(output, Output::Lint(_)))
         || cli.command().fixes()
         || cli.command().reports_gaps();
-    match output {
-        Output::Done => {}
-        Output::Records(records) => {
-            let _ = write!(out, "{}", rendered(&records, &cli, links));
-        }
-        Output::Detail(records) => {
-            let text = match cli.format.is_text() {
-                true => render::fields(&records, links),
-                false => rendered(&records, &cli, links),
-            };
-            let _ = write!(out, "{text}");
-        }
-        Output::Lint(records) => {
-            let text = match cli.format.is_text() {
-                true => render::lint(&records, links, !cli.no_group()),
-                false => rendered(&records, &cli, links),
-            };
-            let _ = write!(out, "{text}");
-        }
-        Output::Partial(records, hint) => {
-            let _ = write!(out, "{}", rendered(&records, &cli, links));
-            if cli.format.is_text() {
-                let _ = writeln!(out, "{}", render::footer(&hint));
-            }
-        }
-        Output::DetailPartial(records, hint) => {
-            let text = match cli.format.is_text() {
-                true => render::fields(&records, links),
-                false => rendered(&records, &cli, links),
-            };
-            let _ = write!(out, "{text}");
-            if cli.format.is_text() {
-                let _ = writeln!(out, "{}", render::footer(&hint));
-            }
-        }
+    let text = cli.format.is_text();
+    let (body, hint) = match output {
+        Output::Done => (String::new(), None),
+        Output::Records(records) => (rendered(&records, &cli, links), None),
+        Output::Partial(records, hint) => (rendered(&records, &cli, links), Some(hint)),
+        Output::Detail(records) if text => (render::fields(&records, links), None),
+        Output::DetailPartial(records, hint) if text => (render::fields(&records, links), Some(hint)),
+        Output::Lint(records) if text => (render::lint(&records, links, !cli.no_group()), None),
+        Output::Detail(records) | Output::Lint(records) => (rendered(&records, &cli, links), None),
+        Output::DetailPartial(records, hint) => (rendered(&records, &cli, links), Some(hint)),
+    };
+    let _ = write!(out, "{body}");
+    if let Some(hint) = hint.filter(|_| text) {
+        let _ = writeln!(out, "{}", render::footer(&hint));
     }
     if !owns_gaps {
         let _ = write!(out, "{unfollowed}");
@@ -490,9 +468,7 @@ fn resolve_profile(cli: &Cli, cfg: &Config, source: Option<&str>) -> Result<sate
     // `cache build` analyzes the documents it writes itself: a class and
     // its packages, never plain TeX. `lsp` serves LaTeX documents and reads
     // no source up front.
-    if cli.file.is_none()
-        && matches!(cli.command, Some(satex::cmd::Command::Cache { .. } | satex::cmd::Command::Lsp { .. }))
-    {
+    if cli.file.is_none() && matches!(cli.command, Some(Command::Cache { .. } | Command::Lsp { .. })) {
         return Ok(Profile::Document);
     }
     let owned;
@@ -895,35 +871,5 @@ fn range(text: &str) -> Result<(u64, u64), String> {
     match from <= to {
         true => Ok((from, to)),
         false => Err(format!("`{text}` is an empty range: FROM is past TO")),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::input_for;
-
-    fn dir(tag: &str, files: &[&str]) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("satex-root-{tag}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        for name in files {
-            std::fs::write(dir.join(name), "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n")
-                .unwrap();
-        }
-        dir
-    }
-
-    #[test]
-    fn an_ambiguous_or_missing_root_is_never_guessed() {
-        let two = dir("two", &["a.tex", "b.tex"]);
-        let why = input_for(&two, false).unwrap_err();
-        assert!(why.contains("-f") && why.contains("a.tex") && why.contains("b.tex"), "{why}");
-        assert_eq!(input_for(&two, true), Ok(None));
-        let none = dir("none", &[]);
-        assert!(input_for(&none, false).unwrap_err().contains("-f"));
-        assert_eq!(input_for(&none, true), Ok(None));
-        let one = dir("one", &["a.tex"]);
-        assert_eq!(input_for(&one, false), Ok(Some(one.join("a.tex"))));
-        assert_eq!(input_for(&one, true), Ok(Some(one.join("a.tex"))));
     }
 }

@@ -7,9 +7,6 @@ use serde::Serialize;
 use crate::env::NodeId;
 use crate::tex::{Interner, Span, Sym};
 
-/// One charged read edge: (from, to, call, made-by-reader).
-type ReadEdge = (NodeId, NodeId, NodeId, Option<NodeId>);
-
 /// What kind of program point a [`Vertex`] stands for: a value, a use, a
 /// macro call, or the definition of a variable or macro.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize)]
@@ -35,7 +32,7 @@ impl VertexTag {
 }
 
 /// How one [`Vertex`] depends on another, as a bit set so that parallel edges
-/// between the same two vertices collapse into one. [`DependencyGraph::slice`]
+/// between the same two vertices collapse into one. [`DependencyGraph::slice_until`]
 /// filters a walk by which kinds it follows.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug, Serialize)]
 pub struct EdgeKind(pub u16);
@@ -112,7 +109,7 @@ pub struct Vertex {
 }
 
 /// The program's dependency graph: [`Vertex`]es for definitions, calls and
-/// uses, connected by [`EdgeKind`] edges. [`DependencyGraph::slice`] is what
+/// uses, connected by [`EdgeKind`] edges. [`DependencyGraph::slice_until`] is what
 /// `satex slice` walks.
 #[derive(Default)]
 pub struct DependencyGraph {
@@ -148,9 +145,6 @@ pub struct DependencyGraph {
     /// The call read from a file when each touched vertex was first
     /// reached, in the same order.
     touched_readers: Vec<Option<NodeId>>,
-    /// While a package cache is being captured: every read edge made, with
-    /// the call charged with it.
-    reads: Option<Vec<ReadEdge>>,
     /// While a package cache is being captured: every edge added, in order,
     /// with the call a read was charged to, and each `made_by` among them
     /// as an edge of no kind; every extent noted.
@@ -181,12 +175,6 @@ impl Vertex {
 pub struct SliceBound {
     pub limit: NodeId,
     pub home: Option<crate::tex::FileId>,
-}
-
-impl Default for SliceBound {
-    fn default() -> Self {
-        SliceBound { limit: NodeId::MAX, home: None }
-    }
 }
 
 /// Definitions after which a name counts as scratch state.
@@ -261,7 +249,6 @@ impl DependencyGraph {
 
     /// Start recording the vertices reached, or stop and hand them back.
     pub fn record_touches(&mut self, on: bool) -> Vec<NodeId> {
-        self.reads = on.then(Vec::new);
         self.touched_readers.clear();
         let previous = std::mem::replace(&mut self.touched, on.then(Default::default));
         previous.map(|(_, order)| order).unwrap_or_default()
@@ -279,17 +266,6 @@ impl DependencyGraph {
         self.out.push(Vec::new());
         self.vertices.push(vertex);
         id
-    }
-
-    /// The read edges made while recording: from, to, the call charged, and
-    /// the call that had made the definition read.
-    pub fn take_reads(&mut self) -> Vec<ReadEdge> {
-        self.reads.take().unwrap_or_default()
-    }
-
-    /// Every definition vertex and the call that last ran it.
-    pub fn made_by_all(&self) -> &HashMap<NodeId, NodeId> {
-        &self.made_by
     }
 
     fn push_site(
@@ -352,14 +328,6 @@ impl DependencyGraph {
         self.extents.get(&span).copied()
     }
 
-    /// Replace a vertex's outgoing edges, keeping the order given.
-    pub fn set_edges(&mut self, id: NodeId, edges: Vec<(NodeId, EdgeKind)>) {
-        if let Some(slot) = self.out.get_mut(id as usize) {
-            *slot = edges;
-            self.wide.remove(&id);
-        }
-    }
-
     pub fn extents(&self) -> &HashMap<Span, u32> {
         &self.extents
     }
@@ -394,12 +362,6 @@ impl DependencyGraph {
         // the dependency on the call that made the definition belongs to the
         // call from the file this read is part of.
         let reader = self.reader.unwrap_or(from);
-        if kind.intersects(EdgeKind::READS)
-            && !mention
-            && let Some(log) = &mut self.reads
-        {
-            log.push((from, to, reader, self.made_by.get(&to).copied()));
-        }
         if kind.intersects(EdgeKind::READS)
             && !mention
             && let Some(&call) = self.made_by.get(&to)
@@ -492,22 +454,17 @@ impl DependencyGraph {
         out
     }
 
-    /// Backward: what the criteria depend on.  Forward: what depends on them.
-    /// The two are exact transposes because they walk the same relation.
-    /// Vertices past `limit` are not followed.  A body vertex stands for every
-    /// expansion of its macro, so its edges reach calls that ran after the
-    /// criterion and cannot have influenced it.
-    pub fn slice(&self, criteria: &[NodeId], kinds: EdgeKind, forward: bool) -> Vec<NodeId> {
-        self.slice_until(criteria, kinds, forward, &SliceBound::default())
-    }
-
     /// The names the run defines over and over, like `\toks@` or `\reserved@a`:
     /// a definition of one is only ever read soon after it is made.
     fn scratch_names(&self) -> crate::fixed::HashSet<Sym> {
         self.defs_of.iter().filter(|&(_, &n)| n >= SCRATCH_DEFS).map(|(&name, _)| name).collect()
     }
 
-    /// As [`DependencyGraph::slice`], within `bound`.
+    /// Backward: what the criteria depend on.  Forward: what depends on them.
+    /// The two are exact transposes because they walk the same relation.
+    /// Vertices past `bound.limit` are not followed.  A body vertex stands for
+    /// every expansion of its macro, so its edges reach calls that ran after
+    /// the criterion and cannot have influenced it.
     pub fn slice_until(&self, criteria: &[NodeId], kinds: EdgeKind, forward: bool, bound: &SliceBound) -> Vec<NodeId> {
         let transposed = forward.then(|| self.transposed());
         let mut seen = crate::fixed::HashSet::default();

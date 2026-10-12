@@ -1419,7 +1419,6 @@ impl Entry {
 /// What a path saved since the save stack stood `base` entries high, by the
 /// group it was saved in: first what lies below every group, then each open
 /// group, outermost first.
-
 fn segments(journal: &Journal, marks: &[Mark], base: usize) -> Vec<Vec<Entry>> {
     let mut journal = journal.clone();
     let mut entries = Vec::new();
@@ -1527,7 +1526,11 @@ pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits, 
     if meaning_grows {
         use crate::builtins::{Cond, Primitive};
         let switch = matches!(joined.meaning.prim(), Some(Primitive::If(_)));
-        let texts = numbers(&joined, sets, typed);
+        // The texts are kept only while they are no more than the head
+        // had: a set that grows every pass is not a widening, and its
+        // hull is.
+        let had = numbers(x, sets, typed).map_or(usize::MAX, |t| t.len());
+        let texts = numbers(&joined, sets, typed).filter(|t| t.len() <= had);
         (joined.meaning, joined.may) = match texts {
             _ if switch => (Meaning::Primitive(Primitive::If(Cond::Opaque)), None),
             Some(mut texts) if texts.len() == 1 => (texts.pop().expect("one text"), None),

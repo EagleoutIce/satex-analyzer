@@ -494,20 +494,9 @@ impl Natural {
             prior: true,
             capped: true,
             tail: [Last::Unknown; TAIL],
-            pending: None,
-            space_factor: None,
-            ligature: None,
-            no_boundary: false,
-            solid: 0,
-            math_prev: None,
-            math_class: None,
-            math_pending: None,
-            math_bin: None,
-            script: None,
-            math_box: None,
-            script_group: false,
             para: Para { lost: true, ..Para::default() },
             prev_depth: Some(Dim::ANY),
+            ..Natural::default()
         }
     }
 
@@ -869,7 +858,7 @@ impl Machine<'_> {
     /// tex.web § 323 `begin_token_list` of `\everypar` and relatives.
     fn insert_every(&mut self, name: &str, span: Span) {
         match self.every(name) {
-            Some(tokens) if !tokens.is_empty() => self.push_tokens(tokens, None),
+            Some(tokens) if !tokens.is_empty() => self.push_tokens(tokens),
             Some(_) => {}
             None => self.diagnose(
                 Severity::Imprecision,
@@ -887,10 +876,7 @@ impl Machine<'_> {
         if part.is_empty() || rest.is_empty() {
             return false;
         }
-        let by = match token.cs().or_else(|| self.active_cs(token)) {
-            Some(sym) => sym,
-            None => self.intern("ifvmode"),
-        };
+        let by = token.cs().or_else(|| self.active_cs(token)).unwrap_or_else(|| self.intern("ifvmode"));
         let parts = [part, rest];
         // Each path begins with `token` given back, which may join a frame
         // of tokens already given back: the paths must read it before they
@@ -1303,20 +1289,8 @@ impl Machine<'_> {
             prior: true,
             capped: n.capped,
             tail,
-            pending: None,
-            space_factor: None,
-            ligature: None,
-            no_boundary: false,
-            solid: 0,
-            math_prev: None,
-            math_class: None,
-            math_pending: None,
-            math_bin: None,
-            script: None,
-            math_box: None,
-            script_group: false,
-            para: Para::default(),
             prev_depth: n.prev_depth,
+            ..Natural::default()
         };
         // Where the mode was in doubt, the vertical list may be as it was.
         self.natural = Some(if only { after } else { after.join(n) });
@@ -1416,21 +1390,7 @@ impl Machine<'_> {
         let at = self.box_left_brace(span);
         self.open_group(GroupKind::Simple, at);
         self.record(Step::OpenGroup, Sym(0), at);
-        self.env.set_nest(Nest {
-            mode: self.mode,
-            list: self.list,
-            code,
-            level: true,
-            part,
-            target: None,
-            shift: Dim::exact(0),
-            to: Packing::Natural,
-            material: self.material,
-            natural: self.natural,
-            placed: false,
-            from: self.out.facts.text.at.len() as u32,
-            align: None,
-        });
+        self.env.set_nest(self.nest_here(code, true, part));
         self.material = false;
         // tex.web § 1083: a box's horizontal list starts at 1000.
         self.natural = Some(Natural { space_factor: Some(1000), tail: [Last::Empty; TAIL], ..Natural::default() });
@@ -1441,6 +1401,26 @@ impl Machine<'_> {
         if modes == Modes::INTERNAL_VERTICAL {
             let sym = self.intern("prevdepth");
             self.env.set_value(sym, Value::Dimen(crate::builtins::IGNORE_DEPTH), false);
+        }
+    }
+
+    /// What a group opened here saves of the nest: the modes, the list and
+    /// its natural size, nothing to shift, pack or fill.
+    fn nest_here(&self, code: Option<u8>, level: bool, part: u8) -> Nest {
+        Nest {
+            mode: self.mode,
+            list: self.list,
+            code,
+            level,
+            part,
+            target: None,
+            shift: Dim::exact(0),
+            to: Packing::Natural,
+            material: self.material,
+            natural: self.natural,
+            placed: false,
+            from: self.out.facts.text.at.len() as u32,
+            align: None,
         }
     }
 
@@ -1469,33 +1449,10 @@ impl Machine<'_> {
             && let Some(mut n) = self.natural
         {
             n.math_box = None;
-            let t = n.math_pending.take().unwrap_or(0);
-            let italic = match n.math_prev {
-                Some(Some((_, font, c))) => self.math_italic(font, c, false),
-                Some(None) => Dim::ANY,
-                None => Dim::exact(0),
-            };
-            let space = self.begin_atom(&mut n, t);
-            n.along = n.along.extended_by(italic).extended_by(space);
-            n.math_prev = None;
+            part = self.next_atom(&mut n);
             self.natural = Some(n);
-            part = t;
         }
-        self.env.set_nest(Nest {
-            mode: self.mode,
-            list: self.list,
-            code,
-            level: false,
-            part,
-            target: None,
-            shift: Dim::exact(0),
-            to: Packing::Natural,
-            material: self.material,
-            natural: self.natural,
-            placed: false,
-            from: self.out.facts.text.at.len() as u32,
-            align: None,
-        });
+        self.env.set_nest(self.nest_here(code, false, part));
         if code.is_some()
             && part != SCRIPT_GROUP
             && let Some(n) = &mut self.natural
@@ -1532,11 +1489,7 @@ impl Machine<'_> {
             } else if nest.code == Some(group::MATH)
                 && let Some(mut n) = self.natural
             {
-                let italic = match n.math_prev {
-                    Some(Some((_, font, c))) => self.math_italic(font, c, false),
-                    Some(None) => Dim::ANY,
-                    None => Dim::exact(0),
-                };
+                let italic = self.prev_italic(n.math_prev);
                 Self::end_atoms(&mut n);
                 n.along = n.along.extended_by(italic);
                 let outer = nest.natural.unwrap_or_else(Natural::any);
@@ -1708,21 +1661,7 @@ impl Machine<'_> {
         let outer = if display || self.list_kind() != Some(true) { None } else { self.natural };
         self.natural = None;
         self.open_group(GroupKind::Math { display }, span);
-        self.env.set_nest(Nest {
-            mode: self.mode,
-            list: self.list,
-            code: Some(group::MATH_SHIFT),
-            level: true,
-            part: 0,
-            target: None,
-            shift: Dim::exact(0),
-            to: Packing::Natural,
-            material: self.material,
-            natural: outer,
-            placed: false,
-            from: 0,
-            align: None,
-        });
+        self.env.set_nest(Nest { natural: outer, from: 0, ..self.nest_here(Some(group::MATH_SHIFT), true, 0) });
         let inner = if display { Modes::DISPLAY_MATH } else { Modes::MATH };
         self.mode = inner;
         self.list = inner;
@@ -1846,19 +1785,9 @@ impl Machine<'_> {
                 {
                     self.open_group(GroupKind::Math { display: false }, span);
                     self.env.set_nest(Nest {
-                        mode: self.mode,
-                        list: self.list,
-                        code: Some(group::MATH_SHIFT),
-                        level: true,
-                        part: EQNO,
-                        target: None,
-                        shift: Dim::exact(0),
-                        to: Packing::Natural,
-                        material: self.material,
                         natural: None,
-                        placed: false,
                         from: 0,
-                        align: None,
+                        ..self.nest_here(Some(group::MATH_SHIFT), true, EQNO)
                     });
                     self.record_item(None);
                     self.mode = Modes::MATH;
@@ -1993,18 +1922,23 @@ impl Machine<'_> {
         }
     }
 
-    /// tex.web § 774 `init_align` for an `\halign`: its cells are
-    /// restricted horizontal lists (§ 785), its rows go onto the enclosing
-    /// vertical list (§ 799). satex runs the preamble as the first row.
-    fn begin_halign(&mut self, span: Span) {
+    /// tex.web § 645 `scan_spec`: `to` or `spread` and a dimension, or neither.
+    fn scan_spec(&mut self) -> Packing {
         let dimen = |m: &mut Self| m.scan_dimen().map_or(Dim::ANY, Dim::exact);
-        let to = if self.scan_keyword("to") {
+        if self.scan_keyword("to") {
             Packing::To(dimen(self))
         } else if self.scan_keyword("spread") {
             Packing::Spread(dimen(self))
         } else {
             Packing::Natural
-        };
+        }
+    }
+
+    /// tex.web § 774 `init_align` for an `\halign`: its cells are
+    /// restricted horizontal lists (§ 785), its rows go onto the enclosing
+    /// vertical list (§ 799). satex runs the preamble as the first row.
+    fn begin_halign(&mut self, span: Span) {
+        let to = self.scan_spec();
         self.open_list(Some(group::ALIGN), Modes::RESTRICTED_HORIZONTAL, 0, span);
         let mut nest = self.env.nest().expect("the alignment's group is open");
         nest.to = to;
@@ -2214,14 +2148,7 @@ impl Machine<'_> {
             BoxCmd::VTop => (Some(group::VTOP), Modes::INTERNAL_VERTICAL),
             BoxCmd::VCenter => (Some(group::VCENTER), Modes::INTERNAL_VERTICAL),
         };
-        let dimen = |m: &mut Self| m.scan_dimen().map_or(Dim::ANY, Dim::exact);
-        let to = if self.scan_keyword("to") {
-            Packing::To(dimen(self))
-        } else if self.scan_keyword("spread") {
-            Packing::Spread(dimen(self))
-        } else {
-            Packing::Natural
-        };
+        let to = self.scan_spec();
         self.open_list(code, modes, 0, span);
         let mut nest = self.env.nest().expect("the box's group is open");
         nest.to = to;
@@ -2353,16 +2280,9 @@ impl Machine<'_> {
                 return;
             }
             n.math_box = (h.lo == h.hi && d.lo == d.hi).then_some((h.lo, d.lo));
-            let italic = match n.math_prev {
-                Some(Some((_, font, c))) => self.math_italic(font, c, false),
-                Some(None) => Dim::ANY,
-                None => Dim::exact(0),
-            };
-            let t = n.math_pending.take().unwrap_or(0);
-            let space = self.begin_atom(&mut n, t);
-            n.along = n.along.extended_by(italic).extended_by(space).extended_by(*w);
+            self.next_atom(&mut n);
+            n.along = n.along.extended_by(*w);
             (n.height, n.depth) = (n.height.max(*h), n.depth.max(*d));
-            n.math_prev = None;
             self.natural = Some(n);
             return;
         }
@@ -2377,11 +2297,7 @@ impl Machine<'_> {
                 return;
             }
             n.math_box = None;
-            let italic = match n.math_prev {
-                Some(Some((_, font, c))) => self.math_italic(font, c, false),
-                Some(None) => Dim::ANY,
-                None => Dim::exact(0),
-            };
+            let italic = self.prev_italic(n.math_prev);
             n.along = n.along.extended_by(italic).extended_by(w.map_or(Dim::ANY, Dim::exact));
             n.math_prev = None;
             self.natural = Some(n);
@@ -2823,11 +2739,7 @@ impl Machine<'_> {
             Some(mut m) => {
                 Self::end_atoms(&mut m);
                 let surround = self.dimen_parameter("mathsurround");
-                let last = match m.math_prev {
-                    Some(Some((_, font, c))) => self.math_italic(font, c, false),
-                    Some(None) => Dim::ANY,
-                    None => Dim::exact(0),
-                };
+                let last = self.prev_italic(m.math_prev);
                 let width = m.along.extended_by(last).extended_by(surround).extended_by(surround);
                 self.append_item(Item::Box([width, m.height, m.depth]));
                 // tex.web § 866, § 761: a formula breaks after it and at
@@ -2838,6 +2750,17 @@ impl Machine<'_> {
                 }
             }
             None => self.append_item(Item::Unknown),
+        }
+    }
+
+    /// The italic correction of the character an atom follows, as text
+    /// does not take it (tex.web § 755): none after no character, unknown
+    /// after an unknown one.
+    fn prev_italic(&mut self, prev: Option<Option<(i64, u32, u32)>>) -> Dim {
+        match prev {
+            Some(Some((_, font, c))) => self.math_italic(font, c, false),
+            Some(None) => Dim::ANY,
+            None => Dim::exact(0),
         }
     }
 
@@ -2883,17 +2806,17 @@ impl Machine<'_> {
         };
         let (class, fam, ch) = (code >> 12, (code >> 8) & 0xf, (code & 0xff) as u32);
         let fam = match class {
-            7 => match {
+            7 => {
                 let sym = self.intern("fam");
-                self.env.value(sym)
-            } {
-                Value::Int(f) if (0..16).contains(&f) => f,
-                Value::Int(_) => fam,
-                _ => {
-                    self.natural = None;
-                    return;
+                match self.env.value(sym) {
+                    Value::Int(f) if (0..16).contains(&f) => f,
+                    Value::Int(_) => fam,
+                    _ => {
+                        self.natural = None;
+                        return;
+                    }
                 }
-            },
+            }
             _ => fam,
         };
         self.math_atom(class, fam, ch);
@@ -2935,6 +2858,17 @@ impl Machine<'_> {
     /// Whether the list being built is inline math whose atoms are followed.
     pub(crate) fn math_followed(&self) -> bool {
         self.mode == Modes::MATH && self.natural.is_some_and(|n| n.script.is_none())
+    }
+
+    /// The pending atom follows the character before it: that character's
+    /// italic correction, then the space before the atom. Its type.
+    fn next_atom(&mut self, n: &mut Natural) -> u8 {
+        let italic = self.prev_italic(n.math_prev);
+        let t = n.math_pending.take().unwrap_or(0);
+        let space = self.begin_atom(n, t);
+        n.along = n.along.extended_by(italic).extended_by(space);
+        n.math_prev = None;
+        t
     }
 
     /// tex.web §§ 728-729, 764: an atom of type `t` follows. A binary atom

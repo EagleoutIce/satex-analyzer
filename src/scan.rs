@@ -124,7 +124,9 @@ fn negate(glue: Glue) -> Glue {
     Glue { width: -glue.width, stretch: flip(glue.stretch), shrink: flip(glue.shrink) }
 }
 
-fn glue_of(value: &Value) -> Option<Glue> {
+/// The glue a value holds. A number or dimension widens to glue without
+/// stretch or shrink, as `scan_glue` coerces.
+pub(crate) fn glue_of(value: &Value) -> Option<Glue> {
     match value {
         Value::Glue(g) | Value::MuGlue(g) => Some(*g),
         Value::Int(n) | Value::Dimen(n) => Some(Glue { width: *n, ..Default::default() }),
@@ -378,7 +380,7 @@ impl Machine<'_> {
             // The test that reads it narrows it on each arm, as a register's.
             let from = from.map(|sym| (sym, crate::value::Quantity::Int));
             (self.abs, self.abs_exact, self.abs_from) = (Some(num), None, from);
-            return (Some(num.lo).filter(|_| num.lo == num.hi), backed_up);
+            return ((num.lo == num.hi).then_some(num.lo), backed_up);
         }
         let digits =
             token.tok == Tok::Cs(self.unknown_digits) || token.cs().is_some_and(|sym| self.is_more_digits(sym));
@@ -1012,11 +1014,11 @@ impl Machine<'_> {
         known.then_some(glue)
     }
 
-    /// tex.web § 407 (`scan_keyword`): the letters of `keyword`, in either
+    /// tex.web § 407: the letters of `keyword`, in either
     /// case and any category but active, read with expansion. Blanks are
     /// skipped only before the first letter. On a mismatch everything read
     /// goes back.
-    pub fn scan_keyword_x(&mut self, keyword: &str) -> bool {
+    pub fn scan_keyword(&mut self, keyword: &str) -> bool {
         let mut read: Vec<Token> = Vec::new();
         let mut wanted = keyword.chars();
         let mut want = wanted.next();
@@ -1375,12 +1377,12 @@ impl Machine<'_> {
                         ExprOp::None => {
                             t = if lv >= 2 && o != ExprOp::None { normalize_glue(f) } else { f };
                             tf = ff;
-                            ta = fa.clone();
+                            ta = fa;
                             ta_x = fa_x.clone();
                         }
                         ExprOp::Mult if o == ExprOp::Div => {
                             n = f.width;
-                            na = fa.clone();
+                            na = fa;
                             na_x = fa_x.clone();
                             o = ExprOp::Scale;
                         }
@@ -1444,7 +1446,7 @@ impl Machine<'_> {
                         if r == ExprOp::None {
                             e = t;
                             ef = tf;
-                            ea = ta.clone();
+                            ea = ta;
                             ea_x = ta_x.clone();
                         } else {
                             let sign = if sub { -1 } else { 1 };

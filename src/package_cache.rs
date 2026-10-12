@@ -37,8 +37,9 @@ use crate::builtins::{DefMode, LoadKind, OccKind};
 use crate::env::{Binding, NodeId, ReadKind};
 use crate::facts::{
     ColorDef, ColorStack, ColorUse, CsnameRole, Definition, Diagnostic, Expansion, Load, LoadStatus, MeaningKind,
-    Occurrence, Severity, StackOp,
+    Occurrence, StackOp,
 };
+use crate::format::{Fnv, SEVERITIES, leak};
 use crate::graph::{ControlDep, EdgeKind, Vertex, VertexTag};
 use crate::tex::codec::{self, Mode};
 use crate::tex::{CatcodeTable, EndLineChar, FileId, LineMark, MacroDef, Meaning, Mouth, RegKind, Span, Sym, Token};
@@ -70,8 +71,6 @@ const STATUSES: [LoadStatus; 8] = [
     LoadStatus::Unreadable,
     LoadStatus::CaseMismatch { on_disk: Sym(0) },
 ];
-const SEVERITIES: [Severity; 5] =
-    [Severity::Info, Severity::Warning, Severity::Imprecision, Severity::Unsupported, Severity::Assumption];
 const STACK_OPS: [StackOp; 4] = [StackOp::Push, StackOp::Pop, StackOp::Set, StackOp::Current];
 const REGISTERS: [RegKind; 11] = [
     RegKind::Count,
@@ -98,38 +97,6 @@ fn index_of<T: PartialEq>(all: &[T], item: &T) -> u8 {
 /// `CachedLoad::case_mismatch_on_disk`.
 fn status_index(item: &LoadStatus) -> u8 {
     STATUSES.iter().position(|x| std::mem::discriminant(x) == std::mem::discriminant(item)).unwrap_or(0) as u8
-}
-
-/// The run's diagnostic codes and fact tags are `&'static str`; a cached one
-/// is interned once per process.
-fn leak(text: &str) -> &'static str {
-    static SEEN: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
-    let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(found) = seen.iter().find(|s| **s == text) {
-        return found;
-    }
-    let leaked: &'static str = Box::leak(text.to_string().into_boxed_str());
-    seen.push(leaked);
-    leaked
-}
-
-struct Fnv(u64);
-
-impl Fnv {
-    fn new() -> Fnv {
-        Fnv(0xcbf2_9ce4_8422_2325)
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            self.0 ^= u64::from(*byte);
-            self.0 = self.0.wrapping_mul(0x0100_0000_01b3);
-        }
-    }
-    fn put<T: Serialize + ?Sized>(&mut self, value: &T) {
-        let bytes = postcard::to_allocvec(value).unwrap_or_default();
-        self.write(&(bytes.len() as u64).to_le_bytes());
-        self.write(&bytes);
-    }
 }
 
 /// Which node of a tree this is, as a digest of what it holds. Kept for the
@@ -630,7 +597,7 @@ fn decode_effect(bytes: &[u8], syms: &[Sym], files: &[FileId]) -> Option<Effect>
         work()
     } else {
         std::thread::scope(|sc| {
-            let helpers: Vec<_> = (1..threads).map(|_| sc.spawn(&work)).collect();
+            let helpers: Vec<_> = (1..threads).map(|_| sc.spawn(work)).collect();
             let mut all = work();
             for h in helpers {
                 all.extend(h.join().ok()?);
@@ -955,17 +922,10 @@ fn digested_kinds(name: &str, kinds: u8) -> u8 {
     if is_clock(name) { kinds & !VALUE } else { kinds }
 }
 
-/// What each kind bit reads, for saying which read a stale segment made.
-const KINDS: [(u8, &str); 8] = [
-    (MEANING, "meaning"),
-    (VALUE, "value"),
-    (KEPT, "kept part"),
-    (DEFINED, "definedness"),
-    (SKIP, "conditional role"),
-    (DEFS, "definition sites"),
-    (COPY, "copied text"),
-    (SHAPE, "shape"),
-];
+/// What each kind bit reads, lowest bit first, for saying which read a stale
+/// segment made.
+const KINDS: [&str; 8] =
+    ["meaning", "value", "kept part", "definedness", "conditional role", "definition sites", "copied text", "shape"];
 
 /// The codec mode that writes names and paths out in full.
 fn hash_mode(m: &Machine) -> Mode {
@@ -1643,7 +1603,7 @@ impl Machine<'_> {
         }
         for (looked, kind, found) in &node.lookups {
             let found = found.as_ref().map(|f| PathBuf::from(roots.decode(&f.display().to_string())));
-            if self.resolver.search_again(looked, *kind, base) != found {
+            if self.resolver.search_uncached(looked, *kind, base) != found {
                 return Err(format!("lookup changed: {looked}"));
             }
         }
@@ -1671,7 +1631,8 @@ impl Machine<'_> {
                     sym.and_then(|sym| self.env.aliases.get(&sym)).map(|a| self.out.interner.name(*a).to_string());
                 if binding_digest(binding, alias.as_deref(), digested) != *digest {
                     let name = sym.map_or_else(|| "a name".to_string(), |sym| self.out.interner.cs(sym));
-                    let read: Vec<&str> = KINDS.iter().filter(|(bit, _)| kinds & bit != 0).map(|(_, k)| *k).collect();
+                    let read: Vec<&str> =
+                        KINDS.iter().enumerate().filter(|(bit, _)| kinds >> bit & 1 != 0).map(|(_, k)| *k).collect();
                     return Some(format!("digest changed: {name} (its {} was read)", read.join(", ")));
                 }
             }
@@ -2665,8 +2626,6 @@ impl Machine<'_> {
                 self.cfg.limits.cache_size.as_u64(),
             );
             prune(dir, self.cfg.limits.cache_size.as_u64());
-            let recorded = total.saturating_sub(rec.served);
-            let _ = recorded;
             let cache_text = rec.cache.display().to_string();
             let state = match rec.served {
                 0 => "stored".to_string(),

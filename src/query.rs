@@ -718,32 +718,15 @@ fn definitions(analysis: &Analysis) -> Vec<Record> {
             record.insert("origin".into(), json!(origin(analysis, def.span.file)));
             record.insert("mode".into(), json!(def.mode.as_str()));
             record.insert("arity".into(), json!(def.arity()));
-            record.insert("takes".into(), takes_of(analysis, def.name, def.mac.as_deref(), None));
-            record.insert(
-                "signature".into(),
-                match def.mac.as_ref().and_then(|m| m.arg_spec.as_ref()) {
-                    Some(spec) => json!(spec.raw),
-                    None => Json::Null,
-                },
-            );
-            record.insert(
-                "parameters".into(),
-                match &def.mac {
-                    Some(m) => json!(m.parameter_text.render(&analysis.interner)),
-                    None => Json::Null,
-                },
-            );
+            let mac = def.mac.as_deref();
+            record.insert("takes".into(), takes_of(analysis, def.name, mac, None));
+            record.insert("signature".into(), json!(mac.and_then(|m| m.arg_spec.as_ref()).map(|s| &s.raw)));
+            record.insert("parameters".into(), json!(mac.map(|m| m.parameter_text.render(&analysis.interner))));
             record.insert("global".into(), json!(def.global));
             record.insert("certain".into(), json!(def.certain));
             record.insert("depth".into(), json!(def.depth));
             record.insert("node".into(), json!(def.node));
-            record.insert(
-                "body".into(),
-                match &def.mac {
-                    Some(m) => json!(detokenize(&m.replacement_text, &analysis.interner)),
-                    None => Json::Null,
-                },
-            );
+            record.insert("body".into(), json!(mac.map(|m| detokenize(&m.replacement_text, &analysis.interner))));
             record
         })
         .collect()
@@ -1867,6 +1850,28 @@ pub fn package_options(analysis: &Analysis, package: &str) -> Vec<(String, Optio
     out.into_iter().collect()
 }
 
+/// `satex controls`: what each of `names` governs, or with none named the
+/// document's switches (every one with `all`), in document order.  Several
+/// names answer in one table: each row keeps the switch or option it
+/// belongs to in `for`, so one answer is still traceable to the name that
+/// asked for it.
+pub fn controls_of(analysis: &Analysis, names: &[String], all: bool) -> Vec<Record> {
+    let mut records = if names.is_empty() {
+        switches(analysis, all)
+    } else {
+        let mut out = Vec::new();
+        for name in names {
+            for mut record in controls(analysis, name) {
+                record.insert("for".into(), json!(name.trim_start_matches('\\')));
+                out.push(record);
+            }
+        }
+        out
+    };
+    in_document_order(analysis, &mut records);
+    records
+}
+
 pub fn controls(analysis: &Analysis, name: &str) -> Vec<Record> {
     let wanted = name.trim_start_matches('\\');
     let governed = |cds: &[crate::graph::ControlDep]| -> Option<String> {
@@ -2653,22 +2658,7 @@ fn record_for_def(analysis: &Analysis, def: &crate::facts::Definition, window: W
     let kind = class_or_package(analysis, def.package, def.span.file);
     record.insert(kind.into(), symbol(analysis, def.package));
     record.insert("arity".into(), json!(def.arity()));
-    record.insert("takes".into(), takes_of(analysis, def.name, def.mac.as_deref(), window.view()));
-    record.insert(
-        "signature".into(),
-        match probed(analysis, def.name, def.mac.as_deref(), window.view()) {
-            Some(p) if p.complete => json!(p.spec.raw),
-            Some(p) => json!(format!("{}…", p.spec.raw)),
-            None => Json::Null,
-        },
-    );
-    if let Some(p) = probed(analysis, def.name, def.mac.as_deref(), window.view()).filter(|p| !p.forms.is_empty()) {
-        record.insert("forms".into(), json!(p.forms.iter().map(|f| f.raw.clone()).collect::<Vec<_>>()));
-    }
-    record.insert("effective".into(), json!(effective_of(analysis, def.name, def.mac.as_deref(), window.view())));
-    if let Some(error) = probed(analysis, def.name, def.mac.as_deref(), window.view()).and_then(|p| p.error) {
-        record.insert("error".into(), json!(error));
-    }
+    insert_call_shape(&mut record, analysis, def.name, def.mac.as_deref(), window.view(), true);
     record.insert("certain".into(), json!(def.certain));
     record.insert("context".into(), json!(def_context_label(analysis, &[(def.context.to_vec(), def.via)])));
     let (body, primitive) = body_of(analysis, def.name, def.mac.as_deref());
@@ -2693,6 +2683,35 @@ fn record_for_def(analysis: &Analysis, def: &crate::facts::Definition, window: W
         record.insert("reference".into(), json!(link));
     }
     record
+}
+
+/// What a call of `sym` reads: `takes`, `signature`, `effective`, the
+/// `error` the probe raised if any, and with `forms` the forms it found.
+fn insert_call_shape(
+    record: &mut Record,
+    analysis: &Analysis,
+    sym: Sym,
+    mac: Option<&crate::tex::MacroDef>,
+    view: Option<bool>,
+    forms: bool,
+) {
+    record.insert("takes".into(), takes_of(analysis, sym, mac, view));
+    let probe = probed(analysis, sym, mac, view);
+    record.insert(
+        "signature".into(),
+        match &probe {
+            Some(p) if p.complete => json!(p.spec.raw),
+            Some(p) => json!(format!("{}…", p.spec.raw)),
+            None => Json::Null,
+        },
+    );
+    if let Some(p) = probe.as_ref().filter(|p| forms && !p.forms.is_empty()) {
+        record.insert("forms".into(), json!(p.forms.iter().map(|f| f.raw.clone()).collect::<Vec<_>>()));
+    }
+    record.insert("effective".into(), json!(effective_of(analysis, sym, mac, view)));
+    if let Some(error) = probe.and_then(|p| p.error) {
+        record.insert("error".into(), json!(error));
+    }
 }
 
 /// A record for a name with no recorded definition site: a kernel primitive
@@ -2737,22 +2756,7 @@ fn record_for_kernel(analysis: &Analysis, sym: Sym, window: Window) -> Option<Re
     };
     record.insert("arity".into(), json!(arity));
     record.insert("context".into(), json!(where_label(analysis, &[Vec::new()])));
-    record.insert("takes".into(), takes_of(analysis, sym, meaning.as_macro().map(|m| &**m), window.view()));
-    record.insert(
-        "signature".into(),
-        match probed(analysis, sym, meaning.as_macro().map(|m| &**m), window.view()) {
-            Some(p) if p.complete => json!(p.spec.raw),
-            Some(p) => json!(format!("{}…", p.spec.raw)),
-            None => Json::Null,
-        },
-    );
-    record.insert(
-        "effective".into(),
-        json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), window.view())),
-    );
-    if let Some(error) = probed(analysis, sym, meaning.as_macro().map(|m| &**m), window.view()).and_then(|p| p.error) {
-        record.insert("error".into(), json!(error));
-    }
+    insert_call_shape(&mut record, analysis, sym, meaning.as_macro().map(|m| &**m), window.view(), false);
     let (body, primitive) = body_of(analysis, sym, meaning.as_macro().map(|m| &**m));
     record.insert("body".into(), body);
     if primitive {
@@ -3070,40 +3074,16 @@ fn split_by_environment(analysis: &Analysis, sym: Sym, base: &Record) -> Option<
     if contexts.len() <= 1 {
         return None;
     }
-    let mut groups: Vec<(Option<String>, Vec<Vec<Sym>>)> = Vec::new();
-    for ctx in contexts {
+    let errors = contexts.into_iter().map(|ctx| {
         let error = analysis
             .facts
             .raised
             .iter()
             .find(|r| r.name == sym && r.context.as_ref() == ctx.as_slice())
             .map(|r| r.text.clone());
-        match groups.iter_mut().find(|(e, _)| *e == error) {
-            Some((_, ctxs)) => ctxs.push(ctx),
-            None => groups.push((error, vec![ctx])),
-        }
-    }
-    if groups.len() <= 1 {
-        return None;
-    }
-    Some(
-        groups
-            .into_iter()
-            .map(|(error, ctxs)| {
-                let mut record = base.clone();
-                match error {
-                    Some(text) => {
-                        record.insert("error".into(), json!(text));
-                    }
-                    None => {
-                        record.remove("error");
-                    }
-                }
-                record.insert("context".into(), json!(where_label(analysis, &ctxs)));
-                record
-            })
-            .collect(),
-    )
+        (error, ctx)
+    });
+    meanings_by_error(analysis, base, errors)
 }
 
 /// Environment-context meanings for a name with no real use to read them
@@ -3113,9 +3093,21 @@ fn split_by_environment(analysis: &Analysis, sym: Sym, base: &Record) -> Option<
 /// each raises against `base`'s own (probed outside any environment)
 /// error. `None` when none of them differed.
 fn probe_context_meanings(analysis: &Analysis, sym: Sym, base: &Record) -> Option<Vec<Record>> {
+    let errors = crate::probe::probe_contexts(analysis, sym)
+        .into_iter()
+        .map(|(env, error)| (error, env.map_or_else(Vec::new, |e| vec![e])));
+    meanings_by_error(analysis, base, errors)
+}
+
+/// One copy of `base` per distinct error among `errors`, each labelled with
+/// every context that raised it.  `None` when they all raised the same.
+fn meanings_by_error(
+    analysis: &Analysis,
+    base: &Record,
+    errors: impl Iterator<Item = (Option<String>, Vec<Sym>)>,
+) -> Option<Vec<Record>> {
     let mut groups: Vec<(Option<String>, Vec<Vec<Sym>>)> = Vec::new();
-    for (env, error) in crate::probe::probe_contexts(analysis, sym) {
-        let ctx = env.map_or_else(Vec::new, |e| vec![e]);
+    for (error, ctx) in errors {
         match groups.iter_mut().find(|(e, _)| *e == error) {
             Some((_, ctxs)) => ctxs.push(ctx),
             None => groups.push((error, vec![ctx])),
@@ -3703,6 +3695,7 @@ pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
             // `.unknown` handler; they follow the family's own keys.
             let mut families = families;
             let mut out = Vec::new();
+            let also = Regex::new(r"/[A-Za-z][^,{}\s\\]*").expect("valid regex");
             let mut rank = 0;
             while rank < families.len() && rank < 8 {
                 let path = format!("{}/", families[rank]);
@@ -3710,7 +3703,7 @@ pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
                     let key = record.get("key").and_then(Json::as_str).unwrap_or_default().to_string();
                     if key == format!("{path}.unknown") {
                         let code = record.get("value").and_then(Json::as_str).unwrap_or_default();
-                        for m in Regex::new(r"/[A-Za-z][^,{}\s\\]*").unwrap().find_iter(code) {
+                        for m in also.find_iter(code) {
                             if !families.iter().any(|f| f == m.as_str()) {
                                 families.push(m.as_str().to_string());
                             }

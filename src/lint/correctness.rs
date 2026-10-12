@@ -575,26 +575,16 @@ fn unresolved_files(report: &mut Report) {
 }
 
 fn option_clash(report: &mut Report) {
-    let analysis = report.analysis();
-    let first = report.index().first_loads();
-    for load in &analysis.facts.loads {
-        if !load.kind.is_package() {
-            continue;
-        }
-        let Some((options, at)) = first.get(load.name.as_str()) else { continue };
-        if *at == load.span {
-            continue;
-        }
+    for (load, options, at, first_load) in report.index().reloads() {
         let extra: Vec<&str> = load.options.iter().filter(|o| !options.contains(o)).map(String::as_str).collect();
         if extra.is_empty() {
             continue;
         }
-        let first_load = analysis.facts.loads.iter().find(|l| l.span == *at && l.name == load.name);
         let edits = first_load.and_then(|first| report.edits().add_options(first, &extra));
         report.add_fix(
             load.span,
             &load.name,
-            format!("{} was first loaded at {} without {}", load.name, report.place(*at), extra.join(", ")),
+            format!("{} was first loaded at {} without {}", load.name, report.place(at), extra.join(", ")),
             Fix::new(
                 format!("move the options to the first \\usepackage{{{}}}", load.name),
                 Applicability::Unsafe,
