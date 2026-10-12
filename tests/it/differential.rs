@@ -32,7 +32,7 @@ fn engine() -> Option<PathBuf> {
 }
 
 fn scratch() -> PathBuf {
-    let directory = std::env::temp_dir().join(format!("satex-differential-{}", std::process::id()));
+    let directory = crate::support::tmp_root().join(format!("satex-differential-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a scratch directory");
     // Absolute: the engine runs inside it, so a relative TMPDIR would point elsewhere.
     directory.canonicalize().expect("a scratch directory")

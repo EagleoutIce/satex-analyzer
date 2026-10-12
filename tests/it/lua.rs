@@ -46,7 +46,7 @@ fn the_argument_is_expanded_first() {
 
 #[test]
 fn required_modules_are_dependencies() {
-    let dir = std::env::temp_dir().join(format!("satex-lua-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-lua-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("mylib.lua"), "local helper = require('myhelper')\nreturn {}\n").unwrap();
     std::fs::write(dir.join("myhelper.lua"), "return 1\n").unwrap();

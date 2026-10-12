@@ -17,7 +17,7 @@ fn analyze(source: &str) -> Analysis {
 /// A document written to a directory of its own, beside the files it names;
 /// the lints read those files too, so the directory outlives the analysis.
 fn analyze_in(name: &str, source: &str, beside: &[(&str, &str)]) -> Analysis {
-    let dir: PathBuf = std::env::temp_dir().join(format!("satex-observed-{name}-{}", std::process::id()));
+    let dir: PathBuf = crate::support::tmp_root().join(format!("satex-observed-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temporary directory");
     for (file, text) in beside {
         std::fs::write(dir.join(file), text).expect("write beside");
@@ -143,7 +143,9 @@ fn an_unreadable_database_keeps_citations_unjudged() {
 }
 
 fn cleanup(name: &str) {
-    let _ = std::fs::remove_dir_all(std::env::temp_dir().join(format!("satex-observed-{name}-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(
+        crate::support::tmp_root().join(format!("satex-observed-{name}-{}", std::process::id())),
+    );
 }
 
 #[test]

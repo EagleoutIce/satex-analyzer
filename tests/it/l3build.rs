@@ -11,7 +11,7 @@ use satex::machine::Machine;
 /// A bundle in a fresh directory: `build.lua`, a `.dtx` with its `.ins`
 /// under `src/`, a document and a test.
 fn bundle(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("satex-l3build-{name}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-l3build-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("testfiles")).unwrap();

@@ -25,7 +25,7 @@ fn events(dir: &std::path::Path, range: &[&str]) -> Vec<(String, String, u64)> {
 }
 
 fn document(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("satex-trace-range-{tag}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-trace-range-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("child.tex"), "\\def\\x{\\relax}\n").unwrap();
     std::fs::write(dir.join("main.tex"), "\\def\\a{\\relax}\n\\def\\b{\\a}\n\\b\n\\a\n\\input child \\x\n").unwrap();
@@ -131,7 +131,7 @@ fn interactive_s_skips_to_a_line() {
 
 #[test]
 fn interactive_o_steps_over_a_call() {
-    let dir = std::env::temp_dir().join(format!("satex-trace-range-over-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-trace-range-over-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("main.tex"), "\\def\\a{\\relax}\n\\def\\b{\\a\\relax}\n\\b\n\\a\n").unwrap();
     let into = stepped(&dir, "s 3\n\nq\n");
@@ -179,7 +179,7 @@ fn trace_shows_only_the_documents_own_files_unless_asked() {
 
 #[test]
 fn interactive_reports_skipped_internal_steps_and_the_output_of_a_range() {
-    let dir = std::env::temp_dir().join(format!("satex-trace-range-out-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-trace-range-out-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("main.tex"), "\\documentclass{article}\n\\def\\a{world}\nhello \\a\n").unwrap();
     let text = |args: &[&str]| -> String {

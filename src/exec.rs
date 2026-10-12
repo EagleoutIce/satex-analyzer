@@ -482,7 +482,7 @@ impl Machine<'_> {
                     let kern = self.scan_mu_dimen();
                     match kern.filter(|_| self.math_followed()) {
                         Some(k) => {
-                            let width = self.mu_width(k);
+                            let width = self.mu_width(k, self.math_size());
                             self.append_item(crate::mode::Item::Kern(width));
                         }
                         None => self.append_item(crate::mode::Item::Unknown),
@@ -498,7 +498,7 @@ impl Machine<'_> {
                 let glue = self.scan_glue(true);
                 match glue.filter(|_| self.math_followed()) {
                     Some(g) => {
-                        let width = self.mu_width(g.width);
+                        let width = self.mu_width(g.width, self.math_size());
                         // Glue that neither stretches nor shrinks keeps its
                         // formula one rigid box to the line breaker.
                         let rigid = g.stretch.amount == 0 && g.shrink.amount == 0;

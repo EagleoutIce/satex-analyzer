@@ -14,7 +14,7 @@ use satex::machine::{Analysis, Machine};
 /// A project directory with `libs/sub/foolocal.sty`, reachable only through
 /// a `//`-recursive search of `libs`.
 fn fixture(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("satex-paths-test-{name}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-paths-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("libs/sub")).unwrap();
     std::fs::write(dir.join("libs/sub/foolocal.sty"), "\\ProvidesPackage{foolocal}\n").unwrap();
@@ -117,7 +117,7 @@ fn gaps(analysis: &Analysis) -> Vec<(&'static str, u32)> {
 /// A document directory beside a template directory, the shape
 /// `\IfFileExists{../template/x.cls}` tests for.
 fn template_tree(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("satex-template-{name}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-template-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("doc")).unwrap();
     std::fs::create_dir_all(dir.join("template")).unwrap();
@@ -235,7 +235,7 @@ fn a_package_that_cannot_be_found_is_recorded_as_a_gap() {
 
 /// A project whose root holds a stale `x.aux` and whose `build/` holds the fresh one.
 fn aux_fixture(name: &str, build_file: &str, text: &str) -> (PathBuf, Analysis) {
-    let dir = std::env::temp_dir().join(format!("satex-outdir-test-{name}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-outdir-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("build")).unwrap();
     std::fs::write(dir.join("x.aux"), "\\relax\n\\gdef\\stalemark{1}\n").unwrap();
@@ -290,7 +290,7 @@ fn config_output_directory_is_the_fallback() {
     if !installed() {
         return;
     }
-    let dir = std::env::temp_dir().join(format!("satex-outdir-test-config-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-outdir-test-config-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("build")).unwrap();
     std::fs::write(dir.join("x.aux"), "\\relax\n").unwrap();

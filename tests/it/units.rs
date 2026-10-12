@@ -10,7 +10,7 @@ use satex::machine::Machine;
 const CODE: &str = "hand-set-quantity";
 
 fn scratch(name: &str) -> PathBuf {
-    let directory = std::env::temp_dir().join("satex-units").join(format!("{name}-{}", std::process::id()));
+    let directory = crate::support::tmp_root().join("satex-units").join(format!("{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("a scratch directory");
     directory

@@ -425,6 +425,14 @@ fn inline_math_nodes_in_a_saved_box_stay_known() {
     assert_eq!(a.peak_paths, 1, "paths parted");
 }
 
+/// The same with sub- and superscripts, nested and in pairs: the formulas
+/// are rigid, so their paragraphs keep their height (tex.web §§ 756-759).
+#[test]
+fn inline_math_scripts_in_a_saved_box_stay_known() {
+    let Some(a) = check("inline_math_scripts_in_a_saved_box", "main.tex", &[]) else { return };
+    assert_eq!(a.peak_paths, 1, "paths parted");
+}
+
 peak_fixtures! {
     /// `\pgfmathparse` of an unknown integer three times: a typed result.
     pgfmath_of_unknown_integer_three_times("call_summary_pgfmath_thrice", "main.tex");

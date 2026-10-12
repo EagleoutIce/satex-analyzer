@@ -8,7 +8,7 @@ use std::process::Command;
 
 /// A project with its own empty cache directory.
 fn project(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("satex-cache-concurrency-{name}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-cache-concurrency-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("cache")).expect("temporary directory");
     dir

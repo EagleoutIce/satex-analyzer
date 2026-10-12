@@ -148,7 +148,7 @@ fn fixture_uri(path: &std::path::Path) -> String {
 
 #[test]
 fn stdio_session_drives_the_feature_set() {
-    let dir = std::env::temp_dir().join(format!("satex-lsp-test-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("greet.tex");
     std::fs::write(&file, FIXTURE).unwrap();
@@ -285,7 +285,7 @@ fn stdio_session_drives_the_feature_set() {
 /// Opens `text` as `name` in a fresh directory whose file on disk says
 /// something else, the way the playground's buffers differ from its files.
 fn open_unsaved(tag: &str, text: &str) -> (Server, String, Value, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!("satex-lsp-{tag}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("main.tex");
     std::fs::write(&file, "% the saved text differs\n").unwrap();
@@ -348,7 +348,7 @@ fn hover_shows_primitive_syntax_only_while_it_is_the_primitive() {
 #[cfg(unix)]
 #[test]
 fn a_folder_opened_through_a_symlink_keeps_its_name() {
-    let base = std::env::temp_dir().join(format!("satex-lsp-link-{}", std::process::id()));
+    let base = crate::support::tmp_root().join(format!("satex-lsp-link-{}", std::process::id()));
     let (real, link) = (base.join("real"), base.join("link"));
     std::fs::create_dir_all(&real).unwrap();
     let _ = std::fs::remove_file(&link);
@@ -410,7 +410,7 @@ mod goto_definition_on_loads {
 
     #[test]
     fn input_with_and_without_extension_opens_the_resolved_file() {
-        let dir = std::env::temp_dir().join(format!("satex-lsp-input-{}", std::process::id()));
+        let dir = crate::support::tmp_root().join(format!("satex-lsp-input-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let prelude = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7\n";
         let main_text = format!("{prelude}\\input{{chapter}}\n\\input{{chapter.tex}}\n");
@@ -453,7 +453,7 @@ mod goto_definition_on_loads {
     /// the source, and hover says the analysis did not reach it.
     #[test]
     fn definition_falls_back_to_a_source_scan_past_where_the_run_stopped() {
-        let dir = std::env::temp_dir().join(format!("satex-lsp-unreached-{}", std::process::id()));
+        let dir = crate::support::tmp_root().join(format!("satex-lsp-unreached-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("parts")).unwrap();
         let prelude = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6\n";
         let main_text = format!("{prelude}\\endinput\n\\input{{parts/later}}\n\\deep\n");
@@ -500,7 +500,7 @@ mod goto_definition_on_loads {
         if !kpsewhich_installed() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("satex-lsp-load-{}", std::process::id()));
+        let dir = crate::support::tmp_root().join(format!("satex-lsp-load-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let main_text = "\\documentclass{article}\n\\usepackage[draft]{mypkg}\n\\begin{document}\n\\include{intro}\n\\end{document}\n";
         let main = dir.join("main.tex");
@@ -597,7 +597,7 @@ fn labels(items: &[Value]) -> Vec<&str> {
 /// [`open_unsaved`] with the real kernel, classes and packages, on a cache
 /// the completion tests share.
 fn open_loaded(tag: &str, text: &str) -> (Server, String, Value, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!("satex-lsp-{tag}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("main.tex");
     std::fs::write(&file, text).unwrap();

@@ -32,7 +32,7 @@ fn analyze(source: &str) -> Analysis {
 // a line of its own only where a test's own position names line 1).
 
 fn scratch(name: &str) -> PathBuf {
-    let directory = std::env::temp_dir().join("satex-slice-test").join(name);
+    let directory = crate::support::tmp_root().join("satex-slice-test").join(name);
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("a scratch directory");
     directory

@@ -26,7 +26,7 @@ struct Run {
 /// command with a lot of output (`tokens`, `trace`) cannot deadlock on a
 /// full pipe the way polling `try_wait` without reading would.
 fn run(args: &[&str]) -> Run {
-    let cache = std::env::temp_dir().join(format!("satex-no-install-{}-{}", std::process::id(), fastrand()));
+    let cache = crate::support::tmp_root().join(format!("satex-no-install-{}-{}", std::process::id(), fastrand()));
     let full: Vec<&str> = args.iter().chain(NO_INSTALL.iter()).copied().collect();
     let child = Command::new(env!("CARGO_BIN_EXE_satex"))
         .args(&full)
@@ -167,7 +167,7 @@ fn version_reports_an_installation_when_kpsewhich_is_allowed() {
     let child = Command::new(env!("CARGO_BIN_EXE_satex"))
         .args(["--version"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .env("SATEX_CACHE", std::env::temp_dir().join(format!("satex-has-install-{}", std::process::id())))
+        .env("SATEX_CACHE", crate::support::tmp_root().join(format!("satex-has-install-{}", std::process::id())))
         .output()
         .expect("satex runs");
     let stdout = String::from_utf8_lossy(&child.stdout);

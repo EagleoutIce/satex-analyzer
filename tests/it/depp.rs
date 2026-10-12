@@ -7,7 +7,7 @@ use crate::support::installed;
 use satex::machine::{Analysis, Machine};
 
 fn project(name: &str, depends: &str) -> (PathBuf, Analysis) {
-    let dir = std::env::temp_dir().join(format!("satex-depp-{name}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-depp-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("DEPENDS.txt"), depends).unwrap();
     let path = dir.join("doc.tex");

@@ -10,7 +10,7 @@ use satex::literate::{Guards, code_view};
 use satex::machine::{Analysis, Machine};
 
 fn scratch(name: &str) -> PathBuf {
-    let directory = std::env::temp_dir().join("satex-literate-test").join(name);
+    let directory = crate::support::tmp_root().join("satex-literate-test").join(name);
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("a scratch directory");
     directory

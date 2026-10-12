@@ -471,18 +471,34 @@ pub struct Natural {
     /// In inline math: the last atom is a box of this height and depth,
     /// the nucleus a script after it sits on (tex.web § 756).
     pub math_box: Option<(Scaled, Scaled)>,
-    /// In inline math: inside a `{…}` script, which holds one character
-    /// here; any other atom in it loses the size (tex.web § 1176).
-    pub script_group: bool,
-    /// In inline math: the formula is no rigid box to the line breaker. A
-    /// binary or relation atom came, after which it may break (tex.web
-    /// § 761), or glue that may stretch or shrink.
-    pub math_breaks: bool,
+    /// In inline math: the style the list is set in, twice its size (0 text,
+    /// 1 script, 2 scriptscript) plus one where cramped (tex.web § 688).
+    pub style: u8,
+    /// In inline math: the script just set, which a script of the other
+    /// kind after it joins (tex.web § 759).
+    pub scripted: Option<Scripted>,
+    /// In inline math: the formula is no rigid box to the line breaker if
+    /// this is not zero. A binary or relation atom came, after which it may
+    /// break (tex.web § 761), or glue that may stretch or shrink: how many
+    /// of them at most, `u32::MAX` where that is not known.
+    pub math_breaks: u32,
     /// A paragraph's lines so far (tex.web § 815).
     pub para: Para,
     /// A vertical list's `\prevdepth` (tex.web § 219), `None` at
     /// `ignore_depth`; on a paragraph, that of the list it goes onto.
     pub prev_depth: Option<Dim>,
+}
+
+/// A script placed after its nucleus: the script box, and the list as it
+/// was before and after.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Scripted {
+    sup: bool,
+    size: [Scaled; 3],
+    before: [Dim; 3],
+    after: Dim,
+    prev: Option<Option<(i64, u32, u32)>>,
+    boxed: Option<(Scaled, Scaled)>,
 }
 
 impl Natural {
@@ -687,15 +703,16 @@ impl Natural {
             math_bin: if self.math_bin == other.math_bin { self.math_bin } else { Some(Scaled::MIN) },
             script: if self.script == other.script { self.script } else { None },
             math_box: if self.math_box == other.math_box { self.math_box } else { None },
-            script_group: self.script_group || other.script_group,
-            math_breaks: self.math_breaks || other.math_breaks,
+            style: self.style.max(other.style),
+            scripted: if self.scripted == other.scripted { self.scripted } else { None },
+            math_breaks: self.math_breaks.max(other.math_breaks),
             solid: self.solid.max(other.solid),
             para: self.para.join(other.para),
             prev_depth: join_prev(self.prev_depth, other.prev_depth),
         };
         // A character not yet counted differs between the paths: its own
         // size is not known, so the lengths it would add widen.
-        if self.pending != other.pending {
+        if self.pending != other.pending || self.style != other.style {
             joined.pending = None;
             joined.along = Dim::ANY;
             joined.height = joined.height.max(Dim::ANY);
@@ -961,8 +978,9 @@ impl Machine<'_> {
             math_bin: None,
             script: None,
             math_box: None,
-            script_group: false,
-            math_breaks: false,
+            style: 0,
+            scripted: None,
+            math_breaks: 0,
             para: Para {
                 along: outer.along.extended_by(outer.depth).extended_by(skip),
                 below,
@@ -1442,14 +1460,10 @@ impl Machine<'_> {
         // the type `\mathord` … `\mathinner` gave it, whose list starts
         // afresh. Its space before it goes on now.
         let mut part = 0;
-        if code.is_some()
-            && let Some(mut n) = self.natural
-            && n.script.is_some()
-            && !n.script_group
-        {
-            // A `{…}` script: its one character is the script (§ 1176).
-            n.script_group = true;
-            self.natural = Some(n);
+        let script = self.natural.and_then(|n| n.script).filter(|_| code.is_some());
+        if script.is_some() {
+            // A `{…}` script is a list of its own, in the style a script
+            // gets (§ 1176); the nucleus waits in the group's saved list.
             part = SCRIPT_GROUP;
         } else if code.is_some()
             && let Some(mut n) = self.natural
@@ -1460,10 +1474,14 @@ impl Machine<'_> {
         }
         self.env.set_nest(self.nest_here(code, false, part));
         if code.is_some()
-            && part != SCRIPT_GROUP
             && let Some(n) = &mut self.natural
         {
-            (n.math_class, n.math_bin, n.math_prev) = (None, None, None);
+            (n.math_class, n.math_bin, n.math_prev, n.math_pending) = (None, None, None, None);
+            n.scripted = None;
+            if let Some(sup) = script {
+                (n.style, n.script, n.math_box) = (Self::script_style(n.style, sup), None, None);
+                (n.along, n.height, n.depth) = (Dim::exact(0), Dim::exact(0), Dim::exact(0));
+            }
         }
         self.mode = self.mode.map(|m| if m.meets(Modes::ANY_MATH) { Modes::MATH } else { m });
     }
@@ -1488,10 +1506,8 @@ impl Machine<'_> {
             // The group's list, boxed (tex.web §§ 720, 755): its last
             // character's italic correction, then the atom it is.
             if nest.code == Some(group::MATH) && nest.part == SCRIPT_GROUP {
-                self.natural = self.natural.filter(|n| n.script.is_none()).map(|mut n| {
-                    n.script_group = false;
-                    n
-                });
+                let outer = nest.natural.unwrap_or_else(Natural::any);
+                self.close_script_group(outer);
             } else if nest.code == Some(group::MATH)
                 && let Some(mut n) = self.natural
             {
@@ -1500,6 +1516,7 @@ impl Machine<'_> {
                 n.along = n.along.extended_by(italic);
                 let outer = nest.natural.unwrap_or_else(Natural::any);
                 (n.math_class, n.math_bin, n.math_prev) = (outer.math_class, outer.math_bin, None);
+                n.scripted = None;
                 self.natural = (n.script.is_none() && n.math_pending.is_none()).then_some(n);
             }
             return;
@@ -2277,14 +2294,11 @@ impl Machine<'_> {
         if matches!(item, Item::Zero | Item::Whatsit) && self.mode == Modes::MATH {
             return;
         }
+        n.scripted = None;
         // A box in inline math is an ordinary atom (tex.web §§ 1076, 736):
         // the character before it takes its italic correction (§ 755), and
         // two ordinary atoms have no space between them (§ 764).
         if let (Item::Box([w, h, d]), Modes::MATH) = (&item, self.mode) {
-            if n.script_group {
-                self.natural = None;
-                return;
-            }
             n.math_box = (h.lo == h.hi && d.lo == d.hi).then_some((h.lo, d.lo));
             self.next_atom(&mut n);
             n.along = n.along.extended_by(*w);
@@ -2298,12 +2312,10 @@ impl Machine<'_> {
         if let (Item::Glue(w, _) | Item::Kern(w), Modes::MATH) = (&item, self.mode)
             && n.script.is_none()
         {
-            if n.script_group {
-                self.natural = None;
-                return;
-            }
             n.math_box = None;
-            n.math_breaks |= matches!(item, Item::Glue(_, spec) if spec.is_none_or(|g| g.stretch.amount != 0 || g.shrink.amount != 0));
+            if let Item::Glue(_, spec) = item {
+                n.math_breaks = Self::more_breaks(n.math_breaks, spec.map(|g| (g.stretch.amount, g.shrink.amount)));
+            }
             let italic = self.prev_italic(n.math_prev);
             n.along = n.along.extended_by(italic).extended_by(w.map_or(Dim::ANY, Dim::exact));
             n.math_prev = None;
@@ -2447,18 +2459,39 @@ impl Machine<'_> {
     /// The node that ends a formula, `w` wide (tex.web § 1196): a
     /// breakpoint where glue follows (§ 866), its width gone at a break
     /// (§ 881) and discarded after one (§ 879), as an explicit kern's. A
-    /// formula that is no `rigid` box breaks at its own penalties too
-    /// (§ 761), which are not followed.
-    fn math_off(&mut self, w: Dim, rigid: bool) {
+    /// formula that breaks at its own penalties (§ 761) or stretches
+    /// (`breaks` of them at most) is not followed: its breakpoints are
+    /// counted, and a penalty that may make a break pay makes the list
+    /// awkward.
+    fn math_off(&mut self, w: Dim, breaks: u32) {
         let Some(mut n) = self.natural else { return };
         n.advance(true, w);
-        let kern = w.known().filter(|_| rigid);
+        let kern = w.known().filter(|_| breaks == 0);
         if let Some(w) = kern {
             self.kp_push(&mut n.para.items, crate::linebreak::Kp::Kern { w, explicit: true });
         }
         self.natural = Some(n);
-        if kern.is_none() {
+        if breaks == 0 && kern.is_none() {
             self.unfollowed_breaks();
+        } else if breaks > 0 {
+            let pens = ["binoppenalty", "relpenalty"].map(|name| self.int_parameter(name));
+            let odd = breaks == u32::MAX || pens.iter().any(|p| p.is_none_or(|p| p < 0));
+            if let Some(n) = &mut self.natural {
+                n.para.breakpoints = n.para.breakpoints.saturating_add(breaks).saturating_add(2);
+                n.para.awkward |= odd;
+                n.para.items = None;
+            }
+        }
+    }
+
+    /// One more place a formula may break or stretch at, given the stretch
+    /// and shrink of the glue there (`None`: not known): glue that is
+    /// negative or unknown can be anywhere.
+    fn more_breaks(count: u32, spec: Option<(Scaled, Scaled)>) -> u32 {
+        match spec {
+            Some((0, 0)) => count,
+            Some((st, sh)) if st >= 0 && sh >= 0 => count.saturating_add(1),
+            _ => u32::MAX,
         }
     }
 
@@ -2770,7 +2803,7 @@ impl Machine<'_> {
                 let last = self.prev_italic(m.math_prev);
                 let width = m.along.extended_by(last).extended_by(surround);
                 self.append_item(Item::Box([width, m.height, m.depth]));
-                self.math_off(surround, !m.math_breaks);
+                self.math_off(surround, m.math_breaks);
                 if let Some(n) = self.natural.as_mut() {
                     n.space_factor = Some(1000);
                 }
@@ -2866,15 +2899,18 @@ impl Machine<'_> {
     /// tex.web §§ 764-766: the space between atoms of type `left` and
     /// `right` in text style (0 ord … 7 inner): none, or `\thinmuskip`,
     /// `\medmuskip` or `\thickmuskip` at their natural width.
-    fn math_space(&mut self, left: Option<i8>, right: u8) -> Dim {
+    fn math_space(&mut self, left: Option<i8>, right: u8, size: u8) -> Dim {
         let Some(left) = left else { return Dim::exact(0) };
-        if Self::space_code(left, right) == Some(b'0') {
+        // The spaces of the table that hold in text style only.
+        if matches!(Self::space_code(left, right), Some(b'0'))
+            || (size > 0 && matches!(Self::space_code(left, right), Some(b'2'..=b'4')))
+        {
             return Dim::exact(0);
         }
         let Some(name) = Self::space_name(Some(left), right) else { return Dim::ANY };
         let sym = self.intern(name);
         let Value::MuGlue(g) = self.env.value(sym) else { return Dim::ANY };
-        self.mu_width(g.width).map_or(Dim::ANY, Dim::exact)
+        self.mu_width(g.width, size).map_or(Dim::ANY, Dim::exact)
     }
 
     /// tex.web § 764: the entry of the spacing table between atoms of
@@ -2897,22 +2933,31 @@ impl Machine<'_> {
         }
     }
 
-    /// Whether the muskip `name` neither stretches nor shrinks.
-    fn rigid_muskip(&mut self, name: &str) -> bool {
+    /// The stretch and shrink of the muskip `name`, where known.
+    fn muskip_stretch(&mut self, name: &str) -> Option<(Scaled, Scaled)> {
         let sym = self.intern(name);
-        matches!(self.env.value(sym), Value::MuGlue(g) if g.stretch.amount == 0 && g.shrink.amount == 0)
+        match self.env.value(sym) {
+            Value::MuGlue(g) => Some((g.stretch.amount, g.shrink.amount)),
+            _ => None,
+        }
     }
 
-    /// A width in math units in text style (tex.web §§ 716-717, 732):
+    /// A width in math units in math size `size` (tex.web §§ 716-717, 732):
     /// `cur_mu` is the math quad over 18, applied as `n.f`.
-    pub(crate) fn mu_width(&mut self, width: Scaled) -> Option<Scaled> {
+    pub(crate) fn mu_width(&mut self, width: Scaled, size: u8) -> Option<Scaled> {
         const UNIT: i64 = 1 << 16;
-        let by = self.intern("textfont");
+        let by = self.size_font(size);
         let quad = self.family_font(by, 2).and_then(|f| self.font_dimen(f, 6)).and_then(|v| v.as_dimen());
         let m = quad.and_then(|q| crate::value::x_over_n(q, 18))?;
         let (n, f) = (m.div_euclid(UNIT), m.rem_euclid(UNIT));
         let y = crate::scan::xn_over_d(width, f, UNIT).0;
         n.checked_mul(width).and_then(|v| v.checked_add(y)).filter(|w| w.abs() <= crate::value::MAX_DIMEN)
+    }
+
+    /// The math size of the formula being built: 0 text, 1 script, 2
+    /// scriptscript.
+    pub(crate) fn math_size(&self) -> u8 {
+        self.natural.map_or(0, |n| n.style >> 1)
     }
 
     /// Whether the list being built is inline math whose atoms are followed.
@@ -2948,17 +2993,23 @@ impl Machine<'_> {
             };
             left = Some(0);
         }
-        let space = self.math_space(left, t);
-        n.math_breaks |= Self::space_name(left, t).is_some_and(|name| !self.rigid_muskip(name));
+        let size = n.style >> 1;
+        let space = self.math_space(left, t, size);
+        if let Some(name) = Self::space_name(left, t) {
+            let spec = self.muskip_stretch(name);
+            n.math_breaks = Self::more_breaks(n.math_breaks, spec);
+        }
         if t == 2 {
-            let ord = self.math_space(left, 0);
+            let ord = self.math_space(left, 0, size);
             n.math_bin = Some(match (space.known(), ord.known()) {
                 (Some(a), Some(b)) => a - b,
                 _ => Scaled::MIN,
             });
         }
         n.math_class = Some(t as i8);
-        n.math_breaks |= matches!(t, 2 | 3);
+        if matches!(t, 2 | 3) {
+            n.math_breaks = n.math_breaks.saturating_add(1);
+        }
         space
     }
 
@@ -2986,13 +3037,9 @@ impl Machine<'_> {
         if let Some(sup) = n.script {
             return self.math_script_char(n, sup, class, fam, ch);
         }
-        if n.script_group {
-            self.natural = None;
-            return;
-        }
-        n.math_box = None;
+        (n.math_box, n.scripted) = (None, None);
         let t = n.math_pending.take().unwrap_or(if class == 7 { 0 } else { class as u8 });
-        let by = self.intern("textfont");
+        let by = self.size_font(n.style >> 1);
         let font = self.family_font(by, fam);
         let known = font.and_then(|f| Some((f, self.font_metrics(f)?, self.font_size(f)?)));
         let Some((font, m, z, b)) = known.and_then(|(f, m, z)| Some((f, m.clone(), z, m.char_box(ch, z)?))) else {
@@ -3068,9 +3115,10 @@ impl Machine<'_> {
     pub(crate) fn math_script(&mut self, sup: bool) {
         match self.natural {
             Some(mut n)
-                if (matches!(n.math_prev, Some(Some(_))) || (n.math_prev.is_none() && n.math_box.is_some()))
-                    && n.script.is_none()
-                    && !n.script_group =>
+                if (matches!(n.math_prev, Some(Some(_)))
+                    || (n.math_prev.is_none() && n.math_box.is_some())
+                    || n.scripted.is_some_and(|r| r.after == n.along && r.sup != sup))
+                    && n.script.is_none() =>
             {
                 n.script = Some(sup);
                 self.natural = Some(n);
@@ -3079,12 +3127,69 @@ impl Machine<'_> {
         }
     }
 
+    /// The style of a script in `style` (tex.web § 702): one size down, to
+    /// scriptscript at most, and cramped for a subscript.
+    fn script_style(style: u8, sup: bool) -> u8 {
+        let size = ((style >> 1) + 1).min(2);
+        size * 2 + if sup { style & 1 } else { 1 }
+    }
+
+    /// The name of the font table (`\textfont` …) of math size `size`.
+    pub(crate) fn size_font(&mut self, size: u8) -> Sym {
+        self.intern(["textfont", "scriptfont", "scriptscriptfont"][usize::from(size.min(2))])
+    }
+
     /// tex.web §§ 755-758: an ordinary character as the one script of a
-    /// character nucleus in text style. The nucleus keeps its italic
-    /// correction only before a superscript. The script is set in the
-    /// script font with its italic correction and `\scriptspace` (§ 720),
-    /// and shifted by the parameters of `\textfont2`.
-    fn math_script_char(&mut self, mut n: Natural, sup: bool, class: i64, fam: i64, c: u32) {
+    /// nucleus, set in the font of the size below it.
+    fn math_script_char(&mut self, n: Natural, sup: bool, class: i64, fam: i64, c: u32) {
+        let by = self.size_font(((n.style >> 1) + 1).min(2));
+        let font = self.family_font(by, fam).filter(|_| matches!(class, 0 | 7));
+        let script = font.and_then(|f| self.font_metrics(f)?.char_box(c, self.font_size(f)?));
+        let Some(b) = script else {
+            self.natural = None;
+            return;
+        };
+        let (w, h, d) = (b.width + b.italic, b.height.max(0), b.depth.max(0));
+        self.place_script(n, sup, w, h, d);
+    }
+
+    /// The end of a `{…}` script: the list it held, boxed.
+    fn close_script_group(&mut self, outer: Natural) {
+        let Some(mut n) = self.natural.filter(|n| n.script.is_none()) else {
+            self.natural = None;
+            return;
+        };
+        let italic = self.prev_italic(n.math_prev);
+        Self::end_atoms(&mut n);
+        let size = n.along.extended_by(italic).known().zip(n.height.known()).zip(n.depth.known());
+        match (size, outer.script) {
+            (Some(((w, h), d)), Some(sup)) => self.place_script(outer, sup, w, h, d),
+            _ => self.natural = None,
+        }
+    }
+
+    /// tex.web §§ 756-759: a script box of this size set after the nucleus
+    /// of `n`, a character or a box, with its italic correction (but for a
+    /// subscript alone) and `\scriptspace` (§ 720), shifted by the
+    /// parameters of the math fonts of the nucleus' size. A script of the
+    /// other kind after one sets both in a column.
+    fn place_script(&mut self, mut n: Natural, sup: bool, w: Scaled, height: Scaled, depth: Scaled) {
+        let mut size = [[w, height, depth]; 2];
+        let mut flip = None;
+        if let Some(r) = n.scripted.filter(|r| r.after == n.along && r.sup != sup) {
+            (n.along, n.height, n.depth) = (r.before[0], r.before[1], r.before[2]);
+            (n.math_prev, n.math_box) = (r.prev, r.boxed);
+            size[usize::from(r.sup)] = r.size;
+            flip = Some(r.sup);
+        }
+        let record = Scripted {
+            sup,
+            size: size[usize::from(sup)],
+            before: [n.along, n.height, n.depth],
+            after: n.along,
+            prev: n.math_prev,
+            boxed: n.math_box,
+        };
         // A character nucleus, or a box one sitting the script by the
         // script font's drops (tex.web § 756).
         let char_nucleus = match (n.math_prev, n.math_box) {
@@ -3095,10 +3200,11 @@ impl Machine<'_> {
                 return;
             }
         };
-        let (by, sy) = (self.intern("scriptfont"), self.intern("textfont"));
+        let (here, below) = (n.style >> 1, ((n.style >> 1) + 1).min(2));
+        let (here, below) = (self.size_font(here), self.size_font(below));
         let drops = match n.math_box {
             Some((bh, bd)) if char_nucleus.is_none() => {
-                let ss = self.family_font(by, 2);
+                let ss = self.family_font(below, 2);
                 let mut sparam = |k| ss.and_then(|f| self.font_dimen(f, k)).and_then(|v| v.as_dimen());
                 let (Some(sup_drop), Some(sub_drop)) = (sparam(18), sparam(19)) else {
                     self.natural = None;
@@ -3108,33 +3214,53 @@ impl Machine<'_> {
             }
             _ => (0, 0),
         };
-        let font = self.family_font(by, fam).filter(|_| matches!(class, 0 | 7));
-        let script = font.and_then(|f| Some((self.font_metrics(f)?.char_box(c, self.font_size(f)?)?, f)));
-        let sy = self.family_font(sy, 2);
+        let (sy, ex) = (self.family_font(here, 2), self.family_font(here, 3));
         let mut param = |k| sy.and_then(|f| self.font_dimen(f, k)).and_then(|v| v.as_dimen());
-        let (Some((b, _)), Some(x_height), Some(shift)) = (script, param(5), param(if sup { 14 } else { 16 })) else {
+        // The shift up is `sup2`, `sup3` where cramped; the shift down
+        // `sub1`, `sub2` beside a superscript (§§ 757-759).
+        let both = flip.is_some();
+        let (up, down) = (param(14 + usize::from(n.style & 1)), param(16 + usize::from(both)));
+        let (Some(x_height), Some(up), Some(down)) = (param(5), up, down) else {
             self.natural = None;
             return;
         };
-        let (height, depth) = (b.height.max(0), b.depth.max(0));
-        let width = Dim::exact(b.width + b.italic).extended_by(self.dimen_parameter("scriptspace"));
-        let (h, d) = match sup {
-            true => {
-                if let Some((nucleus, left)) = char_nucleus {
-                    n.along = n.along.extended_by(self.math_italic(nucleus, left, false));
+        let (sup_box, sub_box) = (size[1], size[0]);
+        let delta = char_nucleus.map_or(Dim::exact(0), |(nucleus, left)| self.math_italic(nucleus, left, false));
+        let ss = self.dimen_parameter("scriptspace");
+        let mut shift_up = drops.0.max(up).max(sup_box[2] + x_height.abs() / 4);
+        let mut shift_down = drops.1.max(down);
+        let mut cols = Dim::exact(w);
+        if both {
+            let Some(thick) = ex.and_then(|f| self.font_dimen(f, 8)?.as_dimen()) else {
+                self.natural = None;
+                return;
+            };
+            let gap = (shift_up - sup_box[2]) - (sub_box[1] - shift_down);
+            if gap < 4 * thick {
+                shift_down = 4 * thick - (shift_up - sup_box[2]) + sub_box[1];
+                let psi = (x_height * 4).abs() / 5 - (shift_up - sup_box[2]);
+                if psi > 0 {
+                    shift_up += psi;
+                    shift_down -= psi;
                 }
-                let up = drops.0.max(shift).max(depth + x_height.abs() / 4);
-                (height + up, depth - up)
             }
-            false => {
-                let down = drops.1.max(shift).max(height - (x_height * 4).abs() / 5);
-                (height - down, depth + down)
-            }
+            cols = Dim::exact(sub_box[0]).max(delta.extended_by(Dim::exact(sup_box[0])));
+        } else {
+            shift_down = shift_down.max(height - (x_height * 4).abs() / 5);
+        }
+        let (h, d) = match (both, sup) {
+            (true, _) => (sup_box[1] + shift_up, sub_box[2] + shift_down),
+            (_, true) => (height + shift_up, depth - shift_up),
+            _ => (height - shift_down, depth + shift_down),
         };
-        n.along = n.along.extended_by(width);
+        if sup && !both {
+            n.along = n.along.extended_by(delta);
+        }
+        n.along = n.along.extended_by(cols).extended_by(ss);
         n.height = n.height.max(Dim::exact(h));
         n.depth = n.depth.max(Dim::exact(d));
         (n.math_prev, n.script, n.math_box) = (None, None, None);
+        n.scripted = (!both).then_some(Scripted { after: n.along, ..record });
         self.natural = Some(n);
     }
 

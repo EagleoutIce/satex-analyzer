@@ -20,7 +20,7 @@ fn run(dir: &std::path::Path, args: &[&str]) -> Result<Vec<serde_json::Value>, S
 }
 
 fn document(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("satex-positions-{tag}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-positions-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("child.tex"), "\\def\\c{1}\n\\a\n").unwrap();
     std::fs::write(dir.join("main.tex"), "\\def\\a{1}\n\\input child\n\\def\\late{2}\n").unwrap();

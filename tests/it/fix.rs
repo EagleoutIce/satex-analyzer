@@ -24,7 +24,7 @@ impl Drop for Fixed {
 }
 
 fn project(name: &str, files: &[(&str, &str)]) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("satex-fix-{name}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-fix-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     for (file, text) in files {

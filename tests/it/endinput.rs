@@ -27,7 +27,7 @@ fn state(analysis: &Analysis, names: &[&str]) -> String {
 
 /// A scratch directory of its own per test.
 fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("satex-endinput-{tag}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-endinput-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir
@@ -39,7 +39,7 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 fn latex(dir: &std::path::Path) -> Config {
     static KERNEL: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
     let shared = KERNEL.get_or_init(|| {
-        let shared = std::env::temp_dir().join(format!("satex-endinput-kernel-{}", std::process::id()));
+        let shared = crate::support::tmp_root().join(format!("satex-endinput-kernel-{}", std::process::id()));
         let cfg = Config {
             cache: Cache { dir: Some(shared.clone()), ..Default::default() },
             load: Load { classes: true, ..Default::default() },

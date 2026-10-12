@@ -250,7 +250,7 @@ fn expl_syntax_makes_colon_and_underscore_letters() {
 fn package_options_run_their_code() {
     // The kernel's own `\DeclareOption` and `\ProcessOptions` (clsguide
     // § 4.5): only the option the document passed runs.
-    let directory = std::env::temp_dir().join(format!("satex-options-{}", std::process::id()));
+    let directory = crate::support::tmp_root().join(format!("satex-options-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(
         directory.join("qopts.sty"),
@@ -532,7 +532,7 @@ fn the_summary_states_what_the_input_is() {
 
 #[test]
 fn the_load_tree_carries_the_path_of_every_file() {
-    let dir = std::env::temp_dir().join("satex-load-tree-test");
+    let dir = crate::support::tmp_root().join("satex-load-tree-test");
     let _ = std::fs::create_dir_all(&dir);
     std::fs::write(dir.join("part.tex"), "\\def\\b{2}\n").unwrap();
     let main = dir.join("main.tex");
@@ -558,7 +558,7 @@ fn a_skip_begun_in_another_file_skips_on_as_tex_does() {
     // With no gap before it satex knows the skip is TeX's own, the way
     // versions.sty and comment.sty skip the document's text on purpose, and
     // follows only that path (SEMANTICS.md § 14).
-    let dir = std::env::temp_dir().join(format!("satex-skip-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-skip-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     std::fs::write(dir.join("opener.tex"), "\\def\\opener{\\iffalse}\n").unwrap();
     let main = dir.join("main.tex");
@@ -1315,7 +1315,7 @@ fn read_appends_the_end_of_line_character_and_balances_braces() {
     // etex: `a;b |{c d}e |\par `: tex.web § 483 appends `\endlinechar` to
     // every line and reads on until the braces balance; past the end the
     // line is empty (expl3 reads UnicodeData.txt with `\ior_map_variable`).
-    let dir = std::env::temp_dir().join(format!("satex-read-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-read-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("rd.dat");
     std::fs::write(&file, "a;b\n{c\nd}e\n").unwrap();

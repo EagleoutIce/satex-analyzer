@@ -113,7 +113,7 @@ fn an_image_is_looked_for_where_graphicspath_says_and_in_what_the_driver_reads()
     if !installed() {
         return;
     }
-    let directory = std::env::temp_dir().join(format!("satex-graphics-test-{}", std::process::id()));
+    let directory = crate::support::tmp_root().join(format!("satex-graphics-test-{}", std::process::id()));
     let figures = directory.join("figs");
     std::fs::create_dir_all(&figures).unwrap();
     std::fs::write(figures.join("tree.png"), b"").unwrap();
@@ -435,7 +435,7 @@ fn a_load_at_the_very_end_of_an_input_file_still_happens() {
     // look-ahead reads on in the file that opened this one.  pdflatex loads
     // the package in every shape below: `\meaning\numberwithin` is amsmath's
     // `\protected macro:->\__cmd_start:nNNnnn …`.
-    let dir = std::env::temp_dir().join(format!("satex-endload-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-endload-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let document = "\\documentclass{article}\n\\input{cfg.tex}\n\\begin{document}\\end{document}\n";

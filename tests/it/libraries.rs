@@ -131,7 +131,7 @@ fn the_meaning_of_a_let_copy_of_a_primitive_names_the_primitive() {
 fn a_package_sees_its_own_name_and_options() {
     // xkeyval's `\ProcessOptionsX` (FiraSans.sty) reads `\@currname`,
     // `\@currext` and `\opt@⟨name⟩.⟨ext⟩`.
-    let directory = std::env::temp_dir().join(format!("satex-currname-{}", std::process::id()));
+    let directory = crate::support::tmp_root().join(format!("satex-currname-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(
         directory.join("cn.sty"),

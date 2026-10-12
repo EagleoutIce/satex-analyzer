@@ -23,7 +23,7 @@ impl Drop for Fixture {
 }
 
 fn write(name: &str, source: &str, cfg: Config) -> Fixture {
-    let directory = std::env::temp_dir().join(format!("satex-rename-{name}-{}", std::process::id()));
+    let directory = crate::support::tmp_root().join(format!("satex-rename-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let path = directory.join("doc.tex");
     std::fs::write(&path, source).unwrap();

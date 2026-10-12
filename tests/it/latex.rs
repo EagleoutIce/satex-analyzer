@@ -2170,6 +2170,8 @@ fn a_paragraph_with_inline_math_keeps_its_height() {
         (r"\hsize=2cm $xxxxxxxxxxxxxxxxxxxx$ $y$", "16.30554pt/1.94444pt"),
         (r"\hsize=1cm $x$ $y$ $z$ $w$ $v$", "16.30554pt/0.0pt"),
         (r"\hsize=1cm $x$$y$$z$$w$$v$ $u$", "16.30554pt/0.0pt"),
+        (r"\hsize=3cm $x^2$ and $a_{ij}$", "8.14003pt/2.86108pt"),
+        (r"\hsize=3cm $def_{A_i}=b$", "6.94444pt/2.49998pt"),
     ];
     let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
     for (i, (f, _)) in cases.iter().enumerate() {
@@ -2187,6 +2189,40 @@ fn a_paragraph_with_inline_math_keeps_its_height() {
         .collect();
     let want: Vec<(String, String)> = cases.iter().map(|(f, w)| (f.to_string(), w.to_string())).collect();
     assert_eq!(got, want);
+}
+
+/// tex.web §§ 719, 756-758: scripts of any length and depth are set in the
+/// script and scriptscript fonts, shifted by the parameters of the size
+/// they sit in. Widths, heights and depths as `pdflatex` prints.
+#[test]
+fn inline_math_with_scripts_has_its_size() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (r"x^2", "10.2014pt/8.14003pt/0.0pt"),
+        (r"a_{ij}", "12.32874pt/4.30554pt/2.86108pt"),
+        (r"x_{A_i}", "15.39703pt/4.30554pt/2.49998pt"),
+        (r"def_{A_i}", "24.43875pt/6.94444pt/2.49998pt"),
+        (r"def_{A_i}=\{\dots\}", "59.43861pt/7.5pt/2.5pt"),
+        (r"a^{b^c}", "13.04968pt/8.79948pt/0.0pt"),
+        (r"a_i^2", "9.77202pt/8.14003pt/2.60292pt"),
+        (r"x^{2}y", "15.463pt/8.14003pt/1.94444pt"),
+        (r"x^{\alpha\beta}", "16.30817pt/8.49002pt/0.0pt"),
+        (r"A_{i}^{j}", "11.71358pt/9.43745pt/2.78741pt"),
+    ];
+    let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!(
+            "\\setbox0\\hbox{{${f}$}}\\xdef\\S{}{{\\the\\wd0/\\the\\ht0/\\the\\dp0}}\n",
+            (b'a' + i as u8) as char
+        ));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    for (i, (f, want)) in cases.iter().enumerate() {
+        assert_eq!(body(&analysis, &format!("S{}", (b'a' + i as u8) as char)), *want, "{f}");
+    }
 }
 
 /// `\unhbox` of any hbox adds its list's natural width (tex.web § 1110),
