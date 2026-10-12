@@ -636,28 +636,42 @@ mod convergence {
             return None;
         }
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/convergence").join(name);
-        let mut cfg = Config {
-            cache: satex::config::Cache { dir: Some(crate::support::scratch_dir(dir)), ..Default::default() },
-            load: satex::config::Load { packages: true, classes: true, ..Default::default() },
-            ..crate::support::config()
-        };
+        let dir = crate::support::scratch_dir(dir);
+        let main = dir.join("main.tex");
+        std::fs::write(&main, source).expect("the document is written");
+        let mut cfg = crate::support::discover(&dir);
+        cfg.cache.dir = Some(dir.join("cache"));
         tune(&mut cfg);
         crate::support::seed_kernel(&cfg);
-        Some(Machine::analyze(source, None, &cfg))
+        Some(Machine::analyze(source, Some(&main), &cfg))
     }
 
-    /// The run read `\end{document}`, cut nowhere by a budget, within
-    /// `forks` undecided choices.
+    /// The run read `\end{document}`, stopped nowhere by a budget, within
+    /// `forks` undecided choices. Every path dropped at some point is no
+    /// end: the run read on from there (`analysis-ended-early`).
     fn converged(a: &Analysis, forks: u64) {
+        let budgets = ["limits.steps", "limits.seconds", "limits.line_steps", "limits.memory"];
         let cut: Vec<String> = a
             .facts
             .diagnostics
             .iter()
-            .filter(|d| ["budget-exhausted", "limit-reached", "analysis-ended-early"].contains(&d.code))
+            .filter(|d| {
+                d.code == "budget-exhausted"
+                    || d.code == "line-budget-cut"
+                    || (d.code == "limit-reached" && budgets.iter().any(|b| d.message.contains(b)))
+                    || (d.code == "analysis-ended-early" && d.severity != satex::facts::Severity::Imprecision)
+            })
             .map(|d| format!("{} {}", d.code, d.message))
             .collect();
         assert!(cut.is_empty(), "{cut:?}");
-        assert!(crate::support::defined(a, "SatexReachedEnd"), "the end was not reached");
+        let main: Vec<String> = a
+            .facts
+            .diagnostics
+            .iter()
+            .filter(|d| d.span.file == 0)
+            .map(|d| format!("{}:{} {} {}", d.span.line, d.span.col, d.code, d.message))
+            .collect();
+        assert!(crate::support::defined(a, "SatexReachedEnd"), "the end was not reached: {main:#?}");
         assert!(a.forks <= forks, "{} forks, at most {forks} expected", a.forks);
     }
 
@@ -707,7 +721,7 @@ mod convergence {
 }
 \end{tikzpicture}";
         let Some(a) = latex("tikz-nodes", &document(preamble, body), |_| {}) else { return };
-        converged(&a, 40_000);
+        converged(&a, 30_000);
     }
 
     /// (3) An expl3 loop whose bound is `\pdfelapsedtime`.

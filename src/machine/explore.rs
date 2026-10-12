@@ -215,6 +215,9 @@ struct Paths {
     shelved: Vec<Shelved>,
     /// A path went on with a certain error: nothing else compiled.
     failed: bool,
+    /// Paths that ran `\end`, as they ended: the run ends in their state
+    /// rather than in one that ran off the end of its input.
+    job_ends: Vec<Config>,
 }
 
 /// A dropped path: its error, where, and the diagnostics' counts the
@@ -250,7 +253,13 @@ impl Machine<'_> {
         let i = self.choices.len();
         let scripted = i < self.script.len();
         // Memory is no reason here: it differs between runs, and the hard stop takes it.
-        if !self.replayable || i >= usize::from(self.limits.choices) || (!scripted && self.runs >= RUNS) {
+        // A cut unwinding to the main loop reads nothing: no choice it
+        // meets is one the document makes.
+        if !self.replayable
+            || i >= usize::from(self.limits.choices)
+            || (!scripted && self.runs >= RUNS)
+            || self.cutting()
+        {
             return None;
         }
         // Replays count: each is work at the site. Only a new choice is
@@ -374,6 +383,10 @@ impl Machine<'_> {
                 },
                 None => {
                     self.parted |= ended || self.halted;
+                    if ended && self.job_ended && paths.top {
+                        let fork = paths.fork.as_ref().expect("checked above");
+                        paths.job_ends.push(Config::new(self.save_path(), self.env.path(fork), true));
+                    }
                     if !ended && !self.halted {
                         let fork = paths.fork.as_ref().expect("checked above");
                         let env = self.env.path(fork);
@@ -416,6 +429,9 @@ impl Machine<'_> {
                         self.read_on_dropped(written);
                         paths.heads.clear();
                         continue;
+                    }
+                    if ended && !self.job_ended && !self.out.exhausted {
+                        self.end_with_the_job(&mut paths, &fork);
                     }
                     self.halted = true;
                     self.env.unfork(fork);
@@ -503,6 +519,24 @@ impl Machine<'_> {
         (self.unit, self.lone) = outer_unit;
     }
 
+    /// The last path ran off the end of its input without `\end`, which TeX
+    /// ends with a fatal error ("*** (job aborted, no legal \end found)",
+    /// tex.web § 360), while others ran `\end`. A document that compiles
+    /// took none like it: the run ends as those others did, joined.
+    fn end_with_the_job(&mut self, paths: &mut Paths, fork: &Fork) {
+        let ends = std::mem::take(&mut paths.job_ends);
+        if ends.is_empty() || !self.cfg.analysis.assume_compiles {
+            return;
+        }
+        let span = self.position_span();
+        self.report_dropped("*** (job aborted, no legal \\end found)", span);
+        let last = match self.join_done(fork, &ends, false) {
+            Some(joined) => joined,
+            None => ends.last().expect("not empty").clone_config(),
+        };
+        self.resume_config(fork, last);
+    }
+
     /// Whether a file is still being read and the budget is not spent.
     fn input_left(&self) -> bool {
         !self.out.exhausted && self.input.iter().any(|f| matches!(f, Frame::File { mouth, .. } if !mouth.ending()))
@@ -517,6 +551,15 @@ impl Machine<'_> {
     /// token stands for what they would have done.
     fn read_on_dropped(&mut self, written: Vec<Sym>) {
         let span = self.position_span();
+        if self.cfg.verbose >= 4 {
+            crate::progress::note!(
+                "satex: every path was dropped at {span:?}: halted {} infeasible {} cutting {} levels {}",
+                self.halted,
+                self.infeasible,
+                self.cutting(),
+                self.input.len()
+            );
+        }
         self.diagnose(
             Severity::Imprecision,
             "analysis-ended-early",
