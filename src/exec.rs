@@ -1935,6 +1935,10 @@ impl Machine<'_> {
     /// widens: both arms are skipped to its `\fi` and it gives unknown
     /// text, assumed to touch nothing, so no path is dropped.
     fn widen_conditional(&mut self, by: Sym, span: Span, base: usize) {
+        // Refused because its site was cut: the expansion goes as a whole.
+        if self.cutting() {
+            return;
+        }
         let message = format!(
             "\\{} could not be decided past the choices one command may make; it is taken as unknown text",
             self.name(by)

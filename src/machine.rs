@@ -360,6 +360,9 @@ pub struct Analysis {
     pub loop_heads: usize,
     /// The most paths one drive held at once, the running one included.
     pub peak_paths: usize,
+    /// Undecided choices made, each replay of one included: the work of
+    /// the paths, which `steps` counts only in part.
+    pub forks: u64,
     /// Where the run spent itself, counted only under `--stats`.
     pub hot: Option<Box<Hot>>,
     /// Slots the joins of paths compared: their work, which `steps` leaves out.
@@ -1033,10 +1036,12 @@ pub struct Machine<'a> {
     /// The precision limits in force: `cfg.limits` until [`Machine::degrade`]
     /// lowers them.
     pub(crate) limits: crate::config::Limits,
-    /// Where and why the precision limits were lowered, reported at the end.
+    /// Where and why the precision limits were first lowered, reported at
+    /// the end.
     degraded_at: Option<(&'static str, Span)>,
-    /// The precision limits were lowered once (`precision-degraded`).
-    degraded: bool,
+    /// How often the precision limits were halved (`precision-degraded`):
+    /// 0 for full precision.
+    pub(crate) pressure: u8,
     /// The last language's patterns [`crate::hyph`] parsed, by their text.
     pub(crate) hyph_cache: Option<(Rc<[Token]>, Rc<crate::hyph::Patterns>)>,
     /// The paragraphs' recorded item lists, for the line breaker.
@@ -1607,9 +1612,13 @@ struct LineGuard {
     /// The step the last check charged up to.
     step: u64,
     lines: HashMap<GuardKey, (u64, u8)>,
-    /// `lines` before the cacheable load under way: a replay charges none
-    /// of its lines, so a read forgets them too ([`Machine::end_cacheable_load`]).
-    held: HashMap<GuardKey, (u64, u8)>,
+    /// The undecided choices made at each site while the run read each
+    /// source line, over all paths ([`Machine::hot_site`]).
+    forks: HashMap<(GuardKey, Span), u32>,
+    /// `lines` and `forks` before the cacheable load under way: a replay
+    /// charges none of its lines, so a read forgets them too
+    /// ([`Machine::end_cacheable_load`]).
+    held: (HashMap<GuardKey, (u64, u8)>, HashMap<(GuardKey, Span), u32>),
     /// The most one line took, for `-vvvv`.
     peak: u64,
 }
@@ -1723,7 +1732,7 @@ impl<'a> Machine<'a> {
             carried: Carried::default(),
             scratch: Scratch::default(),
             limits: cfg.limits.clone(),
-            degraded: false,
+            pressure: 0,
             hyph_cache: None,
             kp: Default::default(),
             degraded_at: None,
@@ -1771,6 +1780,7 @@ impl<'a> Machine<'a> {
                 held_tokens_left: 0,
                 loop_heads: 0,
                 peak_paths: 0,
+                forks: 0,
                 hot: HOT.load(std::sync::atomic::Ordering::Relaxed).then(Default::default),
                 joined_slots: 0,
                 memory_reported: 0,
@@ -2103,14 +2113,15 @@ impl<'a> Machine<'a> {
         }
         crate::progress::clear();
         if let Some((key, at)) = m.degraded_at {
-            let percent = m.limits.degrade_at_percent;
+            let (percent, times) = (m.limits.degrade_at_percent, m.pressure);
             m.diagnose(
                 Severity::Imprecision,
                 "precision-degraded",
                 at,
                 format!(
-                    "{percent}% of limits.{key} used: waiting paths are joined and meaning and value sets \
-                     kept small from here so the run finishes"
+                    "{percent}% of limits.{key} used: the limits that only cost time (paths, sets, choices, \
+                     loop and recursion widening, fork and line budgets) were halved {times} time(s) from here \
+                     so the run finishes"
                 ),
             );
         }
@@ -2866,7 +2877,7 @@ will look undefined",
     /// the document start does for the kernel's ([`Machine::forget_facts`]).
     pub(crate) fn end_cacheable_load(&mut self) {
         self.cacheable_load = None;
-        self.guard.lines = std::mem::take(&mut self.guard.held);
+        (self.guard.lines, self.guard.forks) = std::mem::take(&mut self.guard.held);
         self.forget_settled_calls();
         self.scratch = Scratch::default();
         #[cfg(test)]
@@ -5429,25 +5440,60 @@ will look undefined",
 
     /// Every collection the run appends to has a ceiling. The first one that
     /// is reached stops the analysis instead of growing the process.
-    /// Trade precision for finishing: the smallest values of the limits that
-    /// only cost time, reported once. Undecided conditionals keep every arm.
-    pub(crate) fn degrade(&mut self, key: &'static str) {
-        if self.degraded {
+    /// Trade precision for finishing, as the budget runs low (off by
+    /// default): past `degrade_at_percent` of `limits.steps`, and again
+    /// at each further third of what is left, every limit that only costs
+    /// time is halved from what `cfg.limits` says (down to 1): paths and
+    /// sets kept apart, choices per command, loop and recursion widening,
+    /// call summaries and the fork and line budgets. So the work left per
+    /// line shrinks as the budget does and the run converges instead of
+    /// stopping. Every result stays an over-approximation: a lower limit
+    /// only joins, widens or cuts sooner.
+    fn degrade(&mut self, key: &'static str, used: u64) {
+        let start = u64::from(self.limits.degrade_at_percent);
+        if start >= 100 || used < start {
             return;
         }
-        self.degraded = true;
-        // Waiting paths are joined and sets kept small. Loops and recursions
-        // are widened as before: widening them sooner only made more unknown
-        // text, and so more work.
+        let stage = (1 + (used - start) * 3 / (100 - start)).min(3) as u8;
+        if stage <= self.pressure {
+            return;
+        }
+        self.pressure = stage;
+        let base = &self.cfg.limits;
+        let half = |n: u16| (n >> stage).max(1);
         let limits = &mut self.limits;
-        limits.paths = 1;
-        limits.meaning_set = 1;
-        limits.value_set = 1;
-        limits.interval_set = 1;
-        self.env.sets = crate::env::SetLimits { meanings: 1, values: 1, intervals: 1 };
+        limits.paths = half(base.paths);
+        limits.alike = half(base.alike);
+        limits.choices = half(base.choices);
+        limits.meaning_splits = base.meaning_splits >> stage;
+        limits.widen_after = half(base.widen_after);
+        limits.recursion_depth = half(base.recursion_depth);
+        limits.call_summary_after = match base.call_summary_after {
+            0 => 0,
+            n => half(n),
+        };
+        limits.meaning_set = half(base.meaning_set);
+        limits.value_set = half(base.value_set);
+        limits.interval_set = half(base.interval_set);
+        // The budgets halve twice as fast: they bound work, not precision.
+        limits.site_forks = match base.site_forks {
+            0 => 0,
+            n => (n >> (2 * stage)).max(1),
+        };
+        limits.line_steps = match base.line_steps {
+            0 => 0,
+            n => (n >> (2 * stage)).max(1),
+        };
+        self.env.sets = crate::env::SetLimits {
+            meanings: usize::from(limits.meaning_set),
+            values: usize::from(limits.value_set),
+            intervals: usize::from(limits.interval_set),
+        };
         // Reported when the run ends: a replayed command rolls back what it
         // diagnosed, and this must not be rolled back with it.
-        self.degraded_at = Some((key, self.position_span()));
+        if self.degraded_at.is_none() {
+            self.degraded_at = Some((key, self.position_span()));
+        }
     }
 
     /// The one place work besides reading tokens is paid: a driver
@@ -5484,12 +5530,9 @@ will look undefined",
         }
         // Degraded at a share of the steps only: seconds and memory differ
         // between runs, so they only stop the run, never steer it.
-        let percent = u64::from(self.limits.degrade_at_percent);
-        if !self.degraded && percent < 100 && self.budget.is_none() {
-            let used = u128::from(self.out.steps);
-            if used * 100 >= u128::from(self.cfg.limits.steps) * u128::from(percent) {
-                self.degrade("steps");
-            }
+        if self.budget.is_none() {
+            let used = u128::from(self.out.steps) * 100 / u128::from(self.cfg.limits.steps.max(1));
+            self.degrade("steps", used.min(100) as u64);
         }
         // Sizes a region can grow and give back: past them the region is
         // cut as the guard cuts a line, and the run reads on.
@@ -5670,7 +5713,7 @@ will look undefined",
     fn guard_line(&mut self) -> bool {
         let spent = self.out.steps.saturating_sub(self.guard.step);
         self.guard.step = self.out.steps;
-        let limit = self.cfg.limits.line_steps;
+        let limit = self.limits.line_steps;
         if limit == 0 || self.budget.is_some() || self.halted {
             return false;
         }
@@ -5727,6 +5770,39 @@ will look undefined",
         false
     }
 
+    /// A choice at `site`: counted per source line, over all paths. Past
+    /// `limits.site_forks` the expansion above the line is cut as the
+    /// guard cuts it ([`Machine::cut`]) instead of parting again: what it
+    /// assigned is unknown, and the line reads on after an unknown token.
+    /// Whether it was cut.
+    pub(crate) fn hot_site(&mut self, site: Span) -> bool {
+        let limit = self.limits.site_forks;
+        if limit == 0 || self.budget.is_some() {
+            return false;
+        }
+        let key = (self.guard_key(self.position_span()), site);
+        let count = self.guard.forks.entry(key).or_default();
+        *count = count.saturating_add(1);
+        if *count <= limit {
+            return false;
+        }
+        if !self.guard_seen.cut {
+            let file = self.out.short_name(site.file).to_string();
+            let at = self.position_span();
+            self.diagnose(
+                Severity::Imprecision,
+                "site-forks-cut",
+                site,
+                format!(
+                    "more than {limit} undecided choices were made at {file}:{} while line {} was read; the expansion they were in was cut: what it assigned is unknown",
+                    site.line, at.line
+                ),
+            );
+            self.cut();
+        }
+        true
+    }
+
     /// The region past a size limit is cut ([`Machine::cut`]), said once.
     fn cut_region(&mut self, key: &'static str) {
         if !self.guard_seen.cut {
@@ -5749,6 +5825,12 @@ will look undefined",
         if std::mem::replace(&mut self.guard_seen.cut, true) {
             self.resync();
         }
+    }
+
+    /// Cut where the run stands and read on at once ([`Machine::resync`]).
+    pub(super) fn resync_now(&mut self) {
+        self.guard_seen.cut = true;
+        self.resync();
     }
 
     /// The main loop reads on after a skipped region: what was assigned since
@@ -9680,7 +9762,7 @@ pub(crate) struct Wild(Vec<(String, String, bool)>);
 
 impl Wild {
     /// Beyond this many patterns they are merged into what they share.
-    const MAX: usize = 64;
+    const MAX: usize = 1024;
 
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
@@ -9734,6 +9816,17 @@ impl Wild {
     /// Whether `name` may have a meaning besides `\relax`.
     pub(crate) fn real(&self, name: &str) -> bool {
         self.0.iter().any(|(p, s, r)| *r && Self::fits(name, p, s))
+    }
+
+    /// Whether some name of `prefix`, any text and `suffix` may have a
+    /// meaning besides `\relax`: the unknown parts may be any length, so
+    /// two patterns share a name when their prefixes and their suffixes
+    /// agree as far as both go.
+    pub(crate) fn overlaps_real(&self, prefix: &str, suffix: &str) -> bool {
+        self.0.iter().any(|(p, s, r)| {
+            *r && (p.starts_with(prefix) || prefix.starts_with(p.as_str()))
+                && (s.ends_with(suffix) || suffix.ends_with(s.as_str()))
+        })
     }
 }
 
@@ -10161,10 +10254,31 @@ impl Machine<'_> {
     /// The one control sequence `\csname` builds from partly unknown text.
     pub(crate) fn unknown_name_token(&mut self, prefix: &str, suffix: &str, span: Span) -> Token {
         let sym = self.intern(&format!("{UNKNOWN_NAME}{prefix}{UNKNOWN_NAME_GAP}{suffix}"));
-        if !matches!(self.env.meaning(sym), Meaning::Unknown) {
-            self.env.set(sym, Binding::builtin(Meaning::Unknown), true);
+        // A name that can spell no defined name is undefined, so `\csname`
+        // makes it `\relax` (tex.web § 372), locally as TeX does.
+        let meaning = match self.spells_defined(prefix, suffix) {
+            false => Meaning::Primitive(Primitive::Relax),
+            true => Meaning::Unknown,
+        };
+        if self.env.slot(sym).is_none_or(|b| b.meaning != meaning || b.may.is_some()) {
+            self.env.set(sym, Binding::builtin(meaning), false);
         }
         Token::new(Tok::Cs(sym), span)
+    }
+
+    /// Whether a name of `prefix`, unknown text and `suffix` may be one
+    /// with a meaning besides `\relax`: a defined name of that shape, or
+    /// one a name built from unknown text may have defined.
+    fn spells_defined(&self, prefix: &str, suffix: &str) -> bool {
+        self.wild.overlaps_real(prefix, suffix)
+            || self.env.bound().into_iter().any(|s| {
+                let name = self.out.interner.name(s);
+                name.len() >= prefix.len() + suffix.len()
+                    && name.starts_with(prefix)
+                    && name.ends_with(suffix)
+                    && !self.is_unknown_name(s)
+                    && !matches!(self.env.meaning(s), Meaning::Undefined | Meaning::Primitive(Primitive::Relax))
+            })
     }
 
     /// Unknown text that may hold code runs: what that code may do is done,
