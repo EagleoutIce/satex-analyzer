@@ -84,4 +84,8 @@ pub mod fixed {
     pub type Hasher = std::hash::BuildHasherDefault<std::collections::hash_map::DefaultHasher>;
     pub type HashMap<K, V> = std::collections::HashMap<K, V, Hasher>;
     pub type HashSet<K> = std::collections::HashSet<K, Hasher>;
+    /// For tables that are only looked up, or whose iteration is sorted
+    /// before use: no order of theirs is ever seen, so a fast hash will do.
+    pub type LookupMap<K, V> = std::collections::HashMap<K, V, crate::tex::NameHash>;
+    pub type LookupSet<K> = std::collections::HashSet<K, crate::tex::NameHash>;
 }

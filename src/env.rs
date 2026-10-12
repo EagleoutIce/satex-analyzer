@@ -1,7 +1,7 @@
 //! The save stack: dense slot table plus undo journal (The TeXbook § 275).
 //! Drives conditional analysis: run branch, capture, rollback, join.
 
-use crate::fixed::HashMap;
+use crate::fixed::{HashMap, LookupMap, LookupSet};
 use std::rc::Rc;
 
 use crate::mode::Nest;
@@ -277,24 +277,24 @@ impl ReadKind {
 /// pre-load.
 #[derive(Default)]
 struct Reads {
-    read: HashMap<u32, u8>,
-    written: HashMap<u32, u8>,
+    read: LookupMap<u32, u8>,
+    written: LookupMap<u32, u8>,
     /// Slots assigned since the last [`Env::take_dirty`], in order.
     dirty: Vec<u32>,
-    dirty_seen: crate::fixed::HashSet<u32>,
+    dirty_seen: LookupSet<u32>,
     /// Journal position, slot, and what was written of it when the journal
     /// saved it.
     saved: Vec<(usize, u32, u8)>,
     /// Slots whose text the load copied a text from before it into: a read
     /// of them reads that text, however the load has written them since.
-    carrying: crate::fixed::HashSet<u32>,
+    carrying: LookupSet<u32>,
     /// The slot whose meaning is being copied through, which a read of its
     /// meaning then is.
     copying: Option<u32>,
     /// Slots assigned since the segment began, and of those, the ones whose
     /// text holds what the slot held then, where and how long.
-    touched: crate::fixed::HashSet<u32>,
-    splices: HashMap<u32, (usize, usize)>,
+    touched: LookupSet<u32>,
+    splices: LookupMap<u32, (usize, usize)>,
 }
 
 /// The save stack as it stood where paths split: groups can open and close

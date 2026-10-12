@@ -1168,7 +1168,7 @@ pub struct Machine<'a> {
     pub(crate) narrowing: Option<(Sym, crate::value::Quantity, crate::value::Num, Option<Vec<i64>>, char, (i64, i64))>,
     /// Where each diagnostic was first raised, by code, place and message
     /// hash, so that a repeat is counted and not stored again.
-    diag_seen: HashMap<(&'static str, Span, u64), usize>,
+    diag_seen: crate::fixed::LookupMap<(&'static str, Span, u64), usize>,
     /// Diagnostics before this index belong to a finished cache segment and
     /// are not counted into.
     pub(crate) diag_floor: usize,
@@ -1250,13 +1250,13 @@ pub struct Machine<'a> {
     def_body_depth: Option<usize>,
     /// Fact index by source site, so that re-analyzing a file does not
     /// duplicate what it observed.
-    definition_sites: HashMap<(Span, Sym), usize>,
-    expansion_sites: HashMap<(Span, Sym), Site>,
+    definition_sites: crate::fixed::LookupMap<(Span, Sym), usize>,
+    expansion_sites: crate::fixed::LookupMap<(Span, Sym), Site>,
     /// Hashes of input lists' pending heads, by list and position: a deep
     /// input below a call is hashed once, not at every call.
     shape_memo: std::cell::RefCell<Vec<Option<(Rc<[Token]>, usize, u64)>>>,
     /// Each evaluated conditional's fact, by its `\if…`.
-    cond_sites: HashMap<Span, usize>,
+    cond_sites: crate::fixed::LookupMap<Span, usize>,
     /// Tokens taken from a file so far: the measure of progress through the
     /// source that tells a loop from a helper called again further down.
     source_progress: u64,
@@ -1827,7 +1827,7 @@ impl<'a> Machine<'a> {
             abs_whole: false,
             ranged: None,
             narrowing: None,
-            diag_seen: HashMap::default(),
+            diag_seen: Default::default(),
             diag_floor: 0,
             conds: Rc::default(),
             testing: Vec::new(),
@@ -1858,10 +1858,10 @@ impl<'a> Machine<'a> {
             unknown_more,
             typed_syms: None,
             def_body_depth: None,
-            definition_sites: HashMap::default(),
-            expansion_sites: HashMap::default(),
+            definition_sites: Default::default(),
+            expansion_sites: Default::default(),
             shape_memo: std::cell::RefCell::new(vec![None; SHAPE_MEMO]),
-            cond_sites: HashMap::default(),
+            cond_sites: Default::default(),
             source_progress: 0,
             lines_read: 0,
             call_shape: None,
@@ -4974,10 +4974,13 @@ will look undefined",
     /// Where the file of `span` is being read, and the text from `span` to
     /// there: what the call at `span` has read of it so far.
     pub fn call_extent(&self, span: Span) -> Option<(Span, String)> {
+        self.reading(span.file).map(|mouth| (mouth.here(), mouth.since(span.line, span.col)))
+    }
+
+    /// The innermost input level reading `file`.
+    pub(crate) fn reading(&self, file: FileId) -> Option<&Mouth> {
         self.input.iter().rev().find_map(|frame| match frame {
-            Frame::File { mouth, .. } if mouth.here().file == span.file => {
-                Some((mouth.here(), mouth.since(span.line, span.col)))
-            }
+            Frame::File { mouth, .. } if mouth.here().file == file => Some(mouth),
             _ => None,
         })
     }
