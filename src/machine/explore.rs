@@ -250,7 +250,7 @@ impl Machine<'_> {
         let i = self.choices.len();
         let scripted = i < self.script.len();
         // Memory is no reason here: it differs between runs, and the hard stop takes it.
-        if !self.replayable || i >= usize::from(self.cfg.limits.choices) || (!scripted && self.runs >= RUNS) {
+        if !self.replayable || i >= usize::from(self.limits.choices) || (!scripted && self.runs >= RUNS) {
             return None;
         }
         // Replays count: each is work at the site. Only a new choice is
@@ -626,6 +626,8 @@ impl Machine<'_> {
             };
             self.runs += 1;
             first = first.or(self.choices.first().copied());
+            // A run that was cut ends the region it is in: other sequences
+            // of arms would only be cut there again.
             let next = next_script(&self.choices, self.infeasible);
             let error = self.dropping.take().filter(|_| paths.top && !self.infeasible);
             if outcomes.is_empty() && dropped.is_empty() && next.is_none() {

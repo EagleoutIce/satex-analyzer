@@ -42,11 +42,11 @@ pub struct Limits {
     /// gap.
     pub choices: u16,
     /// Undecided choices one site (a conditional, a name of several
-    /// meanings) may make, over all paths, while the run reads one source
-    /// line. Past them the expansion above that line is cut as `line_steps`
-    /// cuts it (`site-forks-cut`): what it assigned is unknown, and the
-    /// line reads on after an unknown token. Many paths through one
-    /// place say little the join of a few did not. 0 turns it off.
+    /// meanings) may make, over all paths and replays, while the run reads
+    /// one source line. Past them the expansion above that line is cut as
+    /// `line_steps` cuts it (`site-forks-cut`): what it assigned is unknown,
+    /// and the line reads on after an unknown token. Many paths through
+    /// one place say little the join of a few did not. 0 turns it off.
     pub site_forks: u32,
     /// Paths one drive keeps waiting before the two furthest back at one
     /// source position are cut to the input levels they share and joined.
@@ -219,7 +219,7 @@ impl Default for Limits {
             repeat_failures: 8,
             seconds: 300,
             choices: 8,
-            site_forks: 4_096,
+            site_forks: 1_024,
             paths: 16,
             alike: 8,
             meaning_splits: 4,

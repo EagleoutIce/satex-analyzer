@@ -1198,6 +1198,9 @@ pub struct Machine<'a> {
     /// A cut dropped the text a scan in flight began in: every reader but
     /// the main loop finds the input ended until it reads the file again.
     scan_cut: bool,
+    /// What the conditional being widened skipped, to do what its arms
+    /// may do ([`Machine::may_run`]).
+    pub(crate) skip_log: Option<Vec<Token>>,
     /// Lines the kernel and package caches stood for instead of reading.
     pub(crate) cached_lines: u64,
     /// While the format builds: its file's input frame.
@@ -1924,6 +1927,7 @@ impl<'a> Machine<'a> {
             guard: LineGuard::default(),
             scan_starts: Vec::new(),
             scan_cut: false,
+            skip_log: None,
             clock: None,
             clock_read_at: None,
             clock_cached: None,
@@ -5770,11 +5774,11 @@ will look undefined",
         false
     }
 
-    /// A choice at `site`: counted per source line, over all paths. Past
-    /// `limits.site_forks` the expansion above the line is cut as the
-    /// guard cuts it ([`Machine::cut`]) instead of parting again: what it
-    /// assigned is unknown, and the line reads on after an unknown token.
-    /// Whether it was cut.
+    /// A choice at `site`: counted per source line, over all paths and
+    /// replays. Past `limits.site_forks` the expansion above the line is
+    /// cut as the guard cuts it ([`Machine::cut`]) instead of parting
+    /// again: what it assigned is unknown, and the line reads on after an
+    /// unknown token. Whether it was cut.
     pub(crate) fn hot_site(&mut self, site: Span) -> bool {
         let limit = self.limits.site_forks;
         if limit == 0 || self.budget.is_some() {
@@ -8735,6 +8739,9 @@ will look undefined",
         let mut nesting = CondDepth::default();
         loop {
             let Some(t) = self.next_token() else { break };
+            if let Some(log) = &mut self.skip_log {
+                log.push(t);
+            }
             // Skipping crossed into another file's text: a misjudged test or
             // `\fi` would otherwise swallow the document. TeX inserts `\fi`
             // where a file ends inside a skip (tex.web § 336); satex ends the
