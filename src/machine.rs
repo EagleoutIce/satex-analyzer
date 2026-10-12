@@ -5395,17 +5395,8 @@ will look undefined",
                         !self.expandable(sym)
                             && self.env.meaning(sym) != Meaning::Primitive(crate::builtins::Primitive::Relax)
                             && !self.script_transparent(sym)
-                            && !(self.natural.is_some_and(|n| n.script_group)
-                                && matches!(
-                                    self.env.meaning(sym),
-                                    Meaning::Primitive(
-                                        crate::builtins::Primitive::BeginGroup
-                                            | crate::builtins::Primitive::EndGroup
-                                            | crate::builtins::Primitive::Defer(_)
-                                    )
-                                ))
                     }
-                    // `{` opens a script group ([`crate::mode`]'s `SCRIPT_GROUP`).
+                    // `{` opens a script group (`SCRIPT_GROUP` in `crate::mode`).
                     _ => !matches!(
                         self.category_of(token),
                         Some(Catcode::Letter | Catcode::Other | Catcode::Space | Catcode::Begin)

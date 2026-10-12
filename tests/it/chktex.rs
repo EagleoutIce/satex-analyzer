@@ -329,7 +329,7 @@ fn an_italic_correction_a_closing_brace_hides_the_period_from_is_reported() {
 /// reaches, so these run against a file on disk.
 fn latex_file(name: &str, source: &str) -> Option<Analysis> {
     which::which("kpsewhich").ok()?;
-    let dir = std::env::temp_dir().join(format!("satex-chktex-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-chktex-{}", std::process::id()));
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join(name);
     std::fs::write(&path, source).ok()?;
@@ -390,7 +390,7 @@ fn on_disk(name: &str, source: &str, kernel: bool) -> Option<OnDisk> {
     if kernel && which::which("kpsewhich").is_err() {
         return None;
     }
-    let dir = std::env::temp_dir().join(format!("satex-chktex-{name}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-chktex-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join("doc.tex");
@@ -1158,7 +1158,7 @@ fn an_unused_label_may_be_used_in_a_file_not_read() {
     if which::which("kpsewhich").is_err() {
         return;
     }
-    let dir = std::env::temp_dir().join(format!("satex-chktex-unread-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-chktex-unread-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temporary directory");
     std::fs::write(dir.join("part.tex"), "See \\ref{s}.\n").expect("part");
     let source = "\\documentclass{article}\n\\begin{document}\n\\section{S}\\label{s}\n\\iffalse\n\\input{part}\n\\fi\n\\end{document}\n";
@@ -1225,7 +1225,7 @@ fn with_files(name: &str, source: &str, files: &[(&str, &str)]) -> Option<OnDisk
     if which::which("kpsewhich").is_err() {
         return None;
     }
-    let dir = std::env::temp_dir().join(format!("satex-chktex-{name}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-chktex-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).ok()?;
     for (file, text) in files {
@@ -1282,7 +1282,7 @@ fn a_frozen_path_gets_no_findings() {
     if which::which("kpsewhich").is_err() {
         return;
     }
-    let dir = std::env::temp_dir().join(format!("satex-chktex-frozen-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-chktex-frozen-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("frozen")).unwrap();
     std::fs::write(dir.join("frozen/a.tex"), "\\def\\frozenunused{y}\n").unwrap();

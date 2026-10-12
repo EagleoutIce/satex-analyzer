@@ -58,7 +58,7 @@ fn widened(engine: Engine, source: &str, what: &str) -> bool {
 /// `source` run in a directory of its own that holds `zprobe.tex`, which is
 /// the file the `\openin` probes read.
 fn beside_a_file(engine: Engine, name: &str, source: &str) -> Analysis {
-    let directory = std::env::temp_dir().join("satex-limits").join(format!("{name}-{engine:?}"));
+    let directory = crate::support::tmp_root().join("satex-limits").join(format!("{name}-{engine:?}"));
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("a scratch directory");
     std::fs::write(directory.join("zprobe.tex"), "hello\n").unwrap();

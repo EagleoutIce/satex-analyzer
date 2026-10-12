@@ -13,7 +13,7 @@ fn finishes(args: &[&str]) {
 }
 
 fn finishes_within(args: &[&str], limit: Duration) {
-    let cache = std::env::temp_dir().join(format!("satex-no-hang-{}", std::process::id()));
+    let cache = crate::support::tmp_root().join(format!("satex-no-hang-{}", std::process::id()));
     let start = Instant::now();
     let mut child = Command::new(env!("CARGO_BIN_EXE_satex"))
         .args(args)
@@ -64,5 +64,5 @@ fn no_subcommand_hangs() {
     ] {
         finishes(&[args, &file[..]].concat());
     }
-    let _ = std::fs::remove_dir_all(std::env::temp_dir().join(format!("satex-no-hang-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(crate::support::tmp_root().join(format!("satex-no-hang-{}", std::process::id())));
 }

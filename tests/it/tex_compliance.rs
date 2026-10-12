@@ -397,7 +397,7 @@ fn aftergroup_and_afterassignment_are_told_apart() {
 
 #[test]
 fn read_and_readline_from_a_file() {
-    let dir = std::env::temp_dir().join(format!("satex-compliance-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-compliance-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("data.txt");
     std::fs::write(&file, "abc\nsecond line\n").unwrap();

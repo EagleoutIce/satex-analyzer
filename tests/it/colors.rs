@@ -7,7 +7,7 @@ use crate::support::installed;
 use satex::machine::Machine;
 
 fn scratch(name: &str) -> PathBuf {
-    let directory = std::env::temp_dir().join("satex-colors").join(format!("{name}-{}", std::process::id()));
+    let directory = crate::support::tmp_root().join("satex-colors").join(format!("{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).expect("a scratch directory");
     directory

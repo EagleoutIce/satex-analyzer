@@ -128,7 +128,7 @@ fn parse_engine_trace(log: &str) -> EngineTrace {
 /// Run `pdftex -ini -etex` on `source` (with `\end` appended) and parse its
 /// log, or `None` when the run itself failed.
 fn engine_trace(source: &str, tag: &str) -> Option<EngineTrace> {
-    let dir = std::env::temp_dir().join(format!("satex-engine-trace-{tag}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-engine-trace-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).ok()?;
     std::fs::write(dir.join("t.tex"), format!("{source}\\end\n")).ok()?;
     let out = std::process::Command::new("pdftex")

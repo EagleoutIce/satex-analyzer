@@ -57,6 +57,29 @@ pub fn bare() -> Config {
     }
 }
 
+/// Where tests put their files: `satex-tests/<pid>` in the system's
+/// temporary directory. A test process removes what processes no longer
+/// running left there, so runs never pile up (where `/proc` tells which
+/// are running).
+pub fn tmp_root() -> PathBuf {
+    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        let base = crate::support::tmp_root().join("satex-tests");
+        if Path::new("/proc/self").exists() {
+            for entry in std::fs::read_dir(&base).into_iter().flatten().flatten() {
+                let pid = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok());
+                if pid.is_none_or(|pid| !Path::new(&format!("/proc/{pid}")).exists()) {
+                    let _ = std::fs::remove_dir_all(entry.path());
+                }
+            }
+        }
+        let root = base.join(std::process::id().to_string());
+        std::fs::create_dir_all(&root).expect("a scratch root");
+        root
+    })
+    .clone()
+}
+
 /// Recreate `dir` empty. Used to give each test its own scratch directory.
 pub fn scratch_dir(dir: PathBuf) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dir);

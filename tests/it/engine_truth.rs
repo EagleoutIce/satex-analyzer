@@ -40,7 +40,7 @@ fn a_magic_comment_engine_has_only_its_own_primitives() {
 #[test]
 fn everyeof_is_read_before_an_input_file_ends() {
     // pdftex and xetex: `[macro:->ab ]`.
-    let dir = std::env::temp_dir().join(format!("satex-everyeof-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-everyeof-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("ef.tex"), "ab\n").unwrap();
     let main = dir.join("main.tex");
@@ -73,7 +73,7 @@ fn a_name_from_unknown_text_keeps_its_prefix_and_suffix() {
 #[test]
 fn the_last_line_of_a_file_without_a_newline_gets_the_endlinechar() {
     // pdftex and xetex: `[ab ]` whether `ef.tex` ends in a newline or not.
-    let dir = std::env::temp_dir().join(format!("satex-lastline-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-lastline-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     for text in ["ab", "ab  ", "ab\n"] {
         std::fs::write(dir.join("ef.tex"), text).unwrap();
@@ -96,7 +96,7 @@ fn a_command_lua_defines_runs_its_function() {
     // luatex -ini: `\a=macro:->10-1:4::`.  expl3.lua's shape: a forwarding
     // `luacmd`, module-level locals bound to the token library, and a local
     // function asking kpathsea and LuaFileSystem for a file's size.
-    let dir = std::env::temp_dir().join(format!("satex-luacmd-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-luacmd-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("cmds.lua"),
@@ -139,7 +139,7 @@ fn an_installed_font_answers_its_opentype_scripts() {
 fn a_line_ends_as_its_endlinechar_and_catcode_say() {
     // pdftex and xetex -ini -etex: `\meaning\r` after `\input probe`, with
     // `data.tex` = `a⏎␣␣b␣⏎` open for reading.
-    let dir = std::env::temp_dir().join(format!("satex-lineend-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-lineend-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("data.tex"), "a\n  b \n").unwrap();
     let cases: &[(&str, &str)] = &[
@@ -412,7 +412,7 @@ fn an_unknown_dimension_prints_as_digits_point_digits_pt() {
 /// What `pdftex -ini -etex` prints as `[…]` messages for `source`, when it
 /// is installed.
 fn pdftex_messages(source: &str) -> Option<String> {
-    let dir = std::env::temp_dir().join(format!("satex-truth-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-truth-{}", std::process::id()));
     std::fs::create_dir_all(&dir).ok()?;
     std::fs::write(dir.join("t.tex"), format!("{source}\\end\n")).ok()?;
     let out = std::process::Command::new("pdftex")
@@ -457,7 +457,7 @@ fn pdftex_result(source: &str) -> Option<String> {
 /// [`pdftex_result`] in a directory of its own, so that probes running side
 /// by side do not read each other's log.
 fn pdftex_result_in(tag: &str, source: &str) -> Option<String> {
-    let dir = std::env::temp_dir().join(format!("satex-{tag}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).ok()?;
     std::fs::write(dir.join("a.tex"), format!("{source}\\end\n")).ok()?;
     std::process::Command::new("pdftex")
@@ -653,7 +653,7 @@ fn arithmetic_is_texs_at_every_edge() {
 #[test]
 fn a_stream_number_outside_the_four_bit_range_names_stream_zero() {
     // pdftex -ini -etex: `[A:EOFFALSE] [B:EOFFALSE] [C:EOFTRUE]`.
-    let dir = std::env::temp_dir().join(format!("satex-fourbit-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-fourbit-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("probe.tex"), "hello\n").unwrap();
     let main = dir.join("main.tex");

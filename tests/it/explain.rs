@@ -214,7 +214,7 @@ fn paper_usepackage_preamble_and_document() {
         return;
     }
     // A copy of samples/paper.tex and the package it loads from its folder.
-    let directory = std::env::temp_dir().join(format!("satex-explain-paper-{}", std::process::id()));
+    let directory = crate::support::tmp_root().join(format!("satex-explain-paper-{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     let samples = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("samples");
     for file in ["paper.tex", "mypackage.sty", "preamble.tex"] {

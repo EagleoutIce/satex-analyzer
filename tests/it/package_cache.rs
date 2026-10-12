@@ -9,7 +9,7 @@ use satex::facts::LoadStatus;
 use satex::machine::{Analysis, Machine};
 
 fn project(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("satex-package-cache-{name}-{}", std::process::id()));
+    let dir = crate::support::tmp_root().join(format!("satex-package-cache-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temporary directory");
     std::fs::write(dir.join("inner.sty"), "\\ProvidesPackage{inner}[2020/01/01 v1]\n\\def\\innermacro#1{[#1]}\n")
@@ -51,7 +51,7 @@ fn analyze(dir: &Path, source: &str, cfg: &Config) -> Analysis {
 fn latex(dir: &Path) -> Config {
     static KERNEL: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     let shared = KERNEL.get_or_init(|| {
-        let shared = std::env::temp_dir().join(format!("satex-package-cache-kernel-{}", std::process::id()));
+        let shared = crate::support::tmp_root().join(format!("satex-package-cache-kernel-{}", std::process::id()));
         let cfg =
             Config { cache: Cache { dir: Some(shared.clone()), ..Default::default() }, ..crate::support::config() };
         Machine::analyze("\\relax\n", Some(&shared.join("kernel.tex")), &cfg);
@@ -379,7 +379,7 @@ fn a_file_that_now_shadows_a_lookup_makes_the_cache_stale() {
 /// include the resolved path, not just the name.
 #[test]
 fn two_projects_sharing_a_cache_do_not_shadow_each_others_package() {
-    let shared_cache = std::env::temp_dir().join(format!("satex-package-cache-shared-{}", std::process::id()));
+    let shared_cache = crate::support::tmp_root().join(format!("satex-package-cache-shared-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&shared_cache);
     std::fs::create_dir_all(&shared_cache).expect("shared cache dir");
 
@@ -973,7 +973,7 @@ fn a_class_assigning_register_values_is_reused_whole() {
 #[test]
 fn caches_built_against_one_tree_are_reused_from_a_copy_and_an_edit_rebuilds_them() {
     let dir = crate::support::scratch_dir(
-        std::env::temp_dir().join(format!("satex-package-cache-moved-{}", std::process::id())),
+        crate::support::tmp_root().join(format!("satex-package-cache-moved-{}", std::process::id())),
     );
     let (first, cache, doc) = (dir.join("a"), dir.join("cache"), dir.join("doc"));
     let tree_a = crate::support::mini_texmf(&first);
@@ -1038,7 +1038,7 @@ struct Portable {
 impl Portable {
     fn new(name: &str) -> Portable {
         let dir = crate::support::scratch_dir(
-            std::env::temp_dir().join(format!("satex-package-cache-{name}-{}", std::process::id())),
+            crate::support::tmp_root().join(format!("satex-package-cache-{name}-{}", std::process::id())),
         );
         let tree = crate::support::mini_texmf(&dir.join("a"));
         let cache = dir.join("cache");
@@ -1174,8 +1174,9 @@ fn caches_built_against_several_trees_serve_a_bundle_alone() {
 /// A kernel's cache family comes from its own release, not from its path.
 #[test]
 fn a_kernel_is_named_by_its_release_not_its_path() {
-    let dir =
-        crate::support::scratch_dir(std::env::temp_dir().join(format!("satex-release-name-{}", std::process::id())));
+    let dir = crate::support::scratch_dir(
+        crate::support::tmp_root().join(format!("satex-release-name-{}", std::process::id())),
+    );
     let kernel = dir.join("latex.ltx");
     std::fs::write(&kernel, "\\edef\\fmtversion{2031-06-01}\n").expect("kernel");
     assert_eq!(satex::format::release_name(&kernel), "2031");

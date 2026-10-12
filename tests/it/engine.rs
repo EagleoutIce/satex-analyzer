@@ -558,7 +558,7 @@ fn engine_only_names(engine: Engine) -> Vec<String> {
 /// ch. 20).  Returns `None` when the engine is not installed.
 fn engine_primitives(engine: &str, names: &[String]) -> Option<std::collections::BTreeSet<String>> {
     let binary = engine_binary(engine)?;
-    let dir = std::env::temp_dir().join("satex-engine-probe").join(engine);
+    let dir = crate::support::tmp_root().join("satex-engine-probe").join(engine);
     std::fs::create_dir_all(&dir).ok()?;
     let mut probe = String::from("\\catcode`\\{=1 \\catcode`\\}=2 \\immediate\\openout0=found.txt\n");
     for name in names {

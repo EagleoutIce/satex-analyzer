@@ -38,8 +38,9 @@ fn digest(analysis: &Analysis) -> u64 {
 
 #[test]
 fn the_cached_analysis_changes_only_with_a_semantic_version_bump() {
-    let dir =
-        crate::support::scratch_dir(std::env::temp_dir().join(format!("satex-cache-semantics-{}", std::process::id())));
+    let dir = crate::support::scratch_dir(
+        crate::support::tmp_root().join(format!("satex-cache-semantics-{}", std::process::id())),
+    );
     let tree = crate::support::mini_texmf(&dir);
     let source = "\\usepackage{demo}\n\\demomacro\n\\csname demo@x\\endcsname\n";
     let path = dir.join("doc.tex");
