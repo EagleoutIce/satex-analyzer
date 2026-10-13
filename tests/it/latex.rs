@@ -2166,6 +2166,33 @@ fn a_box_uncovered_after_a_forced_break_is_not_empty() {
     assert!(!w.is_empty() && w != "0.0pt", "{w}");
 }
 
+/// tex.web §§ 848, 889: a `\parshape` whose lines are all alike, as
+/// `\list` sets it, packs every line to its length, shifted by its indent.
+/// Sizes as `pdflatex` prints.
+#[test]
+fn a_uniform_parshape_keeps_the_lines_known() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (r"\vbox{\hsize3cm\linewidth3cm\list{}{}\item xy\endlist}", "85.35826pt/26.24998pt/0.0pt"),
+        (r"\vbox{\hsize3cm\parshape1 10pt 50pt xy}", "60.0pt/4.30554pt/1.94444pt"),
+        (r"\vbox{\hsize3cm\linewidth3cm\begin{itemize}\item xy\end{itemize}}", "85.35826pt/26.31837pt/0.0pt"),
+    ];
+    let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!(
+            "\\setbox0{f}\\xdef\\S{}{{\\the\\wd0/\\the\\ht0/\\the\\dp0}}\n",
+            (b'a' + i as u8) as char
+        ));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    for (i, (f, want)) in cases.iter().enumerate() {
+        assert_eq!(body(&analysis, &format!("S{}", (b'a' + i as u8) as char)), *want, "{f}");
+    }
+}
+
 /// tex.web §§ 1151, 1160: `\mathchar` and `\delimiter` in inline math are
 /// one atom each, a delimiter its small variant, so `\langle` and `\{`
 /// keep the formula's width. Widths as `pdflatex` prints.

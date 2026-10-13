@@ -209,7 +209,7 @@ impl Machine<'_> {
 
     /// An engine integer, 0 for a never-set key.
     /// `None` if the key, or an unpinned write, left it unknown.
-    fn engine_slot_int(&mut self, family: &str, key: &str) -> Option<i64> {
+    pub(crate) fn engine_slot_int(&mut self, family: &str, key: &str) -> Option<i64> {
         if self.engine_unpinned(family) {
             return None;
         }

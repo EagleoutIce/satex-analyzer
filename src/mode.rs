@@ -1019,16 +1019,44 @@ impl Machine<'_> {
     /// tex.web §§ 847-848, 889: without `\parshape` or `\hangindent`, every
     /// line of a paragraph is packed to exactly `\hsize`.
     pub(crate) fn line_width(&mut self) -> Dim {
+        self.line_shape()[0]
+    }
+
+    /// The width every line of a paragraph is packed to, and how far its
+    /// box reaches right of the vertical list's reference point: its
+    /// indent added (tex.web § 889 `shift_amount`). A `\parshape` whose
+    /// lines are all alike (§ 848), as `\list` sets, gives both.
+    fn line_shape(&mut self) -> [Dim; 2] {
         let parshape = self.intern("\u{4}parshape");
         match self.env.value(parshape) {
             Value::Int(0) => {}
             Value::Unknown if self.env.get(parshape).is_none() => {}
-            _ => return Dim::ANY,
+            _ => return self.uniform_par_shape().map_or([Dim::ANY; 2], |(i, l)| [Dim::exact(l), Dim::exact(i + l)]),
         }
         if self.dimen_parameter("hangindent") != Dim::exact(0) {
-            return Dim::ANY;
+            return [Dim::ANY; 2];
         }
-        self.dimen_parameter("hsize")
+        let hsize = self.dimen_parameter("hsize");
+        [hsize, hsize]
+    }
+
+    /// The indent and length of every line of `\parshape`, where all are
+    /// known and alike.
+    fn uniform_par_shape(&mut self) -> Option<(Scaled, Scaled)> {
+        let lines = self.engine_slot_int("parshape", "parshape")?;
+        if !(1..=64).contains(&lines) {
+            return None;
+        }
+        let mut shape = None;
+        for k in 1..=lines {
+            let (i, l) = (self.engine_sym(&format!("parshape.i{k}")), self.engine_sym(&format!("parshape.l{k}")));
+            let (i, l) = (self.env.value(i).as_dimen()?, self.env.value(l).as_dimen()?);
+            if shape.is_some_and(|s| s != (i, l)) {
+                return None;
+            }
+            shape = Some((i, l));
+        }
+        shape
     }
 
     /// `\baselineskip`, `\lineskip` and `\lineskiplimit` (tex.web § 679).
@@ -1265,8 +1293,7 @@ impl Machine<'_> {
         // tex.web § 889: each line is a box of the line width, so the
         // vertical list is at least that wide.  A paragraph that may hold
         // nothing may add no line at all (§ 1096).
-        let width = self.line_width();
-        let lined = n.wide.max(width);
+        let lined = n.wide.max(self.line_shape()[1]);
         // The last line's box, or a null paragraph's list as it was.
         let mut tail = [Last::Unknown; TAIL];
         tail[0] = match (n.tail[0], n.prior) {
