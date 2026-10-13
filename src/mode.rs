@@ -550,6 +550,11 @@ impl Natural {
         for k in (1..TAIL).rev() {
             self.tail[k] = self.tail[k - 1];
         }
+        // A lone box followed by an item is no longer the list's size (a
+        // forced break starts a new line): taken away, it is some box.
+        if self.tail[1] == Last::Box {
+            self.tail[1] = Last::Other;
+        }
         self.tail[0] = item;
         self.ligature = None;
     }

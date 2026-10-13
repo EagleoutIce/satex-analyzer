@@ -2150,6 +2150,22 @@ fn a_lone_hbox_taken_by_lastbox_keeps_the_sizes_known() {
     }
 }
 
+/// tex.web § 1080: a forced break starts a new line, but `\unpenalty`
+/// takes the penalty back and `\lastbox` the box before it, whose size the
+/// new line does not have: it is never read as an empty box's.
+#[test]
+fn a_box_uncovered_after_a_forced_break_is_not_empty() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\n\\begin{document}\n\\setbox0\\hbox{\\parbox{3cm}{\\noindent\\setbox3\\hbox{Ag}\\copy3\
+         \\penalty-10000\\unpenalty\\setbox2\\lastbox\\xdef\\W{\\the\\wd2}}}\n\\end{document}",
+    );
+    let w = body(&analysis, "W");
+    assert!(!w.is_empty() && w != "0.0pt", "{w}");
+}
+
 /// tex.web §§ 1151, 1160: `\mathchar` and `\delimiter` in inline math are
 /// one atom each, a delimiter its small variant, so `\langle` and `\{`
 /// keep the formula's width. Widths as `pdflatex` prints.
