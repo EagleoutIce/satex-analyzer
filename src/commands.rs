@@ -1512,10 +1512,23 @@ impl Machine<'_> {
             // `box_flag` (or `global_box_flag`), and an `\afterassignment`
             // token is read once it has begun.
             Syntax::SetBox => {
-                let register = self.scan_int();
+                let register = self.scan_number();
+                // An unpinned number names a register in the interval its scan left.
+                let within = match register {
+                    Some(_) => None,
+                    // At most two intervals are kept: the first, and the hull of the rest.
+                    None => self.take_index().and_then(|mut parts| {
+                        parts.sort_by_key(|p| p.lo);
+                        let first = parts.first()?;
+                        let rest = parts.get(1..).filter(|r| !r.is_empty()).unwrap_or(&parts[..1]);
+                        let lo = rest.iter().map(|p| p.lo).min()?;
+                        let hi = rest.iter().map(|p| p.hi).max()?;
+                        Some([(first.lo, first.hi), (lo, hi)])
+                    }),
+                };
                 self.scan_optional_equals();
                 let global = self.take_global();
-                self.scan_box(crate::mode::BoxContext::Set { register, global }, span);
+                self.scan_box(crate::mode::BoxContext::Set { register, global, within }, span);
             }
             Syntax::VSplit => {
                 self.scan_int();
