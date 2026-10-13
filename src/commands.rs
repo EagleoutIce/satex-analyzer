@@ -29,6 +29,7 @@ const ETEX_VERSION: i64 = 2;
 const ETEX_REVISION: &str = ".6";
 /// The pdfTeX manual: `\pdftexversion` is 140 for 1.40, and
 /// `\pdftexrevision` the last part of the version of the TeX Live binary.
+/// Read from the installed `pdftex` where there is one, these where not.
 const PDFTEX_VERSION: i64 = 140;
 const PDFTEX_REVISION: &str = "29";
 /// `\XeTeXversion` and `\XeTeXrevision` of XeTeX 0.999998.
@@ -54,6 +55,30 @@ const MAX_SCALED: i64 = 32768;
 const SCALE_UNITY: i64 = 1000;
 /// tex.web § 1259: an improper `at` size is replaced by 10pt.
 const DEFAULT_AT: Scaled = 10 * UNIT;
+
+/// `\pdftexversion` and `\pdftexrevision` of the installed engine: version
+/// 1.40.28 is 140 and "28" (the pdfTeX manual).
+fn pdftex_release() -> (i64, String) {
+    let parsed = crate::distribution::engine_release("pdftex").and_then(|v| {
+        let mut parts = v.split('.');
+        let (major, minor, revision) = (parts.next()?, parts.next()?, parts.next()?);
+        let version = major.parse::<i64>().ok()? * 100 + minor.parse::<i64>().ok()?;
+        revision.parse::<u32>().ok()?;
+        Some((version, revision.to_string()))
+    });
+    parsed.unwrap_or((PDFTEX_VERSION, PDFTEX_REVISION.to_string()))
+}
+
+/// `\XeTeXversion` and `\XeTeXrevision` of the installed engine: version
+/// 0.999997 is 0 and ".999997" (the XeTeX reference).
+fn xetex_release() -> (i64, String) {
+    let parsed = crate::distribution::engine_release("xetex").and_then(|v| {
+        let (major, revision) = v.split_once('.')?;
+        revision.parse::<u32>().ok()?;
+        Some((major.parse::<i64>().ok()?, format!(".{revision}")))
+    });
+    parsed.unwrap_or((XETEX_VERSION, XETEX_REVISION.to_string()))
+}
 
 thread_local! {
     /// pdfTeX's `\ifincsname`: how many `\csname`/`\ifcsname` scans are open. Nest only while running, so a counter is exact.
@@ -417,7 +442,7 @@ impl Machine<'_> {
             L::Badness => None,
             L::InputLineNo => self.input_line().map(|line| Value::Int(line.into())),
             L::EtexVersion => int(ETEX_VERSION),
-            L::PdftexVersion => int(PDFTEX_VERSION),
+            L::PdftexVersion => int(pdftex_release().0),
             L::GroupLevel => int(self.env.group_level() as i64),
             L::GroupType => match (self.env.group_kind(), self.env.nest()) {
                 (None, _) => int(0),
@@ -506,7 +531,7 @@ impl Machine<'_> {
             }
             // The random generator and the output position.
             L::RandomSeed | L::LastXPos | L::LastYPos => None,
-            L::XetexVersion => int(XETEX_VERSION),
+            L::XetexVersion => int(xetex_release().0),
             // Unlike the other engines' version primitives, LuaTeX's varies
             // meaningfully across installs, so it is read from the real
             // `luatex --version` for this run rather than a constant.
@@ -1879,8 +1904,8 @@ impl Machine<'_> {
         use Convert as C;
         let text: Option<String> = match convert {
             C::EtexRevision => Some(ETEX_REVISION.into()),
-            C::PdftexRevision => Some(PDFTEX_REVISION.into()),
-            C::XetexRevision => Some(XETEX_REVISION.into()),
+            C::PdftexRevision => Some(pdftex_release().1),
+            C::XetexRevision => Some(xetex_release().1),
             C::FontId => self.scan_font_ident().map(|f| f.to_string()),
             C::Xetex(crate::builtins::XeQuery::GlyphName) => self.xetex_glyph_name(),
             C::Xetex(query) => match self.xetex_query(query) {

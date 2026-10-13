@@ -2209,6 +2209,13 @@ impl Limit {
     }
 }
 
+/// Whether the installed LuaTeX takes LuaTeX's math mode parameters as
+/// ordinary integer parameters: LuaTeX 1.22 and before do (probed). Where
+/// the release is not known, or newer, they read as fixed.
+fn lua_math_modes_assignable() -> bool {
+    crate::plugin::lua::installed_version().is_some_and(|v| v <= 122)
+}
+
 /// The parameters an engine range-checks, refuses to change, or starts away
 /// from zero, and what it does with a value it will not take.  The ranges
 /// and the recovery values differ by engine, so the engine decides.
@@ -2223,9 +2230,18 @@ pub fn limit(name: &str, engine: Engine) -> Option<Limit> {
         // the output routine finds the page in, and starts at 255.
         "outputbox" if engine == Engine::LuaTeX => Limit::Range { start: 255, lo: 0, hi: 65535, bad: None },
         // LuaTeX manual, "Math": these report how the math machinery is
-        // built, so a write is accepted and ignored.
-        "mathnolimitsmode" | "mathitalicsmode" | "mathdelimitersmode" if engine == Engine::LuaTeX => Limit::Fixed(0),
-        "mathdefaultsmode" | "mathscriptboxmode" | "mathscriptcharmode" if engine == Engine::LuaTeX => Limit::Fixed(1),
+        // built, so a write is accepted and ignored; LuaTeX 1.22 (TeX Live
+        // 2025, probed) still takes them as integer parameters.
+        "mathnolimitsmode" | "mathitalicsmode" | "mathdelimitersmode"
+            if engine == Engine::LuaTeX && !lua_math_modes_assignable() =>
+        {
+            Limit::Fixed(0)
+        }
+        "mathdefaultsmode" | "mathscriptboxmode" | "mathscriptcharmode"
+            if engine == Engine::LuaTeX && !lua_math_modes_assignable() =>
+        {
+            Limit::Fixed(1)
+        }
         // tex.web § 1243 (`alter_aux`): "Bad space factor", after which the
         // engine goes on with 1000, which is also a fresh list's.
         // LuaTeX manual, "Directions": 0 to 3, and anything else is
@@ -2258,6 +2274,8 @@ pub fn limit(name: &str, engine: Engine) -> Option<Limit> {
 pub fn initial(name: &str, engine: Engine) -> Option<i64> {
     const INCH: i64 = 4_736_287;
     Some(match name {
+        // LuaTeX 1.22's INITEX (probed): these start at 1.
+        "mathdefaultsmode" | "mathscriptboxmode" | "mathscriptcharmode" if engine == Engine::LuaTeX => 1,
         // -1: `\show` and its kin write to the terminal and log.
         "showstream" if engine.has_pdftex_extensions() => -1,
         // pdfTeX's INITEX: PDF 1.4, compressed, and the DVI origin of one
