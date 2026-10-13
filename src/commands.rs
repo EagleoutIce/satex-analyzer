@@ -1974,7 +1974,10 @@ impl Machine<'_> {
                 let name = self.expanded_text().map(|name| name.replace('"', ""));
                 let bytes = name.and_then(|name| self.input_bytes(&name));
                 match (convert, bytes) {
-                    (_, None) => None,
+                    // A file the run made with what it holds unknown.
+                    (C::FileSize, None) => {
+                        return self.digits_in(crate::value::Num::range(0, crate::value::MAX_INT), span);
+                    }
                     (_, Some(None)) => Some(String::new()),
                     (C::FileSize, Some(Some(b))) => Some(b.len().to_string()),
                     // The date of a file that exists: its time is not

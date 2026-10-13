@@ -635,6 +635,19 @@ math_none! {
     closed_math_is_not_reported("closed", r"Text $x + y$ here.", "math-still-open");
 }
 
+/// A run a limit stops inside a formula has not reached the end of the
+/// text: the formula may close after it.
+#[test]
+fn math_open_where_a_limit_stopped_the_run_is_not_reported() {
+    let source = "\\catcode`\\$=3 \\catcode`\\{=1 \\catcode`\\}=2 \\count1=0\n\
+                  \\def\\b{\\advance\\count1 by 1 \\ifnum\\count1<100000000 \\expandafter\\b\\fi}\n\
+                  Text $x \\b y$ here.\n";
+    let mut cfg = crate::support::bare();
+    cfg.limits.steps = 100_000;
+    let analysis = Machine::analyze(source, None, &cfg);
+    assert!(findings(&analysis, "math-still-open").is_empty());
+}
+
 // chktex warning 49: `Expected math mode to be %s here.`
 #[test]
 fn a_math_delimiter_in_the_wrong_mode_is_reported() {

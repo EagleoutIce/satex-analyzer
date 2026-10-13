@@ -3047,6 +3047,42 @@ will look undefined",
         Rc::make_mut(&mut self.outputs).insert(Self::output_name(name), known.then(String::new));
     }
 
+    /// `\immediate\write18{command}`: a program the engine may run makes the
+    /// files its `--outfile=` or `-o` options name, with content unknown,
+    /// when every other argument names a file there (a converter such as
+    /// `repstopdf` given its input). Under `-shell-restricted` only the
+    /// programs of TeX Live's `shell_escape_commands` run.
+    pub(crate) fn run_shell(&mut self, command: &str) {
+        use crate::config::ShellEscape;
+        const RESTRICTED: &str = "bibtex bibtex8 extractbb gregorio kpsewhich l3sys-query latexminted makeindex \
+            memoize-extract.pl memoize-extract.py repstopdf r-mpost texosquery-jre8";
+        let mut words = command.split_whitespace().map(|w| w.trim_matches(|c| c == '"' || c == '\''));
+        let Some(program) = words.next() else { return };
+        let runs = match self.out.plugins.shell_escape {
+            ShellEscape::None => false,
+            ShellEscape::Restricted => RESTRICTED.split_whitespace().any(|p| p == program),
+            ShellEscape::Full => true,
+        };
+        if !runs || command.chars().any(crate::tex::is_unknown_char) {
+            return;
+        }
+        let (mut outputs, mut inputs) = (Vec::new(), Vec::new());
+        while let Some(word) = words.next() {
+            match word.split_once('=') {
+                Some(("--outfile" | "-outfile", file)) => outputs.push(file.to_string()),
+                _ if word == "-o" => outputs.extend(words.next().map(str::to_string)),
+                _ if word.starts_with('-') => {}
+                _ => inputs.push(word.to_string()),
+            }
+        }
+        if inputs.iter().all(|name| self.input_bytes(name) != Some(None)) {
+            for name in outputs {
+                let name = name.strip_prefix("./").unwrap_or(&name).to_string();
+                Rc::make_mut(&mut self.outputs).insert(name, None);
+            }
+        }
+    }
+
     /// A `\write` to `stream`: `text` ends up in its file when known, and
     /// `None` makes the file's content unknown. An unpinned stream may be
     /// any file.

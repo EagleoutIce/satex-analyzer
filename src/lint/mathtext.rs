@@ -92,7 +92,8 @@ report `Missing $ inserted` and close the formula itself (tex.web § 1047
 
 The rule reports what the interpreter already saw: the `missing-dollar`
 diagnostic it raised, or, where no `\\par` followed, a last character still
-carrying a math mode.  It reports one finding, never both.
+carrying a math mode (unless a limit stopped the run before the text's end).
+It reports one finding, never both.
 
 Fix by closing the formula.",
         references: &[Ref { source: Source::Chktex, at: "16" }, Ref { source: Source::TeXWeb, at: "1047" }],
@@ -561,25 +562,36 @@ fn delimiter_not_followed(report: &mut Report) {
 // chktex warning 16: `Mathmode still on at end of LaTeX file.`
 
 fn math_still_open(report: &mut Report) {
+    use crate::facts::Severity as Seen;
     let analysis = report.analysis();
-    let view = report.text();
-    let raised = analysis
-        .facts
-        .diagnostics
-        .iter()
-        .find(|diagnostic| diagnostic.code == "missing-dollar")
-        .map(|diagnostic| diagnostic.message.clone());
-    let Some(last) = view.ours().next_back() else { return };
-    if raised.is_none() && !view.modes(last).meets(Modes::ANY_MATH) {
+    let fix = Some("close the formula".to_string());
+    // The `\par` that found math mode on, shown where the document led to
+    // it, one on an exact path first. On an approximated path it may not
+    // be TeX's.
+    let raised = analysis.facts.diagnostics.iter().filter(|d| d.code == "missing-dollar");
+    if let Some(d) = raised.min_by_key(|d| d.severity != Seen::Warning) {
+        let mut message = format!("math mode was still on where the paragraph ended: {}", d.message);
+        let severity = match d.severity {
+            Seen::Warning => Severity::Error,
+            _ => {
+                message.push_str(" (the analysis approximated on the way: may not be TeX's)");
+                Severity::Warning
+            }
+        };
+        report.add_as(severity, d.origin.unwrap_or(d.span), "unclosed", message, fix);
         return;
     }
-    let at = (0..=last).rev().find(|i| view.modes(*i).meets(Modes::ANY_MATH)).unwrap_or(last);
-    let Some(span) = view.span(at) else { return };
-    let message = match raised {
-        Some(raised) => format!("math mode was still on where the paragraph ended: {raised}"),
-        None => "math mode was still on where the document's text ended".to_string(),
-    };
-    report.add(span, "unclosed", message, Some("close the formula".into()));
+    // A run stopped by a limit did not reach the end of the text.
+    if analysis.facts.diagnostics.iter().any(|d| d.code == "budget-exhausted") {
+        return;
+    }
+    let view = report.text();
+    let Some(last) = view.ours().next_back() else { return };
+    if !view.modes(last).meets(Modes::ANY_MATH) {
+        return;
+    }
+    let Some(span) = view.span(last) else { return };
+    report.add(span, "unclosed", "math mode was still on where the document's text ended".into(), fix);
 }
 
 // chktex warning 49: `Expected math mode to be %s here.`

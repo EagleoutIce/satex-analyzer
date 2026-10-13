@@ -3897,6 +3897,9 @@ impl Machine<'_> {
             crate::tex::detokenize_in(&text, &self.out.interner, escape, &self.catcodes, to)
         });
         self.write_output(number, line.as_deref());
+        if let (Some(18), Some(command)) = (number, &line) {
+            self.run_shell(command);
+        }
         let text = self.text_of(&text);
         // An unpinned stream may be the shell or a file the run opened, so both
         // are recorded. The log case writes nothing read back.
@@ -4048,7 +4051,21 @@ impl Machine<'_> {
                         Tok::Chr(c, Catcode::Space) if quoted => name.push(c),
                         // tex.web § 526: consume space that ends the name.
                         Tok::Chr(_, Catcode::Space) => break,
-                        Tok::Chr(c, Catcode::Letter | Catcode::Other) => name.push(c),
+                        // A character of any category up to 12 is part of the
+                        // name (`cur_cmd <= other_char`): `_`, `^`, `&`, `$`
+                        // and braces too (`pgfplotsoldpgfsupp_loader.code.tex`).
+                        Tok::Chr(
+                            c,
+                            Catcode::Letter
+                            | Catcode::Other
+                            | Catcode::Begin
+                            | Catcode::End
+                            | Catcode::Math
+                            | Catcode::Tab
+                            | Catcode::Param
+                            | Catcode::Sup
+                            | Catcode::Sub,
+                        ) => name.push(c),
                         Tok::Cs(sym) if self.expandable(sym) => {
                             self.unread(t);
                             if !self.step() {
