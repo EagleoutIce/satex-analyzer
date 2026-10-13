@@ -8171,8 +8171,13 @@ will look undefined",
             // class may hold a brace or the delimiter's first token: the
             // delimiter may begin in it.
             let first = &delimiter[..1.min(delimiter.len())];
-            let unknown_text =
-                self.is_unknown_text(t, first) || (t.cs().is_some() && self.may_hold(t, first) == Some(true));
+            // Inside a group no delimiter matches (tex.web § 392): there
+            // unknown text matters only where its class may hold a brace,
+            // which may close the group. Typed text of characters is read
+            // on exactly, so the argument stays typed by what it read.
+            let unknown_text = (self.is_unknown_text(t, first)
+                || (t.cs().is_some() && self.may_hold(t, first) == Some(true)))
+                && (depth == 0 || self.may_hold(t, &[]) != Some(false));
             // The argument read so far ends in the delimiter's first `j`
             // tokens and the text may begin with the rest (tex.web § 392):
             // the delimiter ends in it, a path each way.
@@ -10328,9 +10333,9 @@ impl Machine<'_> {
     }
 
     /// The class, lower bound, length and named control sequences of text
-    /// covering each of `texts`; `None` where they name too many. Untyped
-    /// text counts as the widest class. Braces are balanced ones, as in
-    /// every argument.
+    /// covering each of `texts`; any control sequence where they name too
+    /// many. Untyped text counts as the widest class. Braces are balanced
+    /// ones, as in every argument.
     fn cover(&self, texts: &[&[Token]]) -> Option<(TextClass, bool, Option<u32>, Vec<Sym>)> {
         /// Named control sequences a typed text may hold before it is any text.
         const NAMED: usize = 8;
@@ -10355,8 +10360,11 @@ impl Machine<'_> {
                 n = n.zip(k).map(|(n, k)| n.saturating_add(k));
                 cs.sort_unstable();
                 cs.dedup();
-                if cs.len() > NAMED {
-                    return None;
+                // More names than a type spells: any control sequence,
+                // still balanced text of the classes read.
+                if cs.len() > NAMED || class.meets(TextClass::CS) {
+                    class = class.union(TextClass::CS);
+                    cs.clear();
                 }
             }
             len = len.zip(n).map(|(a, b)| a.max(b));
