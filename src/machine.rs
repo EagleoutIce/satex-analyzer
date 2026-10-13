@@ -6154,6 +6154,11 @@ will look undefined",
             Meaning::Primitive(P::Mode(crate::builtins::ModeCmd::Horizontal(
                 crate::builtins::Material::Unpackage { .. },
             ))) => true,
+            // A style node, and a choice of lists the style picks, which
+            // `mode_command` follows (tex.web §§ 731, 1171-1174).
+            Meaning::Primitive(P::Mode(
+                crate::builtins::ModeCmd::MathStyle(_) | crate::builtins::ModeCmd::MathChoice,
+            )) => true,
             // A box is an ordinary atom, whose size `append_item` adds.
             Meaning::Primitive(P::Mode(crate::builtins::ModeCmd::Box(
                 crate::builtins::BoxCmd::HBox

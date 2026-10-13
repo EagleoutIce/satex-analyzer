@@ -856,6 +856,9 @@ pub enum ModeCmd {
     NoAlign,
     /// `\mathchoice{…}{…}{…}{…}` (tex.web § 1172).
     MathChoice,
+    /// `\displaystyle` (0), `\textstyle` (2), `\scriptstyle` (4),
+    /// `\scriptscriptstyle` (6) (tex.web § 1169).
+    MathStyle(u8),
     /// `\eqno`, `\leqno` (tex.web § 1140).
     EqNo,
     /// `\left` (tex.web § 1191).
@@ -1747,8 +1750,8 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "displaylimits", P::Command(Syntax::Limits));
     put(it, "limits", P::Command(Syntax::Limits));
     put(it, "nolimits", P::Command(Syntax::Limits));
-    for n in "displaystyle textstyle scriptstyle scriptscriptstyle".split_whitespace() {
-        put(it, n, P::Command(Syntax::Nothing));
+    for (k, n) in "displaystyle textstyle scriptstyle scriptscriptstyle".split_whitespace().enumerate() {
+        put(it, n, P::Mode(ModeCmd::MathStyle(2 * k as u8)));
     }
     put(it, "mathord", P::Command(Syntax::MathComp(0)));
     put(it, "mathop", P::Command(Syntax::MathComp(1)));
@@ -2751,6 +2754,7 @@ fn mode_verdict(m: ModeCmd) -> Judgment {
             at!(V::Approximated, "cells run in the alignment's own list, not distinguished from the preamble")
         }
         M::MathChoice => at!(V::Exact, "tex.web § 1172: opens all four styles in sequence"),
+        M::MathStyle(_) => at!(V::Exact, "tex.web § 1171: the style of the atoms after it in inline math"),
         M::Left => {
             at!(
                 V::Approximated,
