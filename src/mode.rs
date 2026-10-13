@@ -654,7 +654,7 @@ impl Natural {
     fn rigid(&self) -> bool {
         let k = usize::from(self.solid);
         k < TAIL
-            && self.tail[..k].iter().all(|l| *l == Last::Other)
+            && self.tail[..k].iter().all(|l| matches!(l, Last::Other | Last::Box))
             && self.tail[k] == Last::Empty
             && self.pending.is_none()
             && self.para.breakpoints == 0
@@ -761,8 +761,9 @@ pub enum Last {
     Penalty(i64),
     /// Nothing at all: the list is empty.
     Empty,
-    /// The indent box of a paragraph (tex.web § 1091), `\parindent` wide
-    /// and nothing high, with nothing after it.
+    /// An hbox that is the list's only item and its whole size: the indent
+    /// box of a paragraph (tex.web § 1091), or one appended to an empty
+    /// list.
     Box,
     /// A whatsit node (tex.web § 1341), such as `\special`.
     Whatsit,
@@ -1567,7 +1568,8 @@ impl Machine<'_> {
                     let axis = self.family_font(by, 2).and_then(|f| self.font_dimen(f, 22)?.as_dimen());
                     let total = height.extended_by(n.depth);
                     let h = match (axis, total.known()) {
-                        (Some(a), Some(t)) => Dim::exact(a + t / 2),
+                        // `half` (§ 100) rounds an odd total up.
+                        (Some(a), Some(t)) => Dim::exact(a + if t % 2 != 0 { (t + 1) / 2 } else { t / 2 }),
                         _ => Dim::ANY,
                     };
                     [n.wide.at_least_zero(), h, total.reduced_by(h)]
@@ -2114,14 +2116,23 @@ impl Machine<'_> {
                     Some(Last::Glue(..) | Last::Kern(_) | Last::Penalty(_) | Last::Char(_) | Last::Empty) => {
                         BoxState::Void
                     }
-                    // tex.web § 1091: the indent box, and the list is empty.
+                    // The list's only item is an hbox: the indent box
+                    // (tex.web § 1091) or one appended to an empty list. It
+                    // was the list's size, and the list is empty again.
                     Some(Last::Box) => {
-                        let n = self.natural.as_mut().expect("tail read");
-                        let indent = n.along;
+                        let mut n = self.natural.expect("tail read");
+                        let dims = [n.along, n.height, n.depth];
                         n.along = Dim::exact(0);
+                        n.height = Dim::exact(0);
+                        n.depth = Dim::exact(0);
                         n.prior = true;
+                        n.solid = 0;
                         n.tail = [Last::Empty; TAIL];
-                        return self.box_end(context, BoxState::HBox, [indent, Dim::exact(0), Dim::exact(0)]);
+                        if n.para.items.is_some() {
+                            n.para.items = Some(0);
+                        }
+                        self.natural = Some(n);
+                        return self.box_end(context, BoxState::HBox, dims);
                     }
                     _ => {
                         // A horizontal list loses a box of some size; the
@@ -2217,6 +2228,13 @@ impl Machine<'_> {
             BoxContext::Shift(shift) => {
                 let dims = self.shifted(dims, shift);
                 self.append_box(state, dims);
+                // `\lastbox` takes the box back with its shift (§ 1081),
+                // not at the size it gave the list.
+                if let Some(n) = &mut self.natural
+                    && n.tail[0] == Last::Box
+                {
+                    n.tail[0] = Last::Other;
+                }
             }
             BoxContext::Ship => {
                 let ranges = std::mem::take(&mut self.fetched);
@@ -2241,10 +2259,24 @@ impl Machine<'_> {
         let ranges = std::mem::take(&mut self.fetched);
         self.place_chars(ranges, self.mode.within(Modes::INTERNAL_VERTICAL.union(Modes::RESTRICTED_HORIZONTAL)));
         crate::observe::box_break(self);
+        // An hbox of known size, none of it above or below what an empty
+        // horizontal list starts at, onto an empty horizontal list: the
+        // list is that box, as `\lastbox` takes it back (§ 1080).
+        let alone = state == BoxState::HBox
+            && self.list_kind() == Some(true)
+            && self.natural.is_some_and(|n| {
+                n.tail[0] == Last::Empty && [n.along, n.height, n.depth].iter().all(|d| *d == Dim::exact(0))
+            })
+            && dims[0].known().is_some()
+            && dims[1..].iter().all(|d| d.known().is_some_and(|v| v >= 0));
         match state {
             BoxState::Void => {}
             BoxState::Unknown => self.append_item(Item::Unknown),
             _ => self.append_item(Item::Box(dims)),
+        }
+        if alone && let Some(n) = &mut self.natural {
+            n.tail = [Last::Empty; TAIL];
+            n.tail[0] = Last::Box;
         }
     }
 

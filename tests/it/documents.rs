@@ -435,6 +435,17 @@ fn inline_math_scripts_in_a_saved_box_stay_known() {
     assert_eq!(a.peak_paths, 1, "paths parted");
 }
 
+/// A picture in a `center` environment in a parbox, saved in a box: the
+/// paragraph hooks put the indent box back, `\item` takes it with
+/// `\lastbox` (tex.web § 1080), and the box's size is exact, as `pdflatex`
+/// prints it, so the scaled node showing it parses known numbers.
+#[test]
+fn centered_picture_in_a_saved_parbox_has_its_exact_size() {
+    let Some(a) = check("centered_picture_in_a_saved_parbox", "main.tex", &[]) else { return };
+    assert_eq!(crate::support::body(&a, "SketchSize"), "72.45232pt/43.58429pt/38.58427pt");
+    assert_eq!(a.peak_paths, 1, "paths parted");
+}
+
 peak_fixtures! {
     /// `\pgfmathparse` of an unknown integer three times: a typed result.
     pgfmath_of_unknown_integer_three_times("call_summary_pgfmath_thrice", "main.tex");
