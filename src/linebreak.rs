@@ -121,7 +121,7 @@ impl Machine<'_> {
         }
     }
 
-    fn kp_list(&self, mut id: u32) -> Vec<Kp> {
+    pub(crate) fn kp_list(&self, mut id: u32) -> Vec<Kp> {
         let mut out = Vec::new();
         while id > 0 {
             let (k, prev, _) = self.kp.nodes[id as usize - 1];

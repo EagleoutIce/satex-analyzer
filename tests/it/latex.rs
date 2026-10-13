@@ -2193,6 +2193,52 @@ fn a_uniform_parshape_keeps_the_lines_known() {
     }
 }
 
+/// microtype's `\leftprotrusion` sets its text in a trial vbox, splits
+/// the line off with `\vsplit` (tex.web §§ 970-977: no breakpoint but the
+/// end, packed to the height asked), `\unvbox`es it, takes it back with
+/// `\lastbox` and reads pdfTeX's `\leftmarginkern` of it: `\lpcode`
+/// thousandths of the quad. A ligature first stays unknown. Sizes as
+/// `pdflatex` prints.
+#[test]
+fn left_protrusion_of_a_line_is_known() {
+    if !installed() {
+        return;
+    }
+    let src = r"\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{microtype}
+\begin{document}
+\makeatletter
+\def\D#1#2{\setbox0\hbox{#2}\xdef#1{\the\wd0/\the\ht0/\the\dp0}}
+\D\Ma{\vbox{\hsize3cm\trivlist\item\relax Ag\endtrivlist}}
+\D\Mb{\leftprotrusion Ag}
+\D\Mc{\leftprotrusion{T}he}
+\setbox2\vbox{\hsize3cm\noindent A}\setbox4\vbox{\setbox2\vsplit2 to 12pt \xdef\Vs{\the\wd2/\the\ht2/\the\dp2}\unvbox2 \global\setbox6\lastbox}
+\xdef\Mk{\leftmarginkern6/\the\wd6/\the\ht6/\the\dp6/\the\wd4/\the\ht4}
+\setbox0\vbox{\hsize3cm\pdfprotrudechars=0 \noindent A}\setbox0\vbox{\setbox2\vsplit0 to 5pt \unvbox2 \global\setbox6\lastbox}\xdef\Mz{\leftmarginkern6}
+\setbox0\vbox{\hsize3cm}\setbox2\vsplit0 to 7pt \xdef\Me{\the\wd2/\the\ht2/\the\dp2/\ifvoid0 void\fi}
+\setbox0\vbox{\hsize3cm\noindent Ag}\splitmaxdepth=1pt \setbox2\vsplit0 to 3pt \xdef\Md{\the\wd2/\the\ht2/\the\dp2/\ifvoid0 void\fi}
+\setbox0\hbox{\leftprotrusion{fi}x}\xdef\Ml{\the\wd0}
+\end{document}";
+    let analysis = analyze(src);
+    let want = [
+        ("Ma", "85.35826pt/28.83118pt/0.0pt"),
+        ("Mb", "12.11703pt/6.8872pt/1.94397pt"),
+        ("Mc", "16.85811pt/6.8872pt/0.0pt"),
+        ("Vs", "85.35826pt/12.0pt/0.0pt"),
+        ("Mk", "-0.37991pt/85.35826pt/6.8872pt/0.0pt/0.0pt/0.0pt"),
+        ("Mz", "0pt"),
+        ("Me", "0.0pt/7.0pt/0.0pt/void"),
+        ("Md", "85.35826pt/3.0pt/1.0pt/void"),
+    ];
+    for (name, want) in want {
+        assert_eq!(body(&analysis, name), want, "{name}");
+    }
+    // pdflatex: 10.83069pt; a ligature first is not followed.
+    let ml = body(&analysis, "Ml");
+    assert!(ml.contains("unknown"), "{ml}");
+}
+
 /// tex.web §§ 1151, 1160: `\mathchar` and `\delimiter` in inline math are
 /// one atom each, a delimiter its small variant, so `\langle` and `\{`
 /// keep the formula's width. Widths as `pdflatex` prints.
