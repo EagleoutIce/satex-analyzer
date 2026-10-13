@@ -661,7 +661,7 @@ impl Machine<'_> {
             self.choices.clear();
             self.infeasible = false;
             self.at_join = false;
-            self.dropping = None;
+            (self.dropping, self.dropping_possible) = (None, false);
             let going = match self.unit {
                 Unit::Command => self.command(),
                 unit => self.scan_step(unit),
@@ -672,6 +672,10 @@ impl Machine<'_> {
             // of arms would only be cut there again.
             let next = next_script(&self.choices, self.infeasible);
             let error = self.dropping.take().filter(|_| paths.top && !self.infeasible);
+            // An error that may not be TeX's drops its path only where
+            // another is surely a run: one that approximated nothing since
+            // the paths parted. Else it goes on, as TeX recovers.
+            let error = error.filter(|_| !self.dropping_possible || Self::exact_other(paths, &outcomes));
             if outcomes.is_empty() && dropped.is_empty() && next.is_none() {
                 self.choices.clear();
                 // Other paths wait: this one raised a certain error.
@@ -737,6 +741,13 @@ impl Machine<'_> {
             Some(choice) if head => self.loop_head(paths, choice, start, outcomes),
             _ => Next::Many(outcomes),
         }
+    }
+
+    /// Whether a path other than the running one approximated nothing
+    /// since the paths parted.
+    fn exact_other(paths: &Paths, outcomes: &[Config]) -> bool {
+        let mut others = paths.parked.iter().chain(&paths.arrived).chain(&paths.done).chain(outcomes);
+        others.any(|c| !c.state.approximated)
     }
 
     /// A command that branched, begun in `start`, is a loop head. Met again

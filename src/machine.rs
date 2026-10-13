@@ -1498,6 +1498,9 @@ pub struct Machine<'a> {
     /// A certain TeX error the running command raised: under
     /// `analysis.assume_compiles` its path is no run of the document.
     pub(crate) dropping: Option<String>,
+    /// `dropping` is an error reached only past an approximation, which
+    /// may not be TeX's ([`Machine::certain_error`]).
+    pub(crate) dropping_possible: bool,
     /// Paths with certain errors run on: no path compiles
     /// ([`Machine::settle`]).
     pub(crate) keep_errors: bool,
@@ -2046,6 +2049,7 @@ impl<'a> Machine<'a> {
             at_join: false,
             fi_mark: None,
             dropping: None,
+            dropping_possible: false,
             keep_errors: false,
             approximated: false,
             cut_taint: None,
@@ -5279,7 +5283,8 @@ will look undefined",
     /// infeasible and dropped ([`Machine::explore`]).
     ///
     /// An error the path reached only past an approximation may not be
-    /// TeX's: it is a possible error, and its path is dropped the same way,
+    /// TeX's: it is a possible error, and its path is dropped the same way
+    /// where another path approximated nothing ([`Machine::explore`]),
     /// so what it left open (a group, a conditional, an argument scan that
     /// ran to its file's end) does not decide how the paths without one
     /// read on. Where no path goes on without an error, the dropped ones run
@@ -5298,6 +5303,7 @@ will look undefined",
                     && !self.after_cut());
             // A message that prints unknown text was made from it.
             let certain = certain && !text.contains('\u{2}');
+            self.dropping_possible = !certain;
             self.dropping = Some(match certain {
                 true => text.to_string(),
                 false => {
