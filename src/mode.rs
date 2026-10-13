@@ -1734,6 +1734,8 @@ impl Machine<'_> {
                     _ => self.natural = None,
                 }
             }
+        } else if nest.code == Some(group::MATH_CHOICE) {
+            self.choice_closed(nest.part, natural);
         } else if nest.align.is_some() {
             // The rows, or the `\noalign` material, went onto the
             // alignment's vertical list.
@@ -1750,9 +1752,28 @@ impl Machine<'_> {
             Some(group::DISC) if nest.part < 3 => {
                 self.open_list(Some(group::DISC), Modes::RESTRICTED_HORIZONTAL, nest.part + 1, span);
             }
-            Some(group::MATH_CHOICE) if nest.part < 4 => {
-                self.open_list(Some(group::MATH_CHOICE), Modes::MATH, nest.part + 1, span);
-            }
+            Some(group::MATH_CHOICE) if nest.part & 15 < 4 => self.open_choice(nest.part + 1, span),
+            _ => {}
+        }
+    }
+
+    /// The `k`-th list of a `\mathchoice` (low four bits of `part`; the
+    /// high ones the list the style picks, or 0). The picked one goes on
+    /// from the list around it: it takes the choice's place (tex.web § 731).
+    fn open_choice(&mut self, part: u8, span: Span) {
+        let outer = self.natural;
+        self.open_list(Some(group::MATH_CHOICE), Modes::MATH, part, span);
+        if part >> 4 == part & 15 && outer.is_some() {
+            self.natural = outer;
+        }
+    }
+
+    /// A `\mathchoice` list ended: the picked one is the list around it
+    /// from here on; the others are dropped.
+    fn choice_closed(&mut self, part: u8, inner: Option<Natural>) {
+        match part >> 4 {
+            0 => self.natural = None,
+            chosen if chosen == part & 15 => self.natural = inner,
             _ => {}
         }
     }
@@ -1903,7 +1924,33 @@ impl Machine<'_> {
             // tex.web § 1172 `append_choices`.
             ModeCmd::MathChoice => {
                 if self.mode.meets(Modes::ANY_MATH) {
-                    self.open_list(Some(group::MATH_CHOICE), Modes::MATH, 1, span);
+                    // In inline math the style here picks the list (tex.web
+                    // § 731): the text, script or scriptscript one.
+                    let chosen = match (self.mode, self.natural) {
+                        (Modes::MATH, Some(n)) if n.script.is_none() && n.math_pending.is_none() => 2 + (n.style >> 1),
+                        _ => 0,
+                    };
+                    self.open_choice(1 | chosen << 4, span);
+                }
+            }
+            // tex.web § 1171: a style node; the atoms after it are set in
+            // that style (§ 763), and the character before it keeps its
+            // italic correction (§ 755).
+            ModeCmd::MathStyle(code) => {
+                if !self.mode.meets(Modes::ANY_MATH) {
+                    return;
+                }
+                match self.natural {
+                    Some(mut n)
+                        if self.mode == Modes::MATH && code > 0 && n.script.is_none() && n.math_pending.is_none() =>
+                    {
+                        let italic = self.prev_italic(n.math_prev);
+                        n.along = n.along.extended_by(italic);
+                        (n.math_prev, n.math_box, n.scripted) = (None, None, None);
+                        n.style = code - 2;
+                        self.natural = Some(n);
+                    }
+                    _ => self.natural = None,
                 }
             }
             // tex.web § 1142 `start_eq_no`: only in display math.
@@ -2847,7 +2894,9 @@ impl Machine<'_> {
                 | ModeCmd::ShipOut
                 | ModeCmd::Insert { .. }
                 | ModeCmd::StartPar { .. }
-                | ModeCmd::QuitVMode,
+                | ModeCmd::QuitVMode
+                | ModeCmd::MathStyle(_)
+                | ModeCmd::MathChoice,
             )
             | Primitive::Typeset(Typeset::Number | Typeset::Dimen | Typeset::Glue) => return,
             // tex.web § 785: its material goes between the rows.

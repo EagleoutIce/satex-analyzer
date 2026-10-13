@@ -2239,6 +2239,44 @@ fn left_protrusion_of_a_line_is_known() {
     assert!(ml.contains("unknown"), "{ml}");
 }
 
+/// tex.web §§ 731, 763, 1171-1174: in inline math `\textstyle`,
+/// `\scriptstyle` and `\scriptscriptstyle` set the atoms after them in
+/// that style, and `\mathchoice` takes the list the style picks in its
+/// place (amsmath's `\text` is one). `\displaystyle` is not followed.
+/// Sizes as `pdflatex` prints.
+#[test]
+fn math_styles_and_choices_keep_the_size_known() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (r"$\mathchoice{a}{bb}{c}{ddd}$", "8.58331pt/6.94444pt/0.0pt"),
+        (r"$B_{\mathchoice{a}{bb}{c}{ddd}}$", "11.65883pt/6.83331pt/1.49998pt"),
+        (r"$x^{y^{\mathchoice{a}{bb}{c}{ddd}}}$", "22.11757pt/10.11893pt/0.0pt"),
+        (r"$\scriptstyle x$", "4.53473pt/3.01389pt/0.0pt"),
+        (r"$a+\scriptstyle b+c$", "28.51518pt/5.83333pt/0.83334pt"),
+        (r"$f\scriptscriptstyle x\textstyle y$", "15.19221pt/6.94444pt/1.94444pt"),
+        (r"$x_{\mathchoice{}{}{\scriptstyle a}{}b}c$", "18.39714pt/4.30554pt/1.49998pt"),
+        (r"$B_{\text{x}}$", "12.2865pt/6.83331pt/1.49998pt"),
+        (r"$a\mathchoice{+}{+}{+}{+}b$", "21.79968pt/6.94444pt/0.83333pt"),
+    ];
+    let mut src = String::from("\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!(
+            "\\setbox0\\hbox{{{f}}}\\xdef\\S{}{{\\the\\wd0/\\the\\ht0/\\the\\dp0}}\n",
+            (b'a' + i as u8) as char
+        ));
+    }
+    src.push_str("\\setbox0\\hbox{$a\\displaystyle b$}\\xdef\\D{\\the\\wd0}\n\\end{document}");
+    let analysis = analyze(&src);
+    for (i, (f, want)) in cases.iter().enumerate() {
+        assert_eq!(body(&analysis, &format!("S{}", (b'a' + i as u8) as char)), *want, "{f}");
+    }
+    // pdflatex: 9.57755pt; a display style in inline math is not followed.
+    let d = body(&analysis, "D");
+    assert!(d.contains("unknown"), "{d}");
+}
+
 /// tex.web §§ 1151, 1160: `\mathchar` and `\delimiter` in inline math are
 /// one atom each, a delimiter its small variant, so `\langle` and `\{`
 /// keep the formula's width. Widths as `pdflatex` prints.
