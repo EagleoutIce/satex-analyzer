@@ -304,3 +304,48 @@ fn config_output_directory_is_the_fallback() {
     assert!(read_aux(&analysis).iter().all(|p| p.contains("build")));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `source` run as `doc.tex` in a fresh directory holding `files`, the
+/// modeled primitives and the files there only.
+fn analyze_beside(name: &str, files: &[(&str, &str)], source: &str, cfg: Config) -> Analysis {
+    let dir =
+        crate::support::scratch_dir(std::env::temp_dir().join(format!("satex-beside-{name}-{}", std::process::id())));
+    for (file, text) in files {
+        std::fs::write(dir.join(file), text).unwrap();
+    }
+    let doc = dir.join("doc.tex");
+    let source = format!("{}{source}", crate::support::PRELUDE);
+    std::fs::write(&doc, &source).unwrap();
+    let analysis = Machine::analyze(&source, Some(&doc), &cfg);
+    let _ = std::fs::remove_dir_all(&dir);
+    analysis
+}
+
+/// tex.web § 526: a file name takes every character token up to category
+/// 12, so `_` (category 8) does not end it (`\input x_loader.code.tex`).
+#[test]
+fn a_file_name_does_not_end_at_an_underscore() {
+    let cfg = Config { load: Load { inputs: true, ..crate::support::bare().load }, ..crate::support::bare() };
+    let source = "\\catcode`\\_=8 \\input part_two.tex \\relax\n";
+    let analysis = analyze_beside("underscore", &[("part_two.tex", "\\def\\found{}\n")], source, cfg);
+    assert!(defined(&analysis, "found"), "part_two.tex is read");
+}
+
+/// `\immediate\write18` of a program the engine may run makes the file its
+/// `--outfile=` names when its input is there (epstopdf's `repstopdf`), so
+/// `\pdffilesize` of it is not empty; without the input, or with a program
+/// `-shell-restricted` does not allow, nothing is made.
+#[test]
+fn a_shell_escape_conversion_makes_its_output_file() {
+    let probe = "\\immediate\\write18{PROG --outfile=out.pdf in.eps}\n\
+                 \\expandafter\\ifx\\expandafter\\relax\\pdffilesize{out.pdf}\\relax\\def\\missing{}\\else\\def\\made{}\\fi\n";
+    for (name, program, input, made) in [
+        ("restricted", "repstopdf", true, true),
+        ("no-input", "repstopdf", false, false),
+        ("not-allowed", "epstopdf", true, false),
+    ] {
+        let files: &[(&str, &str)] = if input { &[("in.eps", "%!PS\n")] } else { &[] };
+        let analysis = analyze_beside(name, files, &probe.replace("PROG", program), crate::support::bare());
+        assert_eq!((defined(&analysis, "made"), defined(&analysis, "missing")), (made, !made), "{name}");
+    }
+}
