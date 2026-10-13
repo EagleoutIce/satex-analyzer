@@ -1262,6 +1262,7 @@ impl Machine<'_> {
             at_join: _,
             fi_mark: _,
             dropping: _,
+            dropping_possible: _,
             keep_errors: _,
             approximated: _,
             cut_taint: _,
