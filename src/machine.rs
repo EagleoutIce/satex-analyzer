@@ -4133,8 +4133,12 @@ will look undefined",
         match TEX_ERRORS.iter().find(|(c, _)| *c == code) {
             // An engine error on a command satex approximated: the run may
             // not be TeX's there, so it is satex's gap, cut when it repeats.
-            Some(_) if self.scratch.approximations != self.scratch.approximations_at_command || self.after_cut() => {
-                severity = Severity::Unsupported
+            Some((_, text))
+                if self.scratch.approximations != self.scratch.approximations_at_command || self.after_cut() =>
+            {
+                severity = Severity::Unsupported;
+                let text = text.map_or_else(|| message.clone(), str::to_string);
+                self.certain_error(&text, false);
             }
             Some((_, text)) => {
                 let text = text.map_or_else(|| message.clone(), str::to_string);
@@ -5267,21 +5271,33 @@ will look undefined",
     /// or with a cause that is `exact` whatever was approximated (a name
     /// certainly undefined): under `analysis.assume_compiles` the path is
     /// infeasible and dropped ([`Machine::explore`]).
+    ///
+    /// An error the path reached only past an approximation may not be
+    /// TeX's: it is a possible error, and its path is dropped the same way,
+    /// so what it left open (a group, a conditional, an argument scan that
+    /// ran to its file's end) does not decide how the paths without one
+    /// read on. Where no path goes on without an error, the dropped ones run
+    /// on and TeX's recovery applies ([`Machine::settle`]).
     pub(crate) fn certain_error(&mut self, text: &str, exact: bool) {
         if self.cfg.analysis.assume_compiles
             && self.probe.is_none()
             && !self.halted
             && !self.reading_format()
-            && (exact
-                || (self.scratch.approximations == self.scratch.approximations_at_command
-                    && !self.approximated
-                    && !self.after_cut()))
-            // A message that prints unknown text was made from it.
-            && !text.contains('\u{2}')
             && !self.keep_errors
             && self.dropping.is_none()
         {
-            self.dropping = Some(text.to_string());
+            let certain = exact
+                || (self.scratch.approximations == self.scratch.approximations_at_command
+                    && !self.approximated
+                    && !self.after_cut());
+            // A message that prints unknown text was made from it.
+            let certain = certain && !text.contains('\u{2}');
+            self.dropping = Some(match certain {
+                true => text.to_string(),
+                false => {
+                    format!("{} (the analysis approximated on the way: may not be TeX's)", text.replace('\u{2}', "?"))
+                }
+            });
         }
     }
 
@@ -6614,9 +6630,7 @@ will look undefined",
                     Some(arity) => {
                         let node = self.reference(sym, span);
                         self.note_expansion(sym, span, MeaningKind::Unknown, node, Vec::new());
-                        for _ in 0..arity {
-                            self.read_undelimited();
-                        }
+                        self.read_call_arguments(sym, arity as usize, span);
                     }
                     None => {
                         let node = self.reference(sym, span);
@@ -7545,6 +7559,43 @@ will look undefined",
             self.runaway = interrupted;
         }
         arguments
+    }
+
+    /// The `n` undelimited arguments of a call satex runs without its
+    /// macro (an expl3 function it steps over, a modeled `\use:…`), read
+    /// as TeX reads a `\long` macro's (tex.web §§ 336-339, 392): a file
+    /// ending first ends the scan there, a runaway, and the call is
+    /// dropped. `None` then, said as TeX says it.
+    pub(crate) fn read_call_arguments(&mut self, sym: Sym, n: usize, span: Span) -> Option<Vec<Vec<Token>>> {
+        let outer = std::mem::replace(&mut self.long_argument, true);
+        let interrupted = std::mem::take(&mut self.runaway);
+        let scanner = std::mem::replace(&mut self.scanner, Scanner::Matching);
+        let id = self.scan_begin();
+        let mut arguments: Vec<Vec<Token>> = Vec::with_capacity(n);
+        for _ in 0..n {
+            if self.runaway != Runaway::No {
+                break;
+            }
+            arguments.push(self.read_undelimited());
+        }
+        if self.scan_end(id) {
+            let unknown = self.unknown_text(Unk::Any, self.position_span());
+            if let Some(last) = arguments.last_mut() {
+                last.push(unknown);
+            }
+        }
+        self.scanner = scanner;
+        self.long_argument = outer;
+        let runaway = std::mem::replace(&mut self.runaway, interrupted);
+        if runaway == Runaway::No {
+            return Some(arguments);
+        }
+        if runaway == Runaway::FileEnded {
+            let name = self.name(sym).to_string();
+            let message = format!("File ended while scanning use of \\{name}: its argument never closes");
+            self.diagnose(Severity::Warning, "runaway-argument", span, message);
+        }
+        None
     }
 
     /// tex.web § 392/396: a macro not declared `\long` may not have `\par`

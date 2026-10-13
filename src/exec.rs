@@ -273,10 +273,8 @@ impl Machine<'_> {
                 }
             }
             P::Use(arguments) => {
-                let mut kept = Vec::new();
-                for _ in 0..arguments {
-                    kept.extend(self.read_undelimited());
-                }
+                let Some(read) = self.read_call_arguments(by, usize::from(arguments), span) else { return };
+                let kept: Vec<Token> = read.into_iter().flatten().collect();
                 self.push_tokens(Rc::from(kept));
             }
             P::Csname => self.build_csname(span),
@@ -2544,7 +2542,8 @@ impl Machine<'_> {
                 // the meaning it gave the name holds: `\relax` where it can
                 // spell no defined name (tex.web § 372), or one assigned since.
                 if let Some(sym) = sym.filter(|&s| self.is_unknown_name(s)) {
-                    let built = self.name(sym).contains([crate::machine::UNKNOWN_NAME_GAP, crate::machine::UNKNOWN_DIGITS_GAP]);
+                    let built =
+                        self.name(sym).contains([crate::machine::UNKNOWN_NAME_GAP, crate::machine::UNKNOWN_DIGITS_GAP]);
                     return self.env.slot(sym).filter(|b| built && b.may.is_none()).and_then(|b| match b.meaning {
                         Meaning::Unknown | Meaning::Undefined => None,
                         _ => Some(true),
