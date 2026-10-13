@@ -1715,12 +1715,22 @@ impl Machine<'_> {
                     Some(0 | 2) => Some("crop"),
                     _ => None,
                 };
-                let size = path
-                    .filter(|p| {
-                        first && spec == [None; 3] && p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
-                    })
-                    .zip(which)
-                    .and_then(|(p, w)| crate::pdfbox::page_box(&std::fs::read(p).ok()?, w));
+                let pdf = path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")));
+                let size = match pdf {
+                    true => path
+                        .filter(|_| first && spec == [None; 3])
+                        .zip(which)
+                        .and_then(|(p, w)| crate::pdfbox::page_box(&std::fs::read(p).ok()?, w)),
+                    // A PNG or JPEG: its pixels at its resolution, else at
+                    // `\pdfimageresolution`.
+                    false => {
+                        let param = self.intern("pdfimageresolution");
+                        let dpi = self.env.value(param).as_int();
+                        path.filter(|_| spec == [None; 3])
+                            .zip(dpi)
+                            .and_then(|(p, dpi)| crate::pdfbox::raster_size(&std::fs::read(p).ok()?, dpi))
+                    }
+                };
                 // pdfTeX numbers images from 1 and keeps their sizes for
                 // `\pdfrefximage`.
                 let n = self.engine_slot_int("ximages", "ximages").map(|n| n + 1);

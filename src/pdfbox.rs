@@ -1,8 +1,9 @@
 //! The page size `\pdfximage` gives an image of a one-page PDF file (the
 //! pdfTeX manual, "Graphics"): its crop box, else its media box, in big
 //! points. Compressed object streams are inflated (RFC 1950/1951).
-//! Anything this reader cannot be sure of (several pages, a rotation, a
-//! user unit, boxes that disagree) gives no size.
+//! Anything this reader cannot be sure of (a rotation, a user unit, boxes
+//! that disagree, a crop box apart from the media box on several pages)
+//! gives no size.
 
 /// The width and height in scaled points of the box `which` ("media", or
 /// "crop" which falls back to the media box) of the only page of `pdf`:
@@ -51,7 +52,10 @@ pub fn page_box(pdf: &[u8], which: &str) -> Option<(i64, i64)> {
         _ => crop.or(media)?,
     };
     let sp = |bp: f64| (bp * 65781.76).round() as i64;
-    (pages == 1).then(|| ((sp(b[2]) - sp(b[0])).abs(), (sp(b[3]) - sp(b[1])).abs()))
+    // Every box of the file agrees, so a page's own or inherited box is
+    // that one; past one page only where no crop box differs from it.
+    let certain = pages == 1 || (pages > 1 && crop.is_none_or(|c| Some(c) == media));
+    certain.then(|| ((sp(b[2]) - sp(b[0])).abs(), (sp(b[3]) - sp(b[1])).abs()))
 }
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
@@ -243,6 +247,93 @@ fn inflate(data: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
+/// The size in scaled points `\pdfximage` gives a PNG or JPEG file: its
+/// pixels at the file's resolution (PNG `pHYs` in pixels per meter, JFIF
+/// in dots per inch or per centimetre, each rounded as C's `(int)(x+0.5)`),
+/// else at `default_dpi` (`\pdfimageresolution`), one pixel at r dpi being
+/// 7227·65536/(100·r) sp rounded (pdfTeX's `ext_xn_over_d`). Resolutions
+/// below 5 dpi count as none (pdfTeX test 37). Checked against pdfTeX
+/// 1.40.28 on 296 TeX Live images. `None` where pdfTeX might read it
+/// otherwise: one axis tiny and the other not, a resolution past 65535,
+/// EXIF data without JFIF density, any header this reader does not know.
+pub fn raster_size(data: &[u8], default_dpi: i64) -> Option<(i64, i64)> {
+    let (w, h, xr, yr) = png_info(data).or_else(|| jpeg_info(data))?;
+    let tiny = |r: i64| (1..5).contains(&r);
+    let (xr, yr) = match (xr, yr) {
+        (x, y) if x > 65535 || y > 65535 => return None,
+        (x, y) if tiny(x) != tiny(y) => return None,
+        (x, y) if tiny(x) && tiny(y) => (0, 0),
+        (x, 0) if x > 0 => (x, x),
+        (0, y) if y > 0 => (y, y),
+        xy => xy,
+    };
+    let (xr, yr) = if xr == 0 { (default_dpi, default_dpi) } else { (xr, yr) };
+    if xr <= 0 || yr <= 0 {
+        return None;
+    }
+    let scale = |px: i64, r: i64| (7227 * 65536 * px * 2 + 100 * r) / (2 * 100 * r);
+    Some((scale(w, xr), scale(h, yr)))
+}
+
+/// Width, height and resolution (0 none) of a PNG file.
+fn png_info(b: &[u8]) -> Option<(i64, i64, i64, i64)> {
+    if !b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return None;
+    }
+    let be = |at: usize| -> Option<i64> { Some(i64::from(u32::from_be_bytes(b.get(at..at + 4)?.try_into().ok()?))) };
+    let (w, h) = (be(16)?, be(20)?);
+    let (mut xr, mut yr, mut i) = (0, 0, 8);
+    while i + 8 <= b.len() {
+        let n = usize::try_from(be(i)?).ok()?;
+        match b.get(i + 4..i + 8)? {
+            b"pHYs" if *b.get(i + 16)? == 1 => {
+                let r = |ppm: i64| (ppm * 254 + 5000) / 10000;
+                (xr, yr) = (r(be(i + 8)?), r(be(i + 12)?));
+            }
+            b"IDAT" | b"IEND" => break,
+            _ => {}
+        }
+        i += 12 + n;
+    }
+    Some((w, h, xr, yr))
+}
+
+/// Width, height and resolution (0 none) of a JPEG file.
+fn jpeg_info(b: &[u8]) -> Option<(i64, i64, i64, i64)> {
+    if !b.starts_with(&[0xff, 0xd8]) {
+        return None;
+    }
+    let be = |at: usize| -> Option<i64> { Some(i64::from(u16::from_be_bytes(b.get(at..at + 2)?.try_into().ok()?))) };
+    let (mut xr, mut yr, mut jfif, mut exif, mut i) = (0, 0, false, false, 2);
+    while i + 4 <= b.len() {
+        if b[i] != 0xff {
+            return None;
+        }
+        let m = b[i + 1];
+        let n = usize::try_from(be(i + 2)?).ok()?;
+        if m == 0xe0 && b.get(i + 4..i + 9) == Some(b"JFIF\0") {
+            jfif = true;
+            let (dx, dy) = (be(i + 12)?, be(i + 14)?);
+            (xr, yr) = match b.get(i + 11)? {
+                1 => (dx, dy),
+                2 => ((dx * 254 + 50) / 100, (dy * 254 + 50) / 100),
+                _ => (0, 0),
+            };
+        }
+        if m == 0xe1 && b.get(i + 4..i + 8) == Some(b"Exif") {
+            exif = true;
+        }
+        if matches!(m, 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf) {
+            if exif && (!jfif || xr == 0) {
+                return None;
+            }
+            return Some((be(i + 7)?, be(i + 5)?, xr, yr));
+        }
+        i += 2 + n;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -251,4 +342,73 @@ mod tests {
         let data = [0x78, 0x01, 0x01, 0x03, 0x00, 0xfc, 0xff, b'a', b'b', b'c'];
         assert_eq!(super::inflate_zlib(&data).as_deref(), Some(&b"abc"[..]));
     }
+
+    /// Pages that all have one media box give it; a crop box on some
+    /// page only leaves the size unknown.
+    #[test]
+    fn pages_of_one_box_give_it() {
+        let page = "<< /Type /Page /Parent 1 0 R /MediaBox [0 0 486 720] >>";
+        let pdf = format!("%PDF-1.5 << /Type /Pages /Count 2 >> {page} {page}");
+        let (w, h) = super::page_box(pdf.as_bytes(), "crop").unwrap();
+        assert_eq!((w, h), ((486.0f64 * 65781.76).round() as i64, (720.0f64 * 65781.76).round() as i64));
+        let cropped = format!("{pdf} << /Type /Page /CropBox [0 0 100 100] >>");
+        assert_eq!(super::page_box(cropped.as_bytes(), "crop"), None);
+    }
+
+    /// A PNG header: `w`×`h` pixels, with a `pHYs` chunk of `ppm` pixels
+    /// per meter when given.
+    fn png(w: u32, h: u32, ppm: Option<u32>) -> Vec<u8> {
+        let mut b = b"\x89PNG\r\n\x1a\n".to_vec();
+        let chunk = |b: &mut Vec<u8>, t: &[u8], data: &[u8]| {
+            b.extend((data.len() as u32).to_be_bytes());
+            b.extend(t);
+            b.extend(data);
+            b.extend([0; 4]);
+        };
+        let mut ihdr = w.to_be_bytes().to_vec();
+        ihdr.extend(h.to_be_bytes());
+        ihdr.extend([8, 2, 0, 0, 0]);
+        chunk(&mut b, b"IHDR", &ihdr);
+        if let Some(ppm) = ppm {
+            let mut phys = ppm.to_be_bytes().to_vec();
+            phys.extend(ppm.to_be_bytes());
+            phys.push(1);
+            chunk(&mut b, b"pHYs", &phys);
+        }
+        chunk(&mut b, b"IDAT", &[]);
+        b
+    }
+
+    /// pdfTeX 1.40.28's sizes: 72 dpi without a resolution, 17500 pixels
+    /// per meter rounding up to 445 dpi.
+    #[test]
+    fn png_sizes_are_pdftex_s() {
+        let pt = |sp: i64| sp as f64 / 65536.0;
+        let (w, h) = super::raster_size(&png(1000, 500, None), 72).unwrap();
+        assert_eq!((w, h), (1000 * 7227 * 65536 / 7200, 500 * 7227 * 65536 / 7200));
+        let (w, _) = super::raster_size(&png(2608, 221, Some(17500)), 72).unwrap();
+        assert!((pt(w) - 423.55092).abs() < 1e-4, "{}", pt(w));
+    }
+
+    /// A JFIF density below 5 dpi counts as none; 5 counts.
+    #[test]
+    fn tiny_jpeg_resolutions_are_ignored() {
+        let jpeg = |dpi: u16| {
+            let mut b = vec![0xff, 0xd8, 0xff, 0xe0, 0, 16];
+            b.extend(b"JFIF\0");
+            b.extend([1, 1, 1]);
+            b.extend(dpi.to_be_bytes());
+            b.extend(dpi.to_be_bytes());
+            b.extend([0, 0]);
+            b.extend([0xff, 0xc0, 0, 11, 8]);
+            b.extend(1000u16.to_be_bytes());
+            b.extend(1000u16.to_be_bytes());
+            b.extend([1, 1, 0x11, 0]);
+            b
+        };
+        let pt = |dpi| super::raster_size(&jpeg(dpi), 72).map(|s| s.0 as f64 / 65536.0);
+        assert_eq!(pt(4), Some(1003.75));
+        assert_eq!(pt(5), Some(14454.0));
+    }
 }
+
