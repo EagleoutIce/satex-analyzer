@@ -1363,8 +1363,7 @@ fn a_package_error_the_document_causes_is_shown_at_the_cause() {
     let Some(analysis) = latex(
         r"\documentclass{article}
 \ExplSyntaxOn
-\str_set:Ne \l_tmpb_str { a \int_to_Hex:n{\int_rand:n{255}} b }
-\exp_args:NNo \str_set_convert:Nnnn \l_tmpa_str \l_tmpb_str {utf8}{}
+\int_set:Nn \l_tmpa_int { 1 + }
 \ExplSyntaxOff
 \begin{document}x\end{document}",
     ) else {
@@ -1374,10 +1373,12 @@ fn a_package_error_the_document_causes_is_shown_at_the_cause() {
         .into_iter()
         .filter(|r| r["code"] == "caused-library-error" && r["origin"] == "document")
         .collect();
-    let brace = rows.iter().find(|r| r["message"].as_str().is_some_and(|m| m.contains("Argument has an extra }")));
-    let brace = brace.unwrap_or_else(|| panic!("no extra-brace row: {rows:?}"));
-    assert_eq!(brace["line"], 4, "{brace:?}");
-    assert!(brace["message"].as_str().unwrap().starts_with("error in expl3-code.tex:"), "{brace:?}");
+    // pdflatex: "! Missing number, treated as zero." at l.3, raised while
+    // expl3's integer expression reads `1 +`.
+    let missing = rows.iter().find(|r| r["message"].as_str().is_some_and(|m| m.contains("missing number")));
+    let missing = missing.unwrap_or_else(|| panic!("no missing-number row: {rows:?}"));
+    assert_eq!(missing["line"], 3, "{missing:?}");
+    assert!(missing["message"].as_str().unwrap().starts_with("error in expl3-code.tex:"), "{missing:?}");
     // One row per origin line and code.
     let mut keys: Vec<_> = rows.iter().map(|r| (r["line"].to_string(), r["name"].to_string())).collect();
     let all = keys.len();
