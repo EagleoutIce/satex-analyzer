@@ -34,12 +34,12 @@ Every name the document or its packages define. `origin` is `document` for files
 ```text
 $ satex query definitions -f samples/paper.tex --filter 'tag=macro and arity>0'
 tag    name                              paramet…  body      file                  
-macro  \__sys_tmp:w                      #1        \str_if…  expl3-code.tex        @ expl3-code.tex:1539:17
-macro  \sys_gset_rand_seed:n             #1        \tex_se…  expl3-code.tex        @ expl3-code.tex:1531:34
+macro  \__sys_tmp:w                      #1        \str_if…  expl3-code.tex        @ expl3-code.tex:1538:17
+macro  \sys_gset_rand_seed:n             #1        \tex_se…  expl3-code.tex        @ expl3-code.tex:1530:34
 macro  \reserved@c                       #1.sty\…  \def \r…  latex.ltx             @ latex.ltx:18742:20
 macro  \reserved@a                       #10#2#{   \expand…  latex.ltx             @ latex.ltx:1277:3
 macro  \reserved@a                       #1\@nil   \@for \…  latex.ltx             @ latex.ltx:18611:3
-… 2476 more lines omitted
+… 2473 more lines omitted
 ```
 
 ## expansions
@@ -129,7 +129,7 @@ macro-call           \fmtname  latex.ltx                       @ latex.ltx:731:2
 macro-call           \space    latex.ltx                       @ latex.ltx:731:34
 macro-call           \fmtver…  latex.ltx                       @ latex.ltx:731:42
 use                  LaTeX2e…  latex.ltx                       @ latex.ltx:129:24
-… 38899 more lines omitted
+… 38866 more lines omitted
 ```
 
 ## trace
@@ -168,7 +168,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    expl3.ltx                                 
 4    input    expl3-code.tex                            
-… 253 more lines omitted
+… 257 more lines omitted
 ```
 
 ## diagnostics
@@ -178,7 +178,7 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 ```text
 $ satex query diagnostics -f samples/paper.tex
 severity    code           count  message                               file            
-assumption  clock-assumed  1      the document is assumed to be compi…  expl3-code.tex  @ expl3-code.tex:8203:38
+assumption  clock-assumed  1      the document is assumed to be compi…  expl3-code.tex  @ expl3-code.tex:8169:38
 ```
 
 ## distribution
@@ -187,12 +187,12 @@ The detected TeX installation: provider, version, and the texmf trees searched.
 
 ```text
 $ satex query distribution -f samples/paper.tex
-kind        message                                                               root                                  
-            TeX Live 2026, LaTeX2e 2025-11-01, 6 trees via kpsewhich, 47457 fil…                                        
-texmf-tree                                                                        ~/texmf                   
-texmf-tree                                                                        ~/.texliveYYYY/texmf-var  
-texmf-tree                                                                        /usr/local/texlive/texmf-local        
-texmf-tree                                                                        /usr/local/texlive/YYYY/texmf-config  
+kind        message                                                            root                                     
+            TeX Live 2025, LaTeX2e 2025-11-01, 6 trees via kpsewhich, 52950 …                                           
+texmf-tree                                                                     ~/texmf                   
+texmf-tree                                                                     ~/.texliveYYYY/texmf-var  
+texmf-tree                                                                     /usr/local/texlive/texmf-local           
+texmf-tree                                                                     /usr/local/texlive/YYYY/texmf-config     
 … 2 more lines omitted
 ```
 
@@ -211,12 +211,12 @@ Definitions and assignments a macro makes as a side effect of being called, rath
 ```text
 $ satex query side-effects -f samples/paper.tex
 tag                  name      detail    file                  
-variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:2104:42
-variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6668:27
-variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6668:27
-variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6668:27
-variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6668:27
-… 1704 more lines omitted
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:2099:42
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
+… 1699 more lines omitted
 ```
 
 ## project
@@ -241,7 +241,7 @@ The provider, platform, engine, output target, and build system plugins chose fo
 ```text
 $ satex query plugins -f samples/paper.tex
 kind              name                                                                               detail             
-provider          texlive (TeX 3.141592653 (TeX Live 2026))                                          detected           
+provider          texlive (TeX 3.141592653 (TeX Live 2025))                                          detected           
 platform          linux                                                                              this machine       
 engine            pdflatex (pdftex primitives)                                                       build configurat…  
 kernel            latex2e                                                                            default            

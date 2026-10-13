@@ -147,7 +147,7 @@ limits:
   seconds: 300  # wall-clock limit per run, 0 for none
   repeat_failures: 8  # times one gap may be met at one place before the expansion is dropped
   choices: 8  # undecided choices one command may make on one path
-  site_forks: 1024  # undecided choices one place may make while a line is read before its expansion is cut; 0 = never
+  site_forks: 4096  # undecided choices one place may make while a line is read before its expansion is cut; 0 = never
   paths: 16  # waiting paths before the two furthest back are cut to the input they share and joined
   alike: 8  # waiting paths before those at one place in the same conditionals and groups have their input widened
   meaning_splits: 4  # choices a command may have made for a name joined to several meanings to split per meaning
