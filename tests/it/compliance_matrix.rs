@@ -527,7 +527,9 @@ fn convert(name: &str, c: Convert) -> Result<Template, &'static str> {
         Convert::PageRef => Err("names a page object, which a run that ships out no page has not made"),
         Convert::XFormName => Err("names a form object, which this run never creates"),
         Convert::ImageBBox => Err("needs an image the run has read"),
-        Convert::MarginKern => Err("reads a kern protrusion left in a box the page builder made"),
+        Convert::MarginKern | Convert::LeftMarginKern => {
+            Err("reads a kern protrusion left in a box the page builder made")
+        }
         Convert::Xetex(_) => Err("queries a loaded OpenType font, which INITEX has not loaded"),
     }
 }

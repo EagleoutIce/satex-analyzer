@@ -1257,6 +1257,11 @@ impl Machine<'_> {
         self.font_entry_value(param, font, &field)
     }
 
+    /// `\lpcode⟨font⟩⟨c⟩`.
+    pub(crate) fn lp_code(&mut self, font: u32, c: u32) -> Option<i64> {
+        self.font_entry_value(FontParam::CharCode(0), font, &format!("lpcode.{c}"))?.as_int()
+    }
+
     fn font_entry_value(&mut self, param: FontParam, font: u32, field: &str) -> Option<Value> {
         let stored = self.font_field(font, field);
         if !matches!(stored, Value::Unknown) {
@@ -2083,6 +2088,21 @@ impl Machine<'_> {
                     Some(_) => self.text_tokens("0", span),
                     None => self.digits_in(crate::value::Num::range(-2_147_483_646, 2_147_483_646), span),
                 };
+            }
+            // pdfTeX: the width of the left margin kern the box's list
+            // starts with, past a `\leftskip`; 0pt with none. A line made
+            // by the line breaker starts with the one it put there.
+            C::LeftMarginKern => {
+                let n = self.scan_int();
+                let dims = self.box_dims(n);
+                let hbox = n.is_some_and(|k| self.box_state(k) == crate::mode::BoxState::HBox);
+                match self.box_line(n) {
+                    Some(Some((w, h, d, Some(kern)))) if hbox && dims == [w, h, d].map(crate::mode::Dim::exact) => {
+                        // No kern prints as `0pt` (pdfTeX's `print("0")`).
+                        Some(if kern == 0 { "0pt".into() } else { crate::value::render_dimen(kern) })
+                    }
+                    _ => None,
+                }
             }
             C::PageRef | C::XFormName | C::InsertHt | C::MarginKern | C::Marks => {
                 self.scan_int();

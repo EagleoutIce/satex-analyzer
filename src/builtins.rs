@@ -376,6 +376,8 @@ pub enum Convert {
     XFormName,
     InsertHt,
     MarginKern,
+    /// `\leftmarginkern⟨n⟩`.
+    LeftMarginKern,
     ColorStackInit,
     /// `\pdfximagebbox⟨image⟩⟨corner⟩`.
     ImageBBox,
@@ -1929,7 +1931,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "partokencontext", P::IntegerParameter);
         put(it, "lpcode", P::FontParam(FontParam::CharCode(0)));
         put(it, "rpcode", P::FontParam(FontParam::CharCode(0)));
-        put(it, "leftmarginkern", P::Convert(Convert::MarginKern));
+        put(it, "leftmarginkern", P::Convert(Convert::LeftMarginKern));
         put(it, "rightmarginkern", P::Convert(Convert::MarginKern));
         put(it, "ifincsname", P::If(Cond::InCsname));
     }

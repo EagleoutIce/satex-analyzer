@@ -451,6 +451,10 @@ pub struct Natural {
     /// How many boxes and rules came onto the list through
     /// [`State::append_item`]: with the tail, whether it holds nothing else.
     pub solid: u8,
+    /// An internal vertical list whose tail is [`Last::Box`]: the one line
+    /// it holds, its width, height and depth, and the left margin kern
+    /// pdfTeX put at its start (`None`: not known).
+    pub line: Option<Line>,
     /// In inline math: the last math character (family, font, char), whose
     /// italic correction and kern wait for the next (tex.web §§ 752, 755).
     /// `Some(None)`: not known.
@@ -712,6 +716,7 @@ impl Natural {
             scripted: if self.scripted == other.scripted { self.scripted } else { None },
             math_breaks: self.math_breaks.max(other.math_breaks),
             solid: self.solid.max(other.solid),
+            line: if self.line == other.line { self.line } else { None },
             para: self.para.join(other.para),
             prev_depth: join_prev(self.prev_depth, other.prev_depth),
         };
@@ -786,6 +791,10 @@ impl Last {
         }
     }
 }
+
+/// A line of a paragraph as a box on a vertical list (tex.web § 889):
+/// width, height, depth, and the left margin kern pdfTeX put first in it.
+pub type Line = (Scaled, Scaled, Scaled, Option<Scaled>);
 
 /// Which item `\unskip`, `\unkern` or `\unpenalty` takes away.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -978,6 +987,7 @@ impl Machine<'_> {
             ligature: None,
             no_boundary: false,
             solid: 0,
+            line: None,
             math_prev: None,
             math_class: None,
             math_pending: None,
@@ -1008,6 +1018,52 @@ impl Machine<'_> {
         // tex.web § 1091.
         self.set_prevgraf(Value::Int(0));
         self.insert_every("everypar", span);
+    }
+
+    /// The one line a paragraph `before` set on the empty vertical list
+    /// `after` makes it: its size, and the left margin kern pdfTeX's
+    /// `post_line_break` puts first in it, from the character it starts
+    /// with (none known where it starts otherwise).
+    fn lone_line(&mut self, before: &Natural, n: &Natural, after: &mut Natural) {
+        if before.prior || before.first.is_some() || n.para.below != Last::Empty {
+            return;
+        }
+        let head = before.para.items.and_then(|i| self.kp_list(i).first().copied());
+        let [width, reach] = self.line_shape();
+        let (Some(w), Some(h), Some(d)) = (width.known(), n.first.and_then(|f| f.known()), n.para.depth.known()) else {
+            return;
+        };
+        if reach != width || w < 0 || n.para.lost || n.para.lines != (1, 1) || n.para.along != Dim::exact(h) {
+            return;
+        }
+        let kern = match head {
+            Some(crate::linebreak::Kp::Box { chr: Some((font, c)), lig: false, .. }) => self.left_margin_kern(font, c),
+            _ => None,
+        };
+        after.tail = [Last::Empty; TAIL];
+        after.tail[0] = Last::Box;
+        after.line = Some((w, h, d, kern));
+    }
+
+    /// pdfTeX's `char_pw` at the left: `\lpcode` thousandths of the
+    /// font's quad, rounded, taken away at the start of a line where
+    /// `\pdfprotrudechars` is positive.
+    fn left_margin_kern(&mut self, font: u32, c: u32) -> Option<Scaled> {
+        if self.int_parameter("pdfprotrudechars")? <= 0 {
+            return Some(0);
+        }
+        let lp = self.lp_code(font, c)?;
+        if lp == 0 {
+            return Some(0);
+        }
+        let quad = self.font_dimen(font, 6)?.as_dimen()?;
+        if lp < 0 || quad < 0 {
+            return None;
+        }
+        // `round_xn_over_d`: a remainder of half or more rounds up.
+        let (x, d) = (i128::from(quad) * i128::from(lp), 1000);
+        let w = x / d + i128::from(2 * (x % d) >= d);
+        Some(-Scaled::try_from(w).ok()?)
     }
 
     /// `\prevgraf` (tex.web § 1244): not grouped.
@@ -1349,6 +1405,12 @@ impl Machine<'_> {
             prev_depth: n.prev_depth,
             ..Natural::default()
         };
+        // A paragraph of one character alone on an empty internal vertical
+        // list makes it one line, packed to the line width with no indent.
+        let mut after = after;
+        if only && to == Modes::INTERNAL_VERTICAL {
+            self.lone_line(&before, &n, &mut after);
+        }
         // Where the mode was in doubt, the vertical list may be as it was.
         self.natural = Some(if only { after } else { after.join(n) });
     }
@@ -1621,6 +1683,15 @@ impl Machine<'_> {
             if kind != BoxState::Unknown {
                 self.set_box_dims(register, dims);
             }
+            // A naturally packed vbox of one line or nothing: what
+            // `\vsplit` and `\unvbox` find in it.
+            if nest.code == Some(group::VBOX) && nest.to == Packing::Natural && !n.capped {
+                match (n.tail[0], n.line) {
+                    (Last::Empty, _) => self.set_box_line(register, None),
+                    (Last::Box, Some(line)) => self.set_box_line(register, Some(line)),
+                    _ => {}
+                }
+            }
             // What `\unvbox` of it starts with (§ 1110): its list's first
             // height, when the list is as it was packed. `\unhbox` adds the
             // sum along its list.
@@ -1891,6 +1962,7 @@ impl Machine<'_> {
                     _ => None,
                 };
                 let last = self.box_last(n);
+                let line = self.box_line(n);
                 let state = self.fetch_box(n, take);
                 // A void register adds nothing.
                 let ranges = std::mem::take(&mut self.fetched);
@@ -1900,8 +1972,28 @@ impl Machine<'_> {
                         self.mode.within(Modes::INTERNAL_VERTICAL.union(Modes::RESTRICTED_HORIZONTAL)),
                     );
                 }
+                let empty = self.list_kind() == Some(false)
+                    && self
+                        .natural
+                        .is_some_and(|n| n.tail[0] == Last::Empty && n.along == Dim::exact(0) && n.first.is_none());
                 if state != BoxState::Void && self.mode.meets(Modes::ANY_MATH) {
                     self.natural = None;
+                } else if let (BoxState::VBox, true, Some(line)) = (state, empty, line)
+                    && dims.iter().all(|d| d.known().is_some())
+                    && dims[0] == Dim::exact(line.map_or(0, |(w, ..)| w.max(0)))
+                {
+                    // tex.web § 1110: the line goes onto the empty list as it
+                    // is, with no interline glue; nothing, for an empty box.
+                    if let (Some((w, h, d, _)), Some(n)) = (line, &mut self.natural) {
+                        n.along = Dim::exact(h);
+                        n.depth = Dim::exact(d);
+                        n.wide = n.wide.max(Dim::exact(w));
+                        n.first = Some(Dim::exact(h));
+                        n.tail = [Last::Empty; TAIL];
+                        n.tail[0] = Last::Box;
+                        n.line = line;
+                        self.material = true;
+                    }
                 } else if state != BoxState::Void {
                     self.unpackage(state, dims, first, solid);
                     let horizontal = self.list_kind() == Some(true);
@@ -2151,6 +2243,24 @@ impl Machine<'_> {
                     // The list's only item is an hbox: the indent box
                     // (tex.web § 1091) or one appended to an empty list. It
                     // was the list's size, and the list is empty again.
+                    Some(Last::Box) if self.list_kind() == Some(false) => {
+                        let mut n = self.natural.expect("tail read");
+                        let Some((w, h, d, kern)) = n.line else {
+                            self.natural = None;
+                            return self.box_end(context, BoxState::Unknown, [Dim::ANY; 3]);
+                        };
+                        // tex.web § 1080: the list is empty again;
+                        // `\prevdepth` stays as it was.
+                        (n.along, n.depth, n.wide, n.first, n.line) =
+                            (Dim::exact(0), Dim::exact(0), Dim::exact(0), None, None);
+                        n.tail = [Last::Empty; TAIL];
+                        self.natural = Some(n);
+                        self.box_end(context, BoxState::HBox, [w, h, d].map(Dim::exact));
+                        if let BoxContext::Set { register, .. } = context {
+                            self.set_box_line(register, Some((w, h, d, kern)));
+                        }
+                        return;
+                    }
                     Some(Last::Box) => {
                         let mut n = self.natural.expect("tail read");
                         let dims = [n.along, n.height, n.depth];
@@ -2192,11 +2302,33 @@ impl Machine<'_> {
             BoxCmd::VSplit => {
                 let n = self.scan_number();
                 self.scan_keyword("to");
-                self.scan_dimen();
+                let to = self.scan_dimen();
+                let line = self.box_line(n);
+                let dims = self.box_dims(n);
+                let real = n.map(|k| self.box_state(k));
                 let state = match self.fetch_box(n, false) {
                     BoxState::Void => BoxState::Void,
                     _ => BoxState::Unknown,
                 };
+                // tex.web §§ 970-977: a vbox of one line or nothing has no
+                // legal breakpoint but its end, so `vert_break` splits all
+                // of it off, packed to the height asked for, and the
+                // register is void.
+                let max = self.dimen_parameter("splitmaxdepth").known();
+                if let (BoxState::Unknown, Some(line), Some(h), Some(max)) = (state, line, to, max)
+                    && real == Some(BoxState::VBox)
+                    && dims == line.map_or([Dim::exact(0); 3], |(w, h, d, _)| [w, h, d].map(Dim::exact))
+                {
+                    let (w, d) = line.map_or((0, 0), |(w, _, d, _)| (w, d));
+                    let d = if d > max { max.max(0) } else { d };
+                    self.box_changed(n, BoxState::Void);
+                    self.fetched.clear();
+                    self.box_end(context, BoxState::VBox, [Dim::exact(w.max(0)), Dim::exact(h), Dim::exact(d)]);
+                    if let BoxContext::Set { register, .. } = context {
+                        self.set_box_line(register, line);
+                    }
+                    return;
+                }
                 self.box_changed(n, BoxState::Unknown);
                 self.fetched.clear();
                 return self.box_end(context, state, [Dim::ANY; 3]);
@@ -3728,7 +3860,7 @@ impl Machine<'_> {
         };
         let sym = self.box_sym(n);
         self.env.set_value(sym, box_value(state), global);
-        for dimen in ["wd", "ht", "dp", "first", "solid", "last"] {
+        for dimen in ["wd", "ht", "dp", "first", "solid", "last", "one", "lw", "lh", "ld", "lmk"] {
             let key = self.intern(&format!("\u{4}box.{dimen}.{n}"));
             self.env.set_value(key, Value::Unknown, global);
         }
@@ -3736,6 +3868,37 @@ impl Machine<'_> {
 
     fn set_box_first(&mut self, register: Option<i64>, first: Dim) {
         self.set_box_slot(register, "first", first.value());
+    }
+
+    /// What register `register`'s vbox holds: nothing (`None`), or one
+    /// line, an hbox (tex.web § 889).
+    fn set_box_line(&mut self, register: Option<i64>, line: Option<Line>) {
+        self.set_box_slot(register, "one", Value::Int(i64::from(line.is_some())));
+        if let Some((w, h, d, kern)) = line {
+            self.set_box_slot(register, "lw", Value::Dimen(w));
+            self.set_box_slot(register, "lh", Value::Dimen(h));
+            self.set_box_slot(register, "ld", Value::Dimen(d));
+            self.set_box_slot(register, "lmk", kern.map_or(Value::Unknown, Value::Dimen));
+        }
+    }
+
+    /// What register `n` holds where recorded: a vbox of nothing
+    /// (`Some(None)`) or of one line, or an hbox that is a line.
+    pub(crate) fn box_line(&mut self, n: Option<i64>) -> Option<Option<Line>> {
+        let n = n?;
+        let slot = |m: &mut Self, which: &str| {
+            let key = m.intern(&format!("\u{4}box.{which}.{n}"));
+            m.env.value(key)
+        };
+        match slot(self, "one") {
+            Value::Int(0) => Some(None),
+            Value::Int(1) => {
+                let [w, h, d] = ["lw", "lh", "ld"].map(|k| slot(self, k).as_dimen());
+                let kern = slot(self, "lmk").as_dimen();
+                Some(Some((w?, h?, d?, kern)))
+            }
+            _ => None,
+        }
     }
 
     fn set_box_slot(&mut self, register: Option<i64>, which: &str, value: Value) {
@@ -3824,7 +3987,7 @@ impl Machine<'_> {
     }
 
     fn reset_box_dimens(&mut self, n: i64) {
-        for dimen in ["wd", "ht", "dp", "first", "solid", "last"] {
+        for dimen in ["wd", "ht", "dp", "first", "solid", "last", "one", "lw", "lh", "ld", "lmk"] {
             let key = self.intern(&format!("\u{4}box.{dimen}.{n}"));
             if self.env.get(key).is_some() {
                 self.env.set_value_in_place(key, Value::Unknown);
