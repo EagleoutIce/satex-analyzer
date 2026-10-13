@@ -2537,8 +2537,18 @@ impl Machine<'_> {
                 let t = self.next_token()?;
                 let sym = t.cs().or_else(|| self.active_cs(t));
                 operands.extend(sym);
-                if sym == Some(self.unknown) || sym.is_some_and(|s| self.is_unknown_name(s)) {
+                if sym == Some(self.unknown) {
                     return None;
+                }
+                // A name `\csname` built from unknown text is defined while
+                // the meaning it gave the name holds: `\relax` where it can
+                // spell no defined name (tex.web § 372), or one assigned since.
+                if let Some(sym) = sym.filter(|&s| self.is_unknown_name(s)) {
+                    let built = self.name(sym).contains([crate::machine::UNKNOWN_NAME_GAP, crate::machine::UNKNOWN_DIGITS_GAP]);
+                    return self.env.slot(sym).filter(|b| built && b.may.is_none()).and_then(|b| match b.meaning {
+                        Meaning::Unknown | Meaning::Undefined => None,
+                        _ => Some(true),
+                    });
                 }
                 // A name a join left one of several meanings is defined
                 // when every one of them is, undefined when none is.

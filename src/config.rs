@@ -219,7 +219,7 @@ impl Default for Limits {
             repeat_failures: 8,
             seconds: 300,
             choices: 8,
-            site_forks: 1_024,
+            site_forks: 4_096,
             paths: 16,
             alike: 8,
             meaning_splits: 4,

@@ -343,8 +343,9 @@ $ satex explain -f samples/paper.tex '\usepackage'
   tag            alias
   when           preamble
   context        outside environments
-  effective      \usepackage
-  takes          0
+  effective      \usepackage[1]{2}{3}
+  signature      omm
+  takes          2-3
   uses           4 times, in this run
   by             \let
   documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
@@ -404,7 +405,7 @@ paper.tex
   title A Sample Document for saTeX
   author satex Test Suite
   engine pdflatex (build configuration)
-  provider texlive (TeX 3.141592653 (TeX Live 2026)) (detected)
+  provider texlive (TeX 3.141592653 (TeX Live 2025)) (detected)
   platform linux (this machine)
   kernel latex2e (default)
 … 28 more lines omitted
@@ -468,7 +469,7 @@ $ satex scope -f samples/paper.tex --at 20:1
 tag          name                                      effecti…  file                
 macro        \Weird                                    \Weird …  paper.tex           @ paper.tex:16:1
 macro        \WeirdMore                                \WeirdM…  paper.tex           @ paper.tex:14:1
-… 7766 more lines omitted
+… 7774 more lines omitted
 ```
 
 </details>
@@ -482,7 +483,7 @@ $ satex lint -f samples/paper.tex --filter 'category=performance'
 performance (2)
   paper.tex:5:1  info     unused-package  graphicx defines 72 names, none of which are used
     [unsafe fix] delete \usepackage{graphicx} if its side effects are not needed
-  paper.tex:26:1  info     preamble-cost  5 packages requested directly, 254 files read
+  paper.tex:26:1  info     preamble-cost  5 packages requested directly, 258 files read
     [unsafe fix] dump the preamble into a format with `pdftex -ini -jobname=paper "&pdflatex" mylatexformat.ltx
                  """paper.tex"""`, then every build starts from it
 … 3 more lines omitted
@@ -498,7 +499,7 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache
   source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
-  holds 189418 definitions
+  holds 189256 definitions
   state cached
 … 2 more lines omitted
 ```

@@ -246,6 +246,13 @@ impl Machine<'_> {
     /// `None` when the command may not make more choices: the caller leaves
     /// this one undecided another way.
     pub(crate) fn branch(&mut self, by: Sym, arms: usize, span: Span) -> Option<usize> {
+        self.branch_at(by, arms, span, true)
+    }
+
+    /// [`Machine::branch`] over `arms` paths that exist already when
+    /// `budget` is false: a hot site refuses new work, and taking paths
+    /// already made is none, while leaving one would drop runs.
+    fn branch_at(&mut self, by: Sym, arms: usize, span: Span, budget: bool) -> Option<usize> {
         if arms < 2 {
             return (arms == 1).then_some(0);
         }
@@ -263,7 +270,7 @@ impl Machine<'_> {
         }
         // Replays count: each is work at the site. Only a new choice is
         // refused, so a replay follows the run it repeats.
-        if self.hot_site(span) && !scripted {
+        if budget && self.hot_site(span) && !scripted {
             return None;
         }
         let arm = self.script.get(i).copied().unwrap_or(0);
@@ -446,7 +453,7 @@ impl Machine<'_> {
                     None => {
                         let span = self.position_span();
                         self.swap_choices(&mut outer);
-                        let arm = self.branch(self.unknown, configs.len(), span);
+                        let arm = self.branch_at(self.unknown, configs.len(), span, false);
                         self.swap_choices(&mut outer);
                         let forced = match arm {
                             Some(_) => None,
