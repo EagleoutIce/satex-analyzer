@@ -238,13 +238,14 @@ fn call_parts(m: &mut Machine, span: Span) -> std::rc::Rc<[String]> {
     if !m.project_file(span.file) {
         return std::rc::Rc::from([]);
     }
-    let Some((here, text)) = m.call_extent(span) else { return std::rc::Rc::from([]) };
+    let Some(mouth) = m.reading(span.file) else { return std::rc::Rc::from([]) };
+    let here = mouth.here();
     if let Some((at, until, parts)) = &m.call_parts
         && (*at, *until) == (span, here)
     {
         return parts.clone();
     }
-    let parts: std::rc::Rc<[String]> = argument_parts(&text).into();
+    let parts: std::rc::Rc<[String]> = argument_parts(&mouth.since(span.line, span.col)).into();
     m.call_parts = Some((span, here, parts.clone()));
     parts
 }

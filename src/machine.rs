@@ -601,16 +601,12 @@ fn set_primitive_aliases(env: &mut Env, interner: &mut Interner, engine: crate::
 pub(crate) type LoopId = (Span, Sym, u64);
 
 #[derive(Clone)]
-enum Frame {
-    /// A file being read. `catcodes` is the table to restore when it ends:
-    /// `\usepackage` makes `@` a letter for the package only, without
-    /// opening a TeX group, since a package must be able to define things.
-    /// `depth` is the group nesting the file started at, so a group it
-    /// leaves open can be reported and given up.
+pub(crate) enum Frame {
+    /// A file being read. `depth` is the group nesting the file started
+    /// at, so a group it leaves open can be reported and given up.
     File {
         mouth: Mouth,
         package: Option<Sym>,
-        catcodes: Option<Box<CatcodeTable>>,
         depth: usize,
         /// The conditional nesting the file started at, so that one it leaves
         /// open does not govern the rest of the run.
@@ -645,6 +641,78 @@ enum Frame {
     /// Nothing is read across this: it ends a token list that is being run to
     /// completion on its own, such as an option body or a conditional arm.
     Boundary,
+}
+
+/// The input stack (tex.web § 300), its frames shared with the path
+/// snapshots that saw them: a snapshot is taken before every command, and
+/// copies pointers. A frame is copied only when a command reads on in it
+/// while a snapshot still holds it.
+#[derive(Clone, Default)]
+pub(crate) struct Input(Vec<Rc<Frame>>);
+
+impl Input {
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = &Frame> + ExactSizeIterator {
+        self.0.iter().map(|f| &**f)
+    }
+
+    pub(crate) fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut Frame> {
+        self.0.iter_mut().map(Rc::make_mut)
+    }
+
+    pub(crate) fn get(&self, i: usize) -> Option<&Frame> {
+        self.0.get(i).map(|f| &**f)
+    }
+
+    pub(crate) fn last(&self) -> Option<&Frame> {
+        self.0.last().map(|f| &**f)
+    }
+
+    pub(crate) fn last_mut(&mut self) -> Option<&mut Frame> {
+        self.0.last_mut().map(Rc::make_mut)
+    }
+
+    pub(crate) fn push(&mut self, frame: Frame) {
+        self.0.push(Rc::new(frame));
+    }
+
+    pub(crate) fn pop(&mut self) -> Option<Frame> {
+        self.0.pop().map(Rc::unwrap_or_clone)
+    }
+}
+
+impl<'a> IntoIterator for &'a Input {
+    type Item = &'a Frame;
+    type IntoIter = std::iter::Map<std::slice::Iter<'a, Rc<Frame>>, fn(&Rc<Frame>) -> &Frame>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter().map(|f| &**f)
+    }
+}
+
+impl FromIterator<Frame> for Input {
+    fn from_iter<I: IntoIterator<Item = Frame>>(frames: I) -> Input {
+        Input(frames.into_iter().map(Rc::new).collect())
+    }
+}
+
+impl std::ops::Index<usize> for Input {
+    type Output = Frame;
+    fn index(&self, i: usize) -> &Frame {
+        &self.0[i]
+    }
+}
+
+impl std::ops::IndexMut<usize> for Input {
+    fn index_mut(&mut self, i: usize) -> &mut Frame {
+        Rc::make_mut(&mut self.0[i])
+    }
 }
 
 /// The `\global`, `\long`, `\outer` and `\protected` prefixes waiting to
@@ -1082,7 +1150,7 @@ pub struct Machine<'a> {
     pub lua: crate::plugin::lua::Lua,
     /// `\endlinechar`, which expl3 changes.
     pub(crate) end_line: EndLineChar,
-    input: Vec<Frame>,
+    input: Input,
     pub prefixes: Prefixes,
     /// tex.web § 1269 (`after_token`): the one token `\afterassignment`
     /// holds until the next assignment is complete.  A second
@@ -1211,7 +1279,7 @@ pub struct Machine<'a> {
     pub(crate) narrowing: Option<(Sym, crate::value::Quantity, crate::value::Num, Option<Vec<i64>>, char, (i64, i64))>,
     /// Where each diagnostic was first raised, by code, place and message
     /// hash, so that a repeat is counted and not stored again.
-    diag_seen: HashMap<(&'static str, Span, u64), usize>,
+    diag_seen: crate::fixed::LookupMap<(&'static str, Span, u64), usize>,
     /// Diagnostics before this index belong to a finished cache segment and
     /// are not counted into.
     pub(crate) diag_floor: usize,
@@ -1267,7 +1335,7 @@ pub struct Machine<'a> {
     /// Recorded runs per call ([`calls`]).
     call_runs: HashMap<calls::CallKey, calls::CallRuns>,
     /// Calls being recorded, innermost last.
-    call_recs: Vec<calls::CallRec>,
+    call_recs: Rc<Vec<calls::CallRec>>,
     guard_seen: GuardSeen,
     /// The step count the budget was last checked at. A distance, not a
     /// multiple: a read can step onto a multiple the charge then passes.
@@ -1293,13 +1361,13 @@ pub struct Machine<'a> {
     def_body_depth: Option<usize>,
     /// Fact index by source site, so that re-analyzing a file does not
     /// duplicate what it observed.
-    definition_sites: HashMap<(Span, Sym), usize>,
-    expansion_sites: HashMap<(Span, Sym), Site>,
+    definition_sites: crate::fixed::LookupMap<(Span, Sym), usize>,
+    expansion_sites: crate::fixed::LookupMap<(Span, Sym), Site>,
     /// Hashes of input lists' pending heads, by list and position: a deep
     /// input below a call is hashed once, not at every call.
     shape_memo: std::cell::RefCell<Vec<ShapeSlot>>,
     /// Each evaluated conditional's fact, by its `\if…`.
-    cond_sites: HashMap<Span, usize>,
+    cond_sites: crate::fixed::LookupMap<Span, usize>,
     /// Tokens taken from a file so far: the measure of progress through the
     /// source that tells a loop from a helper called again further down.
     source_progress: u64,
@@ -1360,6 +1428,9 @@ pub struct Machine<'a> {
     /// The call whose argument parts [`crate::observe::defined_name`] last
     /// computed, and those parts.
     pub call_parts: Option<(Span, Span, std::rc::Rc<[String]>)>,
+    /// Where [`Machine::read_group_body`] collects a body, kept between
+    /// calls so a long body is not grown anew each time.
+    body: Vec<Token>,
     /// Names document calls defined from their arguments: the name, the key,
     /// the calling command and the call.
     pub key_names: Vec<(String, String, Sym, Span, crate::observe::OccContext)>,
@@ -1479,7 +1550,7 @@ pub struct Machine<'a> {
 /// the union of the paths.
 #[derive(Clone)]
 struct PathState {
-    input: Vec<Frame>,
+    input: Input,
     catcodes: CatcodeTable,
     end_line: EndLineChar,
     prefixes: Prefixes,
@@ -1529,7 +1600,7 @@ struct PathState {
     fi_mark: Option<(Span, usize)>,
     approximated: bool,
     cut_taint: Option<usize>,
-    call_recs: Vec<calls::CallRec>,
+    call_recs: Rc<Vec<calls::CallRec>>,
     guard_seen: GuardSeen,
 }
 
@@ -1831,7 +1902,7 @@ impl<'a> Machine<'a> {
             env,
             catcodes,
             end_line: EndLineChar::default(),
-            input: Vec::new(),
+            input: Input::default(),
             prefixes: Prefixes::default(),
             after_assignment: None,
             long_argument: true,
@@ -1877,7 +1948,7 @@ impl<'a> Machine<'a> {
             abs_whole: false,
             ranged: None,
             narrowing: None,
-            diag_seen: HashMap::default(),
+            diag_seen: Default::default(),
             diag_floor: 0,
             conds: Rc::default(),
             testing: Vec::new(),
@@ -1901,17 +1972,17 @@ impl<'a> Machine<'a> {
             dont_expand,
             unknown,
             call_runs: HashMap::default(),
-            call_recs: Vec::new(),
+            call_recs: Rc::default(),
             guard_seen: GuardSeen::default(),
             checked_at: 0,
             unknown_digits,
             unknown_more,
             typed_syms: None,
             def_body_depth: None,
-            definition_sites: HashMap::default(),
-            expansion_sites: HashMap::default(),
+            definition_sites: Default::default(),
+            expansion_sites: Default::default(),
             shape_memo: std::cell::RefCell::new(vec![None; SHAPE_MEMO]),
-            cond_sites: HashMap::default(),
+            cond_sites: Default::default(),
             source_progress: 0,
             lines_read: 0,
             call_shape: None,
@@ -1934,6 +2005,7 @@ impl<'a> Machine<'a> {
             line_defined: None,
             stream_files: HashMap::default(),
             call_parts: None,
+            body: Vec::new(),
             key_names: Vec::new(),
             counter_namespace: None,
             held: Vec::new(),
@@ -2108,14 +2180,7 @@ impl<'a> Machine<'a> {
         m.out.timings.start(Phase::Document);
         m.document_file_depth = m.file_depth;
         m.out.timings.enter_file(id);
-        m.input.push(Frame::File {
-            mouth: Mouth::file(code, id),
-            package: None,
-            catcodes: None,
-            depth: 0,
-            conds: 0,
-            eof_seen: false,
-        });
+        m.input.push(Frame::File { mouth: Mouth::file(code, id), package: None, depth: 0, conds: 0, eof_seen: false });
         // tex.web § 1337: `\everyjob` is read first, after the format is in
         // place: what it sets from the clock (expl3's `\c_sys_year_int`) is
         // the run's, not the kernel cache's.
@@ -2637,7 +2702,6 @@ impl<'a> Machine<'a> {
         self.input.push(Frame::File {
             mouth: Mouth::file(&text, id),
             package: None,
-            catcodes: None,
             depth: 0,
             conds: 0,
             eof_seen: false,
@@ -2813,7 +2877,6 @@ will look undefined",
         self.input.push(Frame::File {
             mouth: Mouth::file(&text, id),
             package: None,
-            catcodes: None,
             depth: 0,
             conds: 0,
             eof_seen: false,
@@ -2897,7 +2960,7 @@ will look undefined",
         // visit counts, summaries, counters and the typed-name table (kept,
         // a built run forked 50x more than a cached one on the same document).
         self.call_runs.clear();
-        self.call_recs.clear();
+        self.call_recs = Rc::default();
         self.scratch = Scratch::default();
         self.carried = Carried::default();
         self.unknown_chars.clear();
@@ -3396,14 +3459,11 @@ will look undefined",
                 }
             }
             Some(Frame::Pseudo { .. }) => self.bump_expanding(self.pseudo_file, -1),
-            Some(Frame::File { mouth, package, catcodes, depth, conds, .. }) => {
+            Some(Frame::File { mouth, package, depth, conds, .. }) => {
                 self.out.timings.leave_file();
                 self.out.lines += u64::from(mouth.here().line);
                 self.balance_file(mouth.file, depth);
                 self.balance_conditionals(mouth.file, conds);
-                if let Some(table) = catcodes {
-                    self.catcodes = *table;
-                }
                 if package.is_some() {
                     Rc::make_mut(&mut self.packages).pop();
                 }
@@ -4683,7 +4743,6 @@ will look undefined",
         self.input.push(Frame::File {
             mouth: Mouth::new(text, file),
             package: None,
-            catcodes: None,
             depth: 0,
             conds: 0,
             eof_seen: false,
@@ -4708,7 +4767,6 @@ will look undefined",
         self.input.push(Frame::File {
             mouth: Mouth::new(text, file),
             package: None,
-            catcodes: None,
             depth: 0,
             conds: 0,
             eof_seen: false,
@@ -5001,10 +5059,13 @@ will look undefined",
     /// Where the file of `span` is being read, and the text from `span` to
     /// there: what the call at `span` has read of it so far.
     pub fn call_extent(&self, span: Span) -> Option<(Span, String)> {
+        self.reading(span.file).map(|mouth| (mouth.here(), mouth.since(span.line, span.col)))
+    }
+
+    /// The innermost input level reading `file`.
+    pub(crate) fn reading(&self, file: FileId) -> Option<&Mouth> {
         self.input.iter().rev().find_map(|frame| match frame {
-            Frame::File { mouth, .. } if mouth.here().file == span.file => {
-                Some((mouth.here(), mouth.since(span.line, span.col)))
-            }
+            Frame::File { mouth, .. } if mouth.here().file == file => Some(mouth),
             _ => None,
         })
     }
@@ -6781,7 +6842,7 @@ will look undefined",
             let first =
                 self.input.iter().position(|f| matches!(f, Frame::Tokens { expanding: Some(s), .. } if *s == sym));
             if let Some(i) = first.map(|i| i.max(file)) {
-                let places = self.input[..i].iter().filter_map(explore::place).count();
+                let places = self.input.iter().take(i).filter_map(explore::place).count();
                 self.unwind((places, self.conds.len(), self.env.depth()), span);
             }
         }
@@ -7080,7 +7141,7 @@ will look undefined",
         if self.out.graph.reader.is_none() {
             self.out.graph.reader = Some(node);
         }
-        Rc::make_mut(&mut self.within).push((sym, node));
+        crate::push_shared(&mut self.within, (sym, node));
         let before = self.input.len();
         self.record_call(call_key, unknown_operands);
         self.push_parts(body, sym);
@@ -7385,18 +7446,23 @@ will look undefined",
     /// stack already holds or a file: they cannot run away, and no token
     /// budget cuts them short. Every read still costs a step.
     pub fn read_group_body(&mut self) -> Vec<Token> {
-        let mut out = Vec::new();
+        let mut out = std::mem::take(&mut self.body);
+        out.clear();
         let mut depth = 1usize;
         while let Some(t) = self.next_token() {
             if self.runaway_argument(t) {
-                return self.unknown_argument(&out, t.span);
+                let unknown = self.unknown_argument(&out, t.span);
+                self.body = out;
+                return unknown;
             }
             match t.tok {
                 Tok::Chr(_, Catcode::Begin) => depth += 1,
                 Tok::Chr(_, Catcode::End) => {
                     depth -= 1;
                     if depth == 0 {
-                        return out;
+                        let body = out.to_vec();
+                        self.body = out;
+                        return body;
                     }
                 }
                 _ => {}
@@ -7409,7 +7475,9 @@ will look undefined",
             self.diagnose(Severity::Unsupported, "unbalanced-group", at, "group never closes".into());
         }
         self.unread_all(&out);
-        self.unknown_argument(&out, at)
+        let unknown = self.unknown_argument(&out, at);
+        self.body = out;
+        unknown
     }
 
     /// Note an argument the call being described just read, if it read it
@@ -7699,7 +7767,7 @@ will look undefined",
     /// The most tokens `input`'s token lists may hold, typed text by its
     /// bound; `None` when none of it is bounded. A pass that begins with
     /// less than the one before ends by construction.
-    fn input_bound(&self, input: &[Frame]) -> Option<u32> {
+    pub(crate) fn input_bound(&self, input: &Input) -> Option<u32> {
         let lists = input.iter().rev().map_while(|frame| match frame {
             Frame::Tokens { toks, pos, .. } => Some(&toks[*pos..]),
             Frame::Returned(tokens) => Some(&tokens[..]),
@@ -7716,7 +7784,7 @@ will look undefined",
         bounded.then_some(sum)
     }
 
-    fn pending_in(input: &[Frame]) -> Vec<Token> {
+    fn pending_in(input: &Input) -> Vec<Token> {
         let mut rest = Vec::new();
         for frame in input.iter().rev() {
             match frame {
@@ -9243,7 +9311,7 @@ will look undefined",
         if self.take_pending_eof() {
             mouth.inherit_eof(false);
         }
-        self.input.push(Frame::File { mouth, package, catcodes: None, depth, conds, eof_seen: false });
+        self.input.push(Frame::File { mouth, package, depth, conds, eof_seen: false });
     }
 
     /// A `\documentclass`, `\usepackage` or `\RequirePackage` whose file the
@@ -9595,7 +9663,8 @@ pub fn substitute_parts(m: &MacroDef, args: &[Vec<Token>], limit: usize) -> Opti
     }
     let mut shared: Vec<Option<Rc<[Token]>>> = vec![None; args.len()];
     let mut parts = Vec::new();
-    let mut run: Vec<Token> = Vec::new();
+    let copied: usize = args.iter().map(Vec::len).filter(|&n| n < SHARED_ARGUMENT).sum();
+    let mut run: Vec<Token> = Vec::with_capacity(m.replacement_text.len() + copied);
     let mut held = 0;
     for t in m.replacement_text.iter() {
         match t.tok {

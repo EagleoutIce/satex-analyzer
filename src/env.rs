@@ -1,7 +1,8 @@
 //! The save stack: dense slot table plus undo journal (The TeXbook § 275).
 //! Drives conditional analysis: run branch, capture, rollback, join.
 
-use crate::fixed::HashMap;
+use crate::fixed::{HashMap, LookupMap, LookupSet};
+use std::rc::Rc;
 
 use crate::mode::Nest;
 use crate::tex::{Catcode, CatcodeTable, Interner, Meaning, Span, Sym, TextClass, Tok, Token};
@@ -170,7 +171,9 @@ pub struct Env {
     /// it survives the saving group's end (§ 283).
     level: Vec<u32>,
     journal: Journal,
-    marks: Vec<Mark>,
+    /// Shared with the forks and paths that saw it: a fork per command
+    /// copies a pointer, and only a group opened or closed copies the stack.
+    marks: Rc<Vec<Mark>>,
     /// The last group id given out.
     group_ids: u64,
     /// While a path through an undecided conditional runs, every slot it
@@ -266,24 +269,24 @@ impl ReadKind {
 /// pre-load.
 #[derive(Default)]
 struct Reads {
-    read: HashMap<u32, u8>,
-    written: HashMap<u32, u8>,
+    read: LookupMap<u32, u8>,
+    written: LookupMap<u32, u8>,
     /// Slots assigned since the last [`Env::take_dirty`], in order.
     dirty: Vec<u32>,
-    dirty_seen: crate::fixed::HashSet<u32>,
+    dirty_seen: LookupSet<u32>,
     /// Journal position, slot, and what was written of it when the journal
     /// saved it.
     saved: Vec<(usize, u32, u8)>,
     /// Slots whose text the load copied a text from before it into: a read
     /// of them reads that text, however the load has written them since.
-    carrying: crate::fixed::HashSet<u32>,
+    carrying: LookupSet<u32>,
     /// The slot whose meaning is being copied through, which a read of its
     /// meaning then is.
     copying: Option<u32>,
     /// Slots assigned since the segment began, and of those, the ones whose
     /// text holds what the slot held then, where and how long.
-    touched: crate::fixed::HashSet<u32>,
-    splices: HashMap<u32, (usize, usize)>,
+    touched: LookupSet<u32>,
+    splices: LookupMap<u32, (usize, usize)>,
 }
 
 /// The save stack as it stood where paths split: groups can open and close
@@ -296,7 +299,7 @@ pub struct Fork {
     /// Several paths went on from it ([`Env::part`]).
     parted: bool,
     journal: Journal,
-    marks: Vec<Mark>,
+    marks: Rc<Vec<Mark>>,
 }
 
 /// What one path did to the bindings, relative to its [`Fork`].
@@ -304,7 +307,7 @@ pub struct Fork {
 pub struct PathEnv {
     slots: Changed,
     journal: Journal,
-    marks: Vec<Mark>,
+    marks: Rc<Vec<Mark>>,
     /// The fewest groups the path stood in since the fork: the groups up
     /// to there, and what they saved before it, are the fork's.
     low: usize,
@@ -771,14 +774,10 @@ impl Env {
 
     pub fn push_group(&mut self, kind: GroupKind, opened: Span) {
         self.group_ids += 1;
-        self.marks.push(Mark {
-            journal: self.journal.len(),
-            kind,
-            after: Vec::new(),
-            opened,
-            nest: None,
-            id: self.group_ids,
-        });
+        crate::push_shared(
+            &mut self.marks,
+            Mark { journal: self.journal.len(), kind, after: Vec::new(), opened, nest: None, id: self.group_ids },
+        );
     }
 
     /// The innermost open group's id, 0 outside every group.
@@ -808,7 +807,7 @@ impl Env {
         {
             let mut restored = Vec::new();
             self.effective += 1;
-            let mark = self.marks.pop().expect("checked");
+            let mark = Rc::make_mut(&mut self.marks).pop().expect("checked");
             self.lower();
             self.unwind_into(mark.journal, Some(&mut *catcodes), Some(&mut restored));
             for (sym, stamp) in restored {
@@ -823,7 +822,7 @@ impl Env {
 
     /// Record what the innermost group saved of the semantic nest.
     pub fn set_nest(&mut self, nest: Nest) {
-        if let Some(mark) = self.marks.last_mut() {
+        if let Some(mark) = Rc::make_mut(&mut self.marks).last_mut() {
             mark.nest = Some(nest);
         }
     }
@@ -847,7 +846,7 @@ impl Env {
     pub fn pop_group(&mut self, catcodes: &mut CatcodeTable) -> Option<Vec<Token>> {
         self.effective += 1;
         self.group_kind()?;
-        let mark = self.marks.pop()?;
+        let mark = Rc::make_mut(&mut self.marks).pop()?;
         self.lower();
         self.unwind(mark.journal, Some(catcodes));
         Some(mark.after)
@@ -865,14 +864,14 @@ impl Env {
     /// group (for file-end inside open groups).
     pub fn discard_group(&mut self) -> bool {
         self.effective += 1;
-        let popped = self.marks.pop().is_some();
+        let popped = Rc::make_mut(&mut self.marks).pop().is_some();
         self.lower();
         popped
     }
 
     /// `\aftergroup⟨token⟩`: save token, insert at group end (tex.web §§ 326, 282).
     pub fn save_after(&mut self, token: Token) {
-        if let Some(mark) = self.marks.last_mut() {
+        if let Some(mark) = Rc::make_mut(&mut self.marks).last_mut() {
             mark.after.push(token);
         }
     }
@@ -1321,9 +1320,9 @@ impl Env {
             }
             slots.insert_mut(sym, (joined, level));
         }
-        let mut marks = a.marks.clone();
+        let mut marks = Vec::clone(&a.marks);
         let mut waiting = false;
-        for ((mark, other), joined) in marks.iter_mut().zip(&b.marks).zip(after) {
+        for ((mark, other), joined) in marks.iter_mut().zip(b.marks.iter()).zip(after) {
             if let Some(text) = joined {
                 waiting |=
                     !(mark.after.len() == text.len() && mark.after.iter().zip(text).all(|(x, y)| x.tok == y.tok));
@@ -1337,7 +1336,7 @@ impl Env {
         }
         let low = a.low.min(b.low);
         let journal = self.join_journals(fork, a, b, low, &mut marks);
-        (PathEnv { slots, journal, marks, low }, grown, waiting)
+        (PathEnv { slots, journal, marks: Rc::new(marks), low }, grown, waiting)
     }
 
     /// The save stacks of two paths from `fork` joined (tex.web §§ 268-283).
