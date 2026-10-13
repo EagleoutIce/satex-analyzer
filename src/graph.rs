@@ -1,6 +1,6 @@
 //! The dependency graph: vertices, edges, data and control dependencies.
 
-use crate::fixed::HashMap;
+use crate::fixed::{HashMap, LookupMap};
 
 use serde::Serialize;
 
@@ -109,12 +109,12 @@ pub struct DependencyGraph {
     /// Where each target sits in `out`, for the vertices with many outgoing
     /// edges: a call that runs a long loop reaches every vertex the loop
     /// makes, and finding an edge by scanning would make it quadratic.
-    wide: HashMap<NodeId, HashMap<NodeId, u32>>,
+    wide: LookupMap<NodeId, LookupMap<NodeId, u32>>,
     /// One vertex per source site.  A macro body that is read several times —
     /// because a package is analyzed under both arms of an undecided
     /// conditional, or because a loop is unrolled — describes the same
     /// program point every time.
-    sites: HashMap<(Span, Sym, VertexTag), NodeId>,
+    sites: LookupMap<(Span, Sym, VertexTag), NodeId>,
     /// The last line a construct that began at a span reached, for the ones
     /// whose arguments ran past their own line.  Only spans that reach
     /// further than their own line are in here.
@@ -125,7 +125,7 @@ pub struct DependencyGraph {
     made_by: HashMap<NodeId, NodeId>,
     /// How many times each name has been defined so far, counting every run of a
     /// definition site.
-    defs_of: HashMap<Sym, u32>,
+    defs_of: LookupMap<Sym, u32>,
     /// The call read from a file whose expansion is running, if any: what
     /// it reads is read on behalf of that call.
     pub reader: Option<NodeId>,
@@ -584,11 +584,11 @@ impl DependencyGraph {
 #[derive(Default)]
 pub struct CallGraph {
     pub nodes: Vec<Sym>,
-    index: HashMap<Sym, usize>,
+    index: LookupMap<Sym, usize>,
     pub edges: Vec<Vec<usize>>,
     /// While a package cache is being captured: every distinct `node` and
     /// `add` since the last `clear` of its name, and every `clear`, in order.
-    log: Option<(crate::fixed::HashSet<CallEvent>, Vec<CallEvent>)>,
+    log: Option<(crate::fixed::LookupSet<CallEvent>, Vec<CallEvent>)>,
 }
 
 /// One change to a [`CallGraph`], as a package cache replays it.

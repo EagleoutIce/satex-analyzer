@@ -1333,6 +1333,7 @@ impl Machine<'_> {
             line_defined,
             stream_files,
             call_parts: _,
+            body: _,
             key_names,
             held,
             command_level: _,

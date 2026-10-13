@@ -1480,7 +1480,7 @@ impl Machine<'_> {
     /// and what each reads above them becomes one such text. `None` when a
     /// file or a boundary differs, or code does between two paths (not
     /// two passes of one loop, `pass`): they stand at different points.
-    fn widen_input(&mut self, a: &[Frame], b: &[Frame], span: Span, widen: bool, pass: bool) -> Option<Vec<Frame>> {
+    fn widen_input(&mut self, a: &Input, b: &Input, span: Span, widen: bool, pass: bool) -> Option<Input> {
         let (a, b) = (live_frames(a), live_frames(b));
         let tokens = |text: Vec<Token>, at| Frame::Tokens {
             held: text.len(),
@@ -1500,14 +1500,14 @@ impl Machine<'_> {
                 };
                 input.push(frame);
             }
-            return Some(input);
+            return Some(input.into_iter().collect());
         }
         let shared = a.iter().zip(&b).take_while(|(x, y)| place(x) == place(y)).count();
         let (p, q) = (pending(&a[shared..])?, pending(&b[shared..])?);
         let mut input: Vec<Frame> = a[..shared].iter().map(|f| (*f).clone()).collect();
         let at = stamp(&a[shared..].iter().chain(&b[shared..]).copied().collect::<Vec<_>>());
         input.push(tokens(self.widen_text(&p, &q, span, widen, pass)?, at));
-        Some(input)
+        Some(input.into_iter().collect())
     }
 
     /// Two texts left to read, joined: their common end, after one token
@@ -2290,7 +2290,7 @@ fn stamp(frames: &[&Frame]) -> (usize, u64, u64) {
 }
 
 /// The input levels that still have something to read.
-fn live_frames(input: &[Frame]) -> Vec<&Frame> {
+fn live_frames(input: &Input) -> Vec<&Frame> {
     input.iter().filter(|frame| place(frame).is_some()).collect()
 }
 
@@ -2371,10 +2371,10 @@ fn fi_tail(key: &Key, (places, conds): (usize, usize), is_fi: &dyn Fn(Tok) -> bo
 }
 
 /// `input` without its `\fi`-only token lists above `places` live levels.
-fn fi_frames_dropped(input: &[Frame], places: usize, is_fi: &dyn Fn(Tok) -> bool) -> Vec<Frame> {
+fn fi_frames_dropped(input: &Input, places: usize, is_fi: &dyn Fn(Tok) -> bool) -> Input {
     let mut live = 0;
     let mut out = Vec::with_capacity(input.len());
-    for frame in input {
+    for frame in &input.0 {
         if let Some(p) = place(frame) {
             live += 1;
             if live > places && place_text(&p).is_some_and(|t| !t.is_empty() && t.iter().all(|x| is_fi(x.tok))) {
@@ -2383,7 +2383,7 @@ fn fi_frames_dropped(input: &[Frame], places: usize, is_fi: &dyn Fn(Tok) -> bool
         }
         out.push(frame.clone());
     }
-    out
+    Input(out)
 }
 
 /// The text a token-list level has left to read.
