@@ -454,10 +454,12 @@ const UNCERTAIN: &[(&str, &str)] = &[
     ),
     ("endinput_on_one_path_is_not_certain", "\\def\\R{0}\\ifnum\\pdfuniformdeviate2=0 \\endinput\\fi\n\\def\\R{1}\n"),
     // tex.web § 1105: `\unskip` on a list whose tail satex does not know must
-    // widen the size, not leave it as it was.
+    // widen the size, not leave it as it was. `\unhcopy` (§ 1110) moves the
+    // tail to the box's last node: glue on one path (taken, 3pt), a kern on
+    // the other (kept, 4pt).
     (
         "unskip_on_an_unknown_tail_is_not_free",
-        r"\setbox0=\hbox{\kern3pt\pdfliteral{x}\unskip}\ifdim\wd0=3pt \def\R{K}\else\def\R{N}\fi",
+        r"\setbox1=\hbox{\ifnum\pdfuniformdeviate2=0 \hskip2pt\else\kern1pt\fi}\setbox0=\hbox{\kern3pt\unhcopy1\unskip}\ifdim\wd0=3pt \def\R{K}\else\def\R{N}\fi",
     ),
 ];
 
@@ -567,8 +569,11 @@ fn box_registers_follow_setbox_box_copy_and_groups() {
     check(r"\setbox0\vbox to 7pt{}\edef\R{\the\ht0,\the\wd0}", "7.0pt,0.0pt");
     // tex.web § 1043: a space is interword glue, of `\nullfont`'s zero space.
     check(r"\setbox0\hbox{ }\edef\R{\the\wd0}", "0.0pt");
+    // tex.web §§ 651, 1119: `hpack` skips the break texts; the empty
+    // text without a break adds nothing (pdfTeX gives 0.0pt).
+    check(r"\setbox0\hbox{\discretionary{}{}{}}\edef\R{\the\wd0}", "0.0pt");
     // Material satex does not measure leaves the size to typesetting.
-    assert!(!last_certain(r"\setbox0\hbox{\discretionary{}{}{}}\edef\R{\the\wd0}"));
+    assert!(!last_certain(r"\catcode`\&=4 \setbox0\hbox{\valign{#\cr\vrule\cr}}\edef\R{\the\wd0}"));
 }
 
 /// tex.web § 358: behind `\noexpand` an expandable token is `relax` with
@@ -681,6 +686,9 @@ fn unhcopy_of_rules_adds_their_natural_width() {
 fn immediate_write_leaves_the_tail() {
     check(r"\setbox0\hbox{\kern3pt\immediate\write-1{}\unkern}\edef\R{\the\wd0}", "0.0pt");
     check(r"\setbox0\hbox{\kern3pt\write-1{}\unkern}\edef\R{\the\wd0}", "3.0pt");
+    // A literal is a whatsit (pdfTeX manual; `\pdfoutput=1` here): `\unskip`
+    // finds no glue after it.
+    check(r"\setbox0=\hbox{\kern3pt\pdfliteral{x}\unskip}\ifdim\wd0=3pt \def\R{K}\else\def\R{N}\fi", "K");
 }
 
 /// etex.ch: after a rule `\lastnodetype` is 3, never glue (11). LaTeX's

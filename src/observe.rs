@@ -1098,6 +1098,15 @@ pub fn typeset(m: &mut Machine, c: char, span: Span) {
         return;
     }
     set(m, c, span);
+    // A space after `\nobreak` (a tie, `~`) is no breakpoint (tex.web
+    // § 831): the number and the unit stay together on the line, spaced
+    // by hand, and the run goes on.
+    let tied = c == ' '
+        && m.quantity.run.as_ref().is_some_and(|q| q.unit.is_empty())
+        && m.natural.is_some_and(|n| matches!(n.tail[0], crate::mode::Last::Penalty(p) if p >= 10_000));
+    if tied {
+        return;
+    }
     let after_letter = std::mem::replace(&mut m.quantity.after_letter, c.is_alphabetic());
     let mut run = m.quantity.run.take();
     if c.is_ascii_digit() {
