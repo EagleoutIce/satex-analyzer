@@ -2422,3 +2422,19 @@ fn meaning_of_an_unknown_body_hides_no_delimiter() {
     );
     assert_eq!(last_body(&analysis, "c"), "");
 }
+
+/// tex.web § 392: inside a group of a delimited argument no delimiter
+/// matches, so unknown digits there (a `,` among their class) leave where
+/// the argument ends known. The argument read stays typed, not untyped.
+#[test]
+fn unknown_digits_in_a_group_leave_a_delimited_argument_exact() {
+    let analysis = analyze(concat!(
+        r"\dimen0=\pdfuniformdeviate 100000sp \advance\dimen0 by -50000sp ",
+        r"\def\grab#1,#2\stop{\gdef\first{#1}\gdef\second{#2}}",
+        r"\expandafter\grab\expandafter{\the\dimen0}\relax\penalty\fi\else\ifx\iftrue\hbox\vbox\kern\hskip\vskip,tail\stop",
+        r"\gdef\reached{}",
+    ));
+    assert_eq!(last_body(&analysis, "second"), "tail");
+    assert!(names(&analysis).iter().any(|n| n == "reached"), "the end was reached");
+    assert_eq!(analysis.untyped, 0, "every unknown is typed");
+}
