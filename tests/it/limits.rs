@@ -168,6 +168,13 @@ fn interactionmode_outlives_the_group_it_was_set_in() {
 
 // The read-only LuaTeX math mode parameters.
 
+/// Whether the installed LuaTeX takes these as ordinary parameters: 1.22
+/// (TeX Live 2025) does, probed with lualatex (a write of 2 reads 2 back);
+/// 1.24 does not.
+fn math_modes_assignable() -> bool {
+    satex::plugin::lua::installed_version().is_some_and(|v| v <= 122)
+}
+
 /// Measured under `luatex 1.24.0`: each reads one value, before and after a
 /// write of 2.
 const READ_ONLY: [(&str, &str); 6] = [
@@ -184,8 +191,9 @@ fn the_read_only_math_mode_parameters_ignore_a_write() {
     for (name, reads) in READ_ONLY {
         assert_eq!(the(Engine::LuaTeX, "", &format!("\\{name}")), reads, "\\{name} before a write");
         let source = format!("\\{name}=2 ");
-        assert_eq!(the(Engine::LuaTeX, &source, &format!("\\{name}")), reads, "\\{name} after a write");
-        assert_eq!(raised(Engine::LuaTeX, &source, "read-only-parameter"), 1, "\\{name}");
+        let (after, refused) = if math_modes_assignable() { ("2", 0) } else { (reads, 1) };
+        assert_eq!(the(Engine::LuaTeX, &source, &format!("\\{name}")), after, "\\{name} after a write");
+        assert_eq!(raised(Engine::LuaTeX, &source, "read-only-parameter"), refused, "\\{name}");
         assert_eq!(raised(Engine::LuaTeX, &source, "invalid-code"), 0, "\\{name}");
     }
 }
@@ -196,7 +204,13 @@ fn the_read_only_math_mode_parameters_ignore_a_write() {
 fn a_read_only_parameter_stays_exact_under_an_unpinnable_write() {
     for (name, reads) in READ_ONLY {
         let source = format!("\\{name}=\\uniformdeviate 2 \\relax ");
-        assert_eq!(the(Engine::LuaTeX, &source, &format!("\\{name}")), reads, "\\{name}");
+        let value = the(Engine::LuaTeX, &source, &format!("\\{name}"));
+        // Where the engine takes the write, the value is the one written:
+        // not known, so not the fixed one either.
+        match math_modes_assignable() {
+            true => assert!(value != reads && value.contains("unknown"), "\\{name}: {value}"),
+            false => assert_eq!(value, reads, "\\{name}"),
+        }
     }
 }
 
@@ -405,10 +419,11 @@ fn every_limited_name_is_a_primitive_of_that_engine() {
     }
     // `\prevgraf` and `\spacefactor` under four engines, ε-TeX's
     // `\interactionmode` under the three that have it, `\outputbox` and the
-    // six read-only modes under LuaTeX, `\Umathcodenum` and
+    // six read-only modes under a LuaTeX that has them read-only, `\Umathcodenum` and
     // `\Umathcharnumdef` under two each, their `\XeTeX…` spellings, and
     // LuaTeX's six directions.
-    assert_eq!(found, 4 + 3 + 4 + 1 + 6 + 2 + 2 + 2 + 6);
+    let read_only = if math_modes_assignable() { 0 } else { 6 };
+    assert_eq!(found, 4 + 3 + 4 + 1 + read_only + 2 + 2 + 2 + 6);
 }
 
 /// Every owned name is a parameter of every engine: these are TeX82's, so a
