@@ -64,7 +64,7 @@ pub fn bare() -> Config {
 pub fn tmp_root() -> PathBuf {
     static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     ROOT.get_or_init(|| {
-        let base = crate::support::tmp_root().join("satex-tests");
+        let base = std::env::temp_dir().join("satex-tests");
         if Path::new("/proc/self").exists() {
             for entry in std::fs::read_dir(&base).into_iter().flatten().flatten() {
                 let pid = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok());
