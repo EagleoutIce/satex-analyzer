@@ -8187,6 +8187,8 @@ will look undefined",
         // is the join's artifact: the argument ends in that text instead.
         let mut joined_at: Option<usize> = None;
         let mut nesting = CondDepth::default();
+        // Where short typed text stands in `out` ([`Machine::straddles`]).
+        let mut straddled: Vec<usize> = Vec::new();
         // Unknown or one-of tokens of the delimiter match any token they
         // may be, so the argument ends at the earliest possible end.
         let span = self.position_span();
@@ -8251,16 +8253,35 @@ will look undefined",
             // unknown text matters only where its class may hold a brace,
             // which may close the group. Typed text of characters is read
             // on exactly, so the argument stays typed by what it read.
-            let unknown_text = (self.is_unknown_text(t, first)
-                || (t.cs().is_some() && self.may_hold(t, first) == Some(true)))
+            // Typed text shorter than the delimiter and without braces
+            // cannot hold all of it: the delimiter may only straddle it,
+            // which the tokens read after it decide ([`straddles`]), so the
+            // text is read on as it is (an unknown `\escapechar` before a
+            // name `\string` printed).
+            let short = match (depth, self.typed_text_of(t), self.text_len(t)) {
+                // One such text at a time: two near each other may hold
+                // the delimiter between them.
+                (0, Some(_), Some(n))
+                    if (n as usize) < delimiter.len()
+                        && self.may_hold(t, &[]) == Some(false)
+                        && straddled.last().is_none_or(|&q| out.len() - q >= delimiter.len()) =>
+                {
+                    Some(n as usize)
+                }
+                _ => None,
+            };
+            let unknown_text = short.is_none()
+                && (self.is_unknown_text(t, first) || (t.cs().is_some() && self.may_hold(t, first) == Some(true)))
                 && (depth == 0 || self.may_hold(t, &[]) != Some(false));
             // The argument read so far ends in the delimiter's first `j`
             // tokens and the text may begin with the rest (tex.web § 392):
-            // the delimiter ends in it, a path each way.
+            // the delimiter ends in it, a path each way. Text too short for
+            // the rest leaves it to what comes after.
             let mut tail_free = true;
             if depth == 0
                 && let Some(j) = (1..delimiter.len()).rev().find(|&j| {
                     out.len() >= j
+                        && short.is_none_or(|n| delimiter.len() - j <= n)
                         && out[out.len() - j..].iter().zip(delimiter).all(|(o, d)| o.tok == *d)
                         && self.may_begin(t, &delimiter[j..])
                 })
@@ -8389,7 +8410,38 @@ will look undefined",
                 Tok::Chr(_, Catcode::End) => depth -= 1,
                 _ => {}
             }
+            if short.is_some() {
+                straddled.push(out.len());
+            }
             out.push(t);
+            // A delimiter that straddles short typed text read before: a
+            // path where it ends here, and one where the text holds other
+            // characters.
+            if depth == 0
+                && let Some((p, cut)) =
+                    straddled.iter().rev().find_map(|&p| self.straddles(&out, p, delimiter).map(|c| (p, c)))
+            {
+                match self.branch(self.unknown, 2, t.span) {
+                    Some(0) => {
+                        let rest = out[p];
+                        out.truncate(p - cut.0);
+                        if cut.0 == 0
+                            && let Some((class, _)) = self.typed_text_of(rest)
+                            && let Some(n) = self.text_len(rest).map(|n| n.saturating_sub(cut.1 as u32))
+                            && n > 0
+                        {
+                            out.push(self.unknown_text(Unk::Class(class, false, Some(n), &[]), rest.span));
+                        }
+                        self.delimiter_met = true;
+                        if let Some(span) = fuzzy {
+                            return self.unknown_argument(&out, span);
+                        }
+                        return strip_braces(out);
+                    }
+                    Some(_) => self.arm_assumed = true,
+                    None => fuzzy = fuzzy.or(Some(t.span)),
+                }
+            }
             if depth == 0 && out.len() >= delimiter.len() {
                 let at = out.len() - delimiter.len();
                 if out[at..].iter().enumerate().all(|(i, t)| matches(i, t)) {
@@ -8416,6 +8468,31 @@ will look undefined",
             self.unread_all(&out);
         }
         Vec::new()
+    }
+
+    /// Whether `delimiter` may end `out` straddling the short typed text
+    /// at `p`, with at least one token after it: the `j` tokens before it
+    /// begin the delimiter, the text holds the next `m` (all of it where
+    /// `j > 0`, its end otherwise) and the tokens after it are the rest,
+    /// each exactly (tex.web § 392). The tokens before it that belong to
+    /// the delimiter and how many the text gives it.
+    fn straddles(&self, out: &[Token], p: usize, delimiter: &[Tok]) -> Option<(usize, usize)> {
+        let after = out.len().checked_sub(p + 1).filter(|&n| n > 0 && n < delimiter.len())?;
+        let len = self.text_len(out[p])? as usize;
+        let class = self.token_class(out[p], false);
+        if out[p + 1..].iter().zip(&delimiter[delimiter.len() - after..]).any(|(o, d)| o.tok != *d) {
+            return None;
+        }
+        let inside = delimiter.len() - after;
+        (0..=inside.min(p)).find_map(|j| {
+            let m = inside - j;
+            let fits = m <= len && (m > 0 || j > 0);
+            let before = out[p - j..p].iter().zip(delimiter).all(|(o, d)| o.tok == *d);
+            let held = delimiter[j..inside].iter().all(|d| class.may_be(*d));
+            // Empty text: only where it may hold nothing.
+            let empty = m > 0 || class.empty;
+            (fits && before && held && empty).then_some((j, m))
+        })
     }
 
     /// `\def\a#1#{…}`: the final argument stops at the begin-group character,

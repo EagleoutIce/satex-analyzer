@@ -2438,3 +2438,23 @@ fn unknown_digits_in_a_group_leave_a_delimited_argument_exact() {
     assert!(names(&analysis).iter().any(|n| n == "reached"), "the end was reached");
     assert_eq!(analysis.untyped, 0, "every unknown is typed");
 }
+
+/// A name `\string` prints under an unknown `\escapechar` is at most one
+/// character and then the name (tex.web §§ 63, 464): a delimited scan for
+/// text the name spells (expl3's file name cleanup) finds it there, and
+/// what follows the delimiter stays known on every path.
+#[test]
+fn a_name_printed_under_an_unknown_escapechar_keeps_its_characters() {
+    let analysis = analyze(
+        r"\escapechar=\pdfuniformdeviate 256
+          \edef\marker{\detokenize{key=}}
+          \def\x#1{\def\strip##1#1##2\stop{\def\rest{##2}}}\expandafter\x\expandafter{\marker}
+          \expandafter\strip\string\key=value\stop
+          \def\expected{value}
+          \ifx\rest\expected \def\same{}\else \def\differs{}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"same".to_string()), "{defined:?}");
+    assert!(!defined.contains(&"differs".to_string()), "{defined:?}");
+    assert!(analysis.forks <= 2, "{} forks", analysis.forks);
+}
