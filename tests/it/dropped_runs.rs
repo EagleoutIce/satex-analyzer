@@ -1,0 +1,73 @@
+//! Runs the analysis may not drop: where it cannot follow every path a
+//! choice makes, it over-approximates them (unknown values, a cut
+//! expansion, paths kept) rather than following one and losing the rest.
+
+use crate::support::definition;
+use satex::config::{Config, Engine, Load, Texmf};
+use satex::machine::{Analysis, Machine};
+use satex::plugin::Kernel;
+
+/// A scratch directory of its own per test.
+fn scratch(tag: &str) -> std::path::PathBuf {
+    let dir = crate::support::tmp_root().join(format!("satex-dropped-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+/// INITEX with `\input` reading real files, and `limits` set by `tune`.
+fn analyze_files(dir: &std::path::Path, source: &str, tune: impl FnOnce(&mut Config)) -> Analysis {
+    let mut cfg = Config {
+        engine: Some(Engine::PdfTeX),
+        kernel: Some(Kernel::None),
+        load: Load { packages: false, classes: false, format: false, ..Default::default() },
+        texmf: Texmf { kpsewhich: false, ..Default::default() },
+        ..crate::support::config()
+    };
+    tune(&mut cfg);
+    let main = dir.join("main.tex");
+    let source = format!("{}{source}", crate::support::PRELUDE);
+    std::fs::write(&main, &source).unwrap();
+    Machine::analyze(&source, Some(&main), &cfg)
+}
+
+/// Every diagnostic, as `code: message`.
+fn all(analysis: &Analysis) -> Vec<String> {
+    analysis.facts.diagnostics.iter().map(|d| format!("{}: {}", d.code, d.message)).collect()
+}
+
+/// An error a path reached only past an approximation may not be TeX's:
+/// it does not decide how the paths without one read on. Here one arm,
+/// past a `\write` to a stream satex cannot pin down, leaves `\grab`'s
+/// argument open, so its scan runs to the end of the main file (tex.web
+/// §§ 336-339). The other arm reads both files.
+#[test]
+fn an_error_only_an_approximation_reaches_leaves_the_files_read() {
+    let dir = scratch("approximated-error");
+    std::fs::write(dir.join("a.tex"), "\\gdef\\ina{}\n").unwrap();
+    std::fs::write(dir.join("b.tex"), "\\gdef\\inb{}\n").unwrap();
+    let source = "\\def\\grab#1{}\n\\ifnum\\pdfuniformdeviate2=0 \\relax\\else\\immediate\\write\\pdfuniformdeviate9{x}\\expandafter\\grab\\expandafter{\\fi\n\\input a\n\\input b\n";
+    let analysis = analyze_files(&dir, source, |_| {});
+    let read = |name: &str| definition(&analysis, name).is_some();
+    assert!(read("ina") && read("inb"), "{:#?}", all(&analysis));
+    let dropped = all(&analysis);
+    assert!(
+        dropped.iter().any(|d| d.starts_with("assumed-compiles") && d.contains("may not be TeX's")),
+        "{dropped:#?}"
+    );
+}
+
+/// An expl3 function satex steps over by its signature reads its
+/// arguments as a macro call does: a file ending first ends the scan
+/// there, a runaway (tex.web §§ 336-339), and the text after the
+/// `\input` is read as the document's again, not as the argument.
+#[test]
+fn a_stepped_over_call_does_not_read_its_argument_past_its_file() {
+    let dir = scratch("stepped-over");
+    std::fs::write(dir.join("b.tex"), "\\catcode`\\_=11 \\catcode`\\:=11 \\foo_bar:n\n").unwrap();
+    let source = "\\input b\n{\\gdef\\after{}}\n";
+    let analysis = analyze_files(&dir, source, |_| {});
+    assert!(definition(&analysis, "after").is_some(), "{:#?}", all(&analysis));
+    let runaway = all(&analysis);
+    assert!(runaway.iter().any(|d| d.starts_with("runaway-argument") && d.contains("foo_bar:n")), "{runaway:#?}");
+}

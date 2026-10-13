@@ -26,6 +26,7 @@ mod distribution_guard;
 #[cfg(feature = "doc")]
 mod docs;
 mod documents;
+mod dropped_runs;
 mod encoding;
 mod endinput;
 mod engine;
