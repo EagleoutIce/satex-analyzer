@@ -919,18 +919,37 @@ impl Machine<'_> {
                     if kind == TextOf::The || text {
                         return self.unread_unknown(span);
                     }
+                    // A name printed under an unknown `\escapechar` is that
+                    // name after at most one character (none when the code
+                    // names none, tex.web § 63): what the name spells stays
+                    // known, so a scan of the text for a character it cannot
+                    // hold decides at once.
+                    let escape = |m: &mut Self| match m.escape_state() {
+                        Some(escape) => m.text_tokens(&escape.map(String::from).unwrap_or_default(), token.span),
+                        None => vec![m.unknown_text(Unk::Class(TextClass::PRINTED, false, Some(1), &[]), token.span)],
+                    };
+                    if kind == TextOf::String
+                        && !unknown_meaning
+                        && let Tok::Cs(sym) = token.tok
+                        && !self.name(sym).is_empty()
+                    {
+                        let name = self.name(sym).to_string();
+                        let mut tokens = escape(self);
+                        tokens.extend(self.text_tokens(&name, token.span));
+                        return self.unread_all(&tokens);
+                    }
                     let mut tokens = Vec::new();
                     let known = match (kind, token.cs().and_then(|sym| self.name_pattern(sym))) {
-                        (TextOf::String, Some(parts)) => self.escape_state().map(|escape| (escape, parts)),
+                        (TextOf::String, Some(parts)) => Some(parts),
                         _ => None,
                     };
                     let one = known.is_none();
-                    if let Some((escape, (prefix, _))) = &known {
-                        let head: String = escape.iter().copied().chain(prefix.chars()).collect();
-                        tokens.extend(self.text_tokens(&head, token.span));
+                    if let Some((prefix, _)) = &known {
+                        tokens.extend(escape(self));
+                        tokens.extend(self.text_tokens(prefix, token.span));
                     }
                     tokens.push(self.unknown_text(Unk::Class(TextClass::PRINTED, one, None, &[]), token.span));
-                    if let Some((_, (_, suffix))) = &known {
+                    if let Some((_, suffix)) = &known {
                         tokens.extend(self.text_tokens(suffix, token.span));
                     }
                     return self.unread_all(&tokens);

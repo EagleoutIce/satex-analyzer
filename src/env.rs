@@ -1630,8 +1630,9 @@ pub const LEN_MARK: char = '\u{5}';
 /// The longest bound a typed name carries: a sign and 19 digits.
 pub const MAX_LEN: u32 = 20;
 /// The classes whose text carries a bound: what `\the` and `\number`
-/// print (tex.web §§ 65, 103).
-pub const BOUNDED: [TextClass; 2] = [TextClass::DIGIT, TextClass::NUMBER];
+/// print (tex.web §§ 65, 103), and what `\string` prints (an unknown
+/// `\escapechar` is at most one character, tex.web § 63).
+pub const BOUNDED: [TextClass; 3] = [TextClass::DIGIT, TextClass::NUMBER, TextClass::PRINTED];
 
 /// Where the typed name of `class`, lower bound `one`, at most `len`
 /// tokens and `serial` (0 the canonical one) stands in the typed names.
