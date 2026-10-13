@@ -775,7 +775,11 @@ on, and it never invents a meaning.
   control sequence of unknown meaning known by the characters before and
   after the unknown part; defining it may define any name with that prefix
   and suffix, so from then on such a name is not known to be undefined
-  (`\MT@inh@…` never makes `\@nil` so). Defining unknown text as a name
+  (`\MT@inh@…` never makes `\@nil` so). While no defined name has that
+  prefix and suffix and no such definition was made, the name it builds
+  is undefined whatever the unknown part is, so it is `\relax` as TeX
+  makes it (tex.web § 372): expl3's `\cs_new:cpn` on such a name finds it
+  free instead of parting into its error path. Defining unknown text as a name
   leaves no name known to be undefined. Unknown text may hold a delimiter: a delimited argument that
   meets it at brace level 0 ends in it, and required text before an
   argument is taken to begin it; the rest of that text is read next as
@@ -916,6 +920,21 @@ the line (`stalled-line-skipped`). A third stops the run. So a run takes at
 most `3 × limits.line_steps` steps per line read, whatever the input:
 unknown text of unknown length, fully unknown values, or a loop TeX itself
 would never leave.
+
+Paths are bounded the same way, long before the steps are. The undecided
+choices each place makes (a conditional, a name of several meanings) are
+counted while one source line is read, over all paths and replays. Past
+`limits.site_forks` of them the expansion above the line is cut as the
+guard cuts it (`site-forks-cut`): what it assigned is unknown, and the line
+reads on after an unknown token. Every count and limit is in steps or
+choices, never in seconds, so the result does not depend on the machine.
+A drive whose paths were all dropped before the input ended (none of them
+a run of the document as followed, so an approximation on the way went
+wrong) does not end the run either: it reads on from the last path, as
+after a cut, with what that path assigned since the paths parted widened
+(`analysis-ended-early`, an imprecision). Lowering the precision limits
+when a share of `limits.steps` is spent (`limits.degrade_at_percent`) is
+an optional fallback, off by default.
 
 `satex query diagnostics` lists every such point in a run, and
 `satex lint --filter 'code=analysis-imprecision'` groups them by reason.
