@@ -77,13 +77,15 @@ fn xetex_queries_of_a_tfm_font_read_no_further() {
 
 #[test]
 fn xetex_string_utilities_and_characters() {
-    // xetex: `-1ABY0.999998`
+    // xetex: `-1ABY0.999997` (TeX Live 2025): the version is the installed
+    // engine's, 0.999998 where there is none.
+    let release = satex::distribution::engine_release("xetex").unwrap_or_else(|| "0.999998".into());
     assert_eq!(
         out_in(
             Engine::XeTeX,
             r"\edef\out{\strcmp{a}{b}\Uchar65\Ucharcat 66 11 \ifprimitive\relax Y\fi\the\XeTeXversion\XeTeXrevision}"
         ),
-        "-1ABY0.999998"
+        format!("-1ABY{release}")
     );
 }
 

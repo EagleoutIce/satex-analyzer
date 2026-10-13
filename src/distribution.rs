@@ -539,3 +539,36 @@ fn kpse_roots(locator: &str, cache: Option<&Path>, env: &[(String, String)]) -> 
     }
     roots
 }
+
+/// The first line `program --version` prints, asked once per process: the
+/// release of the engine a document is run with, which decides the facts
+/// that change between releases (`\pdftexrevision`, `\XeTeXrevision`,
+/// LuaTeX's math modes). `None` without that engine on `PATH`.
+pub fn engine_banner(program: &'static str) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static BANNERS: OnceLock<Mutex<HashMap<&'static str, Option<String>>>> = OnceLock::new();
+    let banners = BANNERS.get_or_init(Default::default);
+    let mut banners = banners.lock().unwrap_or_else(|e| e.into_inner());
+    banners
+        .entry(program)
+        .or_insert_with(|| {
+            let output = std::process::Command::new(program)
+                .arg("--version")
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()?;
+            String::from_utf8_lossy(&output.stdout).lines().next().map(str::to_string)
+        })
+        .clone()
+}
+
+/// The last `-`-separated field of a banner's version, as `pdftex
+/// --version` prints `pdfTeX 3.141592653-2.6-1.40.28 (TeX Live 2025)`:
+/// `1.40.28`.
+pub fn engine_release(program: &'static str) -> Option<String> {
+    let banner = engine_banner(program)?;
+    let version = banner.split_whitespace().nth(1)?;
+    Some(version.rsplit('-').next()?.to_string())
+}

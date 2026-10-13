@@ -1661,6 +1661,11 @@ struct Site {
     shape: u64,
     levels: usize,
     nest: (usize, usize),
+    /// How many scans the last expansion here was nested in: one met by
+    /// a scan the last one began (`\def\a{\number\a}`) is a level deeper
+    /// in TeX's own recursion (tex.web § 366 `expand`), never the state
+    /// that one was in.
+    scans: u32,
     /// Expansions in a row that had that shape, each nested deeper: in
     /// conditionals or groups, or on the input stack, with that input
     /// still below.
@@ -1687,6 +1692,7 @@ impl Site {
             shape: 0,
             levels: usize::MAX,
             nest: (0, 0),
+            scans: 0,
             deeper: 0,
             effective: u64::MAX,
             cycled: 0,
@@ -5511,7 +5517,16 @@ will look undefined",
             }
             Some(Catcode::End) => {
                 self.end_word();
-                crate::observe::text_break(self);
+                // A plain group in text sets nothing between its characters
+                // and the next (`12{,}5`, the `{}` of `~`); the end of a
+                // list's group or a math group does (`\sum_{i=1}^{N}`).
+                let plain = self.env.group_kind() == Some(GroupKind::Simple)
+                    && self.env.nest().is_none()
+                    && !self.mode.meets(crate::mode::Modes::ANY_MATH);
+                match plain {
+                    true => crate::observe::word_break(self),
+                    false => crate::observe::text_break(self),
+                }
                 self.close_group(GroupKind::Simple, token);
                 self.record(Step::CloseGroup, Sym(0), token.span);
             }
@@ -7174,7 +7189,11 @@ will look undefined",
                 let stacked = under == Some(site.shape) && levels > site.levels && site.effective == effective;
                 let grew = outside && (stacked || site.shape == shape && nest != site.nest);
                 site.deeper = if grew { site.deeper + 1 } else { 0 };
-                let same = site.shape == shape && nest == site.nest && site.effective == effective;
+                let same = site.shape == shape
+                    && nest == site.nest
+                    && site.effective == effective
+                    && site.scans == self.step_depth;
+                site.scans = self.step_depth;
                 site.cycled = if same { site.cycled + 1 } else { 0 };
                 (site.shape, site.levels, site.nest, site.effective) = (shape, levels, nest, effective);
                 (size < std::mem::replace(&mut site.size, size), site.unread, site.deeper, site.cycled)

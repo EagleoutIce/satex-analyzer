@@ -125,7 +125,7 @@ pub struct Nest {
     pub part: u8,
     /// The box register a `\setbox` fills when the box ends, and whether
     /// globally (tex.web § 1077 `box_end`).
-    pub target: Option<(Option<i64>, bool)>,
+    pub target: Option<(Option<i64>, bool, Option<[(i64, i64); 2]>)>,
     /// What `\raise` and relatives shift the box by (tex.web § 1073).
     pub shift: Dim,
     /// How the box is packed (tex.web § 644).
@@ -834,9 +834,9 @@ pub enum BoxContext {
     Direct,
     /// `\raise` and relatives, by how much the box is shifted.
     Shift(Dim),
-    /// `\setbox`: the register, if known, and whether the assignment is
-    /// global.
-    Set { register: Option<i64>, global: bool },
+    /// `\setbox`: the register, if known, whether the assignment is
+    /// global, and the range an unknown register number lies in, if known.
+    Set { register: Option<i64>, global: bool, within: Option<[(i64, i64); 2]> },
     /// `\leaders`.
     Leaders,
     /// `\shipout`.
@@ -1579,11 +1579,11 @@ impl Machine<'_> {
         };
         let now = self.out.facts.text.at.len() as u32;
         let inside = nest.list.within(Modes::INTERNAL_VERTICAL.union(Modes::RESTRICTED_HORIZONTAL));
-        if let Some((register, global)) = nest.target {
+        if let Some((register, global, within)) = nest.target {
             let mut ranges = std::mem::take(&mut self.carried_chars);
             ranges.push((nest.from, now));
             self.set_box_chars(register, ranges);
-            self.set_box(register, kind, global);
+            self.set_box(register, kind, global, within);
             if kind != BoxState::Unknown {
                 self.set_box_dims(register, dims);
             }
@@ -1871,8 +1871,10 @@ impl Machine<'_> {
                 } else if state != BoxState::Void {
                     self.unpackage(state, dims, first, solid);
                     let horizontal = self.list_kind() == Some(true);
+                    // § 1110: an empty list leaves `tail` where it was.
                     if state == BoxState::HBox
                         && horizontal
+                        && solid != Some(0)
                         && let Some(n) = &mut self.natural
                     {
                         n.tail[0] = last;
@@ -2176,7 +2178,7 @@ impl Machine<'_> {
         let mut nest = self.env.nest().expect("the box's group is open");
         nest.to = to;
         match context {
-            BoxContext::Set { register, global } => nest.target = Some((register, global)),
+            BoxContext::Set { register, global, within } => nest.target = Some((register, global, within)),
             BoxContext::Direct => nest.placed = true,
             BoxContext::Shift(shift) => {
                 nest.placed = true;
@@ -2203,10 +2205,10 @@ impl Machine<'_> {
     fn box_end(&mut self, context: BoxContext, state: BoxState, dims: [Dim; 3]) {
         crate::observe::box_break(self);
         match context {
-            BoxContext::Set { register, global } => {
+            BoxContext::Set { register, global, within } => {
                 let ranges = std::mem::take(&mut self.fetched);
                 self.set_box_chars(register, ranges);
-                self.set_box(register, state, global);
+                self.set_box(register, state, global, within);
                 if state != BoxState::Unknown {
                     self.set_box_dims(register, dims);
                 }
@@ -3560,6 +3562,29 @@ impl Machine<'_> {
         self.weaken_box_dimens(None, global);
     }
 
+    /// A write through a box register number known to lie in one of two
+    /// intervals
+    /// (tex.web § 1241): only those registers and their sizes may change.
+    fn weaken_boxes_within(&mut self, within: [(i64, i64); 2], global: bool) {
+        let range = within.map(|(lo, hi)| crate::value::Num::range(lo, hi));
+        self.weaken_registers(crate::tex::RegKind::Box, Some(&range), Value::Unknown, global);
+        let targets: Vec<Sym> = self
+            .env
+            .bound()
+            .into_iter()
+            .filter(|&s| {
+                let name = self.name(s);
+                name.strip_prefix("\u{4}box.")
+                    .and_then(|rest| rest.rsplit_once('.'))
+                    .and_then(|(_, n)| n.parse::<i64>().ok())
+                    .is_some_and(|n| within.iter().any(|&(lo, hi)| lo <= n && n <= hi))
+            })
+            .collect();
+        for sym in targets {
+            self.env.set_value(sym, Value::Unknown, global);
+        }
+    }
+
     /// The same for `\wd`, `\ht` and `\dp`: `which` names one of them, or
     /// `None` all three.  A void box keeps its zeroes, which is what
     /// `alter_box_dimen` leaves them (tex.web § 1247).
@@ -3630,8 +3655,13 @@ impl Machine<'_> {
     }
 
     /// `\setbox`: a register assignment (tex.web § 1077).
-    pub(crate) fn set_box(&mut self, register: Option<i64>, state: BoxState, global: bool) {
-        let Some(n) = register else { return self.weaken_boxes(global) };
+    pub(crate) fn set_box(&mut self, register: Option<i64>, state: BoxState, global: bool, within: Option<[(i64, i64); 2]>) {
+        let Some(n) = register else {
+            return match within {
+                Some(range) => self.weaken_boxes_within(range, global),
+                None => self.weaken_boxes(global),
+            };
+        };
         let sym = self.box_sym(n);
         self.env.set_value(sym, box_value(state), global);
         for dimen in ["wd", "ht", "dp", "first", "solid", "last"] {

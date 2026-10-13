@@ -181,6 +181,16 @@ pub fn engine_version(cfg: &crate::config::Config) -> Option<i64> {
     Some(major * 100 + minor)
 }
 
+/// `\luatexversion` of the `luatex` on `PATH`, asked once per process.
+pub fn installed_version() -> Option<i64> {
+    let release = crate::distribution::engine_banner("luatex")?;
+    let version = release.split("Version ").nth(1)?.split_whitespace().next()?;
+    let mut parts = version.split('.');
+    let major: i64 = parts.next()?.parse().ok()?;
+    let minor: i64 = parts.next()?.parse().ok()?;
+    Some(major * 100 + minor)
+}
+
 /// The catcodes IniTeX starts with (tex.web § 232): letters are letters,
 /// `\` escapes, `%` comments, space is a space, `^^M` ends a line, `^^@` is
 /// ignored, `^^?` is invalid, and everything else is other.
