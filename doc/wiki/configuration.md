@@ -148,13 +148,13 @@ record_arguments: false  # keep the argument tokens of every call
 arm_joins: true  # arms of a choice inside an \edef or \csname join where they meet in it
 
 # Limits: the termination argument. Reaching one stops that part of the run
-# and records a diagnostic. Only choices, paths, meaning_splits, widen_after, recursion_depth,
+# and records a diagnostic. Only choices, site_forks, paths, meaning_splits, widen_after, recursion_depth,
 # call_summary_after, meaning_set and value_set trade precision for time; the rest only stop a run.
 limits:
   memory: 8GiB  # what one run may hold at once; 0 lifts the limit
   threads: 0  # threads for the project walk; the interpreter runs on one
   cache_size: 2GiB  # caches kept, least recently used evicted; 0 for no bound
-  steps: 1000000000  # tokens the document may digest
+  steps: 4000000000  # tokens the document may digest (pdflatex digests ~200M/s; pingus needs ~1.5G real tokens)
   format_steps: 9000000000  # tokens latex.ltx may digest (built once, then cached)
   file_depth: 64  # how deep \input and \usepackage may nest
   expansion_depth: 512  # how often one macro may be nested in itself before its recursion is widened
@@ -162,6 +162,7 @@ limits:
   seconds: 300  # wall-clock limit per run, 0 for none
   repeat_failures: 8  # times one gap may be met at one place before the expansion is dropped
   choices: 8  # undecided choices one command may make on one path
+  site_forks: 1024  # undecided choices one place may make while a line is read before its expansion is cut; 0 = never
   paths: 16  # waiting paths before the two furthest back are cut to the input they share and joined
   alike: 8  # waiting paths before those at one place in the same conditionals and groups have their input widened
   meaning_splits: 4  # choices a command may have made for a name joined to several meanings to split per meaning
@@ -173,7 +174,7 @@ limits:
   meaning_set: 8  # meanings a join keeps as a set before the meaning is unknown
   value_set: 8  # values a join keeps for a count or dimension before only the interval
   interval_set: 4  # members a join keeps for a number once intervals are among them, before only their hull
-  degrade_at_percent: 100  # of limits.steps; 100 = never degrade
+  degrade_at_percent: 100  # of limits.steps past which the precision limits are halved, step by step; 100 = never
   expansion_tokens: 1048576  # tokens one expansion may add
   conditional_tokens: 1048576  # tokens read ahead to count the arms of an \ifcase
   held_tokens: 4000000  # tokens waiting to be read
@@ -399,7 +400,7 @@ A stub stands for the macro only while the package's definition is in force. A d
 
 `limits.memory` bounds what one run may hold at once, written the way `ulimit` takes it (`512M`, `8GiB`, `0` for no limit, default `8GiB`). The `satex` binary counts every allocation it makes, so reaching the limit stops the run with the same `budget-exhausted` diagnostic as the other limits instead of letting the machine swap. `--max-memory SIZE` sets it for one run. A program that uses SaTeX as a library installs its own allocator, so it gets no limit.
 
-`limits.degrade_at_percent` (default `70`) is the share of `limits.seconds` and `limits.memory` past which a run trades precision for finishing: waiting paths are joined and meaning and value sets drop to one member, once, reported as an `imprecision` diagnostic `precision-degraded`. Loops and recursions are widened as before, since widening them sooner only makes more unknown text. Undecided conditionals still run every arm. `100` never degrades: the run stops at the limit as it stands.
+`limits.degrade_at_percent` (default `100`, off) is an optional fallback: past that share of `limits.steps`, and again at each further third of what is left, the limits that only cost time are halved from their configured values (paths, sets, choices, loop and recursion widening, call summaries, `site_forks`, `line_steps`), reported once as an `imprecision` diagnostic `precision-degraded`. Steps are counted alike on every machine, so the result never depends on its speed; seconds and memory only stop a run. Without it a run still converges: `limits.site_forks` bounds the undecided choices one place makes while a line is read, and `limits.line_steps` the steps.
 
 `limits.threads` bounds the file walks: `0` (the default) lets SaTeX choose `min(4, cores)`, `1` keeps everything on one thread, any other number is the cap. `--threads N` sets it for one run. The interpreter itself always runs on one thread, because TeX's state is one machine: catcodes, the save stack and the macro table are global, and every token can change them.
 

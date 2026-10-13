@@ -1033,7 +1033,7 @@ impl Machine<'_> {
             "it is loaded while a test is read"
         } else if self.halted || self.out.exhausted {
             "the analysis ran out of budget"
-        } else if self.degraded {
+        } else if self.pressure > 0 {
             DEGRADED
         } else {
             return true;
@@ -1200,7 +1200,7 @@ impl Machine<'_> {
             // Same throughout a load.
             cfg: _,
             limits: _,
-            degraded: _,
+            pressure: _,
             hyph_cache: _,
             kp: _,
             degraded_at: _,
@@ -1211,6 +1211,7 @@ impl Machine<'_> {
             call_runs: _,
             call_recs: _,
             guard_seen: _,
+            job_ended: _,
             checked_at: _,
             unknown_digits: _,
             unknown_more: _,
@@ -1365,6 +1366,8 @@ impl Machine<'_> {
             carried_chars: _,
             redefines_hint: _,
             text_apart: _,
+            // Scratch of one widened conditional.
+            skip_log: _,
         } = self;
         Rest {
             input,
@@ -1416,7 +1419,7 @@ impl Machine<'_> {
             return Mouth::file(source, id);
         }
         self.cacheable_load = Some(id);
-        self.guard.held = std::mem::take(&mut self.guard.lines);
+        self.guard.held = (std::mem::take(&mut self.guard.lines), std::mem::take(&mut self.guard.forks));
         let Some(dir) = self.cache_dir() else { return Mouth::file(source, id) };
         let path = self.out.files[id as usize].path.clone();
         if kind == LoadKind::Class {
@@ -2530,7 +2533,7 @@ impl Machine<'_> {
     fn checkpoint(&mut self, mark: LineMark) {
         // A degraded run's state is one no full-precision run reaches: its
         // segments would be keyed by a root they were not recorded against.
-        if self.degraded {
+        if self.pressure > 0 {
             if let Some(rec) = self.package_capture.as_mut() {
                 rec.log.spoiled.get_or_insert(DEGRADED);
             }

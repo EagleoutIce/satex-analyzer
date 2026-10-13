@@ -1946,16 +1946,27 @@ impl Machine<'_> {
     }
 
     /// Past the choices one command may make, an undecided conditional
-    /// widens: both arms are skipped to its `\fi` and it gives unknown
-    /// text, assumed to touch nothing, so no path is dropped.
+    /// widens: both arms are skipped to its `\fi`, what their code may do
+    /// is done ([`Machine::may_run`]), and it gives unknown text, so no
+    /// path is dropped.
     fn widen_conditional(&mut self, by: Sym, span: Span, base: usize) {
+        // Refused because its site was cut: the expansion goes as a whole.
+        if self.cutting() {
+            return;
+        }
         let message = format!(
             "\\{} could not be decided past the choices one command may make; it is taken as unknown text",
             self.name(by)
         );
         self.diagnose(Severity::Assumption, "undecided-condition", span, message);
         self.record_with(Step::Branch, by, span, || Some("widened"));
+        let outer = self.skip_log.replace(Vec::new());
         self.pass_outer(true, span, base);
+        let skipped = std::mem::replace(&mut self.skip_log, outer).unwrap_or_default();
+        if let Some(log) = &mut self.skip_log {
+            log.extend_from_slice(&skipped);
+        }
+        self.may_run(by, &[], &[&skipped], span);
         if self.scanning > 0 {
             self.scan_undecided = true;
         } else {
