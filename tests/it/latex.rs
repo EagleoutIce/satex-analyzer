@@ -2114,6 +2114,42 @@ fn binary_operator_and_group_atoms_have_their_width() {
     assert_eq!(got, want);
 }
 
+/// tex.web § 1080: `\lastbox` takes back an hbox that is all its list
+/// holds, at its size, and the list is empty again: the indent box the
+/// paragraph hooks put back, which `\item` takes. A parbox is centred with
+/// `half` (§§ 100, 736) rounding up. Sizes as `pdflatex` prints.
+#[test]
+fn a_lone_hbox_taken_by_lastbox_keeps_the_sizes_known() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (r"\hbox{\parbox{3cm}{\centering xy}}", "85.35826pt/5.625pt/0.62498pt"),
+        (r"\hbox{\parbox{3cm}{\begin{center}xy\end{center}}}", "85.35826pt/15.625pt/10.62498pt"),
+        (r"\hbox{\parbox{3cm}{\trivlist\item\relax xy\endtrivlist}}", "85.35826pt/15.625pt/10.62498pt"),
+        (r"\vbox{\hsize3cm\everypar{\setbox2\lastbox}xy}", "85.35826pt/4.30554pt/1.94444pt"),
+        (r"\vbox{\hsize3cm\trivlist\item\relax xy\endtrivlist}", "85.35826pt/26.24998pt/0.0pt"),
+        (r"\hbox{\setbox3\hbox{Ag}\copy3\setbox2\lastbox}", "0.0pt/0.0pt/0.0pt"),
+        (
+            r"\hbox{\setbox3\hbox{Ag}\copy3\setbox2\lastbox\global\setbox4\box2}\setbox0\box4",
+            "12.50003pt/6.83331pt/1.94444pt",
+        ),
+        (r"\hbox{\parbox{3cm}{\noindent\setbox3\hbox{Ag}\copy3\setbox2\lastbox xy}}", "85.35826pt/5.625pt/0.62498pt"),
+    ];
+    let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!(
+            "\\setbox0{f}\\xdef\\S{}{{\\the\\wd0/\\the\\ht0/\\the\\dp0}}\n",
+            (b'a' + i as u8) as char
+        ));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    for (i, (f, want)) in cases.iter().enumerate() {
+        assert_eq!(body(&analysis, &format!("S{}", (b'a' + i as u8) as char)), *want, "{f}");
+    }
+}
+
 /// tex.web §§ 1151, 1160: `\mathchar` and `\delimiter` in inline math are
 /// one atom each, a delimiter its small variant, so `\langle` and `\{`
 /// keep the formula's width. Widths as `pdflatex` prints.
