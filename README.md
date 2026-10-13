@@ -343,9 +343,9 @@ $ satex explain -f samples/paper.tex '\usepackage'
   tag            alias
   when           preamble
   context        outside environments
-  effective      \usepackage[1]{2}{3}
-  signature      omm
-  takes          2-3
+  effective      \usepackage[1]{2}{3}…
+  signature      omm…
+  takes          2+
   uses           4 times, in this run
   by             \let
   documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
