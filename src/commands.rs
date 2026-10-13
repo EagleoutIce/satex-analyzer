@@ -2283,19 +2283,28 @@ impl Machine<'_> {
 
     /// `\the` of a font-valued quantity: the font identifier (tex.web § 465).
     pub fn font_identifier(&mut self, p: Primitive, sym: Sym, span: Span) -> Option<Vec<Token>> {
+        // tex.web § 465: `\the` of a font gives its identifier. One satex
+        // cannot name is some identifier: unknown, never no token at all.
+        let unknown = |m: &mut Self| Some(vec![Token::new(Tok::Cs(m.unknown), span)]);
         let font = match p {
             Primitive::FontDef => match self.current_font() {
                 Some(font) => font,
-                None => return self.current_font_identifiers(span),
+                None => return self.current_font_identifiers(span).or_else(|| unknown(self)),
             },
             Primitive::FontIdent(font) => font,
             Primitive::Command(Syntax::FamilyFont) => {
-                let family = self.scan_int()?;
-                self.family_font(sym, family)?
+                let font = self.scan_int().and_then(|family| self.family_font(sym, family));
+                match font {
+                    Some(font) => font,
+                    None => return unknown(self),
+                }
             }
             _ => return None,
         };
-        Some(vec![Token::new(Tok::Cs(self.font_cs(font)?), span)])
+        match self.font_cs(font) {
+            Some(cs) => Some(vec![Token::new(Tok::Cs(cs), span)]),
+            None => unknown(self),
+        }
     }
 
     /// The current font a join left one of a few: a token for one of
