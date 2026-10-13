@@ -1871,8 +1871,10 @@ impl Machine<'_> {
                 } else if state != BoxState::Void {
                     self.unpackage(state, dims, first, solid);
                     let horizontal = self.list_kind() == Some(true);
+                    // § 1110: an empty list leaves `tail` where it was.
                     if state == BoxState::HBox
                         && horizontal
+                        && solid != Some(0)
                         && let Some(n) = &mut self.natural
                     {
                         n.tail[0] = last;
