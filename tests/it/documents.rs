@@ -180,6 +180,8 @@ fixtures! {
     tikz_arrow_to_an_unknown_point("tikz_arrow_to_unknown_point", "mwe.tex");
     /// An undefined name in a node's formula: the node's size must stay known.
     tikz_node_with_an_undefined_name_in_math("tikz_node_undefined_in_math", "mwe.tex");
+    /// PNG images scaled to keep their aspect ratio inside beamer columns.
+    beamer_raster_images_scaled_to_their_aspect("beamer_raster_images", "mwe.tex");
 }
 
 /// Capabilities: unknown inputs, global state, typesetting feedback.
