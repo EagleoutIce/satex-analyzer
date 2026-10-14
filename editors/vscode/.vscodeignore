@@ -1,0 +1,8 @@
+src/**
+node_modules/.bin/**
+tsconfig.json
+eslint.config.mjs
+.gitignore
+**/*.map
+node_modules/**/*.md
+node_modules/**/*.map
