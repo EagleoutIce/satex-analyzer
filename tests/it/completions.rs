@@ -18,40 +18,38 @@ fn scratch(name: &str) -> std::path::PathBuf {
     crate::support::scratch_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("target/scratch/completions").join(name))
 }
 
-/// An explicit shell wins over `$SHELL`; the output names shell and file.
+/// An explicit shell is the one set up; without one, every shell in use or
+/// with a startup file is. The output says how to load it in this shell.
 #[test]
 fn install_writes_the_named_shell_file() {
     let home = scratch("install");
     let out = run(&home, "/bin/bash", &["completions", "install", "zsh"]);
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "{text}{}", String::from_utf8_lossy(&out.stderr));
-    assert!(text.contains("shell: zsh") && text.contains(".zshrc"), "{text}");
+    assert!(text.contains("zsh: added to") && text.contains("source ") && text.contains(".zshrc"), "{text}");
     let rc = std::fs::read_to_string(home.join(".zshrc")).expect(".zshrc");
     assert!(rc.contains("COMPLETE=zsh satex"), "{rc}");
     assert!(!home.join(".bashrc").exists());
-    // Not run from a shell here: `$SHELL` decides.
+    // `$SHELL` is fish and `.zshrc` exists: both, zsh already done.
     let out = run(&home, "/usr/bin/fish", &["completions", "install"]);
-    assert!(String::from_utf8_lossy(&out.stdout).contains("shell: fish"));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("fish: added to") && text.contains("zsh: already set up"), "{text}");
     assert!(home.join(".config/fish/completions/satex.fish").exists());
 }
 
-/// `--version` hints on stderr for every used shell without the completion.
+/// `--version` hints on stderr, in one line, at the used shells without the
+/// completion.
 #[test]
 fn version_hints_for_shells_without_completion() {
     let home = scratch("hint");
     std::fs::write(home.join(".zshrc"), "# empty\n").unwrap();
     let out = run(&home, "/bin/bash", &["--version"]);
     let err = String::from_utf8_lossy(&out.stderr);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    for shell in ["bash", "zsh"] {
-        let hint = format!("shell completion is not set up for {shell}: run `satex completions install {shell}`");
-        assert!(err.contains(&hint), "{err}");
-        assert!(!stdout.contains(&hint));
-    }
-    assert!(!err.contains("for fish"), "{err}");
-    for shell in ["bash", "zsh"] {
-        assert!(run(&home, "/bin/bash", &["completions", "install", shell]).status.success());
-    }
+    let hint = "no shell completion for bash, zsh: run `satex completions install`";
+    assert!(err.contains(hint), "{err}");
+    assert!(!String::from_utf8_lossy(&out.stdout).contains(hint));
+    assert_eq!(err.matches("shell completion").count(), 1, "{err}");
+    assert!(run(&home, "/bin/bash", &["completions", "install"]).status.success());
     let out = run(&home, "/bin/bash", &["--version"]);
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!err.contains("shell completion"), "{err}");
