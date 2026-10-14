@@ -6,3 +6,4 @@ eslint.config.mjs
 **/*.map
 node_modules/**/*.md
 node_modules/**/*.map
+node_modules/**
