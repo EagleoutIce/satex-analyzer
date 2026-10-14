@@ -1522,3 +1522,14 @@ fn a_label_in_an_input_file_defines_the_key_a_later_reference_names() {
     let label = |o: &&satex::facts::Occurrence| o.kind == satex::builtins::OccKind::Label && o.key == "sec:a";
     assert_eq!(analysis.facts.occurrences.iter().filter(label).count(), 1);
 }
+
+/// An error in a call's argument (a beamer frame's body) stands at the
+/// command that raised it, not at the call: pdflatex names the end of the
+/// argument, where its reader is.
+#[test]
+fn an_error_in_an_argument_stands_at_its_command() {
+    let source = "\\documentclass{article}\n\\newcommand\\wrap[1]{#1}\n\\begin{document}\n\\wrap{\n  Text\n  \\begin{nosuch}\n  y}\n\\end{document}\n";
+    let Some(analysis) = latex(source) else { return };
+    let found = placed(&analysis, "undefined-environment");
+    assert!(found.len() == 1 && found[0].starts_with("6:3 "), "{found:?}");
+}
