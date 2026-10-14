@@ -3,9 +3,14 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+/// Runs satex with `home/bin` as the whole `PATH`: the shells installed are
+/// the ones a test puts there.
 fn run(home: &Path, shell: &str, args: &[&str]) -> Output {
+    let bin = home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
     Command::new(env!("CARGO_BIN_EXE_satex"))
         .args(args)
+        .env("PATH", &bin)
         .env("HOME", home)
         .env("SHELL", shell)
         .env_remove("XDG_CONFIG_HOME")
@@ -18,8 +23,8 @@ fn scratch(name: &str) -> std::path::PathBuf {
     crate::support::scratch_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("target/scratch/completions").join(name))
 }
 
-/// An explicit shell is the one set up; without one, every shell in use or
-/// with a startup file is. The output says how to load it in this shell.
+/// An explicit shell is the one set up; without one, every shell installed
+/// or in use is. The output says how to load it in this shell.
 #[test]
 fn install_writes_the_named_shell_file() {
     let home = scratch("install");
@@ -30,19 +35,20 @@ fn install_writes_the_named_shell_file() {
     let rc = std::fs::read_to_string(home.join(".zshrc")).expect(".zshrc");
     assert!(rc.contains("COMPLETE=zsh satex"), "{rc}");
     assert!(!home.join(".bashrc").exists());
-    // `$SHELL` is fish and `.zshrc` exists: both, zsh already done.
+    // `$SHELL` is fish and zsh is installed: both, zsh already done.
+    installed(&home, "zsh");
     let out = run(&home, "/usr/bin/fish", &["completions", "install"]);
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("fish: added to") && text.contains("zsh: already set up"), "{text}");
     assert!(home.join(".config/fish/completions/satex.fish").exists());
 }
 
-/// `--version` hints on stderr, in one line, at the used shells without the
+/// `--version` hints on stderr, in one line, at the shells without the
 /// completion.
 #[test]
 fn version_hints_for_shells_without_completion() {
     let home = scratch("hint");
-    std::fs::write(home.join(".zshrc"), "# empty\n").unwrap();
+    installed(&home, "zsh");
     let out = run(&home, "/bin/bash", &["--version"]);
     let err = String::from_utf8_lossy(&out.stderr);
     let hint = "no shell completion for bash, zsh: run `satex completions install`";
@@ -53,4 +59,13 @@ fn version_hints_for_shells_without_completion() {
     let out = run(&home, "/bin/bash", &["--version"]);
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!err.contains("shell completion"), "{err}");
+}
+
+/// An executable `shell` in the test's `PATH`.
+fn installed(home: &Path, shell: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let path = home.join("bin").join(shell);
+    std::fs::create_dir_all(home.join("bin")).unwrap();
+    std::fs::write(&path, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }

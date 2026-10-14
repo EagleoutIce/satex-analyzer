@@ -226,14 +226,13 @@ fn completion_set_up(home: &std::path::Path, shell: &str) -> bool {
     }
 }
 
-/// The shells in use (`$SHELL`, the one running satex) or with a startup
-/// file, the ones completion is set up for.
+/// The shells installed on this machine or in use.
 fn known_shells(home: &std::path::Path) -> Vec<&'static str> {
     let used = [env_shell(), parent_shell().unwrap_or_default()];
-    [("bash", ".bashrc"), ("zsh", ".zshrc"), ("fish", ".config/fish")]
+    ["bash", "zsh", "fish"]
         .into_iter()
-        .filter(|(shell, rc)| used.iter().any(|u| u == shell) || home.join(rc).exists())
-        .map(|(shell, _)| shell)
+        .filter(|shell| used.iter().any(|u| u == shell) || which::which(shell).is_ok())
+        .filter(|shell| completion_file(home, shell).is_some())
         .collect()
 }
 
