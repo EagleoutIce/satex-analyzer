@@ -2344,6 +2344,70 @@ fn math_styles_and_choices_keep_the_size_known() {
     assert!(d.contains("unknown"), "{d}");
 }
 
+/// tex.web §§ 777-801: every cell of an alignment holds its template,
+/// `u_j` before and `v_j` after its text, so a `\unskip` in `v_j` reaches
+/// only the cell's own text (array's `\hskip1sp`); columns are as wide as
+/// their widest cell, rows as high and deep as their cells. Sizes as
+/// `pdflatex` prints; what satex does not follow (spans, `\cline`,
+/// several lines in a `p` cell) stays unknown, never another size.
+#[test]
+fn alignment_cells_hold_their_templates() {
+    if !installed() {
+        return;
+    }
+    let exact = [
+        (r"\begin{tabular}{@{}l@{}}x\end{tabular}", "5.27782pt/8.5pt/3.5pt"),
+        (r"\begin{tabular}{l}x\end{tabular}", "17.27782pt/8.5pt/3.5pt"),
+        (r"\vbox{\halign{\hskip1sp#\unskip\cr x\cr}}", "5.27782pt/4.30554pt/0.0pt"),
+        (r"\begin{tabular}{@{}lp{5cm}@{}}a&x\\b&y\end{tabular}", "159.81937pt/14.5pt/9.5pt"),
+        (r"\begin{tabular}{|c|r|}\hline ab&c\\\hline d&efg\\\hline\end{tabular}", "48.25563pt/15.09999pt/10.09999pt"),
+        (r"\begin{tabular}{ll}a&\multicolumn{1}{c}{b}\\cc&d\end{tabular}", "38.44449pt/14.5pt/9.5pt"),
+        (r"\vbox{\halign{#\hfil&\hfil#\cr a&bb\cr ccc&d\cr\noalign{\kern2pt}e\cr}}", "24.44447pt/32.94444pt/0.0pt"),
+        (r"\begin{tabular}{l}x\\\end{tabular}", "17.27782pt/8.5pt/3.5pt"),
+        (r"\begin{tabular}{>{\bfseries}l<{!}r}a&b\\cc&dd\end{tabular}", "48.83333pt/14.5pt/9.5pt"),
+        (r"\begin{tabular}{l}a\\[4pt]b\\\end{tabular}", "17.55559pt/16.5pt/11.5pt"),
+        (r"\begin{tabular}{l}\begin{tabular}{c}in\\ner\end{tabular}\\x\end{tabular}", "37.91672pt/20.5pt/15.5pt"),
+        (r"\begin{tabular}{ll}a&\\&b\\\end{tabular}", "34.55562pt/14.5pt/9.5pt"),
+        (r"\begin{tabular}{c}\omit x\\yy\end{tabular}", "22.55562pt/10.65277pt/5.65277pt"),
+        (r"\begin{tabular}{l@{ -- }l}a&b\end{tabular}", "34.22229pt/8.5pt/3.5pt"),
+    ];
+    let covered = [
+        (
+            r"\begin{tabular}{|l|c|r|}\hline a&bb&ccc\\\hline\hline d&&f\\\cline{1-2}\end{tabular}",
+            "67.60007pt/16.09999pt/11.09999pt",
+        ),
+        (r"\begin{tabular}{ll}\multicolumn{2}{c}{wide header}\\a&b\end{tabular}", "64.25009pt/14.5pt/9.5pt"),
+        (r"\begin{tabular}{p{2cm}l}some longer words in a cell&x\\y&z\end{tabular}", "86.18332pt/26.5pt/21.5pt"),
+        // tex.web §§ 796, 889, 1076: `\vadjust` material follows the
+        // line, the row or the box on the vertical list.
+        (r"\begin{tabular}{@{}lp{3cm}@{}}&x\bigskip\end{tabular}", "97.35826pt/14.5pt/9.5pt"),
+        (r"\vtop{\hsize3cm x\vadjust{\kern3pt}}", "85.35826pt/4.30554pt/3.0pt"),
+        (r"\vbox{\hbox{x\vadjust{\kern3pt}}}", "5.2778pt/7.30554pt/0.0pt"),
+        (r"\vbox{\halign{#\cr x\vadjust{\kern3pt}\cr}}", "5.2778pt/7.30554pt/0.0pt"),
+    ];
+    let all: Vec<_> = exact.iter().chain(covered.iter()).collect();
+    let mut src = String::from("\\documentclass{article}\n\\usepackage{array}\n\\begin{document}\n");
+    for (i, (f, _)) in all.iter().enumerate() {
+        src.push_str(&format!(
+            "\\setbox0\\hbox{{{f}}}\\xdef\\S{}{{\\the\\wd0/\\the\\ht0/\\the\\dp0}}\n",
+            (b'a' + i as u8) as char
+        ));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    for (i, (f, want)) in all.iter().enumerate() {
+        let got = body(&analysis, &format!("S{}", (b'a' + i as u8) as char));
+        if i < exact.len() {
+            assert_eq!(got, *want, "{f}");
+        } else {
+            // Each of width, height and depth is the right one or unknown.
+            for (g, w) in got.split('/').zip(want.split('/')) {
+                assert!(g == w || g.contains("unknown"), "{f}: {got}");
+            }
+        }
+    }
+}
+
 /// tex.web §§ 1151, 1160: `\mathchar` and `\delimiter` in inline math are
 /// one atom each, a delimiter its small variant, so `\langle` and `\{`
 /// keep the formula's width. Widths as `pdflatex` prints.
