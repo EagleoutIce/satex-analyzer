@@ -410,12 +410,27 @@ fn undefined_control_sequences(report: &mut Report) {
     if report.analysis.plugins.kernel == crate::plugin::Kernel::Context {
         return;
     }
+    // Where a cut made the analysis assume category codes back
+    // (`region-catcodes`), a name holding a character that is no letter
+    // under any category code a document keeps (`{`, `\\`, a space, ...)
+    // was read under codes the analysis only assumed: what TeX reads there
+    // is not known.
+    let assumed = report.analysis.facts.diagnostics.iter().any(|d| d.code == "region-catcodes");
     for expansion in &report.analysis.facts.expansions {
-        if expansion.meaning != MeaningKind::Undefined {
+        if !matches!(expansion.meaning, MeaningKind::Undefined | MeaningKind::UndefinedApproximated) {
             continue;
         }
         let name = report.cs(expansion.name);
-        let (severity, message) = if expansion.cds.is_empty() {
+        let raw = report.analysis.interner.name(expansion.name);
+        let odd = raw.chars().count() > 1 && raw.chars().any(|c| "\\{}$&#% \t\r".contains(c));
+        let (severity, message) = if assumed && odd {
+            (
+                Severity::Warning,
+                format!("{name} is undefined where the analysis assumed category codes back after a cut"),
+            )
+        } else if expansion.meaning == MeaningKind::UndefinedApproximated {
+            (Severity::Warning, format!("{name} is undefined on a path the analysis approximated"))
+        } else if expansion.cds.is_empty() {
             (Severity::Error, format!("{name} is never defined in this run"))
         } else {
             (Severity::Warning, format!("{name} is undefined on a path satex could not decide"))

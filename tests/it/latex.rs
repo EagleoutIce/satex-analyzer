@@ -133,6 +133,70 @@ fn a_duplicate_label_is_reported() {
     assert!(codes(&analysis).contains(&"duplicate-label".to_string()));
 }
 
+/// An undefined name met on a path that approximated since the paths
+/// parted (here a `\write` to a stream satex cannot pin down) is a possible
+/// error, as `certain_error` judges the engine's error there; one met on a
+/// lone path stays TeX's error.
+#[test]
+fn an_undefined_name_past_an_approximation_is_a_possible_error() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\ifnum\pdfuniformdeviate 2=0 \immediate\write\pdfuniformdeviate 16{x}\undefinedfoo\else b\fi
+\undefinedbaz
+\end{document}",
+    );
+    let mut found: Vec<String> = satex::lint::lint(&analysis)
+        .iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-control-sequence"))
+        .map(|f| {
+            let get = |k: &str| f.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            format!("{} {}", get("severity"), get("message"))
+        })
+        .collect();
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            "error \\undefinedbaz is never defined in this run",
+            "warning \\undefinedfoo is undefined on a path the analysis approximated"
+        ]
+    );
+}
+
+/// A name read with `{` a letter is TeX's error where the category codes
+/// are known, but not where a cut made the analysis assume them back
+/// (`region-catcodes`): there it is reported as possible only.
+#[test]
+fn a_name_read_under_assumed_category_codes_is_no_certain_error() {
+    if !installed() {
+        return;
+    }
+    let severity = |spin: &str, line_steps: u64| {
+        let source = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\def\\spin{{\\advance\\count2 1 \\ifnum\\count2<5000000 \\expandafter\\spin\\fi}}\n{spin}\n\\catcode`\\{{=11 \\relax\\x{{y \\catcode`\\{{=1\n\\end{{document}}\n"
+        );
+        let mut cfg = crate::support::config();
+        cfg.limits.line_steps = line_steps;
+        let analysis = Machine::analyze(&source, None, &cfg);
+        satex::lint::lint(&analysis)
+            .iter()
+            .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-control-sequence"))
+            .map(|f| {
+                let get = |k: &str| f.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                format!("{} {}", get("severity"), get("message"))
+            })
+            .filter(|f| f.contains("x{y"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(severity("", 0), ["error \\x{y is never defined in this run"]);
+    let assumed = severity("\\begingroup\\catcode`\\{=11 \\spin\\endgroup", 400_000);
+    assert_eq!(assumed, ["warning \\x{y is undefined where the analysis assumed category codes back after a cut"]);
+}
+
 /// Only `\newlabel` warns about a name defined twice (pdflatex: "Label
 /// `sec:a' multiply defined", a warning): a tikzmark written to the `.aux`
 /// file twice is not reported, and LaTeX's warning is no error.

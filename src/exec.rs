@@ -1547,7 +1547,8 @@ impl Machine<'_> {
         // it and removes it, so the name goes on after it.
         if matches!(self.env.meaning(sym), Meaning::Undefined) {
             let node = self.reference(sym, t.span);
-            self.note_expansion(sym, t.span, crate::facts::MeaningKind::Undefined, node, Vec::new());
+            let kind = self.undefined_kind();
+            self.note_expansion(sym, t.span, kind, node, Vec::new());
             self.record(Step::Undefined, sym, t.span);
             return false;
         }
