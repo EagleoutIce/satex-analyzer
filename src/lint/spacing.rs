@@ -386,7 +386,7 @@ fn missing_nonbreaking_space(report: &mut Report) {
 /// The abbreviation ending at the period at `index`, dots and all.
 fn abbreviation(view: &View, index: usize) -> String {
     let mut start = index;
-    while start > 0 && view.char_at(start - 1).is_some_and(|c| c.is_alphanumeric() || c == '.') {
+    while start > 0 && view.joined(start) && view.char_at(start - 1).is_some_and(|c| c.is_alphanumeric() || c == '.') {
         start -= 1;
     }
     view.slice(start..index + 1).to_string()
