@@ -2650,6 +2650,41 @@ fn alignment_cells_hold_their_templates() {
     }
 }
 
+/// tex.web § 785: between an alignment's rows a `{` or a `$` begins a row
+/// as a letter does, so the group or formula is in the row's first cell, in
+/// restricted horizontal mode, not one more pass of a row that may be in
+/// vertical mode (which once read every token of `{x} &= 1` in amsmath's
+/// `align` as a loop and summarized it). Sizes as `pdflatex` prints them.
+#[test]
+fn a_brace_or_math_shift_between_rows_begins_a_row() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (r"\vbox{\halign{#\cr {x}=1\cr}}", "18.05562pt/6.44444pt/0.0pt"),
+        (r"\vbox{\halign{#\cr $x$\cr}}", "5.71527pt/4.30554pt/0.0pt"),
+        (r"\vbox{\halign{#\cr x\cr {y}\cr}}", "5.2778pt/16.30554pt/1.94444pt"),
+        (r"\vbox{\halign{#\cr {\count255=1 }x\cr}}", "5.2778pt/4.30554pt/0.0pt"),
+    ];
+    let mut src = String::from("\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!(
+            "\\setbox0\\hbox{{{f}}}\\xdef\\S{}{{\\the\\wd0/\\the\\ht0/\\the\\dp0}}\n",
+            (b'a' + i as u8) as char
+        ));
+    }
+    src.push_str("\\begin{align}\n{x} &= 1, 2\n\\end{align}\n\\end{document}");
+    let analysis = analyze(&src);
+    for (i, (f, want)) in cases.iter().enumerate() {
+        let got = body(&analysis, &format!("S{}", (b'a' + i as u8) as char));
+        for (g, w) in got.split('/').zip(want.split('/')) {
+            assert!(g == w || g.contains("unknown"), "{f}: {got}");
+        }
+    }
+    let codes = codes(&analysis);
+    assert!(!codes.iter().any(|c| c == "recursion-widened"), "{codes:?}");
+}
+
 /// tex.web § 342: an `&` or `\cr` that `get_next` reads at the cell's
 /// brace level ends the cell where it is read, whoever reads it: a
 /// `\futurelet` looking ahead meets the cell's `v` part (§ 789), here its

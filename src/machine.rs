@@ -5618,6 +5618,9 @@ will look undefined",
             Some(Catcode::Begin) => {
                 self.end_word();
                 crate::observe::word_break(self);
+                // tex.web § 785: a `{` between an `\halign`'s rows begins
+                // a row, and its group is in that row's first cell.
+                self.align_cell(false);
                 self.open_group(GroupKind::Simple, token.span);
                 self.record(Step::OpenGroup, Sym(0), token.span);
                 self.simple_group_opened();
@@ -5639,6 +5642,8 @@ will look undefined",
             }
             Some(Catcode::Math) => {
                 crate::observe::text_break(self);
+                // tex.web § 785: so does a `$`.
+                self.align_cell(false);
                 self.math_shift_token(token)
             }
             // tex.web § 785: an `&` ends a cell, and between rows begins one.
