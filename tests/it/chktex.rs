@@ -1442,6 +1442,18 @@ fn a_duplicate_label_from_two_calls_is_reported_at_the_second() {
     assert!(found[0].starts_with("5:1 ") && found[0].contains("via \\greet"), "{found:?}");
 }
 
+/// A call that writes two labels, made twice: one finding at the second
+/// call, naming both labels, as pdflatex warns about each.
+#[test]
+fn every_label_a_repeated_call_defines_again_is_named() {
+    let source = "\\documentclass{article}\n\\newcommand\\two[1]{\\section{#1}\\label{a:#1}\\label{b:#1}}\n\
+                  \\begin{document}\n\\two{x}\n\\two{x}\n\\end{document}\n";
+    let Some(analysis) = latex(source) else { return };
+    let found = placed(&analysis, "duplicate-label");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].starts_with("5:1 ") && found[0].contains("`a:x`") && found[0].contains("`b:x`"), "{found:?}");
+}
+
 /// A reference ahead of its label (a figure further down) is defined:
 /// pdflatex resolves it on its second run.
 #[test]
