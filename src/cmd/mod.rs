@@ -3,6 +3,7 @@
 pub mod cache;
 mod graph;
 mod inspect;
+pub mod compile;
 pub mod install;
 mod lint;
 pub mod lsp;
@@ -242,6 +243,10 @@ pub enum Command {
         #[command(subcommand)]
         action: Option<CacheAction>,
     },
+    /// Build the document with latexmk, or the engine where latexmk is
+    /// missing, and explain each error and warning the log reports by what
+    /// the analysis found there.  Never opens a viewer.
+    Compile,
     /// Install the packages the document loads that this machine does not
     /// have.  Asks first, never elevates, and is never run by `lint --fix`.
     Install {
@@ -264,14 +269,14 @@ pub enum Command {
     /// Print the shell completion script: bash, zsh, fish, elvish or
     /// powershell.  Values complete from the running binary.  `install
     /// [bash|zsh|fish]` registers it in that shell's startup file; without a
-    /// shell, the one running satex, else `$SHELL`.
+    /// shell, in every shell installed or in use.
     Completions {
         #[arg(value_name = "SHELL", value_parser = clap::builder::PossibleValuesParser::new(
             ["bash", "zsh", "fish", "elvish", "powershell", "install"].map(clap::builder::PossibleValue::new)
                 .into_iter().chain([clap::builder::PossibleValue::new("json").hide(true)])))]
         shell: String,
-        /// The shell `install` sets up; without it, every shell in use or
-        /// with a startup file.
+        /// The shell `install` sets up; without it, every shell installed
+        /// or in use.
         #[arg(value_name = "TARGET", value_parser = ["bash", "zsh", "fish"])]
         target: Option<String>,
     },
@@ -390,7 +395,7 @@ impl Command {
                 (generic, "text, json, csv or markdown")
             }
             Command::Lint { explain: Some(_), .. } => (matches!(format, Format::Text | Format::Json), "text or json"),
-            Command::Lint { .. } => (
+            Command::Lint { .. } | Command::Compile => (
                 generic || matches!(format, Format::Github | Format::Sarif | Format::Lsp),
                 "text, json, csv, markdown, github, sarif or lsp",
             ),
@@ -466,6 +471,7 @@ impl Command {
             // `Query { request: Some(_) }`.
             Command::Cache { action: Some(_) } => Ok(Output::Done),
             Command::Lsp { .. } | Command::Completions { .. } => Ok(Output::Done),
+            Command::Compile => compile::run(context),
             Command::Install { packages, yes, dry_run, usermode } => {
                 let options = install::Options { yes: *yes, dry_run: *dry_run, usermode: *usermode };
                 install::run(context, packages, options, out)
