@@ -351,7 +351,16 @@ fn run() -> Result<(), String> {
         note_minimal_document("nothing was piped in");
         source = EMPTY_DOCUMENT.to_string();
     }
-    let (cfg, _layers) = configure(&cli, Some(&source))?;
+    let injected = match &cli.command {
+        Some(Command::Trace { inject: Some(text), at: Some(at), .. }) => Some(inject(&cli, &mut source, text, at)?),
+        _ => None,
+    };
+    let (mut cfg, _layers) = configure(&cli, Some(&source))?;
+    if let Some((file, from, to)) = injected {
+        cfg.trace_file = file;
+        cfg.trace_lines = Some((from.0, to.0));
+        (cfg.trace_col, cfg.trace_end_col) = (from.1, to.1);
+    }
     // Input decoding follows the engine.  `Machine::analyze` settles it
     // again once the project and the magic comments are read; commands that
     // tokenize without an analysis, such as `tokens`, keep this one.
@@ -840,6 +849,39 @@ fn discover_input(dir: &Path) -> Result<PathBuf, String> {
         ));
     }
     found.root_document().ok_or_else(|| format!("no root document in {}: name one with -f", dir.display()))
+}
+
+/// `trace --inject`: the text put at `--at` in the main file's `source`, or
+/// in another file through the overlay the run reads files from. The file,
+/// and the positions where the text begins and ends, bound the trace.
+type Injected = (Option<String>, (u32, u32), (u32, u32));
+
+fn inject(cli: &Cli, source: &mut String, text: &str, at: &str) -> Result<Injected, String> {
+    let (file, pos) = satex::cmd::split_file(at);
+    let (line, col) = pos.split_once(':').unwrap_or((pos, "0"));
+    let bad = || format!("`{at}` is no position: use [FILE:]LINE or [FILE:]LINE:COL");
+    let (line, col): (u32, u32) = (line.trim().parse().map_err(|_| bad())?, col.trim().parse().map_err(|_| bad())?);
+    let from = (line, col.max(1));
+    match &file {
+        None => {
+            let (with, to) = satex::cmd::inject_text(source, line, col, text)?;
+            // What reads the main file again (the trace's source lines)
+            // reads it with the text in it too.
+            if let Some(path) = cli.file.as_deref().and_then(|p| p.canonicalize().ok()) {
+                satex::overlay::set(&path, with.clone());
+            }
+            *source = with;
+            Ok((None, from, to))
+        }
+        Some(name) => {
+            let path = base_dir(cli.file.as_deref()).join(name);
+            let path = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
+            let original = satex::overlay::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let (with, to) = satex::cmd::inject_text(&original, line, col, text)?;
+            satex::overlay::set(&path, with);
+            Ok((file, from, to))
+        }
+    }
 }
 
 fn read_source(path: Option<&Path>) -> Result<String, String> {
