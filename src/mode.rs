@@ -4102,7 +4102,7 @@ impl Machine<'_> {
                 // tex.web § 1039: an empty discretionary follows `\hyphenchar`.
                 match self.font_field(font, "hyphenchar") {
                     Value::Int(h) if h == i64::from(c) => {
-                        self.kp_push(&mut n.para.items, crate::linebreak::Kp::Disc(None))
+                        self.kp_push(&mut n.para.items, crate::linebreak::Kp::Disc(None, 0))
                     }
                     Value::Int(_) => {}
                     _ => n.para.items = None,
