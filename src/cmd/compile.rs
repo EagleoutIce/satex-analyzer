@@ -29,45 +29,47 @@ pub fn run(context: &Context) -> Result<Output, String> {
     let dir = main.parent().map(Path::to_path_buf).filter(|d| !d.as_os_str().is_empty()).unwrap_or_else(|| ".".into());
     let file = main.file_name().and_then(|f| f.to_str()).ok_or("the document has no file name")?;
     let job = main.file_stem().and_then(|f| f.to_str()).unwrap_or(file).to_string();
+    let project = &analysis.project;
+    let out_dir = project.output_dir().map(|(d, _)| dir.join(d));
+    let log_path = out_dir.clone().unwrap_or_else(|| dir.clone()).join(format!("{job}.log"));
     let engine = analysis.plugins.engine;
-    let (program, args) = match which::which("latexmk") {
+    let status = match which::which("latexmk") {
+        // latexmk reruns as often as the document needs and reads the
+        // latexmkrc; the engine is ours only where that names none.
         Ok(_) => {
-            let mode = match engine {
-                crate::config::Engine::LuaTeX => "-lualatex",
-                crate::config::Engine::XeTeX => "-xelatex",
-                _ => "-pdf",
-            };
-            // The project's latexmkrc may set the engine itself; latexmk lets
-            // it win over a mode given here only when none is given, so the
-            // mode is given only without one.
-            let configured = analysis.project.files.iter().any(|f| f.tool == "latexmk");
             let mut args = vec!["-interaction=nonstopmode", "-file-line-error", "-pv-", "-pvc-"];
-            if !configured {
-                args.push(mode);
+            if !["pdf_mode", "pdflatex", "lualatex", "xelatex", "latex"].iter().any(|k| project.setting(k).is_some()) {
+                args.push(match engine {
+                    crate::config::Engine::LuaTeX => "-lualatex",
+                    crate::config::Engine::XeTeX => "-xelatex",
+                    _ => "-pdf",
+                });
             }
-            ("latexmk", args)
+            build("latexmk", &args, file, &dir)?
         }
-        Err(_) => (engine.program(), vec!["-interaction=nonstopmode", "-file-line-error"]),
+        // The engine alone: again while the log asks for a rerun, as
+        // LaTeX's cross-references need.
+        Err(_) => {
+            let output = out_dir.as_ref().map(|d| format!("-output-directory={}", d.display()));
+            let mut args = vec!["-interaction=nonstopmode", "-file-line-error"];
+            args.extend(output.as_deref());
+            let mut status = build(engine.program(), &args, file, &dir)?;
+            for _ in 0..2 {
+                let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+                if !log.contains("Rerun to get") {
+                    break;
+                }
+                status = build(engine.program(), &args, file, &dir)?;
+            }
+            status
+        }
     };
-    let status = Command::new(program)
-        .args(&args)
-        .arg(file)
-        .current_dir(&dir)
-        // TeX Live wraps log lines at 79 characters, which splits paths and
-        // messages; one line per message keeps them whole.
-        .env("max_print_line", "100000")
-        // The build's own output is progress, the findings are the result.
-        .stdout(std::process::Stdio::from(std::io::stderr()))
-        .status()
-        .map_err(|e| format!("cannot run {program}: {e}"))?;
-    let out_dir = analysis.project.output_dir().map(|(d, _)| dir.join(d)).unwrap_or_else(|| dir.clone());
-    let log_path = out_dir.join(format!("{job}.log"));
     let log = std::fs::read(&log_path).map_err(|e| format!("{}: {e}", log_path.display()))?;
     let logged = parse_log(&String::from_utf8_lossy(&log), &dir);
     let findings = crate::lint::lint(analysis);
     let mut records: Vec<Record> = logged.iter().map(|l| explain(l, &findings, &main)).collect();
     if !status.success() && !logged.iter().any(|l| l.error) {
-        records.push(record(&main, None, true, "build", format!("{program} failed ({status}) without a TeX error in the log"), None));
+        records.push(record(&main, None, true, "build", format!("the build failed ({status}) without a TeX error in the log"), None));
     }
     Ok(Output::Lint(records))
 }
@@ -75,6 +77,20 @@ pub fn run(context: &Context) -> Result<Output, String> {
 /// The errors (`file:line: message`, as `-file-line-error` writes them) and
 /// the LaTeX, class and package warnings of a log, each with the file TeX
 /// was reading: the innermost `(file` the log opened and has not closed.
+/// One run of `program` on `file` in `dir`. Its output is progress on
+/// stderr; the findings are the result.
+fn build(program: &str, args: &[&str], file: &str, dir: &Path) -> Result<std::process::ExitStatus, String> {
+    Command::new(program)
+        .args(args)
+        .arg(file)
+        .current_dir(dir)
+        // Unwrapped log lines keep paths and messages whole.
+        .env("max_print_line", "100000")
+        .stdout(std::process::Stdio::from(std::io::stderr()))
+        .status()
+        .map_err(|e| format!("cannot run {program}: {e}"))
+}
+
 fn parse_log(log: &str, dir: &Path) -> Vec<Logged> {
     let mut out = Vec::new();
     let mut files: Vec<PathBuf> = Vec::new();
