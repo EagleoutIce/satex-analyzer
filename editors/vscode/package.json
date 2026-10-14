@@ -48,15 +48,34 @@
           ],
           "default": "off",
           "description": "Trace the communication between VS Code and the satex language server."
+        },
+        "satex.rootFile": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Root document of the project, relative to the workspace folder. Empty: the active file. Used by the trace and compile commands."
         }
       }
-    }
+    },
+    "commands": [
+      {
+        "command": "satex.traceAtCursor",
+        "title": "Trace Expansion Here",
+        "category": "satex"
+      },
+      {
+        "command": "satex.compile",
+        "title": "Compile",
+        "category": "satex"
+      }
+    ]
   },
   "scripts": {
     "compile": "tsc --noEmit -p . && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --minify --sourcemap --outfile=out/extension.js",
     "lint": "eslint src",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package --no-dependencies"
+    "package": "vsce package --no-dependencies",
+    "package:local": "node scripts/try.mjs",
+    "try": "node scripts/try.mjs --install"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
@@ -69,5 +88,6 @@
     "typescript-eslint": "^8.0.0",
     "vscode-languageclient": "^9.0.1",
     "esbuild": "^0.25.0"
-  }
+  },
+  "icon": "icon.png"
 }
