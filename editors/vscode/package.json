@@ -5,12 +5,31 @@
   "version": "0.1.0",
   "publisher": "TODO-publisher-id",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/EagleoutIce/satex-analyzer.git", "directory": "editors/vscode" },
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Linters", "Programming Languages"],
-  "keywords": ["latex", "tex", "lint", "static analysis", "language server"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EagleoutIce/satex-analyzer.git",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "latex",
+    "tex",
+    "lint",
+    "static analysis",
+    "language server"
+  ],
   "main": "./out/extension.js",
-  "activationEvents": ["onLanguage:latex", "onLanguage:tex", "onLanguage:bibtex"],
+  "activationEvents": [
+    "onLanguage:latex",
+    "onLanguage:tex",
+    "onLanguage:bibtex"
+  ],
   "contributes": {
     "configuration": {
       "title": "satex",
@@ -22,7 +41,11 @@
         },
         "satex.trace.server": {
           "type": "string",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "off",
           "description": "Trace the communication between VS Code and the satex language server."
         }
@@ -30,13 +53,11 @@
     }
   },
   "scripts": {
-    "compile": "tsc -p .",
-    "watch": "tsc -w -p .",
+    "compile": "tsc --noEmit -p . && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --minify --sourcemap --outfile=out/extension.js",
     "lint": "eslint src",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package"
+    "package": "vsce package --no-dependencies"
   },
-  "dependencies": { "vscode-languageclient": "^9.0.1" },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@types/node": "^20.0.0",
@@ -45,6 +66,8 @@
     "eslint": "^9.0.0",
     "ovsx": "^0.10.0",
     "typescript": "^5.5.0",
-    "typescript-eslint": "^8.0.0"
+    "typescript-eslint": "^8.0.0",
+    "vscode-languageclient": "^9.0.1",
+    "esbuild": "^0.25.0"
   }
 }

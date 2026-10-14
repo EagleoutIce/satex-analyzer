@@ -30,7 +30,7 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run compile
-      - run: npx vsce package --out satex-universal.vsix
+      - run: npx vsce package --no-dependencies --out satex-universal.vsix
 
   build:
     name: Build ${{ matrix.target }}
@@ -78,7 +78,7 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: npx vsce package --target ${{ matrix.vsce }} --out satex-${{ matrix.vsce }}.vsix
+      - run: npx vsce package --no-dependencies --target ${{ matrix.vsce }} --out satex-${{ matrix.vsce }}.vsix
       - uses: actions/upload-artifact@v4
         with:
           name: vsix-${{ matrix.vsce }}
@@ -95,7 +95,7 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: npx vsce package --out satex-universal.vsix
+      - run: npx vsce package --no-dependencies --out satex-universal.vsix
       - uses: actions/download-artifact@v4
         with:
           path: editors/vscode
