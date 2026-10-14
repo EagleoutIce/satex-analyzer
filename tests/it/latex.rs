@@ -1593,6 +1593,19 @@ fn a_class_or_package_option_is_not_a_citation_key() {
     assert_eq!(keys(&analysis, OccKind::Cite), vec!["knuth".to_string()]);
     let found = codes(&analysis);
     assert!(!found.contains(&"undefined-citation".to_string()), "{found:?}");
+    // The option on a line of its own below `\documentclass`, as a class
+    // passes it on to babel.
+    let analysis = analyze(
+        r"\documentclass[
+  a4paper,
+  english
+]{article}
+\usepackage{babel}
+\begin{document}
+\cite{knuth}
+\end{document}",
+    );
+    assert_eq!(keys(&analysis, OccKind::Cite), vec!["knuth".to_string()]);
 }
 
 /// The kernel's own `\cite`, with no bibliography package, still reads its
