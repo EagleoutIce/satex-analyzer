@@ -2558,6 +2558,34 @@ fn math_styles_and_choices_keep_the_size_known() {
     assert!(d.contains("unknown"), "{d}");
 }
 
+/// tex.web § 1151: a script given by name, a `\mathchardef` constant or
+/// `\mathchar`, is one math character, as a letter is. Sizes as `pdflatex`
+/// prints.
+#[test]
+fn a_math_character_named_as_a_script_keeps_the_size_known() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (r"$O_\infty$", "16.1pt/6.83331pt/1.49998pt"),
+        (r"$x^\alpha$", "11.41403pt/6.6428pt/0.0pt"),
+        (r"$x_\alpha^\beta$", "11.41403pt/8.49002pt/2.47217pt"),
+        (r#"$x^\mathchar"0231$"#, "14.18752pt/6.6428pt/0.0pt"),
+    ];
+    let mut src = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!(
+            "\\setbox0\\hbox{{{f}}}\\xdef\\S{}{{\\the\\wd0/\\the\\ht0/\\the\\dp0}}\n",
+            (b'a' + i as u8) as char
+        ));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    for (i, (f, want)) in cases.iter().enumerate() {
+        assert_eq!(body(&analysis, &format!("S{}", (b'a' + i as u8) as char)), *want, "{f}");
+    }
+}
+
 /// tex.web §§ 777-801: every cell of an alignment holds its template,
 /// `u_j` before and `v_j` after its text, so a `\unskip` in `v_j` reaches
 /// only the cell's own text (array's `\hskip1sp`); columns are as wide as
