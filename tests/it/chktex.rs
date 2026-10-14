@@ -1387,6 +1387,31 @@ fn a_package_error_the_document_causes_is_shown_at_the_cause() {
     assert_eq!(keys.len(), all, "{rows:?}");
 }
 
+/// An error that only a path through an unknown value raises (fit around
+/// a box of unknown width) is a possible one: pdflatex raises none here, so
+/// satex gives at most a note, never a warning or an error.
+#[test]
+fn an_error_only_an_approximation_raises_is_a_note() {
+    let Some(analysis) = latex(
+        r"\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{fit}
+\begin{document}
+\begin{tikzpicture}
+\node (n) {\rule{\pdfuniformdeviate 100 pt}{1cm}};
+\node[draw, fit=(n)] {};
+\end{tikzpicture}
+\end{document}",
+    ) else {
+        return;
+    };
+    let rows: Vec<_> = satex::lint::lint(&analysis)
+        .into_iter()
+        .filter(|r| r["code"] == "caused-library-error" && r["severity"] != "info")
+        .collect();
+    assert!(rows.is_empty(), "{rows:?}");
+}
+
 /// A document that calls package code correctly causes no such rows.
 #[test]
 fn a_clean_document_causes_no_package_error() {
