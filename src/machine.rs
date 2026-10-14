@@ -1826,6 +1826,11 @@ pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 7] = [
     ("runaway-argument", None),
 ];
 
+/// Errors and stops of the engine that satex reports as warnings of its
+/// own, not through [`TEX_ERRORS`].
+const ENGINE_WARNINGS: [&str; 5] =
+    ["mismatched-group", "file-ended", "wrong-mode", "arithmetic-overflow", "endless-loop"];
+
 /// tex.web § 82: after this many errors in one paragraph TeX gives up
 /// ("That makes 100 errors; please try again").
 const MAX_ERRORS: u32 = 100;
@@ -4222,12 +4227,23 @@ will look undefined",
         if severity == Severity::Warning && self.after_cut() {
             severity = Severity::Imprecision;
         }
+        // The engine's errors satex reports itself, met on a path that
+        // approximated since the paths parted: the approximation may be
+        // what led there, so they are not TeX's for certain.
+        if severity == Severity::Warning && self.approximated && ENGINE_WARNINGS.contains(&code) {
+            severity = Severity::Imprecision;
+        }
         self.raise_gap(severity, code);
         match TEX_ERRORS.iter().find(|(c, _)| *c == code) {
             // An engine error on a command satex approximated: the run may
             // not be TeX's there, so it is satex's gap, cut when it repeats.
+            // On a path that approximated since the paths parted the error
+            // may be the approximation's, as [`Machine::certain_error`]
+            // judges it: a possible error, not TeX's.
             Some((_, text))
-                if self.scratch.approximations != self.scratch.approximations_at_command || self.after_cut() =>
+                if self.scratch.approximations != self.scratch.approximations_at_command
+                    || self.after_cut()
+                    || self.approximated =>
             {
                 severity = Severity::Unsupported;
                 let text = text.map_or_else(|| message.clone(), str::to_string);
