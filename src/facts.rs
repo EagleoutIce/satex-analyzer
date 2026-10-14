@@ -73,6 +73,9 @@ pub enum MeaningKind {
     Register,
     Char,
     Undefined,
+    /// Undefined, met on a path the analysis approximated since the paths
+    /// parted: TeX may never expand it there.
+    UndefinedApproximated,
     Unknown,
 }
 
@@ -84,6 +87,7 @@ impl MeaningKind {
             MeaningKind::Register => "register",
             MeaningKind::Char => "char",
             MeaningKind::Undefined => "undefined",
+            MeaningKind::UndefinedApproximated => "undefined-approximated",
             MeaningKind::Unknown => "unknown",
         }
     }

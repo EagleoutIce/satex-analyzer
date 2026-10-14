@@ -6785,7 +6785,8 @@ will look undefined",
                     }
                     None => {
                         let node = self.reference(sym, span);
-                        self.note_expansion(sym, span, MeaningKind::Undefined, node, Vec::new());
+                        let kind = self.undefined_kind();
+                        self.note_expansion(sym, span, kind, node, Vec::new());
                         self.record(Step::Undefined, sym, span);
                         let text = format!("Undefined control sequence \\{}", self.name(sym));
                         self.certain_error(&text, true);
@@ -6870,6 +6871,16 @@ will look undefined",
                 // `\let` to (tex.web § 1063): `\bgroup` opens a group.
                 self.do_character(Token::new(Tok::Cs(sym), span));
             }
+        }
+    }
+
+    /// An undefined name met here: [`MeaningKind::UndefinedApproximated`]
+    /// on a path that approximated since the paths parted, where the
+    /// engine's error is a possible one ([`Machine::certain_error`]).
+    pub(crate) fn undefined_kind(&mut self) -> MeaningKind {
+        match self.approximated || self.after_cut() {
+            true => MeaningKind::UndefinedApproximated,
+            false => MeaningKind::Undefined,
         }
     }
 

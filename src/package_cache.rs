@@ -1971,6 +1971,7 @@ impl Machine<'_> {
                 (2, _) => MeaningKind::Register,
                 (3, _) => MeaningKind::Char,
                 (4, _) => MeaningKind::Undefined,
+                (6, _) => MeaningKind::UndefinedApproximated,
                 _ => MeaningKind::Unknown,
             };
             let node_id =
@@ -2865,6 +2866,7 @@ impl Machine<'_> {
                     MeaningKind::Char => (3, None),
                     MeaningKind::Undefined => (4, None),
                     MeaningKind::Unknown => (5, None),
+                    MeaningKind::UndefinedApproximated => (6, None),
                 },
                 within: template.within,
                 arguments: template.arguments.clone(),
