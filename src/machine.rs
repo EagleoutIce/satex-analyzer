@@ -1315,6 +1315,14 @@ pub struct Machine<'a> {
     /// Tokens the input stack currently holds, so that deep nesting of large
     /// replacement texts cannot grow without bound.
     held_tokens: usize,
+    /// tex.web § 309 `align_state`: the explicit `{` read less the `}`,
+    /// whatever reads them (§§ 347, 357) and less what goes back (§ 325).
+    /// A cell's `&` or `\cr` read where it is as at the cell's start ends
+    /// the cell there (§ 342): [`Machine::template_end_read`].
+    pub(crate) align_state: i64,
+    /// The `align_state` the cell being read began with, while its `v`
+    /// part is still to come: where a read may end the cell.
+    pub(crate) cell_base: Option<i64>,
     /// tex.web § 358: the token the last read took from behind a
     /// `\noexpand` marker (`frozen_dont_expand`), which the gullet then treats
     /// as `\relax` with `no_expand_flag`, however it is defined.
@@ -1575,6 +1583,8 @@ struct PathState {
     within: Rc<Vec<(Sym, NodeId)>>,
     packages: Rc<Vec<(Sym, Vec<String>)>>,
     held_tokens: usize,
+    align_state: i64,
+    cell_base: Option<i64>,
     section: Option<Rc<str>>,
     call_shape: Option<Rc<(Sym, Span, String, usize)>>,
     /// The loops this path continues the summary of: never dropped as
@@ -1991,6 +2001,8 @@ impl<'a> Machine<'a> {
             format_progress: None,
             cached_lines: 0,
             held_tokens: 0,
+            align_state: 0,
+            cell_base: None,
             noexpanded: None,
             last_named_cs: None,
             font_watch: FontWatch::default(),
@@ -3259,6 +3271,10 @@ will look undefined",
     /// any reader terminates and not just the main one.
     fn read(&mut self, across_files: bool) -> Option<Token> {
         let token = self.read_token(across_files)?;
+        self.count_brace(&token, 1);
+        if self.template_end_read(token) {
+            return self.read(across_files);
+        }
         // tex.web § 336: `check_outer_validity` runs on every token `get_next`
         // reads, not only where a file ends.
         if let Some(space) = self.outer_while_scanning(token) {
@@ -3271,6 +3287,7 @@ will look undefined",
         // tex.web § 358: the marker goes, and the token after it is read as
         // `\relax` would be, whatever its meaning.
         let token = self.read_token(across_files)?;
+        self.count_brace(&token, 1);
         self.noexpanded = Some(token);
         Some(token)
     }
@@ -3624,6 +3641,7 @@ will look undefined",
     /// marker goes back without it: the marker is consumed by the read, so
     /// `\count1=1\noexpand\x` expands `\x` afterwards.
     pub fn unread(&mut self, token: Token) {
+        self.count_brace(&token, -1);
         if self.read_noexpanded(token) {
             self.noexpanded = None;
         }
@@ -3655,6 +3673,9 @@ will look undefined",
         if tokens.is_empty() {
             return;
         }
+        for t in tokens {
+            self.count_brace(t, -1);
+        }
         // Given back by a keyword scan (tex.web § 407): still the file's.
         let last_file = self.last_file;
         for t in tokens.iter().filter(|t| last_file == Some(t.span.file)) {
@@ -3665,6 +3686,16 @@ will look undefined",
         match self.input.last_mut() {
             Some(Frame::Returned(returned)) => returned.extend(tokens.iter().rev().copied()),
             _ => self.input.push(Frame::Returned(tokens.iter().rev().copied().collect())),
+        }
+    }
+
+    /// tex.web §§ 325, 347, 357: an explicit brace read counts `by` toward
+    /// `align_state`, one given back `-by`.
+    pub(crate) fn count_brace(&mut self, token: &Token, by: i64) {
+        match token.tok {
+            Tok::Chr(_, Catcode::Begin) => self.align_state += by,
+            Tok::Chr(_, Catcode::End) => self.align_state -= by,
+            _ => {}
         }
     }
 
@@ -9154,6 +9185,8 @@ will look undefined",
             within: self.within.clone(),
             packages: self.packages.clone(),
             held_tokens: self.held_tokens,
+            align_state: self.align_state,
+            cell_base: self.cell_base,
             section: self.section.clone(),
             call_shape: self.call_shape.clone(),
             summary_of: self.scratch.summary_of.clone(),
@@ -9237,6 +9270,8 @@ will look undefined",
             self.env.log_reads(false);
         }
         self.held_tokens = state.held_tokens;
+        self.align_state = state.align_state;
+        self.cell_base = state.cell_base;
         self.section = state.section;
         self.call_shape = state.call_shape;
         self.scratch.summary_of = state.summary_of;
