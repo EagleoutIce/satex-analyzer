@@ -29,21 +29,13 @@ fn main() {
         .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
         .unwrap_or_default();
     println!("cargo:rustc-env=SATEX_COMMIT={commit}");
-    // Caches are keyed on `format::SEMANTIC_VERSION`. Outside the `release`
-    // profile the source digest joins in: a development build changes
-    // semantics between bumps, and must not replay what another one cached.
-    let guard = match profile().as_deref() {
-        Some("release") => String::new(),
-        _ => format!("d{:016x}", source_digest()),
-    };
+    // Caches are keyed on `format::SEMANTIC_VERSION` and the source digest:
+    // two builds of one version (a release and a later `cargo install` of a
+    // working tree) may differ in what a cache holds, and must not read or
+    // overwrite each other's.
+    let guard = format!("d{:016x}", source_digest());
     println!("cargo:rustc-env=SATEX_CACHE_GUARD={guard}");
     println!("cargo:rerun-if-changed=src");
-}
-
-/// The cargo profile being built: `OUT_DIR` is `target/[triple/]⟨profile⟩/build/⟨crate⟩/out`.
-fn profile() -> Option<String> {
-    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR")?);
-    out.ancestors().nth(3)?.file_name()?.to_str().map(str::to_string)
 }
 
 /// Code that only reports on an analysis — lints, subcommands, rendering —
