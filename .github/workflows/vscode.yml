@@ -1,0 +1,115 @@
+name: VS Code extension
+
+on:
+  pull_request:
+    paths:
+      - 'editors/vscode/**'
+      - '.github/workflows/vscode.yml'
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: editors/vscode
+
+jobs:
+  check:
+    name: Lint, compile, package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run compile
+      - run: npx vsce package --no-dependencies --out satex-universal.vsix
+
+  build:
+    name: Build ${{ matrix.target }}
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, vsce: linux-x64, runner: ubuntu-latest }
+          - { target: aarch64-unknown-linux-gnu, vsce: linux-arm64, runner: ubuntu-latest }
+          - { target: x86_64-apple-darwin, vsce: darwin-x64, runner: macos-15-intel }
+          - { target: aarch64-apple-darwin, vsce: darwin-arm64, runner: macos-14 }
+          - { target: x86_64-pc-windows-msvc, vsce: win32-x64, runner: windows-latest }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Install cross (aarch64-linux only)
+        if: matrix.vsce == 'linux-arm64'
+        run: cargo install cross
+        working-directory: .
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build release
+        shell: bash
+        working-directory: .
+        run: |
+          if [ "${{ matrix.vsce }}" = "linux-arm64" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+      - name: Bundle the binary
+        shell: bash
+        run: |
+          DIR="bin/${{ matrix.vsce }}"
+          mkdir -p "$DIR"
+          cp ../../target/${{ matrix.target }}/release/satex* "$DIR/" || true
+          rm -f "$DIR"/*.d "$DIR"/*.pdb
+          ls "$DIR"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx vsce package --no-dependencies --target ${{ matrix.vsce }} --out satex-${{ matrix.vsce }}.vsix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-${{ matrix.vsce }}
+          path: editors/vscode/satex-${{ matrix.vsce }}.vsix
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npx vsce package --no-dependencies --out satex-universal.vsix
+      - uses: actions/download-artifact@v4
+        with:
+          path: editors/vscode
+          pattern: vsix-*
+          merge-multiple: true
+      - name: Marketplace
+        run: npx vsce publish --packagePath satex-*.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      - name: Open VSX
+        run: for f in satex-*.vsix; do npx ovsx publish "$f" -p "$OVSX_PAT"; done
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: editors/vscode/satex-*.vsix
