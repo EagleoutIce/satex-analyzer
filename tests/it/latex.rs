@@ -2786,3 +2786,33 @@ fn lint_text_puts_correctness_first_grouped_by_rule() {
     let at = |s: &str| text.find(s).unwrap_or_else(|| panic!("{s} missing in {text}"));
     assert!(at("bug") < at("astyle") && at("astyle") < at("zstyle"), "{text}");
 }
+
+/// `\beamer@modecount` is back at 0 after every frame (`\beamer@savemode`
+/// at its start, `\beamer@resumemode` at its end, beamerbaseframe.sty), as
+/// `pdflatex` says here: a width only known as an interval in a TikZ node
+/// inside an overlay's colour box must not leave a path that skipped the
+/// frame's end decide the count. It is 0 or unknown, never another number.
+#[test]
+fn the_beamer_mode_count_is_back_after_a_frame_with_an_unknown_width() {
+    if !installed() {
+        return;
+    }
+    let source = r"\documentclass{beamer}
+\usepackage{tikz}
+\begin{document}
+\begin{frame}{T}
+\uncover<2->{%
+\begin{beamercolorbox}[wd=\textwidth,sep=5pt,rounded=true,shadow=true]{block body}
+\tikz\node[text width=3cm,text height=2cm]{\rule{\pdfuniformdeviate 100 pt}{1cm}};
+\end{beamercolorbox}%
+}
+\end{frame}
+\makeatletter\xdef\Pmc{\the\beamer@modecount}\makeatother
+\gdef\SatexReachedEnd{}
+\end{document}
+";
+    let analysis = analyze(source);
+    assert!(defined(&analysis, "SatexReachedEnd"));
+    let count = last_body(&analysis, "Pmc");
+    assert!(count == "0" || count.contains("unknown"), "{count:?}");
+}
