@@ -1612,6 +1612,8 @@ impl Machine<'_> {
                 let outer = nest.natural.unwrap_or_else(Natural::any);
                 (n.math_class, n.math_bin, n.math_prev) = (outer.math_class, outer.math_bin, None);
                 n.scripted = None;
+                // tex.web §§ 1153, 1186: the group's noad is the tail again.
+                n.pushed(Last::Other);
                 self.natural = (n.script.is_none() && n.math_pending.is_none()).then_some(n);
             }
             return;
@@ -1736,6 +1738,13 @@ impl Machine<'_> {
             }
         } else if nest.code == Some(group::MATH_CHOICE) {
             self.choice_closed(nest.part, natural);
+            // tex.web § 1174: the choice node is the tail of the list
+            // around it.
+            if nest.part & 15 == 4
+                && let Some(n) = &mut self.natural
+            {
+                n.pushed(Last::Other);
+            }
         } else if nest.align.is_some() {
             // The rows, or the `\noalign` material, went onto the
             // alignment's vertical list.
@@ -1763,8 +1772,12 @@ impl Machine<'_> {
     fn open_choice(&mut self, part: u8, span: Span) {
         let outer = self.natural;
         self.open_list(Some(group::MATH_CHOICE), Modes::MATH, part, span);
-        if part >> 4 == part & 15 && outer.is_some() {
-            self.natural = outer;
+        if part >> 4 == part & 15
+            && let Some(mut n) = outer
+        {
+            // Its list starts empty (tex.web § 1174).
+            n.tail = [Last::Empty; TAIL];
+            self.natural = Some(n);
         }
     }
 
@@ -1817,8 +1830,9 @@ impl Machine<'_> {
         // tex.web § 1139 `push_math`: `\fam` is -1 in the new math list.
         let fam = self.intern("fam");
         self.env.set_value(fam, Value::Int(-1), false);
-        // The math list's size, while it holds only plain characters.
-        self.natural = outer.map(|_| Natural::default());
+        // The math list's size, while it holds only plain characters. It
+        // starts empty (tex.web § 1139 `push_math`).
+        self.natural = outer.map(|_| Natural { tail: [Last::Empty; TAIL], ..Natural::default() });
         if display {
             // tex.web § 1145: the display's size and place come from the
             // paragraph before it, which satex does not break into lines.
@@ -1948,6 +1962,7 @@ impl Machine<'_> {
                         n.along = n.along.extended_by(italic);
                         (n.math_prev, n.math_box, n.scripted) = (None, None, None);
                         n.style = code - 2;
+                        n.pushed(Last::Other);
                         self.natural = Some(n);
                     }
                     _ => self.natural = None,
@@ -2537,6 +2552,12 @@ impl Machine<'_> {
         let Some(mut n) = self.natural else { return };
         // A whatsit in inline math has no size (tex.web § 730).
         if matches!(item, Item::Zero | Item::Whatsit) && self.mode == Modes::MATH {
+            // It is the math list's tail all the same (tex.web § 1105 sees it).
+            match item {
+                Item::Whatsit => n.pushed(Last::Whatsit),
+                _ => n.perhaps(Last::Other),
+            }
+            self.natural = Some(n);
             return;
         }
         n.scripted = None;
@@ -2564,6 +2585,13 @@ impl Machine<'_> {
             let italic = self.prev_italic(n.math_prev);
             n.along = n.along.extended_by(italic).extended_by(w.map_or(Dim::ANY, Dim::exact));
             n.math_prev = None;
+            // The glue's specification is not kept: `\mskip` is in math
+            // units, which `\lastskip` reports as such (tex.web § 424).
+            n.pushed(match (&item, *w) {
+                (Item::Glue(..), Some(w)) => Last::Glue(w, None),
+                (Item::Kern(_), Some(w)) => Last::Kern(w),
+                _ => Last::Unknown,
+            });
             self.natural = Some(n);
             return;
         }
@@ -3055,7 +3083,17 @@ impl Machine<'_> {
                     n.space_factor = Some(1000);
                 }
             }
-            None => self.append_item(Item::Unknown),
+            // Its size is not known, but tex.web § 1196 ends the formula
+            // with a math node and sets the space factor to 1000 whatever
+            // it holds: `\lastskip`, `\lastkern` and `\lastpenalty` are
+            // zero after it, and `\unskip` takes nothing away (§§ 424, 1105).
+            None => {
+                self.append_item(Item::Unknown);
+                if let Some(n) = self.natural.as_mut() {
+                    n.pushed(Last::Other);
+                    n.space_factor = Some(1000);
+                }
+            }
         }
     }
 
@@ -3220,6 +3258,8 @@ impl Machine<'_> {
         let space = self.begin_atom(n, t);
         n.along = n.along.extended_by(italic).extended_by(space);
         n.math_prev = None;
+        // The noad that holds it is the list's new tail.
+        n.pushed(Last::Other);
         t
     }
 
@@ -3285,6 +3325,8 @@ impl Machine<'_> {
             return self.math_script_char(n, sup, class, fam, ch);
         }
         (n.math_box, n.scripted) = (None, None);
+        // tex.web § 1151: a noad is the list's new tail.
+        n.pushed(Last::Other);
         let t = n.math_pending.take().unwrap_or(if class == 7 { 0 } else { class as u8 });
         let by = self.size_font(n.style >> 1);
         let font = self.family_font(by, fam);
@@ -3648,6 +3690,22 @@ impl Machine<'_> {
     pub(crate) fn remove_item(&mut self, removed: Removed) {
         self.end_word();
         let Some(mut n) = self.natural else { return };
+        // tex.web § 1105 in inline math: an item of that kind last in the
+        // math list goes, which loses the list's size here; any other tail
+        // stays.
+        if self.mode == Modes::MATH {
+            let goes = matches!(
+                (removed, n.tail[0]),
+                (_, Last::Unknown)
+                    | (Removed::Glue, Last::Glue(..))
+                    | (Removed::Kern, Last::Kern(_))
+                    | (Removed::Penalty, Last::Penalty(_))
+            );
+            if goes {
+                self.natural = None;
+            }
+            return;
+        }
         let horizontal = self.list_kind();
         self.kp_pop(&mut n.para.items, removed, n.tail[0]);
         let taken = match (removed, n.tail[0]) {

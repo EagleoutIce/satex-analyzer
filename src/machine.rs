@@ -6129,8 +6129,12 @@ will look undefined",
             }
             // Glue and kerns, `\mskip` and `\mkern` in math units, are no
             // atoms: `append_item` adds their width (tex.web §§ 732, 761).
+            // `\unskip`, `\unkern` and `\unpenalty` take an item away or
+            // nothing, which `remove_item` follows (tex.web § 1105).
             Meaning::Primitive(
-                P::Typeset(crate::builtins::Typeset::Glue | crate::builtins::Typeset::Dimen)
+                P::Typeset(
+                    crate::builtins::Typeset::Glue | crate::builtins::Typeset::Dimen | crate::builtins::Typeset::Plain,
+                )
                 | P::Mode(crate::builtins::ModeCmd::Horizontal(crate::builtins::Material::Glue)),
             ) => true,
             // A whatsit is no atom and has no size (tex.web § 730).
