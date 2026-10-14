@@ -78,9 +78,10 @@ Commands:
   dependencies  The program dependence graph — data dependencies plus control dependencies — as DOT or JSON
   trace         The execution trace, step by step
   cache         The interpreted LaTeX2e kernel and the package caches.  Without a further command, prints their status
+  compile       Build the document with latexmk, or the engine where latexmk is missing, and explain each error and warning the log reports by what the analysis found there.  Never opens a viewer
   install       Install the packages the document loads that this machine does not have.  Asks first, never elevates, and is never run by `lint --fix`
   tokens        The token stream the mouth produces
-  completions   Print the shell completion script: bash, zsh, fish, elvish or powershell.  Values complete from the running binary.  `install [bash|zsh|fish]` registers it in that shell's startup file; without a shell, the one running satex, else `$SHELL`
+  completions   Print the shell completion script: bash, zsh, fish, elvish or powershell.  Values complete from the running binary.  `install [bash|zsh|fish]` registers it in that shell's startup file; without a shell, in every shell installed or in use
   lsp           A Language Server Protocol server: a thin facade over the queries and lints above, driven by `initialize`/`didOpen`/`didChange` instead of one-shot arguments.  Stdio by default; `--port` switches to TCP
   help          Print this message or the help of the given subcommand(s)
 
@@ -197,7 +198,6 @@ error     correctness  build-command-placeholders       an engine command in the
 error     correctness  build-engine-mismatch            the build runs another engine, or another output, than the do…  
 error     correctness  build-shell-escape-missing       the document runs programs through \write18, but the build do…  
 error     correctness  caused-library-error             the document makes package code raise a TeX error               
-error     correctness  duplicate-label                  the same label is defined twice                                 
 error     correctness  math-still-open                  the run is still in math mode where the text ends               
 error     correctness  missing-graphic                  an included image is not there for this output target           
 error     correctness  not-defined                      \renewcommand targets a name that does not exist                
@@ -213,6 +213,7 @@ warning   correctness  catcode-escapes-group            a category code change i
 warning   correctness  conflicting-color-definition     the same color name is defined twice with different colors      
 warning   correctness  delimiter-not-followed           \left, \right or \middle is followed by a brace or a math shi…  
 warning   correctness  duplicate-bibliography-entry     the same key is declared by two bibliography entries            
+warning   correctness  duplicate-label                  the same label is defined twice                                 
 warning   correctness  environment-mismatch             \end names an environment other than the one that is open       
 warning   correctness  expl-syntax-left-on              \ExplSyntaxOn is never turned off                               
 warning   correctness  expl3-signature-mismatch         an expl3 function takes other arguments than its name says      
@@ -499,7 +500,7 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache
   source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
-  holds 189256 definitions
+  holds 190581 definitions
   state cached
 … 2 more lines omitted
 ```

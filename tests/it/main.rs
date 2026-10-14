@@ -14,6 +14,8 @@ mod cache_concurrency;
 mod cache_semantics;
 mod chktex;
 mod colors;
+mod compile;
+#[cfg(unix)]
 mod completions;
 mod compliance_matrix;
 mod corpus;

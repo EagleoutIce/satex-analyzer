@@ -129,7 +129,7 @@ macro-call           \fmtname  latex.ltx                       @ latex.ltx:731:2
 macro-call           \space    latex.ltx                       @ latex.ltx:731:34
 macro-call           \fmtver…  latex.ltx                       @ latex.ltx:731:42
 use                  LaTeX2e…  latex.ltx                       @ latex.ltx:129:24
-… 38866 more lines omitted
+… 38849 more lines omitted
 ```
 
 ## trace
@@ -216,7 +216,7 @@ variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.
 variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
 variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
 variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
-… 1699 more lines omitted
+… 1698 more lines omitted
 ```
 
 ## project

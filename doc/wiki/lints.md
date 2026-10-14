@@ -33,7 +33,6 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | [`build-engine-mismatch`](#build-engine-mismatch) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the build runs another engine, or another output, than the document needs |
 | [`build-shell-escape-missing`](#build-shell-escape-missing) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document runs programs through \write18, but the build does not allow it |
 | [`caused-library-error`](#caused-library-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document makes package code raise a TeX error |
-| [`duplicate-label`](#duplicate-label) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the same label is defined twice |
 | [`math-still-open`](#math-still-open) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 16">chktex 16</a> | the run is still in math mode where the text ends |
 | [`missing-graphic`](#missing-graphic) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | an included image is not there for this output target |
 | [`not-defined`](#not-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-safe">safe</span> | — | \renewcommand targets a name that does not exist |
@@ -49,6 +48,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | [`conflicting-color-definition`](#conflicting-color-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the same color name is defined twice with different colors |
 | [`delimiter-not-followed`](#delimiter-not-followed) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a> | \left, \right or \middle is followed by a brace or a math shift |
 | [`duplicate-bibliography-entry`](#duplicate-bibliography-entry) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the same key is declared by two bibliography entries |
+| [`duplicate-label`](#duplicate-label) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the same label is defined twice |
 | [`environment-mismatch`](#environment-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a> | \end names an environment other than the one that is open |
 | [`expl-syntax-left-on`](#expl-syntax-left-on) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | \ExplSyntaxOn is never turned off |
 | [`expl3-signature-mismatch`](#expl3-signature-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | an expl3 function takes other arguments than its name says |
@@ -257,18 +257,6 @@ When satex had to approximate on the way, the error may not be TeX's. Nor may an
 
 See [The TeXbook, chapter 27](https://ctan.org/pkg/texbook#chapter-27).
 
-### duplicate-label
-
-<p class="badges"><span class="sev sev-error" title="default: error">◆ default: error</span> <span class="cat">correctness</span></p>
-
-**the same label is defined twice**
-
-LaTeX warns `Label … multiply defined` and every reference resolves to the later one.
-
-Fix by renaming one of them.
-
-See [source2e § ltxref.dtx](https://ctan.org/pkg/source2e).
-
 ### math-still-open
 
 <p class="badges"><span class="sev sev-error" title="default: error">◆ default: error</span> <span class="cat">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 16">chktex 16</a></p>
@@ -449,6 +437,18 @@ Two `\bibitem`s with one key make LaTeX warn `Label … multiply defined` and ev
 Fix by renaming or deleting one of them.
 
 See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
+
+### duplicate-label
+
+<p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">correctness</span></p>
+
+**the same label is defined twice**
+
+LaTeX warns `Label … multiply defined` and every reference resolves to the later one. Only the kernel's `\newlabel` (and zref's) warn: a name another package writes to the `.aux` file twice, such as a tikzmark, is not checked.
+
+Fix by renaming one of them.
+
+See [source2e § ltxref.dtx](https://ctan.org/pkg/source2e).
 
 ### environment-mismatch
 
