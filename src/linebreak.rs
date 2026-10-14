@@ -5,6 +5,7 @@
 use crate::builtins::CodeTable;
 use crate::machine::Machine;
 use crate::mode::Natural;
+use crate::tfm::LigKern;
 use crate::value::{Glue, Scaled, Value};
 use std::collections::HashMap;
 
@@ -35,9 +36,10 @@ pub(crate) enum Kp {
     },
     Penalty(i64),
     Whatsit,
-    /// A discretionary with an empty replacement and post-break list, and
-    /// this pre-break box (none after a `\hyphenchar`, § 1039).
-    Disc(Option<Dims>),
+    /// A discretionary with an empty post-break list, this pre-break box
+    /// (none after a `\hyphenchar`, § 1039) and this many items after it
+    /// as its replacement (§ 145 `replace_count`).
+    Disc(Option<Dims>, u8),
 }
 
 impl Kp {
@@ -52,7 +54,7 @@ impl Kp {
     }
     /// § 148 `precedes_break` and characters: glue after it is a breakpoint.
     fn non_discardable(self) -> bool {
-        matches!(self, Kp::Box { .. } | Kp::Whatsit | Kp::Disc(_))
+        matches!(self, Kp::Box { .. } | Kp::Whatsit | Kp::Disc(..))
     }
 }
 
@@ -212,13 +214,14 @@ impl Machine<'_> {
 
     /// §§ 894-903: the second pass's list, with a discretionary hyphen at
     /// each hyphenation point of each word after glue. `None` where a word
-    /// is not followed exactly (ligatures, kerns at a point, boundary
-    /// characters, unknown codes or patterns).
+    /// is not followed exactly (ligatures, a ligature with the hyphen,
+    /// boundary characters, unknown codes or patterns).
     fn hyphenate(&mut self, items: &[Kp], start: usize, uc: i64) -> Option<Vec<Kp>> {
         let (left, right) = self.hyphen_mins();
         let tables = self.hyph_tables();
         let mut out: Vec<Kp> = items[..start].to_vec();
         let mut points: HashMap<usize, Dims> = HashMap::new();
+        let mut passed: HashMap<usize, (Dims, u8)> = HashMap::new();
         for i in start..items.len() {
             if !matches!(items[i], Kp::Glue { .. }) {
                 continue;
@@ -295,21 +298,48 @@ impl Machine<'_> {
             let b = m.char_box(hyf_char, z)?;
             for j in left..=word.len() - right {
                 if hyf[j] % 2 == 1 {
-                    let (k, Some(&Kp::Box { chr: Some((_, prev)), .. })) = (at[j - 1], items.get(at[j - 1])) else {
+                    let k = at[j - 1];
+                    let (Some(&Kp::Box { w, h, d, chr: Some((_, prev)), .. }), Some(&Kp::Box { chr: Some((_, next)), .. })) =
+                        (items.get(k), items.get(at[j]))
+                    else {
                         return None;
                     };
-                    // A kern at the point or with the hyphen is not followed.
-                    if k + 1 != at[j] || m.lig_kern(prev, hyf_char, z).is_some() {
+                    // § 916: a left boundary program puts its own material
+                    // at the start of the post-break text.
+                    if m.left_boundary(next, z).is_some() {
                         return None;
                     }
-                    points.insert(k, (b.width, b.height, b.depth));
+                    // § 909: a kern with the hyphen, or one with the next
+                    // letter, passes the hyphen at this letter: the
+                    // discretionary goes before it and replaces it and its
+                    // kern (§§ 914-918), its pre-break text is the letter, the
+                    // kern with the hyphen and the hyphen (§ 915).
+                    let with_hyphen = match m.lig_kern(prev, hyf_char, z) {
+                        None => None,
+                        Some(LigKern::Kern(x)) => Some(x),
+                        Some(LigKern::Lig { .. }) => return None,
+                    };
+                    let between = match items.get(k + 1) {
+                        _ if k + 1 == at[j] => None,
+                        Some(&Kp::Kern { w, explicit: false }) if k + 2 == at[j] => Some(w),
+                        _ => return None,
+                    };
+                    if with_hyphen.is_none() && between.is_none() {
+                        points.insert(k, (b.width, b.height, b.depth));
+                    } else {
+                        let pre = (w + with_hyphen.unwrap_or(0) + b.width, h.max(b.height), d.max(b.depth));
+                        passed.insert(k, (pre, 1 + u8::from(between.is_some())));
+                    }
                 }
             }
         }
         for (i, k) in items.iter().enumerate().skip(start) {
+            if let Some(&(pre, r)) = passed.get(&i) {
+                out.push(Kp::Disc(Some(pre), r));
+            }
             out.push(*k);
             if let Some(&pre) = points.get(&i) {
-                out.push(Kp::Disc(Some(pre)));
+                out.push(Kp::Disc(Some(pre), 0));
             }
         }
         Some(out)
@@ -325,6 +355,14 @@ fn add(sums: &mut [i64; 6], k: Kp) {
     if let Kp::Glue { st, sto, sh, .. } = k {
         sums[1 + usize::from(sto.min(3))] += st;
         sums[5] += sh;
+    }
+}
+
+/// § 869: past a discretionary with a pre-break text, its replacement too.
+fn after_break(items: &[Kp], e: usize) -> usize {
+    match items.get(e) {
+        Some(Kp::Disc(Some(_), r)) => e + 1 + usize::from(*r),
+        _ => e,
     }
 }
 
@@ -399,7 +437,7 @@ impl Pass {
                     (0, false, None)
                 }
                 Some(Kp::Penalty(p)) if *p < 10000 => ((*p).max(EJECT), false, None),
-                Some(Kp::Disc(b)) => (if b.is_some() { hyph } else { ex }, true, *b),
+                Some(Kp::Disc(b, _)) => (if b.is_some() { hyph } else { ex }, true, *b),
                 _ => continue,
             };
             let mut minimal = [AWFUL; 4];
@@ -486,7 +524,7 @@ impl Pass {
             // § 836.
             if minimum < AWFUL {
                 let limit = if adj.abs() >= AWFUL - minimum { AWFUL - 1 } else { minimum + adj.abs() };
-                let next = if brk.is_some() { e + 1 } else { e };
+                let next = after_break(items, e);
                 for fit in 0..4u8 {
                     if minimal[usize::from(fit)] <= limit {
                         active.push(Active {
@@ -528,7 +566,7 @@ impl Pass {
                                 (h, d) = (h.max(*kh), d.max(*kd));
                             }
                         }
-                        from = skip_discardable(items, if brk.is_some() { to + 1 } else { to });
+                        from = skip_discardable(items, after_break(items, to));
                         (h, d)
                     })
                     .collect();
