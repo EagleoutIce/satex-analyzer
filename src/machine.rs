@@ -5417,13 +5417,26 @@ will look undefined",
         }
     }
 
+    /// Where an error or message is raised against: the command of the
+    /// document's text that reached it, which may stand inside the argument
+    /// of the file call (a frame's body), else that call.
+    pub(crate) fn raised_at(&self, span: Span) -> Span {
+        match (self.file_call, self.project_site) {
+            (Some((_, call)), Some(site)) if site.file == call.file && (site.line, site.col) > (call.line, call.col) => {
+                site
+            }
+            (Some((_, call)), _) => call,
+            (None, _) => span,
+        }
+    }
+
     /// One of the engine's own errors, `text` as TeX prints it: raised
     /// against the document command that reached it, like `\errmessage`.
     fn tex_error(&mut self, text: &str, span: Span) {
         if self.probe.is_some() || self.halted {
             return;
         }
-        let at = self.file_call.map_or(span, |(_, call)| call);
+        let at = self.raised_at(span);
         self.note_raised(text, at);
         // Reported as `\errmessage`'s errors are (`raised-error`).
         self.occurrence(OccKind::Message, text.to_string(), Some("errmessage".to_string()), at);

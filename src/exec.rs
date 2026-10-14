@@ -3900,7 +3900,7 @@ impl Machine<'_> {
         self.set_catcode(ch, catcode);
         // `\ExplSyntaxOn` changes catcodes from inside the kernel. The change
         // belongs to the file line that asked for it.
-        let at = self.file_call.map_or(span, |(_, call)| call);
+        let at = self.raised_at(span);
         self.occurrence(OccKind::Catcode, ch.to_string(), Some((catcode as u8).to_string()), at);
     }
 
@@ -3952,7 +3952,7 @@ impl Machine<'_> {
         // message.
         let open = (0..16).contains(&stream) && self.write_open(stream) != Some(false);
         if immediate && stream != 18 && !open {
-            let at = self.file_call.map_or(span, |(_, call)| call);
+            let at = self.raised_at(span);
             crate::observe::warned(self, &text, at);
             if self.probe.is_none() {
                 self.note_missing_file_error(&text, at);
@@ -4134,7 +4134,7 @@ impl Machine<'_> {
         let text = crate::tex::text_with_groups(&expanded, &self.out.interner);
         // The message belongs to the command the file called, wherever the
         // raising code was defined.
-        let at = self.file_call.map_or(span, |(_, call)| call);
+        let at = self.raised_at(span);
         crate::observe::warned(self, &text, at);
         if let (Some(watch), Some(Primitive::Message { error: true })) = (&mut self.probe, self.env.meaning(by).prim())
         {
