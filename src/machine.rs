@@ -5551,13 +5551,15 @@ will look undefined",
                 ),
             };
             // A script is one character here: expansion, spaces and
-            // `\relax` may come before it (tex.web §§ 404, 1151).
+            // `\relax` may come before it (tex.web §§ 404, 1151). A math
+            // character given by name is that character (§ 1151).
             let script = self.natural.is_some_and(|n| n.script.is_some())
                 && match token.tok {
                     Tok::Cs(sym) => {
                         !self.expandable(sym)
                             && self.env.meaning(sym) != Meaning::Primitive(crate::builtins::Primitive::Relax)
                             && !self.script_transparent(sym)
+                            && !self.names_math_char(sym)
                     }
                     // `{` opens a script group (`SCRIPT_GROUP` in `crate::mode`).
                     _ => !matches!(
@@ -6195,6 +6197,13 @@ will look undefined",
             }
             _ => false,
         }
+    }
+
+    /// A `\mathchardef` constant, `\mathchar` or `\delimiter`: one math
+    /// character, which `math_code_char` sets (tex.web § 1151).
+    fn names_math_char(&self, sym: Sym) -> bool {
+        matches!(self.env.meaning(sym), Meaning::Register(crate::tex::RegKind::MathChar, _))
+            || self.math_char_command(sym).is_some()
     }
 
     fn adds_no_atom(&self, sym: Sym) -> bool {
