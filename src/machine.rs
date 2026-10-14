@@ -5542,8 +5542,11 @@ will look undefined",
             }
             // tex.web § 785: an `&` ends a cell, and between rows begins one.
             Some(Catcode::Tab) => {
-                self.end_word();
-                self.align_cell(true);
+                if !self.template_cell_end(token) {
+                    self.end_word();
+                    self.align_cell(true);
+                    self.template_next_cell();
+                }
             }
             // tex.web § 785: spaces between rows are skipped.
             Some(Catcode::Space) if self.between_rows() => {}
