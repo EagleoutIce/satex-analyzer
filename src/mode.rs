@@ -454,6 +454,12 @@ pub struct Natural {
     /// A `\noboundary` came: the word it ends, or the one it starts, meets
     /// no boundary character (tex.web §§ 1030, 1038).
     pub no_boundary: bool,
+    /// A vertical list whose last item is glue or a kern: that item, and
+    /// the height, depth and first height the list had before it (tex.web
+    /// § 668 adds the depth before glue or a kern into the height), so
+    /// that `\unskip` or `\unkern` taking it away restores them; with the
+    /// three after it, which tell that nothing else changed them since.
+    pub undo: Option<(Last, [(Dim, Dim, Option<Dim>); 2])>,
     /// How many boxes and rules came onto the list through
     /// [`State::append_item`]: with the tail, whether it holds nothing else.
     pub solid: u8,
@@ -557,6 +563,7 @@ impl Natural {
 
     /// An item went onto the list.
     fn pushed(&mut self, item: Last) {
+        self.undo = None;
         for k in (1..TAIL).rev() {
             self.tail[k] = self.tail[k - 1];
         }
@@ -572,6 +579,7 @@ impl Natural {
     /// An item came off the list. What it uncovers past the window is not
     /// followed.
     fn popped(&mut self) {
+        self.undo = None;
         for k in 1..TAIL {
             self.tail[k - 1] = self.tail[k];
         }
@@ -725,6 +733,7 @@ impl Natural {
             line: if self.line == other.line { self.line } else { None },
             para: self.para.join(other.para),
             prev_depth: join_prev(self.prev_depth, other.prev_depth),
+            undo: if self.undo == other.undo { self.undo } else { None },
         };
         // A character not yet counted differs between the paths: its own
         // size is not known, so the lengths it would add widen.
@@ -984,6 +993,7 @@ impl Machine<'_> {
         // width, height and depth are those of the one line it may make.
         let indent = if indented { self.dimen_parameter("parindent") } else { Dim::exact(0) };
         self.natural = Some(Natural {
+            undo: None,
             along: indent,
             height: Dim::exact(0),
             depth: Dim::exact(0),
@@ -1666,7 +1676,7 @@ impl Machine<'_> {
                 } else {
                     (n.along.extended_by(n.depth).reduced_by(limit).join(n.along), n.depth.join(limit))
                 };
-                let n = Natural { along, depth, ..n };
+                let n = Natural { along, depth, undo: None, ..n };
                 let height = nest.to.size(n.along);
                 // tex.web § 1087: a `\vtop` takes its height from its first
                 // box, and the rest of the packed box is its depth.
@@ -3090,8 +3100,12 @@ impl Machine<'_> {
                 n.pushed(p.map_or(Last::Unknown, Last::Penalty));
             }
             Item::Kern(k) => {
+                let before = (n.along, n.depth, n.first);
                 n.advance(horizontal, k.map_or(Dim::ANY, Dim::exact));
                 n.pushed(k.map_or(Last::Unknown, Last::Kern));
+                if !horizontal {
+                    n.undo = Some((n.tail[0], [before, (n.along, n.depth, n.first)]));
+                }
             }
             Item::Glue(w, spec) => {
                 // tex.web § 868: glue is a legal breakpoint only after a
@@ -3108,11 +3122,15 @@ impl Machine<'_> {
                     // than `set_line` bounds it.
                     n.para.awkward |= spec.is_none_or(|g| g.stretch.amount < 0);
                 }
+                let before = (n.along, n.depth, n.first);
                 n.advance(horizontal, w.map_or(Dim::ANY, Dim::exact));
                 n.pushed(match w {
                     Some(w) => Last::Glue(w, spec),
                     None => Last::Unknown,
                 });
+                if !horizontal {
+                    n.undo = Some((n.tail[0], [before, (n.along, n.depth, n.first)]));
+                }
             }
             Item::Rule { width, height, depth } => {
                 n.boxed(horizontal, [rule(width), rule(height), rule(depth)], skips);
@@ -4208,6 +4226,17 @@ impl Machine<'_> {
             // tex.web § 668: the depth the item before it left is not kept,
             // so a vertical list only widens.
             Some(true) => n.along = n.along.reduced_by(Dim::exact(taken)),
+            // A penalty has no size on a vertical list (tex.web § 668).
+            Some(false) if removed == Removed::Penalty => {}
+            // The glue or kern appended last: the list as it was before.
+            Some(false)
+                if n.undo.is_some_and(|(item, [_, after])| {
+                    item == n.tail[0] && item != Last::Unknown && after == (n.along, n.depth, n.first)
+                }) =>
+            {
+                let (_, [before, _]) = n.undo.expect("checked");
+                (n.along, n.depth, n.first) = before;
+            }
             _ => {
                 n.along = Dim::ANY;
                 n.depth = Dim::ANY;
