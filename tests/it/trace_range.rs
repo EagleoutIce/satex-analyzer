@@ -220,6 +220,9 @@ fn an_injected_text_is_traced_where_it_is_put() {
     let child = events(&dir, &["--inject", "\\x", "--at", "child.tex:1:15"]);
     assert!(has(&child, "\\x", "child.tex", 1), "{child:?}");
     assert_eq!(std::fs::read_to_string(dir.join("child.tex")).unwrap(), "\\def\\x{\\relax}\n");
+    // The main file named by its name is the main file.
+    let named = events(&dir, &["--inject", "\\b", "--at", "main.tex:3"]);
+    assert!(has(&named, "\\b", "main.tex", 3), "{named:?}");
     // A line past the end is an error, not an empty trace.
     assert!(!trace(&dir, &["--inject", "\\b", "--at", "40"]).status.success());
 }
