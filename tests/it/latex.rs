@@ -783,6 +783,73 @@ fn a_box_has_its_natural_size() {
     );
 }
 
+/// The tail of an inline formula's list, and of the list after it: a
+/// formula ends in a math node whatever it holds (tex.web § 1196), so
+/// `\lastskip` is zero after one that took `\unskip`, as algorithm2e's
+/// `\DataSty` does; in the formula, `\lastkern` sees a kern only while it
+/// is last (§ 424). The expectations are what pdflatex printed for the same
+/// source.
+#[test]
+fn an_inline_formula_list_tail_is_followed() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\def\after#1{\setbox0\hbox{a #1\global\skip1=\lastskip\global\count1=\lastpenalty\global\dimen1=\lastkern}%
+\typeout{mark \the\skip1,\the\count1,\the\dimen1}}
+\def\last#1{\setbox0\hbox{a $x\kern2pt#1$}\typeout{mark \the\dimen1}}
+\def\width#1{\setbox0\hbox{#1}\typeout{mark \the\wd0}}
+\after{$x\unskip$}\after{$\mbox{x}\unskip$}\after{$x\unpenalty$}\after{$x\hskip2pt\unskip$}
+\last{\global\dimen1=\lastkern}\last{\relax\global\dimen1=\lastkern}\last{{}\global\dimen1=\lastkern}
+\last{\textstyle\global\dimen1=\lastkern}\last{{\global\dimen1=\lastkern}}
+\last{\mathchoice{\global\dimen1=\lastkern}{\global\dimen1=\lastkern}{}{}}
+\last{\mathchoice{}{}{}{}\global\dimen1=\lastkern}\last{\special{}\global\dimen1=\lastkern}
+\width{$x\unskip y$}\width{$\mbox{a}\unskip y$}
+\end{document}",
+    );
+    assert_eq!(
+        marks(&analysis),
+        [
+            "mark 0.0pt,0,0.0pt",
+            "mark 0.0pt,0,0.0pt",
+            "mark 0.0pt,0,0.0pt",
+            "mark 0.0pt,0,0.0pt",
+            "mark 2.0pt",
+            "mark 2.0pt",
+            "mark 0.0pt",
+            "mark 0.0pt",
+            "mark 0.0pt",
+            "mark 0.0pt",
+            "mark 0.0pt",
+            "mark 0.0pt",
+            "mark 10.97687pt",
+            "mark 10.26161pt",
+        ]
+    );
+}
+
+/// A kern `\unkern` takes from inline math loses the formula's size, which
+/// pdflatex gives as 10.97687pt, but not what ends the formula.
+#[test]
+fn unkern_in_inline_math_widens_its_size() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\setbox0\hbox{a $x\kern2pt\unkern y$\global\skip1=\lastskip}
+\ifdim\wd0=10.97687pt \def\exact{}\fi
+\ifdim\skip1=0pt \def\zero{}\else\def\nonzero{}\fi
+\end{document}",
+    );
+    assert!(defined(&analysis, "exact"));
+    assert!(defined(&analysis, "zero"));
+    assert!(!defined(&analysis, "nonzero"));
+}
+
 /// An inline formula's size with scripts: a braced one-character script, a
 /// box nucleus (tex.web § 756 uses the box's height and depth), and a
 /// `\color` whatsit inside the script. The expectations are what pdflatex
