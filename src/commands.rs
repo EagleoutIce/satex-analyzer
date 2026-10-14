@@ -1727,12 +1727,12 @@ impl Machine<'_> {
             Syntax::PdfXImage => {
                 let spec = self.scan_rule_spec();
                 self.scan_attr();
-                let mut first = true;
+                let mut page = Some(1);
                 if self.scan_keyword("named") {
                     self.read_general_text();
-                    first = false;
+                    page = None;
                 } else if self.scan_keyword("page") {
-                    first = self.scan_int() == Some(1);
+                    page = self.scan_int();
                 }
                 if self.scan_keyword("colorspace") {
                     self.scan_int();
@@ -1764,12 +1764,13 @@ impl Machine<'_> {
                 let produced = self.produced_page(&name);
                 let size = match pdf {
                     _ if produced.is_some() => {
-                        produced.flatten().filter(|_| first && spec == [None; 3] && which.is_some())
+                        produced.flatten().filter(|_| page == Some(1) && spec == [None; 3] && which.is_some())
                     }
                     true => path
-                        .filter(|_| first && spec == [None; 3])
+                        .filter(|_| spec == [None; 3])
                         .zip(which)
-                        .and_then(|(p, w)| crate::pdfbox::page_box(&std::fs::read(p).ok()?, w)),
+                        .zip(page)
+                        .and_then(|((p, w), n)| crate::pdfbox::page_box(&std::fs::read(p).ok()?, w, n)),
                     // A PNG or JPEG: its pixels at its resolution, else at
                     // `\pdfimageresolution`.
                     false => {

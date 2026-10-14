@@ -2164,6 +2164,76 @@ fn an_eps_image_converted_through_the_shell_has_its_bounding_box() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A PDF file of `objects` (numbered from 1, the first the catalog) with
+/// its cross-reference table.
+fn pdf_file(objects: &[&str]) -> Vec<u8> {
+    let mut out = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend(format!("{} 0 obj\n{body}\nendobj\n", i + 1).bytes());
+    }
+    let xref = out.len();
+    out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).bytes());
+    for o in offsets {
+        out.extend(format!("{o:010} 00000 n \n").bytes());
+    }
+    out.extend(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objects.len() + 1).bytes());
+    out
+}
+
+/// `\pdfximage page n` sizes page `n` of a page tree as pdfTeX does: the
+/// page's crop box clipped to its media box, both and `/Rotate` inherited
+/// from the `/Pages` nodes above it, a rotation by 90 or 270 swapping width
+/// and height, a length through single precision (439.363bp is 28902072sp).
+/// Sizes as `pdflatex` prints them for the same file; a page past the last
+/// is unknown (pdfTeX stops there).
+#[test]
+fn a_page_of_a_pdf_file_has_its_own_box() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::scratch_dir(std::env::temp_dir().join(format!("satex-pages-{}", std::process::id())));
+    let pdf = pdf_file(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [4 0 R 5 0 R 3 0 R 8 0 R] /Count 5 /MediaBox [0 0 439.363 666.131] >>",
+        "<< /Type /Pages /Parent 2 0 R /Kids [6 0 R 7 0 R] /Count 2 /Rotate 90 /CropBox [5 5 405 305] >>",
+        "<< /Type /Page /Parent 2 0 R /Contents 9 0 R >>",
+        "<< /Type /Page /Parent 2 0 R /CropBox [-77.9515 -83.9042 517.049 757.096] /Contents 9 0 R >>",
+        "<< /Type /Page /Parent 3 0 R /CropBox [10 20 210 120] /Contents 9 0 R >>",
+        "<< /Type /Page /Parent 3 0 R /Rotate 180 /MediaBox [0 0 300 100] /Contents 9 0 R >>",
+        "<< /Type /Page /Parent 2 0 R /Rotate -90 /CropBox [-10 50 200 700] /Contents 9 0 R >>",
+        "<< /Length 0 >>\nstream\n\nendstream",
+    ]);
+    std::fs::write(dir.join("multi.pdf"), pdf).unwrap();
+    let source = r"\documentclass{article}
+\begin{document}
+\count255=1
+\loop
+\pdfximage page \count255 {multi.pdf}\setbox0\hbox{\pdfrefximage\pdflastximage}
+\pdfximage page \count255 mediabox {multi.pdf}\setbox2\hbox{\pdfrefximage\pdflastximage}
+\expandafter\xdef\csname P\romannumeral\count255\endcsname{\the\wd0,\the\ht0;\the\wd2,\the\ht2}
+\ifnum\count255<5 \advance\count255 1 \repeat
+\pdfximage page 1 {multi.pdf}\setbox0\hbox{\pdfrefximage\pdflastximage}\xdef\sp{\number\wd0,\number\ht0}
+\pdfximage page 6 {multi.pdf}\setbox0\hbox{\pdfrefximage\pdflastximage}\xdef\past{\number\wd0}
+\end{document}";
+    let doc = dir.join("doc.tex");
+    std::fs::write(&doc, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&doc), &crate::support::config());
+    let _ = std::fs::remove_dir_all(&dir);
+    for (page, want) in [
+        ("Pi", "441.01062pt,668.62897pt;441.01062pt,668.62897pt"),
+        ("Pii", "441.01062pt,668.62897pt;441.01062pt,668.62897pt"),
+        ("Piii", "100.375pt,200.75pt;668.62897pt,441.01062pt"),
+        ("Piv", "296.10625pt,95.35625pt;301.125pt,100.375pt"),
+        ("Pv", "618.44147pt,200.75pt;668.62897pt,441.01062pt"),
+        ("sp", "28902072,43819268"),
+    ] {
+        assert_eq!(body(&analysis, page), want, "{page}");
+    }
+    assert!(!body(&analysis, "past").chars().all(|c| c.is_ascii_digit()), "{}", body(&analysis, "past"));
+}
+
 /// tex.web §§ 764-766, 1155: a `\mathchardef` symbol is one atom with its
 /// font's width, and relations and punctuation are spaced by their muskips.
 /// The widths are what `pdflatex` prints for the same boxes.
