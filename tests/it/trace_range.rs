@@ -204,3 +204,22 @@ fn interactive_reports_skipped_internal_steps_and_the_output_of_a_range() {
     assert!(ranged.contains("output:\nhello world"), "{ranged}");
     assert!(!text(&["--include-internal"]).contains("internal steps skipped"));
 }
+
+/// `--inject TEXT --at [FILE:]LINE[:COL]`: the text is read there as if it
+/// stood in the file, with the definitions in force at that point, and the
+/// trace keeps what it does; the files on disk stay as they were.
+#[test]
+fn an_injected_text_is_traced_where_it_is_put() {
+    let dir = document("inject");
+    // `\b` is defined on line 2: put after it, it runs `\a` and `\relax`.
+    let after = events(&dir, &["--inject", "\\b", "--at", "3"]);
+    assert!(has(&after, "\\b", "main.tex", 3), "{after:?}");
+    assert!(has(&after, "\\a", "main.tex", 2), "{after:?}");
+    assert!(!after.iter().any(|(n, _, l)| n == "\\def" || *l == 4), "{after:?}");
+    // In a file `\input` reads, at a column: the name is defined there.
+    let child = events(&dir, &["--inject", "\\x", "--at", "child.tex:1:15"]);
+    assert!(has(&child, "\\x", "child.tex", 1), "{child:?}");
+    assert_eq!(std::fs::read_to_string(dir.join("child.tex")).unwrap(), "\\def\\x{\\relax}\n");
+    // A line past the end is an error, not an empty trace.
+    assert!(!trace(&dir, &["--inject", "\\b", "--at", "40"]).status.success());
+}
