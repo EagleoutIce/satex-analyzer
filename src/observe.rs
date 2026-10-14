@@ -703,14 +703,15 @@ pub fn relate(m: &mut Machine) {
     let declaring: crate::fixed::HashSet<usize> = declared.iter().map(|d| d.2).collect();
     // Text a `\documentclass` or `\usepackage` call was given as an option
     // is that option wherever it is written again (babel writes its
-    // languages to the `.aux`), never a key a read name was made from.
-    let options: crate::fixed::HashSet<(crate::tex::FileId, u32, &str)> = m
+    // languages to the `.aux`), never a key a read name was made from. The
+    // option is recorded at its call, which may begin lines above it.
+    let options: crate::fixed::HashSet<(crate::tex::FileId, &str)> = m
         .out
         .facts
         .occurrences
         .iter()
         .filter(|o| o.kind == OccKind::PassedOption)
-        .map(|o| (o.span.file, o.span.line, o.key.as_str()))
+        .map(|o| (o.span.file, o.key.as_str()))
         .collect();
     let mut named: Vec<(usize, String, usize)> = Vec::new();
     for (i, line) in lines.iter().enumerate().filter(|(i, l)| !declaring.contains(i) && !l.head.is_empty()) {
@@ -722,7 +723,7 @@ pub fn relate(m: &mut Machine) {
                 let at = shape(&mut shapes, &prefix, &suffix);
                 shapes[at].3.get_or_insert_with(|| line.head.clone());
                 let written = line.at(&key).0;
-                let option = options.contains(&(written.file, written.line, key.as_str()));
+                let option = options.contains(&(written.file, key.as_str()));
                 if !option && !named.iter().any(|n| n.1 == key && n.2 == i) {
                     named.push((at, key, i));
                 }
