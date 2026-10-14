@@ -275,6 +275,48 @@ pub fn raster_size(data: &[u8], default_dpi: i64) -> Option<(i64, i64)> {
     Some((scale(w, xr), scale(h, yr)))
 }
 
+/// The width and height in scaled points of the page `epstopdf` (TeX
+/// Live's `epstopdf.pl`, without `--hires` or `--exact`) makes of the EPS
+/// file `eps`: the header's `%%BoundingBox: llx lly urx ury` moved to the
+/// origin, so a media box `[0 0 urx-llx ury-lly]` in big points, read as
+/// [`page_box`] reads it. Only what the script's header scan surely finds:
+/// a file that starts with `%!`, `\n` line ends, a box of four integers
+/// before the header ends (a line not starting with `%`, or
+/// `%%EndComments`). A DOS EPS binary file (Adobe TN 5002: `C5D0D3C6`, then
+/// the PostScript section's offset and length, little-endian) is that
+/// section. An `(atend)` box or anything else gives no size.
+pub fn eps_page_size(eps: &[u8]) -> Option<(i64, i64)> {
+    if eps.len() > 30 && eps.starts_with(b"\xC5\xD0\xD3\xC6") {
+        let word = |at: usize| u32::from_le_bytes([eps[at], eps[at + 1], eps[at + 2], eps[at + 3]]) as usize;
+        let (offset, length) = (word(4), word(8));
+        return eps_page_size(eps.get(offset..offset.checked_add(length)?)?);
+    }
+    if !eps.starts_with(b"%!") {
+        return None;
+    }
+    for line in eps.split(|&b| b == b'\n').skip(1) {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.contains(&b'\r') {
+            return None;
+        }
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        if !line.starts_with(b"%") || line.starts_with(b"%%EndComments") {
+            return None;
+        }
+        let Some(rest) = line.strip_prefix(b"%%BoundingBox:") else { continue };
+        let rest = String::from_utf8_lossy(rest);
+        let n: Vec<i64> = rest.split_whitespace().take(4).map_while(|v| v.parse().ok()).collect();
+        // `(atend)`, fractions, or anything else the script may read otherwise.
+        let [llx, lly, urx, ury] = n[..] else { return None };
+        let (w, h) = (urx - llx, ury - lly);
+        let sp = |bp: i64| (bp as f64 * 65781.76).round() as i64;
+        return (w > 0 && h > 0).then(|| (sp(w), sp(h)));
+    }
+    None
+}
+
 /// Width, height and resolution (0 none) of a PNG file.
 fn png_info(b: &[u8]) -> Option<(i64, i64, i64, i64)> {
     if !b.starts_with(b"\x89PNG\r\n\x1a\n") {
@@ -355,6 +397,33 @@ mod tests {
         assert_eq!(super::page_box(cropped.as_bytes(), "crop"), None);
     }
 
+    /// epstopdf 2.36 makes `%%BoundingBox: 10 -20 295 61` a media box
+    /// `[0 0 285 81]` (its `%%HiResBoundingBox` unread); a box the header
+    /// does not hold surely gives no size.
+    #[test]
+    fn an_eps_box_moves_to_the_origin() {
+        let eps = |bb: &str| {
+            format!(
+                "%!PS-Adobe-3.0 EPSF-3.0\n{bb}\n%%HiResBoundingBox: 10.2 -19.5 294.9 60.8\n%%EndComments\nshowpage\n"
+            )
+        };
+        let bp = |n: f64| (n * 65781.76).round() as i64;
+        assert_eq!(super::eps_page_size(eps("%%BoundingBox: 10 -20 295 61").as_bytes()), Some((bp(285.0), bp(81.0))));
+        // The same as the PostScript section of a DOS EPS binary file.
+        let ps = eps("%%BoundingBox: 10 -20 295 61").into_bytes();
+        let mut dos = b"\xC5\xD0\xD3\xC6".to_vec();
+        for word in [32u32, ps.len() as u32, 0, 0, 0, 0] {
+            dos.extend(word.to_le_bytes());
+        }
+        dos.extend([0xff, 0xff, 0, 0]);
+        dos.extend(&ps);
+        dos.extend(b"II*\0 preview");
+        assert_eq!(super::eps_page_size(&dos), Some((bp(285.0), bp(81.0))));
+        for bb in ["%%BoundingBox: (atend)", "%%BoundingBox: 0 0 1.5 2", "%%Title: x", "x %%BoundingBox: 0 0 9 9"] {
+            assert_eq!(super::eps_page_size(eps(bb).as_bytes()), None, "{bb}");
+        }
+    }
+
     /// A PNG header: `w`×`h` pixels, with a `pHYs` chunk of `ppm` pixels
     /// per meter when given.
     fn png(w: u32, h: u32, ppm: Option<u32>) -> Vec<u8> {
@@ -411,4 +480,3 @@ mod tests {
         assert_eq!(pt(5), Some(14454.0));
     }
 }
-
