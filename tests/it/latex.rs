@@ -2264,8 +2264,8 @@ fn a_uniform_parshape_keeps_the_lines_known() {
 /// the line off with `\vsplit` (tex.web §§ 970-977: no breakpoint but the
 /// end, packed to the height asked), `\unvbox`es it, takes it back with
 /// `\lastbox` and reads pdfTeX's `\leftmarginkern` of it: `\lpcode`
-/// thousandths of the quad. A ligature first stays unknown. Sizes as
-/// `pdflatex` prints.
+/// thousandths of the quad; of a ligature first, its own character's
+/// (pdfTeX's `char_pw` reads `lig_char`). Sizes as `pdflatex` prints.
 #[test]
 fn left_protrusion_of_a_line_is_known() {
     if !installed() {
@@ -2286,6 +2286,8 @@ fn left_protrusion_of_a_line_is_known() {
 \setbox0\vbox{\hsize3cm}\setbox2\vsplit0 to 7pt \xdef\Me{\the\wd2/\the\ht2/\the\dp2/\ifvoid0 void\fi}
 \setbox0\vbox{\hsize3cm\noindent Ag}\splitmaxdepth=1pt \setbox2\vsplit0 to 3pt \xdef\Md{\the\wd2/\the\ht2/\the\dp2/\ifvoid0 void\fi}
 \setbox0\hbox{\leftprotrusion{fi}x}\xdef\Ml{\the\wd0}
+\setbox0\hbox{\leftprotrusion{--}x}\xdef\Mn{\the\wd0}
+\setbox0\vbox{\hsize3cm\noindent ---}\setbox0\vbox{\setbox2\vsplit0 to 12pt \unvbox2 \global\setbox6\lastbox}\xdef\Mo{\leftmarginkern6}
 \end{document}";
     let analysis = analyze(src);
     let want = [
@@ -2297,13 +2299,35 @@ fn left_protrusion_of_a_line_is_known() {
         ("Mz", "0pt"),
         ("Me", "0.0pt/7.0pt/0.0pt/void"),
         ("Md", "85.35826pt/3.0pt/1.0pt/void"),
+        ("Ml", "10.83069pt"),
+        ("Mn", "8.27576pt"),
+        ("Mo", "-2.99927pt"),
     ];
     for (name, want) in want {
         assert_eq!(body(&analysis, name), want, "{name}");
     }
-    // pdflatex: 10.83069pt; a ligature first is not followed.
-    let ml = body(&analysis, "Ml");
-    assert!(ml.contains("unknown"), "{ml}");
+}
+
+/// microtype's `\leftprotrusion` after `\item` measures an en dash
+/// ligature first in the item: the margin kern it reads is known, so the
+/// paragraph surely starts there and the characters after it do not each
+/// fork on the mode (they did, summarizing a loop per character).
+#[test]
+fn an_item_starting_with_a_dash_ligature_starts_its_paragraph() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{microtype}
+\begin{document}
+\begin{description}
+\item[X] -- Gamma
+\end{description}
+\end{document}",
+    );
+    let found = codes(&analysis);
+    assert!(!found.iter().any(|c| c == "recursion-widened"), "{found:?}");
 }
 
 /// tex.web §§ 731, 763, 1171-1174: in inline math `\textstyle`,

@@ -1028,8 +1028,8 @@ impl Machine<'_> {
 
     /// The one line a paragraph `before` set on the empty vertical list
     /// `after` makes it: its size, and the left margin kern pdfTeX's
-    /// `post_line_break` puts first in it, from the character it starts
-    /// with (none known where it starts otherwise).
+    /// `post_line_break` puts first in it, from the character or ligature
+    /// it starts with (none known where it starts otherwise).
     fn lone_line(&mut self, before: &Natural, n: &Natural, after: &mut Natural) {
         if before.prior || before.first.is_some() || n.para.below != Last::Empty {
             return;
@@ -1042,8 +1042,10 @@ impl Machine<'_> {
         if reach != width || w < 0 || n.para.lost || n.para.lines != (1, 1) || n.para.along != Dim::exact(h) {
             return;
         }
+        // pdfTeX's `char_pw` takes a ligature's own character (`lig_char`),
+        // which is the one a ligature box here holds.
         let kern = match head {
-            Some(crate::linebreak::Kp::Box { chr: Some((font, c)), lig: false, .. }) => self.left_margin_kern(font, c),
+            Some(crate::linebreak::Kp::Box { chr: Some((font, c)), .. }) => self.left_margin_kern(font, c),
             _ => None,
         };
         after.tail = [Last::Empty; TAIL];
