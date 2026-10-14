@@ -520,7 +520,13 @@ fn caused_library_errors(report: &mut Report) {
                 .push_str(&format!(" (may follow from the analysis gap at {}: check that first)", report.place(first))),
             None => {}
         }
-        let severity = if exact && before.is_none() { Severity::Error } else { Severity::Warning };
+        // An error only an approximated path raised is a possible one, not
+        // a defect to fix: a note, never a warning.
+        let severity = match (exact, before) {
+            (false, _) => Severity::Info,
+            (true, None) => Severity::Error,
+            (true, Some(_)) => Severity::Warning,
+        };
         report.add_as(severity, origin, d.code, message, None);
     }
 }
