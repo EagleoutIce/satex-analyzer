@@ -1441,3 +1441,38 @@ fn a_duplicate_label_from_two_calls_is_reported_at_the_second() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].starts_with("5:1 ") && found[0].contains("via \\greet"), "{found:?}");
 }
+
+/// A reference ahead of its label (a figure further down) is defined:
+/// pdflatex resolves it on its second run.
+#[test]
+fn a_reference_ahead_of_its_label_is_defined() {
+    let source = "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\nSee \\ref{fig:a}.\n\
+                  \\begin{figure}\nX\\caption{C}\n\\label{fig:a}\n\\end{figure}\n\\end{document}\n";
+    let Some(analysis) = latex(source) else { return };
+    let found = placed(&analysis, "undefined-reference");
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// A reference leaves `\r@⟨key⟩` `\relax` when it is not defined yet
+/// (nameref's `\NR@@setref`): that declares no label, so a `\label` read
+/// before it from an input file still defines the key, as pdflatex finds on
+/// its second run.
+#[test]
+fn a_label_in_an_input_file_defines_the_key_a_later_reference_names() {
+    if which::which("kpsewhich").is_err() {
+        return;
+    }
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("satex-chktex-ref-ahead"));
+    std::fs::write(dir.join("part.tex"), "Text\\label{sec:a}\n").unwrap();
+    let source = "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\\input{part}\n\
+                  \\ref{sec:a}\n\\end{document}\n";
+    let path = dir.join("doc.tex");
+    std::fs::write(&path, source).unwrap();
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let analysis = Machine::analyze(source, Some(&path), &cfg);
+    let _ = std::fs::remove_dir_all(&dir);
+    let found = placed(&analysis, "undefined-reference");
+    assert!(found.is_empty(), "{found:?}");
+    let label = |o: &&satex::facts::Occurrence| o.kind == satex::builtins::OccKind::Label && o.key == "sec:a";
+    assert_eq!(analysis.facts.occurrences.iter().filter(label).count(), 1);
+}
