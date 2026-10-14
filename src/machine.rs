@@ -4572,7 +4572,12 @@ will look undefined",
         if let Meaning::Register(kind, index) = &meaning {
             self.note_register_origin(*kind, *index);
         }
-        crate::observe::defined_name(self, name);
+        // A name made `\relax` reads as undefined (`\@ifundefined`): a
+        // reference to a missing label leaves its `\r@⟨key⟩` so (hyperref's
+        // `\NR@@setref`), which declares no key.
+        if meaning.prim() != Some(Primitive::Relax) {
+            crate::observe::defined_name(self, name);
+        }
         let spelled = self.name(name).to_string();
         crate::observe::version_record(self, &spelled, &meaning);
         crate::observe::color_def(self, &spelled, &meaning, span);
