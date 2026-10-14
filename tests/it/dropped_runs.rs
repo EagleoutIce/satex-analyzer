@@ -71,3 +71,28 @@ fn a_stepped_over_call_does_not_read_its_argument_past_its_file() {
     let runaway = all(&analysis);
     assert!(runaway.iter().any(|d| d.starts_with("runaway-argument") && d.contains("foo_bar:n")), "{runaway:#?}");
 }
+
+/// A count a frame steps up at its start and back at its end, while one
+/// arm of an undecided choice opens an argument a paragraph end runs
+/// into (tex.web § 396): TeX abandons the call, the step back with it,
+/// and the count stays 1 on that arm with an error, 0 on the arm that
+/// compiles (`pdftex -ini`, each arm forced by `\pdfsetrandomseed`).
+/// Whether the arms approximated (`\write` to a stream not known) or
+/// not, the count afterwards is 0 or unknown, never an exact 1.
+#[test]
+fn a_runaway_that_abandons_a_frame_end_leaves_no_exact_count_of_its_own() {
+    let head =
+        "\\count10=0 \\def\\grab#1{}\\def\\fs{\\global\\advance\\count10 1 }\\def\\fe{\\global\\advance\\count10 -1 }";
+    let w = "\\immediate\\write\\pdfuniformdeviate9{y}";
+    let arms = [("\\relax", ""), ("\\relax", w), (w, w), (w, "")];
+    for (clean, runaway) in arms {
+        let source = format!(
+            "{head}\\fs\\ifnum\\pdfuniformdeviate2=0 {clean}\\else{runaway}\\expandafter\\grab\\expandafter{{\\fi\\fe\n\n\\xdef\\P{{\\the\\count10}}"
+        );
+        let analysis = crate::support::analyze_plain(&source);
+        let diagnostics = all(&analysis);
+        assert!(diagnostics.iter().any(|d| d.starts_with("runaway-argument")), "{diagnostics:#?}");
+        let count = crate::support::last_body(&analysis, "P");
+        assert!(count == "0" || count.contains("unknown"), "arms {clean:?} {runaway:?}: {count:?}");
+    }
+}
