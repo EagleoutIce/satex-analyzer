@@ -2190,6 +2190,32 @@ x\newpage\xdef\e{\the\lastskip}
     assert_eq!(got, ["3.0pt", "0.0pt", "0.0pt", "0.0pt", "0.0pt", "4.0pt|0.0pt", "6.0pt minus 1.0pt"]);
 }
 
+/// tex.web §§ 668, 1105: on a vertical list glue or a kern adds the depth
+/// before it into the height, and `\unskip` or `\unkern` taking it away
+/// gives that depth back, so the box keeps its size (beamer's
+/// `\reset@color` takes the `\topsep` after a list away and puts it back).
+/// Sizes as `pdflatex` prints them.
+#[test]
+fn taking_glue_off_a_vertical_list_restores_its_size() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{beamer}
+\begin{document}
+\begin{frame}{T}
+\setbox0\vbox{\hsize 5cm \begin{itemize}\item Work\end{itemize}}\xdef\a{\the\ht0,\the\dp0}
+\setbox0\vbox{\hbox{\vrule depth 2pt height 3pt}\vskip 5pt\unskip}\xdef\b{\the\ht0,\the\dp0}
+\setbox0\vtop{\vskip 4pt\unskip\hbox{\vrule depth 2pt height 3pt}}\xdef\c{\the\ht0,\the\dp0}
+\setbox0\vbox{\hbox{\vrule depth 2pt height 3pt}\kern 5pt\unkern\kern1pt}\xdef\d{\the\ht0,\the\dp0}
+\setbox0\vbox{\hbox{\vrule depth 2pt height 3pt}\penalty5\unpenalty}\xdef\f{\the\ht0,\the\dp0}
+\end{frame}
+\end{document}",
+    );
+    let got: Vec<String> = ["a", "b", "c", "d", "f"].iter().map(|k| body(&analysis, k)).collect();
+    assert_eq!(got, ["13.60416pt,0.0pt", "3.0pt,2.0pt", "3.0pt,2.0pt", "6.0pt,0.0pt", "3.0pt,2.0pt"]);
+}
+
 /// A PDF file of `objects` (numbered from 1, the first the catalog) with
 /// its cross-reference table.
 fn pdf_file(objects: &[&str]) -> Vec<u8> {
