@@ -226,41 +226,53 @@ fn completion_set_up(home: &std::path::Path, shell: &str) -> bool {
     }
 }
 
-/// After `--version`: a hint on stderr for every shell in use without the completion.
+/// The shells in use (`$SHELL`, the one running satex) or with a startup
+/// file, the ones completion is set up for.
+fn known_shells(home: &std::path::Path) -> Vec<&'static str> {
+    let used = [env_shell(), parent_shell().unwrap_or_default()];
+    [("bash", ".bashrc"), ("zsh", ".zshrc"), ("fish", ".config/fish")]
+        .into_iter()
+        .filter(|(shell, rc)| used.iter().any(|u| u == shell) || home.join(rc).exists())
+        .map(|(shell, _)| shell)
+        .collect()
+}
+
+/// After `--version`: one hint on stderr naming the shells without the completion.
 fn completion_hints() {
     let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else { return };
-    let used = [env_shell(), parent_shell().unwrap_or_default()];
-    let has = |f: &str| home.join(f).exists();
-    for (shell, rc) in [("bash", ".bashrc"), ("zsh", ".zshrc"), ("fish", ".config/fish")] {
-        if (used.iter().any(|u| u == shell) || has(rc)) && !completion_set_up(&home, shell) {
-            eprintln!("shell completion is not set up for {shell}: run `satex completions install {shell}`");
-        }
+    let missing: Vec<&str> =
+        known_shells(&home).into_iter().filter(|shell| !completion_set_up(&home, shell)).collect();
+    if !missing.is_empty() {
+        eprintln!("no shell completion for {}: run `satex completions install`", missing.join(", "));
     }
 }
 
 /// Adds the completion hook to a shell's startup file, once: `target`, else
-/// the shell running satex, else `$SHELL`.
+/// every shell [`known_shells`] finds.
 fn install_completions(target: Option<&str>) -> Result<(), String> {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from).ok_or("HOME is not set")?;
-    let (shell, how) = match (target, parent_shell()) {
-        (Some(t), _) => (t.to_string(), "given"),
-        (None, Some(p)) => (p, "the parent process"),
-        (None, None) => (env_shell(), "$SHELL"),
+    let shells: Vec<&str> = match target {
+        Some(shell) => vec![shell],
+        None => known_shells(&home),
     };
-    let (file, line) = completion_file(&home, &shell)
-        .ok_or_else(|| format!("no automatic setup for the shell `{shell}`; see `satex completions --help`"))?;
-    println!("shell: {shell} ({how})");
-    let text = std::fs::read_to_string(&file).unwrap_or_default();
-    if text.lines().any(|l| l.trim() == line) {
-        println!("completion already set up in {}", file.display());
-        return Ok(());
+    if shells.is_empty() {
+        return Err("found no bash, zsh or fish to set up; name one: `satex completions install zsh`".into());
     }
-    if let Some(dir) = file.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    for shell in shells {
+        let (file, line) = completion_file(&home, shell)
+            .ok_or_else(|| format!("no automatic setup for the shell `{shell}`; see `satex completions --help`"))?;
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        if text.lines().any(|l| l.trim() == line) {
+            println!("{shell}: already set up in {}", file.display());
+            continue;
+        }
+        if let Some(dir) = file.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
+        std::fs::write(&file, format!("{text}{sep}# satex shell completion\n{line}\n")).map_err(|e| e.to_string())?;
+        println!("{shell}: added to {}; run `source {}` to use it in this shell", file.display(), file.display());
     }
-    let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
-    std::fs::write(&file, format!("{text}{sep}# satex shell completion\n{line}\n")).map_err(|e| e.to_string())?;
-    println!("added to {}; open a new shell to use it", file.display());
     Ok(())
 }
 

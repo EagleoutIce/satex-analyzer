@@ -270,7 +270,8 @@ pub enum Command {
             ["bash", "zsh", "fish", "elvish", "powershell", "install"].map(clap::builder::PossibleValue::new)
                 .into_iter().chain([clap::builder::PossibleValue::new("json").hide(true)])))]
         shell: String,
-        /// The shell `install` sets up.
+        /// The shell `install` sets up; without it, every shell in use or
+        /// with a startup file.
         #[arg(value_name = "TARGET", value_parser = ["bash", "zsh", "fish"])]
         target: Option<String>,
     },
