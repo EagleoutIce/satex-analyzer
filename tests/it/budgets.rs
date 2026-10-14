@@ -243,7 +243,8 @@ fn a_growing_document_stays_under_its_memory_limit() {
 }
 
 /// A path dropped for a certain error (here an image of unknown width
-/// that may be zero, as `\includegraphics` divides by) waits until the run
+/// that may be zero, as `\includegraphics` divides by: scaled to a random
+/// width below 100sp, since satex reads the logo's own box exactly) waits until the run
 /// ends. The paths a later picture parts into are joined from where they
 /// part, not from that error: else every join compares all the document
 /// did since.
@@ -259,7 +260,7 @@ fn a_dropped_error_path_does_not_weigh_on_later_joins() {
     };
     let logo = concat!(env!("CARGO_MANIFEST_DIR"), "/doc/logo/logo.pdf");
     let error = format!(
-        "\\pdfximage{{{logo}}}\\setbox0\\hbox{{\\pdfrefximage\\pdflastximage}}\\ifdim\\wd0=0pt \\errmessage{{zero}}\\fi"
+        "\\pdfximage width \\pdfuniformdeviate 100sp {{{logo}}}\\setbox0\\hbox{{\\pdfrefximage\\pdflastximage}}\\ifdim\\wd0=0pt \\errmessage{{zero}}\\fi"
     );
     let plain = run("dropped-plain", &doc(""));
     let dropped = run("dropped-error", &doc(&error));
