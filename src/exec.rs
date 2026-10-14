@@ -45,6 +45,7 @@ const CODE: char = '\u{3}';
 impl Machine<'_> {
     pub fn execute(&mut self, p: Primitive, by: Sym, span: Span) {
         self.drop_prefixes(Some(p));
+        self.forget_main_tail(p);
         self.align_peek(p, by);
         // What may put a node on the current list.
         if matches!(

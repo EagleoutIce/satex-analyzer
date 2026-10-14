@@ -2150,6 +2150,7 @@ impl Machine<'_> {
         };
         x.page_touched |= y.page_touched;
         x.natural = crate::mode::join_natural(x.natural, y.natural);
+        x.main_tail = x.main_tail.merge(y.main_tail);
         x.wild.union(&y.wild);
         // What the scans in flight made: each is the common beginning and
         // end of both, and one token for either of what lies between.

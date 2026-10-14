@@ -2164,6 +2164,32 @@ fn an_eps_image_converted_through_the_shell_has_its_bounding_box() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// tex.web §§ 424, 996, 1013: on the main vertical list `\lastskip` and
+/// `\lastkern` read its last item whether the page builder took it or not,
+/// and an output routine leaves the items from the break on after its own
+/// (`\clearpage` ends in a penalty, so beamer's `\reset@color` after it
+/// reads 0pt). Values as `pdflatex` prints them.
+#[test]
+fn the_last_item_of_the_main_vertical_list_is_known_past_the_page_builder() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}\usepackage{xcolor}
+\begin{document}
+text\par\vskip 3pt\xdef\a{\the\lastskip}
+\penalty 5 \xdef\b{\the\lastskip}
+\clearpage\xdef\c{\the\lastskip}
+\begingroup\color{red}\endgroup\xdef\d{\the\lastskip}
+x\newpage\xdef\e{\the\lastskip}
+\vskip 2pt plus 1fil\kern 4pt\xdef\f{\the\lastkern|\the\lastskip}
+\hbox{}\vskip 6pt minus 1pt\xdef\g{\the\lastskip}
+\end{document}",
+    );
+    let got: Vec<String> = ["a", "b", "c", "d", "e", "f", "g"].iter().map(|k| body(&analysis, k)).collect();
+    assert_eq!(got, ["3.0pt", "0.0pt", "0.0pt", "0.0pt", "0.0pt", "4.0pt|0.0pt", "6.0pt minus 1.0pt"]);
+}
+
 /// A PDF file of `objects` (numbered from 1, the first the catalog) with
 /// its cross-reference table.
 fn pdf_file(objects: &[&str]) -> Vec<u8> {

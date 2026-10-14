@@ -1550,6 +1550,12 @@ pub struct Machine<'a> {
     pub(crate) page_touched: bool,
     /// The natural size of the current list, where known.
     pub(crate) natural: Option<crate::mode::Natural>,
+    /// The last item put on the main vertical list, where known: what
+    /// `\lastskip` and `\lastkern` read there, whether the page builder has
+    /// taken it or not (tex.web §§ 424, 996: `last_glue` and `last_kern` are
+    /// the last item it moved, and an output routine leaves the items from
+    /// the break on, the last one among them, after its own).
+    pub(crate) main_tail: crate::mode::Last,
     /// The names a definition of a name built from unknown text may have
     /// made: one that seems undefined and matches may be defined.
     pub(crate) wild: Wild,
@@ -1609,6 +1615,7 @@ struct PathState {
     material: bool,
     page_touched: bool,
     natural: Option<crate::mode::Natural>,
+    main_tail: crate::mode::Last,
     wild: Wild,
     quantity: crate::observe::Quantities,
     noexpanded: Option<Token>,
@@ -2088,6 +2095,7 @@ impl<'a> Machine<'a> {
             material: false,
             page_touched: false,
             natural: None,
+            main_tail: crate::mode::Last::Unknown,
             wild: Wild::default(),
             trace_full: false,
         }
@@ -9251,6 +9259,7 @@ will look undefined",
             material: self.material,
             page_touched: self.page_touched,
             natural: self.natural,
+            main_tail: self.main_tail,
             wild: self.wild.clone(),
             quantity: self.quantity.clone(),
             noexpanded: self.noexpanded,
@@ -9335,6 +9344,7 @@ will look undefined",
         self.material = state.material;
         self.page_touched = state.page_touched;
         self.natural = state.natural;
+        self.main_tail = state.main_tail;
         self.wild = state.wild;
     }
 

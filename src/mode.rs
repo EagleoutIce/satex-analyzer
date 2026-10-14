@@ -789,7 +789,7 @@ pub enum Last {
 impl Last {
     /// The tail where two paths, or an item that may not have been
     /// appended, leave different ones.
-    fn merge(self, other: Last) -> Last {
+    pub(crate) fn merge(self, other: Last) -> Last {
         match (self, other) {
             _ if self == other => self,
             (Last::Other | Last::Char(_), Last::Other | Last::Char(_)) => Last::Char(None),
@@ -937,6 +937,10 @@ impl Machine<'_> {
     /// when that happened; `false` when `token` is to be obeyed as it is.
     pub(crate) fn horizontal_material(&mut self, token: Token) -> bool {
         self.material = true;
+        // A paragraph the main vertical list gets the lines of.
+        if self.mode.meets(Modes::VERTICAL) {
+            self.main_tail = Last::Unknown;
+        }
         self.align_cell(false);
         let vertical = self.mode.and(Modes::ANY_VERTICAL);
         if vertical.is_empty() {
@@ -2939,6 +2943,16 @@ impl Machine<'_> {
     /// (tex.web §§ 651-656 `hpack`, 669-670 `vpack`).
     pub(crate) fn append_item(&mut self, item: Item) {
         self.material = true;
+        if self.mode.meets(Modes::VERTICAL) {
+            self.main_tail = match (self.mode == Modes::VERTICAL, &item) {
+                (false, _) | (_, Item::Unknown | Item::Glue(None, _) | Item::Glue(_, None)) => Last::Unknown,
+                (_, Item::Glue(Some(w), spec)) => Last::Glue(*w, *spec),
+                (_, Item::Kern(Some(k))) => Last::Kern(*k),
+                (_, Item::Penalty(Some(p))) => Last::Penalty(*p),
+                (_, Item::Kern(None) | Item::Penalty(None)) => Last::Unknown,
+                _ => Last::Other,
+            };
+        }
         // tex.web §§ 987, 1000: the page builder freezes the page dimensions
         // when a box or rule reaches the main vertical list, not for glue,
         // kerns, penalties, marks or whatsits, and never for a box's contents.
@@ -4089,6 +4103,49 @@ impl Machine<'_> {
 
     /// `\unskip`, `\unkern` or `\unpenalty` (tex.web § 1105): each takes
     /// away a last item of its own kind. Which kind is not told apart here.
+    /// Before primitive `p`: where it may put items on the main vertical
+    /// list other than through [`Machine::append_item`], or take them away
+    /// (`\unskip` there may find the page builder took the item, tex.web
+    /// § 1105), its last item is no longer known.
+    pub(crate) fn forget_main_tail(&mut self, p: crate::builtins::Primitive) {
+        use crate::builtins::Primitive as P;
+        if !self.mode.meets(Modes::VERTICAL) || self.main_tail == Last::Unknown {
+            return;
+        }
+        use crate::tex::RegKind as K;
+        // Assignments, groups and messages put nothing on a list.
+        let quiet = matches!(
+            p,
+            P::Mode(ModeCmd::Par)
+                | P::Def { .. }
+                | P::Let { .. }
+                | P::Prefix(_)
+                | P::BeginGroup
+                | P::EndGroup
+                | P::Defer(_)
+                | P::Allocate(_)
+                | P::Register(K::Count | K::Dimen | K::Skip | K::MuSkip | K::Toks)
+                | P::RegisterDef(_)
+                | P::FontDef
+                | P::Arith(_)
+                | P::IntegerParameter
+                | P::DimenParameter
+                | P::GlueParameter { .. }
+                | P::TokensParameter
+                | P::CatcodeAssign
+                | P::CharCode(_)
+                | P::Message { .. }
+                | P::Relax
+                | P::LastItem(_)
+                | P::FontParam(_)
+                | P::FontIdent(_)
+                | P::IgnoreSpaces
+        );
+        if !quiet {
+            self.main_tail = Last::Unknown;
+        }
+    }
+
     pub(crate) fn remove_item(&mut self, removed: Removed) {
         self.end_word();
         let Some(mut n) = self.natural else { return };
@@ -4170,6 +4227,19 @@ impl Machine<'_> {
     /// `\lastskip`, `\lastkern` or `\lastpenalty` of a list whose last item
     /// is known: zero unless it is of that kind (tex.web § 424).
     pub(crate) fn last_value(&mut self, removed: Removed) -> Option<Value> {
+        // The main vertical list: its last item, whether the page builder
+        // took it or not. A penalty may have been the page break, which
+        // makes it 10000 (tex.web § 1013), so `\lastpenalty` stays unknown.
+        if self.natural.is_none() && self.mode == Modes::VERTICAL {
+            return match (removed, self.main_tail) {
+                (_, Last::Unknown) | (Removed::Penalty, Last::Penalty(_)) => None,
+                (Removed::Glue, Last::Glue(_, spec)) => spec.map(Value::Glue),
+                (Removed::Glue, _) => Some(Value::Glue(crate::value::Glue::default())),
+                (Removed::Kern, Last::Kern(k)) => Some(Value::Dimen(k)),
+                (Removed::Kern, _) => Some(Value::Dimen(0)),
+                (Removed::Penalty, _) => Some(Value::Int(0)),
+            };
+        }
         let n = self.natural?;
         // tex.web §§ 1034-1036: the word being set is on the list already
         // and goes on after the expansion that asks, kerning with its next
