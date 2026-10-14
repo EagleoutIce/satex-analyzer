@@ -66,7 +66,7 @@ impl Machine<'_> {
         ) || matches!(p, Primitive::Mode(cmd) if cmd != crate::builtins::ModeCmd::Par)
         {
             self.material = true;
-            self.natural_before(p, by);
+            self.natural_before(p, by, span);
         }
         if p == Primitive::Typeset(crate::builtins::Typeset::Plain) {
             let removed = match self.name(self.env.identity(by)) {
@@ -511,6 +511,9 @@ impl Machine<'_> {
             // An engine primitive satex doesn't interpret. Does nothing, but
             // records the gap so unmodeled effects are on record.
             P::Unmodeled | P::AlignMark | P::AlignTab => {
+                if p == P::AlignTab {
+                    self.template_lost();
+                }
                 self.note_gap("unmodeled-primitive", by, span);
                 self.widen_mode();
             }
