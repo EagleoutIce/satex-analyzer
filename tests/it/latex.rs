@@ -133,6 +133,36 @@ fn a_duplicate_label_is_reported() {
     assert!(codes(&analysis).contains(&"duplicate-label".to_string()));
 }
 
+/// Only `\newlabel` warns about a name defined twice (pdflatex: "Label
+/// `sec:a' multiply defined", a warning): a tikzmark written to the `.aux`
+/// file twice is not reported, and LaTeX's warning is no error.
+#[test]
+fn a_tikzmark_named_twice_is_no_duplicate_label() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{tikz}\usetikzlibrary{tikzmark}
+\begin{document}
+\section{A}\label{sec:a}
+a \tikzmarknode{n-1-left}{x} b \tikzmarknode{n-1-left}{y}
+\section{B}\label{sec:a}
+\end{document}",
+    );
+    let found: Vec<(String, String)> = satex::lint::lint(&analysis)
+        .iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("duplicate-label"))
+        .map(|f| {
+            let get = |k: &str| f.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            (get("severity"), get("message"))
+        })
+        .collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].0, "warning");
+    assert!(found[0].1.contains("sec:a"), "{found:?}");
+}
+
 #[test]
 fn package_options_are_recorded_and_a_clash_is_reported() {
     if !installed() {

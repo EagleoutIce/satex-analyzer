@@ -232,11 +232,12 @@ Fix by adding the `\\label`, or by correcting the key.",
     Rule {
         code: "duplicate-label",
         category: Category::Correctness,
-        severity: Severity::Error,
+        severity: Severity::Warning,
         summary: "the same label is defined twice",
         explanation: "\
 LaTeX warns `Label … multiply defined` and every reference resolves to the
-later one.
+later one. Only the kernel's `\\newlabel` (and zref's) warn: a name another
+package writes to the `.aux` file twice, such as a tikzmark, is not checked.
 
 Fix by renaming one of them.",
         references: &[Ref { source: Source::Source2e, at: "ltxref.dtx" }],
@@ -713,6 +714,9 @@ fn duplicate_label(report: &mut Report) {
         .occurrences
         .iter()
         .filter(|o| o.kind == OccKind::Label)
+        // `\newlabel` warns about a name it defined before (ltxref.dtx
+        // `\@newl@bel`), as zref's does; other `.aux` names do not.
+        .filter(|o| o.detail.as_deref().is_none_or(|head| matches!(head, "newlabel" | "zref@newlabel")))
         .filter_map(|o| {
             let at = report.site(first.get(o.key.as_str())?).0;
             let (span, via) = report.site(o);
