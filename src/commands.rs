@@ -1759,7 +1759,13 @@ impl Machine<'_> {
                     _ => None,
                 };
                 let pdf = path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")));
+                // A PDF file this run made through `\write18` is what the
+                // engine reads, not what was on disk before.
+                let produced = self.produced_page(&name);
                 let size = match pdf {
+                    _ if produced.is_some() => {
+                        produced.flatten().filter(|_| first && spec == [None; 3] && which.is_some())
+                    }
                     true => path
                         .filter(|_| first && spec == [None; 3])
                         .zip(which)

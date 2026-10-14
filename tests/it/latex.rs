@@ -2096,6 +2096,74 @@ x\label{after}\end{document}",
     assert!(analysis.steps < 2_500_000, "{} steps", analysis.steps);
 }
 
+/// `\strip@pt` of a dimension of unknown sign: `\the` prints a `-` or a
+/// digit first, never the `.` that `\rem@pt`'s argument ends at, so no
+/// path reads an empty integer part and TeX's "Missing number" (pdflatex
+/// compiles this cleanly).
+#[test]
+fn stripping_the_unit_of_a_dimension_of_unknown_sign_is_no_error() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}\begin{document}\makeatletter
+\dimen@=\pdfelapsedtime sp \advance\dimen@ by -\pdfelapsedtime sp
+\edef\x{\strip@pt\dimen@}\end{document}",
+    );
+    assert!(!codes(&analysis).contains(&"missing-number".to_string()), "{:?}", codes(&analysis));
+}
+
+/// epstopdf-base converts an EPS file through `\write18` (`repstopdf`, which
+/// `-shell-restricted` runs, or `epstopdf` under `-shell-escape`); the PDF it
+/// makes has the EPS `%%BoundingBox` moved to the origin as its page, so the
+/// image's box is known. Sizes as `pdflatex` prints them for the same file
+/// (`%%HiResBoundingBox` unread). With no `\write18` nothing is converted
+/// and pdftex.def's error is TeX's.
+#[test]
+fn an_eps_image_converted_through_the_shell_has_its_bounding_box() {
+    if !installed() {
+        return;
+    }
+    use satex::config::ShellEscape;
+    let dir = crate::support::scratch_dir(std::env::temp_dir().join(format!("satex-eps-{}", std::process::id())));
+    let eps = "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 10 -20 295 61\n%%HiResBoundingBox: 10.2 -19.5 294.8819 60.7874\n\
+               %%EndComments\nnewpath 10 -20 moveto 284 0 rlineto 0 80 rlineto closepath fill\nshowpage\n%%EOF\n";
+    std::fs::write(dir.join("logo.eps"), eps).unwrap();
+    // The same as a DOS EPS binary file, a preview after it (Adobe TN 5002).
+    let mut dos = b"\xC5\xD0\xD3\xC6".to_vec();
+    for word in [32u32, eps.len() as u32, 0, 0, 0, 0] {
+        dos.extend(word.to_le_bytes());
+    }
+    dos.extend([0xff, 0xff, 0, 0]);
+    dos.extend(eps.as_bytes());
+    dos.extend(b"II*\0 preview");
+    std::fs::write(dir.join("dos.eps"), dos).unwrap();
+    let source = r"\documentclass{article}\usepackage{graphicx}\newcommand\here{.}
+\begin{document}
+\setbox0\hbox{\includegraphics{\here/logo}}\xdef\nat{\the\wd0,\the\ht0}
+\setbox0\hbox{\includegraphics[width=73mm]{\here/logo}}\xdef\scaled{\the\wd0,\the\ht0}
+\setbox0\hbox{\includegraphics{dos}}\xdef\dos{\the\wd0,\the\ht0}
+\end{document}";
+    let doc = dir.join("doc.tex");
+    std::fs::write(&doc, source).unwrap();
+    for mode in [ShellEscape::Restricted, ShellEscape::Full, ShellEscape::None] {
+        let mut cfg = crate::support::config();
+        cfg.shell_escape = Some(mode);
+        let analysis = Machine::analyze(source, Some(&doc), &cfg);
+        if mode == ShellEscape::None {
+            assert_eq!(body(&analysis, "scaled"), "207.70511pt,207.71666pt", "a draft box, as pdflatex makes");
+            assert!(raised(&analysis).contains(&"error".to_string()), "{mode:?}");
+            continue;
+        }
+        assert_eq!(body(&analysis, "nat"), "286.06805pt,81.30354pt", "{mode:?}");
+        assert_eq!(body(&analysis, "scaled"), "207.70511pt,59.0324pt", "{mode:?}");
+        assert_eq!(body(&analysis, "dos"), "286.06805pt,81.30354pt", "{mode:?}");
+        assert!(raised(&analysis).is_empty(), "{mode:?}: {:?}", raised(&analysis));
+        assert!(!codes(&analysis).contains(&"missing-number".to_string()), "{mode:?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// tex.web §§ 764-766, 1155: a `\mathchardef` symbol is one atom with its
 /// font's width, and relations and punctuation are spaced by their muskips.
 /// The widths are what `pdflatex` prints for the same boxes.

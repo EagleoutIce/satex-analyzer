@@ -3066,7 +3066,14 @@ will look undefined",
     /// `\immediate\openout`: the file is there, empty, from here on. With
     /// the stream unpinned, what it gets is unknown.
     pub(crate) fn open_output(&mut self, name: &str, known: bool) {
-        Rc::make_mut(&mut self.outputs).insert(Self::output_name(name), known.then(String::new));
+        let name = Self::output_name(name);
+        for k in ["w", "h"] {
+            let sym = self.engine_sym(&format!("produced.{name}.{k}"));
+            if self.env.get(sym).is_some() {
+                self.set_engine(&format!("produced.{name}.{k}"), crate::value::Value::Unknown, true);
+            }
+        }
+        Rc::make_mut(&mut self.outputs).insert(name, known.then(String::new));
     }
 
     /// `\immediate\write18{command}`: a program the engine may run makes the
@@ -3088,21 +3095,58 @@ will look undefined",
         if !runs || command.chars().any(crate::tex::is_unknown_char) {
             return;
         }
-        let (mut outputs, mut inputs) = (Vec::new(), Vec::new());
+        let (mut outputs, mut inputs, mut options) = (Vec::new(), Vec::new(), false);
         while let Some(word) = words.next() {
             match word.split_once('=') {
                 Some(("--outfile" | "-outfile", file)) => outputs.push(file.to_string()),
                 _ if word == "-o" => outputs.extend(words.next().map(str::to_string)),
-                _ if word.starts_with('-') => {}
+                _ if word.starts_with('-') => options = true,
                 _ => inputs.push(word.to_string()),
             }
         }
-        if inputs.iter().all(|name| self.input_bytes(name) != Some(None)) {
-            for name in outputs {
-                let name = name.strip_prefix("./").unwrap_or(&name).to_string();
-                Rc::make_mut(&mut self.outputs).insert(name, None);
-            }
+        let bytes: Vec<_> = inputs.iter().map(|name| self.input_bytes(name)).collect();
+        if bytes.contains(&Some(None)) {
+            return;
         }
+        // epstopdf's page is the EPS bounding box (`Self::produced_page`);
+        // `repstopdf` writes only where kpathsea's `openout_any=p` lets it.
+        let page = match (&bytes[..], &outputs[..]) {
+            ([Some(Some(eps))], [out]) if !options && matches!(program, "epstopdf" | "repstopdf") => {
+                let safe = program == "epstopdf" || !(out.starts_with('/') || out.split('/').any(|c| c == ".."));
+                crate::pdfbox::eps_page_size(eps).filter(|_| safe)
+            }
+            _ => None,
+        };
+        for name in outputs {
+            let name = name.strip_prefix("./").unwrap_or(&name).to_string();
+            for (k, sp) in [("w", page.map(|p| p.0)), ("h", page.map(|p| p.1))] {
+                self.set_engine(
+                    &format!("produced.{name}.{k}"),
+                    sp.map_or(crate::value::Value::Unknown, crate::value::Value::Int),
+                    true,
+                );
+            }
+            Rc::make_mut(&mut self.outputs).insert(name, None);
+        }
+    }
+
+    /// The page size of the PDF file `name` this run made through
+    /// `\write18` (`Self::run_shell`), where it is known: `Some(None)` when
+    /// the run made that file with its size unknown, `None` when the run
+    /// did not make it that way.
+    pub(crate) fn produced_page(&mut self, name: &str) -> Option<Option<(i64, i64)>> {
+        let name = name.trim();
+        let name = name.strip_prefix("./").unwrap_or(name);
+        if self.written_text(name)?.is_some() {
+            return None;
+        }
+        // A stream still open on it may have written there since.
+        if self.stream_files.values().any(|n| Self::output_name(n) == Self::output_name(name)) {
+            return Some(None);
+        }
+        let w = self.engine_int(&format!("produced.{name}.w"));
+        let h = self.engine_int(&format!("produced.{name}.h"));
+        Some(w.zip(h))
     }
 
     /// A `\write` to `stream`: `text` ends up in its file when known, and
@@ -10659,6 +10703,13 @@ impl Machine<'_> {
     /// hold a token of `needle` or a brace; `None` for a known token.
     pub(crate) fn may_hold(&self, t: Token, needle: &[Tok]) -> Option<bool> {
         let class = match t.tok {
+            // A printed number's sign or a digit: one of the characters
+            // [`crate::tex::unknown_number_chars`] names, so never a `.`.
+            Tok::Chr(c, Catcode::Other) if crate::tex::unknown_number_chars(c).is_some() => {
+                return Some(needle.iter().any(|d| {
+                    matches!(*d, Tok::Chr(e, Catcode::Other) if e == c || crate::tex::may_equal_unknown_char(c as u32, e as u32))
+                }));
+            }
             // One character: never empty, never a control sequence.
             Tok::Chr(c, _) if crate::tex::is_unknown_char(c) => {
                 classes::TokenClass::of_text(TextClass::of(t.tok), true, Vec::new())
