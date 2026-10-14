@@ -738,11 +738,25 @@ fn duplicate_label(report: &mut Report) {
             (at != span).then(|| (span, via, o.key.clone(), at))
         })
         .collect();
+    // One finding per site: a call that writes several labels (a macro's
+    // `\label{nb:#1}` and `\label{cell:#1-a}`) names each repeated one.
+    let mut sites: Vec<(Span, Option<String>, Vec<(String, Span)>)> = Vec::new();
     for (span, via, key, at) in repeats {
+        match sites.iter_mut().find(|s| s.0 == span) {
+            Some(site) if !site.2.iter().any(|(k, _)| *k == key) => site.2.push((key, at)),
+            Some(_) => {}
+            None => sites.push((span, via, vec![(key, at)])),
+        }
+    }
+    for (span, via, labels) in sites {
+        let each: Vec<String> = labels
+            .iter()
+            .map(|(key, at)| format!("label `{key}` is already defined at {}", report.place(*at)))
+            .collect();
         report.add(
             span,
-            &key,
-            format!("label `{key}` is already defined at {}{}", report.place(at), via.unwrap_or_default()),
+            &labels[0].0,
+            format!("{}{}", each.join("; "), via.unwrap_or_default()),
             Some("rename one of the two labels".into()),
         );
     }
