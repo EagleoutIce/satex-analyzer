@@ -1,6 +1,5 @@
 //! Terminal output: aligned tables, color, and OSC 8 hyperlinks.
 
-use crate::fixed::HashMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -532,38 +531,38 @@ fn plural(count: usize, word: &str) -> String {
 /// One finding, never cut: `place  severity  code  message`, wrapped at the
 /// terminal width rather than elided, with `fix: ...` indented below it when
 /// the rule suggests one.
+/// The shape the documentation gives a severity: ◆ error, ▲ warning, ● info.
+fn severity_symbol(severity: &str) -> &'static str {
+    match severity {
+        "error" => "\u{25C6}",
+        "warning" => "\u{25B2}",
+        _ => "\u{25CF}",
+    }
+}
+
+/// One finding under its rule: the place (dimmed), the message, and the fix
+/// (dimmed) with how `satex lint --fix` applies it.
 fn finding(out: &mut String, record: &Record, links: Links) {
-    let severity_text = record.get("severity").map(plain).unwrap_or_default();
-    let code = record.get("code").map(plain).unwrap_or_default();
     let message = record.get("message").map(plain).unwrap_or_default();
     let place = place_text(record);
-    let head = format!("  {place}  {severity_text:<7}  {code}  ");
-    let indent = width(&head);
+    let indent = 4 + width(&place) + 2;
     let room = terminal_width().saturating_sub(indent).max(MIN_COLUMN);
-    let sev_style = severity_style(&severity_text);
     let shown_place = hyperlink(&place, &location(record), links);
     let mut lines = wrap(&message, room).into_iter();
-    let _ = writeln!(
-        out,
-        "  {DIM}{shown_place}{DIM:#}  {sev_style}{severity_text:<7}{sev_style:#}  {DIM}{code}{DIM:#}  {}",
-        lines.next().unwrap_or_default()
-    );
+    let _ = writeln!(out, "    {DIM}{shown_place}{DIM:#}  {}", lines.next().unwrap_or_default());
     for line in lines {
         let _ = writeln!(out, "{:indent$}{line}", "");
     }
     let Some(fix) = record.get("fix").and_then(Json::as_str).filter(|f| !f.is_empty()) else { return };
-    // `satex lint --fix` applies a `[fix]`, `--unsafe-fixes` an `[unsafe fix]`.
-    let (tag, style) = match record.get("applicability").and_then(Json::as_str) {
-        Some("safe") => ("[fix]", GOOD),
-        Some("unsafe") => ("[unsafe fix]", WARNING),
-        _ => ("fix:", DIM),
+    let tag = match record.get("applicability").and_then(Json::as_str) {
+        Some("safe") => "fix",
+        Some("unsafe") => "unsafe fix",
+        _ => "hint",
     };
-    let indent = 5 + width(tag);
-    let fix_room = terminal_width().saturating_sub(indent).max(MIN_COLUMN);
-    let mut lines = wrap(fix, fix_room).into_iter();
-    let _ = writeln!(out, "    {style}{tag}{style:#} {}", lines.next().unwrap_or_default());
-    for line in lines {
-        let _ = writeln!(out, "{:indent$}{line}", "");
+    let fix_room = terminal_width().saturating_sub(indent + width(tag) + 2).max(MIN_COLUMN);
+    for (i, line) in wrap(fix, fix_room).into_iter().enumerate() {
+        let head = if i == 0 { format!("{tag}: ") } else { " ".repeat(width(tag) + 2) };
+        let _ = writeln!(out, "{:indent$}{DIM}{head}{line}{DIM:#}", "");
     }
 }
 
@@ -572,27 +571,25 @@ fn finding(out: &mut String, record: &Record, links: Links) {
 /// and the places are what `--filter` is for.
 const SHOWN_PER_RULE: usize = 3;
 
+/// A section of findings, one heading per rule: its severity's shape, its
+/// code and count, then its findings.
 fn findings_section(out: &mut String, title: &str, records: &[&Record], links: Links, group: bool) {
     if records.is_empty() {
         return;
     }
     let code = |r: &&Record| r.get("code").map(plain).unwrap_or_default();
-    let mut total: HashMap<String, usize> = HashMap::default();
-    for record in records {
-        *total.entry(code(record)).or_default() += 1;
-    }
     let _ = writeln!(out, "{}", heading(&format!("{title} ({})", records.len())));
-    let mut shown: HashMap<String, usize> = HashMap::default();
-    for record in records {
-        let this = code(record);
-        let seen = shown.entry(this.clone()).or_default();
-        *seen += 1;
-        let count = total[&this];
-        if !group || count <= SHOWN_PER_RULE || *seen <= SHOWN_PER_RULE {
+    for rule in records.chunk_by(|a, b| code(a) == code(b)) {
+        let severity = rule[0].get("severity").map(plain).unwrap_or_default();
+        let style = severity_style(&severity);
+        let symbol = severity_symbol(&severity);
+        let _ = writeln!(out, "  {style}{symbol}{style:#} {} {DIM}({}){DIM:#}", code(&rule[0]), rule.len());
+        let shown = if group { SHOWN_PER_RULE.min(rule.len()) } else { rule.len() };
+        for record in &rule[..shown] {
             finding(out, record, links);
-        } else if group && *seen == SHOWN_PER_RULE + 1 {
-            let rest = count - SHOWN_PER_RULE;
-            let _ = writeln!(out, "  {}", label(&format!("{rest} more {this}, shown by --no-group")));
+        }
+        if shown < rule.len() {
+            let _ = writeln!(out, "    {}", label(&format!("{} more, shown by --no-group", rule.len() - shown)));
         }
     }
     out.push('\n');
