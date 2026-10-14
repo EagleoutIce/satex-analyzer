@@ -2351,6 +2351,7 @@ impl Machine<'_> {
             self.tpl_fail();
             return false;
         }
+        self.cell_base = None;
         if self.tpl_int("omit") == 0 && self.tpl_int("vdone") == 0 {
             self.tpl_set("vdone", Value::Int(1));
             let v = self.tpl(&format!("v.{j}"));
@@ -2387,7 +2388,39 @@ impl Machine<'_> {
 
     /// The cells' templates are no longer followed.
     fn tpl_fail(&mut self) {
+        self.cell_base = None;
         self.tpl_set("ok", Value::Int(0));
+    }
+
+    /// tex.web § 342: an `&` or `\cr` (`\crcr`) that `get_next` reads with
+    /// `align_state` zero ends the cell where it is read, whoever reads it:
+    /// a `\futurelet` looking ahead meets the cell's `v` part instead
+    /// (§ 789), as do argument and skipped-text scans. `true` where the
+    /// token was given back behind that `v` part.
+    pub(crate) fn template_end_read(&mut self, token: Token) -> bool {
+        if self.cell_base != Some(self.align_state) {
+            return false;
+        }
+        let ends = match token.tok {
+            Tok::Chr(_, Catcode::Tab) => true,
+            // Engine bookkeeping, as § 336's `\outer` check: not a read of
+            // the meaning.
+            Tok::Cs(sym) => match self.env.slot(sym).map(|b| &b.meaning) {
+                Some(Meaning::Char(_, Catcode::Tab)) => true,
+                Some(Meaning::Primitive(Primitive::Command(crate::builtins::Syntax::Nothing))) => {
+                    matches!(self.name(self.env.identity(sym)), "cr" | "crcr")
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if !ends || !self.templated() || self.between_rows() {
+            return false;
+        }
+        if self.tpl_int("incell") != 1 || self.tpl_int("vdone") != 0 || self.tpl_int("omit") != 0 {
+            return false;
+        }
+        self.template_cell_end(token)
     }
 
     /// A cell boundary satex does not follow (`\span`, an `&` it does not
@@ -2460,6 +2493,9 @@ impl Machine<'_> {
             }
         }
         self.tpl_set("omit", Value::Int(i64::from(omit)));
+        // § 324: past the `u` part `align_state` is zero; the `u` part is
+        // balanced, so the cell's text begins at what it is now.
+        self.cell_base = (!omit).then_some(self.align_state);
         self.tpl_set("cdepth", Value::Int(self.env.depth() as i64));
         self.tpl_set("incell", Value::Int(1));
         self.tpl_set("vdone", Value::Int(0));
@@ -2475,7 +2511,7 @@ impl Machine<'_> {
 
     fn next_nonblank_x_token(&mut self) -> Option<Token> {
         loop {
-            let t = self.next_x_token()?;
+            let t = self.next_x_or_protected()?;
             if !matches!(t.tok, Tok::Chr(_, Catcode::Space)) {
                 return Some(t);
             }
@@ -4324,7 +4360,13 @@ impl Machine<'_> {
     }
 
     /// `\setbox`: a register assignment (tex.web § 1077).
-    pub(crate) fn set_box(&mut self, register: Option<i64>, state: BoxState, global: bool, within: Option<[(i64, i64); 2]>) {
+    pub(crate) fn set_box(
+        &mut self,
+        register: Option<i64>,
+        state: BoxState,
+        global: bool,
+        within: Option<[(i64, i64); 2]>,
+    ) {
         let Some(n) = register else {
             return match within {
                 Some(range) => self.weaken_boxes_within(range, global),

@@ -160,6 +160,32 @@ impl Machine<'_> {
         }
     }
 
+    /// `get_x_or_protected` (tex.web § 380): as [`Machine::next_x_token`],
+    /// but a `\protected` macro is left unexpanded, as where an alignment
+    /// looks for what begins a cell or row (§§ 785, 791).
+    pub fn next_x_or_protected(&mut self) -> Option<Token> {
+        loop {
+            let token = self.next_token()?;
+            if self.read_noexpanded(token) {
+                return Some(token);
+            }
+            let Some(sym) = token.cs().or_else(|| self.active_cs(token)) else {
+                return Some(token);
+            };
+            let meaning = self.env.meaning(sym);
+            if meaning.prim() == Some(Primitive::NoExpand) {
+                return self.noexpanded_next();
+            }
+            if !self.expandable_meaning(&meaning) || matches!(&meaning, Meaning::Macro(m) if m.protected) {
+                return Some(token);
+            }
+            self.unread(token);
+            if !self.step() {
+                return None;
+            }
+        }
+    }
+
     /// The token after `\noexpand`, read with the scanner normal (tex.web
     /// § 367), so a file may end before it.
     pub fn noexpanded_next(&mut self) -> Option<Token> {
@@ -418,6 +444,9 @@ impl Machine<'_> {
     /// expansion and followed by an optional space.
     fn scan_alphabetic_constant(&mut self) -> Option<i64> {
         let token = self.next_token()?;
+        // A brace read as its code leaves `align_state` as it was (array's
+        // `\ifnum0=`}\fi`).
+        self.count_brace(&token, -1);
         let code = match token.tok {
             // An unknown character has no known code.
             Tok::Chr(crate::tex::UNKNOWN_DIGIT | crate::tex::UNKNOWN_NONZERO | crate::tex::UNKNOWN_CHAR, _) => None,

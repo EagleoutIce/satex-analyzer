@@ -2432,6 +2432,73 @@ fn alignment_cells_hold_their_templates() {
     }
 }
 
+/// tex.web § 342: an `&` or `\cr` that `get_next` reads at the cell's
+/// brace level ends the cell where it is read, whoever reads it: a
+/// `\futurelet` looking ahead meets the cell's `v` part (§ 789), here its
+/// `\kern`. Inside braces or after `\omit` it meets something else.
+/// What `pdflatex` records: `vvovo`. (An empty `v` part, where TeX's
+/// look meets `\endtemplate`, is not modeled: satex's meets the `\cr`.)
+#[test]
+fn a_lookahead_at_a_cell_end_meets_its_v_part() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\def\look{\futurelet\next\record}
+\def\record{\ifx\next\kern \xdef\seen{\seen v}\else\ifx\next\cr \xdef\seen{\seen c}\else\xdef\seen{\seen o}\fi\fi}
+\def\seen{}
+\setbox0\vbox{\halign{#\kern1pt\cr a\look\cr}}
+\setbox0\vbox{\halign{#\kern1pt&#\cr a\look&b\cr}}
+\setbox0\vbox{\halign{#\kern1pt\cr a{\look}\cr}}
+\setbox0\vbox{\halign{#\kern1pt\cr \iffalse{\fi a\look\cr\iffalse}\fi}}
+\setbox0\vbox{\halign{#\kern1pt&#\cr \omit a\look&b\cr}}
+\xdef\result{\seen}
+\end{document}",
+    );
+    assert_eq!(body(&analysis, "result"), "vvovo");
+}
+
+/// siunitx collects an `S` cell token by token with `\peek_...` until it
+/// meets the `v` part, which TeX inserts where the `\cr` is looked at
+/// (tex.web § 342); array's `\\` raises `align_state` with
+/// `\iffalse{\fi\ifnum0=`}\fi` (§ 442 leaves a brace read as a code
+/// uncounted), so its look past `\\` at an empty first cell ends nothing.
+/// Each table is read to its end; sizes as `pdflatex` prints, or unknown.
+#[test]
+fn siunitx_table_cells_end_at_their_v_part() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (r"\begin{tabular}{S}3\\12\end{tabular}", "34.77786pt/14.5pt/9.5pt"),
+        (r"\begin{tabular}{SS}3 & 4.5 \\ & 7\end{tabular}", "49.55566pt/14.5pt/9.5pt"),
+        (r"\begin{tabular}{S[table-format=2.0]l}3 & x\\ {y} & z\\\end{tabular}", "39.27786pt/14.5pt/9.5pt"),
+        (r"\begin{tabular}{lS}a & 1.25\\ b & \end{tabular}", "52.33345pt/14.5pt/9.5pt"),
+        (r"\begin{tabular}{ll}a & b\\ & c\\\end{tabular}", "34.55562pt/14.5pt/9.5pt"),
+    ];
+    let mut src = String::from("\\documentclass{article}\n\\usepackage{siunitx}\n\\begin{document}\n");
+    for (i, (f, _)) in cases.iter().enumerate() {
+        src.push_str(&format!(
+            "\\setbox0\\hbox{{{f}}}\\xdef\\S{}{{\\the\\wd0/\\the\\ht0/\\the\\dp0}}\n",
+            (b'a' + i as u8) as char
+        ));
+    }
+    src.push_str("\\end{document}");
+    let analysis = analyze(&src);
+    let codes = codes(&analysis);
+    for code in ["limit-reached", "line-budget-cut", "unbalanced-group", "mismatched-group", "unbalanced-file"] {
+        assert!(!codes.iter().any(|c| c == code), "{codes:?}");
+    }
+    for (i, (f, want)) in cases.iter().enumerate() {
+        let got = body(&analysis, &format!("S{}", (b'a' + i as u8) as char));
+        for (g, w) in got.split('/').zip(want.split('/')) {
+            assert!(g == w || g.contains("unknown"), "{f}: {got}");
+        }
+    }
+}
+
 /// tex.web §§ 1151, 1160: `\mathchar` and `\delimiter` in inline math are
 /// one atom each, a delimiter its small variant, so `\langle` and `\{`
 /// keep the formula's width. Widths as `pdflatex` prints.
