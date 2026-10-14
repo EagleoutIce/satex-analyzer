@@ -869,6 +869,9 @@ type Injected = (Option<String>, (u32, u32), (u32, u32));
 
 fn inject(cli: &Cli, source: &mut String, text: &str, at: &str) -> Result<Injected, String> {
     let (file, pos) = satex::cmd::split_file(at);
+    // The main file named by its path is the main file: its text is `source`.
+    let main = cli.file.as_deref().and_then(|p| p.canonicalize().ok());
+    let file = file.filter(|name| base_dir(cli.file.as_deref()).join(name).canonicalize().ok() != main);
     let (line, col) = pos.split_once(':').unwrap_or((pos, "0"));
     let bad = || format!("`{at}` is no position: use [FILE:]LINE or [FILE:]LINE:COL");
     let (line, col): (u32, u32) = (line.trim().parse().map_err(|_| bad())?, col.trim().parse().map_err(|_| bad())?);
