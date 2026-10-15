@@ -928,7 +928,8 @@ impl Machine<'_> {
         let crowded = paths.heads.iter().filter(|h| same(h)).count() >= usize::from(self.limits.heads_apart);
         let fits: Vec<bool> = {
             let typed = crate::env::typed!(self, syms);
-            paths.heads.iter().map(|h| crowded || data_apart(&h.config, &here, &typed)).collect()
+            let slot = |sym: Sym| self.name(sym).starts_with(|c: char| c < ' ');
+            paths.heads.iter().map(|h| crowded || data_apart(&h.config, &here, &typed, &slot)).collect()
         };
         let is_fi =
             |tok: Tok| matches!(tok, Tok::Cs(s) if matches!(self.env.meaning(s), Meaning::Primitive(Primitive::Fi)));
@@ -2605,22 +2606,23 @@ fn next_script(choices: &[Choice], absent: bool) -> Option<Vec<usize>> {
     None
 }
 
-/// Whether two paths differ only in data: values (registers, code tables,
-/// a name left undefined) and macros whose texts are numbers. What else
-/// differs is code the paths will run: a macro's text, or a meaning another
-/// command gave a name.
-fn data_apart(a: &Config, b: &Config, typed: &crate::env::Typed) -> bool {
+/// Whether two paths differ only in data: what satex keeps under names of
+/// its own (`slot`: a register's or a code table's entry) and macros whose
+/// texts are numbers. What else differs is code the paths will run: a
+/// macro's text, a meaning another command gave a name, or a name left
+/// undefined or unknown.
+fn data_apart(a: &Config, b: &Config, typed: &crate::env::Typed, slot: &dyn Fn(Sym) -> bool) -> bool {
     let number = |t: &Token| match t.tok {
         Tok::Chr(c, Catcode::Other) => c.is_ascii_digit() || "+-.,".contains(c) || crate::tex::is_unknown_digit(c),
         _ => typed.classify(t).is_some_and(|(c, _)| TextClass::NUMBER.contains(c)),
     };
-    let code = |binding: Option<&crate::env::Binding>| match binding.map(|b| &b.meaning) {
-        None | Some(Meaning::Unknown | Meaning::Undefined | Meaning::Register(..)) => false,
+    let code = |sym: Sym, binding: Option<&crate::env::Binding>| match binding.map(|b| &b.meaning) {
+        None | Some(Meaning::Register(..)) => false,
         Some(Meaning::Macro(d)) => !(d.parameter_text.items.is_empty() && d.replacement_text.iter().all(number)),
-        Some(_) => true,
+        Some(_) => !slot(sym),
     };
     a.env.differing(&b.env).into_iter().all(|sym| {
         let (x, y) = (a.env.changed(sym), b.env.changed(sym));
-        x.zip(y).is_some_and(|(x, y)| x.meaning == y.meaning) || !code(x) && !code(y)
+        x.zip(y).is_some_and(|(x, y)| x.meaning == y.meaning) || !code(sym, x) && !code(sym, y)
     })
 }
