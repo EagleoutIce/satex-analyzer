@@ -135,8 +135,8 @@ fn a_duplicate_label_is_reported() {
 
 /// An undefined name met on a path that approximated since the paths
 /// parted (here a `\write` to a stream satex cannot pin down) is a possible
-/// error, as `certain_error` judges the engine's error there; one met on a
-/// lone path stays TeX's error.
+/// error, as `certain_error` judges the engine's error there, and is
+/// reported as a note; one met on a lone path stays TeX's error.
 #[test]
 fn an_undefined_name_past_an_approximation_is_a_possible_error() {
     if !installed() {
@@ -162,7 +162,7 @@ fn an_undefined_name_past_an_approximation_is_a_possible_error() {
         found,
         [
             "error \\undefinedbaz is never defined in this run",
-            "warning \\undefinedfoo is undefined on a path the analysis approximated"
+            "info \\undefinedfoo is undefined on a path the analysis approximated"
         ]
     );
 }
