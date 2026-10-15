@@ -785,6 +785,7 @@ pub(super) struct Recorder {
     last_line: u32,
     /// `class article` or `package tikz`, for the progress bar.
     label: String,
+    started: std::time::Instant,
     chain: Vec<Node<'static>>,
     lists: Option<Lists>,
     lookups: HashSet<(String, LoadKind)>,
@@ -1571,6 +1572,7 @@ impl Machine<'_> {
             marks,
             last_line: end.map_or(0, |(mark, _)| mark.line),
             label: format!("{} {name}", if kind == LoadKind::Class { "class" } else { "package" }),
+            started: std::time::Instant::now(),
             chain: Vec::new(),
             lists: None,
             lookups,
@@ -2633,6 +2635,7 @@ impl Machine<'_> {
             let _ = std::fs::remove_file(&temporary);
         }
         if stored {
+            crate::progress::done(&format!("cached {}", rec.label), rec.started.elapsed());
             crate::format::save_hashes(dir);
             crate::format::prune_family(
                 dir,

@@ -1,9 +1,9 @@
 //! The command line: one module per group of commands.
 
 pub mod cache;
+pub mod compile;
 mod graph;
 mod inspect;
-pub mod compile;
 pub mod install;
 mod lint;
 pub mod lsp;
@@ -245,7 +245,9 @@ pub enum Command {
     },
     /// Build the document with latexmk, or the engine where latexmk is
     /// missing, and explain each error and warning the log reports by what
-    /// the analysis found there.  Never opens a viewer.
+    /// the analysis found there.  Never opens a viewer.  The build runs the
+    /// project's own code, its latexmkrc and what it lets TeX run, so build
+    /// only projects you trust.
     Compile,
     /// Install the packages the document loads that this machine does not
     /// have.  Asks first, never elevates, and is never run by `lint --fix`.
@@ -290,6 +292,9 @@ pub enum Command {
         /// Interface to bind when `--port` is given.
         #[arg(long, value_name = "HOST")]
         host: Option<String>,
+        /// Stdio, the default: accepted because language clients pass it.
+        #[arg(long, hide = true)]
+        stdio: bool,
     },
 }
 
