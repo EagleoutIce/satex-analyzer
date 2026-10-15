@@ -1,8 +1,11 @@
 import * as vscode from 'vscode';
 import { execFile, spawn, spawnSync } from 'child_process';
 import { existsSync } from 'fs';
+import * as os from 'os';
 import * as path from 'path';
-import { LanguageClient, TransportKind } from 'vscode-languageclient/node';
+import { LanguageClient, State, StreamInfo } from 'vscode-languageclient/node';
+import { Actions, Findings } from './sidebar';
+import { Status } from './status';
 
 const INSTALL_HINT = 'Install it with `cargo install satex`, download a release from https://github.com/EagleoutIce/satex-analyzer/releases, or set `satex.path`.';
 let client: LanguageClient | undefined;
@@ -31,33 +34,6 @@ function checkTeX(): void {
         void vscode.window.showWarningMessage(
             `satex uses your TeX distribution, but ${missing.join(' and ')} not found on the PATH. Install TeX Live, MiKTeX or MacTeX for full analysis.`);
     }
-}
-
-/** Build the kernel caches in the background unless they are already there. */
-function buildCaches(binary: string): void {
-    const status = spawnSync(binary, ['--format', 'json', 'cache'], { encoding: 'utf8' });
-    try {
-        if (JSON.parse(status.stdout).cached === true) {
-            return;
-        }
-    } catch { /* unreadable status: build anyway */ }
-    void vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: 'satex: building LaTeX kernel caches', cancellable: true },
-        (progress, token) => new Promise<void>(resolve => {
-            const child = spawn(binary, ['cache', 'build']);
-            const report = (data: Buffer) => {
-                const line = data.toString().trim().split('\n').pop();
-                if (line) { progress.report({ message: line }); }
-            };
-            child.stderr.on('data', report);
-            child.stdout.on('data', report);
-            token.onCancellationRequested(() => child.kill());
-            child.on('error', () => resolve());
-            child.on('close', code => {
-                if (code) { void vscode.window.showWarningMessage(`satex: cache build failed (exit ${code}); analysis stays slower.`); }
-                resolve();
-            });
-        }));
 }
 
 /** The root document (setting `satex.rootFile`, else the active file) and its directory. */
@@ -111,6 +87,11 @@ const SEVERITY: Record<string, vscode.DiagnosticSeverity> = {
 async function compile(): Promise<void> {
     const editor = vscode.window.activeTextEditor;
     if (!editor) { return; }
+    // A build runs the project's own code (its latexmkrc): only where the workspace is trusted.
+    if (!vscode.workspace.isTrusted) {
+        void vscode.window.showWarningMessage('satex: compile runs the project\'s latexmkrc; trust this workspace to build it.');
+        return;
+    }
     const { root, dir } = rootFile(editor);
     buildDiagnostics.clear();
     build.clear();
@@ -139,6 +120,42 @@ async function compile(): Promise<void> {
     for (const [file, diagnostics] of byFile) { buildDiagnostics.set(vscode.Uri.file(file), diagnostics); }
 }
 
+/**
+ * The server, started at a lower priority and with a memory limit
+ * (`satex.server.maxMemory`), so an analysis never slows or starves the
+ * editor; it builds the kernel cache itself on first use.
+ */
+function startServer(binary: string): Promise<StreamInfo> {
+    const memory = vscode.workspace.getConfiguration('satex').get<string>('server.maxMemory', '2GiB');
+    const child = spawn(binary, ['lsp', ...(memory ? ['--max-memory', memory] : [])]);
+    if (child.pid !== undefined) {
+        try { os.setPriority(child.pid, 10); } catch { /* not ours to lower */ }
+    }
+    child.stderr.on('data', (data: Buffer) => client?.outputChannel.append(data.toString()));
+    return Promise.resolve({ reader: child.stdout, writer: child.stdin, detached: false });
+}
+
+/**
+ * LaTeX Workshop lints with chktex too: offer once to leave linting to satex,
+ * so a finding is not reported twice. Its build, viewer and snippets stay.
+ */
+async function harmonize(context: vscode.ExtensionContext): Promise<void> {
+    const workshop = vscode.workspace.getConfiguration('latex-workshop');
+    const key = 'satex.askedAboutChktex';
+    if (!vscode.extensions.getExtension('James-Yu.latex-workshop') || context.globalState.get(key)
+        || !workshop.get<boolean>('linting.chktex.enabled')) {
+        return;
+    }
+    await context.globalState.update(key, true);
+    const off = 'Turn off chktex';
+    const answer = await vscode.window.showInformationMessage(
+        'LaTeX Workshop lints with chktex, and satex reports the same and more. Turn LaTeX Workshop\'s chktex linting off?',
+        off, 'Keep both');
+    if (answer === off) {
+        await workshop.update('linting.chktex.enabled', false, vscode.ConfigurationTarget.Global);
+    }
+}
+
 export function activate(context: vscode.ExtensionContext): void {
     const binary = resolveBinary(context);
     if (!binary) {
@@ -146,19 +163,27 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
     }
     binaryPath = binary;
-    context.subscriptions.push(
-        trace, build, buildDiagnostics,
-        vscode.commands.registerCommand('satex.traceAtCursor', traceAtCursor),
-        vscode.commands.registerCommand('satex.compile', compile));
-    checkTeX();
+    const status = new Status();
+    const findings = new Findings();
+    findings.view = vscode.window.createTreeView('satex.findings', { treeDataProvider: findings });
     client = new LanguageClient(
-        'satex', 'satex',
-        { command: binary, args: ['lsp'], transport: TransportKind.stdio },
+        'satex', 'satex', () => startServer(binary),
         { documentSelector: ['latex', 'tex', 'bibtex'].map(language => ({ language })) });
+    context.subscriptions.push(
+        trace, build, buildDiagnostics, status, findings, findings.view,
+        vscode.window.registerTreeDataProvider('satex.actions', new Actions()),
+        vscode.commands.registerCommand('satex.traceAtCursor', traceAtCursor),
+        vscode.commands.registerCommand('satex.compile', compile),
+        vscode.commands.registerCommand('satex.focus', () => vscode.commands.executeCommand('workbench.view.extension.satex')),
+        vscode.commands.registerCommand('satex.restart', () => client?.restart()),
+        vscode.commands.registerCommand('satex.showOutput', () => client?.outputChannel.show(true)),
+        vscode.commands.registerCommand('satex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
+        client.onNotification('satex/status', (params: { text: string }) => status.working(params.text)),
+        client.onDidChangeState(e => status.down(e.newState === State.Stopped)));
+    checkTeX();
     void client.start();
-    setImmediate(() => buildCaches(binary));
+    void harmonize(context);
 }
-
 export function deactivate(): Thenable<void> | undefined {
     return client?.stop();
 }

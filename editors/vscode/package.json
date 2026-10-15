@@ -30,6 +30,13 @@
     "onLanguage:tex",
     "onLanguage:bibtex"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In a workspace that is not trusted, satex analyzes but does not build: `satex: compile` runs latexmk, which runs the project's latexmkrc.",
+      "restrictedConfigurations": ["satex.rootFile"]
+    }
+  },
   "contributes": {
     "configuration": {
       "title": "satex",
@@ -37,7 +44,8 @@
         "satex.path": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Path to the `satex` binary. Empty: use the bundled binary, else `satex` on the `PATH`."
+          "scope": "machine",
+          "markdownDescription": "Path to the `satex` binary. Empty: use the bundled binary, else `satex` on the `PATH`. Only user settings set it: a workspace never chooses the program VS Code runs."
         },
         "satex.trace.server": {
           "type": "string",
@@ -49,6 +57,17 @@
           "default": "off",
           "description": "Trace the communication between VS Code and the satex language server."
         },
+        "satex.statusBar.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show satex in the status bar: what it caches or analyzes, then its errors and warnings."
+        },
+        "satex.server.maxMemory": {
+          "type": "string",
+          "default": "2GiB",
+          "scope": "machine",
+          "markdownDescription": "Most memory one analysis of the language server may hold, such as `2GiB`; it stops cleanly beyond it. Empty: satex's own limit (`limits.memory`)."
+        },
         "satex.rootFile": {
           "type": "string",
           "default": "",
@@ -56,7 +75,18 @@
         }
       }
     },
-    "commands": [
+    "viewsContainers": {
+    "activitybar": [
+      { "id": "satex", "title": "satex", "icon": "media/satex.svg" }
+    ]
+  },
+  "views": {
+    "satex": [
+      { "id": "satex.findings", "name": "Findings", "icon": "media/satex.svg" },
+      { "id": "satex.actions", "name": "Actions", "icon": "media/satex.svg" }
+    ]
+  },
+  "commands": [
       {
         "command": "satex.traceAtCursor",
         "title": "Trace Expansion Here",
@@ -65,6 +95,26 @@
       {
         "command": "satex.compile",
         "title": "Compile",
+        "category": "satex"
+      },
+      {
+        "command": "satex.focus",
+        "title": "Show Findings",
+        "category": "satex"
+      },
+      {
+        "command": "satex.restart",
+        "title": "Restart Server",
+        "category": "satex"
+      },
+      {
+        "command": "satex.showOutput",
+        "title": "Show Server Output",
+        "category": "satex"
+      },
+      {
+        "command": "satex.openSettings",
+        "title": "Open Settings",
         "category": "satex"
       }
     ]
