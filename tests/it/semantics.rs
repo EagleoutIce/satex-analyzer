@@ -2053,16 +2053,18 @@ fn an_argument_the_file_ends_in_is_one_error_at_the_call() {
     assert!(message.starts_with("File ended while scanning use of \\greet"), "{message}");
 }
 
-/// tex.web § 396: `\par` in the argument of a macro not `\long` is one
-/// error at the call.
+/// tex.web § 396: `\par` in the argument of a macro not `\long` is an error
+/// at the call, and the `}` left behind is a second one (§ 1068, "Too many
+/// }'s"), as `tex` prints for `\def\g#1{} \g{a\par}`.
 #[test]
-fn a_paragraph_end_in_a_short_argument_is_one_error() {
+fn a_paragraph_end_in_a_short_argument_is_an_error_at_the_call() {
     let analysis = analyze_kernel("\\def\\g#1{}\n\\g{a\\par}\n");
     let found = problems(&analysis);
-    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found.len(), 2, "{found:?}");
     let (code, severity, line, col, message) = &found[0];
     assert_eq!((code.as_str(), severity.as_str(), *line, *col), ("raised-error", "error", 2, 1), "{found:?}");
     assert!(message.starts_with("Paragraph ended before \\g was complete"), "{message}");
+    assert_eq!(found[1].4, "Too many }'s", "{found:?}");
 }
 
 /// `\the` of an unknown dimension is a sign, digits, `.`, digits and `pt`
@@ -2477,4 +2479,16 @@ fn a_script_outside_math_is_an_error() {
     assert!(diagnosed(&math, "script-outside-math").is_empty());
     let boxed = analyze(r"\catcode`\_=8 \catcode`\$=3 \catcode`\{=1 \catcode`\}=2 $\hbox{$a_b$}$");
     assert!(diagnosed(&boxed, "script-outside-math").is_empty());
+}
+
+/// tex.web § 459: a number with no unit after it is "Illegal unit of
+/// measure (pt inserted)"; § 456 the same for `mu`.
+#[test]
+fn a_dimension_without_a_unit_is_an_error() {
+    let bare = analyze(r"\dimen0=3 \relax");
+    assert_eq!(diagnosed(&bare, "illegal-unit"), ["Illegal unit of measure (pt inserted)"]);
+    let mu = analyze(r"\muskip0=3 \relax");
+    assert_eq!(diagnosed(&mu, "illegal-unit"), ["Illegal unit of measure (mu inserted)"]);
+    let fine = analyze(r"\dimen0=3pt \dimen1=1.5 truecm \dimen2=2\dimen0 \muskip0=3mu \skip0=1pt plus 2fil");
+    assert!(diagnosed(&fine, "illegal-unit").is_empty());
 }

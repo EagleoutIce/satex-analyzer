@@ -1818,7 +1818,7 @@ const CUT_IMPRECISE: [&str; 1] = ["argument-ends-in-unknown"];
 /// run goes on exactly as TeX does, and never widens for them. Each is
 /// raised as the error TeX prints (`raised-error`) and counts toward
 /// [`MAX_ERRORS`] (tex.web § 82).
-pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 12] = [
+pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 13] = [
     ("missing-endcsname", Some("Missing \\endcsname inserted")),
     ("missing-sharp", Some("Missing # inserted in alignment preamble")),
     ("extra-sharp", Some("Only one # is allowed per tab")),
@@ -1828,6 +1828,7 @@ pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 12] = [
     ("extra-fi", Some("Extra \\fi")),
     ("too-many-braces", Some("Too many }'s")),
     ("script-outside-math", Some("Missing $ inserted")),
+    ("illegal-unit", None),
     ("missing-number", Some("Missing number, treated as zero")),
     // Named after the macro in the message itself.
     ("extra-right-brace", None),
