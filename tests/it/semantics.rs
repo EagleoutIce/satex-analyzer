@@ -2481,6 +2481,16 @@ fn a_script_outside_math_is_an_error() {
     assert!(diagnosed(&boxed, "script-outside-math").is_empty());
 }
 
+/// tex.web § 1128: an `&` read where no alignment is open is an error; in
+/// an alignment's cell it ends the cell.
+#[test]
+fn an_alignment_tab_outside_an_alignment_is_an_error() {
+    let text = analyze(r"\catcode`\&=4 a&b");
+    assert_eq!(diagnosed(&text, "misplaced-tab").len(), 1);
+    let cell = analyze(r"\catcode`\&=4 \catcode`\#=6 \catcode`\{=1 \catcode`\}=2 \halign{#&#\cr a&b\cr}");
+    assert!(diagnosed(&cell, "misplaced-tab").is_empty());
+}
+
 /// tex.web § 459: a number with no unit after it is "Illegal unit of
 /// measure (pt inserted)"; § 456 the same for `mu`.
 #[test]

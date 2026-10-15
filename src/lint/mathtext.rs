@@ -587,9 +587,11 @@ fn math_still_open(report: &mut Report) {
     }
     // `\end{document}` ends a paragraph: an open formula was found above, and
     // the last character sits in one that closed since.
-    let ended = analysis.facts.occurrences.iter().any(|o| {
-        o.kind == crate::builtins::OccKind::EndEnvironment && o.key == "document" && o.certain
-    });
+    let ended = analysis
+        .facts
+        .occurrences
+        .iter()
+        .any(|o| o.kind == crate::builtins::OccKind::EndEnvironment && o.key == "document" && o.certain);
     if ended {
         return;
     }

@@ -1818,11 +1818,12 @@ const CUT_IMPRECISE: [&str; 1] = ["argument-ends-in-unknown"];
 /// run goes on exactly as TeX does, and never widens for them. Each is
 /// raised as the error TeX prints (`raised-error`) and counts toward
 /// [`MAX_ERRORS`] (tex.web § 82).
-pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 13] = [
+pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 14] = [
     ("missing-endcsname", Some("Missing \\endcsname inserted")),
     ("missing-sharp", Some("Missing # inserted in alignment preamble")),
     ("extra-sharp", Some("Only one # is allowed per tab")),
     ("extra-alignment-tab", Some("Extra alignment tab has been changed to \\cr")),
+    ("misplaced-tab", Some("Misplaced alignment tab character &")),
     ("extra-endcsname", Some("Extra \\endcsname")),
     ("extra-else", Some("Extra \\else")),
     ("extra-fi", Some("Extra \\fi")),
@@ -5689,6 +5690,15 @@ will look undefined",
                 self.align_cell(false);
                 self.math_shift_token(token)
             }
+            // tex.web § 1128: an `&` with no alignment open is deleted.
+            Some(Catcode::Tab) if !self.mode.is_empty() && !self.env.in_alignment() => {
+                self.diagnose(
+                    Severity::Warning,
+                    "misplaced-tab",
+                    token.span,
+                    "an `&` stands where no alignment is open".into(),
+                );
+            }
             // tex.web § 785: an `&` ends a cell, and between rows begins one.
             Some(Catcode::Tab) => {
                 if !self.template_cell_end(token, false) {
@@ -5700,13 +5710,20 @@ will look undefined",
             // tex.web § 1046: a script outside math mode inserts the `$` it lacks.
             // Not within an alignment, whose cells satex does not always keep in math.
             Some(Catcode::Sup | Catcode::Sub)
-                if !self.mode.is_empty() && !self.mode.meets(crate::mode::Modes::ANY_MATH) && !self.env.in_alignment() =>
+                if !self.mode.is_empty()
+                    && !self.mode.meets(crate::mode::Modes::ANY_MATH)
+                    && !self.env.in_alignment() =>
             {
                 let span = token.span;
                 if self.own_file(span.file) {
                     self.project_site = Some(span);
                 }
-                self.diagnose(Severity::Warning, "script-outside-math", span, "missing $ inserted before a script".into());
+                self.diagnose(
+                    Severity::Warning,
+                    "script-outside-math",
+                    span,
+                    "missing $ inserted before a script".into(),
+                );
                 self.unread(token);
                 self.unread(Token::new(Tok::Chr('$', Catcode::Math), span));
             }
