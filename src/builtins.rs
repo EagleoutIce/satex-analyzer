@@ -2547,7 +2547,8 @@ pub fn verdict(p: Primitive) -> Judgment {
         P::LuaCall { .. } => {
             at!(V::Approximated, "runs the named Lua function where a host is available. Widens where it is not")
         }
-        P::Unmodeled | P::AlignMark | P::AlignTab => at!(V::Unsupported, "widens the mode"),
+        P::AlignTab => at!(V::Exact, "an `&`: ends the cell, or begins one between rows (tex.web § 785)"),
+        P::Unmodeled | P::AlignMark => at!(V::Unsupported, "widens the mode"),
         P::Docstrip(_) => {
             at!(V::Exact, "recorded as generate/preamble facts, not run as TeX (docstrip.dtx, \"The user interface\")")
         }
