@@ -64,12 +64,13 @@ fn emitter(detail: &str) -> &'static str {
 
 /// Every payload in run order, parsed by what it is, alongside the construct
 /// that wrote it.  A literal the interpreter reaches by more than one path is
-/// recorded once per path, under the same graph node and call site: only
+/// recorded once per path (not `certain`), under the same graph node and call site: only
 /// the first of those is real content. One macro's literal used at many
 /// call sites (accsupp's `\EndAccSupp`) is one node, but a payload at each.
 /// Payloads of nested macros share the outermost call site, so a repeat is
 /// recognized as a whole: a site's sequence that repeats its own prefix
-/// (`B E B E`) is one pass, while `B B E E` is not a repeat of anything.
+/// whole (`B E B E`) is one pass, while `B B E E` or `B E B` is not a
+/// repeat of anything.
 fn payloads(analysis: &Analysis) -> impl Iterator<Item = (usize, Span, &'static str, Payload<'_>)> {
     let pdf: Vec<_> = analysis.facts.occurrences.iter().enumerate().filter(|(_, o)| o.kind == OccKind::Pdf).collect();
     let mut sites: crate::fixed::HashMap<Span, Vec<usize>> = Default::default();
@@ -78,8 +79,13 @@ fn payloads(analysis: &Analysis) -> impl Iterator<Item = (usize, Span, &'static 
     }
     let mut real = vec![true; pdf.len()];
     for at in sites.values() {
+        // Content every run reaches is on one path: each literal is real.
+        if at.iter().all(|&i| pdf[i].1.certain) {
+            continue;
+        }
         let same = |i: usize, j: usize| pdf[at[i]].1.node == pdf[at[j]].1.node && pdf[at[i]].1.key == pdf[at[j]].1.key;
-        let Some(period) = (1..at.len()).find(|&p| (p..at.len()).all(|i| same(i, i - p))) else { continue };
+        let whole = |p: usize| at.len() % p == 0 && (p..at.len()).all(|i| same(i, i - p));
+        let Some(period) = (1..at.len()).find(|&p| whole(p)) else { continue };
         for &i in &at[period..] {
             real[i] = false;
         }

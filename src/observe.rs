@@ -884,7 +884,11 @@ pub fn relate(m: &mut Machine) {
                 if name.is_empty() || name.contains(char::is_whitespace) || !tried.insert(name.clone()) {
                     continue;
                 }
-                if name.ends_with(".bib") || crate::plugin::bib::resolve(&m.out, &name).is_some() {
+                // BibTeX's `\bibdata` names databases, found or not.
+                if name.ends_with(".bib")
+                    || line.head == "bibdata"
+                    || crate::plugin::bib::resolve(&m.out, &name).is_some()
+                {
                     m.occurrence_in(OccKind::Bibliography, name, None, line.span, &line.context);
                 }
             }

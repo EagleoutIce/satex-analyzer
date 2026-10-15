@@ -590,3 +590,29 @@ fn begin_document_stands_at_its_own_line_after_any_number_of_packages() {
         assert_eq!(begin, [("document".to_string(), 2 + packages.len() as u32, 1)], "{packages:?}: {begin:?}");
     }
 }
+
+/// BibTeX writes the `.bbl`: its typography is the style's, not the
+/// author's, so no warning stands there; the document's own text still has
+/// them.
+#[test]
+fn a_bbl_file_has_no_findings_of_its_own() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_in(
+        "bbl",
+        "\\documentclass{article}\n\\begin{document}\nSee \\cite{a} , e.g. this.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n",
+        &[
+            ("refs.bib", "@book{a, title={T}, author={A}}\n"),
+            (
+                "bbl.bbl",
+                "\\begin{thebibliography}{1}\n\\bibitem{a} A. Author , e.g. a title.\n\\end{thebibliography}\n",
+            ),
+        ],
+    );
+    let all = satex::lint::lint(&analysis);
+    let place = |r: &satex::query::Record| r["file"].as_str().unwrap_or_default().to_string();
+    assert!(!all.iter().any(|r| place(r).ends_with(".bbl")), "{all:?}");
+    assert!(all.iter().any(|r| place(r).ends_with("bbl.tex")), "{all:?}");
+    cleanup("bbl");
+}

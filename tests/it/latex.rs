@@ -1591,8 +1591,13 @@ fn a_class_or_package_option_is_not_a_citation_key() {
 \end{document}",
     );
     assert_eq!(keys(&analysis, OccKind::Cite), vec!["knuth".to_string()]);
-    let found = codes(&analysis);
-    assert!(!found.contains(&"undefined-citation".to_string()), "{found:?}");
+    // No bibliography: `knuth` is undefined, as LaTeX warns, and no option is.
+    let undefined: Vec<String> = satex::lint::lint(&analysis)
+        .iter()
+        .filter(|f| f["code"] == "undefined-citation")
+        .map(|f| f["name"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(undefined, ["knuth"]);
     // The option on a line of its own below `\documentclass`, as a class
     // passes it on to babel.
     let analysis = analyze(

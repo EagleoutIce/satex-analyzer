@@ -514,6 +514,13 @@ pub fn lint(analysis: &Analysis) -> Vec<Record> {
             keep[at - 1]
         });
     }
+    // A file the run writes holds what LaTeX, BibTeX or makeindex wrote
+    // there: only an error in it, which still stops the build, is the
+    // document's to know about.
+    out.retain(|r| {
+        r.get("severity").and_then(|v| v.as_str()) == Some("error")
+            || !r.get("path").and_then(|v| v.as_str()).is_some_and(written_by_run)
+    });
     let frozen: Vec<glob::Pattern> =
         analysis.settings.project.frozen.iter().filter_map(|g| glob::Pattern::new(g).ok()).collect();
     // The repository a file belongs to: its nearest ancestor holding a
@@ -533,6 +540,17 @@ pub fn lint(analysis: &Analysis) -> Vec<Record> {
         });
     }
     suppress::apply(analysis, out)
+}
+
+/// Whether `path` is a file the run, BibTeX or makeindex writes, not the
+/// author: `.aux`, `.bbl`, `.toc` and the like.
+pub fn written_by_run(path: &str) -> bool {
+    std::path::Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        matches!(
+            e,
+            "aux" | "bbl" | "toc" | "lof" | "lot" | "out" | "nav" | "snm" | "vrb" | "ind" | "gls" | "glo" | "acr"
+        )
+    })
 }
 
 /// Every rule, by category and then from the most severe down.
