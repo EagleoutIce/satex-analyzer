@@ -1360,6 +1360,7 @@ impl Machine<'_> {
         if self.own_file(at.file) && !files.iter().all(|&f| self.own_file(f)) {
             self.carried.foreign_names.insert((sym, at));
         }
+        self.built_name = Some((sym, at));
         self.unread(Token::new(Tok::Cs(sym), at));
     }
 
