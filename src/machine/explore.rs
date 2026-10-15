@@ -2381,8 +2381,8 @@ fn place_order(a: &[Place], b: &[Place]) -> std::cmp::Ordering {
     // A key per level, compared in order: a total order, as `sort_by`
     // needs. Text further back (more left to read) comes first.
     let key = |p: &Place| match p {
-        Place::File(f, i, _) => (0, *f as usize, (*i, 0)),
-        Place::Pseudo(at, _, i) => (1, at.file as usize, ((at.line as usize) << 32 | at.col as usize, *i)),
+        Place::File(f, i, _) => (0, *f as usize, (*i as u64, 0)),
+        Place::Pseudo(at, _, i) => (1, at.file as usize, (u64::from(at.line) << 32 | u64::from(at.col), *i)),
         Place::Tokens(t, i) => (2, usize::MAX - (t.len() - i), (0, 0)),
         Place::Returned(t) => (2, usize::MAX - t.len(), (0, 0)),
         Place::Boundary => (3, 0, (0, 0)),
