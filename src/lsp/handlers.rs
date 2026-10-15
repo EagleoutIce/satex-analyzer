@@ -135,23 +135,27 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
     let pos = to_pos(doc, position);
     let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
     let markdown = if is_command {
-        let mut md = command_hover(analysis, &name)?;
-        // The primitive's syntax, under the first heading.
-        if let Some(syntax) = super::primitives::syntax(analysis, &name, path, pos.line, pos.col) {
-            let at = md.find("\n\n").map_or(0, |i| i + 2);
-            md.insert_str(at, &syntax);
-        }
-        md
+        placed(analysis, command_hover(analysis, &name)?, &name, path, pos)
     } else {
         load_hover(analysis, path, pos, &name)?
     };
     Some(markdown_hover(markdown))
 }
 
-/// The hover of the control sequence `name` wherever it stands, which may
-/// be kept; `None` where it depends on the place ([`super::primitives::positional`]).
-pub fn command_markdown(analysis: &Analysis, name: &str) -> Option<Option<String>> {
-    (!super::primitives::positional(name)).then(|| command_hover(analysis, name))
+/// The hover of the control sequence `name` apart from where it stands:
+/// what may be kept.
+pub fn command_markdown(analysis: &Analysis, name: &str) -> Option<String> {
+    command_hover(analysis, name)
+}
+
+/// `markdown` with the primitive's syntax under its first heading, where
+/// `name` still means the primitive at `at`.
+pub fn placed(analysis: &Analysis, mut markdown: String, name: &str, path: &str, at: Pos) -> String {
+    if let Some(syntax) = super::primitives::syntax(analysis, name, path, at.line, at.col) {
+        let first = markdown.find("\n\n").map_or(0, |i| i + 2);
+        markdown.insert_str(first, &syntax);
+    }
+    markdown
 }
 
 /// A hover of `markdown`.
