@@ -29,7 +29,8 @@ rustflags = [
 # `cargo playground`: build the site with its playground and serve it on
 # localhost (src/bin/satex-playground.rs).
 [alias]
-playground = "run --release --features doc --bin satex-playground --"
+# The same features as the `satex` it builds, so the library is compiled once.
+playground = "run --release --bin satex-playground --"
 # `cargo vscode`: build the VS Code extension with satex bundled and install
 # it (src/bin/satex-vscode.rs).
-vscode = "run --release --features doc --bin satex-vscode --"
+vscode = "run --release --bin satex-vscode --"

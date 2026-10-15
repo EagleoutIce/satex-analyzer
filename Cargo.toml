@@ -30,12 +30,10 @@ required-features = ["doc"]
 [[bin]]
 name = "satex-playground"
 path = "src/bin/satex-playground.rs"
-required-features = ["doc"]
 
 [[bin]]
 name = "satex-vscode"
 path = "src/bin/satex-vscode.rs"
-required-features = ["doc"]
 
 [lib]
 name = "satex"
