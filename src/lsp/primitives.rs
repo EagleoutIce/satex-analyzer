@@ -68,6 +68,12 @@ const SYNTAX: &[(&str, &str, bool)] = &[
 /// The syntax line for `\name` hovered in `path` at `line`:`col`, when its
 /// meaning there is the primitive of that name: the document has no
 /// definition of it before that place, and the kernel left it alone.
+/// Whether `name`'s hover may name its syntax as a primitive, which depends
+/// on where it stands ([`syntax`]).
+pub fn positional(name: &str) -> bool {
+    SYNTAX.iter().any(|(n, ..)| *n == name)
+}
+
 pub fn syntax(analysis: &Analysis, name: &str, path: &str, line: u32, col: u32) -> Option<String> {
     let (_, rest, etex) = SYNTAX.iter().find(|(n, ..)| *n == name)?;
     let want = *crate::builtins::primitive_names(analysis.plugins.engine).get(name)?;

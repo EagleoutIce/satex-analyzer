@@ -145,10 +145,21 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
     } else {
         load_hover(analysis, path, pos, &name)?
     };
-    Some(Hover {
+    Some(markdown_hover(markdown))
+}
+
+/// The hover of the control sequence `name` wherever it stands, which may
+/// be kept; `None` where it depends on the place ([`super::primitives::positional`]).
+pub fn command_markdown(analysis: &Analysis, name: &str) -> Option<Option<String>> {
+    (!super::primitives::positional(name)).then(|| command_hover(analysis, name))
+}
+
+/// A hover of `markdown`.
+pub fn markdown_hover(markdown: String) -> Hover {
+    Hover {
         contents: HoverContents::Markup(MarkupContent { kind: MarkupKind::Markdown, value: markdown }),
         range: None,
-    })
+    }
 }
 
 fn command_hover(analysis: &Analysis, name: &str) -> Option<String> {
