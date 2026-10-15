@@ -22,6 +22,7 @@ pub mod sourcetext;
 pub mod spacing;
 pub mod style;
 pub mod suppress;
+pub mod tables;
 pub mod text;
 pub mod typography;
 pub mod units;
@@ -55,6 +56,7 @@ pub fn all() -> impl Iterator<Item = &'static Rule> {
         .chain(build::RULES)
         .chain(suppress::RULES)
         .chain(colors::RULES)
+        .chain(tables::RULES)
 }
 
 /// Which lint family a [`Rule`] belongs to. `satex lint --filter category=…`
@@ -211,6 +213,7 @@ pub enum Source {
     MikTeX,
     Xcolor,
     Cleveref,
+    Booktabs,
 }
 
 impl Source {
@@ -250,6 +253,7 @@ impl Source {
             Source::MikTeX => ("MiKTeX manual", "https://docs.miktex.org/manual/"),
             Source::Xcolor => ("xcolor", "https://ctan.org/pkg/xcolor"),
             Source::Cleveref => ("cleveref", "https://ctan.org/pkg/cleveref"),
+            Source::Booktabs => ("booktabs", "https://ctan.org/pkg/booktabs"),
         }
     }
 
