@@ -65,6 +65,44 @@ pub(crate) fn hyperlink(text: &str, target: &str, links: Links) -> String {
     format!("\x1b]8;;{target}\x1b\\{text}\x1b]8;;\x1b\\")
 }
 
+/// Text for a terminal: the styles and file links satex writes (`ESC [ … m`,
+/// `ESC ] 8 ; ; … ESC \`) stay, and every other control character, which a
+/// document's text or a file name may carry, shows as `�`: nothing printed
+/// moves the cursor, clears the screen or retitles the terminal.
+pub fn terminal_safe(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        let kept = match c {
+            '\x1b' => {
+                let style = rest[1..].strip_prefix('[').and_then(|r| {
+                    let params = r.find(|c: char| !c.is_ascii_digit() && c != ';' && c != ':')?;
+                    r[params..].starts_with('m').then_some(2 + params + 1)
+                });
+                let link = rest[1..].strip_prefix("]8;").and_then(|r| {
+                    let end = r.find("\x1b\\")?;
+                    (!r[..end].contains(|c: char| c.is_control())).then_some(4 + end + 2)
+                });
+                style.or(link)
+            }
+            '\n' | '\t' => Some(1),
+            c if c.is_control() => None,
+            c => Some(c.len_utf8()),
+        };
+        match kept {
+            Some(n) => {
+                out.push_str(&rest[..n]);
+                rest = &rest[n..];
+            }
+            None => {
+                out.push('\u{FFFD}');
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+    }
+    out
+}
+
 pub fn plain(value: &Json) -> String {
     match value {
         Json::String(s) => s.clone(),
@@ -540,9 +578,78 @@ fn severity_symbol(severity: &str) -> &'static str {
     }
 }
 
-/// One finding under its rule: the place (dimmed), the message, and the fix
-/// (dimmed) with how `satex lint --fix` applies it.
-fn finding(out: &mut String, record: &Record, links: Links) {
+/// The files findings point into, read once each: the line a finding
+/// stands on is shown under it.
+#[derive(Default)]
+struct Sources {
+    files: std::collections::HashMap<String, Option<Vec<String>>>,
+}
+
+impl Sources {
+    fn line(&mut self, path: &str, line: u64) -> Option<&str> {
+        let lines = self.files.entry(path.to_string()).or_insert_with(|| {
+            let text = std::fs::read(path).ok()?;
+            Some(String::from_utf8_lossy(&text).lines().map(|l| l.replace('\t', " ")).collect())
+        });
+        lines.as_ref()?.get(usize::try_from(line).ok()?.checked_sub(1)?).map(String::as_str)
+    }
+}
+
+/// How many characters from `col` (0-based) the finding marks: a control
+/// sequence, the finding's own name where it stands there, or one character.
+fn marked(line: &[char], col: usize, name: &str) -> usize {
+    let rest = &line[col.min(line.len())..];
+    let named: Vec<char> = name.chars().collect();
+    if !named.is_empty() && rest.starts_with(&named) {
+        return named.len();
+    }
+    match rest {
+        ['\\', c, ..] if c.is_ascii_alphabetic() => {
+            1 + rest[1..].iter().take_while(|c| c.is_ascii_alphabetic()).count()
+        }
+        ['\\', _, ..] => 2,
+        [] => 0,
+        _ => 1,
+    }
+}
+
+/// The source line under a finding, the marked part in the severity's
+/// color, with its number in a gutter: `  8 │ \foo`, then `    │ ^^^^`.
+/// A long line shows the part around the mark. The gutter's width, where
+/// the line could be read.
+fn snippet(out: &mut String, sources: &mut Sources, record: &Record, style: Style) -> Option<usize> {
+    let path = record.get("path").and_then(Json::as_str)?;
+    let number = record.get("line").and_then(Json::as_u64).filter(|n| *n > 0)?;
+    let text = sources.line(path, number)?;
+    let chars: Vec<char> = text.trim_end().chars().collect();
+    let col = record.get("col").and_then(Json::as_u64).map_or(0, |c| c.saturating_sub(1) as usize).min(chars.len());
+    let len = marked(&chars, col, &record.get("name").map(plain).unwrap_or_default());
+    let gutter = number.to_string().len();
+    let room = terminal_width().saturating_sub(SNIPPET + gutter + 3).max(MIN_COLUMN * 4);
+    // A window of `room` characters that holds the mark.
+    let from = if chars.len() <= room { 0 } else { col.saturating_sub(room / 3).min(chars.len() - room) };
+    let to = (from + room).min(chars.len());
+    let cut = |a: usize, b: usize| chars[a.clamp(from, to)..b.clamp(from, to)].iter().collect::<String>();
+    let (before, mark, after) = (cut(from, col), cut(col, col + len), cut(col + len, to));
+    let (open, close) = (if from > 0 { "\u{2026}" } else { "" }, if to < chars.len() { "\u{2026}" } else { "" });
+    let pad = " ".repeat(SNIPPET);
+    let _ = writeln!(
+        out,
+        "{pad}{DIM}{number} \u{2502}{DIM:#} {DIM}{open}{before}{DIM:#}{style}{mark}{style:#}{DIM}{after}{close}{DIM:#}"
+    );
+    let under = width(&format!("{open}{before}"));
+    let carets = "^".repeat(width(&mark).max(1));
+    let _ = writeln!(out, "{pad}{:gutter$} {DIM}\u{2502}{DIM:#} {:under$}{style}{carets}{style:#}", "", "");
+    Some(gutter)
+}
+
+/// Where a finding's source line starts.
+const SNIPPET: usize = 6;
+
+/// One finding under its rule: the place (dimmed) and the message, the
+/// source line it points at, and the fix (dimmed) with how
+/// `satex lint --fix` applies it.
+fn finding(out: &mut String, sources: &mut Sources, record: &Record, links: Links) {
     let message = record.get("message").map(plain).unwrap_or_default();
     let place = place_text(record);
     let indent = 4 + width(&place) + 2;
@@ -553,16 +660,22 @@ fn finding(out: &mut String, record: &Record, links: Links) {
     for line in lines {
         let _ = writeln!(out, "{:indent$}{line}", "");
     }
+    let style = severity_style(&record.get("severity").map(plain).unwrap_or_default());
+    // The fix stands under the gutter's bar, or where the source line would.
+    let bar = match snippet(out, sources, record, style) {
+        Some(gutter) => SNIPPET + gutter + 1,
+        None => SNIPPET,
+    };
     let Some(fix) = record.get("fix").and_then(Json::as_str).filter(|f| !f.is_empty()) else { return };
     let tag = match record.get("applicability").and_then(Json::as_str) {
-        Some("safe") => "fix",
-        Some("unsafe") => "unsafe fix",
-        _ => "hint",
+        Some("safe") => "= fix",
+        Some("unsafe") => "= unsafe fix",
+        _ => "= hint",
     };
-    let fix_room = terminal_width().saturating_sub(indent + width(tag) + 2).max(MIN_COLUMN);
+    let fix_room = terminal_width().saturating_sub(bar + width(tag) + 2).max(MIN_COLUMN);
     for (i, line) in wrap(fix, fix_room).into_iter().enumerate() {
         let head = if i == 0 { format!("{tag}: ") } else { " ".repeat(width(tag) + 2) };
-        let _ = writeln!(out, "{:indent$}{DIM}{head}{line}{DIM:#}", "");
+        let _ = writeln!(out, "{:bar$}{DIM}{head}{line}{DIM:#}", "");
     }
 }
 
@@ -573,7 +686,14 @@ const SHOWN_PER_RULE: usize = 3;
 
 /// A section of findings, one heading per rule: its severity's shape, its
 /// code and count, then its findings.
-fn findings_section(out: &mut String, title: &str, records: &[&Record], links: Links, group: bool) {
+fn findings_section(
+    out: &mut String,
+    sources: &mut Sources,
+    title: &str,
+    records: &[&Record],
+    links: Links,
+    group: bool,
+) {
     if records.is_empty() {
         return;
     }
@@ -583,13 +703,17 @@ fn findings_section(out: &mut String, title: &str, records: &[&Record], links: L
         let severity = rule[0].get("severity").map(plain).unwrap_or_default();
         let style = severity_style(&severity);
         let symbol = severity_symbol(&severity);
-        let _ = writeln!(out, "  {style}{symbol}{style:#} {} {DIM}({}){DIM:#}", code(&rule[0]), rule.len());
+        let _ =
+            writeln!(out, "\n  {style}{symbol}{style:#} {BOLD}{}{BOLD:#} {DIM}({}){DIM:#}", code(&rule[0]), rule.len());
         let shown = if group { SHOWN_PER_RULE.min(rule.len()) } else { rule.len() };
-        for record in &rule[..shown] {
-            finding(out, record, links);
+        for (i, record) in rule[..shown].iter().enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            finding(out, sources, record, links);
         }
         if shown < rule.len() {
-            let _ = writeln!(out, "    {}", label(&format!("{} more, shown by --no-group", rule.len() - shown)));
+            let _ = writeln!(out, "\n    {}", label(&format!("{} more, shown by --no-group", rule.len() - shown)));
         }
     }
     out.push('\n');
@@ -642,11 +766,11 @@ pub fn lint(records: &[Record], links: Links, group: bool) -> String {
     let warnings: Vec<&Record> = document.iter().copied().filter(|r| severity(r) == "warning").collect();
     let suggestions: Vec<&Record> = document.iter().copied().filter(|r| severity(r) == "info").collect();
 
-    let mut out = String::new();
-    findings_section(&mut out, "errors", &errors, links, group);
-    findings_section(&mut out, "warnings", &warnings, links, group);
-    findings_section(&mut out, "suggestions", &suggestions, links, group);
-    findings_section(&mut out, "performance", &performance, links, group);
+    let (mut out, mut sources) = (String::new(), Sources::default());
+    findings_section(&mut out, &mut sources, "errors", &errors, links, group);
+    findings_section(&mut out, &mut sources, "warnings", &warnings, links, group);
+    findings_section(&mut out, &mut sources, "suggestions", &suggestions, links, group);
+    findings_section(&mut out, &mut sources, "performance", &performance, links, group);
     if !precision.is_empty() {
         let _ = writeln!(out, "{}", precision_line(&precision));
         out.push('\n');
@@ -1558,5 +1682,43 @@ mod tests {
         assert!(!out.contains('…'));
         assert!(out.contains(&long_message[long_message.len() - 10..]));
         assert!(out.contains("1 error, 1 warning, 1 suggestion, 1 performance note, 1 precision note"));
+    }
+
+    #[test]
+    fn text_for_a_terminal_keeps_only_satex_s_own_styles_and_links() {
+        let ours = format!("{BOLD}x{BOLD:#} \x1b]8;;file:///a.tex\x1b\\a.tex\x1b]8;;\x1b\\\n\tz");
+        assert_eq!(terminal_safe(&ours), ours);
+        assert_eq!(terminal_safe("a\x1b]0;title\x07b\x1b[2Jc\rd"), "a\u{FFFD}]0;title\u{FFFD}b\u{FFFD}[2Jc\u{FFFD}d");
+    }
+
+    /// Text without its terminal styles.
+    fn unstyled(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '\x1b' => {
+                    chars.by_ref().find(|c| c.is_ascii_alphabetic());
+                }
+                c => out.push(c),
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_finding_shows_the_line_it_stands_on_with_its_place_marked() {
+        let path = std::env::temp_dir().join(format!("satex-render-{}.tex", std::process::id()));
+        std::fs::write(&path, "x\n\tsee \\foo here\n").unwrap();
+        let mut record =
+            finding_record("error", "correctness", "undefined-control-sequence", "never defined", Some("define it"));
+        record.insert("path".into(), Json::from(path.display().to_string()));
+        record.insert("line".into(), Json::from(2));
+        record.insert("col".into(), Json::from(6));
+        record.insert("name".into(), Json::from("\\foo"));
+        let out = unstyled(&lint(&[record], Links(false), true));
+        std::fs::remove_file(&path).unwrap();
+        assert!(out.contains("      2 \u{2502}  see \\foo here\n        \u{2502}      ^^^^\n"), "{out}");
+        assert!(out.contains("        = hint: define it"), "{out}");
     }
 }
