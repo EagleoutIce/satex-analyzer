@@ -624,7 +624,7 @@ fn sandbox_run(m: &mut Machine, text: &str) -> Vec<String> {
         if fragment {
             m.out.preamble = Some(Box::new((m.env.snapshot(), m.catcodes.clone())));
         }
-        let sandbox = Machine::sandbox(m.cfg, &m.out, true).map(Box::new);
+        let sandbox = Machine::sandbox(m.cfg, &m.out, crate::probe::State::Preamble).map(Box::new);
         if fragment {
             m.out.preamble = None;
         }

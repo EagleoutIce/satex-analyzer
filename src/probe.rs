@@ -181,14 +181,25 @@ impl Watch {
 
 /// What `sym` takes where the run ended, or at `\begin{document}` with
 /// `preamble`; computed once per name and view.
-pub fn probe(analysis: &Analysis, sym: Sym, preamble: bool) -> Option<Probed> {
-    if let Some(found) = analysis.probes.lock().ok().and_then(|p| p.get(&(sym, preamble)).cloned()) {
+/// Which state of the run a probe starts from.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum State {
+    /// The end of the run.
+    End,
+    /// `\begin{document}`.
+    Preamble,
+    /// The document's start: the format's meanings.
+    Start,
+}
+
+pub fn probe(analysis: &Analysis, sym: Sym, at: State) -> Option<Probed> {
+    if let Some(found) = analysis.probes.lock().ok().and_then(|p| p.get(&(sym, at)).cloned()) {
         return found;
     }
     let cfg = sandbox_config(&analysis.settings);
-    let found = Prober { cfg: &cfg, analysis, sym, preamble, context: None, seen: Default::default() }.derive();
+    let found = Prober { cfg: &cfg, analysis, sym, at, context: None, seen: Default::default() }.derive();
     if let Ok(mut probes) = analysis.probes.lock() {
-        probes.insert((sym, preamble), found.clone());
+        probes.insert((sym, at), found.clone());
     }
     found
 }
@@ -290,7 +301,7 @@ fn candidate_environments(analysis: &Analysis, sym: Sym) -> Vec<Sym> {
 /// nothing", the signature probe's own condition for reporting an error.
 fn probe_bare_error(analysis: &Analysis, sym: Sym, context: Option<Sym>) -> Option<String> {
     let cfg = sandbox_config(&analysis.settings);
-    let mut machine = Machine::sandbox(&cfg, analysis, false)?;
+    let mut machine = Machine::sandbox(&cfg, analysis, State::End)?;
     if let Some(env) = context {
         enter_environment(&mut machine, env);
     }
@@ -354,7 +365,7 @@ struct Prober<'c, 'a> {
     cfg: &'c Config,
     analysis: &'a Analysis,
     sym: Sym,
-    preamble: bool,
+    at: State,
     /// An environment to really `\begin` in the sandbox, real kernel code
     /// and all, before probing `sym`: what it takes and raises inside
     /// that environment instead of outside every one.
@@ -373,7 +384,7 @@ impl Prober<'_, '_> {
         let watch = match known {
             Some(watch) => watch?,
             None => {
-                let watch = Machine::sandbox(self.cfg, self.analysis, self.preamble)
+                let watch = Machine::sandbox(self.cfg, self.analysis, self.at)
                     .map(|mut machine| {
                         if let Some(env) = self.context {
                             enter_environment(&mut machine, env);
