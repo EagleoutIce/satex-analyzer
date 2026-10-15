@@ -5719,11 +5719,14 @@ will look undefined",
                 }
             }
             // tex.web § 1046: a script outside math mode inserts the `$` it lacks.
-            // Not within an alignment, whose cells satex does not always keep in math.
+            // Not within an alignment, whose cells satex does not always keep in
+            // math, and only in the document's own text: a package's mode is
+            // what satex follows least surely.
             Some(Catcode::Sup | Catcode::Sub)
                 if !self.mode.is_empty()
                     && !self.mode.meets(crate::mode::Modes::ANY_MATH)
-                    && !self.env.in_alignment() =>
+                    && !self.env.in_alignment()
+                    && self.own_file(token.span.file) =>
             {
                 let span = token.span;
                 if self.own_file(span.file) {
