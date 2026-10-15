@@ -3,9 +3,10 @@
 //!
 //!   cargo playground [--port 8000] [--out target/site]
 //!
-//! It needs what the site's workflow has: the Rust target
-//! `wasm32-unknown-emscripten`, the Emscripten SDK (`emcc` on the `PATH`, or
-//! `EMSDK` naming its directory), Python 3, pandoc and pdftocairo.
+//! It needs what the site's workflow has: Python 3, pandoc and pdftocairo,
+//! git, and `rustup`. The Rust target `wasm32-unknown-emscripten` is added
+//! when missing, and the Emscripten SDK the workflow pins is installed under
+//! `target/emsdk` unless `emcc` is on the `PATH` or `EMSDK` names one.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -31,7 +32,8 @@ fn run() -> Result<(), String> {
         }
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let path = emscripten_path()?;
+    wasm_target()?;
+    let path = emscripten_path(root)?;
     // Both builds from one source and profile: a cache is keyed on the build that wrote it.
     step(Command::new("cargo").args(["build", "--release", "--bin", "satex"]).current_dir(root))?;
     step(
@@ -58,23 +60,61 @@ fn run() -> Result<(), String> {
     serve.status().map(|_| ()).map_err(|e| format!("cannot run python3: {e}"))
 }
 
-/// The `PATH` with Emscripten's `emcc` on it: as it is, or with `$EMSDK`'s
-/// compiler in front.
-fn emscripten_path() -> Result<String, String> {
+/// Rust's `wasm32-unknown-emscripten` standard library, added when missing.
+fn wasm_target() -> Result<(), String> {
+    let installed = Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .map_err(|e| format!("cannot run rustup: {e}"))?;
+    if String::from_utf8_lossy(&installed.stdout).lines().any(|t| t.trim() == "wasm32-unknown-emscripten") {
+        return Ok(());
+    }
+    step(Command::new("rustup").args(["target", "add", "wasm32-unknown-emscripten"]))
+}
+
+/// The `PATH` with Emscripten's `emcc` on it: as it is, with `$EMSDK`'s
+/// compiler in front, or with the SDK the site's workflow pins, installed
+/// under `target/emsdk` the first time.
+fn emscripten_path(root: &Path) -> Result<String, String> {
     let path = std::env::var("PATH").unwrap_or_default();
     if which::which("emcc").is_ok() {
         return Ok(path);
     }
-    let emsdk = std::env::var("EMSDK").map_err(|_| {
-        "no `emcc` on the PATH and no EMSDK set: install the Emscripten SDK (the version in \
-         .github/workflows/pages.yml) and `source emsdk_env.sh`, or set EMSDK to its directory"
-            .to_string()
-    })?;
-    let compiler = Path::new(&emsdk).join("upstream/emscripten");
+    let emsdk = match std::env::var("EMSDK") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => install_emsdk(root)?,
+    };
+    let compiler = emsdk.join("upstream/emscripten");
     if !compiler.join("emcc").exists() {
         return Err(format!("{} has no emcc: run `emsdk install` and `emsdk activate` there", compiler.display()));
     }
-    Ok(format!("{}:{emsdk}:{path}", compiler.display()))
+    Ok(format!("{}:{}:{path}", compiler.display(), emsdk.display()))
+}
+
+/// The Emscripten SDK of `.github/workflows/pages.yml`, in `target/emsdk`.
+fn install_emsdk(root: &Path) -> Result<PathBuf, String> {
+    let workflow = std::fs::read_to_string(root.join(".github/workflows/pages.yml")).map_err(|e| e.to_string())?;
+    let version = workflow
+        .split("setup-emsdk")
+        .nth(1)
+        .and_then(|rest| rest.lines().find_map(|line| line.trim().strip_prefix("version:")))
+        .map(str::trim)
+        .ok_or("the site's workflow names no Emscripten version")?
+        .to_string();
+    let emsdk = root.join("target/emsdk");
+    if !emsdk.join("emsdk").exists() {
+        println!("satex-playground: installing the Emscripten SDK {version} into {}", emsdk.display());
+        step(
+            Command::new("git")
+                .args(["clone", "--depth", "1", "https://github.com/emscripten-core/emsdk.git"])
+                .arg(&emsdk),
+        )?;
+    }
+    if !emsdk.join("upstream/emscripten/emcc").exists() {
+        step(Command::new("./emsdk").args(["install", &version]).current_dir(&emsdk))?;
+        step(Command::new("./emsdk").args(["activate", &version]).current_dir(&emsdk))?;
+    }
+    Ok(emsdk)
 }
 
 fn step(command: &mut Command) -> Result<(), String> {
