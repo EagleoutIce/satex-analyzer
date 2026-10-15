@@ -10,7 +10,11 @@ fn the_build_log_is_explained_where_it_arose() {
     }
     let dir = crate::support::tmp_root().join(format!("satex-compile-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("doc.tex"), "\\documentclass{article}\n\\begin{document}\nSee \\ref{nope}.\n\\input{part}\n\\end{document}\n").unwrap();
+    std::fs::write(
+        dir.join("doc.tex"),
+        "\\documentclass{article}\n\\begin{document}\nSee \\ref{nope}.\n\\input{part}\n\\end{document}\n",
+    )
+    .unwrap();
     std::fs::write(dir.join("part.tex"), "Some \\foo text.\n").unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_satex"))
         .args(["compile", "-f", "doc.tex", "--format", "json"])
@@ -19,8 +23,8 @@ fn the_build_log_is_explained_where_it_arose() {
         .env_remove("WAYLAND_DISPLAY")
         .output()
         .unwrap();
-    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout)
-        .unwrap_or_else(|e| panic!("{e}: {}", String::from_utf8_lossy(&out.stderr)));
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", String::from_utf8_lossy(&out.stderr)));
     let find = |code: &str| rows.iter().find(|r| r["code"] == code).unwrap_or_else(|| panic!("no {code}: {rows:?}"));
     let undefined = find("undefined-control-sequence");
     assert_eq!((undefined["file"].as_str(), undefined["line"].as_u64()), (Some("part.tex"), Some(1)));

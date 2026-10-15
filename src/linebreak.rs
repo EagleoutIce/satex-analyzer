@@ -299,8 +299,10 @@ impl Machine<'_> {
             for j in left..=word.len() - right {
                 if hyf[j] % 2 == 1 {
                     let k = at[j - 1];
-                    let (Some(&Kp::Box { w, h, d, chr: Some((_, prev)), .. }), Some(&Kp::Box { chr: Some((_, next)), .. })) =
-                        (items.get(k), items.get(at[j]))
+                    let (
+                        Some(&Kp::Box { w, h, d, chr: Some((_, prev)), .. }),
+                        Some(&Kp::Box { chr: Some((_, next)), .. }),
+                    ) = (items.get(k), items.get(at[j]))
                     else {
                         return None;
                     };
