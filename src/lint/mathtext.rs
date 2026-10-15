@@ -585,6 +585,14 @@ fn math_still_open(report: &mut Report) {
     if analysis.facts.diagnostics.iter().any(|d| d.code == "budget-exhausted") {
         return;
     }
+    // `\end{document}` ends a paragraph: an open formula was found above, and
+    // the last character sits in one that closed since.
+    let ended = analysis.facts.occurrences.iter().any(|o| {
+        o.kind == crate::builtins::OccKind::EndEnvironment && o.key == "document" && o.certain
+    });
+    if ended {
+        return;
+    }
     let view = report.text();
     let Some(last) = view.ours().next_back() else { return };
     if !view.modes(last).meets(Modes::ANY_MATH) {
