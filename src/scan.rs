@@ -614,6 +614,26 @@ impl Machine<'_> {
         (any.then_some(value).or_else(|| self.missing_number(None)), false)
     }
 
+    /// tex.web §§ 456, 459: "Illegal unit of measure", where the token after
+    /// the number is known and no unit.
+    fn illegal_unit(&mut self, inserted: &str) {
+        let Some(token) = self.next_non_blank_x_token() else { return };
+        let unknown = match token.tok {
+            Tok::Cs(sym) => {
+                matches!(self.env.meaning(sym), Meaning::Unknown)
+                    || self.is_unknown_name(sym)
+                    || self.is_unknown_digits(sym)
+            }
+            Tok::Chr(c, _) => crate::tex::is_unknown_char(c),
+            _ => false,
+        };
+        self.unread(token);
+        if !unknown {
+            let message = format!("Illegal unit of measure ({inserted} inserted)");
+            self.diagnose(crate::facts::Severity::Warning, "illegal-unit", token.span, message);
+        }
+    }
+
     /// tex.web § 446: "Missing number, treated as zero".
     fn missing_number(&mut self, at: Option<Token>) -> Option<i64> {
         let span = at.map(|t| t.span).unwrap_or_default();
@@ -977,7 +997,9 @@ impl Machine<'_> {
         if mu {
             // tex.web § 456: "Illegal unit of measure (mu inserted)" when the
             // keyword is missing. The value is taken as mu either way.
-            self.scan_keyword("mu");
+            if !self.scan_keyword("mu") && integer.is_some() {
+                self.illegal_unit("mu");
+            }
             let value = integer.map(|n| attach_fraction(n, fraction));
             self.set_ranged(range, |n, f| Some(attach_fraction(n, f)));
             self.scan_optional_x_space();
@@ -1048,6 +1070,9 @@ impl Machine<'_> {
             integer
         } else {
             // `pt`, or "Illegal unit of measure (pt inserted)" (tex.web § 459).
+            if !pt && integer.is_some() {
+                self.illegal_unit("pt");
+            }
             self.set_ranged(range, |n, f| Some(attach_fraction(n, f)));
             integer.map(|n| attach_fraction(n, fraction))
         };
