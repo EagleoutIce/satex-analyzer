@@ -591,7 +591,10 @@ const DBASE: [u16; 30] = [
 const DEXT: [u8; 30] =
     [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
 
-/// RFC 1951, at most 64 MiB out.
+/// What [`inflate`] gives out at most.
+const MAX_INFLATED: usize = 64 << 20;
+
+/// RFC 1951, at most [`MAX_INFLATED`] bytes out.
 fn inflate(data: &[u8]) -> Option<Vec<u8>> {
     let mut b = Bits { data, pos: 0, bit: 0 };
     let mut out: Vec<u8> = Vec::new();
@@ -648,6 +651,11 @@ fn inflate(data: &[u8]) -> Option<Vec<u8>> {
                             let d = usize::from(b.decode(&dist)?);
                             let back = usize::from(*DBASE.get(d)?) + b.get(u32::from(DEXT[d]))? as usize;
                             let from = out.len().checked_sub(back)?;
+                            // The bound holds within a block too: one block
+                            // of copies alone could fill memory.
+                            if out.len() + len > MAX_INFLATED {
+                                return None;
+                            }
                             for k in 0..len {
                                 out.push(out[from + k]);
                             }
@@ -657,7 +665,7 @@ fn inflate(data: &[u8]) -> Option<Vec<u8>> {
             }
             _ => return None,
         }
-        if out.len() > 64 << 20 {
+        if out.len() > MAX_INFLATED {
             return None;
         }
         if last == 1 {

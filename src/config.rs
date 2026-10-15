@@ -1462,10 +1462,10 @@ impl Config {
             }
         }
         if !rooted && let Some(global) = global_config_file() {
-            merge_file(&mut value, &global, &mut files);
+            merge_file(&mut value, &global, &mut files, false);
         }
         for candidate in layers.into_iter().rev() {
-            merge_file(&mut value, &candidate, &mut files);
+            merge_file(&mut value, &candidate, &mut files, true);
         }
         let mut cfg: Config = serde_yaml_ng::from_value(value).unwrap_or_default();
         cfg.source = files.last().cloned();
@@ -1535,11 +1535,14 @@ fn anchor_frozen(value: &mut serde_yaml_ng::Value, path: &Path) {
     }
 }
 
+/// What only the user's own configuration sets, never a project's.
+const USER_KEYS: [(&str, &str); 2] = [("cache", "dir"), ("plugins", "packages")];
+
 /// Merges `path` onto `base` with `merge_value`, and records it in
 /// `files` — but only when the result still fits `Config`; a file that does
 /// not (an unknown key, a value of the wrong type, unreadable, absent) is
 /// left out and `base` is unchanged, so it never blanks out an outer layer.
-fn merge_file(base: &mut serde_yaml_ng::Value, path: &Path, files: &mut Vec<PathBuf>) {
+fn merge_file(base: &mut serde_yaml_ng::Value, path: &Path, files: &mut Vec<PathBuf>, project: bool) {
     if !path.is_file() {
         return;
     }
@@ -1548,6 +1551,18 @@ fn merge_file(base: &mut serde_yaml_ng::Value, path: &Path, files: &mut Vec<Path
         Ok(incoming) => incoming,
         Err(e) => return eprintln!("satex: {}: ignored: {e}", path.display()),
     };
+    // A project, maybe someone else's, does not say where satex writes its
+    // caches or whether a lint reaches the network: only the user's own
+    // config, `--config`, `--set` and `SATEX_CACHE` do.
+    if project {
+        for (section, key) in USER_KEYS {
+            if let Some(serde_yaml_ng::Value::Mapping(map)) = incoming.get_mut(section)
+                && map.remove(key).is_some()
+            {
+                eprintln!("satex: {}: {section}.{key} ignored: only the user's own config sets it", path.display());
+            }
+        }
+    }
     anchor_frozen(&mut incoming, path);
     let fits = |incoming: &serde_yaml_ng::Value| {
         let mut candidate = base.clone();
@@ -1728,6 +1743,24 @@ mod tests {
         assert!(!cfg.load.classes);
         assert_eq!(cfg.load.skip, vec!["b".to_string()]);
         assert!(files.ends_with(&[dir.join("satex.yaml"), inner.join("satex.yaml")]));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_project_does_not_choose_the_cache_or_reach_the_network() {
+        let dir = std::env::temp_dir().join(format!("satex-config-user-keys-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        write(
+            &dir,
+            "satex.yaml",
+            "project: {ignore_other_configs: true}\ncache: {dir: ./c, enabled: false}\nplugins: {packages: true}\n",
+        );
+        let (cfg, _) = Config::discover_layers(&dir);
+        assert_eq!(cfg.cache.dir, None);
+        assert!(!cfg.plugins.packages);
+        // The rest of the file applies.
+        assert!(!cfg.cache.enabled);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

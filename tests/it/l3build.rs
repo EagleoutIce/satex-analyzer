@@ -91,3 +91,30 @@ fn defaults_come_from_l3build_itself() {
     assert!(config.unpacked().contains_key("demo.sty"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `build.lua` is run sandboxed: a file it opens for update (`r+`) or for
+/// writing is refused, so reading a bundle never changes a file.
+#[test]
+fn build_lua_cannot_write_a_file() {
+    if !installed() || which::which("texlua").is_err() {
+        return;
+    }
+    let dir = bundle("sandbox");
+    let victim = dir.join("victim.txt");
+    std::fs::write(&victim, "kept\n").unwrap();
+    std::fs::write(
+        dir.join("build.lua"),
+        "module = \"demo\"\n\
+         for _, mode in ipairs({\"r+\", \"w\", \"a\", \"w+\"}) do\n\
+           local f = io.open(\"victim.txt\", mode)\n\
+           if f and f.write then f:write(\"changed\") end\n\
+           if f and f.close then f:close() end\n\
+         end\n\
+         local r = io.open(\"victim.txt\")\n\
+         if r and r.write then r:write(\"changed\") end\n",
+    )
+    .unwrap();
+    let analysis = analyze(&dir.join("demo-doc.tex"));
+    assert_eq!(analysis.project.l3build.as_ref().and_then(|c| c.string("module")), Some("demo"));
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "kept\n");
+}

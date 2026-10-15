@@ -239,8 +239,7 @@ fn known_shells(home: &std::path::Path) -> Vec<&'static str> {
 /// After `--version`: one hint on stderr naming the shells without the completion.
 fn completion_hints() {
     let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else { return };
-    let missing: Vec<&str> =
-        known_shells(&home).into_iter().filter(|shell| !completion_set_up(&home, shell)).collect();
+    let missing: Vec<&str> = known_shells(&home).into_iter().filter(|shell| !completion_set_up(&home, shell)).collect();
     if !missing.is_empty() {
         eprintln!("no shell completion for {}: run `satex completions install`", missing.join(", "));
     }
@@ -456,12 +455,14 @@ fn run() -> Result<(), String> {
         Output::Detail(records) | Output::Lint(records) => (rendered(&records, &cli, links), None),
         Output::DetailPartial(records, hint) => (rendered(&records, &cli, links), Some(hint)),
     };
-    let _ = write!(out, "{body}");
+    // JSON escapes what text would print raw.
+    let safe = |t: &str| if text { render::terminal_safe(t) } else { t.to_string() };
+    let _ = write!(out, "{}", safe(&body));
     if let Some(hint) = hint.filter(|_| text) {
-        let _ = writeln!(out, "{}", render::footer(&hint));
+        let _ = writeln!(out, "{}", safe(&render::footer(&hint)));
     }
     if !owns_gaps {
-        let _ = write!(out, "{unfollowed}");
+        let _ = write!(out, "{}", safe(&unfollowed));
     }
     // After the command, so that the phases it ran are in the table.
     if cfg.timings {
