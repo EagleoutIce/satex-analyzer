@@ -30,7 +30,7 @@ use crate::fixed::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, select};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError, select};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::{
     CodeActionParams, CodeActionProviderCapability, CompletionOptions, CompletionParams, DidChangeTextDocumentParams,
@@ -49,6 +49,16 @@ use crate::machine::{Analysis, Machine};
 /// argument is a `satex query --request` body (`doc/wiki/queries.md`),
 /// minus `file` when the request means the document that sent it.
 const EXECUTE_COMMAND: &str = "satex/query";
+
+/// The hovers of control sequences by document and name, `None` where there
+/// is none: shared with the connection thread, which answers from them while
+/// the engine analyzes. Filled on demand, and while the engine is idle for
+/// the names the document uses most.
+type Hovers = std::sync::Arc<std::sync::Mutex<HashMap<(Uri, String), Option<String>>>>;
+
+/// How many of the names a document uses most get their hover while the
+/// engine is idle.
+const PREFILL: usize = 400;
 
 #[cfg_attr(target_os = "emscripten", allow(unreachable_code))]
 pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), String> {
@@ -76,16 +86,18 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
     let (engine_tx, engine_rx) = crossbeam_channel::unbounded::<EngineMsg>();
     let (diagnostics_tx, diagnostics_rx) = crossbeam_channel::unbounded::<PublishDiagnosticsParams>();
     let debounce = Duration::from_millis(cfg.lsp.debounce_ms.max(1));
+    let hovers = Hovers::default();
+    let engine_hovers = hovers.clone();
     // The stack the command line's main thread has: deep expansion nests that far.
     let engine = std::thread::Builder::new()
         .stack_size(8 << 20)
         .spawn(move || {
             handlers::VIEW.with_borrow_mut(|view| named.iter().for_each(|r| view.add(r)));
-            engine_loop(engine_rx, Engine::new(cfg, root, main, diagnostics_tx), debounce)
+            engine_loop(engine_rx, Engine::new(cfg, root, main, diagnostics_tx).with_hovers(engine_hovers), debounce)
         })
         .map_err(|e| e.to_string())?;
 
-    let result = main_loop(&connection, &engine_tx, &diagnostics_rx);
+    let result = main_loop(&connection, &engine_tx, &diagnostics_rx, &hovers);
     let _ = engine_tx.send(EngineMsg::Shutdown);
     let _ = engine.join();
     crate::progress::listen(None);
@@ -129,7 +141,10 @@ fn main_loop(
     connection: &Connection,
     engine_tx: &Sender<EngineMsg>,
     diagnostics_rx: &Receiver<PublishDiagnosticsParams>,
+    hovers: &Hovers,
 ) -> Result<(), String> {
+    // The open documents' text, to find the name under a hover here.
+    let mut texts: HashMap<Uri, String> = HashMap::default();
     loop {
         select! {
             recv(connection.receiver) -> msg => {
@@ -138,9 +153,28 @@ fn main_loop(
                         if connection.handle_shutdown(&req).map_err(|e| e.to_string())? {
                             return Ok(());
                         }
-                        handle_request(connection, engine_tx, req);
+                        match kept_hover(&req, &texts, hovers) {
+                            Some(hover) => {
+                                let _ = connection.sender.send(Message::Response(Response::new_ok(req.id, hover)));
+                            }
+                            None => handle_request(connection, engine_tx, req),
+                        }
                     }
-                    Ok(Message::Notification(not)) => handle_notification(&mut |m| engine_tx.send(m).is_ok(), not),
+                    Ok(Message::Notification(not)) => handle_notification(
+                        &mut |m| {
+                            match &m {
+                                EngineMsg::Open(uri, _, text) | EngineMsg::Change(uri, text) => {
+                                    texts.insert(uri.clone(), text.clone());
+                                }
+                                EngineMsg::Close(uri) => {
+                                    texts.remove(uri);
+                                }
+                                _ => {}
+                            }
+                            engine_tx.send(m).is_ok()
+                        },
+                        not,
+                    ),
                     Ok(Message::Response(_)) => {}
                     Err(_) => return Ok(()),
                 }
@@ -153,6 +187,20 @@ fn main_loop(
             }
         }
     }
+}
+
+/// A hover answered from what the engine kept, without waiting for it.
+fn kept_hover(req: &Request, texts: &HashMap<Uri, String>, hovers: &Hovers) -> Option<Json> {
+    if req.method != "textDocument/hover" {
+        return None;
+    }
+    let p: HoverParams = serde_json::from_value(req.params.clone()).ok()?;
+    let uri = p.text_document_position_params.text_document.uri;
+    let text = Text::new(texts.get(&uri)?.clone());
+    let pos = handlers::to_pos(&text, p.text_document_position_params.position);
+    let (name, true) = handlers::word_at(text.line(pos.line), pos.col)? else { return None };
+    let kept = hovers.lock().ok()?.get(&(uri, name))?.clone();
+    Some(serde_json::to_value(kept.map(handlers::markdown_hover)).unwrap_or(Json::Null))
 }
 
 fn handle_request(connection: &Connection, engine_tx: &Sender<EngineMsg>, req: Request) {
@@ -345,6 +393,12 @@ struct Engine {
     root: PathBuf,
     main: Option<PathBuf>,
     diagnostics_tx: Sender<PublishDiagnosticsParams>,
+    hovers: Hovers,
+    /// The names whose hover the engine computes while it is idle.
+    prefill: std::collections::VecDeque<(Uri, String)>,
+    /// Each document's loads, when its hovers were last kept: the kernel's
+    /// and the packages' names mean the same while these do.
+    preambles: HashMap<Uri, Vec<String>>,
 }
 
 impl Engine {
@@ -367,13 +421,83 @@ impl Engine {
             root,
             main,
             diagnostics_tx,
+            hovers: Hovers::default(),
+            prefill: Default::default(),
+            preambles: HashMap::default(),
+        }
+    }
+
+    /// Keeps the hovers in `hovers`, which another thread reads.
+    fn with_hovers(self, hovers: Hovers) -> Self {
+        Engine { hovers, ..self }
+    }
+
+    /// Analyzes `uri`, then publishes its diagnostics once its hovers are
+    /// the new analysis's: a hover asked after them never gets an older one.
+    fn analyze(&mut self, uri: &Uri) {
+        let published = analyze(&mut self.docs, &mut self.actions, uri, &self.cfg, self.main.as_deref());
+        self.dirty.retain(|d| d != uri);
+        self.refresh_hovers(uri);
+        for params in published {
+            let _ = self.diagnostics_tx.send(params);
+        }
+        crate::progress::idle();
+    }
+
+    /// After `uri` was analyzed: its hovers of names the document defines
+    /// go, and all of them when its loads changed; the names it uses most
+    /// are queued for the idle engine.
+    fn refresh_hovers(&mut self, uri: &Uri) {
+        let Some(analysis) = self.docs.get(uri).and_then(|d| d.analysis.as_ref()) else { return };
+        let name = |sym| analysis.interner.name(sym).to_string();
+        let loads: Vec<String> = analysis.facts.loads.iter().map(|l| l.name.clone()).collect();
+        let same = self.preambles.insert(uri.clone(), loads.clone()).is_some_and(|before| before == loads);
+        let own: std::collections::HashSet<String> =
+            analysis.facts.defs.iter().filter(|d| d.package.is_none()).map(|d| name(d.name)).collect();
+        // The commands the document's own files call, not the kernel's inner ones.
+        let dir = crate::paths::dir_of(Path::new(analysis.file_name(analysis.main_file)));
+        let mut owned: HashMap<crate::tex::FileId, bool> = HashMap::default();
+        let mut used: HashMap<crate::tex::Sym, u32> = HashMap::default();
+        for e in &analysis.facts.expansions {
+            let file = e.span.file;
+            if *owned.entry(file).or_insert_with(|| crate::paths::within(&dir, Path::new(analysis.file_name(file)))) {
+                *used.entry(e.name).or_default() += e.count.max(1);
+            }
+        }
+        let mut used: Vec<(u32, String)> = used.into_iter().map(|(sym, n)| (n, name(sym))).collect();
+        used.sort_by(|a, b| b.cmp(a));
+        let Ok(mut hovers) = self.hovers.lock() else { return };
+        hovers.retain(|(u, n), _| u != uri || same && !own.contains(n));
+        self.prefill.retain(|(u, _)| u != uri);
+        for (_, n) in used.into_iter().take(PREFILL) {
+            if !hovers.contains_key(&(uri.clone(), n.clone())) {
+                self.prefill.push_back((uri.clone(), n));
+            }
+        }
+    }
+
+    /// One queued hover, computed and kept.
+    fn prefill_one(&mut self) {
+        let Some((uri, name)) = self.prefill.pop_front() else { return };
+        if let Some(Some(markdown)) =
+            with_doc(&self.docs, &uri, |analysis, _| handlers::command_markdown(analysis, &name))
+            && let Ok(mut hovers) = self.hovers.lock()
+        {
+            hovers.insert((uri, name), markdown);
+        }
+    }
+
+    /// `uri` analyzed for what it is now, where an answer edits its text.
+    fn fresh(&mut self, uri: &Uri) {
+        if self.dirty.contains(uri) || self.docs.get(uri).is_some_and(|d| d.analysis.is_none()) {
+            self.analyze(uri);
         }
     }
 
     /// Analyzes every document edited since the last call.
     fn flush(&mut self) {
         for uri in std::mem::take(&mut self.dirty) {
-            analyze(&mut self.docs, &mut self.actions, &uri, &self.cfg, self.main.as_deref(), &self.diagnostics_tx);
+            self.analyze(&uri);
         }
     }
 
@@ -383,8 +507,7 @@ impl Engine {
         if self.docs.get(uri).is_some_and(|d| d.analysis.is_some()) {
             return;
         }
-        analyze(&mut self.docs, &mut self.actions, uri, &self.cfg, self.main.as_deref(), &self.diagnostics_tx);
-        self.dirty.retain(|d| d != uri);
+        self.analyze(uri);
     }
 
     fn step(&mut self, msg: EngineMsg) {
@@ -398,9 +521,10 @@ impl Engine {
                 }
             }
             EngineMsg::Change(uri, text) => {
+                // The last analysis answers until the next one replaces it,
+                // so a request never waits out a whole run.
                 if let Some(doc) = self.docs.get_mut(&uri) {
                     doc.text = text;
-                    doc.analysis = None;
                     if !self.dirty.contains(&uri) {
                         self.dirty.push(uri);
                     }
@@ -410,11 +534,28 @@ impl Engine {
                 self.docs.remove(&uri);
                 self.actions.remove(&uri);
                 self.dirty.retain(|d| d != &uri);
+                self.preambles.remove(&uri);
+                self.prefill.retain(|(u, _)| u != &uri);
+                if let Ok(mut hovers) = self.hovers.lock() {
+                    hovers.retain(|(u, _), _| u != &uri);
+                }
             }
             EngineMsg::Hover(uri, pos, reply) => {
                 self.ensure(&uri);
                 let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc(&self.docs, &uri, |analysis, text| handlers::hover(analysis, text, &path, pos));
+                let result = with_doc(&self.docs, &uri, |analysis, text| {
+                    let at = handlers::to_pos(text, pos);
+                    // A control sequence's hover is kept for the next time.
+                    if let Some((name, true)) = handlers::word_at(text.line(at.line), at.col)
+                        && let Some(markdown) = handlers::command_markdown(analysis, &name)
+                    {
+                        if let Ok(mut hovers) = self.hovers.lock() {
+                            hovers.insert((uri.clone(), name), markdown.clone());
+                        }
+                        return markdown.map(handlers::markdown_hover);
+                    }
+                    handlers::hover(analysis, text, &path, pos)
+                });
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::Definition(uri, pos, reply) => {
@@ -450,21 +591,21 @@ impl Engine {
                 let _ = reply.send(result);
             }
             EngineMsg::Highlight(uri, pos, reply) => {
-                self.ensure(&uri);
+                self.fresh(&uri);
                 let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
                 let result =
                     with_doc(&self.docs, &uri, |analysis, text| handlers::highlights(analysis, text, &path, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::PrepareRename(uri, pos, reply) => {
-                self.ensure(&uri);
+                self.fresh(&uri);
                 let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
                 let result =
                     with_doc(&self.docs, &uri, |analysis, text| handlers::prepare_rename(analysis, text, &path, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::Rename(uri, pos, new_name, reply) => {
-                self.ensure(&uri);
+                self.fresh(&uri);
                 let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
                 let result = with_doc(&self.docs, &uri, |analysis, text| {
                     handlers::rename(analysis, text, &path, pos, &new_name)
@@ -483,7 +624,7 @@ impl Engine {
                 let _ = reply.send(result);
             }
             EngineMsg::CodeAction(uri, reply) => {
-                self.ensure(&uri);
+                self.fresh(&uri);
                 let _ = reply.send(self.actions.get(&uri).cloned().unwrap_or_default());
             }
             EngineMsg::ExecuteCommand(body, reply) => {
@@ -497,10 +638,20 @@ impl Engine {
 
 fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) {
     loop {
-        let received = if engine.dirty.is_empty() {
-            rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
-        } else {
+        let received = if !engine.dirty.is_empty() {
             rx.recv_timeout(debounce)
+        } else if !engine.prefill.is_empty() {
+            // Idle: one more hover, unless a message waits.
+            match rx.try_recv() {
+                Ok(msg) => Ok(msg),
+                Err(TryRecvError::Empty) => {
+                    engine.prefill_one();
+                    continue;
+                }
+                Err(TryRecvError::Disconnected) => Err(RecvTimeoutError::Disconnected),
+            }
+        } else {
+            rx.recv().map_err(|_| RecvTimeoutError::Disconnected)
         };
         match received {
             Ok(EngineMsg::Shutdown) | Err(RecvTimeoutError::Disconnected) => return,
@@ -510,8 +661,9 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
     }
 }
 
-/// Re-analyzes `uri`'s current text, publishes its diagnostics, and stashes
-/// their quick-fix code actions for later `textDocument/codeAction` calls.
+/// Re-analyzes `uri`'s current text, stashes the quick-fix code actions of
+/// its diagnostics for later `textDocument/codeAction` calls, and returns
+/// the diagnostics to publish.
 /// Every other open document is set in the overlay first, so an `\input` of
 /// one sees its unsaved text too (`crate::overlay`).  An input file (no
 /// `\documentclass`, as discovery classifies it) is analyzed as part of
@@ -522,9 +674,8 @@ fn analyze(
     uri: &Uri,
     cfg: &Config,
     main: Option<&Path>,
-    diagnostics_tx: &Sender<PublishDiagnosticsParams>,
-) {
-    let Some((text, path)) = docs.get(uri).map(|d| (d.text.clone(), d.path.clone())) else { return };
+) -> Vec<PublishDiagnosticsParams> {
+    let Some((text, path)) = docs.get(uri).map(|d| (d.text.clone(), d.path.clone())) else { return Vec::new() };
     // Rules and handlers read the buffer, not the file on disk.
     crate::overlay::set(&path, text.clone());
     for (other_uri, other) in docs.iter() {
@@ -552,6 +703,7 @@ fn analyze(
     if let Some(doc) = docs.get_mut(uri) {
         doc.analysis = Some(analysis);
     }
+    let mut published = Vec::new();
     for group in groups {
         let Some(group_uri) = group.get("uri").and_then(Json::as_str).and_then(|s| s.parse::<Uri>().ok()) else {
             continue;
@@ -560,9 +712,9 @@ fn analyze(
             group.get("diagnostics").cloned().and_then(|d| serde_json::from_value(d).ok()).unwrap_or_default();
         let code_actions = group.get("codeActions").and_then(|a| a.as_array()).cloned().unwrap_or_default();
         actions.insert(group_uri.clone(), code_actions);
-        let _ = diagnostics_tx.send(PublishDiagnosticsParams { uri: group_uri, diagnostics, version: None });
+        published.push(PublishDiagnosticsParams { uri: group_uri, diagnostics, version: None });
     }
-    crate::progress::idle();
+    published
 }
 
 /// Runs `f` against `uri`'s [`Analysis`] and a [`Text`] of its current

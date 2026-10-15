@@ -342,6 +342,36 @@ fn hover_shows_primitive_syntax_only_while_it_is_the_primitive() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A hover is kept, and the one of a name the document defines is asked
+/// again once an edit redefined it: the diagnostics of the edit come after.
+#[test]
+fn a_kept_hover_follows_the_document_s_own_definition() {
+    let catcodes = "\\catcode`\\{=1 \\catcode`\\}=2 ";
+    let (mut server, uri, _, dir) = open_unsaved("kept", &format!("{catcodes}\\def\\foo{{x}}\n\\foo\n"));
+    let mut hover = |server: &mut Server, line: u32| {
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": 2 } }),
+        );
+        server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
+    };
+    let first = hover(&mut server, 1);
+    assert!(first.contains("main.tex:1"), "{first}");
+    assert_eq!(hover(&mut server, 1), first);
+    server.notify(
+        "textDocument/didChange",
+        json!({
+            "textDocument": { "uri": uri, "version": 2 },
+            "contentChanges": [{ "text": format!("{catcodes}\n\\def\\foo{{y}}\n\\foo\n") }],
+        }),
+    );
+    server.notification("textDocument/publishDiagnostics");
+    let after = hover(&mut server, 2);
+    assert!(after.contains("main.tex:2"), "{after}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A folder opened through a symlink is answered under the symlink, though
 /// the server's working directory is the resolved folder (#17), and an input
 /// file is analyzed with the document that reads it.
