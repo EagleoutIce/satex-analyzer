@@ -189,6 +189,22 @@ fn main_loop(
     }
 }
 
+/// Where the hovers of a document whose run read these files are kept
+/// between sessions: one file per satex build and set of the installation's
+/// files the run read (each by its path, size and time), so a hover of
+/// another meaning is never read back.
+fn hover_store(cfg: &Config, analysis: &Analysis, own: &Path) -> Option<std::path::PathBuf> {
+    let dir = crate::format::enabled_cache_dir(cfg)?;
+    let mut hash = crate::format::Fnv::new();
+    hash.write(crate::format::cache_key().as_bytes());
+    for name in analysis.file_names().iter().filter(|f| !crate::paths::within(own, Path::new(f))) {
+        let meta = std::fs::metadata(name).ok();
+        hash.put(&(name, meta.as_ref().map(|m| m.len()), meta.and_then(|m| m.modified().ok())));
+    }
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(format!("hovers-{:016x}.json", hash.0)))
+}
+
 /// A hover answered from what the engine kept, without waiting for it.
 fn kept_hover(req: &Request, texts: &HashMap<Uri, String>, hovers: &Hovers) -> Option<Json> {
     if req.method != "textDocument/hover" {
@@ -404,6 +420,9 @@ struct Engine {
     /// Each document's loads, when its hovers were last kept: the kernel's
     /// and the packages' names mean the same while these do.
     preambles: HashMap<Uri, Vec<String>>,
+    /// Where each document's hovers are kept between sessions, and the
+    /// names it defines itself, which are never kept there.
+    stores: HashMap<Uri, (std::path::PathBuf, std::collections::HashSet<String>)>,
 }
 
 impl Engine {
@@ -429,6 +448,7 @@ impl Engine {
             hovers: Hovers::default(),
             prefill: Default::default(),
             preambles: HashMap::default(),
+            stores: HashMap::default(),
         }
     }
 
@@ -471,8 +491,21 @@ impl Engine {
         }
         let mut used: Vec<(u32, String)> = used.into_iter().map(|(sym, n)| (n, name(sym))).collect();
         used.sort_by(|a, b| b.cmp(a));
+        let store = hover_store(&self.cfg, analysis, &dir);
         let Ok(mut hovers) = self.hovers.lock() else { return };
         hovers.retain(|(u, n), _| u != uri || same && !own.contains(n));
+        // What an earlier session kept for these same loads.
+        if !same && let Some(path) = &store {
+            let kept: HashMap<String, Option<String>> =
+                std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+            for (name, markdown) in kept.into_iter().filter(|(name, _)| !own.contains(name)) {
+                hovers.entry((uri.clone(), name)).or_insert(markdown);
+            }
+        }
+        match store {
+            Some(path) => self.stores.insert(uri.clone(), (path, own.clone())),
+            None => self.stores.remove(uri),
+        };
         self.prefill.retain(|(u, _)| u != uri);
         for (_, n) in used.into_iter().take(PREFILL) {
             if !hovers.contains_key(&(uri.clone(), n.clone())) {
@@ -481,13 +514,33 @@ impl Engine {
         }
     }
 
-    /// One queued hover, computed and kept.
+    /// Writes `uri`'s hovers of the kernel's and the packages' names where
+    /// the next session reads them.
+    fn store_hovers(&self, uri: &Uri) {
+        let Some((path, own)) = self.stores.get(uri) else { return };
+        let Ok(hovers) = self.hovers.lock() else { return };
+        let kept: std::collections::BTreeMap<&String, &Option<String>> =
+            hovers.iter().filter(|((u, n), _)| u == uri && !own.contains(n)).map(|((_, n), m)| (n, m)).collect();
+        if let Ok(bytes) = serde_json::to_vec(&kept) {
+            let temporary = path.with_extension("tmp");
+            if std::fs::write(&temporary, bytes).is_ok() {
+                let _ = std::fs::rename(&temporary, path);
+            }
+        }
+    }
+
+    /// One queued hover, computed and kept; once the queue of a document is
+    /// done, its hovers are stored for the next session.
     fn prefill_one(&mut self) {
         let Some((uri, name)) = self.prefill.pop_front() else { return };
+        let last = !self.prefill.iter().any(|(u, _)| *u == uri);
         if let Some(markdown) = with_doc(&self.docs, &uri, |analysis, _| handlers::command_markdown(analysis, &name))
             && let Ok(mut hovers) = self.hovers.lock()
         {
-            hovers.insert((uri, name), markdown);
+            hovers.insert((uri.clone(), name), markdown);
+        }
+        if last {
+            self.store_hovers(&uri);
         }
     }
 
@@ -535,6 +588,8 @@ impl Engine {
                 }
             }
             EngineMsg::Close(uri) => {
+                self.store_hovers(&uri);
+                self.stores.remove(&uri);
                 self.docs.remove(&uri);
                 self.actions.remove(&uri);
                 self.dirty.retain(|d| d != &uri);

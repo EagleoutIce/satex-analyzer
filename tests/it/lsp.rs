@@ -372,6 +372,36 @@ fn a_kept_hover_follows_the_document_s_own_definition() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The hovers of names the document does not define are kept for the next
+/// session, in the cache, and answered from there.
+#[test]
+fn hovers_are_kept_between_sessions() {
+    let text = "\\catcode`\\{=1 \\catcode`\\}=2 \\def\\x{\\hfil}\n\\hfil\n";
+    let (mut server, uri, _, dir) = open_unsaved("store", text);
+    let hover = |server: &mut Server, uri: &str| {
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 2 } }),
+        );
+        server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
+    };
+    let first = hover(&mut server, &uri);
+    assert!(first.contains("\\hfil"), "{first}");
+    server.notify("textDocument/didClose", json!({ "textDocument": { "uri": uri } }));
+    server.shutdown();
+    let stored: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("hovers-")))
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .collect();
+    assert!(stored.iter().any(|s| s.contains("\"hfil\"") && !s.contains("\"x\"")), "{stored:?}");
+    let (mut again, uri, _, dir) = open_unsaved("store", text);
+    assert_eq!(hover(&mut again, &uri), first);
+    again.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A folder opened through a symlink is answered under the symlink, though
 /// the server's working directory is the resolved folder (#17), and an input
 /// file is analyzed with the document that reads it.
