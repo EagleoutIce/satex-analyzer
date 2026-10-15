@@ -20,8 +20,9 @@ declares this key, so LaTeX prints `?` and warns `Citation … undefined`.
 Citations are observed rather than listed: a citation command writes its key
 to the `.aux` for the bibliography program (`\\citation{⟨key⟩}`) and reads
 the name the entry defines when the file is read back (`\\b@⟨key⟩`).  Any line
-written so is a citation.  Nothing is reported while a named database cannot
-be found.
+written so is a citation.  Without any bibliography every citation is
+undefined.  Nothing is reported while a named database cannot be found, or
+while a file of the document was not read.
 
 Fix by adding the entry, or by correcting the key.",
         references: &[Ref { source: Source::Source2e, at: "ltbibl.dtx" }],
@@ -114,7 +115,9 @@ const EVERY_ENTRY: &str = "*";
 fn undefined_citation(report: &mut Report) {
     let analysis = report.analysis;
     let bibliography = bibliography(analysis);
-    if !bibliography.complete || bibliography.declared.is_empty() {
+    // With no entry at all, every citation is undefined, as LaTeX warns;
+    // unless the entries may stand in what the run did not read.
+    if !bibliography.complete || bibliography.declared.is_empty() && report.unread("declared").is_some() {
         return;
     }
     let missing: Vec<(Span, Option<String>, String)> = analysis

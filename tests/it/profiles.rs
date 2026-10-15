@@ -113,4 +113,10 @@ fn a_document_s_unused_definition_is_reported_regardless() {
     let analysis = analyze_as(Profile::Document, source, "demo.tex");
     let findings = satex::lint::lint(&analysis);
     assert!(findings.iter().any(|r| r["code"] == "unused-definition" && r["origin"] == "document"), "{findings:?}");
+    // What LaTeX writes to the `.aux` file (`\@abspage@last`) is not the
+    // author's to delete.
+    let aux = |r: &satex::query::Record| {
+        r["code"] == "unused-definition" && r["file"].as_str().is_some_and(|f| f.ends_with(".aux"))
+    };
+    assert!(!findings.iter().any(aux), "{findings:?}");
 }
