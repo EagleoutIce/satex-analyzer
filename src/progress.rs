@@ -143,6 +143,33 @@ pub fn bar(label: &str, reached: usize, total: usize, lines: (u64, u64), clock: 
     }
 }
 
+/// Who hears what the bars say where there are none: the language server,
+/// which tells the editor. With what it heard last, and when.
+type Listener = Box<dyn Fn(&str) + Send>;
+static LISTENER: Mutex<Option<(Listener, String, u64)>> = Mutex::new(None);
+
+/// `listener` hears each change of what the work is (`caching package
+/// tikz`), at most twice a second, and `""` once it is idle; `None` stops.
+pub fn listen(listener: Option<Listener>) {
+    *LISTENER.lock().unwrap_or_else(|e| e.into_inner()) = listener.map(|l| (l, String::new(), 0));
+}
+
+/// What the work is now, for the listener ([`listen`]).
+pub fn tell(label: &str) {
+    let mut listener = LISTENER.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((hear, last, at)) = listener.as_mut() else { return };
+    let now = now_ms();
+    if label != last && (label.is_empty() || now.saturating_sub(*at) >= 500) {
+        hear(label);
+        (*last, *at) = (label.to_string(), now);
+    }
+}
+
+/// The work is done: the listener hears `""`.
+pub fn idle() {
+    tell("");
+}
+
 /// Print a message above the bars, which are drawn again below it.
 pub fn message(args: std::fmt::Arguments) {
     if !active() {
@@ -164,6 +191,22 @@ pub fn step(what: &str, why: &str, hint: &str) {
     let _ = write!(
         anstream::AutoStream::new(&mut line, anstream::stderr().current_choice()),
         "{dim}satex:{dim:#} {bold}{what}{bold:#}: {why} {dim}({hint}){dim:#}"
+    );
+    message(format_args!("{}", String::from_utf8_lossy(&line)));
+}
+
+/// A block of one-time work done, kept above the bars on a terminal:
+/// `satex: ✓ cached package tikz (14.2 s)`. Silent elsewhere, as the bars.
+pub fn done(what: &str, took: std::time::Duration) {
+    if !active() {
+        return;
+    }
+    let (dim, good) = (Style::new().dimmed(), Style::new().fg_color(Some(AnsiColor::Green.into())));
+    let mut line = Vec::new();
+    let _ = write!(
+        anstream::AutoStream::new(&mut line, anstream::stderr().current_choice()),
+        "{dim}satex:{dim:#} {good}\u{2713}{good:#} {what} {dim}({:.1} s){dim:#}",
+        took.as_secs_f64()
     );
     message(format_args!("{}", String::from_utf8_lossy(&line)));
 }

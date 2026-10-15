@@ -2773,6 +2773,8 @@ impl<'a> Machine<'a> {
         self.run();
         let kernel_steps = self.out.steps;
         self.budget = None;
+        let engine = self.out.plugins.engine.as_str();
+        crate::progress::done(&format!("built {engine} kernel cache"), self.started.elapsed());
         // The kernel build has a clock of its own; the document's starts after it.
         self.started = std::time::Instant::now();
         self.format_progress = None;
@@ -5108,7 +5110,7 @@ will look undefined",
         // work, or else of the document.
         if self.out.steps.is_multiple_of(2048) {
             let (label, frame) = match (self.format_progress, self.recording_package()) {
-                (Some(frame), _) => (format!("building {} kernel", self.out.plugins.engine.as_str()), frame),
+                (Some(frame), _) => (format!("caching {} kernel", self.out.plugins.engine.as_str()), frame),
                 (None, Some((name, frame))) => (format!("caching {name}"), frame),
                 (None, None) => match self.input.iter().position(|f| matches!(f, Frame::File { .. })) {
                     Some(frame) => ("at".to_string(), frame),
@@ -5124,8 +5126,8 @@ will look undefined",
                 _ => String::new(),
             };
             let label = match (label.as_str(), &phase) {
-                ("at", Some(phase)) => format!("{label} {own} ({phase})"),
-                ("at", None) => format!("{label} {own}"),
+                ("at", Some(phase)) => format!("analyzing {own} ({phase})"),
+                ("at", None) => format!("analyzing {own}"),
                 _ => label,
             };
             let (read, all) = self.frame_read(frame).unwrap_or((1, 1));
@@ -5173,6 +5175,7 @@ will look undefined",
                     std::path::Path::new(full).file_name().map_or(full.clone(), |n| n.to_string_lossy().into_owned());
                 subs.push(crate::progress::Sub { file: name, path: full.clone(), line: at as u32, reached: at, total });
             }
+            crate::progress::tell(&label);
             let label = if subs.is_empty() && !file.is_empty() { format!("{label}:{line}") } else { label };
             crate::progress::bar(&label, read, all, lines, clock, &subs);
         }

@@ -65,6 +65,13 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
     // must be answered under the symlink (#17).
     let named = client_roots(&params);
     let root = named.first().cloned().unwrap_or(root);
+    // What the engine is doing (`caching pdftex kernel`), for the editor's
+    // status bar: `satex/status` with `{ "text": … }`, empty when idle.
+    let status = connection.sender.clone();
+    crate::progress::listen(Some(Box::new(move |text: &str| {
+        let note = Notification::new("satex/status".into(), serde_json::json!({ "text": text }));
+        let _ = status.send(Message::Notification(note));
+    })));
 
     let (engine_tx, engine_rx) = crossbeam_channel::unbounded::<EngineMsg>();
     let (diagnostics_tx, diagnostics_rx) = crossbeam_channel::unbounded::<PublishDiagnosticsParams>();
@@ -81,6 +88,7 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
     let result = main_loop(&connection, &engine_tx, &diagnostics_rx);
     let _ = engine_tx.send(EngineMsg::Shutdown);
     let _ = engine.join();
+    crate::progress::listen(None);
     // The writer thread only stops once every `Sender` feeding it is gone
     // (`Connection::sender` among them), so it has to be dropped before
     // `io_threads.join()` can return.
@@ -554,6 +562,7 @@ fn analyze(
         actions.insert(group_uri.clone(), code_actions);
         let _ = diagnostics_tx.send(PublishDiagnosticsParams { uri: group_uri, diagnostics, version: None });
     }
+    crate::progress::idle();
 }
 
 /// Runs `f` against `uri`'s [`Analysis`] and a [`Text`] of its current

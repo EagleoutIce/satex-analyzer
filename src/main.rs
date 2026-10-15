@@ -376,7 +376,7 @@ fn run() -> Result<(), String> {
     // again once the project and the magic comments are read; commands that
     // tokenize without an analysis, such as `tokens`, keep this one.
     satex::source::set_encoding(satex::plugin::Plugins::sniff_engine(&cfg, &source).encoding());
-    if let Some(Command::Lsp { port, host }) = &cli.command {
+    if let Some(Command::Lsp { port, host, .. }) = &cli.command {
         return satex::cmd::lsp::run(&cfg, cli.file.as_deref(), *port, host.as_deref());
     }
     if let Some(Command::Cache { action: Some(action) }) = &cli.command {
