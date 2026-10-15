@@ -23,3 +23,8 @@ rustflags = [
   "-Clink-arg=-sFORCE_FILESYSTEM=1",
   "-Clink-arg=-sENVIRONMENT=web,worker,node",
 ]
+
+# `cargo playground`: build the site with its playground and serve it on
+# localhost (src/bin/satex-playground.rs).
+[alias]
+playground = "run --release --features doc --bin satex-playground --"

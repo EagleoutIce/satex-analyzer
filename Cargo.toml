@@ -27,6 +27,11 @@ name = "satex-doc"
 path = "src/bin/satex-doc.rs"
 required-features = ["doc"]
 
+[[bin]]
+name = "satex-playground"
+path = "src/bin/satex-playground.rs"
+required-features = ["doc"]
+
 [lib]
 name = "satex"
 path = "src/lib.rs"

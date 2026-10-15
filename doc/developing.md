@@ -156,7 +156,8 @@ F2, the context menu and Ctrl+click rename, explain and go to a definition. A de
 Uploaded files join the open project. A folder or a zip is unpacked in the page and goes to `/work/upload`. A permalink is the open file, the arguments, the kernel and the selection, deflated into the URL's hash.
 `doc/site/playground.yaml` is the satex.yaml of those runs.
 
-To build and test it locally you need the native and the wasm build, the
+`cargo playground` does all of it and serves the result at <http://127.0.0.1:8000/play/> (`--port`, `--out`).
+To build and test it step by step you need the native and the wasm build, the
 [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html) (the version in the workflow), pandoc and pdftocairo:
 
 ```sh
