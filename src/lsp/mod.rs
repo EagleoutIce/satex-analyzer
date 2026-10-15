@@ -199,6 +199,11 @@ fn kept_hover(req: &Request, texts: &HashMap<Uri, String>, hovers: &Hovers) -> O
     let text = Text::new(texts.get(&uri)?.clone());
     let pos = handlers::to_pos(&text, p.text_document_position_params.position);
     let (name, true) = handlers::word_at(text.line(pos.line), pos.col)? else { return None };
+    // A primitive's name shows its syntax where it still means it: the
+    // engine adds that to what it kept.
+    if primitives::positional(&name) {
+        return None;
+    }
     let kept = hovers.lock().ok()?.get(&(uri, name))?.clone();
     Some(serde_json::to_value(kept.map(handlers::markdown_hover)).unwrap_or(Json::Null))
 }
@@ -479,8 +484,7 @@ impl Engine {
     /// One queued hover, computed and kept.
     fn prefill_one(&mut self) {
         let Some((uri, name)) = self.prefill.pop_front() else { return };
-        if let Some(Some(markdown)) =
-            with_doc(&self.docs, &uri, |analysis, _| handlers::command_markdown(analysis, &name))
+        if let Some(markdown) = with_doc(&self.docs, &uri, |analysis, _| handlers::command_markdown(analysis, &name))
             && let Ok(mut hovers) = self.hovers.lock()
         {
             hovers.insert((uri, name), markdown);
@@ -545,14 +549,20 @@ impl Engine {
                 let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
                 let result = with_doc(&self.docs, &uri, |analysis, text| {
                     let at = handlers::to_pos(text, pos);
-                    // A control sequence's hover is kept for the next time.
-                    if let Some((name, true)) = handlers::word_at(text.line(at.line), at.col)
-                        && let Some(markdown) = handlers::command_markdown(analysis, &name)
-                    {
-                        if let Ok(mut hovers) = self.hovers.lock() {
-                            hovers.insert((uri.clone(), name), markdown.clone());
-                        }
-                        return markdown.map(handlers::markdown_hover);
+                    // A control sequence's hover is kept for the next time,
+                    // and placed where it is asked.
+                    if let Some((name, true)) = handlers::word_at(text.line(at.line), at.col) {
+                        let key = (uri.clone(), name.clone());
+                        let kept = self.hovers.lock().ok().and_then(|h| h.get(&key).cloned());
+                        let markdown = kept.unwrap_or_else(|| {
+                            let markdown = handlers::command_markdown(analysis, &name);
+                            if let Ok(mut hovers) = self.hovers.lock() {
+                                hovers.insert(key, markdown.clone());
+                            }
+                            markdown
+                        });
+                        return markdown
+                            .map(|m| handlers::markdown_hover(handlers::placed(analysis, m, &name, &path, at)));
                     }
                     handlers::hover(analysis, text, &path, pos)
                 });
