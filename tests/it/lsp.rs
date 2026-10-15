@@ -190,7 +190,7 @@ fn stdio_session_drives_the_feature_set() {
         json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 1 } }),
     );
     let completion = server.response(completion_id);
-    let items = completion["result"].as_array().cloned().unwrap_or_default();
+    let items = completion_items(&completion["result"]);
     assert!(items.iter().any(|item| item["label"] == json!("greet")), "completion did not offer `greet`: {items:?}");
 
     let definition_id = server.request(
@@ -636,6 +636,11 @@ const COMPLETE: &str = "\\documentclass{article}
 \\begin{}
 ";
 
+/// A completion result's items, an array or a list (LSP `CompletionList`).
+fn completion_items(result: &Value) -> Vec<Value> {
+    result.as_array().or_else(|| result["items"].as_array()).cloned().unwrap_or_default()
+}
+
 /// The completion items at 0-based `line`:`character`, ordered as a client
 /// orders them: by `sortText`, then label.
 fn complete(server: &mut Server, uri: &str, line: u32, character: u32) -> Vec<Value> {
@@ -643,7 +648,7 @@ fn complete(server: &mut Server, uri: &str, line: u32, character: u32) -> Vec<Va
         "textDocument/completion",
         json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": character } }),
     );
-    let mut items = server.response(id)["result"].as_array().cloned().unwrap_or_default();
+    let mut items = completion_items(&server.response(id)["result"]);
     let key =
         |v: &Value| (v["sortText"].as_str().unwrap_or("").to_string(), v["label"].as_str().unwrap_or("").to_string());
     items.sort_by_key(key);
@@ -701,10 +706,14 @@ fn completion_knows_the_argument_it_is_in() {
     let pgf = labels(&complete(&mut server, &uri, 12, 18)).join(" ");
     assert!(pgf.starts_with("wide width wild"), "{pgf}");
     assert!(!pgf.contains("wimp"), "{pgf}");
-    // A document author's commands before the kernel's internals.
+    // A document author's commands before the kernel's internals, which a
+    // list cut to the best may not reach; what is typed narrows it.
     let commands = complete(&mut server, &uri, 10, 1);
     let at = |name: &str| labels(&commands).iter().position(|l| *l == name);
-    assert!(at("section").unwrap() < at("@startsection").unwrap(), "section ranks after @startsection");
+    assert!(at("section").is_some_and(|s| at("@startsection").is_none_or(|i| s < i)), "{:?}", labels(&commands));
+    let typed = complete(&mut server, &uri, 10, 3);
+    assert!(labels(&typed).iter().all(|l| l.to_lowercase().contains("se")), "{:?}", labels(&typed));
+    assert!(labels(&typed).contains(&"section"), "{:?}", labels(&typed));
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }

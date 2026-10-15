@@ -619,12 +619,21 @@ pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> Comple
     let pos = to_pos(doc, position);
     let line = doc.line(pos.line);
     let (before, after) = line.split_at(crate::source::byte_of_col(line, pos.col).min(line.len()));
-    let items = match argument_at(before) {
-        Some(arg) if !cs_re().is_match(before) => argument_items(analysis, doc, &arg, after, pos),
-        _ => command_items(analysis, pos),
-    };
-    CompletionResponse::Array(items)
+    match argument_at(before) {
+        Some(arg) if !cs_re().is_match(before) => {
+            CompletionResponse::Array(argument_items(analysis, doc, &arg, after, pos))
+        }
+        _ => {
+            let typed = cs_re().find(before).map_or("", |m| &m.as_str()[1..]);
+            let (items, more) = command_items(analysis, pos, typed);
+            CompletionResponse::List(lsp_types::CompletionList { is_incomplete: more, items })
+        }
+    }
 }
+
+/// How many commands one completion answer lists; the client asks again as
+/// more of the name is typed.
+const COMMANDS_SHOWN: usize = 300;
 
 fn cs_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -1002,26 +1011,34 @@ fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTreeSet<crate::
 /// project's own first, then documented names from packages and the
 /// kernel (no `@`, `_` or `:`), more used ones first, internals last.
 /// Each carries a snippet for its mandatory arguments.
-fn command_items(analysis: &Analysis, pos: Pos) -> Vec<CompletionItem> {
-    let takes: crate::fixed::HashMap<String, u8> = query::run(analysis, Query::Definitions, &Filter::Always)
-        .into_iter()
-        .filter_map(|r| {
-            let name = r.get("name")?.as_str()?.to_string();
-            let min = r.get("takes")?.get("min")?.as_u64()? as u8;
-            Some((name, min))
-        })
-        .collect();
+/// The commands in scope at `pos` whose name holds `typed` (case aside),
+/// the best [`COMMANDS_SHOWN`] of them, and whether there were more.
+fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionItem>, bool) {
+    let takes = analysis.takes.get_or_init(|| {
+        query::run(analysis, Query::Definitions, &Filter::Always)
+            .into_iter()
+            .filter_map(|r| {
+                let name = r.get("name")?.as_str()?.to_string();
+                let min = r.get("takes")?.get("min")?.as_u64()? as u8;
+                Some((name, min))
+            })
+            .collect()
+    });
+    let typed = typed.to_lowercase();
     let mut used: crate::fixed::HashMap<crate::tex::Sym, u32> = crate::fixed::HashMap::default();
     for e in &analysis.facts.expansions {
         if query::origin(analysis, e.span.file) == "document" && e.within.is_none() {
             *used.entry(e.name).or_default() += 1;
         }
     }
-    query::scope(analysis, Some((analysis.main_file, pos.line, pos.col)), true)
+    let mut items: Vec<CompletionItem> = query::scope(analysis, Some((analysis.main_file, pos.line, pos.col)), true)
         .into_iter()
         .filter_map(|record| {
             let name = record.get("name")?.as_str()?.to_string();
             let label = name.trim_start_matches('\\').to_string();
+            if !label.to_lowercase().contains(&typed) {
+                return None;
+            }
             let tag = record.get("tag").and_then(Json::as_str).unwrap_or("");
             let internal = label.contains(['@', '_', ':']);
             if label.is_empty() || (internal && !matches!(tag, "macro" | "primitive" | "environment" | "alias")) {
@@ -1053,6 +1070,24 @@ fn command_items(analysis: &Analysis, pos: Pos) -> Vec<CompletionItem> {
                 ..Default::default()
             })
         })
+        .collect();
+    // A name that starts with what is typed before one that only holds it.
+    items.sort_by_cached_key(|i| (!i.label.to_lowercase().starts_with(&typed), i.sort_text.clone()));
+    let more = items.len() > COMMANDS_SHOWN;
+    items.truncate(COMMANDS_SHOWN);
+    (items, more)
+}
+
+/// The paragraphs the document's own files set, in reading order: `satex
+/// query typeset` of the run, without what libraries set.
+pub fn typeset(analysis: &Analysis) -> Vec<Json> {
+    query::run(analysis, Query::Typeset, &Filter::Always)
+        .into_iter()
+        .filter(|r| {
+            r.get("origin").is_none_or(|o| o == "document")
+                && r.get("kind").and_then(Json::as_str) != Some("assumption")
+        })
+        .map(Json::Object)
         .collect()
 }
 

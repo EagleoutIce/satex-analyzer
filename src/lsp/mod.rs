@@ -256,6 +256,11 @@ fn ask<T>(engine_tx: Send<'_>, build: impl FnOnce(Sender<T>) -> EngineMsg) -> Re
 fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
     let params = req.params;
     match req.method.as_str() {
+        // What the document's paragraphs set, as `satex query typeset` has it.
+        "satex/typeset" => {
+            let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
+            Ok(Json::Array(ask(engine_tx, |reply| EngineMsg::Typeset(uri, reply))?))
+        }
         "textDocument/hover" => {
             let p: HoverParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let uri = p.text_document_position_params.text_document.uri;
@@ -375,6 +380,7 @@ enum EngineMsg {
     WorkspaceSymbol(String, Sender<Vec<lsp_types::SymbolInformation>>),
     CodeAction(Uri, Sender<Vec<Json>>),
     ExecuteCommand(Json, Sender<Result<Vec<Json>, String>>),
+    Typeset(Uri, Sender<Vec<Json>>),
     Shutdown,
 }
 
@@ -691,6 +697,11 @@ impl Engine {
             EngineMsg::CodeAction(uri, reply) => {
                 self.fresh(&uri);
                 let _ = reply.send(self.actions.get(&uri).cloned().unwrap_or_default());
+            }
+            EngineMsg::Typeset(uri, reply) => {
+                self.ensure(&uri);
+                let result = with_doc(&self.docs, &uri, |analysis, _| handlers::typeset(analysis));
+                let _ = reply.send(result.unwrap_or_default());
             }
             EngineMsg::ExecuteCommand(body, reply) => {
                 let active = self.docs.values().next().map(|d| d.path.clone()).unwrap_or_else(|| self.root.clone());

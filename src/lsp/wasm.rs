@@ -31,7 +31,9 @@ pub fn serve(cfg: crate::config::Config, root: std::path::PathBuf, main: Option<
 }
 
 impl Local {
-    /// Handles one message; edits are analyzed at once (the page debounces).
+    /// Handles one message. An edit only updates the text, so a hover or a
+    /// completion asked while typing is answered from the last analysis;
+    /// the page sends `satex/analyze` once the typing pauses.
     fn message(&mut self, text: &str) -> Vec<Message> {
         let engine = &mut self.engine;
         let mut out = match serde_json::from_str::<Message>(text) {
@@ -46,7 +48,12 @@ impl Local {
                     req,
                 ),
             })],
+            Ok(Message::Notification(not)) if not.method == "satex/analyze" => {
+                engine.flush();
+                vec![]
+            }
             Ok(Message::Notification(not)) => {
+                let opened = not.method == "textDocument/didOpen";
                 handle_notification(
                     &mut |m| {
                         engine.step(m);
@@ -54,7 +61,10 @@ impl Local {
                     },
                     not,
                 );
-                engine.flush();
+                // A document just opened has no analysis to answer from yet.
+                if opened {
+                    engine.flush();
+                }
                 vec![]
             }
             _ => vec![],
