@@ -573,21 +573,14 @@ l.5 \nest ⇒ \ifnum \pdfuniformdeviate 4>0 (\nest {\n…
 ```
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code></code></td><td><code><b>{</b><b>⟦</b>long bodylong bodylong body<b>⟧</b><b>|</b><b>}</b></code></td><td>⊇</td></tr>
-<tr><td><code>done</code></td><td><code></code></td><td>✗</td></tr>
+<tr><td><code>done</code></td><td><code>done</code></td><td>✓</td></tr>
 </table>
-
-Differs: pdflatex ships `done` where satex computes ``.
-
-Why:
-
-- `{⟦l⟧⟦o⟧⟦n⟧⟦g⟧⟦ ⟧⟦b⟧⟦o⟧⟦d⟧⟦y⟧⟦l⟧⟦o⟧⟦n⟧⟦g⟧⟦ ⟧⟦b⟧⟦o⟧⟦d⟧⟦y⟧⟦l⟧⟦o…`: l.4 `\ifnum\n>0` is undecided, it reads `\n`.
 
 <details><summary>Computed text</summary>
 
 ```sh
 $ satex query typeset -f r7-merge-cost.tex --set limits.seconds=60
-6:14  paragraph  {⟦long bodylong bodylong body⟧|}
+6:16  paragraph  done
 assumption  clock-assumed
 ```
 
@@ -601,9 +594,7 @@ l.2 \newcount ⇒ \e@alloc \count \countdef {\count 10}\in… (defines \n)
 l.6 \cheap ⇒ \ifnum \n >0 \advance \n -1 \expandafter…
 l.6 \costly ⇒ \ifnum \n >0 \setbox 0\hbox {\tiny long …
 l.3 \cheap ⇒ \ifnum \n >0 \advance \n -1 \expandafter…
-l.6 \costly ⇒ \ifnum \n >0 \setbox 0\hbox {\tiny long … (defines \@currsize \f@size \f@baselineskip … 27 more)
-l.4 \costly ⇒ \ifnum \n >0 \setbox 0\hbox {\tiny long … (defines \@currsize \f@size \f@baselineskip … 6 more)
-l.4 \costly ⇒ \ifnum \n >0 \setbox 0\hbox {\tiny long …
+l.6 \costly ⇒ \ifnum \n >0 \setbox 0\hbox {\tiny long …
 ```
 
 </details>

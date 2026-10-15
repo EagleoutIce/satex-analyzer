@@ -98,14 +98,18 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | [`duplicate-color-value`](#duplicate-color-value) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | two color names store the exact same color |
 | [`duplicate-package`](#duplicate-package) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> | — | a package is loaded more than once |
 | [`hand-set-quantity`](#hand-set-quantity) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a number and its unit are set by hand where siunitx would set them |
+| [`inconsistent-precision`](#inconsistent-precision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | the numbers of a table column give different numbers of decimals |
 | [`math-punctuation`](#math-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 40">chktex 40</a> | punctuation sits on the wrong side of a formula |
 | [`microtype-available`](#microtype-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | the engine can protrude characters and expand fonts, but microtype is not loaded |
+| [`numbers-not-aligned`](#numbers-not-aligned) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a table column of numbers does not line them up at their decimal mark |
 | [`ot1-font-encoding`](#ot1-font-encoding) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | accented letters are built with \accent because the text is set in OT1 |
 | [`prefer-cleveref`](#prefer-cleveref) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a hand-written name in front of `\ref` is what cleveref sets from the label itself |
 | [`primitive-tex-command`](#primitive-tex-command) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 41">chktex 41</a> | a plain TeX primitive is used where LaTeX has its own interface |
 | [`quote-ligature`](#quote-ligature) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 23">chktex 23</a> | three quotation marks in a row set a double and a single mark with nothing between them |
 | [`quote-punctuation`](#quote-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 38">chktex 38</a> | punctuation stands inside the closing quotation mark |
 | [`stray-space`](#stray-space) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> | — | a macro body picked up a space from an unescaped line end |
+| [`table-rules`](#table-rules) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a table is ruled with vertical rules or `\hline` |
+| [`unit-in-cells`](#unit-in-cells) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | every number of a table column carries the same unit |
 | [`unreferenced-numbered-display`](#unreferenced-numbered-display) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a display that stepped a counter is never referenced, so its number is spent for nothing |
 | [`unused-bibitem`](#unused-bibitem) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a \bibitem written in the document is never cited |
 | [`unused-color`](#unused-color) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a color the document defines is never used |
@@ -574,7 +578,7 @@ See [PDF 32000 § 8.4.2](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfsta
 
 **a citation names a key no bibliography entry declares**
 
-No `\bibitem` and no entry of the `.bib` databases `\bibliography` names declares this key, so LaTeX prints `?` and warns `Citation … undefined`. Citations are observed rather than listed: a citation command writes its key to the `.aux` for the bibliography program (`\citation{⟨key⟩}`) and reads the name the entry defines when the file is read back (`\b@⟨key⟩`). Any line written so is a citation. Nothing is reported while a named database cannot be found.
+No `\bibitem` and no entry of the `.bib` databases `\bibliography` names declares this key, so LaTeX prints `?` and warns `Citation … undefined`. Citations are observed rather than listed: a citation command writes its key to the `.aux` for the bibliography program (`\citation{⟨key⟩}`) and reads the name the entry defines when the file is read back (`\b@⟨key⟩`). Any line written so is a citation. Without any bibliography every citation is undefined. Nothing is reported while a named database cannot be found, or while a file of the document was not read.
 
 Fix by adding the entry, or by correcting the key.
 
@@ -688,7 +692,7 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 </details>
 
 <details>
-<summary><b>style</b> — 44 rules</summary>
+<summary><b>style</b> — 48 rules</summary>
 
 ### accent-on-dotted-letter
 
@@ -1104,6 +1108,16 @@ Fix by loading `\usepackage{siunitx}` and writing `\qty{⟨number⟩}{⟨unit⟩
 
 See [SI brochure § 5.4.3](https://www.bipm.org/en/publications/si-brochure), [siunitx § \qty](https://ctan.org/pkg/siunitx).
 
+### inconsistent-precision
+
+<p class="badges"><span class="sev sev-info" title="default: info">● default: info</span> <span class="cat">style</span></p>
+
+**the numbers of a table column give different numbers of decimals**
+
+`1.5`, `2.25` and `3` in one column claim three different precisions, and do not line up even at their decimal mark. Give them one precision; an `S` column of [siunitx](https://ctan.org/pkg/siunitx) rounds them with `round-mode = places, round-precision = …`.
+
+See [siunitx § 4.6](https://ctan.org/pkg/siunitx).
+
 ### math-punctuation
 
 <p class="badges"><span class="sev sev-info" title="default: info">● default: info</span> <span class="cat">style</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 40">chktex 40</a></p>
@@ -1129,6 +1143,18 @@ pdfTeX and LuaTeX writing PDF support character protrusion and font expansion ([
 Fix by loading `\usepackage{microtype}`.
 
 See [microtype § 1](https://ctan.org/pkg/microtype), [pdftex § \pdfprotrudechars](https://ctan.org/pkg/pdftex).
+
+### numbers-not-aligned
+
+<p class="badges"><span class="sev sev-info" title="default: info">● default: info</span> <span class="cat">style</span></p>
+
+**a table column of numbers does not line them up at their decimal mark**
+
+A column of numbers is read by comparing them, which works when each digit stands under the digit of the same place: the units under the units, the decimal marks under each other. An `l` or `c` column sets numbers of different lengths ragged, and an `r` column lines up only numbers with as many decimals. [siunitx](https://ctan.org/pkg/siunitx)'s `S` column aligns them at the decimal mark ([§ 7.12](https://ctan.org/pkg/siunitx) of its manual); its header, not a number, goes in braces: `{Time}`.
+
+The rule reads the table's source: a column whose cells below the header are all numbers, three or more, set in a column that does not align them.
+
+See [siunitx § 7.12](https://ctan.org/pkg/siunitx).
 
 ### ot1-font-encoding
 
@@ -1213,6 +1239,26 @@ The finding follows the modes the run read that space in ([§ 1043](https://gith
 Fix by writing `%` at the end of that line.
 
 See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7326), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20358).
+
+### table-rules
+
+<p class="badges"><span class="sev sev-info" title="default: info">● default: info</span> <span class="cat">style</span></p>
+
+**a table is ruled with vertical rules or `\hline`**
+
+[booktabs](https://ctan.org/pkg/booktabs) gives a table three rules of different weights, `\toprule`, `\midrule` and `\bottomrule`, with space around them, and asks for no vertical rules at all ([§ 2](https://ctan.org/pkg/booktabs) of its manual): the columns are separated by their space, and `\hline` sets every rule alike and too close to the text.
+
+See [booktabs § 2](https://ctan.org/pkg/booktabs).
+
+### unit-in-cells
+
+<p class="badges"><span class="sev sev-info" title="default: info">● default: info</span> <span class="cat">style</span></p>
+
+**every number of a table column carries the same unit**
+
+A unit repeated in every cell of a column says the same thing on each line and pushes the numbers out of alignment. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§ 5.4.1](https://www.bipm.org/en/publications/si-brochure)) heads such a column with the quantity and its unit, as `Time / ms`; with [siunitx](https://ctan.org/pkg/siunitx), `{Time / \unit{ms}}` over an `S` column of bare numbers.
+
+See [SI brochure § 5.4.1](https://www.bipm.org/en/publications/si-brochure), [siunitx § \unit](https://ctan.org/pkg/siunitx).
 
 ### unreferenced-numbered-display
 
