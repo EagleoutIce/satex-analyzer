@@ -429,7 +429,7 @@ fn undefined_control_sequences(report: &mut Report) {
                 format!("{name} is undefined where the analysis assumed category codes back after a cut"),
             )
         } else if expansion.meaning == MeaningKind::UndefinedApproximated {
-            (Severity::Warning, format!("{name} is undefined on a path the analysis approximated"))
+            (Severity::Info, format!("{name} is undefined on a path the analysis approximated"))
         } else if expansion.cds.is_empty() {
             (Severity::Error, format!("{name} is never defined in this run"))
         } else {
@@ -622,7 +622,8 @@ fn already_defined(report: &mut Report) {
         let rest = &text[text.find("Command \\")? + "Command ".len()..];
         Some(rest[..rest.find(" already defined")?].to_string())
     });
-    for (span, name, doubt) in refused {
+    // A name built from unknown text says nothing about the document.
+    for (span, name, doubt) in refused.into_iter().filter(|(_, name, _)| !name.contains('\u{2}')) {
         if let Some(cause) = doubt {
             report.add_doubted(span, &name, format!("{name} is already defined"), &cause);
             continue;
