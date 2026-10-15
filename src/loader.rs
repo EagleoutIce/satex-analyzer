@@ -10,6 +10,7 @@ fn extensions(kind: LoadKind) -> &'static [&'static str] {
         LoadKind::Class => &["cls"],
         LoadKind::Package | LoadKind::Inherited => &["sty", "cls"],
         LoadKind::Lua => &["lua"],
+        LoadKind::Font => &["tfm"],
         _ => &["tex", "ltx", "sty", "def", "cfg", "clo", "fd"],
     }
 }
