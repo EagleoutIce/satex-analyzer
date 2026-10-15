@@ -49,7 +49,9 @@ fn run() -> Result<(), String> {
             .current_dir(root),
     )?;
     let site = root.join(&out);
-    println!("satex-playground: serving http://127.0.0.1:{port}/play/ (the site at http://127.0.0.1:{port}/); Ctrl+C stops");
+    println!(
+        "satex-playground: serving http://127.0.0.1:{port}/play/ (the site at http://127.0.0.1:{port}/); Ctrl+C stops"
+    );
     // It serves until Ctrl+C, which ends it as it should.
     let mut serve = Command::new("python3");
     serve.args(["-m", "http.server", "-b", "127.0.0.1", "-d"]).arg(&site).arg(&port);
