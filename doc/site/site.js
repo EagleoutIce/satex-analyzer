@@ -179,11 +179,25 @@
     return `<div class="xcard"><div class="x-head"><code class="x-name">${esc(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}</div>` +
       `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
   }
+  /** The same record as a hover card: its name and kind, where it is
+   * defined, how it is used, the error it raises and its documentation. */
+  function brief(r) {
+    const primitive = r.kind === 'primitive';
+    const tags = [primitive ? 'primitive' : r.tag, r.when && `in the ${r.when}`].filter(Boolean);
+    const use = r.effective && r.effective !== r.name ? `<code class="usage">${slots(tex(r.effective))}</code>`
+      : r.signature ? signature(r.signature) : r.takes ? argumentCount(r.takes) : '';
+    const where = r.path && r.line ? placeLink(r.path, r.line, r.file) : '';
+    const docs = r.reference ? `<a href="${esc(r.reference)}" target="_blank" rel="noopener">${esc(r.documentation ?? 'docs')} ↗</a>` : '';
+    return `<div class="xcard brief"><div class="x-head"><code class="x-name">${esc(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}` +
+      `${where ? ` <span class="x-where">${where}</span>` : ''}</div>` +
+      (use ? `<div class="x-use">${use}</div>` : '') + (r.error ? `<div class="x-err">${esc(r.error)}</div>` : '') +
+      (docs ? `<div class="x-docs">${docs}</div>` : '') + '</div>';
+  }
   /** Any other record value for a table cell: lists as chips, never raw JSON. */
   const value = (v) => v == null ? '' : Array.isArray(v) ? v.map((x) => typeof x === 'object' ? value(x) : /^\\/.test(String(x)) ? csChip(String(x)) : `<code>${esc(x)}</code>`).join(' ')
     : typeof v === 'object' ? ('min' in v && 'max' in v ? argumentCount(v) : Object.entries(v).map(([k, x]) => `${esc(k)} ${value(x)}`).join(', '))
       : /^\\/.test(String(v)) ? csChip(String(v)) : /^[{}#]/.test(String(v)) ? `<code>${esc(v)}</code>` : esc(v);
-  self.satexCards = { explain, signature, slots, tex, inline, placeLink, upstream, csChip, value, esc };
+  self.satexCards = { explain, brief, signature, slots, tex, inline, placeLink, upstream, csChip, value, esc };
 
   // ------------------------------------------------------------ the landing page's examples
   // A command explains itself on hover, an underline shows its finding: a floating card,
@@ -197,9 +211,17 @@
     if (!tip.isConnected) document.body.append(tip);
     const data = JSON.parse(fig.querySelector('.ex-data').textContent);
     const pane = fig.querySelector('.ex-explain');
-    const record = (name) => data.cs[name]?.find((r) => !r.error) ?? data.cs[name]?.[0];
-    const show = (name) => {
-      const r = record(name);
+    // A command before `\begin{document}` means what it means in the preamble.
+    const src = fig.querySelector('pre.src');
+    const lines = [...src.querySelectorAll('.ln')];
+    const begins = lines.findIndex((l) => l.textContent.includes('\\begin{document}'));
+    const when = (el) => el && begins >= 0 && lines.indexOf(el.closest('.ln')) < begins ? 'preamble' : 'document';
+    const record = (name, el) => {
+      const all = data.cs[name] ?? [];
+      return all.find((r) => r.when && r.when === when(el)) ?? all.find((r) => !r.error) ?? all[0];
+    };
+    const show = (name, el) => {
+      const r = record(name, el);
       if (!r) return false;
       pane.querySelector('.xname').textContent = name;
       pane.querySelector('.xbody').innerHTML = explain(r);
@@ -219,17 +241,16 @@
       const top = b.bottom + 6 + h > innerHeight && b.top - 6 - h > 0 ? b.top - 6 - h : b.bottom + 6;
       Object.assign(tip.style, { left: `${Math.max(8, Math.min(b.left, innerWidth - w - 16))}px`, top: `${top}px` });
     };
-    const src = fig.querySelector('pre.src');
     src.addEventListener('mouseover', (e) => {
       const el = e.target.closest('[data-cs], [data-lint]');
       if (!el) return;
       clearTimeout(tipTimer);
       const ks = el.dataset.lint ? el.dataset.lint.split(' ') : [];
-      const cs = el.dataset.cs ? record(el.dataset.cs) : null;
+      const cs = el.dataset.cs ? record(el.dataset.cs, el) : null;
       if (!ks.length && !cs) return hideTip();
-      tip.innerHTML = ks.map(lintCard).join('') + (cs ? explain(cs) : '');
+      tip.innerHTML = ks.map(lintCard).join('') + (cs ? brief(cs) : '');
       tip.dataset.fig = fig.id;
-      if (cs) show(el.dataset.cs);
+      if (cs) show(el.dataset.cs, el);
       lit(ks, true);
       put(el);
     });

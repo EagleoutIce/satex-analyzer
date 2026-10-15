@@ -53,16 +53,22 @@ for (const entry of manifest.kernels.slice(1)) {
 const uri = `file:///work/${manifest.sample}`;
 let source = samples[manifest.sample];
 const lsp = (method, params, id) => engine.lsp({ jsonrpc: '2.0', method, params, ...(id ? { id } : {}) });
+// An edit, then the analysis the page asks for once typing pauses: its messages.
+const edit = async (version, text) => [
+  ...await lsp('textDocument/didChange', { textDocument: { uri, version }, contentChanges: [{ text }] }),
+  ...await lsp('satex/analyze', {}),
+];
 t = performance.now();
 await lsp('initialize', { capabilities: {} }, 1);
 const published = (await lsp('textDocument/didOpen', { textDocument: { uri, languageId: 'latex', version: 1, text: source } }))
   .find((m) => m.method === 'textDocument/publishDiagnostics' && m.params.uri === uri);
 const codes = published?.params.diagnostics.map((d) => d.code) ?? [];
 source = source.replace('\\end{document}', '\\gre\n\\end{document}');
-await lsp('textDocument/didChange', { textDocument: { uri, version: 2 }, contentChanges: [{ text: source }] });
+await edit(2, source);
 const line = source.split('\n').findIndex((l) => l === '\\gre');
 const [completion] = await lsp('textDocument/completion', { textDocument: { uri }, position: { line, character: 4 } }, 2);
-const items = completion?.result ?? [];
+// An array, or a list the server cut to the best (`isIncomplete`).
+const items = Array.isArray(completion?.result) ? completion.result : completion?.result?.items ?? [];
 check('lsp', codes.length > 0 && items.some((i) => i.label === 'greet'), `${Math.round(performance.now() - t)} ms, diagnostics [${codes.join(', ')}], ${items.length} completions`);
 check('completion marks the document\'s own commands', items.find((i) => i.label === 'greet')?.detail?.endsWith('(document)'));
 const nl = source.split('\n').findIndex((l) => l.includes('\\newcommand'));
@@ -72,7 +78,7 @@ check('hover shows a usage line, no raw signature', /⟨arg1⟩/.test(card) && !
 
 // The same findings as `satex lint`, info ones included, on an unsaved buffer.
 const unsaved = samples[manifest.sample].replace('\\begin{document}', '\\def\\foo{}\n\\begin{document}');
-const pub = (await lsp('textDocument/didChange', { textDocument: { uri, version: 3 }, contentChanges: [{ text: unsaved }] }))
+const pub = (await edit(3, unsaved))
   .find((m) => m.method === 'textDocument/publishDiagnostics' && m.params.uri === uri);
 const lspFound = (pub?.params.diagnostics ?? []).map((d) => `${d.code}/${['', 'error', 'warning', 'info', 'info'][d.severity]}`);
 const lintRun = await engine.run(['lint', '--format', 'json', '-f', manifest.sample], { [`/work/${manifest.sample}`]: new TextEncoder().encode(unsaved) });
@@ -82,7 +88,7 @@ check('unused-definition shown as by lint', lspFound.includes('unused-definition
 // A primitive's syntax, only while the name means the primitive.
 const defLine = unsaved.split('\n').findIndex((l) => l === '\\def\\foo{}');
 const hoverAt = async (text, line, id) => {
-  await lsp('textDocument/didChange', { textDocument: { uri, version: 10 + id }, contentChanges: [{ text }] });
+  await edit(10 + id, text);
   return (await lsp('textDocument/hover', { textDocument: { uri }, position: { line, character: 2 } }, id))[0]?.result?.contents?.value ?? '';
 };
 const prim = await hoverAt(unsaved, defLine, 5);
@@ -93,7 +99,7 @@ check('no syntax once \\def is redefined', !/TeX primitive|⟨control sequence�
 
 // a finding underlines the whole call, not one character
 const redefined = '\\newcommand{\\section}{x}';
-const wide = (await lsp('textDocument/didChange', { textDocument: { uri, version: 4 }, contentChanges: [{ text: source.replace('\\begin{document}', `${redefined}\n\\begin{document}`) }] }))
+const wide = (await edit(4, source.replace('\\begin{document}', `${redefined}\n\\begin{document}`)))
   .find((m) => m.method === 'textDocument/publishDiagnostics' && m.params.uri === uri);
 const rline = source.replace('\\begin{document}', `${redefined}\n\\begin{document}`).split('\n').findIndex((l) => l === redefined);
 const marks = (wide?.params.diagnostics ?? []).filter((d) => d.range.start.line === rline);
