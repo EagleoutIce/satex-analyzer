@@ -894,13 +894,17 @@ impl Machine<'_> {
             let bare = std::path::Path::new(&file).file_name()?.to_str()?.to_string();
             ["", "otf", "ttf"].iter().find_map(|ext| crate::tfm::locate(&base, &roots, &bare, ext))?
         };
+        self.register_file(path.display().to_string(), crate::builtins::LoadKind::Font);
         crate::otf::load(&path)
     }
 
     fn find_tfm(&mut self, name: &str) -> Option<Rc<crate::tfm::Metrics>> {
         let base = self.base().to_path_buf();
         let roots = self.resolver_mut().distribution().roots.clone();
-        crate::tfm::locate(&base, &roots, name, "tfm").and_then(|path| crate::tfm::load(&path))
+        let path = crate::tfm::locate(&base, &roots, name, "tfm")?;
+        // A file the run reads, as `satex query files` lists it.
+        self.register_file(path.display().to_string(), crate::builtins::LoadKind::Font);
+        crate::tfm::load(&path)
     }
 
     /// Whether the font is an OpenType or AAT font (XeTeX's native fonts),

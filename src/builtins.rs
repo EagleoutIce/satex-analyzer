@@ -419,6 +419,9 @@ named_enum! {
         Inherited => "inherited",
         /// A Lua module a `require` or `dofile` in `\directlua` reads.
         Lua => "lua",
+        /// A font's metrics (`.tfm`) or a native font (`.otf`, `.ttf`) a
+        /// `\font` loads: read, though never as TeX.
+        Font => "font",
     }
 }
 
