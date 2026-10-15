@@ -1431,6 +1431,9 @@ pub struct Machine<'a> {
     /// a macro body of the project's included: where its own text put what
     /// the call `file_call` does.
     project_site: Option<Span>,
+    /// The name `\csname` built last, at the text its name came from: no
+    /// command the document wrote there.
+    pub(crate) built_name: Option<(Sym, Span)>,
     /// The file call each open file was pushed under: when the file ends,
     /// the call that read it is the file call again.
     file_calls: Vec<(FileId, Option<(Sym, Span)>)>,
@@ -2048,6 +2051,7 @@ impl<'a> Machine<'a> {
             recent_file_spans: Vec::new(),
             file_call: None,
             project_site: None,
+            built_name: None,
             file_calls: Vec::new(),
             written_lines: Vec::new(),
             name_reads: Vec::new(),
@@ -5422,7 +5426,9 @@ will look undefined",
     /// of the file call (a frame's body), else that call.
     pub(crate) fn raised_at(&self, span: Span) -> Span {
         match (self.file_call, self.project_site) {
-            (Some((_, call)), Some(site)) if site.file == call.file && (site.line, site.col) > (call.line, call.col) => {
+            (Some((_, call)), Some(site))
+                if site.file == call.file && (site.line, site.col) > (call.line, call.col) =>
+            {
                 site
             }
             (Some((_, call)), _) => call,
@@ -6750,7 +6756,7 @@ will look undefined",
     }
 
     fn do_control_sequence(&mut self, sym: Sym, span: Span) {
-        if self.own_file(span.file) {
+        if self.own_file(span.file) && self.built_name != Some((sym, span)) {
             self.project_site = Some(span);
         }
         // A control sequence read straight from a file starts a new call. One

@@ -1251,6 +1251,7 @@ impl Machine<'_> {
             recent_file_spans: _,
             file_call: _,
             project_site: _,
+            built_name: _,
             file_calls: _,
             counter_namespace: _,
             name_token: _,
