@@ -1818,7 +1818,7 @@ const CUT_IMPRECISE: [&str; 1] = ["argument-ends-in-unknown"];
 /// run goes on exactly as TeX does, and never widens for them. Each is
 /// raised as the error TeX prints (`raised-error`) and counts toward
 /// [`MAX_ERRORS`] (tex.web § 82).
-pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 10] = [
+pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 12] = [
     ("missing-endcsname", Some("Missing \\endcsname inserted")),
     ("missing-sharp", Some("Missing # inserted in alignment preamble")),
     ("extra-sharp", Some("Only one # is allowed per tab")),
@@ -1826,6 +1826,8 @@ pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 10] = [
     ("extra-endcsname", Some("Extra \\endcsname")),
     ("extra-else", Some("Extra \\else")),
     ("extra-fi", Some("Extra \\fi")),
+    ("too-many-braces", Some("Too many }'s")),
+    ("script-outside-math", Some("Missing $ inserted")),
     ("missing-number", Some("Missing number, treated as zero")),
     // Named after the macro in the message itself.
     ("extra-right-brace", None),
@@ -3833,7 +3835,17 @@ will look undefined",
     /// close a group opened outside the analyzed region, is ignored: nothing to restore.
     pub fn close_group(&mut self, closer: GroupKind, token: Token) {
         let span = token.span;
-        let Some(kind) = self.env.group_kind() else { return };
+        let Some(kind) = self.env.group_kind() else {
+            // tex.web § 1068: a `}` at the bottom level is deleted.
+            if closer == GroupKind::Simple {
+                // The brace is the document's command: the error is raised at it.
+                if self.own_file(span.file) {
+                    self.project_site = Some(span);
+                }
+                self.diagnose(Severity::Warning, "too-many-braces", span, "`}` closes no group".into());
+            }
+            return;
+        };
         if !closer.closes(kind) {
             if closer == GroupKind::Simple {
                 // tex.web § 1069: a `}` that meets `\begingroup` or `$` is deleted.
@@ -5683,6 +5695,19 @@ will look undefined",
                     self.align_cell(true);
                     self.template_next_cell(false, token.span);
                 }
+            }
+            // tex.web § 1046: a script outside math mode inserts the `$` it lacks.
+            // Not within an alignment, whose cells satex does not always keep in math.
+            Some(Catcode::Sup | Catcode::Sub)
+                if !self.mode.is_empty() && !self.mode.meets(crate::mode::Modes::ANY_MATH) && !self.env.in_alignment() =>
+            {
+                let span = token.span;
+                if self.own_file(span.file) {
+                    self.project_site = Some(span);
+                }
+                self.diagnose(Severity::Warning, "script-outside-math", span, "missing $ inserted before a script".into());
+                self.unread(token);
+                self.unread(Token::new(Tok::Chr('$', Catcode::Math), span));
             }
             // tex.web § 785: spaces between rows are skipped.
             Some(Catcode::Space) if self.between_rows() => {}
