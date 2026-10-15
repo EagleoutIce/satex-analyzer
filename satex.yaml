@@ -150,6 +150,7 @@ limits:
   site_forks: 4096  # undecided choices one place may make while a line is read before its expansion is cut; 0 = never
   paths: 16  # waiting paths before the two furthest back are cut to the input they share and joined
   alike: 8  # waiting paths before those at one place in the same conditionals and groups have their input widened
+  heads_apart: 32  # loop heads at one place kept apart for differing in code still to run, before they are joined
   meaning_splits: 4  # choices a command may have made for a name joined to several meanings to split per meaning
   widen_after: 3  # rounds a loop head reanalyzes a grown state before widening it
   recursion_depth: 100  # levels an undecided recursion is followed before it is assumed to end

@@ -5752,6 +5752,7 @@ will look undefined",
         let limits = &mut self.limits;
         limits.paths = half(base.paths);
         limits.alike = half(base.alike);
+        limits.heads_apart = half(base.heads_apart);
         limits.choices = half(base.choices);
         limits.meaning_splits = base.meaning_splits >> stage;
         limits.widen_after = half(base.widen_after);

@@ -56,6 +56,10 @@ pub struct Limits {
     /// scans): what their token lists differ in becomes one token that
     /// stands for either text.
     pub alike: u16,
+    /// Loop heads at one place kept apart because the paths differ in code
+    /// they will still run (an operation stacked or not) before they are
+    /// joined after all. Halved under time pressure.
+    pub heads_apart: u16,
     /// Choices one command may have made on one path for a name that a
     /// join left with one of several meanings to still split the run into a
     /// path per meaning; past them, and with 0 everywhere, it is read as a
@@ -159,6 +163,7 @@ impl Limits {
             "site_forks" => self.site_forks.into(),
             "paths" => self.paths.into(),
             "alike" => self.alike.into(),
+            "heads_apart" => self.heads_apart.into(),
             "widen_after" => self.widen_after.into(),
             "recursion_depth" => self.recursion_depth.into(),
             "loop_heads" => self.loop_heads.into(),
@@ -222,6 +227,7 @@ impl Default for Limits {
             site_forks: 4_096,
             paths: 16,
             alike: 8,
+            heads_apart: 32,
             meaning_splits: 4,
             widen_after: 3,
             recursion_depth: 100,
