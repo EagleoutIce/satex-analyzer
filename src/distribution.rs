@@ -91,12 +91,15 @@ pub struct Request {
 /// file-name index [`crate::loader::Resolver`] searches.
 pub struct Trees {
     pub distribution: Distribution,
-    index: Arc<HashMap<String, PathBuf>>,
+    index: Index,
 }
 
 impl Trees {
+    /// Where `file` is: the first tree, in search order, that has it. A
+    /// tree's `ls-R` may name a file since deleted; kpathsea passes over
+    /// it to the next tree, and so does this.
     pub fn get(&self, file: &str) -> Option<&PathBuf> {
-        self.index.get(file)
+        self.index.get(file)?.iter().find(|path| path.is_file())
     }
 }
 
@@ -215,7 +218,8 @@ fn year_in(path: &Path) -> Option<u32> {
     })
 }
 
-type Index = Arc<HashMap<String, PathBuf>>;
+/// Each file name with where every tree has it, in search order.
+type Index = Arc<HashMap<String, Vec<PathBuf>>>;
 
 /// The stamp of what a tree was indexed from, so that a cached index is
 /// discarded once the installation changes.
@@ -227,12 +231,12 @@ fn tree_stamp(root: &Path) -> (u64, u64) {
 struct CachedIndex {
     version: u32,
     stamps: Vec<(String, u64, u64)>,
-    entries: Vec<(String, PathBuf)>,
+    entries: Vec<(String, Vec<PathBuf>)>,
 }
 
 /// Part of the cache file name, so an index written by an older encoding is
 /// simply a different file.
-const INDEX_VERSION: u32 = 1;
+const INDEX_VERSION: u32 = 2;
 
 fn index_cache_file(dir: &Path, roots: &[PathBuf]) -> PathBuf {
     let joined: Vec<u8> = roots.iter().flat_map(|r| r.as_os_str().as_encoded_bytes().to_vec()).collect();
@@ -250,22 +254,22 @@ fn stamps_for(roots: &[PathBuf]) -> Vec<(String, u64, u64)> {
         .collect()
 }
 
-fn read_cached_index(dir: &Path, roots: &[PathBuf]) -> Option<HashMap<String, PathBuf>> {
+fn read_cached_index(dir: &Path, roots: &[PathBuf]) -> Option<HashMap<String, Vec<PathBuf>>> {
     let bytes = std::fs::read(index_cache_file(dir, roots)).ok()?;
     let cached: CachedIndex = postcard::from_bytes(&bytes).ok()?;
     (cached.version == INDEX_VERSION && cached.stamps == stamps_for(roots))
         .then(|| cached.entries.into_iter().collect())
 }
 
-fn write_cached_index(dir: &Path, roots: &[PathBuf], index: &HashMap<String, PathBuf>) {
+fn write_cached_index(dir: &Path, roots: &[PathBuf], index: &HashMap<String, Vec<PathBuf>>) {
     let cached = CachedIndex {
         version: INDEX_VERSION,
         stamps: stamps_for(roots),
         entries: {
             // A map's order is the process's, so the file would differ
             // between two runs that indexed the same installation.
-            let mut entries: Vec<(String, PathBuf)> =
-                index.iter().map(|(name, path)| (name.clone(), path.clone())).collect();
+            let mut entries: Vec<(String, Vec<PathBuf>)> =
+                index.iter().map(|(name, paths)| (name.clone(), paths.clone())).collect();
             entries.sort();
             entries
         },
@@ -299,14 +303,14 @@ fn index_for(roots: &[PathBuf], cache: Option<&Path>) -> (Index, bool) {
     }
     let mut index = HashMap::default();
     // Later roots must not shadow earlier ones, so they are read in order and
-    // only fill in names that are still missing.
+    // each adds its path after the earlier ones'.
     for root in roots {
         let mut tree: HashMap<String, (u8, PathBuf)> = HashMap::default();
         if !read_ls_r(root, &mut tree) {
             walk(&root.join("tex"), &mut tree);
         }
         for (name, (_, path)) in tree {
-            index.entry(name).or_insert(path);
+            index.entry(name).or_insert_with(Vec::new).push(path);
         }
     }
     if let Some(dir) = cache {
@@ -414,8 +418,9 @@ fn walk(directory: &Path, index: &mut HashMap<String, (u8, PathBuf)>) {
 
 /// `latex.ltx` carries the format date, written as `\edef\fmtversion` with
 /// the value on the following line, plus a patch level.
-fn format_version(index: &HashMap<String, PathBuf>) -> Option<String> {
-    let text = std::fs::read_to_string(index.get("latex.ltx")?).ok()?;
+fn format_version(index: &HashMap<String, Vec<PathBuf>>) -> Option<String> {
+    let latex = index.get("latex.ltx")?.iter().find(|path| path.is_file())?;
+    let text = std::fs::read_to_string(latex).ok()?;
     let version = braced_after(&text, "\\fmtversion")?;
     Some(match braced_after(&text, "\\def\\patch@level") {
         Some(patch) if patch != "0" => format!("{version} patch level {patch}"),
@@ -571,4 +576,26 @@ pub fn engine_release(program: &'static str) -> Option<String> {
     let banner = engine_banner(program)?;
     let version = banner.split_whitespace().nth(1)?;
     Some(version.rsplit('-').next()?.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A tree's `ls-R` that names a file since deleted does not hide the
+    /// file of a later tree: kpathsea passes over it, and so does the index.
+    #[test]
+    fn a_file_an_ls_r_names_but_that_is_gone_falls_through_to_the_next_tree() {
+        let dir = std::env::temp_dir().join(format!("satex-trees-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (stale, real) = (dir.join("local"), dir.join("dist"));
+        std::fs::create_dir_all(stale.join("tex/latex/gone")).unwrap();
+        std::fs::write(stale.join("ls-R"), "./tex/latex/gone:\nx.sty\n").unwrap();
+        std::fs::create_dir_all(real.join("tex/latex/x")).unwrap();
+        std::fs::write(real.join("tex/latex/x/x.sty"), "").unwrap();
+        std::fs::write(real.join("ls-R"), "./tex/latex/x:\nx.sty\n").unwrap();
+        let trees = discover(&Request { roots: vec![stale, real.clone()], ..Request::default() });
+        assert_eq!(trees.get("x.sty"), Some(&real.join("tex/latex/x/x.sty")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
