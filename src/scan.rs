@@ -617,18 +617,27 @@ impl Machine<'_> {
     /// tex.web §§ 456, 459: "Illegal unit of measure", where the token after
     /// the number is known and no unit.
     fn illegal_unit(&mut self, inserted: &str) {
-        let Some(token) = self.next_non_blank_x_token() else { return };
-        let unknown = match token.tok {
-            Tok::Cs(sym) => {
-                matches!(self.env.meaning(sym), Meaning::Unknown)
-                    || self.is_unknown_name(sym)
-                    || self.is_unknown_digits(sym)
+        // Looked at, not expanded: what a name would expand to is no unit
+        // satex can rule out, and an undefined one is an error of its own.
+        let mut spaces = Vec::new();
+        let token = loop {
+            let Some(token) = self.next_token() else { return };
+            if !matches!(token.tok, Tok::Chr(_, crate::tex::Catcode::Space)) {
+                break token;
             }
-            Tok::Chr(c, _) => crate::tex::is_unknown_char(c),
+            spaces.push(token);
+        };
+        let plain = match token.tok {
+            Tok::Cs(sym) => matches!(self.env.meaning(sym), Meaning::Primitive(p) if !crate::builtins::expandable(p)),
+            Tok::Chr(_, crate::tex::Catcode::Active) => false,
+            Tok::Chr(c, _) => !crate::tex::is_unknown_char(c),
             _ => false,
         };
         self.unread(token);
-        if !unknown {
+        for space in spaces.into_iter().rev() {
+            self.unread(space);
+        }
+        if plain {
             let message = format!("Illegal unit of measure ({inserted} inserted)");
             self.diagnose(crate::facts::Severity::Warning, "illegal-unit", token.span, message);
         }
