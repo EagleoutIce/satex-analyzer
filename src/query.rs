@@ -2307,7 +2307,7 @@ fn shape_bounds(shape: &str) -> (u8, Option<u8>) {
 /// ([`crate::probe`]) — at the end of the run, or at `\begin{document}`
 /// with `preamble`.
 pub fn signature(analysis: &Analysis, sym: crate::tex::Sym, mac: &crate::tex::MacroDef) -> Option<crate::tex::ArgSpec> {
-    probed(analysis, sym, Some(mac), Some(false)).filter(|p| p.complete).map(|p| p.spec)
+    probed(analysis, sym, Some(mac), Some(crate::probe::State::End)).filter(|p| p.complete).map(|p| p.spec)
 }
 
 /// `view` is `None` where a listing reports many names at once and only
@@ -2318,7 +2318,7 @@ fn probed(
     analysis: &Analysis,
     sym: crate::tex::Sym,
     mac: Option<&crate::tex::MacroDef>,
-    view: Option<bool>,
+    view: Option<crate::probe::State>,
 ) -> Option<crate::probe::Probed> {
     if let Some(spec) = mac.and_then(|m| m.arg_spec.as_ref()) {
         return Some(crate::probe::Probed { spec: spec.clone(), complete: true, error: None, forms: Vec::new() });
@@ -2326,11 +2326,18 @@ fn probed(
     let own = mac
         .and_then(|m| crate::tex::ArgSpec::from_parameter_text(&m.parameter_text, &analysis.interner))
         .map(|spec| crate::tex::ArgSpec { raw: crate::probe::raw_of(&spec.items), ..spec });
-    let Some(preamble) = view else {
+    let Some(at) = view else {
         return own.map(|spec| crate::probe::Probed { spec, complete: true, error: None, forms: Vec::new() });
     };
+    // A state the run did not keep: the end of the run's.
+    let kept = match at {
+        crate::probe::State::Preamble => analysis.preamble.is_some(),
+        crate::probe::State::Start => analysis.preamble.is_some() && analysis.kernel.is_some(),
+        crate::probe::State::End => true,
+    };
+    let at = if kept { at } else { crate::probe::State::End };
     // Where the run could not say, what the parameter text reads is certain.
-    crate::probe::probe(analysis, sym, preamble && analysis.preamble.is_some())
+    crate::probe::probe(analysis, sym, at)
         .or_else(|| own.map(|spec| crate::probe::Probed { spec, complete: false, error: None, forms: Vec::new() }))
 }
 
@@ -2339,7 +2346,12 @@ fn probed(
 /// unbounded (`\csname`, `\halign`) or the probe could not see the end.
 /// A primitive's bounds are what satex was seen to read for it, or its
 /// catalog entry.
-fn takes_of(analysis: &Analysis, sym: crate::tex::Sym, mac: Option<&crate::tex::MacroDef>, view: Option<bool>) -> Json {
+fn takes_of(
+    analysis: &Analysis,
+    sym: crate::tex::Sym,
+    mac: Option<&crate::tex::MacroDef>,
+    view: Option<crate::probe::State>,
+) -> Json {
     let (mut low, mut high) = match analysis.env.meaning(sym).prim() {
         Some(prim) => match analysis.facts.shapes.get(&sym) {
             Some(shape) => shape_bounds(shape),
@@ -2386,7 +2398,7 @@ fn effective_of(
     analysis: &Analysis,
     sym: crate::tex::Sym,
     mac: Option<&crate::tex::MacroDef>,
-    view: Option<bool>,
+    view: Option<crate::probe::State>,
 ) -> String {
     use crate::tex::ArgType as A;
     let cs = analysis.interner.cs(sym);
@@ -2618,11 +2630,18 @@ enum Window {
     All,
     Preamble,
     Document,
+    /// The document's start, where a name means what the format made it.
+    Start,
 }
 
 impl Window {
-    fn view(self) -> Option<bool> {
-        Some(self == Window::Preamble)
+    fn view(self) -> Option<crate::probe::State> {
+        use crate::probe::State;
+        Some(match self {
+            Window::Preamble => State::Preamble,
+            Window::Start => State::Start,
+            Window::All | Window::Document => State::End,
+        })
     }
 }
 
@@ -2636,7 +2655,7 @@ fn uses_in(analysis: &Analysis, sym: Sym, window: Window) -> u32 {
         .filter(|e| e.name == sym)
         .filter(|e| match (window, boundary, e.node) {
             (Window::All, ..) | (_, None, _) => true,
-            (Window::Preamble, Some(b), Some(n)) => n < b,
+            (Window::Preamble | Window::Start, Some(b), Some(n)) => n < b,
             (Window::Document, Some(b), Some(n)) => n >= b,
             (_, Some(_), None) => false,
         })
@@ -2692,7 +2711,7 @@ fn insert_call_shape(
     analysis: &Analysis,
     sym: Sym,
     mac: Option<&crate::tex::MacroDef>,
-    view: Option<bool>,
+    view: Option<crate::probe::State>,
     forms: bool,
 ) {
     record.insert("takes".into(), takes_of(analysis, sym, mac, view));
@@ -2718,7 +2737,12 @@ fn insert_call_shape(
 /// or macro this run never redefined, reported from its final meaning —
 /// the branch `explain` falls back to.
 fn record_for_kernel(analysis: &Analysis, sym: Sym, window: Window) -> Option<Record> {
-    let meaning = analysis.env.meaning(sym);
+    record_for_meaning(analysis, sym, window, analysis.env.meaning(sym))
+}
+
+/// [`record_for_kernel`] of the meaning `sym` has somewhere else than at
+/// the end of the run.
+fn record_for_meaning(analysis: &Analysis, sym: Sym, window: Window, meaning: Meaning) -> Option<Record> {
     if matches!(meaning, Meaning::Undefined) {
         return None;
     }
@@ -3205,17 +3229,17 @@ pub fn explain_at(
         } else {
             let doc_def = def_at(analysis, sym, None);
             let preamble_boundary = explain_boundary(analysis, &ExplainAt::Preamble).ok().flatten();
-            let preamble_def = preamble_boundary.and_then(|b| {
-                let call = analysis
+            let preamble_call = preamble_boundary.and_then(|b| {
+                analysis
                     .facts
                     .expansions
                     .iter()
                     .filter(|e| e.name == sym && e.span.file == analysis.main_file)
                     .filter_map(|e| e.node)
                     .filter(|n| *n <= b)
-                    .max();
-                def_at(analysis, sym, Some(call.unwrap_or(b)))
+                    .max()
             });
+            let preamble_def = preamble_boundary.and_then(|b| def_at(analysis, sym, Some(preamble_call.unwrap_or(b))));
             match (preamble_def, doc_def) {
                 (None, None) => {
                     let base = record_for_kernel(analysis, sym, Window::All);
@@ -3232,6 +3256,25 @@ pub fn explain_at(
                 }
                 // Only one of the two exists, or they agree: nothing to tell
                 // apart, so `when` would only be noise on the one record shown.
+                // Used in the preamble with the meaning the format gave it,
+                // which the run later replaced (`\documentclass` by an
+                // error): both, each where it holds.
+                (None, Some(doc))
+                    if preamble_call.is_some()
+                        && analysis.kernel.as_ref().is_some_and(|kernel| {
+                            !matches!(kernel.meaning(sym), Meaning::Undefined)
+                                && doc.mac.as_deref() != kernel.meaning(sym).as_macro().map(|m| &**m)
+                        }) =>
+                {
+                    let kernel = analysis.kernel.as_ref().map(|k| k.meaning(sym)).unwrap_or(Meaning::Undefined);
+                    if let Some(mut record) = record_for_meaning(analysis, sym, Window::Start, kernel) {
+                        record.insert("when".into(), json!("preamble"));
+                        out.push(record);
+                    }
+                    let mut record = record_for_def(analysis, doc, Window::Document);
+                    record.insert("when".into(), json!("document"));
+                    out.push(record);
+                }
                 (None, Some(def)) | (Some(def), None) => out.push(record_for_def(analysis, def, Window::All)),
                 (Some(a), Some(b)) if a.node == b.node => out.push(record_for_def(analysis, b, Window::All)),
                 (Some(preamble), Some(doc)) => {
@@ -3676,7 +3719,7 @@ pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
     let Some(sym) = analysis.interner.lookup(wanted) else { return Vec::new() };
     let Some((dialect, families)) = key_family(analysis, sym) else {
         let mac = analysis.env.meaning(sym).as_macro().map(|m| (**m).clone());
-        let shape = effective_of(analysis, sym, mac.as_ref(), Some(false));
+        let shape = effective_of(analysis, sym, mac.as_ref(), Some(crate::probe::State::End));
         if !shape.contains('[') {
             return Vec::new();
         }

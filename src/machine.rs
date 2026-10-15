@@ -383,8 +383,11 @@ pub struct Analysis {
     /// The bindings and category codes at `\begin{document}`, for probing
     /// what a command takes in the preamble.
     pub preamble: Option<Box<(Env, CatcodeTable)>>,
+    /// The bindings the document started with, the format's: what a name
+    /// means where the document uses it before anything redefines it.
+    pub kernel: Option<Box<Env>>,
     /// What [`crate::probe`] found per name and view, computed on demand.
-    pub probes: std::sync::Mutex<HashMap<(Sym, bool), Option<crate::probe::Probed>>>,
+    pub probes: std::sync::Mutex<HashMap<(Sym, crate::probe::State), Option<crate::probe::Probed>>>,
     /// Environments open right now, outermost first (`document` excluded:
     /// `document_depth` already answers that axis). What `explain` reads to
     /// tell a definition made inside `enumerate` from one made outside.
@@ -392,6 +395,9 @@ pub struct Analysis {
     /// Environments worth probing a name inside, and what that found: cache
     /// for [`crate::probe::probe_contexts`].
     pub context_probes: std::sync::Mutex<ContextProbes>,
+    /// The fewest arguments each defined name takes, for completion: built
+    /// once, from the definitions query.
+    pub takes: std::sync::OnceLock<crate::fixed::HashMap<String, u8>>,
 }
 
 /// Collection sizes change slowly. Checking them on every token would
@@ -1952,9 +1958,11 @@ impl<'a> Machine<'a> {
                 class_caches: Default::default(),
                 cached_files: Default::default(),
                 preamble: None,
+                kernel: None,
                 probes: Default::default(),
                 env_stack: Vec::new(),
                 context_probes: Default::default(),
+                takes: Default::default(),
             },
             env,
             catcodes,
@@ -2238,6 +2246,7 @@ impl<'a> Machine<'a> {
         let mode = m.intern("interactionmode");
         m.env.set_value(mode, crate::value::Value::Int(m.cfg.interaction as i64), true);
         m.install_output();
+        m.out.kernel = Some(Box::new(m.env.snapshot()));
         if literate == Some(crate::literate::Literate::Ins) {
             m.install_docstrip();
         }
@@ -4900,11 +4909,13 @@ will look undefined",
     /// A machine that starts where `analysis` ended, or at its
     /// `\begin{document}` with `preamble`, to run [`crate::probe`]s in:
     /// what it finds is not recorded anywhere, and `cfg` bounds it.
-    pub fn sandbox(cfg: &'a Config, analysis: &Analysis, preamble: bool) -> Option<Self> {
-        let (env, catcodes) = match (preamble, &analysis.preamble) {
-            (true, Some(state)) => (state.0.snapshot(), state.1.clone()),
-            (true, None) => return None,
-            (false, _) => (analysis.env.snapshot(), analysis.catcodes.clone()),
+    pub fn sandbox(cfg: &'a Config, analysis: &Analysis, at: crate::probe::State) -> Option<Self> {
+        use crate::probe::State;
+        let (env, catcodes) = match (at, &analysis.preamble, &analysis.kernel) {
+            (State::Preamble, Some(state), _) => (state.0.snapshot(), state.1.clone()),
+            (State::Start, Some(state), Some(kernel)) => (kernel.snapshot(), state.1.clone()),
+            (State::Preamble | State::Start, ..) => return None,
+            (State::End, ..) => (analysis.env.snapshot(), analysis.catcodes.clone()),
         };
         let mut m = Machine::new(cfg, PathBuf::new());
         m.out.interner = analysis.interner.clone();
