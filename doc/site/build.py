@@ -380,7 +380,7 @@ def playground(satex, wasm, work, out):
              for r in json.loads(run(str(satex), "lint", "--rules", "--format", "json"))}
     manifest = {
         "js": emit_local(out, "play/satex.js", (wasm / "satex.js").read_bytes()),
-        "wasm": emit_local(out, "play/satex.wasm", wasm_bytes),
+        "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
         "kernels": kernels, "unavailable": UNAVAILABLE, "queries": queries, "filtered": [q for q in queries if per_file(q)], "rules": rules,
         "completion": json.loads(run(str(satex), "completions", "json")), "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"},
@@ -398,6 +398,8 @@ def main():
     ap.add_argument("--wasm", type=Path, required=True, help="directory with the Emscripten satex.js and satex.wasm")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--work", type=Path, help="scratch directory (default: OUT/../site-work)")
+    ap.add_argument("--precompress", action="store_true",
+                    help="write a .gz beside each compressible file, for a server that serves those as GitHub Pages compresses")
     args = ap.parse_args()
     out, work = args.out.resolve(), (args.work or args.out.resolve().parent / "site-work").resolve()
     shutil.rmtree(out, ignore_errors=True)
@@ -449,6 +451,21 @@ def main():
     page("index.html", "satex", home, side=False)
     page("play/index.html", "Playground", fill((SITE / "play.html").read_text(), {**assets, **parts}), side=False, kind="play")
     (out / ".nojekyll").write_text("")
+    if args.precompress:
+        precompress(out)
+
+
+COMPRESSIBLE = {".html", ".js", ".css", ".json", ".svg", ".wasm", ".txt", ".xml", ".map"}
+
+
+def precompress(out):
+    """`name.gz` beside each compressible file where it is smaller: what a server
+    that compresses on the fly, as GitHub Pages does, would send."""
+    for path in out.rglob("*"):
+        if path.is_file() and path.suffix in COMPRESSIBLE and path.stat().st_size > 1024:
+            packed = gzip.compress(path.read_bytes(), compresslevel=9, mtime=0)
+            if len(packed) < path.stat().st_size:
+                path.with_name(path.name + ".gz").write_bytes(packed)
 
 
 if __name__ == "__main__":
