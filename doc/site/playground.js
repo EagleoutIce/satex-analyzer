@@ -148,7 +148,7 @@
       if (target === uri()) editor.apply(edits);
       else {
         const name = Object.keys(state.texts).find((f) => uri(f) === target);
-        if (name) { state.texts[name] = edited(state.texts[name], edits); if (opened.has(target)) lsp('textDocument/didChange', { textDocument: { uri: target, version: ++version }, contentChanges: [{ text: state.texts[name] }] }, true); }
+        if (name) { state.texts[name] = edited(state.texts[name], edits); if (opened.has(target)) { lsp('textDocument/didChange', { textDocument: { uri: target, version: ++version }, contentChanges: [{ text: state.texts[name] }] }, true); analyze(); } }
       }
     }
     return n;
@@ -164,16 +164,22 @@
     clearTimeout(timer);
     timer = setTimeout(sync, 400);
   }
-  /** Sends the buffer to the server unless it already has it. */
+  /** Sends the buffer to the server unless it already has it: the text
+   * only, so what is asked meanwhile is answered from the last analysis. */
+  function push() {
+    if (state.file in state.ro) return false;
+    state.texts[state.file] = editor.text();
+    if (synced === version || !opened.has(uri())) return false;
+    synced = version;
+    lsp('textDocument/didChange', { textDocument: { uri: uri(), version }, contentChanges: [{ text: editor.text() }] }, true);
+    return true;
+  }
+  /** Once typing pauses: the buffer, and an analysis of it. */
   function sync() {
     clearTimeout(timer);
-    if (state.file in state.ro) return;
-    state.texts[state.file] = editor.text();
-    if (synced === version || !opened.has(uri())) return;
-    synced = version;
-    checking();
-    lsp('textDocument/didChange', { textDocument: { uri: uri(), version }, contentChanges: [{ text: editor.text() }] }, true);
+    if (push()) analyze();
   }
+  function analyze() { checking(); lsp('satex/analyze', {}, true); }
   function checking() { lspStatus.textContent = 'checking…'; checkStart = performance.now(); }
 
   /** Completion order: the project's own commands, then the documented ones, internals
@@ -188,7 +194,7 @@
     const k = `${uri()}|${version}|${position.line}:${position.character}`;
     if (!asked.has(k)) {
       asked.clear();
-      asked.set(k, lsp('textDocument/completion', { textDocument: { uri: uri() }, position }).then((r) => r ?? []).catch(() => []));
+      asked.set(k, lsp('textDocument/completion', { textDocument: { uri: uri() }, position }).then((r) => (Array.isArray(r) ? r : r?.items) ?? []).catch(() => []));
     }
     return asked.get(k);
   }
@@ -209,8 +215,8 @@
       const word = ctx.matchBefore(/[A-Za-z@*_:]*/);
       const before = ctx.state.sliceDoc(word.from - 1, word.from);
       if (!ctx.explicit && before !== '\\' && before !== '{') return null;
-      sync();
-      const items = await completions(position(ctx.state.doc, word.from));
+      push();
+      const items = await completions(position(ctx.state.doc, ctx.pos));
       return {
         from: word.from, filter: false,
         options: rank(items, word.text).slice(0, 200).map((i) => ({
@@ -220,14 +226,9 @@
       };
     }
     const hover = view.hoverTooltip(async (v, pos) => {
-      // Asked again while the text changed under the request: never a stale card.
-      let result, asked;
-      for (let tries = 0; tries < 3 && asked !== version; tries++) {
-        sync();
-        asked = version;
-        result = await lsp('textDocument/hover', { textDocument: { uri: uri() }, position: position(v.state.doc, pos) }).catch(() => null);
-      }
-      if (asked !== version) return null;
+      // The server has the text; it answers from its last analysis at once.
+      push();
+      const result = await lsp('textDocument/hover', { textDocument: { uri: uri() }, position: position(v.state.doc, pos) }).catch(() => null);
       const c = result?.contents;
       const value = typeof c === 'string' ? c : c?.value ?? (Array.isArray(c) ? c.map((x) => x.value ?? x).join('\n') : '');
       if (!value) return null;
@@ -236,7 +237,7 @@
         pos: range ? at(v.state.doc, range.start) : pos, end: range ? at(v.state.doc, range.end) : pos,
         create: () => { const dom = document.createElement('div'); dom.className = 'hover'; dom.innerHTML = card(value); return { dom }; },
       };
-    }, { hoverTime: 350, hideOnChange: true });
+    }, { hoverTime: 250, hideOnChange: true });
     // Ctrl (Cmd) held over a command underlines it as a link to its definition.
     const link = st.StateEffect.define();
     const linkField = st.StateField.define({
@@ -337,6 +338,25 @@
 
   const diagnostics = {}; // uri -> the last list, each with its fixes
   const key = (d) => `${d.code}|${d.range.start.line}:${d.range.start.character}|${d.message}`;
+  /** What the open file's paragraphs set, from the language server's last
+   * analysis (`satex query typeset`); a click goes to the paragraph. */
+  const typesetBody = $('typeset-body');
+  async function typeset(target) {
+    if (target !== uri()) return;
+    const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
+    if (!rows || target !== uri()) return;
+    const mine = rows.filter((r) => r.kind === 'paragraph' && r.path?.endsWith(state.file));
+    typesetBody.innerHTML = mine.length
+      ? mine.map((r) => `<p class="ts" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span>${escape(r.detail ?? '')}</p>`).join('')
+      : '<p class="muted">This file sets no paragraph.</p>';
+  }
+  typesetBody.addEventListener('click', (e) => {
+    const p = e.target.closest('.ts');
+    if (!p) return;
+    const at = { line: +p.dataset.line - 1, character: Math.max(+p.dataset.col - 1, 0) };
+    editor.focus({ start: at, end: at });
+  });
+
   async function show(target, ds) {
     const actions = await lsp('textDocument/codeAction', { textDocument: { uri: target },
       range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, context: { diagnostics: [] } }).catch(() => []);
@@ -829,7 +849,7 @@
     editor.set(state.texts[name], name in state.ro);
     drawRefs();
     if (name in state.ro) render();
-    else if (opened.has(uri())) { synced = version; lsp('textDocument/didChange', { textDocument: { uri: uri(), version }, contentChanges: [{ text: state.texts[name] }] }, true); render(); }
+    else if (opened.has(uri())) { synced = version; lsp('textDocument/didChange', { textDocument: { uri: uri(), version }, contentChanges: [{ text: state.texts[name] }] }, true); analyze(); render(); }
     else open(name);
     if (!state.upload && !(name in state.ro) && name in sampleTexts) {
       history.replaceState(null, '', `#${name}`);
@@ -1028,7 +1048,10 @@
           const p = pending.get(m.id);
           pending.delete(m.id);
           if (m.error) p.reject(new Error(m.error.message.replace(/^[\w/]+: /, ''))); else p.resolve(m.result ?? null);
-        } else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) show(m.params.uri, m.params.diagnostics);
+        } else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) {
+          show(m.params.uri, m.params.diagnostics);
+          typeset(m.params.uri);
+        }
       }
     } else if (data.type === 'error' && data.of === 'lsp') {
       lspStatus.textContent = `language server failed: ${data.message.split('\n')[0]}`;
