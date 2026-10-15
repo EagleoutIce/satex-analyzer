@@ -54,7 +54,7 @@ Current version: {{version}}. `satex --version` also lists the plugins included 
 
 Provides context-sensitive diagnostics like undefined names, duplicates, dead code, and misused conditionals.
 
-{{run(8): satex lint -f samples/paper.tex}}
+{{run(24): satex lint -f samples/paper.tex}}
 
 <details>
 <summary> List all rules alongside a description with <code>--rules</code> </summary>

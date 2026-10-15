@@ -129,7 +129,7 @@ macro-call           \fmtname  latex.ltx                       @ latex.ltx:731:2
 macro-call           \space    latex.ltx                       @ latex.ltx:731:34
 macro-call           \fmtver…  latex.ltx                       @ latex.ltx:731:42
 use                  LaTeX2e…  latex.ltx                       @ latex.ltx:129:24
-… 38849 more lines omitted
+… 38846 more lines omitted
 ```
 
 ## trace

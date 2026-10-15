@@ -78,7 +78,7 @@ Commands:
   dependencies  The program dependence graph — data dependencies plus control dependencies — as DOT or JSON
   trace         The execution trace, step by step
   cache         The interpreted LaTeX2e kernel and the package caches.  Without a further command, prints their status
-  compile       Build the document with latexmk, or the engine where latexmk is missing, and explain each error and warning the log reports by what the analysis found there.  Never opens a viewer
+  compile       Build the document with latexmk, or the engine where latexmk is missing, and explain each error and warning the log reports by what the analysis found there.  Never opens a viewer.  The build runs the project's own code, its latexmkrc and what it lets TeX run, so build only projects you trust
   install       Install the packages the document loads that this machine does not have.  Asks first, never elevates, and is never run by `lint --fix`
   tokens        The token stream the mouth produces
   completions   Print the shell completion script: bash, zsh, fish, elvish or powershell.  Values complete from the running binary.  `install [bash|zsh|fish]` registers it in that shell's startup file; without a shell, in every shell installed or in use
@@ -176,14 +176,30 @@ Provides context-sensitive diagnostics like undefined names, duplicates, dead co
 ```text
 $ satex lint -f samples/paper.tex
 errors (1)
+
   ◆ already-defined (1)
     paper.tex:24:1  \repeat is already defined
-                    unsafe fix: use \renewcommand{\repeat} instead
+      24 │ \newcommand{\repeat}[1]{#1\repeat{#1}}
+         │ ^^^^^^^^^^^
+         = unsafe fix: use \renewcommand{\repeat} instead
 
-suggestions (7)
+suggestions (8)
+
   ● microtype-available (1)
     paper.tex:26:1  pdftex writes PDF and can protrude characters and expand fonts, but microtype is not loaded
-… 28 more lines omitted
+      26 │ \begin{document}
+         │ ^^^^^^
+         = unsafe fix: load \usepackage{microtype}
+
+  ● primitive-tex-command (1)
+    paper.tex:22:1  \csname is plain TeX; here it uses a control sequence by name
+      22 │ \csname ifdraft\endcsname\else
+         │ ^^^^^^^
+         = unsafe fix: use \csuse (etoolbox)
+
+  ● table-rules (1)
+    paper.tex:68:3  the table is ruled with `\hline`
+… 48 more lines omitted
 ```
 
 <details>
@@ -263,14 +279,18 @@ info      style        dead-definition                  a definition is replaced
 info      style        duplicate-color-value            two color names store the exact same color                      
 info      style        duplicate-package                a package is loaded more than once                              
 info      style        hand-set-quantity                a number and its unit are set by hand where siunitx would set…  
+info      style        inconsistent-precision           the numbers of a table column give different numbers of decim…  
 info      style        math-punctuation                 punctuation sits on the wrong side of a formula                 
 info      style        microtype-available              the engine can protrude characters and expand fonts, but micr…  
+info      style        numbers-not-aligned              a table column of numbers does not line them up at their deci…  
 info      style        ot1-font-encoding                accented letters are built with \accent because the text is s…  
 info      style        prefer-cleveref                  a hand-written name in front of `\ref` is what cleveref sets …  
 info      style        primitive-tex-command            a plain TeX primitive is used where LaTeX has its own interfa…  
 info      style        quote-ligature                   three quotation marks in a row set a double and a single mark…  
 info      style        quote-punctuation                punctuation stands inside the closing quotation mark            
 info      style        stray-space                      a macro body picked up a space from an unescaped line end       
+info      style        table-rules                      a table is ruled with vertical rules or `\hline`                
+info      style        unit-in-cells                    every number of a table column carries the same unit            
 info      style        unreferenced-numbered-display    a display that stepped a counter is never referenced, so its …  
 info      style        unused-bibitem                   a \bibitem written in the document is never cited               
 info      style        unused-color                     a color the document defines is never used                      
@@ -320,7 +340,7 @@ $ satex lint -f samples/paper.tex --format github
 ::notice file=samples/paper.tex,line=22,col=1,title=primitive-tex-command::\csname is plain TeX; here it uses a control sequence by name
 ::notice file=samples/preamble.tex,line=1,col=1,title=unused-definition::\hello is never used
 ::notice file=samples/paper.tex,line=14,col=1,title=unused-definition::\WeirdMore is never used
-… 4 more lines omitted
+… 5 more lines omitted
 ```
 
 </details>
@@ -344,9 +364,9 @@ $ satex explain -f samples/paper.tex '\usepackage'
   tag            alias
   when           preamble
   context        outside environments
-  effective      \usepackage[1]{2}{3}…
-  signature      omm…
-  takes          2+
+  effective      \usepackage[1]{2}{3}
+  signature      omm
+  takes          2-3
   uses           4 times, in this run
   by             \let
   documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
@@ -424,9 +444,9 @@ The `controls` command shows the switches and options a package or class defines
 $ satex controls -f samples/paper.tex
 tag     name       count  value                                   governs  file           
 option  article           11pt                                             paper.tex      @ paper.tex:1:1
-switch  \ifdraft          false                                   237      paper.tex      @ paper.tex:3:7
+switch  \ifdraft          false                                   263      paper.tex      @ paper.tex:3:7
 offers  amsmath    15     alignedleftspaceno, alignedleftspacey…           amsmath.sty    @ amsmath.sty:45:16
-… 11 more lines omitted
+… 12 more lines omitted
 ```
 
 </details>
@@ -482,12 +502,12 @@ Shows what a build costs: which packages and files dominate, and what to do abou
 ```text
 $ satex lint -f samples/paper.tex --filter 'category=performance'
 performance (2)
+
   ● unused-package (1)
     paper.tex:5:1  graphicx defines 72 names, none of which are used
-                   unsafe fix: delete \usepackage{graphicx} if its side effects are not needed
-  ● preamble-cost (1)
-    paper.tex:26:1  5 packages requested directly, 258 files read
-… 5 more lines omitted
+      5 │ \usepackage{graphicx}
+        │ ^^^^^^^^^^^
+… 11 more lines omitted
 ```
 
 `--timings` breaks the time down per phase and file, `--stats` sums up counts and wall time. Both measure the run itself and change between runs.
