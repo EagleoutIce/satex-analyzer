@@ -4982,6 +4982,17 @@ will look undefined",
         watch
     }
 
+    /// A probe run reached a prompt: the command read what its file has
+    /// read so far, and the run ends there.
+    pub(crate) fn probe_waits(&mut self) {
+        let Some(file) = self.probe.as_ref().map(|w| w.file) else { return };
+        let read = self.reading(file).map(|mouth| mouth.here().col.saturating_sub(1) as usize);
+        if let Some(watch) = &mut self.probe {
+            watch.reached = watch.reached.or(read);
+        }
+        self.halted = true;
+    }
+
     /// Whether the main loop took a probe character straight from its file:
     /// the command being probed did not consume it.
     fn probe_reached(&mut self, token: Token) -> bool {
