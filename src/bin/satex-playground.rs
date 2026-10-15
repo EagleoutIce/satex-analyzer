@@ -51,6 +51,7 @@ fn run() -> Result<(), String> {
             .current_dir(root),
     )?;
     let site = root.join(&out);
+    let port = free_port(&port)?;
     println!(
         "satex-playground: serving http://127.0.0.1:{port}/play/ (the site at http://127.0.0.1:{port}/); Ctrl+C stops"
     );
@@ -58,6 +59,15 @@ fn run() -> Result<(), String> {
     let mut serve = Command::new("python3");
     serve.args(["-m", "http.server", "-b", "127.0.0.1", "-d"]).arg(&site).arg(&port);
     serve.status().map(|_| ()).map_err(|e| format!("cannot run python3: {e}"))
+}
+
+/// `port`, or the next one up that nothing listens on.
+fn free_port(port: &str) -> Result<String, String> {
+    let first: u16 = port.parse().map_err(|_| format!("`{port}` is no port"))?;
+    (first..first.saturating_add(100))
+        .find(|p| std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
+        .map(|p| p.to_string())
+        .ok_or_else(|| format!("no free port from {first} on"))
 }
 
 /// Rust's `wasm32-unknown-emscripten` standard library, added when missing.
