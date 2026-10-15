@@ -631,6 +631,11 @@ fn math_left_open_is_reported() {
     assert!(found[0].contains("math mode was still on"), "{found:?}");
 }
 
+// A display that closed before `\end{document}` leaves no math mode on.
+math_none! {
+    a_last_display_is_not_left_open("lastdisplay", r"\begin{equation} x \end{equation}", "math-still-open");
+}
+
 math_none! {
     closed_math_is_not_reported("closed", r"Text $x + y$ here.", "math-still-open");
 }
