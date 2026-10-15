@@ -66,6 +66,7 @@ mod slice;
 mod slice_build;
 mod stubs;
 mod support;
+mod tables;
 mod termination;
 mod tex_compliance;
 mod trace_range;
