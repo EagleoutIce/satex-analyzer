@@ -176,14 +176,14 @@ Provides context-sensitive diagnostics like undefined names, duplicates, dead co
 ```text
 $ satex lint -f samples/paper.tex
 errors (1)
-  paper.tex:24:1  error    already-defined  \repeat is already defined
-    [unsafe fix] use \renewcommand{\repeat} instead
+  ◆ already-defined (1)
+    paper.tex:24:1  \repeat is already defined
+                    unsafe fix: use \renewcommand{\repeat} instead
 
 suggestions (7)
-  paper.tex:26:1  info     microtype-available  pdftex writes PDF and can protrude characters and expand fonts, but
-                                                microtype is not loaded
-    [unsafe fix] load \usepackage{microtype}
-… 22 more lines omitted
+  ● microtype-available (1)
+    paper.tex:26:1  pdftex writes PDF and can protrude characters and expand fonts, but microtype is not loaded
+… 28 more lines omitted
 ```
 
 <details>
@@ -482,12 +482,12 @@ Shows what a build costs: which packages and files dominate, and what to do abou
 ```text
 $ satex lint -f samples/paper.tex --filter 'category=performance'
 performance (2)
-  paper.tex:5:1  info     unused-package  graphicx defines 72 names, none of which are used
-    [unsafe fix] delete \usepackage{graphicx} if its side effects are not needed
-  paper.tex:26:1  info     preamble-cost  5 packages requested directly, 258 files read
-    [unsafe fix] dump the preamble into a format with `pdftex -ini -jobname=paper "&pdflatex" mylatexformat.ltx
-                 """paper.tex"""`, then every build starts from it
-… 3 more lines omitted
+  ● unused-package (1)
+    paper.tex:5:1  graphicx defines 72 names, none of which are used
+                   unsafe fix: delete \usepackage{graphicx} if its side effects are not needed
+  ● preamble-cost (1)
+    paper.tex:26:1  5 packages requested directly, 258 files read
+… 5 more lines omitted
 ```
 
 `--timings` breaks the time down per phase and file, `--stats` sums up counts and wall time. Both measure the run itself and change between runs.

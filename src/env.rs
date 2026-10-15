@@ -335,6 +335,11 @@ impl PathEnv {
         self.slots.is_empty()
     }
 
+    /// The binding the path gave `sym` since its fork, if it changed it.
+    pub fn changed(&self, sym: Sym) -> Option<&Binding> {
+        self.slots.get(&sym.0).and_then(|(binding, _)| binding.as_ref())
+    }
+
     /// The names the path changed since its fork.
     pub fn syms(&self) -> Vec<Sym> {
         self.slots.keys().map(|&s| Sym(s)).collect()

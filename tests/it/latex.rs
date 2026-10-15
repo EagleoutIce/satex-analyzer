@@ -3108,3 +3108,26 @@ fn the_beamer_mode_count_is_back_after_a_frame_with_an_unknown_width() {
     let count = last_body(&analysis, "Pmc");
     assert!(count == "0" || count.contains("unknown"), "{count:?}");
 }
+
+/// A number of unknown sign parsed by pgfmath: the path that read a unary
+/// minus and the one that did not are kept apart where their loops meet,
+/// so neither loop is cut and no operation of one stands on the other's
+/// stack (pdflatex: no error).
+#[test]
+fn pgfmath_keeps_the_signs_of_an_unknown_number_apart() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{pgfmath}
+\newdimen\da
+\begin{document}
+\da=-\pdfuniformdeviate 100 pt
+\pgfmathparse{\the\da*2}\xdef\R{\pgfmathresult}
+\end{document}",
+    );
+    let count = |code: &str| analysis.facts.diagnostics.iter().filter(|d| d.code == code).count();
+    assert_eq!(count("recursion-widened"), 0, "{:?}", codes(&analysis));
+    assert!(count("undecided-loop") <= 2, "{:?}", codes(&analysis));
+}
