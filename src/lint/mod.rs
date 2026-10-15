@@ -412,9 +412,10 @@ impl<'a> Report<'a> {
 
     /// A finding on an error raised after `cause`, which may have led to
     /// it: one severity lower, naming the cause, without edits.
+    /// A finding that may only follow from an earlier gap: a possible one,
+    /// so a note, never a warning or an error.
     pub fn add_doubted(&mut self, span: Span, name: &str, message: String, cause: &str) {
-        let severity = if self.rule.severity == Severity::Error { Severity::Warning } else { Severity::Info };
-        self.add_as(severity, span, name, format!("{message} (may follow from {cause}: check that first)"), None);
+        self.add_as(Severity::Info, span, name, format!("{message} (may follow from {cause}: check that first)"), None);
     }
 
     /// The note for a finding that something is absent from the whole
