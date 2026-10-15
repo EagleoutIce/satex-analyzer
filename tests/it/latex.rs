@@ -2605,6 +2605,33 @@ fn left_protrusion_of_a_line_is_known() {
     }
 }
 
+/// tex.web §§ 909, 914-918: at a hyphenation point with a font kern to
+/// the next letter or to the hyphen, the discretionary replaces the letter
+/// and its kern and its pre-break text is the letter, that kern and the
+/// hyphen. Palatino kerns `v` in "every" and "toward": the paragraphs
+/// break as `pdflatex` breaks them, also at exactly the pre-break width.
+#[test]
+fn a_kern_at_a_hyphenation_point_keeps_the_lines_known() {
+    if !installed() {
+        return;
+    }
+    let src = r"\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage[osf]{mathpazo}
+\begin{document}
+\pretolerance=-1 \tolerance=100 \parfillskip=0pt plus 1fil
+\setbox0\hbox{ev-}\setbox0\vbox{\hsize=\wd0 \parindent0pt \hskip0pt every\par\xdef\Ma{\the\prevgraf}}
+\setbox0\hbox{ev-}\setbox0\vbox{\hsize=\dimexpr\wd0-1sp\relax \parindent0pt \hskip0pt every\par\xdef\Mb{\the\prevgraf}}
+\setbox0\hbox{tow-}\setbox0\vbox{\hsize=\wd0 \parindent0pt \hskip0pt toward\par\xdef\Md{\the\prevgraf}}
+\setbox0\vbox{\hsize=1pt \tolerance=10000 \hyphenpenalty=0 \parindent0pt \hskip0pt every\par\xdef\Me{\the\prevgraf}}
+\setbox0\vbox{\hsize=1pt \tolerance=10000 \hyphenpenalty=0 \parindent0pt \hskip0pt revolution\par}\xdef\Mf{\the\ht0/\the\dp0}
+\end{document}";
+    let analysis = analyze(src);
+    for (name, want) in [("Ma", "2"), ("Mb", "2"), ("Md", "1"), ("Me", "3"), ("Mf", "48.0pt/0.215pt")] {
+        assert_eq!(body(&analysis, name), want, "{name}");
+    }
+}
+
 /// microtype's `\leftprotrusion` after `\item` measures an en dash
 /// ligature first in the item: the margin kern it reads is known, so the
 /// paragraph surely starts there and the characters after it do not each
