@@ -63,6 +63,16 @@ fn effective_signature_for_usepackage() {
     assert_eq!(str_field(&record, "signature"), Some("omo"));
 }
 
+/// A probe ends where the command prompts the terminal (a missing file's
+/// `\typein`): what follows is the user's answer, not an argument.
+#[test]
+fn effective_signature_for_input_ends_at_the_prompt() {
+    let analysis = analyze_kernel(r"\documentclass{article}");
+    let record = explain_one(&analysis, "input");
+    assert_eq!(str_field(&record, "effective"), Some(r"\input{1}"));
+    assert_eq!(str_field(&record, "signature"), Some("m"));
+}
+
 #[test]
 fn primitive_body_and_kind() {
     let analysis = analyze(r"\relax");

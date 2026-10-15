@@ -4012,6 +4012,13 @@ impl Machine<'_> {
             if open == Some(false) && self.terminal_read_is_fatal(span) {
                 return;
             }
+            // A probe asks what a command reads: what follows a prompt is
+            // the user's answer, so the run ends at it (a missing file's
+            // `\typein` would otherwise ask again until the budget is spent).
+            if open == Some(false) && self.probe.is_some() {
+                self.probe_waits();
+                return;
+            }
             let what = if open == Some(false) { "the terminal" } else { "a stream satex could not pin down" };
             self.diagnose(
                 Severity::Imprecision,
