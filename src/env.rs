@@ -843,6 +843,11 @@ impl Env {
         self.marks.last().and_then(|m| m.nest)
     }
 
+    /// Whether an `\halign` or `\valign` group is open anywhere.
+    pub fn in_alignment(&self) -> bool {
+        self.marks.iter().any(|m| m.nest.is_some_and(|n| n.code == Some(crate::mode::group::ALIGN)))
+    }
+
     /// Where each group still open was opened, innermost last.
     pub fn open_group_spans(&self) -> Vec<(GroupKind, Span)> {
         self.marks.iter().map(|mark| (mark.kind, mark.opened)).collect()

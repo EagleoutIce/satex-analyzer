@@ -2458,3 +2458,23 @@ fn a_name_printed_under_an_unknown_escapechar_keeps_its_characters() {
     assert!(!defined.contains(&"differs".to_string()), "{defined:?}");
     assert!(analysis.forks <= 2, "{} forks", analysis.forks);
 }
+
+/// tex.web § 1068: a `}` at the bottom level is deleted with "Too many }'s".
+#[test]
+fn a_right_brace_with_no_group_is_an_error() {
+    let stray = analyze(r"\def\a{1} } \def\b{2}");
+    assert_eq!(diagnosed(&stray, "too-many-braces").len(), 1);
+    let balanced = analyze(r"{\def\a{1}} \def\b{2}");
+    assert!(diagnosed(&balanced, "too-many-braces").is_empty());
+}
+
+/// tex.web § 1046: `^` and `_` outside math mode insert the `$` they lack.
+#[test]
+fn a_script_outside_math_is_an_error() {
+    let text = analyze(r"\catcode`\_=8 a_b");
+    assert_eq!(diagnosed(&text, "script-outside-math").len(), 1);
+    let math = analyze(r"\catcode`\_=8 \catcode`\$=3 $a_b^c$");
+    assert!(diagnosed(&math, "script-outside-math").is_empty());
+    let boxed = analyze(r"\catcode`\_=8 \catcode`\$=3 \catcode`\{=1 \catcode`\}=2 $\hbox{$a_b$}$");
+    assert!(diagnosed(&boxed, "script-outside-math").is_empty());
+}
