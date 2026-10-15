@@ -511,10 +511,15 @@ impl Machine<'_> {
             P::Relax | P::Typeset(_) => {}
             // An engine primitive satex doesn't interpret. Does nothing, but
             // records the gap so unmodeled effects are on record.
-            P::Unmodeled | P::AlignMark | P::AlignTab => {
-                if p == P::AlignTab {
-                    self.template_lost();
+            // LuaTeX's `\aligntab` is an `&` (§ 785).
+            P::AlignTab => {
+                if !self.template_cell_end(Token::new(Tok::Cs(by), span), false) {
+                    self.end_word();
+                    self.align_cell(true);
+                    self.template_next_cell(false, span);
                 }
+            }
+            P::Unmodeled | P::AlignMark => {
                 self.note_gap("unmodeled-primitive", by, span);
                 self.widen_mode();
             }
@@ -752,7 +757,7 @@ impl Machine<'_> {
 
     /// One step of expansion, as `\expandafter` asks. An unexpandable token
     /// stays where it is (tex.web § 367).
-    fn expand_once(&mut self) {
+    pub(crate) fn expand_once(&mut self) {
         let Some(token) = self.next_token() else { return };
         let cs = match token.tok {
             Tok::Cs(sym) => Some(sym),

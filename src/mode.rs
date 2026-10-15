@@ -146,9 +146,6 @@ pub struct Nest {
 /// (tex.web §§ 770, 799).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Align {
-    /// The templates' natural width, height and depth, once the preamble
-    /// ended (§ 779). satex runs them once, not in every cell.
-    pub template: Option<[Dim; 3]>,
     /// The `\tabskip` glue before the first column and after the last (§ 778).
     pub tabskip: Dim,
     /// The widest cell, once a row ended (§ 801).
@@ -156,8 +153,8 @@ pub struct Align {
     /// A row has more than one column, whose widths are not followed.
     pub columns: bool,
     /// The alignment's width where every cell was set with its template
-    /// (tex.web §§ 789-791) and is followed: its columns' widths summed
-    /// (§ 801, all `\tabskip` glue nothing).
+    /// (tex.web §§ 789-791) and is followed: its columns' widths and the
+    /// `\tabskip` glue between them, summed (§ 801).
     pub exact: Option<Dim>,
 }
 
@@ -169,13 +166,7 @@ impl Align {
             _ => Some(Dim::ANY),
         };
         let exact = self.exact.zip(other.exact).map(|(a, b)| a.join(b));
-        let template = match (self.template, other.template) {
-            (Some(a), Some(b)) => Some(std::array::from_fn(|k| a[k].join(b[k]))),
-            (None, None) => None,
-            _ => Some([Dim::ANY; 3]),
-        };
         Align {
-            template,
             tabskip: self.tabskip.join(other.tabskip),
             widest: pair(self.widest, other.widest),
             columns: self.columns || other.columns,
@@ -2195,7 +2186,8 @@ impl Machine<'_> {
 
     /// tex.web § 774 `init_align` for an `\halign`: its cells are
     /// restricted horizontal lists (§ 785), its rows go onto the enclosing
-    /// vertical list (§ 799). satex runs the preamble as the first row.
+    /// vertical list (§ 799). The preamble is read (§ 777), then
+    /// `\everycr` and the first row follow (§ 785).
     fn begin_halign(&mut self, span: Span) {
         let to = self.scan_spec();
         self.open_list(Some(group::ALIGN), Modes::RESTRICTED_HORIZONTAL, 0, span);
@@ -2203,7 +2195,16 @@ impl Machine<'_> {
         nest.to = to;
         nest.align = Some(Align { tabskip: self.glue_natural("tabskip"), ..Align::default() });
         self.env.set_nest(nest);
-        self.capture_templates();
+        if !self.capture_templates(span) {
+            return;
+        }
+        let mut nest = self.env.nest().expect("the alignment's group is open");
+        nest.align = nest.align.map(|a| Align { columns: self.tpl_int("n") > 1, ..a });
+        self.env.set_nest(nest);
+        self.mode = ALIGN_MODES;
+        self.natural = Some(Natural { space_factor: Some(1000), tail: [Last::Empty; TAIL], ..Natural::default() });
+        self.insert_every("everycr", span);
+        self.template_row_start();
     }
 
     /// The name of the template state `what` of the innermost alignment.
@@ -2235,122 +2236,125 @@ impl Machine<'_> {
     }
 
     /// tex.web §§ 777-784: the preamble's templates `u_j # v_j`, read as
-    /// TeX reads them, unexpanded. They are given back for satex's own run
-    /// of the preamble; each cell then gets its template (§§ 789-791). Only
-    /// a plain preamble is followed: no `\span`, no periodic `&&`, and
-    /// `\tabskip` only set to nothing.
-    fn capture_templates(&mut self) {
+    /// TeX reads them: unexpanded but for what `\span` expands, `\tabskip`
+    /// assigned where it stands, `&` and `\cr` only outside braces. The
+    /// preamble is not run; each cell gets its template (§§ 789-791).
+    /// `false` where the input ended first.
+    fn capture_templates(&mut self, span: Span) -> bool {
         let depth = self.intern("\u{4}tpl.depth");
         let d = self.env.value(depth).as_int().unwrap_or(0) + 1;
         self.env.set_value(depth, Value::Int(d), false);
-        let mut taken = Vec::new();
-        let mut columns: Vec<(Vec<Token>, Vec<Token>)> = Vec::new();
+        // Each template with the `\tabskip` glue that follows its column.
+        let mut columns: Vec<(Vec<Token>, Vec<Token>, Dim)> = Vec::new();
         let (mut u, mut v, mut sharp) = (Vec::new(), Vec::new(), false);
-        let mut ok = self.glue_natural("tabskip") == Dim::exact(0);
-        let mut skip_next = false;
-        loop {
-            let Some(t) = self.next_token() else {
-                ok = false;
-                break;
+        // § 779: an `&` that begins a template starts the periodic part.
+        let mut period = None;
+        let outside = self.align_state;
+        let ended = loop {
+            let Some(t) = self.preamble_token() else { break false };
+            let meaning = match t.tok {
+                Tok::Cs(sym) => Some(self.env.meaning(sym)),
+                _ => None,
             };
-            taken.push(t);
-            if taken.len() > 4000 {
-                ok = false;
-                break;
-            }
-            if skip_next {
-                skip_next = false;
-                let zero = match t.tok {
-                    Tok::Cs(sym) => matches!(self.name(sym), "z@" | "z@skip"),
-                    _ => false,
-                };
-                ok &= zero;
+            let tab = matches!(t.tok, Tok::Chr(_, Catcode::Tab))
+                || matches!(meaning, Some(Meaning::Primitive(Primitive::AlignTab) | Meaning::Char(_, Catcode::Tab)));
+            let cr = matches!(self.align_primitive(t), Some("cr" | "crcr"));
+            let param = matches!(t.tok, Tok::Chr(_, Catcode::Param))
+                || matches!(meaning, Some(Meaning::Char(_, Catcode::Param) | Meaning::Primitive(Primitive::AlignMark)));
+            let ends = (tab || cr) && self.align_state == outside;
+            if !sharp {
+                if param {
+                    sharp = true;
+                } else if ends && tab && u.is_empty() && period.is_none() {
+                    period = Some(columns.len());
+                } else if ends {
+                    // § 783: the `#` is taken to stand before this token.
+                    self.diagnose(
+                        Severity::Warning,
+                        "missing-sharp",
+                        t.span,
+                        "a template of the alignment's preamble has no `#`".into(),
+                    );
+                    self.unread(t);
+                    sharp = true;
+                } else if !u.is_empty()
+                    || !(matches!(t.tok, Tok::Chr(_, Catcode::Space))
+                        || matches!(meaning, Some(Meaning::Char(_, Catcode::Space))))
+                {
+                    u.push(t);
+                }
                 continue;
             }
-            let tab = match t.tok {
-                Tok::Chr(_, Catcode::Tab) => true,
-                Tok::Cs(sym) => {
-                    self.env.meaning(sym) == Meaning::Primitive(Primitive::AlignTab)
-                        || matches!(self.env.meaning(sym), Meaning::Char(_, Catcode::Tab))
-                }
-                _ => false,
-            };
-            let name = self.align_primitive(t).map(str::to_string);
-            if tab || matches!(name.as_deref(), Some("cr" | "crcr")) {
-                ok &= sharp;
-                columns.push((std::mem::take(&mut u), std::mem::take(&mut v)));
+            if ends {
+                columns.push((std::mem::take(&mut u), std::mem::take(&mut v), self.glue_natural("tabskip")));
                 sharp = false;
-                if tab {
-                    continue;
+                if cr {
+                    break true;
                 }
-                break;
+            } else if param {
+                self.diagnose(Severity::Warning, "extra-sharp", t.span, "a template has a second `#`".into());
+            } else {
+                v.push(t);
             }
-            if name.as_deref() == Some("span") {
-                ok = false;
-                continue;
-            }
-            if let Tok::Cs(sym) = t.tok
-                && self.name(self.env.identity(sym)) == "tabskip"
-                && matches!(self.env.meaning(sym), Meaning::Primitive(Primitive::GlueParameter { .. }))
-            {
-                skip_next = true;
-                continue;
-            }
-            // § 780: a `#`, or a name `\let` to one, as LaTeX's `\@sharp`.
-            let param = match t.tok {
-                Tok::Chr(_, Catcode::Param) => true,
-                Tok::Cs(sym) => matches!(self.env.meaning(sym), Meaning::Char(_, Catcode::Param)),
-                Tok::Param(_) => {
-                    ok = false;
-                    false
-                }
-                _ => false,
-            };
-            if param {
-                ok &= !sharp;
-                sharp = true;
-                continue;
-            }
-            match (sharp, t.tok) {
-                // § 783: spaces before a `u` part are dropped.
-                (false, Tok::Chr(_, Catcode::Space)) if u.is_empty() => {}
-                (false, _) => u.push(t),
-                (true, _) => v.push(t),
-            }
+        };
+        if !ended || columns.is_empty() {
+            self.diagnose(Severity::Warning, "file-ended", span, "the input ended in the alignment's preamble".into());
+            return false;
         }
-        self.unread_all(&taken);
-        ok &= !columns.is_empty() && columns.len() < 64;
         // The state lives at the alignment's level (`tpl_set`).
         let local = |m: &mut Self, what: &str, value: Value| {
             let sym = m.tpl(what);
             m.env.set_value(sym, value, false);
         };
-        local(self, "ok", Value::Int(i64::from(ok)));
-        if ok {
-            local(self, "n", Value::Int(columns.len() as i64));
-            for what in ["col", "incell", "omit", "vdone", "rows", "cdepth"] {
-                local(self, what, Value::Int(0));
+        local(self, "ok", Value::Int(1));
+        local(self, "n", Value::Int(columns.len() as i64));
+        // A `&&` before the `\cr` makes nothing periodic.
+        local(self, "period", Value::Int(period.filter(|p| *p < columns.len()).map_or(-1, |p| p as i64)));
+        local(self, "m", Value::Int(columns.len() as i64));
+        for what in ["col", "incell", "omit", "vdone", "cdepth", "spans"] {
+            local(self, what, Value::Int(0));
+        }
+        local(self, "start", Value::Unknown);
+        for (j, (u, v, skip)) in columns.into_iter().enumerate() {
+            local(self, &format!("u.{j}"), Value::Toks(Rc::from(u)));
+            local(self, &format!("v.{j}"), Value::Toks(Rc::from(v)));
+            local(self, &format!("t.{j}"), skip.known().map_or(Value::Unknown, Value::Dimen));
+            // Not set yet: no cell of the column has ended.
+            local(self, &format!("w.{j}"), Value::Int(-1));
+        }
+        true
+    }
+
+    /// tex.web § 782 `get_preamble_token`: the next token of a preamble,
+    /// past what `\span` expands and the `\tabskip` glue assigned there.
+    fn preamble_token(&mut self) -> Option<Token> {
+        loop {
+            let t = self.next_token()?;
+            if self.align_primitive(t) == Some("span") {
+                self.expand_once();
+                continue;
             }
-            local(self, "start", Value::Unknown);
-            for (j, (u, v)) in columns.into_iter().enumerate() {
-                local(self, &format!("u.{j}"), Value::Toks(Rc::from(u)));
-                local(self, &format!("v.{j}"), Value::Toks(Rc::from(v)));
-                // Not set yet: no cell of the column has ended.
-                local(self, &format!("w.{j}"), Value::Int(-1));
+            if let Tok::Cs(sym) = t.tok
+                && self.name(self.env.identity(sym)) == "tabskip"
+                && self.env.meaning(sym) == Meaning::Primitive(Primitive::GlueParameter { mu: false })
+            {
+                self.execute_extra(Primitive::GlueParameter { mu: false }, sym, t.span);
+                continue;
             }
+            return Some(t);
         }
     }
 
     /// Whether the cells of the innermost alignment, past its preamble, are
     /// set with their templates.
     fn templated(&mut self) -> bool {
-        self.tpl_int("ok") == 1 && self.tpl_int("rows") == 1
+        self.tpl_int("ok") == 1
     }
 
     /// An `&` or `\cr` ends a cell (tex.web § 791): its `v` part goes first,
     /// then the cell's width counts toward its column's (§ 796, 801).
     /// `true` where `token` was given back behind the `v` part.
-    pub(crate) fn template_cell_end(&mut self, token: Token) -> bool {
+    pub(crate) fn template_cell_end(&mut self, token: Token, spans: bool) -> bool {
         if !self.templated() || self.between_rows() {
             return false;
         }
@@ -2368,7 +2372,8 @@ impl Machine<'_> {
         self.cell_base = None;
         if self.tpl_int("omit") == 0 && self.tpl_int("vdone") == 0 {
             self.tpl_set("vdone", Value::Int(1));
-            let v = self.tpl(&format!("v.{j}"));
+            let v = self.template_of(j);
+            let v = self.tpl(&format!("v.{v}"));
             let Value::Toks(v) = self.env.value(v) else {
                 self.tpl_fail();
                 return false;
@@ -2376,6 +2381,13 @@ impl Machine<'_> {
             self.unread(token);
             self.push_tokens(v);
             return true;
+        }
+        if spans {
+            // § 791: a `\span` packs nothing; the cell goes on in the next
+            // column, and its width counts toward the columns it spans.
+            self.tpl_set("spans", Value::Int(1));
+            self.tpl_set("vdone", Value::Int(0));
+            return false;
         }
         self.end_word();
         let along = self.natural.map_or(Dim::ANY, |n| n.along);
@@ -2389,15 +2401,26 @@ impl Machine<'_> {
             _ => None,
         };
         let key = self.tpl(&format!("w.{j}"));
+        // § 801: a spanned cell widens its last column by what the columns
+        // it spans lack, which is not followed.
+        let width = width.filter(|_| self.tpl_int("spans") == 0);
         let widest = match (self.env.value(key), width) {
             (Value::Int(-1), Some(w)) => Value::Dimen(w),
             (Value::Dimen(b), Some(w)) => Value::Dimen(b.max(w)),
             _ => Value::Unknown,
         };
         self.env.set_value_in_place(key, widest);
-        self.tpl_set("incell", Value::Int(0));
-        self.tpl_set("vdone", Value::Int(0));
+        for what in ["incell", "vdone", "spans"] {
+            self.tpl_set(what, Value::Int(0));
+        }
         false
+    }
+
+    /// The template of column `j`: past the last, the periodic part's
+    /// again (tex.web § 793).
+    fn template_of(&mut self, j: i64) -> i64 {
+        let (n, p) = (self.tpl_int("n"), self.tpl_int("period"));
+        if j < n || p < 0 { j } else { p + (j - p) % (n - p) }
     }
 
     /// The cells' templates are no longer followed.
@@ -2420,9 +2443,9 @@ impl Machine<'_> {
             // Engine bookkeeping, as § 336's `\outer` check: not a read of
             // the meaning.
             Tok::Cs(sym) => match self.env.slot(sym).map(|b| &b.meaning) {
-                Some(Meaning::Char(_, Catcode::Tab)) => true,
+                Some(Meaning::Char(_, Catcode::Tab) | Meaning::Primitive(Primitive::AlignTab)) => true,
                 Some(Meaning::Primitive(Primitive::Command(crate::builtins::Syntax::Nothing))) => {
-                    matches!(self.name(self.env.identity(sym)), "cr" | "crcr")
+                    matches!(self.name(self.env.identity(sym)), "cr" | "crcr" | "span")
                 }
                 _ => false,
             },
@@ -2434,7 +2457,8 @@ impl Machine<'_> {
         if self.tpl_int("incell") != 1 || self.tpl_int("vdone") != 0 || self.tpl_int("omit") != 0 {
             return false;
         }
-        self.template_cell_end(token)
+        let spans = self.align_primitive(token) == Some("span");
+        self.template_cell_end(token, spans)
     }
 
     /// A cell boundary satex does not follow (`\span`, an `&` it does not
@@ -2443,33 +2467,43 @@ impl Machine<'_> {
         self.tpl_fail();
     }
 
-    /// After an `&`: the next cell begins (tex.web § 791).
-    pub(crate) fn template_next_cell(&mut self) {
+    /// After an `&` or a `\span`: the next cell begins, or with `spans`
+    /// the cell goes on in the next column (tex.web § 791).
+    pub(crate) fn template_next_cell(&mut self, spans: bool, span: Span) {
         if !self.templated() || self.between_rows() {
             return;
         }
         let j = self.tpl_int("col") + 1;
-        if j >= self.tpl_int("n") {
-            // § 792: an extra `&`; not followed.
-            self.tpl_fail();
+        if j >= self.tpl_int("n") && self.tpl_int("period") < 0 {
+            // § 792: the row ends as at a `\cr`.
+            self.diagnose(
+                Severity::Warning,
+                "extra-alignment-tab",
+                span,
+                "a row has more cells than the preamble has templates".into(),
+            );
+            if spans {
+                self.tpl_fail();
+            }
+            if self.align_cr(false, span) {
+                self.template_row_start();
+            }
             return;
+        }
+        if j >= self.tpl_int("m") {
+            self.tpl_set("m", Value::Int(j + 1));
+            let w = self.tpl(&format!("w.{j}"));
+            self.env.set_value_in_place(w, Value::Int(-1));
         }
         self.tpl_set("col", Value::Int(j));
         let Some(t) = self.next_nonblank_x_token() else { return };
-        self.template_cell_start(j, t);
+        self.template_cell_start(j, t, !spans);
     }
 
     /// After a `\cr`, a `\crcr` or a `\noalign`: the next row begins
     /// with its first cell, unless the alignment or the row is something
     /// else (tex.web § 785 `align_peek`).
     pub(crate) fn template_row_start(&mut self) {
-        // The preamble ended: the rows begin.
-        if self.tpl_int("ok") == 1
-            && self.tpl_int("rows") == 0
-            && self.halign().is_some_and(|n| n.align.is_some_and(|a| a.template.is_some()))
-        {
-            self.tpl_set("rows", Value::Int(1));
-        }
         if !self.templated() || !self.between_rows() {
             return;
         }
@@ -2488,16 +2522,17 @@ impl Machine<'_> {
             return;
         }
         self.tpl_set("col", Value::Int(0));
-        self.template_cell_start(0, t);
+        self.template_cell_start(0, t, true);
     }
 
     /// Cell `j` begins at `t`, the first token of it after expansion:
     /// `\omit` drops the template, else its `u` part goes first (§ 791).
-    fn template_cell_start(&mut self, j: i64, t: Token) {
+    fn template_cell_start(&mut self, j: i64, t: Token, fresh: bool) {
         let omit = self.align_primitive(t) == Some("omit");
         if !omit {
             self.unread(t);
-            let u = self.tpl(&format!("u.{j}"));
+            let u = self.template_of(j);
+            let u = self.tpl(&format!("u.{u}"));
             match self.env.value(u) {
                 Value::Toks(u) => self.push_tokens(u),
                 _ => {
@@ -2513,6 +2548,10 @@ impl Machine<'_> {
         self.tpl_set("cdepth", Value::Int(self.env.depth() as i64));
         self.tpl_set("incell", Value::Int(1));
         self.tpl_set("vdone", Value::Int(0));
+        // § 791: a spanned cell goes on in the same list.
+        if !fresh {
+            return;
+        }
         self.end_word();
         let start = self.natural.and_then(|n| n.along.known()).map_or(Value::Unknown, Value::Dimen);
         self.tpl_set("start", start);
@@ -2568,42 +2607,39 @@ impl Machine<'_> {
     }
 
     /// A `\cr` or `\crcr` ends the preamble or a row (tex.web §§ 779,
-    /// 799). False where no `\halign` of satex's takes it.
-    fn align_cr(&mut self, crcr: bool) -> bool {
+    /// 799), and `\everycr` follows. False where no `\halign` of satex's
+    /// takes it.
+    fn align_cr(&mut self, crcr: bool, span: Span) -> bool {
         let Some(mut nest) = self.halign() else { return false };
         // § 785: a `\crcr` right after a `\cr` does nothing.
         if !(crcr && self.between_rows()) {
             self.end_row(&mut nest);
             self.env.set_nest(nest);
+            self.insert_every("everycr", span);
         }
         true
     }
 
     /// tex.web §§ 796, 799: each cell and its row are packed naturally, so
-    /// the row's height and depth are maxima from zero. The templates add
-    /// at most their own size.
+    /// the row's height and depth are maxima from zero.
     fn end_row(&mut self, nest: &mut Nest) {
         self.end_word();
         let Some(mut align) = nest.align else { return };
         let size = self.natural.map_or([Dim::ANY; 3], |n| [n.along, n.height.at_least_zero(), n.depth.at_least_zero()]);
-        match align.template {
-            None => {
-                align.template = Some(size);
-                align.tabskip = align.tabskip.extended_by(self.glue_natural("tabskip"));
-            }
-            Some(_) if self.templated() => {
+        match self.templated() {
+            true => {
                 // Each cell holds its template: the row is as high and deep
                 // as its cells (§ 799), the alignment as wide as its
-                // columns (§ 801).
+                // columns and the glue after each used one (§ 801).
                 let [_, h, d] = size;
                 let lost = self.natural.is_some_and(|n| n.para.lost);
-                let n = self.tpl_int("n");
-                let mut sum = Some(0);
-                for j in 0..n {
-                    let key = self.tpl(&format!("w.{j}"));
-                    sum = match (sum, self.env.value(key)) {
-                        (Some(s), Value::Dimen(w)) => Some(s + w),
-                        (s, Value::Int(-1)) => s,
+                let mut sum = align.tabskip.known();
+                for j in 0..self.tpl_int("m") {
+                    let (w, t) = (self.tpl(&format!("w.{j}")), self.template_of(j));
+                    let t = self.tpl(&format!("t.{t}"));
+                    sum = match (sum, self.env.value(w), self.env.value(t)) {
+                        (s, Value::Int(-1), _) => s,
+                        (Some(s), Value::Dimen(w), Value::Dimen(t)) => Some(s + w + t),
                         _ => None,
                     };
                 }
@@ -2618,11 +2654,13 @@ impl Machine<'_> {
                     }
                 }
             }
-            Some([tw, th, td]) => {
+            // Cells past a boundary satex lost hold templates it did not
+            // set: they add what they make.
+            false => {
                 align.exact = None;
                 let [w, h, d] = size;
-                let w = w.join(w.extended_by(tw));
-                let (h, d) = (h.join(h.max(th)), d.join(d.max(td)));
+                let w = w.join(w.extended_by(Dim::ANY));
+                let (h, d) = (h.join(h.max(Dim::ANY)), d.join(d.max(Dim::ANY)));
                 align.widest = Some(align.widest.map_or(w, |m| m.max(w)));
                 let lost = self.natural.is_some_and(|n| n.para.lost);
                 let skips = self.interline();
@@ -2647,7 +2685,7 @@ impl Machine<'_> {
         let align = nest.align?;
         let widest = align.widest?;
         let natural = match align.exact {
-            Some(exact) if align.tabskip == Dim::exact(0) => exact,
+            Some(exact) => exact,
             _ if align.columns => Dim::ANY,
             _ => widest.extended_by(align.tabskip),
         };
@@ -2680,11 +2718,22 @@ impl Machine<'_> {
                     let fetched = self.fetch_box(n, true);
                     return self.box_end(context, fetched, dims);
                 }
+                // tex.web § 463: a `\vrule` 0.4pt wide, an `\hrule` 0.4pt
+                // high and nothing deep, the rest running.
                 Meaning::Primitive(Primitive::Mode(
-                    ModeCmd::Horizontal(Material::Rule) | ModeCmd::Vertical(Material::Rule),
+                    rule @ (ModeCmd::Horizontal(Material::Rule) | ModeCmd::Vertical(Material::Rule)),
                 )) if context == BoxContext::Leaders => {
-                    self.scan_rule_spec();
-                    return;
+                    let vrule = matches!(rule, ModeCmd::Horizontal(_));
+                    let [w, h, d] = self.scan_rule_spec();
+                    let size = |given: Option<Option<Scaled>>, default: Option<Scaled>| match given {
+                        Some(Some(v)) => Some(Dim::exact(v)),
+                        Some(None) => Some(Dim::ANY),
+                        None => default.map(Dim::exact),
+                    };
+                    let w = size(w, vrule.then_some(DEFAULT_RULE));
+                    let h = size(h, (!vrule).then_some(DEFAULT_RULE));
+                    let d = size(d, (!vrule).then_some(0));
+                    return self.leader_size([w, h, d]);
                 }
                 _ => {
                     self.diagnose(Severity::Warning, "missing-box", span, "a <box> was supposed to be here".into());
@@ -2877,7 +2926,36 @@ impl Machine<'_> {
                 let ranges = std::mem::take(&mut self.fetched);
                 self.place_chars(ranges, false);
             }
-            BoxContext::Leaders => self.fetched.clear(),
+            BoxContext::Leaders => {
+                self.fetched.clear();
+                if state != BoxState::Void {
+                    self.leader_size(dims.map(Some));
+                }
+            }
+        }
+    }
+
+    /// tex.web §§ 656, 671: the box or rule of leaders makes a horizontal
+    /// list as high and deep as it is, a vertical one as wide; a running
+    /// length (`None`) does neither.
+    fn leader_size(&mut self, [w, h, d]: [Option<Dim>; 3]) {
+        let horizontal = self.list_kind();
+        let Some(n) = &mut self.natural else { return };
+        match horizontal {
+            Some(true) => {
+                if let Some(h) = h {
+                    n.height = n.height.max(h);
+                }
+                if let Some(d) = d {
+                    n.depth = n.depth.max(d);
+                }
+            }
+            Some(false) => {
+                if let Some(w) = w {
+                    n.wide = n.wide.max(w);
+                }
+            }
+            None => {}
         }
     }
 
@@ -3327,16 +3405,16 @@ impl Machine<'_> {
             if name == "/" {
                 return self.italic_correction();
             }
-            if (cr || crcr) && self.template_cell_end(Token::new(Tok::Cs(by), at)) {
+            if (cr || crcr || span) && self.template_cell_end(Token::new(Tok::Cs(by), at), span) {
                 return;
             }
-            if (cr || crcr) && self.align_cr(crcr) {
+            if (cr || crcr) && self.align_cr(crcr, at) {
                 self.template_row_start();
                 return;
             }
             if span {
-                self.template_lost();
                 self.align_cell(true);
+                self.template_next_cell(true, at);
             }
         }
         // `\pdfrefximage` adds its box once its number is read, and so do

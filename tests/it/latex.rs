@@ -2789,6 +2789,34 @@ fn alignment_cells_hold_their_templates() {
     }
 }
 
+/// tex.web §§ 778-793: a preamble is read, not run; past its last
+/// template a cell takes the periodic part's (`&&`) again, and `\everycr`
+/// follows the preamble's `\cr` and each row's. pgf's matrix checks in
+/// each `v` part that the cell's `&` was its own.
+#[test]
+fn a_periodic_preamble_is_read_and_every_cell_takes_its_template() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{matrix}
+\newcount\c \newcount\r
+\begin{document}
+\setbox0\vbox{\everycr{\noalign{\global\advance\r1 }}%
+  \halign{\global\advance\c1 #&&\global\advance\c10 #\cr a&b&c\cr d\cr}}
+\xdef\C{\the\c/\the\r}
+\begin{tikzpicture}
+\matrix (m) [matrix of nodes] {|[alias=a]| A & B \\ C & D \\};
+\draw (a) -- (m-2-2);
+\end{tikzpicture}
+\end{document}",
+    );
+    assert_eq!(body(&analysis, "C"), "22/3");
+    assert!(raised(&analysis).is_empty(), "{:?}", raised(&analysis));
+}
+
 /// tex.web § 785: between an alignment's rows a `{` or a `$` begins a row
 /// as a letter does, so the group or formula is in the row's first cell, in
 /// restricted horizontal mode, not one more pass of a row that may be in

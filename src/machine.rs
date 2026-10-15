@@ -1818,8 +1818,11 @@ const CUT_IMPRECISE: [&str; 1] = ["argument-ends-in-unknown"];
 /// run goes on exactly as TeX does, and never widens for them. Each is
 /// raised as the error TeX prints (`raised-error`) and counts toward
 /// [`MAX_ERRORS`] (tex.web § 82).
-pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 7] = [
+pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 10] = [
     ("missing-endcsname", Some("Missing \\endcsname inserted")),
+    ("missing-sharp", Some("Missing # inserted in alignment preamble")),
+    ("extra-sharp", Some("Only one # is allowed per tab")),
+    ("extra-alignment-tab", Some("Extra alignment tab has been changed to \\cr")),
     ("extra-endcsname", Some("Extra \\endcsname")),
     ("extra-else", Some("Extra \\else")),
     ("extra-fi", Some("Extra \\fi")),
@@ -5672,10 +5675,10 @@ will look undefined",
             }
             // tex.web § 785: an `&` ends a cell, and between rows begins one.
             Some(Catcode::Tab) => {
-                if !self.template_cell_end(token) {
+                if !self.template_cell_end(token, false) {
                     self.end_word();
                     self.align_cell(true);
-                    self.template_next_cell();
+                    self.template_next_cell(false, token.span);
                 }
             }
             // tex.web § 785: spaces between rows are skipped.
