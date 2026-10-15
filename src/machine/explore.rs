@@ -936,7 +936,7 @@ impl Machine<'_> {
         let bare = |k: &Key| entry.and_then(|e| fi_tail(k, (e.0, e.1), &is_fi)).unwrap_or_else(|| k.clone());
         // A path that differs from a head in code it will still run (pgfmath
         // with a unary minus on its stack or without) is a head of its own.
-        let heads = || paths.heads.iter().enumerate().filter(|(i, _)| fits[*i]).map(|(i, h)| (i, h));
+        let heads = || paths.heads.iter().enumerate().filter(|(i, _)| fits[*i]);
         let exact = heads().find(|(_, h)| same(h) && h.config.key == here.key).map(|(i, _)| i).or_else(|| {
             let b = here_bare.as_ref()?;
             heads().find(|(_, h)| same(h) && bare(&h.config.key) == *b).map(|(i, _)| i)
@@ -2605,17 +2605,22 @@ fn next_script(choices: &[Choice], absent: bool) -> Option<Vec<usize>> {
     None
 }
 
-/// Whether two paths differ only in data: registers, and macros whose
-/// texts are numbers. What else differs is code the paths will run.
+/// Whether two paths differ only in data: values (registers, code tables,
+/// a name left undefined) and macros whose texts are numbers. What else
+/// differs is code the paths will run: a macro's text, or a meaning another
+/// command gave a name.
 fn data_apart(a: &Config, b: &Config, typed: &crate::env::Typed) -> bool {
     let number = |t: &Token| match t.tok {
         Tok::Chr(c, Catcode::Other) => c.is_ascii_digit() || "+-.,".contains(c) || crate::tex::is_unknown_digit(c),
         _ => typed.classify(t).is_some_and(|(c, _)| TextClass::NUMBER.contains(c)),
     };
-    let data = |binding: Option<&crate::env::Binding>| match binding.map(|b| &b.meaning) {
-        None | Some(Meaning::Register(..)) => true,
-        Some(Meaning::Macro(d)) => d.parameter_text.items.is_empty() && d.replacement_text.iter().all(number),
-        Some(_) => false,
+    let code = |binding: Option<&crate::env::Binding>| match binding.map(|b| &b.meaning) {
+        None | Some(Meaning::Unknown | Meaning::Undefined | Meaning::Register(..)) => false,
+        Some(Meaning::Macro(d)) => !(d.parameter_text.items.is_empty() && d.replacement_text.iter().all(number)),
+        Some(_) => true,
     };
-    a.env.differing(&b.env).into_iter().all(|sym| data(a.env.changed(sym)) && data(b.env.changed(sym)))
+    a.env.differing(&b.env).into_iter().all(|sym| {
+        let (x, y) = (a.env.changed(sym), b.env.changed(sym));
+        x.zip(y).is_some_and(|(x, y)| x.meaning == y.meaning) || !code(x) && !code(y)
+    })
 }
