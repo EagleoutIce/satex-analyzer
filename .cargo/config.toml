@@ -9,6 +9,8 @@ RUST_MIN_STACK = "8388608"
 # module, run through `callMain` over an in-memory filesystem.
 [target.wasm32-unknown-emscripten]
 rustflags = [
+  # emcc's notes on the settings Rust's target passes, not satex's.
+  "-Alinker-messages",
   "-Clink-arg=-sSUPPORT_LONGJMP=wasm",
   "-Clink-arg=-sALLOW_MEMORY_GROWTH=1",
   "-Clink-arg=-sINITIAL_MEMORY=256MB",
