@@ -154,6 +154,11 @@
     return n;
   }
 
+  // The editor's modules, fetched while satex loads rather than after it.
+  const EDITOR = ['codemirror@6.0.2', '@codemirror/language@6', '@codemirror/lint@6', '@codemirror/autocomplete@6', '@codemirror/view@6',
+    '@codemirror/state@6', '@codemirror/theme-one-dark@6'].map((m) => import(`https://esm.sh/${m}`));
+  for (const loading of EDITOR) loading.catch(() => {}); // a failure shows when the editor is built
+
   // ---------------------------------------------------------------- editor
 
   let editor; // { text(), set(text), diagnostics(list), apply(edits), cursor(), select(c), word() }
@@ -206,10 +211,7 @@
   }
 
   async function codemirror(parent, text) {
-    const cdn = 'https://esm.sh/';
-    const [{ EditorView, basicSetup }, language, lint, ac, view, st, { oneDark }, tex] = await Promise.all(
-      ['codemirror@6.0.2', '@codemirror/language@6', '@codemirror/lint@6', '@codemirror/autocomplete@6', '@codemirror/view@6',
-        '@codemirror/state@6', '@codemirror/theme-one-dark@6'].map((m) => import(cdn + m)).concat(self.siteTex()));
+    const [{ EditorView, basicSetup }, language, lint, ac, view, st, { oneDark }, tex] = await Promise.all(EDITOR.concat(self.siteTex()));
     const KIND = { 3: 'function', 14: 'keyword', 9: 'namespace', 18: 'variable' };
     async function complete(ctx) {
       const word = ctx.matchBefore(/[A-Za-z@*_:]*/);
@@ -888,6 +890,8 @@
       await ask({ type: 'kernel', base, entry, given }, given ? [given.buffer] : []);
       state.loaded.add(i);
       timing('t-init', `${$('t-init').textContent} · ${entry.label} ${secs(performance.now() - t)}`, 'time to fetch and set up each kernel');
+    bar.hidden = true;
+    loads.clear();
       status.textContent = `${entry.label} ready`;
     }
     state.kernel = i;
@@ -1041,6 +1045,23 @@
 
   // ---------------------------------------------------------------- start
 
+  /** What loading has come to: per download its bytes, else the phase it is in. */
+  const bar = $('play-progress'), loads = new Map();
+  const PHASE = { unpacking: 'Unpacking the TeX files…', importing: 'Importing the kernel caches…' };
+  function progressed({ label, loaded, total }) {
+    bar.hidden = false;
+    if (PHASE[label]) {
+      bar.removeAttribute('value');
+      status.textContent = PHASE[label];
+      return;
+    }
+    loads.set(label, [loaded, total]);
+    const [got, all] = [...loads.values()].reduce(([g, a], [l, t]) => [g + l, a + t], [0, 0]);
+    if (all) bar.value = Math.min(got / all, 1);
+    const mb = (n) => (n / 2 ** 20).toFixed(1);
+    status.textContent = `Fetching ${[...loads.keys()].join(' and ')}: ${mb(got)} of ${mb(all)} MiB`;
+  }
+
   worker.onmessage = async ({ data }) => {
     if (data.type === 'lsp') {
       for (const m of data.out) {
@@ -1053,6 +1074,8 @@
           typeset(m.params.uri);
         }
       }
+    } else if (data.type === 'progress') {
+      progressed(data);
     } else if (data.type === 'error' && data.of === 'lsp') {
       lspStatus.textContent = `language server failed: ${data.message.split('\n')[0]}`;
       for (const p of pending.values()) p.resolve(null);
@@ -1082,6 +1105,7 @@
     }
     const ready = await ask({ type: 'init', base, manifest, given }, given ? Object.values(given).map((b) => b.buffer) : []);
     timing('t-init', `init ${secs(performance.now() - started)}`, 'time to fetch satex and the pdfTeX kernel and set them up');
+    bar.hidden = true;
     sampleTexts = ready.samples;
     const hash = decodeURIComponent(location.hash.slice(1));
     const link = hash.startsWith('s=') ? await restore(hash.slice(2)) : null;

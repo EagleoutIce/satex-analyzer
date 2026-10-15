@@ -4,15 +4,29 @@
 // the same code in node.
 
 /* exported SatexEngine */
-function SatexEngine(createSatex) {
+function SatexEngine(createSatex, progress = () => {}) {
   const files = new Map();
   let wasm = null;
 
-  async function bytes(url) {
-    if (url instanceof Uint8Array) return url;
+  /** `url`'s response, its body counted into `progress(label, loaded, total)` as it
+   * arrives: `total` from the manifest, since a compressed transfer's length is not
+   * the length the body has once the browser decoded it. */
+  async function fetched(url, label, total) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`${url}: ${response.status}`);
-    return new Uint8Array(await response.arrayBuffer());
+    if (!response.body) return response;
+    const size = total || Number(response.headers.get('Content-Length')) || 0;
+    let loaded = 0;
+    progress(label, 0, size);
+    const counted = response.body.pipeThrough(new TransformStream({
+      transform(chunk, out) { loaded += chunk.byteLength; progress(label, loaded, size); out.enqueue(chunk); },
+    }));
+    return new Response(counted, { headers: response.headers });
+  }
+
+  async function bytes(url, label = url, total = 0) {
+    if (url instanceof Uint8Array) return url;
+    return new Uint8Array(await (await fetched(url, label, total)).arrayBuffer());
   }
 
   async function gunzip(data) {
@@ -21,12 +35,13 @@ function SatexEngine(createSatex) {
     return new Uint8Array(await new Response(stream).arrayBuffer());
   }
 
-  async function compile(url) {
+  /** The binary, compiled while it downloads. */
+  async function compile(url, total) {
     if (url instanceof Uint8Array) return WebAssembly.compile(url);
     try {
-      return await WebAssembly.compileStreaming(fetch(url));
+      return await WebAssembly.compileStreaming(fetched(url, 'satex', total));
     } catch {
-      return WebAssembly.compile(await bytes(url)); // served without application/wasm
+      return WebAssembly.compile(await bytes(url, 'satex', total)); // served without application/wasm
     }
   }
 
@@ -93,14 +108,18 @@ function SatexEngine(createSatex) {
     }
   }
 
-  /** A kernel's bundle: its files join the tree, its caches the cache directory. */
-  async function kernel(base, entry, given) {
-    const blob = await gunzip(await bytes(given ?? base + entry.bundle));
+  /** A kernel's bundle: its files join the tree, its caches the cache directory.
+   * `fetching` is its download, when already under way. */
+  async function kernel(base, entry, given, fetching) {
+    const packed = await (fetching ?? bytes(given ?? base + entry.bundle, entry.label, entry.size));
+    progress('unpacking', 0, 0);
+    const blob = await gunzip(packed);
     let offset = 0;
     for (const [path, size] of entry.files) {
       files.set(path, blob.subarray(offset, offset + size));
       offset += size;
     }
+    progress('importing', 0, 0);
     const imported = await run(['cache', 'import', `/kernels/${entry.id}`], {}, '/work', '/cache');
     files.delete(`/kernels/${entry.id}/satex-cache.bin`);
     return imported;
@@ -121,8 +140,11 @@ function SatexEngine(createSatex) {
 
   /** Fetches the binary and the default kernel, unless `given` has them. */
   async function init(base, manifest, given = {}) {
-    wasm = await compile(given.wasm ?? base + manifest.wasm);
-    const imported = await kernel(base, manifest.kernels[0], given.bundle);
+    // Both downloads at once: the binary compiles while the TeX files arrive.
+    const entry = manifest.kernels[0];
+    const fetching = given.bundle ?? bytes(base + entry.bundle, entry.label, entry.size);
+    wasm = await compile(given.wasm ?? base + manifest.wasm, manifest.wasmSize);
+    const imported = await kernel(base, entry, null, fetching);
     const decoder = new TextDecoder();
     const samples = Object.fromEntries(manifest.samples.map((name) => [name, decoder.decode(files.get(`/work/${name}`))]));
     return { samples, imported };
@@ -140,7 +162,14 @@ if (typeof module === 'object' && module.exports) {
       if (data.type === 'init') {
         const given = data.given ?? {};
         importScripts(given.js ? URL.createObjectURL(new Blob([given.js], { type: 'text/javascript' })) : data.base + data.manifest.js);
-        engine = SatexEngine(self.createSatex);
+        // At most every 100 ms, and every phase change.
+        let last = 0, phase = '';
+        engine = SatexEngine(self.createSatex, (label, loaded, total) => {
+          const now = performance.now();
+          if (label === phase && now - last < 100 && loaded < total) return;
+          [last, phase] = [now, label];
+          self.postMessage({ type: 'progress', label, loaded, total });
+        });
         self.postMessage({ type: 'ready', ...(await engine.init(data.base, data.manifest, given)) });
       } else if (data.type === 'kernel') {
         self.postMessage({ type: 'kernel', id: data.entry.id, ...(await engine.kernel(data.base, data.entry, data.given)) });

@@ -356,4 +356,7 @@ main td .badges, main td .cat { white-space: nowrap; }
 .typeset .ts { margin: .15rem 0; cursor: pointer; display: flex; gap: .6rem; }
 .typeset .ts:hover { background: var(--hover, rgba(127,127,127,.12)); }
 .typeset .ts-at { color: var(--muted); font-family: var(--mono, monospace); font-size: 12px; min-width: 2.5ch; text-align: right; }
+/* Loading the playground: a thin bar before the status text. */
+#play-progress { width: 8rem; height: .45rem; margin-right: .6rem; vertical-align: middle; accent-color: var(--c4, #4a7bd0); }
+#play-progress[hidden] { display: none; }
 
