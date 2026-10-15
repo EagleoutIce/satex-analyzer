@@ -69,7 +69,14 @@ pub fn run(context: &Context) -> Result<Output, String> {
     let findings = crate::lint::lint(analysis);
     let mut records: Vec<Record> = logged.iter().map(|l| explain(l, &findings, &main)).collect();
     if !status.success() && !logged.iter().any(|l| l.error) {
-        records.push(record(&main, None, true, "build", format!("the build failed ({status}) without a TeX error in the log"), None));
+        records.push(record(
+            &main,
+            None,
+            true,
+            "build",
+            format!("the build failed ({status}) without a TeX error in the log"),
+            None,
+        ));
     }
     Ok(Output::Lint(records))
 }

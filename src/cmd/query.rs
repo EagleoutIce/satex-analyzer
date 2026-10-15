@@ -322,7 +322,11 @@ fn window(
 ) -> Option<(String, String)> {
     let lines = cache
         .entry(path.to_string())
-        .or_insert_with(|| crate::overlay::read_to_string(std::path::Path::new(path)).ok().map(|t| t.lines().map(str::to_string).collect()))
+        .or_insert_with(|| {
+            crate::overlay::read_to_string(std::path::Path::new(path))
+                .ok()
+                .map(|t| t.lines().map(str::to_string).collect())
+        })
         .as_ref()?;
     let raw = lines.get(line.checked_sub(1)? as usize)?;
     // A column counts what the engine reads; the window counts characters.
