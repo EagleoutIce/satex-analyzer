@@ -1106,6 +1106,16 @@ pub fn timings(analysis: &crate::machine::Analysis, links: Links) -> String {
         }
     }
 
+    let written = analysis.timings.top_written(10);
+    if !written.is_empty() {
+        let _ = writeln!(out, "{}", heading("costliest written lines (tokens to run them where they are read back)"));
+        for ((file, line), (tokens, lines, text)) in written {
+            let path = analysis.files.get(usize::from(file)).map(|f| f.path.as_str()).unwrap_or_default();
+            let name = path.rsplit('/').next().unwrap_or(path);
+            let _ = writeln!(out, "  {tokens:>12}  {name}:{line} ×{lines}  {}", label(&terminal_safe(&text)));
+        }
+    }
+
     let root = crate::query::summary(analysis);
     let mut rows: Vec<(String, &crate::query::Node)> = Vec::new();
     flatten(&root, String::new(), true, true, &mut rows);

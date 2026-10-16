@@ -90,6 +90,12 @@ inherits = "release"
 lto = false
 codegen-units = 16
 
+# The release build with line tables, for a sampling profiler to name the
+# inlined code a hot frame stands for (`eu-stack -i`, `perf report`).
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+
 # Quick experiments: optimized, but incremental and spread over every core,
 # so an edit rebuilds in seconds rather than minutes.
 [profile.fast]
