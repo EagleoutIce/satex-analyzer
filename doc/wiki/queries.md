@@ -168,7 +168,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    expl3.ltx                                 
 4    input    expl3-code.tex                            
-… 257 more lines omitted
+… 284 more lines omitted
 ```
 
 ## diagnostics
