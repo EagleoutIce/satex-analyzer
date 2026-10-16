@@ -929,7 +929,9 @@ impl Machine<'_> {
         let fits: Vec<bool> = {
             let typed = crate::env::typed!(self, syms);
             let slot = |sym: Sym| self.name(sym).starts_with(|c: char| c < ' ');
-            paths.heads.iter().map(|h| crowded || data_apart(&h.config, &here, &typed, &slot)).collect()
+            // Only heads at this place are ever met here: the others are
+            // never compared, a costly comparison of their bindings.
+            paths.heads.iter().map(|h| same(h) && (crowded || data_apart(&h.config, &here, &typed, &slot))).collect()
         };
         let is_fi =
             |tok: Tok| matches!(tok, Tok::Cs(s) if matches!(self.env.meaning(s), Meaning::Primitive(Primitive::Fi)));
