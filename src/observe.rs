@@ -689,10 +689,16 @@ pub fn relate(m: &mut Machine) {
     // each give a key: one inside the other is the key the document gave,
     // and the rest a package's addition around it.
     let spans: Vec<Span> = declared.iter().map(|d| lines[d.2].span).collect();
+    let mut at_span: crate::fixed::HashMap<Span, Vec<usize>> = crate::fixed::HashMap::default();
+    for (k, span) in spans.iter().enumerate() {
+        at_span.entry(*span).or_default().push(k);
+    }
     let canon: Vec<String> = (0..declared.len())
         .map(|j| {
-            (0..declared.len())
-                .filter(|&k| spans[k] == spans[j] && declared[j].1.len() > declared[k].1.len())
+            at_span[&spans[j]]
+                .iter()
+                .copied()
+                .filter(|&k| declared[j].1.len() > declared[k].1.len())
                 .map(|k| &declared[k].1)
                 .filter(|shorter| declared[j].1.contains(shorter.as_str()))
                 .min_by_key(|shorter| shorter.len())
@@ -719,10 +725,14 @@ pub fn relate(m: &mut Machine) {
         .filter(|o| o.kind == OccKind::PassedOption)
         .map(|o| (o.span.file, o.key.as_str()))
         .collect();
+    let mut reads_at: crate::fixed::HashMap<Span, Vec<&NameRead>> = crate::fixed::HashMap::default();
+    for read in &reads {
+        reads_at.entry(read.span).or_default().push(read);
+    }
     let mut named: Vec<(usize, String, usize)> = Vec::new();
     for (i, line) in lines.iter().enumerate().filter(|(i, l)| !declaring.contains(i) && !l.head.is_empty()) {
         let keys = line.keys();
-        for read in reads.iter().filter(|r| r.span == line.span) {
+        for read in reads_at.get(&line.span).into_iter().flatten() {
             let name = m.name(read.name).to_string();
             if let Some((key, prefix, suffix)) = within(&name, &keys).filter(|(_, p, s)| !p.is_empty() || !s.is_empty())
             {
@@ -739,10 +749,14 @@ pub fn relate(m: &mut Machine) {
     // Keys document calls declared while they ran: not a name the call
     // read as its own (`\begin{document}` reads `\document`), nor a file
     // it loaded (`\usepackage{x}` defines `\ver@x.sty`).
+    let mut loads_at: crate::fixed::HashMap<Span, Vec<&String>> = crate::fixed::HashMap::default();
+    for load in &m.out.facts.loads {
+        loads_at.entry(load.span).or_default().push(&load.name);
+    }
     let names: Vec<_> = std::mem::take(&mut m.key_names)
         .into_iter()
-        .filter(|n| !reads.iter().any(|r| r.span == n.3 && m.name(r.name) == n.1))
-        .filter(|n| !m.out.facts.loads.iter().any(|l| l.span == n.3 && l.name == n.1))
+        .filter(|n| !reads_at.get(&n.3).into_iter().flatten().any(|r| m.name(r.name) == n.1))
+        .filter(|n| !loads_at.get(&n.3).into_iter().flatten().any(|l| **l == n.1))
         .map(|(name, key, call, span, context)| {
             let at = name.find(key.as_str()).unwrap_or(0);
             let shape = (name[..at].to_string(), name[at + key.len()..].to_string());
