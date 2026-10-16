@@ -182,7 +182,7 @@
   /** Once typing pauses: the buffer, and an analysis of it. */
   function sync() {
     clearTimeout(timer);
-    if (push()) analyze();
+    if (push()) { analyze(); explainSoon(); }
   }
   function analyze() { checking(); lsp('satex/analyze', {}, true); }
   function checking() { lspStatus.textContent = 'checking…'; checkStart = performance.now(); }
@@ -259,7 +259,7 @@
       parent, doc: text,
       extensions: [basicSetup, tex.language, language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete] }), hover,
         linkField, markField, view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
-        EditorView.updateListener.of((u) => { if (u.docChanged) changed(); if (u.selectionSet || u.docChanged) explainSoon(); }), theme.of([]), lock.of([])],
+        EditorView.updateListener.of((u) => { if (u.docChanged) changed(); else if (u.selectionSet) explainSoon(); }), theme.of([]), lock.of([])],
     });
     // the site's light/dark choice (site.js) picks the editor's theme
     const scheme = () => ev.dispatch({ effects: theme.reconfigure(self.siteDark?.() ? oneDark : []) });
