@@ -695,6 +695,9 @@ fn completion_knows_the_argument_it_is_in() {
     };
     assert_eq!(snippet("myenv"), "myenv}\n\t$0\n\\end{myenv}");
     assert_eq!(snippet("itemize"), "itemize}\n\t\\item $0\n\\end{itemize}");
+    // Mandatory arguments the begin command reads through an internal macro.
+    assert_eq!(snippet("tabular"), "tabular}{$1}\n\t$0\n\\end{tabular}");
+    assert_eq!(snippet("minipage"), "minipage}{$1}\n\t$0\n\\end{minipage}");
     let end = complete(&mut server, &uri, 14, 5);
     assert_eq!(labels(&end).first(), Some(&"myenv"), "{:?}", labels(&end));
     assert_eq!(labels(&end).get(1), Some(&"itemize"), "{:?}", labels(&end));
@@ -711,6 +714,10 @@ fn completion_knows_the_argument_it_is_in() {
     let commands = complete(&mut server, &uri, 10, 1);
     let at = |name: &str| labels(&commands).iter().position(|l| *l == name);
     assert!(at("section").is_some_and(|s| at("@startsection").is_none_or(|i| s < i)), "{:?}", labels(&commands));
+    // `\begin` opens its braces and asks again: the environment list.
+    let begin = commands.iter().find(|i| i["label"] == "begin").expect("begin offered");
+    assert_eq!(begin["insertText"], "begin{$1}");
+    assert_eq!(begin["command"]["command"], "editor.action.triggerSuggest");
     let typed = complete(&mut server, &uri, 10, 3);
     assert!(labels(&typed).iter().all(|l| l.to_lowercase().contains("se")), "{:?}", labels(&typed));
     assert!(labels(&typed).contains(&"section"), "{:?}", labels(&typed));
