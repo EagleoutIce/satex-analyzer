@@ -14,17 +14,30 @@ pub struct Fixing {
     pub diff: bool,
 }
 
+/// Which findings `satex lint` is asked for: the rule filter, whether
+/// findings from loaded files count, and the listings that report on the
+/// rules themselves instead of the document.
+#[derive(Clone, Copy, Default)]
+pub struct Selection<'a> {
+    pub filter: Option<&'a str>,
+    pub all: bool,
+    pub rules: bool,
+    pub explain: Option<&'a str>,
+    pub chktex: bool,
+}
+
 pub fn run(
     context: &Context,
-    filter: Option<&str>,
-    all: bool,
-    rules: bool,
-    explain: Option<&str>,
+    selection: Selection<'_>,
     fixing: Fixing,
     out: &mut impl Write,
 ) -> Result<Output, String> {
+    let Selection { filter, all, rules, explain, chktex } = selection;
     if rules {
         return Ok(Output::Records(lint::rules()));
+    }
+    if chktex {
+        return Ok(Output::Records(lint::chktex::coverage()));
     }
     if let Some(code) = explain {
         let rule = lint::explanation(code).ok_or_else(|| format!("no rule called `{code}`"))?;
@@ -34,23 +47,44 @@ pub fn run(
                 "category": rule.category.as_str(),
                 "severity": rule.severity.as_str(),
                 "summary": rule.summary,
-                "explanation": rule.explanation,
+                "explanation": lint::cite::linkify_citations(rule.explanation),
+                "references": rule.references.iter()
+                    .map(|r| serde_json::json!({"cite": r.cite(), "url": r.url()}))
+                    .collect::<Vec<_>>(),
             }))
             .map_err(|e| e.to_string())?,
-            _ => format!(
-                "{}  {}\n{}\n\n{}",
-                render::heading(rule.code),
-                render::label(&format!("{} / {}", rule.category.as_str(), rule.severity.as_str())),
-                rule.summary,
-                rule.explanation
-            ),
+            _ => {
+                let sources = match rule.references.is_empty() {
+                    true => String::new(),
+                    false => format!(
+                        "\n\nSee {}.",
+                        rule.references
+                            .iter()
+                            .map(|r| format!("[{}]({})", r.cite(), r.url()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                };
+                format!(
+                    "{}  {}\n{}\n\n{}{sources}",
+                    render::heading(rule.code),
+                    render::label(&format!("{} / {}", rule.category.as_str(), rule.severity.as_str())),
+                    rule.summary,
+                    rule.explanation
+                )
+            }
         };
         let _ = writeln!(out, "{text}");
         return Ok(Output::Done);
     }
     let filter = parse_filter(filter)?;
     let select = |record: &Record| (all || record["origin"] == "document") && filter.accepts(record);
-    let records: Vec<Record> = lint::lint(context.analysis).into_iter().filter(|r| select(r)).collect();
+    let timings = &context.analysis.timings;
+    let records: Vec<Record> = timings
+        .around(crate::timing::Phase::Lint, || lint::lint(context.analysis))
+        .into_iter()
+        .filter(|r| select(r))
+        .collect();
     if !fixing.fix && !fixing.diff {
         return Ok(Output::Lint(records));
     }
@@ -59,7 +93,9 @@ pub fn run(
     if !std::path::Path::new(&main).is_file() {
         return Err("`--fix` and `--diff` change files: name the document with -f".into());
     }
-    let outcome = apply::fixpoint(&main, &analysis.settings, records, &select, fixing.unsafe_fixes);
+    let outcome = timings.around(crate::timing::Phase::Fix, || {
+        apply::fixpoint(&main, &analysis.settings, records, &select, fixing.unsafe_fixes)
+    });
     let summary = summary(&outcome, fixing);
     if fixing.diff {
         for (path, (old, new)) in &outcome.changed {
@@ -70,7 +106,7 @@ pub fn run(
     }
     apply::write(&outcome)?;
     if context.format.is_text() {
-        let _ = write!(out, "{}", render::lint(&outcome.remaining, context.links));
+        let _ = write!(out, "{}", render::lint(&outcome.remaining, context.links, true));
         let _ = writeln!(out, "{}", render::label(&summary));
         return Ok(Output::Done);
     }

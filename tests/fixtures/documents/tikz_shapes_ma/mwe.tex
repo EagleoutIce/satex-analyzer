@@ -1,0 +1,140 @@
+\documentclass{article}
+\usepackage{xcolor,tikz,graphicx}
+\usetikzlibrary{arrows.meta,backgrounds,fit,shadows,shapes.geometric,shapes.symbols}
+\definecolor{colA}{HTML}{A32638}
+
+% tikz docs (inherit anchors); minor mods :)
+\makeatletter
+\pgfdeclareshape{document shape}{
+\inheritsavedanchors[from=rectangle] % this is nearly a rectangle
+\inheritanchorborder[from=rectangle]
+\inheritanchor[from=rectangle]{center}
+\inheritanchor[from=rectangle]{north}
+\inheritanchor[from=rectangle]{south}
+\inheritanchor[from=rectangle]{west}
+\inheritanchor[from=rectangle]{east}
+% ... and possibly more
+\backgroundpath{% this is new
+% store lower right in xa/ya and upper right in xb/yb
+\southwest \pgf@xa=\pgf@x \pgf@ya=\pgf@y
+\northeast \pgf@xb=\pgf@x \pgf@yb=\pgf@y
+% compute corner of ‘‘flipped page’’
+\pgf@xc=\pgf@xb \advance\pgf@xc by-5pt % this should be a parameter
+\pgf@yc=\pgf@yb \advance\pgf@yc by-5pt
+% construct main path
+\pgfpathmoveto{\pgfpoint{\pgf@xa}{\pgf@ya}}
+\pgfpathlineto{\pgfpoint{\pgf@xa}{\pgf@yb}}
+\pgfpathlineto{\pgfpoint{\pgf@xc}{\pgf@yb}}
+\pgfpathlineto{\pgfpoint{\pgf@xb}{\pgf@yc}}
+\pgfpathlineto{\pgfpoint{\pgf@xb}{\pgf@ya}}
+\pgfpathclose
+% add little corner
+\pgf@xc=\dimexpr\pgf@xc-1pt\relax
+\pgfpathmoveto{\pgfpoint{\pgf@xc}{\pgf@yb}}
+\pgf@yc=\dimexpr\pgf@yc-1pt\relax
+\pgfpathlineto{\pgfpoint{\pgf@xc}{\pgf@yc}}
+\pgf@xb=\dimexpr\pgf@xb+.5pt\relax
+\pgfpathlineto{\pgfpoint{\pgf@xb}{\pgf@yc}}
+\pgf@xc=\dimexpr\pgf@xc+1pt\relax
+\pgfpathlineto{\pgfpoint{\pgf@xc}{\pgf@yc}}
+}
+}
+
+\tikzset{
+   every path/.append style={
+      line cap=round,
+      line join=round
+   },
+   ds/.style={
+      drop shadow={shadow xshift=2pt, shadow yshift=-2pt, fill=black!10},
+   },
+   box/.style={
+      draw, rounded corners=3pt,
+      fill=white, align=center,
+      inner sep=.75em,
+      minimum height=3em,
+      minimum width=2.25em
+   },
+   document/.style={
+      box,
+      rounded corners=1pt,
+      document shape
+   },
+   cloudy/.style={
+      box,shape=cloud,sharp corners,aspect=1.5,inner sep=.15em
+   }
+}
+
+\newsavebox\GraphA
+\begin{lrbox}{\GraphA}
+\begin{tikzpicture}[dot/.style={fill=black,circle,minimum size=3mm}]
+   \node[dot] (a) at (0,0) {};
+   \node[dot] (b) at (1,-1) {};
+   \node[dot,rectangle,minimum size=3.5mm] (c) at (-1,-1) {};
+   \node[dot,shape=diamond] (d) at (0,-2) {};
+   \node[dot] (e) at (1,-3) {};
+   \draw[Kite-,dashed] (a) -- (b);
+   \draw[Kite-] (a) -- (c);
+   \draw[-Kite] (b) -- (d);
+   \draw[Kite-] (c) -- (d);
+   \draw[Kite-Kite] (e) -- (d);
+   \draw[Kite-,dashed] (b) to[bend left] (e);
+\end{tikzpicture}
+\end{lrbox}
+
+\newsavebox\GraphB
+\begin{lrbox}{\GraphB}
+\begin{tikzpicture}[dot/.style={fill=black,circle,minimum size=3mm},g/.style={gray!30}]
+   \node[dot] (a) at (0,0) {};
+   \node[dot,g] (b) at (1,-1) {};
+   \node[dot,rectangle,minimum size=3.5mm] (c) at (-1,-1) {};
+   \node[dot,shape=diamond] (d) at (0,-2) {};
+   \node[dot] (e) at (1,-3) {};
+   \draw[Kite-,dashed,g] (a) -- (b);
+   \draw[Kite-] (a) -- (c);
+   \draw[-Kite,g] (b) -- (d);
+   \draw[Kite-] (c) -- (d);
+   \draw[Kite-Kite] (e) -- (d);
+   \draw[Kite-,dashed,g] (b) to[bend left] (e);
+\end{tikzpicture}
+\end{lrbox}
+
+\newsavebox\Stickfigure
+\begin{lrbox}{\Stickfigure}
+\begin{tikzpicture}
+   \draw[thick] (0,0) circle[radius=.5cm];
+   \draw[thick] (0,-.5) -- (0,-2);
+   \draw[thick] (-1,-.85) -- (0,-1.2) -- (1,-.85);
+   \draw[thick] (-1,-2.75) -- (0,-2) -- (1,-2.75);
+\end{tikzpicture}
+\end{lrbox}
+
+\newsavebox\RCode
+\begin{lrbox}{\RCode}
+\begin{tikzpicture}
+\foreach[count=\i] \col/\letter/\length/\off in {
+   black/A/1.5/0,
+   black/A/2/0,
+   gray/B/.75/0,
+   black/A/1.25/1/1,
+   gray/B/.5/0,
+   gray/B/1/1,%
+   black/A/1.5/0%
+} {
+   \draw[\col,line cap=round,line width=2mm,draw=gray!40] (.5*\off,-.3*\i) -- ++(\length,0);
+   \node[\col,left=1.5mm] at(0,-.3*\i) {\small\bfseries\sffamily\letter};
+}
+\end{tikzpicture}
+\end{lrbox}
+\begin{document}
+\begin{document}
+   \begin{tikzpicture}[yscale=.9]
+      \node[document] (box) at (0,0) {Points of\\Interest}; % Types of Points of interests
+      \end{itemize}};
+      \node[document,right=2.5cm] (r) at(box.east) {\rotatebox[origin=c]{45}{source}};
+      
+      \node[document,below=1.25cm,xshift=1cm] (gA) at(r.south) {\scalebox{.4}{\usebox\GraphA}};
+      \node[document,below=1.25cm,double copy shadow] (slice) at(gA.south) {\scalebox{.4}{\usebox\GraphA}};
+\end{tikzpicture}
+\gdef\SatexReachedEnd{}
+\end{document}

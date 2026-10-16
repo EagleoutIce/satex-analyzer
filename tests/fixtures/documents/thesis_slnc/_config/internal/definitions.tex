@@ -1,0 +1,18 @@
+% TODO: add to toc but disable number more elegantly
+\newenvironment{abstract}{\cleardoublepage\begingroup\section*{\translate{abstract}}\addcontentsline{toc}{chapter}{Abstract}}{\thesis@voidpar\endgroup\bigskip\thesis@voidpar}
+\newenvironment{acknowledgements}{\cleardoublepage\begingroup\section*{\translate{acknowledgements}}}{\thesis@voidpar\endgroup\bigskip\thesis@voidpar}
+% \addcontentsline{toc}{chapter}{Acknowledgements}
+\setcounter{tocdepth}{\sectiontocdepth}
+% TODO: deal without sidebar?
+% TODO:
+\def\csumnext{\\[.4ex]}
+\def\csummary#1{\addtocontents{toc}{\protect\sidenote{\itshape\chapapp~\thechapter:\\[.5ex]#1}}}
+\newenvironment{summary}{\vspace*{-.65\medskipamount}\begingroup
+\LetLtxMacro\Cref\basicCref % just avoid side markers in the summary
+\LetLtxMacro\cref\basiccref
+\hypersetup{allcolors=.,citecolor=@cite}\thesisglsinsidefalse
+}%\itshape}
+{\thesis@voidpar\endgroup\smallskip\thesis@voidpar}
+
+% \addcontentsline{toc}{chapter}{Conventions}
+\newenvironment{conventions}{\cleardoublepage\begingroup\section*{\translate{conventions}}}{\thesis@voidpar\endgroup\bigskip\thesis@voidpar}

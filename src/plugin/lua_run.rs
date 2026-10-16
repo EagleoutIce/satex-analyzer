@@ -82,7 +82,7 @@ struct Shared {
     failed: Cell<bool>,
     /// Globals a run satex could not finish may have set: missing, they
     /// are unknown, not nil.  `all` stands for every name.
-    tainted: RefCell<std::collections::HashSet<String>>,
+    tainted: RefCell<crate::fixed::HashSet<String>>,
     all: Cell<bool>,
 }
 
@@ -281,7 +281,15 @@ fn new_state(memory: u64) -> R<State> {
 fn state(m: &mut Machine) -> Option<State> {
     if m.lua.state.is_none() {
         let memory = m.cfg.limits.memory.as_u64() / 4;
-        m.lua.state = Some(new_state(memory).ok()?);
+        let lua = new_state(memory).ok()?;
+        // The platform the document is built on, as kpathsea lookups assume.
+        let kind = match m.out.plugins.platform {
+            super::Platform::Linux | super::Platform::Macos => "unix",
+            super::Platform::Windows => "windows",
+        };
+        let os: Table = lua.globals().raw_get("os").ok()?;
+        os.raw_set("type", kind).ok()?;
+        m.lua.state = Some(lua);
     }
     m.lua.state.clone()
 }
@@ -300,36 +308,84 @@ fn taint(m: &mut Machine, texts: &[Option<String>]) {
 }
 
 /// The globals Lua text may assign: `name =` and `name.field =` outside a
-/// `local`, and `function name`; `None` when it may assign any.
+/// `local`, `function name`, `_G.name`, `_G["name"]` and
+/// `rawset(_G, "name", …)`; `None` when it may assign any: `_G` or `_ENV`
+/// used otherwise than these or `__index = _G`, or `load` of a chunk
+/// without its own environment.
 fn globals(text: &str) -> Option<Vec<String>> {
     let t = super::lua::lex(text);
+    let is_name = |s: &str| s.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_');
+    let at = |j: usize| t.get(j).map(String::as_str);
+    let before = |j: usize| (j > 0).then(|| t[j - 1].as_str());
     let mut names = Vec::new();
     for k in 0..t.len() {
-        if matches!(t[k].as_str(), "_G" | "_ENV" | "rawset" | "load" | "loadstring") {
-            return None;
+        let field = matches!(before(k), Some("." | ":"));
+        match t[k].as_str() {
+            "\"_G" | "_ENV" => return None,
+            "_G" if field => return None,
+            // A table that reads through to `_G` writes to itself.
+            "_G" if before(k) == Some("=") && k >= 2 && t[k - 2] == "__index" => continue,
+            "_G" => {
+                let lit = |j: usize| at(j).and_then(|s| s.strip_prefix('"')).map(str::to_string);
+                let reached = match at(k + 1) {
+                    Some(".") => at(k + 2).filter(|n| is_name(n)).map(str::to_string),
+                    Some("[") => lit(k + 2).filter(|_| at(k + 3) == Some("]")),
+                    Some(",") if k >= 2 && t[k - 1] == "(" && matches!(t[k - 2].as_str(), "rawset" | "rawget") => {
+                        lit(k + 2).filter(|_| at(k + 3) == Some(","))
+                    }
+                    _ => None,
+                };
+                names.push(reached?);
+                continue;
+            }
+            "load" | "loadstring" if !field && !matches!(before(k), Some("local" | "function")) => {
+                // A chunk `load` makes assigns globals of the environment it is given.
+                if t[k] == "loadstring" || at(k + 1) != Some("(") || arguments(&t, k + 1) < 4 {
+                    return None;
+                }
+                continue;
+            }
+            _ => {}
         }
-        let named = t[k].chars().next().is_some_and(|c| c.is_alphabetic() || c == '_');
-        if !named {
+        if !is_name(&t[k]) {
             continue;
         }
-        let before = |j: usize| (j > 0).then(|| t[j - 1].as_str());
         // The first name of a list `a, b =`.
         let mut first = k;
-        while before(first) == Some(",")
-            && first >= 2
-            && t[first - 2].chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
-        {
+        while before(first) == Some(",") && first >= 2 && is_name(&t[first - 2]) {
             first -= 2;
         }
-        let assigned = t.get(k + 1).is_some_and(|n| n == "=" || n == "," || n == ".")
+        let assigned = at(k + 1).is_some_and(|n| n == "=" || n == "," || n == ".")
             && !matches!(before(first), Some("local" | "for"))
-            && !matches!(before(k), Some("." | ":"));
+            && !field;
         let defined = before(k) == Some("function") && !(k >= 2 && t[k - 2] == "local");
         if assigned || defined {
             names.push(t[k].clone());
         }
     }
     Some(names)
+}
+
+/// How many arguments the call whose `(` is at `open` passes.
+fn arguments(t: &[String], open: usize) -> usize {
+    let (mut depth, mut count) = (0usize, 0usize);
+    for s in &t[open..] {
+        if depth >= 1 && count == 0 && s != ")" {
+            count = 1;
+        }
+        match s.as_str() {
+            "(" | "[" | "{" => depth += 1,
+            ")" | "]" | "}" => {
+                depth -= 1;
+                if depth == 0 {
+                    return count;
+                }
+            }
+            "," if depth == 1 => count += 1,
+            _ => {}
+        }
+    }
+    count
 }
 
 /// The line of `source` the innermost frame of `trace` stopped at: 1 when
@@ -414,6 +470,9 @@ fn enter(
         // What did not run: the chunk or function from where it stopped,
         // and the modules whose loading stopped, from where they did.
         let trace = result.as_ref().err().map(ToString::to_string).unwrap_or_default();
+        if failed && m.cfg.verbose >= 3 {
+            crate::progress::note!("satex: Lua at {}:{} stopped: {trace}", m.out.file_name(span.file), span.line);
+        }
         let mut texts = vec![(text, stopped_at(&trace, "[\\directlua]"))];
         for file in stopped {
             let path = m.out.files.get(file as usize).map(|f| f.path.clone()).unwrap_or_default();
@@ -558,164 +617,30 @@ fn flags(lua: &State, args: &MultiValue, from: usize) -> R<Vec<String>> {
 
 /// LuaTeX's command names, numbered as `token.commands()` numbers them
 /// (LuaTeX 1.x); a character's command is its category code.
+#[rustfmt::skip]
 const COMMANDS: &[&str] = &[
-    "relax",
-    "left_brace",
-    "right_brace",
-    "math_shift",
-    "tab_mark",
-    "car_ret",
-    "mac_param",
-    "sup_mark",
-    "sub_mark",
-    "endv",
-    "spacer",
-    "letter",
-    "other_char",
-    "par_end",
-    "stop",
-    "delim_num",
-    "char_num",
-    "math_char_num",
-    "mark",
-    "node",
-    "xray",
-    "make_box",
-    "hmove",
-    "vmove",
-    "un_hbox",
-    "un_vbox",
-    "remove_item",
-    "hskip",
-    "vskip",
-    "mskip",
-    "kern",
-    "mkern",
-    "leader_ship",
-    "halign",
-    "valign",
-    "no_align",
-    "vrule",
-    "hrule",
-    "novrule",
-    "nohrule",
-    "insert",
-    "vadjust",
-    "ignore_spaces",
-    "after_assignment",
-    "after_group",
-    "partoken_name",
-    "break_penalty",
-    "start_par",
-    "ital_corr",
-    "accent",
-    "math_accent",
-    "discretionary",
-    "eq_no",
-    "left_right",
-    "math_comp",
-    "limit_switch",
-    "above",
-    "math_style",
-    "math_choice",
-    "non_script",
-    "vcenter",
-    "case_shift",
-    "message",
-    "normal",
-    "extension",
-    "option",
-    "lua_function_call",
-    "lua_bytecode_call",
-    "lua_call",
-    "in_stream",
-    "begin_group",
-    "end_group",
-    "omit",
-    "ex_space",
-    "boundary",
-    "radical",
-    "super_sub_script",
-    "no_super_sub_script",
-    "math_shift_cs",
-    "end_cs_name",
-    "char_ghost",
-    "assign_local_box",
-    "char_given",
-    "math_given",
-    "xmath_given",
-    "last_item",
-    "toks_register",
-    "assign_toks",
-    "assign_int",
-    "assign_attr",
-    "assign_dimen",
-    "assign_glue",
-    "assign_mu_glue",
-    "assign_font_dimen",
-    "assign_font_int",
-    "assign_hang_indent",
-    "set_aux",
-    "set_prev_graf",
-    "set_page_dimen",
-    "set_page_int",
-    "set_box_dimen",
-    "set_tex_shape",
-    "set_etex_shape",
-    "def_char_code",
-    "def_del_code",
-    "extdef_math_code",
-    "extdef_del_code",
-    "def_family",
-    "set_math_param",
-    "set_font",
-    "def_font",
-    "register",
-    "assign_box_direction",
-    "assign_box_dir",
-    "assign_direction",
-    "assign_dir",
-    "combinetoks",
-    "advance",
-    "multiply",
-    "divide",
-    "prefix",
-    "let",
-    "shorthand_def",
-    "def_lua_call",
-    "read_to_cs",
-    "def",
-    "set_box",
-    "hyph_data",
-    "set_interaction",
-    "letterspace_font",
-    "expand_font",
-    "copy_font",
-    "set_font_id",
-    "undefined_cs",
-    "expand_after",
-    "no_expand",
-    "input",
-    "lua_expandable_call",
-    "lua_local_call",
-    "if_test",
-    "fi_or_else",
-    "cs_name",
-    "convert",
-    "variable",
-    "feedback",
-    "the",
-    "top_bot_mark",
-    "call",
-    "long_call",
-    "outer_call",
-    "long_outer_call",
-    "end_template",
-    "dont_expand",
-    "glue_ref",
-    "shape_ref",
-    "box_ref",
-    "data",
+    "relax", "left_brace", "right_brace", "math_shift", "tab_mark", "car_ret", "mac_param", "sup_mark",
+    "sub_mark", "endv", "spacer", "letter", "other_char", "par_end", "stop", "delim_num", "char_num",
+    "math_char_num", "mark", "node", "xray", "make_box", "hmove", "vmove", "un_hbox", "un_vbox",
+    "remove_item", "hskip", "vskip", "mskip", "kern", "mkern", "leader_ship", "halign", "valign", "no_align",
+    "vrule", "hrule", "novrule", "nohrule", "insert", "vadjust", "ignore_spaces", "after_assignment",
+    "after_group", "partoken_name", "break_penalty", "start_par", "ital_corr", "accent", "math_accent",
+    "discretionary", "eq_no", "left_right", "math_comp", "limit_switch", "above", "math_style", "math_choice",
+    "non_script", "vcenter", "case_shift", "message", "normal", "extension", "option", "lua_function_call",
+    "lua_bytecode_call", "lua_call", "in_stream", "begin_group", "end_group", "omit", "ex_space", "boundary",
+    "radical", "super_sub_script", "no_super_sub_script", "math_shift_cs", "end_cs_name", "char_ghost",
+    "assign_local_box", "char_given", "math_given", "xmath_given", "last_item", "toks_register",
+    "assign_toks", "assign_int", "assign_attr", "assign_dimen", "assign_glue", "assign_mu_glue",
+    "assign_font_dimen", "assign_font_int", "assign_hang_indent", "set_aux", "set_prev_graf",
+    "set_page_dimen", "set_page_int", "set_box_dimen", "set_tex_shape", "set_etex_shape", "def_char_code",
+    "def_del_code", "extdef_math_code", "extdef_del_code", "def_family", "set_math_param", "set_font",
+    "def_font", "register", "assign_box_direction", "assign_box_dir", "assign_direction", "assign_dir",
+    "combinetoks", "advance", "multiply", "divide", "prefix", "let", "shorthand_def", "def_lua_call",
+    "read_to_cs", "def", "set_box", "hyph_data", "set_interaction", "letterspace_font", "expand_font",
+    "copy_font", "set_font_id", "undefined_cs", "expand_after", "no_expand", "input", "lua_expandable_call",
+    "lua_local_call", "if_test", "fi_or_else", "cs_name", "convert", "variable", "feedback", "the",
+    "top_bot_mark", "call", "long_call", "outer_call", "long_outer_call", "end_template", "dont_expand",
+    "glue_ref", "shape_ref", "box_ref", "data",
 ];
 
 fn command(name: &str) -> i64 {
@@ -758,6 +683,7 @@ fn classify(m: &mut Machine, t: Token) -> Option<(&'static str, Option<i64>, boo
                 RegKind::Toks => "assign_toks",
                 RegKind::Char => "char_given",
                 RegKind::MathChar => "math_given",
+                RegKind::UMathChar => "xmath_given",
                 _ => return None,
             };
             (name, Some(n.into()), false, false)
@@ -911,7 +837,7 @@ fn put_next<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) -
             tokens.append(captured);
             *captured = tokens;
         }
-        None => run.m.push_tokens(Rc::from(tokens), None),
+        None => run.m.push_tokens(Rc::from(tokens)),
     }
     ret(lua, ())
 }

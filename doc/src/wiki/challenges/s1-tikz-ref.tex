@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{positioning}
+\usepackage{hyperref}
+\begin{document}
+\begin{tikzpicture}
+  \node (a) {$B_{\ref{cell:B-a}}$};
+  \node[below=of a] (c) {$B_{\ref{cell:B-c}}$};
+  \node[below right=of a] (d) {$B_{\ref{cell:B-d}}$};
+  \node[below left=of a] (b) {$B_{\ref{cell:B-b}}$};
+  \draw[->] (a) -- (b);
+\end{tikzpicture}
+\end{document}

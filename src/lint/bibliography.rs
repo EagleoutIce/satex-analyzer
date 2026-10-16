@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::builtins::OccKind;
-use crate::lint::{Category, Report, Rule, Severity};
+use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 use crate::machine::Analysis;
 use crate::tex::Span;
 
@@ -19,11 +19,14 @@ No `\\bibitem` and no entry of the `.bib` databases `\\bibliography` names
 declares this key, so LaTeX prints `?` and warns `Citation … undefined`.
 Citations are observed rather than listed: a citation command writes its key
 to the `.aux` for the bibliography program (`\\citation{⟨key⟩}`) and reads
-the name the entry defines when the file is read back (`\\b@⟨key⟩`); any line
-written so is a citation.  Nothing is reported while a named database cannot
-be found.
+the name the entry defines when the file is read back (`\\b@⟨key⟩`).  Any line
+written so is a citation.  Without any bibliography every citation is
+undefined.  Nothing is reported while a named database cannot be found, or
+while a file of the document was not read.
 
 Fix by adding the entry, or by correcting the key.",
+        references: &[Ref { source: Source::Source2e, at: "ltbibl.dtx" }],
+        fixes: &[],
         run: undefined_citation,
     },
     Rule {
@@ -33,10 +36,12 @@ Fix by adding the entry, or by correcting the key.",
         summary: "the same key is declared by two bibliography entries",
         explanation: "\
 Two `\\bibitem`s with one key make LaTeX warn `Label … multiply defined` and
-every citation resolves to the later one; two `.bib` entries with one key make
+every citation resolves to the later one.  Two `.bib` entries with one key make
 BibTeX stop with `Repeated entry`.
 
 Fix by renaming or deleting one of them.",
+        references: &[Ref { source: Source::Bibtex, at: "Using BibTeX" }],
+        fixes: &[],
         run: duplicate_bibliography_entry,
     },
     Rule {
@@ -50,6 +55,8 @@ database only contributes what is cited, so its entries are not reported.
 `\\nocite{*}` cites everything.
 
 Fix by citing the entry, or by deleting it.",
+        references: &[Ref { source: Source::Bibtex, at: "Using BibTeX" }],
+        fixes: &[],
         run: unused_bibitem,
     },
 ];
@@ -108,22 +115,27 @@ const EVERY_ENTRY: &str = "*";
 fn undefined_citation(report: &mut Report) {
     let analysis = report.analysis;
     let bibliography = bibliography(analysis);
-    if !bibliography.complete || bibliography.declared.is_empty() {
+    // With no entry at all, every citation is undefined, as LaTeX warns;
+    // unless the entries may stand in what the run did not read.
+    if !bibliography.complete || bibliography.declared.is_empty() && report.unread("declared").is_some() {
         return;
     }
-    let missing: Vec<(Span, String)> = analysis
+    let missing: Vec<(Span, Option<String>, String)> = analysis
         .facts
         .occurrences
         .iter()
         .filter(|o| o.kind == OccKind::Cite && o.key != EVERY_ENTRY)
         .filter(|o| !bibliography.declared.contains_key(&o.key))
-        .map(|o| (o.span, o.key.clone()))
+        .map(|o| {
+            let (span, via) = report.site(o);
+            (span, via, o.key.clone())
+        })
         .collect();
-    for (span, key) in missing {
+    for (span, via, key) in missing {
         report.add(
             span,
             &key,
-            format!("no bibliography entry declares `{key}`"),
+            format!("no bibliography entry declares `{key}`{}", via.unwrap_or_default()),
             Some(format!("add an entry `{key}`, or correct the key")),
         );
     }
@@ -142,7 +154,7 @@ fn duplicate_bibliography_entry(report: &mut Report) {
                     None => continue,
                     Some(at) => {
                         first_item = Some(at);
-                        (*span, format!("`{key}` is already declared by the \\bibitem at {at}"))
+                        (*span, format!("`{key}` is already declared by the \\bibitem at {}", report.place(at)))
                     }
                 },
                 Declared::Entry { file, line, at } => {
@@ -180,7 +192,7 @@ fn unused_bibitem(report: &mut Report) {
         report.add(
             span,
             &key,
-            format!("\\bibitem `{key}` is never cited"),
+            format!("\\bibitem `{key}` is never cited{}", report.unread("cited").unwrap_or_default()),
             Some(format!("cite `{key}`, or delete its \\bibitem")),
         );
     }

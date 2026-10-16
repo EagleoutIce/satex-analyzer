@@ -1,5 +1,7 @@
 <!-- generated from doc/src/wiki/queries.md.in by satex-doc; do not edit -->
 
+<p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
+
 # Queries
 
 `satex query NAME -f FILE` runs a query and prints its records. `satex query --list` names them all. Every query takes `--filter EXPR` (e.g. `'tag=macro and arity>0'`) and `--format json`/`csv`. The examples analyze `samples/paper.tex`.
@@ -54,7 +56,7 @@ Every step: which macro expanded, which primitive ran, what changed. Use `satex 
 
 {{run(6): satex trace -f samples/paper.tex}}
 
-`--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile; `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown; `--include-internal` adds packages, classes and the kernel. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
+`--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile; `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown; `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
 
 {{run(6): satex trace -f samples/paper.tex --lines 10:11}}
 
@@ -108,7 +110,7 @@ The pgfkeys keys defined at the end of the run and what each does (`initial`, `c
 
 ## gaps
 
-What the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `log_gaps` use the same list.
+What the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `gaps.log` use the same list.
 
 {{run(6): satex query gaps -f samples/mypackage.sty}}
 
@@ -121,6 +123,12 @@ This needs call arguments recorded (`record_arguments`). `query options` and `--
 `mybanner` in `samples/mypackage.sty` takes an optional argument but reads it directly (`[plain]`, no keys), so it comes back `positional`:
 
 {{run(6): satex query options --for mybanner -f samples/mypackage.sty}}
+
+## typeset
+
+The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. The [challenges](Challenges) compare it with what pdflatex sets.
+
+{{run(6): satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex}}
 
 ## produces
 
@@ -208,7 +216,7 @@ The criterion is a name, `--at [FILE:]LINE:COL[-LINE[:COL]]` (a range, to the en
 `satex query --request FILE` (`-` for stdin) runs several queries on one analysis and prints one JSON answer per query. The request is a JSON object:
 
 * `file` — the document to analyze. Falls back to `-f` when omitted.
-* `config` — optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load_packages": false}`.
+* `config` — optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load.packages": false}`.
 * `queries` — an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, or `options`, with their own arguments:
   * `explain`: `names` (array), `all` (bool).
   * `controls`: `names` (array), `all` (bool).

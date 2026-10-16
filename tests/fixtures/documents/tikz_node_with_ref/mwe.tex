@@ -1,0 +1,17 @@
+% A \ref to a label the first run does not know, inside a tikz node: the
+% kernel sets `??`, so the node's size is exact. Reduced from a thesis
+% (68.6k forks and expansion_depth before the fix).
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{positioning}
+\usepackage{hyperref}
+\begin{document}
+\begin{tikzpicture}
+  \node (a) {$B_{\ref{cell:B-a}}$};
+  \node[below=of a] (c) {$B_{\ref{cell:B-c}}$};
+  \node[below right=of a] (d) {$B_{\ref{cell:B-d}}$};
+  \node[below left=of a] (b) {$B_{\ref{cell:B-b}}$};
+  \draw[->] (a) -- (b);
+\end{tikzpicture}
+\gdef\SatexReachedEnd{}
+\end{document}

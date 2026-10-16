@@ -1,0 +1,102 @@
+% this titlepage does not use tikz for speed reason
+\begin{full-titlepage}%
+   \makeatletter\ifthesis@fira\firabook\else\sffamily\fi\def\margin{1.5cm}%
+    \parskip\z@\relax\parindent\z@\relax
+    \fboxsep\z@\relax\fboxrule\z@\relax
+    \vspace*{\margin}\par% upper space
+    \strut\hfill\includegraphics[width=73mm]{\thesisProfilesPath/logo}\hskip\margin\null% left space
+    \vskip\margin% space to logo
+    {% titleimage
+      % TODO: titleimage attribution
+      \colorbox{titleimage@background}{\parbox{\paperwidth}{\hfil
+         \thesisinserttitleimage
+      \hfil}}%
+    }%
+    \vskip-1pt\par{% separator line
+      \color{@primary}\rule{\paperwidth}{28pt}%
+    }%
+    \vskip-1pt\par{% the title
+      \fboxsep=5mm\relax
+      \setbox0=\hbox{\hspace*{-\fboxsep}\parbox{\dimexpr\paperwidth}{\hfill
+         \parbox{\dimexpr.8\linewidth-\margin}{\RaggedLeft
+            % TODO: titlefont
+            \huge\strut\def\nl{\\[1.5pt]}\@title\strut
+         }\null%
+      \hskip\margin\null}}%
+      % we use the box to set the minimum width accordingly
+      \ifdim72pt>\dimexpr\ht0+\dp0\relax
+         \colorbox{lightgray!25}{\vbox to 72pt{\vfill\box0\vfill}}%
+      \else
+         \colorbox{lightgray!25}{\box0}%
+      \fi
+    }%
+    \vskip\margin
+    \par{% author name
+      % TODO: authorfont
+      \null\hfill\parbox{\dimexpr.8\linewidth-\margin}{%
+         \RaggedLeft\LARGE\itshape\strut\@author\strut
+      }\hskip\margin\null%
+    }
+    \vfill% space to bottom
+    \par{% footer
+      \colorbox{lightgray!25}{\parbox[t][90pt][c]{\paperwidth}{%
+         \null\hfill\parbox{\dimexpr.8\linewidth-\margin}{%
+            \RaggedLeft\large\strut\@institute\strut
+         }\hskip\margin\null
+      }}%
+    }%
+    \vskip-\baselineskip\par{% thesis type
+      \fboxsep=3mm\relax
+      \null\hfill\smash{\raisebox{\dimexpr\thesis@marginpar@width+\fboxsep-.5\height-.5\depth}{\colorbox{@primary}{\hskip\dimexpr\margin-\fboxsep\relax
+         \color{white}\Large\translate{\thesis@type}%
+      \hskip\dimexpr\margin-\fboxsep\relax}}}\null
+    }%
+	% 		\node [above left = of banner.south east, anchor=south east, inner sep=2pt] {
+	% 			\ifx\titleBannerImageAttribution\undefined
+	% 			%
+	% 			\else
+	% 				\titleBannerImageAttribution
+	% 			\fi
+	% 		};
+	% 	\end{scope}
+\end{full-titlepage}\relax
+\cleardoublepage
+{\makeatletter
+\thispagestyle{empty}%
+\parskip\z@\relax\parindent\z@\relax
+\vspace*{\fill}%
+\textbf{\translate{type-and-field}}\par\relax
+\begin{tabular}{@{}ll@{}}
+\translate{date-of-submission}:&\@date\\
+\translate{institution}:&\@university
+\end{tabular}\vskip1.25cm\par
+{\bfseries\ifnum\value{thesis@examiners}=1
+   \translate{advisor-singular}%
+\else\ifnum\value{thesis@examiners}>1
+   \translate{advisor-plural}%
+\fi\fi\smallskip}
+\ifnum\value{thesis@examiners}>0
+\begin{itemize}[leftmargin=*,nosep,itemsep=\smallskipamount]
+   \@examiners
+\end{itemize}
+\fi
+\vskip.5cm
+{\bfseries\ifnum\value{thesis@supervisors}=1
+   \translate{supervisor-singular}%
+\else\ifnum\value{thesis@supervisors}>1
+   \translate{supervisor-plural}%
+\fi\fi\smallskip}
+\ifnum\value{thesis@supervisors}>0
+\begin{itemize}[leftmargin=*,nosep,itemsep=\smallskipamount]
+   \@supervisors
+\end{itemize}
+\fi
+\vfill\vfill\vfill
+% \dimexpr\linewidth+\marginparsep+\marginparwidth
+{\footnotesize\begin{tabularx}{\linewidth}{@{}lX@{}}
+   \textcopyright\;\@year&\@author\quad\@studentnumber\\
+      & \textit{\def\nl{\space}\@title}\bigskip\\
+   \thesis@license@symbols &\translate{license}
+\end{tabularx}}
+}
+\clearpage

@@ -1,27 +1,18 @@
 use serde::{Deserialize, Serialize};
 
-/// The document output format: PDF, DVI, PostScript or HTML.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Output {
-    Pdf,
-    Dvi,
-    PostScript,
-    Html,
+named_enum! {
+    /// The document output format: PDF, DVI, PostScript or HTML.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Output {
+        Pdf => "pdf",
+        Dvi => "dvi",
+        PostScript => "ps",
+        Html => "html",
+    }
 }
 
 impl Output {
-    /// Every output satex knows, for `--version`.
-    pub const ALL: &'static [Output] = &[Output::Pdf, Output::Dvi, Output::PostScript, Output::Html];
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Output::Pdf => "pdf",
-            Output::Dvi => "dvi",
-            Output::PostScript => "ps",
-            Output::Html => "html",
-        }
-    }
-
     /// The `\pdfoutput` register value for this output format.
     /// Positive means PDF, zero means DVI (pdfTeX manual, "\pdfoutput").
     /// XeTeX has no such parameter and always writes XDV, which xdvipdfmx converts to PDF.

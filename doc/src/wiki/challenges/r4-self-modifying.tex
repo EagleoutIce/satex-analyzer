@@ -1,0 +1,7 @@
+\documentclass{article}
+\makeatletter
+\def\list@{}
+\def\add#1{\g@addto@macro\list@{[#1]}}
+\begin{document}
+\add a\add b\add c\list@
+\end{document}

@@ -1,0 +1,9 @@
+\documentclass{article}
+% The same undecided test, twenty times in a row.
+\edef\x{\pdffilemoddate{x.tex}}
+\def\y{}
+\def\t{\ifx\x\y a\else b\fi}
+\begin{document}
+\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+\gdef\SatexReachedEnd{}
+\end{document}

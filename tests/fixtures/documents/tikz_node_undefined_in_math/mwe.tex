@@ -1,0 +1,11 @@
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{positioning}
+\begin{document}
+\begin{tikzpicture}
+\node (a) {$\nosuchmacro$};
+\node[below=of a] (c) {$\nosuchmacro$};
+\draw[->] (a) -- (c);
+\end{tikzpicture}
+\gdef\SatexReachedEnd{}
+\end{document}

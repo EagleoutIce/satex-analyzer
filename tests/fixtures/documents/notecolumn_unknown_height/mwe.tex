@@ -1,0 +1,13 @@
+% An unknown box height leaves \pagetotal unknown, so the note column
+% loops of \clearnotecolumns are summarized; they must stay balanced.
+\documentclass[twoside]{scrartcl}
+\usepackage[autoclearnotecolumns]{scrlayer-notecolumn}
+\begin{document}
+\setbox0\vbox{\hrule height \pdfuniformdeviate 1000pt}
+\copy0
+\makenote{first note}
+\clearpage
+\makenote{second note}
+Text after.
+\gdef\SatexReachedEnd{}
+\end{document}

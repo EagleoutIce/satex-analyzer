@@ -1,0 +1,15 @@
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{positioning,calc,backgrounds}
+\usepackage{suffix}
+\usepackage{hyperref}
+\tikzset{@link/.style={}}
+\input{notebook.tex}
+\begin{document}
+\begin{notebook}{A}
+    \cell{c}{print(x)\\rm(x)}
+    \cell{a}{x <- x + 1}
+    \cell{b}{x <- 2}
+\end{notebook}
+\gdef\SatexReachedEnd{}
+\end{document}

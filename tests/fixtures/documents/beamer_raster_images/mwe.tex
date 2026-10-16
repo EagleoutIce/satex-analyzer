@@ -1,0 +1,13 @@
+% Raster images scaled with keepaspectratio in a narrow column: their size is
+% the file's pixels at its resolution (pdfTeX), so graphicx's scale arithmetic
+% runs on known values and raises no error.
+\documentclass{article}
+\usepackage{graphicx}
+\begin{document}
+\begin{minipage}[t]{.5\textwidth}
+\centering
+\includegraphics[keepaspectratio, width=.5\linewidth]{example-image-a.png}
+\end{minipage}
+\includegraphics[width=\textwidth,height=0.8\textheight,keepaspectratio]{example-image-b.png}
+\gdef\SatexReachedEnd{}
+\end{document}

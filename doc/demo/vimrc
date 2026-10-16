@@ -26,7 +26,7 @@ def SetupLsp()
     return
   endif
   g:LspOptionsSet({showDiagOnStatusLine: false, autoHighlightDiags: true, showDiagWithVirtualText: false})
-  g:LspAddServer([{name: 'satex', filetype: ['tex', 'plaintex'], path: 'satex', args: ['lsp', '--set', 'load_classes=true', '--set', 'load_packages=true']}])
+  g:LspAddServer([{name: 'satex', filetype: ['tex', 'plaintex'], path: 'satex', args: ['lsp', '--set', 'load.classes=true', '--set', 'load.packages=true']}])
 enddef
 autocmd VimEnter * SetupLsp()
 nnoremap K <Cmd>LspHover<CR>

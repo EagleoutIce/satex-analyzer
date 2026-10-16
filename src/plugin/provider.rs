@@ -1,33 +1,52 @@
 use serde::{Deserialize, Serialize};
 
-/// A TeX distribution provider: the package manager and locator program.
-/// [`Provider::locator`] is what [`crate::distribution::Request`] asks for
-/// the installation's roots.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Provider {
-    TexLive,
-    MikTeX,
-    Tectonic,
+named_enum! {
+    /// A TeX distribution provider: the package manager and locator program.
+    /// [`Provider::locator`] is what [`crate::distribution::Request`] asks for
+    /// the installation's roots.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Provider {
+        TexLive => "texlive",
+        MikTeX => "miktex",
+        Tectonic => "tectonic",
+    }
 }
 
 impl Provider {
-    /// Every provider satex knows, for `--version`.
-    pub const ALL: &'static [Provider] = &[Provider::TexLive, Provider::MikTeX, Provider::Tectonic];
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Provider::TexLive => "texlive",
-            Provider::MikTeX => "miktex",
-            Provider::Tectonic => "tectonic",
-        }
-    }
-
     /// The program that locates files in the distribution.
     pub fn locator(self) -> &'static str {
         match self {
             Provider::TexLive => "kpsewhich",
             Provider::MikTeX => "miktex-kpsewhich",
             Provider::Tectonic => "tectonic",
+        }
+    }
+
+    /// The distribution's kpathsea program, for the lookups satex makes
+    /// outside [`crate::distribution`].  Tectonic has none: it resolves from
+    /// its own bundle, so nothing can be asked of it.
+    pub fn kpsewhich(self) -> Option<&'static str> {
+        match self {
+            Provider::TexLive | Provider::MikTeX => Some(self.locator()),
+            Provider::Tectonic => None,
+        }
+    }
+
+    /// The kpathsea program of `provider`, falling back to whichever
+    /// distribution is installed when the run configured none.
+    pub fn kpsewhich_of(provider: Option<Provider>) -> Option<&'static str> {
+        provider.or_else(Provider::detect)?.kpsewhich()
+    }
+
+    /// The distribution's package manager, when it has one (TeX Live
+    /// manual, `tlmgr`; MiKTeX manual, `miktex packages`).  Tectonic has
+    /// none: it carries one bundle and takes what a document needs out of it.
+    pub fn manager(self) -> Option<&'static str> {
+        match self {
+            Provider::TexLive => Some("tlmgr"),
+            Provider::MikTeX => Some("miktex"),
+            Provider::Tectonic => None,
         }
     }
 

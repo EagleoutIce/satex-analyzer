@@ -1,0 +1,8 @@
+\documentclass{article}
+\usepackage{listings}
+\begin{document}
+\edef\delim{\ifodd\pdfuniformdeviate9 !\else +\fi}
+\expandafter\lstinline\delim x!+\gdef\AfterA{}
+\section{After}\label{after}
+\gdef\SatexReachedEnd{}
+\end{document}

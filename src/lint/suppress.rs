@@ -8,7 +8,7 @@
 //! has produced its findings, so every output format and `--fix` (which
 //! relints after each round) see the same filtered set.
 
-use std::collections::{HashMap, HashSet};
+use crate::fixed::{HashMap, HashSet};
 use std::path::Path;
 
 use serde_json::json;
@@ -30,8 +30,10 @@ nothing, since matching a finding's own code is all these comments do.
 Fix by correcting the code, or removing it if the rule was renamed or
 never existed.",
     // The finding is produced by `suppress::apply`, which already scans
-    // every magic comment while it builds the suppression map; a second,
+    // every magic comment while it builds the suppression map.  A second,
     // ordinary rule pass would just repeat that scan.
+    references: &[],
+    fixes: &[],
     run: |_| {},
 }];
 
@@ -81,6 +83,8 @@ fn parse_directive(comment: &str) -> Option<Directive> {
 
 #[derive(Default)]
 struct FileSuppressions {
+    /// No directive at all: the file suppresses nothing.
+    empty: bool,
     file_all: bool,
     file_codes: HashSet<String>,
     next_line: HashMap<u32, Option<Vec<String>>>,
@@ -99,11 +103,10 @@ impl FileSuppressions {
             return true;
         }
         // A region's state as of `line`: `all` once a bare `disable` is
-        // seen, `exceptions` are codes an `enable` carved back out of it;
-        // outside `all`, `specific` are the codes a bare-less `disable`
-        // named directly. Recomputed per query: regions are few, findings
-        // are not, and a finding's own suppression never changes a run.
-        let (mut all, mut specific, mut exceptions) = (false, HashSet::<&str>::new(), HashSet::<&str>::new());
+        // seen, `exceptions` the codes an `enable` carved back out of it,
+        // and `specific` the codes a `disable` named directly outside an
+        // `all`.  Recomputed per query, because regions are few.
+        let (mut all, mut specific, mut exceptions) = (false, HashSet::<&str>::default(), HashSet::<&str>::default());
         for (at, dir) in &self.regions {
             if *at > line {
                 break;
@@ -146,7 +149,7 @@ fn unknown_finding(path: &str, line: u32, col: u32, code: &str) -> Record {
 }
 
 fn scan(path: &str, text: &str) -> (FileSuppressions, Vec<Record>) {
-    let mut sup = FileSuppressions::default();
+    let mut sup = FileSuppressions { empty: true, ..FileSuppressions::default() };
     let mut warnings = Vec::new();
     for (i, line) in text.lines().enumerate() {
         let ln = i as u32 + 1;
@@ -155,11 +158,12 @@ fn scan(path: &str, text: &str) -> (FileSuppressions, Vec<Record>) {
         if let Some(codes) = &dir.codes {
             for code in codes {
                 if crate::lint::explanation(code).is_none() {
-                    let col = line.find(code.as_str()).map_or(1, |b| line[..b].chars().count() as u32 + 1);
+                    let col = line.find(code.as_str()).map_or(1, |b| crate::source::col_of_byte(line, b));
                     warnings.push(unknown_finding(path, ln, col, code));
                 }
             }
         }
+        sup.empty = false;
         match dir.kind {
             Kind::NextLine => {
                 sup.next_line.insert(ln + 1, dir.codes);
@@ -180,7 +184,7 @@ fn scan(path: &str, text: &str) -> (FileSuppressions, Vec<Record>) {
 /// `records`, with everything a magic comment suppressed removed, and a
 /// warning added for every code such a comment named that no rule has.
 pub fn apply(analysis: &Analysis, records: Vec<Record>) -> Vec<Record> {
-    let mut by_file: HashMap<String, FileSuppressions> = HashMap::new();
+    let mut by_file: HashMap<String, FileSuppressions> = HashMap::default();
     let mut extra = Vec::new();
     for id in 0..analysis.files.len() as crate::tex::FileId {
         if crate::query::origin(analysis, id) != "document" {
@@ -194,6 +198,12 @@ pub fn apply(analysis: &Analysis, records: Vec<Record>) -> Vec<Record> {
         let (sup, warnings) = scan(&path, &text);
         extra.extend(warnings);
         by_file.insert(path, sup);
+    }
+    // Nothing to match against: the common document has no magic comment.
+    if by_file.values().all(|sup| sup.empty) {
+        let mut out = records;
+        out.extend(extra);
+        return out;
     }
     let mut out: Vec<Record> = records
         .into_iter()

@@ -1,5 +1,7 @@
 <!-- generated from doc/src/wiki/queries.md.in by satex-doc; do not edit -->
 
+<p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
+
 # Queries
 
 `satex query NAME -f FILE` runs a query and prints its records. `satex query --list` names them all. Every query takes `--filter EXPR` (e.g. `'tag=macro and arity>0'`) and `--format json`/`csv`. The examples analyze `samples/paper.tex`.
@@ -23,6 +25,7 @@
 - [gaps](#gaps)
 - [pgfkeys](#pgfkeys)
 - [options](#options)
+- [typeset](#typeset)
 
 ## definitions
 
@@ -31,12 +34,12 @@ Every name the document or its packages define. `origin` is `document` for files
 ```text
 $ satex query definitions -f samples/paper.tex --filter 'tag=macro and arity>0'
 tag    name                              paramet…  body      file                  
+macro  \__sys_tmp:w                      #1        \str_if…  expl3-code.tex        @ expl3-code.tex:1538:17
+macro  \sys_gset_rand_seed:n             #1        \tex_se…  expl3-code.tex        @ expl3-code.tex:1530:34
 macro  \reserved@c                       #1.sty\…  \def \r…  latex.ltx             @ latex.ltx:18742:20
 macro  \reserved@a                       #10#2#{   \expand…  latex.ltx             @ latex.ltx:1277:3
 macro  \reserved@a                       #1\@nil   \@for \…  latex.ltx             @ latex.ltx:18611:3
-macro  \in@@                             #1cmtt              latex.ltx             @ latex.ltx:12883:6
-macro  \reserved@a                       #1,,#2\…  #1,#2\r…  latex.ltx             @ latex.ltx:8765:3
-… 2478 more lines omitted
+… 2473 more lines omitted
 ```
 
 ## expansions
@@ -121,12 +124,12 @@ The dependency graph as records. `satex dependencies` renders it as DOT or JSON.
 ```text
 $ satex query dependency-graph -f samples/paper.tex
 tag                  name      file                            
-macro-call           \docume…  paper.tex                       @ paper.tex:1:1
-variable-definition  \docume…  latex.ltx                       @ latex.ltx:18618:3
-macro-definition     \docume…  latex.ltx                       @ latex.ltx:18618:3
-variable-definition  \usepac…  latex.ltx                       @ latex.ltx:18619:25
-macro-definition     \usepac…  latex.ltx                       @ latex.ltx:18619:25
-… 38895 more lines omitted
+macro-call           \show@r…  latex.ltx                       @ latex.ltx:731:7
+macro-call           \fmtname  latex.ltx                       @ latex.ltx:731:26
+macro-call           \space    latex.ltx                       @ latex.ltx:731:34
+macro-call           \fmtver…  latex.ltx                       @ latex.ltx:731:42
+use                  LaTeX2e…  latex.ltx                       @ latex.ltx:129:24
+… 38846 more lines omitted
 ```
 
 ## trace
@@ -135,16 +138,16 @@ Every step: which macro expanded, which primitive ran, what changed. Use `satex 
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step       name            detail                                             file       
-0       expand     \documentclass                                                     paper.tex  @ paper.tex:1:1
-7734    open-file  \article        /usr/local/texlive/2026/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
-16002   expand     \value                                                             paper.tex  @ paper.tex:0:0
-29937   expand     \par                                                               paper.tex  @ paper.tex:2:1
-29944   expand     \newif                                                             paper.tex  @ paper.tex:3:1
-… 11 more lines omitted
+index   step         name                        detail                     file           
+678     expand       \documentclass                                         paper.tex      @ paper.tex:1:1
+8412    open-file    \article                    /usr/local/texlive/YYYY/…  paper.tex      @ paper.tex:1:1
+10261   expand       \par                                                   paper.tex      @ paper.tex:2:1
+10268   expand       \newif                                                 paper.tex      @ paper.tex:3:1
+10272   define       \ifdraft                                               paper.tex      @ paper.tex:3:7
+… 208 more lines omitted
 ```
 
-`--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile; `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown; `--include-internal` adds packages, classes and the kernel. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
+`--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile; `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown; `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
 
 ```text
 $ satex trace -f samples/paper.tex --lines 10:11
@@ -165,7 +168,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    expl3.ltx                                 
 4    input    expl3-code.tex                            
-… 262 more lines omitted
+… 284 more lines omitted
 ```
 
 ## diagnostics
@@ -174,9 +177,8 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
-severity     code                 count  message                 file                
-imprecision  undecided-condition  2      \ifx could not be dec…  rerunfilecheck.sty  @ rerunfilecheck.sty:312:11
-imprecision  undecided-condition  1      \ifx could not be dec…  rerunfilecheck.sty  @ rerunfilecheck.sty:311:11
+severity    code           count  message                               file            
+assumption  clock-assumed  1      the document is assumed to be compi…  expl3-code.tex  @ expl3-code.tex:8169:38
 ```
 
 ## distribution
@@ -185,12 +187,12 @@ The detected TeX installation: provider, version, and the texmf trees searched.
 
 ```text
 $ satex query distribution -f samples/paper.tex
-kind        message                                                               root                                  
-            TeX Live 2026, LaTeX2e 2025-11-01, 6 trees via kpsewhich, 47457 fil…                                        
-texmf-tree                                                                        /home/ostwind/texmf                   
-texmf-tree                                                                        /home/ostwind/.texlive2026/texmf-var  
-texmf-tree                                                                        /usr/local/texlive/texmf-local        
-texmf-tree                                                                        /usr/local/texlive/2026/texmf-config  
+kind        message                                                            root                                     
+            TeX Live 2025, LaTeX2e 2025-11-01, 6 trees via kpsewhich, 52950 …                                           
+texmf-tree                                                                     ~/texmf                   
+texmf-tree                                                                     ~/.texliveYYYY/texmf-var  
+texmf-tree                                                                     /usr/local/texlive/texmf-local           
+texmf-tree                                                                     /usr/local/texlive/YYYY/texmf-config     
 … 2 more lines omitted
 ```
 
@@ -209,11 +211,11 @@ Definitions and assignments a macro makes as a side effect of being called, rath
 ```text
 $ satex query side-effects -f samples/paper.tex
 tag                  name      detail    file                  
-variable-definition  \@class…  while e…  latex.ltx             @ latex.ltx:1450:4
-variable-definition  \@raw@c…  while e…  latex.ltx             @ latex.ltx:18718:7
-variable-definition  \g__fil…  while e…  expl3-code.tex        @ expl3-code.tex:5901:5
-variable-definition  \g_file…  while e…  expl3-code.tex        @ expl3-code.tex:3545:19
-variable-definition  \g_file…  while e…  expl3-code.tex        @ expl3-code.tex:3545:19
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:2099:42
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
+variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
 … 1698 more lines omitted
 ```
 
@@ -239,7 +241,7 @@ The provider, platform, engine, output target, and build system plugins chose fo
 ```text
 $ satex query plugins -f samples/paper.tex
 kind              name                                                                               detail             
-provider          texlive (TeX 3.141592653 (TeX Live 2026))                                          detected           
+provider          texlive (TeX 3.141592653 (TeX Live 2025))                                          detected           
 platform          linux                                                                              this machine       
 engine            pdflatex (pdftex primitives)                                                       build configurat…  
 kernel            latex2e                                                                            default            
@@ -264,7 +266,7 @@ code args  /demo/label                                          \def \demola… 
 
 ## gaps
 
-What the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `log_gaps` use the same list.
+What the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `gaps.log` use the same list.
 
 ```text
 $ satex query gaps -f samples/mypackage.sty
@@ -282,20 +284,30 @@ This needs call arguments recorded (`record_arguments`). `query options` and `--
 $ satex query options --for mybanner -f samples/mypackage.sty
 ```
 
+## typeset
+
+The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. The [challenges](Challenges) compare it with what pdflatex sets.
+
+```text
+$ satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex
+3:25  paragraph  ⟦f⟧wide, {empty page|page started}
+assumption  clock-assumed
+```
+
 ## produces
 
 Where a piece of text can come from, with or without expansion. `--text` is a literal, case-sensitive substring. `kind` says how: `source` (literal in a file. `tag` `comment` if commented out), `macro body` (at the definition), `value` (a register, counter or length. Dimensions in points), `occurrence` (a label, section title, …), `metadata` (`\title`, `\author`, `\date`), or `expansion` (a call the run expanded).
 
 ```text
 $ satex query produces -f samples/paper.tex --text 1.5em
-kind        tag      name           detail                                  file           
-source      class                   \vskip 1.5em%                           article.cls    @ article.cls:184:14
-source      class                   \vskip 1.5em%                           article.cls    @ article.cls:243:12
-source      class                   \vskip 1.5em}                           article.cls    @ article.cls:253:10
-source      class                   \itemindent -1.5em%                     article.cls    @ article.cls:392:40
-source      class                   \advance\leftmargin 1.5em}%             article.cls    @ article.cls:395:45
-source      class                   {\list{}{\listparindent 1.5em%          article.cls    @ article.cls:399:40
-source      class                   \setlength\@tempdima{1.5em}%            article.cls    @ article.cls:532:26
+kind        tag          name           detail                              file           
+source      class                       \vskip 1.5em%                       article.cls    @ article.cls:184:14
+source      class                       \vskip 1.5em%                       article.cls    @ article.cls:243:12
+source      class                       \vskip 1.5em}                       article.cls    @ article.cls:253:10
+source      class                       \itemindent -1.5em%                 article.cls    @ article.cls:392:40
+source      class                       \advance\leftmargin 1.5em}%         article.cls    @ article.cls:395:45
+source      class                       {\list{}{\listparindent 1.5em%      article.cls    @ article.cls:399:40
+source      class                       \setlength\@tempdima{1.5em}%        article.cls    @ article.cls:532:26
 … 11 more lines omitted
 ```
 
@@ -322,7 +334,7 @@ $ satex explain '\itshape'
   takes          0
   uses           0 times, in this run
   by             \def
-  documentation  The LaTeX2e sources, source2e
+  documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
   body           \not@math@alphabet \itshape \mathit \fontshape \itdefault \selectfont 
   reference      https://texdoc.org/serve/source2e/0
 … 1 more line omitted
@@ -359,7 +371,7 @@ A name without its own redefinitions can still behave differently by context. `e
 
 `effective` writes a call: `\section*?[1]{2}` is `som` (optional star, optional argument, mandatory argument). `[default]` shows a default. `takes` is the least and most arguments a call reads.
 
-SaTeX finds a signature by running the command on probe input and watching what it reads (SEMANTICS § 13, "What a command takes").
+SaTeX finds a signature by running the command on probe input and watching what it reads (SEMANTICS [§ 13](https://ctan.org/pkg/usrguide), "What a command takes").
 
 ## Locations
 
@@ -382,7 +394,7 @@ $ satex explain '\itshape' --at preamble
   effective      \itshape
   takes          0
   package        kernel
-  documentation  The LaTeX2e sources, source2e
+  documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
 … 3 more lines omitted
 ```
 
@@ -429,7 +441,7 @@ $ satex controls my@draft my@wide -f samples/mypackage.sty
 `satex query --request FILE` (`-` for stdin) runs several queries on one analysis and prints one JSON answer per query. The request is a JSON object:
 
 * `file` — the document to analyze. Falls back to `-f` when omitted.
-* `config` — optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load_packages": false}`.
+* `config` — optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load.packages": false}`.
 * `queries` — an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, or `options`, with their own arguments:
   * `explain`: `names` (array), `all` (bool).
   * `controls`: `names` (array), `all` (bool).

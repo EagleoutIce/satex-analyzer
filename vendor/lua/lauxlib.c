@@ -48,7 +48,9 @@ static int findfield (lua_State *L, int objidx, int level) {
     return 0;  /* not found */
   lua_pushnil(L);  /* start 'next' loop */
   while (lua_next(L, -2)) {  /* for each pair in table */
-    if (lua_type(L, -2) == LUA_TSTRING) {  /* ignore non-string keys */
+    if (lua_type(L, -2) == LUA_TSTRING &&  /* ignore non-string keys */
+        !(lua_type(L, -1) == LUA_TLIGHTUSERDATA &&  /* satex: and the unknown value */
+          lua_touserdata(L, -1) == (void *)&satex_unknown_tag)) {
       if (lua_rawequal(L, objidx, -1)) {  /* found object? */
         lua_pop(L, 1);  /* remove value (but keep name) */
         return 1;

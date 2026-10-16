@@ -1,0 +1,36 @@
+[env]
+LUA_LIB_NAME = "lua53"
+LUA_LINK = "static"
+# Test threads get the 8 MiB the binary's main thread has: a kernel build
+# nests `drive` per command and needs more than the 2 MiB test default.
+RUST_MIN_STACK = "8388608"
+
+# The browser playground (doc/site): the `satex` binary as an Emscripten
+# module, run through `callMain` over an in-memory filesystem.
+[target.wasm32-unknown-emscripten]
+rustflags = [
+  # emcc's notes on the settings Rust's target passes, not satex's.
+  "-Alinker-messages",
+  "-Clink-arg=-sSUPPORT_LONGJMP=wasm",
+  "-Clink-arg=-sALLOW_MEMORY_GROWTH=1",
+  "-Clink-arg=-sINITIAL_MEMORY=256MB",
+  "-Clink-arg=-sMAXIMUM_MEMORY=4GB",
+  "-Clink-arg=-sSTACK_SIZE=64MB",
+  "-Clink-arg=-sMODULARIZE=1",
+  "-Clink-arg=-sEXPORT_NAME=createSatex",
+  "-Clink-arg=-sINVOKE_RUN=0",
+  "-Clink-arg=-sEXIT_RUNTIME=1",
+  "-Clink-arg=-sEXPORTED_RUNTIME_METHODS=callMain,FS,ENV,UTF8ToString,stringToNewUTF8",
+  "-Clink-arg=-sEXPORTED_FUNCTIONS=_main,_satex_lsp,_free",
+  "-Clink-arg=-sFORCE_FILESYSTEM=1",
+  "-Clink-arg=-sENVIRONMENT=web,worker,node",
+]
+
+# `cargo playground`: build the site with its playground and serve it on
+# localhost (src/bin/satex-playground.rs).
+[alias]
+# The same features as the `satex` it builds, so the library is compiled once.
+playground = "run --release --bin satex-playground --"
+# `cargo vscode`: build the VS Code extension with satex bundled and install
+# it (src/bin/satex-vscode.rs).
+vscode = "run --release --bin satex-vscode --"

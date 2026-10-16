@@ -1,0 +1,35 @@
+\PassOptionsToPackage{automark}{scrlayer-scrpage}
+\ifthesis@oneside
+   \PassOptionsToPackage{autooneside=false}{scrlayer-scrpage}
+\fi
+\RequirePackage{scrlayer-scrpage}
+
+\pagestyle{scrheadings}
+\clearpairofpagestyles
+
+% \cfoot{[\today]}
+
+\renewcommand*{\chaptermark}[1]{%
+\markboth% do not use markright for single page layouts, as i show both marks on each page
+{\MakeMarkcase{\Ifnumbered{chapter}{%
+   \thechapter\autodot\enskip
+  }{}#1}%
+}{}%
+}%
+
+\addtokomafont{pagenumber}{\thesis@liningnumbers}
+\ifthesis@marginpar
+\ifthesis@oneside
+\ohead{\rightmark}
+\ihead{\leftmark}
+\ofoot*{\null\rlap{\hskip\marginparsep\hb@xt@\marginparwidth{\null\hfill\pagemark\hfill}}}
+\else
+\lehead{\headmark}
+\lefoot*{\llap{\hb@xt@\marginparwidth{\null\hfill\pagemark\hfill}\hskip\marginparsep}}
+\rohead{\headmark}
+\rofoot*{\rlap{\hskip\marginparsep\hb@xt@\marginparwidth{\null\hfill\pagemark\hfill}}}
+\fi
+\else
+% TODO
+\fi
+% TODO: configure if in head or foot, but maybe with author?

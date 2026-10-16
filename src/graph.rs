@@ -1,41 +1,28 @@
 //! The dependency graph: vertices, edges, data and control dependencies.
 
-use std::collections::HashMap;
+use crate::fixed::{HashMap, LookupMap};
 
 use serde::Serialize;
 
 use crate::env::NodeId;
 use crate::tex::{Interner, Span, Sym};
 
-/// One charged read edge: (from, to, call, made-by-reader).
-type ReadEdge = (NodeId, NodeId, NodeId, Option<NodeId>);
-
-/// What kind of program point a [`Vertex`] stands for: a value, a use, a
-/// macro call, or the definition of a variable or macro.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum VertexTag {
-    Value,
-    Use,
-    MacroCall,
-    VariableDefinition,
-    MacroDefinition,
-}
-
-impl VertexTag {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            VertexTag::Value => "value",
-            VertexTag::Use => "use",
-            VertexTag::MacroCall => "macro-call",
-            VertexTag::VariableDefinition => "variable-definition",
-            VertexTag::MacroDefinition => "macro-definition",
-        }
+named_enum! {
+    /// What kind of program point a [`Vertex`] stands for: a value, a use, a
+    /// macro call, or the definition of a variable or macro.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum VertexTag {
+        Value => "value",
+        Use => "use",
+        MacroCall => "macro-call",
+        VariableDefinition => "variable-definition",
+        MacroDefinition => "macro-definition",
     }
 }
 
 /// How one [`Vertex`] depends on another, as a bit set so that parallel edges
-/// between the same two vertices collapse into one. [`DependencyGraph::slice`]
+/// between the same two vertices collapse into one. [`DependencyGraph::slice_until`]
 /// filters a walk by which kinds it follows.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug, Serialize)]
 pub struct EdgeKind(pub u16);
@@ -112,7 +99,7 @@ pub struct Vertex {
 }
 
 /// The program's dependency graph: [`Vertex`]es for definitions, calls and
-/// uses, connected by [`EdgeKind`] edges. [`DependencyGraph::slice`] is what
+/// uses, connected by [`EdgeKind`] edges. [`DependencyGraph::slice_until`] is what
 /// `satex slice` walks.
 #[derive(Default)]
 pub struct DependencyGraph {
@@ -122,12 +109,12 @@ pub struct DependencyGraph {
     /// Where each target sits in `out`, for the vertices with many outgoing
     /// edges: a call that runs a long loop reaches every vertex the loop
     /// makes, and finding an edge by scanning would make it quadratic.
-    wide: HashMap<NodeId, HashMap<NodeId, u32>>,
+    wide: LookupMap<NodeId, LookupMap<NodeId, u32>>,
     /// One vertex per source site.  A macro body that is read several times —
     /// because a package is analyzed under both arms of an undecided
     /// conditional, or because a loop is unrolled — describes the same
     /// program point every time.
-    sites: HashMap<(Span, Sym, VertexTag), NodeId>,
+    sites: LookupMap<(Span, Sym, VertexTag), NodeId>,
     /// The last line a construct that began at a span reached, for the ones
     /// whose arguments ran past their own line.  Only spans that reach
     /// further than their own line are in here.
@@ -138,19 +125,16 @@ pub struct DependencyGraph {
     made_by: HashMap<NodeId, NodeId>,
     /// How many times each name has been defined so far, counting every run of a
     /// definition site.
-    defs_of: HashMap<Sym, u32>,
+    defs_of: LookupMap<Sym, u32>,
     /// The call read from a file whose expansion is running, if any: what
     /// it reads is read on behalf of that call.
     pub reader: Option<NodeId>,
     /// While a package cache is being captured: the vertices it reached, new
     /// or not, in the order it first reached them.
-    touched: Option<(std::collections::HashSet<NodeId>, Vec<NodeId>)>,
+    touched: Option<(crate::fixed::HashSet<NodeId>, Vec<NodeId>)>,
     /// The call read from a file when each touched vertex was first
     /// reached, in the same order.
     touched_readers: Vec<Option<NodeId>>,
-    /// While a package cache is being captured: every read edge made, with
-    /// the call charged with it.
-    reads: Option<Vec<ReadEdge>>,
     /// While a package cache is being captured: every edge added, in order,
     /// with the call a read was charged to, and each `made_by` among them
     /// as an edge of no kind; every extent noted.
@@ -181,12 +165,6 @@ impl Vertex {
 pub struct SliceBound {
     pub limit: NodeId,
     pub home: Option<crate::tex::FileId>,
-}
-
-impl Default for SliceBound {
-    fn default() -> Self {
-        SliceBound { limit: NodeId::MAX, home: None }
-    }
 }
 
 /// Definitions after which a name counts as scratch state.
@@ -261,7 +239,6 @@ impl DependencyGraph {
 
     /// Start recording the vertices reached, or stop and hand them back.
     pub fn record_touches(&mut self, on: bool) -> Vec<NodeId> {
-        self.reads = on.then(Vec::new);
         self.touched_readers.clear();
         let previous = std::mem::replace(&mut self.touched, on.then(Default::default));
         previous.map(|(_, order)| order).unwrap_or_default()
@@ -281,17 +258,6 @@ impl DependencyGraph {
         id
     }
 
-    /// The read edges made while recording: from, to, the call charged, and
-    /// the call that had made the definition read.
-    pub fn take_reads(&mut self) -> Vec<ReadEdge> {
-        self.reads.take().unwrap_or_default()
-    }
-
-    /// Every definition vertex and the call that last ran it.
-    pub fn made_by_all(&self) -> &HashMap<NodeId, NodeId> {
-        &self.made_by
-    }
-
     fn push_site(
         &mut self,
         tag: VertexTag,
@@ -305,7 +271,7 @@ impl DependencyGraph {
             let vertex = &mut self.vertices[id as usize];
             if vertex.cds != cds {
                 if cds.len() > 16 {
-                    let keep: std::collections::HashSet<(NodeId, bool)> = cds.iter().map(|c| (c.on, c.taken)).collect();
+                    let keep: crate::fixed::HashSet<(NodeId, bool)> = cds.iter().map(|c| (c.on, c.taken)).collect();
                     vertex.cds.retain(|c| keep.contains(&(c.on, c.taken)));
                 } else {
                     vertex.cds.retain(|c| cds.contains(c));
@@ -352,14 +318,6 @@ impl DependencyGraph {
         self.extents.get(&span).copied()
     }
 
-    /// Replace a vertex's outgoing edges, keeping the order given.
-    pub fn set_edges(&mut self, id: NodeId, edges: Vec<(NodeId, EdgeKind)>) {
-        if let Some(slot) = self.out.get_mut(id as usize) {
-            *slot = edges;
-            self.wide.remove(&id);
-        }
-    }
-
     pub fn extents(&self) -> &HashMap<Span, u32> {
         &self.extents
     }
@@ -394,12 +352,6 @@ impl DependencyGraph {
         // the dependency on the call that made the definition belongs to the
         // call from the file this read is part of.
         let reader = self.reader.unwrap_or(from);
-        if kind.intersects(EdgeKind::READS)
-            && !mention
-            && let Some(log) = &mut self.reads
-        {
-            log.push((from, to, reader, self.made_by.get(&to).copied()));
-        }
         if kind.intersects(EdgeKind::READS)
             && !mention
             && let Some(&call) = self.made_by.get(&to)
@@ -492,25 +444,20 @@ impl DependencyGraph {
         out
     }
 
-    /// Backward: what the criteria depend on.  Forward: what depends on them.
-    /// The two are exact transposes because they walk the same relation.
-    /// Vertices past `limit` are not followed.  A body vertex stands for every
-    /// expansion of its macro, so its edges reach calls that ran after the
-    /// criterion and cannot have influenced it.
-    pub fn slice(&self, criteria: &[NodeId], kinds: EdgeKind, forward: bool) -> Vec<NodeId> {
-        self.slice_until(criteria, kinds, forward, &SliceBound::default())
-    }
-
     /// The names the run defines over and over, like `\toks@` or `\reserved@a`:
     /// a definition of one is only ever read soon after it is made.
-    fn scratch_names(&self) -> std::collections::HashSet<Sym> {
+    fn scratch_names(&self) -> crate::fixed::HashSet<Sym> {
         self.defs_of.iter().filter(|&(_, &n)| n >= SCRATCH_DEFS).map(|(&name, _)| name).collect()
     }
 
-    /// As [`DependencyGraph::slice`], within `bound`.
+    /// Backward: what the criteria depend on.  Forward: what depends on them.
+    /// The two are exact transposes because they walk the same relation.
+    /// Vertices past `bound.limit` are not followed.  A body vertex stands for
+    /// every expansion of its macro, so its edges reach calls that ran after
+    /// the criterion and cannot have influenced it.
     pub fn slice_until(&self, criteria: &[NodeId], kinds: EdgeKind, forward: bool, bound: &SliceBound) -> Vec<NodeId> {
         let transposed = forward.then(|| self.transposed());
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = crate::fixed::HashSet::default();
         let mut kept = vec![false; self.vertices.len()];
         // Each vertex travels with the call of the home file it was reached
         // from: a body vertex stands for every expansion, and only the call
@@ -637,11 +584,11 @@ impl DependencyGraph {
 #[derive(Default)]
 pub struct CallGraph {
     pub nodes: Vec<Sym>,
-    index: HashMap<Sym, usize>,
+    index: LookupMap<Sym, usize>,
     pub edges: Vec<Vec<usize>>,
     /// While a package cache is being captured: every distinct `node` and
     /// `add` since the last `clear` of its name, and every `clear`, in order.
-    log: Option<(std::collections::HashSet<CallEvent>, Vec<CallEvent>)>,
+    log: Option<(crate::fixed::LookupSet<CallEvent>, Vec<CallEvent>)>,
 }
 
 /// One change to a [`CallGraph`], as a package cache replays it.
@@ -653,12 +600,12 @@ pub enum CallEvent {
 }
 
 impl CallGraph {
-    /// Start recording, or stop and hand back what was recorded.
     /// What has been recorded so far, in order.
     pub fn recorded(&self) -> &[CallEvent] {
         self.log.as_ref().map_or(&[][..], |(_, order)| &order[..])
     }
 
+    /// Start recording, or stop and hand back what was recorded.
     pub fn record(&mut self, on: bool) -> Vec<CallEvent> {
         let previous = std::mem::replace(&mut self.log, on.then(Default::default));
         previous.map(|(_, order)| order).unwrap_or_default()
@@ -729,40 +676,62 @@ impl CallGraph {
         self.index.get(&s).copied()
     }
 
-    /// Strongly connected components; a component of more than one name is a
-    /// cycle of macros calling one another.
-    pub fn sccs(&self) -> Vec<Vec<Sym>> {
-        let mut graph: petgraph::graph::DiGraph<(), ()> = petgraph::graph::DiGraph::new();
-        let nodes: Vec<_> = self.nodes.iter().map(|_| graph.add_node(())).collect();
-        for (from, targets) in self.edges.iter().enumerate() {
-            for to in targets {
-                graph.add_edge(nodes[from], nodes[*to], ());
-            }
-        }
-        petgraph::algo::tarjan_scc(&graph)
-            .into_iter()
-            .map(|component| component.into_iter().map(|node| self.nodes[node.index()]).collect())
-            .collect()
-    }
-
-    /// Names that are directly or mutually recursive.
+    /// Names that are directly or mutually recursive: the strongly
+    /// connected components of the call graph, one of more than one name
+    /// being a cycle of macros calling one another.
     pub fn recursive(&self) -> Vec<(Sym, Vec<Sym>)> {
         let mut out = Vec::new();
-        for comp in self.sccs() {
-            if comp.len() > 1 {
-                for &s in &comp {
-                    out.push((s, comp.clone()));
-                }
-            } else if let Some(i) = self.get(comp[0])
-                && self.edges[i].contains(&i)
-            {
-                out.push((comp[0], comp));
+        let mut tarjan = petgraph::algo::TarjanScc::new();
+        tarjan.run(Adjacency(&self.edges), |component| match component {
+            [only] if self.edges[*only].contains(only) => out.push((self.nodes[*only], vec![self.nodes[*only]])),
+            [_] => {}
+            many => {
+                let cycle: Vec<Sym> = many.iter().map(|node| self.nodes[*node]).collect();
+                out.extend(many.iter().map(|node| (self.nodes[*node], cycle.clone())));
             }
-        }
+        });
         out
     }
 }
 
 fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// The call graph's adjacency lists as petgraph sees them.  `DiGraph` walks
+/// a node's edges newest first, so the neighbors come out reversed.
+#[derive(Clone, Copy)]
+struct Adjacency<'a>(&'a [Vec<usize>]);
+
+impl petgraph::visit::GraphBase for Adjacency<'_> {
+    type NodeId = usize;
+    type EdgeId = usize;
+}
+
+impl petgraph::visit::GraphRef for Adjacency<'_> {}
+
+impl petgraph::visit::NodeIndexable for Adjacency<'_> {
+    fn node_bound(&self) -> usize {
+        self.0.len()
+    }
+    fn to_index(&self, node: usize) -> usize {
+        node
+    }
+    fn from_index(&self, index: usize) -> usize {
+        index
+    }
+}
+
+impl<'a> petgraph::visit::IntoNeighbors for Adjacency<'a> {
+    type Neighbors = std::iter::Rev<std::iter::Copied<std::slice::Iter<'a, usize>>>;
+    fn neighbors(self, node: usize) -> Self::Neighbors {
+        self.0[node].iter().copied().rev()
+    }
+}
+
+impl<'a> petgraph::visit::IntoNodeIdentifiers for Adjacency<'a> {
+    type NodeIdentifiers = std::ops::Range<usize>;
+    fn node_identifiers(self) -> Self::NodeIdentifiers {
+        0..self.0.len()
+    }
 }

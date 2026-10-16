@@ -1,0 +1,17 @@
+\documentclass{article}
+\usepackage{listings}
+\newcommand\Wrap[1]{#1}
+\begin{document}
+\begin{lstlisting}
+% not a comment {
+\end{x} \undefinedmacro } }
+\end{lstlisting}
+\gdef\AfterA{}
+\lstinline|x{%|\gdef\AfterB{}
+\lstinline{y}\gdef\AfterC{}
+\lstinputlisting{code.c}
+\gdef\AfterD{}
+\Wrap{\lstinline{z}}\gdef\AfterE{}
+\section{After}\label{after}
+\gdef\SatexReachedEnd{}
+\end{document}

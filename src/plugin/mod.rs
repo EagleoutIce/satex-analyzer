@@ -11,6 +11,7 @@ pub mod lua;
 pub mod lua_run;
 pub mod magic;
 pub mod output;
+pub mod packages;
 pub mod pdf;
 pub mod platform;
 pub mod preload;
@@ -27,72 +28,46 @@ pub use provider::Provider;
 use crate::config::{Config, Engine};
 use crate::project::Project;
 
-/// The kind of thing a plugin describes, for reporting: which field of
-/// [`Plugins`] it names and how [`Plugins::source`] was decided.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Kind {
-    Provider,
-    Platform,
-    Engine,
-    Kernel,
-    Output,
-    BuildSystem,
-    Tool,
-    Magic,
-    Format,
-    Preload,
-    Depp,
-}
-
-impl Kind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Kind::Provider => "provider",
-            Kind::Platform => "platform",
-            Kind::Engine => "engine",
-            Kind::Kernel => "kernel",
-            Kind::Output => "output",
-            Kind::BuildSystem => "build system",
-            Kind::Tool => "tools",
-            Kind::Magic => "magic comments",
-            Kind::Format => "output format",
-            Kind::Preload => "preloaded format",
-            Kind::Depp => "TeX Live packages",
-        }
+named_enum! {
+    /// The kind of thing a plugin describes, for reporting: which field of
+    /// [`Plugins`] it names and how [`Plugins::source`] was decided.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Kind {
+        Provider => "provider",
+        Platform => "platform",
+        Engine => "engine",
+        Kernel => "kernel",
+        Output => "output",
+        BuildSystem => "build system",
+        Tool => "tools",
+        Magic => "magic comments",
+        Format => "output format",
+        Preload => "preloaded format",
+        Depp => "TeX Live packages",
     }
 }
 
-/// Which format the run starts from.  satex interprets the LaTeX2e kernel,
-/// `latex.ltx`; a ConTeXt run is only recognized, because its kernel is
-/// written for ConTeXt's own Lua layer and satex does not interpret it.
-/// ConTeXt support is therefore EXPERIMENTAL: the document is identified and
-/// its primitives are known, but nothing the ConTeXt kernel defines is.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Deserialize, serde::Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Kernel {
-    #[serde(rename = "latex2e")]
-    Latex,
-    /// `plain.tex`: Knuth's macros, which satex interprets like the LaTeX
-    /// kernel because they are ordinary TeX (The TeXbook, appendix B).
-    Plain,
-    Context,
-    /// No kernel at all: the engine's primitives and nothing else.
-    None,
+named_enum! {
+    /// Which format the run starts from.  satex interprets the LaTeX2e kernel,
+    /// `latex.ltx`; a ConTeXt run is only recognized, because its kernel is
+    /// written for ConTeXt's own Lua layer and satex does not interpret it.
+    /// ConTeXt support is therefore EXPERIMENTAL: the document is identified and
+    /// its primitives are known, but nothing the ConTeXt kernel defines is.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Deserialize, serde::Serialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Kernel {
+        #[serde(rename = "latex2e")]
+        Latex => "latex2e",
+        /// `plain.tex`: Knuth's macros, which satex interprets like the LaTeX
+        /// kernel because they are ordinary TeX (The TeXbook, appendix B).
+        Plain => "plain",
+        Context => "context",
+        /// No kernel at all: the engine's primitives and nothing else.
+        None => "none",
+    }
 }
 
 impl Kernel {
-    /// Every kernel satex knows, for `--version`.
-    pub const ALL: &'static [Kernel] = &[Kernel::Latex, Kernel::Plain, Kernel::Context, Kernel::None];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Kernel::Latex => "latex2e",
-            Kernel::Plain => "plain",
-            Kernel::Context => "context",
-            Kernel::None => "none",
-        }
-    }
-
     /// Whether satex interprets this kernel at all, or only recognizes it.
     pub fn is_experimental(self) -> bool {
         self == Kernel::Context
@@ -157,6 +132,8 @@ pub struct Plugins {
     pub discovery: Discovery,
     /// How each was decided: configured, detected, or the default.
     pub sources: Vec<(Kind, &'static str)>,
+    /// What `\write18` may do: configured, else what the build asks for.
+    pub shell_escape: crate::config::ShellEscape,
 }
 
 impl Plugins {
@@ -172,10 +149,9 @@ impl Plugins {
                 (Some(provider), None)
             }
             None => {
-                let detected = cfg.use_kpsewhich.then(Provider::detect).flatten();
+                let detected = cfg.texmf.kpsewhich.then(Provider::detect).flatten();
                 note(Kind::Provider, if detected.is_some() { "detected" } else { "none found" });
-                let cache =
-                    cfg.cache.then(|| cfg.cache_dir.clone().or_else(crate::format::default_cache_dir)).flatten();
+                let cache = crate::format::enabled_cache_dir(cfg);
                 let version = detected.and_then(|p| p.version(cache.as_deref()));
                 (detected, version)
             }
@@ -274,7 +250,33 @@ impl Plugins {
             depp: None,
             discovery: Discovery::default(),
             sources,
+            shell_escape: cfg.shell_escape.unwrap_or_default(),
         }
+    }
+
+    /// The `\write18` access the build files and magic comments ask for,
+    /// unless the configuration says.
+    pub fn read_shell_escape(&mut self, cfg: &Config, project: &Project) {
+        if cfg.shell_escape.is_none()
+            && let Some(mode) = crate::lint::build::requested_shell_escape(project, &self.magic)
+        {
+            self.shell_escape = mode;
+        }
+    }
+
+    /// The engine a run assumes before the project is read: the configured
+    /// one, else what a `% !TeX program` magic comment names, else pdfTeX,
+    /// the default [`Plugins::detect`] settles on.  Commands that tokenize
+    /// without an analysis need it to pick the input encoding.
+    pub fn sniff_engine(cfg: &Config, source: &str) -> Engine {
+        if let Some(engine) = cfg.engine {
+            return engine;
+        }
+        magic::scan(source)
+            .iter()
+            .find(|m| m.key.eq_ignore_ascii_case("TeX program"))
+            .and_then(|m| Engine::from_program(&m.value))
+            .unwrap_or(Engine::PdfTeX)
     }
 
     /// What the source itself says: magic comments, and — since they name the
@@ -288,6 +290,11 @@ impl Plugins {
         };
         if let Some(engine) = Engine::from_program(&program) {
             self.engine = engine;
+            if Engine::writes_dvi(&program) && !self.sources.contains(&(Kind::Output, "configured")) {
+                self.output = Output::Dvi;
+                self.sources.retain(|(kind, _)| *kind != Kind::Output);
+                self.sources.push((Kind::Output, "magic comment"));
+            }
             self.program = program;
             self.sources.retain(|(kind, _)| *kind != Kind::Engine);
             self.sources.push((Kind::Engine, "magic comment"));

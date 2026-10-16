@@ -1,0 +1,7 @@
+\newcounter{pbCounter}
+\setcounter{pbCounter}{0}
+\newcommand{\pbitem}[3]{\refstepcounter{pbCounter}\label{pb:#1}\item[\texttt{Problem \thepbCounter}] -- #2 \\\\ #3}
+
+\newcommand{\pbrefn}[2]{\hyperref[pb:#1]{Problem~\ref{pb:#1} (#2)}}
+\WithSuffix\newcommand\pbrefn*[2]{Problem~\ref*{pb:#1} (#2)}
+\newcommand{\pbref}[1]{\hyperref[pb:#1]{Problem~\ref{pb:#1}}}

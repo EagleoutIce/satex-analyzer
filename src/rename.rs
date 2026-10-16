@@ -5,7 +5,8 @@
 //! definitions recorded at one declaration span, the key their subject.
 //! A site the source does not spell stops the rename.
 
-use std::collections::{BTreeSet, HashSet};
+use crate::fixed::HashSet;
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use crate::builtins::{LoadKind, OccKind, Primitive};
@@ -52,14 +53,10 @@ fn writable(analysis: &Analysis, file: FileId) -> Option<String> {
     editable(analysis, &path).then_some(path)
 }
 
-fn pos(span: Span) -> Pos {
-    Pos::new(span.line, span.col)
-}
-
 fn scan_at(sources: &Sources, analysis: &Analysis, span: Span) -> Option<(String, Rc<Text>, Scan)> {
     let path = writable(analysis, span.file)?;
     let text = sources.get(&path)?;
-    let scan = Scan::at(&text, pos(span), cats(analysis, span.file))?;
+    let scan = Scan::at(&text, Pos::of(span), cats(analysis, span.file))?;
     Some((path, text, scan))
 }
 
@@ -91,7 +88,7 @@ fn family<'a>(
             return Err(format!("`\\{name}` is not defined in this project"));
         }
         // The binding under the cursor, not every macro of the name.
-        let here = |span: Span| analysis.file_name(span.file) == path && pos(span) == at;
+        let here = |span: Span| analysis.file_name(span.file) == path && Pos::of(span) == at;
         let bound = named.iter().find(|d| here(d.span)).map(|d| d.span).or_else(|| {
             let call = analysis.facts.expansions.iter().find(|e| Some(e.name) == sym && here(e.span))?;
             let MeaningKind::Macro(node) = call.meaning else { return None };
@@ -144,11 +141,11 @@ fn declaration(
     };
     let head = scan.peek().cloned();
     if head.as_ref().is_some_and(|l| scan.name(l) == Some(name)) {
-        let at = head.map(|l| l.start).unwrap_or(pos(span));
+        let at = head.map(|l| l.start).unwrap_or(Pos::of(span));
         scan.advance();
         return spelled(Pos::new(at.line, at.col + 1 + inside), &text).ok_or_else(unwritten);
     }
-    if let Some(site) = keyed.then(|| spelled(pos(span), &text)).flatten() {
+    if let Some(site) = keyed.then(|| spelled(Pos::of(span), &text)).flatten() {
         return Ok(site);
     }
     // The span is the defining call: the name is one of its arguments.
@@ -186,7 +183,7 @@ fn uses(
         let Some((path, text, mut scan)) = scan_at(sources, analysis, use_.span) else { continue };
         let inside = offset(spelled, key).unwrap_or(0);
         // A `\csname` site is recorded at the name's first character.
-        let at = pos(use_.span);
+        let at = Pos::of(use_.span);
         let end = Pos::new(at.line, at.col + spelled.chars().count() as u32);
         if text.slice(at, end) == Some(spelled) {
             out.push(site(&path, Pos::new(at.line, at.col + inside), key));
@@ -260,7 +257,7 @@ fn skip_head(scan: &mut Scan, text: &Text, span: Span, name: &str, subject: Opti
         return;
     }
     if let Some(key) = subject {
-        let at = pos(span);
+        let at = Pos::of(span);
         let width = key.chars().count() as u32;
         if text.slice(at, Pos::new(at.line, at.col + width)) == Some(key) {
             while scan.peek().is_some_and(|l| l.start.line == at.line && l.start.col < at.col + width) {
@@ -329,7 +326,7 @@ fn bodies(
     readers: &BTreeSet<String>,
 ) -> Vec<Site> {
     let spelled: BTreeSet<&str> = members.iter().map(|d| analysis.interner.name(d.name)).collect();
-    let mut seen: HashSet<Span> = HashSet::new();
+    let mut seen: HashSet<Span> = HashSet::default();
     let mut out = Vec::new();
     for def in analysis.facts.defs.iter().filter(|d| d.mac.is_some()) {
         if !seen.insert(def.span) {

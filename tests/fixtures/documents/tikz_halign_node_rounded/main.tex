@@ -1,0 +1,10 @@
+% A two-line node (align=center, `\\`) is an \halign; with rounded
+% corners its unknown size makes pgfmath fork.
+\documentclass{article}
+\usepackage{tikz}
+\begin{document}
+\begin{tikzpicture}
+\node[draw,rounded corners=2pt,align=center] (df) at (0,0) {A\\B};
+\end{tikzpicture}
+\gdef\SatexReachedEnd{}
+\end{document}

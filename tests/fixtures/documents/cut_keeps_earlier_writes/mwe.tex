@@ -1,0 +1,8 @@
+\documentclass{article}
+\begin{document}
+% A recursion cut inside a group that set \escapechar before it began:
+% the cut widens only what the recursion wrote.
+\def\zzloop{\zzloop\relax}
+\begingroup\escapechar=-1 \zzloop\ifnum\escapechar=-1 \else\gdef\EscapeWidened{}\fi\endgroup
+\gdef\SatexReachedEnd{}
+\end{document}

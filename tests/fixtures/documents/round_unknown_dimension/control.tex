@@ -1,0 +1,14 @@
+\documentclass{article}
+\usepackage{tikz}
+\makeatletter
+% An unknown non-negative width, and a difference of two: any sign.
+\setbox0\hbox{\the\pdfrandomseed}
+\setbox2\hbox{\romannumeral\pdfrandomseed}
+\newdimen\Interval \Interval=\pdfuniformdeviate 65536000 sp\relax
+\newdimen\Unknown \Unknown=\wd2 \advance\Unknown by -\wd0
+%OPS
+\makeatother
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

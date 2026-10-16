@@ -1,0 +1,10 @@
+\documentclass{article}
+% A control sequence name built from unknown text.
+\ExplSyntaxOn
+\edef\x{\pdffilemoddate{m.tex}}
+\cs_if_exist:cTF { mt-\x } { \gdef\AfterTest{} } { \gdef\AfterTest{} }
+\ExplSyntaxOff
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

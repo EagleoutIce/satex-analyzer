@@ -1,0 +1,143 @@
+{
+  "name": "satex",
+  "displayName": "satex",
+  "description": "LaTeX/TeX static analysis and language server, powered by satex.",
+  "version": "0.1.0",
+  "publisher": "TODO-publisher-id",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EagleoutIce/satex-analyzer.git",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "latex",
+    "tex",
+    "lint",
+    "static analysis",
+    "language server"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:latex",
+    "onLanguage:tex",
+    "onLanguage:bibtex"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In a workspace that is not trusted, satex analyzes but does not build: `satex: compile` runs latexmk, which runs the project's latexmkrc.",
+      "restrictedConfigurations": ["satex.rootFile"]
+    }
+  },
+  "contributes": {
+    "configuration": {
+      "title": "satex",
+      "properties": {
+        "satex.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Path to the `satex` binary. Empty: use the bundled binary, else `satex` on the `PATH`. Only user settings set it: a workspace never chooses the program VS Code runs."
+        },
+        "satex.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace the communication between VS Code and the satex language server."
+        },
+        "satex.statusBar.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show satex in the status bar: what it caches or analyzes, then its errors and warnings."
+        },
+        "satex.server.maxMemory": {
+          "type": "string",
+          "default": "2GiB",
+          "scope": "machine",
+          "markdownDescription": "Most memory one analysis of the language server may hold, such as `2GiB`; it stops cleanly beyond it. Empty: satex's own limit (`limits.memory`)."
+        },
+        "satex.rootFile": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Root document of the project, relative to the workspace folder. Empty: the active file. Used by the trace and compile commands."
+        }
+      }
+    },
+    "viewsContainers": {
+    "activitybar": [
+      { "id": "satex", "title": "satex", "icon": "media/satex.svg" }
+    ]
+  },
+  "views": {
+    "satex": [
+      { "id": "satex.findings", "name": "Findings", "icon": "media/satex.svg" },
+      { "id": "satex.actions", "name": "Actions", "icon": "media/satex.svg" }
+    ]
+  },
+  "commands": [
+      {
+        "command": "satex.traceAtCursor",
+        "title": "Trace Expansion Here",
+        "category": "satex"
+      },
+      {
+        "command": "satex.compile",
+        "title": "Compile",
+        "category": "satex"
+      },
+      {
+        "command": "satex.focus",
+        "title": "Show Findings",
+        "category": "satex"
+      },
+      {
+        "command": "satex.restart",
+        "title": "Restart Server",
+        "category": "satex"
+      },
+      {
+        "command": "satex.showOutput",
+        "title": "Show Server Output",
+        "category": "satex"
+      },
+      {
+        "command": "satex.openSettings",
+        "title": "Open Settings",
+        "category": "satex"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc --noEmit -p . && esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --minify --sourcemap --outfile=out/extension.js",
+    "lint": "eslint src",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --no-dependencies",
+    "package:local": "node scripts/try.mjs",
+    "try": "node scripts/try.mjs --install"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "eslint": "^9.0.0",
+    "ovsx": "^0.10.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0",
+    "vscode-languageclient": "^9.0.1",
+    "esbuild": "^0.25.0"
+  },
+  "icon": "icon.png"
+}

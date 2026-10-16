@@ -1,0 +1,10 @@
+% scrlayer-notecolumn reads its .slnc file in a \read loop at every
+% \clearpage; the page number that ends the loop is unknown.
+\documentclass[twoside]{scrbook}
+\usepackage[autoclearnotecolumns]{scrlayer-notecolumn}
+\begin{document}
+\frontmatter
+\title{T}\author{A}
+\maketitle
+\gdef\SatexReachedEnd{}
+\end{document}

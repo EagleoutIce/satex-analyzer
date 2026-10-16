@@ -1,0 +1,89 @@
+\documentclass[
+	verbose,
+	english,
+	type=bachelor-thesis, % master-thesis
+	field=Computer\ Science, % change your field
+	license=CCBY, % CCBY, CCBYSA, CCBYNC, CCBYNCSA; open an issue if you need another license
+	%sftitle,  % sans-serif titles
+	paper=a4,  % forces A4 format
+	%twoside,   % twosided layout
+	%draft,    % omit title page, listings, and particular chapters selected below using include only
+	%print,    % the printed version does not use colored links
+	%pageInFloatRef=false % if you want to have the default names for floats instead of <page><Letter>
+	%floatRefSidenotes=true % force 'on page' sidenotes for float refs (auto: only without pageInFloatRef)
+	%notomath=false % do not use noto math as a font but fallback to the mathpazo alternative
+]{thesis}
+
+\addbibresource{literature/literature.bib}
+
+% for the final page! (see below with `\makedeclarationofauthenticity)
+\ThesisModule{authenticity}
+% specify \signature{path/to/signature.png} to include a signature
+% you can also shift the signature with \signature[xshift=0pt,yshift=0pt]{path/to/signature.png}
+% if you want to set the location of the signature, use
+\signaturelocation{City}
+% if you want to set the submission date of the declaration, use
+\signaturedate{2025-12-30}
+\makedeclarationofauthenticity % for a predefined declaration of authenticity
+% \begin{declarationofauthenticity} % when you want to write your own text
+% 	No, I definitely did not copy all my code from StackOverflow. I swear!
+% \end{declarationofauthenticity}
+
+% provide addon listings support:
+\ThesisModule{listings}
+\LoadLanguage{R}
+
+\ThesisModule{units}
+
+\ThesisModule{pseudocode}
+% do you have a glossary?
+\ThesisModule{glossary}
+\loadglsentries{segments/glossary.tex}
+% do you want colored glossary symbols in the document?
+\def\glssym#1{{\color{purple!80!blue}\gls{#1}}}
+
+% == Important Metadata
+\title{Placeholder Title}
+\author{Author Name}
+\studentnumber{0000000} %your matriculation number if you have to
+
+\titleimage[width=.75\linewidth]{img/title-banner-image}
+\date{\today}
+
+\examiner{Examiner Name}{Institute A}
+% \examiner{Your Second Examiner}{Their Institute}
+\supervisor{Supervisor Name}{Institute A}
+% == End of Important Metadata
+
+\usepackage{tikz}
+\usetikzlibrary{positioning}
+\usetikzlibrary{graphs,quotes}
+\usetikzlibrary{calc}
+\usetikzlibrary{fit}
+\usetikzlibrary{backgrounds}
+\usetikzlibrary{shadows}
+\usepackage{suffix}
+\usepackage{xspace}
+\usepackage{soul}
+\usepackage{pgf}
+\usepackage{booktabs}
+\usepackage{fancyvrb}
+
+\input{util/annotations.tex}
+\input{util/words.tex}
+\input{util/notebook.tex}
+\input{util/problem-statement.tex}
+\input{util/graphs.tex}
+
+\begin{document}
+\begin{figure}[h]
+    \begin{notebook}{A}
+        \cell{a}{\bR{x <- x + 1}}
+    \end{notebook}
+    \vspace{-2mm}
+    \caption{Simple Notebook}
+    \label{fig:simple-notebook}
+\end{figure}
+After.
+\gdef\SatexReachedEnd{}
+\end{document}
