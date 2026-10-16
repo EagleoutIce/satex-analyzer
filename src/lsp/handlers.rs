@@ -846,7 +846,9 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
                             start: to_lsp(doc, Pos::new(pos.line, pos.col - typed)),
                             end: to_lsp(doc, Pos::new(pos.line, pos.col + close as u32)),
                         };
-                        let new_text = format!("{env}}}\n{body}\n\\end{{{env}}}");
+                        let args: String =
+                            (1..=environment_arguments(analysis, &env)).map(|i| format!("{{${i}}}")).collect();
+                        let new_text = format!("{env}}}{args}\n{body}\n\\end{{{env}}}");
                         it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
                         it.insert_text_format = Some(InsertTextFormat::SNIPPET);
                     }
@@ -965,8 +967,8 @@ fn environments(analysis: &Analysis, pos: Pos) -> Vec<(String, bool)> {
         let defs: Vec<_> = analysis.facts.defs.iter().filter(|d| d.name == sym).collect();
         !defs.is_empty() && !defs.iter().any(|d| analysis.visible_in(d.span, analysis.main_file, pos.line, pos.col))
     };
-    let generic = body_reach(analysis, "document", 400);
-    let marks: BTreeSet<_> = body_reach(analysis, "item", 1).difference(&generic).copied().collect();
+    // A list environment is made with `\list`, whose items are `\item`s.
+    let list = analysis.interner.lookup("list");
     let mut out = Vec::new();
     for i in 0..analysis.interner.len() as u32 {
         let end = crate::tex::Sym(i);
@@ -979,7 +981,7 @@ fn environments(analysis: &Analysis, pos: Pos) -> Vec<(String, bool)> {
         if !user(begin) || !user(end) || later(begin) {
             continue;
         }
-        let items = !marks.is_empty() && !body_reach(analysis, base, 400).is_disjoint(&marks);
+        let items = list.is_some_and(|l| body_reach(analysis, base, 400).contains(&l));
         out.push((base.to_string(), items));
     }
     out.sort();
@@ -1010,11 +1012,10 @@ fn body_reach(analysis: &Analysis, name: &str, limit: usize) -> BTreeSet<crate::
 /// Command names in scope at `pos`, ranked for a document author: the
 /// project's own first, then documented names from packages and the
 /// kernel (no `@`, `_` or `:`), more used ones first, internals last.
-/// Each carries a snippet for its mandatory arguments.
-/// The commands in scope at `pos` whose name holds `typed` (case aside),
-/// the best [`COMMANDS_SHOWN`] of them, and whether there were more.
-fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionItem>, bool) {
-    let takes = analysis.takes.get_or_init(|| {
+/// The fewest arguments each defined name takes, from the definitions
+/// query, once per analysis.
+fn takes(analysis: &Analysis) -> &crate::fixed::HashMap<String, u8> {
+    analysis.takes.get_or_init(|| {
         query::run(analysis, Query::Definitions, &Filter::Always)
             .into_iter()
             .filter_map(|r| {
@@ -1023,7 +1024,37 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
                 Some((name, min))
             })
             .collect()
-    });
+    })
+}
+
+/// Environments whose begin command reads its mandatory arguments through
+/// an internal macro (`\tabular` hands them to `\@tabular`), so its own
+/// definition takes none: how many they are.
+const ENVIRONMENT_ARGUMENTS: &[(&str, u8)] = &[
+    ("array", 1),
+    ("minipage", 1),
+    ("multicols", 1),
+    ("tabular", 1),
+    ("tabular*", 2),
+    ("tabularx", 2),
+    ("thebibliography", 1),
+    ("wrapfigure", 2),
+];
+
+/// How many mandatory arguments `\begin{env}` takes.
+fn environment_arguments(analysis: &Analysis, env: &str) -> u8 {
+    ENVIRONMENT_ARGUMENTS
+        .iter()
+        .find(|(name, _)| *name == env)
+        .map(|(_, n)| *n)
+        .unwrap_or_else(|| takes(analysis).get(&format!("\\{env}")).copied().unwrap_or(0))
+}
+
+/// Each carries a snippet for its mandatory arguments.
+/// The commands in scope at `pos` whose name holds `typed` (case aside),
+/// the best [`COMMANDS_SHOWN`] of them, and whether there were more.
+fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionItem>, bool) {
+    let takes = takes(analysis);
     let typed = typed.to_lowercase();
     let mut used: crate::fixed::HashMap<crate::tex::Sym, u32> = crate::fixed::HashMap::default();
     for e in &analysis.facts.expansions {
@@ -1053,7 +1084,11 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
                 _ => 1,
             };
             let count = analysis.interner.lookup(&label).and_then(|s| used.get(&s)).copied().unwrap_or(0);
+            // The argument is a name to pick: the editor asks again inside
+            // the braces, and an environment brings its `\end`.
+            let pick = matches!(label.as_str(), "begin" | "end" | "usepackage" | "documentclass" | "ref" | "cref" | "cite");
             let (insert_text, format) = match takes.get(&name).copied().unwrap_or(0) {
+                _ if pick => (format!("{label}{{$1}}"), InsertTextFormat::SNIPPET),
                 0 => (label.clone(), InsertTextFormat::PLAIN_TEXT),
                 min => {
                     let args: String = (1..=min).map(|i| format!("{{${i}}}")).collect();
@@ -1067,6 +1102,11 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
                 detail: Some(format!("{effective}  ({package})")),
                 insert_text: Some(insert_text),
                 insert_text_format: Some(format),
+                command: pick.then(|| lsp_types::Command {
+                    title: "pick".into(),
+                    command: "editor.action.triggerSuggest".into(),
+                    arguments: None,
+                }),
                 ..Default::default()
             })
         })
