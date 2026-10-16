@@ -222,9 +222,15 @@ pub struct Env {
     /// set, which is what the package's effect may depend on.
     tracking: std::cell::Cell<bool>,
     reads: std::cell::RefCell<Reads>,
-    /// While calls are recorded: every name read, in order.
+    /// While calls are recorded: the names read, in order, each once
+    /// since `read_floor`, where the innermost recorded call began.
     logging: std::cell::Cell<bool>,
     read_log: std::cell::RefCell<Vec<u32>>,
+    read_floor: std::cell::Cell<usize>,
+    /// Per name, where it was logged last: the log's generation in the
+    /// high half, its position plus one in the low half.
+    read_last: std::cell::RefCell<Vec<u64>>,
+    read_generation: std::cell::Cell<u32>,
 }
 
 /// Which part of a binding a read looked at.
@@ -549,9 +555,29 @@ impl Env {
     /// Returns whether it was recording before.
     #[inline]
     fn log_read(&self, sym: Sym) {
-        if self.logging.get() {
-            self.read_log.borrow_mut().push(sym.0);
+        if !self.logging.get() {
+            return;
         }
+        let mut log = self.read_log.borrow_mut();
+        let mut last = self.read_last.borrow_mut();
+        let i = sym.0 as usize;
+        if last.len() <= i {
+            last.resize(i + 1, 0);
+        }
+        // Logged since the innermost recording began: every recording
+        // running now sees it already.
+        let generation = u64::from(self.read_generation.get()) << 32;
+        let at = last[i];
+        if at >> 32 << 32 == generation && (at & u64::from(u32::MAX)) as usize > self.read_floor.get() {
+            return;
+        }
+        log.push(sym.0);
+        last[i] = generation | log.len() as u64;
+    }
+
+    /// Where the innermost recorded call began in the log.
+    pub fn set_read_floor(&self, at: usize) {
+        self.read_floor.set(at);
     }
 
     /// Log every name read from now on (`on`), or stop and forget the log.
@@ -559,6 +585,12 @@ impl Env {
         self.logging.set(on);
         if !on {
             self.read_log.borrow_mut().clear();
+            self.read_floor.set(0);
+            let generation = self.read_generation.get().wrapping_add(1);
+            self.read_generation.set(generation);
+            if generation == 0 {
+                self.read_last.borrow_mut().clear();
+            }
         }
     }
 
