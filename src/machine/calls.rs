@@ -106,7 +106,6 @@ impl Machine<'_> {
                 unknown,
             };
             crate::push_shared(&mut self.call_recs, rec);
-            self.sync_read_floor();
         }
     }
 
@@ -243,12 +242,6 @@ impl Machine<'_> {
         if self.call_recs.is_empty() {
             self.env.log_reads(false);
         }
-        self.sync_read_floor();
-    }
-
-    /// The read log keeps each name once per innermost recorded call.
-    pub(crate) fn sync_read_floor(&self) {
-        self.env.set_read_floor(self.call_recs.last().map_or(0, |rec| rec.reads));
     }
 
     /// A binding that holds unknown text, which a parser walks a token at
