@@ -1088,6 +1088,24 @@ pub fn timings(analysis: &crate::machine::Analysis, links: Links) -> String {
         let _ = writeln!(out, "  {:<10} {:>8.1} ms{note}", phase.as_str(), elapsed.as_secs_f64() * 1000.0);
     }
 
+    let calls = analysis.timings.top_calls(15);
+    if !calls.is_empty() {
+        let _ = writeln!(out, "{}", heading("most expanded"));
+        for (sym, count) in calls {
+            let _ = writeln!(out, "  {count:>12}  \\{}", analysis.interner.name(sym));
+        }
+    }
+
+    let sites = analysis.timings.top_sites(15);
+    if !sites.is_empty() {
+        let _ = writeln!(out, "{}", heading("costliest lines (tokens read until the next own line)"));
+        for ((file, line), tokens) in sites {
+            let path = analysis.files.get(usize::from(file)).map(|f| f.path.as_str()).unwrap_or_default();
+            let name = path.rsplit('/').next().unwrap_or(path);
+            let _ = writeln!(out, "  {tokens:>12}  {name}:{line}");
+        }
+    }
+
     let root = crate::query::summary(analysis);
     let mut rows: Vec<(String, &crate::query::Node)> = Vec::new();
     flatten(&root, String::new(), true, true, &mut rows);

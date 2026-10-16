@@ -3378,6 +3378,18 @@ will look undefined",
     }
 
     fn read_token(&mut self, across_files: bool) -> Option<Token> {
+        let t = self.take_token(across_files);
+        if self.out.timings.is_enabled()
+            && let Some(t) = t
+            && self.last_file.is_some()
+            && self.own_file(t.span.file)
+        {
+            self.out.timings.at_site(t.span.file, t.span.line);
+        }
+        t
+    }
+
+    fn take_token(&mut self, across_files: bool) -> Option<Token> {
         if self.over_budget() {
             return None;
         }
@@ -7263,6 +7275,9 @@ will look undefined",
     }
 
     fn expand_macro(&mut self, sym: Sym, m: Rc<MacroDef>, span: Span) {
+        if self.out.timings.is_enabled() {
+            self.out.timings.count_call(sym);
+        }
         if self.join_hooks.contains(&sym)
             || self.join_commands.iter().any(|&c| self.env.meaning(c).as_macro().is_some_and(|d| Rc::ptr_eq(d, &m)))
         {

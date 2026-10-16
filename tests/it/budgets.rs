@@ -373,3 +373,16 @@ fn expl3_regex_scan_of_lines() {
         without("regex-scan", &analysis, &["limit-reached", "endless-loop"]);
     }
 }
+
+/// `--timings` names what a slow run spent its steps on: the macros
+/// expanded most and the document lines whose reading they followed.
+#[test]
+fn timings_name_the_costly_line_and_macro() {
+    let cfg = satex::config::Config { timings: true, ..crate::support::bare() };
+    let source = format!("{}\\def\\x#1{{#1#1#1#1}}\n\\x{{\\x{{\\x{{\\relax}}}}}}\n\\relax\n", crate::support::PRELUDE);
+    let analysis = satex::machine::Machine::analyze(&source, None, &cfg);
+    let sites = analysis.timings.top_sites(1);
+    assert_eq!(sites.first().map(|((_, line), _)| *line), Some(2), "{sites:?}");
+    let calls = analysis.timings.top_calls(1);
+    assert_eq!(calls.first().map(|(sym, count)| (analysis.interner.name(*sym), *count)), Some(("x", 21)));
+}
