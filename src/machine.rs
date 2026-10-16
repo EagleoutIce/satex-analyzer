@@ -3037,6 +3037,7 @@ will look undefined",
         // a built run forked 50x more than a cached one on the same document).
         self.call_runs.clear();
         self.call_recs = Rc::default();
+        self.sync_read_floor();
         self.scratch = Scratch::default();
         self.carried = Carried::default();
         self.unknown_chars.clear();
@@ -5042,6 +5043,9 @@ will look undefined",
     }
 
     pub fn run(&mut self) {
+        // Resolved afresh: a sandbox runs once per written line.
+        self.join_commands.clear();
+        self.join_hooks.clear();
         let points = self.cfg.analysis.join_paths_at.clone();
         for point in points {
             if let Some(name) = point.command {
@@ -9477,6 +9481,7 @@ will look undefined",
         if self.call_recs.is_empty() {
             self.env.log_reads(false);
         }
+        self.sync_read_floor();
         self.held_tokens = state.held_tokens;
         self.align_state = state.align_state;
         self.cell_base = state.cell_base;
