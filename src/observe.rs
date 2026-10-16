@@ -524,6 +524,12 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
     }
     let text = crate::tex::text_with_groups(tokens, &m.out.interner);
     let defined = sandbox_run(m, &text);
+    if m.out.timings.is_enabled()
+        && let Some(Some(sandbox)) = &m.line_sandbox
+    {
+        let steps = sandbox.out.steps;
+        m.out.timings.written_line((span.file, span.line), steps, &text);
+    }
     let parts = call_parts(m, span);
     m.written_lines.push(WrittenLine { head, args, keys, parts, defined, span, context });
 }

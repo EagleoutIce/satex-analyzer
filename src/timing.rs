@@ -36,6 +36,9 @@ pub struct Timings {
     /// what each line of the document costs, packages' work included.
     site: Option<(FileId, u32)>,
     sites: crate::fixed::HashMap<(FileId, u32), u64>,
+    /// What running each written line where it is read back cost, per
+    /// writing line: its tokens, how many lines, and the first line's text.
+    written: crate::fixed::HashMap<(FileId, u32), (u64, u32, String)>,
     /// Phases timed after the analysis is finished, so behind a lock: the
     /// command that reads the analysis only has it by shared reference.
     after: std::sync::Mutex<Vec<(Phase, Duration)>>,
@@ -107,6 +110,21 @@ impl Timings {
     pub fn top_sites(&self, n: usize) -> Vec<((FileId, u32), u64)> {
         let mut out: Vec<((FileId, u32), u64)> = self.sites.iter().map(|(&s, &c)| (s, c)).collect();
         out.sort_unstable_by_key(|&(s, c)| (std::cmp::Reverse(c), s));
+        out.truncate(n);
+        out
+    }
+
+    /// A line `site` wrote, run where it is read back, took `steps`.
+    pub fn written_line(&mut self, site: (FileId, u32), steps: u64, text: &str) {
+        let entry = self.written.entry(site).or_insert_with(|| (0, 0, text.chars().take(100).collect()));
+        entry.0 += steps;
+        entry.1 += 1;
+    }
+
+    /// The `n` writing lines whose written lines cost most, most first.
+    pub fn top_written(&self, n: usize) -> Vec<((FileId, u32), (u64, u32, String))> {
+        let mut out: Vec<_> = self.written.iter().map(|(&s, w)| (s, w.clone())).collect();
+        out.sort_unstable_by_key(|(s, w)| (std::cmp::Reverse(w.0), *s));
         out.truncate(n);
         out
     }
