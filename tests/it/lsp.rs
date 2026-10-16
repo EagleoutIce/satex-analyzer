@@ -762,3 +762,29 @@ fn a_finding_covers_its_call() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The comment above a definition documents it: in the hover, and per
+/// argument in the signature help while that argument is being typed.
+#[test]
+fn comments_above_a_definition_document_its_arguments() {
+    let text = "\\documentclass{article}\n% Greets someone.\n% #1: who is greeted\n% #2: the greeting\n\\newcommand{\\greet}[2]{#2, #1!}\n\\begin{document}\n\\greet{world}{He\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("sig", text);
+    let id = server.request(
+        "textDocument/signatureHelp",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 6, "character": 16 } }),
+    );
+    let help = server.response(id)["result"].clone();
+    let signature = &help["signatures"][0];
+    assert_eq!(signature["label"], "\\greet{⟨arg1⟩}{⟨arg2⟩}", "{help}");
+    assert_eq!(signature["documentation"], "Greets someone.");
+    assert_eq!(help["activeParameter"], 1);
+    assert_eq!(signature["parameters"][1]["documentation"], "the greeting");
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 6, "character": 3 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("Greets someone.") && hover.contains("`⟨arg1⟩` who is greeted"), "{hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}

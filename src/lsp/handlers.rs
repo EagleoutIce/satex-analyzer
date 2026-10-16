@@ -189,6 +189,17 @@ fn command_hover(analysis: &Analysis, name: &str) -> Option<String> {
         if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
             markdown.push_str(&format!("`\\{name}{}`\n\n", usage(sig)));
         }
+        if let Some(doc) = documented(record) {
+            if !doc.text.is_empty() {
+                markdown.push_str(&format!("{}\n\n", doc.text));
+            }
+            for (n, text) in &doc.params {
+                markdown.push_str(&format!("- `⟨arg{n}⟩` {text}\n"));
+            }
+            if !doc.params.is_empty() {
+                markdown.push('\n');
+            }
+        }
         let mut foot = Vec::new();
         if let (Some(file), Some(line)) = (text("file"), record.get("line").and_then(Json::as_u64)) {
             foot.push(format!("`{file}:{line}`"));
@@ -203,6 +214,96 @@ fn command_hover(analysis: &Analysis, name: &str) -> Option<String> {
         }
     }
     Some(markdown)
+}
+
+/// The comment block above the definition a record names.
+fn documented(record: &Record) -> Option<super::doccomment::DocComment> {
+    let path = record.get("path").and_then(Json::as_str)?;
+    let line = record.get("line").and_then(Json::as_u64)? as usize;
+    super::doccomment::above(&std::fs::read_to_string(path).ok()?, line)
+}
+
+/// The command whose argument the cursor is in, on its line: its name and
+/// how many arguments before it are complete.
+fn argument_of(line: &str, col: usize) -> Option<(String, u32)> {
+    let chars: Vec<char> = line.chars().take(col).collect();
+    let mut i = chars.len();
+    // Out to the group the cursor is in.
+    let mut depth = 0;
+    loop {
+        i = i.checked_sub(1)?;
+        match chars[i] {
+            '}' | ']' => depth += 1,
+            '{' | '[' if depth == 0 => break,
+            '{' | '[' => depth -= 1,
+            _ => {}
+        }
+    }
+    // The groups before it, back to the command's name.
+    let mut done = 0;
+    loop {
+        while i > 0 && chars[i - 1] == ' ' {
+            i -= 1;
+        }
+        let close = *chars.get(i.checked_sub(1)?)?;
+        let open = match close {
+            '}' => '{',
+            ']' => '[',
+            _ => break,
+        };
+        let mut depth = 0;
+        loop {
+            i = i.checked_sub(1)?;
+            if chars[i] == close {
+                depth += 1;
+            } else if chars[i] == open {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+        }
+        done += 1;
+    }
+    let end = i;
+    while i > 0 && (chars[i - 1].is_ascii_alphabetic() || chars[i - 1] == '@' || chars[i - 1] == '*') {
+        i -= 1;
+    }
+    (i > 0 && chars[i - 1] == '\\' && i < end).then(|| (chars[i..end].iter().collect(), done))
+}
+
+/// The usage line of the command whose argument the cursor is in, the
+/// argument it is at, and what the comment above its definition says.
+pub fn signature_help(analysis: &Analysis, doc: &Text, position: Position) -> Option<lsp_types::SignatureHelp> {
+    let pos = to_pos(doc, position);
+    let (name, done) = argument_of(doc.line(pos.line), pos.col as usize)?;
+    let (records, _) = query::explain(analysis, std::slice::from_ref(&name), false).ok()?;
+    let record = records.iter().find(|r| r.get("signature").and_then(Json::as_str).is_some_and(|s| !s.is_empty()))?;
+    let label = format!("\\{name}{}", usage(record.get("signature").and_then(Json::as_str)?));
+    let comment = documented(record);
+    let mut parameters = Vec::new();
+    for n in 1..=9u8 {
+        let arg = format!("⟨arg{n}⟩");
+        if !label.contains(&arg) {
+            break;
+        }
+        let text = comment.as_ref().and_then(|d| d.params.iter().find(|(k, _)| *k == n)).map(|(_, t)| t.clone());
+        parameters.push(lsp_types::ParameterInformation {
+            label: lsp_types::ParameterLabel::Simple(arg),
+            documentation: text.map(lsp_types::Documentation::String),
+        });
+    }
+    let documentation = comment.map(|d| d.text).filter(|t| !t.is_empty()).map(lsp_types::Documentation::String);
+    Some(lsp_types::SignatureHelp {
+        signatures: vec![lsp_types::SignatureInformation {
+            label,
+            documentation,
+            parameters: Some(parameters),
+            active_parameter: Some(done),
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(done),
+    })
 }
 
 /// A usage line for an xparse-style signature (`smO{0}om`): `*` for a star,
@@ -1086,7 +1187,8 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
             let count = analysis.interner.lookup(&label).and_then(|s| used.get(&s)).copied().unwrap_or(0);
             // The argument is a name to pick: the editor asks again inside
             // the braces, and an environment brings its `\end`.
-            let pick = matches!(label.as_str(), "begin" | "end" | "usepackage" | "documentclass" | "ref" | "cref" | "cite");
+            let pick =
+                matches!(label.as_str(), "begin" | "end" | "usepackage" | "documentclass" | "ref" | "cref" | "cite");
             let (insert_text, format) = match takes.get(&name).copied().unwrap_or(0) {
                 _ if pick => (format!("{label}{{$1}}"), InsertTextFormat::SNIPPET),
                 0 => (label.clone(), InsertTextFormat::PLAIN_TEXT),
@@ -1188,4 +1290,17 @@ pub fn diagnostics_json(analysis: &Analysis) -> Vec<Json> {
         .collect();
     let text = crate::render::lsp_with(&records, |path| path_uri(path).to_string());
     serde_json::from_str(&text).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod signature_tests {
+    use super::argument_of;
+
+    #[test]
+    fn the_argument_the_cursor_is_in() {
+        assert_eq!(argument_of("\\greet{wor", 11), Some(("greet".into(), 0)));
+        assert_eq!(argument_of("x \\frac{a}{b", 13), Some(("frac".into(), 1)));
+        assert_eq!(argument_of("\\cmd[o]{a{b}c}{", 16), Some(("cmd".into(), 2)));
+        assert_eq!(argument_of("plain {text", 11), None);
+    }
 }

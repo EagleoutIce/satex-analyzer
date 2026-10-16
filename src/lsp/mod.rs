@@ -20,6 +20,7 @@
 // lsp_types::Uri's interior mutability is a cache with no bearing on Eq/Hash; safe as a map key.
 #![allow(clippy::mutable_key_type)]
 
+mod doccomment;
 mod handlers;
 mod primitives;
 mod unreached;
@@ -122,6 +123,11 @@ fn server_capabilities() -> ServerCapabilities {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
         })),
+        signature_help_provider: Some(lsp_types::SignatureHelpOptions {
+            trigger_characters: Some(vec!["{".into(), "[".into()]),
+            retrigger_characters: Some(vec!["}".into(), "]".into()]),
+            work_done_progress_options: Default::default(),
+        }),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec!["\\".into(), "{".into()]),
             ..Default::default()
@@ -283,6 +289,13 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             let refs = ask(engine_tx, |reply| EngineMsg::References(uri, pos, declarations, reply))?;
             Ok(serde_json::to_value(refs).unwrap())
         }
+        "textDocument/signatureHelp" => {
+            let p: lsp_types::SignatureHelpParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let uri = p.text_document_position_params.text_document.uri;
+            let pos = p.text_document_position_params.position;
+            let help = ask(engine_tx, |reply| EngineMsg::SignatureHelp(uri, pos, reply))?;
+            Ok(serde_json::to_value(help).unwrap())
+        }
         "textDocument/completion" => {
             let p: CompletionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let uri = p.text_document_position.text_document.uri;
@@ -373,6 +386,7 @@ enum EngineMsg {
     Definition(Uri, Position, Sender<Option<lsp_types::GotoDefinitionResponse>>),
     References(Uri, Position, bool, Sender<Option<Vec<Location>>>),
     Completion(Uri, Position, Sender<lsp_types::CompletionResponse>),
+    SignatureHelp(Uri, Position, Sender<Option<lsp_types::SignatureHelp>>),
     DocumentSymbol(Uri, Sender<Option<lsp_types::DocumentSymbolResponse>>),
     Highlight(Uri, Position, Sender<Option<Vec<lsp_types::DocumentHighlight>>>),
     PrepareRename(Uri, Position, Sender<Option<lsp_types::PrepareRenameResponse>>),
@@ -642,6 +656,11 @@ impl Engine {
                 let result = with_doc(&self.docs, &uri, |analysis, text| {
                     handlers::references(analysis, text, &path, pos, decls)
                 });
+                let _ = reply.send(result.flatten());
+            }
+            EngineMsg::SignatureHelp(uri, pos, reply) => {
+                self.ensure(&uri);
+                let result = with_doc(&self.docs, &uri, |analysis, text| handlers::signature_help(analysis, text, pos));
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::Completion(uri, pos, reply) => {
