@@ -793,6 +793,9 @@ impl Machine<'_> {
                 paths.fork = Some(fork.clone());
             }
             if !self.infeasible {
+                if going && paths.top {
+                    self.read_pending_fis();
+                }
                 let base = paths.fork.as_ref().expect("set above");
                 let (state, env) = (self.save_path(), self.env.path(base));
                 let config = Config::new(state, env, !going);
@@ -886,9 +889,11 @@ impl Machine<'_> {
                 // command came from, a list with no unknown text left,
                 // as deep in conditionals and groups: the entry's call
                 // ended, a sibling call (tex.web §§ 321-322: a list is
-                // read on only once what came of it is done).
+                // read on only once what came of it is done). Read from a
+                // list that list called, it is a recursion: no bound.
                 let sibling = !read
                     && m == l.levels.len()
+                    && levels.len() == m + 1
                     && known.get(m) == Some(&true)
                     && (depth.1, depth.2) == (l.depth.1, l.depth.2)
                     && l.top.as_ref().is_some_and(|(top, at)| {
@@ -1943,6 +1948,27 @@ impl Machine<'_> {
         text.push(one);
         text.extend_from_slice(tail);
         Some(text)
+    }
+
+    /// An arm of the document's commands whose next tokens are `\\fi`s in
+    /// token lists reads them now, as TeX's main loop would next: arms that
+    /// leave a recursion at different depths then stand in one place and
+    /// join when parked.
+    fn read_pending_fis(&mut self) {
+        while self.conds.last().is_some_and(|c| !c.many) && self.testing.last() != Some(&self.conds.len()) {
+            let next = self.input.iter().rev().find_map(|f| match f {
+                Frame::Tokens { toks, pos, .. } if *pos < toks.len() => Some(Some(toks[*pos])),
+                Frame::Returned(t) if !t.is_empty() => Some(t.last().copied()),
+                Frame::Tokens { .. } | Frame::Returned(_) => None,
+                _ => Some(None),
+            });
+            let fi = next
+                .flatten()
+                .filter(|t| t.cs().is_some_and(|s| matches!(self.env.meaning(s), Meaning::Primitive(Primitive::Fi))));
+            let Some(fi) = fi else { break };
+            self.next_token();
+            self.conditional_fi(fi.span);
+        }
     }
 
     /// Park `config`, joined with a parked path at its place ([`partner`]).

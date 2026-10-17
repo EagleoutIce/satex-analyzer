@@ -1875,6 +1875,15 @@ impl Machine<'_> {
             if (xs.len() > 1 || ys.len() > 1) && answers.and_then(|a| alike(a.into_iter())).is_some() {
                 return;
             }
+            // Several meanings against one: a path per answer, not per member.
+            for (t, other) in [(a, &ys), (b, &xs)] {
+                let sym = t.cs().or_else(|| self.active_cs(t));
+                if let (Some(sym), [y]) = (sym, &other[..])
+                    && self.split_meaning_by(sym, t.span, |m, x| m.ifx_pair(x, y))
+                {
+                    return;
+                }
+            }
         }
         for t in std::iter::once(a).chain(b) {
             if let Some(sym) = t.cs().or_else(|| self.active_cs(t)) {
@@ -2224,7 +2233,7 @@ impl Machine<'_> {
     }
 
     /// `\fi` ends the level.
-    fn conditional_fi(&mut self, span: Span) {
+    pub(crate) fn conditional_fi(&mut self, span: Span) {
         self.unfold_conditional(span);
         if self.conds.is_empty() {
             // tex.web § 510: "Extra \fi", ignored.

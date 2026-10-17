@@ -161,8 +161,9 @@ pub(crate) fn load_hashes(dir: &Path) {
     }
 }
 
-/// Leave this process's hashes in `dir` for the next run, if it made any.
-pub(crate) fn save_hashes(dir: &Path) {
+/// Leave this process's hashes in `dir` for the next run, if it made any,
+/// and keep `dir` within `bound` with them.
+pub(crate) fn save_hashes(dir: &Path, bound: u64) {
     let stored: StoredHashes = {
         let mut memo = HASHES.lock().unwrap_or_else(|e| e.into_inner());
         if !std::mem::take(&mut memo.dirty) {
@@ -179,6 +180,7 @@ pub(crate) fn save_hashes(dir: &Path) {
     if std::fs::write(&temporary, bytes).is_ok() && std::fs::rename(&temporary, &target).is_err() {
         let _ = std::fs::remove_file(&temporary);
     }
+    crate::machine::prune_caches(dir, bound);
 }
 
 /// The trees a cached path is written against: each TeX root under a tag
@@ -717,7 +719,14 @@ impl Format {
 
     /// The kernel cache for `source`, its paths resolved against `roots`,
     /// if every file it was read from still has the content it had.
-    pub(crate) fn load(dir: &Path, source: &Path, engine: &str, preload: u64, roots: &Roots) -> Result<Format, String> {
+    pub(crate) fn load(
+        dir: &Path,
+        source: &Path,
+        engine: &str,
+        preload: u64,
+        bound: u64,
+        roots: &Roots,
+    ) -> Result<Format, String> {
         load_hashes(dir);
         let path = cache_file(dir, source, engine, preload, roots);
         let bytes = std::fs::read(&path).map_err(|e| match e.kind() {
@@ -731,7 +740,7 @@ impl Format {
                 return Err(format!("content changed: {file}"));
             }
         }
-        save_hashes(dir);
+        save_hashes(dir, bound);
         touch(&path);
         Ok(format)
     }
@@ -747,7 +756,7 @@ impl Format {
     ) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
         let bytes = postcard::to_allocvec(self).map_err(|e| std::io::Error::other(e.to_string()))?;
-        save_hashes(dir);
+        save_hashes(dir, bound);
         let target = cache_file(dir, source, engine, preload, roots);
         let Some(_lock) = StoreLock::try_take(&target) else { return Ok(()) };
         let temporary = temporary_for(&target);

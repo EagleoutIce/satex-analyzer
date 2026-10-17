@@ -1390,6 +1390,23 @@ impl Env {
         self.changed(i);
     }
 
+    /// [`Env::refine`] to one of `members`: still several, the name keeps
+    /// them as its meanings.
+    pub fn refine_to(&mut self, sym: Sym, members: &[Meaning]) {
+        match members {
+            [one] => self.refine(sym, one.clone()),
+            _ => {
+                self.effective += 1;
+                let i = sym.0 as usize;
+                let Some(Some(binding)) = self.slots.get(i) else { return };
+                let binding = Binding { meaning: Meaning::Unknown, may: Some(members.into()), ..binding.clone() };
+                self.log(i);
+                self.slots[i] = Some(binding);
+                self.changed(i);
+            }
+        }
+    }
+
     /// The groups the running path stands in, outermost first: each one's
     /// kind and waiting `\aftergroup` tokens.
     pub fn groups(&self) -> Vec<(GroupKind, bool, Vec<Tok>)> {
