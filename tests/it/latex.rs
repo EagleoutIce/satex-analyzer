@@ -3190,3 +3190,23 @@ fn pgfmath_keeps_the_signs_of_an_unknown_number_apart() {
     assert_eq!(count("recursion-widened"), 0, "{:?}", codes(&analysis));
     assert!(count("undecided-loop") <= 2, "{:?}", codes(&analysis));
 }
+
+/// Capabilities: unknown inputs, code as data. `\char_generate:nn` of an
+/// unknown code names `c__char_<roman numeral>_tl`: the numeral is unknown
+/// characters, part of the name, never a token that stops the `\csname`.
+#[test]
+fn char_generate_of_an_unknown_code_closes_its_csname() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\str_set:Ne \l_tmpa_str { \char_generate:nn { \int_rand:nn {32} {255} } {12} abc }
+\ExplSyntaxOff
+\begin{document}x\end{document}",
+    );
+    let stopped: Vec<_> =
+        analysis.facts.diagnostics.iter().filter(|d| d.message.contains("has no \\endcsname")).collect();
+    assert!(stopped.is_empty(), "{:?}", stopped.iter().map(|d| &d.message).collect::<Vec<_>>());
+}

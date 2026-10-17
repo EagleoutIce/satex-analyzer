@@ -2308,18 +2308,6 @@ impl Machine<'_> {
     /// The conditionals this module adds (see [`Cond`]).
     pub fn eval_extra_condition(&mut self, cond: Cond) -> Option<bool> {
         match cond {
-            Cond::AbsNum => {
-                let a = self.scan_int();
-                let relation = self.scan_relation_x();
-                let b = self.scan_int();
-                crate::scan::compare_abs(a, relation, b)
-            }
-            Cond::AbsDim => {
-                let a = self.scan_dimen();
-                let relation = self.scan_relation_x();
-                let b = self.scan_dimen();
-                crate::scan::compare_abs(a, relation, b)
-            }
             Cond::FontChar => {
                 let font = self.scan_font_ident();
                 let c = self.scan_int();

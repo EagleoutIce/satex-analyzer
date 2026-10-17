@@ -868,9 +868,11 @@ const OUTS: &[crate::support::PairRow] = &[
         (r"\thinmuskip=3mu plus 1fill \edef\out{\the\thinmuskip}", "3.0mu plus 1.0fill"),
         (r"\everypar{abc}\toks3=\expandafter{\the\everypar x}\edef\out{\the\everypar,\the\toks3}", "abc,abcx"),
     ]),
-    // etex: `YN`; and `N`, because the skipped `\ifpdfabsnum` needs its own `\fi`
+    // etex: `YN`; `Y` for any random value, decided by the interval of the
+    // absolute value; and `N`, because the skipped `\ifpdfabsnum` needs its own `\fi`
     ("pdftex_absolute_conditionals_are_conditionals", &[
         (r"\edef\out{\ifpdfabsnum -5>3 Y\else N\fi\ifpdfabsdim -2pt<1pt Y\else N\fi}", "YN"),
+        (r"\count1=\pdfuniformdeviate100 \advance\count1-200 \edef\out{\ifpdfabsnum\count1>100 Y\else N\fi}", "Y"),
         (r"\edef\out{\iffalse\ifpdfabsnum 1=1 \fi Y\else N\fi}", "N"),
     ]),
     // etex: `2.6,140`, `0`, `1`, `Y`, `1`
