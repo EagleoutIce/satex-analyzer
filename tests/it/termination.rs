@@ -605,7 +605,9 @@ fn a_summarized_loop_leaves_the_rest_of_the_document_read() {
     let analysis = Machine::analyze(&source, None, &cfg);
     let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
     assert!(!codes.contains(&"analysis-ended-early"), "{codes:?}");
-    assert!(codes.contains(&"recursion-widened"), "the loop is summarized: {codes:?}");
+    // Its groups widen to any number: it may meet a fixpoint, not a summary.
+    let ends = codes.iter().any(|c| matches!(*c, "recursion-widened" | "undecided-loop"));
+    assert!(ends, "the loop is joined or summarized: {codes:?}");
     let reached = analysis.facts.diagnostics.iter().any(|d| d.message.contains("not reached"));
     assert!(!reached, "the second file was not read");
     assert!(analysis.files.iter().any(|f| f.path.ends_with("rest.tex")), "rest.tex is read");
@@ -635,7 +637,9 @@ Plain text after the loop.
     crate::support::seed_kernel(&cfg);
     let analysis = Machine::analyze(source, None, &cfg);
     let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
-    assert!(codes.contains(&"recursion-widened"), "the loop is summarized: {codes:?}");
+    // Its groups widen to any number: it may meet a fixpoint, not a summary.
+    let ends = codes.iter().any(|c| matches!(*c, "recursion-widened" | "undecided-loop"));
+    assert!(ends, "the loop is joined or summarized: {codes:?}");
     assert!(!codes.contains(&"analysis-ended-early"), "{codes:?}");
     let label = analysis.interner.lookup("r@sec:after").or_else(|| analysis.interner.lookup("sec:after"));
     let seen = format!("{:?}", analysis.facts.diagnostics).contains("sec:after")

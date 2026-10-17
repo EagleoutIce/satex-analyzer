@@ -48,8 +48,11 @@ pub(super) struct Config {
 struct Key {
     progress: u64,
     places: Vec<Place>,
-    conds: Vec<(CondLimit, Span)>,
-    groups: Vec<GroupKind>,
+    /// Each conditional's limit and opener, and whether it stands for any
+    /// number of them.
+    conds: Vec<((CondLimit, Span), bool)>,
+    /// Each group's kind, and whether it stands for any number of them.
+    groups: Vec<(GroupKind, bool)>,
     scans: Vec<(usize, bool)>,
 }
 
@@ -66,27 +69,27 @@ struct Tag {
 }
 
 impl Key {
-    fn new(state: &PathState, groups: &[(GroupKind, Vec<Tok>)]) -> Key {
+    fn new(state: &PathState, groups: &[(GroupKind, bool, Vec<Tok>)]) -> Key {
         let places = state.input.iter().filter_map(place).collect();
         Key {
             progress: state.source_progress - state.lines_read,
             places,
-            conds: state.conds.iter().map(|c| (c.limit, c.at)).collect(),
-            groups: groups.iter().map(|g| g.0).collect(),
+            conds: state.conds.iter().map(|c| ((c.limit, c.at), c.many)).collect(),
+            groups: groups.iter().map(|g| (g.0, g.1)).collect(),
             scans: state.scans.iter().map(Accum::shape).collect(),
         }
     }
 }
 
 impl Tag {
-    fn new(state: &PathState, groups: Vec<(GroupKind, Vec<Tok>)>) -> Tag {
+    fn new(state: &PathState, groups: Vec<(GroupKind, bool, Vec<Tok>)>) -> Tag {
         Tag {
             mode: state.mode,
             catcodes: state.catcodes.clone(),
             end_line: state.end_line,
             after_assignment: state.after_assignment.map(|t| t.tok),
             streams: state.streams.clone(),
-            after: groups.into_iter().map(|g| g.1).collect(),
+            after: groups.into_iter().map(|g| g.2).collect(),
         }
     }
 }
@@ -144,6 +147,10 @@ struct Loop {
     top: Option<(Level, Place)>,
     /// The join of the states the passes began in, from the entry on.
     joined: Config,
+    /// Summarized, its body ran once more from the widened state: what a
+    /// pass writes under names the widening opened (`\csname a\the\n`)
+    /// is only met by running it.
+    rerun: bool,
 }
 
 /// One input level, by identity rather than by where it stands. Never by
@@ -214,6 +221,8 @@ struct Paths {
     /// Paths that ran `\end`, as they ended: the run ends in their state
     /// rather than in one that ran off the end of its input.
     job_ends: Vec<Config>,
+    /// Paths that ran off the end of their input, as they ended.
+    input_ends: Vec<Config>,
 }
 
 /// A dropped path: its error, where, and the diagnostics' counts the
@@ -382,9 +391,13 @@ impl Machine<'_> {
                 },
                 None => {
                     self.parted |= ended || self.halted;
-                    if ended && self.job_ended && paths.top {
+                    if ended && paths.top && !self.infeasible {
                         let fork = paths.fork.as_ref().expect("checked above");
-                        paths.job_ends.push(Config::new(self.save_path(), self.env.path(fork), true));
+                        let end = Config::new(self.save_path(), self.env.path(fork), true);
+                        match self.job_ended {
+                            true => paths.job_ends.push(end),
+                            false => paths.input_ends.push(end),
+                        }
                     }
                     if !ended && !self.halted {
                         let fork = paths.fork.as_ref().expect("checked above");
@@ -405,7 +418,13 @@ impl Machine<'_> {
             if let Some(i) = self.behind(&paths, live) {
                 if live {
                     let env = self.env.path(&fork);
-                    paths.parked.push(Config::new(self.save_path(), env, ended));
+                    let config = Config::new(self.save_path(), env, ended);
+                    // An ended path waits for the run's end, to join there.
+                    match (ended && paths.top && !self.infeasible, self.job_ended) {
+                        (true, true) => paths.job_ends.push(config),
+                        (true, false) => paths.input_ends.push(config),
+                        (false, _) => paths.parked.push(config),
+                    }
                 }
                 let path = paths.parked.swap_remove(i);
                 ended = path.ended;
@@ -429,7 +448,7 @@ impl Machine<'_> {
                         paths.heads.clear();
                         continue;
                     }
-                    if ended && !self.job_ended && !self.out.exhausted {
+                    if ended && !self.out.exhausted {
                         self.end_with_the_job(&mut paths, &fork);
                     }
                     self.halted = true;
@@ -485,11 +504,16 @@ impl Machine<'_> {
                 ended = false;
                 self.resume_config(&fork, joined);
             }
-            if paths.parked.is_empty() && paths.done.is_empty() && paths.arrived.is_empty() && paths.shelved.is_empty()
-            {
+            // Ended paths wait for the run's end: their fork stays.
+            let idle = paths.parked.is_empty()
+                && paths.done.is_empty()
+                && paths.arrived.is_empty()
+                && paths.job_ends.is_empty()
+                && paths.input_ends.is_empty();
+            if idle && paths.shelved.is_empty() {
                 self.env.unfork(fork);
                 paths.heads.clear();
-            } else if paths.parked.is_empty() && paths.done.is_empty() && paths.arrived.is_empty() {
+            } else if idle {
                 // Only paths dropped for an error wait. They and the
                 // recursion summaries move up to where the running path
                 // stands, so its later paths part from there, not from the
@@ -518,17 +542,28 @@ impl Machine<'_> {
         (self.unit, self.lone) = outer_unit;
     }
 
-    /// The last path ran off the end of its input without `\end`, which TeX
-    /// ends with a fatal error ("*** (job aborted, no legal \end found)",
-    /// tex.web § 360), while others ran `\end`. A document that compiles
-    /// took none like it: the run ends as those others did, joined.
+    /// The run ends in the join of every path that ended as the last one
+    /// did, by `\end` or off the end of its input. A last path that ran off
+    /// its input without `\end` while others ran it is a fatal error ("***
+    /// (job aborted, no legal \end found)", tex.web § 360): a document that
+    /// compiles took none like it, so the run ends as those others did.
     fn end_with_the_job(&mut self, paths: &mut Paths, fork: &Fork) {
-        let ends = std::mem::take(&mut paths.job_ends);
-        if ends.is_empty() || !self.cfg.analysis.assume_compiles {
+        let (jobs, inputs) = (std::mem::take(&mut paths.job_ends), std::mem::take(&mut paths.input_ends));
+        let aborted = !self.job_ended && !jobs.is_empty() && self.cfg.compiles();
+        if aborted {
+            let span = self.position_span();
+            self.report_dropped("*** (job aborted, no legal \\end found)", span);
+        }
+        let mut ends: Vec<Config> = match (aborted, self.job_ended) {
+            (true, _) | (false, true) => jobs,
+            (false, false) => inputs,
+        };
+        if !aborted {
+            ends.push(Config::new(self.save_path(), self.env.path(fork), true));
+        }
+        if ends.len() < 2 {
             return;
         }
-        let span = self.position_span();
-        self.report_dropped("*** (job aborted, no legal \\end found)", span);
         let last = match self.join_done(fork, &ends, false) {
             Some(joined) => joined,
             None => ends.last().expect("not empty").clone_config(),
@@ -827,6 +862,9 @@ impl Machine<'_> {
         if here.state.summary_of.contains(&id)
             && let Some(l) = paths.stopped.iter().position(reentry)
         {
+            if !std::mem::replace(&mut paths.stopped[l].rerun, true) {
+                return Next::Many(outcomes);
+            }
             let entry = paths.stopped[l].depth;
             let exits =
                 paths.parked.iter().chain(&paths.arrived).chain(&paths.done).any(|p| p.state.summary_of.contains(&id));
@@ -914,6 +952,7 @@ impl Machine<'_> {
                     places,
                     top,
                     joined,
+                    rerun: false,
                 });
                 keep_last(&mut paths.loops, self.limits.loop_heads);
                 capped
@@ -926,13 +965,28 @@ impl Machine<'_> {
         // with a unary minus on its stack or without) is a head of its own.
         // Past `limits.heads_apart` such heads at one place they are joined.
         let crowded = paths.heads.iter().filter(|h| same(h)).count() >= usize::from(self.limits.heads_apart);
-        let fits: Vec<bool> = {
+        let mut fits: Vec<bool> = {
             let typed = crate::env::typed!(self, syms);
             let slot = |sym: Sym| self.name(sym).starts_with(|c: char| c < ' ');
             // Only heads at this place are ever met here: the others are
             // never compared, a costly comparison of their bindings.
             paths.heads.iter().map(|h| same(h) && (crowded || data_apart(&h.config, &here, &typed, &slot))).collect()
         };
+        // Forced, and no head kept apart is this one: it joins every head
+        // here. A join that converges by widening needs no summary.
+        if forced && !paths.heads.iter().zip(&fits).any(|(h, f)| *f && h.config.key == here.key) {
+            fits = paths.heads.iter().map(same).collect();
+        }
+        // Forced, and a head here differs only in being fewer groups of one
+        // kind deep: both stand in any number of them from where they part
+        // (stacks as intervals), so the passes meet.
+        let mut here = here;
+        for (h, _) in paths.heads.iter_mut().zip(&fits).filter(|(h, f)| forced && **f && same(h)) {
+            if let Some((head, widened)) = self.widen_stacks(&fork, &h.config, &here) {
+                (h.config, here) = (head, widened);
+                break;
+            }
+        }
         let is_fi =
             |tok: Tok| matches!(tok, Tok::Cs(s) if matches!(self.env.meaning(s), Meaning::Primitive(Primitive::Fi)));
         let here_bare = entry.and_then(|e| fi_tail(&here.key, (e.0, e.1), &is_fi));
@@ -1015,8 +1069,11 @@ impl Machine<'_> {
             }
             (None, None) => (usize::MAX, here),
         };
+        // A summary runs the body once more from the widened state, unless
+        // a scan is in flight: that drive ends and would summarize anew.
+        let cut = !here.key.scans.is_empty();
         if forced_new && (h == usize::MAX || (!folded && paths.heads[h].config.key != here.key)) {
-            return self.summarize(paths, &fork, here, id, span, by);
+            return self.summarize(paths, &fork, here, id, span, by, cut);
         }
         if h == usize::MAX {
             // Met again inside its own input, it is a recursion: every
@@ -1126,7 +1183,7 @@ impl Machine<'_> {
         // not converge, so the loop is summarized (forced convergence).
         let diverges = widen && paths.heads[h].passes >= widen_after.saturating_mul(2);
         if forced_join || (diverges && paths.loops.iter().any(|l| l.id == id)) {
-            return self.summarize(paths, &fork, here, id, span, by);
+            return self.summarize(paths, &fork, here, id, span, by, cut);
         }
         if self.cfg.verbose >= 4 && widen {
             let names: Vec<&str> = growth.slots.iter().take(8).map(|&sym| self.name(sym)).collect();
@@ -1153,11 +1210,79 @@ impl Machine<'_> {
         self.explore(paths, false)
     }
 
-    /// A loop met `widen_after` times is not run again: what it could
-    /// write may hold anything, the input it read on unwinds to where it
-    /// was entered and reads one unknown token, and conditionals and groups
-    /// it opened are assumed closed. Met again in this drive, it stops.
-    fn summarize(&mut self, paths: &mut Paths, fork: &Fork, here: Config, id: LoopId, span: Span, by: Sym) -> Next {
+    /// Two paths that stand in the same place, in fewer or more groups or
+    /// conditionals of one kind above where they part: both widened to one
+    /// standing for any number of that kind from there (stacks as
+    /// intervals, [`crate::env::PathEnv::many_from`]). Only groups opened
+    /// since the fork, plain ones with the same tokens waiting.
+    fn widen_stacks(&mut self, fork: &Fork, a: &Config, b: &Config) -> Option<(Config, Config)> {
+        let (x, y) = (&a.key, &b.key);
+        if (x.progress, &x.places, &x.scans) != (y.progress, &y.places, &y.scans)
+            || (x.conds == y.conds && x.groups == y.groups)
+        {
+            return None;
+        }
+        let groups = match x.groups == y.groups {
+            true => None,
+            false => {
+                let (from, kind) = many_from(&x.groups, &y.groups)?;
+                let (ga, gb) = (a.env.groups(), b.env.groups());
+                let after = ga.get(from).or(gb.get(from)).map(|g| g.2.clone()).unwrap_or_default();
+                let fits = from >= fork.depth()
+                    && ga[from..].iter().chain(&gb[from..]).all(|g| g.2 == after)
+                    && a.env.plain_from(from)
+                    && b.env.plain_from(from);
+                let waiting = if ga.len() > from { a.env.after_at(from) } else { b.env.after_at(from) };
+                Some(fits.then(|| (from, kind, waiting, self.env.next_group_id()))?)
+            }
+        };
+        let conds = match x.conds == y.conds {
+            true => None,
+            false => {
+                let (from, _) = many_from(&x.conds, &y.conds)?;
+                let frame = a.state.conds.get(from).or(b.state.conds.get(from))?.clone();
+                let kind = |c: &[CondFrame]| c[from.min(c.len())..].iter().all(|f| f.kind == frame.kind);
+                Some((kind(&a.state.conds) && kind(&b.state.conds)).then_some((from, frame))?)
+            }
+        };
+        let widen = |c: &Config| {
+            let mut env = c.env.clone();
+            if let Some((from, kind, waiting, id)) = &groups {
+                env.many_from(*from, *kind, waiting, *id);
+            }
+            let mut state = c.state.clone();
+            if let Some((from, frame)) = &conds {
+                let frames = Rc::make_mut(&mut state.conds);
+                let deps = frames.iter().skip(from + 1).filter(|f| f.dep).count();
+                match frames.get_mut(*from) {
+                    Some(f) => f.many = true,
+                    None => frames.push(CondFrame { many: true, dep: false, ..frame.clone() }),
+                }
+                frames.truncate(from + 1);
+                let cds = Rc::make_mut(&mut state.cds);
+                cds.truncate(cds.len().saturating_sub(deps));
+            }
+            Config::new(state, env, c.ended)
+        };
+        Some((widen(a), widen(b)))
+    }
+
+    /// A loop met `widen_after` times is summarized: what it wrote may hold
+    /// anything, and its body runs once more from there (`cut` cuts at
+    /// once). Then its input unwinds to where it was entered and reads one
+    /// unknown token, and conditionals and groups it opened are assumed
+    /// closed. Met again in this drive, it stops.
+    #[allow(clippy::too_many_arguments)]
+    fn summarize(
+        &mut self,
+        paths: &mut Paths,
+        fork: &Fork,
+        here: Config,
+        id: LoopId,
+        span: Span,
+        by: Sym,
+        cut: bool,
+    ) -> Next {
         let Some(l) = paths.loops.iter().position(|l| l.id == id) else { return Next::None };
         let mut summarized = paths.loops.swap_remove(l);
         let depth = summarized.depth;
@@ -1182,7 +1307,7 @@ impl Machine<'_> {
         self.env.widen(&written, None, &crate::env::typed!(self, syms));
         let here = Config::new(self.save_path(), self.env.path(fork), false);
         let env = here.env.clone();
-        self.cut_loop(paths, fork, here, env, id, depth, span, by)
+        self.cut_loop(paths, fork, here, env, id, depth, span, by, cut)
     }
 
     /// A pass of a loop already summarized, met again: the summary's path
@@ -1232,7 +1357,7 @@ impl Machine<'_> {
             self.env.widen(&written, Some(&summary), &crate::env::typed!(self, syms));
             let here = Config::new(self.save_path(), self.env.path(fork), false);
             let env = here.env.clone();
-            return self.cut_loop(paths, fork, here, env, id, entry, span, id.1);
+            return self.cut_loop(paths, fork, here, env, id, entry, span, id.1, true);
         }
         for i in 0..paths.parked.len() + paths.arrived.len() + paths.done.len() {
             let (n, m) = (paths.parked.len(), paths.arrived.len());
@@ -1244,6 +1369,7 @@ impl Machine<'_> {
             let ended = c.ended;
             self.resume_config(fork, c.clone_config());
             self.env.widen(&written, Some(&summary), &crate::env::typed!(self, syms));
+            self.wild.union(&here.state.wild);
             let c = Config::new(self.save_path(), self.env.path(fork), ended);
             match i {
                 i if i < n => paths.parked[i] = c,
@@ -1268,9 +1394,12 @@ impl Machine<'_> {
         depth: (usize, usize, usize),
         span: Span,
         by: Sym,
+        cut: bool,
     ) -> Next {
         self.resume_config(fork, Config::new(here.state, env, false));
-        self.unwind(depth, span);
+        if cut {
+            self.unwind(depth, span);
+        }
         self.diagnose(
             Severity::Imprecision,
             "recursion-widened",
@@ -1287,9 +1416,46 @@ impl Machine<'_> {
         if !self.scratch.summary_of.contains(&id) {
             Rc::make_mut(&mut self.scratch.summary_of).push(id);
         }
-        let unknown = self.unknown_text(Unk::Any, span);
-        self.push_tokens(Rc::from(vec![unknown]));
+        if cut {
+            let unknown = self.unknown_text(Unk::Any, span);
+            self.push_tokens(Rc::from(vec![unknown]));
+        }
         self.explore(paths, false)
+    }
+
+    /// How many conditionals and groups `t` closes, less those it opens.
+    fn closing(&self, t: &Token) -> (i64, i64) {
+        self.closing_in(t, &mut Vec::new())
+    }
+
+    /// [`Machine::closing`], through parameterless macros (`\close` for
+    /// `\endgroup`) not met already in `seen`.
+    fn closing_in(&self, t: &Token, seen: &mut Vec<Sym>) -> (i64, i64) {
+        use crate::builtins::Primitive as P;
+        let char_group = |cat: crate::tex::Catcode| match cat {
+            crate::tex::Catcode::Begin => (0, -1),
+            crate::tex::Catcode::End => (0, 1),
+            _ => (0, 0),
+        };
+        match t.tok {
+            Tok::Chr(_, cat) => char_group(cat),
+            Tok::Cs(sym) => match self.env.meaning(sym) {
+                Meaning::Primitive(P::Fi) => (1, 0),
+                Meaning::Primitive(P::If(_)) => (-1, 0),
+                Meaning::Primitive(P::BeginGroup) => (0, -1),
+                Meaning::Primitive(P::EndGroup) => (0, 1),
+                Meaning::Char(_, cat) => char_group(cat),
+                Meaning::Macro(m) if m.parameter_text.items.is_empty() && !seen.contains(&sym) => {
+                    seen.push(sym);
+                    let sum = m.replacement_text.iter().map(|t| self.closing_in(t, seen));
+                    let sum = sum.fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+                    seen.pop();
+                    sum
+                }
+                _ => (0, 0),
+            },
+            _ => (0, 0),
+        }
     }
 
     /// Drop the token lists above `depth.0` input levels, never source
@@ -1300,15 +1466,35 @@ impl Machine<'_> {
     pub(super) fn unwind(&mut self, depth: (usize, usize, usize), span: Span) {
         self.leak_call_recs();
         let mut at = None;
+        // What the dropped text would itself have closed: closing that much
+        // is what running it does, no assumption.
+        let mut closes = (0i64, 0i64);
         while self.input.iter().filter_map(place).count() > depth.0
             && matches!(self.input.last(), Some(Frame::Tokens { .. } | Frame::Returned(_)))
         {
+            let left: Vec<Token> = match self.input.last() {
+                Some(Frame::Tokens { toks, pos, .. }) => toks[(*pos).min(toks.len())..].to_vec(),
+                Some(Frame::Returned(t)) => t.clone(),
+                _ => Vec::new(),
+            };
+            for t in &left {
+                let (c, g) = self.closing(t);
+                closes = (closes.0 + c, closes.1 + g);
+            }
             at = lower(at, self.input.last());
             self.pop_frame();
         }
         self.mark_cut_scans();
         let at = at.unwrap_or((depth.1, self.env.group_id_at(depth.2), 0));
-        if self.close_since(at) != (0, 0) {
+        // What the dropped text leaves open: any number of what the passes
+        // opened, when one kind (stacks as intervals).
+        let from = self.env.depth_upto(at.1);
+        let open = (self.conds.len().saturating_sub(at.0) as i64, (self.env.depth() - from) as i64);
+        if (open.0 > closes.0 || open.1 > closes.1) && self.many_since(at.0, from) {
+            return;
+        }
+        let (groups, conds) = self.close_since(at);
+        if (groups, conds) != (0, 0) && (conds as i64 > closes.0 || groups as i64 > closes.1) {
             self.diagnose(
                 Severity::Assumption,
                 "unbalanced-path",
@@ -1316,6 +1502,26 @@ impl Machine<'_> {
                 "a loop opened conditionals or groups it was summarized in; they are assumed closed".into(),
             );
         }
+    }
+
+    /// The conditionals above `conds` and the groups from `groups` up,
+    /// each as one standing for any number of them, when each is of one
+    /// kind; whether they were.
+    fn many_since(&mut self, conds: usize, groups: usize) -> bool {
+        let frames = &self.conds[conds.min(self.conds.len())..];
+        let alike = frames.iter().all(|f| (f.limit, f.at, f.kind) == (frames[0].limit, frames[0].at, frames[0].kind));
+        if !alike || !self.env.many_since(groups) {
+            return false;
+        }
+        if conds < self.conds.len() {
+            let frames = Rc::make_mut(&mut self.conds);
+            let deps = frames.iter().skip(conds + 1).filter(|f| f.dep).count();
+            frames[conds].many = true;
+            frames.truncate(conds + 1);
+            let cds = Rc::make_mut(&mut self.cds);
+            cds.truncate(cds.len().saturating_sub(deps));
+        }
+        true
     }
 
     /// The closers in `text` of conditionals opened before it (`\fi`,
@@ -1443,17 +1649,19 @@ impl Machine<'_> {
         }
     }
 
-    /// Assumed, as of a package that is done: it closed the groups it opened.
     /// Between two lines of a file, a path that stands where another does,
-    /// in the same conditionals but in more groups, has its extra groups
-    /// closed, so the two can join.
+    /// in the same conditionals but in more groups: in the document's own
+    /// text both stand in any number of the extra groups from where they
+    /// part ([`Machine::widen_stacks`]), so the two can join. In a package,
+    /// with `analysis.assume_packages_close_groups`, the extra groups are
+    /// assumed closed, as a package closes what it opens.
     fn close_extra_groups(&mut self, paths: &mut Paths, fork: &Fork) {
         let places: Vec<Place> = self.input.iter().filter_map(place).collect();
         if !places.iter().all(|p| matches!(p, Place::File(..) | Place::Pseudo(..))) {
             return;
         }
-        let here: Vec<GroupKind> = self.env.groups().into_iter().map(|g| g.0).collect();
-        let conds: Vec<(CondLimit, Span)> = self.conds.iter().map(|c| (c.limit, c.at)).collect();
+        let here: Vec<(GroupKind, bool)> = self.env.groups().into_iter().map(|g| (g.0, g.1)).collect();
+        let conds: Vec<((CondLimit, Span), bool)> = self.conds.iter().map(|c| ((c.limit, c.at), c.many)).collect();
         let Some(i) = paths.parked.iter().position(|p| {
             let k = &p.key;
             let n = k.groups.len().min(here.len());
@@ -1465,6 +1673,15 @@ impl Machine<'_> {
         }) else {
             return;
         };
+        let span = self.position_span();
+        if self.own_file(span.file) || !self.cfg.analysis.assume_packages_close_groups {
+            let live = Config::new(self.save_path(), self.env.path(fork), false);
+            if let Some((parked, live)) = self.widen_stacks(fork, &paths.parked[i], &live) {
+                paths.parked[i] = parked;
+                self.resume_config(fork, live);
+            }
+            return;
+        }
         let keep = paths.parked[i].key.groups.len().min(here.len());
         if paths.parked[i].key.groups.len() > here.len() {
             // The waiting path is the deeper one: it runs on from here.
@@ -1473,7 +1690,6 @@ impl Machine<'_> {
             paths.parked.push(Config::new(self.save_path(), env, false));
             self.resume_config(fork, other);
         }
-        let span = self.position_span();
         while self.env.depth() > keep {
             let mut catcodes = std::mem::take(&mut self.catcodes);
             self.env.pop_group(&mut catcodes);
@@ -1922,7 +2138,9 @@ impl Machine<'_> {
                 _ => None,
             })
             .collect();
-        digits?.parse::<i64>().ok().map(Num::exact)
+        // Only as the number prints: `00` is no text of 0.
+        let digits = digits.filter(|d| d.len() == 1 || !d.starts_with('0'))?;
+        digits.parse::<i64>().ok().map(Num::exact)
     }
 
     /// The texts a token from [`Machine::one_of`] stands for. `None` for
@@ -2058,7 +2276,7 @@ impl Machine<'_> {
                         c.key
                             .conds
                             .iter()
-                            .map(|(limit, at)| format!("{limit:?}@{}:{}", self.out.short_name(at.file), at.line))
+                            .map(|((limit, at), _)| format!("{limit:?}@{}:{}", self.out.short_name(at.file), at.line))
                             .collect()
                     };
                     let detail = if differ.contains(&"conds") {
@@ -2131,8 +2349,9 @@ impl Machine<'_> {
                     let name = self.name(sym).to_string();
                     match digit_run(&name).filter(|_| !self.is_unknown_name(sym)) {
                         Some((prefix, suffix)) => {
-                            let real = !matches!(self.env.meaning(sym), Meaning::Primitive(Primitive::Relax));
-                            self.wild.add(prefix, suffix, real);
+                            let meaning = self.env.meaning(sym);
+                            let real = !matches!(meaning, Meaning::Primitive(Primitive::Relax));
+                            self.wild.add(prefix, suffix, true, real.then_some(meaning));
                             false
                         }
                         None => true,
@@ -2627,4 +2846,17 @@ fn data_apart(a: &Config, b: &Config, typed: &crate::env::Typed, slot: &dyn Fn(S
         let (x, y) = (a.env.changed(sym), b.env.changed(sym));
         x.zip(y).is_some_and(|(x, y)| x.meaning == y.meaning) || !code(sym, x) && !code(sym, y)
     })
+}
+
+/// Where two stacks part when every frame above is the same one (whether
+/// it stands for many aside): the frame and where one standing for any
+/// number of it begins, below the part when the last shared frame is one.
+/// `None` when they are equal or part otherwise.
+fn many_from<T: PartialEq + Copy>(a: &[(T, bool)], b: &[(T, bool)]) -> Option<(usize, T)> {
+    let n = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    let t = a.get(n).or(b.get(n))?.0;
+    if !a[n..].iter().chain(&b[n..]).all(|f| f.0 == t) {
+        return None;
+    }
+    Some((if n > 0 && a[n - 1] == (t, true) { n - 1 } else { n }, t))
 }

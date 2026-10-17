@@ -40,7 +40,7 @@ const UNKNOWN_OPERAND: (u32, u8) = (u32::MAX, u8::MAX);
 
 /// Keeps the per-character code tables out of the namespace control
 /// sequences live in, the way the register names are kept out of it.
-const CODE: char = '\u{3}';
+pub(crate) const CODE: char = '\u{3}';
 
 impl Machine<'_> {
     pub fn execute(&mut self, p: Primitive, by: Sym, span: Span) {
@@ -77,25 +77,7 @@ impl Machine<'_> {
             };
             self.remove_item(removed);
         }
-        // An unknown `\globaldefs` leaves the scope open: assign globally,
-        // then widen to either possible value.
-        let scope = crate::builtins::assignment(p) && self.apply_global_defs();
-        let recent = scope.then(|| {
-            let recent = self.env.recent();
-            self.env.clear_recent();
-            recent
-        });
-        self.execute_command(p, by, span);
-        if let Some(recent) = recent {
-            self.diagnose(
-                Severity::Imprecision,
-                "unknown-globaldefs",
-                span,
-                "\\globaldefs holds a number satex does not know; what the assignment left is unknown".into(),
-            );
-            self.widen_since(0);
-            self.env.set_recent(recent);
-        }
+        self.scoped(p, span, |m| m.execute_command(p, by, span));
         if p == Primitive::IntegerParameter && self.env.identity(by) == self.intern("spacefactor") {
             let sf = self.env.value(self.env.identity(by)).as_int();
             if let Some(n) = &mut self.natural {
@@ -120,6 +102,28 @@ impl Machine<'_> {
             && let Some(token) = self.after_assignment.take()
         {
             self.unread(token);
+        }
+    }
+
+    /// tex.web § 1214: `\globaldefs` decides an assignment's scope. An
+    /// unknown one leaves it open: assign globally, then widen to either.
+    pub(crate) fn scoped(&mut self, p: Primitive, span: Span, run: impl FnOnce(&mut Self)) {
+        let scope = crate::builtins::assignment(p) && self.apply_global_defs();
+        let recent = scope.then(|| {
+            let recent = self.env.recent();
+            self.env.clear_recent();
+            recent
+        });
+        run(self);
+        if let Some(recent) = recent {
+            self.diagnose(
+                Severity::Imprecision,
+                "unknown-globaldefs",
+                span,
+                "\\globaldefs holds a number satex does not know; what the assignment left is unknown".into(),
+            );
+            self.widen_since(0);
+            self.env.set_recent(recent);
         }
     }
 
@@ -360,9 +364,9 @@ impl Machine<'_> {
                     };
                 self.unread_all(&tokens);
             }
-            P::OpenIn => self.open_in(),
+            P::OpenIn => self.open_in(by, span),
             P::CloseIn => {
-                let stream = self.scan_number().map(four_bit);
+                let stream = self.scan_stream(by, span);
                 self.close_in(stream);
             }
             P::Read => self.read_line_into(by, span),
@@ -437,7 +441,20 @@ impl Machine<'_> {
 
             // The engine's `\end` (tex.web § 1054). latex.ltx keeps it as `\@@end`
             // and defines its own `\end{…}`.
-            P::End => self.end_job(),
+            // § 1094: in horizontal mode it heads for vertical mode first.
+            // § 1054: `its_all_over` is `privileged`, so a list of its own
+            // reports the illegal case and goes on.
+            P::End => {
+                let token = Token::new(Tok::Cs(by), span);
+                let horizontal = self.mode.within(crate::mode::Modes::ANY_HORIZONTAL);
+                if horizontal && !self.mode.is_empty() && self.vertical_material(token) {
+                    return;
+                }
+                match self.mode.within(crate::mode::Modes::INTERNAL_VERTICAL) && !self.mode.is_empty() {
+                    true => self.certain_error("You can't use `\\end' in internal vertical mode", true, span),
+                    false => self.end_job(),
+                }
+            }
 
             P::Message { .. } => self.message(by, span),
             P::Lua(op) => crate::plugin::lua::primitive(self, op, by, span),
@@ -451,7 +468,8 @@ impl Machine<'_> {
             }
             P::Accent => {
                 if !self.horizontal_material(Token::new(Tok::Cs(by), span)) {
-                    crate::observe::accent(self, span);
+                    let code = crate::observe::accent(self, span);
+                    self.make_accent(code);
                 }
             }
             P::Mode(cmd) => self.mode_command(cmd, by, span),
@@ -483,6 +501,9 @@ impl Machine<'_> {
                         Some(k) => {
                             let width = self.mu_width(k, self.math_size());
                             self.append_item(crate::mode::Item::Kern(width));
+                            // tex.web § 424: `\lastkern` reads a math kern
+                            // in mu, before § 717 converts it.
+                            self.set_tail(crate::mode::Last::Kern(k));
                         }
                         None => self.append_item(crate::mode::Item::Unknown),
                     }
@@ -502,7 +523,11 @@ impl Machine<'_> {
                         // formula one rigid box to the line breaker.
                         let rigid = g.stretch.amount == 0 && g.shrink.amount == 0;
                         let spec = width.filter(|_| rigid).map(|width| value::Glue { width, ..Default::default() });
-                        self.append_item(crate::mode::Item::Glue(width, spec));
+                        self.append_item(crate::mode::Item::glue(width, spec));
+                        // tex.web § 424: `\lastskip` reads it as muglue.
+                        if let Some(crate::mode::Last::Glue(w, _)) = self.natural.map(|n| n.tail[0]) {
+                            self.set_tail(crate::mode::Last::Glue(w, None));
+                        }
                     }
                     None => self.append_item(crate::mode::Item::Unknown),
                 }
@@ -562,7 +587,7 @@ impl Machine<'_> {
     /// Where a definition is placed: at the name's own file when a macro of
     /// another file does the defining (expl3's `\cs_new:Npn` reaches
     /// `\tex_gdef:D` in `expl3-code.tex`), else at the defining command.
-    fn definition_site(&mut self, span: Span) -> Span {
+    pub(crate) fn definition_site(&mut self, span: Span) -> Span {
         self.skip_spaces();
         match self.peek() {
             Some(token) if token.span.file != span.file && token.span.line > 0 => token.span,
@@ -800,7 +825,7 @@ impl Machine<'_> {
             // tex.web § 370: an undefined name is an error and expands to nothing.
             Some(sym) if matches!(self.env.meaning(sym), Meaning::Undefined) && !self.may_be_defined(sym) => {
                 let text = format!("Undefined control sequence \\{}", self.name(sym));
-                self.certain_error(&text, true);
+                self.certain_error(&text, true, token.span);
             }
             _ => self.unread(token),
         }
@@ -994,6 +1019,17 @@ impl Machine<'_> {
                         tokens.push(self.unknown_text(Unk::Class(TextClass::PRINTED, false, None, &[]), at));
                         return self.unread_all(&tokens);
                     }
+                    // A register named through a number satex could not pin
+                    // down prints that number (tex.web § 1224).
+                    (TextOf::Meaning, Tok::Cs(sym))
+                        if matches!(self.env.meaning(sym), Meaning::Register(k, crate::tex::UNNUMBERED)
+                            if !matches!(k, RegKind::Char | RegKind::MathChar | RegKind::UMathChar)) =>
+                    {
+                        let text = self.meaning_text(sym);
+                        let mut tokens = self.text_tokens(&text, at);
+                        tokens.push(self.unknown_digits_token(at));
+                        return self.unread_all(&tokens);
+                    }
                     (TextOf::Meaning, Tok::Cs(_) | Tok::Chr(_, Catcode::Active)) => {
                         let sym = match token.tok {
                             Tok::Chr(c, _) => self.active_sym(c),
@@ -1053,12 +1089,21 @@ impl Machine<'_> {
         let level = self.internal_level(&self.env.meaning(sym));
         // Only the interval this quantity leaves may type its digits.
         self.abs = None;
-        match self.internal_quantity(sym, span) {
+        let value = self.internal_quantity(sym, span);
+        // Glue prints its `plus` and `minus` parts unless both are zero
+        // (tex.web § 178).
+        let tail = match &value {
+            Some(Value::GlueNum { hull, .. }) => hull.stretch != Num::exact(0) || hull.shrink != Num::exact(0),
+            _ => matches!(level, Some(RegKind::Skip | RegKind::MuSkip)),
+        };
+        match value {
             Some(Value::Toks(toks)) => toks.to_vec(),
             // An unknown dimension still prints as `⟨digits⟩.⟨digits⟩pt`
             // (tex.web § 103), which `\def\getpt#1pt{…}` splits at. The digits
             // are unknown text holding no delimiter.
-            Some(Value::Unknown) | None if matches!(level, Some(RegKind::Dimen | RegKind::Skip | RegKind::MuSkip)) => {
+            Some(Value::Unknown | Value::GlueNum { .. }) | None
+                if matches!(level, Some(RegKind::Dimen | RegKind::Skip | RegKind::MuSkip)) =>
+            {
                 let unit = if level == Some(RegKind::MuSkip) { "mu" } else { "pt" };
                 let num = if level == Some(RegKind::Dimen) { self.abs.take() } else { None };
                 // A sign that is known and one digit before the point: that
@@ -1080,6 +1125,9 @@ impl Machine<'_> {
                 // At most five places after the point (tex.web § 103).
                 tokens.push(self.unknown_text(Unk::Class(TextClass::DIGIT, true, Some(5), &[]), span));
                 tokens.extend(self.text_tokens(unit, span));
+                if tail {
+                    tokens.push(self.unknown_text(Unk::Class(TextClass::PRINTED, false, None, &[]), span));
+                }
                 tokens
             }
             Some(Value::Unknown) | None if level == Some(RegKind::Toks) => self.toks_member(sym, span),
@@ -1346,8 +1394,8 @@ impl Machine<'_> {
         if !self.env.is_defined(sym) {
             // A name of a family a loop may have defined (`\a5` after a
             // widened `\a\the\n`) is that definition or `\relax`.
-            let meaning = if self.may_be_real(sym) { Meaning::Unknown } else { relax };
-            self.env.set(sym, Binding::builtin(meaning), false);
+            let binding = self.wild_binding(sym);
+            self.env.set(sym, binding, false);
         } else if let Some(b) = self.env.slot(sym)
             && let Some(may) = b.may.as_ref().filter(|may| may.contains(&Meaning::Undefined))
         {
@@ -1356,6 +1404,11 @@ impl Machine<'_> {
             let mut meanings: Vec<Meaning> = may.iter().filter(|m| **m != Meaning::Undefined).cloned().collect();
             if !meanings.contains(&relax) {
                 meanings.push(relax);
+            }
+            // Two meanings now, both defined: read as either, never as the
+            // one the join kept.
+            if meanings.len() > 1 {
+                binding.meaning = Meaning::Unknown;
             }
             binding.may = Some(meanings.into());
             self.env.set(sym, binding, false);
@@ -1367,6 +1420,24 @@ impl Machine<'_> {
         }
         self.built_name = Some((sym, at));
         self.unread(Token::new(Tok::Cs(sym), at));
+    }
+
+    /// An undefined name a family write may have reached
+    /// ([`crate::machine::Wild`]): `\relax` or one of the family's meanings.
+    fn wild_binding(&self, sym: Sym) -> Binding {
+        let relax = Meaning::Primitive(Primitive::Relax);
+        match self.wild.meanings(self.name(sym)) {
+            Some(ms) if ms.is_empty() => Binding::builtin(relax),
+            Some(mut ms) => {
+                if !ms.contains(&relax) {
+                    ms.insert(0, relax);
+                }
+                let mut b = Binding::builtin(Meaning::Unknown);
+                b.may = Some(ms.into());
+                b
+            }
+            None => Binding::builtin(Meaning::Unknown),
+        }
     }
 
     /// Token for a `\csname` name with unknown digits: one of the names they
@@ -1383,11 +1454,19 @@ impl Machine<'_> {
         for candidate in &candidates {
             let sym = self.intern(candidate);
             let meaning = match self.env.meaning(sym) {
-                Meaning::Undefined if self.may_be_real(sym) => Meaning::Unknown,
+                Meaning::Undefined if self.may_be_real(sym) => {
+                    let binding = self.wild_binding(sym);
+                    for m in binding.may.as_deref().unwrap_or(std::slice::from_ref(&binding.meaning)) {
+                        if !meanings.contains(m) {
+                            meanings.push(m.clone());
+                        }
+                    }
+                    continue;
+                }
                 Meaning::Undefined => {
                     let (prefix, suffix) =
                         name.split_once(|c| crate::tex::unknown_number_chars(c).is_some()).unwrap_or((name, ""));
-                    self.wild.add(prefix.to_string(), suffix.to_string(), false);
+                    self.wild.add(prefix.to_string(), suffix.to_string(), false, None);
                     Meaning::Primitive(Primitive::Relax)
                 }
                 m => m,
@@ -1436,10 +1515,12 @@ impl Machine<'_> {
         &mut self,
         span: Span,
     ) -> (Result<String, (String, String, bool)>, Span, Vec<crate::tex::FileId>) {
+        let mut start = Accum::for_name();
+        start.name.as_deref_mut().expect("a name scan").site = span;
         let mut acc = match self.cfg.arm_joins {
-            true => self.scan_paths(Unit::Name, Accum::for_name()),
+            true => self.scan_paths(Unit::Name, start),
             false => {
-                let mut acc = Accum::for_name();
+                let mut acc = start;
                 self.scans.push(acc);
                 loop {
                     let done = self.name_step();
@@ -1452,9 +1533,13 @@ impl Machine<'_> {
             }
         };
         // A name that is one of several: a path per name, on which the
-        // command goes on.
+        // command goes on. Each replay runs the scan's own choices again,
+        // so a site that parted `meaning_set` paths on this line already
+        // keeps the name whole: the family the names share.
         let names = acc.name.as_deref().map_or(0, |n| n.names.len());
-        if names > 1 {
+        if names > 1 && self.site_forked(span) >= u32::from(self.limits.meaning_set) {
+            acc.name.as_deref_mut().expect("the name scan").collapse();
+        } else if names > 1 {
             let chosen = self.split(self.unknown, span, names, |_, arm| {
                 let n = acc.name.as_deref_mut().expect("the name scan");
                 // A replayed choice may count other arms: then any name.
@@ -1494,6 +1579,7 @@ impl Machine<'_> {
         let file_call = self.file_call;
         let acc = self.scans.last_mut().and_then(|a| a.name.as_deref_mut());
         let Some(n) = acc else { return true };
+        let site = n.site;
         let cs = match t.tok {
             // A brace after an unknown part: the name is unknown whatever
             // TeX read into it, and what follows the brace is left where
@@ -1536,7 +1622,7 @@ impl Machine<'_> {
         }
         // One of several texts, or a name of several meanings: a path
         // per one where the run may part.
-        if self.split_one_of(t) {
+        if self.split_one_of_at(t, site) {
             return false;
         }
         // A path per meaning, each reading the name on with its own: read
@@ -1734,16 +1820,20 @@ impl Machine<'_> {
     }
 
     /// The meanings a name may have: its members, or its one meaning.
+    /// Read untracked: the test records what of each meaning it reads.
     fn ifx_members(&mut self, t: Token) -> Vec<Meaning> {
         let sym = t.cs().or_else(|| self.active_cs(t));
-        match sym.and_then(|s| self.env.slot(s)?.may.clone().or_else(|| self.typed_meanings(s))) {
+        let tracking = self.env.track_reads(false);
+        let members = match sym.and_then(|s| self.env.slot(s)?.may.clone().or_else(|| self.typed_meanings(s))) {
             Some(may) => may.to_vec(),
             None => vec![match (t.tok, sym) {
                 (Tok::Chr(c, cat), None) if cat != Catcode::Active => Meaning::Char(c, cat),
                 (_, Some(sym)) => self.env.meaning(sym),
                 _ => Meaning::Unknown,
             }],
-        }
+        };
+        self.env.track_reads(tracking);
+        members
     }
 
     /// Split `\ifx` on operands with multiple meanings, comparing each separately.
@@ -1896,7 +1986,8 @@ impl Machine<'_> {
                         Primitive::Fi => open -= 1,
                         _ if open > 0 => {}
                         _ => {
-                            let frame = CondFrame { limit: CondLimit::Fi, dep: false, at: span, kind: None };
+                            let frame =
+                                CondFrame { limit: CondLimit::Fi, dep: false, at: span, kind: None, many: false };
                             Rc::make_mut(&mut m.conds).push(frame);
                             break;
                         }
@@ -1948,7 +2039,7 @@ impl Machine<'_> {
             if let Some(on) = on {
                 Rc::make_mut(&mut m.cds).push(ControlDep { on, taken: holds });
             }
-            Rc::make_mut(&mut m.conds).insert(at, CondFrame { limit, dep, at: span, kind });
+            Rc::make_mut(&mut m.conds).insert(at, CondFrame { limit, dep, at: span, kind, many: false });
         };
         if holds {
             self.record_with(Step::Branch, by, span, || Some("true"));
@@ -2050,7 +2141,7 @@ impl Machine<'_> {
         if let Some(on) = on {
             crate::push_shared(&mut self.cds, ControlDep { on, taken: n == 0 });
         }
-        Rc::make_mut(&mut self.conds).insert(base, CondFrame { limit, dep: on.is_some(), at: span, kind });
+        Rc::make_mut(&mut self.conds).insert(base, CondFrame { limit, dep: on.is_some(), at: span, kind, many: false });
     }
 
     /// tex.web § 510: an `\else`, `\or` or `\fi` met while its own test is read
@@ -2064,6 +2155,7 @@ impl Machine<'_> {
 
     /// `\else` and `\or`: the taken arm is over.
     fn conditional_else(&mut self, span: Span) {
+        self.unfold_conditional(span);
         if let Some(frame) = self.conds.last() {
             self.note_cond_mark(frame.at, span, false);
         }
@@ -2082,8 +2174,53 @@ impl Machine<'_> {
         }
     }
 
+    /// The innermost conditional stands for any number of them and a
+    /// closer meets it: a path where it is one of them, and one where there
+    /// are none. Where no more paths may part, the one below joins it when
+    /// alike, so one path covers both.
+    fn unfold_conditional(&mut self, span: Span) {
+        if !self.conds.last().is_some_and(|c| c.many) {
+            return;
+        }
+        let by = self.unknown;
+        let unfold = |m: &mut Self, arm: usize| {
+            let conds = Rc::make_mut(&mut m.conds);
+            match arm {
+                0 => conds.push(CondFrame { many: false, dep: false, ..conds.last().expect("checked").clone() }),
+                _ => {
+                    if conds.pop().is_some_and(|c| c.dep) {
+                        Rc::make_mut(&mut m.cds).pop();
+                    }
+                }
+            }
+            true
+        };
+        if self.split(by, span, 2, unfold) {
+            return;
+        }
+        let n = self.conds.len();
+        let alike = n >= 2 && {
+            let (a, b) = (&self.conds[n - 2], &self.conds[n - 1]);
+            (a.limit, a.at, a.kind) == (b.limit, b.at, b.kind)
+        };
+        if alike {
+            unfold(self, 1);
+            Rc::make_mut(&mut self.conds).last_mut().expect("alike").many = true;
+        } else {
+            self.diagnose(
+                Severity::Assumption,
+                "unbalanced-path",
+                span,
+                "a closer met any number of open conditionals and no more paths could part; it is assumed one of them"
+                    .into(),
+            );
+        }
+        unfold(self, 0);
+    }
+
     /// `\fi` ends the level.
     fn conditional_fi(&mut self, span: Span) {
+        self.unfold_conditional(span);
         if self.conds.is_empty() {
             // tex.web § 510: "Extra \fi", ignored.
             self.diagnose(Severity::Warning, "extra-fi", span, "\\fi outside a conditional".into());
@@ -2355,7 +2492,9 @@ impl Machine<'_> {
             // when every member decides it alike.
             Cond::Num | Cond::Odd => {
                 self.abs_from = None;
+                self.abs_odd = None;
                 let a = self.scan_number();
+                let odd = self.abs_odd.take();
                 let xs = a.map(Num::exact).or_else(|| self.abs.take());
                 let from = self.abs_from.take();
                 // A register (or sub-expression) a join left one of a few
@@ -2368,7 +2507,7 @@ impl Machine<'_> {
                         let first = odds.next()?;
                         odds.all(|o| o == first).then_some(first)
                     });
-                    return exact.or_else(|| xs?.odd());
+                    return exact.or_else(|| xs?.odd()).or(odd);
                 }
                 let relation = self.scan_relation();
                 let b = self.scan_number();
@@ -2437,10 +2576,6 @@ impl Machine<'_> {
                 let font_open = (self.font_may_be_null(&ma) && (mb == null || self.font_may_be_null(&mb)))
                     || (self.font_may_be_null(&mb) && ma == null);
                 let (sa, sb) = (a.cs().or_else(|| self.active_cs(a)), b.cs().or_else(|| self.active_cs(b)));
-                let open = |m: &Meaning, sym: Option<Sym>, me: &Self| {
-                    matches!(m, Meaning::Unknown)
-                        || (matches!(m, Meaning::Undefined) && sym.is_some_and(|sym| me.may_be_defined(sym)))
-                };
                 // A character whose code is unknown equals a character of its
                 // category only perhaps, and nothing else.
                 // Digits typed with their interval begin with a digit the
@@ -2491,6 +2626,14 @@ impl Machine<'_> {
                     match (m, sym.and_then(|s| me.env.slot(s)?.may.clone().or_else(|| me.typed_meanings(s)))) {
                         // Also a name with a meaning that may be undefined.
                         (_, Some(may)) => may.to_vec(),
+                        // An undefined name a family write may have made
+                        // `\relax` or given a meaning.
+                        (Meaning::Undefined, None) if sym.is_some_and(|s| me.may_be_defined(s)) => {
+                            let b = me.wild_binding(sym.expect("a name"));
+                            let mut all = vec![Meaning::Undefined];
+                            all.extend(b.may.as_deref().map_or(vec![b.meaning.clone()], <[Meaning]>::to_vec));
+                            all
+                        }
                         _ => vec![m.clone()],
                     }
                 };
@@ -2532,8 +2675,8 @@ impl Machine<'_> {
                     let parts = [(texts_a, a, decides(&xs, &ys, self)), (texts_b, b, decides(&ys, &xs, self))];
                     return parts.into_iter().find(|p| p.0 && p.2).and_then(|(_, t, _)| self.split_answer(t));
                 }
-                if open(&ma, sa, self)
-                    || open(&mb, sb, self)
+                if matches!(ma, Meaning::Unknown)
+                    || matches!(mb, Meaning::Unknown)
                     || font_open
                     || char_open
                     || (!same_macro && !bodies_differ && (vague(&ma, self) || vague(&mb, self)))
@@ -2579,14 +2722,7 @@ impl Machine<'_> {
                         _ => Some(true),
                     });
                 }
-                // A name a join left one of several meanings is defined
-                // when every one of them is, undefined when none is.
-                if let Some(may) = sym.and_then(|sym| self.env.slot(sym)?.may.clone()) {
-                    self.env.note_read(sym.unwrap(), crate::env::ReadKind::Defined);
-                    let defined = alike(may.iter().map(|m| !matches!(m, Meaning::Undefined)));
-                    return defined.filter(|defined| *defined || !self.may_be_defined(sym.unwrap()));
-                }
-                sym.map(|sym| self.env.is_defined(sym)).filter(|defined| *defined || !self.may_be_defined(sym.unwrap()))
+                self.decide_defined(sym?)
             }
             Cond::Csname => {
                 let at = self.peek().map(|t| t.span).unwrap_or_default();
@@ -2595,7 +2731,7 @@ impl Machine<'_> {
                 let sym = self.intern(&name);
                 self.last_named_cs = Some(sym);
                 operands.push(sym);
-                Some(self.env.is_defined(sym)).filter(|defined| *defined || !self.may_be_defined(sym))
+                self.decide_defined(sym)
             }
             Cond::Chars | Cond::Catcodes => {
                 // Operands that may be several tokens are decided pair by
@@ -2620,6 +2756,18 @@ impl Machine<'_> {
             }
             Cond::Case => None,
         }
+    }
+
+    /// Whether `sym` is defined, for `\ifdefined` and `\ifcsname`: a name
+    /// a join left one of several meanings is defined when every one of
+    /// them is, undefined when none is; `None` when that differs.
+    fn decide_defined(&mut self, sym: Sym) -> Option<bool> {
+        if let Some(may) = self.env.slot(sym).and_then(|b| b.may.clone()) {
+            self.env.note_read(sym, crate::env::ReadKind::Defined);
+            let defined = alike(may.iter().map(|m| !matches!(m, Meaning::Undefined)));
+            return defined.filter(|defined| *defined || !self.may_be_defined(sym));
+        }
+        Some(self.env.is_defined(sym)).filter(|defined| *defined || !self.may_be_defined(sym))
     }
 
     /// The meaning `\ifx` compares: tex.web § 358 reads a token behind a
@@ -2683,7 +2831,12 @@ impl Machine<'_> {
 
     /// ⟨glue⟩ or ⟨muglue⟩ (tex.web § 461); see [`crate::scan`].
     pub fn scan_glue(&mut self, mu: bool) -> Option<Glue> {
-        self.scanning_value(|m| m.scan_glue_spec(mu))
+        self.scan_glue_hull(mu).glue()
+    }
+
+    /// ⟨glue⟩ as one interval per component, any where not followed.
+    pub fn scan_glue_hull(&mut self, mu: bool) -> crate::value::GlueHull {
+        self.scanning_value(|m| m.scan_glue_spec(mu)).unwrap_or_else(crate::value::GlueHull::full)
     }
 
     /// ⟨dimen⟩ in scaled points (tex.web § 448); see [`crate::scan`].
@@ -2750,6 +2903,20 @@ impl Machine<'_> {
         }
     }
 
+    /// A read of an abstract number leaves its interval, and, while a join
+    /// left it one of a few exact values, those (the set lift), to the test
+    /// that reads it, as a register does.
+    fn read_abstract(&mut self, value: Value) -> Option<Value> {
+        if !matches!(value, Value::Num { .. } | Value::OneOf(_)) {
+            return Some(value);
+        }
+        self.abs = value.num().map(|(_, n)| n);
+        self.abs_exact = value.exact_ints();
+        self.abs_parts = value.member_nums().filter(|_| self.abs_exact.is_none());
+        self.abs_from = None;
+        Some(Value::Unknown)
+    }
+
     pub(crate) fn internal_quantity(&mut self, sym: Sym, span: Span) -> Option<Value> {
         if let Some(p) = self.env.meaning(sym).prim()
             && Machine::extra_level(p).is_some()
@@ -2763,7 +2930,11 @@ impl Machine<'_> {
                     self.abs_from = None;
                     Some(Value::Unknown)
                 }
-                value => value,
+                // An operand's bound is not the quantity's.
+                value => {
+                    (self.abs, self.abs_exact, self.abs_from) = (None, None, None);
+                    value
+                }
             };
         }
         // tex.web §§ 418, 986: a quantity the current list or the page
@@ -2781,34 +2952,35 @@ impl Machine<'_> {
             // An expression of unknown value leaves its interval, and, while
             // a join left it one of a few exact values, those (the set
             // lift), to the test that reads it, as a register does.
-            Some(Primitive::Expr(kind)) => match self.scan_expr(kind) {
-                value @ (Value::Num { .. } | Value::OneOf(_)) => {
-                    self.abs = value.num().map(|(_, n)| n);
-                    self.abs_exact = value.exact_ints();
-                    self.abs_parts = value.member_nums().filter(|_| self.abs_exact.is_none());
-                    self.abs_from = None;
-                    Some(Value::Unknown)
-                }
-                value => Some(value),
-            },
+            Some(Primitive::Expr(kind)) => {
+                let value = self.scan_expr(kind);
+                self.read_abstract(value)
+            }
             // `\the\catcode⟨number⟩` is the category code in force (The TeXbook,
             // ch. 24). expl3 saves and restores its catcodes with it.
             Some(Primitive::CatcodeAssign) => {
                 let code = self.scan_number()?;
                 let character = u32::try_from(code).ok().and_then(char::from_u32)?;
-                if self.catcodes.is_unknown(character) {
-                    return Some(Value::Unknown);
-                }
-                Some(Value::Int(self.catcodes.get(character) as u8 as i64))
+                let cats = self.catcodes.cats(character);
+                let sets = self.env.sets;
+                let value = (0..16).filter(|k| cats & 1 << k != 0).map(Value::Int).reduce(|a, b| a.join(&b, sets));
+                self.read_abstract(value.unwrap_or(Value::Unknown))
             }
             Some(Primitive::CharCode(table)) => {
                 let code = self.scan_number()?;
                 let character = u32::try_from(code).ok().and_then(char::from_u32)?;
-                let Some(value) = self.char_code_known(table, character) else {
-                    return Some(Value::Unknown);
+                let engine = self.out.plugins.engine;
+                let value = self.code_value(table, character);
+                let Some(value) = value.as_int() else {
+                    // Read as stored where every member is.
+                    let stored = value.num().is_some_and(|(_, n)| match table {
+                        CodeTable::Math => !engine.has_unicode_math() && n.hi <= MATH_CODE_MAX,
+                        CodeTable::Delimiter => n.hi < 1 << 30,
+                        _ => true,
+                    });
+                    return self.read_abstract(if stored { value } else { Value::Unknown });
                 };
                 // XeTeX and LuaTeX keep one packed math code per character.
-                let engine = self.out.plugins.engine;
                 if table == CodeTable::Math && engine.has_unicode_math() {
                     return Some(Value::Int(crate::builtins::read_math_code(value, engine)));
                 }
@@ -3229,8 +3401,9 @@ impl Machine<'_> {
     fn scan_register_value(&mut self, kind: RegKind) -> Value {
         let value = match kind {
             RegKind::Dimen => self.scan_dimen().map_or_else(|| self.scanned_abs(true), Value::Dimen),
-            RegKind::Skip => self.scan_glue(false).map_or(Value::Unknown, Value::Glue),
-            RegKind::MuSkip => self.scan_glue(true).map_or(Value::Unknown, Value::MuGlue),
+            RegKind::Skip | RegKind::MuSkip => {
+                self.scan_glue_hull(kind == RegKind::MuSkip).value(kind == RegKind::MuSkip)
+            }
             RegKind::Toks => Value::Toks(Rc::from(self.read_general_text())),
             _ => self.scan_number().map_or_else(|| self.scanned_abs(false), Value::Int),
         };
@@ -3657,10 +3830,8 @@ impl Machine<'_> {
                 self.join_code(table, character, &value, global, span);
             }
             match parts {
-                Some(_) => {
-                    reach.iter().for_each(|part| self.weaken_code_table(table, Some(part), &value, global, span))
-                }
-                None => self.weaken_code_table(table, None, &value, global, span),
+                Some(_) => reach.iter().for_each(|part| self.weaken_code_table(table, Some(part), &value, global)),
+                None => self.weaken_code_table(table, None, &value, global),
             }
             let what = match parts.is_none() || !reach.is_empty() {
                 true => "each entry it may name holds its old code or the new",
@@ -3728,48 +3899,15 @@ impl Machine<'_> {
 
     /// The slot for every character of a table. Real entries are one
     /// character long, so `{CODE}any` is none of them.
-    /// `unknown`: the family of writes through unknown characters.
-    fn any_code_sym(&mut self, table: CodeTable, unknown: bool) -> Sym {
-        let tail = if unknown { "anyu" } else { "any" };
-        self.intern(&format!("{CODE}{}{CODE}{tail}", table.as_str()))
+    fn any_code_sym(&mut self, table: CodeTable) -> Sym {
+        self.intern(&format!("{CODE}{}{CODE}any", table.as_str()))
     }
 
-    /// A write through an unpinned character number may reach any entry, so
-    /// none is known.
-    /// Through an unknown character it is assumed to miss the structural
-    /// ones, kept apart in `{CODE}anyu`.
-    pub(crate) fn weaken_code_table(
-        &mut self,
-        table: CodeTable,
-        index: Option<&Num>,
-        value: &Value,
-        global: bool,
-        span: Span,
-    ) {
-        let assumed = crate::machine::unknown_char_index(index);
-        let any = self.any_code_sym(table, assumed);
+    /// A write through an unpinned character number may reach any entry
+    /// `index` spans (all for `None`): each holds its old code or `value`.
+    pub(crate) fn weaken_code_table(&mut self, table: CodeTable, index: Option<&Num>, value: &Value, global: bool) {
+        let any = self.any_code_sym(table);
         self.reach_family(any, index, value, global);
-        if assumed {
-            self.assume_structural(span);
-        }
-    }
-
-    /// The approved assumption, said once per site.
-    pub(crate) fn assume_structural(&mut self, span: Span) {
-        self.diagnose(
-            Severity::Assumption,
-            "unknown-char-catcode-assumed",
-            span,
-            "a code-table write through an unknown character is assumed to leave \\ { } % # $ & ^ _, space and end-of-line alone".into(),
-        );
-    }
-
-    pub(crate) fn char_code(&mut self, table: CodeTable, c: char) -> i64 {
-        let sym = self.char_code_sym(table, c);
-        match self.env.value(sym).as_int() {
-            Some(value) => value,
-            None => self.code_default(table, c),
-        }
     }
 
     /// A character's initial code in the table's form. Math codes are packed
@@ -3786,29 +3924,20 @@ impl Machine<'_> {
     /// writes that may have named it add what they stored.
     fn code_value(&mut self, table: CodeTable, c: char) -> Value {
         let sym = self.char_code_sym(table, c);
-        let own = match self.env.get(sym) {
-            Some(_) => self.env.value(sym).clone(),
+        let own = match self.env.get(sym).map(|b| b.value.clone()) {
+            Some(own) => {
+                let _ = self.env.value(sym);
+                own
+            }
             None => Value::Int(self.code_default(table, c)),
         };
-        let index = Some(i64::from(c as u32));
-        let any = self.any_code_sym(table, false);
-        let own = self.family_value(any, index, own);
-        if crate::tex::is_structural(c) {
-            return own;
-        }
-        let any = self.any_code_sym(table, true);
-        self.family_value(any, index, own)
+        let any = self.any_code_sym(table);
+        self.family_value(any, Some(i64::from(c as u32)), own)
     }
 
     /// [`Machine::char_code`], `None` where it is not one known code.
     pub(crate) fn char_code_known(&mut self, table: CodeTable, c: char) -> Option<i64> {
         self.code_value(table, c).as_int()
-    }
-
-    /// The few codes `c`'s entry may hold.
-    fn code_set(&mut self, table: CodeTable, c: char) -> Option<Vec<i64>> {
-        let value = self.code_value(table, c);
-        matches!(value, Value::OneOf(_)).then(|| value.exact_ints()).flatten()
     }
 
     /// tex.web § 1288 (`case_shift`): each character with a non-zero
@@ -3818,23 +3947,41 @@ impl Machine<'_> {
         let body = self.read_general_text();
         let shift =
             |c: char, code: i64| u32::try_from(code).ok().and_then(char::from_u32).filter(|s| *s != '\0').unwrap_or(c);
-        let shifted: Vec<Token> = body
-            .iter()
-            .map(|t| match t.tok {
-                // A code a join left one of a few: one of the characters.
-                Tok::Chr(c, cat) if let Some(codes) = self.code_set(table, c) => {
-                    let texts = codes
-                        .iter()
-                        .map(|&code| Rc::from([Token::new(Tok::Chr(shift(c, code), cat), t.span)]))
-                        .collect();
+        let mut shifted = Vec::with_capacity(body.len());
+        for t in body.iter() {
+            let Tok::Chr(c, cat) = t.tok else {
+                shifted.push(*t);
+                continue;
+            };
+            let value = self.code_value(table, c);
+            let most = usize::from(self.limits.value_set);
+            let codes = match value {
+                Value::Int(code) => vec![code],
+                Value::Num { num, .. } if num.hi.saturating_sub(num.lo) < most as i64 => (num.lo..=num.hi).collect(),
+                _ => value.exact_ints().filter(|v| v.len() <= most).unwrap_or_default(),
+            };
+            let token = |code: i64| Token::new(Tok::Chr(shift(c, code), cat), t.span);
+            // A code a join left one of a few: a path for each where the
+            // category shapes what reads it, else one of the characters.
+            let mut taken = None;
+            shifted.push(match codes[..] {
+                [code] => token(code),
+                [] if matches!(cat, Catcode::Letter | Catcode::Other) => self.unknown_text(Unk::Any, t.span),
+                [] => Token::new(Tok::Chr(crate::tex::UNKNOWN_ANY, cat), t.span),
+                _ if !matches!(cat, Catcode::Letter | Catcode::Other)
+                    && self.split(self.unknown, t.span, codes.len(), |_, arm| {
+                        taken = Some(codes[arm]);
+                        true
+                    }) =>
+                {
+                    token(taken.unwrap_or(c as i64))
+                }
+                _ => {
+                    let texts = codes.iter().map(|&code| Rc::from([token(code)])).collect();
                     self.one_of(texts, t.span)
                 }
-                // Unknown code produces unknown character.
-                Tok::Chr(c, _) if self.char_code_known(table, c).is_none() => self.unknown_text(Unk::Any, t.span),
-                Tok::Chr(c, cat) => Token::new(Tok::Chr(shift(c, self.char_code(table, c)), cat), t.span),
-                _ => *t,
-            })
-            .collect();
+            });
+        }
         self.push_tokens(Rc::from(shifted));
     }
 
@@ -3880,20 +4027,19 @@ impl Machine<'_> {
                 (None, Some(parts)) => parts.into_iter().map(Some).collect(),
                 _ => vec![abs],
             };
+            let lone = parts.len() == 1;
             for part in parts {
                 match chars.clone().or_else(|| Self::interval_chars(part)) {
+                    // One character takes one of `cats`, each of several keeps
+                    // its own or takes one.
                     Some(chars) => {
+                        let one = lone && chars.len() == 1;
                         for ch in chars {
-                            if self.catcodes.is_unknown(ch) || cats != 1 << self.catcodes.get(ch) as u8 {
-                                self.set_catcode_unknown(ch);
-                            }
+                            let old = if one { 0 } else { self.catcodes.cats(ch) };
+                            self.set_catcode_may(ch, old | cats);
                         }
                     }
-                    None => {
-                        if self.set_catcodes_reach(part, cats) {
-                            self.assume_structural(span);
-                        }
-                    }
+                    None => self.set_catcodes_reach(part, cats),
                 }
             }
             return self.diagnose(
@@ -3978,8 +4124,8 @@ impl Machine<'_> {
 
     /// `\openin⟨number⟩=⟨file name⟩` (tex.web § 1275). The name resolves as the
     /// engine would, so `\ifeof` answers for real.
-    fn open_in(&mut self) {
-        let stream = self.scan_number().map(four_bit);
+    fn open_in(&mut self, by: Sym, span: Span) {
+        let stream = self.scan_stream(by, span);
         self.read_equals();
         let name = self.read_file_name();
         let base = self.base().to_path_buf();
@@ -3990,8 +4136,8 @@ impl Machine<'_> {
                 self.carried.stream_paths.insert(stream, path.display().to_string());
             }
         }
-        // A file this run wrote with unknown content leaves every stream unknown.
-        let Some(bytes) = self.input_bytes(&name) else { return self.set_stream(None, None) };
+        // A file this run wrote with unknown content leaves the stream unknown.
+        let Some(bytes) = self.input_bytes(&name) else { return self.unknown_stream(stream) };
         let lines = bytes.map(|b| crate::source::decode(&b).lines().map(str::to_string).collect::<Vec<_>>());
         self.set_stream(stream, lines);
     }
@@ -4156,7 +4302,7 @@ impl Machine<'_> {
         }
         if self.probe.is_none() && matches!(self.env.meaning(by).prim(), Some(Primitive::Message { error: true })) {
             self.note_raised(&text, at);
-            self.certain_error(&text, false);
+            self.certain_error(&text, false, span);
             // tex.web § 1283: `\errmessage` is one of the engine's errors.
             self.count_error(at);
         }
@@ -4288,6 +4434,45 @@ fn register_top(kind: RegKind) -> Option<Num> {
 
 /// tex.web § 433 (`scan_four_bit_int`): stream numbers are 0..15. "Bad
 /// number" names stream 0 (probed: `\closein99` closes stream 0).
+impl Machine<'_> {
+    /// A stream's ⟨4-bit number⟩ (tex.web § 436: outside 0..=15 it is "Bad
+    /// number" and 0). One read in an interval parts the path per stream it
+    /// may name, the register it came from narrowed to match, so a later
+    /// read of that register names the same stream. `None`: any stream.
+    fn scan_stream(&mut self, by: Sym, span: Span) -> Option<i64> {
+        self.abs_from = None;
+        if let Some(n) = self.scan_number() {
+            return Some(four_bit(n));
+        }
+        let from = self.abs_from.take();
+        let mut arms: Vec<(i64, Num)> = Vec::new();
+        for p in self.take_index()? {
+            arms.extend((p.lo.max(0)..=p.hi.min(15)).map(|s| (s, Num::exact(s))));
+            if p.lo < 0 {
+                arms.push((0, Num::range(p.lo, p.hi.min(-1))));
+            }
+            if p.hi > 15 {
+                arms.push((0, Num::range(p.lo.max(16), p.hi)));
+            }
+        }
+        if let [(s, _), rest @ ..] = &arms[..]
+            && rest.iter().all(|(t, _)| t == s)
+        {
+            return Some(*s);
+        }
+        let mut stream = None;
+        self.split(by, span, arms.len(), |m, arm| {
+            let (s, part) = arms[arm];
+            if let Some((sym, quantity)) = from {
+                m.env.refine_value(sym, Value::from_num(quantity, part));
+            }
+            stream = Some(s);
+            true
+        });
+        stream
+    }
+}
+
 fn four_bit(n: i64) -> i64 {
     if (0..16).contains(&n) { n } else { 0 }
 }

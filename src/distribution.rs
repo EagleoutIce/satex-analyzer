@@ -112,6 +112,19 @@ pub fn names_with(roots: &[PathBuf], ext: &str) -> Vec<String> {
     names
 }
 
+/// The installation's files ending in `ext` with where the first tree has
+/// each, sorted by name.
+pub fn files_with(roots: &[PathBuf], ext: &str) -> Vec<(String, PathBuf)> {
+    let (index, _) = index_for(roots, None);
+    let mut files: Vec<(String, PathBuf)> = index
+        .iter()
+        .filter(|(name, _)| name.ends_with(ext))
+        .filter_map(|(name, paths)| Some((name.clone(), paths.first()?.clone())))
+        .collect();
+    files.sort();
+    files
+}
+
 /// Where an installation would resolve from, without indexing its files:
 /// the roots [`discover`] would pick, cheap enough for `satex --version` to
 /// call on every run.
@@ -194,10 +207,9 @@ fn fallback_roots(year: Option<u32>, platform: Platform) -> Vec<PathBuf> {
     // More than one personal tree can exist per platform; probe each.
     roots.extend(platform.home_trees().into_iter().filter(|tree| tree.is_dir()));
     for pattern in platform.roots() {
-        let Ok(matches) = glob::glob(pattern) else { continue };
         // A pattern matches one directory per installed version: the wanted
         // year wins, otherwise the newest.
-        let mut found: Vec<PathBuf> = matches.flatten().filter(|path| path.is_dir()).collect();
+        let mut found: Vec<PathBuf> = crate::paths::glob(pattern).into_iter().filter(|path| path.is_dir()).collect();
         found.sort();
         let chosen = match year {
             Some(year) => found.into_iter().find(|path| year_in(path) == Some(year)),
@@ -244,7 +256,7 @@ fn index_cache_file(dir: &Path, roots: &[PathBuf]) -> PathBuf {
     dir.join(format!("index-{tree}-v{INDEX_VERSION}-{:08x}.postcard", digest(&joined)))
 }
 
-fn stamps_for(roots: &[PathBuf]) -> Vec<(String, u64, u64)> {
+pub(crate) fn stamps_for(roots: &[PathBuf]) -> Vec<(String, u64, u64)> {
     roots
         .iter()
         .map(|root| {
@@ -474,7 +486,7 @@ pub(crate) fn probed(
     cache: Option<&Path>,
     ask: impl FnOnce() -> Vec<String>,
 ) -> Vec<String> {
-    let path = which::which(program).ok();
+    let path = crate::paths::which(program).ok();
     let stamped = path.as_deref().and_then(|path| stamp(path).map(|s| (path, s)));
     let file = match (cache, &stamped) {
         (Some(dir), Some((path, _))) => Some(probe_cache_file(dir, path, topic)),

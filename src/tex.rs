@@ -192,6 +192,10 @@ pub const UNKNOWN_DIGIT: char = '\u{10FFFE}';
 /// (tex.web §§ 103, 104).
 pub const UNKNOWN_NONZERO: char = '\u{10FFFB}';
 
+/// Any one character: what `\lowercase` makes of a character whose code
+/// is not known, its category kept.
+pub const UNKNOWN_ANY: char = '\u{10FFFA}';
+
 /// One letter (category 11) of unknown text.
 pub const UNKNOWN_LETTER: char = '\u{10FFFD}';
 
@@ -200,7 +204,7 @@ pub const UNKNOWN_OTHER: char = '\u{10FFFC}';
 
 /// Whether `c` is one character of unknown text.
 pub fn is_unknown_char(c: char) -> bool {
-    matches!(c, UNKNOWN_CHAR | UNKNOWN_DIGIT | UNKNOWN_NONZERO | UNKNOWN_LETTER | UNKNOWN_OTHER)
+    matches!(c, UNKNOWN_CHAR | UNKNOWN_DIGIT | UNKNOWN_NONZERO | UNKNOWN_LETTER | UNKNOWN_OTHER | UNKNOWN_ANY)
 }
 
 /// Whether `c` is one unknown digit.
@@ -224,6 +228,9 @@ pub fn unknown_number_chars(c: char) -> Option<&'static str> {
 /// [`UNKNOWN_LETTER`] or [`UNKNOWN_OTHER`].
 pub fn may_equal_unknown_char(a: u32, b: u32) -> bool {
     let (letter, other) = (UNKNOWN_LETTER as u32, UNKNOWN_OTHER as u32);
+    if a == UNKNOWN_ANY as u32 || b == UNKNOWN_ANY as u32 {
+        return true;
+    }
     let is = |c: u32, f: fn(char) -> bool| char::from_u32(c).is_some_and(f);
     // What each unknown character may be, the unknown ones included.
     let may_be = |c: u32, f: fn(char) -> bool| is(c, is_unknown_char) || is(c, f);
@@ -565,12 +572,12 @@ pub struct CatcodeTable {
     /// A character past 255 not in `wide`: 12 in INITEX, 11 once a format
     /// has classified the letters.
     wide_default: Catcode,
-    /// Characters whose category satex could not follow: `\catcode` was
-    /// given a number it does not know. tex.web has no such state — it is
-    /// the top of the lattice for one character. [`CatcodeTable::get`]
-    /// still answers with the last one known, a guess no reader may trust
+    /// Characters whose category satex could not pin down, each with the
+    /// categories it may have, one bit each (all for the top of the
+    /// lattice). tex.web has no such state. [`CatcodeTable::get`] still
+    /// answers with the last one known, a guess no reader may trust
     /// without asking [`CatcodeTable::is_unknown`] first.
-    unknown: Rc<std::collections::BTreeSet<char>>,
+    unknown: Rc<std::collections::BTreeMap<char, u16>>,
     /// The hull of the character codes a `\catcode` through a number satex
     /// could not pin down may have named: those categories are unknown but
     /// the ones assigned since, which `known` holds.
@@ -578,17 +585,7 @@ pub struct CatcodeTable {
     /// The categories those writes may have stored, one bit each: a character
     /// in reach is its last known category or one of these.
     reach_cats: u16,
-    /// Whether the reach may cover the structural characters: only a write
-    /// through a number known to range over them does (`unknown-char-catcode-assumed`).
-    reach_structural: bool,
     known: Rc<std::collections::BTreeSet<char>>,
-}
-
-/// The characters TeX's syntax rests on: `\\ { } % # $ & ^ _`, space and
-/// end-of-line. A code-table write through an unknown character number is
-/// assumed never to name them (`unknown-char-catcode-assumed`).
-pub fn is_structural(c: char) -> bool {
-    matches!(c, '\\' | '{' | '}' | '%' | '#' | '$' | '&' | '^' | '_' | ' ' | '\r')
 }
 
 impl PartialEq for CatcodeTable {
@@ -599,7 +596,6 @@ impl PartialEq for CatcodeTable {
             && (Rc::ptr_eq(&self.unknown, &other.unknown) || self.unknown == other.unknown)
             && self.reach == other.reach
             && self.reach_cats == other.reach_cats
-            && self.reach_structural == other.reach_structural
             && (Rc::ptr_eq(&self.known, &other.known) || self.known == other.known)
     }
 }
@@ -631,7 +627,6 @@ impl CatcodeTable {
             unknown: Rc::default(),
             reach: None,
             reach_cats: 0,
-            reach_structural: false,
             known: Rc::default(),
         }
     }
@@ -669,7 +664,7 @@ impl CatcodeTable {
             Rc::make_mut(&mut self.wide).insert(c, cat);
         }
         // An assignment satex could follow makes the category known again.
-        if self.unknown.contains(&c) {
+        if self.unknown.contains_key(&c) {
             Rc::make_mut(&mut self.unknown).remove(&c);
         }
         if self.reaches(c) && !self.known.contains(&c) {
@@ -682,25 +677,38 @@ impl CatcodeTable {
     /// widen instead.
     #[inline]
     pub fn is_unknown(&self, c: char) -> bool {
-        if self.reaches(c) && !self.known.contains(&c) && (self.reach_cats | 1 << self.get(c) as u8).count_ones() > 1 {
-            return true;
-        }
-        !self.unknown.is_empty() && self.unknown.contains(&c)
+        self.may(c) != 0
     }
 
     /// The categories `c` may have, one bit each.
     pub fn cats(&self, c: char) -> u16 {
-        if self.unknown.contains(&c) {
-            return u16::MAX;
+        match self.may(c) {
+            0 => 1 << self.get(c) as u8,
+            may => may,
         }
-        let own = 1 << self.get(c) as u8;
-        if self.reaches(c) && !self.known.contains(&c) { own | self.reach_cats } else { own }
+    }
+
+    /// [`CatcodeTable::cats`] where more than one, else 0: what the save
+    /// stack keeps beside the category.
+    pub fn may(&self, c: char) -> u16 {
+        let reach = self.reaches(c) && !self.known.contains(&c);
+        let own = self.unknown.get(&c).copied().unwrap_or(1 << self.get(c) as u8);
+        let cats = if reach { own | self.reach_cats } else { own };
+        if cats.count_ones() > 1 { cats } else { 0 }
     }
 
     /// `\catcode` was given a number satex does not know: the character's
     /// category is anything from here on.
     pub fn set_unknown(&mut self, c: char) {
-        Rc::make_mut(&mut self.unknown).insert(c);
+        self.set_may(c, u16::MAX);
+    }
+
+    /// The character's category is one of `cats`, one bit each.
+    pub fn set_may(&mut self, c: char, cats: u16) {
+        if let Some(cat) = (cats.count_ones() == 1).then(|| Catcode::from_u8(cats.trailing_zeros() as u8)).flatten() {
+            return self.set(c, cat);
+        }
+        Rc::make_mut(&mut self.unknown).insert(c, cats);
         if self.known.contains(&c) {
             Rc::make_mut(&mut self.known).remove(&c);
         }
@@ -708,28 +716,26 @@ impl CatcodeTable {
 
     /// `\catcode` assigned one of `cats` (one bit per category) through a
     /// character number satex could not pin down (tex.web § 1232): each
-    /// character in `lo..=hi` is its old category or one of `cats`. Without
-    /// `structural`, the structural characters are assumed untouched.
-    pub fn set_reach(&mut self, lo: u32, hi: u32, cats: u16, structural: bool) {
+    /// character in `lo..=hi` is its old category or one of `cats`.
+    pub fn set_reach(&mut self, lo: u32, hi: u32, cats: u16) {
         let reach = self.reach.map_or((lo, hi), |(a, b)| (a.min(lo), b.max(hi)));
         self.reach = Some(reach);
         self.reach_cats |= cats;
-        self.reach_structural |= structural;
-        let kept = |c: char| !(lo..=hi).contains(&(c as u32)) || (!structural && is_structural(c));
-        let known: std::collections::BTreeSet<char> = self.known.iter().copied().filter(|&c| kept(c)).collect();
+        let known: std::collections::BTreeSet<char> =
+            self.known.iter().copied().filter(|&c| !(lo..=hi).contains(&(c as u32))).collect();
         self.known = Rc::new(known);
     }
 
     fn reaches(&self, c: char) -> bool {
         self.reach.is_some_and(|(lo, hi)| (lo..=hi).contains(&(c as u32)))
-            && (self.reach_structural || !is_structural(c))
     }
 
-    /// Put back what [`Env`](crate::env::Env)'s save stack saved.
-    pub fn restore(&mut self, c: char, cat: Catcode, unknown: bool) {
+    /// Put back what [`Env`](crate::env::Env)'s save stack saved: `may` as
+    /// [`CatcodeTable::may`] gave it.
+    pub fn restore(&mut self, c: char, cat: Catcode, may: u16) {
         self.set(c, cat);
-        if unknown {
-            self.set_unknown(c);
+        if may != 0 {
+            self.set_may(c, may);
         }
     }
 
@@ -750,15 +756,9 @@ impl CatcodeTable {
         out
     }
 
-    /// Whether the two tables say different things about `c`. Both
-    /// knowing nothing is agreement, one knowing it does not know is not,
-    /// which a diff of the values cannot say.
+    /// Whether the two tables say different things about `c`.
     fn differs(&self, other: &CatcodeTable, c: char) -> bool {
-        match (self.is_unknown(c), other.is_unknown(c)) {
-            (true, true) => false,
-            (false, false) => self.get(c) != other.get(c),
-            _ => true,
-        }
+        self.cats(c) != other.cats(c)
     }
 
     /// The characters the two tables do not agree about: over the category
@@ -774,9 +774,13 @@ impl CatcodeTable {
         }
         // The wide characters two tables may part about: those either one
         // gave a category or marked, the rest being the shared default.
-        let marked = [&self.unknown, &other.unknown, &self.known, &other.known];
-        let mut wide: std::collections::BTreeSet<char> =
-            marked.iter().flat_map(|set| set.iter().copied()).filter(|c| *c as u32 >= 256).collect();
+        let marked = [&self.known, &other.known];
+        let mut wide: std::collections::BTreeSet<char> = marked
+            .iter()
+            .flat_map(|set| set.iter().copied())
+            .chain(self.unknown.keys().chain(other.unknown.keys()).copied())
+            .filter(|c| *c as u32 >= 256)
+            .collect();
         if !Rc::ptr_eq(&self.wide, &other.wide) {
             wide.extend(self.wide.keys().chain(other.wide.keys()).copied());
         }
@@ -806,7 +810,6 @@ impl CatcodeTable {
             .collect();
         self.reach = Some(reach);
         self.reach_cats |= other.reach_cats;
-        self.reach_structural |= other.reach_structural;
         self.known = Rc::new(known);
     }
 
@@ -819,7 +822,7 @@ impl CatcodeTable {
     pub fn join_widen(&mut self, other: &CatcodeTable, widen: bool) {
         self.join_reach(other, widen);
         for c in self.disagreements(other) {
-            self.set_unknown(c);
+            self.set_may(c, self.cats(c) | other.cats(c));
         }
     }
 
@@ -1161,6 +1164,9 @@ pub struct Mouth {
     /// 13 runs a meaning (tex.web §§ 232, 344), so the character is what
     /// bounds what that token may do.
     pub last_unknown: Option<char>,
+    /// The character of several possible categories the last token met:
+    /// the reader may split the path on it and read again.
+    pub undecided: Option<char>,
     pub file: FileId,
 }
 
@@ -1222,6 +1228,7 @@ impl Mouth {
             force_eof: None,
             line_end: EndLineChar::default(),
             last_unknown: None,
+            undecided: None,
             file,
         }
     }
@@ -1469,6 +1476,7 @@ impl Mouth {
         // of `first`, which is not known: the name is not either.
         if cats.is_unknown(first) {
             self.state = LineState::Middle;
+            self.undecided = Some(first);
             return Some(it.intern(UNKNOWN_CS));
         }
         if cats.get(first) != Catcode::Letter {
@@ -1481,6 +1489,7 @@ impl Mouth {
             // A character that may or may not carry the name on.
             if cats.is_unknown(c) {
                 self.state = LineState::Middle;
+                self.undecided = Some(c);
                 return Some(it.intern(UNKNOWN_CS));
             }
             if cats.get(c) == Catcode::Letter {
@@ -1555,6 +1564,7 @@ impl Mouth {
             if cat != Catcode::Eol && cats.is_unknown(c) {
                 self.state = LineState::Middle;
                 self.last_unknown = Some(c);
+                self.undecided = Some(c);
                 return Some(Token::new(Tok::Cs(it.intern(UNKNOWN_CS)), span));
             }
             match cat {

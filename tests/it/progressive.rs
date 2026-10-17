@@ -10,7 +10,8 @@ use satex::facts::Severity;
 use satex::machine::{Analysis, Machine};
 use satex::plugin::Kernel;
 
-const PRE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\countdef\\n=10 \\n=0 \\countdef\\m=11\n";
+pub(crate) const PRE: &str =
+    "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\countdef\\n=10 \\n=0 \\countdef\\m=11\n";
 
 fn cfg() -> Config {
     Config { engine: Some(Engine::PdfTeX), kernel: Some(Kernel::None), ..crate::support::bare() }
@@ -63,7 +64,7 @@ fn covers(got: &str, want: &str) -> bool {
 }
 
 /// Known bounds: exact.
-const EXACT: &[(&str, &str, &str)] = &[
+pub(crate) const EXACT: &[(&str, &str, &str)] = &[
     // etex: 3/5/U
     (
         "tail_known_bound",
@@ -173,12 +174,28 @@ fn generated_names_are_recorded_one_by_one() {
 
 /// Unknown bounds: `\R` covers what etex printed. The clock makes `\m`
 /// unknown to satex; etex's value is the one of that run.
-const COVERED: &[(&str, &str, &str)] = &[
+pub(crate) const COVERED: &[(&str, &str, &str)] = &[
     // etex: 1/D/U
     (
         "tail_unknown_bound",
         r"\m=\pdfelapsedtime \divide\m by 1000000 \advance\m 4
 \def\step{\advance\n1 \expandafter\edef\csname a\the\n\endcsname{\the\n}\ifnum\n<\m \expandafter\step\fi}\step
+\edef\R{\csname a1\endcsname/\expandafter\ifx\csname a3\endcsname\relax U\else D\fi/\expandafter\ifx\csname a7\endcsname\relax U\else D\fi}",
+        "1/D/U",
+    ),
+    // etex: 1/D/U or 1/D/D
+    (
+        "tail_unconstrained_bound",
+        r"\m=\pdfuniformdeviate 12
+\def\step{\advance\n1 \expandafter\edef\csname a\the\n\endcsname{\the\n}\ifnum\n<\m \expandafter\step\fi}\step
+\edef\R{\csname a1\endcsname/\expandafter\ifx\csname a3\endcsname\relax U\else D\fi/\expandafter\ifx\csname a7\endcsname\relax U\else D\fi}",
+        "1/D/U",
+    ),
+    // etex: 1/D/U or 1/D/D
+    (
+        "non_tail_unconstrained_bound",
+        r"\m=\pdfuniformdeviate 12
+\def\step{\advance\n1 \expandafter\edef\csname a\the\n\endcsname{\the\n}\ifnum\n<\m \step\fi}\step
 \edef\R{\csname a1\endcsname/\expandafter\ifx\csname a3\endcsname\relax U\else D\fi/\expandafter\ifx\csname a7\endcsname\relax U\else D\fi}",
         "1/D/U",
     ),

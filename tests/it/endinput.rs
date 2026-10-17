@@ -269,9 +269,9 @@ fn endinput_under_an_undecided_condition_reads_on() {
 
 #[test]
 fn endinput_past_the_choice_limit_is_reported() {
-    // Past `limits.choices` only the first arm is read, and it ends the
-    // file: what the other arm would have run is missing, which the run
-    // says.
+    // Past `limits.choices` the conditional is unknown text, which may
+    // end the file or not: what follows is read, not certain, and the run
+    // says why.
     let cfg = Config {
         load: Load { packages: false, classes: false, inputs: false, format: false, ..Default::default() },
         texmf: Texmf { kpsewhich: false, ..Default::default() },
@@ -280,10 +280,11 @@ fn endinput_past_the_choice_limit_is_reported() {
     };
     let source = "\\ifnum\\pdfuniformdeviate2=0 \\endinput\\fi\\def\\after{a}\n\\def\\two{2}\n";
     let analysis = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
-    assert_eq!(state(&analysis, &["after", "two"]), "after=1 two=0");
+    assert_eq!(state(&analysis, &["after", "two"]), "after=1 two=1");
+    assert!(!definition(&analysis, "two").expect("read").certain, "the file may have ended");
     let reported = diagnosed(&analysis, "undecided-condition");
     assert_eq!(reported.len(), 1, "{reported:?}");
-    assert!(reported[0].contains("only its first arm is followed"), "{}", reported[0]);
+    assert!(reported[0].contains("taken as unknown text"), "{}", reported[0]);
 }
 
 #[test]

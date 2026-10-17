@@ -5,7 +5,7 @@ use std::process::Command;
 
 #[test]
 fn the_build_log_is_explained_where_it_arose() {
-    if !crate::support::installed() || which::which("pdflatex").is_err() {
+    if !crate::support::installed() || satex::paths::which("pdflatex").is_err() {
         return;
     }
     let dir = crate::support::tmp_root().join(format!("satex-compile-{}", std::process::id()));

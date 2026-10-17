@@ -86,7 +86,7 @@ fn luaescapestring_escapes_for_a_lua_string() {
 
 #[test]
 fn luacode_environments_keep_the_stream_in_step() {
-    if which::which("kpsewhich").is_err() {
+    if satex::paths::which("kpsewhich").is_err() {
         return;
     }
     let source = "% !TeX program = lualatex\n\\documentclass{article}\n\\usepackage{luacode}\n\

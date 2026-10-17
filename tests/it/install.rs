@@ -32,7 +32,7 @@ fn an_explicit_request_needs_a_manager_on_the_machine() {
 
 #[test]
 fn the_command_is_the_managers_own() {
-    if !installed() || which::which("tlmgr").is_err() {
+    if !installed() || satex::paths::which("tlmgr").is_err() {
         return;
     }
     let cfg = Config::default();

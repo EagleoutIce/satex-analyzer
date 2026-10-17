@@ -38,8 +38,7 @@ pub struct Limits {
     /// `memory`, it never changes where a path is cut before that stop.
     pub seconds: u64,
     /// Undecided choices one command may make on one path.  Past them a
-    /// conditional follows only its first arm, reported as an `unsupported`
-    /// gap.
+    /// conditional is taken as unknown text, reported as an `assumption`.
     pub choices: u16,
     /// Undecided choices one site (a conditional, a name of several
     /// meanings) may make, over all paths and replays, while the run reads
@@ -455,8 +454,12 @@ pub enum Interaction {
 pub struct CacheIndex {
     /// The packages `satex cache build` prepares. Empty means it discovers
     /// them instead, from what ordinary runs already found expensive to
-    /// interpret in the cache directory (see `cmd::cache::build::discover_expensive`).
+    /// interpret in the cache directory, or with nothing measured yet, the
+    /// packages installed packages load most.
     pub packages: Vec<String>,
+    /// Packages it prepares first when `packages` is empty, as far as they
+    /// are installed.
+    pub common: Vec<String>,
     /// The engines it prepares them for; empty means the one in effect.
     pub engines: Vec<Engine>,
     /// The class the prepared packages are loaded after.
@@ -477,11 +480,82 @@ impl Default for CacheIndex {
     fn default() -> Self {
         Self {
             packages: Vec::new(),
+            common: [
+                "microtype",
+                "cleveref",
+                "zref-clever",
+                "savetrees",
+                "tabularray",
+                "xurl",
+                "glossaries",
+                "enumitem",
+                "nowidow",
+                "silence",
+                "adjustbox",
+                "pdfpages",
+                "pgfplotstable",
+                "memoize",
+                "classicthesis",
+            ]
+            .map(String::from)
+            .to_vec(),
             engines: Vec::new(),
             class: "article".into(),
             auto: true,
             refresh: false,
             building: false,
+        }
+    }
+}
+
+impl Config {
+    /// `analysis.assume_compiles`.
+    pub fn compiles(&self) -> bool {
+        self.analysis.assume_compiles
+    }
+}
+
+/// `conventions:` in `satex.yaml`: what SaTeX takes for granted about how
+/// TeX is written, each a choice a project can change.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Conventions {
+    /// What makes a name internal, a package's own and not its interface:
+    /// regexes on the name without its backslash. Internal names are left
+    /// out of listings, completion and the public-name lints.
+    pub internal: Vec<String>,
+    /// Commands whose next control sequence is the name they define, as
+    /// the package files on disk are read for what they define.
+    pub definers: Vec<String>,
+}
+
+impl Conventions {
+    /// Whether `name` (without its backslash) is internal by `internal`.
+    pub fn is_internal(&self, name: &str) -> bool {
+        static COMPILED: std::sync::Mutex<Vec<(String, Option<regex::Regex>)>> = std::sync::Mutex::new(Vec::new());
+        let mut compiled = COMPILED.lock().unwrap_or_else(|e| e.into_inner());
+        self.internal.iter().any(|pattern| {
+            let at = match compiled.iter().position(|(p, _)| p == pattern) {
+                Some(at) => at,
+                None => {
+                    compiled.push((pattern.clone(), regex::Regex::new(pattern).ok()));
+                    compiled.len() - 1
+                }
+            };
+            compiled[at].1.as_ref().is_some_and(|r| r.is_match(name))
+        })
+    }
+}
+
+impl Default for Conventions {
+    fn default() -> Conventions {
+        let definers = "def gdef edef xdef let chardef mathchardef countdef dimendef skipdef toksdef newif \
+            newcount newdimen newskip newtoks newbox newlength newcommand renewcommand providecommand \
+            DeclareRobustCommand newrobustcmd renewrobustcmd providerobustcmd NewDocumentCommand \
+            RenewDocumentCommand ProvideDocumentCommand DeclareDocumentCommand NewExpandableDocumentCommand";
+        Conventions {
+            internal: vec!["@".into(), "^__".into(), "_.*:".into()],
+            definers: definers.split_whitespace().map(str::to_string).collect(),
         }
     }
 }
@@ -497,11 +571,25 @@ pub struct Load {
     pub format: bool,
     /// Packages to leave unread.
     pub skip: Vec<String>,
+    /// Classes and packages the file expects loaded before it, as a beamer
+    /// theme expects beamer: read first, as a document would load them.
+    pub expect: Vec<String>,
+    /// Find what a package or class file expects loaded from the names it
+    /// uses and the packages on disk that define them.
+    pub expect_detect: bool,
 }
 
 impl Default for Load {
     fn default() -> Load {
-        Load { packages: true, classes: true, inputs: true, format: true, skip: Vec::new() }
+        Load {
+            packages: true,
+            classes: true,
+            inputs: true,
+            format: true,
+            skip: Vec::new(),
+            expect: Vec::new(),
+            expect_detect: true,
+        }
     }
 }
 
@@ -578,13 +666,22 @@ pub struct AnalysisConfig {
     /// paths arrived and what kept them apart.
     pub join_paths_at: Vec<JoinPoint>,
     /// A soundiness assumption: the document compiles without errors. A
-    /// path that raises a certain TeX error is then no run of the
-    /// document, and is dropped. An error is certain when it arises on
-    /// state the run knows exactly, before any approximation. Each such
-    /// drop is reported once as an `assumption` diagnostic. An error
-    /// after an approximation keeps its path, and the last path is
-    /// never dropped. `false` keeps every path.
+    /// path that raises a certain TeX error in library code (a package,
+    /// the kernel) is then no run of the document, and is dropped. An
+    /// error is certain when it arises on state the run knows exactly,
+    /// before any approximation. An error in the document's own text is
+    /// always kept, to be reported and fixed. Each drop is reported once
+    /// as an `assumption` diagnostic, and the last path is never dropped.
+    /// `false` keeps every path.
     pub assume_compiles: bool,
+    /// A soundiness assumption: a package closes the groups it opens, so
+    /// two paths at the same line of a file, one in more groups, join with
+    /// those closed. `false` keeps such paths apart.
+    pub assume_packages_close_groups: bool,
+    /// A soundiness assumption: the build runs in the environment SaTeX
+    /// runs in, which Lua's `os.getenv` reads. `false` makes every
+    /// variable unknown.
+    pub assume_environment: bool,
 }
 
 impl Default for AnalysisConfig {
@@ -592,6 +689,8 @@ impl Default for AnalysisConfig {
         AnalysisConfig {
             join_paths_at: vec![JoinPoint { command: Some("\\document".into()), hook: None }],
             assume_compiles: true,
+            assume_packages_close_groups: true,
+            assume_environment: true,
         }
     }
 }
@@ -775,6 +874,10 @@ pub struct Config {
     /// `lints:` in `satex.yaml`: what a single rule reads, under its code.
     #[serde(default)]
     pub lints: Lints,
+    /// `conventions:` in `satex.yaml`: how TeX is usually written, where
+    /// the text alone does not say.
+    #[serde(default)]
+    pub conventions: Conventions,
     /// The profile in force: `--profile`, `profile:` here, or
     /// [`Profile::detect`], in that order — [`Config::apply_profile`]
     /// settles one for every run, so this is `Some` by the time analysis
@@ -850,6 +953,7 @@ impl Default for Config {
             lint_off: vec!["analysis-imprecision".to_string()],
             project: Project::default(),
             lints: Lints::default(),
+            conventions: Conventions::default(),
             profile: None,
             profiles: Profiles::default(),
             verbose: 0,
@@ -1118,6 +1222,61 @@ pub struct Lints {
     pub wrong_dash: WrongDash,
     pub user_pattern: UserPattern,
     pub comment_marker: CommentMarker,
+    pub build_cost: BuildCost,
+    pub microtype_available: MicrotypeAvailable,
+    pub ellipsis_dots: EllipsisDots,
+}
+
+/// `lints.build-cost:` in `satex.yaml`: when a part of the build is worth
+/// a format (`preamble-cost`) or `\includeonly` (`includeonly-available`).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BuildCost {
+    /// Tokens below which a part reads in well under a second.
+    pub tokens: u64,
+    /// The share of the run's tokens the part must take.
+    pub share: f64,
+}
+
+impl Default for BuildCost {
+    fn default() -> BuildCost {
+        BuildCost { tokens: 2_000_000, share: 0.5 }
+    }
+}
+
+impl BuildCost {
+    /// Whether `part` of `total` tokens is worth saving.
+    pub fn costly(&self, part: u64, total: u64) -> bool {
+        part >= self.tokens && part as f64 >= self.share * total as f64
+    }
+}
+
+/// `lints.microtype-available:` in `satex.yaml`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MicrotypeAvailable {
+    /// Characters of justified paragraph text the body must set: about a page.
+    pub characters: u64,
+}
+
+impl Default for MicrotypeAvailable {
+    fn default() -> MicrotypeAvailable {
+        MicrotypeAvailable { characters: 2500 }
+    }
+}
+
+/// `lints.ellipsis-dots:` in `satex.yaml`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EllipsisDots {
+    /// chktex's `CenterDots`: what an ellipsis stands between when `\cdots` belongs.
+    pub center: String,
+}
+
+impl Default for EllipsisDots {
+    fn default() -> EllipsisDots {
+        EllipsisDots { center: "=+-<>".into() }
+    }
 }
 
 /// `lints.user-pattern:` in `satex.yaml`: chktex's `UserWarn` (warning 20)
@@ -1161,7 +1320,8 @@ pub struct WrongDash {
     /// inside an identifier such as an ISBN or a date (another hyphen,
     /// a letter or a `/` in the same word) are left alone.
     pub digits: Vec<usize>,
-    /// How many belong between spaces, as chktex's `WordDash`.
+    /// How many belong between spaces, as chktex's `WordDash`; two is
+    /// Bringhurst's spaced en-dash.
     pub words: Vec<usize>,
     /// Whole spellings to leave alone, as chktex's `DashExcpt`.
     pub except: Vec<String>,
@@ -1172,7 +1332,7 @@ impl Default for WrongDash {
         WrongDash {
             letters: vec![1, 3],
             digits: vec![2],
-            words: vec![3],
+            words: vec![3, 2],
             except: vec!["Birch--Swinnerton-Dyer".to_string()],
         }
     }
@@ -1515,7 +1675,7 @@ impl Config {
 /// `~/.config` on Linux, `~/Library/Application Support` on macOS,
 /// `%APPDATA%` on Windows).
 fn global_config_file() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("satex").join(FILE_NAME))
+    crate::paths::config_dir().map(|dir| dir.join("satex").join(FILE_NAME))
 }
 
 /// Makes the `project.frozen` globs of the file at `path` absolute

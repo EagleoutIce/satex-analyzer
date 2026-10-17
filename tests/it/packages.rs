@@ -338,7 +338,6 @@ fn cleveref_and_hyperref_references_are_observed_from_the_names_they_test() {
 }
 
 #[test]
-#[ignore = "cleveref's label-list loop (\\@whilesw\\if@cref@stackfull, cleveref.sty:950) does not terminate in satex yet"]
 fn cleveref_reads_every_label_of_a_list() {
     if !installed() {
         return;
@@ -467,4 +466,27 @@ fn a_load_at_the_very_end_of_an_input_file_still_happens() {
 /// The names of everything the run loaded, for a failure message.
 fn names(analysis: &Analysis) -> Vec<String> {
     analysis.facts.loads.iter().map(|load| load.name.clone()).collect()
+}
+
+/// A beamer theme read on its own uses beamer's names: the packages on disk
+/// say beamer defines them, so the file is read after it, and says so.
+#[test]
+fn a_theme_is_read_after_the_class_it_expects() {
+    if !installed() {
+        return;
+    }
+    let dir =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-expect-{}", std::process::id())));
+    let path = dir.join("beamerthemeplain.sty");
+    let source =
+        "\\mode<presentation>\n\\setbeamertemplate{navigation symbols}{}\n\\usecolortheme{whale}\n\\mode<all>\n";
+    std::fs::write(&path, source).unwrap();
+    let undefined =
+        |a: &Analysis| a.facts.expansions.iter().filter(|e| e.meaning == satex::facts::MeaningKind::Undefined).count();
+    let cfg = crate::support::config();
+    let found = Machine::analyze(source, Some(&path), &cfg);
+    assert_eq!(undefined(&found), 0);
+    assert!(found.facts.diagnostics.iter().any(|d| d.code == "expected-load" && d.message.contains("beamer")));
+    let off = Config { load: Load { expect_detect: false, ..cfg.load.clone() }, ..cfg };
+    assert!(undefined(&Machine::analyze(source, Some(&path), &off)) > 0);
 }

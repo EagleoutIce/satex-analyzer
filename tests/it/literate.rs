@@ -173,7 +173,7 @@ fn unpacked(directory: &Path, dtx: &Path, options: &str) -> Option<String> {
 
 #[test]
 fn the_code_view_is_what_docstrip_writes() {
-    if !installed() || which::which("tex").is_err() {
+    if !installed() || satex::paths::which("tex").is_err() {
         return;
     }
     let Ok(found) = Command::new("kpsewhich").arg("array.dtx").output() else { return };
@@ -198,7 +198,7 @@ fn the_code_view_is_what_docstrip_writes() {
 
 #[test]
 fn a_documented_source_defines_what_the_package_does() {
-    if !installed() || which::which("tex").is_err() {
+    if !installed() || satex::paths::which("tex").is_err() {
         return;
     }
     let Ok(found) = Command::new("kpsewhich").arg("array.dtx").output() else { return };

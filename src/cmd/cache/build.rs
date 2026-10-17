@@ -119,8 +119,11 @@ fn package_name_of(file_name: &str) -> Option<&str> {
 /// packages whose cache files in `dir` already total at least `threshold`
 /// bytes, most expensive first. A measurement of what ordinary runs
 /// (`cache.index.auto`) already found worth storing on this machine, not a
-/// list of names; a fresh cache directory has nothing to discover, which is
-/// the honest answer until some document has loaded a package for real.
+/// list of names.
+/// How many of the packages installed packages load most `cache build`
+/// prepares when nothing is configured and nothing measured yet.
+const COMMON: usize = 24;
+
 pub(crate) fn discover_expensive(dir: &Path, threshold: u64) -> Vec<(String, u64)> {
     let mut totals: crate::fixed::HashMap<String, u64> = crate::fixed::HashMap::default();
     let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
@@ -214,19 +217,25 @@ pub fn prepare(
     // Nothing configured or named: prepare what ordinary runs on this
     // machine (`cache.index.auto`) already found expensive, discovered from
     // their caches rather than a list of names. A fresh cache directory has
-    // nothing to discover yet; `cache build` then has nothing to warm until
-    // some document has loaded a package for real.
-    let discovered;
+    // nothing to discover yet: then the packages installed packages load
+    // most, read off the installation.
+    let discovered: Vec<String>;
     let packages: &[String] = match preamble {
         Some(_) => &[],
         None if packages.is_empty() && cfg.cache.index.packages.is_empty() => {
+            let trees = crate::distribution::discover(&cfg.distribution_request());
             let found = discover_expensive(&directory, EXPENSIVE_BYTES);
-            if found.is_empty() {
-                progress(
-                    "nothing configured and nothing measured yet: run satex over your documents \
-                     first (cache.index.auto stores what they load), then `cache build` will warm \
-                     what turned out to be expensive",
-                );
+            let measured = if found.is_empty() {
+                // Nothing measured yet: what the packages on disk load most.
+                let common =
+                    crate::exports::Exports::of(&trees.distribution.roots, Some(&directory), &cfg.conventions.definers)
+                        .most_loaded(COMMON);
+                progress(&format!(
+                    "nothing configured and nothing measured yet: the {} packages installed packages load most: {}",
+                    common.len(),
+                    common.join(", ")
+                ));
+                common
             } else {
                 progress(&format!(
                     "discovered from what ran here already, at least {} each: {}",
@@ -237,8 +246,13 @@ pub fn prepare(
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));
-            }
-            discovered = found.into_iter().map(|(name, _)| name).collect::<Vec<_>>();
+                found.into_iter().map(|(name, _)| name).collect()
+            };
+            // `cache.index.common`, as far as it is installed, comes first.
+            let common: Vec<String> =
+                cfg.cache.index.common.iter().filter(|n| trees.get(&format!("{n}.sty")).is_some()).cloned().collect();
+            progress(&format!("cache.index.common, installed: {}", common.join(", ")));
+            discovered = common.iter().cloned().chain(measured.into_iter().filter(|n| !common.contains(n))).collect();
             &discovered[..]
         }
         None if packages.is_empty() => &cfg.cache.index.packages[..],

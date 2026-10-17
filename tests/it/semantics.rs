@@ -137,10 +137,11 @@ fn a_switch_decides_its_conditional() {
 }
 
 /// Capabilities: termination, unknown inputs, progressive recursion. The
-/// empty arm expands the undefined `\stop`, an error: under assume_compiles
-/// that path is dropped, so the walk never reads on into the caller's code.
+/// empty arm expands the undefined `\stop`, an error in the document's own
+/// text, so that path is kept: the walk reads on into `\fi\def` as pdftex
+/// does, leaving `\rev` as `\def `.
 #[test]
-fn a_walk_never_reads_past_an_undefined_stop_on_an_erroring_path() {
+fn a_walk_past_an_undefined_stop_reads_on_as_tex_does() {
     let analysis = analyze(
         r"\def\walk#1{\ifx#1\stop\else\edef\rev{\rev#1}\expandafter\walk\fi}\def\conv#1{\def\rev{}\expandafter\walk#1\stop}\ifnum\pdfuniformdeviate2=0 \conv{12}\else\conv{}\fi\def\after{x}",
     );
@@ -148,7 +149,7 @@ fn a_walk_never_reads_past_an_undefined_stop_on_an_erroring_path() {
         .filter(|d| analysis.interner.name(d.name) == "rev")
         .filter_map(|d| d.mac.as_ref().map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner)))
         .collect();
-    assert!(bodies.iter().all(|b| ["", "1", "12"].contains(&b.as_str())), "{bodies:?}");
+    assert!(bodies.iter().all(|b| ["", "1", "12", "\\def "].contains(&b.as_str())), "{bodies:?}");
 }
 
 #[test]
@@ -766,7 +767,7 @@ fn every_switch_means_the_documents_own() {
     // `satex controls` without a name leaves the document's switches
     // undecided, and only those: the kernel's `\if@tempswa` and the like
     // keep deciding the code they drive.
-    if which::which("kpsewhich").is_err() {
+    if satex::paths::which("kpsewhich").is_err() {
         return;
     }
     let cfg = Config {
@@ -1655,10 +1656,10 @@ fn an_ifeof_of_a_stream_satex_cannot_pin_down_is_undecided() {
     assert!(defined.contains(&"yes".to_string()) && defined.contains(&"no".to_string()), "{defined:?}");
 }
 
-/// tex.web § 1275: `\openin` through a number satex could not pin down may
-/// have opened or closed any stream, so no `\ifeof` is decided after it.
+/// tex.web § 1275: `\openin` of a missing file through a number satex
+/// could not pin down leaves every stream it may name at end.
 #[test]
-fn an_openin_through_an_unknown_stream_leaves_every_stream_undecided() {
+fn an_openin_of_a_missing_file_through_an_unknown_stream_stays_at_end() {
     let analysis = analyze(
         r"\ifeof3 \def\closedbefore{}\fi
           \count0=\pdfuniformdeviate 9 \openin\count0=nosuchfile
@@ -1666,7 +1667,7 @@ fn an_openin_through_an_unknown_stream_leaves_every_stream_undecided() {
     );
     let defined = names(&analysis);
     assert!(defined.contains(&"closedbefore".to_string()), "a stream nothing opened is at end");
-    assert!(defined.contains(&"yes".to_string()) && defined.contains(&"no".to_string()), "{defined:?}");
+    assert!(defined.contains(&"yes".to_string()) && !defined.contains(&"no".to_string()), "{defined:?}");
 }
 
 /// tex.web § 484: a `\read` from the terminal ends the job in nonstop mode,
@@ -1741,17 +1742,17 @@ fn an_unless_before_an_unknown_meaning_opens_a_conditional() {
 }
 
 /// tex.web § 1232: `\catcode` of a character satex could not pin down may
-/// have changed any category, so none of them is known afterwards -- not
-/// even the braces, which is why nothing past it tokenizes.  Before, the
-/// assignment was dropped and `\the\catcode`\a` read back 11.
+/// have changed any category, the structural ones included. Where the
+/// reader meets one that may be structural, the path splits per category,
+/// so the run reads on where it was not hit.
 #[test]
-fn a_catcode_of_a_character_satex_cannot_pin_down_makes_every_category_unknown() {
+fn a_catcode_of_a_character_satex_cannot_pin_down_splits_where_the_reader_meets_it() {
     let analysis = analyze(
         r"\count0=\pdfuniformdeviate 999 \catcode\count0=11
           \edef\after{\the\catcode`\a}",
     );
     assert!(!diagnosed(&analysis, "unknown-catcode").is_empty());
-    assert!(definition(&analysis, "after").is_none(), "no category is known, so nothing after it is read");
+    assert!(definition(&analysis, "after").is_some(), "read where `\\` and the braces were not hit");
 }
 
 /// The same where the character's interval is narrow: only the categories
@@ -2046,9 +2047,10 @@ fn problems(analysis: &Analysis) -> Vec<(String, String, u64, u64, String)> {
 fn an_argument_the_file_ends_in_is_one_error_at_the_call() {
     let analysis =
         analyze_kernel("\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\n\\greet{world\n\\end{document}\n");
+    // Without a class `\begin{document}` also misses `\normalsize`, as pdflatex reports.
     let found = problems(&analysis);
-    assert_eq!(found.len(), 1, "{found:?}");
-    let (code, severity, line, col, message) = &found[0];
+    assert_eq!(found.len(), 2, "{found:?}");
+    let (code, severity, line, col, message) = &found[1];
     assert_eq!((code.as_str(), severity.as_str(), *line, *col), ("raised-error", "error", 3, 1), "{found:?}");
     assert!(message.starts_with("File ended while scanning use of \\greet"), "{message}");
 }

@@ -244,8 +244,10 @@ impl Num {
             .collect();
         let (mut lo, mut hi, mut err, mut any, mut wrapped) = (i64::MAX, i64::MIN, false, false, false);
         for c in combos(&pts) {
+            // An overflowing corner leaves the values up to the bound
+            // between it and the others attainable.
             let Some(v) = ideal(&c) else {
-                err = true;
+                (err, any, lo, hi) = (true, true, range.0, range.1);
                 continue;
             };
             if v < range.0 || v > range.1 {
@@ -340,7 +342,7 @@ impl Num {
 /// A glue's abstract form (tex.web § 150): one interval per component.
 /// [`Value::GlueNum`]'s payload, [`Num`] lifted componentwise the way
 /// [`Colors`] lifts one per color component.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GlueHull {
     pub width: Num,
     pub stretch: Num,
@@ -369,6 +371,48 @@ impl GlueHull {
             shrink: Num::full(true),
             shrink_order: Num::range(0, i64::from(MAX_FIL_ORDER)),
         }
+    }
+
+    /// The one glue it is, when every component is exact.
+    pub fn glue(&self) -> Option<Glue> {
+        let one = |n: Num| (n.lo == n.hi).then_some(n.lo);
+        let part =
+            |amount: Num, order: Num| Some(Stretch { amount: one(amount)?, order: u8::try_from(one(order)?).ok()? });
+        Some(Glue {
+            width: one(self.width)?,
+            stretch: part(self.stretch, self.stretch_order)?,
+            shrink: part(self.shrink, self.shrink_order)?,
+        })
+    }
+
+    /// The glue a value may be, coerced as [`crate::scan`]'s `glue_of`
+    /// does; a set lift joins its members.
+    pub fn of(value: &Value) -> Option<GlueHull> {
+        let zero = GlueHull::exact(&Glue::default());
+        match value {
+            Value::Glue(g) | Value::MuGlue(g) => Some(GlueHull::exact(g)),
+            Value::Int(n) | Value::Dimen(n) => Some(GlueHull { width: Num::exact(*n), ..zero }),
+            Value::Num { num, .. } => Some(GlueHull { width: *num, ..zero }),
+            Value::GlueNum { hull, .. } => Some(*hull),
+            Value::OneOf(set) => set.iter().map(GlueHull::of).reduce(|a, b| Some(a?.join(&b?)))?,
+            _ => None,
+        }
+    }
+
+    /// As a value: the exact glue where it is one, unknown where it may be
+    /// any, else the hull.
+    pub fn value(self, mu: bool) -> Value {
+        match self.glue() {
+            Some(g) if mu => Value::MuGlue(g),
+            Some(g) => Value::Glue(g),
+            None if self == GlueHull::full() => Value::Unknown,
+            None => Value::GlueNum { quantity: if mu { Quantity::MuGlue } else { Quantity::Glue }, hull: self },
+        }
+    }
+
+    /// tex.web § 461: a minus sign negates every amount, not the orders.
+    pub fn neg(&self) -> GlueHull {
+        GlueHull { width: self.width.neg(), stretch: self.stretch.neg(), shrink: self.shrink.neg(), ..*self }
     }
 
     /// Least upper bound, componentwise.

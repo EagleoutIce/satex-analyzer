@@ -54,7 +54,7 @@ impl Provider {
     pub fn detect() -> Option<Provider> {
         [Provider::TexLive, Provider::MikTeX, Provider::Tectonic]
             .into_iter()
-            .find(|provider| which::which(provider.locator()).is_ok())
+            .find(|provider| crate::paths::which(provider.locator()).is_ok())
     }
 
     /// Query the provider's version string.

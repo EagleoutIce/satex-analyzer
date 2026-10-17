@@ -7,7 +7,9 @@
 use crate::builtins::Primitive;
 use crate::machine::Machine;
 use crate::tex::{Catcode, Meaning, RegKind, Span, Sym, Tok, Token};
-use crate::value::{Glue, MAX_DIMEN, MAX_INT, Num, Scaled, Stretch, UNIT, Value, WORD_MAX, WORD_MIN, mult_and_add};
+use crate::value::{
+    Glue, GlueHull, MAX_DIMEN, MAX_INT, Num, Scaled, Stretch, UNIT, Value, WORD_MAX, WORD_MIN, mult_and_add,
+};
 
 /// The prefix of the names of unknown digits typed with their interval
 /// ([`Machine::digits_in`]).
@@ -117,11 +119,6 @@ pub fn xn_over_d(x: i64, n: i64, d: i64) -> (i64, i64) {
 /// so `20000` times a negative unit is `+\maxdimen`.
 fn scale_unit(n: i64, v: i64, f: i64) -> Scaled {
     mult_and_add(n, v, xn_over_d(v, f, UNIT).0, MAX_DIMEN).unwrap_or(MAX_DIMEN)
-}
-
-fn negate(glue: Glue) -> Glue {
-    let flip = |s: Stretch| Stretch { amount: -s.amount, order: s.order };
-    Glue { width: -glue.width, stretch: flip(glue.stretch), shrink: flip(glue.shrink) }
 }
 
 /// The glue a value holds. A number or dimension widens to glue without
@@ -341,8 +338,9 @@ impl Machine<'_> {
         self.abs = None;
         self.abs_exact = None;
         self.abs_parts = None;
+        self.abs_whole = false;
         let magnitude = self.scan_int_from(token).0;
-        let keep = register && magnitude.is_none();
+        let keep = (register || std::mem::take(&mut self.abs_whole)) && magnitude.is_none();
 
         let abs = self.abs.take().filter(|_| keep);
         let exact = self.abs_exact.take().filter(|_| keep && !negative);
@@ -392,10 +390,10 @@ impl Machine<'_> {
                     || t.cs().is_some_and(|sym| self.is_unknown_digits(sym))
             });
             if more {
-                // More digits after them: any number.
-                let scanned = self.scan_digits(DECIMAL, next);
-                (self.abs, self.abs_exact, self.abs_from) = (None, None, None);
-                return scanned;
+                // More digits after them: any number, unsigned where these are.
+                let backed_up = self.scan_digits(DECIMAL, next).1;
+                self.unsigned_number(num.lo >= 0);
+                return (None, backed_up);
             }
             // tex.web § 445: one trailing space is part of the constant.
             let backed_up = match next {
@@ -408,7 +406,7 @@ impl Machine<'_> {
             };
             // The test that reads it narrows it on each arm, as a register's.
             let from = from.map(|sym| (sym, crate::value::Quantity::Int));
-            (self.abs, self.abs_exact, self.abs_from) = (Some(num), None, from);
+            (self.abs, self.abs_exact, self.abs_from, self.abs_odd) = (Some(num), None, from, None);
             return ((num.lo == num.hi).then_some(num.lo), backed_up);
         }
         let digits =
@@ -423,15 +421,24 @@ impl Machine<'_> {
             };
         }
         if self.is_unknown(token) {
+            // A name a join or a family write left one of several
+            // meanings; a one-of token's texts may run on past it.
+            let unsigned = token.cs().is_some_and(|sym| !self.is_unknown_name(sym)) && self.digits_first(token);
+            self.unsigned_number(unsigned);
+            self.abs_odd = None;
             return (None, true);
         }
+        self.abs_odd = None;
         match token.tok {
             Tok::Chr('`', Catcode::Other) => (self.scan_alphabetic_constant(), false),
             Tok::Chr('\'', Catcode::Other) => (self.scan_digits(OCTAL, None).0, false),
             Tok::Chr('"', Catcode::Other) => (self.scan_digits(HEXADECIMAL, None).0, false),
             _ => match self.scan_internal(token) {
                 Some((RegKind::Toks, _)) => (None, false),
-                Some((_, value)) => (value.and_then(|v| v.as_int()), false),
+                Some((_, value)) => {
+                    self.abs_odd = None;
+                    (value.and_then(|v| v.as_int()), false)
+                }
                 None => {
                     let (value, backed_up) = self.scan_digits(DECIMAL, Some(token));
                     (value, backed_up)
@@ -568,8 +575,14 @@ impl Machine<'_> {
         let mut any = false;
         // Unknown digits among the digits make the number unknown.
         let mut unknown = false;
+        // Begun with a digit, known or unknown: no sign hides in it, so an
+        // unknown value is unsigned (tex.web § 445 caps it).
+        let mut unsigned = None;
         let mut next = first.or_else(|| self.next_x_token());
-        while let Some(token) = next {
+        // The last digit, while it is known: it decides the parity.
+        let mut last = None;
+        let result = loop {
+            let Some(token) = next else { break None };
             if self.split_scanned(token) {
                 next = self.next_x_token();
                 continue;
@@ -581,10 +594,12 @@ impl Machine<'_> {
             };
             // Unknown text may be digits, read on and making the number
             // unknown. It may also be empty, so it is not itself a digit.
+            unsigned.get_or_insert_with(|| self.digits_first(token));
             let maybe = !digits && self.is_unknown(token);
             if digits || maybe {
                 any |= !maybe && !token.cs().is_some_and(|sym| self.is_more_digits(sym));
                 unknown = true;
+                last = None;
                 next = self.next_x_token();
                 continue;
             }
@@ -592,26 +607,34 @@ impl Machine<'_> {
                 // Only unknown text so far: it may have been the digits.
                 if !any && unknown {
                     self.unread(token);
-                    return (None, true);
+                    break Some(true);
                 }
                 if !any {
                     self.unread(token);
+                    self.abs_odd = None;
                     return (self.missing_number(Some(token)), true);
                 }
                 if self.is_spacer(token) {
-                    return ((!unknown).then_some(value), false);
+                    break Some(false);
                 }
                 self.unread(token);
-                return ((!unknown).then_some(value), true);
+                break Some(true);
             };
             any = true;
+            last = Some(d);
             value = (value * radix + d).min(MAX_INT);
             next = self.next_x_token();
-        }
+        };
+        // Radixes are even: the last digit's parity is the number's.
+        self.abs_odd = last.map(|d| d % 2 != 0);
         if unknown {
-            return (None, false);
+            self.unsigned_number(unsigned == Some(true));
+            return (None, result.unwrap_or(false));
         }
-        (any.then_some(value).or_else(|| self.missing_number(None)), false)
+        match result {
+            Some(backed_up) => (Some(value), backed_up),
+            None => (any.then_some(value).or_else(|| self.missing_number(None)), false),
+        }
     }
 
     /// tex.web §§ 456, 459: "Illegal unit of measure", where the token after
@@ -691,7 +714,11 @@ impl Machine<'_> {
         let mut range: Option<crate::value::Num> = None;
         let mut fraction_unknown = false;
         let integer = match shortcut {
-            Some(integer) => integer,
+            // A count of unknown value left its interval, signed.
+            Some(integer) => {
+                range = integer.map(crate::value::Num::exact).or_else(|| self.abs.take());
+                integer
+            }
             None => {
                 let Some((signs, token)) = self.scan_signs() else { return (None, 0) };
                 self.abs = None;
@@ -708,11 +735,16 @@ impl Machine<'_> {
                     // tex.web § 449: an internal dimension or glue is the
                     // whole value; no unit follows.
                     Some((kind, value)) => {
+                        let width = value.as_ref().and_then(GlueHull::of).map(|g| g.width);
                         let value = value.and_then(|v| v.as_dimen());
                         // A dimension register of unknown value leaves its
-                        // interval to the test (see `scan_int`).
-                        if value.is_some() || kind != RegKind::Dimen {
+                        // interval to the test (see `scan_int`), glue in a
+                        // hull its width's, which no test narrows.
+                        if value.is_some() {
                             self.abs = None;
+                        } else if kind != RegKind::Dimen {
+                            self.abs = width;
+                            self.abs_from = None;
                         }
                         self.abs_exact = None;
                         // `attach_sign` clamps before the sign is attached,
@@ -801,6 +833,44 @@ impl Machine<'_> {
             }
         }
         known.then(|| round_decimals(&digits))
+    }
+
+    /// Whether the number `token` begins is surely a digit first, so no
+    /// sign hides in it: a digit, unknown digits that are at least one
+    /// and unsigned, or meanings each a macro without parameters whose
+    /// text is digits beginning so, or `\relax`.
+    fn digits_first(&self, token: Token) -> bool {
+        let first = |t: &Token| match t.tok {
+            Tok::Chr(c, Catcode::Other) => c.is_ascii_digit() || crate::tex::is_unknown_digit(c),
+            Tok::Cs(sym) if self.is_more_digits(sym) => false,
+            Tok::Cs(sym) => sym == self.unknown_digits || self.typed_digits_of(sym).is_some_and(|num| num.lo >= 0),
+            _ => false,
+        };
+        if first(&token) {
+            return true;
+        }
+        let Some(binding) = token.cs().and_then(|sym| self.env.slot(sym)) else { return false };
+        let members = binding.may.as_deref().unwrap_or(std::slice::from_ref(&binding.meaning));
+        // `\relax` is no digit: "Missing number" puts it back, and what
+        // reads on after it (a relation, more of the number) is not what
+        // a number here would read, so it is no member of this case.
+        members.iter().all(|m| match m {
+            // Digits alone: no unit or other text hides after them either.
+            Meaning::Macro(d) => {
+                let rest = |t: &Token| first(t) || t.cs().is_some_and(|sym| self.is_unknown_digits(sym));
+                d.parameter_text.items.is_empty()
+                    && d.replacement_text.first().is_some_and(first)
+                    && d.replacement_text.iter().all(rest)
+            }
+            _ => false,
+        })
+    }
+
+    /// An unknown number just read: unsigned digits lie in 0..=`MAX_INT`
+    /// (tex.web § 445 caps them), the interval left for the test.
+    fn unsigned_number(&mut self, unsigned: bool) {
+        self.abs = unsigned.then(|| Num::range(0, MAX_INT));
+        (self.abs_exact, self.abs_from, self.abs_whole) = (None, None, unsigned);
     }
 
     /// A token whose meaning is unknown: it may stand for any text.
@@ -1096,43 +1166,55 @@ impl Machine<'_> {
         if negative { -value } else { value }
     }
 
-    /// ⟨glue⟩ or, with `mu`, ⟨muglue⟩ (tex.web § 461, `scan_glue`).
-    pub fn scan_glue_spec(&mut self, mu: bool) -> Option<Glue> {
+    /// ⟨glue⟩ or, with `mu`, ⟨muglue⟩ (tex.web § 461, `scan_glue`): one
+    /// interval per component, the interval a scan left where its amount is
+    /// not known, else any.
+    pub fn scan_glue_spec(&mut self, mu: bool) -> Option<GlueHull> {
         let (negative, token) = self.scan_signs()?;
         self.probe_scans(token, if mu { "muglue" } else { "glue" });
+        let sign = |num: Num| if negative { num.neg() } else { num };
         let width = match self.scan_internal(token) {
             Some((RegKind::Skip | RegKind::MuSkip, value)) => {
-                let glue = value.as_ref().and_then(glue_of);
-                return glue.map(|g| if negative { negate(g) } else { g });
+                let hull = value.as_ref().and_then(GlueHull::of).unwrap_or_else(GlueHull::full);
+                return Some(if negative { hull.neg() } else { hull });
             }
+            // The count's interval goes in signed, and comes out so.
             Some((RegKind::Count, value)) => {
                 let integer = value.and_then(|v| v.as_int()).map(|n| if negative { -n } else { n });
-                self.scan_dimen_with(mu, false, Some(integer)).0
+                self.abs = self.abs.take().filter(|_| integer.is_none()).map(sign);
+                let width = self.scan_dimen_with(mu, false, Some(integer)).0;
+                width.map(Num::exact).or_else(|| self.abs.take())
             }
             Some((RegKind::Toks, _)) => None,
-            Some((_, value)) => value.and_then(|v| v.as_dimen()).map(|v| if negative { -v } else { v }),
+            Some((_, value)) => match value.and_then(|v| v.as_dimen()) {
+                Some(v) => Some(Num::exact(if negative { -v } else { v })),
+                None => self.abs.take().map(sign),
+            },
             None => {
                 self.unread(token);
                 let width = self.scan_dimen_with(mu, false, None).0;
-                width.map(|v| if negative { -v } else { v })
+                width.map(Num::exact).or_else(|| self.abs.take()).map(sign)
             }
         };
-        let mut glue = Glue { width: width.unwrap_or_default(), ..Default::default() };
-        let mut known = width.is_some();
+        let mut hull = GlueHull::exact(&Glue::default());
+        hull.width = width.unwrap_or(Num::full(true));
         for (keyword, stretch) in [("plus", true), ("minus", false)] {
             if !self.scan_keyword(keyword) {
                 continue;
             }
             let (amount, order) = self.scan_dimen_with(mu, true, None);
-            known &= amount.is_some();
-            let part = Stretch { amount: amount.unwrap_or_default(), order };
+            let (amount, order) = match (amount, self.abs.take()) {
+                (Some(a), _) => (Num::exact(a), Num::exact(order.into())),
+                (None, Some(num)) => (num, Num::exact(order.into())),
+                (None, None) => (Num::full(true), GlueHull::full().stretch_order),
+            };
             if stretch {
-                glue.stretch = part;
+                (hull.stretch, hull.stretch_order) = (amount, order);
             } else {
-                glue.shrink = part;
+                (hull.shrink, hull.shrink_order) = (amount, order);
             }
         }
-        known.then_some(glue)
+        Some(hull)
     }
 
     /// tex.web § 407: the letters of `keyword`, in either
@@ -1402,8 +1484,8 @@ impl Machine<'_> {
                 let f = match o_level {
                     RegKind::Count => self.scan_int().map(|v| Glue { width: v, ..zero }),
                     RegKind::Dimen => self.scan_dimension().map(|v| Glue { width: v, ..zero }),
-                    RegKind::Skip => self.scan_glue_spec(false),
-                    _ => self.scan_glue_spec(true),
+                    RegKind::Skip => self.scan_glue_spec(false).and_then(|g| g.glue()),
+                    _ => self.scan_glue_spec(true).and_then(|g| g.glue()),
                 };
                 // A register of unknown value leaves its interval; anything
                 // else unknown may be any 32-bit number. A register (or

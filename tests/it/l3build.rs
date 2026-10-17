@@ -80,7 +80,7 @@ fn documents_are_typeset_with_typesetexe_and_tests_checked_with_the_first_engine
 
 #[test]
 fn defaults_come_from_l3build_itself() {
-    if which::which("texlua").is_err() || !installed() {
+    if satex::paths::which("texlua").is_err() || !installed() {
         return;
     }
     let dir = bundle("defaults");
@@ -96,7 +96,7 @@ fn defaults_come_from_l3build_itself() {
 /// writing is refused, so reading a bundle never changes a file.
 #[test]
 fn build_lua_cannot_write_a_file() {
-    if !installed() || which::which("texlua").is_err() {
+    if !installed() || satex::paths::which("texlua").is_err() {
         return;
     }
     let dir = bundle("sandbox");

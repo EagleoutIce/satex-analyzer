@@ -231,7 +231,7 @@ fn known_shells(home: &std::path::Path) -> Vec<&'static str> {
     let used = [env_shell(), parent_shell().unwrap_or_default()];
     ["bash", "zsh", "fish"]
         .into_iter()
-        .filter(|shell| used.iter().any(|u| u == shell) || which::which(shell).is_ok())
+        .filter(|shell| used.iter().any(|u| u == shell) || satex::paths::which(shell).is_ok())
         .filter(|shell| completion_file(home, shell).is_some())
         .collect()
 }

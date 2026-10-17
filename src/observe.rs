@@ -354,7 +354,7 @@ pub fn environment_opened(m: &mut Machine, outer: Option<String>, span: Span) {
         // `\@execute@begin@hook` closes the group `\begin` opened, so the
         // body is read one level out.
         m.out.document_depth = Some(m.env.group_level().saturating_sub(1) as u16);
-        m.out.preamble_files = Some(m.out.files.len());
+        m.out.preamble_cost = Some((m.out.files.len(), m.out.steps));
         m.out.preamble = Some(Box::new((m.env.snapshot(), m.catcodes.clone())));
     } else {
         // `document` itself is not on the stack: `document_depth` already
@@ -984,10 +984,11 @@ pub fn image(m: &mut Machine, name: &str, span: Span) -> Option<std::path::PathB
 /// `\accent⟨8-bit number⟩⟨character⟩` (tex.web § 1123): the accent is
 /// placed over the character by the typesetter, so the word it stands in
 /// is no longer one TeX can hyphenate (The TeXbook, appendix H).
-pub fn accent(m: &mut Machine, span: Span) {
-    let code = m.scan_number().unwrap_or(0);
+pub fn accent(m: &mut Machine, span: Span) -> Option<i64> {
+    let code = m.scan_number();
     let at = m.file_call.map_or(span, |(_, at)| at);
-    m.occurrence(OccKind::Accent, code.to_string(), None, at);
+    m.occurrence(OccKind::Accent, code.unwrap_or(0).to_string(), None, at);
+    code
 }
 
 /// The payload of a PDF primitive, in the syntax the pdfTeX manual gives

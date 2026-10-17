@@ -1249,6 +1249,8 @@ impl Machine<'_> {
             call_shape: _,
             gaps: _,
             last_file: _,
+            read: _,
+            may_have_ended: _,
             recent_file_spans: _,
             file_call: _,
             project_site: _,
@@ -1312,6 +1314,7 @@ impl Machine<'_> {
             parted: _,
             abs: _,
             abs_exact: _,
+            abs_odd: _,
             abs_parts: _,
             abs_from: _,
             abs_whole: _,
@@ -2168,7 +2171,7 @@ impl Machine<'_> {
         self.last_named_cs = s.last_named_cs;
         self.page_touched |= s.page_touched;
         // What the replayed code put on the main vertical list is not kept.
-        self.main_tail = crate::mode::Last::Unknown;
+        self.main_tail = crate::mode::Last::UNKNOWN;
         let mut recent = before.recent_file_spans.clone();
         recent.extend(s.recent_file_spans.iter().map(|span| span_in(*span, site)));
         let excess = recent.len().saturating_sub(RECENT_FILE_SPANS);
@@ -3338,7 +3341,7 @@ mod tests {
     }
 
     fn installed() -> bool {
-        which::which("kpsewhich").is_ok()
+        crate::paths::which("kpsewhich").is_ok()
     }
 
     /// One kernel cache for every test here, as `tests/it/package_cache.rs` does.

@@ -474,3 +474,17 @@ challenges! {
     typeset_termination_merge_cost: "r7-merge-cost",
     typeset_typesetting_feedback_hyphenation: "s2-rounded-paragraph",
 }
+
+/// `\quad` after a section number is space on the page: the computed text
+/// says `1 Intro`, as pdftotext reads it.
+#[test]
+fn a_section_number_and_its_title_are_apart() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nText.\n\\end{document}\n";
+    let analysis = satex::machine::Machine::analyze(source, None, &crate::support::config());
+    let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+    let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
+    assert!(texts.contains(&"1 Intro"), "{texts:?}");
+}

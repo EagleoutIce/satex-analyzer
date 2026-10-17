@@ -53,7 +53,7 @@ fn package(macros: usize) -> String {
 
 fn local() -> Config {
     Config {
-        load: Load { packages: false, classes: false, inputs: false, format: false, skip: Vec::new() },
+        load: Load { packages: false, classes: false, inputs: false, format: false, ..Default::default() },
         texmf: Texmf { kpsewhich: false, ..Texmf::default() },
         ..Config::default()
     }

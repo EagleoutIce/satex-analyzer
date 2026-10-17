@@ -240,6 +240,11 @@ pub fn within(dir: &Path, file: &Path) -> bool {
     absolute(file).starts_with(absolute(dir))
 }
 
+/// Whether `a` and `b` name one file, symlinks resolved.
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    a == b || std::fs::canonicalize(a).ok().zip(std::fs::canonicalize(b).ok()).is_some_and(|(a, b)| a == b)
+}
+
 /// The directory `path` lives in, for a document- or project-relative
 /// lookup: `Path::parent()` returns `Some("")`, not `None`, for a bare file
 /// name, so code that does `.unwrap_or_default()` on it silently gets the
@@ -414,4 +419,117 @@ mod tests {
         assert!(dirs.contains(&dir.join("tex/sub")));
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// No program of that name is on `PATH`.
+#[derive(Debug)]
+pub struct NotOnPath(pub String);
+
+impl std::fmt::Display for NotOnPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} is not on PATH", self.0)
+    }
+}
+
+impl std::error::Error for NotOnPath {}
+
+/// The program `name` as the shell finds it: the first `PATH` entry that
+/// holds it as an executable file, on Windows with a `PATHEXT` extension.
+pub fn which(name: impl AsRef<std::ffi::OsStr>) -> Result<PathBuf, NotOnPath> {
+    let name = Path::new(name.as_ref());
+    let missing = || NotOnPath(name.display().to_string());
+    let extensions: Vec<String> = if cfg!(windows) {
+        let ext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+        std::iter::once(String::new()).chain(ext.split(';').map(str::to_lowercase)).collect()
+    } else {
+        vec![String::new()]
+    };
+    let runnable = |path: &Path| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            path.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        }
+        #[cfg(not(unix))]
+        {
+            path.is_file()
+        }
+    };
+    let candidates = |dir: &Path| -> Vec<PathBuf> {
+        let file = dir.join(name);
+        extensions
+            .iter()
+            .map(|ext| {
+                let mut file = file.clone().into_os_string();
+                file.push(ext);
+                PathBuf::from(file)
+            })
+            .collect()
+    };
+    if name.components().count() > 1 {
+        return candidates(Path::new("")).into_iter().find(|p| runnable(p)).ok_or_else(missing);
+    }
+    let path = std::env::var_os("PATH").ok_or_else(missing)?;
+    std::env::split_paths(&path).flat_map(|dir| candidates(&dir)).find(|p| runnable(p)).ok_or_else(missing)
+}
+
+/// The user's home directory: `HOME`, on Windows `USERPROFILE`.
+pub fn home_dir() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+/// Where the platform keeps a user's caches: `XDG_CACHE_HOME` or
+/// `~/.cache`, `~/Library/Caches` on macOS, `LOCALAPPDATA` on Windows.
+pub fn cache_dir() -> Option<PathBuf> {
+    platform_dir("XDG_CACHE_HOME", ".cache", "Library/Caches", "LOCALAPPDATA")
+}
+
+/// Where the platform keeps a user's configuration: `XDG_CONFIG_HOME` or
+/// `~/.config`, `~/Library/Application Support` on macOS, `APPDATA` on Windows.
+pub fn config_dir() -> Option<PathBuf> {
+    platform_dir("XDG_CONFIG_HOME", ".config", "Library/Application Support", "APPDATA")
+}
+
+fn platform_dir(xdg: &str, unix: &str, macos: &str, windows: &str) -> Option<PathBuf> {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if cfg!(windows) {
+        var(windows)
+    } else if cfg!(target_os = "macos") {
+        home_dir().map(|h| h.join(macos))
+    } else {
+        var(xdg).filter(|p| p.is_absolute()).or_else(|| home_dir().map(|h| h.join(unix)))
+    }
+}
+
+/// The existing paths `pattern` names, `*`, `?` and `[…]` matched one
+/// component at a time, sorted.
+pub fn glob(pattern: &str) -> Vec<PathBuf> {
+    let wild = |c: &str| c.contains(['*', '?', '[']);
+    let mut found = vec![PathBuf::new()];
+    for component in Path::new(pattern).components() {
+        let part = component.as_os_str().to_string_lossy();
+        if !wild(&part) {
+            found.iter_mut().for_each(|p| p.push(component));
+            found.retain(|p| p.exists());
+            continue;
+        }
+        let Ok(matcher) = globset::Glob::new(&part).map(|g| g.compile_matcher()) else { return Vec::new() };
+        found = found
+            .iter()
+            .flat_map(|dir| {
+                let read = if dir.as_os_str().is_empty() { Path::new(".") } else { dir.as_path() };
+                std::fs::read_dir(read)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|e| e.file_name())
+                    .filter(|n| matcher.is_match(n))
+                    .map(|n| dir.join(n))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+    }
+    found.sort();
+    found
 }

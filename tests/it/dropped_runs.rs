@@ -36,11 +36,10 @@ fn all(analysis: &Analysis) -> Vec<String> {
     analysis.facts.diagnostics.iter().map(|d| format!("{}: {}", d.code, d.message)).collect()
 }
 
-/// An error a path reached only past an approximation may not be TeX's:
-/// it does not decide how the paths without one read on. Here one arm,
-/// past a `\write` to a stream satex cannot pin down, leaves `\grab`'s
-/// argument open, so its scan runs to the end of the main file (tex.web
-/// §§ 336-339). The other arm reads both files.
+/// An error in the document's own text is kept, past an approximation too:
+/// one arm, past a `\write` to a stream satex cannot pin down, leaves
+/// `\grab`'s argument open to the end of the file (tex.web §§ 336-339), and
+/// says so. The other arm reads both files.
 #[test]
 fn an_error_only_an_approximation_reaches_leaves_the_files_read() {
     let dir = scratch("approximated-error");
@@ -50,10 +49,11 @@ fn an_error_only_an_approximation_reaches_leaves_the_files_read() {
     let analysis = analyze_files(&dir, source, |_| {});
     let read = |name: &str| definition(&analysis, name).is_some();
     assert!(read("ina") && read("inb"), "{:#?}", all(&analysis));
-    let dropped = all(&analysis);
+    let reported = all(&analysis);
     assert!(
-        dropped.iter().any(|d| d.starts_with("assumed-compiles") && d.contains("may not be TeX's")),
-        "{dropped:#?}"
+        reported.iter().any(|d| d.starts_with("runaway-argument"))
+            && !reported.iter().any(|d| d.starts_with("assumed-compiles")),
+        "{reported:#?}"
     );
 }
 

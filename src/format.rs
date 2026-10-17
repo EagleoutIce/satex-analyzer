@@ -264,7 +264,7 @@ pub static BUILDING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub fn default_cache_dir() -> Option<PathBuf> {
     match std::env::var_os("SATEX_CACHE").filter(|value| !value.is_empty()) {
         Some(value) => Some(PathBuf::from(value)),
-        None => dirs::cache_dir().map(|base| base.join("satex")),
+        None => crate::paths::cache_dir().map(|base| base.join("satex")),
     }
 }
 
@@ -871,7 +871,7 @@ mod tests {
             gaps: vec![("unsupported-primitive".into(), 0)],
             wild: {
                 let mut wild = crate::machine::Wild::default();
-                wild.add("MT@inh@".into(), String::new(), true);
+                wild.add("MT@inh@".into(), String::new(), false, Some(crate::tex::Meaning::Unknown));
                 wild
             },
         }

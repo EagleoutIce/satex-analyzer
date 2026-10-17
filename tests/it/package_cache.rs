@@ -1182,7 +1182,7 @@ fn a_kernel_is_named_by_its_release_not_its_path() {
     assert_eq!(satex::format::release_name(&kernel), "2031");
     let bare = dir.join("other.ltx");
     std::fs::write(&bare, "\\relax\n").expect("kernel");
-    assert_eq!(satex::format::release_name(&bare), "other");
+    assert_eq!(satex::format::release_name(&bare), satex::format::tree_name(&bare));
 }
 
 /// No state from an interrupted run: every package cache entry of `a`.

@@ -644,7 +644,7 @@ fn every_evaluated_conditional_is_a_fact() {
 #[test]
 fn the_lualatex_kernel_builds_without_broken_gaps() {
     use satex::facts::Severity;
-    if !crate::support::installed() || which::which("lualatex").is_err() {
+    if !crate::support::installed() || satex::paths::which("lualatex").is_err() {
         eprintln!("no lualatex found; skipping the LuaLaTeX kernel build");
         return;
     }
@@ -673,7 +673,7 @@ fn the_lualatex_kernel_builds_without_broken_gaps() {
 /// `\str_if_eq:nnTF`. Skipped without `lualatex`.
 #[test]
 fn the_lualatex_kernel_is_cached_and_expl3_works() {
-    if !crate::support::installed() || which::which("lualatex").is_err() {
+    if !crate::support::installed() || satex::paths::which("lualatex").is_err() {
         eprintln!("no lualatex found; skipping the LuaLaTeX kernel cache");
         return;
     }

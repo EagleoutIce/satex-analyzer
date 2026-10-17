@@ -92,7 +92,7 @@ impl Manager {
             return Err(Unasked::Bundled);
         }
         let program = provider.manager().ok_or(Unasked::NoManager)?;
-        if which::which(program).is_err() {
+        if crate::paths::which(program).is_err() {
             return Err(Unasked::NoManager);
         }
         let cache = crate::format::enabled_cache_dir(cfg);

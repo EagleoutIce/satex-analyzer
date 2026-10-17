@@ -12,7 +12,7 @@ use crate::env::GroupKind;
 use crate::facts::Severity;
 use crate::machine::{Machine, Step};
 use crate::tex::{Catcode, Meaning, Span, Sym, Tok, Token};
-use crate::value::{Scaled, Value};
+use crate::value::{GlueHull, Scaled, Value};
 
 /// A set of TeX's six modes (tex.web § 211).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash, serde::Serialize, serde::Deserialize)]
@@ -110,6 +110,11 @@ pub mod group {
     pub const MATH_SHIFT: u8 = 15;
 }
 
+/// A `\setbox` target: register, global, and its pending dimensions.
+type BoxTarget = (Option<i64>, bool, Option<[(i64, i64); 2]>);
+/// Width, height and depth `\unskip`/`\unkern` restore.
+type Undo = (Dim, Dim, Option<Dim>);
+
 /// What a group saved of the semantic nest.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Nest {
@@ -125,7 +130,7 @@ pub struct Nest {
     pub part: u8,
     /// The box register a `\setbox` fills when the box ends, and whether
     /// globally (tex.web § 1077 `box_end`).
-    pub target: Option<(Option<i64>, bool, Option<[(i64, i64); 2]>)>,
+    pub target: Option<BoxTarget>,
     /// What `\raise` and relatives shift the box by (tex.web § 1073).
     pub shift: Dim,
     /// How the box is packed (tex.web § 644).
@@ -450,7 +455,7 @@ pub struct Natural {
     /// § 668 adds the depth before glue or a kern into the height), so
     /// that `\unskip` or `\unkern` taking it away restores them; with the
     /// three after it, which tell that nothing else changed them since.
-    pub undo: Option<(Last, [(Dim, Dim, Option<Dim>); 2])>,
+    pub undo: Option<(Last, [Undo; 2])>,
     /// How many boxes and rules came onto the list through
     /// [`State::append_item`]: with the tail, whether it holds nothing else.
     pub solid: u8,
@@ -520,7 +525,7 @@ impl Natural {
             first: Some(Dim::ANY),
             prior: true,
             capped: true,
-            tail: [Last::Unknown; TAIL],
+            tail: [Last::UNKNOWN; TAIL],
             para: Para { lost: true, ..Para::default() },
             prev_depth: Some(Dim::ANY),
             ..Natural::default()
@@ -574,7 +579,7 @@ impl Natural {
         for k in 1..TAIL {
             self.tail[k - 1] = self.tail[k];
         }
-        self.tail[TAIL - 1] = Last::Unknown;
+        self.tail[TAIL - 1] = Last::UNKNOWN;
         self.ligature = None;
     }
 
@@ -683,7 +688,7 @@ impl Natural {
         let was = match self.tail[0] {
             Last::Glue(..) => {
                 !self.para.fresh
-                    && !matches!(self.tail[1], Last::Glue(..) | Last::Penalty(_) | Last::Empty | Last::Unknown)
+                    && !matches!(self.tail[1], Last::Glue(..) | Last::Penalty(_) | Last::Empty | Last::Unknown(_))
             }
             Last::Penalty(p) => p > -10000 && p < 10000,
             _ => false,
@@ -771,8 +776,9 @@ pub enum Last {
     /// its italic correction from (tex.web § 1113); `None` where that is
     /// not known.
     Char(Option<(u32, u32)>),
-    /// Glue by its natural width, and its whole specification where known.
-    Glue(Scaled, Option<crate::value::Glue>),
+    /// Glue by its natural width and its specification, each an interval
+    /// per component; no specification where `\lastskip` does not read it.
+    Glue(Dim, Option<GlueHull>),
     Kern(Scaled),
     Penalty(i64),
     /// Nothing at all: the list is empty.
@@ -783,18 +789,71 @@ pub enum Last {
     Box,
     /// A whatsit node (tex.web § 1341), such as `\special`.
     Whatsit,
-    Unknown,
+    /// Not known which item, only what the `\last…` commands may read.
+    Unknown(Reads),
+}
+
+/// What `\lastskip`, `\lastkern` and `\lastpenalty` may read off a tail
+/// of several possible items (tex.web § 424): an interval each, `None`
+/// for any.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Reads {
+    pub skip: Option<GlueHull>,
+    pub kern: Option<Dim>,
+    pub penalty: Option<crate::value::Num>,
 }
 
 impl Last {
+    /// Any item at all.
+    pub const UNKNOWN: Last = Last::Unknown(Reads { skip: None, kern: None, penalty: None });
+
     /// The tail where two paths, or an item that may not have been
-    /// appended, leave different ones.
+    /// appended, leave different ones: of different kinds, what each
+    /// `\last…` reads is joined.
     pub(crate) fn merge(self, other: Last) -> Last {
         match (self, other) {
             _ if self == other => self,
             (Last::Other | Last::Char(_), Last::Other | Last::Char(_)) => Last::Char(None),
-            _ => Last::Unknown,
+            (Last::Glue(w, p), Last::Glue(v, q)) => Last::Glue(w.join(v), p.zip(q).map(|(p, q)| p.join(&q))),
+            _ => {
+                let (a, b) = (self.reads(), other.reads());
+                Last::Unknown(Reads {
+                    skip: a.skip.zip(b.skip).map(|(p, q)| p.join(&q)),
+                    kern: a.kern.zip(b.kern).map(|(p, q)| p.join(q)),
+                    penalty: a.penalty.zip(b.penalty).map(|(p, q)| p.join(&q)),
+                })
+            }
         }
+    }
+
+    /// What `\lastskip`, `\lastkern` and `\lastpenalty` read off it: zero
+    /// unless it is of that kind (tex.web § 424).
+    pub(crate) fn reads(self) -> Reads {
+        let zero = Reads {
+            skip: Some(GlueHull::exact(&crate::value::Glue::default())),
+            kern: Some(Dim::exact(0)),
+            penalty: Some(crate::value::Num::exact(0)),
+        };
+        match self {
+            Last::Glue(_, skip) => Reads { skip, ..zero },
+            Last::Kern(k) => Reads { kern: Some(Dim::exact(k)), ..zero },
+            Last::Penalty(p) => Reads { penalty: Some(crate::value::Num::exact(p)), ..zero },
+            Last::Unknown(reads) => reads,
+            Last::Other | Last::Char(_) | Last::Empty | Last::Box | Last::Whatsit => zero,
+        }
+    }
+}
+
+impl Reads {
+    /// What the `\last…` command of `removed`'s kind reads.
+    fn value(self, removed: Removed) -> Option<Value> {
+        use crate::value::{Num, Quantity};
+        let value = match removed {
+            Removed::Glue => self.skip?.value(false),
+            Removed::Kern => self.kern.map(|d| Value::from_num(Quantity::Dimen, Num::range(d.lo, d.hi)))?,
+            Removed::Penalty => Value::from_num(Quantity::Int, self.penalty?),
+        };
+        (!matches!(value, Value::Unknown)).then_some(value)
     }
 }
 
@@ -820,8 +879,8 @@ pub(crate) enum Item {
     Whatsit,
     Penalty(Option<i64>),
     Kern(Option<Scaled>),
-    /// Glue by its natural width, and its specification where known.
-    Glue(Option<Scaled>, Option<crate::value::Glue>),
+    /// Glue by its natural width and its specification, as [`Last::Glue`].
+    Glue(Dim, Option<GlueHull>),
     /// A rule: each of its three lengths, `None` where running (tex.web
     /// § 463), `Some(None)` where satex does not know it.
     Rule {
@@ -831,6 +890,13 @@ pub(crate) enum Item {
     },
     Box([Dim; 3]),
     Unknown,
+}
+
+impl Item {
+    /// Glue whose width and specification are each known or not.
+    pub(crate) fn glue(width: Option<Scaled>, spec: Option<crate::value::Glue>) -> Item {
+        Item::Glue(width.map_or(Dim::ANY, Dim::exact), spec.map(|g| GlueHull::exact(&g)))
+    }
 }
 
 /// Two paths' natural sizes: each length joined, so a size that differs
@@ -847,6 +913,9 @@ const DEFAULT_RULE: Scaled = 26214;
 
 /// The `part` of the math group `\eqno` begins (tex.web § 1142).
 const EQNO: u8 = 1;
+
+/// The `part` of a box group that makes the box of leaders.
+const LEADERS: u8 = 2;
 
 /// tex.web § 1071 `box_context`: where the box goes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -901,7 +970,10 @@ impl Machine<'_> {
     /// tex.web § 323 `begin_token_list` of `\everypar` and relatives.
     fn insert_every(&mut self, name: &str, span: Span) {
         match self.every(name) {
-            Some(tokens) if !tokens.is_empty() => self.push_tokens(tokens),
+            Some(tokens) if !tokens.is_empty() => {
+                let sym = self.intern(name);
+                self.push_inserted(sym, tokens, span);
+            }
             Some(_) => {}
             None => self.diagnose(
                 Severity::Imprecision,
@@ -939,7 +1011,7 @@ impl Machine<'_> {
         self.material = true;
         // A paragraph the main vertical list gets the lines of.
         if self.mode.meets(Modes::VERTICAL) {
-            self.main_tail = Last::Unknown;
+            self.main_tail = Last::UNKNOWN;
         }
         self.align_cell(false);
         let vertical = self.mode.and(Modes::ANY_VERTICAL);
@@ -973,11 +1045,11 @@ impl Machine<'_> {
         let skip = parskip.map_or(Dim::ANY, |g| Dim::exact(g.width));
         let (skip, first, below) = match outer.tail[0] {
             Last::Empty => (Dim::exact(0), outer.first, Last::Empty),
-            Last::Unknown if outer.first.is_none() => (Dim::exact(0).join(skip), Some(Dim::ANY), Last::Unknown),
+            Last::Unknown(_) if outer.first.is_none() => (Dim::exact(0).join(skip), Some(Dim::ANY), Last::UNKNOWN),
             _ => (
                 skip,
                 outer.first.or(Some(Dim::exact(0))),
-                parskip.map_or(Last::Unknown, |g| Last::Glue(g.width, Some(g))),
+                parskip.map_or(Last::UNKNOWN, |g| Last::Glue(Dim::exact(g.width), Some(GlueHull::exact(&g)))),
             ),
         };
         // tex.web § 1091: the indent box is `\parindent` wide.  The list's
@@ -1077,6 +1149,20 @@ impl Machine<'_> {
         let (x, d) = (i128::from(quad) * i128::from(lp), 1000);
         let w = x / d + i128::from(2 * (x % d) >= d);
         Some(-Scaled::try_from(w).ok()?)
+    }
+
+    /// The tail item, where the list is followed.
+    pub(crate) fn set_tail(&mut self, last: Last) {
+        if let Some(n) = &mut self.natural {
+            n.tail[0] = last;
+        }
+    }
+
+    /// tex.web § 646 `last_badness`, set by every `hpack` and `vpack`: zero
+    /// for a list packed to its natural size, not followed otherwise.
+    pub(crate) fn set_badness(&mut self, natural: bool) {
+        let sym = self.intern("badness");
+        self.env.set_value(sym, if natural { Value::Int(0) } else { Value::Unknown }, true);
     }
 
     /// `\prevgraf` (tex.web § 1244): not grouped.
@@ -1219,14 +1305,14 @@ impl Machine<'_> {
             self.glue_parameter("parfillskip")
         } else {
             match n.tail[0] {
-                Last::Glue(_, g) => g,
+                Last::Glue(_, g) => g.and_then(|g| g.glue()),
                 _ => None,
             }
         };
         let stretch = stretchy(end) || stretchy(self.glue_parameter("rightskip"));
         let mut along = n.along;
         if last && let Last::Glue(w, _) = n.tail[0] {
-            along = along.reduced_by(Dim::exact(w));
+            along = along.reduced_by(w);
             // § 816 turns it into `\penalty10000`.
             n.drop_break();
         }
@@ -1300,6 +1386,20 @@ impl Machine<'_> {
     /// `head_for_vmode`): a `\par` token goes in front of it.  `true` when
     /// `token` was put back.
     pub(crate) fn vertical_material(&mut self, token: Token) -> bool {
+        // In a box the open group's closer goes in front (`off_save`,
+        // § 1064); `\hrule` there is an error and is dropped (§ 1095).
+        if self.mode == Modes::RESTRICTED_HORIZONTAL
+            && let Some(kind) = self.env.group_kind()
+        {
+            let hrule = token.cs().is_some_and(|sym| self.name(self.env.identity(sym)) == "hrule");
+            let msg = if hrule { "\\hrule in a box is dropped" } else { "missing } inserted before vertical material" };
+            self.diagnose(Severity::Warning, "mismatched-group", token.span, msg.into());
+            if !hrule {
+                self.unread(token);
+                self.close_group(kind, token);
+            }
+            return true;
+        }
         let horizontal = self.mode.and(Modes::HORIZONTAL);
         if horizontal.is_empty() {
             self.par_inserted = None;
@@ -1310,12 +1410,19 @@ impl Machine<'_> {
         // would insert `\par` forever, so a run that compiles had it end the
         // paragraph. Only an approximated `\par` gets here.
         if self.par_inserted.replace(token.span) == Some(token.span) && horizontal == self.mode {
-            self.diagnose(
-                Severity::Assumption,
-                "par-assumed-to-end-paragraph",
-                token.span,
-                "\\par was put before this command and the paragraph did not end; as in a run that compiles, it is assumed to have ended".into(),
-            );
+            // Without `analysis.assume_compiles` it is TeX's endless loop, and
+            // the path goes on as the one that ends would.
+            let (severity, message) = match self.cfg.compiles() {
+                true => (
+                    Severity::Assumption,
+                    "\\par was put before this command and the paragraph did not end; as in a run that compiles, it is assumed to have ended",
+                ),
+                false => (
+                    Severity::Warning,
+                    "\\par was put before this command and the paragraph did not end: TeX puts it there again forever",
+                ),
+            };
+            self.diagnose(severity, "par-assumed-to-end-paragraph", token.span, message.into());
             self.par_inserted = None;
             self.end_graf();
             self.normal_paragraph(false);
@@ -1342,6 +1449,9 @@ impl Machine<'_> {
     /// list the paragraph belongs to.
     pub(crate) fn end_graf(&mut self) {
         self.par_inserted = None;
+        if self.mode.meets(Modes::HORIZONTAL) {
+            self.set_badness(false);
+        }
         // tex.web § 1096: the error count starts over with each paragraph.
         self.tex_errors = 0;
         let list = self.list.and(Modes::ANY_VERTICAL);
@@ -1364,7 +1474,7 @@ impl Machine<'_> {
         // nothing may add no line at all (§ 1096).
         let lined = n.wide.max(self.line_shape()[1]);
         // The last line's box, or a null paragraph's list as it was.
-        let mut tail = [Last::Unknown; TAIL];
+        let mut tail = [Last::UNKNOWN; TAIL];
         tail[0] = match (n.tail[0], n.prior) {
             (Last::Empty, _) => n.para.below,
             (_, true) => Last::Other.merge(n.para.below),
@@ -1375,6 +1485,17 @@ impl Machine<'_> {
         let before = n;
         if n.tail[0] != Last::Empty {
             self.set_line(&mut n, true);
+        }
+        let rigid = |g: Option<crate::value::Glue>| g.is_some_and(|g| g.stretch.amount == 0);
+        if self.out.document_depth.is_some()
+            && rigid(self.glue_parameter("leftskip"))
+            && rigid(self.glue_parameter("rightskip"))
+        {
+            // `\par` closed the text at its end; the close before is where it began.
+            let text = &self.out.facts.text;
+            let start = text.closed.iter().rev().nth(1).map_or(0, |&c| c as usize);
+            let set = text.at.get(start..).unwrap_or_default().iter().filter(|s| s.modes == Modes::HORIZONTAL).count();
+            self.out.justified_text += set as u64;
         }
         // A hyphen is set only at a line's end (§ 902): one line, none.
         self.mark_hyphens(n.para.lines.1 <= 1 && !n.para.lost);
@@ -1452,19 +1573,7 @@ impl Machine<'_> {
     }
 
     /// `\par` (tex.web § 1094).
-    fn par(&mut self, span: Span) {
-        // A `\par` in math mode is an error that inserts the `$` it lacks
-        // (tex.web § 1047 `insert_dollar_sign`).
-        if self.mode.within(Modes::ANY_MATH)
-            && !self.mode.is_empty()
-            && matches!(self.env.group_kind(), Some(GroupKind::Math { .. }))
-        {
-            self.diagnose(Severity::Warning, "missing-dollar", span, "missing $ inserted before \\par".into());
-            let par = self.intern("par");
-            self.unread(Token::new(Tok::Cs(par), span));
-            self.unread(Token::new(Tok::Chr('$', Catcode::Math), span));
-            return;
-        }
+    fn par(&mut self) {
         let acting = self.mode.and(Modes::ANY_VERTICAL.union(Modes::HORIZONTAL));
         if acting.is_empty() {
             return;
@@ -1477,6 +1586,7 @@ impl Machine<'_> {
     /// An unknown command may have started or ended a paragraph.
     pub(crate) fn widen_mode(&mut self) {
         self.material = true;
+        self.set_badness(false);
         self.natural = None;
         let mut mode = self.mode;
         if mode.meets(Modes::ANY_VERTICAL) {
@@ -1631,7 +1741,10 @@ impl Machine<'_> {
                 n.scripted = None;
                 // tex.web §§ 1153, 1186: the group's noad is the tail again.
                 n.pushed(Last::Other);
-                self.natural = (n.script.is_none() && n.math_pending.is_none()).then_some(n);
+                // § 749: an operator whose list is one character is centred
+                // on the axis, which this sum does not follow.
+                let op = nest.part == 1;
+                self.natural = (n.script.is_none() && n.math_pending.is_none() && !op).then_some(n);
             }
             return;
         }
@@ -1692,6 +1805,15 @@ impl Machine<'_> {
                 }
             }
         };
+        // tex.web §§ 658, 673: a list packed to its natural size is not bad.
+        let natural_size = match nest.to {
+            Packing::Natural => true,
+            Packing::Spread(by) => by == Dim::exact(0),
+            Packing::To(to) => kind == BoxState::HBox && to.known().is_some() && to == n.along,
+        };
+        if kind != BoxState::Unknown || nest.code == Some(group::ALIGN) {
+            self.set_badness(natural_size);
+        }
         let now = self.out.facts.text.at.len() as u32;
         let inside = nest.list.within(Modes::INTERNAL_VERTICAL.union(Modes::RESTRICTED_HORIZONTAL));
         if let Some((register, global, within)) = nest.target {
@@ -1783,6 +1905,8 @@ impl Machine<'_> {
                 self.env.set_nest(rows);
                 self.template_row_start();
             }
+        } else if nest.part == LEADERS {
+            self.leader_size(dims.map(Some));
         } else if kind == BoxState::Unknown {
             self.natural = None;
         }
@@ -1834,6 +1958,10 @@ impl Machine<'_> {
             if eqno && let Some(GroupKind::Math { display: true }) = self.env.group_kind() {
                 self.close_group(GroupKind::Math { display: true }, token);
             }
+            // tex.web § 1199: a display may be packed to fit the line.
+            if display || eqno {
+                self.set_badness(false);
+            }
             return;
         }
         // tex.web § 1193: a `$` that meets another group in math is `off_save`.
@@ -1877,7 +2005,7 @@ impl Machine<'_> {
     pub(crate) fn mode_command(&mut self, cmd: ModeCmd, by: Sym, span: Span) {
         let token = Token::new(Tok::Cs(by), span);
         match cmd {
-            ModeCmd::Par => self.par(span),
+            ModeCmd::Par => self.par(),
             ModeCmd::StartPar { .. } | ModeCmd::QuitVMode => {
                 // tex.web § 1093: `\indent` in horizontal mode appends an
                 // empty box `\parindent` wide.
@@ -1913,7 +2041,20 @@ impl Machine<'_> {
                 }
             }
             ModeCmd::Box(kind) => self.begin_box(kind, BoxContext::Direct, span),
-            ModeCmd::Shift { .. } => {
+            ModeCmd::Shift { vertical } => {
+                // tex.web §§ 1048-1049, 1073: `\raise` and `\lower` move a box
+                // in a horizontal list or in math, `\moveleft` and `\moveright`
+                // in a vertical one; elsewhere the command is an error and is
+                // ignored.
+                let legal = if vertical { Modes::ANY_HORIZONTAL.union(Modes::ANY_MATH) } else { Modes::ANY_VERTICAL };
+                if !self.mode.is_empty() && !self.mode.meets(legal) {
+                    let msg = format!("\\{} is not allowed in this mode and is ignored", self.name(by));
+                    self.diagnose(Severity::Warning, "illegal-in-mode", span, msg);
+                    return;
+                }
+                if self.split_mode(token, self.mode.and(legal)) {
+                    return;
+                }
                 // tex.web § 1073: `\raise` and `\moveleft` shift the other
                 // way round from `\lower` and `\moveright`.
                 let back = {
@@ -2123,8 +2264,13 @@ impl Machine<'_> {
                 self.append_item(item);
             }
             Material::Glue => {
-                let glue = self.scan_glue(false);
-                self.append_item(Item::Glue(glue.map(|g| g.width), glue));
+                let glue = self.scan_glue_hull(false);
+                // Positive glue in a line (`\quad` after a section number)
+                // is space on the page, as an interword space is.
+                if self.mode.meets(Modes::ANY_HORIZONTAL) && glue.width.lo > 0 {
+                    self.note_text(' ', span);
+                }
+                self.append_item(Item::Glue(Dim { lo: glue.width.lo, hi: glue.width.hi }, Some(glue)));
             }
             // tex.web § 1060: `fil`, `fill`, `ss` and `fil_neg` glue.
             Material::Fil(code) => {
@@ -2136,7 +2282,7 @@ impl Machine<'_> {
                     2 => (unit(1, 1), unit(1, 1)),
                     _ => (unit(-1, 1), unit(0, 0)),
                 };
-                self.append_item(Item::Glue(Some(0), Some(Glue { width: 0, stretch, shrink })))
+                self.append_item(Item::glue(Some(0), Some(Glue { width: 0, stretch, shrink })))
             }
             Material::NoBoundary => {
                 if let Some(n) = &mut self.natural {
@@ -2166,7 +2312,7 @@ impl Machine<'_> {
             Material::Space => {
                 self.note_text(' ', span);
                 let (width, spec) = self.space_glue(true);
-                self.append_item(Item::Glue(width, spec));
+                self.append_item(Item::glue(width, spec));
             }
             Material::Discards | Material::Hyphen => self.append_item(Item::Unknown),
         }
@@ -2338,7 +2484,9 @@ impl Machine<'_> {
                 && self.name(self.env.identity(sym)) == "tabskip"
                 && self.env.meaning(sym) == Meaning::Primitive(Primitive::GlueParameter { mu: false })
             {
-                self.execute_extra(Primitive::GlueParameter { mu: false }, sym, t.span);
+                // § 778: an assignment like any other, `\globaldefs` too.
+                let p = Primitive::GlueParameter { mu: false };
+                self.scoped(p, t.span, |m| m.execute_extra(p, sym, t.span));
                 continue;
             }
             return Some(t);
@@ -2807,7 +2955,7 @@ impl Machine<'_> {
                                 n.height = Dim::ANY;
                                 n.depth = Dim::ANY;
                                 n.prior = true;
-                                n.tail = [Last::Unknown; TAIL];
+                                n.tail = [Last::UNKNOWN; TAIL];
                                 n.pending = None;
                                 n.space_factor = None;
                                 n.ligature = None;
@@ -2843,6 +2991,16 @@ impl Machine<'_> {
                 {
                     let (w, d) = line.map_or((0, 0), |(w, _, d, _)| (w, d));
                     let d = if d > max { max.max(0) } else { d };
+                    // tex.web §§ 674, 676: a line with no glue, packed to `h`,
+                    // is underfull or overfull past any stretch or shrink.
+                    let x = line.map_or(0, |(_, natural, _, _)| h - natural);
+                    let badness = match x.signum() {
+                        1 => 10000,
+                        -1 => 1_000_000,
+                        _ => 0,
+                    };
+                    let sym = self.intern("badness");
+                    self.env.set_value(sym, Value::Int(badness), true);
                     self.box_changed(n, BoxState::Void);
                     self.fetched.clear();
                     self.box_end(context, BoxState::VBox, [Dim::exact(w.max(0)), Dim::exact(h), Dim::exact(d)]);
@@ -2853,6 +3011,10 @@ impl Machine<'_> {
                 }
                 self.box_changed(n, BoxState::Unknown);
                 self.fetched.clear();
+                // A void register splits off nothing and packs nothing (§ 977).
+                if state != BoxState::Void {
+                    self.set_badness(false);
+                }
                 return self.box_end(context, state, [Dim::ANY; 3]);
             }
             BoxCmd::HBox => {
@@ -2881,9 +3043,10 @@ impl Machine<'_> {
                 nest.placed = true;
                 nest.shift = shift;
             }
-            // tex.web § 1078: the leader box itself goes on no list. The
-            // glue that follows it is appended on its own.
-            BoxContext::Leaders | BoxContext::Ship => {}
+            // tex.web § 1078: the leader box itself goes on no list, but
+            // the list's packing counts its size (§§ 656, 671).
+            BoxContext::Leaders => nest.part = LEADERS,
+            BoxContext::Ship => {}
         }
         self.env.set_nest(nest);
         if modes == Modes::INTERNAL_VERTICAL {
@@ -3002,6 +3165,7 @@ impl Machine<'_> {
     pub(crate) fn touch_page(&mut self) {
         if self.mode.test(Modes::INNER) != Some(true) {
             self.page_touched = true;
+            self.set_badness(false);
         }
     }
 
@@ -3033,11 +3197,11 @@ impl Machine<'_> {
         self.material = true;
         if self.mode.meets(Modes::VERTICAL) {
             self.main_tail = match (self.mode == Modes::VERTICAL, &item) {
-                (false, _) | (_, Item::Unknown | Item::Glue(None, _) | Item::Glue(_, None)) => Last::Unknown,
-                (_, Item::Glue(Some(w), spec)) => Last::Glue(*w, *spec),
+                (false, _) | (_, Item::Unknown | Item::Glue(_, None)) => Last::UNKNOWN,
+                (_, Item::Glue(w, spec)) => Last::Glue(*w, *spec),
                 (_, Item::Kern(Some(k))) => Last::Kern(*k),
                 (_, Item::Penalty(Some(p))) => Last::Penalty(*p),
-                (_, Item::Kern(None) | Item::Penalty(None)) => Last::Unknown,
+                (_, Item::Kern(None) | Item::Penalty(None)) => Last::UNKNOWN,
                 _ => Last::Other,
             };
         }
@@ -3074,22 +3238,28 @@ impl Machine<'_> {
         // Glue or a kern in inline math is no atom: the spacing between
         // atoms passes over it (tex.web § 761), and the character before it
         // takes its italic correction (§§ 752, 755).
-        if let (Item::Glue(w, _) | Item::Kern(w), Modes::MATH) = (&item, self.mode)
+        if let (Item::Glue(..) | Item::Kern(_), Modes::MATH) = (&item, self.mode)
             && n.script.is_none()
         {
             n.math_box = None;
             if let Item::Glue(_, spec) = item {
+                let spec = spec.and_then(|g| g.glue());
                 n.math_breaks = Self::more_breaks(n.math_breaks, spec.map(|g| (g.stretch.amount, g.shrink.amount)));
             }
+            let w = match item {
+                Item::Glue(w, _) => w,
+                Item::Kern(w) => w.map_or(Dim::ANY, Dim::exact),
+                _ => unreachable!("matched above"),
+            };
             let italic = self.prev_italic(n.math_prev);
-            n.along = n.along.extended_by(italic).extended_by(w.map_or(Dim::ANY, Dim::exact));
+            n.along = n.along.extended_by(italic).extended_by(w);
             n.math_prev = None;
             // The glue's specification is not kept: `\mskip` is in math
             // units, which `\lastskip` reports as such (tex.web § 424).
-            n.pushed(match (&item, *w) {
-                (Item::Glue(..), Some(w)) => Last::Glue(w, None),
+            n.pushed(match (&item, w.known()) {
+                (Item::Glue(..), _) => Last::Glue(w, None),
                 (Item::Kern(_), Some(w)) => Last::Kern(w),
-                _ => Last::Unknown,
+                _ => Last::UNKNOWN,
             });
             self.natural = Some(n);
             return;
@@ -3105,7 +3275,7 @@ impl Machine<'_> {
             let k = match item {
                 Item::Penalty(Some(..=-10000)) if self.mode == Modes::HORIZONTAL => None,
                 Item::Penalty(Some(p)) => Some(Some(Kp::Penalty(p))),
-                Item::Glue(_, Some(g)) => Some(Some(Kp::glue(g))),
+                Item::Glue(_, Some(g)) => Some(g.glue().map(Kp::glue)),
                 Item::Kern(Some(w)) => Some(Some(Kp::Kern { w, explicit: true })),
                 Item::Whatsit => Some(Some(Kp::Whatsit)),
                 Item::Box(b) => {
@@ -3175,12 +3345,12 @@ impl Machine<'_> {
                     }
                     _ => {}
                 }
-                n.pushed(p.map_or(Last::Unknown, Last::Penalty));
+                n.pushed(p.map_or(Last::UNKNOWN, Last::Penalty));
             }
             Item::Kern(k) => {
                 let before = (n.along, n.depth, n.first);
                 n.advance(horizontal, k.map_or(Dim::ANY, Dim::exact));
-                n.pushed(k.map_or(Last::Unknown, Last::Kern));
+                n.pushed(k.map_or(Last::UNKNOWN, Last::Kern));
                 if !horizontal {
                     n.undo = Some((n.tail[0], [before, (n.along, n.depth, n.first)]));
                 }
@@ -3198,14 +3368,11 @@ impl Machine<'_> {
                     // tex.web § 859: negative infinite stretch may make a
                     // break pay; negative finite stretch, a line worse
                     // than `set_line` bounds it.
-                    n.para.awkward |= spec.is_none_or(|g| g.stretch.amount < 0);
+                    n.para.awkward |= spec.is_none_or(|g| g.stretch.lo < 0);
                 }
                 let before = (n.along, n.depth, n.first);
-                n.advance(horizontal, w.map_or(Dim::ANY, Dim::exact));
-                n.pushed(match w {
-                    Some(w) => Last::Glue(w, spec),
-                    None => Last::Unknown,
-                });
+                n.advance(horizontal, w);
+                n.pushed(Last::Glue(w, spec));
                 if !horizontal {
                     n.undo = Some((n.tail[0], [before, (n.along, n.depth, n.first)]));
                 }
@@ -3230,7 +3397,7 @@ impl Machine<'_> {
                 n.para.awkward = true;
                 // Material satex did not follow may have set it.
                 n.space_factor = None;
-                n.tail = [Last::Unknown; TAIL];
+                n.tail = [Last::UNKNOWN; TAIL];
             }
         }
         self.natural = Some(n);
@@ -3331,7 +3498,7 @@ impl Machine<'_> {
         }
         // What the list ends in, and its space factor, are the box's.
         if let Some(n) = &mut self.natural {
-            n.tail = [Last::Unknown; TAIL];
+            n.tail = [Last::UNKNOWN; TAIL];
             n.space_factor = None;
         }
     }
@@ -3438,7 +3605,8 @@ impl Machine<'_> {
                 | ModeCmd::MathStyle(_)
                 | ModeCmd::MathChoice,
             )
-            | Primitive::Typeset(Typeset::Number | Typeset::Dimen | Typeset::Glue) => return,
+            | Primitive::Typeset(Typeset::Number | Typeset::Dimen | Typeset::Glue)
+            | Primitive::Accent => return,
             // tex.web § 785: its material goes between the rows.
             Primitive::Mode(ModeCmd::NoAlign) if self.between_rows() => return,
             // These can't be `\immediate`, so they always add a whatsit.
@@ -3556,7 +3724,7 @@ impl Machine<'_> {
                 let sf = n.space_factor;
                 n.widen(true);
                 n.space_factor = sf;
-                n.tail = [Last::Unknown; TAIL];
+                n.tail = [Last::UNKNOWN; TAIL];
                 n.tail[0] = Last::Char(None);
             }
             step => {
@@ -3574,6 +3742,121 @@ impl Machine<'_> {
         }
         n.space_factor = self.space_factor_after(c, n.space_factor);
         self.natural = Some(n);
+    }
+
+    /// tex.web §§ 1122-1125 `make_accent`: accent character `a` of the
+    /// current font, over the character that follows the assignments after
+    /// it (in the font they leave): as wide as that character, as high as
+    /// the accent raised by the difference to its font's x-height. With no
+    /// character after it, the accent is a character of its own.
+    pub(crate) fn make_accent(&mut self, a: Option<i64>) {
+        self.end_word();
+        // `scan_char_num` (§ 434) takes a bad code as 0.
+        let a = a.map(|a| if (0..=255).contains(&a) { a as u32 } else { 0 });
+        let f = self.current_font();
+        let accent = f.zip(a).and_then(|(f, a)| Some((f, a, self.char_metrics(f, a)?)));
+        let x = f.and_then(|f| self.font_dimen(f, 5)?.as_dimen());
+        if self.mode != Modes::RESTRICTED_HORIZONTAL && self.mode != Modes::HORIZONTAL {
+            self.natural = None;
+        }
+        let Some((f, a, ab)) = accent else {
+            // Whether there is an accent to set, or a character it takes,
+            // is not known: the rest is read as ordinary material.
+            if f.zip(a).is_none_or(|(f, a)| self.font_metrics(f).is_none_or(|m| m.has_char(a))) {
+                self.natural = None;
+            }
+            return;
+        };
+        let q = self.accent_base();
+        let g = self.current_font();
+        let base = match (q, g) {
+            (Some(Some((c, span))), Some(g)) => {
+                if let Some(ch) = char::from_u32(c) {
+                    self.note_text(ch, span);
+                }
+                match self.char_metrics(g, c) {
+                    Some(m) => Some(Some((g, c, m))),
+                    // § 582: a missing character is no node.
+                    None if self.font_metrics(g).is_some_and(|m| !m.has_char(c)) => Some(None),
+                    None => None,
+                }
+            }
+            (Some(None), _) => Some(None),
+            _ => None,
+        };
+        let Some(mut n) = self.natural.filter(|_| base.is_some()) else {
+            self.natural = None;
+            return;
+        };
+        n.para.items = None;
+        let (tail, [w, h, d]) = match base.flatten() {
+            None => (Last::Char(Some((f, a))), [ab.width, ab.height, ab.depth]),
+            Some((g, c, b)) => {
+                // § 1125: an accent not at the character's height is boxed
+                // and shifted, which packs it. The two kerns cancel.
+                let Some(x) = x else {
+                    self.natural = None;
+                    return;
+                };
+                let shift = x - b.height;
+                if shift != 0 {
+                    self.set_badness(true);
+                }
+                (Last::Char(Some((g, c))), [b.width, b.height.max(ab.height - shift), b.depth.max(ab.depth + shift)])
+            }
+        };
+        n.character([w, h, d].map(Dim::exact));
+        n.pushed(tail);
+        (n.pending, n.ligature, n.space_factor) = (None, Some(false), Some(1000));
+        self.natural = Some(n);
+    }
+
+    /// A character's box in font `f`.
+    fn char_metrics(&mut self, f: u32, c: u32) -> Option<crate::tfm::CharBox> {
+        self.font_metrics(f)?.char_box(c, self.font_size(f)?)
+    }
+
+    /// tex.web § 1123: the assignments after an accent, then the character
+    /// it goes over: `Some(None)` where none follows, `None` where that is
+    /// not known.
+    fn accent_base(&mut self) -> Option<Option<(u32, Span)>> {
+        use crate::builtins::{Material, Primitive as P};
+        loop {
+            let t = self.next_x_token()?;
+            let meaning = match t.tok {
+                Tok::Cs(sym) => self.env.meaning(sym),
+                Tok::Chr(c, Catcode::Active) => {
+                    let sym = self.active_sym(c);
+                    self.env.meaning(sym)
+                }
+                Tok::Chr(c, cat) => Meaning::Char(c, cat),
+                Tok::Param(_) => Meaning::Unknown,
+            };
+            match meaning {
+                Meaning::Char(_, Catcode::Space) | Meaning::Primitive(P::Relax) => {}
+                Meaning::Char(c, Catcode::Letter | Catcode::Other) => return Some(Some((u32::from(c), t.span))),
+                Meaning::Register(crate::tex::RegKind::Char, _) => {
+                    let c = t.cs().and_then(|sym| self.env.value(sym).as_int());
+                    return c.and_then(|c| u32::try_from(c).ok()).map(|c| Some((c, t.span)));
+                }
+                Meaning::Primitive(P::Mode(ModeCmd::Horizontal(Material::Char))) => {
+                    let c = self.scan_number()?;
+                    return Some(Some((if (0..=255).contains(&c) { c as u32 } else { 0 }, t.span)));
+                }
+                Meaning::Primitive(p) if crate::builtins::assignment(p) && t.cs().is_some() => {
+                    self.execute(p, t.cs().expect("checked"), t.span);
+                }
+                // Commands that are no assignment end them (§ 1270).
+                Meaning::Primitive(P::Mode(_) | P::Typeset(_) | P::Accent) | Meaning::Char(..) => {
+                    self.unread(t);
+                    return Some(None);
+                }
+                _ => {
+                    self.unread(t);
+                    return None;
+                }
+            }
+        }
     }
 
     /// tex.web §§ 1194-1196: inline math ends. A list of plain characters
@@ -4119,7 +4402,7 @@ impl Machine<'_> {
             }
             // A character whose italic correction is not known, or a tail
             // that may be one: the kern it adds is not known either.
-            Last::Char(None) | Last::Unknown => self.append_item(Item::Kern(None)),
+            Last::Char(None) | Last::Unknown(_) => self.append_item(Item::Kern(None)),
             // The tail is no character, so `\/` appends nothing.
             _ => {}
         }
@@ -4155,7 +4438,7 @@ impl Machine<'_> {
                 n.para.items = None;
                 n.widen(true);
                 n.space_factor = sf;
-                n.tail = [Last::Unknown; TAIL];
+                n.tail = [Last::UNKNOWN; TAIL];
                 n.ligature = None;
             }
             None => {}
@@ -4205,7 +4488,7 @@ impl Machine<'_> {
     /// § 1105), its last item is no longer known.
     pub(crate) fn forget_main_tail(&mut self, p: crate::builtins::Primitive) {
         use crate::builtins::Primitive as P;
-        if !self.mode.meets(Modes::VERTICAL) || self.main_tail == Last::Unknown {
+        if !self.mode.meets(Modes::VERTICAL) || matches!(self.main_tail, Last::Unknown(_)) {
             return;
         }
         use crate::tex::RegKind as K;
@@ -4238,7 +4521,7 @@ impl Machine<'_> {
                 | P::IgnoreSpaces
         );
         if !quiet {
-            self.main_tail = Last::Unknown;
+            self.main_tail = Last::UNKNOWN;
         }
     }
 
@@ -4251,7 +4534,7 @@ impl Machine<'_> {
         if self.mode == Modes::MATH {
             let goes = matches!(
                 (removed, n.tail[0]),
-                (_, Last::Unknown)
+                (_, Last::Unknown(_))
                     | (Removed::Glue, Last::Glue(..))
                     | (Removed::Kern, Last::Kern(_))
                     | (Removed::Penalty, Last::Penalty(_))
@@ -4266,7 +4549,7 @@ impl Machine<'_> {
         let taken = match (removed, n.tail[0]) {
             // What the tail is is not known, so neither is what went. The
             // size widens rather than staying as it was.
-            (_, Last::Unknown) => {
+            (_, Last::Unknown(_)) => {
                 match horizontal {
                     // tex.web § 1105: only glue, a kern or a penalty goes,
                     // so a horizontal list keeps its height and depth.
@@ -4286,15 +4569,16 @@ impl Machine<'_> {
                         return;
                     }
                 }
-                n.tail = [Last::Unknown; TAIL];
+                n.tail = [Last::UNKNOWN; TAIL];
                 self.natural = Some(n);
                 return;
             }
-            (Removed::Glue, Last::Glue(w, _)) | (Removed::Kern, Last::Kern(w)) => w,
+            (Removed::Glue, Last::Glue(w, _)) => w,
+            (Removed::Kern, Last::Kern(w)) => Dim::exact(w),
             (Removed::Penalty, Last::Penalty(p)) => {
                 // The paragraph's lines were set as if it broke there.
                 n.para.lost |= p <= -10000;
-                0
+                Dim::exact(0)
             }
             _ => return,
         };
@@ -4303,13 +4587,13 @@ impl Machine<'_> {
             Some(true) if n.para.fresh => {}
             // tex.web § 668: the depth the item before it left is not kept,
             // so a vertical list only widens.
-            Some(true) => n.along = n.along.reduced_by(Dim::exact(taken)),
+            Some(true) => n.along = n.along.reduced_by(taken),
             // A penalty has no size on a vertical list (tex.web § 668).
             Some(false) if removed == Removed::Penalty => {}
             // The glue or kern appended last: the list as it was before.
             Some(false)
                 if n.undo.is_some_and(|(item, [_, after])| {
-                    item == n.tail[0] && item != Last::Unknown && after == (n.along, n.depth, n.first)
+                    item == n.tail[0] && !matches!(item, Last::Unknown(_)) && after == (n.along, n.depth, n.first)
                 }) =>
             {
                 let (_, [before, _]) = n.undo.expect("checked");
@@ -4325,7 +4609,7 @@ impl Machine<'_> {
         }
         n.popped();
         // tex.web § 1096: what is left may be a null paragraph again.
-        if horizontal == Some(true) && matches!(n.tail[0], Last::Empty | Last::Unknown) {
+        if horizontal == Some(true) && matches!(n.tail[0], Last::Empty | Last::Unknown(_)) {
             n.prior = true;
         }
         self.natural = Some(n);
@@ -4339,12 +4623,8 @@ impl Machine<'_> {
         // makes it 10000 (tex.web § 1013), so `\lastpenalty` stays unknown.
         if self.natural.is_none() && self.mode == Modes::VERTICAL {
             return match (removed, self.main_tail) {
-                (_, Last::Unknown) | (Removed::Penalty, Last::Penalty(_)) => None,
-                (Removed::Glue, Last::Glue(_, spec)) => spec.map(Value::Glue),
-                (Removed::Glue, _) => Some(Value::Glue(crate::value::Glue::default())),
-                (Removed::Kern, Last::Kern(k)) => Some(Value::Dimen(k)),
-                (Removed::Kern, _) => Some(Value::Dimen(0)),
-                (Removed::Penalty, _) => Some(Value::Int(0)),
+                (Removed::Penalty, Last::Penalty(_) | Last::Unknown(_)) => None,
+                (_, tail) => tail.reads().value(removed),
             };
         }
         let n = self.natural?;
@@ -4352,15 +4632,7 @@ impl Machine<'_> {
         // and goes on after the expansion that asks, kerning with its next
         // character.
         let tail = if n.pending.is_some() { Last::Char(None) } else { n.tail[0] };
-        match (removed, tail) {
-            (_, Last::Unknown) => None,
-            (Removed::Glue, Last::Glue(_, spec)) => spec.map(Value::Glue),
-            (Removed::Glue, _) => Some(Value::Glue(crate::value::Glue::default())),
-            (Removed::Kern, Last::Kern(k)) => Some(Value::Dimen(k)),
-            (Removed::Kern, _) => Some(Value::Dimen(0)),
-            (Removed::Penalty, Last::Penalty(p)) => Some(Value::Int(p)),
-            (Removed::Penalty, _) => Some(Value::Int(0)),
-        }
+        tail.reads().value(removed)
     }
 }
 
@@ -4605,25 +4877,25 @@ impl Machine<'_> {
     fn set_box_last(&mut self, register: Option<i64>, last: Last) {
         let Some(n) = register else { return };
         let value = match last {
-            Last::Glue(_, Some(g)) => Value::Glue(g),
+            Last::Glue(_, Some(g)) => g.value(false),
             Last::Kern(k) => Value::Dimen(k),
             Last::Penalty(p) => Value::Int(p),
             Last::Other | Last::Char(_) | Last::Box | Last::Whatsit => Value::Toks(Rc::from([])),
-            Last::Glue(_, None) | Last::Empty | Last::Unknown => return,
+            Last::Glue(_, None) | Last::Empty | Last::Unknown(_) => return,
         };
         let key = self.intern(&format!("\u{4}box.last.{n}"));
         self.env.set_value_in_place(key, value);
     }
 
     fn box_last(&mut self, n: Option<i64>) -> Last {
-        let Some(n) = n else { return Last::Unknown };
+        let Some(n) = n else { return Last::UNKNOWN };
         let key = self.intern(&format!("\u{4}box.last.{n}"));
         match self.env.value(key) {
-            Value::Glue(g) => Last::Glue(g.width, Some(g)),
+            Value::Glue(g) => Last::Glue(Dim::exact(g.width), Some(GlueHull::exact(&g))),
             Value::Dimen(k) => Last::Kern(k),
             Value::Int(p) => Last::Penalty(p),
             Value::Toks(t) if t.is_empty() => Last::Char(None),
-            _ => Last::Unknown,
+            _ => Last::UNKNOWN,
         }
     }
 
@@ -4699,18 +4971,7 @@ impl Machine<'_> {
                     // tex.web §§ 649, 668: `hpack` starts height and depth
                     // at zero and takes the maximum, `vpack` the width, so
                     // the bound `set_box_dims` kept is what the test gets.
-                    Value::Num { quantity: crate::value::Quantity::Dimen, num } => {
-                        self.abs = Some(num);
-                        self.abs_exact = None;
-                        self.abs_from = None;
-                        None
-                    }
-                    Value::Unknown => {
-                        self.abs = None;
-                        self.abs_exact = None;
-                        self.abs_from = None;
-                        None
-                    }
+                    Value::Unknown => None,
                     value => Some(value),
                 }
             }

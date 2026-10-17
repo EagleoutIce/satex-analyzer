@@ -43,10 +43,12 @@ use satex::tex::{Meaning, RegKind};
 
 // The document each probe is written into.
 
-/// Without a format the catcodes are INITEX's (tex.web § 232), so only the
-/// grouping, parameter and superscript characters have to be declared.  This
+/// Without a format the catcodes are INITEX's (tex.web § 232), so the
+/// grouping, parameter, math, alignment and script characters are declared
+/// once, as a format does, and never reset: a probe sees what an earlier
+/// one's recovery left.  This
 /// is line 1 of every batch, in the engine's file and in satex's alike.
-const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 \\immediate\\openout9=zout";
+const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\catcode`\\^=7 \\catcode`\\$=3 \\catcode`\\&=4 \\catcode`\\_=8 \\immediate\\openout9=zout";
 
 /// LuaTeX's INITEX hides its own extensions behind `luatex`-prefixed names
 /// until `tex.enableprimitives` is called (LuaTeX manual, "Enabling
@@ -58,7 +60,7 @@ const LUA_PRELUDE: &str = "\\directlua{tex.enableprimitives(\"\",tex.extraprimit
 
 /// The state every probe starts from, so a probe that leaks past its group
 /// cannot make the next one pass by accident.
-const RESET: &str = "\\global\\let\\zR\\relax \\global\\let\\zX\\relax \\global\\let\\zY\\relax \\global\\let\\zZ\\relax \\count255=1 \\dimen255=1pt \\skip255=1pt plus 1pt \\muskip255=1mu \\toks255={q}\
+const RESET: &str = "\\global\\let\\zR\\relax \\global\\let\\zT\\relax \\global\\let\\zX\\relax \\global\\let\\zY\\relax \\global\\let\\zZ\\relax \\count255=1 \\dimen255=1pt \\skip255=1pt plus 1pt \\muskip255=1mu \\toks255={q}\
 \\count0=1 \\dimen0=1pt \\skip0=1pt \\toks0={q}\\setbox255=\\hbox{}\\setbox0=\\hbox{}\
 \\def\\victim{v}\\chardef\\cvictim=7 \\lccode`\\A=`\\a \\uccode`\\a=`\\A \\sfcode`\\A=1000 \
 \\catcode`\\@=12 \\escapechar=92 \\closein0 \\closein3 ";
@@ -115,6 +117,10 @@ enum Dim {
     HMode,
     /// The body inside internal vertical mode (tex.web § 1070).
     VMode,
+    /// Every operand drawn by `\pdfuniformdeviate`: concrete in each engine
+    /// run, one per `\pdfsetrandomseed`, unknown to satex, whose widened
+    /// answer has to contain every run's.
+    Random,
 }
 
 impl Dim {
@@ -130,13 +136,14 @@ impl Dim {
             Dim::Rescan => "rescan",
             Dim::HMode => "hmode",
             Dim::VMode => "vmode",
+            Dim::Random => "random",
         }
     }
 
     /// Whether the context alone may force satex to widen, so an `Exact`
     /// primitive is held to containment instead of equality here.
     fn may_widen(self) -> bool {
-        matches!(self, Dim::Undecided | Dim::Unpinned)
+        matches!(self, Dim::Undecided | Dim::Unpinned | Dim::Random)
     }
 
     /// Whether the probe's own answer can still be read where the witnesses
@@ -149,7 +156,7 @@ impl Dim {
     }
 }
 
-const CONTEXTS: [Dim; 9] = [
+const CONTEXTS: [Dim; 10] = [
     Dim::Undecided,
     Dim::GlobalDefs,
     Dim::Group,
@@ -159,6 +166,7 @@ const CONTEXTS: [Dim; 9] = [
     Dim::Rescan,
     Dim::HMode,
     Dim::VMode,
+    Dim::Random,
 ];
 
 /// The numeric boundaries tex.web itself names: zero and its neighbors, the
@@ -232,6 +240,9 @@ fn template(name: &str, p: Primitive) -> Result<Template, &'static str> {
     use Primitive as P;
     let cs = format!("\\{name}");
     let t = |s: String| Ok(Template::new(s));
+    if let Some(body) = material(name) {
+        return t(body);
+    }
     match p {
         // Definitions and expansion.
         P::Def { expand, .. } => {
@@ -322,7 +333,7 @@ fn template(name: &str, p: Primitive) -> Result<Template, &'static str> {
         P::Load(LoadKind::Input) => t(format!("{cs} zin \\edef\\zR{{[\\zin]}}")),
         P::Load(_) => Err("a LaTeX loader, defined by the format, not an engine primitive"),
         P::Endinput => t("\\input zend \\edef\\zR{[\\zend]}".to_string()),
-        P::End => Err("ends the run, so it cannot share a document with other probes"),
+        P::End => Err("ends the run: probed by `end_stops_the_run` in a document of its own"),
         P::Message { error: false } => t(format!("{cs}{{hi}}\\edef\\zR{{done}}")),
         P::Message { error: true } => t(format!("\\errhelp={{}}{cs}{{hi}}\\edef\\zR{{done}}")),
         P::Write => t(format!("\\immediate{cs}9{{w}}\\edef\\zR{{done}}")),
@@ -450,6 +461,97 @@ fn template(name: &str, p: Primitive) -> Result<Template, &'static str> {
             Err("left alone on purpose: a meaning of its own for `\\ifx`, nothing else")
         }
     }
+}
+
+/// Fonts loaded by their TFMs, so typeset material has real metrics: cmr for
+/// text and family 0, cmmi, cmsy and cmex for families 1-3 at their three
+/// sizes (tex.web § 700), and the delimiters `\left` and `\right` take.
+const FONTS: &str = "\\font\\zrm=cmr10 \\font\\zrms=cmr7 \\font\\zrmss=cmr5 \\font\\zmi=cmmi10 \\font\\zmis=cmmi7 \
+\\font\\zmiss=cmmi5 \\font\\zsy=cmsy10 \\font\\zsys=cmsy7 \\font\\zsyss=cmsy5 \\font\\zex=cmex10 \
+\\textfont0=\\zrm \\scriptfont0=\\zrms \\scriptscriptfont0=\\zrmss \\textfont1=\\zmi \\scriptfont1=\\zmis \
+\\scriptscriptfont1=\\zmiss \\textfont2=\\zsy \\scriptfont2=\\zsys \\scriptscriptfont2=\\zsyss \\textfont3=\\zex \
+\\scriptfont3=\\zex \\scriptscriptfont3=\\zex \\delcode`(=\"028300 \\delcode`)=\"029301 \\delcode`/=\"02F30E \\zrm ";
+
+/// What the tail of the list reads (tex.web § 424).
+const TAIL_READ: &str = "\\xdef\\zT{\\the\\lastskip,\\the\\lastkern,\\the\\lastpenalty}";
+
+/// The probe for typeset material: build it in a box with real fonts and
+/// read back the box's size, the badness its packing left, and the tail.
+fn material(name: &str) -> Option<String> {
+    let cs = format!("\\{name}");
+    let read = |kind: &str, inner: &str| {
+        format!(
+            "\\setbox%I%=\\{kind}{{{inner}}}\\edef\\zR{{\\the\\wd%I%,\\the\\ht%I%,\\the\\dp%I%,\\the\\badness;\\zT}}"
+        )
+    };
+    let h = |b: &str| read("hbox", &format!("{b}{TAIL_READ}"));
+    let v = |b: &str| read("vbox", &format!("{b}{TAIL_READ}"));
+    let m = |b: &str| read("hbox", &format!("${b}{TAIL_READ}$"));
+    let body = match name {
+        "-" => h("\\hyphenchar\\zrm=45 A\\-B"),
+        "char" => h("\\char65 \\char86 A\\char`\\f\\char`\\i"),
+        "discretionary" => h("A\\discretionary{B}{C}{DD}V"),
+        "noboundary" => h("\\noboundary AV\\noboundary"),
+        "accent" => {
+            h("\\accent18 A\\accent94 a\\accent%N% b\\zmi\\accent127 A\\zrm\\accent18\\char65 \\accent18 \\kern3pt")
+        }
+        "leaders" => h("\\leaders\\hrule\\hskip%D%\\leaders\\hbox{A}\\hskip 5pt plus 1fil"),
+        "cleaders" => h("\\cleaders\\hbox{AB}\\hskip%D%"),
+        "xleaders" => v("\\xleaders\\vbox{\\hbox{A}}\\vskip%D%"),
+        "lastbox" => {
+            format!("{}\\edef\\zR{{\\zR;\\the\\wd2}}", h("\\hbox{A}\\hbox to%D%{}\\global\\setbox2=\\lastbox"))
+        }
+        "halign" => v("\\halign{#\\tabskip%D%&\\hfil#\\cr A&BB\\cr AV\\cr}"),
+        "valign" => h("\\valign{#\\vfil\\tabskip%D%&\\hbox{#}\\cr\\hbox{A}&B\\cr\\noalign{\\kern2pt}\\hbox{BB}\\cr}"),
+        "noalign" => v("\\halign{#\\cr A\\cr\\noalign{\\kern%D%}B\\cr}"),
+        "cr" => v("\\halign{#\\cr A\\cr}"),
+        "crcr" => v("\\halign{#\\crcr A\\cr\\crcr}"),
+        "omit" => v("\\halign{[#]&#\\cr\\omit A&\\omit B\\cr}"),
+        "span" => v("\\halign{#&#\\cr A\\span B\\cr}"),
+        "insert" => v("\\hbox{A}\\insert100{\\hbox{B}\\kern%D%}"),
+        "vadjust" => h("A\\vadjust{\\kern%D%}"),
+        "mark" => h("A\\mark{x}"),
+        "marks" => h("A\\marks3{x}"),
+        "vcenter" => m("\\vcenter{\\hbox{A}\\kern3pt}"),
+        "vsplit" => "\\setbox3=\\vbox{\\hbox{A}\\penalty0\\hbox{B}}\\setbox%I%=\\vsplit3 to%D%\
+                     \\edef\\zR{\\the\\wd%I%,\\the\\ht%I%,\\the\\dp%I%;\\the\\ht3,\\the\\dp3,\\the\\badness}"
+            .to_string(),
+        "pagediscards" => v("\\pagediscards"),
+        "splitdiscards" => format!(
+            "\\savingvdiscards=1 \\setbox3=\\vbox{{\\hbox{{A}}\\penalty0\\kern%D%\\hbox{{B}}}}\\setbox4=\\vsplit3 to1pt {}",
+            v("\\splitdiscards")
+        ),
+        "shipout" => {
+            "\\setbox%I%=\\hbox{A}\\shipout\\box%I%\\edef\\zR{\\ifvoid%I% V\\else N\\fi,\\the\\deadcycles}".to_string()
+        }
+        "displaystyle" | "textstyle" | "scriptstyle" | "scriptscriptstyle" => m(&format!("A{cs} A^A")),
+        "mathchoice" => m("\\mathchoice{A}{BB}{C}{D}^{\\mathchoice{A}{BB}{C}{DDD}}"),
+        "left" => m("\\left(A\\over B\\right)"),
+        "middle" => m("\\left(A\\middle/B\\right."),
+        "right" => m("\\left.A\\right)"),
+        "mkern" => m("A\\mkern18mu B\\mkern-3mu"),
+        "mskip" => m("A\\mskip18mu plus 2mu B^{A\\mskip18mu B}"),
+        "nonscript" => m("A\\nonscript\\mskip18mu B^{A\\nonscript\\mskip18mu B}"),
+        "eqno" | "leqno" => v(&format!("\\hsize=100pt \\noindent$$A{cs} B$$")),
+        "above" => m("{A\\above%D% B}"),
+        "abovewithdelims" => m("{A\\abovewithdelims()%D% B}"),
+        "atop" | "over" => m(&format!("{{A{cs} B}}")),
+        "atopwithdelims" | "overwithdelims" => m(&format!("{{A{cs}() B}}")),
+        "delimiter" => m("\\delimiter\"4162301 A"),
+        "mathchar" => m("\\mathchar\"141 A"),
+        "mathaccent" => m("\\mathaccent\"17F A\\mathaccent\"7016 f"),
+        "radical" => m("\\radical\"270370 A"),
+        "overline" | "underline" => m(&format!("{cs}{{A}}B")),
+        "mathord" | "mathop" | "mathbin" | "mathrel" | "mathopen" | "mathclose" | "mathpunct" | "mathinner" => {
+            m(&format!("A{cs}{{B}}A"))
+        }
+        "limits" | "nolimits" | "displaylimits" => m(&format!("\\displaystyle\\mathop{{A}}{cs}^B_C")),
+        "/" => h("\\zmi f\\/A\\/"),
+        "beginL" | "beginR" | "endL" | "endR" => h("\\TeXXeTstate=1 A\\beginR B\\endR\\beginL C\\endL"),
+        "setlanguage" => h("A\\setlanguage3 B"),
+        _ => return None,
+    };
+    Some(format!("{FONTS}{body}"))
 }
 
 /// The value a register of this kind is given.
@@ -605,6 +707,12 @@ fn wrap(dim: Dim, body: &str, index: usize, deviate: &str) -> (String, Option<(S
         Dim::GlobalDefs => (format!("\\begingroup\\globaldefs=1 {body}\\endgroup"), None),
         Dim::Group => (format!("\\begingroup{body}\\endgroup"), None),
         Dim::Unpinned => (body.to_string(), None),
+        // One draw per operand kind, so a register written and read back
+        // names the same one.
+        Dim::Random => (
+            format!("\\edef\\zI{{{deviate} 3}}\\edef\\zN{{-{deviate} 40}}\\edef\\zD{{{deviate} 900000sp}}{body}"),
+            None,
+        ),
         Dim::File => {
             let file = format!("zb{index}");
             (format!("\\input {file} "), Some((format!("{file}.tex"), format!("{body}%\n"))))
@@ -616,18 +724,24 @@ fn wrap(dim: Dim, body: &str, index: usize, deviate: &str) -> (String, Option<(S
     }
 }
 
-/// The one line a case becomes.
-fn line_for(case: &Case, index: usize, deviate: &str) -> (String, Option<(String, String)>) {
-    let (wrapped, extra) = wrap(case.dim, &case.body, index, deviate);
-    // `\\write` expands its text again (tex.web § 1368), which would undo a
-    // `\\noexpand` the probe is testing, so the value is detokenized instead.
-    // The escape character is put back first so both sides print it the same.
+/// The witnesses, and the line that writes them and the answer out.
+fn payload(index: usize) -> String {
     let mut payload = format!("{WITNESS_X}{WITNESS_Y}{WITNESS_Z}\\newlinechar=-1 \\escapechar=92 ");
     for slot in SLOTS {
         payload.push_str(&format!(
             "\\immediate\\write9{{Q{index}{slot}:\\expandafter\\detokenize\\expandafter{{\\{slot}}}}}"
         ));
     }
+    payload
+}
+
+/// The one line a case becomes.
+fn line_for(case: &Case, index: usize, deviate: &str) -> (String, Option<(String, String)>) {
+    let (wrapped, extra) = wrap(case.dim, &case.body, index, deviate);
+    // `\\write` expands its text again (tex.web § 1368), which would undo a
+    // `\\noexpand` the probe is testing, so the value is detokenized instead.
+    // The escape character is put back first so both sides print it the same.
+    let payload = payload(index);
     // A witness set inside a box has to be read inside it too: the box group
     // takes the definition back at its closing brace (tex.web § 1086).
     let line = if wrapped.contains("%WITNESS%") {
@@ -662,7 +776,7 @@ fn binary(engine: Engine) -> &'static str {
 }
 
 fn available(engine: Engine) -> bool {
-    which::which(binary(engine)).is_ok()
+    satex::paths::which(binary(engine)).is_ok()
 }
 
 /// The files every batch reads: a fixed-size file for the file queries, a file
@@ -700,9 +814,10 @@ fn engine_answers(engine: Engine, dir: &Path, stem: &str) -> BTreeMap<(usize, St
     out
 }
 
-/// Every text satex gave a macro on a line, with whether it was certain.
-fn satex_answers(analysis: &Analysis, main: &Path) -> BTreeMap<(u32, String), Vec<(String, bool)>> {
-    let mut out: BTreeMap<(u32, String), Vec<(String, bool)>> = BTreeMap::new();
+/// Every text satex gave a macro on a line, with whether it was certain
+/// and its tokens.
+fn satex_answers(analysis: &Analysis, main: &Path) -> BTreeMap<(u32, String), Vec<Answer>> {
+    let mut out: BTreeMap<(u32, String), Vec<Answer>> = BTreeMap::new();
     // The engine reads the answer where the witnesses are.  A local answer
     // made deeper than they are was taken back when its group ended, as when
     // `\outer`'s recovery closes the probe's box early.
@@ -725,16 +840,16 @@ fn satex_answers(analysis: &Analysis, main: &Path) -> BTreeMap<(u32, String), Ve
         if analysis.files.get(usize::from(def.span.file)).is_some_and(|f| Path::new(&f.path) != main) {
             continue;
         }
-        let text = def
-            .mac
-            .as_ref()
-            .map(|m| satex::tex::detokenize(&m.replacement_text, &analysis.interner))
-            .unwrap_or_default();
-        let widened = !def.certain || text.contains('\u{2}');
-        out.entry((def.span.line, name)).or_default().push((text, !widened));
+        let tokens = def.mac.as_ref().map(|m| m.replacement_text.to_vec()).unwrap_or_default();
+        let text = satex::tex::detokenize(&tokens, &analysis.interner);
+        let widened = !def.certain || text.chars().any(|c| c == '\u{2}' || satex::tex::is_unknown_char(c));
+        out.entry((def.span.line, name)).or_default().push((text, !widened, tokens));
     }
     out
 }
+
+/// A text satex gave a slot: its spelling, whether it is certain, its tokens.
+type Answer = (String, bool, Vec<satex::tex::Token>);
 
 /// Whitespace and the `##` a `\write` doubles (tex.web § 1368) carry no
 /// meaning for the comparison, so both sides are read without them.
@@ -790,7 +905,7 @@ impl Report {
         let entry = self.failures.entry(signature).or_insert((0, Vec::new()));
         entry.0 += 1;
         if entry.1.len() < 4 {
-            entry.1.push(example);
+            entry.1.push(example.replace(FONTS, "⟨fonts⟩"));
         }
     }
 
@@ -801,7 +916,7 @@ impl Report {
 
 /// Compares one slot.  Every disagreement is pushed onto the
 /// report with enough of the probe to reproduce it.
-fn compare(report: &mut Report, case: &Case, slot: &str, engine: &str, satex: Option<&Vec<(String, bool)>>) {
+fn compare(report: &mut Report, case: &Case, slot: &str, engine: &str, satex: Option<&Vec<Answer>>, a: &Analysis) {
     let Some(bodies) = satex else {
         // Neither side has a macro to read: the engine's answer is the slot
         // itself, left unexpanded.
@@ -818,33 +933,52 @@ fn compare(report: &mut Report, case: &Case, slot: &str, engine: &str, satex: Op
     };
     report.checked += 1;
     let want = normalize(engine);
-    let certain: Vec<&String> = bodies.iter().filter(|(_, c)| *c).map(|(t, _)| t).collect();
-    let widened = certain.len() < bodies.len();
+    let certain = bodies.iter().filter(|(_, c, _)| *c).count();
+    let widened = certain < bodies.len();
     if widened {
         report.widened += 1;
     }
-    let hit = certain.iter().any(|t| normalize(t) == want);
-    // Silent wrongness: every path satex took is confident, and none of them
-    // is what the engine did.  This holds whatever the verdict is.
-    if !hit && !widened {
-        let got: Vec<String> = bodies.iter().map(|(t, _)| normalize(t)).collect();
+    // Containment: some path's text, read with what its unknown parts
+    // stand for, spells the engine's answer.
+    let hit = bodies.iter().any(|(_, _, t)| satex::oracle::covers_text(t, a, engine));
+    let got = || -> Vec<String> {
+        bodies.iter().map(|(t, c, _)| format!("{}{}", if *c { "" } else { "?" }, normalize(t))).collect()
+    };
+    if !hit {
+        let what = if widened { "widened to" } else { "confident about" };
         report.fail(
             case,
-            format!("{slot}: satex is confident about {got:?}, the engine gave {want:?}"),
+            format!("{slot}: satex is {what} {:?}, the engine gave {want:?}", got()),
             format!("{} {}", case.label(), case.body),
         );
         return;
     }
     // An exact primitive in a context that cannot force a widening must be
     // exactly right, not merely containing.
-    if case.verdict == Verdict::Exact && !case.dim.may_widen() && !(hit && certain.len() == bodies.len()) {
-        let got: Vec<String> =
-            bodies.iter().map(|(t, c)| format!("{}{}", if *c { "" } else { "?" }, normalize(t))).collect();
+    if case.verdict == Verdict::Exact && !case.dim.may_widen() && widened {
         report.fail(
             case,
-            format!("{slot}: verdict Exact but satex gave {got:?} for the engine's {want:?}"),
+            format!("{slot}: verdict Exact but satex gave {:?} for the engine's {want:?}", got()),
             format!("{} {}", case.label(), case.body),
         );
+    }
+}
+
+/// The seeds a batch with [`Dim::Random`] probes is run under, one engine run
+/// each.
+const SEEDS: [Option<u32>; 4] = [Some(1), Some(2), Some(3), Some(5)];
+
+/// satex set up as the oracle is started: INITEX, batch mode, no format.
+fn satex_config(engine: Engine) -> Config {
+    Config {
+        engine: Some(engine),
+        kernel: Some(Kernel::None),
+        // The oracle is started with `-interaction=batchmode`, and the
+        // option is what `\interactionmode` reads (tex.web § 1337).
+        interaction: Interaction::Batchmode,
+        load: Load { packages: false, classes: false, format: false, ..Default::default() },
+        texmf: Texmf { kpsewhich: false, ..Default::default() },
+        ..crate::support::config()
     }
 }
 
@@ -871,39 +1005,38 @@ fn run_batch(engine: Engine, tag: &str, batch: &[Case], deviate: &str, report: &
     let stem = "zbatch";
     let main = dir.join(format!("{stem}.tex"));
     // Line 1 differs for LuaTeX, and only line 1, so the probes stay on the
-    // same lines in the engine's file and in satex's source.
-    let on_disk = if engine == Engine::LuaTeX {
-        source.replacen(PRELUDE, &format!("{PRELUDE}{LUA_PRELUDE}"), 1)
-    } else {
-        source.clone()
-    };
-    std::fs::write(&main, &on_disk).unwrap();
-    let engine_out = engine_answers(engine, &dir, stem);
-    if engine_out.is_empty() {
-        // A probe can take the engine down with it (LuaTeX panics on a
-        // `\\luabytecode` register it has not filled), which would lose the
-        // whole batch.  Split and let the culprit name itself.
-        if retry {
-            return batch.to_vec();
+    // same lines in the engine's file and in satex's source.  A seed, which
+    // satex never sees, goes there too.
+    let seeds: &[Option<u32>] = if batch.iter().any(|c| c.dim == Dim::Random) { &SEEDS } else { &[None] };
+    let mut runs = Vec::new();
+    for seed in seeds {
+        let mut first = String::from(PRELUDE);
+        if engine == Engine::LuaTeX {
+            first.push_str(LUA_PRELUDE);
         }
-        report.fail(
-            &batch[0],
-            format!("{}: the engine did not finish, so the probe could not be run", binary(engine)),
-            format!("{} {}", batch[0].label(), batch[0].body),
-        );
-        return Vec::new();
+        if let Some(seed) = seed {
+            first.push_str(&format!("{}{seed} ", deviate.replace("uniformdeviate", "setrandomseed")));
+        }
+        std::fs::write(&main, source.replacen(PRELUDE, &first, 1)).unwrap();
+        let engine_out = engine_answers(engine, &dir, stem);
+        if engine_out.is_empty() {
+            // A probe can take the engine down with it (LuaTeX panics on a
+            // `\\luabytecode` register it has not filled), which would lose
+            // the whole batch.  Split and let the culprit name itself.
+            if retry {
+                return batch.to_vec();
+            }
+            report.fail(
+                &batch[0],
+                format!("{}: the engine did not finish, so the probe could not be run", binary(engine)),
+                format!("{} {}", batch[0].label(), batch[0].body),
+            );
+            return Vec::new();
+        }
+        runs.push(engine_out);
     }
 
-    let cfg = Config {
-        engine: Some(engine),
-        kernel: Some(Kernel::None),
-        // The oracle is started with `-interaction=batchmode`, and the
-        // option is what `\interactionmode` reads (tex.web § 1337).
-        interaction: Interaction::Batchmode,
-        load: Load { packages: false, classes: false, format: false, ..Default::default() },
-        texmf: Texmf { kpsewhich: false, ..Default::default() },
-        ..crate::support::config()
-    };
+    let cfg = satex_config(engine);
     let analysis = Machine::analyze(&source, Some(&main), &cfg);
     let satex_out = satex_answers(&analysis, &main);
     let lines: BTreeSet<u32> = analysis
@@ -920,7 +1053,7 @@ fn run_batch(engine: Engine, tag: &str, batch: &[Case], deviate: &str, report: &
         // One probe that swallows the rest of its line takes the markers of
         // every later probe with it, so an incomplete batch is split before
         // anything is blamed on it.
-        if retry && SLOTS.iter().any(|slot| !engine_out.contains_key(&(index, (*slot).to_string()))) {
+        if retry && runs.iter().any(|run| SLOTS.iter().any(|slot| !run.contains_key(&(index, (*slot).to_string())))) {
             again.push(case.clone());
             continue;
         }
@@ -928,26 +1061,28 @@ fn run_batch(engine: Engine, tag: &str, batch: &[Case], deviate: &str, report: &
             if slot == "zR" && !case.dim.answer_is_on_the_line() {
                 continue;
             }
-            let Some(engine_value) = engine_out.get(&(index, slot.to_string())) else {
-                // The engine never reached the marker: the probe left it in a
-                // state where the rest of the line was swallowed.  Say so
-                // rather than pass quietly.
-                report.fail(
-                    case,
-                    format!("{slot}: the engine wrote no marker, so the probe is not self-contained"),
-                    format!("{} {}", case.label(), case.body),
-                );
-                continue;
-            };
-            compare(report, case, slot, engine_value, satex_out.get(&(*line_no, slot.to_string())));
+            for run in &runs {
+                let Some(engine_value) = run.get(&(index, slot.to_string())) else {
+                    // The engine never reached the marker: the probe left it
+                    // in a state where the rest of the line was swallowed.
+                    // Say so rather than pass quietly.
+                    report.fail(
+                        case,
+                        format!("{slot}: the engine wrote no marker, so the probe is not self-contained"),
+                        format!("{} {}", case.label(), case.body),
+                    );
+                    continue;
+                };
+                compare(report, case, slot, engine_value, satex_out.get(&(*line_no, slot.to_string())), &analysis);
+            }
         }
         // An Unsupported primitive met with an operand it cannot pin down has
         // to widen *and* say so.
         if case.verdict == Verdict::Unsupported && case.dim == Dim::Unpinned {
             let said = lines.contains(line_no);
-            let widened = SLOTS
-                .iter()
-                .any(|slot| satex_out.get(&(*line_no, (*slot).to_string())).is_some_and(|b| b.iter().any(|(_, c)| !c)));
+            let widened = SLOTS.iter().any(|slot| {
+                satex_out.get(&(*line_no, (*slot).to_string())).is_some_and(|b| b.iter().any(|(_, c, _)| !c))
+            });
             if !(said && widened) {
                 report.fail(
                     case,
@@ -975,7 +1110,10 @@ fn table() -> Vec<(Engine, String, Primitive)> {
             seen.entry(name).or_insert((engine, p));
         }
     }
-    seen.into_iter().map(|(name, (engine, p))| (engine, name, p)).collect()
+    // `SATEX_COMPLIANCE_ONLY=name,…` narrows the table while a fix is made.
+    let only = std::env::var("SATEX_COMPLIANCE_ONLY").ok().filter(|o| !o.is_empty());
+    let wanted = |name: &str| only.as_ref().is_none_or(|o| o.split(',').any(|n| n == name));
+    seen.into_iter().filter(|(name, _)| wanted(name)).map(|(name, (engine, p))| (engine, name, p)).collect()
 }
 
 /// A name that cannot be written into a probe line as `\name`.
@@ -1134,6 +1272,16 @@ fn context_cases() -> Vec<(Engine, Case)> {
         for dim in CONTEXTS {
             // An unpinnable index only matters where the template has one.
             if dim == Dim::Unpinned && !template.has("%I%") && !template.has("%S%") && !template.has("%T%") {
+                continue;
+            }
+            let operand = ["%I%", "%S%", "%T%", "%N%", "%D%"].iter().any(|p| template.has(p));
+            if dim == Dim::Random {
+                // Widening is what this dimension checks.
+                if !operand || builtins::verdict(p).0 == Verdict::Exact {
+                    continue;
+                }
+                let with = Fill { index: "\\zI ", int: "\\zN ", dimen: "\\zD " };
+                cases.push((engine, behavior_case(&name, p, dim, &template, with, "")));
                 continue;
             }
             let index = match (dim, engine) {
@@ -1295,5 +1443,147 @@ fn unprobed_primitives_are_listed_with_a_reason() {
 fn the_suite_skips_without_an_engine() {
     if !available(Engine::PdfTeX) {
         println!("no pdftex: the compliance matrix is skipped");
+    }
+}
+
+/// The errors TeX recovers from by inserting or dropping a token, each in a
+/// box so the line stays self-contained: what the box holds afterwards is
+/// what the recovery made of it.
+const RECOVERIES: &[&str] = &[
+    // tex.web §§ 1046-1047: math material outside math inserts a `$`.
+    "\\hbox{A_B$}",
+    "\\hbox{A^B$}",
+    "\\hbox{A\\mathchar\"141$}",
+    "\\hbox{A\\displaystyle B$}",
+    "\\hbox{A\\mkern18mu B$}",
+    "\\hbox{A\\left(B\\right)$}",
+    "\\hbox{A\\over B$}",
+    "\\hbox{A\\radical\"270370 B$}",
+    "\\hbox{\\vcenter{\\hbox{A}}$}",
+    // Vertical material and `\\par` in math end it first.
+    "\\hbox{$A\\par B$$}",
+    "\\hbox{$A\\vskip3pt B$$}",
+    "\\hbox{$A\\hrule B$$}",
+    "\\vbox{\\hsize100pt\\noindent$A\\par B$}",
+    "\\vbox{\\hsize100pt\\noindent$A\\vskip3pt B}",
+    // tex.web § 1128: `&` outside an alignment is dropped.
+    "\\hbox{A&B}",
+    "\\vbox{A&B}",
+    // tex.web §§ 1068-1069: a `}` that closes no group of its kind.
+    "\\hbox{A\\begingroup B}\\endgroup C}",
+    "\\hbox{$A}B$}",
+    "\\hbox{$A\\left(B}C\\right)$}",
+    // tex.web §§ 1064-1065: the wrong closer for a group.
+    "\\hbox{A\\begingroup B$C$\\endgroup}",
+    "\\hbox{A{B\\endgroup C}}",
+    "\\hbox{$A\\right)B$}",
+    // tex.web §§ 1049-1050: a command the mode forbids is ignored.
+    "\\hbox{$A\\eqno B$}",
+    "\\hbox{$A\\halign{#\\cr B\\cr}$}",
+    "\\hbox{A\\moveleft3pt\\hbox{B}C}",
+    "\\vbox{\\hsize100pt\\raise3pt\\hbox{B}}",
+    "\\hbox{$A\\moveleft3pt\\hbox{B}$}",
+    "\\hbox{A\\lastskip B}",
+    "\\hbox{$A&B$}",
+    "\\hbox{$A#B$}",
+    "\\hbox{A#B}",
+    "\\hbox{A\\endcsname B}",
+    // Vertical material, `\\unvbox` and `\\end` in a box or in math.
+    "\\hbox{$A\\unvbox1 B$$}",
+    "\\hbox{A\\vfil B}",
+    "\\hbox{A\\end B}",
+    "\\hbox{$A\\end B$$}",
+    "\\vbox{\\hsize100pt A\\end B}",
+];
+
+#[test]
+fn error_recoveries_match_the_engine() {
+    let mut cases = Vec::new();
+    for body in RECOVERIES {
+        for dim in [Dim::Plain, Dim::Group, Dim::Undecided, Dim::HMode, Dim::VMode] {
+            let read = format!(
+                "{FONTS}\\zrm\\setbox7={body}\\edef\\zR{{\\the\\wd7,\\the\\ht7,\\the\\dp7,\\the\\currentgrouplevel,\\ifmmode M\\else N\\fi}}"
+            );
+            let case = Case {
+                name: (*body).to_string(),
+                primitive: Primitive::Relax,
+                // The recovery has to be sound; how exactly satex sets the
+                // material is each primitive's own verdict.
+                verdict: Verdict::Approximated,
+                dim,
+                kind: "recovery",
+                body: read,
+                note: String::new(),
+            };
+            cases.push((Engine::PdfTeX, case));
+        }
+    }
+    // One document each: a recovery TeX gets wrong-footed by must not take
+    // the next probe with it.
+    let mut report = Report::default();
+    for (n, (engine, case)) in cases.into_iter().enumerate() {
+        if available(engine) {
+            run_batch(
+                engine,
+                &format!("recovery-{n}"),
+                std::slice::from_ref(&case),
+                &deviate(engine),
+                &mut report,
+                false,
+            );
+        }
+    }
+    finish("recoveries", report);
+}
+
+/// `\end` ends the run (tex.web § 1054), so it gets a document of its own:
+/// what comes before it is read and nothing after it is, whether the page is
+/// empty, has to be shipped out first, or a group is still open.
+#[test]
+fn end_stops_the_run() {
+    for (engine, name, p) in table() {
+        if p != Primitive::End || !available(engine) {
+            continue;
+        }
+        for (n, before) in ["", "\\hbox{}", "\\begingroup", "\\setbox1=\\vbox{"].into_iter().enumerate() {
+            let dir = scratch(&format!("end-{}-{n}", binary(engine)));
+            let source = format!(
+                "{PRELUDE}\n{RESET}\\def\\zR{{A}}{before}{}\\{name}\n\\def\\zR{{B}}{}\n",
+                payload(0),
+                payload(1)
+            );
+            let main = dir.join("zbatch.tex");
+            std::fs::write(&main, &source).unwrap();
+            let engine_out = engine_answers(engine, &dir, "zbatch");
+            let analysis = Machine::analyze(&source, Some(&main), &satex_config(engine));
+            let satex_out = satex_answers(&analysis, &main);
+            let case = Case {
+                name: name.clone(),
+                primitive: p,
+                verdict: builtins::verdict(p).0,
+                dim: Dim::Plain,
+                kind: "behavior",
+                body: before.to_string(),
+                note: String::new(),
+            };
+            let mut report = Report::default();
+            for slot in SLOTS {
+                match engine_out.get(&(0, slot.to_string())) {
+                    Some(value) => {
+                        compare(&mut report, &case, slot, value, satex_out.get(&(2, slot.to_string())), &analysis)
+                    }
+                    None => report.fail(&case, format!("{slot}: the engine wrote no marker"), before.to_string()),
+                }
+                let after = satex_out.get(&(3, slot.to_string()));
+                // Inside an open box `\end` is an error the engine recovers
+                // from, and the run goes on.
+                if engine_out.contains_key(&(1, slot.to_string())) {
+                    compare(&mut report, &case, slot, &engine_out[&(1, slot.to_string())], after, &analysis);
+                } else if after.is_some() {
+                    report.fail(&case, format!("{slot}: satex ran past the end: {after:?}"), before.to_string());
+                }
+            }
+            finish("end", report);
+        }
     }
 }

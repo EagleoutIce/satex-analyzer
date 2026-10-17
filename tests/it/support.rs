@@ -43,7 +43,7 @@ fn bounded(mut cfg: Config) -> Config {
 /// need `texmf.kpsewhich` or package/class loading skip themselves when this
 /// is `false`.
 pub fn installed() -> bool {
-    which::which("kpsewhich").is_ok()
+    satex::paths::which("kpsewhich").is_ok()
 }
 
 /// `config()` with package, class, input and format loading all off, and

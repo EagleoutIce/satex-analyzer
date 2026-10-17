@@ -151,7 +151,7 @@ fn is_subsequence<T: PartialEq>(needle: &[T], haystack: &[T]) -> bool {
 
 #[test]
 fn satex_trace_contains_every_step_a_real_engine_took() {
-    if which::which("pdftex").is_err() {
+    if satex::paths::which("pdftex").is_err() {
         eprintln!("no pdftex found; skipping the engine-trace suite");
         return;
     }
