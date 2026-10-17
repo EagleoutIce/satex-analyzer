@@ -142,6 +142,9 @@ Write the documentation in American English, in short sentences.
   Built against the installation, the package caches would not serve the bundle: their key names the roots.
 - pdfTeX's files, its caches and the samples are one gzip file. Each other kernel is a gzip file of what it adds, fetched when it is chosen.
   Every asset name carries its content hash, so browsers cache it for good.
+- Further packages are a gzip file each: those `doc/site/packages.txt` names, then `cache.index.common` of satex.yaml.
+  The build runs satex on a document loading each one, once per kernel, and keeps the files that kernel's download lacks.
+  The playground fetches a package when a finding or a run says it is not in this installation, then starts over.
 - The page also carries data from satex itself: `satex query --list`, the rules with their explanations (`satex lint --rules`, `satex lint --explain`),
   and `satex completions json` (the command tree, the config keys and the rule codes) for the argument line's completion.
 
@@ -156,7 +159,7 @@ F2, the context menu and Ctrl+click rename, explain and go to a definition. A de
 Uploaded files join the open project. A folder or a zip is unpacked in the page and goes to `/work/upload`. A permalink is the open file, the arguments, the kernel and the selection, deflated into the URL's hash.
 `doc/site/playground.yaml` is the satex.yaml of those runs.
 
-`cargo playground` does all of it and serves the result at <http://127.0.0.1:8000/play/> (`--port`, `--out`).
+`cargo playground` does all of it and serves the result at <http://127.0.0.1:8000/play/> (`--port`, `--out`). It builds with the incremental `playground` profile, so a rebuild after an edit takes seconds; `--release` builds what the published site ships.
 To build and test it step by step you need the native and the wasm build, the
 [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html) (the version in the workflow), pandoc and pdftocairo:
 

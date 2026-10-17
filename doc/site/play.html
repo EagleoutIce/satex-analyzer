@@ -16,16 +16,16 @@
       <label id="play-rootbox" hidden>root <select id="play-root" aria-label="root document"></select></label></div>
     <div id="play-editor" class="editor"><textarea id="play-source" spellcheck="false" aria-label="LaTeX source"></textarea></div>
   </section>
-  <div class="divider" id="play-divider" role="separator" aria-orientation="vertical" aria-label="resize panes" tabindex="0"></div>
+  <div class="divider" id="play-divider" role="separator" aria-orientation="vertical" aria-label="resize panes: drag to the edge to fold a pane, click to bring it back" aria-valuemin="0" aria-valuemax="100" tabindex="0" title="drag to resize, to an edge to fold; click a folded one to unfold; double-click: half"></div>
   <section class="pane side-pane">
-    <details open class="sect"><summary>Findings <b id="lsp-count"></b> <span class="muted" id="lsp-status">language server: starting…</span></summary>
+    <details open class="sect" id="play-findings"><summary>Findings <b id="lsp-count"></b> <span class="muted" id="lsp-status">language server: starting…</span></summary>
       <div id="play-refs" class="refs" hidden></div>
-      <ul id="lsp-diagnostics" class="diagnostics" aria-live="polite"></ul></details>
+      <ul id="lsp-diagnostics" class="diagnostics grow" aria-live="polite"></ul></details>
     <details open class="sect" id="play-explain"><summary>Explain macro <code id="explain-name"></code></summary>
-      <div id="explain-body" class="hover"><p class="muted">Put the cursor on a command.</p></div></details>
+      <div id="explain-body" class="hover grow"><p class="muted">Put the cursor on a command.</p></div></details>
     <details class="sect" id="play-typeset"><summary>Typeset</summary>
-      <div id="typeset-body" class="typeset"><p class="muted">What the paragraphs of the open file set, once it is checked.</p></div></details>
-    <details class="sect" id="play-out" hidden><summary>Output <code id="play-cmd">satex lint</code></summary><div id="play-output" class="output"></div></details>
+      <div id="typeset-body" class="typeset grow"><p class="muted">What the paragraphs of the open file set, once it is checked.</p></div></details>
+    <details class="sect" id="play-out" hidden><summary>Output <code id="play-cmd">satex lint</code></summary><div id="play-output" class="output grow"></div></details>
     <div class="statusbar" aria-live="polite"><progress id="play-progress" max="1" value="0" aria-label="loading"></progress><span id="play-status">Fetching satex and the TeX bundle…</span><span id="t-init"></span><span id="t-check"></span><span id="t-stats" class="muted"></span></div>
   </section>
 </div>
