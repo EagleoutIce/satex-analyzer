@@ -2051,7 +2051,9 @@ fn resized_picture_with_styles_keeps_file_name_scans() {
    },
    klabel/.style={font=\scriptsize\sffamily, inner sep=1pt,text=black,above,execute at begin node={\strut}},
    olabel/.style={midway,fill=white,fill opacity=.75,text opacity=1,rounded corners=2pt,inner sep=1pt,font=\tiny\sffamily},
+}
 \newsavebox\DataFlow
+\setbox\DataFlow=\hbox{\resizebox*!{1.25cm}{\begin{tikzpicture}
    \node[d] (0) at (0,0) {};
    \node[u,right=4mm] (1) at (0.east) {};
    \node[v,above=4mm] (2) at (0.north) {~~~~};
@@ -2061,7 +2063,9 @@ fn resized_picture_with_styles_keeps_file_name_scans() {
    \draw[Link,dotted] (1) to[bend right] (2);
 \end{tikzpicture}}}
 \newsavebox\ControlFlow
-\setbox\ControlFlow=\hbox{\resizebox*!{1.25cm}{\color{lightgray!80!BaseGray}\begin{tikzpicture}[Link/.style={draw,line cap=round,gray,thick},comm/.append style={very thick}]
+\setbox\ControlFlow=\hbox{\resizebox*!{1.25cm}{\color{lightgray!80!gray}\begin{tikzpicture}[Link/.style={draw,line cap=round,gray,thick},comm/.append style={very thick}]
+\node[d] (0) at (0,0) {};
+\end{tikzpicture}}}
 \begin{document}
 x\label{after}
 \end{document}"#,
