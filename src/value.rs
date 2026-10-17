@@ -207,6 +207,16 @@ impl Num {
         Num::range(-self.hi, -self.lo)
     }
 
+    pub fn abs(&self) -> Num {
+        if self.lo >= 0 {
+            *self
+        } else if self.hi <= 0 {
+            self.neg()
+        } else {
+            Num::range(0, self.hi.max(-self.lo))
+        }
+    }
+
     /// TeX arithmetic lifted to an interval: `exact` at a point when both
     /// ends agree, otherwise `ideal` (the unbounded-integer operation,
     /// `None` only at a zero divisor) taken at the box's corners cut at

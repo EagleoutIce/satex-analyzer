@@ -1268,17 +1268,6 @@ fn attach_fraction(integer: i64, fraction: i64) -> Scaled {
     if integer >= MAX_POINTS { MAX_DIMEN } else { integer * UNIT + fraction }
 }
 
-/// `\ifnum`/`\ifdim` on absolute values (pdfTeX's `\ifpdfabsnum`,
-/// `\ifpdfabsdim`); unknown when an operand or the relation is.
-pub fn compare_abs(a: Option<i64>, relation: Option<char>, b: Option<i64>) -> Option<bool> {
-    let (a, b) = (a?.abs(), b?.abs());
-    match relation? {
-        '<' => Some(a < b),
-        '>' => Some(a > b),
-        _ => Some(a == b),
-    }
-}
-
 /// What a `scan_expr` term is in terms of one unknown operand `x` (a
 /// register or typed digits, read twice as one value): `x + c`,
 /// `round((x + c)/d)`, or that times `d`, with the interval of `x + c`.

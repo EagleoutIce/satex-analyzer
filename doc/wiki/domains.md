@@ -56,7 +56,7 @@ A token list join past `limits.value_set` keeps its frame, as a macro join does:
 `Unknown` is the top of every kind: unresolved typesetting output, text with unknown digits, a read through an unpinned index.
 A bounded number that becomes text (`\the`, `\number`, `\pdfuniformdeviate`) is one token of unknown digits typed with its `Num`, which a later scan reads back as that `Num`, so a bound survives `\numexpr` through text and a recursion over it ends.
 A register read goes through `Env::value` ([`src/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/env.rs)), which reads a `Num`, `GlueNum` or `OneOf` as `Unknown`.
-Only code that inspects the abstract value sees it. A comparison in `\ifnum`/`\ifdim` decides by the interval; a join or loop head compares the hulls.
+Only code that inspects the abstract value sees it. A comparison in `\ifnum`/`\ifdim` decides by the interval, and `\ifpdfabsnum`/`\ifpdfabsdim` by the interval of the absolute values (`Num::abs`); a join or loop head compares the hulls.
 
 A count and dimension share one payload shape, `Num`, tagged by `Quantity` (`Int`, `Dimen`, `Glue`, `MuGlue`).
 Glue and muglue use a `GlueHull` instead: one `Num` per component, because glue has components ([tex.web § 150](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L3147)) that a single interval cannot carry.

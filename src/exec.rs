@@ -1630,7 +1630,12 @@ impl Machine<'_> {
         if matches!(self.env.meaning(sym), Meaning::Unknown) {
             self.split_meaning(sym, t.span);
         }
-        if self.is_unknown_digits(sym) || matches!(self.env.meaning(sym), Meaning::Unknown) {
+        // Unknown text of characters only (typed, no control sequence) is
+        // part of the name, as unknown digits are.
+        if self.is_unknown_digits(sym)
+            || matches!(self.env.meaning(sym), Meaning::Unknown)
+            || self.typed_text_of(t).is_some()
+        {
             let digits = self.is_unknown_digits(sym);
             self.scans.last_mut().and_then(|a| a.name.as_deref_mut()).expect("the name scan").unknown_part(digits);
             return false;
@@ -2466,31 +2471,29 @@ impl Machine<'_> {
                     _ => state == crate::mode::BoxState::VBox,
                 })
             }
-            Cond::AbsNum | Cond::AbsDim | Cond::FontChar | Cond::InCsname | Cond::Primitive => {
-                self.eval_extra_condition(cond)
-            }
+            Cond::FontChar | Cond::InCsname | Cond::Primitive => self.eval_extra_condition(cond),
             // tex.web § 501; see [`crate::mode`].
             Cond::VMode | Cond::HMode | Cond::InnerMode | Cond::MathMode => self.mode_test(cond),
-            Cond::Opaque | Cond::Dim => {
-                if cond == Cond::Dim {
-                    self.abs_from = None;
-                    let a = self.scan_dimen();
-                    let xs = a.map(Num::exact).or_else(|| self.abs.take());
-                    self.abs_exact = None;
-                    let from = self.abs_from.take();
-                    let relation = self.scan_relation();
-                    let b = self.scan_dimen();
-                    let ys = b.map(Num::exact).or_else(|| self.abs.take());
-                    self.abs_exact = None;
-                    let from_b = self.abs_from.take();
-                    return self.decide_numbers(xs, None, relation, ys, None, (a, b), (from, from_b));
-                }
-                None
+            Cond::Opaque => None,
+            Cond::Dim | Cond::AbsDim => {
+                self.abs_from = None;
+                let a = self.scan_dimen();
+                let xs = a.map(Num::exact).or_else(|| self.abs.take());
+                self.abs_exact = None;
+                let from = self.abs_from.take();
+                let relation = self.scan_relation();
+                let b = self.scan_dimen();
+                let ys = b.map(Num::exact).or_else(|| self.abs.take());
+                self.abs_exact = None;
+                let from_b = self.abs_from.take();
+                let ((xs, _, a, from), (ys, _, b, from_b)) =
+                    absolute(cond == Cond::AbsDim, [(xs, None, a, from), (ys, None, b, from_b)]);
+                self.decide_numbers(xs, None, relation, ys, None, (a, b), (from, from_b))
             }
             // A number read from a register a join left one of a few
             // values is compared member by member: the test is decided
             // when every member decides it alike.
-            Cond::Num | Cond::Odd => {
+            Cond::Num | Cond::Odd | Cond::AbsNum => {
                 self.abs_from = None;
                 self.abs_odd = None;
                 let a = self.scan_number();
@@ -2514,6 +2517,8 @@ impl Machine<'_> {
                 let ys = b.map(Num::exact).or_else(|| self.abs.take());
                 let from_b = self.abs_from.take();
                 let ys_exact = b.map(|n| vec![n]).or_else(|| self.abs_exact.take());
+                let ((xs, xs_exact, a, from), (ys, ys_exact, b, from_b)) =
+                    absolute(cond == Cond::AbsNum, [(xs, xs_exact, a, from), (ys, ys_exact, b, from_b)]);
                 self.decide_numbers(xs, xs_exact, relation, ys, ys_exact, (a, b), (from, from_b))
             }
             Cond::IfX => {
@@ -4684,6 +4689,21 @@ impl Machine<'_> {
         };
         None
     }
+}
+
+/// An operand of a comparison: its interval, exact members, value and register.
+type Operand = (Option<Num>, Option<Vec<i64>>, Option<i64>, Option<(Sym, crate::value::Quantity)>);
+
+/// pdfTeX's `\ifpdfabsnum`/`\ifpdfabsdim`: both operands as absolute
+/// values; the register is dropped, so no arm narrows it.
+fn absolute(abs: bool, [x, y]: [Operand; 2]) -> (Operand, Operand) {
+    if !abs {
+        return (x, y);
+    }
+    let f = |(n, e, v, _): Operand| -> Operand {
+        (n.map(|n| n.abs()), e.map(|e| e.into_iter().map(i64::abs).collect()), v.map(i64::abs), None)
+    };
+    (f(x), f(y))
 }
 
 /// The common answer when every member gives one and all agree.
