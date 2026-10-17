@@ -128,8 +128,9 @@ look at the set.
 
 - `\ifx` and `\ifdefined` are decided when every member of the set(s)
   agrees.
-- Executing a name with several meanings, or comparing it with `\ifx`,
-  *splits* the run into one path per meaning, but only `limits.meaning_splits`
+- Executing a name with several meanings *splits* the run into one path per
+  meaning. `\ifx` against a name of one meaning splits into one path per
+  answer, the name keeping the members that give it. Both go only `limits.meaning_splits`
   levels deep (below). Beyond that, or inside an `\edef`/scan, the
   name is simply of unknown meaning. The default is deliberately shallow.
   Measured on a TikZ document, splitting further runs
@@ -497,7 +498,12 @@ dropped, so both go on with the same counters.
   A later meet of the same head counts as a pass only while every list
   below the entry's own is unread since. Once one was read on, the entry's
   call ended (tex.web § 325), and the meet is a new entry, however deep. So a summary never
-  closes groups or drops frames that its caller owns.
+  closes groups or drops frames that its caller owns. The entry's own list
+  read on counts as such a call only when the meet reads from it. A meet
+  from a list it called is a recursion with text after the call, a pass.
+- **Pending `\fi`s:** an arm of the document's commands whose next tokens
+  are `\fi`s in token lists reads them at once, as TeX would. The exits of a
+  recursion's passes then stand in one place and join when parked.
 - **Widened pass:** a summary first runs the loop's body once more from
   the widened state, and only the next meet cuts. A pass writes names
   the widening opens (`\csname a\the\n\endcsname` with `\n` unknown)

@@ -2643,7 +2643,7 @@ impl Machine<'_> {
         }
         if stored {
             crate::progress::done(&format!("cached {}", rec.label), rec.started.elapsed());
-            crate::format::save_hashes(dir);
+            crate::format::save_hashes(dir, self.cfg.limits.cache_size.as_u64());
             crate::format::prune_family(
                 dir,
                 &family(&rec.name),

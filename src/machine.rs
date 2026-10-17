@@ -2825,8 +2825,16 @@ impl<'a> Machine<'a> {
             self.cfg.cache.rebuild.then(|| "asked for (cache.rebuild)".into())
         };
         if let (Some(directory), false) = (&cache_dir, self.cfg.cache.rebuild) {
-            let load =
-                || Format::load(directory, &source, self.out.plugins.engine.as_str(), self.preload_key(), &roots);
+            let load = || {
+                Format::load(
+                    directory,
+                    &source,
+                    self.out.plugins.engine.as_str(),
+                    self.preload_key(),
+                    self.cfg.limits.cache_size.as_u64(),
+                    &roots,
+                )
+            };
             let mut cached = load();
             if cached.is_err() {
                 _building = Some(crate::format::BUILDING.lock().unwrap_or_else(|e| e.into_inner()));
@@ -9876,6 +9884,18 @@ will look undefined",
     /// name has that one.  Each path goes on with the command, so the paths
     /// part where the meanings act differently.
     pub fn split_meaning(&mut self, sym: Sym, span: Span) -> bool {
+        self.split_meaning_by(sym, span, |_, _| None)
+    }
+
+    /// [`Machine::split_meaning`], a path per class of meanings `class`
+    /// puts alike (an `\\ifx` answer): the name holds that class on it.
+    /// Unclassed meanings (`None`) each part on their own.
+    pub(crate) fn split_meaning_by(
+        &mut self,
+        sym: Sym,
+        span: Span,
+        class: impl Fn(&Self, &Meaning) -> Option<bool>,
+    ) -> bool {
         // A name with a meaning of its own may only be undefined besides:
         // it is read with that meaning ([`crate::env`]'s one-sided join).
         let Some(may) =
@@ -9886,10 +9906,18 @@ will look undefined",
         // A one-of token keeps its meanings: refined, `text*` would call
         // itself forever.
         let one_of = self.name(sym).strip_prefix(UNKNOWN_NAME).is_some_and(|n| n.starts_with(explore::ONE_OF));
+        let mut classes: Vec<(Option<bool>, Vec<Meaning>)> = Vec::new();
+        for m in may.iter() {
+            let c = class(self, m);
+            match classes.iter_mut().find(|(k, _)| c.is_some() && *k == c) {
+                Some((_, ms)) => ms.push(m.clone()),
+                None => classes.push((c, vec![m.clone()])),
+            }
+        }
         !one_of
             && self.may_split_meaning()
-            && self.split(sym, span, may.len(), |m, arm| {
-                m.env.refine(sym, may[arm].clone());
+            && self.split(sym, span, classes.len(), |m, arm| {
+                m.env.refine_to(sym, &classes[arm].1);
                 true
             })
     }
