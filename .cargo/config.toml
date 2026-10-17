@@ -1,6 +1,8 @@
 [env]
+# Only Windows reads it (`mlua`'s `module` mode): link Lua by name, so the
+# final link finds build.rs's static `lua53`. Not `LUA_LINK = "static"`:
+# that makes `mlua-sys` bundle the library before build.rs has built it.
 LUA_LIB_NAME = "lua53"
-LUA_LINK = "static"
 # Test threads get the 8 MiB the binary's main thread has: a kernel build
 # nests `drive` per command and needs more than the 2 MiB test default.
 RUST_MIN_STACK = "8388608"
