@@ -23,12 +23,18 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
-    let (mut port, mut out) = ("8000".to_string(), PathBuf::from("target/site"));
+    let (mut port, mut out, mut profile) = ("8000".to_string(), PathBuf::from("target/site"), "playground");
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--port" => port = args.next().ok_or("--port needs a number")?,
             "--out" => out = args.next().ok_or("--out needs a directory")?.into(),
-            _ => return Err(format!("unknown argument `{arg}`; usage: cargo playground [--port N] [--out DIR]")),
+            // What the published site ships: slower to build, faster to run.
+            "--release" => profile = "release",
+            _ => {
+                return Err(format!(
+                    "unknown argument `{arg}`; usage: cargo playground [--port N] [--out DIR] [--release]"
+                ));
+            }
         }
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -40,21 +46,26 @@ fn run() -> Result<(), String> {
         c
     };
     let path = emscripten_path(root)?;
+    // Where cargo puts its builds: `$CARGO_TARGET_DIR`, else `target`.
+    let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
     // Both builds from one source and profile: a cache is keyed on the build that wrote it.
     say("2/4 satex for this machine");
-    step(cargo().args(["build", "--release", "--bin", "satex"]))?;
+    step(cargo().args(["build", "--profile", profile, "--bin", "satex"]))?;
     say("3/4 satex for the browser");
     step(
         cargo()
-            .args(["build", "--release", "--target", "wasm32-unknown-emscripten", "--bin", "satex"])
+            .args(["build", "--profile", profile, "--target", "wasm32-unknown-emscripten", "--bin", "satex"])
             .env("PATH", &path),
     )?;
     say("4/4 the site: the pages, the TeX files and caches the playground loads");
     step(
         Command::new("python3")
             .arg("doc/site/build.py")
-            .args(["--satex", "target/release/satex"])
-            .args(["--wasm", "target/wasm32-unknown-emscripten/release", "--precompress", "--out"])
+            .arg("--satex")
+            .arg(target.join(profile).join("satex"))
+            .arg("--wasm")
+            .arg(target.join("wasm32-unknown-emscripten").join(profile))
+            .args(["--precompress", "--out"])
             .arg(&out)
             .current_dir(root),
     )?;
