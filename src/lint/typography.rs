@@ -68,8 +68,10 @@ pdfTeX and LuaTeX writing PDF support character protrusion and font expansion
 (pdfTeX manual, `\\pdfprotrudechars` and `\\pdfadjustspacing`), which make
 margins look straighter and let paragraphs break with fewer hyphens and less
 uneven spacing.  microtype turns both on (microtype manual § 1).  The rule
-fires when both are still off at the end of the run.  XeTeX only
-protrudes, and DVI output supports neither, so the rule stays silent there.
+fires when both are still off at the end of the run and the body set about a
+page of text in justified paragraphs, so a figure, a standalone picture or
+ragged slides are left alone.  XeTeX only protrudes, and DVI output supports
+neither, so the rule stays silent there.
 
 Fix by loading `\\usepackage{microtype}`.",
         references: &[
@@ -203,7 +205,9 @@ fn microtype_available(report: &mut Report) {
         _ => ["pdfprotrudechars", "pdfadjustspacing"],
     };
     let off = |name: &str| analysis.interner.lookup(name).is_none_or(|sym| analysis.env.value(sym).as_int() == Some(0));
-    if !(off(protrude) && off(adjust)) {
+    if !(off(protrude) && off(adjust))
+        || analysis.justified_text < analysis.settings.lints.microtype_available.characters
+    {
         return;
     }
     let Some(span) = document_start(analysis) else { return };
@@ -212,8 +216,10 @@ fn microtype_available(report: &mut Report) {
         span,
         "microtype",
         format!(
-            "{} writes PDF and can protrude characters and expand fonts, but microtype is not loaded",
-            plugins.engine.as_str()
+            "microtype is not loaded; under {} it evens out the spacing and line breaks of the {} characters \
+             the body sets justified",
+            plugins.engine.as_str(),
+            analysis.justified_text
         ),
         Fix::new("load \\usepackage{microtype}", Applicability::Unsafe, edits),
     );

@@ -464,7 +464,12 @@ pub fn lint(analysis: &Analysis) -> Vec<Record> {
     let text = text::View::of(analysis, &sources);
     let index = Index::of(analysis);
     let mut raised: crate::fixed::HashSet<usize> = crate::fixed::HashSet::default();
-    for rule in all().filter(|rule| !analysis.settings.lint_off.iter().any(|code| code == rule.code)) {
+    let rules: Vec<&Rule> =
+        all().filter(|rule| !analysis.settings.lint_off.iter().any(|code| code == rule.code)).collect();
+    for (i, &rule) in rules.iter().enumerate() {
+        let label = format!("lint {}", rule.code);
+        crate::progress::bar(&label, i, rules.len(), (0, 0), None, &[]);
+        crate::progress::tell(crate::progress::Status { text: label, phase: "lint".into(), ..Default::default() });
         let mut report = Report {
             analysis,
             sources: &sources,
@@ -488,6 +493,7 @@ pub fn lint(analysis: &Analysis) -> Vec<Record> {
             raised.extend(start..out.len());
         }
     }
+    crate::progress::clear();
     // A raised error another rule explains at the same place is its.  The
     // places a raised error stands at are few, so the line alone sieves the
     // rest out before any place is built.
@@ -525,8 +531,13 @@ pub fn lint(analysis: &Analysis) -> Vec<Record> {
         r.get("severity").and_then(|v| v.as_str()) == Some("error")
             || !r.get("path").and_then(|v| v.as_str()).is_some_and(written_by_run)
     });
-    let frozen: Vec<glob::Pattern> =
-        analysis.settings.project.frozen.iter().filter_map(|g| glob::Pattern::new(g).ok()).collect();
+    let frozen: Vec<globset::GlobMatcher> = analysis
+        .settings
+        .project
+        .frozen
+        .iter()
+        .filter_map(|g| globset::Glob::new(g).ok().map(|g| g.compile_matcher()))
+        .collect();
     // The repository a file belongs to: its nearest ancestor holding a
     // `.git` (a directory, or the file a submodule checkout has).
     let repository =
@@ -540,7 +551,7 @@ pub fn lint(analysis: &Analysis) -> Vec<Record> {
             let path = std::path::Path::new(path);
             let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
             let foreign = home.as_ref().is_some_and(|home| repository(&path).is_some_and(|r| &r != home));
-            !foreign && !frozen.iter().any(|g| g.matches_path(&path))
+            !foreign && !frozen.iter().any(|g| g.is_match(&path))
         });
     }
     suppress::apply(analysis, out)

@@ -160,6 +160,10 @@ fn run(
         let message = format!("{} in math mode set {n} minus signs, not {}", hyphens(n), dash(n));
         return (n > 1).then(|| Rewrite::new(start..end, "math", message, "-".repeat(n.min(1))));
     }
+    // Bringhurst's spaced en-dash: `A\,--\,B`, a kern or glue on both sides.
+    if n == 2 && !view.joined(start) && !view.joined(end) {
+        return None;
+    }
     let between = Between::of(left, right);
     // `2ms - 3s` reads as a subtraction, and a minus sign is a math
     // character (tex.web § 1046), not an em-dash.

@@ -78,7 +78,7 @@ fn finding_rows(rows: &[FindingRow], read: impl Fn(&str) -> Option<Analysis>) {
 /// `\end{…}` is latex.ltx's, so these run the kernel: its `\@checkend`
 /// raises `\begin{x} on input line n ended by \end{y}`.
 fn latex(source: &str) -> Option<Analysis> {
-    which::which("kpsewhich").ok()?;
+    satex::paths::which("kpsewhich").ok()?;
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     Some(Machine::analyze(source, None, &cfg))
 }
@@ -328,7 +328,7 @@ fn an_italic_correction_a_closing_brace_hides_the_period_from_is_reported() {
 /// The accent rules read the source to see how far the accent's argument
 /// reaches, so these run against a file on disk.
 fn latex_file(name: &str, source: &str) -> Option<Analysis> {
-    which::which("kpsewhich").ok()?;
+    satex::paths::which("kpsewhich").ok()?;
     let dir = crate::support::tmp_root().join(format!("satex-chktex-{}", std::process::id()));
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join(name);
@@ -387,7 +387,7 @@ impl Drop for OnDisk {
 /// A one-file project in a fresh directory, analyzed.  `kernel` runs the
 /// real LaTeX2e kernel and gives `None` without a TeX installation.
 fn on_disk(name: &str, source: &str, kernel: bool) -> Option<OnDisk> {
-    if kernel && which::which("kpsewhich").is_err() {
+    if kernel && satex::paths::which("kpsewhich").is_err() {
         return None;
     }
     let dir = crate::support::tmp_root().join(format!("satex-chktex-{name}-{}", std::process::id()));
@@ -564,8 +564,9 @@ fn dollars_around_math_are_reported() {
         return;
     };
     let found = findings(&doc.analysis, "math-shift-dollars");
-    assert!(found.iter().any(|m| m.contains("$$ … $$") && m.contains(r"\[ … \]")), "{found:?}");
-    assert!(found.iter().any(|m| m.contains("$ … $") && m.contains(r"\( … \)")), "{found:?}");
+    // Only the display: inline `$` sets what `\(` does.
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("$$ … $$") && found[0].contains(r"\[ … \]"), "{found:?}");
 }
 
 math_none! {
@@ -814,7 +815,8 @@ fn a_hand_written_name_is_fixed_to_cref_when_cleveref_is_loaded() {
                 Sections~\\ref{sec:x} and~\\ref{sec:x}.\n\\end{document}\n";
     let found = cleveref_records("cleveref-loaded", body);
     let fixes: Vec<String> = found.iter().flat_map(replacements).collect();
-    assert_eq!(fixes, [r"\Cref{sec:x}", r"\Cref{sec:x}", r"\cref{sec:x}", r"\Cref{sec:x,sec:x}"], "{found:?}");
+    // `Sec.` stays: cleveref would set `Section`, another word on the page.
+    assert_eq!(fixes, [r"\Cref{sec:x}", r"\cref{sec:x}", r"\Cref{sec:x,sec:x}"], "{found:?}");
     assert!(found[0]["message"].as_str().unwrap().contains(r"`\Cref{sec:x}`"), "{found:?}");
 }
 
@@ -837,7 +839,7 @@ fn the_name_must_fit_the_kind_of_the_label() {
         return;
     }
     let body = "\\usepackage{cleveref}\n\\begin{document}\n\\begin{figure}\\caption{c}\\label{f:y}\\end{figure}\n\
-                Fig.~\\ref{f:y} is one.\nSee table~\\ref{f:y} and in~\\ref{f:y}.\n\\end{document}\n";
+                Figure~\\ref{f:y} is one.\nSee table~\\ref{f:y} and in~\\ref{f:y}.\n\\end{document}\n";
     let found = cleveref_records("cleveref-kind", body);
     let fixes: Vec<String> = found.iter().flat_map(replacements).collect();
     assert_eq!(fixes, [r"\Cref{f:y}"], "{found:?}");
@@ -850,7 +852,7 @@ fn names_and_lists_follow_the_kind_and_the_plural() {
     }
     let body = "\\usepackage{hyperref}\n\\usepackage{cleveref}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\
                 \\begin{figure}\\caption{F}\\label{fig:f}\\end{figure}\n\\section{B}\\label{sec:b}\n\
-                Section~\\ref{sec:a} and Fig.~\\ref{fig:f}, see~\\ref{sec:b}, \
+                Section~\\ref{sec:a} and Figure~\\ref{fig:f}, see~\\ref{sec:b}, \
                 Sections~\\ref{sec:a} and~\\ref{sec:b}.\n\\end{document}\n";
     let found = cleveref_records("cleveref-repro", body);
     let fixes: Vec<String> = found.iter().flat_map(replacements).collect();
@@ -1111,7 +1113,7 @@ fn a_figure_with_an_unreferenced_caption_is_not_reported() {
 // verbatim is program text, so no typographic rule may fire on it.
 
 /// The characters the rules below all disagree with, in one line.
-const PROGRAM_TEXT: &str = "printf( \"[\" ) -- a ... 640x480";
+const PROGRAM_TEXT: &str = "printf( \"[\" ) - a ... 640x480";
 
 /// One rule per kind of typography the line above trips.
 const TYPOGRAPHY: [&str; 6] = [
@@ -1182,7 +1184,7 @@ fn a_bracket_after_a_macro_argument_is_counted() {
 /// so and deletes nothing.
 #[test]
 fn an_unused_label_may_be_used_in_a_file_not_read() {
-    if which::which("kpsewhich").is_err() {
+    if satex::paths::which("kpsewhich").is_err() {
         return;
     }
     let dir = crate::support::tmp_root().join(format!("satex-chktex-unread-{}", std::process::id()));
@@ -1249,7 +1251,7 @@ fn an_open_bracket_is_still_reported_after_lookahead_macros() {
 
 /// `on_disk` with more files beside `doc.tex`.
 fn with_files(name: &str, source: &str, files: &[(&str, &str)]) -> Option<OnDisk> {
-    if which::which("kpsewhich").is_err() {
+    if satex::paths::which("kpsewhich").is_err() {
         return None;
     }
     let dir = crate::support::tmp_root().join(format!("satex-chktex-{name}-{}", std::process::id()));
@@ -1306,7 +1308,7 @@ fn a_graphic_epstopdf_converts_is_not_missing() {
 
 #[test]
 fn a_frozen_path_gets_no_findings() {
-    if which::which("kpsewhich").is_err() {
+    if satex::paths::which("kpsewhich").is_err() {
         return;
     }
     let dir = crate::support::tmp_root().join(format!("satex-chktex-frozen-{}", std::process::id()));
@@ -1333,7 +1335,7 @@ fn a_frozen_path_gets_no_findings() {
 /// go unless `project.freeze_other_repositories` is off.
 #[test]
 fn a_git_submodule_is_frozen() {
-    if which::which("kpsewhich").is_err() {
+    if satex::paths::which("kpsewhich").is_err() {
         return;
     }
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1478,7 +1480,7 @@ fn a_duplicate_label_from_two_calls_is_reported_at_the_second() {
     let Some(analysis) = latex(&format!("{GREET}\\greet{{x}}\n\\greet{{x}}\n\\end{{document}}\n")) else { return };
     let found = placed(&analysis, "duplicate-label");
     assert_eq!(found.len(), 1, "{found:?}");
-    assert!(found[0].starts_with("5:1 ") && found[0].contains("via \\greet"), "{found:?}");
+    assert!(found[0].starts_with("5:1 ") && !found[0].contains("via"), "{found:?}");
 }
 
 /// A call that writes two labels, made twice: one finding at the second
@@ -1510,7 +1512,7 @@ fn a_reference_ahead_of_its_label_is_defined() {
 /// its second run.
 #[test]
 fn a_label_in_an_input_file_defines_the_key_a_later_reference_names() {
-    if which::which("kpsewhich").is_err() {
+    if satex::paths::which("kpsewhich").is_err() {
         return;
     }
     let dir = crate::support::scratch_dir(crate::support::tmp_root().join("satex-chktex-ref-ahead"));
@@ -1537,4 +1539,37 @@ fn an_error_in_an_argument_stands_at_its_command() {
     let Some(analysis) = latex(source) else { return };
     let found = placed(&analysis, "undefined-environment");
     assert!(found.len() == 1 && found[0].starts_with("6:3 "), "{found:?}");
+}
+
+/// A prefix in parentheses is part of the word: `(re)executed`.
+#[test]
+fn a_prefix_in_parentheses_is_one_word() {
+    let source = "\\documentclass{article}\n\\begin{document}\nThe job is (re)executed.\n\\end{document}\n";
+    let Some(doc) = on_disk("prefix-paren", source, true) else { return };
+    assert!(findings(&doc.analysis, "parenthesis-spacing").is_empty());
+}
+
+/// A `!` at the end of a formula is a factorial, not punctuation.
+#[test]
+fn a_factorial_ends_a_formula() {
+    let source = "\\documentclass{article}\n\\begin{document}\nThere are $n!$ ways, $n.$\n\\end{document}\n";
+    let Some(doc) = on_disk("factorial", source, true) else { return };
+    assert_eq!(findings(&doc.analysis, "math-punctuation").len(), 1);
+}
+
+/// Bringhurst's spaced en-dash, thin spaces on both sides, is a dash.
+#[test]
+fn a_spaced_en_dash_is_a_dash() {
+    let source = "\\documentclass{article}\n\\begin{document}\nA\\,--\\,B but A--B.\n\\end{document}\n";
+    let Some(doc) = on_disk("spaced-en-dash", source, true) else { return };
+    assert_eq!(findings(&doc.analysis, "wrong-dash").len(), 1);
+}
+
+/// algorithm2e makes `\;` end an algorithm line: after `\Return` it is
+/// that command, not a stray mark.
+#[test]
+fn a_package_command_for_a_mark_is_not_an_escape() {
+    let source = "\\documentclass{article}\n\\usepackage{algorithm2e}\n\\begin{document}\n\\begin{algorithm}\n\\Return\\; foo\n\\end{algorithm}\n\\end{document}\n";
+    let Some(doc) = on_disk("algo-endline", source, true) else { return };
+    assert!(findings(&doc.analysis, "unintended-escape").is_empty());
 }

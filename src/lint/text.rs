@@ -261,7 +261,27 @@ fn verbatim_of(text: &crate::facts::Text, analysis: &Analysis, sources: &Sources
     if bodies.is_empty() {
         return Vec::new();
     }
-    text.at.iter().map(|spot| bodies.holds(spot.span.file, spot.span.line, spot.span.col)).collect()
+    let mut out: Vec<bool> =
+        text.at.iter().map(|spot| bodies.holds(spot.span.file, spot.span.line, spot.span.col)).collect();
+    // What an active character in the body sets (`\verb`'s `-`, made
+    // `\kern\z@\char`-`) comes from the kernel's text: it is the body's
+    // when the document's characters on both sides are.
+    let document: Vec<bool> =
+        (0..analysis.files.len()).map(|f| crate::query::origin(analysis, f as FileId) == "document").collect();
+    let ours = |i: usize| document.get(text.at[i].span.file as usize).copied().unwrap_or(false);
+    let mut i = 0;
+    while i < out.len() {
+        if ours(i) {
+            i += 1;
+            continue;
+        }
+        let end = (i..out.len()).find(|&k| ours(k)).unwrap_or(out.len());
+        if i > 0 && out[i - 1] && out.get(end).copied().unwrap_or(false) {
+            out[i..end].fill(true);
+        }
+        i = end;
+    }
+    out
 }
 
 /// An edit replacing the source `range` covers, when it stands there

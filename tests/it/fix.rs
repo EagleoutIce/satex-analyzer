@@ -62,7 +62,7 @@ fn fix(name: &str, source: &str, code: &str, unsafe_fixes: bool) -> Fixed {
 
 /// pdflatex accepts the fixed document, when it is installed.
 fn compiles(dir: &Path) {
-    if which::which("pdflatex").is_err() {
+    if satex::paths::which("pdflatex").is_err() {
         return;
     }
     let status = Command::new("pdflatex")
@@ -103,6 +103,7 @@ macro_rules! fix_cases {
 }
 
 const BODY: &str = "\\begin{document}\nx\n\\end{document}\n";
+const PROSE: &str = "Running text that fills the line. ";
 
 fix_cases! {
     duplicate_package_drops_the_name_from_a_list("duplicate-list", format!(
@@ -124,6 +125,42 @@ fn unused_package_is_an_unsafe_fix() {
     // Both names are unused: their edits overlap, so the second waits a round
     // and then deletes what is left of the line.
     check(&fixed, &format!("\\documentclass{{article}}\n{BODY}"));
+}
+
+/// How many findings of `code` the document `source` gets.
+fn reported(name: &str, source: &str, code: &str) -> usize {
+    let dir = project(name, &[("doc.tex", source)]);
+    let path = dir.join("doc.tex");
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let analysis = Machine::analyze(source, Some(&path), &cfg);
+    satex::lint::lint(&analysis).iter().filter(|r| r.get("code").and_then(|c| c.as_str()) == Some(code)).count()
+}
+
+/// A package whose command the text of a macro the document runs calls is
+/// used, through any number of macros, though the path calling it was not
+/// taken. A macro nothing runs uses nothing.
+#[test]
+fn a_package_a_running_macro_calls_is_used() {
+    if !installed() {
+        return;
+    }
+    let defs = "\\newif\\ifpic\n\\newcommand\\pic{\\includegraphics{x}}\n\\newcommand\\maybe{\\ifpic\\pic\\fi}\n";
+    let head = format!("\\documentclass{{article}}\n\\usepackage{{graphicx}}\n{defs}");
+    let used = format!("{head}\\begin{{document}}\n\\maybe\n\\end{{document}}\n");
+    assert_eq!(reported("unused-package-called", &used, "unused-package"), 0);
+    let idle = format!("{head}{BODY}");
+    assert_eq!(reported("unused-package-idle", &idle, "unused-package"), 1);
+}
+
+/// A package that only changes settings acts without any of its names
+/// being used.
+#[test]
+fn a_package_that_changes_settings_is_used() {
+    if !installed() {
+        return;
+    }
+    let source = format!("\\documentclass{{article}}\n\\usepackage{{parskip}}\n{BODY}");
+    assert_eq!(reported("unused-package-parskip", &source, "unused-package"), 0);
 }
 
 #[test]
@@ -163,7 +200,7 @@ fix_cases! {
     dead_definition_before_a_def_is_a_safe_deletion("dead-definition", "\\documentclass{article}\n\\def\\x#1{[#1]}\n\\def\\x#1{(#1)}\n\\begin{document}\n\\x{a}\n\\end{document}\n", "dead-definition", false, "\\documentclass{article}\n\\def\\x#1{(#1)}\n\\begin{document}\n\\x{a}\n\\end{document}\n");
     unused_definition_deletes_the_whole_newcommand("unused-definition", "\\documentclass{article}\n\\newcommand*{\\unused}[2][d]{%\n  #1 and #2%\n}\n\\begin{document}\nx\n\\end{document}\n", "unused-definition", true, &format!("\\documentclass{{article}}\n{BODY}"));
     csname_becomes_the_etoolbox_command_for_its_role("csname", "\\documentclass{article}\n\\usepackage{etoolbox}\n\\expandafter\\def\\csname my@x\\endcsname{X}\n\\expandafter\\let\\csname my@y\\endcsname\\relax\n\\begin{document}\n\\csname my@x\\endcsname \\csname my@x\\endcsname\n\\end{document}\n", "primitive-tex-command", true, "\\documentclass{article}\n\\usepackage{etoolbox}\n\\csdef{my@x}{X}\n\\cslet{my@y}\\relax\n\\begin{document}\n\\csuse{my@x}\\csuse{my@x}%\n\\end{document}\n");
-    microtype_is_loaded_before_the_document("microtype", format!("\\documentclass{{article}}\n{BODY}"), "microtype-available", true, &format!("\\documentclass{{article}}\n\\usepackage{{microtype}}\n{BODY}"));
+    microtype_is_loaded_before_the_document("microtype", format!("\\documentclass{{article}}\n\\begin{{document}}\n{}\n\\end{{document}}\n", PROSE.repeat(150)), "microtype-available", true, &format!("\\documentclass{{article}}\n\\usepackage{{microtype}}\n\\begin{{document}}\n{}\n\\end{{document}}\n", PROSE.repeat(150)));
 }
 
 #[test]

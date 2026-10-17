@@ -329,6 +329,18 @@ fn unintended_escape(report: &mut Report) {
             set.insert((span.file, span.line, span.col), c);
         }
     }
+    // A mark a package gives its own meaning, even while the document
+    // runs (algorithm2e's `\;` ends a line), is that package's command.
+    let loaded: HashSet<FileId> = report.analysis.facts.loads.iter().filter_map(|l| l.file).collect();
+    let redefined: HashSet<String> = report
+        .analysis
+        .facts
+        .defs
+        .iter()
+        .filter(|d| d.package.is_some() || loaded.contains(&d.span.file))
+        .map(|d| report.analysis.interner.name(d.name).to_string())
+        .filter(|n| n.chars().count() == 1)
+        .collect();
     let mut findings = Vec::new();
     for file in &files {
         let Some(mut scan) = Scan::at(&file.text, Pos::new(1, 1), CatcodeTable::latex()) else { continue };
@@ -357,7 +369,7 @@ fn unintended_escape(report: &mut Report) {
                     if math || line != at.line || bodies.holds(file.id, at.line, at.col) {
                         continue;
                     }
-                    if set.get(&(file.id, at.line, at.col)) == Some(&punct) {
+                    if set.get(&(file.id, at.line, at.col)) == Some(&punct) || redefined.contains(n) {
                         continue;
                     }
                     if !ends_a_word(file.text.line(at.line), at.col) || !opens_a_word(file.text.line(at.line), at.col) {

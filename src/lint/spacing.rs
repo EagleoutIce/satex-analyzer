@@ -582,15 +582,21 @@ fn parenthesis_spacing(report: &mut Report) {
             true => i.checked_sub(1),
             false => Some(i + 1),
         };
-        // A word with a suffix in parentheses, `file(s)` or `f(x)`, is one
-        // word: its parentheses hold no space.  (`(c)three` is a label.)
+        // A word with a part in parentheses, `file(s)`, `f(x)` or
+        // `(re)executed`, is one word: its parentheses hold no space.  A
+        // one-letter prefix is a label (`(c)three`).
         let partner = |k: usize| match view.char_at(k) {
-            Some(')') => Some(true),
+            Some(')') if open => Some(true),
+            Some('(') if !open => Some(i - k > 2),
             Some(c) if c.is_whitespace() => Some(false),
             Some(_) => None,
             None => Some(false),
         };
-        let one_word = open && (i + 1..i + 32).find_map(partner).unwrap_or(false);
+        let one_word = match open {
+            true => (i + 1..i + 32).find_map(partner),
+            false => (i.saturating_sub(32)..i).rev().find_map(partner),
+        }
+        .unwrap_or(false);
         if !one_word && outside.filter(|&k| near(k)).and_then(|k| view.char_at(k)).is_some_and(char::is_alphabetic) {
             let side = if open { "in front of" } else { "after" };
             let message = format!("no space stands {side} the `{paren}`, so it is set against the word");

@@ -216,6 +216,9 @@ fn unused_label(report: &mut Report) {
         .labels()
         .iter()
         .filter(|(key, _)| !referenced.contains(*key))
+        // A key written into the `.aux` file named after it is an `\include`d
+        // part's checkpoint, which the part's own file carries back.
+        .filter(|(key, _)| !analysis.facts.written_files.contains(&format!("{key}.aux")))
         .map(|(key, o)| {
             let (span, via) = report.site(o);
             (span, via, key.to_string())
@@ -411,12 +414,12 @@ fn interface(analysis: &Analysis, sym: crate::tex::Sym) -> String {
     format!("{}{}", analysis.interner.cs(sym), package.unwrap_or_default())
 }
 
-/// Whether `name` (a control word, as [`Report::cs`] writes it) reads as the
-/// module-internal naming a package or class author would not want the
-/// public to rely on: an `@` (kernel convention, source2e `classes.dtx`) or
-/// expl3's `module_function:signature` (interface3, "The naming scheme").
-fn looks_private(name: &str) -> bool {
-    name.contains('@') || (name.contains('_') && name.contains(':'))
+/// Whether `name` (a control word, as [`Report::cs`] writes it) is one a
+/// package or class author would not want the public to rely on, by
+/// `conventions.internal`: an `@` (source2e `classes.dtx`), expl3's
+/// `module_function:signature` (interface3, "The naming scheme").
+fn looks_private(analysis: &Analysis, name: &str) -> bool {
+    analysis.settings.conventions.is_internal(name.trim_start_matches('\\'))
 }
 
 /// pgfkeys stores a key as `\pgfk@/path/key/.@body` etc.: the user sets it.
@@ -464,7 +467,7 @@ fn unused_definition(report: &mut Report) {
             continue;
         }
         if (!rule.pgf_keys && is_pgf_key(&name))
-            || (!rule.report_public && !looks_private(&name))
+            || (!rule.report_public && !looks_private(analysis, &name))
             || ignore.iter().any(|re| re.is_match(&name))
         {
             continue;

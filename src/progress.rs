@@ -50,16 +50,68 @@ impl Bars {
         self.drawn = 0;
     }
 
-    /// Draw every bar, leaving the cursor at the end of the last one.
+    /// Draw every bar, leaving the cursor at the end of the last one. A
+    /// line is cut to the terminal's width: one that wrapped would leave
+    /// the erase above one row short.
     fn draw(&mut self, out: &mut impl Write) {
         self.erase(out);
+        let width = terminal_size::terminal_size_of(std::io::stderr()).map_or(80, |(w, _)| w.0 as usize);
         let all: Vec<&String> = self.lines.iter().flat_map(|(_, lines)| lines).collect();
         for (i, line) in all.iter().enumerate() {
-            let _ = write!(out, "{}{line}", if i > 0 { "\n" } else { "" });
+            let _ = write!(out, "{}{}", if i > 0 { "\n" } else { "" }, fit(line, width.saturating_sub(1)));
         }
         self.drawn = all.len();
         let _ = out.flush();
     }
+}
+
+/// `line` cut to `width` visible columns. Escape sequences (colors, OSC 8
+/// links) take no room and are kept whole.
+fn fit(line: &str, width: usize) -> String {
+    use unicode_width::UnicodeWidthChar;
+    let mut out = String::with_capacity(line.len());
+    let (mut used, mut chars) = (0, line.chars().peekable());
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            out.push(c);
+            // CSI ends at a letter; OSC at BEL or ESC `\`.
+            match chars.next() {
+                Some('[') => {
+                    out.push('[');
+                    for c in chars.by_ref() {
+                        out.push(c);
+                        if c.is_ascii_alphabetic() {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    out.push(']');
+                    while let Some(c) = chars.next() {
+                        out.push(c);
+                        if c == '\x07' || (c == '\x1b' && chars.peek() == Some(&'\\')) {
+                            if c == '\x1b' {
+                                out.extend(chars.next());
+                            }
+                            break;
+                        }
+                    }
+                }
+                Some(c) => out.push(c),
+                None => {}
+            }
+            continue;
+        }
+        let w = c.width().unwrap_or(0);
+        if used + w > width {
+            // Close any color and link the cut left open.
+            out.push_str("\x1b[0m\x1b]8;;\x1b\\");
+            break;
+        }
+        used += w;
+        out.push(c);
+    }
+    out
 }
 
 fn lock() -> std::sync::MutexGuard<'static, Bars> {
@@ -143,31 +195,87 @@ pub fn bar(label: &str, reached: usize, total: usize, lines: (u64, u64), clock: 
     }
 }
 
+/// What the work is now, for the editor: `text` on its status bar, the
+/// rest in that item's hover.
+#[derive(Clone, Default, PartialEq, serde::Serialize)]
+pub struct Status {
+    pub text: String,
+    /// `format`, `package`, `preamble`, `document`, `lint` or `probe`.
+    #[serde(skip_serializing_if = "str::is_empty")]
+    pub phase: String,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    pub file: String,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub line: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub files: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub lines: u64,
+    /// Lines the kernel and package caches stood for.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub cached: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub ms: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub paths: u64,
+    /// The command a probe calls, and who asked ([`because`]).
+    #[serde(skip_serializing_if = "str::is_empty")]
+    pub probe: String,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    pub why: String,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
 /// Who hears what the bars say where there are none: the language server,
 /// which tells the editor. With what it heard last, and when.
-type Listener = Box<dyn Fn(&str) + Send>;
-static LISTENER: Mutex<Option<(Listener, String, u64)>> = Mutex::new(None);
+type Listener = Box<dyn Fn(&Status) + Send>;
+static LISTENER: Mutex<Option<(Listener, Status, u64)>> = Mutex::new(None);
 
-/// `listener` hears each change of what the work is (`caching package
-/// tikz`), at most twice a second, and `""` once it is idle; `None` stops.
+/// `listener` hears what the work is, at most twice a second, and an empty
+/// status once it is idle; `None` stops.
 pub fn listen(listener: Option<Listener>) {
-    *LISTENER.lock().unwrap_or_else(|e| e.into_inner()) = listener.map(|l| (l, String::new(), 0));
+    *LISTENER.lock().unwrap_or_else(|e| e.into_inner()) = listener.map(|l| (l, Status::default(), 0));
 }
 
 /// What the work is now, for the listener ([`listen`]).
-pub fn tell(label: &str) {
+pub fn tell(status: Status) {
     let mut listener = LISTENER.lock().unwrap_or_else(|e| e.into_inner());
     let Some((hear, last, at)) = listener.as_mut() else { return };
     let now = now_ms();
-    if label != last && (label.is_empty() || now.saturating_sub(*at) >= 500) {
-        hear(label);
-        (*last, *at) = (label.to_string(), now);
+    if status != *last && (status.text.is_empty() || now.saturating_sub(*at) >= 500) {
+        hear(&status);
+        (*last, *at) = (status, now);
     }
 }
 
-/// The work is done: the listener hears `""`.
+/// The work is done: the listener hears an empty status.
 pub fn idle() {
-    tell("");
+    tell(Status::default());
+}
+
+thread_local! {
+    static WHY: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Runs `f` with `why` added to what this thread's work is for.
+pub fn because<T>(why: impl Into<String>, f: impl FnOnce() -> T) -> T {
+    struct Pop;
+    impl Drop for Pop {
+        fn drop(&mut self) {
+            WHY.with_borrow_mut(Vec::pop);
+        }
+    }
+    WHY.with_borrow_mut(|w| w.push(why.into()));
+    let _pop = Pop;
+    f()
+}
+
+/// What this thread's work is for, outermost first.
+pub fn why() -> String {
+    WHY.with_borrow(|w| w.join(": "))
 }
 
 /// Print a message above the bars, which are drawn again below it.
@@ -228,4 +336,14 @@ pub fn clear() {
     let mut bars = lock();
     bars.lines.retain(|(id, _)| *id != me);
     bars.draw(&mut std::io::stderr().lock());
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_line_is_cut_to_the_width_without_counting_escapes() {
+        let line = "\x1b[1mabc\x1b[0m \x1b]8;;file:///x\x1b\\defgh\x1b]8;;\x1b\\";
+        assert_eq!(super::fit(line, 20), line);
+        assert_eq!(super::fit(line, 6), "\x1b[1mabc\x1b[0m \x1b]8;;file:///x\x1b\\de\x1b[0m\x1b]8;;\x1b\\");
+    }
 }
