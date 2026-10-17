@@ -108,9 +108,9 @@ function SatexEngine(createSatex, progress = () => {}) {
     }
   }
 
-  /** A kernel's bundle: its files join the tree, its caches the cache directory.
-   * `fetching` is its download, when already under way. */
-  async function kernel(base, entry, given, fetching) {
+  /** A bundle, a kernel's or a package's: its files join the tree, a kernel's caches
+   * the cache directory. `fetching` is its download, when already under way. */
+  async function bundle(base, entry, given, fetching) {
     const packed = await (fetching ?? bytes(given ?? base + entry.bundle, entry.label, entry.size));
     progress('unpacking', 0, 0);
     const blob = await gunzip(packed);
@@ -119,9 +119,11 @@ function SatexEngine(createSatex, progress = () => {}) {
       files.set(path, blob.subarray(offset, offset + size));
       offset += size;
     }
+    const caches = `/kernels/${entry.id}/satex-cache.bin`;
+    if (!files.has(caches)) return { lines: [], status: 0, ms: 0 };
     progress('importing', 0, 0);
     const imported = await run(['cache', 'import', `/kernels/${entry.id}`], {}, '/work', '/cache');
-    files.delete(`/kernels/${entry.id}/satex-cache.bin`);
+    files.delete(caches);
     return imported;
   }
 
@@ -144,13 +146,13 @@ function SatexEngine(createSatex, progress = () => {}) {
     const entry = manifest.kernels[0];
     const fetching = given.bundle ?? bytes(base + entry.bundle, entry.label, entry.size);
     wasm = await compile(given.wasm ?? base + manifest.wasm, manifest.wasmSize);
-    const imported = await kernel(base, entry, null, fetching);
+    const imported = await bundle(base, entry, null, fetching);
     const decoder = new TextDecoder();
     const samples = Object.fromEntries(manifest.samples.map((name) => [name, decoder.decode(files.get(`/work/${name}`))]));
     return { samples, imported };
   }
 
-  return { init, run, lsp, reset, kernel, project, read };
+  return { init, run, lsp, reset, bundle, project, read };
 }
 
 if (typeof module === 'object' && module.exports) {
@@ -171,8 +173,8 @@ if (typeof module === 'object' && module.exports) {
           self.postMessage({ type: 'progress', label, loaded, total });
         });
         self.postMessage({ type: 'ready', ...(await engine.init(data.base, data.manifest, given)) });
-      } else if (data.type === 'kernel') {
-        self.postMessage({ type: 'kernel', id: data.entry.id, ...(await engine.kernel(data.base, data.entry, data.given)) });
+      } else if (data.type === 'bundle') {
+        self.postMessage({ type: 'bundle', id: data.entry.id, ...(await engine.bundle(data.base, data.entry, data.given)) });
       } else if (data.type === 'project') {
         engine.project(data.dir, data.files, data.replace);
       } else if (data.type === 'read') {

@@ -135,7 +135,10 @@ button:disabled { opacity: .55; cursor: progress; }
 /* a typographic finding marks its few characters: the hyphen, the space */
 .lint.typo { background: color-mix(in srgb, var(--sev) 24%, transparent); outline: 1px dashed var(--sev); outline-offset: 1px; border-radius: 2px; }
 .lint.typo.lit { background: color-mix(in srgb, var(--sev) 40%, transparent); }
-.ex-side { display: flex; flex-direction: column; gap: .7rem; min-width: 0; font-size: .9rem; }
+.example { grid-template-rows: auto minmax(20rem, auto); }
+/* the side takes the height the source gives, scrolling within: what a hover shows there moves nothing */
+.ex-side { display: flex; flex-direction: column; gap: .7rem; min-width: 0; font-size: .9rem; contain: size; overflow: auto; }
+.ex-explain { flex: 1 0 auto; }
 .ex-side h4 { margin: 0 0 .35rem; font-size: .75rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .ex-side h4 code { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--fg); }
 .ex-side .diagnostics li { cursor: default; padding: .3rem .55rem; margin-bottom: .3rem; }
@@ -209,7 +212,17 @@ body.play main { padding: 0; height: 100%; display: grid; grid-template-rows: au
 .play-tools .hint { font-size: .8rem; margin-left: auto; }
 .play-split { display: grid; grid-template-columns: minmax(0, var(--split, 1fr)) 6px minmax(0, 1fr); min-height: 0; }
 .divider { cursor: col-resize; background: var(--border); touch-action: none; transition: background-color var(--quick); }
-.divider:hover, .divider:focus-visible, .divider.drag { background: var(--accent); outline: none; }
+.divider:hover, .divider:focus-visible, .divider.drag, .grip:hover, .grip.drag { background: var(--accent); outline: none; }
+/* a folded pane: the splitter widens into a handle that brings it back */
+.play-split[data-fold=editor] { grid-template-columns: 0 .9rem minmax(0, 1fr); }
+.play-split[data-fold=side] { grid-template-columns: minmax(0, 1fr) .9rem 0; }
+.play-split[data-fold=editor] > .pane:first-child, .play-split[data-fold=side] > .side-pane { visibility: hidden; overflow: hidden; }
+.play-split[data-fold] > .divider { display: grid; place-items: center; cursor: pointer; color: var(--muted); font-weight: 700; }
+.play-split[data-fold] > .divider:hover { color: var(--bg); }
+.play-split[data-fold=editor] > .divider::before { content: "›"; } .play-split[data-fold=side] > .divider::before { content: "‹"; }
+.grip { height: 5px; margin: .35rem -1.2rem -.7rem; cursor: row-resize; touch-action: none; background: color-mix(in srgb, var(--border) 60%, transparent); transition: background-color var(--quick); }
+.sect .grow { overflow: auto; }
+.sect .grow[style*="--h"] { height: var(--h); max-height: none; }
 .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .pane .tabs { padding: .4rem .8rem 0; background: var(--panel); }
 .pane .editor { flex: 1; min-height: 0; overflow: auto; background: var(--panel); }
@@ -330,15 +343,24 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
   .layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .side { position: static; max-height: none; border-bottom: 1px solid var(--border); }
   .top nav { margin-left: 0; order: 3; width: 100%; gap: .8rem; }
-  .example { grid-template-columns: minmax(0, 1fr); }
+  .example { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+  .ex-side { contain: none; }
 }
-.output { overflow-wrap: anywhere; }
+/* run output: one table per record shape, a lone record as a card; words never break */
+.output { overflow-wrap: break-word; }
 .output pre { white-space: pre-wrap; margin: 0; }
-.output table.rows { width: 100%; border-collapse: collapse; font-size: .9em; }
-.output table.rows th, .output table.rows td { text-align: left; padding: .2rem .4rem; border-bottom: 1px solid var(--line, #8884); vertical-align: top; }
-.output .card dl { display: grid; grid-template-columns: max-content 1fr; gap: .2rem .8rem; margin: .4rem 0; }
-.output .card dt { color: var(--muted); }
-.output .card dd { margin: 0; }
+.output table.rows { width: max-content; max-width: 100%; margin: .2rem 0 .9rem; font-size: 12.5px; border: 1px solid var(--border); border-radius: 8px; border-collapse: separate; border-spacing: 0; }
+.output table.rows caption { text-align: left; color: var(--muted); font-size: .75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 0 0 .25rem; }
+.output table.rows th, .output table.rows td { text-align: left; padding: .2rem .55rem; border: 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+.output table.rows tr:last-child td { border-bottom: 0; }
+.output table.rows th { white-space: nowrap; font-size: 11.5px; font-weight: 600; color: var(--muted); background: var(--sunk); position: sticky; top: 0; }
+.output table.rows td { max-width: 28rem; }
+.output table.rows tbody tr:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.output .card { border: 1px solid var(--border); border-radius: 8px; padding: .35rem .7rem; margin: .2rem 0 .8rem; font-size: 13px; }
+.output .card p { margin: .1rem 0 .3rem; font-weight: 600; }
+.output .card dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .15rem .9rem; margin: 0; }
+.output .card dt { color: var(--muted); white-space: nowrap; }
+.output .card dd { margin: 0; min-width: 0; }
 .output details.raw > summary { color: var(--muted); cursor: pointer; font-size: .85em; }
 
 /* long names and narrow screens */
@@ -360,3 +382,7 @@ main td .badges, main td .cat { white-space: nowrap; }
 #play-progress { width: 8rem; height: .45rem; margin-right: .6rem; vertical-align: middle; accent-color: var(--c4, #4a7bd0); }
 #play-progress[hidden] { display: none; }
 
+/* the editor's completion: its usage line, chips readable on the selected row too */
+.cm-completionDetail { font-style: normal; } .cm-completionDetail .arg { font-size: 11px; padding: 0 .25rem; }
+.cm-tooltip-autocomplete li[aria-selected] .cm-completionDetail * { color: inherit; }
+.cm-tooltip-autocomplete li[aria-selected] .cm-completionDetail .arg { background: color-mix(in srgb, var(--panel) 25%, transparent); border-color: currentColor; }

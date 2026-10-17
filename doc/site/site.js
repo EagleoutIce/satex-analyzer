@@ -86,9 +86,32 @@
     filler: 'spaces and \\relax, skipped', token: 'one token', box: 'a box: \\hbox{…}, \\vbox{…}, \\box0 …', rule: 'a rule: \\hrule or \\vrule with its sizes',
     'math field': 'a math character or a {…} group', 'math character': 'a character in math', delim: 'a delimiter: (, \\langle …', font: 'a font identifier like \\tenrm',
   };
-  const slot = (name) => `<span class="arg arg-slot" title="${esc(SLOT[name.toLowerCase()] ?? (/^arg\d+$/.test(name) ? `the ${name.slice(3)}. argument` : `${name}, read by the command`))}">⟨${esc(name)}⟩</span>`;
-  /** The ⟨…⟩ placeholders of a syntax or usage line as chips that explain themselves. */
-  const slots = (html) => html.replace(/⟨([^⟩<]+)⟩/g, (m, n) => slot(n));
+  const slot = (name, kind) => {
+    const tip = SLOT[name.toLowerCase()] ?? (/^arg\d+$/.test(name) ? `the ${name.slice(3)}. argument${kind ? `, ${KIND[kind]}` : ''}` : `${name}, read by the command`);
+    // the brackets as entities: a chip is never wrapped again
+    return `<span class="arg arg-${kind ?? 'slot'}" title="${esc(tip)}">&#x27E8;${esc(name)}&#x27E9;</span>`;
+  };
+  const KIND = { mand: 'mandatory', opt: 'optional', emb: 'an embellishment' };
+  /** The ⟨…⟩ placeholders of a syntax or usage line as chips that explain themselves;
+   * `kinds` colors ⟨argN⟩ as `usage` found it. */
+  const slots = (html, kinds = {}) => html.replace(/⟨([^⟩<]+)⟩/g, (m, n) => slot(n, kinds[n]));
+  /** A usage line, as the hover writes it (`\cs*{⟨arg1⟩}[⟨arg2⟩]`) or as explain's
+   * `effective` (`\cs{1}[2](3)?`), TeX-colored: each argument a ⟨argN⟩ chip in its
+   * kind's color, read off its delimiters: […] or a trailing ? optional, c{…}? an
+   * embellishment, else mandatory; a star after the name as the star's chip. Returns the HTML and the kinds by name. */
+  function usage(text) {
+    const kinds = {};
+    let n = 0;
+    const marked = String(text ?? '').replace(/([{[(<]?)(⟨arg(\d+)⟩|\d)([}\])>]?)(\??)/g, (m, open, arg, k, close, opt, at, all) => {
+      if (!k && (!open || !close || +arg !== n + 1)) return m;
+      n = k ? +k : n + 1;
+      kinds[`arg${n}`] = open === '[' ? 'opt' : !opt ? 'mand' : open === '{' && /[^A-Za-z0-9\s\]})>]/.test(all[at - 1] ?? '') ? 'emb' : 'opt';
+      return `${open}\uE000${n}\uE001${close}${opt}`;
+    }).replace(/^(\\[A-Za-z@]+)\*\??/, '$1\uE002'); // a star after the name: the s argument
+    const html = slots(tex(marked), kinds).replace(/\uE000(\d+)\uE001/g, (m, k) => slot(`arg${k}`, kinds[`arg${k}`]))
+      .replace('\uE002', '<span class="arg arg-flag" title="the star: the starred form">*</span>');
+    return { html, kinds };
+  }
   /** An xparse-style signature (`smO{0}om`, `⟨cs⟩soo…`) as one chip per argument. */
   function signature(spec) {
     const out = [];
@@ -162,7 +185,7 @@
       const more = r.takes && !r.signature.endsWith('…') && !(r.takes.min <= counted && (r.takes.max ?? Infinity) <= counted);
       rows.push(['signature', signature(r.signature) + (more ? ` <span class="muted">reads ${argumentCount(r.takes)} with what it calls</span>` : '')]);
     } else if (r.takes) rows.push(['arguments', argumentCount(r.takes)]);
-    if (r.effective && r.effective !== r.name) rows.push(['usage', `<code class="usage">${slots(tex(r.effective))}</code>`]);
+    if (r.effective && r.effective !== r.name) rows.push(['usage', `<code class="usage">${usage(r.effective).html}</code>`]);
     if (r.forms?.length) rows.push(['forms', r.forms.map((f) => `<code>${esc(f)}</code>`).join(' ')]);
     if (primitive) rows.push(['body', 'none: a TeX primitive']);
     else if (r.body != null) rows.push(['body', r.body === '' ? '<span class="muted">empty</span>' : `<pre class="x-body"><code>${tex(r.body)}</code></pre>`]);
@@ -184,8 +207,8 @@
   function brief(r) {
     const primitive = r.kind === 'primitive';
     const tags = [primitive ? 'primitive' : r.tag, r.when && `in the ${r.when}`].filter(Boolean);
-    const use = r.effective && r.effective !== r.name ? `<code class="usage">${slots(tex(r.effective))}</code>`
-      : r.signature ? signature(r.signature) : r.takes ? argumentCount(r.takes) : '';
+    const use = r.signature ? signature(r.signature) : r.effective && r.effective !== r.name ? `<code class="usage">${usage(r.effective).html}</code>`
+      : r.takes ? argumentCount(r.takes) : '';
     const where = r.path && r.line ? placeLink(r.path, r.line, r.file) : '';
     const docs = r.reference ? `<a href="${esc(r.reference)}" target="_blank" rel="noopener">${esc(r.documentation ?? 'docs')} ↗</a>` : '';
     return `<div class="xcard brief"><div class="x-head"><code class="x-name">${esc(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}` +
@@ -197,7 +220,7 @@
   const value = (v) => v == null ? '' : Array.isArray(v) ? v.map((x) => typeof x === 'object' ? value(x) : /^\\/.test(String(x)) ? csChip(String(x)) : `<code>${esc(x)}</code>`).join(' ')
     : typeof v === 'object' ? ('min' in v && 'max' in v ? argumentCount(v) : Object.entries(v).map(([k, x]) => `${esc(k)} ${value(x)}`).join(', '))
       : /^\\/.test(String(v)) ? csChip(String(v)) : /^[{}#]/.test(String(v)) ? `<code>${esc(v)}</code>` : esc(v);
-  self.satexCards = { explain, brief, signature, slots, tex, inline, placeLink, upstream, csChip, value, esc };
+  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, placeLink, upstream, csChip, value, esc };
 
   // ------------------------------------------------------------ the landing page's examples
   // A command explains itself on hover, an underline shows its finding: a floating card,

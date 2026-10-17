@@ -9,29 +9,76 @@
   const [tabs, args, button, status, output, lspStatus, list, count, cmd, kernelBox, rootBox, toastBox, ctxMenu] =
     ['play-tabs', 'play-args', 'play-run', 'play-status', 'play-output', 'lsp-status', 'lsp-diagnostics', 'lsp-count',
       'play-cmd', 'play-kernel', 'play-root', 'play-toast', 'play-ctx'].map($);
+  // Panes snap, as in flowR's playground: a splitter dragged into a pane's last half
+  // minimum folds that pane away, a click on the folded splitter brings it back; near a
+  // third, half or two thirds it rests there. A section's grip sets its height, dragged
+  // under half the minimum it closes the section. Sizes are kept per browser.
+  const PANES = { min: 15, snap: [1 / 3, 1 / 2, 2 / 3], within: 1, minSection: 4 }; // rem, fractions
   {
+    const rem = () => parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const clamp = (x, lo, hi) => Math.min(Math.max(x, lo), hi);
+    let kept = {};
+    try { kept = JSON.parse(localStorage.getItem('satex-panes')) ?? {}; } catch {}
+    const keep = () => { try { localStorage.setItem('satex-panes', JSON.stringify(kept)); } catch {} };
+    /** Drags `grip`: `to(move, down, from())` sizes while it moves, `done(moved)` ends it. */
+    const drag = (grip, from, to, done) => grip.addEventListener('pointerdown', (e) => {
+      if (e.button) return;
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      grip.classList.add('drag');
+      const start = from();
+      let moved = false;
+      const move = (m) => { moved ||= Math.abs(m.clientX - e.clientX) + Math.abs(m.clientY - e.clientY) > 3; if (moved) to(m, e, start); };
+      const up = () => { grip.classList.remove('drag'); grip.removeEventListener('pointermove', move); grip.removeEventListener('lostpointercapture', up); done(moved); };
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('lostpointercapture', up);
+    });
+
     const divider = $('play-divider'), split = divider.parentElement;
-    const set = (px) => {
-      const w = split.getBoundingClientRect().width;
-      const clamped = Math.min(Math.max(px, 240), w - 240);
-      split.style.setProperty('--split', `${clamped}px`);
-      try { localStorage.setItem('satex-split', String(clamped / w)); } catch {}
+    let open = kept.open ?? '50%'; // the split a folded pane comes back to
+    const place = (v) => {
+      split.style.setProperty('--split', v);
+      const f = parseFloat(v);
+      if (f <= 0 || f >= 100) split.dataset.fold = f <= 0 ? 'editor' : 'side';
+      else { delete split.dataset.fold; open = v; }
+      divider.setAttribute('aria-valuenow', Math.round(f));
+      Object.assign(kept, { split: v, open });
     };
-    try { const f = +localStorage.getItem('satex-split'); if (f > 0 && f < 1) split.style.setProperty('--split', `${f * 100}%`); } catch {}
-    divider.addEventListener('pointerdown', (e) => {
-      divider.setPointerCapture(e.pointerId);
-      divider.classList.add('drag');
-      const left = split.getBoundingClientRect().left;
-      const move = (m) => set(m.clientX - left);
-      const up = () => { divider.classList.remove('drag'); divider.removeEventListener('pointermove', move); divider.removeEventListener('pointerup', up); };
-      divider.addEventListener('pointermove', move);
-      divider.addEventListener('pointerup', up);
-    });
+    const at = (x) => {
+      const b = split.getBoundingClientRect(), min = PANES.min * rem(), px = x - b.left;
+      if (px < min / 2) return '0%';
+      if (b.width - px < min / 2) return '100%';
+      const f = clamp(px, min, b.width - min) / b.width;
+      const snapped = PANES.snap.find((s) => Math.abs(s - f) * b.width < PANES.within * rem());
+      return `${((snapped ?? f) * 100).toFixed(1)}%`;
+    };
+    if (/^[\d.]+%$/.test(kept.split ?? '')) place(kept.split);
+    drag(divider, () => 0, (m) => place(at(m.clientX)), (moved) => { if (!moved && split.dataset.fold) place(open); keep(); });
+    divider.addEventListener('dblclick', () => { place('50%'); keep(); });
     divider.addEventListener('keydown', (e) => {
-      const step = { ArrowLeft: -32, ArrowRight: 32 }[e.key];
-      if (step) { e.preventDefault(); set(split.firstElementChild.getBoundingClientRect().width + step); }
+      const f = parseFloat(split.style.getPropertyValue('--split')) || 50;
+      const to = { ArrowLeft: `${clamp(f - 5, 0, 100)}%`, ArrowRight: `${clamp(f + 5, 0, 100)}%`, Home: '0%', End: '100%', Enter: split.dataset.fold ? open : '50%' }[e.key];
+      if (to) { e.preventDefault(); place(to); keep(); }
     });
-    divider.addEventListener('dblclick', () => { split.style.removeProperty('--split'); try { localStorage.removeItem('satex-split'); } catch {} });
+
+    // each section of the side pane: a grip under its body
+    kept.heights ??= {};
+    for (const sect of document.querySelectorAll('.side-pane > details.sect')) {
+      const body = sect.querySelector('.grow');
+      if (!body) continue;
+      const grip = Object.assign(document.createElement('div'), { className: 'grip', title: 'drag to resize, down to nothing to close; double-click: fit' });
+      grip.setAttribute('role', 'separator');
+      grip.setAttribute('aria-orientation', 'horizontal');
+      body.after(grip);
+      const height = (px) => { body.style.setProperty('--h', px == null ? '' : `${px}px`); if (px == null) delete kept.heights[sect.id]; else kept.heights[sect.id] = px; };
+      if (kept.heights[sect.id]) height(kept.heights[sect.id]);
+      drag(grip, () => body.getBoundingClientRect().height, (m, e, h) => {
+        const min = PANES.minSection * rem(), want = h + m.clientY - e.clientY;
+        if (want < min / 2) { sect.open = false; height(h); return; }
+        height(Math.round(clamp(want, min, innerHeight * 0.85)));
+      }, keep);
+      grip.addEventListener('dblclick', () => { height(null); keep(); });
+    }
   }
   // The worker's code comes with the page: file:// pages cannot start a worker from a file.
   const worker = new Worker(URL.createObjectURL(new Blob([manifest.worker], { type: 'text/javascript' })));
@@ -102,12 +149,23 @@
       `${markdown(r.explanation ?? '')}<p class="refs">${[...refs, `<a href="${base}wiki/lints.html#${encodeURIComponent(d.code)}">the rule's entry</a>`].join(' · ')}</p></div>`;
   }
   /** A hover's Markdown; its last paragraph, the places and links, is a muted footer. */
-  const card = (value) => cards.slots(markdown(value)).replace(/<p>((?:\s|·|<a [^>]*>[^<]*<\/a>)+)<\/p>$/, '<p class="foot">$1</p>');
+  const unescape = (s) => s.replace(/&(lt|gt|quot|amp);/g, (m, e) => ({ lt: '<', gt: '>', quot: '"', amp: '&' })[e]);
+  /** A hover's Markdown: its usage lines colored, each ⟨argN⟩ elsewhere in the kind its usage gave it. */
+  const card = (value) => {
+    const kinds = {};
+    const html = markdown(value).replace(/<code>([^<]*⟨arg\d+⟩[^<]*)<\/code>/g, (m, code) => {
+      if (/^⟨arg\d+⟩$/.test(code)) return m;
+      const u = cards.usage(unescape(code));
+      Object.assign(kinds, u.kinds);
+      return `<code class="usage">${u.html}</code>`;
+    });
+    return cards.slots(html, kinds).replace(/<p>((?:\s|·|<a [^>]*>[^<]*<\/a>)+)<\/p>$/, '<p class="foot">$1</p>');
+  };
 
   // ---------------------------------------------------------------- worker requests
 
   const waiting = {}; // reply type -> resolver; runs, reads and kernel loads go one at a time, in order
-  const REPLY = { run: 'result', kernel: 'kernel', init: 'ready', read: 'file' };
+  const REPLY = { run: 'result', bundle: 'bundle', init: 'ready', read: 'file' };
   let line_ = Promise.resolve();
   const ask = (msg, transfer = []) => {
     const asked = line_.then(() => new Promise((resolve, reject) => {
@@ -232,7 +290,7 @@
       return {
         from: word.from, filter: false,
         options: rank(items, word.text).slice(0, 200).map((i) => ({
-          label: i.label, detail: i.detail, type: KIND[i.kind] ?? 'text',
+          label: i.label, usage: i.detail, type: KIND[i.kind] ?? 'text',
           apply: i.insertTextFormat === 2 ? ac.snippet(i.insertText.replace(/\$\{?(\d+)\}?/g, '#{$1}')) : i.insertText ?? i.label,
         })),
       };
@@ -271,7 +329,13 @@
     const theme = new st.Compartment(), lock = new st.Compartment();
     const ev = new EditorView({
       parent, doc: text,
-      extensions: [basicSetup, tex.language, language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete] }), hover,
+      extensions: [basicSetup, tex.language, language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete], addToOptions: [{ position: 80, render: (c) => {
+        // the detail: a usage line colored like the hover's, then where it comes from
+        const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
+        const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
+        span.innerHTML = (use ? cards.usage(use).html : '') + (from ? ` <span class="muted">${escape(from)}</span>` : '');
+        return span;
+      } }] }), hover,
         linkField, markField, view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
         EditorView.updateListener.of((u) => { if (u.docChanged) changed(); else if (u.selectionSet) explainSoon(); }), theme.of([]), lock.of([])],
     });
@@ -636,26 +700,39 @@
   const command = () => words(args.value).filter((x) => x !== 'satex' && !x.startsWith('-'))[0];
   /** Plain `lint` repeats what the language server shows: it runs only when asked to. */
   const plainLint = () => words(args.value).filter((x) => x !== 'satex').join(' ') === 'lint';
-  /** Records a run printed as JSON, as cards (one) or a table (many), each place a chip that opens it.
-   * The text output stays behind a collapsed "raw" toggle. */
+  /** Records a run printed as JSON: one table per record shape (the keys a record has),
+   * a single record as a card, each place a chip that opens it. The text output stays
+   * behind a collapsed "raw" toggle. */
   const HIDDEN_COLS = new Set(['path', 'node', 'file', 'line', 'col', 'expanded', 'certain', 'definition']);
+  const ROW_LIMIT = 500;
   const cell = cards.value;
   const chip = (r) => r.file && r.line ? cards.placeLink(r.path ?? r.file, r.line, r.file) : '';
+  const filled = (v) => v != null && v !== '' && !(Array.isArray(v) && !v.length);
+  function records(rows) {
+    if (command() === 'explain' && rows.every((r) => r.name)) return rows.map(cards.explain).join('');
+    const shapes = new Map();
+    for (const r of rows) {
+      const k = Object.keys(r).filter((c) => !HIDDEN_COLS.has(c)).join('\0');
+      shapes.set(k, [...(shapes.get(k) ?? []), r]);
+    }
+    return [...shapes.values()].map((group) => {
+      const cols = [...new Set(group.flatMap(Object.keys))].filter((c) => !HIDDEN_COLS.has(c) && group.some((r) => filled(r[c]))), title = group[0].tag ?? group[0].kind;
+      if (group.length === 1) {
+        const r = group[0], head = r.name ?? r.key, rest = cols.filter((k) => k !== 'name' && !(k === 'key' && !r.name));
+        return `<div class="card">${head || chip(r) ? `<p>${cell(head ?? '')} ${chip(r)}</p>` : ''}<dl>${rest.map((k) => `<dt>${escape(k)}</dt><dd>${cell(r[k])}</dd>`).join('')}</dl></div>`;
+      }
+      const where = group.some(chip);
+      return `<table class="rows"><caption>${title ? `${escape(title)} · ` : ''}${group.length} rows${group.length > ROW_LIMIT ? `, the first ${ROW_LIMIT} shown` : ''}</caption>` +
+        `<thead><tr>${cols.map((c) => `<th>${escape(c)}</th>`).join('')}${where ? '<th>where</th>' : ''}</tr></thead><tbody>` +
+        group.slice(0, ROW_LIMIT).map((r) => `<tr>${cols.map((c) => `<td>${cell(r[c])}</td>`).join('')}${where ? `<td>${chip(r)}</td>` : ''}</tr>`).join('') + '</tbody></table>';
+    }).join('');
+  }
   function structured(out, raw) {
     let rows;
     try { rows = JSON.parse(out); } catch { return `<pre class="raw">${raw}</pre>`; }
     if (!Array.isArray(rows)) rows = [rows];
     const rawBox = `<details class="raw"><summary>raw</summary><pre>${raw}</pre></details>`;
-    if (!rows.length) return `<p class="muted">no results</p>${rawBox}`;
-    if (command() === 'explain' && rows.every((r) => r.name)) return rows.map(cards.explain).join('') + rawBox;
-    if (rows.length === 1) {
-      const r = rows[0];
-      return `<div class="card"><p>${cell(r.name ?? r.key ?? '')} ${chip(r)}</p><dl>` +
-        Object.entries(r).filter(([k, v]) => !HIDDEN_COLS.has(k) && k !== 'name' && v != null && v !== '').map(([k, v]) => `<dt>${escape(k)}</dt><dd>${cell(v)}</dd>`).join('') + `</dl></div>${rawBox}`;
-    }
-    const cols = [...new Set(rows.flatMap((r) => Object.keys(r)))].filter((k) => !HIDDEN_COLS.has(k));
-    return `<table class="rows"><thead><tr>${cols.map((c) => `<th>${escape(c)}</th>`).join('')}<th>where</th></tr></thead><tbody>` +
-      rows.slice(0, 500).map((r) => `<tr>${cols.map((c) => `<td>${cell(r[c])}</td>`).join('')}<td>${chip(r)}</td></tr>`).join('') + `</tbody></table>${rawBox}`;
+    return (rows.length ? records(rows) : '<p class="muted">no results</p>') + rawBox;
   }
   /** The command line as satex's argv: `-f` the root, the kernel's flags, colors and --stats. */
   function argv() {
@@ -699,6 +776,7 @@
       outBox.hidden = (plainLint() || explainedHere) && !failed;
       outBox.open = !outBox.hidden;
       status.dataset.done = data.status;
+      if (missing([printed]).length) fetchMissing([printed]);
     } catch (e) {
       status.textContent = `the run failed: ${e.message}`;
       status.dataset.done = 'error';
@@ -901,15 +979,52 @@
       status.textContent = `loading the ${entry.label} kernel (${size(entry.size)})…`;
       const t = performance.now();
       const given = location.protocol === 'file:' ? await local(entry.bundle) : undefined;
-      await ask({ type: 'kernel', base, entry, given }, given ? [given.buffer] : []);
+      await ask({ type: 'bundle', base, entry, given }, given ? [given.buffer] : []);
       state.loaded.add(i);
       timing('t-init', `${$('t-init').textContent} · ${entry.label} ${secs(performance.now() - t)}`, 'time to fetch and set up each kernel');
-    bar.hidden = true;
-    loads.clear();
+      bar.hidden = true;
+      loads.clear();
       status.textContent = `${entry.label} ready`;
     }
     state.kernel = i;
     kernelBox.value = i;
+  }
+
+  /** Packages beyond the first download: a bundle each, fetched the first time a finding
+   * or a run says one is not in this installation; then the server and the run start over. */
+  const PACKAGES = new Map((manifest.packages ?? []).map((p) => [p.id, p]));
+  const fetchedPackages = new Map(); // id -> its load
+  const MISSING = /`([^`\s]+)` is not in this installation/g;
+  /** The offered packages `texts` say are missing, not asked for yet. */
+  const missing = (texts) => [...new Set(texts.flatMap((t) => [...String(t).matchAll(MISSING)].map((m) => m[1].replace(/\.(sty|cls)$/, ''))))]
+    .filter((id) => PACKAGES.has(id) && !fetchedPackages.has(id));
+  async function fetchPackages(ids) {
+    if (!ids.length) return false;
+    const label = ids.join(', ');
+    status.textContent = `fetching ${label} (${size(ids.reduce((n, id) => n + PACKAGES.get(id).size, 0))})…`;
+    const t = performance.now();
+    const loading = ids.map((id) => {
+      const entry = PACKAGES.get(id);
+      const load = (async () => {
+        const given = location.protocol === 'file:' ? await local(entry.bundle) : undefined;
+        await ask({ type: 'bundle', base, entry, given }, given ? [given.buffer] : []);
+      })();
+      fetchedPackages.set(id, load);
+      return load;
+    });
+    try { await Promise.all(loading); } catch (e) { toast(`${label} did not load: ${e.message}`); return false; }
+    bar.hidden = true;
+    loads.clear();
+    status.textContent = `${label} fetched in ${secs(performance.now() - t)}`;
+    status.dataset.packages = [...fetchedPackages.keys()].join(' ');
+    timing('t-init', `${$('t-init').textContent} · ${label} ${secs(performance.now() - t)}`, 'time to fetch and set up each kernel and package');
+    return true;
+  }
+  /** After findings or a run name missing packages: fetch them, start over. */
+  async function fetchMissing(texts) {
+    if (!await fetchPackages(missing(texts))) return;
+    await restart();
+    if (!plainLint()) await start();
   }
   kernelBox.innerHTML = manifest.kernels.map((k, i) => `<option value="${i}" title="download ${size(k.size)}">${k.label} · ${size(k.size)}</option>`).join('') +
     (manifest.unavailable ?? []).map(([label, why]) => `<option disabled title="${escape(why)}">${label} · not available</option>`).join('');
@@ -1087,6 +1202,7 @@
         } else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) {
           show(m.params.uri, m.params.diagnostics);
           typeset(m.params.uri);
+          fetchMissing(m.params.diagnostics.filter((d) => d.code === 'unresolved-file').map((d) => d.message));
         }
       }
     } else if (data.type === 'progress') {

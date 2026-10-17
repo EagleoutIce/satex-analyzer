@@ -43,11 +43,34 @@ for (const name of manifest.samples) {
 // The other kernels: each bundle loads, and the default sample lints with it.
 for (const entry of manifest.kernels.slice(1)) {
   t = performance.now();
-  await engine.kernel(base, entry, base.startsWith('file:') ? await bytes(entry.bundle) : undefined);
+  await engine.bundle(base, entry, base.startsWith('file:') ? await bytes(entry.bundle) : undefined);
   const run = await engine.run([...entry.args, 'lint', '-f', manifest.sample]);
   const summary = run.lines.map((l) => l[1]).find((l) => /\d+ errors?, \d+ warnings?/.test(l));
   check(`${entry.label} kernel`, typeof run.status === 'number' && run.status <= 1 && summary, `${Math.round(performance.now() - t)} ms with loading, ${summary ?? 'no summary'}`);
 }
+
+// Packages on demand: missing until its bundle is loaded, then every offered one resolves
+// (under the first kernel that has it: fontspec wants XeTeX).
+const unresolved = (run, id) => run.lines.some((l) => l[1].includes(`\`${id}\` is not in this installation`) || l[1].includes(`\`${id}.sty\` is not in this installation`));
+const usePackage = (id) => new TextEncoder().encode(`\\documentclass{article}\n\\usepackage{${id}}\n\\begin{document}\nText.\n\\end{document}\n`);
+const packageRun = (id, kernel) => engine.run([...kernel.args, 'lint', '-f', 'probe.tex'], { '/work/probe.tex': usePackage(id) });
+const offered = manifest.packages ?? [];
+const micro = offered.find((p) => p.id === 'microtype');
+check('microtype is offered on demand', !!micro && micro.size < 2 ** 20, micro ? `${micro.files.length} files, ${micro.size} bytes` : offered.map((p) => p.id).join(' '));
+check('the first download stays small', manifest.kernels[0].size < 12 * 2 ** 20, `${manifest.kernels[0].size} bytes`);
+if (micro) check('microtype is missing before its bundle', unresolved(await packageRun('microtype', manifest.kernels[0]), 'microtype'));
+t = performance.now();
+for (const entry of offered) await engine.bundle(base, entry, base.startsWith('file:') ? await bytes(entry.bundle) : undefined);
+const stillMissing = [];
+for (const entry of offered) {
+  let ok = false;
+  for (const kernel of manifest.kernels) {
+    const run = await packageRun(entry.id, kernel);
+    if ((ok = typeof run.status === 'number' && run.status <= 1 && !unresolved(run, entry.id))) break;
+  }
+  if (!ok) stillMissing.push(entry.id);
+}
+check(`${offered.length} packages on demand resolve`, offered.length >= 20 && !stillMissing.length, `${Math.round(performance.now() - t)} ms; missing ${stillMissing.join(' ')}`);
 
 // The language server: a finding for the default file, a completion, a hover.
 const uri = `file:///work/${manifest.sample}`;
@@ -164,13 +187,20 @@ async function browser() {
     };
     const until = async (expr, ms = 120000) => { for (const end = Date.now() + ms; Date.now() < end; await sleep(150)) if (await js(expr).catch(() => false)) return true; return false; };
     const key = async (key, modifiers = 0, code = key) => {
-      for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key, code, modifiers, windowsVirtualKeyCode: { Enter: 13, Escape: 27, F2: 113, Tab: 9 }[key] ?? 0, ...(key === 'Enter' ? { text: '\r' } : {}) });
+      for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key, code, modifiers, windowsVirtualKeyCode: { Enter: 13, Escape: 27, F2: 113, Tab: 9, Backspace: 8 }[key] ?? 0, ...(key === 'Enter' ? { text: '\r' } : {}) });
     };
     const mouse = async (x, y, opts = {}) => { for (const t of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type: t, x, y, button: 'left', clickCount: 1, ...opts }); };
     /** The screen point of `needle` (its `at`-th character) in the editor's text. */
     const spot = (needle, at = 1) => js(`for (const l of document.querySelectorAll('.cm-line')) { const i = l.textContent.indexOf(${JSON.stringify(needle)}); if (i < 0) continue;
       const w = document.createTreeWalker(l, NodeFilter.SHOW_TEXT); let n, off = i + ${at};
       while ((n = w.nextNode())) { if (off <= n.length) { const r = document.createRange(); r.setStart(n, off); r.setEnd(n, off); const b = r.getBoundingClientRect(); return [b.left + 1, b.top + b.height / 2]; } off -= n.length; } } return null;`);
+    /** A screenshot into $SHOTS, when set: what the checks saw. */
+    const shot = async (name) => {
+      if (!process.env.SHOTS) return;
+      mkdirSync(process.env.SHOTS, { recursive: true });
+      const r = await send('Page.captureScreenshot', { format: 'png' });
+      writeFileSync(join(process.env.SHOTS, `${name}.png`), Buffer.from(r.result.data, 'base64'));
+    };
     const upload = async (input, files) => {
       const { result } = (await send('Runtime.evaluate', { expression: `document.getElementById('${input}')` })).result;
       const r = await send('DOM.setFileInputFiles', { files, objectId: result.objectId });
@@ -192,6 +222,7 @@ async function browser() {
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
     check('landing command hover card', await until(`const t = document.querySelector('.tip:not([hidden])'); return t && /greet/.test(t.querySelector('.x-name')?.textContent) && t.querySelector('.sig .arg[title]')`, 5000),
       await js(`return document.querySelector('.tip')?.textContent.slice(0, 120) ?? 'no card'`));
+    await shot('landing-command-hover');
     const after = await js(layout);
     check('landing hover moves nothing', before === after, before === after ? '' : `${before} -> ${after}`);
     // findings are wavy underlines over the whole call, with the message on hover
@@ -201,12 +232,14 @@ async function browser() {
     at = await center('#ex-0 [data-lint].f-error');
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
     check('landing finding hover', await until(`return /already defined/.test(document.querySelector('.tip:not([hidden]) .tip-lint')?.textContent ?? '')`, 5000));
+    await shot('landing-finding-hover');
     check('landing finding hover moves nothing', before === await js(layout));
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
     // the macros example: an explain panel, signature chips with explanations, no raw JSON
     await js(`[...document.querySelectorAll('.examples [role=tab]')].find((t) => /macros/.test(t.textContent)).click()`);
     const panel = await js(`const f = document.querySelector('.example:not([hidden])'); return [f.querySelector('.ex-explain .xname').textContent, f.querySelector('.ex-explain').textContent,
       [...f.querySelectorAll('.ex-explain .sig .arg')].map((a) => a.title)]`);
+    await shot('landing-macros');
     check('macros example explains \\twice', panel[0] === '\\twice' && /#1#1/.test(panel[1]) && panel[2].length === 1 && /mandatory/.test(panel[2][0]), JSON.stringify(panel).slice(0, 200));
     check('no raw JSON on the landing page', await js(`return ![...document.querySelectorAll('.ex-explain, .ex-findings')].some((e) => /[{\\[]"|"max"|"min"/.test(e.textContent))`));
     await js(`[...document.querySelectorAll('.examples [role=tab]')].find((t) => /spacing/.test(t.textContent)).click()`);
@@ -223,6 +256,7 @@ async function browser() {
     await send('Page.navigate', { url: base + 'play/index.html' });
     check('ready without a run', await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 240000),
       await js(`return document.getElementById('play-status').textContent`));
+    await shot('play-ready');
     check('no output panel for plain lint', await js(`return document.getElementById('play-out').hidden`));
     for (const width of [1866, 1480]) {
       await send('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -232,6 +266,23 @@ async function browser() {
       check(`header fits at ${width}px`, fit.slice(3, 6).every((x) => x <= fit[6]) && fit[7] <= fit[6], JSON.stringify(fit));
     }
     await send('Emulation.clearDeviceMetricsOverride');
+    // panes snap: dragged to an edge a pane folds, a click on the splitter brings it back, near half it rests at half
+    const dragTo = async (x) => {
+      const d = await js(`const r = document.getElementById('play-divider').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]`);
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: d[0], y: d[1], button: 'left', clickCount: 1 });
+      for (const f of [0.3, 0.7, 1]) await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: d[0] + (x - d[0]) * f, y: d[1], button: 'left', buttons: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y: d[1], button: 'left', clickCount: 1 });
+      await sleep(100);
+      return js(`const s = document.querySelector('.play-split'); return [s.dataset.fold ?? '', s.style.getPropertyValue('--split')]`);
+    };
+    const folded = await dragTo(8);
+    await shot('play-folded');
+    const d = await js(`const r = document.getElementById('play-divider').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]`);
+    await mouse(...d);
+    await sleep(100);
+    const back = await js(`return document.querySelector('.play-split').dataset.fold ?? ''`);
+    const half = await dragTo(await js(`const r = document.querySelector('.play-split').getBoundingClientRect(); return r.x + r.width / 2 + 7`));
+    check('panes snap and fold', folded[0] === 'editor' && back === '' && half[0] === '' && half[1] === '50.0%', JSON.stringify([folded, back, half]));
     check('header: kernel, command line, run, upload, link', await js(`return !document.querySelector('.act, #play-query, #play-reset') && !!document.querySelector('#play-kernel') && !!document.querySelector('#play-args')`));
     check('findings', await until(`return document.querySelectorAll('#lsp-diagnostics li').length > 0`));
     const kernels = await js(`return [...document.querySelectorAll('#play-kernel option')].map((o) => [o.textContent, o.disabled, o.title])`);
@@ -297,12 +348,26 @@ async function browser() {
     await until(`return document.getElementById('play-status').dataset.done !== undefined`, 120000);
     check('query definitions renders a table', await js(`const o = document.getElementById('play-output'); return !!o.querySelector('table.rows tbody tr') && !o.querySelector(':scope > pre')`),
       await js(`return document.getElementById('play-output').innerHTML.slice(0, 200)`));
+    await js(`delete document.getElementById('play-status').dataset.done; document.getElementById('play-args').value = 'query distribution'`);
+    await js(`document.getElementById('play-args').focus()`);
+    await key('Enter');
+    await until(`return document.getElementById('play-status').dataset.done !== undefined`, 120000);
+    // its summary and its trees are records of two shapes: never one table with empty columns
+    const tables = await js(`const o = document.getElementById('play-output'), ts = [...o.querySelectorAll('table.rows')];
+      return [o.querySelectorAll('.card').length + ts.length, ts.every((t) => [...t.tHead.rows[0].cells].every((_, i) => [...t.tBodies[0].rows].some((r) => r.cells[i].textContent.trim()))),
+        [...o.querySelectorAll('table.rows th, .card dt')].every((h) => h.getBoundingClientRect().height < 24), o.innerHTML.slice(0, 160)]`);
+    check('one table or card per record shape, labels on one line', tables[0] >= 2 && tables[1] && tables[2], JSON.stringify(tables));
+    await js(`document.getElementById('play-out').scrollIntoView()`);
+    await shot('play-query-distribution');
 
     // hover card: a usage line, a footer, no raw signature
     let p = await spot('\\newcommand', 3);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p[0], y: p[1] });
     const hoverText = await until(`return document.querySelector('.cm-tooltip-hover .hover')`, 20000) && await js(`return document.querySelector('.cm-tooltip-hover .hover').textContent`);
     check('hover card', /⟨arg1⟩/.test(hoverText) && !/signature/.test(hoverText) && await js(`return !!document.querySelector('.cm-tooltip-hover .foot')`), hoverText.slice(0, 100));
+    check('hover usage colored by argument kind', await js(`const u = [...document.querySelectorAll('.cm-tooltip-hover code.usage .arg')].map((a) => a.className.split('-').pop());
+      return ['flag', 'mand', 'opt'].every((k) => u.includes(k)) && !document.querySelector('.cm-tooltip-hover .arg .arg')`), await js(`return document.querySelector('.cm-tooltip-hover code.usage')?.innerHTML.slice(0, 300) ?? 'no usage'`));
+    await shot('play-hover-newcommand');
 
     // the Explain macro panel follows the mouse, no click
     p = await spot('\\greet{', 2);
@@ -363,6 +428,15 @@ async function browser() {
         return [again.querySelectorAll('.sev').length, again.querySelector('.sev').textContent, /\berror\b/.test(again.querySelector('.explain').textContent.split('.')[0])];`);
     check('lowered severity shown once', lowered && lowered[0] === 1 && lowered[1] !== manifest.rules['unguarded-recursion'].severity && !lowered[2], JSON.stringify(lowered));
 
+    // the editor's completion: the usage line colored like the hover's (\greet is \salute since the rename)
+    await mouse(...await spot('\\end{document}', 14));
+    await send('Input.insertText', { text: '\n\\salu' });
+    const detail = await until(`return [...document.querySelectorAll('.cm-tooltip-autocomplete li')].some((li) => /salute/.test(li.textContent) && li.querySelector('.cm-completionDetail .arg-mand'))`, 20000);
+    await shot('play-completion');
+    check('completion usage colored by argument kind', detail, await js(`return document.querySelector('.cm-tooltip-autocomplete')?.textContent.slice(0, 120) ?? 'no completion'`));
+    await key('Escape');
+    for (let i = 0; i < 6; i++) await key('Backspace');
+
     // Ctrl+click: the kernel's \section opens read-only
     p = await spot('\\section', 3);
     await mouse(...p, { modifiers: 2 });
@@ -382,6 +456,16 @@ async function browser() {
     await upload('play-folder', [folder]);
     check('folder upload', await until(`return [...document.querySelectorAll('#play-tabs [role=tab]')].map((t) => t.textContent).join() === '← samples,chapters/one.tex,main.tex'`, 30000),
       await js(`return [...document.querySelectorAll('#play-tabs [role=tab]')].map((t) => t.textContent).join()`));
+
+    // a package beyond the first download: fetched when the findings say it is missing
+    const micro = join(dir, 'micro');
+    mkdirSync(micro);
+    writeFileSync(join(micro, 'main.tex'), '\\documentclass{article}\n\\usepackage{microtype}\n\\begin{document}\nText.\n\\end{document}\n');
+    await upload('play-folder', [micro]);
+    check('a package loads on demand', await until(`return /\\bmicrotype\\b/.test(document.getElementById('play-status').dataset.packages ?? '') && document.getElementById('lsp-status').textContent !== 'checking…'
+      && ![...document.querySelectorAll('#lsp-diagnostics li code')].some((c) => c.textContent === 'unresolved-file')`, 90000),
+      await js(`return document.getElementById('play-status').textContent + ' | ' + document.getElementById('lsp-diagnostics').textContent.slice(0, 200)`));
+    await shot('play-package');
 
     // the drop zone: shown while files are dragged, gone on Escape
     await js(`const dt = new DataTransfer(); dt.items.add(new File(['x'], 'a.tex')); window.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true }))`);

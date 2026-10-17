@@ -4,12 +4,12 @@
 Nothing here is copied text: pages come from the Markdown in the tree, the
 navigation from the wiki's _Sidebar.md, the version from Cargo.toml, the logo
 from doc/logo/logo.tex, the playground's TeX files from what `satex query
-files` says the samples read, and its caches from `satex cache export`.
+files` says the samples and the offered packages read, and its caches from `satex cache export`.
 
     build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site-out
 """
 
-import argparse, base64, datetime, gzip, hashlib, html, json, os, re, shutil, subprocess, sys, tomllib
+import argparse, base64, concurrent.futures, datetime, gzip, hashlib, html, json, os, re, shutil, subprocess, sys, tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -231,6 +231,59 @@ def bundle(satex, work):
     return tables, names, project
 
 
+def package_names():
+    """doc/site/packages.txt, then satex.yaml's `cache.index.common`, each once."""
+    names = re.sub(r"#.*", "", (SITE / "packages.txt").read_text()).split()
+    config = (ROOT / "satex.yaml").read_text()
+    common = re.search(r"^\s*common:\s*\[([^\]]*)\]", config, flags=re.M)
+    if not common and re.search(r"^\s*common:", config, flags=re.M):
+        sys.exit("build.py: satex.yaml's cache.index.common must stay a [a, b, ...] flow list")
+    return list(dict.fromkeys(names + [n.strip() for n in (common.group(1).split(",") if common else []) if n.strip()]))
+
+
+def packages(satex, work, have):
+    """One bundle per package of `package_names()`: the distribution files a document
+    loading it reads under each kernel, but those the browser has with that kernel
+    loaded (`have`, one set per kernel).
+    A name satex finds no file for is left out, and said."""
+    dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
+    probes = work / "probes"
+    shutil.rmtree(probes, ignore_errors=True)
+    probes.mkdir(parents=True)
+    env = dict(os.environ, SATEX_CACHE=str(work / "cache-install"))
+
+    def probe(name):
+        cls = name.endswith(".cls")
+        stem = name.removesuffix(".cls")
+        doc = probes / f"{stem}.tex"
+        head = f"\\documentclass{{{stem}}}" if cls else f"\\documentclass{{article}}\n\\usepackage{{{stem}}}"
+        doc.write_text(head + "\n\\begin{document}\nText.\n\\end{document}\n")
+        seen, files = set(), {}
+        for (_, _, flags), loaded in zip(KERNELS, have):
+            done = subprocess.run([str(satex), *flags, "query", "files", "-f", doc.name, "--format", "json"],
+                                  cwd=probes, env=env, capture_output=True, text=True)
+            for entry in json.loads(done.stdout or "[]"):
+                path = (probes / entry["path"]).resolve()
+                if not path.is_relative_to(dist):
+                    continue
+                seen.add(path.name)
+                bundled = f"/texmf.bundle/{path.relative_to(dist).as_posix()}"
+                if bundled not in loaded:
+                    files[bundled] = path
+        if (f"{stem}.cls" if cls else f"{stem}.sty") not in seen:
+            return name, None
+        return name, {path: files[path].read_bytes() for path in sorted(files)}
+
+    found = {}
+    with concurrent.futures.ThreadPoolExecutor(max(1, min(4, (os.cpu_count() or 2) // 2))) as pool:
+        for name, files in pool.map(probe, package_names()):
+            if files is None:
+                print(f"playground: no {name} in this installation, not offered", file=sys.stderr)
+            else:
+                found[name.removesuffix(".cls")] = files
+    return found
+
+
 def commands():
     """`examples/commands.txt`: the command each example runs, `lint` unless named there."""
     named = dict(line.split(": ", 1) for line in (EXAMPLES / "commands.txt").read_text().splitlines() if line and not line.startswith("#"))
@@ -364,6 +417,13 @@ def playground(satex, wasm, work, out):
         kernels.append({"id": kernel, "label": label, "args": flags, "size": len(packed),
                         "bundle": emit_local(out, f"play/{kernel}.bin.gz", packed),
                         "files": [[path, len(data)] for path, data in files.items()]})
+    extra = []
+    for name, files in packages(satex, work, [set(tables[0]) | set(t) for t in tables]).items():
+        if not files:  # all in the first download already
+            continue
+        packed = gzip.compress(b"".join(files.values()), 9, mtime=0)
+        extra.append({"id": name, "label": name, "size": len(packed), "bundle": emit_local(out, f"play/pkg/{name}.bin.gz", packed),
+                      "files": [[path, len(data)] for path, data in files.items()]})
     queries = [line.split()[0] for line in run(str(satex), "query", "--list").splitlines()[1:] if line.strip()]
     env = dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))
     sample = (EXAMPLES / roots(EXAMPLES)[0]).name
@@ -381,12 +441,13 @@ def playground(satex, wasm, work, out):
     manifest = {
         "js": emit_local(out, "play/satex.js", (wasm / "satex.js").read_bytes()),
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
-        "kernels": kernels, "unavailable": UNAVAILABLE, "queries": queries, "filtered": [q for q in queries if per_file(q)], "rules": rules,
+        "kernels": kernels, "packages": extra, "unavailable": UNAVAILABLE, "queries": queries, "filtered": [q for q in queries if per_file(q)], "rules": rules,
         "completion": json.loads(run(str(satex), "completions", "json")), "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"},
     }
     sizes = {k["id"]: f"{k['size'] / 2**20:.1f} MiB gz, {len(k['files'])} files" for k in kernels}
-    print(f"playground: wasm {len(wasm_bytes) / 2**20:.1f} MiB, {sizes}", file=sys.stderr)
+    print(f"playground: wasm {len(wasm_bytes) / 2**20:.1f} MiB, {sizes}; {len(extra)} packages on demand, "
+          f"{sum(p['size'] for p in extra) / 2**20:.1f} MiB gz in all", file=sys.stderr)
     return manifest, examples(satex, work, project)
 
 
