@@ -5,6 +5,40 @@ export function isOurs(d: vscode.Diagnostic): boolean {
     return d.source === 'satex' || d.source === 'satex build';
 }
 
+/** What the server does now (`satex/status`): `text` empty when idle. */
+export interface Work {
+    text: string;
+    phase?: string;
+    file?: string;
+    line?: number;
+    files?: number;
+    lines?: number;
+    cached?: number;
+    ms?: number;
+    paths?: number;
+    probe?: string;
+    why?: string;
+}
+
+/** `work` as a markdown table for the status item's hover. */
+function explain(work: Work): vscode.MarkdownString {
+    const n = (v?: number) => (v ?? 0).toLocaleString();
+    const rows: [string, string | undefined][] = [
+        ['Phase', work.phase],
+        ['Probing', work.probe && `\`${work.probe}\``],
+        ['Why', work.why],
+        ['Reading', work.file && `\`${work.file}${work.line ? `:${work.line}` : ''}\``],
+        ['Read', work.lines ? `${n(work.lines)} lines in ${n(work.files)} files` : undefined],
+        ['From caches', work.cached ? `${n(work.cached)} lines` : undefined],
+        ['Paths alive', work.paths ? n(work.paths) : undefined],
+        ['Elapsed', work.ms ? `${(work.ms / 1000).toFixed(1)} s` : undefined],
+    ];
+    const md = new vscode.MarkdownString(`**satex: ${work.text}**\n\n| | |\n|---|---|\n`);
+    md.appendMarkdown(rows.filter(([, v]) => v).map(([k, v]) => `| ${k} | ${v} |`).join('\n'));
+    md.appendMarkdown('\n\nKernels and packages are cached once, then reused.');
+    return md;
+}
+
 /**
  * The status bar entry: what the server does now (`caching pdftex kernel`),
  * else how many errors and warnings it found. A click opens the satex view;
@@ -13,7 +47,7 @@ export function isOurs(d: vscode.Diagnostic): boolean {
 export class Status implements vscode.Disposable {
     private readonly item = vscode.window.createStatusBarItem('satex.status', vscode.StatusBarAlignment.Left, 0);
     private readonly listeners: vscode.Disposable[] = [];
-    private busy = '';
+    private busy: Work = { text: '' };
     private stopped = false;
 
     constructor() {
@@ -28,8 +62,8 @@ export class Status implements vscode.Disposable {
     }
 
     /** What the server says it does; empty when it is idle. */
-    working(text: string): void {
-        this.busy = text;
+    working(work: Work): void {
+        this.busy = work;
         this.render();
     }
 
@@ -55,9 +89,9 @@ export class Status implements vscode.Disposable {
         if (this.stopped) {
             this.item.text = '$(error) satex';
             this.item.tooltip = 'The satex server stopped: see the output "satex". Click to open the satex view.';
-        } else if (this.busy) {
-            this.item.text = `$(sync~spin) satex: ${this.busy}`;
-            this.item.tooltip = 'satex is working; kernels and packages are cached once, then reused.';
+        } else if (this.busy.text) {
+            this.item.text = `$(sync~spin) satex: ${this.busy.text}`;
+            this.item.tooltip = explain(this.busy);
         } else {
             const counts = errors + warnings > 0 ? ` $(error) ${errors} $(warning) ${warnings}` : ' $(check)';
             this.item.text = `satex${counts}`;

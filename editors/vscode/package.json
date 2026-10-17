@@ -86,12 +86,21 @@
       { "id": "satex.actions", "name": "Actions", "icon": "media/satex.svg" }
     ]
   },
+  "keybindings": [
+    { "command": "satex.traceNext", "key": "alt+]", "when": "satex.tracing" },
+    { "command": "satex.tracePrevious", "key": "alt+[", "when": "satex.tracing" },
+    { "command": "satex.traceClose", "key": "escape", "when": "satex.tracing && editorTextFocus && !suggestWidgetVisible" }
+  ],
   "commands": [
       {
         "command": "satex.traceAtCursor",
         "title": "Trace Expansion Here",
         "category": "satex"
       },
+      { "command": "satex.traceNext", "title": "Trace: Next Step", "category": "satex", "enablement": "satex.tracing" },
+      { "command": "satex.tracePrevious", "title": "Trace: Previous Step", "category": "satex", "enablement": "satex.tracing" },
+      { "command": "satex.tracePick", "title": "Trace: Go to Step…", "category": "satex", "enablement": "satex.tracing" },
+      { "command": "satex.traceClose", "title": "Trace: Close", "category": "satex", "enablement": "satex.tracing" },
       {
         "command": "satex.compile",
         "title": "Compile",

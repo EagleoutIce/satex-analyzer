@@ -5,7 +5,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { LanguageClient, State, StreamInfo } from 'vscode-languageclient/node';
 import { Actions, Findings } from './sidebar';
-import { Status } from './status';
+import { Status, Work } from './status';
+import { Steps, TraceEvent } from './steps';
 
 const INSTALL_HINT = 'Install it with `cargo install satex`, download a release from https://github.com/EagleoutIce/satex-analyzer/releases, or set `satex.path`.';
 let client: LanguageClient | undefined;
@@ -13,6 +14,7 @@ let binaryPath = '';
 const trace = vscode.window.createOutputChannel('satex trace');
 const build = vscode.window.createOutputChannel('satex build');
 const buildDiagnostics = vscode.languages.createDiagnosticCollection('satex build');
+const steps = new Steps();
 
 /** Setting, then the bundled binary, then `satex` on the PATH. */
 function resolveBinary(context: vscode.ExtensionContext): string | undefined {
@@ -44,8 +46,6 @@ function rootFile(editor: vscode.TextEditor): { root: string; dir: string } {
     return { root, dir: path.dirname(root) };
 }
 
-interface TraceEvent { index: number; step: string; name: string; file: string; line: number; col: number }
-
 function runTrace(args: string[]): Promise<TraceEvent[]> {
     return new Promise((resolve, reject) => execFile(binaryPath, args, { maxBuffer: 1 << 28 }, (error, stdout, stderr) => {
         if (stderr) { trace.appendLine(stderr); }
@@ -69,6 +69,7 @@ async function traceAtCursor(): Promise<void> {
         const content = `# Expansion of \`${text}\` at ${at}\n\n| # | step | name | location |\n| --- | --- | --- | --- |\n${rows.join('\n')}\n`;
         const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content });
         await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside, true);
+        await steps.load(events, dir);
     } catch (error) {
         trace.appendLine(String(error));
         trace.show(true);
@@ -170,7 +171,11 @@ export function activate(context: vscode.ExtensionContext): void {
         'satex', 'satex', () => startServer(binary),
         { documentSelector: ['latex', 'tex', 'bibtex'].map(language => ({ language })) });
     context.subscriptions.push(
-        trace, build, buildDiagnostics, status, findings, findings.view,
+        trace, build, buildDiagnostics, status, findings, findings.view, steps,
+        vscode.commands.registerCommand('satex.traceNext', () => steps.move(1)),
+        vscode.commands.registerCommand('satex.tracePrevious', () => steps.move(-1)),
+        vscode.commands.registerCommand('satex.tracePick', () => steps.pick()),
+        vscode.commands.registerCommand('satex.traceClose', () => steps.clear()),
         vscode.window.registerTreeDataProvider('satex.actions', new Actions()),
         vscode.commands.registerCommand('satex.traceAtCursor', traceAtCursor),
         vscode.commands.registerCommand('satex.compile', compile),
@@ -178,7 +183,7 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('satex.restart', () => client?.restart()),
         vscode.commands.registerCommand('satex.showOutput', () => client?.outputChannel.show(true)),
         vscode.commands.registerCommand('satex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
-        client.onNotification('satex/status', (params: { text: string }) => status.working(params.text)),
+        client.onNotification('satex/status', (work: Work) => status.working(work)),
         client.onDidChangeState(e => status.down(e.newState === State.Stopped)));
     checkTeX();
     void client.start();

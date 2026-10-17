@@ -25,7 +25,7 @@ fn run() -> Result<(), String> {
     }
     let extension = Path::new(env!("CARGO_MANIFEST_DIR")).join("editors/vscode");
     for tool in ["npm", "code"] {
-        which::which(tool).map_err(|_| format!("`{tool}` is not on the PATH"))?;
+        satex::paths::which(tool).map_err(|_| format!("`{tool}` is not on the PATH"))?;
     }
     if !extension.join("node_modules").is_dir() {
         step(Command::new("npm").args(["ci", "--no-audit", "--no-fund"]).current_dir(&extension))?;
