@@ -407,7 +407,7 @@ Hehe
 <tr><td><code>1 50</code></td><td><code>1 <b>⟨?⟩</b></code></td><td>⊇</td></tr>
 <tr><td><code>bazx</code></td><td><code>bazx</code></td><td>✓</td></tr>
 <tr><td><code>X1XHehe</code></td><td><code>X1XHehe</code></td><td>✓</td></tr>
-<tr><td><code>1 Later</code></td><td><code>1Later</code></td><td>✓</td></tr>
+<tr><td><code>1 Later</code></td><td><code>1 Later</code></td><td>✓</td></tr>
 </table>
 
 Why:
@@ -421,7 +421,7 @@ $ satex query typeset -f 06-unknown.tex --set limits.seconds=60
 3:12  paragraph  1 ⟨?⟩
 8:5  paragraph  bazx
 14:80  paragraph  X1XHehe
-16:16  paragraph  1Later
+16:16  paragraph  1 Later
 assumption  clock-assumed
 recognized gaps
   unbalanced-conditional 1× first at 06-unknown.tex:0

@@ -27,7 +27,7 @@ The domains on this page:
 - [Meaning sets](#meaning-sets-what-a-control-sequence-may-mean), with [names from unknown text](#names-from-unknown-text)
 - [Modes and box dimensions](#modes-and-box-dimensions), with [paragraphs](#paragraphs-and-line-breaking)
 - [Unknown text](#unknown-text-the-textclass-lattice), with [unknown characters and digits](#unknown-characters-and-digits) and [length bounds](#length-bounds-on-typed-text)
-- [Unknown category codes](#catcodetableunknown-unknown-category-as-a-lattice-element)
+- [Category sets](#catcodetableunknown-category-sets-as-a-lattice-element)
 - [Files written in the run](#files-written-in-the-run)
 - [Call summaries](#call-summaries-what-a-call-did-twice), with [the line guard](#the-line-guard-termination)
 - [The join](#the-join-in-general), with [joins at `\fi`](#joins-at-fi) and [joins at the limits](#joins-at-the-limits)
@@ -60,6 +60,7 @@ Only code that inspects the abstract value sees it. A comparison in `\ifnum`/`\i
 
 A count and dimension share one payload shape, `Num`, tagged by `Quantity` (`Int`, `Dimen`, `Glue`, `MuGlue`).
 Glue and muglue use a `GlueHull` instead: one `Num` per component, because glue has components (tex.web § 150) that a single interval cannot carry.
+A glue scan gives a `GlueHull` too: a component read from a number in an interval (`\hskip\i pt`) keeps that interval, and only one not followed is any.
 `Value::Num` and `Value::GlueNum` form one family, split only where the shape differs.
 
 ## The set lift: `OneOf`
@@ -166,7 +167,11 @@ rather than leaving the item out, which would under-approximate. `Natural`
 bundles the running `along`/`height`/`depth`/`wide` dimensions plus the
 list's tail, mirroring the fields `hpack`/`vpack` compute.  The tail's items
 (`Last`: a character, glue, a kern, a penalty, anything else) have
-`Last::Unknown` as their top, and whether a character node is a ligature is
+`Last::Unknown` as their top. Glue keeps its width as a `Dim` and its
+specification as a `GlueHull`, and two glues join componentwise. Items of
+different kinds join to `Last::Unknown(Reads)`, which keeps what
+`\lastskip`, `\lastkern` and `\lastpenalty` may read: the join of each
+item's reading, zero where it is of another kind (§ 424). Whether a character node is a ligature is
 a flag whose top is "not known".  `\lastnodetype` reads both (etex.ch), so it
 is exact where the font's ligature/kerning program was followed (tex.web
 §§ 1034-1040, boundary characters included). Where the flag is not known it
@@ -331,6 +336,11 @@ So a loop that strips digits one by one sees the integer part end after a `0`.
 `\romannumeral` of an unknown number gives typed text of class `o`, possibly empty: its letters are category 12, as tex.web § 69 prints them.
 A bounded number under `\number` gives typed digits with that bound.
 
+A number whose digits are not all known but begin with a digit has no sign in them: it lies in 0 to 2^31-1 (§ 445 caps it there).
+The same holds for a name of several meanings, each a macro without parameters whose text is digits beginning so, or `\relax` (a "Missing number", 0).
+A one-of token is not read so: its texts may run on past it.
+A number whose last digit is known has that digit's parity, whatever digits come before it, so `\ifodd` decides it (radixes are even).
+
 A dimension in an interval of one sign prints under `\the` as its sign, typed digits with the interval of its integer part, a point, at most five unknown digits and `pt` (§ 103).
 A scan reads it back as an interval (§§ 448-458): each unit is monotone in the integer part and the fraction, so the value lies between the values at their ends.
 So `\the` keeps a bound through `\pgf@sys@tonumber` and pgfmath's `round`, `floor` and `int`.
@@ -351,16 +361,18 @@ A loop head counts the passes of a loop against `limits.widen_after` ([Configura
 A pass whose pending input holds strictly fewer tokens than the pass before is not counted (`input_bound`, `loop_bounds`).
 Such a loop ends by construction, so each of its passes stays exact. A loop that consumes `\the\count0` digit by digit is followed to its end, not widened.
 
-## `CatcodeTable::unknown`: unknown category as a lattice element
+## `CatcodeTable::unknown`: category sets as a lattice element
 
-`CatcodeTable` ([`src/tex.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/tex.rs)) (tex.web § 232) tracks, per character, a
-set `unknown` of characters whose `\catcode` was set to a number satex
-cannot interpret. This is not a missing table entry: `CatcodeTable::get`
-still returns a best-guess category (the last one known), but any caller
-that matters must first check `CatcodeTable::is_unknown`. The *unknown*
-state is itself a real element of the per-character lattice, one level
-above every concrete category code, not an absence of information that
-falls back to a default silently.
+`CatcodeTable` ([`src/tex.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/tex.rs)) (tex.web § 232) maps each character
+whose category satex cannot pin to one to the set of categories it may
+have, one bit each (`unknown`). All 16 bits is the top. `CatcodeTable::get`
+still returns a best guess (the last one known), so any caller that
+matters asks `CatcodeTable::cats` or `CatcodeTable::is_unknown` first.
+
+- A join unions the two sets of every character the tables disagree on.
+- The save stack keeps the set beside the category, so a group end puts
+  the set back.
+- `\the\catcode` reads the set as a set of numbers.
 
 ## Files written in the run
 
@@ -381,16 +393,25 @@ Reads look at the run's own files first (tex.web § 537):
 
 The `\openin` streams are a table of the lines each stream has left.
 A join of paths that differ in any stream leaves no stream known. `\ifeof` is then undecided.
-A stream number `satex` cannot pin down does the same.
+A stream number in an interval parts the path per stream it may name, numbers outside 0 to 15 being stream 0 (§ 436).
+On each path the register it was read from is narrowed to match, so a later `\closein` of it names the same stream.
+A stream number `satex` cannot pin down at all leaves no stream known.
+A file of unknown text leaves only its own stream unknown.
 
 ## Names from unknown text
 
 [`Wild`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)
 holds the families of names that definitions of partly unknown names may
 have made (tex.web § 372): each is the known text before and after the
-unknown part, as in `\csname MT@inh@\x\endcsname`. An undefined name of
-such a family may be defined. The join is the union. Past 64 patterns,
-they widen to what they share.
+unknown part, as in `\csname MT@inh@\x\endcsname`, and whether that part
+is digits alone. A `\csname` of a partly unknown name is such a write
+too: each undefined name it may spell may now be `\relax`, which
+`\ifcsname`, `\ifdefined` and `\ifx` see. An undefined name of such a family may be defined, as
+one of up to 8 meanings the family's writes gave, or any past them. A
+`\csname` of such a name is `\relax` or one of those meanings, a
+[meaning set](#meaning-sets-what-a-control-sequence-may-mean). The join is
+the union, meanings joined per pattern. Past 1024 patterns, they widen to
+what they share. A cache keeps the patterns, not their meanings.
 
 A name of wholly unknown text adds no family. The standing assumption
 (`unknown-name-defines-fresh`, an imprecision) is that it is a new name:
@@ -458,6 +479,13 @@ dropped, so both go on with the same counters.
   `budget-exhausted`.
 - **Paths:** a path parked on the line before a cut takes the same cut
   when it runs again, so forks cannot outrun the guard.
+- **Built names:** a `\csname` whose scan left several names parts one
+  path per name. Once that site has parted `limits.meaning_set` times on
+  the line, the names stay one name of their shared family, on one path
+  (each replay of the command reruns the scan's own forks, so per-name
+  parts multiply). A one-of token read into the name parts at that
+  `\csname`, not where its texts were joined: reads of one value by
+  several `\csname`s are no passes of one loop.
 - **Bound:** the run spends at most `3 × limits.line_steps` steps per line it
   reads (a source line, paired with the data line `\read` took last), plus a
   constant.
@@ -470,6 +498,11 @@ dropped, so both go on with the same counters.
   below the entry's own is unread since. Once one was read on, the entry's
   call ended (tex.web § 325), and the meet is a new entry, however deep. So a summary never
   closes groups or drops frames that its caller owns.
+- **Widened pass:** a summary first runs the loop's body once more from
+  the widened state, and only the next meet cuts. A pass writes names
+  the widening opens (`\csname a\the\n\endcsname` with `\n` unknown)
+  only when it runs, so they reach the continuation as a family. A summary
+  taken while a scan is in flight cuts at once.
 - **Endless loops:** a call that meets a state it was in before
   (`limits.cycle_after`) ends its path only while another path waits to
   read on. A path no other path covers is summarized and goes on, since
@@ -479,10 +512,12 @@ dropped, so both go on with the same counters.
   what their text opened, by identity. Each list records the conditionals,
   the innermost group and the assignment count at its push. The cut closes
   the conditionals and groups opened since the lowest dropped list, as
-  `\endgroup` would (tex.web §§ 281-283). A value a group puts back that
+  `\endgroup` would (tex.web §§ 281-283), when the dropped text closes as
+  many. A value a group puts back that
   was written since that push is widened, since the dropped text would
-  have run on. Closers are never counted in the dropped text: a macro such
-  as calc's `\calc@close` closes groups too.
+  have run on. Closers in the dropped text are counted through macros
+  without parameters (`\close` for `\endgroup`). Where the dropped text closes
+  fewer, the levels it leaves open become [stacks as intervals](#stacks-as-intervals).
 - **Covered passes:** a pass of a summarized loop ends only while a waiting
   path went on past that loop's summary. Other waiting arms are not its
   continuation: without such a path the pass is cut and goes on.
@@ -510,7 +545,7 @@ they join at once ([joins at `\fi`](#joins-at-fi)). Past two per place they are 
 their join, the token lists into one token that stands for either list. Paths
 are compared by what is left to read, not by which copy of a token list holds
 it. The path furthest behind runs next, so paths that can meet do. Paths that
-never meet run on to the end separately. No path is dropped. Where they stand
+never meet run on to the end separately. No path is dropped: the run's end state is the join of every path that ended as the last one did, by `\end` or off the end of its input, whatever groups and conditionals each left open. Where they stand
 in different groups, their save stacks are joined entry by entry.
 
 A loop whose exit is undecided (`\loop … \ifhbox … \repeat`, or pgfmath's
@@ -524,7 +559,21 @@ So every loop terminates within `widen_after + 2` rounds, win or lose, and a
 run that still grows past that says so (`undecided-loop`).
 A head whose widened state still grows (its input keeps changing, as a
 recursion's frames do) is summarized after `2 × widen_after` widened rounds.
+A forced head that matches no head kept apart for its code joins every head at its place: a meaning that grows each pass (`\edef\t{\t x}`) then widens to its hull and the loop ends at a fixpoint, not a summary.
 A path's place leaves out the lines it read with `\read`: the exits of a loop that reads one line per pass stand at one place, and their streams join as ranges.
+
+### Stacks as intervals
+
+A group or conditional frame may stand for any number of copies of itself, none too (`many`).
+A loop that opens a `\begingroup` or leaves an `\ifnum` open per pass keeps its places but not its stacks, so its passes never meet.
+Once its passes are forced, a head and the pass that differ only in more frames of one kind above where their stacks part widen to that part plus one `many` frame: `[G]` and `[G, G]` become `[G, G*]`, and `[G, G*, G]` collapses into `[G, G*]`, so the passes meet and join.
+Paths between two lines of the document's own text that stand in different groups join the same way. In a package `analysis.assume_packages_close_groups` still closes the extra groups.
+A loop summary whose dropped text leaves frames open makes them one `many` frame each, when they are of one kind.
+Only plain groups (no box or alignment group), with the same `\aftergroup` tokens, opened since the paths parted, are widened.
+`\currentgrouplevel` and `\currentiflevel` read `[frames not many, 2^31 - 1]` while a `many` frame is open.
+A closer (`}`, `\endgroup`, `\fi`, `\else`, `\or`) that meets a `many` frame on top parts two paths: one where a copy closes and the frame stays, one where there are none and the closer acts on the frame below.
+A copy that closes puts back what any copy may have saved, so the names saved in the frame are widened. When no more paths may part, the frame below joins it if alike, so one path covers both.
+The stacks stay bounded: a `many` frame absorbs every copy pushed on it at a widening.
 
 ### Joins at `\fi`
 
@@ -624,9 +673,14 @@ just the registers `satex` happens to already have slots for.
 
 ## Code tables behind an unknown character
 
-A `\catcode`, `\lccode`, `\uccode`, `\sfcode` or `\mathcode` write
-through a character number `satex` cannot pin down (tex.web § 1232) leaves
-each entry it may name at {old, new}.
+A `\catcode`, `\lccode`, `\uccode`, `\sfcode`, `\mathcode` or `\delcode`
+write through a character number `satex` cannot pin down (tex.web § 1232)
+leaves each entry it may name at {old, new}. That holds for every
+character, the structural ones (`\ { } % # $ & ^ _`, space, end-of-line)
+included. No assumption narrows it.
+
+- A few characters: each one's category set (or code) is joined with the
+  new one. One character known to be the target takes the new one.
 
 - Categories: `CatcodeTable` keeps the hull of the codes (`reach`) and a bit
   set of the categories written (`reach_cats`). A character in reach has its
@@ -635,17 +689,22 @@ each entry it may name at {old, new}.
 - Codes: the written values are joined in one slot per table
   (`reach_family`, `family_value`). An entry reads its own code joined with
   that slot.
-- A character that may be a letter or an other character is read as a
-  one-of of the two tokens, not as unknown text. Other category sets still
-  read as unknown text.
-
-**Named assumption `unknown-char-catcode-assumed`.** A write through an
-*unknown* character never changes the structural characters `\ { } % # $
-& ^ _`, space and end-of-line. Unknown means no interval, or one that runs
-past the last character code (a widened loop counter). A write through a
-bounded interval that covers them does widen them. Writes of the two kinds
-are kept apart (`reach_structural`, the `anyu` code slot), so a join keeps
-the assumption only where every write had it. It is reported once per site.
+- Reading splits paths lazily. Where the reader meets a character whose
+  set holds a structural category (up to `SPLIT_CATS` of them), the path
+  splits per category and reads it again. On each path the character has
+  that one category (`split_catcode`), saved like an assignment, so it is
+  split once per path. Past `limits.choices`, or for a larger set, the
+  character reads as unknown text.
+- A character that may only be a letter or an other character is read as
+  a one-of of the two tokens. Inside a control word it ends the name in
+  unknown text.
+- `\lowercase`/`\uppercase` of a character whose code is one of a few
+  splits the path per code where its category is structural, and is a
+  one-of of the characters otherwise. A code of many values gives unknown
+  text, or, for a structural category, `UNKNOWN_ANY` with that category,
+  a character that may equal any other.
+- `\the\lccode` and its siblings read the joined code as a set or an
+  interval.
 
 ## Known limits
 

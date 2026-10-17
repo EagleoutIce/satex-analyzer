@@ -58,11 +58,10 @@ moment the character is tokenized, not when the token is used. ([*TeXbook*][texb
   differs from `X`'s in bit 6; `^^XY` with two lower-case hex digits denotes
   that code directly. Above 127 no substitution happens. ([tex.web § 352][tw-352].)
 * `\catcode` through a character number `satex` cannot pin down leaves each
-  character it may name at its old category or the new one. A write through
-  an *unknown* number (no interval, or one past every character code) is
-  assumed never to name `\ { } % # $ & ^ _`, space or end-of-line; the same
-  holds for `\lccode`, `\uccode`, `\sfcode` and `\mathcode`. This named
-  assumption is reported as `unknown-char-catcode-assumed`.
+  character it may name at its old category or the new one, structural
+  characters included. The same holds for `\lccode`, `\uccode`, `\sfcode`,
+  `\mathcode` and `\delcode`. The reader splits the path where it meets a
+  character that may be structural, one path per category.
 * `\makeatletter` sets `@` to category 11, `\makeatother` to 12.
   ([*clsguide*][clsguide] § 2.)
 * `\ExplSyntaxOn` sets tab and space to ignored (9), `"` and `|` to other
@@ -1025,7 +1024,7 @@ name and run. A stub applies only to the package's own definition: a
 document that redefines the name gets its own meaning back.
 
 [texbook]: https://ctan.org/pkg/texbook
-[tex.web]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web
+[tex.web]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web
 [tex-by-topic]: https://ctan.org/pkg/texbytopic
 [etex_man]: https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf
 [clsguide]: https://ctan.org/pkg/clsguide
@@ -1039,76 +1038,76 @@ document that redefines the name gets its own meaning back.
 
 <!-- tex.web modules. Re-pin with `python3 scripts/tex-web-links.py --update SEMANTICS.md`;
      `--check` (run in CI) fails if these have drifted from the current upstream commit. -->
-[tw-31]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L908
-[tw-82]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L1875
-[tw-105]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L2254
-[tw-106]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L2272
-[tw-211]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4220
-[tw-232]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4811
-[tw-240]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L5228
-[tw-262]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L5588
-[tw-265]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L5652
-[tw-268]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L5813
-[tw-269]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L5859
-[tw-279]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L6010
-[tw-283]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L6070
-[tw-303]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L6475
-[tw-306]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L6608
-[tw-326]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7035
-[tw-336]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7144
-[tw-339]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7202
-[tw-347]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7326
-[tw-352]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7371
-[tw-358]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7503
-[tw-362]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7563
-[tw-367]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7681
-[tw-372]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7745
-[tw-373]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7759
-[tw-392]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L8022
-[tw-398]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L8133
-[tw-424]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L8517
-[tw-446]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L8802
-[tw-448]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L8829
-[tw-449]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L8875
-[tw-455]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L8965
-[tw-461]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9064
-[tw-473]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9292
-[tw-476]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9357
-[tw-477]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9381
-[tw-478]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9395
-[tw-482]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9444
-[tw-484]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9485
-[tw-486]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9507
-[tw-498]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9711
-[tw-500]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9742
-[tw-506]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9814
-[tw-507]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9840
-[tw-526]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L10201
-[tw-571]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L11108
-[tw-580]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L11284
-[tw-649]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L12910
-[tw-668]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L13152
-[tw-1034]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20114
-[tw-1040]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20271
-[tw-1041]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20321
-[tw-1044]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20372
-[tw-1045]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20377
-[tw-1063]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20637
-[tw-1077]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20915
-[tw-1105]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21264
-[tw-1110]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21332
-[tw-1145]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21755
-[tw-1200]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22526
+[tw-31]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L908
+[tw-82]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L1875
+[tw-105]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L2254
+[tw-106]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L2272
+[tw-211]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L4220
+[tw-232]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L4811
+[tw-240]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L5228
+[tw-262]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L5588
+[tw-265]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L5652
+[tw-268]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L5813
+[tw-269]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L5859
+[tw-279]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L6010
+[tw-283]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L6070
+[tw-303]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L6475
+[tw-306]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L6608
+[tw-326]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7035
+[tw-336]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7144
+[tw-339]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7202
+[tw-347]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7326
+[tw-352]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7371
+[tw-358]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7503
+[tw-362]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7563
+[tw-367]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7681
+[tw-372]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7745
+[tw-373]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7759
+[tw-392]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L8022
+[tw-398]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L8133
+[tw-424]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L8517
+[tw-446]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L8802
+[tw-448]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L8829
+[tw-449]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L8875
+[tw-455]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L8965
+[tw-461]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9064
+[tw-473]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9292
+[tw-476]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9357
+[tw-477]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9381
+[tw-478]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9395
+[tw-482]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9444
+[tw-484]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9485
+[tw-486]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9507
+[tw-498]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9711
+[tw-500]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9742
+[tw-506]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9814
+[tw-507]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9840
+[tw-526]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L10201
+[tw-571]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L11108
+[tw-580]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L11284
+[tw-649]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L12910
+[tw-668]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L13152
+[tw-1034]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20114
+[tw-1040]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20271
+[tw-1041]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20321
+[tw-1044]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20372
+[tw-1045]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20377
+[tw-1063]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20637
+[tw-1077]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20915
+[tw-1105]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21264
+[tw-1110]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21332
+[tw-1145]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21755
+[tw-1200]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L22526
 [tw-1211]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22720
 [tw-1217]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22811
-[tw-1221]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22838
-[tw-1229]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22996
-[tw-1236]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L23078
-[tw-1240]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L23160
-[tw-1257]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L23346
-[tw-1260]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L23404
+[tw-1221]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L22838
+[tw-1229]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L22996
+[tw-1236]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L23078
+[tw-1240]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L23160
+[tw-1257]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L23346
+[tw-1260]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L23404
 
 <!-- etex.ch identifiers -->
-[ech-pseudo_input]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/etexdir/etex.ch#L4654
-[ech-scan_expr]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/etexdir/etex.ch#L5006
-[ech-every_eof_loc]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/etexdir/etex.ch#L442
+[ech-pseudo_input]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/etexdir/etex.ch#L4654
+[ech-scan_expr]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/etexdir/etex.ch#L5006
+[ech-every_eof_loc]: https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/etexdir/etex.ch#L442

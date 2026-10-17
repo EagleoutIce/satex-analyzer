@@ -27,7 +27,7 @@ The domains on this page:
 - [Meaning sets](#meaning-sets-what-a-control-sequence-may-mean), with [names from unknown text](#names-from-unknown-text)
 - [Modes and box dimensions](#modes-and-box-dimensions), with [paragraphs](#paragraphs-and-line-breaking)
 - [Unknown text](#unknown-text-the-textclass-lattice), with [unknown characters and digits](#unknown-characters-and-digits) and [length bounds](#length-bounds-on-typed-text)
-- [Unknown category codes](#catcodetableunknown-unknown-category-as-a-lattice-element)
+- [Category sets](#catcodetableunknown-category-sets-as-a-lattice-element)
 - [Files written in the run](#files-written-in-the-run)
 - [Call summaries](#call-summaries-what-a-call-did-twice), with [the line guard](#the-line-guard-termination)
 - [The join](#the-join-in-general), with [joins at `\fi`](#joins-at-fi) and [joins at the limits](#joins-at-the-limits)
@@ -47,19 +47,20 @@ below), so the table has no gaps.
 | --- | --- | --- | --- | --- |
 | count (`\count`, `\numexpr`, integer parameters) | `Int(i64)` | `Num { lo, hi }` | `OneOf([Int or Num, …])` | `Num::full(false)`, `[-MAX_INT, MAX_INT]`, read as `Unknown` |
 | dimension (`\dimen`, `\dimexpr`) | `Dimen(Scaled)` | `Num { lo, hi }`, scaled points | `OneOf([Dimen or Num, …])` | `Num::full(true)`, `[-MAX_DIMEN, MAX_DIMEN]`, read as `Unknown` |
-| glue (`\skip`) | `Glue(Glue)` | `GlueHull`: one `Num` per component ([tex.web § 150](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L3147)) | `OneOf([Glue, …])` | `GlueHull::full()`, read as `Unknown` |
+| glue (`\skip`) | `Glue(Glue)` | `GlueHull`: one `Num` per component ([tex.web § 150](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L3147)) | `OneOf([Glue, …])` | `GlueHull::full()`, read as `Unknown` |
 | muglue (`\muskip`) | `MuGlue(Glue)` | `GlueHull` | `OneOf([MuGlue, …])` | `GlueHull::full()`, read as `Unknown` |
 | token list (`\toks`) | `Toks(Rc<[Token]>)` | past the set: the common beginning and end around one typed unknown token, when the middles are balanced and hold no control sequence | `OneOf([Toks, …])` | `Unknown` |
 | color (`\color@⟨name⟩`) | `Color(Colors)`, every component a point | `Colors { hull: Color }`, one `Num` per component | `OneOf([Color, …])` | the hull over the model's full range |
 
-A token list join past `limits.value_set` keeps its frame, as a macro join does: pgfmath's operand stacks with different numbers on top join to one stack whose top is typed digits, not to `Unknown`, so a pop by delimited parameters still finds its braces ([tex.web § 1227](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22968)).
+A token list join past `limits.value_set` keeps its frame, as a macro join does: pgfmath's operand stacks with different numbers on top join to one stack whose top is typed digits, not to `Unknown`, so a pop by delimited parameters still finds its braces ([tex.web § 1227](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L22968)).
 `Unknown` is the top of every kind: unresolved typesetting output, text with unknown digits, a read through an unpinned index.
 A bounded number that becomes text (`\the`, `\number`, `\pdfuniformdeviate`) is one token of unknown digits typed with its `Num`, which a later scan reads back as that `Num`, so a bound survives `\numexpr` through text and a recursion over it ends.
 A register read goes through `Env::value` ([`src/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/env.rs)), which reads a `Num`, `GlueNum` or `OneOf` as `Unknown`.
 Only code that inspects the abstract value sees it. A comparison in `\ifnum`/`\ifdim` decides by the interval; a join or loop head compares the hulls.
 
 A count and dimension share one payload shape, `Num`, tagged by `Quantity` (`Int`, `Dimen`, `Glue`, `MuGlue`).
-Glue and muglue use a `GlueHull` instead: one `Num` per component, because glue has components ([tex.web § 150](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L3147)) that a single interval cannot carry.
+Glue and muglue use a `GlueHull` instead: one `Num` per component, because glue has components ([tex.web § 150](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L3147)) that a single interval cannot carry.
+A glue scan gives a `GlueHull` too: a component read from a number in an interval (`\hskip\i pt`) keeps that interval, and only one not followed is any.
 `Value::Num` and `Value::GlueNum` form one family, split only where the shape differs.
 
 ## The set lift: `OneOf`
@@ -86,13 +87,13 @@ Arithmetic (`Num::lift`) and conditionals (`Num::compare`, `Num::odd`,
 the corners of the interval box (cut at zero, since TeX's arithmetic is
 monotone on each side of zero) bound the ideal result. An overflow of the
 exact range is TeX's arithmetic error, kept in-range by clipping. A 32-bit
-wraparound (`\advance` past the register's own width, [tex.web § 1238](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L23134))
+wraparound (`\advance` past the register's own width, [tex.web § 1238](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L23134))
 instead widens to the *entire* 32-bit range (`WORD_MIN..=WORD_MAX`), not
 `\maxdimen`, since `\advance` can pass that too.
 
 ## Character codes as sets
 
-A code table entry (`\lccode`, `\uccode`, `\sfcode`, `\mathcode`, `\delcode`, [tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L23040)) holds a `Value` like a register.
+A code table entry (`\lccode`, `\uccode`, `\sfcode`, `\mathcode`, `\delcode`, [tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L23040)) holds a `Value` like a register.
 A join keeps a few different codes as a `OneOf`, up to `limits.value_set`.
 The scan keeps them too. Where a ⟨number⟩ is a character that is one of several (`` `\x `` for a `\x` of several meanings), it reads as the hull of their codes plus the exact set (`abs_exact` in [`src/scan.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/scan.rs)).
 `assign_char_code` stores a set or an interval as read while every member is a valid code.
@@ -151,27 +152,31 @@ the arms of an undecided conditional.
 ## Modes and box dimensions
 
 `Modes` ([`src/mode.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/mode.rs)) is a bitset over TeX's six
-modes ([tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4220): vertical, internal vertical, horizontal, restricted
+modes ([tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L4220): vertical, internal vertical, horizontal, restricted
 horizontal, display math, math). The run keeps the *set* of modes it may be
 in. `Modes::test` decides an `\ifvmode`/`\ifhmode`/`\ifmmode`/`\ifinner`
 only when every mode in the set answers alike, and disagreeing paths join
-by `union`. `INNER` picks out the three "-mode" (inner) variants [tex.web](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web)
+by `union`. `INNER` picks out the three "-mode" (inner) variants [tex.web](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web)
 distinguishes from their outer counterparts.
 
 `Dim { lo, hi }` is the analogous domain for a single length: box
-dimensions and node sizes, added up the way `hpack` ([tex.web § 649](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L12910)) and
-`vpack` ([§ 668](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L13152)) add a list's items. `Dim::ANY` (`±MAX_DIMEN`) is the top of
+dimensions and node sizes, added up the way `hpack` ([tex.web § 649](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L12910)) and
+`vpack` ([§ 668](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L13152)) add a list's items. `Dim::ANY` (`±MAX_DIMEN`) is the top of
 the lattice. What an item `satex` cannot follow widens the running size to,
 rather than leaving the item out, which would under-approximate. `Natural`
 bundles the running `along`/`height`/`depth`/`wide` dimensions plus the
 list's tail, mirroring the fields `hpack`/`vpack` compute.  The tail's items
 (`Last`: a character, glue, a kern, a penalty, anything else) have
-`Last::Unknown` as their top, and whether a character node is a ligature is
+`Last::Unknown` as their top. Glue keeps its width as a `Dim` and its
+specification as a `GlueHull`, and two glues join componentwise. Items of
+different kinds join to `Last::Unknown(Reads)`, which keeps what
+`\lastskip`, `\lastkern` and `\lastpenalty` may read: the join of each
+item's reading, zero where it is of another kind ([§ 424](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L8517)). Whether a character node is a ligature is
 a flag whose top is "not known".  `\lastnodetype` reads both (etex.ch), so it
-is exact where the font's ligature/kerning program was followed ([tex.web §§ 1034](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20114)–[1040](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20271), boundary characters included). Where the flag is not known it
+is exact where the font's ligature/kerning program was followed ([tex.web §§ 1034](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20114)–[1040](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20271), boundary characters included). Where the flag is not known it
 is the interval 0 to 7, never glue, a kern or a penalty. Reading the tail
-inside a word does not end the word ([§ 1036](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20193)). A `\write` is a whatsit, or
-nothing after `\immediate` ([§ 1375](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L24937)), as are `\pdfstartlink`, `\pdfendlink`,
+inside a word does not end the word ([§ 1036](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20193)). A `\write` is a whatsit, or
+nothing after `\immediate` ([§ 1375](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L24937)), as are `\pdfstartlink`, `\pdfendlink`,
 `\pdfsave` and `\pdfrestore`.
 
 ### Boxes
@@ -182,31 +187,31 @@ The sizes come from the list, as `hpack` and `vpack` would compute them:
 
 - A character is its box from the font's TFM metrics: width, height, depth, plus the kerns and ligatures of its ligature/kerning program.
   A font without metrics widens the sizes.
-- `hpack` starts height and depth at zero ([tex.web § 649](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L12910)), and `vpack` starts the width at zero ([§ 668](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L13152)).
+- `hpack` starts height and depth at zero ([tex.web § 649](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L12910)), and `vpack` starts the width at zero ([§ 668](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L13152)).
   So these are clamped to at least zero. The other sizes may be negative, as in TeX.
-- `vpack` moves the depth past `\boxmaxdepth` into the height ([§ 668](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L13152)).
-  A `\vtop` takes its height from its first box ([§ 1087](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21078)), and a `\vcenter` is centred on the math axis ([§ 736](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L14454)).
-- Inline math made of plain characters is followed ([§§ 752](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L14748)–[755](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L14862), [1151](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21874)–[1155](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21946)).
+- `vpack` moves the depth past `\boxmaxdepth` into the height ([§ 668](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L13152)).
+  A `\vtop` takes its height from its first box ([§ 1087](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21078)), and a `\vcenter` is centred on the math axis ([§ 736](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L14454)).
+- Inline math made of plain characters is followed ([§§ 752](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L14748)–[755](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L14862), [1151](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21874)–[1155](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21946)).
   An ordinary character adds its box, its italic correction and its kern with the character before.
-  The formula adds two `\mathsurround` kerns ([§§ 1194](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22404)–[1196](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22455)).
-  A `\mathchardef` symbol is one atom, as a character is ([§ 1155](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21946)).
-  Relations, openings, closings and punctuation add the space their classes call for ([§§ 764](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L15038)–[766](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L15073)): `\thinmuskip`, `\medmuskip` or `\thickmuskip` at its natural width, in units of the math quad over 18 ([§§ 716](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L14093), [732](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L14391)).
-  A binary atom may turn ordinary ([§§ 728](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L14323)–[729](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L14348)), so its width is widened. An operator is shifted, so its whole size is.
-- `\unhbox` of a naturally packed hbox of boxes and rules alone adds their natural width ([§ 1110](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21332)).
+  The formula adds two `\mathsurround` kerns ([§§ 1194](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L22404)–[1196](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L22455)).
+  A `\mathchardef` symbol is one atom, as a character is ([§ 1155](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21946)).
+  Relations, openings, closings and punctuation add the space their classes call for ([§§ 764](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L15038)–[766](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L15073)): `\thinmuskip`, `\medmuskip` or `\thickmuskip` at its natural width, in units of the math quad over 18 ([§§ 716](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L14093), [732](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L14391)).
+  A binary atom may turn ordinary ([§§ 728](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L14323)–[729](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L14348)), so its width is widened. An operator is shifted, so its whole size is.
+- `\unhbox` of a naturally packed hbox of boxes and rules alone adds their natural width ([§ 1110](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21332)).
   The register also keeps how many there are, so the list's tail is known after it: `\unskip` then takes nothing.
-- `\unhbox` of any other hbox adds the natural width recorded when it was packed, whatever it was packed to: [§ 1110](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21332) moves the list with its glue unset.
+- `\unhbox` of any other hbox adds the natural width recorded when it was packed, whatever it was packed to: [§ 1110](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21332) moves the list with its glue unset.
   Its last item is kept, so an `\unskip` after it takes its glue away. tikz's `align` lines in an `\halign` stay exact.
-- Glue and kerns in inline math are no atoms ([§ 761](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L14984)). `\mskip` and `\mkern` are in math units, a math quad over 18 in text style ([§§ 716](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L14093)–[717](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L14117), [732](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L14391)).
-  The character before takes its italic correction ([§ 755](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L14862)). amsmath's `\dots` ends in `\,`, so its width stays known.
-- `\immediate\write`, `\openout` and `\closeout` leave the list as it was ([§ 1375](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L24937)).
-  Deferred, each is a whatsit at the list's end ([§ 1352](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L24702)).
-- A `\discretionary` adds its text without a break to the list. Its break texts do not count ([§§ 651](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L12946), [1119](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21419)–[1120](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21440)).
+- Glue and kerns in inline math are no atoms ([§ 761](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L14984)). `\mskip` and `\mkern` are in math units, a math quad over 18 in text style ([§§ 716](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L14093)–[717](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L14117), [732](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L14391)).
+  The character before takes its italic correction ([§ 755](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L14862)). amsmath's `\dots` ends in `\,`, so its width stays known.
+- `\immediate\write`, `\openout` and `\closeout` leave the list as it was ([§ 1375](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L24937)).
+  Deferred, each is a whatsit at the list's end ([§ 1352](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L24702)).
+- A `\discretionary` adds its text without a break to the list. Its break texts do not count ([§§ 651](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L12946), [1119](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21419)–[1120](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21440)).
   In inline math, `\lowercase`, `\openin`, `\closein` and `\pdffontexpand` add no atom, so loading a font in a formula keeps its size.
 - A box of a kind `satex` does not know has `Dim::ANY` for all three sizes.
 
 ### Paragraphs and line breaking
 
-A paragraph in a vertical box is line-broken as `line_break` does it ([tex.web §§ 813](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L17438)).
+A paragraph in a vertical box is line-broken as `line_break` does it ([tex.web §§ 813](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L17438)).
 `Para` in [`src/mode.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/mode.rs) holds the range of lines made so far and the vertical list they go onto.
 
 - Each line is a box of the line width ([§ 889](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/mode.rs)).
@@ -235,11 +240,11 @@ A paragraph in a vertical box is line-broken as `line_break` does it ([tex.web �
 - `\prevdepth` is tracked per vertical list ([§ 219](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/mode.rs)). A box starts with `ignore_depth` ([§ 1083](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/mode.rs)). The lines set it to the last line's depth.
 - `\parskip` goes onto the list before the paragraph when the list is not empty ([§ 1091](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/mode.rs)).
 
-Hyphenation follows [tex.web §§ 919](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L18072)–[965](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L18820) on the format's own data.
+Hyphenation follows [tex.web §§ 919](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L18072)–[965](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L18820) on the format's own data.
 `\patterns` and `\hyphenation` store their text per `\language`, letters lowercased by `\lccode` (src/hyph.rs).
 At a paragraph's end each word gets the gaps its patterns or exception mark, within `\lefthyphenmin` and `\righthyphenmin`.
 Whether the line breaker takes a gap is not followed, so each gap is a may-hyphen (`·` in the typeset view).
-A paragraph known to be one line gets none: a hyphen is set only at a line's end ([§ 902](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L17669)).
+A paragraph known to be one line gets none: a hyphen is set only at a line's end ([§ 902](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L17669)).
 An unknown language, pattern text or `\lccode` marks every gap of the word.
 
 The line parameters are read at `\par`. When they changed since a line was set, the lines are not followed and their sizes widen.
@@ -277,9 +282,9 @@ Each step down rules out more.
 Text of a class holds a token only if the class holds its kind (`TextClass::holds`).
 So a scan delimited by `}` finds none in text without `b`, a scan delimited by a space finds none without `_`, a `\futurelet` look-ahead or an `\ifx` against a letter cannot match without `l`, and nothing without `c` can be a control sequence or an active character.
 All unknown text comes from one constructor, `Machine::unknown_text`. It takes a class with a lower and upper length bound, or the texts the unknown text stands for, and yields typed text.
-The rest of typed text after a scan split it is typed text of the same class, perhaps empty, shorter by the delimiter. It may hold the delimiter again ([tex.web § 392](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L8022)).
+The rest of typed text after a scan split it is typed text of the same class, perhaps empty, shorter by the delimiter. It may hold the delimiter again ([tex.web § 392](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L8022)).
 Text of which nothing is known is the widest typed text: characters that are neither active nor braces.
-`\detokenize` and `\string` print typed text in its printed class (`TextClass::printed`, [tex.web § 464](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9142)): letters and braces become category 12, a control sequence its characters. `\string` prints only the first token, the rest keeps its class.
+`\detokenize` and `\string` print typed text in its printed class (`TextClass::printed`, [tex.web § 464](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9142)): letters and braces become category 12, a control sequence its characters. `\string` prints only the first token, the rest keeps its class.
 The untyped marker is left for texts that name more control sequences than typed text keeps. `--stats` counts it per call site.
 
 Typed digits do more. A later `\ifnum`, `\numexpr` or `\csname` reads their `Num` back, so the test is decided by the interval and the name is one of a bounded set.
@@ -316,7 +321,7 @@ Each stands for a fixed set of characters of category 12:
 | `UNKNOWN_DIGIT` | a digit `0` to `9` |
 | `UNKNOWN_NONZERO` | a digit `1` to `9` |
 
-`\the` and `\number` never print a leading zero ([tex.web §§ 103](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L2199), [104](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L2225)).
+`\the` and `\number` never print a leading zero ([tex.web §§ 103](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L2199), [104](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L2225)).
 `satex` keeps this in the integer digits it makes for an unknown number, marked with `LEAD_MARK` ([`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)).
 A number known to be at least 1 starts with `UNKNOWN_NONZERO`. One that may be negative starts with `UNKNOWN_CHAR`.
 Reading the first token of such digits splits the run into one path per case:
@@ -327,11 +332,16 @@ Reading the first token of such digits splits the run into one path per case:
 
 So a loop that strips digits one by one sees the integer part end after a `0`.
 
-`\romannumeral` of an unknown number gives typed text of class `o`, possibly empty: its letters are category 12, as [tex.web § 69](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L1663) prints them.
+`\romannumeral` of an unknown number gives typed text of class `o`, possibly empty: its letters are category 12, as [tex.web § 69](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L1663) prints them.
 A bounded number under `\number` gives typed digits with that bound.
 
-A dimension in an interval of one sign prints under `\the` as its sign, typed digits with the interval of its integer part, a point, at most five unknown digits and `pt` ([§ 103](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L2199)).
-A scan reads it back as an interval ([§§ 448](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L8829)–[458](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9009)): each unit is monotone in the integer part and the fraction, so the value lies between the values at their ends.
+A number whose digits are not all known but begin with a digit has no sign in them: it lies in 0 to 2^31-1 ([§ 445](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L8773) caps it there).
+The same holds for a name of several meanings, each a macro without parameters whose text is digits beginning so, or `\relax` (a "Missing number", 0).
+A one-of token is not read so: its texts may run on past it.
+A number whose last digit is known has that digit's parity, whatever digits come before it, so `\ifodd` decides it (radixes are even).
+
+A dimension in an interval of one sign prints under `\the` as its sign, typed digits with the interval of its integer part, a point, at most five unknown digits and `pt` ([§ 103](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L2199)).
+A scan reads it back as an interval ([§§ 448](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L8829)–[458](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9009)): each unit is monotone in the integer part and the fraction, so the value lies between the values at their ends.
 So `\the` keeps a bound through `\pgf@sys@tonumber` and pgfmath's `round`, `floor` and `int`.
 An interval that holds both signs still prints as unknown digits.
 
@@ -340,8 +350,8 @@ An interval that holds both signs still prints as unknown digits.
 Typed digits and number text may carry an upper bound on the number of tokens they hold (`LEN_MARK`, `text_len` in [`src/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/env.rs)).
 The bound is at most 20, a sign and 19 digits.
 
-- `\the` or `\number` of an unknown count gives at most 11 tokens: a sign and 10 digits ([tex.web § 65](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L1613)).
-- `\the` of an unknown dimension gives at most 14: a sign, 5 digits, a point, 5 places and `pt` ([§ 103](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L2199)).
+- `\the` or `\number` of an unknown count gives at most 11 tokens: a sign and 10 digits ([tex.web § 65](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L1613)).
+- `\the` of an unknown dimension gives at most 14: a sign, 5 digits, a point, 5 places and `pt` ([§ 103](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L2199)).
 - A count or dimension in an interval prints with the digits of its larger bound.
 - Reading one token of bounded text leaves a rest with a bound one smaller. A rest with bound 0 is no text at all.
 - A join of texts keeps the largest bound of their differing parts. A run of unknown tokens that collapses into one token sums their bounds.
@@ -350,21 +360,23 @@ A loop head counts the passes of a loop against `limits.widen_after` ([Configura
 A pass whose pending input holds strictly fewer tokens than the pass before is not counted (`input_bound`, `loop_bounds`).
 Such a loop ends by construction, so each of its passes stays exact. A loop that consumes `\the\count0` digit by digit is followed to its end, not widened.
 
-## `CatcodeTable::unknown`: unknown category as a lattice element
+## `CatcodeTable::unknown`: category sets as a lattice element
 
-`CatcodeTable` ([`src/tex.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/tex.rs)) ([tex.web § 232](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4811)) tracks, per character, a
-set `unknown` of characters whose `\catcode` was set to a number satex
-cannot interpret. This is not a missing table entry: `CatcodeTable::get`
-still returns a best-guess category (the last one known), but any caller
-that matters must first check `CatcodeTable::is_unknown`. The *unknown*
-state is itself a real element of the per-character lattice, one level
-above every concrete category code, not an absence of information that
-falls back to a default silently.
+`CatcodeTable` ([`src/tex.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/tex.rs)) ([tex.web § 232](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L4811)) maps each character
+whose category satex cannot pin to one to the set of categories it may
+have, one bit each (`unknown`). All 16 bits is the top. `CatcodeTable::get`
+still returns a best guess (the last one known), so any caller that
+matters asks `CatcodeTable::cats` or `CatcodeTable::is_unknown` first.
+
+- A join unions the two sets of every character the tables disagree on.
+- The save stack keeps the set beside the category, so a group end puts
+  the set back.
+- `\the\catcode` reads the set as a set of numbers.
 
 ## Files written in the run
 
 `satex` writes nothing to disk. It keeps what the run writes per file name, in `Outputs` ([`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)), as part of each path's state.
-A name without an extension gets `.tex` ([tex.web § 1374](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L24914)).
+A name without an extension gets `.tex` ([tex.web § 1374](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L24914)).
 A file the run wrote is in one of two states:
 
 - known text: `\immediate\openout` made it empty, and each `\immediate\write` to an open stream appended a line,
@@ -372,7 +384,7 @@ A file the run wrote is in one of two states:
 
 A file the run did not write is what is on disk, or absent.
 
-Reads look at the run's own files first ([tex.web § 537](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L10365)):
+Reads look at the run's own files first ([tex.web § 537](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L10365)):
 
 - `\input` and `\openin` of a file with known text read that text, even where no such file is on disk.
 - A file with unknown text that is not on disk is there to read, with text that is not known.
@@ -380,16 +392,25 @@ Reads look at the run's own files first ([tex.web § 537](https://github.com/TeX
 
 The `\openin` streams are a table of the lines each stream has left.
 A join of paths that differ in any stream leaves no stream known. `\ifeof` is then undecided.
-A stream number `satex` cannot pin down does the same.
+A stream number in an interval parts the path per stream it may name, numbers outside 0 to 15 being stream 0 ([§ 436](#known-limits)).
+On each path the register it was read from is narrowed to match, so a later `\closein` of it names the same stream.
+A stream number `satex` cannot pin down at all leaves no stream known.
+A file of unknown text leaves only its own stream unknown.
 
 ## Names from unknown text
 
 [`Wild`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)
 holds the families of names that definitions of partly unknown names may
-have made ([tex.web § 372](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7745)): each is the known text before and after the
-unknown part, as in `\csname MT@inh@\x\endcsname`. An undefined name of
-such a family may be defined. The join is the union. Past 64 patterns,
-they widen to what they share.
+have made ([tex.web § 372](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7745)): each is the known text before and after the
+unknown part, as in `\csname MT@inh@\x\endcsname`, and whether that part
+is digits alone. A `\csname` of a partly unknown name is such a write
+too: each undefined name it may spell may now be `\relax`, which
+`\ifcsname`, `\ifdefined` and `\ifx` see. An undefined name of such a family may be defined, as
+one of up to 8 meanings the family's writes gave, or any past them. A
+`\csname` of such a name is `\relax` or one of those meanings, a
+[meaning set](#meaning-sets-what-a-control-sequence-may-mean). The join is
+the union, meanings joined per pattern. Past 1024 patterns, they widen to
+what they share. A cache keeps the patterns, not their meanings.
 
 A name of wholly unknown text adds no family. The standing assumption
 (`unknown-name-defines-fresh`, an imprecision) is that it is a new name:
@@ -409,7 +430,7 @@ runs instead of running on.
   in its arguments. A call writes the names it is handed, so other names
   make another key.
 - **What a run records.** The first `limits.call_summary_after` runs (2 by default) of a key over unknown operands run the real body
-  ([tex.web § 389](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7938): the body replaces the call). Each run is recorded from
+  ([tex.web § 389](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7938): the body replaces the call). Each run is recorded from
   the call until the main loop reads below the call's input level. A run
   records the names it wrote, with what they hold then, and the names it
   read. A run over known operands is not recorded: what it wrote holds for
@@ -457,6 +478,13 @@ dropped, so both go on with the same counters.
   `budget-exhausted`.
 - **Paths:** a path parked on the line before a cut takes the same cut
   when it runs again, so forks cannot outrun the guard.
+- **Built names:** a `\csname` whose scan left several names parts one
+  path per name. Once that site has parted `limits.meaning_set` times on
+  the line, the names stay one name of their shared family, on one path
+  (each replay of the command reruns the scan's own forks, so per-name
+  parts multiply). A one-of token read into the name parts at that
+  `\csname`, not where its texts were joined: reads of one value by
+  several `\csname`s are no passes of one loop.
 - **Bound:** the run spends at most `3 × limits.line_steps` steps per line it
   reads (a source line, paired with the data line `\read` took last), plus a
   constant.
@@ -467,8 +495,13 @@ dropped, so both go on with the same counters.
 - **Loop entries:** a loop summary unwinds to where its loop was entered.
   A later meet of the same head counts as a pass only while every list
   below the entry's own is unread since. Once one was read on, the entry's
-  call ended ([tex.web § 325](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7015)), and the meet is a new entry, however deep. So a summary never
+  call ended ([tex.web § 325](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7015)), and the meet is a new entry, however deep. So a summary never
   closes groups or drops frames that its caller owns.
+- **Widened pass:** a summary first runs the loop's body once more from
+  the widened state, and only the next meet cuts. A pass writes names
+  the widening opens (`\csname a\the\n\endcsname` with `\n` unknown)
+  only when it runs, so they reach the continuation as a family. A summary
+  taken while a scan is in flight cuts at once.
 - **Endless loops:** a call that meets a state it was in before
   (`limits.cycle_after`) ends its path only while another path waits to
   read on. A path no other path covers is summarized and goes on, since
@@ -478,10 +511,12 @@ dropped, so both go on with the same counters.
   what their text opened, by identity. Each list records the conditionals,
   the innermost group and the assignment count at its push. The cut closes
   the conditionals and groups opened since the lowest dropped list, as
-  `\endgroup` would ([tex.web §§ 281](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L6035)–[283](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L6070)). A value a group puts back that
+  `\endgroup` would ([tex.web §§ 281](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L6035)–[283](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L6070)), when the dropped text closes as
+  many. A value a group puts back that
   was written since that push is widened, since the dropped text would
-  have run on. Closers are never counted in the dropped text: a macro such
-  as calc's `\calc@close` closes groups too.
+  have run on. Closers in the dropped text are counted through macros
+  without parameters (`\close` for `\endgroup`). Where the dropped text closes
+  fewer, the levels it leaves open become [stacks as intervals](#stacks-as-intervals).
 - **Covered passes:** a pass of a summarized loop ends only while a waiting
   path went on past that loop's summary. Other waiting arms are not its
   continuation: without such a path the pass is cut and goes on.
@@ -509,7 +544,7 @@ they join at once ([joins at `\fi`](#joins-at-fi)). Past two per place they are 
 their join, the token lists into one token that stands for either list. Paths
 are compared by what is left to read, not by which copy of a token list holds
 it. The path furthest behind runs next, so paths that can meet do. Paths that
-never meet run on to the end separately. No path is dropped. Where they stand
+never meet run on to the end separately. No path is dropped: the run's end state is the join of every path that ended as the last one did, by `\end` or off the end of its input, whatever groups and conditionals each left open. Where they stand
 in different groups, their save stacks are joined entry by entry.
 
 A loop whose exit is undecided (`\loop … \ifhbox … \repeat`, or pgfmath's
@@ -523,12 +558,26 @@ So every loop terminates within `widen_after + 2` rounds, win or lose, and a
 run that still grows past that says so (`undecided-loop`).
 A head whose widened state still grows (its input keeps changing, as a
 recursion's frames do) is summarized after `2 × widen_after` widened rounds.
+A forced head that matches no head kept apart for its code joins every head at its place: a meaning that grows each pass (`\edef\t{\t x}`) then widens to its hull and the loop ends at a fixpoint, not a summary.
 A path's place leaves out the lines it read with `\read`: the exits of a loop that reads one line per pass stand at one place, and their streams join as ranges.
+
+### Stacks as intervals
+
+A group or conditional frame may stand for any number of copies of itself, none too (`many`).
+A loop that opens a `\begingroup` or leaves an `\ifnum` open per pass keeps its places but not its stacks, so its passes never meet.
+Once its passes are forced, a head and the pass that differ only in more frames of one kind above where their stacks part widen to that part plus one `many` frame: `[G]` and `[G, G]` become `[G, G*]`, and `[G, G*, G]` collapses into `[G, G*]`, so the passes meet and join.
+Paths between two lines of the document's own text that stand in different groups join the same way. In a package `analysis.assume_packages_close_groups` still closes the extra groups.
+A loop summary whose dropped text leaves frames open makes them one `many` frame each, when they are of one kind.
+Only plain groups (no box or alignment group), with the same `\aftergroup` tokens, opened since the paths parted, are widened.
+`\currentgrouplevel` and `\currentiflevel` read `[frames not many, 2^31 - 1]` while a `many` frame is open.
+A closer (`}`, `\endgroup`, `\fi`, `\else`, `\or`) that meets a `many` frame on top parts two paths: one where a copy closes and the frame stays, one where there are none and the closer acts on the frame below.
+A copy that closes puts back what any copy may have saved, so the names saved in the frame are widened. When no more paths may part, the frame below joins it if alike, so one path covers both.
+The stacks stay bounded: a `many` frame absorbs every copy pushed on it at a widening.
 
 ### Joins at `\fi`
 
 Both arms of an undecided conditional that reach the same `\fi` go on as one path from there.
-The conditional is known by its `\if…` and the depth of the conditional stack below it ([tex.web §§ 489](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9601), [498](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9711)), so nested and recursive conditionals stay apart.
+The conditional is known by its `\if…` and the depth of the conditional stack below it ([tex.web §§ 489](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9601), [498](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9711)), so nested and recursive conditionals stay apart.
 Each path keeps the conditional it closed last (`fi_mark` in [`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)).
 Two paths at one place that closed the same one join whatever else tells them apart ([`src/machine/explore.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine/explore.rs), `partner`).
 The join is the general one above. Data becomes an interval or a set. A macro the arms define differently is a meaning set of both bodies. A macro only one arm defines may be undefined or that body, so a later `\ifdefined` takes both arms. Registers, category codes, `\let` and `\chardef` join the same way.
@@ -596,7 +645,7 @@ never make a result coarser: they only stop a run, and the run says so. Full des
 
 | setting | default | what it bounds |
 | --- | --- | --- |
-| [`limits.choices`](Configuration#what-a-run-may-use) | 8 | Undecided choices one command may make on one path.  Past them a conditional follows only its first arm, reported as an `unsupported` gap. |
+| [`limits.choices`](Configuration#what-a-run-may-use) | 8 | Undecided choices one command may make on one path.  Past them a conditional is taken as unknown text, reported as an `assumption`. |
 | [`limits.site_forks`](Configuration#what-a-run-may-use) | 4096 | Undecided choices one site (a conditional, a name of several meanings) may make, over all paths and replays, while the run reads one source line. Past them the expansion above that line is cut as `line_steps` cuts it (`site-forks-cut`): what it assigned is unknown, and the line reads on after an unknown token. Many paths through one place say little the join of a few did not. 0 turns it off. |
 | [`limits.paths`](Configuration#what-a-run-may-use) | 16 | Paths one drive keeps waiting before the two furthest back at one source position are cut to the input levels they share and joined. |
 | [`limits.meaning_splits`](Configuration#what-a-run-may-use) | 4 | Choices one command may have made on one path for a name that a join left with one of several meanings to still split the run into a path per meaning; past them, and with 0 everywhere, it is read as a name of unknown meaning. |
@@ -624,7 +673,7 @@ so it must be sound for *every* register that index could have named
   is joined with the written value.
 - Otherwise every register of that kind is weakened: registers already seen
   are joined with the value, and any register not yet seen can no longer be
-  assumed to hold its [tex.web § 232](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4811) zero default. A further unseen-register
+  assumed to hold its [tex.web § 232](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L4811) zero default. A further unseen-register
   read (`unseen_register`) then answers with the whole range of the kind
   (`register_top`) instead of zero.
 
@@ -634,9 +683,14 @@ just the registers `satex` happens to already have slots for.
 
 ## Code tables behind an unknown character
 
-A `\catcode`, `\lccode`, `\uccode`, `\sfcode` or `\mathcode` write
-through a character number `satex` cannot pin down ([tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L23040)) leaves
-each entry it may name at {old, new}.
+A `\catcode`, `\lccode`, `\uccode`, `\sfcode`, `\mathcode` or `\delcode`
+write through a character number `satex` cannot pin down ([tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L23040))
+leaves each entry it may name at {old, new}. That holds for every
+character, the structural ones (`\ { } % # $ & ^ _`, space, end-of-line)
+included. No assumption narrows it.
+
+- A few characters: each one's category set (or code) is joined with the
+  new one. One character known to be the target takes the new one.
 
 - Categories: `CatcodeTable` keeps the hull of the codes (`reach`) and a bit
   set of the categories written (`reach_cats`). A character in reach has its
@@ -645,17 +699,22 @@ each entry it may name at {old, new}.
 - Codes: the written values are joined in one slot per table
   (`reach_family`, `family_value`). An entry reads its own code joined with
   that slot.
-- A character that may be a letter or an other character is read as a
-  one-of of the two tokens, not as unknown text. Other category sets still
-  read as unknown text.
-
-**Named assumption `unknown-char-catcode-assumed`.** A write through an
-*unknown* character never changes the structural characters `\ { } % # $
-& ^ _`, space and end-of-line. Unknown means no interval, or one that runs
-past the last character code (a widened loop counter). A write through a
-bounded interval that covers them does widen them. Writes of the two kinds
-are kept apart (`reach_structural`, the `anyu` code slot), so a join keeps
-the assumption only where every write had it. It is reported once per site.
+- Reading splits paths lazily. Where the reader meets a character whose
+  set holds a structural category (up to `SPLIT_CATS` of them), the path
+  splits per category and reads it again. On each path the character has
+  that one category (`split_catcode`), saved like an assignment, so it is
+  split once per path. Past `limits.choices`, or for a larger set, the
+  character reads as unknown text.
+- A character that may only be a letter or an other character is read as
+  a one-of of the two tokens. Inside a control word it ends the name in
+  unknown text.
+- `\lowercase`/`\uppercase` of a character whose code is one of a few
+  splits the path per code where its category is structural, and is a
+  one-of of the characters otherwise. A code of many values gives unknown
+  text, or, for a structural category, `UNKNOWN_ANY` with that category,
+  a character that may equal any other.
+- `\the\lccode` and its siblings read the joined code as a set or an
+  interval.
 
 ## Known limits
 
@@ -665,7 +724,7 @@ it does not yet reach it. They are stated here rather than left implicit.
 ### Text `satex` could not follow, once it is executed
 
 A character whose category `satex` cannot pin down runs a meaning of its own
-only when its category is 13, and [tex.web §§ 232](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4811), [344](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7286) say that meaning is
+only when its category is 13, and [tex.web §§ 232](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L4811), [344](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7286) say that meaning is
 the one bound for that character. None of the other categories runs
 anything. So executing such a character joins in what that one binding could
 assign, and a character nothing binds leaves the run exactly as precise as it
@@ -688,7 +747,7 @@ What that does not cover:
 ### Expansion that is widened away
 
 A recursion that is stopped at its bound has its remaining rounds widened:
-the call reads as text that is not known ([tex.web § 366](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7636)), and what those
+the call reads as text that is not known ([tex.web § 366](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7636)), and what those
 rounds would have assigned is widened with it. Category codes, groups,
 files, streams and `\write` are not widened there. The sound answer for
 category codes is the top of that table, which leaves nothing tokenizable,
@@ -718,6 +777,6 @@ silently skipped or guessed at. This is what makes every finding `satex`
 reports trustworthy: it may miss nothing it should have flagged, though it
 may (and, at a stated limit, does) flag something a real run would not.
 
-Sources cited above: [tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4220) (modes), [§ 232](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L4811) (category codes), [§ 433](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L8617)
-(register codes), [§§ 448](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L8829)–[460](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L9056) (`scan_dimen`), [§ 649](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L12910) (`hpack`), [§ 668](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L13152)
-(`vpack`), [§ 1238](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L23134) (`\advance` wraps without an overflow check).
+Sources cited above: [tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L4220) (modes), [§ 232](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L4811) (category codes), [§ 433](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L8617)
+(register codes), [§§ 448](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L8829)–[460](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L9056) (`scan_dimen`), [§ 649](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L12910) (`hpack`), [§ 668](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L13152)
+(`vpack`), [§ 1238](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L23134) (`\advance` wraps without an overflow check).
