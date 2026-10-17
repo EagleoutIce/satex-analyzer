@@ -33,16 +33,20 @@ fn run() -> Result<(), String> {
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     say("1/4 the toolchain: Rust's wasm32-unknown-emscripten and the Emscripten SDK");
-    wasm_target()?;
+    let wasm = wasm_cargo()?;
+    let cargo = || {
+        let mut c = Command::new(wasm.get_program());
+        c.envs(wasm.get_envs().filter_map(|(k, v)| Some((k, v?)))).current_dir(root);
+        c
+    };
     let path = emscripten_path(root)?;
     // Both builds from one source and profile: a cache is keyed on the build that wrote it.
     say("2/4 satex for this machine");
-    step(Command::new("cargo").args(["build", "--release", "--bin", "satex"]).current_dir(root))?;
+    step(cargo().args(["build", "--release", "--bin", "satex"]))?;
     say("3/4 satex for the browser");
     step(
-        Command::new("cargo")
+        cargo()
             .args(["build", "--release", "--target", "wasm32-unknown-emscripten", "--bin", "satex"])
-            .current_dir(root)
             .env("PATH", &path),
     )?;
     say("4/4 the site: the pages, the TeX files and caches the playground loads");
@@ -176,16 +180,37 @@ fn free_port(port: &str) -> Result<String, String> {
         .ok_or_else(|| format!("no free port from {first} on"))
 }
 
-/// Rust's `wasm32-unknown-emscripten` standard library, added when missing.
-fn wasm_target() -> Result<(), String> {
-    let installed = Command::new("rustup")
-        .args(["target", "list", "--installed"])
-        .output()
-        .map_err(|e| format!("cannot run rustup: {e}"))?;
-    if String::from_utf8_lossy(&installed.stdout).lines().any(|t| t.trim() == "wasm32-unknown-emscripten") {
-        return Ok(());
+/// A `cargo` whose `rustc` has Rust's `wasm32-unknown-emscripten` standard
+/// library: the one on the `PATH`, or else rustup's default toolchain's,
+/// with the target added when missing (a distribution's `rustc` may come
+/// first on the `PATH`, and a toolchain's `cargo` calls the first `rustc`).
+fn wasm_cargo() -> Result<Command, String> {
+    // `cargo run` names the `cargo` it is and the `rustc` it was told to use.
+    let var = |name, default| std::env::var_os(name).unwrap_or_else(|| std::ffi::OsString::from(default));
+    let libdir = Command::new(var("RUSTC", "rustc"))
+        .args(["--print", "target-libdir", "--target", "wasm32-unknown-emscripten"])
+        .output();
+    if libdir.is_ok_and(|o| o.status.success() && Path::new(String::from_utf8_lossy(&o.stdout).trim()).is_dir()) {
+        return Ok(Command::new(var("CARGO", "cargo")));
     }
-    step(Command::new("rustup").args(["target", "add", "wasm32-unknown-emscripten"]))
+    let rustup = |args: &[&str]| -> Result<String, String> {
+        match Command::new("rustup").args(args).output() {
+            Ok(out) if out.status.success() => Ok(String::from_utf8_lossy(&out.stdout).trim().to_string()),
+            Ok(out) => Err(format!("rustup {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim())),
+            Err(e) => Err(format!("no rustc with the wasm32-unknown-emscripten target and no rustup: {e}")),
+        }
+    };
+    let active = rustup(&["show", "active-toolchain"])?;
+    let toolchain = active.split_whitespace().next().ok_or("rustup has no default toolchain")?.to_string();
+    if !rustup(&["target", "list", "--installed", "--toolchain", &toolchain])?
+        .lines()
+        .any(|t| t == "wasm32-unknown-emscripten")
+    {
+        step(Command::new("rustup").args(["target", "add", "wasm32-unknown-emscripten", "--toolchain", &toolchain]))?;
+    }
+    let mut cargo = Command::new(rustup(&["which", "cargo", "--toolchain", &toolchain])?);
+    cargo.env("RUSTC", rustup(&["which", "rustc", "--toolchain", &toolchain])?);
+    Ok(cargo)
 }
 
 /// The `PATH` with Emscripten's `emcc` on it: as it is, with `$EMSDK`'s
@@ -193,7 +218,7 @@ fn wasm_target() -> Result<(), String> {
 /// under `target/emsdk` the first time.
 fn emscripten_path(root: &Path) -> Result<String, String> {
     let path = std::env::var("PATH").unwrap_or_default();
-    if which::which("emcc").is_ok() {
+    if satex::paths::which("emcc").is_ok() {
         return Ok(path);
     }
     let emsdk = match std::env::var("EMSDK") {

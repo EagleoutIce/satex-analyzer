@@ -97,10 +97,21 @@ jobs:
 
       # scheme-basic is the smallest tree with a real LaTeX in it, and it
       # carries pdfTeX, XeTeX and LuaTeX: what the engine-dependent tests
-      # drive.  A bigger scheme buys packages, not platform coverage.
+      # drive.  A bigger scheme buys packages, not platform coverage; the
+      # few the modules below load are named one by one.
       - uses: TeX-Live/setup-texlive-action@v4
         with:
-          packages: scheme-basic
+          packages: |
+            scheme-basic
+            pgf
+            beamer
+            microtype
+            luacode
+            luatexbase
+            iftex
+            xcolor
+            translator
+            etoolbox
           cache: true
 
       - uses: Swatinem/rust-cache@v2
