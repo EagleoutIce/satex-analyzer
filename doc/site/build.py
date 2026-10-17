@@ -24,6 +24,30 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()[:12]
 
 
+# How many satex runs go at once: each takes a core and up to a few GB.
+JOBS = max(1, min(8, (os.cpu_count() or 2) // 2))
+# What `satex query files` listed, by what it depends on: the document, the
+# flags, the project config and the installation (its ls-R files). A listing
+# does not depend on the satex build, so a rebuild reuses it; --fresh drops it.
+LISTINGS = {}
+
+
+def installation_stamp():
+    lsr = run("kpsewhich", "--all", "ls-R").split()
+    return ";".join(f"{p}:{os.stat(p).st_mtime_ns}" for p in sorted(lsr))
+
+
+def files_read(satex, flags, doc, cwd, env, config=b""):
+    """The paths `satex query files` lists for `doc`, reused while nothing it depends on changed."""
+    key = digest(json.dumps([flags, doc.read_bytes().decode(errors="replace"), config.decode(errors="replace"),
+                             LISTINGS.get("@stamp", "")]).encode())
+    if key not in LISTINGS:
+        done = subprocess.run([str(satex), *flags, "query", "files", "-f", str(doc), "--format", "json"],
+                              cwd=cwd, env=env, capture_output=True, text=True)
+        LISTINGS[key] = [entry["path"] for entry in json.loads(done.stdout or "[]")]
+    return LISTINGS[key]
+
+
 def emit(out, name, data):
     """Writes `data` under a content-addressed name, so it can be cached forever."""
     stem, ext = name.split(".", 1)
@@ -194,13 +218,13 @@ def bundle(satex, work):
     for d in (tree, project):
         shutil.rmtree(d, ignore_errors=True)
     env = dict(os.environ, SATEX_CACHE=str(work / "cache-install"))
-    read = {}
-    for kernel, _, flags in KERNELS:
-        read[kernel] = set()
-        for doc in docs:
-            listing = run(str(satex), *flags, "query", "files", "-f", str(doc), "--format", "json", env=env)
-            for entry in json.loads(listing):
-                path = Path(entry["path"]) if Path(entry["path"]).is_absolute() else ROOT / entry["path"]
+    read = {kernel: set() for kernel, _, _ in KERNELS}
+    jobs = [(kernel, flags, doc) for kernel, _, flags in KERNELS for doc in docs]
+    with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
+        listed = pool.map(lambda j: files_read(satex, j[1], j[2], ROOT, env), jobs)
+        for (kernel, _, _), paths in zip(jobs, listed):
+            for entry in paths:
+                path = Path(entry) if Path(entry).is_absolute() else ROOT / entry
                 if path.resolve().is_relative_to(dist):
                     read[kernel].add(path.resolve())
     for path in set().union(*read.values()):
@@ -216,8 +240,9 @@ def bundle(satex, work):
     for i, (kernel, _, flags) in enumerate(KERNELS):
         cache = work / f"cache-{kernel}"
         env = dict(os.environ, SATEX_CACHE=str(cache))
-        for name in names:
-            subprocess.run([str(satex), *flags, "lint", "-f", name], cwd=project, env=env, capture_output=True, check=False)
+        with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
+            list(pool.map(lambda name: subprocess.run([str(satex), *flags, "lint", "-f", name], cwd=project, env=env,
+                                                      capture_output=True, check=False), names))
         archive = work / f"satex-cache-{kernel}.bin"
         run(str(satex), "cache", "export", str(archive), env=env)
         own = sorted(read[kernel]) if i == 0 else sorted(read[kernel] - shared)
@@ -260,10 +285,8 @@ def packages(satex, work, have):
         doc.write_text(head + "\n\\begin{document}\nText.\n\\end{document}\n")
         seen, files = set(), {}
         for (_, _, flags), loaded in zip(KERNELS, have):
-            done = subprocess.run([str(satex), *flags, "query", "files", "-f", doc.name, "--format", "json"],
-                                  cwd=probes, env=env, capture_output=True, text=True)
-            for entry in json.loads(done.stdout or "[]"):
-                path = (probes / entry["path"]).resolve()
+            for entry in files_read(satex, flags, doc, probes, env):
+                path = (probes / entry).resolve()
                 if not path.is_relative_to(dist):
                     continue
                 seen.add(path.name)
@@ -275,7 +298,7 @@ def packages(satex, work, have):
         return name, {path: files[path].read_bytes() for path in sorted(files)}
 
     found = {}
-    with concurrent.futures.ThreadPoolExecutor(max(1, min(4, (os.cpu_count() or 2) // 2))) as pool:
+    with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
         for name, files in pool.map(probe, package_names()):
             if files is None:
                 print(f"playground: no {name} in this installation, not offered", file=sys.stderr)
@@ -461,11 +484,19 @@ def main():
     ap.add_argument("--work", type=Path, help="scratch directory (default: OUT/../site-work)")
     ap.add_argument("--precompress", action="store_true",
                     help="write a .gz beside each compressible file, for a server that serves those as GitHub Pages compresses")
+    ap.add_argument("--fresh", action="store_true", help="list every file read anew instead of reusing WORK/listings.json")
     args = ap.parse_args()
     out, work = args.out.resolve(), (args.work or args.out.resolve().parent / "site-work").resolve()
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
     work.mkdir(parents=True, exist_ok=True)
+    listings = work / "listings.json"
+    stamp = installation_stamp()
+    if listings.exists() and not args.fresh:
+        LISTINGS.update(json.loads(listings.read_text()))
+    if LISTINGS.get("@stamp") != stamp:
+        LISTINGS.clear()
+        LISTINGS["@stamp"] = stamp
 
     cargo = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]
     homepage, repo = cargo["homepage"].rstrip("/") + "/", cargo["repository"].rstrip("/")
@@ -502,6 +533,7 @@ def main():
         page(dst, title_of(text), body)
 
     manifest, shown = playground(args.satex.resolve(), args.wasm.resolve(), work, out)
+    listings.write_text(json.dumps(LISTINGS))
     manifest["worker"] = (SITE / "worker.js").read_text()
     readme = (ROOT / "README.md").read_text()
     md = lambda text: rewrite(markdown(text), "README.md", table, homepage, repo, out, "")
