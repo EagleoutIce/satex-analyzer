@@ -730,7 +730,7 @@ fn undefined_reference(report: &mut Report) {
 
 fn duplicate_label(report: &mut Report) {
     let first = report.index().labels();
-    let repeats: Vec<(Span, Option<String>, String, Span)> = report
+    let repeats: Vec<(Span, String, Span)> = report
         .analysis
         .facts
         .occurrences
@@ -741,29 +741,27 @@ fn duplicate_label(report: &mut Report) {
         .filter(|o| o.detail.as_deref().is_none_or(|head| matches!(head, "newlabel" | "zref@newlabel")))
         .filter_map(|o| {
             let at = report.site(first.get(o.key.as_str())?).0;
-            let (span, via) = report.site(o);
-            (at != span).then(|| (span, via, o.key.clone(), at))
+            let span = report.site(o).0;
+            (at != span).then(|| (span, o.key.clone(), at))
         })
         .collect();
     // One finding per site: a call that writes several labels (a macro's
     // `\label{nb:#1}` and `\label{cell:#1-a}`) names each repeated one.
-    let mut sites: Vec<(Span, Option<String>, Vec<(String, Span)>)> = Vec::new();
-    for (span, via, key, at) in repeats {
+    let mut sites: Vec<(Span, Vec<(String, Span)>)> = Vec::new();
+    for (span, key, at) in repeats {
         match sites.iter_mut().find(|s| s.0 == span) {
-            Some(site) if !site.2.iter().any(|(k, _)| *k == key) => site.2.push((key, at)),
+            Some(site) if !site.1.iter().any(|(k, _)| *k == key) => site.1.push((key, at)),
             Some(_) => {}
-            None => sites.push((span, via, vec![(key, at)])),
+            None => sites.push((span, vec![(key, at)])),
         }
     }
-    for (span, via, labels) in sites {
-        let each: Vec<String> = labels
-            .iter()
-            .map(|(key, at)| format!("label `{key}` is already defined at {}", report.place(*at)))
-            .collect();
+    for (span, labels) in sites {
+        let each: Vec<String> =
+            labels.iter().map(|(key, at)| format!("`{key}` is already defined at {}", report.place(*at))).collect();
         report.add(
             span,
             &labels[0].0,
-            format!("{}{}", each.join("; "), via.unwrap_or_default()),
+            format!("label {}", each.join("; ")),
             Some("rename one of the two labels".into()),
         );
     }

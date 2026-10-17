@@ -9,6 +9,8 @@ load:  # what to follow from the document
   inputs: true  # \input and \include
   format: true  # the installation's latex.ltx
   skip: []  # packages to leave unread
+  expect: []  # classes and packages a package or class file expects loaded before it (a beamer theme: [beamer])
+  expect_detect: true  # find them from what the packages on disk define, and say so
 search_paths: []  # searched before the installation
 paths:  # kpathsea variables' fallback list: tried after the
                           # environment and the project's latexmkrc/Makefile
@@ -24,6 +26,9 @@ project:
   frozen: []  # globs of files read and analyzed, but with no findings and no fixes inside; relative to this file
   freeze_other_repositories: true  # files of another git repository (a submodule, a nested clone) count as frozen too
   ignore_other_configs: false  # true: satex.yaml files above this one and the global one are not read
+conventions:  # how TeX is usually written, where the text alone does not say
+  internal: ['@', '^__', '_.*:']  # regexes marking internal names (hidden from listings and completion, private to lints)
+  definers: [def, gdef, edef, xdef, let, chardef, mathchardef, countdef, dimendef, skipdef, toksdef, newif, newcount, newdimen, newskip, newtoks, newbox, newlength, newcommand, renewcommand, providecommand, DeclareRobustCommand, newrobustcmd, renewrobustcmd, providerobustcmd, NewDocumentCommand, RenewDocumentCommand, ProvideDocumentCommand, DeclareDocumentCommand, NewExpandableDocumentCommand]  # commands whose next name is the one they define, for reading what packages on disk define
 lints:
   unused-definition:
     report_public: true  # also flag a public name
@@ -32,13 +37,20 @@ lints:
   wrong-dash:  # how many hyphens belong in each context
     letters: [1, 3]  # chktex HyphDash: a hyphen or an em-dash
     digits: [2]  # chktex NumDash: an en-dash spans a range
-    words: [3]  # chktex WordDash: an em-dash breaks a sentence
+    words: [3, 2]  # chktex WordDash: an em-dash breaks a sentence, or Bringhurst's spaced en-dash
     except: [Birch--Swinnerton-Dyer]  # chktex DashExcpt: spellings to leave alone
   user-pattern:  # chktex UserWarn and UserWarnRegex
     patterns: []  # literal strings to report
     regexes: []  # regular expressions to report
   comment-marker:
     markers: [TODO, FIXME, XXX, HACK]  # markers in a comment worth a finding
+  build-cost:  # when preamble-cost and includeonly-available suggest saving a part of the build
+    tokens: 2000000  # a part below this reads in well under a second
+    share: 0.5  # the share of the run's tokens the part must take
+  microtype-available:
+    characters: 2500  # justified paragraph text the body must set, about a page
+  ellipsis-dots:
+    center: '=+-<>'  # chktex CenterDots: an ellipsis between these wants \cdots
 # profile: package          # forces one instead of detecting it from the input
 
 # Sensible defaults per kind of input, chosen automatically by the input's
@@ -85,6 +97,9 @@ cache:
                             # empty, whatever ordinary runs already found
                             # expensive to interpret (measured, not a hand-picked list)
     packages: []
+    common: [microtype, cleveref, zref-clever, savetrees, tabularray, xurl, glossaries,
+      enumitem, nowidow, silence, adjustbox, pdfpages, pgfplotstable, memoize,
+      classicthesis]  # prepared first while packages is empty, where installed
     engines: []  # empty: the engine in effect
     class: article  # the class they are loaded after
     auto: true  # every run stores the packages it reads
@@ -108,7 +123,9 @@ analysis:
   join_paths_at:  # where every path still apart is joined, reported as paths-joined-at
     - command: \document  # matched by meaning, however the run reaches it
     # - hook: begindocument  # an lthooks hook, when it is used
-  assume_compiles: true  # drop a path that raises a certain TeX error (reported as an assumption)
+  assume_compiles: true  # assumption: drop a path that raises a certain TeX error in library code; the document's own errors are kept
+  assume_packages_close_groups: true  # assumption: a package closes the groups it opens
+  assume_environment: true  # assumption: the build runs in this environment (Lua's os.getenv reads it)
 
 # shell_escape: restricted # none | restricted | full; unset, what the build files ask for
 # TEMPORARY effect summaries: satex does not follow these macros' internals.

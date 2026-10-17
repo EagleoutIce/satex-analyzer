@@ -273,25 +273,67 @@ fn an_undefined_name_in_math_sets_nothing() {
 }
 
 #[test]
-fn microtype_is_recommended_only_where_the_engine_supports_it() {
+fn microtype_is_recommended_only_for_justified_text_where_the_engine_supports_it() {
     if !installed() {
         return;
     }
-    let source = r"\documentclass{article}
-\begin{document}
-Text.
-\end{document}";
-    assert_eq!(findings(&analyze(source), "microtype-available").len(), 1);
-    let loaded = analyze(
-        r"\documentclass{article}
-\usepackage{microtype}
-\begin{document}
-Text.
-\end{document}",
-    );
-    assert!(findings(&loaded, "microtype-available").is_empty());
+    let prose = "Running text that fills the line. ".repeat(150);
+    let doc = |preamble: &str, body: &str| {
+        format!("\\documentclass{{article}}\n{preamble}\\begin{{document}}\n{body}\n\\end{{document}}")
+    };
+    let source = doc("", &prose);
+    assert_eq!(findings(&analyze(&source), "microtype-available").len(), 1);
+    for quiet in [
+        doc("\\usepackage{microtype}\n", &prose),
+        doc("", "Text."),
+        doc("", &format!("\\raggedright\n{prose}")),
+        doc("", &format!("\\mbox{{{prose}}}")),
+    ] {
+        assert!(findings(&analyze(&quiet), "microtype-available").is_empty(), "{quiet}");
+    }
     let xetex = Config { engine: Some(satex::config::Engine::XeTeX), ..crate::support::config() };
-    assert!(findings(&Machine::analyze(source, None, &xetex), "microtype-available").is_empty());
+    assert!(findings(&Machine::analyze(&source, None, &xetex), "microtype-available").is_empty());
+}
+
+/// Macros that take about a million tokens per `\a`: a cost of known size.
+const COSTLY: &str = r"\def\e{\relax}\def\d{\e\e\e\e\e\e\e\e\e\e}\def\c{\d\d\d\d\d\d\d\d\d\d}
+\def\b{\c\c\c\c\c\c\c\c\c\c}\def\a{\b\b\b\b\b\b\b\b\b\b}";
+
+#[test]
+fn preamble_cost_speaks_only_for_a_preamble_that_is_most_of_a_costly_build() {
+    if !installed() {
+        return;
+    }
+    let calls = r"\a".repeat(200);
+    let doc = |preamble: &str, body: &str| {
+        format!("\\documentclass{{article}}\n{COSTLY}\n{preamble}\n\\begin{{document}}\n{body}\n\\end{{document}}")
+    };
+    assert_eq!(findings(&analyze(&doc(&calls, "x")), "preamble-cost").len(), 1);
+    for quiet in [doc("", "x"), doc(&calls, &format!("{calls}{calls}"))] {
+        assert!(findings(&analyze(&quiet), "preamble-cost").is_empty(), "{quiet}");
+    }
+}
+
+#[test]
+fn includeonly_is_suggested_for_costly_included_parts_built_whole() {
+    if !installed() {
+        return;
+    }
+    let calls = r"\a".repeat(200);
+    let parts = [("part-a.tex", calls.as_str()), ("part-b.tex", calls.as_str())];
+    let doc = |preamble: &str| {
+        format!(
+            "\\documentclass{{report}}\n{COSTLY}\n{preamble}\\begin{{document}}\n\\include{{part-a}}\n\\include{{part-b}}\n\\end{{document}}\n"
+        )
+    };
+    let whole = analyze_in("includeonly-whole", &doc(""), &parts);
+    assert_eq!(findings(&whole, "includeonly-available").len(), 1);
+    // A part's checkpoint in its own `.aux` file is no label.
+    assert!(findings(&whole, "unused-label").is_empty());
+    let only = analyze_in("includeonly-only", &doc("\\includeonly{part-a}\n"), &parts);
+    assert!(findings(&only, "includeonly-available").is_empty());
+    let cheap = [("part-a.tex", "A."), ("part-b.tex", "B.")];
+    assert!(findings(&analyze_in("includeonly-cheap", &doc(""), &cheap), "includeonly-available").is_empty());
 }
 
 #[test]

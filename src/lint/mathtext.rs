@@ -16,19 +16,20 @@ pub static RULES: &[Rule] = &[
     Rule {
         code: "math-shift-dollars",
         category: Category::Style,
-        severity: Severity::Warning,
-        summary: "math opened with `$` or `$$` where LaTeX spells it \\( or \\[",
+        severity: Severity::Info,
+        summary: "display math opened with `$$` where LaTeX spells it \\[",
         explanation: "\
-`$$ … $$` and `$ … $` are plain TeX's displays.  LaTeX spells them
-`\\[ … \\]` and `\\( … \\)`, which obey the `fleqn` and `leqno` class options
-and the class's `\\everydisplay` (source2e, ltmath.dtx).
+`$$ … $$` is plain TeX's display.  LaTeX spells it `\\[ … \\]`, which obeys
+the `fleqn` and `leqno` class options and the class's `\\everydisplay`
+(source2e, ltmath.dtx).  Inline `$ … $` sets the same as `\\( … \\)` and is
+left alone.
 
 Both spellings put the run in the same mode.  satex takes the first
 character set in math mode, lexes the source before it with TeX's own mouth,
 and reports the math shift characters standing there, so math an environment
 opened is left alone.
 
-Fix by writing `\\[ … \\]` and `\\( … \\)`.",
+Fix by writing `\\[ … \\]`.",
         references: &[
             Ref { source: Source::Chktex, at: "45" },
             Ref { source: Source::Chktex, at: "46" },
@@ -198,10 +199,6 @@ Fix by moving the punctuation to the other side of the delimiter.",
     },
 ];
 
-/// chktex's `CenterDots`: what an ellipsis stands between when `\cdots` is
-/// the one that belongs.
-const CENTER_DOTS: &str = "=+-<>";
-
 /// How many source tokens one file is lexed for.
 const LEXEMES: usize = 400_000;
 
@@ -365,16 +362,14 @@ fn math_shift_dollars(report: &mut Report) {
         });
         findings.push((span_at(region.first.file, at), display, want_open, want_close, edit));
     }
-    for (span, display, open, close, edit) in findings {
-        let (severity, typed, what) = match display {
-            true => (Severity::Warning, "$$ … $$", "display"),
-            false => (Severity::Info, "$ … $", "inline"),
-        };
+    // Inline `$ … $` is the spelling most LaTeX is written in, and sets the
+    // same as `\( … \)`: only `$$`, which ignores `fleqn` and `leqno`, is noted.
+    for (span, _, open, close, edit) in findings.into_iter().filter(|f| f.1) {
         report.add_fix_as(
-            severity,
+            Severity::Info,
             span,
-            what,
-            format!("{typed} is plain TeX's {what} math, where LaTeX spells it `{open} … {close}`"),
+            "display",
+            format!("$$ … $$ is plain TeX's display math, where LaTeX spells it `{open} … {close}`"),
             Fix::new(format!("write `{open} … {close}`"), Applicability::Safe, edit),
         );
     }
@@ -764,7 +759,7 @@ fn ellipsis_dots(report: &mut Report) {
         }
         let want = match view.math(i) {
             false => Some(plain),
-            true => centered.filter(|_| beside_operator(view, i)),
+            true => centered.filter(|_| beside_operator(view, i, &analysis.settings.lints.ellipsis_dots.center)),
         };
         findings.push((i..i + 3, want));
         i += 3;
@@ -797,9 +792,9 @@ fn spelled(view: &View, after: usize, command: &str) -> String {
 }
 
 /// Whether one of chktex's `CenterDots` characters stands beside the dots.
-fn beside_operator(view: &View, at: usize) -> bool {
+fn beside_operator(view: &View, at: usize, center: &str) -> bool {
     let sides = [view.before(at), view.after(at + 3)];
-    sides.into_iter().flatten().any(|(_, c)| CENTER_DOTS.contains(c))
+    sides.into_iter().flatten().any(|(_, c)| center.contains(c))
 }
 
 // chktex warning 29: `$\times$ may look prettier here.`
@@ -859,7 +854,8 @@ fn math_punctuation(report: &mut Report) {
         let last = region.end - 1;
         match region.mode {
             Modes::MATH => {
-                let inside = view.char_at(last).filter(|c| PUNCTUATION.contains(*c));
+                // A `!` in math is a factorial (`$n!$`), not punctuation.
+                let inside = view.char_at(last).filter(|c| *c != '!' && PUNCTUATION.contains(*c));
                 findings.extend(inside.map(|c| (last, c, false)));
             }
             Modes::DISPLAY_MATH => {
@@ -869,8 +865,20 @@ fn math_punctuation(report: &mut Report) {
             _ => {}
         }
     }
+    let sources = report.edits().sources;
     for (at, c, display) in findings {
         let Some(span) = view.span(at) else { continue };
+        // Inside, the mark has to be the author's, written before the
+        // closing `$` or `\)`: siunitx's `group-separator={,}` is not.
+        let written = || {
+            let text = sources.get(report.analysis.file_name(span.file))?;
+            let rest = text.body().get(text.offset(crate::lint::fix::Pos::new(span.line, span.col))?..)?;
+            let after = rest.strip_prefix(c)?;
+            Some(after.starts_with('$') || after.starts_with("\\)"))
+        };
+        if !display && written() != Some(true) {
+            continue;
+        }
         let (is, belongs) = match display {
             true => ("after the display", "inside it"),
             false => ("inside the formula", "after the closing delimiter"),

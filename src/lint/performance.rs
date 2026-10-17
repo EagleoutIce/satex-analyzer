@@ -107,7 +107,8 @@ Fix, if the package really is unused, by deleting its line.",
         summary: "what the preamble costs on every build",
         explanation: "\
 The packages the document asks for and the files read before
-`\\begin{document}`.
+`\\begin{document}`, reported when the preamble takes most of the tokens
+the build interprets and is no small one.
 
 A format holds the preamble already interpreted, so a build that starts from
 one skips all of it.  [mylatexformat](https://ctan.org/pkg/mylatexformat)
@@ -118,6 +119,23 @@ Fix by dumping the preamble into a format and starting every build from it.",
         references: &[Ref { source: Source::Companion, at: "formats" }],
         fixes: &[Applicability::Unsafe],
         run: preamble_cost,
+    },
+    Rule {
+        code: "includeonly-available",
+        category: Category::Performance,
+        severity: Severity::Info,
+        summary: "a document of several `\\include`d parts is built whole",
+        explanation: "\
+`\\includeonly` names the parts a build reads.  The others keep their page
+numbers and labels from their `.aux` files (source2e, ltfiles.dtx).  A draft
+build of one chapter then skips the rest.  The rule fires when the document
+`\\include`s at least two parts, no `\\includeonly` is in force, and the body
+is most of what the build interprets and no small one.
+
+Fix by listing the parts being written in `\\includeonly` while drafting.",
+        references: &[Ref { source: Source::Source2e, at: "ltfiles.dtx" }],
+        fixes: &[Applicability::Unsafe],
+        run: includeonly_available,
     },
 ];
 
@@ -151,32 +169,73 @@ fn unused_package(report: &mut Report) {
             files.entry(by).or_default().insert(file);
         }
     }
+    let of = |file: crate::tex::FileId| files.iter().filter(move |(_, f)| f.contains(&file)).map(|(p, _)| *p);
+    // A package's names: those the format did not have and whose meaning
+    // the run ends with is the one the package gave them, a scratch name it
+    // once set (`\@tempa`) not.
+    // A parameter TeX reads as it typesets (`\parskip`) left other than
+    // the format had it acts whatever the document does.
     let mut provided: BTreeMap<Sym, BTreeSet<Sym>> = BTreeMap::new();
-    for def in &analysis.facts.defs {
-        // The kernel's own bookkeeping for the load (`\ver@…`, `\opt@…`,
-        // hook code) is written in the kernel's files, not the package's.
-        if def.package.is_none_or(|p| !files.get(&p).is_some_and(|f| f.contains(&def.span.file))) {
+    let mut acts: BTreeSet<Sym> = BTreeSet::new();
+    for sym in analysis.env.bound() {
+        let Some(binding) = analysis.env.slot(sym) else { continue };
+        let Some(file) = binding.defs.last().and_then(|&n| analysis.graph.vertex(n)).map(|v| v.span.file) else {
             continue;
-        }
-        // What the kernel sets inside a group while the package loads
-        // (`\ProvidesPackage` writes its log line with `\protect` let to
-        // `\string`) is gone when the group closes: the package does not
-        // provide it.
-        if def.depth > 0 && !def.global {
-            continue;
-        }
-        if let Some(package) = def.package {
-            provided.entry(package).or_default().insert(def.name);
+        };
+        let format = analysis.kernel.as_ref().and_then(|k| k.slot(sym));
+        let setting = matches!(binding.meaning.prim(), Some(p) if p.is_parameter())
+            && format.is_none_or(|f| f.value != binding.value);
+        for package in of(file) {
+            if setting {
+                acts.insert(package);
+            } else if format.is_none() && analysis.env.is_defined(sym) {
+                provided.entry(package).or_default().insert(sym);
+            }
         }
     }
-    let used = report.index().expanded();
+    // Used is what the document's body expands, and what the text of a
+    // macro so expanded calls, through any number of macros: the path that
+    // would expand it may be one this run did not take. What
+    // `\begin{document}` and `\end{document}` run is the packages' own
+    // setting up and hooks.
+    let document =
+        |kind| analysis.facts.occurrences.iter().find(|o| o.kind == kind && o.key == "document").map(|o| o.span);
+    let (begin, end) =
+        (document(crate::builtins::OccKind::BeginEnvironment), document(crate::builtins::OccKind::EndEnvironment));
+    let body = |span: Span| {
+        crate::query::origin(analysis, span.file) == "document"
+            && match begin {
+                Some(b) if span.file == b.file => {
+                    (span.line, span.col) > (b.line, b.col + "\\begin{document}".len() as u32)
+                }
+                Some(_) => true,
+                None => false,
+            }
+            && end.is_none_or(|e| span.file != e.file || (span.line, span.col) < (e.line, e.col))
+    };
+    let graph = &analysis.calls;
+    let roots: crate::fixed::HashSet<Sym> =
+        analysis.facts.expansions.iter().filter(|e| body(e.span)).map(|e| e.name).collect();
+    let mut reached = vec![false; graph.nodes.len()];
+    let mut queue: Vec<usize> = (0..graph.nodes.len()).filter(|&i| roots.contains(&graph.nodes[i])).collect();
+    while let Some(i) = queue.pop() {
+        if std::mem::replace(&mut reached[i], true) {
+            continue;
+        }
+        queue.extend(graph.edges[i].iter().copied().filter(|&j| !reached[j]));
+    }
+    let used: crate::fixed::HashSet<Sym> =
+        roots.iter().copied().chain((0..graph.nodes.len()).filter(|&i| reached[i]).map(|i| graph.nodes[i])).collect();
     for load in &analysis.facts.loads {
-        if !load.kind.is_package() || load.status != LoadStatus::Read {
+        if !load.kind.is_package()
+            || load.status != LoadStatus::Read
+            || crate::query::origin(analysis, load.span.file) != "document"
+        {
             continue;
         }
         let Some(package) = analysis.interner.lookup(&load.name) else { continue };
         let Some(names) = provided.get(&package) else { continue };
-        if names.is_empty() || names.iter().any(|n| used.contains(*n)) {
+        if names.is_empty() || acts.contains(&package) || names.iter().any(|n| used.contains(n)) {
             continue;
         }
         let edits = report.edits().delete_load(load);
@@ -352,9 +411,16 @@ fn preamble_cost(report: &mut Report) {
     let analysis = report.analysis;
     let direct =
         analysis.facts.loads.iter().filter(|l| l.kind.is_package() && l.span.file == analysis.main_file).count();
-    let files = analysis.preamble_files.unwrap_or(analysis.files.len());
+    let (files, steps) = analysis.preamble_cost.unwrap_or((analysis.files.len(), analysis.steps));
+    // Only a preamble that is most of the build, and no small one, is worth a format.
+    if !analysis.settings.lints.build_cost.costly(steps, analysis.steps) {
+        return;
+    }
     let span = report.index().document_start().unwrap_or_default();
-    let message = format!("{direct} packages requested directly, {files} files read");
+    let message = format!(
+        "{direct} packages requested directly, {files} files read, {}% of the tokens the build takes",
+        steps * 100 / analysis.steps.max(1)
+    );
     // A format the build already starts from leaves nothing to suggest.
     if analysis.plugins.preload.is_some() {
         report.add(span, "", message, None);
@@ -376,5 +442,37 @@ fn preamble_cost(report: &mut Report) {
             Applicability::Unsafe,
             edits,
         ),
+    );
+}
+
+fn includeonly_available<'a>(report: &mut Report<'a>) {
+    let analysis = report.analysis;
+    let preamble = analysis.preamble_cost.map_or(0, |(_, steps)| steps);
+    let body = analysis.steps.saturating_sub(preamble);
+    // `\includeonly` switches `\if@partsw` on (ltfiles.dtx).
+    let only = analysis.interner.lookup("if@partsw").is_none_or(|sym| {
+        analysis.env.meaning(sym).prim() != Some(crate::builtins::Primitive::If(crate::builtins::Cond::False))
+    });
+    // An `\include`d part is read with an `.aux` file of its own (ltfiles.dtx).
+    let stem = |f: &'a str| std::path::Path::new(f).file_stem().and_then(|s| s.to_str());
+    let aux: BTreeSet<&str> =
+        analysis.facts.written_files.iter().filter(|f| f.ends_with(".aux")).filter_map(|f| stem(f)).collect();
+    let parts: Vec<&str> = analysis
+        .facts
+        .loads
+        .iter()
+        .filter(|l| l.span.file == analysis.main_file && stem(&l.name).is_some_and(|s| aux.contains(s)))
+        .map(|l| l.name.as_str())
+        .collect();
+    if only || parts.len() < 2 || !analysis.settings.lints.build_cost.costly(body, body + preamble) {
+        return;
+    }
+    let Some(span) = report.index().document_start() else { return };
+    let edits = report.edits().insert_before(span, &format!("\\includeonly{{{}}}", parts.join(",")));
+    report.add_fix(
+        span,
+        "",
+        format!("the build reads all {} \\include'd parts, and the body is most of its tokens", parts.len()),
+        Fix::new("while drafting, list only the parts being written in \\includeonly", Applicability::Unsafe, edits),
     );
 }

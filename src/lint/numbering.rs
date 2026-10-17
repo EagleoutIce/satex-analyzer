@@ -30,7 +30,9 @@ a label the run never found.  `\\eqref`, `\\pageref` and `(\\ref{x})` have no wo
 front and stay silent.  `Sections~\\ref{a} and~\\ref{b}` is one finding.
 
 Whether the document loaded cleveref is read from the run.  If it did, the
-fix writes `\\Cref{sec:x}`, or `\\cref` after a lowercase word.  If it did
+fix writes `\\Cref{sec:x}`, or `\\cref` after a lowercase word, and the rule
+speaks only where cleveref would set the very word written (`Sec.` stays
+where it sets `Section`).  If it did
 not, the finding asks to load it after hyperref and has no fix.
 
 Fix by writing `\\Cref{sec:x}` and loading cleveref.",
@@ -382,6 +384,16 @@ fn prefer_cleveref(report: &mut Report) {
         let at = Span { file: n.file, line: n.line, col: n.start as u32 + 1 };
         let labels = n.labels.join(",");
         let command = if n.word.chars().next().is_some_and(char::is_uppercase) { r"\Cref" } else { r"\cref" };
+        // The fix changes nothing on the page only where cleveref sets
+        // the very word written: `Fig.` stays when it would set `Figure`.
+        let form = &command[1..];
+        let tail = if n.labels.len() > 1 { "@plural" } else { "" };
+        let same = counters.get(n.labels[0].as_str()).is_some_and(|c| {
+            crate::lint::shared::macro_text(analysis, &format!("{form}@{c}@name{tail}")).is_some_and(|t| t == n.word)
+        });
+        if cleveref && !same {
+            continue;
+        }
         if cleveref {
             let edit = Edit {
                 path: n.path,

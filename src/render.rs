@@ -11,7 +11,8 @@ use crate::machine::Step;
 use crate::query::Record;
 
 const BOLD: Style = Style::new().bold();
-const DIM: Style = Style::new().dimmed();
+// Gray, which every terminal shows; SGR 2 (dim) some ignore.
+const DIM: Style = fg(AnsiColor::BrightBlack);
 const NAME: Style = fg(AnsiColor::Cyan);
 const ERROR: Style = fg(AnsiColor::Red).bold();
 const WARNING: Style = fg(AnsiColor::Yellow);
@@ -737,7 +738,7 @@ fn precision_line(records: &[&Record]) -> String {
     )
 }
 
-/// `satex lint`'s text output: findings grouped by severity, with build-cost
+/// `satex lint`'s text output: findings grouped by category, with build-cost
 /// observations and unresolved cases kept apart rather than mixed into one
 /// flat, truncated table.
 pub fn lint(records: &[Record], links: Links, group: bool) -> String {
@@ -751,25 +752,34 @@ pub fn lint(records: &[Record], links: Links, group: bool) -> String {
             _ => document.push(record),
         }
     }
-    // Most important first: by category (correctness before style), then
-    // grouped by rule, each rule's findings in source order.
-    let rank = |r: &Record| match r.get("category").map(plain).as_deref() {
-        Some("correctness") => 0,
-        Some("security") => 1,
+    // One section per category, most important first; inside one, errors,
+    // then warnings, then the minor notes, each rule's findings in source
+    // order.
+    let severity = |r: &Record| r.get("severity").map(plain).unwrap_or_default();
+    let weight = |r: &Record| match severity(r).as_str() {
+        "error" => 0,
+        "warning" => 1,
         _ => 2,
     };
-    document.sort_by_key(|r| (rank(r), r.get("code").map(plain).unwrap_or_default(), place_key(r)));
-    performance.sort_by_key(|r| place_key(r));
-
-    let severity = |r: &&Record| r.get("severity").map(plain).unwrap_or_default();
-    let errors: Vec<&Record> = document.iter().copied().filter(|r| severity(r) == "error").collect();
-    let warnings: Vec<&Record> = document.iter().copied().filter(|r| severity(r) == "warning").collect();
-    let suggestions: Vec<&Record> = document.iter().copied().filter(|r| severity(r) == "info").collect();
+    let key = |r: &&Record| (weight(r), r.get("code").map(plain).unwrap_or_default(), place_key(r));
+    document.sort_by_key(key);
+    performance.sort_by_key(key);
+    let count = |level: &str| document.iter().filter(|r| severity(r) == level).count();
+    let (errors, warnings) = (count("error"), count("warning"));
+    let suggestions = count("info");
 
     let (mut out, mut sources) = (String::new(), Sources::default());
-    findings_section(&mut out, &mut sources, "errors", &errors, links, group);
-    findings_section(&mut out, &mut sources, "warnings", &warnings, links, group);
-    findings_section(&mut out, &mut sources, "suggestions", &suggestions, links, group);
+    for category in ["correctness", "security", "style"] {
+        let these: Vec<&Record> =
+            document.iter().copied().filter(|r| r.get("category").map(plain).as_deref() == Some(category)).collect();
+        findings_section(&mut out, &mut sources, category, &these, links, group);
+    }
+    let other: Vec<&Record> = document
+        .iter()
+        .copied()
+        .filter(|r| !matches!(r.get("category").map(plain).as_deref(), Some("correctness" | "security" | "style")))
+        .collect();
+    findings_section(&mut out, &mut sources, "other", &other, links, group);
     findings_section(&mut out, &mut sources, "performance", &performance, links, group);
     if !precision.is_empty() {
         let _ = writeln!(out, "{}", precision_line(&precision));
@@ -780,9 +790,9 @@ pub fn lint(records: &[Record], links: Links, group: bool) -> String {
         "{}",
         label(&format!(
             "{}, {}, {}, {}, {}",
-            plural(errors.len(), "error"),
-            plural(warnings.len(), "warning"),
-            plural(suggestions.len(), "suggestion"),
+            plural(errors, "error"),
+            plural(warnings, "warning"),
+            plural(suggestions, "suggestion"),
             plural(performance.len(), "performance note"),
             plural(precision.len(), "precision note"),
         ))
@@ -1286,6 +1296,25 @@ pub fn github(records: &[Record]) -> String {
     out
 }
 
+/// Findings as TeX's own log reports them: a file frame `(./f.tex … )`,
+/// `! Package satex Error: …` with `l.⟨line⟩`, and `Package satex Warning:
+/// … on input line ⟨line⟩.` for the rest, which TeXstudio's log view reads.
+pub fn texlog(records: &[Record]) -> String {
+    let mut out = String::new();
+    for record in records {
+        let text = |key: &str| plain(record.get(key).unwrap_or(&Json::Null)).replace('\n', " ");
+        let line = record.get("line").and_then(Json::as_u64).unwrap_or(1);
+        let (path, code, message) = (text("path"), text("code"), text("message"));
+        // TeX opens a file as `(./name.tex`.
+        let path = if path.starts_with(['/', '.']) { path } else { format!("./{path}") };
+        let _ = match record.get("severity").and_then(Json::as_str) {
+            Some("error") => writeln!(out, "({path}\n! Package satex Error: {code}: {message}.\nl.{line} \n)"),
+            _ => writeln!(out, "({path}\nPackage satex Warning: {code}: {message} on input line {line}.\n)"),
+        };
+    }
+    out
+}
+
 pub fn sarif(records: &[Record], version: &str) -> String {
     let rules: Vec<serde_json::Value> = {
         let mut codes: Vec<String> = records.iter().map(|r| plain(r.get("code").unwrap_or(&Json::Null))).collect();
@@ -1690,7 +1719,7 @@ mod tests {
     }
 
     #[test]
-    fn lint_groups_by_severity_and_never_truncates() {
+    fn lint_groups_by_category_and_never_truncates() {
         let long_message = "x".repeat(200);
         let records = vec![
             finding_record("error", "correctness", "some-code", &long_message, Some("fix it")),
@@ -1700,16 +1729,31 @@ mod tests {
             finding_record("info", "precision", "analysis-imprecision", "widened", None),
         ];
         let out = lint(&records, Links(false), true);
-        assert!(out.contains("errors (1)"));
-        assert!(out.contains("warnings (1)"));
-        assert!(out.contains("suggestions (1)"));
+        assert!(out.contains("correctness (2)"));
+        assert!(out.contains("style (1)"));
         assert!(out.contains("performance (1)"));
+        // Errors before warnings, categories in their order.
+        let at = |code: &str| out.find(code).unwrap_or(usize::MAX);
+        assert!(at("some-code") < at("other-code") && at("other-code") < at("style-code"));
+        assert!(at("style-code") < at("perf-code"));
         assert!(out.contains("precision"));
         // wrapped, not cut: no ellipsis, and the tail of the long message
         // still shows up somewhere in the output.
         assert!(!out.contains('…'));
         assert!(out.contains(&long_message[long_message.len() - 10..]));
         assert!(out.contains("1 error, 1 warning, 1 suggestion, 1 performance note, 1 precision note"));
+    }
+
+    #[test]
+    fn texlog_reads_as_a_latex_log() {
+        let records = vec![
+            finding_record("error", "correctness", "e", "bad", None),
+            finding_record("info", "style", "s", "meh", None),
+        ];
+        assert_eq!(
+            texlog(&records),
+            "(./paper.tex\n! Package satex Error: e: bad.\nl.1 \n)\n(./paper.tex\nPackage satex Warning: s: meh on input line 1.\n)\n"
+        );
     }
 
     #[test]
