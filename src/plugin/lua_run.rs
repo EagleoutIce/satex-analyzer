@@ -413,7 +413,7 @@ fn after(text: &str, from: usize) -> String {
 
 /// The text of lines `from..=to` of a Lua file.
 fn lines(path: &str, from: usize, to: usize) -> Option<String> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = crate::overlay::read_to_string(path.as_ref()).ok()?;
     Some(text.lines().skip(from.saturating_sub(1)).take((to + 1).saturating_sub(from)).collect::<Vec<_>>().join("\n"))
 }
 
@@ -480,11 +480,11 @@ fn enter(
         let mut texts = vec![(text, stopped_at(&trace, "[\\directlua]"))];
         for file in stopped {
             let path = m.out.files.get(file as usize).map(|f| f.path.clone()).unwrap_or_default();
-            texts.push((std::fs::read_to_string(&path).ok(), stopped_at(&trace, &path)));
+            texts.push((crate::overlay::read_to_string(path.as_ref()).ok(), stopped_at(&trace, &path)));
         }
         // A function's definers may sit anywhere in its file.
         if let Some((path, from, to)) = origin
-            && let Ok(file) = std::fs::read_to_string(&path)
+            && let Ok(file) = crate::overlay::read_to_string(path.as_ref())
         {
             // From where the body stopped; on its first line, past the
             // `function` that starts it, not the call it is handed to.
@@ -1301,7 +1301,7 @@ fn read_file<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) 
         Ok(meta) if meta.len() <= MEMORY / 4 => {}
         _ => return unknown(lua),
     }
-    match std::fs::read(&path) {
+    match crate::overlay::read_bytes(path.as_ref()) {
         Ok(bytes) => ret(lua, lua.create_string(bytes)?),
         Err(_) => unknown(lua),
     }
@@ -1315,7 +1315,7 @@ fn compile(run: &RefCell<Run>, lua: &State, module: Module) -> R<Option<(mlua::F
         None => run.span,
     };
     let Some((path, file)) = super::lua::load(run.m, &module, span) else { return Ok(None) };
-    let Ok(source) = std::fs::read_to_string(&path) else { return unknown(lua) };
+    let Ok(source) = crate::overlay::read_to_string(path.as_ref()) else { return unknown(lua) };
     let name = path.display().to_string();
     let f = lua.load(source).set_name(format!("@{name}")).set_mode(ChunkMode::Text).into_function()?;
     Ok(Some((f, name, file)))

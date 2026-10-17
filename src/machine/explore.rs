@@ -33,6 +33,7 @@ pub(super) struct Choice {
 }
 
 /// A path parked between two commands.
+#[derive(Clone)]
 pub(super) struct Config {
     state: PathState,
     env: PathEnv,
@@ -58,7 +59,7 @@ struct Key {
 
 /// What a join of paths at one place loses: which mode, switches and
 /// waiting tokens go together (trace partitioning).
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 struct Tag {
     mode: crate::mode::Modes,
     catcodes: CatcodeTable,
@@ -121,6 +122,7 @@ impl Growth {
 }
 
 /// A command that branched: the join of every state a path began it in.
+#[derive(Clone)]
 struct Head {
     span: Span,
     progress: u64,
@@ -132,6 +134,7 @@ struct Head {
 
 /// Where a loop was entered: its input levels, conditionals and groups
 /// then.
+#[derive(Clone)]
 struct Loop {
     id: LoopId,
     depth: (usize, usize, usize),
@@ -189,8 +192,8 @@ fn level(frame: &Frame) -> Option<Level> {
 }
 
 /// The paths of one [`Machine::drive`].
-#[derive(Default)]
-struct Paths {
+#[derive(Clone, Default)]
+pub(super) struct Paths {
     /// Where they parted: their bindings are kept relative to it.
     fork: Option<Fork>,
     parked: Vec<Config>,
@@ -227,6 +230,7 @@ struct Paths {
 
 /// A dropped path: its error, where, and the diagnostics' counts the
 /// command made (rolled back with it, given back when it runs on).
+#[derive(Clone)]
 struct Shelved {
     config: Config,
     error: String,
@@ -247,6 +251,37 @@ enum Next {
     Many(Vec<Config>),
     /// None: every arm was absent, or the state is one a head holds already.
     None,
+}
+
+/// What a [`Machine::drive`] holds besides the machine: the state of the
+/// command it runs within, and its paths. A checkpoint keeps it.
+#[derive(Clone)]
+pub(super) struct Drive {
+    outer: (Vec<usize>, Vec<Choice>, usize, bool),
+    outer_unit: (Unit, bool),
+    nested: bool,
+    paths: Paths,
+    keep_errors: bool,
+    mark: u64,
+    commands: u64,
+}
+
+impl Drive {
+    /// Every input stack its paths hold, and whether it is a path's that
+    /// may still run, not a state kept for joins: a resumed run reads the
+    /// files as they are now on each.
+    pub(super) fn inputs(&mut self) -> impl Iterator<Item = (&mut super::Input, bool)> {
+        let p = &mut self.paths;
+        let live = (p.parked.iter_mut().chain(&mut p.done).chain(&mut p.arrived))
+            .chain(p.job_ends.iter_mut().chain(&mut p.input_ends))
+            .chain(p.shelved.iter_mut().map(|s| &mut s.config))
+            .map(|c| (c, true));
+        let kept = (p.heads.iter_mut().map(|h| &mut h.config))
+            .chain(p.loops.iter_mut().chain(&mut p.stopped).map(|l| &mut l.joined))
+            .chain(p.cut.iter_mut().map(|c| &mut c.1))
+            .map(|c| (c, false));
+        live.chain(kept).map(|(c, live)| (&mut c.state.input, live))
+    }
 }
 
 impl Machine<'_> {
@@ -304,17 +339,36 @@ impl Machine<'_> {
     /// Run commands on every path until `done` holds for all of them or
     /// they end.  Paths that reach `done` are joined and go on as one.
     pub(super) fn drive(&mut self, unit: Unit, done: impl Fn(&Self) -> bool) {
-        let mut outer =
-            (std::mem::take(&mut self.script), std::mem::take(&mut self.choices), self.runs, self.replayable);
-        let outer_unit = (std::mem::replace(&mut self.unit, unit), self.lone);
-        // Inside a command, whose run again undoes what this one counts.
-        let nested = self.replayable;
-        self.replayable = true;
-        let mut paths = Paths { top: !nested && matches!(unit, Unit::Command), ..Paths::default() };
-        let keep_errors = self.keep_errors;
-        let (mut commands, mut ended) = (0u64, false);
-        let mut mark = self.out.steps;
+        // A run resumed from a checkpoint goes on with the drive it kept.
+        let Drive { mut outer, outer_unit, nested, mut paths, keep_errors, mut mark, mut commands } =
+            self.checkpoints.resume().unwrap_or_else(|| {
+                let outer =
+                    (std::mem::take(&mut self.script), std::mem::take(&mut self.choices), self.runs, self.replayable);
+                let outer_unit = (std::mem::replace(&mut self.unit, unit), self.lone);
+                // Inside a command, whose run again undoes what this one counts.
+                let nested = self.replayable;
+                self.replayable = true;
+                let paths = Paths { top: !nested && matches!(unit, Unit::Command), ..Paths::default() };
+                Drive {
+                    outer,
+                    outer_unit,
+                    nested,
+                    paths,
+                    keep_errors: self.keep_errors,
+                    mark: self.out.steps,
+                    commands: 0,
+                }
+            });
+        let mut ended = false;
         while !self.out.exhausted {
+            // Between two commands of the run: the language server answers meanwhile.
+            if !ended && paths.top {
+                crate::progress::pause();
+            }
+            if !ended && paths.top && self.checkpoint_due() {
+                let (outer, paths) = (outer.clone(), paths.clone());
+                self.take_checkpoint(Drive { outer, outer_unit, nested, paths, keep_errors, mark, commands });
+            }
             self.charge(&mut mark);
             if !nested {
                 self.undo.clear();

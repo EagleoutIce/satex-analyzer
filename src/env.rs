@@ -164,14 +164,14 @@ struct Mark {
 
 /// The meaning table and the save stack: [`Binding`]s are pushed and undone
 /// per group, which is what `\begingroup` and `}` do.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Env {
-    slots: Vec<Option<Binding>>,
+    slots: crate::fixed::Chunked<Option<Binding>>,
     /// The group level each slot's binding was made at, 0 for level one
     /// (tex.web § 221 `eq_level`). A local assignment saves the old binding
     /// only once per level (§ 277). A `\global` one is made at level one, so
     /// it survives the saving group's end (§ 283).
-    level: Vec<u32>,
+    level: crate::fixed::Chunked<u32>,
     journal: Journal,
     /// Shared with the forks and paths that saw it: a fork per command
     /// copies a pointer, and only a group opened or closed copies the stack.
@@ -185,7 +185,7 @@ pub struct Env {
     /// entry names the slot's previous entry, put back on rewind.
     trail: Vec<(u32, Option<Binding>, u32, u32, u64)>,
     /// Per slot, its latest trail entry, `NONE` for none.
-    trailed: Vec<u32>,
+    trailed: crate::fixed::Chunked<u32>,
     /// Per open fork, the fewest groups the running path stood in since.
     lows: Vec<usize>,
     /// Per open fork, innermost last: where its trail begins, and the
@@ -205,7 +205,7 @@ pub struct Env {
     /// Per slot, [`Env::assignments`] at the write its binding came from.
     /// A group end puts back the old one, so a name whose write a group
     /// end undid is not widened.
-    stamp: Vec<u64>,
+    stamp: crate::fixed::Chunked<u64>,
     /// `\let\tex_escapechar:D\escapechar`: the engine primitive a name was
     /// made equal to, for primitives satex models alike (tex.web keeps the
     /// primitive's `chr` code in the copy). A parameter's value lives with
@@ -269,7 +269,7 @@ impl ReadKind {
 /// load has since overwritten, so a later read of them owes nothing to
 /// before. A group end restores what the parts held, and whether that was
 /// pre-load.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Reads {
     read: LookupMap<u32, u8>,
     written: LookupMap<u32, u8>,
@@ -358,10 +358,10 @@ impl PathEnv {
 impl Env {
     pub fn with_capacity(n: usize) -> Self {
         Self {
-            slots: vec![None; n],
-            level: vec![0; n],
-            trailed: vec![NONE; n],
-            stamp: vec![0; n],
+            slots: crate::fixed::Chunked::filled(n, None),
+            level: crate::fixed::Chunked::filled(n, 0),
+            trailed: crate::fixed::Chunked::filled(n, NONE),
+            stamp: crate::fixed::Chunked::filled(n, 0),
             ..Default::default()
         }
     }
@@ -370,7 +370,7 @@ impl Env {
     fn grow(&mut self, sym: Sym) {
         let n = sym.0 as usize + 1;
         if self.slots.len() < n {
-            self.slots.resize_with(n, || None);
+            self.slots.resize(n, None);
             self.level.resize(n, 0);
             self.trailed.resize(n, NONE);
             self.stamp.resize(n, 0);
@@ -1026,9 +1026,9 @@ impl Env {
     pub fn snapshot(&self) -> Env {
         Env {
             slots: self.slots.clone(),
-            level: vec![0; self.level.len()],
-            stamp: vec![0; self.level.len()],
-            trailed: vec![NONE; self.level.len()],
+            level: crate::fixed::Chunked::filled(self.level.len(), 0),
+            stamp: crate::fixed::Chunked::filled(self.level.len(), 0),
+            trailed: crate::fixed::Chunked::filled(self.level.len(), NONE),
             aliases: self.aliases.clone(),
             ..Default::default()
         }

@@ -58,6 +58,8 @@ use explore::Choice;
 pub(crate) mod classes;
 pub(crate) use classes::decide;
 mod calls;
+mod checkpoint;
+pub use checkpoint::Checkpoints;
 pub(crate) mod explore;
 #[path = "package_cache.rs"]
 mod package_cache;
@@ -123,6 +125,7 @@ impl Step {
 
 /// One entry of the execution trace: what [`Step`] happened, to which name,
 /// at which [`Span`]. Held by [`Analysis::trace`], the sequence `satex trace` prints.
+#[derive(Clone)]
 pub struct Event {
     pub index: u32,
     pub depth: u16,
@@ -156,6 +159,7 @@ pub struct LimitHit {
 /// Where the LaTeX2e kernel came from for this run: the `latex.ltx` path,
 /// whether it was read from a [`Format`] cache, and how far interpretation of
 /// it got.
+#[derive(Clone)]
 pub struct FormatInfo {
     pub source: String,
     pub definitions: usize,
@@ -195,7 +199,7 @@ pub type ContextProbes = HashMap<Sym, Vec<(Option<Sym>, Option<String>)>>;
 /// Cached per-character font state: the five NFSS names, the bodies they
 /// had when last resolved, and the resolved row. Costs a few pointer
 /// comparisons instead of five macro lookups.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct FontWatch {
     pub(crate) names: Option<[Option<Sym>; 5]>,
     /// Held, not just pointed at, so a freed body cannot be mistaken for
@@ -221,7 +225,7 @@ pub struct FontUse {
 pub static HOT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Work per source line, keyed by file and line.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Hot {
     pub steps: HashMap<(FileId, u32), u64>,
     pub forks: HashMap<(FileId, u32), u64>,
@@ -293,6 +297,7 @@ fn compact_count(n: u64) -> String {
 /// Everything a run produced: the ending [`Env`] and [`CatcodeTable`], the
 /// recorded [`Facts`] and [`DependencyGraph`], and the bookkeeping every
 /// `satex` command reads instead of the live [`Machine`].
+#[derive(Clone)]
 pub struct Analysis {
     pub interner: Interner,
     pub graph: DependencyGraph,
@@ -389,14 +394,14 @@ pub struct Analysis {
     /// means where the document uses it before anything redefines it.
     pub kernel: Option<Box<Env>>,
     /// What [`crate::probe`] found per name and view, computed on demand.
-    pub probes: std::sync::Mutex<HashMap<(Sym, crate::probe::State), Option<crate::probe::Probed>>>,
+    pub probes: crate::fixed::Mutex<HashMap<(Sym, crate::probe::State), Option<crate::probe::Probed>>>,
     /// Environments open right now, outermost first (`document` excluded:
     /// `document_depth` already answers that axis). What `explain` reads to
     /// tell a definition made inside `enumerate` from one made outside.
     pub env_stack: Vec<Sym>,
     /// Environments worth probing a name inside, and what that found: cache
     /// for [`crate::probe::probe_contexts`].
-    pub context_probes: std::sync::Mutex<ContextProbes>,
+    pub context_probes: crate::fixed::Mutex<ContextProbes>,
     /// The fewest arguments each defined name takes, for completion: built
     /// once, from the definitions query.
     pub takes: std::sync::OnceLock<crate::fixed::HashMap<String, u8>>,
@@ -1115,7 +1120,7 @@ carried! {
 
 /// Per-load state every cacheable load forgets at its end, read or
 /// replayed alike ([`Machine::end_cacheable_load`]).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Scratch {
     /// Where a region's effect summary stands for the unknown text it left
     /// (a recursion cut: its widened fixpoint holds every deeper level's
@@ -1149,6 +1154,7 @@ pub(crate) struct Scratch {
 /// The interpreter itself: reads [`Token`]s from the input stack, expands
 /// macros, executes primitives, changes [`Env`] and [`CatcodeTable`], and
 /// records what it saw into [`Analysis`].
+#[derive(Clone)]
 pub struct Machine<'a> {
     pub cfg: &'a Config,
     /// What a load changes that its cache carries.
@@ -1601,6 +1607,8 @@ pub struct Machine<'a> {
     pub(crate) pseudo_file: Sym,
     /// Set in a sandbox run by [`crate::probe`]: what it watches for.
     pub(crate) probe: Option<Box<crate::probe::Watch>>,
+    /// Where this run keeps its checkpoints, if anywhere ([`Checkpoints`]).
+    checkpoints: checkpoint::Taker<'a>,
 }
 
 /// Everything besides the bindings that a path through an undecided
@@ -1755,6 +1763,7 @@ impl Site {
 
 /// A counter that decides when the run gives up, as the running command
 /// found it: running the command again starts from it ([`Machine::branch`]).
+#[derive(Clone)]
 enum Undo {
     Site((Span, Sym), Site),
     Count(usize, u32),
@@ -1785,7 +1794,7 @@ type HeldCharges = (HashMap<GuardKey, (u64, u8)>, HashMap<(GuardKey, Span), u32>
 
 /// The termination guard: the steps spent while the run reads each source
 /// line, and how often that line overran `limits.line_steps`.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct LineGuard {
     /// The step the last check charged up to.
     step: u64,
@@ -1818,7 +1827,7 @@ struct GuardSeen {
 
 /// The stretch since the run last read source further than before: where
 /// a guard cut reads on, and the categories it puts back.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Region {
     progress: u64,
     span: Span,
@@ -2148,6 +2157,7 @@ impl<'a> Machine<'a> {
             main_tail: crate::mode::Last::UNKNOWN,
             wild: Wild::default(),
             trace_full: false,
+            checkpoints: Default::default(),
         }
     }
 
@@ -2239,6 +2249,14 @@ impl<'a> Machine<'a> {
     pub fn analyze_once(source: &str, path: Option<&Path>, cfg: &'a Config) -> Analysis {
         // Memory is counted per run, apart from runs beside it in the process.
         let (_run, _entered) = crate::budget::Run::start();
+        let (mut m, id) = Machine::begin(source, path, cfg);
+        m.run_guarded();
+        m.conclude(id)
+    }
+
+    /// A run of `source` set up to read it: the format installed, the
+    /// file's frame pushed, `\everyjob` run.
+    fn begin(source: &str, path: Option<&Path>, cfg: &'a Config) -> (Self, FileId) {
         // `-f doc.tex` has an empty parent, not a missing one, so the
         // filter is what keeps a bare name rooted at the working directory.
         let base = path
@@ -2355,7 +2373,13 @@ impl<'a> Machine<'a> {
         // `--steps` counts the document's tokens, not the job's nor what
         // installing the format took.
         m.read = 0;
-        m.run_guarded();
+        (m, id)
+    }
+
+    /// What the document's run leaves, once it ran: the hooks after it,
+    /// and the facts drawn from all it recorded.
+    fn conclude(self, id: FileId) -> Analysis {
+        let mut m = self;
         // The document's own run only: nested runs read part of it.
         m.report_unread_inputs();
         crate::observe::text_break(&mut m);

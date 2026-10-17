@@ -9,16 +9,81 @@ use std::path::{Path, PathBuf};
 
 thread_local! {
     static FILES: RefCell<HashMap<PathBuf, String>> = RefCell::new(HashMap::default());
+    /// The files read or looked for while [`log`] is on.
+    static LOG: RefCell<Option<Vec<Read>>> = const { RefCell::new(None) };
+    /// Each file's [`fingerprint`] by its size and time.
+    static PRINTS: RefCell<HashMap<PathBuf, (Stamp, u64)>> = RefCell::new(HashMap::default());
+}
+
+/// A file's size and time.
+type Stamp = (u64, std::time::SystemTime);
+
+/// A file a run read, or only looked for: its path, and what it found.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Read {
+    pub path: PathBuf,
+    /// Whether it was only looked for.
+    pub probe: bool,
+    /// Its [`fingerprint`], or whether it was there.
+    pub print: u64,
+}
+
+impl Read {
+    /// Whether the file is still what the run found.
+    pub fn holds(&self) -> bool {
+        self.print == if self.probe { presence(&self.path) } else { fingerprint(&self.path) }
+    }
+}
+
+/// Starts logging the files read on this thread, or stops it: what was logged comes back.
+pub fn log(on: bool) -> Vec<Read> {
+    LOG.with_borrow_mut(|log| std::mem::replace(log, on.then(Vec::new))).unwrap_or_default()
+}
+
+fn push(path: &Path, probe: bool, print: impl FnOnce() -> u64) {
+    LOG.with_borrow_mut(|log| log.as_mut().map(|l| l.push(Read { path: path.to_path_buf(), probe, print: print() })));
+}
+
+/// Notes that a run looked for `path`, which is a file or not.
+pub fn probed(path: &Path) {
+    push(path, true, || presence(path));
+}
+
+/// Whether `path` is there to read: 1, else 0.
+fn presence(path: &Path) -> u64 {
+    u64::from(FILES.with_borrow(|files| files.contains_key(path)) || path.is_file())
+}
+
+/// What `path` holds now, as a hash: the overlay's text, else the file's
+/// bytes, else that it is missing. A file's is read again only once its
+/// size or time changed.
+pub fn fingerprint(path: &Path) -> u64 {
+    let stamp = |m: std::fs::Metadata| Some((m.len(), m.modified().ok()?));
+    let on_disk = !FILES.with_borrow(|files| files.contains_key(path));
+    let stamp = on_disk.then(|| std::fs::metadata(path).ok().and_then(stamp)).flatten();
+    if let Some(stamp) = stamp
+        && let Some((kept, print)) = PRINTS.with_borrow(|prints| prints.get(path).copied())
+        && kept == stamp
+    {
+        return print;
+    }
+    let print = hash(&read_bytes_unlogged(path));
+    if let Some(stamp) = stamp {
+        PRINTS.with_borrow_mut(|prints| prints.insert(path.to_path_buf(), (stamp, print)));
+    }
+    print
+}
+
+fn hash(bytes: &std::io::Result<Vec<u8>>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    bytes.as_ref().ok().hash(&mut hasher);
+    hasher.finish()
 }
 
 pub fn read_to_string(path: &Path) -> std::io::Result<String> {
-    match FILES.with(|files| files.borrow().get(path).cloned()) {
-        Some(text) => Ok(text),
-        None => {
-            let bytes = std::fs::read(path)?;
-            Ok(String::from_utf8(bytes).unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect()))
-        }
-    }
+    let bytes = read_bytes(path)?;
+    Ok(String::from_utf8(bytes).unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect()))
 }
 
 /// Writes `text` back the way the file on disk is written: the bytes
@@ -54,6 +119,12 @@ fn to_crlf(text: &str) -> String {
 /// A file's bytes, as [`crate::source::decode`] wants them: what the
 /// overlay holds for it, or what is on disk.
 pub fn read_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    let bytes = read_bytes_unlogged(path);
+    push(path, false, || hash(&bytes));
+    bytes
+}
+
+fn read_bytes_unlogged(path: &Path) -> std::io::Result<Vec<u8>> {
     match FILES.with(|files| files.borrow().get(path).cloned()) {
         // The overlay holds a file as it is written, so its bytes are its.
         Some(text) => Ok(text.into_bytes()),

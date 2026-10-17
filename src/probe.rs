@@ -119,6 +119,7 @@ pub struct Demand {
     pub want: Want,
 }
 
+#[derive(Clone)]
 pub struct Watch {
     pub(crate) file: FileId,
     pub(crate) sym: Sym,

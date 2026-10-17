@@ -26,7 +26,7 @@ pub type Written = (u64, u32, String);
 
 /// Where the run's time went: per-[`Phase`] totals and per-file token and
 /// time counts, collected only when the run asked for timings.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Timings {
     enabled: bool,
     phases: Vec<(Phase, Duration)>,
@@ -44,7 +44,7 @@ pub struct Timings {
     written: crate::fixed::HashMap<(FileId, u32), Written>,
     /// Phases timed after the analysis is finished, so behind a lock: the
     /// command that reads the analysis only has it by shared reference.
-    after: std::sync::Mutex<Vec<(Phase, Duration)>>,
+    after: crate::fixed::Mutex<Vec<(Phase, Duration)>>,
 }
 
 impl Timings {

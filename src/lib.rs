@@ -105,4 +105,87 @@ pub mod fixed {
     /// before use: no order of theirs is ever seen, so a fast hash will do.
     pub type LookupMap<K, V> = std::collections::HashMap<K, V, crate::tex::NameHash>;
     pub type LookupSet<K> = std::collections::HashSet<K, crate::tex::NameHash>;
+
+    /// A mutex whose clone holds a copy of its value: an [`crate::machine::Analysis`] is cloned whole.
+    #[derive(Default, Debug)]
+    pub struct Mutex<T>(pub std::sync::Mutex<T>);
+
+    impl<T: Clone> Clone for Mutex<T> {
+        fn clone(&self) -> Self {
+            Mutex(std::sync::Mutex::new(self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()))
+        }
+    }
+
+    /// A vector whose copies share its chunks until one is written: a
+    /// checkpoint of a run copies the bindings of every name.
+    #[derive(Clone, Debug)]
+    pub struct Chunked<T>(Vec<std::rc::Rc<Vec<T>>>, usize);
+
+    const CHUNK: usize = 1024;
+
+    impl<T> Default for Chunked<T> {
+        fn default() -> Self {
+            Chunked(Vec::new(), 0)
+        }
+    }
+
+    impl<T: Clone> Chunked<T> {
+        /// `n` times `value`.
+        pub fn filled(n: usize, value: T) -> Self {
+            let mut out = Chunked::default();
+            out.resize(n, value);
+            out
+        }
+
+        pub fn len(&self) -> usize {
+            self.1
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.1 == 0
+        }
+
+        pub fn get(&self, i: usize) -> Option<&T> {
+            (i < self.1).then(|| &self.0[i / CHUNK][i % CHUNK])
+        }
+
+        /// Grows to `n` with `value`; never shrinks.
+        pub fn resize(&mut self, n: usize, value: T) {
+            while self.1 < n {
+                if self.1.is_multiple_of(CHUNK) {
+                    self.0.push(std::rc::Rc::new(Vec::with_capacity(CHUNK)));
+                }
+                let last = std::rc::Rc::make_mut(self.0.last_mut().expect("pushed"));
+                let more = (CHUNK - last.len()).min(n - self.1);
+                last.resize(last.len() + more, value.clone());
+                self.1 += more;
+            }
+        }
+
+        pub fn iter(&self) -> impl Iterator<Item = &T> {
+            self.0.iter().flat_map(|c| c.iter())
+        }
+    }
+
+    impl<T> std::ops::Index<usize> for Chunked<T> {
+        type Output = T;
+        fn index(&self, i: usize) -> &T {
+            assert!(i < self.1, "index {i} past {}", self.1);
+            &self.0[i / CHUNK][i % CHUNK]
+        }
+    }
+
+    impl<T: Clone> std::ops::IndexMut<usize> for Chunked<T> {
+        fn index_mut(&mut self, i: usize) -> &mut T {
+            assert!(i < self.1, "index {i} past {}", self.1);
+            &mut std::rc::Rc::make_mut(&mut self.0[i / CHUNK])[i % CHUNK]
+        }
+    }
+
+    impl<T> std::ops::Deref for Mutex<T> {
+        type Target = std::sync::Mutex<T>;
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
 }

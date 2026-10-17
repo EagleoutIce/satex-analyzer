@@ -220,7 +220,7 @@ fn command_hover(analysis: &Analysis, name: &str) -> Option<String> {
 fn documented(record: &Record) -> Option<super::doccomment::DocComment> {
     let path = record.get("path").and_then(Json::as_str)?;
     let line = record.get("line").and_then(Json::as_u64)? as usize;
-    super::doccomment::above(&std::fs::read_to_string(path).ok()?, line)
+    super::doccomment::above(&crate::overlay::read_to_string(std::path::Path::new(path)).ok()?, line)
 }
 
 /// The command whose argument the cursor is in, on its line: its name and

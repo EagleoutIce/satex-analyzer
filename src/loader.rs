@@ -19,6 +19,7 @@ fn extensions(kind: LoadKind) -> &'static [&'static str] {
 /// the [`Trees`] of the configured [`Distribution`].
 /// [`crate::machine::Machine::load`] calls it once per `\usepackage`-family
 /// command.
+#[derive(Clone)]
 pub struct Resolver {
     local: Vec<PathBuf>,
     /// The build's output directory, searched first for a relative name.
@@ -154,6 +155,7 @@ pub(crate) const FOLDING: Fs = Fs { folding: true };
 
 impl Fs {
     fn is_file(self, path: &Path) -> bool {
+        crate::overlay::probed(path);
         path.is_file() || (self.folding && folded_file(path))
     }
 }

@@ -22,7 +22,7 @@ use crate::value::Value;
 /// The Lua files a run has read and its Lua state.  The catcode tables
 /// themselves live in the save stack's table of meanings (`table_slot`),
 /// so the format and package caches carry them like any other assignment.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Lua {
     read: HashSet<PathBuf>,
     /// Made when a run first needs it (see [`super::lua_run`]).
@@ -298,7 +298,7 @@ fn unfinished(m: &mut Machine, code: &str, span: Span, depth: usize) {
             continue;
         }
         let Some((path, file)) = load(m, module, span) else { continue };
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = crate::overlay::read_to_string(&path) else { continue };
         unfinished(m, &text, Span::new(file, 1, 1), depth + 1);
     }
 }

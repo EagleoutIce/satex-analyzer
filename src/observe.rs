@@ -169,6 +169,7 @@ pub struct OccContext {
 /// A line a `\write` handed a file: the command it starts with (empty for
 /// text such as a `.bcf`'s XML), the text of its arguments, and the names
 /// running it where the file is read back defined.
+#[derive(Clone)]
 pub struct WrittenLine {
     head: String,
     args: Vec<String>,
@@ -202,6 +203,7 @@ impl WrittenLine {
 }
 
 /// A name a call in the document body read.
+#[derive(Clone)]
 pub struct NameRead {
     name: crate::tex::Sym,
     /// The contents of the call's braced arguments.
