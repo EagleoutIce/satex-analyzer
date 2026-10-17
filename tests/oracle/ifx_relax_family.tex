@@ -1,0 +1,1 @@
+\countdef\i=200 \countdef\n=201 \n=\pdfuniformdeviate 3 \def\lp{\ifnum\i<\n \advance\i1 \expandafter\lp\fi}\lp \csname h\the\i\endcsname \catcode`\2=11 \catcode`\1=11 \ifx\h1\relax\def\mA{}\fi \ifx\h1\undefined\def\mB{}\fi \ifx\h1 x\def\mC{}\fi \ifx\h2\h1\def\mD{}\fi \catcode`\1=\catcode`\. \catcode`\2=\catcode`\. 

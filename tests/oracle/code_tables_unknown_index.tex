@@ -1,0 +1,15 @@
+\lccode\pdfuniformdeviate 256=\pdfuniformdeviate 300
+\uccode\pdfuniformdeviate 256=7
+\sfcode\pdfuniformdeviate 256=\pdfuniformdeviate 32767
+\mathcode\pdfuniformdeviate 256=\pdfuniformdeviate 32768
+\delcode\pdfuniformdeviate 256=\numexpr\pdfuniformdeviate 1000-1\relax
+\count1=\lccode\pdfuniformdeviate 256
+\count2=\mathcode 65
+\count3=\delcode\pdfuniformdeviate 256
+\lccode\numexpr65+\pdfuniformdeviate 4\relax=\numexpr97+\pdfuniformdeviate 3\relax
+\lowercase{\gdef\y{ABCD}}
+\uccode\numexpr97+\pdfuniformdeviate 3\relax=\numexpr65+\pdfuniformdeviate 3\relax
+\uppercase{\gdef\z{abcd}}
+\begingroup\sfcode\pdfuniformdeviate 128=\pdfuniformdeviate 3000 \endgroup
+\sfcode\numexpr65+\pdfuniformdeviate 3\relax=\pdfuniformdeviate 3000
+\indent ABC\count4=\spacefactor
