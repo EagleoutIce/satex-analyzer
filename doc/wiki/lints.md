@@ -63,6 +63,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | \ref names a label that is never defined |
 | [`uninstalled-package`](#uninstalled-package) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the package is not installed, and the distribution could install it |
 | [`unresolved-file`](#unresolved-file) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> | a package, class or input file is not in the installation |
+| [`expected-load`](#expected-load) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">correctness</span> | — | — | the file was read after a package it expects loaded |
 | [`math-mode-mismatch`](#math-mode-mismatch) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">correctness</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 49">chktex 49</a> | \(, \), \[ or \] stands where the mode does not allow it |
 | [`unintended-escape`](#unintended-escape) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 21">chktex 21</a> | a command is followed by an escaped punctuation mark, which is another command |
 | [`build-shell-escape-unneeded`](#build-shell-escape-unneeded) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">security</span> | — | — | the build allows \write18, but the document never uses it |
@@ -74,7 +75,6 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | [`ellipsis-dots`](#ellipsis-dots) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 11">chktex 11</a> | three periods set three periods, not an ellipsis |
 | [`group-local-definition`](#group-local-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | — | — | a definition is made inside a group and lost when it closes |
 | [`math-operator-name`](#math-operator-name) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 35">chktex 35</a> | an operator name is set in math italic instead of by its command |
-| [`math-shift-dollars`](#math-shift-dollars) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 45, 46">chktex 45, 46</a> | math opened with `$` or `$$` where LaTeX spells it \( or \[ |
 | [`missing-italic-correction`](#missing-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 6">chktex 6</a> | a slanted letter runs into upright text with no `\/` between them |
 | [`missing-nonbreaking-space`](#missing-nonbreaking-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 2">chktex 2</a> | an ordinary space in front of a reference lets the line break before the number |
 | [`parenthesis-spacing`](#parenthesis-spacing) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 36, 37">chktex 36, 37</a> | a parenthesis carries the space of the text inside it instead of the text around it |
@@ -100,6 +100,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | [`hand-set-quantity`](#hand-set-quantity) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a number and its unit are set by hand where siunitx would set them |
 | [`inconsistent-precision`](#inconsistent-precision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | the numbers of a table column give different numbers of decimals |
 | [`math-punctuation`](#math-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 40">chktex 40</a> | punctuation sits on the wrong side of a formula |
+| [`math-shift-dollars`](#math-shift-dollars) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 45, 46">chktex 45, 46</a> | display math opened with `$$` where LaTeX spells it \[ |
 | [`microtype-available`](#microtype-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | the engine can protrude characters and expand fonts, but microtype is not loaded |
 | [`numbers-not-aligned`](#numbers-not-aligned) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a table column of numbers does not line them up at their decimal mark |
 | [`ot1-font-encoding`](#ot1-font-encoding) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | accented letters are built with \accent because the text is set in OT1 |
@@ -116,6 +117,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | [`unused-definition`](#unused-definition) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a macro defined in the document is never used |
 | [`unused-label`](#unused-label) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a label is never referenced |
 | [`package-after-preamble`](#package-after-preamble) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">performance</span> | <span class="fix fix-unsafe">unsafe</span> | — | a package is loaded after \begin{document} |
+| [`includeonly-available`](#includeonly-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">performance</span> | <span class="fix fix-unsafe">unsafe</span> | — | a document of several `\include`d parts is built whole |
 | [`preamble-cost`](#preamble-cost) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">performance</span> | <span class="fix fix-unsafe">unsafe</span> | — | what the preamble costs on every build |
 | [`recursive-macro`](#recursive-macro) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">performance</span> | — | — | a macro calls itself, directly or through others |
 | [`unused-dependency`](#unused-dependency) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">performance</span> | <span class="fix fix-unsafe">unsafe</span> | — | the dependency file lists a TeX Live package no file of the run comes from |
@@ -150,7 +152,6 @@ These rules have quick fixes:
 * [`double-space`](#double-space) <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span> — two interword spaces reached the page, one of them from a tie
 * [`ellipsis-dots`](#ellipsis-dots) <span class="fix fix-unsafe">unsafe</span> — three periods set three periods, not an ellipsis
 * [`math-operator-name`](#math-operator-name) <span class="fix fix-unsafe">unsafe</span> — an operator name is set in math italic instead of by its command
-* [`math-shift-dollars`](#math-shift-dollars) <span class="fix fix-safe">safe</span> — math opened with `$` or `$$` where LaTeX spells it \( or \[
 * [`missing-italic-correction`](#missing-italic-correction) <span class="fix fix-unsafe">unsafe</span> — a slanted letter runs into upright text with no `\/` between them
 * [`missing-nonbreaking-space`](#missing-nonbreaking-space) <span class="fix fix-unsafe">unsafe</span> — an ordinary space in front of a reference lets the line break before the number
 * [`parenthesis-spacing`](#parenthesis-spacing) <span class="fix fix-unsafe">unsafe</span> — a parenthesis carries the space of the text inside it instead of the text around it
@@ -167,6 +168,7 @@ These rules have quick fixes:
 * [`dead-definition`](#dead-definition) <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span> — a definition is replaced before anything uses it
 * [`duplicate-package`](#duplicate-package) <span class="fix fix-safe">safe</span> — a package is loaded more than once
 * [`hand-set-quantity`](#hand-set-quantity) <span class="fix fix-unsafe">unsafe</span> — a number and its unit are set by hand where siunitx would set them
+* [`math-shift-dollars`](#math-shift-dollars) <span class="fix fix-safe">safe</span> — display math opened with `$$` where LaTeX spells it \[
 * [`microtype-available`](#microtype-available) <span class="fix fix-unsafe">unsafe</span> — the engine can protrude characters and expand fonts, but microtype is not loaded
 * [`ot1-font-encoding`](#ot1-font-encoding) <span class="fix fix-unsafe">unsafe</span> — accented letters are built with \accent because the text is set in OT1
 * [`prefer-cleveref`](#prefer-cleveref) <span class="fix fix-unsafe">unsafe</span> — a hand-written name in front of `\ref` is what cleveref sets from the label itself
@@ -178,6 +180,7 @@ These rules have quick fixes:
 * [`unused-definition`](#unused-definition) <span class="fix fix-unsafe">unsafe</span> — a macro defined in the document is never used
 * [`unused-label`](#unused-label) <span class="fix fix-unsafe">unsafe</span> — a label is never referenced
 * [`package-after-preamble`](#package-after-preamble) <span class="fix fix-unsafe">unsafe</span> — a package is loaded after \begin{document}
+* [`includeonly-available`](#includeonly-available) <span class="fix fix-unsafe">unsafe</span> — a document of several `\include`d parts is built whole
 * [`preamble-cost`](#preamble-cost) <span class="fix fix-unsafe">unsafe</span> — what the preamble costs on every build
 * [`unused-dependency`](#unused-dependency) <span class="fix fix-unsafe">unsafe</span> — the dependency file lists a TeX Live package no file of the run comes from
 * [`unused-package`](#unused-package) <span class="fix fix-unsafe">unsafe</span> — a loaded package defines nothing the document uses
@@ -187,7 +190,7 @@ These rules have quick fixes:
 One group per category. Open a group to read its rules.
 
 <details>
-<summary><b>correctness</b> — 38 rules</summary>
+<summary><b>correctness</b> — 39 rules</summary>
 
 ### already-defined
 
@@ -267,13 +270,13 @@ See [The TeXbook, chapter 27](https://ctan.org/pkg/texbook#chapter-27).
 
 **the run is still in math mode where the text ends**
 
-A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20410) `insert_dollar_sign`), and everything up to there is set as mathematics.
+A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20410) `insert_dollar_sign`), and everything up to there is set as mathematics.
 
 The rule reports what the interpreter already saw: the `missing-dollar` diagnostic it raised, or, where no `\par` followed, a last character still carrying a math mode (unless a limit stopped the run before the text's end). It reports one finding, never both.
 
 Fix by closing the formula.
 
-See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20410).
+See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20410).
 
 ### missing-graphic
 
@@ -422,13 +425,13 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 **\left, \right or \middle is followed by a brace or a math shift**
 
-`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22057)). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
+`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L22057)). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
 
 The rule asks what each command means rather than matching its name, so it covers `\middle` and any `\let` alias, which chktex's name list does not.
 
 Fix by writing `\{` and `\}` for brace delimiters, or `\left.` where no delimiter is wanted.
 
-See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L22057).
+See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L22057).
 
 ### duplicate-bibliography-entry
 
@@ -632,6 +635,16 @@ Fix by installing the package, adding its directory to `search_paths` in `satex.
 
 See [chktex 27](https://www.nongnu.org/chktex/).
 
+### expected-load
+
+<p class="badges"><span class="sev sev-info" title="default: info">● default: info</span> <span class="cat">correctness</span></p>
+
+**the file was read after a package it expects loaded**
+
+A package or class read on its own may use names that another one defines, as a beamer theme uses beamer's. When `load.expect_detect` is on, SaTeX looks up which classes and packages on disk define those names, and reads the file again after the one that defines most of them. It keeps that run when it leaves fewer names undefined.
+
+Fix by naming what the file expects in `load.expect`, or by loading it with `\RequirePackage` in the file itself.
+
 ### math-mode-mismatch
 
 <p class="badges"><span class="sev sev-info" title="default: info">● default: info</span> <span class="cat">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 49">chktex 49</a></p>
@@ -790,20 +803,6 @@ Fix by writing the command.
 
 See [chktex 35](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https://ctan.org/pkg/texbook#chapter-18).
 
-### math-shift-dollars
-
-<p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">style</span> <span class="fix fix-safe">safe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 45, 46">chktex 45, 46</a></p>
-
-**math opened with `$` or `$$` where LaTeX spells it \( or \[**
-
-`$$ … $$` and `$ … $` are plain TeX's displays. LaTeX spells them `\[ … \]` and `\( … \)`, which obey the `fleqn` and `leqno` class options and the class's `\everydisplay` ([source2e](https://ctan.org/pkg/source2e), ltmath.dtx).
-
-Both spellings put the run in the same mode. satex takes the first character set in math mode, lexes the source before it with TeX's own mouth, and reports the math shift characters standing there, so math an environment opened is left alone.
-
-Fix by writing `\[ … \]` and `\( … \)`.
-
-See [chktex 45](https://www.nongnu.org/chktex/), [chktex 46](https://www.nongnu.org/chktex/), [source2e § ltmath.dtx](https://ctan.org/pkg/source2e).
-
 ### missing-italic-correction
 
 <p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 6">chktex 6</a></p>
@@ -816,7 +815,7 @@ satex compares each character's `\f@shape` against the kernel's `\itdefault` and
 
 Fix by writing `\/` after the last slanted character.
 
-See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21365).
+See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21365).
 
 ### missing-nonbreaking-space
 
@@ -826,11 +825,11 @@ See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https:/
 
 A reference should not begin a line on its own, so a tie belongs in front of it. `~` is an interword space TeX may not break at ([The TeXbook, chapter 14](https://ctan.org/pkg/texbook#chapter-14)).
 
-The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20358)).
+The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20358)).
 
 Fix by writing `Figure~\ref{fig:one}`.
 
-See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook#chapter-14), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20358).
+See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook#chapter-14), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20358).
 
 ### parenthesis-spacing
 
@@ -866,13 +865,13 @@ See [chktex 32](https://www.nongnu.org/chktex/), [chktex 33](https://www.nongnu.
 
 **a period set the wrong width of space for the sentence around it**
 
-How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000.
+How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000.
 
 So `etc. and` gets a sentence space and `the ABC. Next` a word space, both the wrong way round. The rule reads the characters the run set and reports only where a real space token became glue.
 
 Fix by writing `etc.\ and`, or `the ABC\@. Next`.
 
-See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20114).
+See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20114).
 
 ### space-before-command
 
@@ -896,11 +895,11 @@ See [chktex 24](https://www.nongnu.org/chktex/), [chktex 42](https://www.nongnu.
 
 Punctuation belongs against the word it follows. A space in front of a comma or a period is glue, and the reader sees it on the page.
 
-The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20358)). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
+The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20358)). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
 
 Fix by deleting the space.
 
-See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20358).
+See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20358).
 
 ### stray-italic-correction
 
@@ -908,13 +907,13 @@ See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://githu
 
 **a repeated italic correction, or one in front of a period or comma**
 
-`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
+`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
 
 satex reads the characters the document set, so it sees through a closing brace: in `\textit{word\/}.` the next character set is the period.
 
 Fix by deleting the `\/`.
 
-See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21365).
+See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21365).
 
 ### unknown-suppress-code
 
@@ -974,13 +973,13 @@ See [chktex 18](https://www.nongnu.org/chktex/), [chktex 19](https://www.nongnu.
 
 **the italic correction is zero here, so `\/` changes nothing**
 
-`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21365)). Where that correction is zero the `\/` does nothing.
+`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21365)). Where that correction is zero the `\/` does nothing.
 
 Every character carries the font it was set in ([fntguide § 2](https://ctan.org/pkg/fntguide)), and satex reads the correction out of that font's TFM. That is a measurement, where chktex decides from a list of command names. In math, and after a space, the kern is zero whatever the font.
 
 Fix by deleting the `\/`.
 
-See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4).
+See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4).
 
 ### build-bibliography-unneeded
 
@@ -1132,13 +1131,27 @@ Fix by moving the punctuation to the other side of the delimiter.
 
 See [chktex 40](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https://ctan.org/pkg/texbook#chapter-18).
 
+### math-shift-dollars
+
+<p class="badges"><span class="sev sev-info" title="default: info">● default: info</span> <span class="cat">style</span> <span class="fix fix-safe">safe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 45, 46">chktex 45, 46</a></p>
+
+**display math opened with `$$` where LaTeX spells it \[**
+
+`$$ … $$` is plain TeX's display. LaTeX spells it `\[ … \]`, which obeys the `fleqn` and `leqno` class options and the class's `\everydisplay` ([source2e](https://ctan.org/pkg/source2e), ltmath.dtx). Inline `$ … $` sets the same as `\( … \)` and is left alone.
+
+Both spellings put the run in the same mode. satex takes the first character set in math mode, lexes the source before it with TeX's own mouth, and reports the math shift characters standing there, so math an environment opened is left alone.
+
+Fix by writing `\[ … \]`.
+
+See [chktex 45](https://www.nongnu.org/chktex/), [chktex 46](https://www.nongnu.org/chktex/), [source2e § ltmath.dtx](https://ctan.org/pkg/source2e).
+
 ### microtype-available
 
 <p class="badges"><span class="sev sev-info" title="default: info">● default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **the engine can protrude characters and expand fonts, but microtype is not loaded**
 
-pdfTeX and LuaTeX writing PDF support character protrusion and font expansion ([pdfTeX manual](https://ctan.org/pkg/pdftex), `\pdfprotrudechars` and `\pdfadjustspacing`), which make margins look straighter and let paragraphs break with fewer hyphens and less uneven spacing. microtype turns both on ([microtype manual § 1](https://ctan.org/pkg/microtype)). The rule fires when both are still off at the end of the run. XeTeX only protrudes, and DVI output supports neither, so the rule stays silent there.
+pdfTeX and LuaTeX writing PDF support character protrusion and font expansion ([pdfTeX manual](https://ctan.org/pkg/pdftex), `\pdfprotrudechars` and `\pdfadjustspacing`), which make margins look straighter and let paragraphs break with fewer hyphens and less uneven spacing. microtype turns both on ([microtype manual § 1](https://ctan.org/pkg/microtype)). The rule fires when both are still off at the end of the run and the body set about a page of text in justified paragraphs, so a figure, a standalone picture or ragged slides are left alone. XeTeX only protrudes, and DVI output supports neither, so the rule stays silent there.
 
 Fix by loading `\usepackage{microtype}`.
 
@@ -1180,7 +1193,7 @@ See [source2e § ot1enc.def](https://ctan.org/pkg/source2e), [fntguide § 5](htt
 
 The rule reads the `\ref` sites the run recorded and takes a word, or abbreviation with a period, tied or spaced directly in front of one. The word must name the label's kind, read from the counter the label was set after: the counter's name, its `\<counter>name` macro or a `\crefname` text, in singular, plural or as a prefix. `see~\ref{x}` stays silent, and so does a label the run never found. `\eqref`, `\pageref` and `(\ref{x})` have no word in front and stay silent. `Sections~\ref{a} and~\ref{b}` is one finding.
 
-Whether the document loaded cleveref is read from the run. If it did, the fix writes `\Cref{sec:x}`, or `\cref` after a lowercase word. If it did not, the finding asks to load it after hyperref and has no fix.
+Whether the document loaded cleveref is read from the run. If it did, the fix writes `\Cref{sec:x}`, or `\cref` after a lowercase word, and the rule speaks only where cleveref would set the very word written (`Sec.` stays where it sets `Section`). If it did not, the finding asks to load it after hyperref and has no fix.
 
 Fix by writing `\Cref{sec:x}` and loading cleveref.
 
@@ -1232,13 +1245,13 @@ See [chktex 38](https://www.nongnu.org/chktex/).
 
 **a macro body picked up a space from an unescaped line end**
 
-Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7326)).
+Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7326)).
 
-The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been.
+The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been.
 
 Fix by writing `%` at the end of that line.
 
-See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L7326), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L20358).
+See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7326), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20358).
 
 ### table-rules
 
@@ -1319,7 +1332,7 @@ Fix by deleting the `\label`, or by checking the `\ref` that was meant to use it
 </details>
 
 <details>
-<summary><b>performance</b> — 5 rules</summary>
+<summary><b>performance</b> — 6 rules</summary>
 
 ### package-after-preamble
 
@@ -1333,13 +1346,25 @@ Fix by moving the load into the preamble.
 
 See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
+### includeonly-available
+
+<p class="badges"><span class="sev sev-info" title="default: info">● default: info</span> <span class="cat">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
+
+**a document of several `\include`d parts is built whole**
+
+`\includeonly` names the parts a build reads. The others keep their page numbers and labels from their `.aux` files ([source2e](https://ctan.org/pkg/source2e), ltfiles.dtx). A draft build of one chapter then skips the rest. The rule fires when the document `\include`s at least two parts, no `\includeonly` is in force, and the body is most of what the build interprets and no small one.
+
+Fix by listing the parts being written in `\includeonly` while drafting.
+
+See [source2e § ltfiles.dtx](https://ctan.org/pkg/source2e).
+
 ### preamble-cost
 
 <p class="badges"><span class="sev sev-info" title="default: info">● default: info</span> <span class="cat">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **what the preamble costs on every build**
 
-The packages the document asks for and the files read before `\begin{document}`.
+The packages the document asks for and the files read before `\begin{document}`, reported when the preamble takes most of the tokens the build interprets and is no small one.
 
 A format holds the preamble already interpreted, so a build that starts from one skips all of it. [mylatexformat](https://ctan.org/pkg/mylatexformat) dumps one from the document's own preamble, and TeX reads a `%&`(format) line before anything else (web2c manual, "Format files").
 

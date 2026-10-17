@@ -33,13 +33,13 @@ Every name the document or its packages define. `origin` is `document` for files
 
 ```text
 $ satex query definitions -f samples/paper.tex --filter 'tag=macro and arity>0'
-tag    name                              paramet…  body      file                  
-macro  \__sys_tmp:w                      #1        \str_if…  expl3-code.tex        @ expl3-code.tex:1538:17
-macro  \sys_gset_rand_seed:n             #1        \tex_se…  expl3-code.tex        @ expl3-code.tex:1530:34
-macro  \reserved@c                       #1.sty\…  \def \r…  latex.ltx             @ latex.ltx:18742:20
-macro  \reserved@a                       #10#2#{   \expand…  latex.ltx             @ latex.ltx:1277:3
-macro  \reserved@a                       #1\@nil   \@for \…  latex.ltx             @ latex.ltx:18611:3
-… 2473 more lines omitted
+tag    name                             paramet…  body      file                  
+macro  \__sys_tmp:w                     #1        \str_if…  expl3-code.tex        @ expl3-code.tex:1539:17
+macro  \sys_gset_rand_seed:n            #1        \tex_se…  expl3-code.tex        @ expl3-code.tex:1531:34
+macro  \reserved@c                      #1.sty\…  \def \r…  latex.ltx             @ latex.ltx:18742:20
+macro  \reserved@a                      #10#2#{   \expand…  latex.ltx             @ latex.ltx:1277:3
+macro  \reserved@a                      #1\@nil   \@for \…  latex.ltx             @ latex.ltx:18611:3
+… 2476 more lines omitted
 ```
 
 ## expansions
@@ -78,12 +78,12 @@ Package and class identification banners, passed options, and other one-off even
 
 ```text
 $ satex query occurrences -f samples/paper.tex --filter 'kind=identification'
-kind            key                   detail                   file                  
-identification  article               2025/01/22 v1.4n Stand…  article.cls           @ article.cls:45:1
-identification  size11.clo            2025/01/22 v1.4n Stand…  size11.clo            @ size11.clo:44:1
-identification  amsmath               2025/07/09 v2.17z AMS …  amsmath.sty           @ amsmath.sty:29:1
-identification  amstext               2024/11/17 v2.01 AMS t…  amstext.sty           @ amstext.sty:26:1
-identification  amsgen                1999/11/30 v2.0 generi…  amsgen.sty            @ amsgen.sty:26:1
+kind            key                   detail                  file                  
+identification  article               2025/01/22 v1.4n Stan…  article.cls           @ article.cls:45:1
+identification  size11.clo            2025/01/22 v1.4n Stan…  size11.clo            @ size11.clo:44:1
+identification  amsmath               2025/07/09 v2.17z AMS…  amsmath.sty           @ amsmath.sty:29:1
+identification  amstext               2024/11/17 v2.01 AMS …  amstext.sty           @ amstext.sty:26:1
+identification  amsgen                1999/11/30 v2.0 gener…  amsgen.sty            @ amsgen.sty:26:1
 … 38 more lines omitted
 ```
 
@@ -123,13 +123,13 @@ The dependency graph as records. `satex dependencies` renders it as DOT or JSON.
 
 ```text
 $ satex query dependency-graph -f samples/paper.tex
-tag                  name      file                            
-macro-call           \show@r…  latex.ltx                       @ latex.ltx:731:7
-macro-call           \fmtname  latex.ltx                       @ latex.ltx:731:26
-macro-call           \space    latex.ltx                       @ latex.ltx:731:34
-macro-call           \fmtver…  latex.ltx                       @ latex.ltx:731:42
-use                  LaTeX2e…  latex.ltx                       @ latex.ltx:129:24
-… 38846 more lines omitted
+tag                  name      file                           
+macro-call           \show@r…  latex.ltx                      @ latex.ltx:731:7
+macro-call           \fmtname  latex.ltx                      @ latex.ltx:731:26
+macro-call           \space    latex.ltx                      @ latex.ltx:731:34
+macro-call           \fmtver…  latex.ltx                      @ latex.ltx:731:42
+use                  LaTeX2e…  latex.ltx                      @ latex.ltx:129:24
+… 38879 more lines omitted
 ```
 
 ## trace
@@ -138,12 +138,12 @@ Every step: which macro expanded, which primitive ran, what changed. Use `satex 
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step         name                        detail                     file           
-678     expand       \documentclass                                         paper.tex      @ paper.tex:1:1
-8412    open-file    \article                    /usr/local/texlive/YYYY/…  paper.tex      @ paper.tex:1:1
-10261   expand       \par                                                   paper.tex      @ paper.tex:2:1
-10268   expand       \newif                                                 paper.tex      @ paper.tex:3:1
-10272   define       \ifdraft                                               paper.tex      @ paper.tex:3:7
+index   step         name                        detail                    file           
+678     expand       \documentclass                                        paper.tex      @ paper.tex:1:1
+8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
+10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
+10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
+10272   define       \ifdraft                                              paper.tex      @ paper.tex:3:7
 … 208 more lines omitted
 ```
 
@@ -168,7 +168,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    expl3.ltx                                 
 4    input    expl3-code.tex                            
-… 284 more lines omitted
+… 286 more lines omitted
 ```
 
 ## diagnostics
@@ -177,8 +177,8 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
-severity    code           count  message                               file            
-assumption  clock-assumed  1      the document is assumed to be compi…  expl3-code.tex  @ expl3-code.tex:8169:38
+severity    code           count  message                              file            
+assumption  clock-assumed  1      the document is assumed to be comp…  expl3-code.tex  @ expl3-code.tex:8203:38
 ```
 
 ## distribution
@@ -187,12 +187,12 @@ The detected TeX installation: provider, version, and the texmf trees searched.
 
 ```text
 $ satex query distribution -f samples/paper.tex
-kind        message                                                            root                                     
-            TeX Live 2025, LaTeX2e 2025-11-01, 6 trees via kpsewhich, 52950 …                                           
-texmf-tree                                                                     ~/texmf                   
-texmf-tree                                                                     ~/.texliveYYYY/texmf-var  
-texmf-tree                                                                     /usr/local/texlive/texmf-local           
-texmf-tree                                                                     /usr/local/texlive/YYYY/texmf-config     
+kind        message                                                               root                                  
+            TeX Live 2026, LaTeX2e 2025-11-01, 6 trees via kpsewhich, 47457 fil…                                        
+texmf-tree                                                                        ~/texmf                   
+texmf-tree                                                                        ~/.texliveYYYY/texmf-var  
+texmf-tree                                                                        /usr/local/texlive/texmf-local        
+texmf-tree                                                                        /usr/local/texlive/YYYY/texmf-config  
 … 2 more lines omitted
 ```
 
@@ -210,13 +210,13 @@ Definitions and assignments a macro makes as a side effect of being called, rath
 
 ```text
 $ satex query side-effects -f samples/paper.tex
-tag                  name      detail    file                  
-variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:2099:42
-variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
-variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
-variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
-variable-definition  \c_sys_…  while e…  expl3-code.tex        @ expl3-code.tex:6658:27
-… 1698 more lines omitted
+tag                  name      detail    file                 
+variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:2104:42
+variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
+variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
+variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
+variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
+… 1703 more lines omitted
 ```
 
 ## project
@@ -241,7 +241,7 @@ The provider, platform, engine, output target, and build system plugins chose fo
 ```text
 $ satex query plugins -f samples/paper.tex
 kind              name                                                                               detail             
-provider          texlive (TeX 3.141592653 (TeX Live 2025))                                          detected           
+provider          texlive (TeX 3.141592653 (TeX Live 2026))                                          detected           
 platform          linux                                                                              this machine       
 engine            pdflatex (pdftex primitives)                                                       build configurat…  
 kernel            latex2e                                                                            default            
@@ -255,12 +255,12 @@ The pgfkeys keys defined at the end of the run and what each does (`initial`, `c
 
 ```text
 $ satex query pgfkeys -f samples/keys.tex
-kind       key                                                  value          default  file      
-is family  /demo                                                \edef \pgfke…           keys.tex  @ keys.tex:4:1
-style      /demo/color                                          \pgfkeysalso…  red      keys.tex  @ keys.tex:4:1
-is if      /demo/draft                                          \pgfkeys@han…  true     keys.tex  @ keys.tex:4:1
-initial    /demo/family                                         /demo                   keys.tex  @ keys.tex:4:1
-code args  /demo/label                                          \def \demola…           keys.tex  @ keys.tex:4:1
+kind       key                                                  value         default  file      
+is family  /demo                                                \edef \pgfk…           keys.tex  @ keys.tex:4:1
+style      /demo/color                                          \pgfkeysals…  red      keys.tex  @ keys.tex:4:1
+is if      /demo/draft                                          \pgfkeys@ha…  true     keys.tex  @ keys.tex:4:1
+initial    /demo/family                                         /demo                  keys.tex  @ keys.tex:4:1
+code args  /demo/label                                          \def \demol…           keys.tex  @ keys.tex:4:1
 … 90 more lines omitted
 ```
 
@@ -300,14 +300,14 @@ Where a piece of text can come from, with or without expansion. `--text` is a li
 
 ```text
 $ satex query produces -f samples/paper.tex --text 1.5em
-kind        tag          name           detail                              file           
-source      class                       \vskip 1.5em%                       article.cls    @ article.cls:184:14
-source      class                       \vskip 1.5em%                       article.cls    @ article.cls:243:12
-source      class                       \vskip 1.5em}                       article.cls    @ article.cls:253:10
-source      class                       \itemindent -1.5em%                 article.cls    @ article.cls:392:40
-source      class                       \advance\leftmargin 1.5em}%         article.cls    @ article.cls:395:45
-source      class                       {\list{}{\listparindent 1.5em%      article.cls    @ article.cls:399:40
-source      class                       \setlength\@tempdima{1.5em}%        article.cls    @ article.cls:532:26
+kind        tag          name           detail                             file           
+source      class                       \vskip 1.5em%                      article.cls    @ article.cls:184:14
+source      class                       \vskip 1.5em%                      article.cls    @ article.cls:243:12
+source      class                       \vskip 1.5em}                      article.cls    @ article.cls:253:10
+source      class                       \itemindent -1.5em%                article.cls    @ article.cls:392:40
+source      class                       \advance\leftmargin 1.5em}%        article.cls    @ article.cls:395:45
+source      class                       {\list{}{\listparindent 1.5em%     article.cls    @ article.cls:399:40
+source      class                       \setlength\@tempdima{1.5em}%       article.cls    @ article.cls:532:26
 … 11 more lines omitted
 ```
 
@@ -315,10 +315,10 @@ Only the places that stand behind an expansion, for a text the document never wr
 
 ```text
 $ satex query produces -f samples/paper.tex --text Introduction --filter 'kind!=source'
-kind        tag      name                                               detail    file       
-occurrence  section  Introduction                                       Introdu…  paper.tex  @ paper.tex:33:1
-occurrence  write    \@writefiletocprotectcontentslinesectionprotectn…  \@write…  latex.ltx  @ latex.ltx:9552:34
-occurrence  write    \newlabelsec:intro1thepageIntroductionsection.1    \newlab…  latex.ltx  @ latex.ltx:9552:34
+kind        tag      name                                              detail    file       
+occurrence  section  Introduction                                      Introdu…  paper.tex  @ paper.tex:33:1
+occurrence  write    \@writefiletocprotectcontentslinesectionprotect…  \@write…  latex.ltx  @ latex.ltx:9552:34
+occurrence  write    \newlabelsec:intro1thepageIntroductionsection.1   \newlab…  latex.ltx  @ latex.ltx:9552:34
 ```
 
 # Explain

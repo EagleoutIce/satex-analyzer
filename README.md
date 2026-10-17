@@ -175,7 +175,7 @@ Provides context-sensitive diagnostics like undefined names, duplicates, dead co
 
 ```text
 $ satex lint -f samples/paper.tex
-errors (1)
+correctness (1)
 
   ◆ already-defined (1)
     paper.tex:24:1  \repeat is already defined
@@ -183,10 +183,10 @@ errors (1)
          │ ^^^^^^^^^^^
          = unsafe fix: use \renewcommand{\repeat} instead
 
-suggestions (8)
+style (8)
 
   ● microtype-available (1)
-    paper.tex:26:1  pdftex writes PDF and can protrude characters and expand fonts, but microtype is not loaded
+    paper.tex:26:1  microtype is not loaded; under pdftex it evens out spacing and line breaks
       26 │ \begin{document}
          │ ^^^^^^
          = unsafe fix: load \usepackage{microtype}
@@ -199,7 +199,7 @@ suggestions (8)
 
   ● table-rules (1)
     paper.tex:68:3  the table is ruled with `\hline`
-… 48 more lines omitted
+… 42 more lines omitted
 ```
 
 <details>
@@ -244,6 +244,7 @@ warning   correctness  undefined-optional-content       marked content refers to
 warning   correctness  undefined-reference              \ref names a label that is never defined                        
 warning   correctness  uninstalled-package              the package is not installed, and the distribution could inst…  
 warning   correctness  unresolved-file                  a package, class or input file is not in the installation       
+info      correctness  expected-load                    the file was read after a package it expects loaded             
 info      correctness  math-mode-mismatch               \(, \), \[ or \] stands where the mode does not allow it        
 info      correctness  unintended-escape                a command is followed by an escaped punctuation mark, which i…  
 warning   security     build-shell-escape-unneeded      the build allows \write18, but the document never uses it       
@@ -255,7 +256,6 @@ warning   style        double-space                     two interword spaces rea
 warning   style        ellipsis-dots                    three periods set three periods, not an ellipsis                
 warning   style        group-local-definition           a definition is made inside a group and lost when it closes     
 warning   style        math-operator-name               an operator name is set in math italic instead of by its comm…  
-warning   style        math-shift-dollars               math opened with `$` or `$$` where LaTeX spells it \( or \[     
 warning   style        missing-italic-correction        a slanted letter runs into upright text with no `\/` between …  
 warning   style        missing-nonbreaking-space        an ordinary space in front of a reference lets the line break…  
 warning   style        parenthesis-spacing              a parenthesis carries the space of the text inside it instead…  
@@ -281,6 +281,7 @@ info      style        duplicate-package                a package is loaded more
 info      style        hand-set-quantity                a number and its unit are set by hand where siunitx would set…  
 info      style        inconsistent-precision           the numbers of a table column give different numbers of decim…  
 info      style        math-punctuation                 punctuation sits on the wrong side of a formula                 
+info      style        math-shift-dollars               display math opened with `$$` where LaTeX spells it \[          
 info      style        microtype-available              the engine can protrude characters and expand fonts, but micr…  
 info      style        numbers-not-aligned              a table column of numbers does not line them up at their deci…  
 info      style        ot1-font-encoding                accented letters are built with \accent because the text is s…  
@@ -340,7 +341,7 @@ $ satex lint -f samples/paper.tex --format github
 ::notice file=samples/paper.tex,line=22,col=1,title=primitive-tex-command::\csname is plain TeX; here it uses a control sequence by name
 ::notice file=samples/preamble.tex,line=1,col=1,title=unused-definition::\hello is never used
 ::notice file=samples/paper.tex,line=14,col=1,title=unused-definition::\WeirdMore is never used
-… 5 more lines omitted
+… 4 more lines omitted
 ```
 
 </details>
@@ -426,7 +427,7 @@ paper.tex
   title A Sample Document for saTeX
   author satex Test Suite
   engine pdflatex (build configuration)
-  provider texlive (TeX 3.141592653 (TeX Live 2025)) (detected)
+  provider texlive (TeX 3.141592653 (TeX Live 2026)) (detected)
   platform linux (this machine)
   kernel latex2e (default)
 … 28 more lines omitted
@@ -442,10 +443,10 @@ The `controls` command shows the switches and options a package or class defines
 
 ```text
 $ satex controls -f samples/paper.tex
-tag     name       count  value                                   governs  file           
-option  article           11pt                                             paper.tex      @ paper.tex:1:1
-switch  \ifdraft          false                                   263      paper.tex      @ paper.tex:3:7
-offers  amsmath    15     alignedleftspaceno, alignedleftspacey…           amsmath.sty    @ amsmath.sty:45:16
+tag     name       count  value                                  governs  file           
+option  article           11pt                                            paper.tex      @ paper.tex:1:1
+switch  \ifdraft          false                                  263      paper.tex      @ paper.tex:3:7
+offers  amsmath    15     alignedleftspaceno, alignedleftspace…           amsmath.sty    @ amsmath.sty:45:16
 … 12 more lines omitted
 ```
 
@@ -487,10 +488,10 @@ $ satex slice -f samples/paper.tex '\ifdraft'
 
 ```text
 $ satex scope -f samples/paper.tex --at 20:1
-tag          name                                      effecti…  file                
-macro        \Weird                                    \Weird …  paper.tex           @ paper.tex:16:1
-macro        \WeirdMore                                \WeirdM…  paper.tex           @ paper.tex:14:1
-… 7774 more lines omitted
+tag          name                                     effecti…  file                
+macro        \Weird                                   \Weird …  paper.tex           @ paper.tex:16:1
+macro        \WeirdMore                               \WeirdM…  paper.tex           @ paper.tex:14:1
+… 8278 more lines omitted
 ```
 
 </details>
@@ -501,13 +502,13 @@ Shows what a build costs: which packages and files dominate, and what to do abou
 
 ```text
 $ satex lint -f samples/paper.tex --filter 'category=performance'
-performance (2)
+performance (1)
 
-  ● unused-package (1)
-    paper.tex:5:1  graphicx defines 72 names, none of which are used
-      5 │ \usepackage{graphicx}
-        │ ^^^^^^^^^^^
-… 11 more lines omitted
+  ● preamble-cost (1)
+    paper.tex:26:1  5 packages requested directly, 274 files read
+      26 │ \begin{document}
+         │ ^^^^^^
+… 5 more lines omitted
 ```
 
 `--timings` breaks the time down per phase and file, `--stats` sums up counts and wall time. Both measure the run itself and change between runs.
@@ -520,7 +521,7 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 $ satex cache
 cache
   source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
-  holds 190581 definitions
+  holds 190762 definitions
   state cached
 … 2 more lines omitted
 ```
@@ -535,14 +536,14 @@ The commands a document defines itself, without packages and without internal `@
 
 ```text
 $ satex query definitions -f samples/paper.tex --filter 'origin=document and not package~. and not name~@'
-tag     name         parameters                       body                      file          
-switch  \ifdraft                                                                paper.tex     @ paper.tex:3:7
-switch  \drafttrue                                    \let \ifdraft \iftrue     paper.tex     @ paper.tex:3:7
-switch  \draftfalse                                   \let \ifdraft \iffalse    paper.tex     @ paper.tex:3:7
-macro   \hello                                        world                     preamble.tex  @ preamble.tex:1:1
-macro   \highlight   #1                               \textbf {#1}              paper.tex     @ paper.tex:11:13
-macro   \norm        #1                               \left \lVert #1\right \…  paper.tex     @ paper.tex:12:13
-macro   \WeirdMore   super #1\;                        #1                       paper.tex     @ paper.tex:14:1
+tag     name         parameters                       body                     file          
+switch  \ifdraft                                                               paper.tex     @ paper.tex:3:7
+switch  \drafttrue                                    \let \ifdraft \iftrue    paper.tex     @ paper.tex:3:7
+switch  \draftfalse                                   \let \ifdraft \iffalse   paper.tex     @ paper.tex:3:7
+macro   \hello                                        world                    preamble.tex  @ preamble.tex:1:1
+macro   \highlight   #1                               \textbf {#1}             paper.tex     @ paper.tex:11:13
+macro   \norm        #1                               \left \lVert #1\right …  paper.tex     @ paper.tex:12:13
+macro   \WeirdMore   super #1\;                        #1                      paper.tex     @ paper.tex:14:1
 … 2 more lines omitted
 ```
 
@@ -598,11 +599,11 @@ typeset
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step         name                        detail                     file           
-678     expand       \documentclass                                         paper.tex      @ paper.tex:1:1
-8412    open-file    \article                    /usr/local/texlive/YYYY/…  paper.tex      @ paper.tex:1:1
-10261   expand       \par                                                   paper.tex      @ paper.tex:2:1
-10268   expand       \newif                                                 paper.tex      @ paper.tex:3:1
+index   step         name                        detail                    file           
+678     expand       \documentclass                                        paper.tex      @ paper.tex:1:1
+8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
+10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
+10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
 … 209 more lines omitted
 ```
 

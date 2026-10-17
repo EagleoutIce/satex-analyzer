@@ -94,3 +94,14 @@ vim.lsp.config.satex = {
 }
 vim.lsp.enable("satex")
 ```
+
+### TeXstudio
+
+TeXstudio has no LSP client. It reads the LaTeX log, so `satex lint --format texlog` writes findings in that form: errors as `! Package satex Error: …` with `l.⟨line⟩`, the rest as `Package satex Warning: … on input line ⟨line⟩.` Append them to the log after compiling, then let TeXstudio show the log. Under *Options → Configure TeXstudio → Build*, set *Build & View* to
+
+```
+txs:///compile | satex lint -f %.tex --format texlog >> %.log | txs:///view-log | txs:///view
+```
+
+The findings then appear in the log panel and as error and warning marks in the editor.
+

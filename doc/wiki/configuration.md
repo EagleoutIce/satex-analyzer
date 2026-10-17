@@ -24,6 +24,8 @@ load:  # what to follow from the document
   inputs: true  # \input and \include
   format: true  # the installation's latex.ltx
   skip: []  # packages to leave unread
+  expect: []  # classes and packages a package or class file expects loaded before it (a beamer theme: [beamer])
+  expect_detect: true  # find them from what the packages on disk define, and say so
 search_paths: []  # searched before the installation
 paths:  # kpathsea variables' fallback list: tried after the
                           # environment and the project's latexmkrc/Makefile
@@ -39,6 +41,9 @@ project:
   frozen: []  # globs of files read and analyzed, but with no findings and no fixes inside; relative to this file
   freeze_other_repositories: true  # files of another git repository (a submodule, a nested clone) count as frozen too
   ignore_other_configs: false  # true: satex.yaml files above this one and the global one are not read
+conventions:  # how TeX is usually written, where the text alone does not say
+  internal: ['@', '^__', '_.*:']  # regexes marking internal names (hidden from listings and completion, private to lints)
+  definers: [def, gdef, edef, xdef, let, chardef, mathchardef, countdef, dimendef, skipdef, toksdef, newif, newcount, newdimen, newskip, newtoks, newbox, newlength, newcommand, renewcommand, providecommand, DeclareRobustCommand, newrobustcmd, renewrobustcmd, providerobustcmd, NewDocumentCommand, RenewDocumentCommand, ProvideDocumentCommand, DeclareDocumentCommand, NewExpandableDocumentCommand]  # commands whose next name is the one they define, for reading what packages on disk define
 lints:
   unused-definition:
     report_public: true  # also flag a public name
@@ -47,7 +52,7 @@ lints:
   wrong-dash:  # how many hyphens belong in each context
     letters: [1, 3]  # chktex HyphDash: a hyphen or an em-dash
     digits: [2]  # chktex NumDash: an en-dash spans a range
-    words: [3]  # chktex WordDash: an em-dash breaks a sentence
+    words: [3, 2]  # chktex WordDash: an em-dash breaks a sentence, or Bringhurst's spaced en-dash
     except: [Birch--Swinnerton-Dyer]  # chktex DashExcpt: spellings to leave alone
   user-pattern:  # chktex UserWarn and UserWarnRegex
     patterns: []  # literal strings to report
@@ -100,6 +105,9 @@ cache:
                             # empty, whatever ordinary runs already found
                             # expensive to interpret (measured, not a hand-picked list)
     packages: []
+    common: [microtype, cleveref, zref-clever, savetrees, tabularray, xurl, glossaries,
+      enumitem, nowidow, silence, adjustbox, pdfpages, pgfplotstable, memoize,
+      classicthesis]  # prepared first while packages is empty, where installed
     engines: []  # empty: the engine in effect
     class: article  # the class they are loaded after
     auto: true  # every run stores the packages it reads
@@ -123,7 +131,9 @@ analysis:
   join_paths_at:  # where every path still apart is joined, reported as paths-joined-at
     - command: \document  # matched by meaning, however the run reaches it
     # - hook: begindocument  # an lthooks hook, when it is used
-  assume_compiles: true  # drop a path that raises a certain TeX error (reported as an assumption)
+  assume_compiles: true  # assumption: drop a path that raises a certain TeX error in library code; the document's own errors are kept
+  assume_packages_close_groups: true  # assumption: a package closes the groups it opens
+  assume_environment: true  # assumption: the build runs in this environment (Lua's os.getenv reads it)
 
 # shell_escape: restricted # none | restricted | full; unset, what the build files ask for
 # TEMPORARY effect summaries: satex does not follow these macros' internals.
@@ -326,7 +336,7 @@ A rule with settings of its own reads them under `lints`, keyed by the rule's co
 
 `lints.wrong-dash.digits` (default `[2]`): How many belong between numbers, as chktex's `NumDash`. Hyphens inside an identifier such as an ISBN or a date (another hyphen, a letter or a `/` in the same word) are left alone.
 
-`lints.wrong-dash.words` (default `[3]`): How many belong between spaces, as chktex's `WordDash`.
+`lints.wrong-dash.words` (default `[3, 2]`): How many belong between spaces, as chktex's `WordDash`; two is Bringhurst's spaced en-dash.
 
 `lints.wrong-dash.except` (default `[Birch--Swinnerton-Dyer]`): Whole spellings to leave alone, as chktex's `DashExcpt`.
 
@@ -346,7 +356,7 @@ A value follows kpathsea's own path syntax (kpathsea manual, "Path searching"): 
 
 ## The clock
 
-`clock` is what `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` hold when the run starts ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/tex.web#L5240)), and so what `\today` and the date packages print. The default `now` is the time the analysis runs, said once as the `clock-assumed` assumption the first time the document reads it. An ISO date-time (`2026-09-29`, `2026-09-29T14:30`, `2026-09-29T14:30:00+02:00`; without a zone, the machine's) pins the date, for a run that must agree with another. `unknown` leaves the date unknown: every digit of it is an unknown digit, so what a document decides by the date is analyzed for every outcome. A package cache that read the clock replays the clock of the run that made it, and the `clock-assumed` assumption names it; the caches are kept per `clock` setting.
+`clock` is what `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` hold when the run starts ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L5240)), and so what `\today` and the date packages print. The default `now` is the time the analysis runs, said once as the `clock-assumed` assumption the first time the document reads it. An ISO date-time (`2026-09-29`, `2026-09-29T14:30`, `2026-09-29T14:30:00+02:00`; without a zone, the machine's) pins the date, for a run that must agree with another. `unknown` leaves the date unknown: every digit of it is an unknown digit, so what a document decides by the date is analyzed for every outcome. A package cache that read the clock replays the clock of the run that made it, and the `clock-assumed` assumption names it; the caches are kept per `clock` setting.
 
 ### Output directory
 
@@ -365,7 +375,11 @@ analysis:
 
 `analysis.join_paths_at` (default `[{command: \document}]`): Points where every path still apart is joined, whatever else differs. A `command` is matched by its meaning: `\document` joins wherever the run starts that meaning, from `\begin{document}`, an alias or an `\expandafter`. A `hook` is an lthooks name and joins when the hook is used. A slot the paths disagree on becomes the join of their values, widened when needed, and no path is dropped. Each join is reported once as the `imprecision` diagnostic `paths-joined-at`, with how many paths arrived and what kept them apart.
 
-`analysis.assume_compiles` (default `true`): A soundiness assumption: the document compiles without errors. A path that raises a certain TeX error is then no run of the document, and is dropped. An error is certain when it arises on state the run knows exactly, before any approximation. Each such drop is reported once as an `assumption` diagnostic. An error after an approximation keeps its path, and the last path is never dropped. `false` keeps every path.
+`analysis.assume_compiles` (default `true`): A soundiness assumption: the document compiles without errors. A path that raises a certain TeX error in library code (a package, the kernel) is then no run of the document, and is dropped. An error is certain when it arises on state the run knows exactly, before any approximation. An error in the document's own text is always kept, to be reported and fixed. Each drop is reported once as an `assumption` diagnostic, and the last path is never dropped. `false` keeps every path.
+
+`analysis.assume_packages_close_groups` (default `true`): A soundiness assumption: a package closes the groups it opens, so two paths at the same line of a file, one in more groups, join with those closed. `false` keeps such paths apart.
+
+`analysis.assume_environment` (default `true`): A soundiness assumption: the build runs in the environment SaTeX runs in, which Lua's `os.getenv` reads. `false` makes every variable unknown.
 
 ## Stubs
 
