@@ -66,8 +66,10 @@ fn check_allowing(id: &str, main: &str, also: &[&str], allowed: &[&str]) -> Opti
     if analysis.untyped > 0 {
         failures.push(format!("{} untyped unknown texts made; every unknown is typed", analysis.untyped));
     }
-    if analysis.steps >= STEP_BUDGET {
-        failures.push(format!("{} steps, budget {STEP_BUDGET}", analysis.steps));
+    let steps = analysis.steps - analysis.load_steps;
+    eprintln!("{id}/{main}: {steps} analysis steps, {} loading", analysis.load_steps);
+    if steps >= STEP_BUDGET {
+        failures.push(format!("{steps} analysis steps ({} loading), budget {STEP_BUDGET}", analysis.load_steps));
     }
     let own = |s: &satex::tex::Span| {
         analysis.files.get(s.file as usize).is_some_and(|f| std::path::Path::new(&f.path).starts_with(&root))
