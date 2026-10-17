@@ -1204,6 +1204,7 @@ impl Machine<'_> {
             cfg: _,
             checkpoints: _,
             limits: _,
+            load_start: _,
             pressure: _,
             hyph_cache: _,
             kp: _,

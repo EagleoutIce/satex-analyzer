@@ -355,6 +355,8 @@ pub struct Analysis {
     /// The characters typeset from the lines a filtered trace covers.
     pub typeset: String,
     pub steps: u64,
+    /// The part of `steps` spent in outermost class and package loads, read or replayed.
+    pub load_steps: u64,
     /// The limits that cut the run somewhere, in the order first reached.
     pub limits: Vec<LimitHit>,
     /// Source lines read from files, each counted to where it stopped.
@@ -519,10 +521,11 @@ impl Analysis {
         [
             format!("{:.3}s{peak}{exhausted}", elapsed.as_secs_f64()),
             format!(
-                "{} files  {} lines  {} tokens",
+                "{} files  {} lines  {} tokens ({} loading)",
                 c(self.files.len()),
                 compact_count(self.lines),
-                compact_count(self.steps)
+                compact_count(self.steps),
+                compact_count(self.load_steps)
             ),
             format!(
                 "{} definitions  {} expansions  {} occurrences  {} diagnostics",
@@ -1248,6 +1251,8 @@ pub struct Machine<'a> {
     source: Option<Sym>,
     /// Package context: the name and the options it was given.
     packages: Rc<Vec<(Sym, Vec<String>)>>,
+    /// `out.steps` when the outermost package load began.
+    load_start: Option<u64>,
     /// How often each control sequence is currently being expanded.
     pub(crate) expanding: Vec<u16>,
     pub loaded: Rc<Vec<String>>,
@@ -1974,6 +1979,7 @@ impl<'a> Machine<'a> {
                 trace: Vec::new(),
                 typeset: String::new(),
                 steps: 0,
+                load_steps: 0,
                 limits: Vec::new(),
                 lines: 0,
                 exhausted: false,
@@ -2020,6 +2026,7 @@ impl<'a> Machine<'a> {
             text_apart: false,
             source: None,
             packages: Rc::default(),
+            load_start: None,
             expanding: Vec::new(),
             loaded: Rc::default(),
             class_options: Vec::new(),
@@ -2388,6 +2395,9 @@ impl<'a> Machine<'a> {
         m.out.timings.start(Phase::Hooks);
         m.out.journal_size = m.env.journal_len();
         m.out.held_tokens_left = m.held_tokens;
+        if let Some(start) = m.load_start.take() {
+            m.out.load_steps += m.out.steps.saturating_sub(start);
+        }
         if m.cfg.plugins.tools {
             let loads: Vec<(String, Vec<String>)> = m
                 .out
@@ -3087,7 +3097,7 @@ will look undefined",
         let id = self.register_file(source.display().to_string(), LoadKind::Input);
         // A run of its own: the preamble neither inherits the kernel's spent steps
         // nor leaves anything on the input stack for the document to read as its own.
-        self.out.steps = 0;
+        (self.out.steps, self.out.load_steps) = (0, 0);
         self.halted = false;
         self.input.push(Frame::Boundary);
         let base = self.input.len();
@@ -3155,7 +3165,7 @@ will look undefined",
         // counter namespace yet either. Both learn it the same way.
         self.counter_namespace = None;
         self.out.exhausted = false;
-        self.out.steps = 0;
+        (self.out.steps, self.out.load_steps) = (0, 0);
         // Steps of the kernel's: a build would otherwise leave the document's
         // loops open to the stall check a cached kernel leaves them closed to.
         self.region = Region::default();
@@ -3812,6 +3822,11 @@ will look undefined",
                 self.balance_conditionals(mouth.file, conds);
                 if package.is_some() {
                     Rc::make_mut(&mut self.packages).pop();
+                    if self.packages.is_empty()
+                        && let Some(start) = self.load_start.take()
+                    {
+                        self.out.load_steps += self.out.steps.saturating_sub(start);
+                    }
                 }
                 let name = package.unwrap_or(Sym(0));
                 self.record(Step::CloseFile, name, Span::new(mouth.file, 0, 0));
@@ -10178,6 +10193,9 @@ will look undefined",
         }
         let package = kind.is_package().then(|| self.intern(name));
         if let Some(sym) = package {
+            if self.packages.is_empty() {
+                self.load_start.get_or_insert(self.out.steps);
+            }
             Rc::make_mut(&mut self.packages).push((sym, options));
         }
         self.identifying = Some(load);

@@ -1,8 +1,8 @@
 //! Step-count budgets: a fixed problem that gets slow again fails here.
 //! Counts are tokens, never wall-clock, so they do not depend on the machine.
-//! Each limit is the value measured 2026-10-03, failing at +20%.
-//! Document budgets run on a warm kernel cache, so they exclude the kernel's
-//! steps, which `kernel_build` measures once.
+//! Each limit is the value measured on the date noted, failing at +20%.
+//! Document budgets run on a warm kernel cache and count analysis steps:
+//! the kernel (`kernel_build` measures it once) and package loads are out.
 
 use satex::config::{Cache, Load};
 use satex::machine::{Analysis, Machine};
@@ -18,6 +18,10 @@ fn fresh(name: &str) -> PathBuf {
 fn within(what: &str, steps: u64, measured: u64) {
     eprintln!("budget {what}: {steps} (measured {measured})");
     assert!(steps * 100 <= measured * SLACK, "{what}: {steps} steps, measured {measured}, fail at +20%");
+}
+
+fn analysis_steps(a: &Analysis) -> u64 {
+    a.steps - a.load_steps
 }
 
 fn run(name: &str, source: &str) -> Analysis {
@@ -40,9 +44,9 @@ fn budget(name: &str, source: &str, measured: u64) -> Option<Analysis> {
         return None;
     }
     let analysis = run(name, source);
-    eprintln!("budget {name}: {} steps", analysis.steps);
+    eprintln!("budget {name}: {} steps, {} loading", analysis.steps, analysis.load_steps);
     without(name, &analysis, &["line-budget-cut", "budget-exhausted"]);
-    within(name, analysis.steps, measured);
+    within(name, analysis_steps(&analysis), measured);
     Some(analysis)
 }
 
@@ -56,18 +60,22 @@ const TIKZ: &str = "\\documentclass{article}\\usepackage{tikz}";
 
 // measured 2026-10-03, fail at +20%
 const KERNEL: u64 = 620765941;
-const ROUNDED: u64 = 8304180;
-const CLOUD: u64 = 9041018;
-const PARAGRAPH: u64 = 8093921;
-const DATETIME: u64 = 10844643;
-const METADATA: u64 = 8399005;
-const FLAG: u64 = 990538;
-const NOTEBOOK: u64 = 10772145;
-const OVERFULL: u64 = 9091922;
-const PGFMATH_TYPED: u64 = 2329093;
-const GRAPHIC: u64 = 1856715;
-// measured 2026-10-11
-const REGEX_SCAN: u64 = 11077529;
+// analysis steps (package loads excluded), measured 2026-10-17
+const ROUNDED: u64 = 1667940;
+const CLOUD: u64 = 1953470;
+const PARAGRAPH: u64 = 1456856;
+const DATETIME: u64 = 1734775;
+const METADATA: u64 = 5773865;
+/// What `\DocumentMetadata` cost in all on 2026-10-03, nearly all of it
+/// tagpdf's loading: a load that runs unknown values (`\int_rand:n`) is
+/// analysis too, so its loading has a budget of its own.
+const METADATA_LOADING: u64 = 8_400_000;
+const FLAG: u64 = 852156;
+const NOTEBOOK: u64 = 3669404;
+const OVERFULL: u64 = 2287795;
+const PGFMATH_TYPED: u64 = 898341;
+const GRAPHIC: u64 = 1181589;
+const REGEX_SCAN: u64 = 10924212;
 
 #[test]
 fn kernel_build() {
@@ -179,7 +187,10 @@ fn pgfmath_parse_of_typed_numbers() {
 
 #[test]
 fn document_metadata() {
-    budget("metadata", "\\DocumentMetadata{}\\documentclass{article}\\begin{document}x\\end{document}", METADATA);
+    let source = "\\DocumentMetadata{}\\documentclass{article}\\begin{document}x\\end{document}";
+    if let Some(analysis) = budget("metadata", source, METADATA) {
+        within("metadata loading", analysis.load_steps, METADATA_LOADING);
+    }
 }
 
 #[test]
@@ -211,8 +222,9 @@ fn an_unknown_font_size_does_not_multiply_paths() {
     };
     let known = run("font-known", &doc("11 "));
     let unknown = run("font-unknown", &doc("\\pdfuniformdeviate 20 "));
-    eprintln!("steps: known {} unknown {}", known.steps, unknown.steps);
-    assert!(unknown.steps < known.steps * 2, "{} vs {}", unknown.steps, known.steps);
+    let (known, unknown_steps) = (analysis_steps(&known), analysis_steps(&unknown));
+    eprintln!("analysis steps: known {known} unknown {unknown_steps}");
+    assert!(unknown_steps < known * 2, "{unknown_steps} vs {known}");
     assert!(!unknown.facts.diagnostics.iter().any(|d| d.code == "budget-exhausted"));
 }
 
