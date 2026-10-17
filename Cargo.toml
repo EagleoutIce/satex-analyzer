@@ -89,6 +89,11 @@ codegen-units = 16
 # Local reruns rebuild in seconds; CI sets CARGO_INCREMENTAL=0.
 incremental = true
 
+# `cargo playground` on a developer machine: the CI optimizations, kept
+# apart from the test builds, which may use another rustc.
+[profile.playground]
+inherits = "ci"
+
 # The release build with line tables, for a sampling profiler to name the
 # inlined code a hot frame stands for (`eu-stack -i`, `perf report`).
 [profile.profiling]
