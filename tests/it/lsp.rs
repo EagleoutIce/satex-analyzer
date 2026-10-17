@@ -348,7 +348,7 @@ fn hover_shows_primitive_syntax_only_while_it_is_the_primitive() {
 fn a_kept_hover_follows_the_document_s_own_definition() {
     let catcodes = "\\catcode`\\{=1 \\catcode`\\}=2 ";
     let (mut server, uri, _, dir) = open_unsaved("kept", &format!("{catcodes}\\def\\foo{{x}}\n\\foo\n"));
-    let mut hover = |server: &mut Server, line: u32| {
+    let hover = |server: &mut Server, line: u32| {
         let id = server.request(
             "textDocument/hover",
             json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": 2 } }),
@@ -453,7 +453,7 @@ mod goto_definition_on_loads {
     use super::*;
 
     fn kpsewhich_installed() -> bool {
-        which::which("kpsewhich").is_ok()
+        satex::paths::which("kpsewhich").is_ok()
     }
 
     fn definition_at(server: &mut Server, uri: &str, line: u32, character: u32) -> Value {
@@ -787,4 +787,127 @@ fn comments_above_a_definition_document_its_arguments() {
     assert!(hover.contains("Greets someone.") && hover.contains("`⟨arg1⟩` who is greeted"), "{hover}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An input file is analyzed through the root that reads it, never alone.
+mod roots {
+    use super::*;
+
+    const PRELUDE: &str =
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\def\\documentclass#1{}\\documentclass{article}\n";
+
+    /// A project of `files` in a fresh directory, served from there with
+    /// `open` opened and its diagnostics waited out.
+    fn project(tag: &str, files: &[(&str, &str)], open: &str) -> (Server, String, std::path::PathBuf) {
+        let dir = crate::support::tmp_root().join(format!("satex-lsp-roots-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, text) in files {
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        let mut server = Server::start(&dir);
+        let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+        server.response(id);
+        server.notify("initialized", json!({}));
+        let uri = fixture_uri(&dir.join(open));
+        let text = std::fs::read_to_string(dir.join(open)).unwrap();
+        server.notify(
+            "textDocument/didOpen",
+            json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
+        );
+        server.notification("textDocument/publishDiagnostics");
+        (server, uri, dir)
+    }
+
+    /// Where `\greet` on the last line of `uri` is defined.
+    fn greet_defined_in(server: &mut Server, uri: &str) -> String {
+        let path = satex::paths::from_file_url(uri).unwrap();
+        let line = std::fs::read_to_string(path).unwrap().lines().count() - 1;
+        let id = server.request(
+            "textDocument/definition",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": 2 } }),
+        );
+        let def = server.response(id);
+        def["result"][0]["uri"].as_str().unwrap_or_else(|| panic!("no definition: {def:?}")).to_string()
+    }
+
+    #[test]
+    fn an_input_file_is_read_through_its_root() {
+        let main = format!("{PRELUDE}\\def\\greet#1{{Hello, #1!}}\n\\input{{chap}}\n");
+        let (mut server, uri, dir) =
+            project("input", &[("main.tex", &main), ("chap.tex", "\\greet{world}\n")], "chap.tex");
+        assert_eq!(greet_defined_in(&mut server, &uri), fixture_uri(&dir.join("main.tex")));
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `a.tex` names the file but does not read it; of `b.tex` and `c.tex`,
+    /// which both read it, the likelier one answers, and keeps answering.
+    #[test]
+    fn of_two_roots_sharing_a_file_the_one_seen_reading_it_answers() {
+        let a = format!("{PRELUDE}% \\input{{shared}}\n\\def\\greet#1{{a}}\n");
+        let b = format!("{PRELUDE}\\def\\greet#1{{b}}\n\\input{{shared}}\n");
+        let c = format!("{PRELUDE}\\def\\greet#1{{c}}\n\\input{{shared}}\n");
+        let files = [("a.tex", a.as_str()), ("b.tex", &b), ("c.tex", &c), ("shared.tex", "\\greet{world}\n")];
+        let (mut server, uri, dir) = project("shared", &files, "shared.tex");
+        let b_uri = fixture_uri(&dir.join("b.tex"));
+        assert_eq!(greet_defined_in(&mut server, &uri), b_uri);
+        server.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": "\\greet{you}\n" }] }),
+        );
+        server.notification("textDocument/publishDiagnostics");
+        assert_eq!(greet_defined_in(&mut server, &uri), b_uri);
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_magic_root_comment_wins() {
+        let b = format!("{PRELUDE}\\def\\greet#1{{b}}\n\\input{{shared}}\n");
+        let c = format!("{PRELUDE}\\def\\greet#1{{c}}\n\\input{{shared}}\n");
+        let shared = "% !TeX root = c.tex\n\\greet{world}\n";
+        let files = [("b.tex", b.as_str()), ("c.tex", &c), ("shared.tex", shared)];
+        let (mut server, uri, dir) = project("magic", &files, "shared.tex");
+        assert_eq!(greet_defined_in(&mut server, &uri), fixture_uri(&dir.join("c.tex")));
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The same text sent again runs nothing: no diagnostics arrive before
+    /// the answer to a request sent after the debounce.
+    #[test]
+    fn the_same_text_again_does_not_run_again() {
+        let main = format!("{PRELUDE}\\def\\greet#1{{Hello, #1!}}\n\\def\\unused{{}}\n");
+        let (mut server, uri, dir) = project("same", &[("main.tex", &main)], "main.tex");
+        let change = |server: &mut Server, version: i64, text: &str| {
+            server.notify(
+                "textDocument/didChange",
+                json!({ "textDocument": { "uri": uri, "version": version }, "contentChanges": [{ "text": text }] }),
+            )
+        };
+        let quiet = |server: &mut Server| {
+            std::thread::sleep(Duration::from_millis(800));
+            let id = server.request("textDocument/documentSymbol", json!({ "textDocument": { "uri": uri } }));
+            loop {
+                let msg = server.read();
+                assert_ne!(msg["method"], "textDocument/publishDiagnostics", "ran again: {msg:?}");
+                if msg["id"] == id {
+                    break;
+                }
+            }
+        };
+        for version in 2..5 {
+            change(&mut server, version, &main);
+        }
+        quiet(&mut server);
+        // An edit and its undo before the debounce ends: the text analyzed.
+        change(&mut server, 5, "% edited\n");
+        change(&mut server, 6, &main);
+        quiet(&mut server);
+        change(&mut server, 7, "% edited\n");
+        server.notification("textDocument/publishDiagnostics");
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

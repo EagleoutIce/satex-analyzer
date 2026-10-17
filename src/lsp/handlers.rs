@@ -420,7 +420,7 @@ fn load_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<S
         .iter()
         .filter(|d| d.span.file == file && !matches!(d.tag, "option" | "key"))
         .map(|d| analysis.interner.name(d.name))
-        .filter(|n| !n.is_empty() && !n.contains(['@', '_', ':']))
+        .filter(|n| !n.is_empty() && !analysis.settings.conventions.is_internal(n))
         .collect();
     defined.sort();
     defined.dedup();
@@ -1172,7 +1172,7 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
                 return None;
             }
             let tag = record.get("tag").and_then(Json::as_str).unwrap_or("");
-            let internal = label.contains(['@', '_', ':']);
+            let internal = analysis.settings.conventions.is_internal(label.trim_start_matches('\\'));
             if label.is_empty() || (internal && !matches!(tag, "macro" | "primitive" | "environment" | "alias")) {
                 return None;
             }

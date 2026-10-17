@@ -16,6 +16,11 @@
 //! lands while a document is still waiting out its debounce replaces the
 //! pending text, which is this facade's form of "cancelling" a stale run:
 //! nothing has started yet, so there is nothing to interrupt.
+//!
+//! An input file is analyzed through its root: the one its `% !TeX root`
+//! line names, else the first candidate root (`Discovery::candidate_roots`)
+//! whose run reads it. A root's run is reused while the open buffers' texts
+//! are those it read, so the same text sent again runs nothing.
 
 // lsp_types::Uri's interior mutability is a cache with no bearing on Eq/Hash; safe as a map key.
 #![allow(clippy::mutable_key_type)]
@@ -28,7 +33,11 @@ mod unreached;
 mod wasm;
 
 use crate::fixed::HashMap;
+use crate::plugin::discovery;
+use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError, select};
@@ -77,10 +86,10 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
     let named = client_roots(&params);
     let root = named.first().cloned().unwrap_or(root);
     // What the engine is doing (`caching pdftex kernel`), for the editor's
-    // status bar: `satex/status` with `{ "text": … }`, empty when idle.
+    // status bar: `satex/status` with a `progress::Status`, `text` empty when idle.
     let status = connection.sender.clone();
-    crate::progress::listen(Some(Box::new(move |text: &str| {
-        let note = Notification::new("satex/status".into(), serde_json::json!({ "text": text }));
+    crate::progress::listen(Some(Box::new(move |now: &crate::progress::Status| {
+        let note = Notification::new("satex/status".into(), now);
         let _ = status.send(Message::Notification(note));
     })));
 
@@ -177,7 +186,7 @@ fn main_loop(
                                 }
                                 _ => {}
                             }
-                            engine_tx.send(m).is_ok()
+                            to_engine(engine_tx, m)
                         },
                         not,
                     ),
@@ -231,7 +240,13 @@ fn kept_hover(req: &Request, texts: &HashMap<Uri, String>, hovers: &Hovers) -> O
 }
 
 fn handle_request(connection: &Connection, engine_tx: &Sender<EngineMsg>, req: Request) {
-    let _ = connection.sender.send(Message::Response(respond(&mut |m| engine_tx.send(m).is_ok(), req)));
+    let _ = connection.sender.send(Message::Response(respond(&mut |m| to_engine(engine_tx, m), req)));
+}
+
+/// Hands `msg` to the engine, which stops the probes it runs in the background for it.
+fn to_engine(engine_tx: &Sender<EngineMsg>, msg: EngineMsg) -> bool {
+    crate::probe::WANTED.store(true, std::sync::atomic::Ordering::Relaxed);
+    engine_tx.send(msg).is_ok()
 }
 
 /// `req` answered through `send`, which hands a message to the engine.
@@ -401,7 +416,15 @@ enum EngineMsg {
 struct Doc {
     text: String,
     path: PathBuf,
-    analysis: Option<Analysis>,
+    analysis: Option<Rc<Analysis>>,
+}
+
+/// One run of a root: the open buffers' texts it read, by hash, and the
+/// files it read.
+struct Run {
+    texts: u64,
+    analysis: Rc<Analysis>,
+    reads: HashSet<PathBuf>,
 }
 
 /// The workspace folders the client named, else its root.
@@ -432,7 +455,12 @@ struct Engine {
     dirty: Vec<Uri>,
     cfg: Config,
     root: PathBuf,
+    /// The root `satex lsp -f` names, tried first for an input file.
     main: Option<PathBuf>,
+    /// The last run of each root an open document is answered from.
+    runs: HashMap<PathBuf, Run>,
+    /// The root a run was seen to read each file from.
+    owners: HashMap<PathBuf, PathBuf>,
     diagnostics_tx: Sender<PublishDiagnosticsParams>,
     hovers: Hovers,
     /// The names whose hover the engine computes while it is idle.
@@ -452,9 +480,6 @@ impl Engine {
         main: Option<PathBuf>,
         diagnostics_tx: Sender<PublishDiagnosticsParams>,
     ) -> Self {
-        // The document an input file is read as part of (`satex lsp -f`, else
-        // the one discovery would start from).
-        let main = main.or_else(|| crate::plugin::discovery::scan(&root).root_document());
         // Completion reads the key family an argument feeds off the calls.
         cfg.record_arguments = true;
         Engine {
@@ -464,6 +489,8 @@ impl Engine {
             cfg,
             root,
             main,
+            runs: HashMap::default(),
+            owners: HashMap::default(),
             diagnostics_tx,
             hovers: Hovers::default(),
             prefill: Default::default(),
@@ -477,16 +504,98 @@ impl Engine {
         Engine { hovers, ..self }
     }
 
-    /// Analyzes `uri`, then publishes its diagnostics once its hovers are
-    /// the new analysis's: a hover asked after them never gets an older one.
+    /// Analyzes `uri` through its root, then publishes the diagnostics of a
+    /// new run once its hovers are the run's: a hover asked after them
+    /// never gets an older one. A run of the same texts is reused.
     fn analyze(&mut self, uri: &Uri) {
-        let published = analyze(&mut self.docs, &mut self.actions, uri, &self.cfg, self.main.as_deref());
+        let Some(doc) = self.docs.get(uri) else { return };
+        let (path, text) = (doc.path.clone(), doc.text.clone());
+        // Every open buffer is read for its file, so an `\input` of one sees
+        // its unsaved text too (`crate::overlay`).
+        for doc in self.docs.values() {
+            crate::overlay::set(&doc.path, doc.text.clone());
+        }
+        let (analysis, fresh) = self.run_for(&path, &text);
         self.dirty.retain(|d| d != uri);
-        self.refresh_hovers(uri);
-        for params in published {
-            let _ = self.diagnostics_tx.send(params);
+        let Some(doc) = self.docs.get_mut(uri) else { return };
+        let changed = !doc.analysis.as_ref().is_some_and(|a| Rc::ptr_eq(a, &analysis));
+        doc.analysis = Some(analysis.clone());
+        self.runs.retain(|_, run| Rc::strong_count(&run.analysis) > 1);
+        if changed {
+            self.refresh_hovers(uri);
+        }
+        if fresh {
+            let open: Vec<&Path> = self.docs.values().map(|d| d.path.as_path()).collect();
+            for params in publish(&mut self.actions, &analysis, &path, &open) {
+                let _ = self.diagnostics_tx.send(params);
+            }
         }
         crate::progress::idle();
+    }
+
+    /// The analysis answering for `path`: that of the root its `% !TeX root`
+    /// line names, else, for an input file, of the first candidate root a
+    /// run sees reading it, else its own. Whether it is a new run is the second.
+    fn run_for(&mut self, path: &Path, text: &str) -> (Rc<Analysis>, bool) {
+        let key = canonical(path);
+        let input = path.extension().is_some_and(|e| e == "tex") && !discovery::is_document(text);
+        let declared = discovery::declared_root(path, text);
+        let known: Vec<PathBuf> = match (declared, input) {
+            (Some(root), _) => vec![root],
+            (None, true) => self.owners.get(&key).into_iter().chain(&self.main).cloned().collect(),
+            (None, false) => Vec::new(),
+        };
+        let mut tried = Vec::new();
+        let dir = if crate::paths::within(&self.root, path) { self.root.clone() } else { crate::paths::dir_of(path) };
+        let searched = move || discovery::scan(&dir).candidate_roots(path);
+        let candidates = known.into_iter().chain(input.then(searched).into_iter().flatten());
+        for root in candidates {
+            let root_key = canonical(&root);
+            if root_key == key || tried.contains(&root_key) {
+                continue;
+            }
+            let run = self.run(&root);
+            if self.runs.get(&root_key).is_some_and(|r| r.reads.contains(&key)) {
+                self.owners.insert(key, root);
+                return run;
+            }
+            // A root that does not read the file is dropped.
+            drop(run);
+            self.runs.retain(|_, run| Rc::strong_count(&run.analysis) > 1);
+            tried.push(root_key);
+        }
+        self.run(path)
+    }
+
+    /// `root` analyzed for the open buffers' texts, reused while they are
+    /// those of its last run.
+    fn run(&mut self, root: &Path) -> (Rc<Analysis>, bool) {
+        let texts = {
+            let mut docs: Vec<(&PathBuf, &String)> = self.docs.values().map(|d| (&d.path, &d.text)).collect();
+            docs.sort();
+            let mut hasher = std::hash::DefaultHasher::new();
+            docs.hash(&mut hasher);
+            hasher.finish()
+        };
+        let key = canonical(root);
+        if let Some(run) = self.runs.get(&key).filter(|run| run.texts == texts) {
+            return (run.analysis.clone(), false);
+        }
+        let source = crate::overlay::read_to_string(root).unwrap_or_default();
+        let analysis = Rc::new(Machine::analyze(&source, Some(root), &self.cfg));
+        // The server's stderr is the client's log.
+        for note in analysis.limit_notes() {
+            eprintln!("satex: {note}");
+        }
+        let reads: HashSet<PathBuf> = analysis.file_names().iter().map(|f| canonical(Path::new(f))).collect();
+        // A document's run says which root each file it reads belongs to.
+        if discovery::is_document(&source) {
+            for file in &reads {
+                self.owners.entry(file.clone()).or_insert_with(|| root.to_path_buf());
+            }
+        }
+        self.runs.insert(key, Run { texts, analysis: analysis.clone(), reads });
+        (analysis, true)
     }
 
     /// After `uri` was analyzed: its hovers of names the document defines
@@ -554,7 +663,17 @@ impl Engine {
     fn prefill_one(&mut self) {
         let Some((uri, name)) = self.prefill.pop_front() else { return };
         let last = !self.prefill.iter().any(|(u, _)| *u == uri);
-        if let Some(markdown) = with_doc(&self.docs, &uri, |analysis, _| handlers::command_markdown(analysis, &name))
+        let markdown = crate::probe::background(|| {
+            crate::progress::because("hover computed ahead", || {
+                with_doc(&self.docs, &uri, |analysis, _| handlers::command_markdown(analysis, &name))
+            })
+        });
+        let Some(markdown) = markdown else {
+            // A request came first: asked again once the engine is idle.
+            self.prefill.push_front((uri, name));
+            return;
+        };
+        if let Some(markdown) = markdown
             && let Ok(mut hovers) = self.hovers.lock()
         {
             hovers.insert((uri.clone(), name), markdown);
@@ -630,7 +749,8 @@ impl Engine {
                         let key = (uri.clone(), name.clone());
                         let kept = self.hovers.lock().ok().and_then(|h| h.get(&key).cloned());
                         let markdown = kept.unwrap_or_else(|| {
-                            let markdown = handlers::command_markdown(analysis, &name);
+                            let markdown =
+                                crate::progress::because("hover", || handlers::command_markdown(analysis, &name));
                             if let Ok(mut hovers) = self.hovers.lock() {
                                 hovers.insert(key, markdown.clone());
                             }
@@ -660,12 +780,16 @@ impl Engine {
             }
             EngineMsg::SignatureHelp(uri, pos, reply) => {
                 self.ensure(&uri);
-                let result = with_doc(&self.docs, &uri, |analysis, text| handlers::signature_help(analysis, text, pos));
+                let result = crate::progress::because("signature help", || {
+                    with_doc(&self.docs, &uri, |analysis, text| handlers::signature_help(analysis, text, pos))
+                });
                 let _ = reply.send(result.flatten());
             }
             EngineMsg::Completion(uri, pos, reply) => {
                 self.ensure(&uri);
-                let result = with_doc(&self.docs, &uri, |analysis, text| handlers::completion(analysis, text, pos));
+                let result = crate::progress::because("completion", || {
+                    with_doc(&self.docs, &uri, |analysis, text| handlers::completion(analysis, text, pos))
+                });
                 let _ = reply.send(result.unwrap_or(lsp_types::CompletionResponse::Array(Vec::new())));
             }
             EngineMsg::DocumentSymbol(uri, reply) => {
@@ -737,10 +861,14 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
             rx.recv_timeout(debounce)
         } else if !engine.prefill.is_empty() {
             // Idle: one more hover, unless a message waits.
+            crate::probe::WANTED.store(false, std::sync::atomic::Ordering::Relaxed);
             match rx.try_recv() {
                 Ok(msg) => Ok(msg),
                 Err(TryRecvError::Empty) => {
                     engine.prefill_one();
+                    if engine.prefill.is_empty() {
+                        crate::progress::idle();
+                    }
                     continue;
                 }
                 Err(TryRecvError::Disconnected) => Err(RecvTimeoutError::Disconnected),
@@ -753,50 +881,28 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
             Ok(msg) => engine.step(msg),
             Err(RecvTimeoutError::Timeout) => engine.flush(),
         }
+        crate::progress::idle();
     }
 }
 
-/// Re-analyzes `uri`'s current text, stashes the quick-fix code actions of
-/// its diagnostics for later `textDocument/codeAction` calls, and returns
-/// the diagnostics to publish.
-/// Every other open document is set in the overlay first, so an `\input` of
-/// one sees its unsaved text too (`crate::overlay`).  An input file (no
-/// `\documentclass`, as discovery classifies it) is analyzed as part of
-/// `main`, so its names are seen with every file that uses them.
-fn analyze(
-    docs: &mut HashMap<Uri, Doc>,
+/// The diagnostics of `analysis` to publish, by file, with an empty list
+/// for `own` and each open file it reads that has none, clearing what an
+/// earlier run found there; stashes their quick fixes for
+/// `textDocument/codeAction`.
+fn publish(
     actions: &mut HashMap<Uri, Vec<Json>>,
-    uri: &Uri,
-    cfg: &Config,
-    main: Option<&Path>,
+    analysis: &Analysis,
+    own: &Path,
+    open: &[&Path],
 ) -> Vec<PublishDiagnosticsParams> {
-    let Some((text, path)) = docs.get(uri).map(|d| (d.text.clone(), d.path.clone())) else { return Vec::new() };
-    // Rules and handlers read the buffer, not the file on disk.
-    crate::overlay::set(&path, text.clone());
-    for (other_uri, other) in docs.iter() {
-        if other_uri != uri {
-            crate::overlay::set(&other.path, other.text.clone());
+    let mut groups = handlers::diagnostics_json(analysis);
+    let names = analysis.file_names();
+    let read = |p: &&Path| names.iter().any(|f| crate::paths::same_file(Path::new(f), p));
+    for path in std::iter::once(own).chain(open.iter().copied().filter(read)) {
+        let uri = handlers::path_uri(&path.display().to_string());
+        if !groups.iter().any(|g| g.get("uri").and_then(Json::as_str) == Some(uri.as_str())) {
+            groups.push(serde_json::json!({ "uri": uri, "diagnostics": [], "codeActions": [] }));
         }
-    }
-    let input = path.extension().is_some_and(|e| e == "tex") && !text.contains("\\documentclass");
-    let whole = main.filter(|main| input && !same_file(main, &path)).and_then(|main| {
-        let source = crate::overlay::read_to_string(main).ok()?;
-        let analysis = Machine::analyze(&source, Some(main), cfg);
-        // Only a document that reads the file speaks for it.
-        analysis.file_names().iter().any(|f| same_file(Path::new(f), &path)).then_some(analysis)
-    });
-    let analysis = whole.unwrap_or_else(|| Machine::analyze(&text, Some(&path), cfg));
-    // The server's stderr is the client's log.
-    for note in analysis.limit_notes() {
-        eprintln!("satex: {note}");
-    }
-    let mut groups = handlers::diagnostics_json(&analysis);
-    let own_uri = handlers::path_uri(&path.display().to_string());
-    if !groups.iter().any(|g| g.get("uri").and_then(Json::as_str) == Some(own_uri.as_str())) {
-        groups.push(serde_json::json!({ "uri": own_uri, "diagnostics": [], "codeActions": [] }));
-    }
-    if let Some(doc) = docs.get_mut(uri) {
-        doc.analysis = Some(analysis);
     }
     let mut published = Vec::new();
     for group in groups {
@@ -816,13 +922,14 @@ fn analyze(
 /// buffer, or `None` when the document is not open or has no analysis yet.
 fn with_doc<T>(docs: &HashMap<Uri, Doc>, uri: &Uri, f: impl FnOnce(&Analysis, &Text) -> T) -> Option<T> {
     let doc = docs.get(uri)?;
-    let analysis = doc.analysis.as_ref()?;
+    let analysis = doc.analysis.as_deref()?;
     let text = Text::new(doc.text.clone());
     // Columns count what this document's engine reads, whatever was
     // analyzed last on this thread (`crate::source`).
     Some(crate::source::with(analysis.plugins.engine.encoding(), || f(analysis, &text)))
 }
 
-fn same_file(a: &Path, b: &Path) -> bool {
-    a == b || std::fs::canonicalize(a).ok().zip(std::fs::canonicalize(b).ok()).is_some_and(|(a, b)| a == b)
+/// `path` with symlinks resolved, where it exists: the key of a file.
+fn canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
