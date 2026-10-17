@@ -1972,7 +1972,6 @@ fn an_error_in_the_document_is_recovered_like_tex() {
 /// (unbalanced-argument, extra-right-brace at expl3-code.tex:2549, then
 /// missing-endcsname and unbalanced-group by the dozen). Four gaps remain.
 #[test]
-#[ignore = "expl3's file-name quote loop over unknown text still leaves unbalanced-argument and extra-right-brace at expl3-code.tex:2549-2551 and a choice-budget undecided-condition at :12513"]
 fn resized_picture_with_styles_keeps_file_name_scans() {
     if !installed() {
         return;

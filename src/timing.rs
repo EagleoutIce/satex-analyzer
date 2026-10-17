@@ -21,6 +21,9 @@ named_enum! {
     }
 }
 
+/// Tokens, line count, and first line's text of a writing line's output.
+pub type Written = (u64, u32, String);
+
 /// Where the run's time went: per-[`Phase`] totals and per-file token and
 /// time counts, collected only when the run asked for timings.
 #[derive(Default)]
@@ -38,7 +41,7 @@ pub struct Timings {
     sites: crate::fixed::HashMap<(FileId, u32), u64>,
     /// What running each written line where it is read back cost, per
     /// writing line: its tokens, how many lines, and the first line's text.
-    written: crate::fixed::HashMap<(FileId, u32), (u64, u32, String)>,
+    written: crate::fixed::HashMap<(FileId, u32), Written>,
     /// Phases timed after the analysis is finished, so behind a lock: the
     /// command that reads the analysis only has it by shared reference.
     after: std::sync::Mutex<Vec<(Phase, Duration)>>,
@@ -122,7 +125,7 @@ impl Timings {
     }
 
     /// The `n` writing lines whose written lines cost most, most first.
-    pub fn top_written(&self, n: usize) -> Vec<((FileId, u32), (u64, u32, String))> {
+    pub fn top_written(&self, n: usize) -> Vec<((FileId, u32), Written)> {
         let mut out: Vec<_> = self.written.iter().map(|(&s, w)| (s, w.clone())).collect();
         out.sort_unstable_by_key(|(s, w)| (std::cmp::Reverse(w.0), *s));
         out.truncate(n);

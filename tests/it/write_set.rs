@@ -28,7 +28,7 @@ fn cfg(assume_compiles: bool) -> Config {
     cfg
 }
 
-fn source(setup: &str, body: &str, check: &str) -> String {
+pub(crate) fn source(setup: &str, body: &str, check: &str) -> String {
     let head = HEAD.replace(r"\N", r"\pdfelapsedtime");
     format!(
         "{PRELUDE}{head}{setup}\\def\\lp{{\\ifnum\\i<\\n \\advance\\i1 {body}\\relax\\expandafter\\lp\\fi}}\\lp {check}"
@@ -79,7 +79,7 @@ fn problems(analysis: &Analysis, text: &str) -> Option<String> {
 }
 
 /// One state class: (name, setup, loop body, check after the loop).
-type Row = (&'static str, &'static str, &'static str, &'static str);
+pub(crate) type Row = (&'static str, &'static str, &'static str, &'static str);
 
 fn run_rows(rows: &[Row]) {
     crate::support::table(
@@ -93,7 +93,7 @@ fn run_rows(rows: &[Row]) {
 }
 
 /// Registers, by number and by computed number.
-const REGISTERS: &[Row] = &[
+pub(crate) const REGISTERS: &[Row] = &[
     // etex: \count1=6, \count2=5. `\count1<0` is not a `bad`: `\advance`
     // adds without an overflow check (tex.web § 1238), so 2^30 passes
     // wrap it negative, and `\n` may be that large.
@@ -157,7 +157,7 @@ const REGISTERS: &[Row] = &[
 
 /// Meanings: token lists that grow, names built from numbers, callees
 /// chosen by number.
-const MEANINGS: &[Row] = &[
+pub(crate) const MEANINGS: &[Row] = &[
     // etex: \t=abxxx, \u=cd
     (
         "macro_append",
@@ -198,7 +198,7 @@ const MEANINGS: &[Row] = &[
 ];
 
 /// Character code tables (tex.web §§ 230-236).
-const CODES: &[Row] = &[
+pub(crate) const CODES: &[Row] = &[
     // etex: \catcode131=11, ! stays 12, a stays 11
     (
         "catcode_computed",
@@ -251,7 +251,7 @@ const CODES: &[Row] = &[
 ];
 
 /// Parameters, fonts, interaction, waiting tokens, streams.
-const PARAMETERS: &[Row] = &[
+pub(crate) const PARAMETERS: &[Row] = &[
     // etex: \everypar={axxx}, \everyhbox={keep}
     (
         "every_append",
@@ -339,7 +339,7 @@ const PARAMETERS: &[Row] = &[
 ];
 
 /// Typeset output, last items, nesting.
-const NESTING: &[Row] = &[
+pub(crate) const NESTING: &[Row] = &[
     // etex: horizontal mode, not inner
     ("mode", "", r"\ifodd\i\hbox{}\else\indent\fi ", r"\ifhmode\def\okA{}\fi \ifinner\def\badA{}\fi "),
     // etex: \lastskip=3pt
@@ -435,41 +435,15 @@ fn refine_source(setup: &str, body: &str, use_: &str) -> String {
     source(&format!("{CLASSIFY}{setup}"), body, &format!(r"{use_}\expandafter\first\x\end "))
 }
 
-/// Assumption on: the inputs that compile are exactly etex's (`\isdig` only),
-/// the error path is dropped with its facts, and the drop is reported.
-#[test]
-fn refinement_with_assume_compiles() {
+/// Every etex run is covered, the erring one included, and the error is
+/// reported, never assumed away: the probes are the document's own text,
+/// whose errors are kept whether or not library code is assumed to compile.
+fn refinement_kept(assume_compiles: bool) {
     crate::support::table(
         REFINE,
         |r| r.0,
         |&(_, setup, body, use_, errs)| {
-            let analysis = Machine::analyze(&refine_source(setup, body, use_), None, &cfg(true));
-            let defs = defined(&analysis);
-            let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
-            let mut why = Vec::new();
-            if !defs.iter().any(|d| d == "isdig") {
-                why.push("\\isdig never defined".to_string());
-            }
-            if defs.iter().any(|d| d == "islet") {
-                why.push("\\islet defined: the path that cannot compile (or its facts) survived".to_string());
-            }
-            if errs && !codes.contains(&"assumed-compiles") {
-                why.push(format!("no assumed-compiles reported: {codes:?}"));
-            }
-            (!why.is_empty()).then(|| why.join("; "))
-        },
-    );
-}
-
-/// Assumption off: every etex run is covered, the erring one included,
-/// and the possible error is reported, never assumed away.
-#[test]
-fn refinement_without_assume_compiles() {
-    crate::support::table(
-        REFINE,
-        |r| r.0,
-        |&(_, setup, body, use_, errs)| {
-            let analysis = Machine::analyze(&refine_source(setup, body, use_), None, &cfg(false));
+            let analysis = Machine::analyze(&refine_source(setup, body, use_), None, &cfg(assume_compiles));
             let defs = defined(&analysis);
             let codes: Vec<&str> = analysis.facts.diagnostics.iter().map(|d| d.code).collect();
             let mut why = Vec::new();
@@ -482,12 +456,32 @@ fn refinement_without_assume_compiles() {
             if errs && !codes.contains(&"missing-number") {
                 why.push(format!("no missing-number reported: {codes:?}"));
             }
-            if codes.contains(&"assumed-compiles") {
-                why.push("assumed-compiles with the assumption off".to_string());
+            let dropped: Vec<&str> = analysis
+                .facts
+                .diagnostics
+                .iter()
+                // A runaway on an arm over unknown text is the
+                // approximation's, not the document's: only a certain
+                // error of the document's text must stay.
+                .filter(|d| d.code == "assumed-compiles" && !d.message.contains("Paragraph ended"))
+                .map(|d| d.message.as_str())
+                .collect();
+            if !dropped.is_empty() {
+                why.push(format!("a path of the document's own text was dropped: {dropped:?}"));
             }
             (!why.is_empty()).then(|| why.join("; "))
         },
     );
+}
+
+#[test]
+fn refinement_with_assume_compiles() {
+    refinement_kept(true);
+}
+
+#[test]
+fn refinement_without_assume_compiles() {
+    refinement_kept(false);
 }
 
 /// An error certain on every concrete run is real: reported and its path

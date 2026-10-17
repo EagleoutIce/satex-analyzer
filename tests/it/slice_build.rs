@@ -80,7 +80,7 @@ fn compile(binary: &Path, directory: &Path, file: &str, passes: usize) -> Run {
     }
     let log = std::fs::read_to_string(directory.join(format!("{stem}.log"))).unwrap_or_default();
     let pdf = directory.join(format!("{stem}.pdf"));
-    let text = (pdf.is_file() && which::which("pdftotext").is_ok())
+    let text = (pdf.is_file() && satex::paths::which("pdftotext").is_ok())
         .then(|| {
             let out = Command::new("pdftotext").arg(&pdf).arg("-").output().ok()?;
             Some(String::from_utf8_lossy(&out.stdout).to_string())
@@ -217,7 +217,7 @@ fn check(case: &Case) -> Option<String> {
 }
 
 fn run_all(cases: &[Case]) {
-    if which::which("kpsewhich").is_err() {
+    if satex::paths::which("kpsewhich").is_err() {
         return;
     }
     let failures: Vec<String> = cases.iter().filter_map(check).collect();

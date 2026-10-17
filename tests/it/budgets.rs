@@ -21,6 +21,10 @@ fn within(what: &str, steps: u64, measured: u64) {
 }
 
 fn run(name: &str, source: &str) -> Analysis {
+    run_at(name, source, None)
+}
+
+fn run_at(name: &str, source: &str, path: Option<&std::path::Path>) -> Analysis {
     let cfg = satex::config::Config {
         cache: Cache { dir: Some(fresh(name)), ..Default::default() },
         load: Load { packages: true, classes: true, ..Default::default() },
@@ -28,7 +32,7 @@ fn run(name: &str, source: &str) -> Analysis {
     };
     // Documents are measured against a warm kernel; `kernel_build` measures the kernel.
     crate::support::seed_kernel(&cfg);
-    Machine::analyze(source, None, &cfg)
+    Machine::analyze(source, path, &cfg)
 }
 
 fn budget(name: &str, source: &str, measured: u64) -> Option<Analysis> {
@@ -242,10 +246,10 @@ fn a_growing_document_stays_under_its_memory_limit() {
     assert!(peak << 20 <= LIMIT * 3 / 2 + (48 << 20), "peak {peak} MiB past a 64M limit");
 }
 
-/// A path dropped for a certain error (here an image of unknown width
-/// that may be zero, as `\includegraphics` divides by: scaled to a random
+/// A path dropped for a certain error in a package (here an image of unknown
+/// width that may be zero, as `\includegraphics` divides by: scaled to a random
 /// width below 100sp, since satex reads the logo's own box exactly) waits until the run
-/// ends. The paths a later picture parts into are joined from where they
+/// ends. The document's own errors are kept, so the check stands in a package. The paths a later picture parts into are joined from where they
 /// part, not from that error: else every join compares all the document
 /// did since.
 #[test]
@@ -255,15 +259,19 @@ fn a_dropped_error_path_does_not_weigh_on_later_joins() {
     }
     let doc = |before: &str| {
         format!(
-            "{TIKZ}\\usetikzlibrary{{positioning}}\\begin{{document}}{before}\\begin{{tikzpicture}}\\node (a) {{N}};\\node[below=1mm of a, text width=4cm, rounded corners, draw] {{\\begin{{obeylines}}p(x)\\\\r(x)\\end{{obeylines}}}};\\end{{tikzpicture}}\\end{{document}}"
+            "{TIKZ}\\usetikzlibrary{{positioning}}{before}\\begin{{document}}\\begin{{tikzpicture}}\\node (a) {{N}};\\node[below=1mm of a, text width=4cm, rounded corners, draw] {{\\begin{{obeylines}}p(x)\\\\r(x)\\end{{obeylines}}}};\\end{{tikzpicture}}\\end{{document}}"
         )
     };
     let logo = concat!(env!("CARGO_MANIFEST_DIR"), "/doc/logo/logo.pdf");
     let error = format!(
         "\\pdfximage width \\pdfuniformdeviate 100sp {{{logo}}}\\setbox0\\hbox{{\\pdfrefximage\\pdflastximage}}\\ifdim\\wd0=0pt \\errmessage{{zero}}\\fi"
     );
-    let plain = run("dropped-plain", &doc(""));
-    let dropped = run("dropped-error", &doc(&error));
+    let sty = fresh("dropped-package").join("zerocheck");
+    std::fs::write(sty.with_extension("sty"), error).expect("write package");
+    // The document stands in a directory of its own, so the package is not its file.
+    let main = fresh("dropped-document").join("main.tex");
+    let plain = run_at("dropped-plain", &doc(""), Some(&main));
+    let dropped = run_at("dropped-error", &doc(&format!("\\usepackage{{{}}}", sty.display())), Some(&main));
     let codes = |a: &Analysis| {
         use satex::facts::Severity::{Unsupported, Warning};
         let faults = a.facts.diagnostics.iter().filter(|d| matches!(d.severity, Unsupported | Warning));

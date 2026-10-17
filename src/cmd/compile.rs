@@ -33,7 +33,7 @@ pub fn run(context: &Context) -> Result<Output, String> {
     let out_dir = project.output_dir().map(|(d, _)| dir.join(d));
     let log_path = out_dir.clone().unwrap_or_else(|| dir.clone()).join(format!("{job}.log"));
     let engine = analysis.plugins.engine;
-    let status = match which::which("latexmk") {
+    let status = match crate::paths::which("latexmk") {
         // latexmk reruns as often as the document needs and reads the
         // latexmkrc; the engine is ours only where that names none.
         Ok(_) => {

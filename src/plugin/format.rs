@@ -32,6 +32,8 @@ named_enum! {
         Sarif => "sarif",
         /// Language Server Protocol diagnostics and quick-fix code actions.
         Lsp => "lsp",
+        /// A LaTeX log, for editors that read only that (TeXstudio).
+        Texlog => "texlog",
     }
 }
 
@@ -51,6 +53,7 @@ impl Format {
             Format::Dot | Format::Github => render::github(records),
             Format::Sarif => render::sarif(records, version),
             Format::Lsp => render::lsp(records),
+            Format::Texlog => render::texlog(records),
         }
     }
 }

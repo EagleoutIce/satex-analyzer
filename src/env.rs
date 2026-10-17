@@ -58,8 +58,8 @@ enum Entry {
     Catcode {
         character: char,
         old: Catcode,
-        /// Whether the category was one satex could not follow.
-        old_unknown: bool,
+        /// The categories it may have had, as [`CatcodeTable::may`] gives them.
+        old_may: u16,
     },
 }
 
@@ -158,6 +158,8 @@ struct Mark {
     nest: Option<Nest>,
     /// Which group this is: ids grow with every opening.
     id: u64,
+    /// It stands for any number of such groups, none too (a widened stack).
+    many: bool,
 }
 
 /// The meaning table and the save stack: [`Binding`]s are pushed and undone
@@ -300,6 +302,13 @@ pub struct Fork {
     parted: bool,
     journal: Journal,
     marks: Rc<Vec<Mark>>,
+}
+
+impl Fork {
+    /// The groups open where the paths split.
+    pub fn depth(&self) -> usize {
+        self.marks.len()
+    }
 }
 
 /// What one path did to the bindings, relative to its [`Fork`].
@@ -662,9 +671,109 @@ impl Env {
         self.marks.len()
     }
 
-    /// The group level TeX reports.
+    /// The group level TeX reports, at least: more by any number when a
+    /// group stands for many (the second value).
     pub fn group_level(&self) -> usize {
-        self.marks.len()
+        self.marks.iter().filter(|m| !m.many).count()
+    }
+
+    /// Whether some open group stands for any number of groups.
+    pub fn many_groups(&self) -> bool {
+        self.marks.iter().any(|m| m.many)
+    }
+
+    /// Whether the innermost group stands for any number of groups.
+    pub fn top_many(&self) -> bool {
+        self.marks.last().is_some_and(|m| m.many)
+    }
+
+    /// The innermost group stands for any number of groups and a closer
+    /// meets it. `more`: one of them closes, and it stays; what they saved
+    /// may hold anything, as the closing one may have saved it. Else there
+    /// are none: it goes, and its saves belong to the group below.
+    pub fn unfold(&mut self, more: bool, catcodes: &mut CatcodeTable, typed: &Typed) {
+        let Some(mark) = self.marks.last().cloned() else { return };
+        self.effective += 1;
+        let mut journal = self.journal.clone();
+        let mut saved = Vec::new();
+        while journal.len() > mark.journal {
+            saved.push(journal.pop().expect("length checked"));
+        }
+        if !more {
+            Rc::make_mut(&mut self.marks).pop();
+            self.lower();
+            self.clamp_levels(&saved);
+            return;
+        }
+        for entry in saved {
+            match entry {
+                Entry::Meaning { sym, .. } => self.widen_in_place(Sym(sym), typed),
+                Entry::Catcode { character, .. } => catcodes.set_unknown(character),
+            }
+        }
+        self.group_ids += 1;
+        let one = Mark { journal: self.journal.len(), many: false, id: self.group_ids, ..mark };
+        crate::push_shared(&mut self.marks, one);
+    }
+
+    /// The slots `saved` names, written deeper than the groups now open,
+    /// count as written in the innermost: a group opened later saves them.
+    fn clamp_levels(&mut self, saved: &[Entry]) {
+        let level = self.marks.len() as u32;
+        for entry in saved {
+            if let Entry::Meaning { sym, .. } = *entry
+                && self.level[sym as usize] > level
+            {
+                let i = sym as usize;
+                self.log(i);
+                self.level[i] = level;
+                self.changed(i);
+            }
+        }
+    }
+
+    /// The groups from `from` up as one that stands for any number of
+    /// them, when all are plain and alike; whether they were.
+    pub fn many_since(&mut self, from: usize) -> bool {
+        let Some(first) = self.marks.get(from).cloned() else { return true };
+        let alike = |m: &Mark| {
+            m.kind == first.kind
+                && m.nest.is_none()
+                && m.after.iter().map(|t| t.tok).eq(first.after.iter().map(|t| t.tok))
+        };
+        if !self.marks[from..].iter().all(alike) {
+            return false;
+        }
+        self.effective += 1;
+        let mut journal = self.journal.clone();
+        let mut saved = Vec::new();
+        while journal.len() > first.journal {
+            saved.push(journal.pop().expect("length checked"));
+        }
+        let marks = Rc::make_mut(&mut self.marks);
+        marks[from].many = true;
+        marks.truncate(from + 1);
+        self.lower();
+        self.clamp_levels(&saved);
+        true
+    }
+
+    /// How many open groups were opened up to group `id`.
+    pub fn depth_upto(&self, id: u64) -> usize {
+        self.marks.iter().take_while(|m| m.id <= id).count()
+    }
+
+    /// The innermost group stands for any number of its kind.
+    pub fn set_top_many(&mut self) {
+        if let Some(mark) = Rc::make_mut(&mut self.marks).last_mut() {
+            mark.many = true;
+        }
+    }
+
+    /// A fresh group id, for a group made by a widening.
+    pub fn next_group_id(&mut self) -> u64 {
+        self.group_ids += 1;
+        self.group_ids
     }
 
     /// Local or global assignment.  A global one survives every enclosing
@@ -786,7 +895,15 @@ impl Env {
         self.group_ids += 1;
         crate::push_shared(
             &mut self.marks,
-            Mark { journal: self.journal.len(), kind, after: Vec::new(), opened, nest: None, id: self.group_ids },
+            Mark {
+                journal: self.journal.len(),
+                kind,
+                after: Vec::new(),
+                opened,
+                nest: None,
+                id: self.group_ids,
+                many: false,
+            },
         );
     }
 
@@ -892,15 +1009,15 @@ impl Env {
     }
 
     pub fn save_catcode(&mut self, character: char, old: Catcode) {
-        self.save_catcode_state(character, old, false);
+        self.save_catcode_state(character, old, 0);
     }
 
     /// [`Env::save_catcode`] keeping whether the category was one satex
     /// could not follow, so that the group end puts that back too.
-    pub fn save_catcode_state(&mut self, character: char, old: Catcode, old_unknown: bool) {
+    pub fn save_catcode_state(&mut self, character: char, old: Catcode, old_may: u16) {
         self.effective += 1;
         if !self.marks.is_empty() {
-            self.journal.push(Entry::Catcode { character, old, old_unknown });
+            self.journal.push(Entry::Catcode { character, old, old_may });
         }
     }
 
@@ -965,9 +1082,9 @@ impl Env {
                         }
                     }
                 }
-                Entry::Catcode { character, old, old_unknown } => {
+                Entry::Catcode { character, old, old_may } => {
                     if let Some(table) = catcodes.as_deref_mut() {
-                        table.restore(character, old, old_unknown);
+                        table.restore(character, old, old_may);
                     }
                 }
             }
@@ -1275,7 +1392,7 @@ impl Env {
 
     /// The groups the running path stands in, outermost first: each one's
     /// kind and waiting `\aftergroup` tokens.
-    pub fn groups(&self) -> Vec<(GroupKind, Vec<Tok>)> {
+    pub fn groups(&self) -> Vec<(GroupKind, bool, Vec<Tok>)> {
         groups(&self.marks)
     }
 
@@ -1430,8 +1547,10 @@ impl Entry {
                 *old = join(old.clone(), theirs, sets, None);
                 *stamp = (*stamp).max(at);
             }
-            (Entry::Catcode { old, old_unknown, .. }, Entry::Catcode { old: theirs, old_unknown: unknown, .. }) => {
-                *old_unknown |= unknown || *old != theirs;
+            (Entry::Catcode { old, old_may, .. }, Entry::Catcode { old: theirs, old_may: may, .. }) => {
+                let cats = |cat: Catcode, may: u16| if may == 0 { 1 << cat as u8 } else { may };
+                let joined = cats(*old, *old_may) | cats(theirs, may);
+                *old_may = if joined.count_ones() > 1 { joined } else { 0 };
             }
             _ => {}
         }
@@ -1459,8 +1578,48 @@ fn segments(journal: &Journal, marks: &[Mark], base: usize) -> Vec<Vec<Entry>> {
 
 impl PathEnv {
     /// [`Env::groups`] of a parked path.
-    pub fn groups(&self) -> Vec<(GroupKind, Vec<Tok>)> {
+    pub fn groups(&self) -> Vec<(GroupKind, bool, Vec<Tok>)> {
         groups(&self.marks)
+    }
+
+    /// The groups from `from` up as one that stands for any number of
+    /// them (none open there: one pushed, of `kind` with `after` waiting):
+    /// a widened stack. Their saves are its saves. Only groups opened
+    /// since the fork, so the fork's own levels stay as they are.
+    pub fn many_from(&mut self, from: usize, kind: GroupKind, after: &[Token], id: u64) {
+        let marks = Rc::make_mut(&mut self.marks);
+        match marks.get_mut(from) {
+            Some(mark) => mark.many = true,
+            None => marks.push(Mark {
+                journal: self.journal.len(),
+                kind,
+                after: after.to_vec(),
+                opened: Span::default(),
+                nest: None,
+                id,
+                many: true,
+            }),
+        }
+        marks.truncate(from + 1);
+        // A slot written deeper now counts as written in the widened group:
+        // a group opened later saves it again.
+        let top = (from + 1) as u32;
+        let deeper: Vec<(u32, Option<Binding>)> =
+            self.slots.iter().filter(|(_, (_, l))| *l > top).map(|(s, (b, _))| (*s, b.clone())).collect();
+        for (sym, binding) in deeper {
+            self.slots.insert_mut(sym, (binding, top));
+        }
+    }
+
+    /// Whether the groups from `from` up saved nothing of the nest: no box
+    /// or alignment group.
+    pub fn plain_from(&self, from: usize) -> bool {
+        self.marks.iter().skip(from).all(|m| m.nest.is_none())
+    }
+
+    /// The waiting `\aftergroup` tokens of group `i`.
+    pub fn after_at(&self, i: usize) -> Vec<Token> {
+        self.marks.get(i).map(|m| m.after.clone()).unwrap_or_default()
     }
 
     /// Where each open group was opened, outermost first.
@@ -1474,8 +1633,8 @@ impl PathEnv {
     }
 }
 
-fn groups(marks: &[Mark]) -> Vec<(GroupKind, Vec<Tok>)> {
-    marks.iter().map(|m| (m.kind, m.after.iter().map(|t| t.tok).collect())).collect()
+fn groups(marks: &[Mark]) -> Vec<(GroupKind, bool, Vec<Tok>)> {
+    marks.iter().map(|m| (m.kind, m.many, m.after.iter().map(|t| t.tok).collect())).collect()
 }
 
 /// How many meanings a name may be left with by joins before it is widened

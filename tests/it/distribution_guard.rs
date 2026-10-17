@@ -1,6 +1,6 @@
 //! What a run without a TeX distribution silently gave up.
 //!
-//! Most targets guard on `which::which("kpsewhich")` and return quietly
+//! Most targets guard on `satex::paths::which("kpsewhich")` and return quietly
 //! when there is none, so a run on a runner with no TeX looks exactly like
 //! a run where every one of them passed.  This target makes the two
 //! distinguishable: it reports which targets are gated that way, and with
@@ -26,7 +26,7 @@ fn gated() -> Vec<(String, usize)> {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        if !text.contains("which::which(\"kpsewhich\")") && !text.contains("Command::new(\"kpsewhich\")") {
+        if !text.contains("satex::paths::which(\"kpsewhich\")") && !text.contains("Command::new(\"kpsewhich\")") {
             continue;
         }
         let name = path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
@@ -46,7 +46,7 @@ fn the_promised_distribution_is_there() {
     if std::env::var_os("SATEX_REQUIRE_TEX").is_none() {
         return;
     }
-    assert!(which::which("kpsewhich").is_ok(), "SATEX_REQUIRE_TEX is set, but no kpsewhich is on PATH");
+    assert!(satex::paths::which("kpsewhich").is_ok(), "SATEX_REQUIRE_TEX is set, but no kpsewhich is on PATH");
     let found = Command::new("kpsewhich").arg("latex.ltx").output().expect("kpsewhich latex.ltx");
     let path = String::from_utf8_lossy(&found.stdout);
     assert!(
@@ -61,7 +61,7 @@ fn the_promised_distribution_is_there() {
 fn report_the_distribution_gate() {
     let gated = gated();
     let upper_bound: usize = gated.iter().map(|(_, count)| count).sum();
-    let present = which::which("kpsewhich").is_ok();
+    let present = satex::paths::which("kpsewhich").is_ok();
     let names: Vec<&str> = gated.iter().map(|(name, _)| name.as_str()).collect();
 
     let verdict = if present {

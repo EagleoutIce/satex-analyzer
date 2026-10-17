@@ -272,6 +272,11 @@ pub enum Syntax {
     /// `\limits`, `\nolimits`, `\displaylimits` (tex.web § 1159).
     Limits,
     Number,
+    /// `\attributedef`, `\luadef`: a name, an optional `=`, a ⟨number⟩.
+    /// The name means what SaTeX does not model, so it is unknown.
+    NamesNumber,
+    /// `\attribute⟨number⟩=⟨number⟩`.
+    NumberIsNumber,
     Dimen,
     /// `\abovewithdelims` and relatives: two delimiters, then for
     /// `\abovewithdelims` a dimension (tex.web § 1178).
@@ -824,6 +829,20 @@ pub enum Primitive {
     /// `\ignorespaces` (tex.web § 1045): the next non-blank token after
     /// expansion is read as a command.
     IgnoreSpaces,
+}
+
+impl Primitive {
+    /// A parameter TeX itself reads while it typesets (`\parskip`,
+    /// `\tolerance`, `\everypar`), tex.web §§ 224, 236, 247, 230.
+    pub fn is_parameter(self) -> bool {
+        matches!(
+            self,
+            Primitive::IntegerParameter
+                | Primitive::DimenParameter
+                | Primitive::GlueParameter { .. }
+                | Primitive::TokensParameter
+        )
+    }
 }
 
 /// A command of TeX's stomach that the mode governs (tex.web § 1045 cases
@@ -1560,11 +1579,10 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         // like `\countdef`; `\luadef` names a Lua function like `\chardef`.
         // satex has no `RegKind` for any of the three, and modeling them as
         // `\count`-alike would misclassify `\attribute255` as `\count255`.
-        // Left unmodeled: satex widens rather than answering for the wrong
-        // register.
-        put(it, "attribute", P::Unmodeled);
-        put(it, "attributedef", P::Unmodeled);
-        put(it, "luadef", P::Unmodeled);
+        // Their syntax is read, and what they name is unknown.
+        put(it, "attribute", P::Command(Syntax::NumberIsNumber));
+        put(it, "attributedef", P::Command(Syntax::NamesNumber));
+        put(it, "luadef", P::Command(Syntax::NamesNumber));
         // `\csstring` is `\string` without the escape character, and
         // `\scantextokens` is `\scantokens` without the file wrapper.
         put(it, "csstring", P::Text(TextOf::String));
@@ -2441,6 +2459,26 @@ macro_rules! at {
 /// The verdict for a [`Primitive`] and why, from what `src/exec.rs`,
 /// `src/mode.rs` and `src/commands.rs` actually do with it. Grouped by
 /// sub-enum so a new case cannot be forgotten (exhaustive matches).
+/// tex.web § 1046: `Some(true)` for a primitive only math mode takes
+/// (`non_math`), `Some(false)` for one math mode refuses, by the name the
+/// engine gave it.
+pub fn math_material(name: &str) -> Option<bool> {
+    const MATH: &str = "mathchar delimiter radical mathaccent mathord mathop mathbin mathrel mathopen mathclose \
+        mathpunct mathinner underline overline over atop above overwithdelims atopwithdelims abovewithdelims \
+        displaystyle textstyle scriptstyle scriptscriptstyle mathchoice vcenter nonscript mkern mskip limits \
+        nolimits displaylimits left right middle Umathchar Umathcharnum Udelimiter Uradical Umathaccent";
+    const VERTICAL: &str =
+        "par end dump vskip vfil vfill vss vfilneg unvbox unvcopy pagediscards splitdiscards valign hrule";
+    let has = |list: &str| list.split_whitespace().any(|n| n == name);
+    if has(MATH) {
+        Some(true)
+    } else if has(VERTICAL) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 pub fn verdict(p: Primitive) -> Judgment {
     use Primitive as P;
     use Verdict as V;
@@ -2511,12 +2549,12 @@ pub fn verdict(p: Primitive) -> Judgment {
             "the stored parameter table, but setting any `\\every…` list widens the dimensions of boxes that were already packed before it was read",
         ),
         P::CatcodeAssign => at!(
-            V::Unsupported,
-            "exact for one known character and category. Diagnosed (`unknown-catcode`) and widened when either can't be pinned down",
+            V::Approximated,
+            "exact for one known character and category. Through an unknown character or value (`unknown-catcode`) each character it may name keeps its category or takes one it may be given, structural ones included; the reader splits the path on such a character",
         ),
         P::CharCode(_) => at!(
-            V::Unsupported,
-            "exact for one known character. Diagnosed (`unknown-char-code`) and the whole table widened when the candidates can't be enumerated at all",
+            V::Approximated,
+            "exact for one known character and code. Through an unknown character or value (`unknown-char-code`) each entry it may name holds its old code or the new, read back as that set",
         ),
         P::CaseShift(_) => at!(V::Exact, "tex.web § 1288. Widens a code an unknown token was assigned"),
         P::FontParam(_) => at!(
@@ -2540,9 +2578,10 @@ pub fn verdict(p: Primitive) -> Judgment {
 
         // Output, PDF, Lua and docstrip, and the primitives satex leaves
         // alone on purpose.
-        P::Accent => {
-            at!(V::Approximated, "widens to Unknown when the accented character does not resolve in horizontal mode")
-        }
+        P::Accent => at!(
+            V::Exact,
+            "tex.web §§ 1123-1125 for TFM fonts: the accent box, its shift by the x-height, the kerns and the character after the assignments. Widens where the font, either character or what follows is not known",
+        ),
         P::Pdf(_) => at!(
             V::Approximated,
             "the manual's keywords are scanned exactly. No PDF is built, so the payload is recorded as an occurrence, not replayed",
@@ -2670,9 +2709,17 @@ fn syntax_verdict(s: Syntax) -> Judgment {
     use Syntax as S;
     use Verdict as V;
     match s {
-        S::Nothing => at!(V::Exact, "no operand"),
-        S::MathComp(_) => at!(V::Exact, "sets the class of the next atom, whose size and spacing are followed"),
-        S::Limits => at!(V::Exact, "no operand"),
+        S::Nothing => at!(
+            V::Approximated,
+            "no operand. The size of what `\\span`, `\\nonscript`, a fraction or `\\overline`/`\\underline` builds is widened, not computed",
+        ),
+        S::MathComp(_) => at!(
+            V::Approximated,
+            "sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens (tex.web § 749 centres a one-character list)",
+        ),
+        S::Limits => {
+            at!(V::Approximated, "no operand. Where the scripts go is not followed, so the formula's size widens")
+        }
         S::Whatsit => at!(V::Exact, "no operand, a whatsit on the current list"),
         S::Interaction(_) => at!(V::Exact, "sets `\\interactionmode`"),
         S::Token => at!(V::Exact, "`\\show`"),
@@ -2737,7 +2784,10 @@ fn mode_verdict(m: ModeCmd) -> Judgment {
     use ModeCmd as M;
     use Verdict as V;
     match m {
-        M::Par | M::StartPar { .. } | M::QuitVMode | M::Shift { .. } | M::EqNo => {
+        M::EqNo => {
+            at!(V::Approximated, "opens the equation number. The display's placement (tex.web § 1199) is widened")
+        }
+        M::Par | M::StartPar { .. } | M::QuitVMode | M::Shift { .. } => {
             at!(V::Exact, "tex.web's own mode-transition rules")
         }
         M::Horizontal(Material::Rule) => at!(
@@ -2758,7 +2808,10 @@ fn mode_verdict(m: ModeCmd) -> Judgment {
             at!(V::Approximated, "cells run in the alignment's own list, not distinguished from the preamble")
         }
         M::MathChoice => at!(V::Exact, "tex.web § 1172: opens all four styles in sequence"),
-        M::MathStyle(_) => at!(V::Exact, "tex.web § 1171: the style of the atoms after it in inline math"),
+        M::MathStyle(_) => at!(
+            V::Approximated,
+            "tex.web § 1171: the style of the atoms after it in inline math. Scripts in display style widen",
+        ),
         M::Left => {
             at!(
                 V::Approximated,
@@ -2793,7 +2846,11 @@ fn box_verdict(b: BoxCmd) -> Judgment {
     use BoxCmd as B;
     use Verdict as V;
     match b {
-        B::HBox | B::VBox | B::VTop | B::VCenter | B::Copy | B::LastBox => at!(V::Exact, "the real box machinery"),
+        B::HBox | B::VBox | B::VTop | B::VCenter | B::Copy => at!(V::Exact, "the real box machinery"),
+        B::LastBox => at!(
+            V::Approximated,
+            "the real box machinery for the one box of a vertical list. A box taken from a horizontal list widens",
+        ),
         B::VSplit => at!(
             V::Approximated,
             "the result always widens to Unknown, even from a void register. A real split's remainder is not tracked",
@@ -2811,7 +2868,10 @@ fn typeset_verdict(t: Typeset) -> Judgment {
             V::Approximated,
             "`\\kern` is exact. `\\mkern`'s math-unit dimension always widens to Unknown, since it needs math-font setup satex does not run",
         ),
-        T::Delimiter => at!(V::Exact, "tex.web § 1161: the delimiter is the one token the primitive itself consumes"),
+        T::Delimiter => at!(
+            V::Approximated,
+            "tex.web § 1161: the delimiter is the one token the primitive itself consumes. The size of the delimited formula widens",
+        ),
         T::Glue => at!(
             V::Approximated,
             "`\\mskip` appends an item of unknown size: its glue is in math units, which need math-font setup satex does not run",

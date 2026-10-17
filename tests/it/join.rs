@@ -323,17 +323,27 @@ fn text_command_group_keeps_no_path_apart() {
     assert!(twelve - base <= 5 * (three - base), "{base} base, {three} for 3 calls, {twelve} for 12");
 }
 
-/// `analysis.assume_compiles`: an arm that raises a certain error is no
-/// run of a document that compiles, and is dropped, said once.
+/// `analysis.assume_compiles`: an arm of library code that raises a
+/// certain error is no run of a document that compiles, and is dropped,
+/// said once. The same arm in the document's own text is kept: its error
+/// is the one to report and fix.
 #[test]
 fn certain_error_drops_its_path() {
-    let source = r"\ifnum\pdfuniformdeviate2=0 \def\m{a}\undefinedcs\else\def\m{b}\fi \edef\z{\m}";
-    let analysis = analyze(source);
+    let arm = r"\ifnum\pdfuniformdeviate2=0 \def\m{a}\undefinedcs\else\def\m{b}\fi ";
+    let lib =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-join-lib-{}", std::process::id())));
+    std::fs::write(lib.join("arm.tex"), arm).unwrap();
+    let source = format!(r"\input {}/arm.tex \edef\z{{\m}}", lib.display());
+    let mut cfg = satex::config::Config { arm_joins: true, ..crate::support::bare() };
+    cfg.load.inputs = true;
+    let analysis = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
     assert_eq!(body(&analysis, "z"), "b");
     let assumed = with_code(&analysis, "assumed-compiles");
     assert_eq!(assumed.len(), 1, "{assumed:?}");
     assert!(assumed[0].contains("Undefined control sequence"), "{assumed:?}");
-    let mut cfg = satex::config::Config { arm_joins: true, ..crate::support::bare() };
+    let own = analyze(&format!(r"{arm}\edef\z{{\m}}"));
+    assert!(body(&own, "z").contains("one of:"), "{}", body(&own, "z"));
+    assert!(with_code(&own, "assumed-compiles").is_empty());
     cfg.analysis.assume_compiles = false;
     let kept = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
     assert!(body(&kept, "z").contains("one of:"), "{}", body(&kept, "z"));

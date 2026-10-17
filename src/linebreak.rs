@@ -107,17 +107,12 @@ impl Machine<'_> {
             (Removed::Glue, Last::Glue(..))
                 | (Removed::Kern, Last::Kern(_))
                 | (Removed::Penalty, Last::Penalty(_))
-                | (_, Last::Unknown)
+                | (_, Last::Unknown(_))
         );
         if hit {
             *items = match (last, k) {
-                (Last::Glue(w, _), Kp::Glue { w: v, .. })
-                | (Last::Kern(w), Kp::Kern { w: v, .. })
-                | (Last::Penalty(w), Kp::Penalty(v))
-                    if w == v =>
-                {
-                    Some(prev)
-                }
+                (Last::Glue(w, _), Kp::Glue { w: v, .. }) if w.known() == Some(v) => Some(prev),
+                (Last::Kern(w), Kp::Kern { w: v, .. }) | (Last::Penalty(w), Kp::Penalty(v)) if w == v => Some(prev),
                 _ => None,
             };
         }

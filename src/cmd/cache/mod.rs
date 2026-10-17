@@ -85,15 +85,13 @@ pub fn status(context: &Context, out: &mut impl Write) -> Result<Output, String>
             );
         }
         let (count, bytes) = crate::format::package_caches(directory);
-        let prepares = if analysis.settings.cache.index.packages.is_empty() {
+        let index = &analysis.settings.cache.index;
+        let prepares = if index.packages.is_empty() {
             let found = build::discover_expensive(directory, build::EXPENSIVE_BYTES);
-            if found.is_empty() {
-                "nothing yet; discovered from what ran here, once something has".to_string()
-            } else {
-                found.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", ")
-            }
+            let found = found.iter().map(|(name, _)| name).filter(|name| !index.common.contains(name));
+            index.common.iter().chain(found).map(String::as_str).collect::<Vec<_>>().join(", ")
         } else {
-            analysis.settings.cache.index.packages.join(", ")
+            index.packages.join(", ")
         };
         let _ = writeln!(
             out,

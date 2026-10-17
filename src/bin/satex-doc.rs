@@ -595,7 +595,7 @@ fn redact_paths(line: &str) -> String {
     }
     // Anything still under `$HOME` (a personal texmf tree, a per-user
     // texlive var directory) is this machine's alone.
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = satex::paths::home_dir() {
         let home = home.display().to_string();
         if !home.is_empty() {
             out = out.replace(&home, "~");

@@ -124,7 +124,7 @@ luacmd('size', function()\n  local size = filesize(scan_string())\n  if size the
 #[test]
 fn an_installed_font_answers_its_opentype_scripts() {
     // xetex: `3:1145457748:0` (`DFLT` first; past the list, 0).
-    if which::which("kpsewhich").is_err() {
+    if satex::paths::which("kpsewhich").is_err() {
         return;
     }
     let source = format!(
@@ -636,7 +636,9 @@ fn arithmetic_is_texs_at_every_edge() {
     let mut wrong = Vec::new();
     for (probe, expected) in ARITHMETIC {
         let source = format!("{PRELUDE}{probe}\\immediate\\write-1{{R:\\r}}\n");
-        if let Some(real) = pdftex_result(&source) {
+        // Negating -2^31 overflows in pdftex's C, which each compiler
+        // resolves its own way (clang on macOS: 1073741824 for -2^31/2).
+        if let Some(real) = pdftex_result(&source).filter(|_| !probe.contains("-2147483647 \\advance\\count1")) {
             assert_eq!(real, *expected, "pdftex: {probe}");
         }
         let analysis = run(&source, None, Some(Engine::PdfTeX));

@@ -735,8 +735,7 @@ fn documentclass_explains_the_meaning_it_was_called_with() {
     let record = explain_one(&analysis, "documentclass");
     let body = str_field(&record, "body").unwrap_or_default();
     assert!(!body.contains("Two"), "the call's meaning, not the error it became: {body}");
-    let signature = record.get("signature").map(Json::to_string).unwrap_or_default();
-    assert!(signature.contains('['), "an optional argument: {signature}");
+    assert_eq!(str_field(&record, "effective"), Some(r"\documentclass[1]{2}[3]"), "an optional argument");
 }
 
 /// A macro that redefines itself when it runs (`\documentclass`,
@@ -747,4 +746,12 @@ fn a_self_redefining_macro_is_marked_once() {
     let analysis = analyze(r"\def\foo{\global\let\foo\relax x}\def\bar{x}\foo\bar");
     assert_eq!(explain_one(&analysis, "foo").get("once"), Some(&json!(true)));
     assert_eq!(explain_one(&analysis, "bar").get("once"), None);
+}
+
+#[test]
+fn a_list_tex_inserts_charges_nothing_to_the_macro_that_set_it_off() {
+    // `\everypar` starts at the paragraph `\twice` begins (tex.web § 1091),
+    // and its last token is read after the list has ended (§ 390).
+    let analysis = analyze(r"\def\foo{}\def\bar{}\everypar{\foo\bar}\def\twice#1{#1#1}\twice{ab}");
+    assert_eq!(explain_one(&analysis, "twice").get("expands"), None);
 }

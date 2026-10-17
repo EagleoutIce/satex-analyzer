@@ -289,6 +289,10 @@ fn state(m: &mut Machine) -> Option<State> {
         };
         let os: Table = lua.globals().raw_get("os").ok()?;
         os.raw_set("type", kind).ok()?;
+        if m.cfg.analysis.assume_environment {
+            let getenv = lua.create_function(|_, name: String| Ok(std::env::var(name).ok())).ok()?;
+            os.raw_set("getenv", getenv).ok()?;
+        }
         m.lua.state = Some(lua);
     }
     m.lua.state.clone()

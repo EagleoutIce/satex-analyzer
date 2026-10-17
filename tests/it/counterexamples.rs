@@ -228,8 +228,6 @@ fn macro_bodies_agree_with_tex() {
 // cannot decide is analyzed arm by arm: interleaved scanning would make those
 // arms reach into the rest of the file instead of into the body.  The `\long`
 // rule itself is enforced and tested; only TeX's error recovery differs here.
-#[ignore = "interleaved \\edef scanning conflicts with analyzing both arms of \
-            an undecided conditional"]
 fn par_is_forbidden_in_a_non_long_macro_argument() {
     let analysis = analyze(r"\def\eat#1{GOT:[#1]}\edef\result{\eat{a\par b}}");
     assert_eq!(body(&analysis, "result"), r"\par b");

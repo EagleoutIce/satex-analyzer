@@ -1768,7 +1768,9 @@ fn offered_options(analysis: &Analysis, all: bool) -> Vec<Record> {
         let name = analysis.interner.name(subject);
         // `\DeclareOption*` and the keys a package declares for itself are
         // not options a document can pass.
-        let internal = name.is_empty() || name.contains('@') || !name.starts_with(|c: char| c.is_ascii_alphanumeric());
+        let internal = name.is_empty()
+            || analysis.settings.conventions.is_internal(name)
+            || !name.starts_with(|c: char| c.is_ascii_alphanumeric());
         if internal && !all {
             continue;
         }
@@ -1837,7 +1839,8 @@ pub fn package_options(analysis: &Analysis, package: &str) -> Vec<(String, Optio
     for def in &analysis.facts.defs {
         if def.tag == "option" && def.package.is_some_and(|p| analysis.interner.name(p) == package) {
             let name = def.subject.map(|s| analysis.interner.name(s)).unwrap_or_default();
-            if name.starts_with(|c: char| c.is_ascii_alphanumeric()) && !name.contains('@') {
+            if name.starts_with(|c: char| c.is_ascii_alphanumeric()) && !analysis.settings.conventions.is_internal(name)
+            {
                 out.entry(name.to_string()).or_default();
             }
         }
@@ -2164,16 +2167,14 @@ fn unprintable_name(name: &str) -> bool {
     name.is_empty() || name.chars().any(|c| c.is_control())
 }
 
-/// A name only a package's or the kernel's own internals would spell:
-/// LaTeX2e's `@` convention, an expl3 function (`_..._:...`) whether public
-/// or private, and expl3's own `__` prefix for what is private even among
-/// those.
-fn internal_name(name: &str) -> bool {
+/// A name only a package's or the kernel's own internals would spell, by
+/// `conventions.internal` (LaTeX2e's `@`, expl3's `:` and `__`).
+fn internal_name(analysis: &Analysis, name: &str) -> bool {
     // A name a `\csname`-style construction built out of another one's own
     // spelling (`\@testopt`'s internal partner for `\section`, say) carries
     // a literal backslash as its first character; no document ever writes
     // that out by hand.
-    name.contains('@') || name.contains(':') || name.starts_with("__") || name.starts_with('\\')
+    analysis.settings.conventions.is_internal(name) || name.starts_with('\\')
 }
 
 /// Where a name in scope came from, for `scope`'s ordering and its
@@ -2214,7 +2215,7 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
     let mut rows: Vec<(u8, Record)> = Vec::new();
     for def in latest.values() {
         let name = analysis.interner.name(def.name);
-        if unprintable_name(name) || (!all && internal_name(name)) {
+        if unprintable_name(name) || (!all && internal_name(analysis, name)) {
             continue;
         }
         let mut record = place(analysis, def.span);
@@ -2245,7 +2246,8 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
         // every number and character it has ever seen, which would
         // otherwise outnumber the useful primitives and macros many times
         // over.
-        if unprintable_name(name) || (!all && (internal_name(name) || !matches!(tag, "primitive" | "macro"))) {
+        if unprintable_name(name) || (!all && (internal_name(analysis, name) || !matches!(tag, "primitive" | "macro")))
+        {
             continue;
         }
         let mut record = Map::new();

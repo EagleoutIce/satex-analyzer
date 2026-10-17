@@ -314,13 +314,15 @@ fn rule_of_unknown_height_before_clearpage() {
     assert!(count(&a, "recursion-widened") <= 1, "{}", count(&a, "recursion-widened"));
 }
 
-/// `\catcode<unknown>=11` from a summarized loop leaves `\ { }` alone
-/// (`unknown-char-catcode-assumed`), so the `\include` still reads its file.
-/// Both `\u` and `\z` loop forever in TeX (pdflatex never gets past
-/// them), so each is reported as an `endless-loop` before it is summarized.
+/// `\catcode<unknown>=11` from a summarized loop may reach `\ { }`: the
+/// reader splits there, and on the path where they kept their categories
+/// the `\include` still reads its file. Where `}` became a letter, its
+/// argument never closes. Both `\u` and `\z` loop forever in TeX
+/// (pdflatex never gets past them), so each is reported as an
+/// `endless-loop` before it is summarized.
 #[test]
 fn include_after_unknown_char_catcode_loop_is_read() {
-    check_allowing("catcode_loop_include", "main.tex", &["ch1"], &["endless-loop"]);
+    check_allowing("catcode_loop_include", "main.tex", &["ch1"], &["endless-loop", "runaway-argument"]);
 }
 
 /// A recursion cut inside a group that set `\escapechar` before it began:

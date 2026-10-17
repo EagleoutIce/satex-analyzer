@@ -432,18 +432,33 @@ impl Machine<'_> {
                     crate::mode::Last::Empty => int(-1),
                     crate::mode::Last::Box => int(1),
                     crate::mode::Last::Whatsit => int(9),
-                    // A box, rule, insertion, mark, adjust, discretionary or math node.
+                    // A box, rule, insertion, mark, adjust, discretionary or
+                    // math node, and in math a noad (etex.ch: 15).
                     crate::mode::Last::Other => {
-                        Some(Value::Num { quantity: crate::value::Quantity::Int, num: crate::value::Num::range(1, 10) })
+                        let hi = if self.mode.meets(crate::mode::Modes::ANY_MATH) { 15 } else { 10 };
+                        Some(Value::Num { quantity: crate::value::Quantity::Int, num: crate::value::Num::range(1, hi) })
                     }
-                    crate::mode::Last::Unknown => None,
+                    crate::mode::Last::Unknown(_) => None,
                 }
             }
-            L::Badness => None,
+            L::Badness => {
+                let sym = self.intern("badness");
+                match self.env.value(sym) {
+                    Value::Int(b) => int(b),
+                    _ => None,
+                }
+            }
             L::InputLineNo => self.input_line().map(|line| Value::Int(line.into())),
             L::EtexVersion => int(ETEX_VERSION),
             L::PdftexVersion => int(pdftex_release().0),
-            L::GroupLevel => int(self.env.group_level() as i64),
+            // A group standing for any number of groups: at least the rest.
+            L::GroupLevel => match self.env.many_groups() {
+                false => int(self.env.group_level() as i64),
+                true => Some(Value::Num {
+                    quantity: crate::value::Quantity::Int,
+                    num: crate::value::Num::range(self.env.group_level() as i64, i32::MAX.into()),
+                }),
+            },
             L::GroupType => match (self.env.group_kind(), self.env.nest()) {
                 (None, _) => int(0),
                 (Some(_), Some(nest)) => nest.code.map(|code| Value::Int(code.into())),
@@ -451,7 +466,17 @@ impl Machine<'_> {
                 (Some(GroupKind::SemiSimple), None) => int(group::SEMI_SIMPLE.into()),
                 (Some(GroupKind::Math { .. }), None) => int(group::MATH_SHIFT.into()),
             },
-            L::IfLevel => int((self.conds.len() + TESTING.with(Cell::get)) as i64),
+            // A conditional standing for any number of them: at least the rest.
+            L::IfLevel => {
+                let level = (self.conds.iter().filter(|c| !c.many).count() + TESTING.with(Cell::get)) as i64;
+                match self.conds.iter().any(|c| c.many) {
+                    false => int(level),
+                    true => Some(Value::Num {
+                        quantity: crate::value::Quantity::Int,
+                        num: crate::value::Num::range(level, i32::MAX.into()),
+                    }),
+                }
+            }
             // etex.ch: the innermost conditional, which is the one whose test
             // is being read if there is one.
             L::IfType | L::IfBranch => {
@@ -475,15 +500,16 @@ impl Machine<'_> {
             }
             L::GlueStretch | L::GlueShrink | L::GlueStretchOrder | L::GlueShrinkOrder => {
                 let glue = self.scan_glue_spec(false)?;
-                let part =
-                    if matches!(item, L::GlueStretch | L::GlueStretchOrder) { glue.stretch } else { glue.shrink };
+                use crate::value::Quantity;
                 Some(match item {
-                    L::GlueStretch | L::GlueShrink => Value::Dimen(part.amount),
-                    _ => Value::Int(part.order.into()),
+                    L::GlueStretch => Value::from_num(Quantity::Dimen, glue.stretch),
+                    L::GlueShrink => Value::from_num(Quantity::Dimen, glue.shrink),
+                    L::GlueStretchOrder => Value::from_num(Quantity::Int, glue.stretch_order),
+                    _ => Value::from_num(Quantity::Int, glue.shrink_order),
                 })
             }
-            L::GlueToMu => self.scan_glue_spec(false).map(Value::MuGlue),
-            L::MuToGlue => self.scan_glue_spec(true).map(Value::Glue),
+            L::GlueToMu => self.scan_glue_spec(false).map(|g| g.value(true)),
+            L::MuToGlue => self.scan_glue_spec(true).map(|g| g.value(false)),
             L::FontCharWd | L::FontCharHt | L::FontCharDp | L::FontCharIc => {
                 let font = self.scan_font_ident();
                 let c = self.scan_int();
@@ -524,11 +550,10 @@ impl Machine<'_> {
             // pdfTeX's clock: scaled seconds since the run began, stopping
             // at 2^31-1, so never negative. Its interval is left to the
             // test or assignment that reads it, as a register's is.
-            L::ElapsedTime => {
-                (self.abs, self.abs_exact, self.abs_from) =
-                    (Some(crate::value::Num::range(0, crate::value::MAX_INT)), None, None);
-                None
-            }
+            L::ElapsedTime => Some(Value::Num {
+                quantity: crate::value::Quantity::Int,
+                num: crate::value::Num::range(0, crate::value::MAX_INT),
+            }),
             // The random generator and the output position.
             L::RandomSeed | L::LastXPos | L::LastYPos => None,
             L::XetexVersion => int(xetex_release().0),
@@ -771,7 +796,7 @@ impl Machine<'_> {
                         // A checked code may be stored as something else.
                         let value =
                             if limit.is_some() { Value::Unknown } else { code.map_or(Value::Unknown, Value::Int) };
-                        self.weaken_code_table(table, None, &value, global, span)
+                        self.weaken_code_table(table, None, &value, global)
                     }
                 }
             }
@@ -1406,11 +1431,7 @@ impl Machine<'_> {
             Primitive::GlueParameter { mu } => {
                 self.scan_optional_equals();
                 let glue = self.scan_glue_spec(mu);
-                let value = match (glue, mu) {
-                    (Some(g), false) => Value::Glue(g),
-                    (Some(g), true) => Value::MuGlue(g),
-                    (None, _) => Value::Unknown,
-                };
+                let value = glue.map_or(Value::Unknown, |g| g.value(mu));
                 let by = self.env.identity(by);
                 self.assign_value(by, value, span);
             }
@@ -1464,6 +1485,20 @@ impl Machine<'_> {
                 self.math_code_char(code);
             }
             Syntax::Number => {
+                self.scan_int();
+            }
+            Syntax::NamesNumber => {
+                let span = self.definition_site(span);
+                let Some(name) = self.read_r_token() else { return };
+                let relax = crate::env::Binding::builtin(Meaning::Primitive(Primitive::Relax));
+                self.env.set(name, relax, self.prefixes.global);
+                self.read_equals();
+                self.scan_int();
+                self.define(name, Meaning::Unknown, by, crate::builtins::DefMode::Declare, span);
+            }
+            Syntax::NumberIsNumber => {
+                self.scan_int();
+                self.read_equals();
                 self.scan_int();
             }
             Syntax::Dimen => {

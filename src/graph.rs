@@ -681,15 +681,16 @@ impl CallGraph {
     /// being a cycle of macros calling one another.
     pub fn recursive(&self) -> Vec<(Sym, Vec<Sym>)> {
         let mut out = Vec::new();
-        let mut tarjan = petgraph::algo::TarjanScc::new();
-        tarjan.run(Adjacency(&self.edges), |component| match component {
-            [only] if self.edges[*only].contains(only) => out.push((self.nodes[*only], vec![self.nodes[*only]])),
-            [_] => {}
-            many => {
-                let cycle: Vec<Sym> = many.iter().map(|node| self.nodes[*node]).collect();
-                out.extend(many.iter().map(|node| (self.nodes[*node], cycle.clone())));
+        for component in strongly_connected(&self.edges) {
+            match component[..] {
+                [only] if self.edges[only].contains(&only) => out.push((self.nodes[only], vec![self.nodes[only]])),
+                [_] => {}
+                _ => {
+                    let cycle: Vec<Sym> = component.iter().map(|&node| self.nodes[node]).collect();
+                    out.extend(component.iter().map(|&node| (self.nodes[node], cycle.clone())));
+                }
             }
-        });
+        }
         out
     }
 }
@@ -698,40 +699,64 @@ fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// The call graph's adjacency lists as petgraph sees them.  `DiGraph` walks
-/// a node's edges newest first, so the neighbors come out reversed.
-#[derive(Clone, Copy)]
-struct Adjacency<'a>(&'a [Vec<usize>]);
-
-impl petgraph::visit::GraphBase for Adjacency<'_> {
-    type NodeId = usize;
-    type EdgeId = usize;
+/// The strongly connected components of `edges` (Tarjan), each closed
+/// before the ones that reach it, iteratively so a long chain of calls
+/// cannot overflow the stack.
+fn strongly_connected(edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    const NONE: usize = usize::MAX;
+    let n = edges.len();
+    let (mut index, mut low, mut on) = (vec![NONE; n], vec![0; n], vec![false; n]);
+    let (mut next, mut stack, mut out) = (0, Vec::new(), Vec::new());
+    for root in 0..n {
+        if index[root] != NONE {
+            continue;
+        }
+        // A frame: the node and how many of its edges are done.
+        let mut frames = vec![(root, 0)];
+        (index[root], low[root], next) = (next, next, next + 1);
+        stack.push(root);
+        on[root] = true;
+        while let Some(&mut (v, ref mut done)) = frames.last_mut() {
+            if let Some(&w) = edges[v].get(*done) {
+                *done += 1;
+                if index[w] == NONE {
+                    (index[w], low[w], next) = (next, next, next + 1);
+                    stack.push(w);
+                    on[w] = true;
+                    frames.push((w, 0));
+                } else if on[w] {
+                    low[v] = low[v].min(index[w]);
+                }
+                continue;
+            }
+            frames.pop();
+            if let Some(&(parent, _)) = frames.last() {
+                low[parent] = low[parent].min(low[v]);
+            }
+            if low[v] == index[v] {
+                let mut component = Vec::new();
+                while let Some(w) = stack.pop() {
+                    on[w] = false;
+                    component.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                out.push(component);
+            }
+        }
+    }
+    out
 }
 
-impl petgraph::visit::GraphRef for Adjacency<'_> {}
-
-impl petgraph::visit::NodeIndexable for Adjacency<'_> {
-    fn node_bound(&self) -> usize {
-        self.0.len()
-    }
-    fn to_index(&self, node: usize) -> usize {
-        node
-    }
-    fn from_index(&self, index: usize) -> usize {
-        index
-    }
-}
-
-impl<'a> petgraph::visit::IntoNeighbors for Adjacency<'a> {
-    type Neighbors = std::iter::Rev<std::iter::Copied<std::slice::Iter<'a, usize>>>;
-    fn neighbors(self, node: usize) -> Self::Neighbors {
-        self.0[node].iter().copied().rev()
-    }
-}
-
-impl<'a> petgraph::visit::IntoNodeIdentifiers for Adjacency<'a> {
-    type NodeIdentifiers = std::ops::Range<usize>;
-    fn node_identifiers(self) -> Self::NodeIdentifiers {
-        0..self.0.len()
+#[cfg(test)]
+mod scc_tests {
+    #[test]
+    fn components_close_before_what_reaches_them() {
+        // 0 -> 1 <-> 2, 3 -> 3, 4 alone.
+        let edges = vec![vec![1], vec![2], vec![1], vec![3], vec![]];
+        let mut found = super::strongly_connected(&edges);
+        found.iter_mut().for_each(|c| c.sort());
+        assert_eq!(found, [vec![1, 2], vec![0], vec![3], vec![4]]);
     }
 }

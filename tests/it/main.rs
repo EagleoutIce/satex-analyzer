@@ -52,6 +52,7 @@ mod mutation;
 mod no_hang;
 mod no_installation;
 mod observed;
+mod oracle;
 mod package_cache;
 mod packages;
 mod paths;

@@ -183,7 +183,7 @@ fn an_unknown_dimension_still_prints_its_unit() {
 
 #[test]
 fn the_pgfkeys_query_lists_every_key_with_its_handler() {
-    if which::which("kpsewhich").is_err() {
+    if satex::paths::which("kpsewhich").is_err() {
         return;
     }
     // pgfkeys.code.tex needs `@` to be a letter (its own header says so);

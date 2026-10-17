@@ -401,8 +401,8 @@ impl Command {
             }
             Command::Lint { explain: Some(_), .. } => (matches!(format, Format::Text | Format::Json), "text or json"),
             Command::Lint { .. } | Command::Compile => (
-                generic || matches!(format, Format::Github | Format::Sarif | Format::Lsp),
-                "text, json, csv, markdown, github, sarif or lsp",
+                generic || matches!(format, Format::Github | Format::Sarif | Format::Lsp | Format::Texlog),
+                "text, json, csv, markdown, github, sarif, lsp or texlog",
             ),
             Command::Summary { .. } | Command::Cache { action: None } | Command::Install { .. } => {
                 (matches!(format, Format::Text | Format::Json), "text or json")

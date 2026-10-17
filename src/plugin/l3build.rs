@@ -120,7 +120,7 @@ impl L3build {
     /// documentation sit below it.
     pub fn read(dir: &Path) -> Option<L3build> {
         let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-        let home = dirs::home_dir();
+        let home = crate::paths::home_dir();
         let mut root = None;
         // Never above the repository, the home directory, or what another
         // user owns: a `build.lua` there is no part of this bundle.
@@ -217,7 +217,7 @@ impl L3build {
         for pattern in self.list(patterns) {
             let joined = base.join(&pattern);
             let Some(joined) = joined.to_str() else { continue };
-            for path in glob::glob(joined).into_iter().flatten().flatten() {
+            for path in crate::paths::glob(joined) {
                 if path.is_file() && !out.contains(&path) {
                     out.push(path);
                 }
@@ -356,7 +356,7 @@ fn owned_alike(dir: &Path, a: &Path) -> bool {
 }
 
 fn evaluate(root: &Path, defaults: Option<&Path>) -> Option<Evaluated> {
-    let texlua = which::which("texlua").ok()?;
+    let texlua = crate::paths::which("texlua").ok()?;
     let script = std::env::temp_dir().join(format!(
         "satex-l3build-{}-{:?}.lua",
         std::process::id(),
