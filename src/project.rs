@@ -65,7 +65,7 @@ impl Project {
         // The user's own `~/.latexmkrc` (latexmk manual, "Configuration/initialization
         // (rc) files"), read after the project's: a project-level `ensure_path`
         // outranks it, since [`Project::kpse_paths`] takes the first file per tool.
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::paths::home_dir() {
             let global = home.join(".latexmkrc");
             if global.is_file() && !files.iter().any(|f| f.path == global) {
                 let paths = latexmkrc_paths(&global);
