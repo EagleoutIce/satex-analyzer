@@ -89,6 +89,7 @@ pub struct Request {
 
 /// A resolved TeX installation: its [`Distribution`] description plus the
 /// file-name index [`crate::loader::Resolver`] searches.
+#[derive(Clone)]
 pub struct Trees {
     pub distribution: Distribution,
     index: Index,

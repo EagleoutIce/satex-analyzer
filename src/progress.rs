@@ -260,6 +260,39 @@ thread_local! {
     static WHY: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// What runs between two commands of a document's run on this thread.
+type Pause = Box<dyn FnMut()>;
+
+thread_local! {
+    static PAUSE: std::cell::RefCell<Option<Pause>> = const { std::cell::RefCell::new(None) };
+    static PAUSED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Runs `f` with `pause` called between the commands of the runs it makes:
+/// the language server answers from its last analysis there.
+pub fn pausing<T>(pause: Pause, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<Pause>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PAUSE.set(self.0.take());
+        }
+    }
+    let _restore = Restore(PAUSE.replace(Some(pause)));
+    f()
+}
+
+/// A run stands between two of its commands: every so often, the pause runs.
+pub fn pause() {
+    let n = PAUSED.get().wrapping_add(1);
+    PAUSED.set(n);
+    if n.is_multiple_of(64)
+        && let Some(mut pause) = PAUSE.take()
+    {
+        pause();
+        PAUSE.set(Some(pause));
+    }
+}
+
 /// Runs `f` with `why` added to what this thread's work is for.
 pub fn because<T>(why: impl Into<String>, f: impl FnOnce() -> T) -> T {
     struct Pop;

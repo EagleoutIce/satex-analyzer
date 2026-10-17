@@ -103,7 +103,8 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
         .stack_size(8 << 20)
         .spawn(move || {
             handlers::VIEW.with_borrow_mut(|view| named.iter().for_each(|r| view.add(r)));
-            engine_loop(engine_rx, Engine::new(cfg, root, main, diagnostics_tx).with_hovers(engine_hovers), debounce)
+            let engine = Engine::new(cfg, root, main, diagnostics_tx).with_hovers(engine_hovers);
+            engine_loop(engine_rx.clone(), Engine { inbox: Some(engine_rx), ..engine }, debounce)
         })
         .map_err(|e| e.to_string())?;
 
@@ -413,6 +414,7 @@ enum EngineMsg {
     Shutdown,
 }
 
+#[derive(Clone)]
 struct Doc {
     text: String,
     path: PathBuf,
@@ -453,7 +455,8 @@ struct Engine {
     docs: HashMap<Uri, Doc>,
     actions: HashMap<Uri, Vec<Json>>,
     dirty: Vec<Uri>,
-    cfg: Config,
+    /// Leaked once per server: the checkpoints of a run hold it.
+    cfg: &'static Config,
     root: PathBuf,
     /// The root `satex lsp -f` names, tried first for an input file.
     main: Option<PathBuf>,
@@ -471,6 +474,27 @@ struct Engine {
     /// Where each document's hovers are kept between sessions, and the
     /// names it defines itself, which are never kept there.
     stores: HashMap<Uri, (std::path::PathBuf, std::collections::HashSet<String>)>,
+    /// Each document root's checkpoints, from which its next run resumes.
+    checkpoints: HashMap<PathBuf, crate::machine::Checkpoints<'static>>,
+    /// Where messages arrive while a run goes on, and those that wait for its end.
+    inbox: Option<Receiver<EngineMsg>>,
+    deferred: std::collections::VecDeque<EngineMsg>,
+}
+
+impl EngineMsg {
+    /// The document a request asks about.
+    fn uri(&self) -> Option<&Uri> {
+        match self {
+            EngineMsg::Hover(uri, ..)
+            | EngineMsg::Definition(uri, ..)
+            | EngineMsg::References(uri, ..)
+            | EngineMsg::SignatureHelp(uri, ..)
+            | EngineMsg::Completion(uri, ..)
+            | EngineMsg::DocumentSymbol(uri, ..)
+            | EngineMsg::Typeset(uri, ..) => Some(uri),
+            _ => None,
+        }
+    }
 }
 
 impl Engine {
@@ -486,7 +510,7 @@ impl Engine {
             docs: HashMap::default(),
             actions: HashMap::default(),
             dirty: Vec::new(),
-            cfg,
+            cfg: Box::leak(Box::new(cfg)),
             root,
             main,
             runs: HashMap::default(),
@@ -496,6 +520,9 @@ impl Engine {
             prefill: Default::default(),
             preambles: HashMap::default(),
             stores: HashMap::default(),
+            checkpoints: HashMap::default(),
+            inbox: None,
+            deferred: Default::default(),
         }
     }
 
@@ -582,7 +609,16 @@ impl Engine {
             return (run.analysis.clone(), false);
         }
         let source = crate::overlay::read_to_string(root).unwrap_or_default();
-        let analysis = Rc::new(Machine::analyze(&source, Some(root), &self.cfg));
+        let analysis = Rc::new(self.serving(|engine| {
+            match discovery::is_document(&source) {
+                true => engine
+                    .checkpoints
+                    .entry(key.clone())
+                    .or_insert_with(|| crate::machine::Checkpoints::new(engine.cfg))
+                    .analyze(&source, root),
+                false => Machine::analyze(&source, Some(root), engine.cfg),
+            }
+        }));
         // The server's stderr is the client's log.
         for note in analysis.limit_notes() {
             eprintln!("satex: {note}");
@@ -595,7 +631,42 @@ impl Engine {
             }
         }
         self.runs.insert(key, Run { texts, analysis: analysis.clone(), reads });
+        let runs = &self.runs;
+        self.checkpoints.retain(|root, _| runs.contains_key(root));
         (analysis, true)
+    }
+
+    /// `f`'s run, while which the requests that only read are answered
+    /// from the analyses there are, and the others wait for its end.
+    fn serving<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let Some(inbox) = self.inbox.clone() else { return f(self) };
+        let (mut docs, hovers) = (self.docs.clone(), self.hovers.clone());
+        let deferred = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let waiting = deferred.clone();
+        let pause = Box::new(move || {
+            while let Ok(msg) = inbox.try_recv() {
+                match msg {
+                    EngineMsg::Change(ref uri, ref text) => {
+                        if let Some(doc) = docs.get_mut(uri) {
+                            doc.text = text.clone();
+                        }
+                        waiting.borrow_mut().push(msg);
+                    }
+                    // A document's first analysis is waited for.
+                    msg if msg.uri().is_some_and(|uri| docs.get(uri).is_none_or(|d| d.analysis.is_none())) => {
+                        waiting.borrow_mut().push(msg)
+                    }
+                    msg => {
+                        if let Some(msg) = answer(&docs, &hovers, msg) {
+                            waiting.borrow_mut().push(msg);
+                        }
+                    }
+                }
+            }
+        });
+        let out = crate::progress::pausing(pause, || f(self));
+        self.deferred.extend(deferred.take());
+        out
     }
 
     /// After `uri` was analyzed: its hovers of names the document defines
@@ -620,7 +691,7 @@ impl Engine {
         }
         let mut used: Vec<(u32, String)> = used.into_iter().map(|(sym, n)| (n, name(sym))).collect();
         used.sort_by(|a, b| b.cmp(a));
-        let store = hover_store(&self.cfg, analysis, &dir);
+        let store = hover_store(self.cfg, analysis, &dir);
         let Ok(mut hovers) = self.hovers.lock() else { return };
         hovers.retain(|(u, n), _| u != uri || same && !own.contains(n));
         // What an earlier session kept for these same loads.
@@ -738,71 +809,18 @@ impl Engine {
                     hovers.retain(|(u, _), _| u != &uri);
                 }
             }
-            EngineMsg::Hover(uri, pos, reply) => {
-                self.ensure(&uri);
-                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc(&self.docs, &uri, |analysis, text| {
-                    let at = handlers::to_pos(text, pos);
-                    // A control sequence's hover is kept for the next time,
-                    // and placed where it is asked.
-                    if let Some((name, true)) = handlers::word_at(text.line(at.line), at.col) {
-                        let key = (uri.clone(), name.clone());
-                        let kept = self.hovers.lock().ok().and_then(|h| h.get(&key).cloned());
-                        let markdown = kept.unwrap_or_else(|| {
-                            let markdown =
-                                crate::progress::because("hover", || handlers::command_markdown(analysis, &name));
-                            if let Ok(mut hovers) = self.hovers.lock() {
-                                hovers.insert(key, markdown.clone());
-                            }
-                            markdown
-                        });
-                        return markdown
-                            .map(|m| handlers::markdown_hover(handlers::placed(analysis, m, &name, &path, at)));
-                    }
-                    handlers::hover(analysis, text, &path, pos)
-                });
-                let _ = reply.send(result.flatten());
-            }
-            EngineMsg::Definition(uri, pos, reply) => {
-                self.ensure(&uri);
-                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result =
-                    with_doc(&self.docs, &uri, |analysis, text| handlers::definition(analysis, text, &path, pos));
-                let _ = reply.send(result.flatten());
-            }
-            EngineMsg::References(uri, pos, decls, reply) => {
-                self.ensure(&uri);
-                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let result = with_doc(&self.docs, &uri, |analysis, text| {
-                    handlers::references(analysis, text, &path, pos, decls)
-                });
-                let _ = reply.send(result.flatten());
-            }
-            EngineMsg::SignatureHelp(uri, pos, reply) => {
-                self.ensure(&uri);
-                let result = crate::progress::because("signature help", || {
-                    with_doc(&self.docs, &uri, |analysis, text| handlers::signature_help(analysis, text, pos))
-                });
-                let _ = reply.send(result.flatten());
-            }
-            EngineMsg::Completion(uri, pos, reply) => {
-                self.ensure(&uri);
-                let result = crate::progress::because("completion", || {
-                    with_doc(&self.docs, &uri, |analysis, text| handlers::completion(analysis, text, pos))
-                });
-                let _ = reply.send(result.unwrap_or(lsp_types::CompletionResponse::Array(Vec::new())));
-            }
-            EngineMsg::DocumentSymbol(uri, reply) => {
-                self.ensure(&uri);
-                let path = self.docs.get(&uri).map(|d| d.path.display().to_string());
-                let result = match path {
-                    Some(path) => with_doc(&self.docs, &uri, |analysis, text| {
-                        handlers::document_symbols(analysis, &path, text).map(lsp_types::DocumentSymbolResponse::Flat)
-                    })
-                    .flatten(),
-                    None => None,
-                };
-                let _ = reply.send(result);
+            msg @ (EngineMsg::Hover(..)
+            | EngineMsg::Definition(..)
+            | EngineMsg::References(..)
+            | EngineMsg::SignatureHelp(..)
+            | EngineMsg::Completion(..)
+            | EngineMsg::DocumentSymbol(..)
+            | EngineMsg::Typeset(..)
+            | EngineMsg::WorkspaceSymbol(..)) => {
+                if let Some(uri) = msg.uri().or_else(|| self.docs.keys().next()).cloned() {
+                    self.ensure(&uri);
+                }
+                answer(&self.docs, &self.hovers, msg);
             }
             EngineMsg::Highlight(uri, pos, reply) => {
                 self.fresh(&uri);
@@ -827,37 +845,102 @@ impl Engine {
                 .unwrap_or_else(|| Err("document is not open".to_string()));
                 let _ = reply.send(result);
             }
-            EngineMsg::WorkspaceSymbol(query, reply) => {
-                let uri = self.docs.keys().next().cloned();
-                if let Some(uri) = &uri {
-                    self.ensure(uri);
-                }
-                let result = uri
-                    .and_then(|u| with_doc(&self.docs, &u, |analysis, _| handlers::workspace_symbols(analysis, &query)))
-                    .unwrap_or_default();
-                let _ = reply.send(result);
-            }
             EngineMsg::CodeAction(uri, reply) => {
                 self.fresh(&uri);
                 let _ = reply.send(self.actions.get(&uri).cloned().unwrap_or_default());
             }
-            EngineMsg::Typeset(uri, reply) => {
-                self.ensure(&uri);
-                let result = with_doc(&self.docs, &uri, |analysis, _| handlers::typeset(analysis));
-                let _ = reply.send(result.unwrap_or_default());
-            }
             EngineMsg::ExecuteCommand(body, reply) => {
                 let active = self.docs.values().next().map(|d| d.path.clone()).unwrap_or_else(|| self.root.clone());
-                let result = crate::cmd::query::run_request_value(&body, &self.cfg, Some(&active));
+                let result = crate::cmd::query::run_request_value(&body, self.cfg, Some(&active));
                 let _ = reply.send(result);
             }
         }
     }
 }
 
+/// Answers `msg` from the analyses in `docs` when it only reads one; any
+/// other message comes back.
+fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, msg: EngineMsg) -> Option<EngineMsg> {
+    match msg {
+        EngineMsg::Hover(uri, pos, reply) => {
+            let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+            let result = with_doc(docs, &uri, |analysis, text| {
+                let at = handlers::to_pos(text, pos);
+                // A control sequence's hover is kept for the next time,
+                // and placed where it is asked.
+                if let Some((name, true)) = handlers::word_at(text.line(at.line), at.col) {
+                    let key = (uri.clone(), name.clone());
+                    let kept = hovers.lock().ok().and_then(|h| h.get(&key).cloned());
+                    let markdown = kept.unwrap_or_else(|| {
+                        let markdown =
+                            crate::progress::because("hover", || handlers::command_markdown(analysis, &name));
+                        if let Ok(mut hovers) = hovers.lock() {
+                            hovers.insert(key, markdown.clone());
+                        }
+                        markdown
+                    });
+                    return markdown.map(|m| handlers::markdown_hover(handlers::placed(analysis, m, &name, &path, at)));
+                }
+                handlers::hover(analysis, text, &path, pos)
+            });
+            let _ = reply.send(result.flatten());
+        }
+        EngineMsg::Definition(uri, pos, reply) => {
+            let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+            let result = with_doc(docs, &uri, |analysis, text| handlers::definition(analysis, text, &path, pos));
+            let _ = reply.send(result.flatten());
+        }
+        EngineMsg::References(uri, pos, decls, reply) => {
+            let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+            let result = with_doc(docs, &uri, |analysis, text| handlers::references(analysis, text, &path, pos, decls));
+            let _ = reply.send(result.flatten());
+        }
+        EngineMsg::SignatureHelp(uri, pos, reply) => {
+            let result = crate::progress::because("signature help", || {
+                with_doc(docs, &uri, |analysis, text| handlers::signature_help(analysis, text, pos))
+            });
+            let _ = reply.send(result.flatten());
+        }
+        EngineMsg::Completion(uri, pos, reply) => {
+            let result = crate::progress::because("completion", || {
+                with_doc(docs, &uri, |analysis, text| handlers::completion(analysis, text, pos))
+            });
+            let _ = reply.send(result.unwrap_or(lsp_types::CompletionResponse::Array(Vec::new())));
+        }
+        EngineMsg::DocumentSymbol(uri, reply) => {
+            let path = docs.get(&uri).map(|d| d.path.display().to_string());
+            let result = match path {
+                Some(path) => with_doc(docs, &uri, |analysis, text| {
+                    handlers::document_symbols(analysis, &path, text).map(lsp_types::DocumentSymbolResponse::Flat)
+                })
+                .flatten(),
+                None => None,
+            };
+            let _ = reply.send(result);
+        }
+        EngineMsg::WorkspaceSymbol(query, reply) => {
+            let result = docs
+                .keys()
+                .next()
+                .cloned()
+                .and_then(|u| with_doc(docs, &u, |analysis, _| handlers::workspace_symbols(analysis, &query)))
+                .unwrap_or_default();
+            let _ = reply.send(result);
+        }
+        EngineMsg::Typeset(uri, reply) => {
+            let result = with_doc(docs, &uri, |analysis, _| handlers::typeset(analysis));
+            let _ = reply.send(result.unwrap_or_default());
+        }
+        msg => return Some(msg),
+    }
+    None
+}
+
 fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) {
     loop {
-        let received = if !engine.dirty.is_empty() {
+        let received = if let Some(msg) = engine.deferred.pop_front() {
+            Ok(msg)
+        } else if !engine.dirty.is_empty() {
             rx.recv_timeout(debounce)
         } else if !engine.prefill.is_empty() {
             // Idle: one more hover, unless a message waits.

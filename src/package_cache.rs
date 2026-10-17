@@ -619,7 +619,7 @@ fn decode_effect(bytes: &[u8], syms: &[Sym], files: &[FileId]) -> Option<Effect>
 
 /// One segment of a package's tree. Read from a file, its byte fields
 /// borrow the file's bytes: the file is held once, not decoded into a copy.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Node<'a> {
     parent: Option<u32>,
     /// Checkpoint marking where the segment ends.
@@ -658,7 +658,7 @@ struct CacheFile<'a> {
 }
 
 /// Interpreter logs beyond checkpoint state, while a package is recorded.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Log {
     /// Definition facts in order, including pre-existing sites; whether redefinition was in initial state.
     pub(super) definitions: Vec<(Definition, bool)>,
@@ -686,6 +686,7 @@ pub(super) struct Log {
 }
 
 /// Initial state of a load; reads are compared against it.
+#[derive(Clone)]
 struct Before {
     slots: Vec<Option<Binding>>,
     aliases: HashMap<Sym, Sym>,
@@ -733,7 +734,7 @@ struct Marks {
 }
 
 /// Interpreter state that must match for a checkpoint (at package file push).
-#[derive(PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 struct Rest {
     input: usize,
     depth: usize,
@@ -767,6 +768,7 @@ struct Rest {
 }
 
 /// A package being recorded.
+#[derive(Clone)]
 pub(super) struct Recorder {
     pub(super) file: FileId,
     pub(super) expansions_start: usize,
@@ -1200,6 +1202,7 @@ impl Machine<'_> {
             scratch: _,
             // Same throughout a load.
             cfg: _,
+            checkpoints: _,
             limits: _,
             pressure: _,
             hyph_cache: _,

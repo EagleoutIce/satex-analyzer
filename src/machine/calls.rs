@@ -36,6 +36,7 @@ pub(crate) struct CallRec {
 
 /// One recorded run: the names it wrote, as it left them, and the names
 /// it read.
+#[derive(Clone)]
 struct Run {
     writes: Vec<(Sym, Option<Binding>)>,
     reads: Vec<Sym>,
@@ -45,7 +46,7 @@ struct Run {
 const READ_LOG: usize = 1 << 22;
 
 /// What the recorded runs of one call did.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct CallRuns {
     runs: Vec<Run>,
     /// A run read past its own text, changed catcodes, or left groups,

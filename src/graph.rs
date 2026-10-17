@@ -101,7 +101,7 @@ pub struct Vertex {
 /// The program's dependency graph: [`Vertex`]es for definitions, calls and
 /// uses, connected by [`EdgeKind`] edges. [`DependencyGraph::slice_until`] is what
 /// `satex slice` walks.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct DependencyGraph {
     pub vertices: Vec<Vertex>,
     /// Outgoing edges, indexed by source vertex.
@@ -141,7 +141,7 @@ pub struct DependencyGraph {
     log: Option<GraphLog>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct GraphLog {
     pub edges: Vec<(NodeId, NodeId, EdgeKind, Option<NodeId>)>,
     /// Reads linked to whatever defines a name, not to particular vertices:
@@ -581,7 +581,7 @@ impl DependencyGraph {
 /// definitions rather than from the [`DependencyGraph`], so that macros that
 /// are never invoked are still covered. [`crate::machine::Analysis::calls`]
 /// holds the one for a run.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct CallGraph {
     pub nodes: Vec<Sym>,
     index: LookupMap<Sym, usize>,

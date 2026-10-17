@@ -122,8 +122,15 @@
 
   let nextId = 1;
   const pending = new Map();
+  // The worker answers each message in turn: those that run an analysis, not
+  // yet answered, are `running`, and what it answered before stands in meanwhile.
+  const order = [];
+  let running = 0;
   function lsp(method, params, notify = false) {
     const message = { jsonrpc: '2.0', method, params, ...(notify ? {} : { id: nextId++ }) };
+    const runs = method === 'satex/analyze' || method === 'textDocument/didOpen';
+    order.push(runs);
+    running += runs;
     worker.postMessage({ type: 'lsp', message });
     return notify ? null : new Promise((resolve, reject) => pending.set(message.id, { resolve, reject }));
   }
@@ -195,14 +202,17 @@
     .sort((a, b) => a[1] - b[1] || a[2] - b[2] || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
   /** The language server's completion items at `position`, kept per buffer version. */
   const asked = new Map();
+  let lastItems = null;
   function completions(position) {
     const k = `${uri()}|${version}|${position.line}:${position.character}`;
     if (!asked.has(k)) {
       asked.clear();
-      asked.set(k, lsp('textDocument/completion', { textDocument: { uri: uri() }, position }).then((r) => (Array.isArray(r) ? r : r?.items) ?? []).catch(() => []));
+      asked.set(k, lsp('textDocument/completion', { textDocument: { uri: uri() }, position }).then((r) => (lastItems = (Array.isArray(r) ? r : r?.items) ?? [])).catch(() => []));
     }
-    return asked.get(k);
+    return running && lastItems ? lastItems : asked.get(k);
   }
+  /** The last hover of each command, by file: shown at once while a run goes on. */
+  const keptHovers = new Map();
   /** The command (or key) at offset `col` of `line`: [from, to, name, isCommand]. */
   function wordAt(line, col) {
     for (const m of line.matchAll(/\\([A-Za-z@]+|.)|[A-Za-z0-9_:.+*-]+/g))
@@ -230,7 +240,11 @@
     const hover = view.hoverTooltip(async (v, pos) => {
       // The server has the text; it answers from its last analysis at once.
       push();
-      const result = await lsp('textDocument/hover', { textDocument: { uri: uri() }, position: position(v.state.doc, pos) }).catch(() => null);
+      const line = v.state.doc.lineAt(pos), word = wordAt(line.text, pos - line.from);
+      const key = word?.[3] ? `${uri()}|${word[2]}` : null;
+      const asking = lsp('textDocument/hover', { textDocument: { uri: uri() }, position: position(v.state.doc, pos) }).catch(() => null)
+        .then((r) => { if (key) keptHovers.set(key, r); return r; });
+      const result = running && keptHovers.has(key) ? keptHovers.get(key) : await asking;
       const c = result?.contents;
       const value = typeof c === 'string' ? c : c?.value ?? (Array.isArray(c) ? c.map((x) => x.value ?? x).join('\n') : '');
       if (!value) return null;
@@ -1064,6 +1078,7 @@
 
   worker.onmessage = async ({ data }) => {
     if (data.type === 'lsp') {
+      running -= order.shift() ? 1 : 0;
       for (const m of data.out) {
         if (m.id !== undefined && pending.has(m.id)) {
           const p = pending.get(m.id);
@@ -1078,6 +1093,7 @@
       progressed(data);
     } else if (data.type === 'error' && data.of === 'lsp') {
       lspStatus.textContent = `language server failed: ${data.message.split('\n')[0]}`;
+      running -= order.shift() ? 1 : 0;
       for (const p of pending.values()) p.resolve(null);
       pending.clear();
     } else if (data.type === 'error') {

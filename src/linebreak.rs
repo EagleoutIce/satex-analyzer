@@ -59,7 +59,7 @@ impl Kp {
 }
 
 /// The recorded lists, hash-consed: a list is the id of its last node.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct Arena {
     nodes: Vec<(Kp, u32, u32)>,
     index: HashMap<(Kp, u32), u32>,

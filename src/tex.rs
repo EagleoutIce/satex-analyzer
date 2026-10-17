@@ -1289,6 +1289,18 @@ impl Mouth {
         mouth
     }
 
+    /// This mouth reading what `fresh` reads, which begins with what this
+    /// one has read so far; else the line where it differs first.
+    pub fn retext(&self, fresh: &Mouth) -> Result<Self, u32> {
+        match self.src[..self.pos].iter().zip(fresh.src.iter()).position(|(a, b)| a != b) {
+            None if fresh.src.len() >= self.pos => Ok(Mouth { src: fresh.src.clone(), ..self.clone() }),
+            at => {
+                let at = at.unwrap_or(fresh.src.len());
+                Err(1 + self.src[..at].iter().filter(|&&c| c == '\n').count() as u32)
+            }
+        }
+    }
+
     /// `\endinput` sets `force_eof` (tex.web §§ 362, 360).
     pub fn end_input(&mut self) {
         self.force_eof.get_or_insert(self.line);

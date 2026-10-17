@@ -328,7 +328,7 @@ pub struct Spot {
 /// Every character the run typeset outside package code, in order: the
 /// document as the reader sees it, with each character's source position.
 /// [`Facts::text`] holds it, and the typographic lints read it.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Text {
     pub chars: String,
     /// One per character of `chars`, in the same order.
@@ -420,7 +420,7 @@ pub struct Diagnostic {
 
 /// What a run observed: [`Definition`]s, [`Expansion`]s, [`Occurrence`]s and
 /// [`Load`]s, which every query and lint reads.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Facts {
     pub defs: Vec<Definition>,
     /// The files `\write` handed lines to, as `\openout` named them.

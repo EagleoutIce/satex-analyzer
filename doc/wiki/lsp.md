@@ -12,7 +12,7 @@ satex lsp --port 9257        # TCP instead, bound to 127.0.0.1
 satex lsp --port 9257 --host 0.0.0.0
 ```
 
-A document is re-analyzed `lsp.debounce_ms` after its last edit. Requests wait for the first analysis. `\input` and `\include` see the unsaved text of other open documents. A file without `\documentclass` is analyzed as part of the document that reads it: the one `-f` names, else the root the client's workspace folder holds. Every path is answered as the client named it, so a folder opened through a symlink keeps its name.
+A document is re-analyzed `lsp.debounce_ms` after its last edit. The run keeps checkpoints of its whole state at line starts in the document's own files. The next run resumes from the last one whose input is unchanged, so an edit late in the document reruns only what follows it. The result is the same as a full run. While a run goes on, hover, completion and signature help are answered from the last analysis at once. Requests wait for the first analysis. `\input` and `\include` see the unsaved text of other open documents. A file without `\documentclass` is analyzed as part of the document that reads it: the one `-f` names, else the root the client's workspace folder holds. Every path is answered as the client named it, so a folder opened through a symlink keeps its name.
 
 ## Capabilities
 

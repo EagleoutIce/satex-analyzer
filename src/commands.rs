@@ -1801,6 +1801,8 @@ impl Machine<'_> {
                 // A PDF file this run made through `\write18` is what the
                 // engine reads, not what was on disk before.
                 let produced = self.produced_page(&name);
+                // Logged, as every file the run reads (`crate::overlay::log`).
+                let read = |p: std::path::PathBuf| crate::overlay::read_bytes(&p).ok();
                 let size = match pdf {
                     _ if produced.is_some() => {
                         produced.flatten().filter(|_| page == Some(1) && spec == [None; 3] && which.is_some())
@@ -1809,7 +1811,7 @@ impl Machine<'_> {
                         .filter(|_| spec == [None; 3])
                         .zip(which)
                         .zip(page)
-                        .and_then(|((p, w), n)| crate::pdfbox::page_box(&std::fs::read(p).ok()?, w, n)),
+                        .and_then(|((p, w), n)| crate::pdfbox::page_box(&read(p)?, w, n)),
                     // A PNG or JPEG: its pixels at its resolution, else at
                     // `\pdfimageresolution`.
                     false => {
@@ -1817,7 +1819,7 @@ impl Machine<'_> {
                         let dpi = self.env.value(param).as_int();
                         path.filter(|_| spec == [None; 3])
                             .zip(dpi)
-                            .and_then(|(p, dpi)| crate::pdfbox::raster_size(&std::fs::read(p).ok()?, dpi))
+                            .and_then(|(p, dpi)| crate::pdfbox::raster_size(&read(p)?, dpi))
                     }
                 };
                 // pdfTeX numbers images from 1 and keeps their sizes for

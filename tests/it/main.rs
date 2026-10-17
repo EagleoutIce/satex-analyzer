@@ -38,6 +38,7 @@ mod explain;
 mod fix;
 mod fonts;
 mod format_flags;
+mod incremental;
 mod install;
 mod join;
 mod l3build;
