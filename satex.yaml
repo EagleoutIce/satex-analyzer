@@ -184,6 +184,6 @@ limits:
   held_tokens: 4000000  # tokens waiting to be read
   expansion_stack: 4000  # token lists open at once: expansions, arguments, files
   save_stack: 2000000  # assignments a group may have to undo (~200 MB)
-  vertices: 400000  # graph nodes recorded
+  vertices: 400000  # graph nodes recorded; past it the graph stops growing and the analysis goes on
   facts: 2000000  # definitions, uses and occurrences recorded
   trace: 200000  # trace events recorded

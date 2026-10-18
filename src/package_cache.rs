@@ -1319,6 +1319,7 @@ impl Machine<'_> {
             abs: _,
             abs_exact: _,
             abs_odd: _,
+            graph_full_noted: _,
             abs_parts: _,
             abs_from: _,
             abs_whole: _,

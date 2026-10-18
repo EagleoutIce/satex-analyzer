@@ -1301,6 +1301,8 @@ pub struct Machine<'a> {
     /// Whether the constant the last digit scan read is odd, when its
     /// value is unknown but its last digit is not (`?14` is even).
     pub(crate) abs_odd: Option<bool>,
+    /// Whether the run said the dependency graph is full.
+    graph_full_noted: bool,
     /// [`Machine::abs`] as the few intervals it is the hull of, when an
     /// expression left a set of them (`\numexpr` past its range is 0, not
     /// every number down to 0). Only the number scan that read it may
@@ -1947,7 +1949,7 @@ impl<'a> Machine<'a> {
                 metadata: Vec::new(),
                 kernel_sites: HashMap::default(),
                 interner,
-                graph: DependencyGraph::default(),
+                graph: DependencyGraph::with_cap(cfg.limits.vertices),
                 calls: CallGraph::default(),
                 observed: CallGraph::default(),
                 files: Vec::new(),
@@ -2048,6 +2050,7 @@ impl<'a> Machine<'a> {
             abs: None,
             abs_exact: None,
             abs_odd: None,
+            graph_full_noted: false,
             abs_parts: None,
             abs_from: None,
             abs_whole: false,
@@ -6228,13 +6231,20 @@ will look undefined",
         if let Some(key) = size {
             self.cut_region(key);
         }
+        // A full graph only stops growing: the analysis goes on.
+        if self.out.graph.full() && !self.graph_full_noted {
+            self.graph_full_noted = true;
+            let at = self.input.iter().rev().find_map(|f| match f {
+                Frame::File { mouth, .. } => Some(mouth.here()),
+                _ => None,
+            });
+            self.limit_reached("vertices", at.unwrap_or_default());
+        }
         let facts = &self.out.facts;
         let used = facts.defs.len() + facts.expansions.len() + facts.occurrences.len();
         let max_steps = self.budget.unwrap_or(self.cfg.limits.steps);
         let (reason, key) = if self.out.steps >= max_steps {
             ("token budget", if self.budget.is_some() { "format_steps" } else { "steps" })
-        } else if self.out.graph.len() >= self.cfg.limits.vertices {
-            ("dependency graph size", "vertices")
         } else if used >= self.cfg.limits.facts {
             ("fact budget", "facts")
         } else if self.cfg.limits.seconds > 0 && self.started.elapsed().as_secs() >= self.cfg.limits.seconds {
