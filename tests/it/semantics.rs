@@ -2049,10 +2049,11 @@ fn problems(analysis: &Analysis) -> Vec<(String, String, u64, u64, String)> {
 fn an_argument_the_file_ends_in_is_one_error_at_the_call() {
     let analysis =
         analyze_kernel("\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\n\\greet{world\n\\end{document}\n");
-    // Without a class `\begin{document}` also misses `\normalsize`, as pdflatex reports.
-    let found = problems(&analysis);
-    assert_eq!(found.len(), 2, "{found:?}");
-    let (code, severity, line, col, message) = &found[1];
+    // Without a class `\begin{document}` and every page the output routine
+    // makes miss `\normalsize`, as pdflatex reports; the runaway is one error.
+    let found: Vec<_> = problems(&analysis).into_iter().filter(|p| !p.4.contains("\\normalsize")).collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    let (code, severity, line, col, message) = &found[0];
     assert_eq!((code.as_str(), severity.as_str(), *line, *col), ("raised-error", "error", 3, 1), "{found:?}");
     assert!(message.starts_with("File ended while scanning use of \\greet"), "{message}");
 }

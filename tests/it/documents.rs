@@ -186,6 +186,23 @@ fixtures! {
     beamer_raster_images_scaled_to_their_aspect("beamer_raster_images", "mwe.tex");
 }
 
+/// Capabilities: unknown inputs, typesetting feedback, package interpreters.
+/// A footnote gives the box an unknown size, so pgfmath draws the frame on
+/// approximated values and may misread a number. That call is summarized:
+/// the path never reads on into the list's `\end{enumerate}`. The
+/// misread itself is still said, as a gap (pgfmath decorrelation, open).
+#[test]
+fn tcolorbox_with_a_footnote_in_a_list_item_ends() {
+    let found = check_allowing(
+        "tcolorbox_footnote_in_list",
+        "mwe.tex",
+        &[],
+        &["missing-number", "runaway-argument", "extra-right-brace"],
+    );
+    let Some(analysis) = found else { return };
+    assert!(count(&analysis, "fault-contained") > 0);
+}
+
 /// Capabilities: unknown inputs, global state, typesetting feedback.
 /// A breakable box of unknown height closes every group it opens, so a
 /// node's saved anchors stay local (fse: later figures summarized on them).

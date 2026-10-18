@@ -686,6 +686,10 @@ pub struct AnalysisConfig {
     /// runs in, which Lua's `os.getenv` reads. `false` makes every
     /// variable unknown.
     pub assume_environment: bool,
+    /// A soundiness assumption: a page breaks only where a penalty forces
+    /// it (`\clearpage`, `\newpage`, `\end`). `false` also fires the
+    /// output routine wherever the page may have filled, one path each way.
+    pub assume_forced_page_breaks: bool,
 }
 
 impl Default for AnalysisConfig {
@@ -695,6 +699,7 @@ impl Default for AnalysisConfig {
             assume_compiles: true,
             assume_packages_close_groups: true,
             assume_environment: true,
+            assume_forced_page_breaks: true,
         }
     }
 }

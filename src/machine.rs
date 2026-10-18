@@ -1303,6 +1303,8 @@ pub struct Machine<'a> {
     pub(crate) abs_odd: Option<bool>,
     /// Whether the run said the dependency graph is full.
     graph_full_noted: bool,
+    /// tex.web § 989 `output_active`: the output routine runs.
+    pub(crate) output_active: bool,
     /// [`Machine::abs`] as the few intervals it is the hull of, when an
     /// expression left a set of them (`\numexpr` past its range is 0, not
     /// every number down to 0). Only the number scan that read it may
@@ -1554,6 +1556,9 @@ pub struct Machine<'a> {
     /// `dropping` is an error reached only past an approximation, which
     /// may not be TeX's ([`Machine::certain_error`]).
     pub(crate) dropping_possible: bool,
+    /// `dropping` is a possible engine error whose recovery breaks the
+    /// code's brackets ([`BREAKING`]): its path is contained, not run on.
+    pub(crate) dropping_breaks: bool,
     /// Paths with certain errors run on: no path compiles
     /// ([`Machine::settle`]).
     pub(crate) keep_errors: bool,
@@ -1593,6 +1598,8 @@ pub struct Machine<'a> {
     /// §§ 987, 1000).  Until then `\pagegoal` reads `\maxdimen` and the
     /// other seven page dimensions read zero.
     pub(crate) page_touched: bool,
+    /// Whether material reached the page since the page builder last looked.
+    pub(crate) page_grew: bool,
     /// The natural size of the current list, where known.
     pub(crate) natural: Option<crate::mode::Natural>,
     /// The last item put on the main vertical list, where known: what
@@ -1661,6 +1668,8 @@ struct PathState {
     list: crate::mode::Modes,
     material: bool,
     page_touched: bool,
+    page_grew: bool,
+    output_active: bool,
     natural: Option<crate::mode::Natural>,
     main_tail: crate::mode::Last,
     wild: Wild,
@@ -1880,6 +1889,21 @@ pub(crate) const TEX_ERRORS: [(&str, Option<&str>); 14] = [
     ("runaway-argument", None),
 ];
 
+/// The files of the tokens a token list still holds, `None` for a file.
+fn list_files(frame: &Frame) -> Option<Vec<FileId>> {
+    match frame {
+        Frame::Tokens { toks, pos, .. } => Some(toks[(*pos).min(toks.len())..].iter().map(|t| t.span.file).collect()),
+        Frame::Returned(t) => Some(t.iter().map(|t| t.span.file).collect()),
+        _ => None,
+    }
+}
+
+/// Engine errors whose recovery drops or inserts brackets (§§ 395-396,
+/// 1069, 510, 1135): the code after one reads text it never meant to.
+/// So does a misread number ([`Machine::misread`]).
+pub(crate) const BREAKING: [&str; 6] =
+    ["extra-right-brace", "runaway-argument", "too-many-braces", "extra-fi", "extra-else", "extra-endcsname"];
+
 /// Errors and stops of the engine that satex reports as warnings of its
 /// own, not through [`TEX_ERRORS`].
 const ENGINE_WARNINGS: [&str; 5] =
@@ -2051,6 +2075,7 @@ impl<'a> Machine<'a> {
             abs_exact: None,
             abs_odd: None,
             graph_full_noted: false,
+            output_active: false,
             abs_parts: None,
             abs_from: None,
             abs_whole: false,
@@ -2138,6 +2163,7 @@ impl<'a> Machine<'a> {
             fi_mark: None,
             dropping: None,
             dropping_possible: false,
+            dropping_breaks: false,
             keep_errors: false,
             approximated: false,
             cut_taint: None,
@@ -2163,6 +2189,7 @@ impl<'a> Machine<'a> {
             probe: None,
             material: false,
             page_touched: false,
+            page_grew: false,
             natural: None,
             main_tail: crate::mode::Last::UNKNOWN,
             wild: Wild::default(),
@@ -4433,6 +4460,10 @@ will look undefined",
     /// lines produce.
     pub(crate) fn note_text(&mut self, c: char, span: Span) {
         const LIMIT: usize = 1 << 16;
+        // Heads and feet the output routine sets are no text of the document.
+        if self.output_active {
+            return;
+        }
         crate::observe::typeset(self, c, span);
         if self.cfg.trace
             && self.cfg.trace_lines.is_some()
@@ -4561,6 +4592,7 @@ will look undefined",
                 severity = Severity::Unsupported;
                 let text = text.map_or_else(|| message.clone(), str::to_string);
                 self.certain_error(&text, false, span);
+                self.dropping_breaks |= self.dropping_possible && BREAKING.contains(&code);
             }
             Some((_, text)) => {
                 let text = text.map_or_else(|| message.clone(), str::to_string);
@@ -5846,7 +5878,7 @@ will look undefined",
             );
             self.tex_errors = 0;
             self.widen_since(0);
-            self.give_up_lists();
+            self.give_up_lists(false);
         }
     }
 
@@ -6273,10 +6305,21 @@ will look undefined",
     /// what their text opened ([`Machine::close_since`]): its closers went
     /// with it, so the file's next `}`/`\fi` would close one of its levels
     /// instead of its own (tex.web § 336 balances a file end the same way).
-    /// Returns the groups and conditionals closed.
-    fn give_up_lists(&mut self) -> (usize, usize) {
+    /// With `own`, down to the first list that still holds the document's
+    /// text instead. Returns the groups and conditionals closed.
+    fn give_up_lists(&mut self, own: bool) -> (usize, usize) {
         let mut at = None;
-        while matches!(self.input.last(), Some(Frame::Tokens { .. } | Frame::Pseudo { .. } | Frame::Returned(_))) {
+        loop {
+            let pending = match self.input.last() {
+                Some(Frame::Pseudo { .. }) if !own => Vec::new(),
+                last => match last.and_then(list_files) {
+                    Some(files) => files,
+                    None => break,
+                },
+            };
+            if own && pending.into_iter().any(|f| self.own_file(f)) {
+                break;
+            }
             at = explore::lower(at, self.input.last());
             self.pop_frame();
         }
@@ -6353,11 +6396,51 @@ will look undefined",
         }
     }
 
+    /// Where the innermost file being read stands on the input stack.
+    pub(crate) fn file_level(&self) -> Option<usize> {
+        self.input.iter().rposition(|f| matches!(f, Frame::File { .. } | Frame::Pseudo { .. }))
+    }
+
+    /// A possible `error` library code raised on a path that approximated,
+    /// with no exact path beside it: TeX's recovery would read on into the
+    /// caller's text. The call is summarized instead: its pending lists go,
+    /// down to the file or a list holding the document's text, what it
+    /// assigned is unknown, and an unknown token stands for the rest.
+    pub(crate) fn contain_fault(&mut self, error: &str, file: Option<usize>) {
+        // Nothing of the call's code is left to read (its file ended, its
+        // lists are done, put-back tokens aside): TeX's recovery is all.
+        if self.file_level() < file {
+            return;
+        }
+        let lists = self.input.iter().rev().take_while(|f| list_files(f).is_some());
+        let pending =
+            lists.filter(|f| matches!(f, Frame::Tokens { .. })).filter_map(list_files).find(|t| !t.is_empty());
+        if pending.is_none_or(|files| files.into_iter().any(|f| self.own_file(f))) {
+            return;
+        }
+        let span = self.position_span();
+        self.widen_since(0);
+        let balanced = Self::closed_note(self.give_up_lists(true));
+        self.diagnose(
+            Severity::Imprecision,
+            "fault-contained",
+            span,
+            format!(
+                "library code raised `{}`, maybe only on approximated values; the call is summarized: what it assigned is unknown{balanced}",
+                error.lines().next().unwrap_or_default()
+            ),
+        );
+        self.approximated = true;
+        self.taint_after_cut();
+        let unknown = self.unknown_text(Unk::Any, span);
+        self.push_tokens(Rc::from(vec![unknown]));
+    }
+
     /// An expansion nested deeper than satex follows: its assignments become
     /// unknown, its pending lists are dropped, and the run reads on.
     fn abandon_nesting(&mut self) {
         self.widen_since(0);
-        let balanced = Self::closed_note(self.give_up_lists());
+        let balanced = Self::closed_note(self.give_up_lists(false));
         let (file, line) = self.position();
         self.diagnose(
             Severity::Unsupported,
@@ -6554,7 +6637,7 @@ will look undefined",
     fn resync(&mut self) {
         self.leak_call_recs();
         self.widen_since(0);
-        self.give_up_lists();
+        self.give_up_lists(false);
         if std::mem::take(&mut self.guard_seen.cut) {
             let at = self.position_span();
             let unknown = self.unknown_text(Unk::Any, at);
@@ -9719,13 +9802,20 @@ will look undefined",
             let unsure = self.scratch.cond_gaps.get(&at).is_none_or(|&gaps| gaps != self.gaps_raised);
             if unsure && self.last_file.is_some_and(|f| f != at.file) {
                 self.unread(t);
+                // A library conditional skipping on into the document's text
+                // is no run of it (`analysis.assume_compiles`): it ends here.
+                let ends = self.cfg.compiles() && !self.own_file(at.file) && self.own_file(t.span.file);
                 let name = self.out.short_name(at.file).to_string();
+                let on = if ends { "it ends there" } else { "both its end there and the skip on are analyzed" };
                 self.diagnose(
                     Severity::Imprecision,
                     "conditional-crosses-file",
                     t.span,
-                    format!("skipping a conditional begun at {name}:{} reached another file's text; both its end there and the skip on are analyzed", at.line),
+                    format!("skipping a conditional begun at {name}:{} reached another file's text; {on}", at.line),
                 );
+                if ends {
+                    return Some((Primitive::Fi, t.span));
+                }
                 let nested = u8::try_from(nesting.0).unwrap_or(u8::MAX);
                 let marker = self.intern(&format!("\u{2}skip crossing:{nested}:{to_fi}"));
                 let meaning = Meaning::Primitive(Primitive::SkipCrossing { nested, to_fi });
@@ -9783,6 +9873,8 @@ will look undefined",
             list: self.list,
             material: self.material,
             page_touched: self.page_touched,
+            page_grew: self.page_grew,
+            output_active: self.output_active,
             natural: self.natural,
             main_tail: self.main_tail,
             wild: self.wild.clone(),
@@ -9868,6 +9960,8 @@ will look undefined",
         self.list = state.list;
         self.material = state.material;
         self.page_touched = state.page_touched;
+        self.output_active = state.output_active;
+        self.page_grew = state.page_grew;
         self.natural = state.natural;
         self.main_tail = state.main_tail;
         self.wild = state.wild;

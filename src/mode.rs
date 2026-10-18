@@ -108,6 +108,8 @@ pub mod group {
     pub const MATH_CHOICE: u8 = 13;
     pub const SEMI_SIMPLE: u8 = 14;
     pub const MATH_SHIFT: u8 = 15;
+    /// tex.web § 269 `output_group`.
+    pub const OUTPUT: u8 = 8;
 }
 
 /// A `\setbox` target: register, global, and its pending dimensions.
@@ -1031,6 +1033,7 @@ impl Machine<'_> {
 
     /// tex.web § 1091 `new_graf`.
     fn new_graf(&mut self, span: Span, indented: bool) {
+        let on_page = self.mode == Modes::VERTICAL;
         self.mode = self.mode.map(|m| if m.meets(Modes::ANY_VERTICAL) { Modes::HORIZONTAL } else { m });
         // A new horizontal list: its tail (`\lastskip`) is empty or the
         // indent box, neither glue, kern nor penalty. Line breaking undoes
@@ -1101,6 +1104,10 @@ impl Machine<'_> {
         // tex.web § 1091.
         self.set_prevgraf(Value::Int(0));
         self.insert_every("everypar", span);
+        // § 1091: a paragraph begun on the main vertical list builds the page.
+        if on_page {
+            self.build_page(span);
+        }
     }
 
     /// The one line a paragraph `before` set on the empty vertical list
@@ -1754,9 +1761,16 @@ impl Machine<'_> {
         }
         self.mode = nest.mode;
         self.list = nest.list;
-        self.material = nest.material;
+        let material = std::mem::replace(&mut self.material, nest.material);
         self.end_word();
         let natural = std::mem::replace(&mut self.natural, nest.natural);
+        // tex.web § 1100: what the output routine left on its list goes
+        // back onto the page, ahead of what waits.
+        if nest.code == Some(group::OUTPUT) {
+            self.output_active = false;
+            self.page_touched |= material;
+            return;
+        }
         let kind = match nest.code {
             Some(group::HBOX | group::ADJUSTED_HBOX) => BoxState::HBox,
             Some(group::VBOX | group::VTOP | group::VCENTER) => BoxState::VBox,
@@ -1858,6 +1872,10 @@ impl Machine<'_> {
             // § 1076: `\vadjust` material in it follows it on the list.
             if nest.code == Some(group::ADJUSTED_HBOX) && n.para.lost && self.list_kind() != Some(true) {
                 self.append_item(Item::Unknown);
+            }
+            // § 1076: a box on the main vertical list builds the page.
+            if self.mode == Modes::VERTICAL {
+                self.build_page(span);
             }
         } else if nest.code == Some(group::INSERT) {
             self.append_item(Item::Zero);
@@ -3165,7 +3183,101 @@ impl Machine<'_> {
     pub(crate) fn touch_page(&mut self) {
         if self.mode.test(Modes::INNER) != Some(true) {
             self.page_touched = true;
+            self.page_grew = true;
             self.set_badness(false);
+        }
+    }
+
+    /// tex.web §§ 1005, 1012-1025: a forced break on the main vertical list
+    /// ejects a page that holds a box: `\box255` gets the page (its size
+    /// unknown here), `\outputpenalty` the penalty, and `\output` runs in
+    /// a group of its own in internal vertical mode. Without an output
+    /// routine the page is shipped out (§ 1023).
+    pub(crate) fn fire_up(&mut self, penalty: i64, span: Span) {
+        if !self.page_touched || self.output_active {
+            return;
+        }
+        self.page_touched = false;
+        self.set_page_length(Dim::exact(0));
+        let sym = self.intern("outputpenalty");
+        self.env.set_value(sym, Value::Int(penalty), true);
+        self.set_box(Some(255), BoxState::VBox, true, None);
+        // § 1017: packed to the page goal, its depth at most `\maxdepth`.
+        let dimen = |m: &mut Self, name: &str| {
+            let sym = m.intern(name);
+            match m.env.value(sym) {
+                Value::Dimen(d) => Some(d),
+                _ => None,
+            }
+        };
+        let height = dimen(self, "vsize").map_or(Dim::ANY, Dim::exact);
+        let depth = dimen(self, "maxdepth").map_or(Dim::ANY, |d| Dim::range(0, d.max(0)));
+        self.set_box_dims(Some(255), [Dim::range(0, crate::value::MAX_DIMEN), height, depth]);
+        match self.every("output") {
+            Some(tokens) if !tokens.is_empty() => {
+                let output = self.intern("output");
+                self.push_inserted(output, tokens, span);
+                self.output_active = true;
+                self.open_list(Some(group::OUTPUT), Modes::INTERNAL_VERTICAL, 0, span);
+            }
+            Some(_) => self.set_box(Some(255), BoxState::Void, true, None),
+            None => self.diagnose(
+                Severity::Imprecision,
+                "unknown-token-list",
+                span,
+                "\\output is unknown here, and what it holds was not run".into(),
+            ),
+        }
+    }
+
+    /// tex.web § 994 `build_page` where the page may have filled: material
+    /// reached it since the last look, and its height against `\vsize` is
+    /// not known. One path fires the output routine (§ 1005, a break at
+    /// glue: `\outputpenalty` 10000), the other goes on; they join where
+    /// they meet again.
+    pub(crate) fn build_page(&mut self, span: Span) {
+        if self.cfg.analysis.assume_forced_page_breaks {
+            return;
+        }
+        if !std::mem::take(&mut self.page_grew) || self.output_active || !self.page_touched {
+            return;
+        }
+        // § 1008: the page fills only past its goal, `\vsize` without inserts.
+        let vsize = self.intern("vsize");
+        if let Value::Dimen(goal) = self.env.value(vsize)
+            && self.page_length().hi <= goal
+        {
+            return;
+        }
+        if !self.every("output").is_some_and(|t| !t.is_empty()) {
+            return;
+        }
+        let by = self.intern("output");
+        self.split(by, span, 2, |m, arm| {
+            if arm == 0 {
+                m.fire_up(10000, span);
+            }
+            true
+        });
+    }
+
+    /// How much the page holds: the main vertical list's length, kept in
+    /// `para` while a paragraph begun on it is open.
+    fn page_length(&self) -> Dim {
+        match self.natural {
+            Some(n) if self.mode == Modes::VERTICAL => n.along,
+            Some(n) => n.para.along,
+            None => Dim::ANY,
+        }
+    }
+
+    fn set_page_length(&mut self, length: Dim) {
+        let vertical = self.mode == Modes::VERTICAL;
+        if let Some(n) = &mut self.natural {
+            match vertical {
+                true => n.along = length,
+                false => n.para.along = length,
+            }
         }
     }
 
