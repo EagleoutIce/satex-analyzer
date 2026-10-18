@@ -890,6 +890,24 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
         };
         return option_items(analysis, &target);
     }
+    // A key list in braces (`\pgfkeys{…}`, `\tikzset{…}`, a macro that
+    // hands its argument to one): a `/path` typed so far completes to the
+    // keys under it, else the keys of the family the command sets.
+    if arg.open == '{' && loads.is_empty() {
+        let typed = arg_item(doc, pos);
+        if typed.starts_with('/') {
+            let paths = key_paths(analysis, doc, pos, &typed);
+            if !paths.is_empty() {
+                return paths;
+            }
+        }
+    }
+    if arg.open == '{' && loads.is_empty() && occs.iter().all(|k| matches!(k, OccKind::Key | OccKind::KeyUse)) {
+        let keys = option_items(analysis, arg.cmd);
+        if !keys.is_empty() && !keys.iter().all(|k| k.detail.as_deref().is_some_and(|d| d.contains("positional"))) {
+            return keys;
+        }
+    }
     let mut out = Vec::new();
     let roots = &analysis.distribution.roots;
     for &kind in &loads {
@@ -980,6 +998,34 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
 }
 
 /// The keys `name`'s optional argument feeds, from [`query::options`].
+/// The item of a key list the cursor is in, from its `,` or `{`.
+fn arg_item(doc: &Text, pos: Pos) -> String {
+    let line = doc.line(pos.line);
+    let before = &line[..crate::source::byte_of_col(line, pos.col).min(line.len())];
+    before.rsplit([',', '{']).next().unwrap_or_default().trim_start().to_string()
+}
+
+/// Every pgf key under the directory of `typed` (`/demo/m` → `/demo/`),
+/// replacing what was typed.
+fn key_paths(analysis: &Analysis, doc: &Text, pos: Pos, typed: &str) -> Vec<CompletionItem> {
+    let dir = &typed[..typed.rfind('/').map_or(0, |i| i + 1)];
+    let range =
+        Range { start: to_lsp(doc, Pos::new(pos.line, pos.col - typed.chars().count() as u32)), end: to_lsp(doc, pos) };
+    query::pgfkeys(analysis, Some(dir))
+        .into_iter()
+        .filter_map(|r| {
+            let key = r.get("key")?.as_str()?.to_string();
+            if key[dir.len().min(key.len())..].contains("/.") || key.ends_with("/.unknown") {
+                return None;
+            }
+            let detail = ["kind", "default"].iter().filter_map(|f| r.get(*f)?.as_str()).collect::<Vec<_>>().join("  ");
+            let mut it = item(key.clone(), CompletionItemKind::PROPERTY, Some(detail), 0);
+            it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text: key }));
+            Some(it)
+        })
+        .collect()
+}
+
 fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
     query::options(analysis, name)
         .iter()
