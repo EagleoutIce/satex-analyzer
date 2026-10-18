@@ -666,3 +666,19 @@ fn disjoint_intervals_join_to_an_interval_set() {
     let hull = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
     assert!(names(&hull).contains(&"middle".to_string()), "{:?}", names(&hull));
 }
+
+/// Digits a loop prepends to a macro join into one-of texts; a walk over
+/// them to a marker compares the marker with digits, never with a control
+/// sequence, so no path leaves the marker unread.
+#[test]
+fn a_walk_over_joined_digits_meets_its_marker() {
+    let analysis = crate::support::analyze_kernel(
+        "\\newcount\\c \\newcount\\k \\k=\\pdfuniformdeviate 1000 \\let\\foo\\empty
+\\loop\\ifnum\\k>0 \\edef\\foo{\\the\\k\\foo}\\divide\\k by 16 \\repeat
+\\def\\walk#1{\\ifx\\stop#1\\expandafter\\relax\\else\\advance\\c-1 \\expandafter\\walk\\fi}
+\\def\\stop{\\BADSTOP}
+\\expandafter\\walk\\foo\\stop",
+    );
+    let bad = crate::support::diagnosed(&analysis, "undefined-control-sequence");
+    assert!(!bad.iter().any(|m| m.contains("BADSTOP")), "{bad:?}");
+}

@@ -206,6 +206,13 @@ pub struct Env {
     /// A group end puts back the old one, so a name whose write a group
     /// end undid is not widened.
     stamp: crate::fixed::Chunked<u64>,
+    /// What the join the running path came from kept of its arms
+    /// ([`Corr`]), valid for names not written since `corr_at`.
+    corr: Option<Rc<Corr>>,
+    corr_at: u64,
+    /// Slot writes so far, never undone, and per slot the last one.
+    writes: u64,
+    wrote: crate::fixed::Chunked<u64>,
     /// `\let\tex_escapechar:D\escapechar`: the engine primitive a name was
     /// made equal to, for primitives satex models alike (tex.web keeps the
     /// primitive's `chr` code in the copy). A parameter's value lives with
@@ -302,6 +309,7 @@ pub struct Fork {
     parted: bool,
     journal: Journal,
     marks: Rc<Vec<Mark>>,
+    corr: Option<Rc<Corr>>,
 }
 
 impl Fork {
@@ -317,6 +325,7 @@ pub struct PathEnv {
     slots: Changed,
     journal: Journal,
     marks: Rc<Vec<Mark>>,
+    corr: Option<Rc<Corr>>,
     /// The fewest groups the path stood in since the fork: the groups up
     /// to there, and what they saved before it, are the fork's.
     low: usize,
@@ -362,6 +371,7 @@ impl Env {
             level: crate::fixed::Chunked::filled(n, 0),
             trailed: crate::fixed::Chunked::filled(n, NONE),
             stamp: crate::fixed::Chunked::filled(n, 0),
+            wrote: crate::fixed::Chunked::filled(n, 0),
             ..Default::default()
         }
     }
@@ -374,6 +384,7 @@ impl Env {
             self.level.resize(n, 0);
             self.trailed.resize(n, NONE);
             self.stamp.resize(n, 0);
+            self.wrote.resize(n, 0);
         }
     }
 
@@ -843,11 +854,13 @@ impl Env {
 
     /// What a test taught a path of a register: that its value is `value`.
     /// Not an assignment, so the save stack is not told.
-    pub fn refine_value(&mut self, sym: Sym, value: Value) {
+    /// `keep`: which arms of [`Env::arms`] may hold it.
+    pub fn refine_value(&mut self, sym: Sym, value: Value, keep: &[bool]) {
         self.effective += 1;
         let i = sym.0 as usize;
         let Some(Some(binding)) = self.slots.get(i) else { return };
         let binding = Binding { value, ..binding.clone() };
+        self.correlate(i, keep);
         self.log(i);
         self.slots[i] = Some(binding);
         self.changed(i);
@@ -1028,6 +1041,7 @@ impl Env {
             slots: self.slots.clone(),
             level: crate::fixed::Chunked::filled(self.level.len(), 0),
             stamp: crate::fixed::Chunked::filled(self.level.len(), 0),
+            wrote: crate::fixed::Chunked::filled(self.level.len(), 0),
             trailed: crate::fixed::Chunked::filled(self.level.len(), NONE),
             aliases: self.aliases.clone(),
             ..Default::default()
@@ -1191,6 +1205,8 @@ impl Env {
 
     #[inline]
     fn log(&mut self, i: usize) {
+        self.writes += 1;
+        self.wrote[i] = self.writes;
         if self.tracking.get() {
             let mut reads = self.reads.borrow_mut();
             reads.touched.insert(i as u32);
@@ -1229,6 +1245,7 @@ impl Env {
             parted: false,
             journal: self.journal.snapshot(),
             marks: self.marks.clone(),
+            corr: self.live_corr(),
         }
     }
 
@@ -1261,7 +1278,7 @@ impl Env {
         debug_assert_eq!(self.floors.get(fork.level), Some(&fork.trail), "the fork is open");
         let slots = self.changed.get(fork.level).cloned().unwrap_or_default();
         let low = self.lows.get(fork.level).copied().unwrap_or(fork.marks.len());
-        PathEnv { slots, journal: self.journal.clone(), marks: self.marks.clone(), low }
+        PathEnv { slots, journal: self.journal.clone(), marks: self.marks.clone(), low, corr: self.live_corr() }
     }
 
     /// Back to the bindings `fork` saw.
@@ -1303,6 +1320,7 @@ impl Env {
         }
         self.journal = fork.journal.clone();
         self.marks = fork.marks.clone();
+        (self.corr, self.corr_at) = (fork.corr.clone(), self.writes);
     }
 
     /// Continue `path` from `fork`.
@@ -1332,6 +1350,7 @@ impl Env {
         for low in &mut self.lows {
             *low = (*low).min(path.low);
         }
+        (self.corr, self.corr_at) = (path.corr.clone(), self.writes);
     }
 
     /// `paths`, each a path from `fork`, made paths from where the running
@@ -1380,11 +1399,13 @@ impl Env {
     /// What a path has learned of a name that holds one of several
     /// meanings: that it holds `meaning`.  Not an assignment, so the save
     /// stack is not told.
-    pub fn refine(&mut self, sym: Sym, meaning: Meaning) {
+    /// `keep` as for [`Env::refine_value`].
+    pub fn refine(&mut self, sym: Sym, meaning: Meaning, keep: &[bool]) {
         self.effective += 1;
         let i = sym.0 as usize;
         let Some(Some(binding)) = self.slots.get(i) else { return };
         let binding = Binding { meaning, may: None, ..binding.clone() };
+        self.correlate(i, keep);
         self.log(i);
         self.slots[i] = Some(binding);
         self.changed(i);
@@ -1392,14 +1413,15 @@ impl Env {
 
     /// [`Env::refine`] to one of `members`: still several, the name keeps
     /// them as its meanings.
-    pub fn refine_to(&mut self, sym: Sym, members: &[Meaning]) {
+    pub fn refine_to(&mut self, sym: Sym, members: &[Meaning], keep: &[bool]) {
         match members {
-            [one] => self.refine(sym, one.clone()),
+            [one] => self.refine(sym, one.clone(), keep),
             _ => {
                 self.effective += 1;
                 let i = sym.0 as usize;
                 let Some(Some(binding)) = self.slots.get(i) else { return };
                 let binding = Binding { meaning: Meaning::Unknown, may: Some(members.into()), ..binding.clone() };
+                self.correlate(i, keep);
                 self.log(i);
                 self.slots[i] = Some(binding);
                 self.changed(i);
@@ -1419,6 +1441,8 @@ impl Env {
         self.effective += 1;
         self.grow(sym);
         let i = sym.0 as usize;
+        self.writes += 1;
+        self.wrote[i] = self.writes;
         self.slots[i] = Some(Binding { global: true, ..binding });
         self.level[i] = 0;
         self.note_write(sym.0, ReadKind::Meaning.bit() | ReadKind::Value.bit());
@@ -1447,12 +1471,16 @@ impl Env {
         let mut grown = Vec::new();
         // `a`'s map, shared where the join keeps its binding.
         let mut slots = a.slots.clone();
+        let mut apart = Vec::new();
         for sym in touched {
             self.grow(Sym(sym));
             let i = sym as usize;
             let side =
                 |p: &PathEnv| p.slots.get(&sym).map_or_else(|| (self.slots[i].clone(), self.level[i]), Clone::clone);
             let ((old, x), (new, y)) = (side(a), side(b));
+            if !widen && !identical(&old, &new) {
+                apart.push(sym);
+            }
             // A group end puts back what either path saved (tex.web § 283
             // keeps only what both made global).
             let level = x.max(y);
@@ -1485,7 +1513,142 @@ impl Env {
         }
         let low = a.low.min(b.low);
         let journal = self.join_journals(fork, a, b, low, &mut marks);
-        (PathEnv { slots, journal, marks: Rc::new(marks), low }, grown, waiting)
+        let corr = (!widen).then(|| self.correlated(apart, a, b)).flatten();
+        (PathEnv { slots, journal, marks: Rc::new(marks), low, corr }, grown, waiting)
+    }
+
+    /// The arms of a join of `a` and `b` that differ in `apart`, each
+    /// path's own arms if it came from a join: `None` past `sets.meanings`
+    /// arms, or when fewer than two names differ.
+    fn correlated(&self, mut apart: Vec<u32>, a: &PathEnv, b: &PathEnv) -> Option<Rc<Corr>> {
+        for c in [&a.corr, &b.corr].into_iter().flatten() {
+            for &sym in &c.syms {
+                if !apart.contains(&sym) {
+                    apart.push(sym);
+                }
+            }
+        }
+        if apart.len() < 2 {
+            return None;
+        }
+        let mut arms: Vec<Vec<Option<Binding>>> = Vec::new();
+        for p in [a, b] {
+            let own = |sym: u32| p.slots.get(&sym).map_or_else(|| self.slots[sym as usize].clone(), |(b, _)| b.clone());
+            let theirs: Vec<Option<&[Option<Binding>]>> = match &p.corr {
+                Some(c) => c.arms.iter().map(|arm| Some(&arm[..])).collect(),
+                None => vec![None],
+            };
+            for arm in theirs {
+                let pick = |sym: u32| match (arm, &p.corr) {
+                    (Some(arm), Some(c)) => match c.syms.iter().position(|&s| s == sym) {
+                        Some(n) => arm[n].clone(),
+                        None => own(sym),
+                    },
+                    _ => own(sym),
+                };
+                let row: Vec<Option<Binding>> = apart.iter().map(|&sym| pick(sym)).collect();
+                if !arms.iter().any(|r| r.iter().zip(&row).all(|(x, y)| identical(x, y))) {
+                    arms.push(row);
+                }
+            }
+        }
+        // Past the bound, the name with the most distinct bindings is
+        // forgotten first: few-valued pairings (an operation stacked or
+        // not) are what tells the arms apart.
+        let mut corr = Corr { syms: apart, arms };
+        while corr.arms.len() > self.sets.arms && corr.syms.len() > 2 {
+            let distinct = |n: usize| {
+                let mut seen: Vec<&Option<Binding>> = Vec::new();
+                for row in &corr.arms {
+                    if !seen.iter().any(|x| same_slot(x, &row[n])) {
+                        seen.push(&row[n]);
+                    }
+                }
+                seen.len()
+            };
+            let drop = (0..corr.syms.len()).max_by_key(|&n| distinct(n)).expect("names");
+            let keep: Vec<usize> = (0..corr.syms.len()).filter(|&n| n != drop).collect();
+            corr = corr.project(&keep);
+            let mut rows: Vec<Vec<Option<Binding>>> = Vec::new();
+            for row in corr.arms {
+                match rows.iter_mut().find(|r| r.iter().zip(&row).all(|(x, y)| same_slot(x, y))) {
+                    Some(r) => *r = r.iter().zip(row).map(|(x, y)| join(x.clone(), y, self.sets, None)).collect(),
+                    None => rows.push(row),
+                }
+            }
+            corr.arms = rows;
+        }
+        (corr.arms.len() >= 2 && corr.arms.len() <= self.sets.arms).then(|| Rc::new(corr))
+    }
+
+    /// Whether every state of `here` is one of `head`'s arms, where
+    /// `head` came from a join that kept them ([`Corr`]): both paths
+    /// from `fork`. Leaves the bindings as `fork` saw them.
+    pub fn covers(&mut self, fork: &Fork, head: &PathEnv, here: &PathEnv) -> bool {
+        let Some(corr) = &head.corr else { return true };
+        self.rewind(fork);
+        let own = |sym: u32| here.slots.get(&sym).map_or_else(|| self.slots[sym as usize].clone(), |(b, _)| b.clone());
+        let rows: Vec<Vec<Option<Binding>>> = match &here.corr {
+            Some(c) => c
+                .arms
+                .iter()
+                .map(|arm| {
+                    let at =
+                        |sym: u32| c.syms.iter().position(|&s| s == sym).map_or_else(|| own(sym), |n| arm[n].clone());
+                    corr.syms.iter().map(|&sym| at(sym)).collect()
+                })
+                .collect(),
+            None => vec![corr.syms.iter().map(|&sym| own(sym)).collect()],
+        };
+        let within =
+            |h: &Option<Binding>, x: &Option<Binding>| same_slot(&join(h.clone(), x.clone(), self.sets, None), h);
+        rows.iter().all(|row| corr.arms.iter().any(|arm| arm.iter().zip(row).all(|(h, x)| within(h, x))))
+    }
+
+    /// The running path's [`Corr`], without the names written since.
+    fn live_corr(&self) -> Option<Rc<Corr>> {
+        let corr = self.corr.as_ref()?;
+        let live: Vec<usize> =
+            (0..corr.syms.len()).filter(|&n| self.wrote[corr.syms[n] as usize] <= self.corr_at).collect();
+        match live.len() {
+            n if n == corr.syms.len() => Some(corr.clone()),
+            0 | 1 => None,
+            _ => Some(Rc::new(corr.project(&live))),
+        }
+    }
+
+    /// The bindings `sym` has in the arms of the join the running path
+    /// came from ([`Corr`]): empty when they are not kept.
+    pub fn arms(&self, sym: Sym) -> Vec<Option<Binding>> {
+        let Some(corr) = self.live_corr() else { return Vec::new() };
+        let Some(n) = corr.syms.iter().position(|&s| s == sym.0) else { return Vec::new() };
+        corr.arms.iter().map(|arm| arm[n].clone()).collect()
+    }
+
+    /// Slot `i` is refined to what the arms flagged in `keep` allow: the
+    /// other names of the running path's [`Corr`] are refined alike.
+    fn correlate(&mut self, i: usize, keep: &[bool]) {
+        let Some(corr) = self.live_corr() else { return };
+        let Some(n) = corr.syms.iter().position(|&s| s as usize == i) else { return };
+        let keep: Vec<usize> = (0..corr.arms.len()).filter(|&k| keep.get(k) == Some(&true)).collect();
+        if keep.is_empty() || keep.len() == corr.arms.len() {
+            return;
+        }
+        for m in (0..corr.syms.len()).filter(|&m| m != n) {
+            let joined = keep.iter().map(|&k| corr.arms[k][m].clone()).reduce(|x, y| join(x, y, self.sets, None));
+            let j = corr.syms[m] as usize;
+            let joined = joined.flatten();
+            if !identical(&self.slots[j], &joined) {
+                self.log(j);
+                self.slots[j] = joined;
+                self.changed(j);
+            }
+        }
+        let rest: Vec<usize> = (0..corr.syms.len()).filter(|&m| m != n).collect();
+        let corr =
+            Corr { syms: corr.syms.clone(), arms: keep.iter().map(|&k| corr.arms[k].clone()).collect() }.project(&rest);
+        self.corr = (rest.len() >= 2 && corr.arms.len() >= 2).then(|| Rc::new(corr));
+        self.corr_at = self.writes;
     }
 
     /// The save stacks of two paths from `fork` joined (tex.web §§ 268-283).
@@ -1660,16 +1823,39 @@ pub const MAY_MEANINGS: usize = 5;
 
 /// How many meanings and how many values a join keeps as a set
 /// (`limits.meaning_set`, `limits.value_set`, `limits.interval_set`).
+/// What a join of paths kept of its arms: per arm, the bindings of the
+/// names they differ in. A path that learns one name's binding learns
+/// the others' from the arms that allow it (`\pgfmath`'s operation stack
+/// and its top stay paired).
+pub struct Corr {
+    syms: Vec<u32>,
+    arms: Vec<Vec<Option<Binding>>>,
+}
+
+impl Corr {
+    /// Only the names at `keep`.
+    fn project(&self, keep: &[usize]) -> Corr {
+        let pick = |row: &Vec<Option<Binding>>| keep.iter().map(|&n| row[n].clone()).collect();
+        Corr { syms: keep.iter().map(|&n| self.syms[n]).collect(), arms: self.arms.iter().map(pick).collect() }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct SetLimits {
     pub meanings: usize,
+    pub arms: usize,
     pub values: usize,
     pub intervals: usize,
 }
 
 impl Default for SetLimits {
     fn default() -> Self {
-        SetLimits { meanings: MAY_MEANINGS, values: crate::value::MAY_VALUES, intervals: crate::value::MAY_INTERVALS }
+        SetLimits {
+            meanings: MAY_MEANINGS,
+            arms: MAY_MEANINGS,
+            values: crate::value::MAY_VALUES,
+            intervals: crate::value::MAY_INTERVALS,
+        }
     }
 }
 
@@ -1780,7 +1966,9 @@ fn text_hull<'t>(texts: impl Iterator<Item = &'t [Token]>, typed: &Typed) -> Tok
         one &= !text.is_empty();
         for t in text {
             span = span.or(Some(t.span));
-            class = class.union(typed.classify(t).map_or_else(|| TextClass::of(t.tok), |c| c.0));
+            class = class.union(
+                typed.classify(t).or_else(|| typed.one_of_class(t)).map_or_else(|| TextClass::of(t.tok), |c| c.0),
+            );
         }
     }
     Token::new(Tok::Cs(typed.make(class, one, None)), span.unwrap_or_default())
@@ -1813,6 +2001,9 @@ fn numbers(b: &Binding, sets: SetLimits, typed: &Typed) -> Option<Vec<Meaning>> 
 /// what a token stands for, and the token for a class.
 /// What parts a typed name from its bound: the most tokens it may hold.
 pub const LEN_MARK: char = '\u{5}';
+/// Before the class a one-of token's name spells
+/// ([`Typed::one_of_class`]): no gap, so the name reads as no partly unknown one.
+pub const CLASS_MARK: char = '\u{8}';
 /// The longest bound a typed name carries: a sign and 19 digits.
 pub const MAX_LEN: u32 = 20;
 /// The classes whose text carries a bound: what `\the` and `\number`
@@ -1909,6 +2100,16 @@ impl Typed<'_> {
             }
             _ => None,
         }
+    }
+
+    /// The class of the texts a one-of token ([`crate::machine::Machine::one_of`])
+    /// stands for, which its name spells after its [`CLASS_MARK`].
+    pub fn one_of_class(&self, t: &Token) -> Option<(TextClass, bool)> {
+        let name = self.interner.name(t.cs()?);
+        let rest = name.strip_prefix(crate::machine::UNKNOWN_NAME)?.strip_prefix(crate::machine::explore::ONE_OF)?;
+        let (_, head) = rest.rsplit_once(CLASS_MARK)?;
+        let (spelled, one) = head.split_at(head.len().checked_sub(1)?);
+        Some((TextClass::parse(spelled)?, one == "+"))
     }
 
     pub fn make(&self, class: TextClass, one: bool, len: Option<u32>) -> Sym {

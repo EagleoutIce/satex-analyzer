@@ -1621,8 +1621,10 @@ impl Machine<'_> {
             return true;
         }
         // One of several texts, or a name of several meanings: a path
-        // per one where the run may part.
-        if self.split_one_of_at(t, site) {
+        // per one where the run may part. Read past `LOOP_ENTRIES` times at
+        // this `\csname` here, the token is an unknown part of the name: a
+        // summary would join the arms into the token again.
+        if !self.loop_capped(site, sym) && self.split_one_of_at(t, site) {
             return false;
         }
         // A path per meaning, each reading the name on with its own: read
@@ -1771,16 +1773,10 @@ impl Machine<'_> {
                 if Rc::ptr_eq(p, q) {
                     return Some(true);
                 }
-                let (pu, qu) = (self.has_unknown(&p.replacement_text), self.has_unknown(&q.replacement_text));
-                if !pu && !qu {
+                if !self.has_unknown(&p.replacement_text) && !self.has_unknown(&q.replacement_text) {
                     return Some(x == y);
                 }
-                let ((pmin, pmax), (qmin, qmax)) =
-                    (self.text_length(&p.replacement_text), self.text_length(&q.replacement_text));
-                (pmax.is_some_and(|m| m < qmin)
-                    || qmax.is_some_and(|m| m < pmin)
-                    || self.texts_differ(&p.replacement_text, &q.replacement_text))
-                .then_some(false)
+                (!self.texts_may_equal(&p.replacement_text, &q.replacement_text)).then_some(false)
             }
             // A macro is never a character or a primitive.
             (Meaning::Macro(_), _) | (_, Meaning::Macro(_)) => Some(false),
@@ -1790,6 +1786,57 @@ impl Machine<'_> {
                 None
             }
             _ => Some(x == y),
+        }
+    }
+
+    /// Whether two texts may be one: unknown parts stand for any text
+    /// they allow.
+    fn texts_may_equal(&self, p: &[Token], q: &[Token]) -> bool {
+        if !self.has_unknown(p) && !self.has_unknown(q) {
+            return p.iter().map(|t| t.tok).eq(q.iter().map(|t| t.tok));
+        }
+        let ((pmin, pmax), (qmin, qmax)) = (self.text_length(p), self.text_length(q));
+        !(pmax.is_some_and(|m| m < qmin) || qmax.is_some_and(|m| m < pmin) || self.texts_differ(p, q))
+    }
+
+    /// What a test taught the path of `sym`: that it means `meaning`
+    /// ([`crate::env::Env::refine`]). The other names of the join the path
+    /// came from keep the arms that may mean it.
+    pub(crate) fn refine(&mut self, sym: Sym, meaning: Meaning) {
+        self.refine_to(sym, &[meaning]);
+    }
+
+    /// [`Machine::refine`] to one of `members`.
+    pub(crate) fn refine_to(&mut self, sym: Sym, members: &[Meaning]) {
+        let keep: Vec<bool> =
+            self.env.arms(sym).iter().map(|arm| members.iter().any(|m| self.may_mean(arm, m))).collect();
+        self.env.refine_to(sym, members, &keep);
+    }
+
+    /// [`Machine::refine`] for a register's value.
+    pub(crate) fn refine_value(&mut self, sym: Sym, value: Value) {
+        let keep: Vec<bool> =
+            self.env.arms(sym).iter().map(|arm| arm.as_ref().is_none_or(|b| self.may_be(&b.value, &value))).collect();
+        self.env.refine_value(sym, value, &keep);
+    }
+
+    /// Whether an arm's binding may mean `to`, as `\ifx` decides: no
+    /// binding is undefined.
+    fn may_mean(&self, arm: &Option<crate::env::Binding>, to: &Meaning) -> bool {
+        let Some(arm) = arm else { return !matches!(to, Meaning::Macro(_)) };
+        let members = arm.may.as_deref().unwrap_or(std::slice::from_ref(&arm.meaning));
+        members.iter().any(|m| self.ifx_pair(m, to) != Some(false))
+    }
+
+    /// Whether value `arm` may be `to`.
+    fn may_be(&self, arm: &Value, to: &Value) -> bool {
+        match (arm, to) {
+            (Value::OneOf(ms), v) => ms.iter().any(|m| self.may_be(m, v)),
+            (v, Value::OneOf(ts)) => ts.iter().any(|t| self.may_be(v, t)),
+            (Value::Toks(x), Value::Toks(y)) => self.texts_may_equal(x, y),
+            (Value::Int(x), Value::Int(y)) => x == y,
+            (Value::Dimen(x), Value::Dimen(y)) => x == y,
+            _ => true,
         }
     }
 
@@ -2030,7 +2077,7 @@ impl Machine<'_> {
             if let Some((sym, yes, no)) = narrow
                 && let Some(value) = if holds { yes } else { no }
             {
-                self.env.refine_value(sym, value);
+                self.refine_value(sym, value);
             }
         }
         self.enter_arm(holds, by, span, base, kind, Some(on));
@@ -3517,7 +3564,7 @@ impl Machine<'_> {
         let mut chosen = None;
         if let Some(lists) = lists
             && self.split(storage, span, lists.len(), |m, arm| {
-                m.env.refine_value(storage, Value::Toks(lists[arm].clone()));
+                m.refine_value(storage, Value::Toks(lists[arm].clone()));
                 chosen = Some(lists[arm].to_vec());
                 true
             })
@@ -4478,7 +4525,7 @@ impl Machine<'_> {
         self.split(by, span, arms.len(), |m, arm| {
             let (s, part) = arms[arm];
             if let Some((sym, quantity)) = from {
-                m.env.refine_value(sym, Value::from_num(quantity, part));
+                m.refine_value(sym, Value::from_num(quantity, part));
             }
             stream = Some(s);
             true

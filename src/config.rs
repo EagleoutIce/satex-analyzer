@@ -86,6 +86,9 @@ pub struct Limits {
     /// How many meanings a join leaves a name with as a set (one of them)
     /// before it has an unknown meaning.
     pub meaning_set: u16,
+    /// How many arms a join of paths keeps paired ([`crate::env::Corr`]):
+    /// which binding of one name goes with which of another.
+    pub join_arms: u16,
     /// How many values a join leaves a count or dimension register with as
     /// a set before only their interval is kept.
     pub value_set: u16,
@@ -234,6 +237,7 @@ impl Default for Limits {
             call_summary_after: 2,
             cycle_after: 2,
             meaning_set: 8,
+            join_arms: 32,
             value_set: 8,
             interval_set: 4,
             degrade_at_percent: 100,

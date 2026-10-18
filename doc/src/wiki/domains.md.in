@@ -340,6 +340,8 @@ A bounded number under `\number` gives typed digits with that bound.
 A number whose digits are not all known but begin with a digit has no sign in them: it lies in 0 to 2^31-1 (§ 445 caps it there).
 The same holds for a name of several meanings, each a macro without parameters whose text is digits beginning so, or `\relax` (a "Missing number", 0).
 A one-of token is not read so: its texts may run on past it.
+A one-of token's name spells the class of its texts (digits, letters, control sequences, ...) and whether one may be empty.
+A hull of texts that hold one-of tokens takes those classes, not that of a control sequence, so `\ifx` of a marker against digits joined in a loop stays decided.
 A number whose last digit is known has that digit's parity, whatever digits come before it, so `\ifodd` decides it (radixes are even).
 
 A dimension in an interval of one sign prints under `\the` as its sign, typed digits with the interval of its integer part, a point, at most five unknown digits and `pt` (§ 103).
@@ -486,7 +488,11 @@ dropped, so both go on with the same counters.
   (each replay of the command reruns the scan's own forks, so per-name
   parts multiply). A one-of token read into the name parts at that
   `\csname`, not where its texts were joined: reads of one value by
-  several `\csname`s are no passes of one loop.
+  several `\csname`s are no passes of one loop. Read there more often
+  than a loop point is entered fresh, the token is an unknown part of the
+  name instead: a summary would join its arms into the token again, so
+  each later read parted and summarized anew (`\end` of an environment
+  whose name is one of two cost 2k forks at one `\cs:w`).
 - **Bound:** the run spends at most `3 × limits.line_steps` steps per line it
   reads (a source line, paired with the data line `\read` took last), plus a
   constant.
@@ -567,6 +573,18 @@ A head whose widened state still grows (its input keeps changing, as a
 recursion's frames do) is summarized after `2 × widen_after` widened rounds.
 A forced head that matches no head kept apart for its code joins every head at its place: a meaning that grows each pass (`\edef\t{\t x}`) then widens to its hull and the loop ends at a fixpoint, not a summary.
 A path's place leaves out the lines it read with `\read`: the exits of a loop that reads one line per pass stand at one place, and their streams join as ranges.
+
+### Arms kept paired
+
+A join that is not widened keeps its arms paired (`Corr` in [`src/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/env.rs)): per arm, the bindings of the names the arms differ in.
+pgfmath's operation stack and its top differ together: one arm pushed `neg`, the other did not.
+Joined apart, a later split of the top pairs `neg` with the stack that never held it, and the pop finds no operation (a false missing number at pgfmathparser.code.tex:830).
+When a path learns one paired name (a split of its meanings or values), the other paired names take the join of the arms that allow it.
+An arm allows it unless `\ifx` would tell the two apart: a text with unknown parts (a one-of token) may be any text it stands for.
+A name written after the join leaves the pairing. A per-slot write count tells which.
+A path from a join of paired paths keeps their arms. Past `limits.join_arms` arms the name with the most distinct bindings leaves the pairing first, so few-valued pairings stay.
+A loop head whose state came from such a join counts a pass as covered only when every arm of the pass lies within one arm of the head.
+The arms only remove combinations no arm had, so the join stays an over-approximation.
 
 ### Stacks as intervals
 

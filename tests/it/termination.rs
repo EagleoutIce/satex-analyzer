@@ -814,6 +814,19 @@ mod convergence {
         converged(&a, 30_000);
     }
 
+    /// An environment whose name is one of two: `\end` looks its hooks up
+    /// by a name holding the one-of token, many `\cs:w` at one site. Past
+    /// the fresh entries of that point the token is an unknown part of the
+    /// name: summarized instead, each lookup parted again (2k forks).
+    #[test]
+    fn environment_named_one_of_two_ends_in_few_forks() {
+        let preamble = r"\newenvironment{va}{}{}\newenvironment{vb}{}{}
+\edef\which{\ifodd\pdfuniformdeviate9 va\else vb\fi}";
+        let body = r"\expandafter\begin\expandafter{\which}\expandafter\end\expandafter{\which}";
+        let Some(a) = latex("one-of-environment", &document(preamble, body), |_| {}) else { return };
+        converged(&a, 300);
+    }
+
     /// (3) An expl3 loop whose bound is `\pdfelapsedtime`.
     #[test]
     fn expl3_loop_to_the_elapsed_time() {
