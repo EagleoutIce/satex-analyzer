@@ -565,7 +565,10 @@ impl Engine {
     /// run sees reading it, else its own. Whether it is a new run is the second.
     fn run_for(&mut self, path: &Path, text: &str) -> (Rc<Analysis>, bool) {
         let key = canonical(path);
-        let input = path.extension().is_some_and(|e| e == "tex") && !discovery::is_document(text);
+        // Any file that is no document (an input, a package's part) is read
+        // through the document that reads it; literate sources are their own.
+        let literate = path.extension().is_some_and(|e| matches!(e.to_str(), Some("dtx" | "ins" | "fdd")));
+        let input = !literate && !discovery::is_document(text);
         let declared = discovery::declared_root(path, text);
         let known: Vec<PathBuf> = match (declared, input) {
             (Some(root), _) => vec![root],
@@ -590,6 +593,22 @@ impl Engine {
             drop(run);
             self.runs.retain(|_, run| Rc::strong_count(&run.analysis) > 1);
             tried.push(root_key);
+        }
+        // A part of a package the project provides is read where the
+        // package puts it: after loading it, as its own code.
+        if input && let Some(owner) = discovery::scan(&crate::paths::dir_of(path)).package_owners(path).first() {
+            let stem = owner.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            let (load, class) = match owner.extension().is_some_and(|e| e == "cls") {
+                true => (String::new(), stem.to_string()),
+                false => (format!("\\usepackage{{{stem}}}"), "article".to_string()),
+            };
+            let name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+            let root = crate::paths::dir_of(path).join(format!(".satex-part-{stem}.tex"));
+            let text = format!(
+                "\\documentclass{{{class}}}{load}\\makeatletter\\input{{{name}}}\\makeatother\\begin{{document}}\\end{{document}}\n"
+            );
+            crate::overlay::set(&root, text);
+            return self.run(&root);
         }
         self.run(path)
     }
@@ -978,9 +997,18 @@ fn publish(
     own: &Path,
     open: &[&Path],
 ) -> Vec<PublishDiagnosticsParams> {
-    let mut groups = handlers::diagnostics_json(analysis);
     let names = analysis.file_names();
     let read = |p: &&Path| names.iter().any(|f| crate::paths::same_file(Path::new(f), p));
+    // The findings of the file worked on and of the other open files it
+    // reads: the rest of the run is context.
+    let shown: Vec<String> = std::iter::once(own)
+        .chain(open.iter().copied().filter(read))
+        .map(|p| handlers::path_uri(&p.display().to_string()).to_string())
+        .collect();
+    let mut groups: Vec<Json> = handlers::diagnostics_json(analysis)
+        .into_iter()
+        .filter(|g| g.get("uri").and_then(Json::as_str).is_some_and(|u| shown.iter().any(|s| s == u)))
+        .collect();
     for path in std::iter::once(own).chain(open.iter().copied().filter(read)) {
         let uri = handlers::path_uri(&path.display().to_string());
         if !groups.iter().any(|g| g.get("uri").and_then(Json::as_str) == Some(uri.as_str())) {

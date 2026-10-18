@@ -122,9 +122,19 @@ impl Project {
     }
 
     /// Where a build finds the files the project itself provides, beyond the
-    /// document's own directory.
+    /// document's own directory: l3build's, then each git submodule's
+    /// directory (`.gitmodules`), which holds packages the project builds with.
     pub fn search_paths(&self) -> Vec<PathBuf> {
-        self.l3build.as_ref().map(|config| config.search_paths()).unwrap_or_default()
+        let mut paths = self.l3build.as_ref().map(|config| config.search_paths()).unwrap_or_default();
+        let modules = std::fs::read_to_string(self.root.join(".gitmodules")).unwrap_or_default();
+        paths.extend(
+            modules
+                .lines()
+                .filter_map(|line| line.trim().strip_prefix("path")?.trim_start().strip_prefix('='))
+                .map(|path| self.root.join(path.trim()))
+                .filter(|dir| dir.is_dir()),
+        );
+        paths
     }
 
     /// The files a build generates from literate sources before TeX runs,

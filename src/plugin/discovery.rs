@@ -87,14 +87,28 @@ pub fn declared_root(path: &Path, text: &str) -> Option<PathBuf> {
 
 /// Whether `text` names the file `stem` the way a load does: as a path
 /// argument, `{stem}`, `{dir/stem.tex}` or `\input stem `.
-fn names(text: &str, stem: &str) -> bool {
+fn names(text: &str, file: &Path) -> bool {
+    let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+    let name = file.file_name().and_then(|s| s.to_str()).unwrap_or_default();
     !stem.is_empty()
-        && text.match_indices(stem).any(|(at, _)| {
+        && (text.match_indices(stem).any(|(at, _)| {
             let before = text[..at].chars().next_back();
             let after = text[at + stem.len()..].chars().next();
             (matches!(before, Some('{' | '/')) || text[..at].ends_with("\\input "))
                 && matches!(after, None | Some('}' | '.' | ' ' | '\n'))
-        })
+        }) || names_by_pattern(text, stem, name))
+}
+
+/// Whether a name with a parameter in braces (`{fancyqr-style-#1.code}`,
+/// as a package inputs its parts) spells `stem` or `name`.
+fn names_by_pattern(text: &str, stem: &str, name: &str) -> bool {
+    static ARG: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let arg = ARG.get_or_init(|| regex::Regex::new(r"\{([^{}\s]*#[1-9][^{}\s]*)\}").expect("valid regex"));
+    arg.captures_iter(text).any(|c| {
+        let pattern = regex::escape(&c[1]).replace(r"\#", "#");
+        let pattern = regex::Regex::new(r"#[1-9]").expect("valid regex").replace_all(&pattern, "[^/{}]+");
+        regex::Regex::new(&format!("^{pattern}$")).is_ok_and(|re| re.is_match(name) || re.is_match(stem))
+    })
 }
 
 fn classify(path: &Path) -> Option<Found> {
@@ -249,24 +263,37 @@ impl Discovery {
             .documents
             .iter()
             .chain(&self.inputs)
+            .chain(&self.packages)
+            .chain(&self.classes)
             .filter(|p| !crate::paths::same_file(p, file))
             .map(|p| (p, head_of(p)))
             .collect();
         let mut named = vec![file.to_path_buf()];
         let mut next = 0;
         while next < named.len() {
-            let stem = named[next].file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_string();
+            let file = named[next].clone();
             next += 1;
             for (path, text) in &texts {
-                if names(text, &stem) && !named.contains(path) {
+                if names(text, &file) && !named.contains(path) {
                     named.push(path.to_path_buf());
                 }
             }
         }
-        let mut roots: Vec<PathBuf> = named.into_iter().filter(|p| self.documents.contains(p)).collect();
+        let mut roots: Vec<PathBuf> = named.iter().filter(|p| self.documents.contains(p)).cloned().collect();
         roots.sort_by_cached_key(|p| self.rank(p));
         roots.extend(self.root_document().filter(|r| !roots.contains(r) && !crate::paths::same_file(r, file)));
         roots
+    }
+
+    /// The project's packages and classes that read `file` as a part of
+    /// their own (`\input{name-#1.code}`), nearest first.
+    pub fn package_owners(&self, file: &Path) -> Vec<PathBuf> {
+        self.packages
+            .iter()
+            .chain(&self.classes)
+            .filter(|p| !crate::paths::same_file(p, file) && names(&head_of(p), file))
+            .cloned()
+            .collect()
     }
 
     /// The documents that could be the root, when more than one could and

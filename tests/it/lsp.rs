@@ -862,6 +862,35 @@ mod roots {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A part a package inputs by a name with a parameter
+    /// (`\input{parts-#1.code}`) is read through the document that loads
+    /// the package, not as a document of its own.
+    #[test]
+    fn a_package_part_is_read_through_the_document_using_the_package() {
+        let main = format!("{PRELUDE}\\input{{parts.sty}}\n");
+        let sty = "\\def\\greet#1{Hello, #1!}\n\\def\\load#1{\\input{parts-#1.code}}\n\\load{one}\n";
+        let files = [("main.tex", main.as_str()), ("parts.sty", sty), ("parts-one.code", "\\greet{world}\n")];
+        let (mut server, uri, dir) = project("parts", &files, "parts-one.code");
+        assert_eq!(greet_defined_in(&mut server, &uri), fixture_uri(&dir.join("parts.sty")));
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Without a document that reads it, a package's part is read after
+    /// the package is loaded, as its own code.
+    #[test]
+    fn a_package_part_without_a_document_is_read_after_its_package() {
+        if !crate::support::installed() {
+            return;
+        }
+        let sty = "\\ProvidesPackage{parts}\n\\def\\greet#1{Hello, #1!}\n\\def\\load#1{\\input{parts-#1.code}}\n";
+        let files = [("parts.sty", sty), ("parts-one.code", "\\greet{world}\n")];
+        let (mut server, uri, dir) = project("partsonly", &files, "parts-one.code");
+        assert_eq!(greet_defined_in(&mut server, &uri), fixture_uri(&dir.join("parts.sty")));
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_magic_root_comment_wins() {
         let b = format!("{PRELUDE}\\def\\greet#1{{b}}\n\\input{{shared}}\n");
