@@ -5877,7 +5877,6 @@ will look undefined",
                 "That makes 100 errors; please try again: TeX would stop here (tex.web § 82); satex gives up the expansion and reads on".into(),
             );
             self.tex_errors = 0;
-            self.widen_since(0);
             self.give_up_lists(false);
         }
     }
@@ -6324,7 +6323,11 @@ will look undefined",
             self.pop_frame();
         }
         self.mark_cut_scans();
-        at.map_or((0, 0), |at| self.close_since(at))
+        let closed = at.map_or((0, 0), |at| self.close_since(at));
+        // What the dropped calls assigned and the closed groups left holds
+        // anything of its kind; values the groups gave back stay.
+        self.widen_since(at.map_or(0, |at| at.2));
+        closed
     }
 
     /// Close the conditionals above `at.0` and the groups opened after
@@ -6337,9 +6340,23 @@ will look undefined",
         for _ in 0..conds {
             self.pop_conditional();
         }
-        let syms = self.typed_syms();
-        let typed = crate::env::typed!(self, syms);
-        let groups = self.env.close_since(at.1, at.2, &mut self.catcodes, &typed);
+        // A list's group gives back the modes around it (tex.web § 1085);
+        // what the dropped text would have put on the list is unknown.
+        let span = self.position_span();
+        let mut groups = 0;
+        loop {
+            let nest = self.env.nest();
+            let syms = self.typed_syms();
+            let typed = crate::env::typed!(self, syms);
+            if !self.env.close_since(at.1, at.2, &mut self.catcodes, &typed) {
+                break;
+            }
+            if nest.is_some() {
+                self.natural = None;
+                self.group_closed(nest, span);
+            }
+            groups += 1;
+        }
         (groups, conds)
     }
 
@@ -6419,7 +6436,6 @@ will look undefined",
             return;
         }
         let span = self.position_span();
-        self.widen_since(0);
         let balanced = Self::closed_note(self.give_up_lists(true));
         self.diagnose(
             Severity::Imprecision,
@@ -6439,7 +6455,6 @@ will look undefined",
     /// An expansion nested deeper than satex follows: its assignments become
     /// unknown, its pending lists are dropped, and the run reads on.
     fn abandon_nesting(&mut self) {
-        self.widen_since(0);
         let balanced = Self::closed_note(self.give_up_lists(false));
         let (file, line) = self.position();
         self.diagnose(
@@ -6636,7 +6651,6 @@ will look undefined",
     /// assumption.
     fn resync(&mut self) {
         self.leak_call_recs();
-        self.widen_since(0);
         self.give_up_lists(false);
         if std::mem::take(&mut self.guard_seen.cut) {
             let at = self.position_span();
