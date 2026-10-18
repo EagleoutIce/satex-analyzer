@@ -170,6 +170,8 @@ button:disabled { opacity: .55; cursor: progress; }
 .arg b { font-weight: 700; } .arg small { opacity: .75; font-size: 11px; } .arg .times { opacity: 1; font-weight: 700; }
 .arg-opt { --k: var(--c5); } .arg-flag { --k: var(--warning); } .arg-emb { --k: var(--c2); } .arg-slot { --k: var(--c6); } .arg-more { --k: var(--muted); }
 code .arg { font-size: 12px; padding: 0 .3rem; }
+/* placeholders inside a usage line: text-sized, so the line reads as code */
+.usage .arg { font-size: .85em; line-height: 1.25; padding: 0 .15rem; border-radius: 3px; gap: 0; vertical-align: baseline; }
 .chips { display: inline-flex; flex-wrap: wrap; gap: .25rem; }
 .cs { display: inline-block; font: 12px/1.6 ui-monospace, Menlo, monospace; padding: 0 .45rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 .cs:hover { text-decoration: none; background: color-mix(in srgb, var(--accent) 22%, transparent); }
@@ -386,3 +388,6 @@ main td .badges, main td .cat { white-space: nowrap; }
 .cm-completionDetail { font-style: normal; } .cm-completionDetail .arg { font-size: 11px; padding: 0 .25rem; }
 .cm-tooltip-autocomplete li[aria-selected] .cm-completionDetail * { color: inherit; }
 .cm-tooltip-autocomplete li[aria-selected] .cm-completionDetail .arg { background: color-mix(in srgb, var(--panel) 25%, transparent); border-color: currentColor; }
+/* findings grouped by category */
+.cat-head { list-style: none; margin: .6rem 0 .2rem; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.cat-head:first-child { margin-top: 0; }
