@@ -11,7 +11,10 @@ tier=${1:?usage: $0 fast|slow|measure [args]}; shift
 run() { cargo test --profile "${PROFILE:-ci}" --test it -- "$@"; }
 if [ "$tier" = measure ]; then
     log=$(mktemp -p "${TMPDIR:-target}" tiers.XXXXXX)
-    RUSTC_BOOTSTRAP=1 run -Z unstable-options --report-time "$@" | tee "$log" || true
+    # Only the test binary may see RUSTC_BOOTSTRAP: cargo would rebuild everything.
+    bin=$(cargo test --profile "${PROFILE:-ci}" --test it --no-run --message-format=json |
+        sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)
+    RUSTC_BOOTSTRAP=1 "$bin" -Z unstable-options --report-time "$@" | tee "$log" || true
     sed -nE 's/^test (\S+) \.\.\. \S+ <([0-9.]+)s>$/\2 \1/p' "$log" |
         awk -v s="${SLOW_SECONDS:-20}" '$1 >= s {print $2}' | sort > tests/slow.txt
     rm -f "$log"; echo "tests/slow.txt: $(wc -l < tests/slow.txt) tests"; exit
