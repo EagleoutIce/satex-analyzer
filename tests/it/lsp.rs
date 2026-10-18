@@ -911,3 +911,17 @@ mod roots {
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
+
+/// Keys complete inside a key list: a `/path` lists the keys under it, and a
+/// command that hands its argument to `\pgfkeys` offers its family's keys.
+#[test]
+fn completion_offers_keys_in_key_lists() {
+    let text = "\\documentclass{article}\n\\usepackage{pgfkeys}\n\\pgfkeys{/demo/.is family, /demo,\n  width/.initial=2cm,\n  mode/.is choice, mode/fast/.code={}, mode/safe/.code={},\n}\n\\newcommand\\demo[1]{\\pgfkeys{/demo/.cd,#1}}\n\\begin{document}\n\\pgfkeys{/demo/}\n\\demo{}\n\\demo{width=1cm}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("keys", text);
+    let paths = complete(&mut server, &uri, 8, 15);
+    assert!(labels(&paths).contains(&"/demo/width"), "{:?}", labels(&paths));
+    assert!(labels(&paths).contains(&"/demo/mode"), "{:?}", labels(&paths));
+    let family = complete(&mut server, &uri, 9, 6);
+    assert!(labels(&family).contains(&"width"), "{:?}", labels(&family));
+    std::fs::remove_dir_all(dir).ok();
+}
