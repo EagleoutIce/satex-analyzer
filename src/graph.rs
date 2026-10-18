@@ -104,6 +104,10 @@ pub struct Vertex {
 #[derive(Clone, Default)]
 pub struct DependencyGraph {
     pub vertices: Vec<Vertex>,
+    /// `limits.vertices` (0: none): past it a new site shares one overflow vertex, so
+    /// the graph stops growing while the analysis goes on.
+    pub cap: usize,
+    overflow: Option<NodeId>,
     /// Outgoing edges, indexed by source vertex.
     out: Vec<Vec<(NodeId, EdgeKind)>>,
     /// Where each target sits in `out`, for the vertices with many outgoing
@@ -282,7 +286,13 @@ impl DependencyGraph {
             }
             return id;
         }
+        if let Some(id) = self.overflow {
+            return id;
+        }
         let id = self.vertices.len() as NodeId;
+        if self.cap > 0 && self.vertices.len() + 1 >= self.cap {
+            self.overflow = Some(id);
+        }
         self.sites.insert((span, name, tag), id);
         self.out.push(Vec::new());
         self.vertices.push(Vertex { tag, name, key, span, cds: cds.clone(), within });
@@ -415,6 +425,16 @@ impl DependencyGraph {
 
     pub fn len(&self) -> usize {
         self.vertices.len()
+    }
+
+    /// An empty graph that stops growing at `cap` vertices (0: never).
+    pub fn with_cap(cap: usize) -> Self {
+        Self { cap, ..Default::default() }
+    }
+
+    /// Whether the graph reached [`DependencyGraph::cap`].
+    pub fn full(&self) -> bool {
+        self.overflow.is_some()
     }
 
     pub fn is_empty(&self) -> bool {
