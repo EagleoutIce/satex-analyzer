@@ -457,12 +457,20 @@
     checkStart = 0;
     lspStatus.textContent = state.file in state.ro ? 'read-only file' : ds.length ? '' : 'none';
     const fixButton = (f, j, cls) => `<button class="small apply${cls}" data-j="${j}" title="${escape(f.title)}">Fix <span class="fix fix-${f.safety}">${f.safety}</span></button>`;
-    list.innerHTML = ds.map((d, i) => `<li class="f-${sev(d)}${d.fixes.length ? ' fixable' : ''}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
+    const item = (d, i) => `<li class="f-${sev(d)}${d.fixes.length ? ' fixable' : ''}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
       `<span class="badge"><span class="sev sev-${sev(d)}">${sev(d)}</span>${d.fixes.length ? fixButton(d.fixes[0], 0, ' as-badge') : ''}</span> <b>${d.range.start.line + 1}:${d.range.start.character + 1}</b> ` +
       `<code>${escape(d.code ?? '')}</code> <span class="msg">${inline(d.message)}</span><span class="acts">` +
       d.fixes.slice(1).map((f, j) => fixButton(f, j + 1, '')).join('') +
       `<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
-      (unfolded.has(key(d)) ? explanation(d) : '') + '</li>').join('');
+      (unfolded.has(key(d)) ? explanation(d) : '') + '</li>';
+    // grouped by the rule's category, as the command line prints them
+    const groups = new Map();
+    ds.forEach((d, i) => {
+      const cat = manifest.rules[d.code]?.category ?? 'other';
+      groups.set(cat, [...(groups.get(cat) ?? []), item(d, i)]);
+    });
+    list.innerHTML = [...groups].map(([cat, items]) =>
+      (groups.size > 1 ? `<li class="cat-head">${escape(cat)} <span class="muted">${items.length}</span></li>` : '') + items.join('')).join('');
   }
   const unfolded = new Set();
   function unfold(i, toggle = true) {
@@ -470,7 +478,7 @@
     if (!d) return;
     if (toggle && unfolded.has(key(d))) unfolded.delete(key(d)); else unfolded.add(key(d));
     render();
-    list.children[i]?.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    list.querySelector(`li[data-i="${i}"]`)?.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
   /** The findings at a place: line, and column unless a gutter marker was clicked. */
   const findingsAt = (line, character) => (diagnostics[uri()] ?? []).map((d, i) => [d, i]).filter(([d]) => d.range.start.line <= line && line <= d.range.end.line &&
@@ -480,7 +488,7 @@
     if (hit) unfold(hit[1], false);
   }
   list.onclick = (e) => {
-    const li = e.target.closest('li');
+    const li = e.target.closest('li[data-i]');
     if (!li) return;
     const d = diagnostics[uri()][li.dataset.i];
     const apply = e.target.closest('.apply');

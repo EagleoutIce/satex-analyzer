@@ -4573,7 +4573,12 @@ will look undefined",
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         message.hash(&mut hasher);
-        let origin = self.user_origin(span);
+        // A runaway has read its file to where it gave up: the command in
+        // the user's files that started it is the place, not that end.
+        let origin = match code {
+            "runaway-argument" if !self.own_file(span.file) => self.project_site.or_else(|| self.user_origin(span)),
+            _ => self.user_origin(span),
+        };
         // An engine error is one row per place in the user's files it came
         // from, so each cause is shown.
         if TEX_ERRORS.iter().any(|(c, _)| *c == code) {

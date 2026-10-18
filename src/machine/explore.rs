@@ -1111,7 +1111,7 @@ impl Machine<'_> {
         let alike = alike.or_else(|| {
             let kins = if exact.is_none() { heads().filter(|(_, h)| kin(h)).count() } else { 0 };
             (kins > usize::from(self.limits.widen_after))
-                .then(|| heads().filter(|(_, h)| kin(h)).last().map(|(i, _)| i))
+                .then(|| heads().filter(|(_, h)| kin(h)).next_back().map(|(i, _)| i))
                 .flatten()
         });
         // Whether the head's input grew by the widening: what it reads
