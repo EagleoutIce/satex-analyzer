@@ -490,8 +490,12 @@ impl Machine<'_> {
                 self.append_item(crate::mode::Item::Penalty(penalty));
                 // tex.web §§ 1005, 1012: a forced break on the main vertical
                 // list ejects the page, which is then empty.
-                if penalty.is_some_and(|p| p <= -10000) && self.mode == crate::mode::Modes::VERTICAL {
-                    self.page_touched = false;
+                // § 1103: a penalty on the main vertical list builds the page.
+                if self.mode == crate::mode::Modes::VERTICAL {
+                    match penalty.filter(|p| *p <= -10000) {
+                        Some(p) => self.fire_up(p, span),
+                        None => self.build_page(span),
+                    }
                 }
             }
             P::Typeset(crate::builtins::Typeset::Dimen) => {

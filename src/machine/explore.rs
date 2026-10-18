@@ -737,6 +737,7 @@ impl Machine<'_> {
     /// the loop heads: it runs from one.
     fn explore(&mut self, paths: &mut Paths, head: bool) -> Next {
         let start = self.save_path();
+        let file = self.file_level();
         let mut fork = self.env.fork();
         let own = paths.fork.is_none();
         let counters = (self.undo.len(), self.env.assignments, self.gaps_raised, self.gap_depth, self.tex_errors);
@@ -752,7 +753,7 @@ impl Machine<'_> {
             self.choices.clear();
             self.infeasible = false;
             self.at_join = false;
-            (self.dropping, self.dropping_possible) = (None, false);
+            (self.dropping, self.dropping_possible, self.dropping_breaks) = (None, false, false);
             let going = match self.unit {
                 Unit::Command => self.command(),
                 unit => self.scan_step(unit),
@@ -765,8 +766,17 @@ impl Machine<'_> {
             let error = self.dropping.take().filter(|_| paths.top && !self.infeasible);
             // An error that may not be TeX's drops its path only where
             // another is surely a run: one that approximated nothing since
-            // the paths parted. Else it goes on, as TeX recovers.
-            let error = error.filter(|_| !self.dropping_possible || Self::exact_other(paths, &outcomes));
+            // the paths parted. Else it goes on, as TeX recovers, unless the
+            // recovery breaks library code's brackets: then it is contained.
+            let error = match error {
+                Some(e) if self.dropping_possible && !Self::exact_other(paths, &outcomes) => {
+                    if going && self.dropping_breaks {
+                        self.contain_fault(&e, file);
+                    }
+                    None
+                }
+                e => e,
+            };
             if outcomes.is_empty() && dropped.is_empty() && next.is_none() {
                 self.choices.clear();
                 // Other paths wait: this one raised a certain error.
@@ -2517,6 +2527,8 @@ impl Machine<'_> {
             (a, b) => a.or(b),
         };
         x.page_touched |= y.page_touched;
+        x.output_active |= y.output_active;
+        x.page_grew |= y.page_grew;
         x.natural = crate::mode::join_natural(x.natural, y.natural);
         x.main_tail = x.main_tail.merge(y.main_tail);
         x.wild.union(&y.wild);

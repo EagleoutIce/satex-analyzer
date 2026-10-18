@@ -663,7 +663,17 @@ impl Machine<'_> {
         if plain {
             let message = format!("Illegal unit of measure ({inserted} inserted)");
             self.diagnose(crate::facts::Severity::Warning, "illegal-unit", token.span, message);
+            self.misread(Some(token));
         }
+    }
+
+    /// A number scan met `t` where TeX wants a number or unit: past a
+    /// possible error, a token other than the scan's own end (`\relax`, a
+    /// space, the input's end) stood for the number, and the code after it
+    /// runs its data as code ([`crate::machine::BREAKING`]).
+    fn misread(&mut self, t: Option<Token>) {
+        let end = t.is_none_or(|t| t.is_space() || self.is_relax(t));
+        self.dropping_breaks |= self.dropping_possible && !end;
     }
 
     /// tex.web § 446: "Missing number, treated as zero".
@@ -677,6 +687,7 @@ impl Machine<'_> {
             span,
             format!("missing number before `{seen}`, treated as zero"),
         );
+        self.misread(at);
         Some(0)
     }
 

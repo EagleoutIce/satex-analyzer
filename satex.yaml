@@ -126,6 +126,7 @@ analysis:
   assume_compiles: true  # assumption: drop a path that raises a certain TeX error in library code; the document's own errors are kept
   assume_packages_close_groups: true  # assumption: a package closes the groups it opens
   assume_environment: true  # assumption: the build runs in this environment (Lua's os.getenv reads it)
+  assume_forced_page_breaks: true  # assumption: pages break only where a penalty forces it; false also follows breaks where the page may have filled
 
 # shell_escape: restricted # none | restricted | full; unset, what the build files ask for
 # TEMPORARY effect summaries: satex does not follow these macros' internals.
