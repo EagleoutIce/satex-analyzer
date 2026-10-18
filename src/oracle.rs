@@ -424,10 +424,20 @@ pub fn generate(seed: u64, statements: usize) -> String {
     if typeset {
         out.push_str("\\font\\tenrm=cmr10 \\tenrm ");
     }
+    // Pages: an output routine that counts its runs in `\count5`, fired by
+    // a forced break or by a page that fills `\vsize` (tex.web §§ 1005, 1012).
+    let paged = rng.below(3) == 0;
+    if paged {
+        out.push_str(&format!(
+            "\\output={{\\global\\advance\\count5 1 \\setbox250\\box255 \\deadcycles=0 }}\\vsize={}pt ",
+            5 + rng.below(20)
+        ));
+    }
     for k in 0..statements {
-        out.push_str(&match typeset && rng.below(2) == 0 {
-            true => boxed(&mut rng),
-            false => statement(&mut rng, k, 0, &mut marker),
+        out.push_str(&match rng.below(4) {
+            0 if paged => page_item(&mut rng),
+            1 if typeset => boxed(&mut rng),
+            _ => statement(&mut rng, k, 0, &mut marker),
         });
     }
     // Box metrics into `\dimen230`…, where the observations read them.
@@ -440,6 +450,17 @@ pub fn generate(seed: u64, statements: usize) -> String {
         ));
     }
     out
+}
+
+/// Material for the main vertical list: a box of known or unknown height,
+/// glue, or a forced page break.
+fn page_item(rng: &mut Rng) -> String {
+    match rng.below(4) {
+        0 => "\\hbox{}\\penalty-10000 ".to_string(),
+        1 => format!("\\vskip{}pt ", rng.below(9)),
+        2 => format!("\\hbox{{\\vrule height\\pdfuniformdeviate {}sp}}", 1 + rng.below(900_000)),
+        _ => format!("\\hbox{{\\vrule height{}pt}}", rng.below(9)),
+    }
 }
 
 /// A box of typeset material: characters, kerns, glue, rules, accents,
