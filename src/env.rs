@@ -1937,7 +1937,8 @@ pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits, 
 /// A macro without parameters whose text is any text of the classes its
 /// texts have, when every meaning `b` may have is such a macro with the
 /// same prefixes: widened, it stays one, which `\ifx` can still tell from
-/// other kinds. Its length is not bounded: a widened write may repeat.
+/// other kinds. Its length is bounded only where all texts have one
+/// length: a widened write that repeats changes it.
 fn macro_hull(b: &Binding, typed: &Typed) -> Option<Meaning> {
     let members = b.may.as_deref().unwrap_or(std::slice::from_ref(&b.meaning));
     let mut first: Option<&crate::tex::MacroDef> = None;
@@ -1959,11 +1960,15 @@ fn macro_hull(b: &Binding, typed: &Typed) -> Option<Meaning> {
 }
 
 /// One typed token for any text of the classes `texts` have, at least
-/// one token when each has one.
+/// one token when each has one. Texts all of one bounded length keep it:
+/// no write grew them.
 fn text_hull<'t>(texts: impl Iterator<Item = &'t [Token]>, typed: &Typed) -> Token {
     let (mut one, mut class, mut span) = (true, TextClass::EMPTY, None);
+    let mut lens: Vec<Option<u32>> = Vec::new();
     for text in texts {
         one &= !text.is_empty();
+        let len = |t: &Token| text_len(typed.interner, t).or(matches!(t.tok, Tok::Chr(..)).then_some(1));
+        lens.push(text.iter().try_fold(0, |n, t| Some(n + len(t)?)));
         for t in text {
             span = span.or(Some(t.span));
             class = class.union(
@@ -1971,7 +1976,8 @@ fn text_hull<'t>(texts: impl Iterator<Item = &'t [Token]>, typed: &Typed) -> Tok
             );
         }
     }
-    Token::new(Tok::Cs(typed.make(class, one, None)), span.unwrap_or_default())
+    let len = lens.first().copied().flatten().filter(|n| *n > 0 && lens.iter().all(|l| *l == Some(*n)));
+    Token::new(Tok::Cs(typed.make(class, one, len)), span.unwrap_or_default())
 }
 
 /// The meanings `b` may have, each a macro without parameters, with every

@@ -139,7 +139,7 @@ look at the set.
 - `\let` copies the whole set, not just one meaning.
 - A loop head widens a meaning that keeps growing, and a write `satex` cannot follow widens a name in place.
   Macros without parameters whose texts differ only in their digit runs first become one macro, with each run made typed digits.
-  Otherwise a set of macros without parameters that share their `\long`, `\outer` and `\protected` prefixes widens to one such macro whose text is unknown text (`macro_hull` in [`src/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/env.rs)).
+  Otherwise a set of macros without parameters that share their `\long`, `\outer` and `\protected` prefixes widens to one such macro whose text is unknown text, bounded by the texts' length when they all have one (a write that grows the text changes its length) (`macro_hull` in [`src/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/env.rs)).
   The text holds at least one token when every member's text does.
   So `\ifx` can still tell the widened name from a primitive, a character or a macro with parameters.
   Any other set widens to an unknown meaning.
