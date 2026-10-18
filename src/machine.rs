@@ -2341,6 +2341,7 @@ impl<'a> Machine<'a> {
         let limits = &m.cfg.limits;
         m.env.sets = crate::env::SetLimits {
             meanings: usize::from(limits.meaning_set).max(1),
+            arms: usize::from(limits.join_arms),
             values: usize::from(limits.value_set).max(1),
             intervals: usize::from(limits.interval_set).max(1),
         };
@@ -6143,6 +6144,7 @@ will look undefined",
         limits.meaning_set = half(base.meaning_set);
         limits.value_set = half(base.value_set);
         limits.interval_set = half(base.interval_set);
+        limits.join_arms = half(base.join_arms);
         // The budgets halve twice as fast: they bound work, not precision.
         limits.site_forks = match base.site_forks {
             0 => 0,
@@ -6154,6 +6156,7 @@ will look undefined",
         };
         self.env.sets = crate::env::SetLimits {
             meanings: usize::from(limits.meaning_set),
+            arms: usize::from(limits.join_arms),
             values: usize::from(limits.value_set),
             intervals: usize::from(limits.interval_set),
         };
@@ -8388,7 +8391,7 @@ will look undefined",
                 if !unbounded
                     && self.split(sym, t.span, arms.len(), |m, arm| {
                         let (part, text) = &arms[arm];
-                        m.env.refine_value(sym, crate::value::Value::from_num(crate::value::Quantity::Int, *part));
+                        m.refine_value(sym, crate::value::Value::from_num(crate::value::Quantity::Int, *part));
                         m.unread_all(text);
                         true
                     })
@@ -9917,7 +9920,7 @@ will look undefined",
         !one_of
             && self.may_split_meaning()
             && self.split(sym, span, classes.len(), |m, arm| {
-                m.env.refine_to(sym, &classes[arm].1);
+                m.refine_to(sym, &classes[arm].1);
                 true
             })
     }
@@ -9960,7 +9963,7 @@ will look undefined",
         }
         self.split(sym, span, members.len() + 1, |m, arm| {
             let meaning = members.get(arm).map_or(Meaning::Primitive(Primitive::Relax), |(_, meaning)| meaning.clone());
-            m.env.refine(sym, meaning);
+            m.refine(sym, meaning);
             true
         })
     }
@@ -10014,7 +10017,7 @@ will look undefined",
         let Some(texts) = self.one_of_members(t) else { return false };
         self.split(sym, t.span, texts.len(), |m, arm| {
             let text = MacroDef { replacement_text: texts[arm].clone(), ..(*def).clone() };
-            m.env.refine(owner, Meaning::Macro(Rc::new(text)));
+            m.refine(owner, Meaning::Macro(Rc::new(text)));
             m.unread_all(&texts[arm]);
             true
         })

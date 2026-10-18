@@ -41,6 +41,8 @@ pub(super) struct Config {
     tag: Tag,
     /// It reached `\end` or the end of its input.
     ended: bool,
+    /// [`Machine::crowd`] tried it against every other waiting path.
+    crowded: bool,
 }
 
 /// Where a path stands, for joining: its input, bottom first and without
@@ -99,7 +101,7 @@ impl Config {
     fn new(state: PathState, env: PathEnv, ended: bool) -> Config {
         let groups = env.groups();
         let (key, tag) = (Key::new(&state, &groups), Tag::new(&state, groups));
-        Config { state, env, key, tag, ended }
+        Config { state, env, key, tag, ended, crowded: false }
     }
 
     fn clone_config(&self) -> Config {
@@ -835,6 +837,13 @@ impl Machine<'_> {
         }
     }
 
+    /// Whether choices by `by` at `span` here entered as a loop more than
+    /// `LOOP_ENTRIES` times: every further one is a re-entry.
+    pub(crate) fn loop_capped(&self, span: Span, by: Sym) -> bool {
+        let id = (span, by, self.source_progress - self.lines_read);
+        self.scratch.loop_summaries.get(&id).is_some_and(|c| c.1 > LOOP_ENTRIES)
+    }
+
     /// Whether a path other than the running one approximated nothing
     /// since the paths parted.
     fn exact_other(paths: &Paths, outcomes: &[Config]) -> bool {
@@ -1100,8 +1109,10 @@ impl Machine<'_> {
                 && a.places.iter().zip(&b.places).all(|(x, y)| x == y || (text(x) && text(y)))
         };
         let alike = alike.or_else(|| {
-            let kins = if exact.is_none() { paths.heads.iter().filter(|h| kin(h)).count() } else { 0 };
-            (kins > usize::from(self.limits.widen_after)).then(|| paths.heads.iter().rposition(kin)).flatten()
+            let kins = if exact.is_none() { heads().filter(|(_, h)| kin(h)).count() } else { 0 };
+            (kins > usize::from(self.limits.widen_after))
+                .then(|| heads().filter(|(_, h)| kin(h)).last().map(|(i, _)| i))
+                .flatten()
         });
         // Whether the head's input grew by the widening: what it reads
         // next is then not covered by what it ran with.
@@ -1233,6 +1244,11 @@ impl Machine<'_> {
         let (joined, mut growth) = self.join_configs(&fork, &paths.heads[h].config, &here, widen);
         if input_grew {
             growth.parts.push("input");
+        }
+        // The head ran on its join's arms ([`crate::env::Corr`]): a pass
+        // in none of them is not covered, though the join holds it.
+        if !self.env.covers(&fork, &paths.heads[h].config.env, &here.env) {
+            growth.parts.push("arms");
         }
         if !growth.any() {
             return Next::None;
@@ -1597,6 +1613,23 @@ impl Machine<'_> {
         self.strays(text) == (Vec::new(), 0) && balanced(text)
     }
 
+    /// Per length `k`, whether `text[..k]` is [`Self::whole`], in one pass.
+    fn whole_prefixes(&self, text: &[Token]) -> Vec<bool> {
+        let (mut open, mut depth, mut broken) = (crate::machine::CondDepth::default(), 0i64, false);
+        let mut out = vec![true];
+        for t in text {
+            broken |= open.feed(self.cond_prim(*t)).is_some();
+            depth += match t.tok {
+                Tok::Chr(_, Catcode::Begin) => 1,
+                Tok::Chr(_, Catcode::End) => -1,
+                _ => 0,
+            };
+            broken |= depth < 0;
+            out.push(!broken && depth == 0 && open.0 == 0);
+        }
+        out
+    }
+
     /// `analysis.assume_compiles`: a path that raised a certain error was dropped.
     fn report_dropped(&mut self, error: &str, span: Span) {
         self.diagnose(
@@ -1791,7 +1824,7 @@ impl Machine<'_> {
         while paths.parked.len() > bound && i < paths.parked.len() {
             let joined = (i + 1..paths.parked.len()).find_map(|j| {
                 let (a, b) = (&paths.parked[i], &paths.parked[j]);
-                if !alike(a, b) {
+                if (a.crowded && b.crowded) || !alike(a, b) {
                     return None;
                 }
                 let input = self.widen_input(&a.state.input, &b.state.input, span, false, false)?;
@@ -1808,6 +1841,7 @@ impl Machine<'_> {
             paths.parked.push(joined);
         }
         // Tried again only once more wait: the rest cannot be one now.
+        paths.parked.iter_mut().for_each(|c| c.crowded = true);
         paths.crowded = paths.parked.len();
         if paths.parked.len() == before {
             return;
@@ -1911,7 +1945,8 @@ impl Machine<'_> {
         }
         // A shorter common end, so what differs before it is balanced: an
         // argument that grows inside its braces is then one text.
-        while common > 0 && !(self.whole(&p[..p.len() - common]) && self.whole(&q[..q.len() - common])) {
+        let (wp, wq) = (self.whole_prefixes(p), self.whole_prefixes(q));
+        while common > 0 && !(wp[p.len() - common] && wq[q.len() - common]) {
             common -= 1;
         }
         let (head, tail) = (&p[..p.len() - common], &p[p.len() - common..]);
@@ -2074,7 +2109,8 @@ impl Machine<'_> {
         let mut named: Vec<(u128, Rc<[Token]>)> =
             members.into_iter().map(|t| (text_hash(&t, |s| self.name(s).to_owned()), t)).collect();
         named.sort_by_key(|n| n.0);
-        let sym = self.intern(&format!("{prefix}{:x?}", named.iter().map(|n| n.0).collect::<Vec<_>>()));
+        let class = self.class_name(named.iter().map(|n| &n.1[..]));
+        let sym = self.intern(&format!("{prefix}{:x?}{class}", named.iter().map(|n| n.0).collect::<Vec<_>>()));
         let may: Vec<Meaning> = named
             .into_iter()
             .map(|(_, text)| {
@@ -2171,6 +2207,23 @@ impl Machine<'_> {
         text
     }
 
+    /// The name part that spells the class of `texts` for a one-of token
+    /// ([`crate::env::Typed::one_of_class`]): the mark, the class, `+` when no
+    /// text is empty.
+    fn class_name<'t>(&mut self, texts: impl Iterator<Item = &'t [Token]>) -> String {
+        let syms = self.typed_syms();
+        let typed = crate::env::typed!(self, syms);
+        let (mut class, mut one) = (crate::tex::TextClass::EMPTY, true);
+        for text in texts {
+            one &= !text.is_empty();
+            for t in text {
+                let c = typed.classify(t).or_else(|| typed.one_of_class(t));
+                class = class.union(c.map_or_else(|| crate::tex::TextClass::of(t.tok), |c| c.0));
+            }
+        }
+        format!("{}{}{}", crate::env::CLASS_MARK, class.spell(), if one { '+' } else { '_' })
+    }
+
     /// A token for any number of repetitions of `text` (`text*`): one of the
     /// empty text and `text` followed by itself. Run, it parts like any
     /// [`Machine::one_of`] token, and the loop it makes meets by fixpoint.
@@ -2180,7 +2233,9 @@ impl Machine<'_> {
         {
             return *t;
         }
-        let sym = self.intern(&format!("{UNKNOWN_NAME}{ONE_OF}*{:x}", text_hash(text, |s| self.name(s).to_owned())));
+        let class = self.class_name([&[][..], text].into_iter());
+        let sym =
+            self.intern(&format!("{UNKNOWN_NAME}{ONE_OF}*{:x}{class}", text_hash(text, |s| self.name(s).to_owned())));
         let token = Token::new(Tok::Cs(sym), span);
         if self.env.slot(sym).is_none() {
             let def = |replacement_text: Rc<[Token]>| {
