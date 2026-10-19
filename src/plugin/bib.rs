@@ -5,11 +5,16 @@ use std::path::{Path, PathBuf};
 
 use crate::machine::Analysis;
 
-/// One entry of a `.bib` file: its key and the line its `@type{` opens on.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One entry of a `.bib` file: its key, the line its `@type{` opens on,
+/// its type and what completion shows of it.
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Entry {
     pub key: String,
     pub line: u32,
+    pub kind: String,
+    pub title: String,
+    pub author: String,
+    pub year: String,
 }
 
 /// A database as BibTeX finds it: `⟨name⟩.bib` beside the document, or the
@@ -66,12 +71,78 @@ pub fn entries(text: &str) -> Vec<Entry> {
         let end = body.find([',', '}', ')', '\n']).unwrap_or(body.len());
         let key = body[..end].trim();
         if !key.is_empty() {
-            out.push(Entry { key: key.to_string(), line });
+            let mut entry = Entry { key: key.to_string(), line, kind, ..Default::default() };
+            for (name, value) in fields(&body[end..], if open == '(' { ')' } else { '}' }) {
+                match name.as_str() {
+                    "title" => entry.title = value,
+                    "author" => entry.author = value,
+                    "year" => entry.year = value,
+                    "date" if entry.year.is_empty() => entry.year = value.chars().take(4).collect(),
+                    _ => {}
+                }
+            }
+            out.push(entry);
         }
+    }
+    out
+}
+
+/// The `name = value` fields of an entry's body, up to its `close`: a
+/// value in braces or quotes with its braces dropped, or a bare word.
+fn fields(body: &str, close: char) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut chars = body.char_indices().peekable();
+    loop {
+        while chars.next_if(|(_, c)| c.is_whitespace() || *c == ',').is_some() {}
+        let Some(&(_, c)) = chars.peek() else { break };
+        if c == close {
+            break;
+        }
+        let mut name = String::new();
+        while let Some((_, c)) = chars.next_if(|(_, c)| c.is_alphanumeric() || "-_".contains(*c)) {
+            name.push(c);
+        }
+        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
+        if name.is_empty() || chars.next_if(|(_, c)| *c == '=').is_none() {
+            break;
+        }
+        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
+        let mut value = String::new();
+        let mut depth = 0;
+        let quoted = chars.next_if(|(_, c)| *c == '"').is_some();
+        for (_, c) in chars.by_ref() {
+            match c {
+                '{' => depth += 1,
+                '}' if depth > 0 => depth -= 1,
+                '"' if quoted && depth == 0 => break,
+                c if !quoted && depth == 0 && (c == ',' || c == close) => break,
+                c => value.push(c),
+            }
+        }
+        let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+        out.push((name.to_ascii_lowercase(), value));
     }
     out
 }
 
 fn count_lines(text: &str) -> u32 {
     u32::try_from(text.bytes().filter(|b| *b == b'\n').count()).unwrap_or(u32::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entries_carry_what_completion_shows() {
+        let text = "@string{x = \"y\"}\n@Article{knuth84,\n  author = {Donald E. Knuth},\n  title = \"Literate {P}rogramming\",\n  year = 1984,\n}\n@book(lamport, title={\\LaTeX}, date={1994-01-01})\n";
+        let e = entries(text);
+        assert_eq!(e.len(), 2);
+        assert_eq!((e[0].key.as_str(), e[0].kind.as_str(), e[0].line), ("knuth84", "article", 2));
+        assert_eq!(
+            (e[0].author.as_str(), e[0].title.as_str(), e[0].year.as_str()),
+            ("Donald E. Knuth", "Literate Programming", "1984")
+        );
+        assert_eq!((e[1].key.as_str(), e[1].title.as_str(), e[1].year.as_str()), ("lamport", "\\LaTeX", "1994"));
+    }
 }

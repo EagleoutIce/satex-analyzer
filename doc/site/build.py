@@ -235,6 +235,8 @@ def bundle(satex, work):
     shutil.copytree(samples, project, ignore=shutil.ignore_patterns("satex.yaml"))
     for doc in docs[:len(roots(EXAMPLES))]:
         shutil.copy2(doc, project / doc.name)
+    for database in EXAMPLES.glob("*.bib"):
+        shutil.copy2(database, project / database.name)
     (project / "satex.yaml").write_text(config.replace("/texmf.bundle", str(tree)))
     tables, shared = [], read[KERNELS[0][0]]
     for i, (kernel, _, flags) in enumerate(KERNELS):

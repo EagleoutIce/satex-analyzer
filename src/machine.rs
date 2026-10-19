@@ -407,6 +407,9 @@ pub struct Analysis {
     /// The fewest arguments each defined name takes, for completion: built
     /// once, from the definitions query.
     pub takes: std::sync::OnceLock<crate::fixed::HashMap<String, u8>>,
+    /// The entries of the bibliography databases the document names, for
+    /// completion: read once.
+    pub bib: std::sync::OnceLock<Vec<crate::plugin::bib::Entry>>,
 }
 
 /// Collection sizes change slowly. Checking them on every token would
@@ -2027,6 +2030,7 @@ impl<'a> Machine<'a> {
                 env_stack: Vec::new(),
                 context_probes: Default::default(),
                 takes: Default::default(),
+                bib: Default::default(),
             },
             env,
             catcodes,

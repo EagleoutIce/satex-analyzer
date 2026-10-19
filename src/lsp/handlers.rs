@@ -811,6 +811,23 @@ fn names_load(doc: &Text, span: crate::tex::Span, file: &str) -> bool {
     })
 }
 
+/// The entries of every database the document names, once per analysis.
+fn bib_entries(analysis: &Analysis) -> &[crate::plugin::bib::Entry] {
+    analysis.bib.get_or_init(|| {
+        let mut seen = BTreeSet::new();
+        analysis
+            .facts
+            .occurrences
+            .iter()
+            .filter(|o| o.kind == crate::builtins::OccKind::Bibliography)
+            .filter_map(|o| crate::plugin::bib::resolve(analysis, &o.key))
+            .filter(|path| seen.insert(path.clone()))
+            .filter_map(|path| std::fs::read_to_string(path).ok())
+            .flat_map(|text| crate::plugin::bib::entries(&text))
+            .collect()
+    })
+}
+
 fn item(label: String, kind: CompletionItemKind, detail: Option<String>, rank: usize) -> CompletionItem {
     CompletionItem {
         sort_text: Some(format!("{rank:05}{label}")),
@@ -977,11 +994,34 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
             OccKind::Ref => {
                 out.extend(keys(&[OccKind::Label]).into_iter().map(|k| item(k, CompletionItemKind::REFERENCE, None, 0)))
             }
-            OccKind::Cite => out.extend(
-                keys(&[OccKind::BibItem, OccKind::Cite])
-                    .into_iter()
-                    .map(|k| item(k, CompletionItemKind::REFERENCE, None, 0)),
-            ),
+            OccKind::Cite => {
+                // The databases' entries, found by key, title, author or
+                // year; then keys a `\bibitem` or another citation gave.
+                let entries = bib_entries(analysis);
+                out.extend(entries.iter().map(|e| {
+                    let who = e.author.split(" and ").next().unwrap_or_default();
+                    let surname = who.split(',').next().unwrap_or(who).split_whitespace().last().unwrap_or_default();
+                    let detail = match (surname, e.year.as_str()) {
+                        ("", "") => e.kind.clone(),
+                        (s, "") => s.to_string(),
+                        ("", y) => y.to_string(),
+                        (s, y) => format!("{s} ({y})"),
+                    };
+                    CompletionItem {
+                        filter_text: Some(format!("{} {} {} {}", e.key, e.title, e.author, e.year)),
+                        documentation: (!e.title.is_empty())
+                            .then(|| lsp_types::Documentation::String(format!("{}\n{} {}", e.title, e.author, e.year))),
+                        ..item(e.key.clone(), CompletionItemKind::REFERENCE, Some(detail), 0)
+                    }
+                }));
+                let known: BTreeSet<&str> = entries.iter().map(|e| e.key.as_str()).collect();
+                out.extend(
+                    keys(&[OccKind::BibItem, OccKind::Cite])
+                        .into_iter()
+                        .filter(|k| !known.contains(k.as_str()))
+                        .map(|k| item(k, CompletionItemKind::REFERENCE, None, 1)),
+                );
+            }
             OccKind::Graphics => {
                 let exts: BTreeSet<String> =
                     keys(&[OccKind::Graphics]).iter().filter_map(|k| Some(k.rsplit_once('.')?.1.to_string())).collect();
