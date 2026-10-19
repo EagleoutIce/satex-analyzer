@@ -531,3 +531,12 @@ fn notecolumn_clear_loop_paths_do_not_grow_with_notes() {
         few.peak_paths
     );
 }
+
+/// ba: a float with a minipage caption in one `\include`d part, hyperref
+/// loaded: the output routine the part's `\clearpage` runs places the float,
+/// and the next part is still read (pdflatex reads both).
+#[test]
+fn include_after_a_float_with_hyperref_reads_the_next_part() {
+    let Some(a) = check("include_after_float_with_hyperref", "main.tex", &[]) else { return };
+    assert!(crate::support::defined(&a, "ReadB"), "the second part was not read");
+}

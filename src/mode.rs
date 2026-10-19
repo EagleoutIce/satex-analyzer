@@ -2269,8 +2269,7 @@ impl Machine<'_> {
                     }
                     let horizontal = self.list_kind() == Some(true);
                     // § 1110: an empty list leaves `tail` where it was.
-                    if state == BoxState::HBox
-                        && horizontal
+                    if (state == BoxState::HBox && horizontal || state == BoxState::VBox && !horizontal)
                         && solid != Some(0)
                         && let Some(n) = &mut self.natural
                     {
@@ -3218,7 +3217,13 @@ impl Machine<'_> {
         self.set_page_length(Dim::exact(0));
         let sym = self.intern("outputpenalty");
         self.env.set_value(sym, Value::Int(penalty), true);
+        // § 1017: the page up to the break, which stays behind it.
+        let before = match self.natural {
+            Some(n) if self.main_tail == Last::Penalty(penalty) => n.tail[1],
+            _ => Last::UNKNOWN,
+        };
         self.set_box(Some(255), BoxState::VBox, true, None);
+        self.set_box_last(Some(255), before);
         // § 1017: packed to the page goal, its depth at most `\maxdepth`.
         let dimen = |m: &mut Self, name: &str| {
             let sym = m.intern(name);
