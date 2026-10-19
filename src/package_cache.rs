@@ -1301,6 +1301,7 @@ impl Machine<'_> {
             page_grew: _,
             natural: _,
             main_tail: _,
+            main_depth: _,
             docstrip,
             pinned,
             within,
@@ -2180,6 +2181,7 @@ impl Machine<'_> {
         self.page_touched |= s.page_touched;
         // What the replayed code put on the main vertical list is not kept.
         self.main_tail = crate::mode::Last::UNKNOWN;
+        self.main_depth = crate::mode::Dim::ANY;
         let mut recent = before.recent_file_spans.clone();
         recent.extend(s.recent_file_spans.iter().map(|span| span_in(*span, site)));
         let excess = recent.len().saturating_sub(RECENT_FILE_SPANS);

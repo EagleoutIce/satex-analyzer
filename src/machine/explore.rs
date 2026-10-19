@@ -392,8 +392,12 @@ impl Machine<'_> {
             }
             let next = if finished { None } else { Some(self.explore(&mut paths, true)) };
             self.waiting = paths.parked.len() + paths.done.len();
-            if paths.parked.len() + 1 > self.out.peak_paths {
-                self.out.peak_paths = paths.parked.len() + 1;
+            let peak = match self.output_active {
+                true => &mut self.out.peak_output_paths,
+                false => &mut self.out.peak_paths,
+            };
+            if paths.parked.len() + 1 > *peak {
+                *peak = paths.parked.len() + 1;
                 if self.cfg.verbose >= 4 {
                     crate::progress::note!("satex: {} paths at {:?}", self.out.peak_paths, self.position_span());
                 }
@@ -2533,6 +2537,8 @@ impl Machine<'_> {
         x.page_grew |= y.page_grew;
         x.natural = crate::mode::join_natural(x.natural, y.natural);
         x.main_tail = x.main_tail.merge(y.main_tail);
+        x.main_depth =
+            crate::mode::Dim::range(x.main_depth.lo.min(y.main_depth.lo), x.main_depth.hi.max(y.main_depth.hi));
         x.wild.union(&y.wild);
         // What the scans in flight made: each is the common beginning and
         // end of both, and one token for either of what lies between.
