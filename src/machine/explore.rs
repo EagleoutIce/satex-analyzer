@@ -314,7 +314,10 @@ impl Machine<'_> {
         }
         let arm = self.script.get(i).copied().unwrap_or(0);
         self.out.heat(|h| &mut h.forks, span);
-        self.out.forks += 1;
+        match self.output_active {
+            true => self.out.output_forks += 1,
+            false => self.out.forks += 1,
+        }
         self.choices.push(Choice { span, by, arms, arm });
         Some(arm)
     }

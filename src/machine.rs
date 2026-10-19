@@ -376,8 +376,10 @@ pub struct Analysis {
     /// LaTeX's page code makes on a page satex does not know.
     pub peak_output_paths: usize,
     /// Undecided choices made, each replay of one included: the work of
-    /// the paths, which `steps` counts only in part.
+    /// the paths, which `steps` counts only in part. Those the output
+    /// routine makes on a page satex does not know are `output_forks`.
     pub forks: u64,
+    pub output_forks: u64,
     /// Where the run spent itself, counted only under `--stats`.
     pub hot: Option<Box<Hot>>,
     /// Slots the joins of paths compared: their work, which `steps` leaves out.
@@ -2029,6 +2031,7 @@ impl<'a> Machine<'a> {
                 peak_paths: 0,
                 peak_output_paths: 0,
                 forks: 0,
+                output_forks: 0,
                 hot: HOT.load(std::sync::atomic::Ordering::Relaxed).then(Default::default),
                 joined_slots: 0,
                 memory_reported: 0,
