@@ -528,8 +528,9 @@ pub struct Conventions {
     /// regexes on the name without its backslash. Internal names are left
     /// out of listings, completion and the public-name lints.
     pub internal: Vec<String>,
-    /// Commands whose next control sequence is the name they define, as
-    /// the package files on disk are read for what they define.
+    /// Commands besides those satex finds in the kernel whose next control
+    /// sequence is the name they define, as the package files on disk are
+    /// read for what they define.
     pub definers: Vec<String>,
 }
 
@@ -553,14 +554,7 @@ impl Conventions {
 
 impl Default for Conventions {
     fn default() -> Conventions {
-        let definers = "def gdef edef xdef let chardef mathchardef countdef dimendef skipdef toksdef newif \
-            newcount newdimen newskip newtoks newbox newlength newcommand renewcommand providecommand \
-            DeclareRobustCommand newrobustcmd renewrobustcmd providerobustcmd NewDocumentCommand \
-            RenewDocumentCommand ProvideDocumentCommand DeclareDocumentCommand NewExpandableDocumentCommand";
-        Conventions {
-            internal: vec!["@".into(), "^__".into(), "_.*:".into()],
-            definers: definers.split_whitespace().map(str::to_string).collect(),
-        }
+        Conventions { internal: vec!["@".into(), "^__".into(), "_.*:".into()], definers: Vec::new() }
     }
 }
 

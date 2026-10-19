@@ -174,6 +174,8 @@ pub struct FormatInfo {
     pub steps: u64,
     /// Why the kernel was built and not read from its cache, when it was.
     pub rebuilt: Option<String>,
+    /// The commands the kernel wrote its definitions with ([`crate::exports::written`]).
+    pub definers: Vec<String>,
 }
 
 impl FormatInfo {
@@ -2256,8 +2258,11 @@ impl<'a> Machine<'a> {
             return first;
         }
         let cache = cfg.cache.enabled.then(|| cfg.cache.dir.clone().or_else(format::default_cache_dir)).flatten();
-        let exports =
-            crate::exports::Exports::of(&first.distribution.roots, cache.as_deref(), &cfg.conventions.definers);
+        let exports = crate::exports::Exports::of(
+            &first.distribution.roots,
+            cache.as_deref(),
+            &crate::exports::definers(&first, &cfg.conventions.definers),
+        );
         for (file, _) in exports.providers(&names).into_iter().take(3) {
             let name = file.trim_end_matches(".sty").trim_end_matches(".cls").to_string();
             let mut with = cfg.clone();
@@ -2902,6 +2907,7 @@ impl<'a> Machine<'a> {
                     self.wild = cached.wild().clone();
                     // The cache carries what the kernel build diagnosed.
                     self.restore_format_diagnostics(&cached);
+                    let definers = cached.definers().to_vec();
                     let deltas = cached.install(&mut self.out.interner, &mut self.env);
                     self.catcodes = self.format_catcodes();
                     self.catcodes.apply(&deltas);
@@ -2925,6 +2931,7 @@ impl<'a> Machine<'a> {
                         lines: 0,
                         steps: 0,
                         rebuilt: None,
+                        definers,
                     });
                     return;
                 }
@@ -2975,6 +2982,12 @@ impl<'a> Machine<'a> {
             self.out.kernel_sites = seen.clone();
             seen.into_iter().map(|(sym, span)| (sym.0, span.file, span.line)).collect()
         };
+        let definers = {
+            let files = &self.out.files;
+            crate::exports::written(&self.out.facts.defs, &self.out.interner, |f| {
+                files.get(usize::from(f)).map(|f| f.path.clone())
+            })
+        };
         self.forget_facts();
         let preload_key = self.preload_key();
 
@@ -2991,6 +3004,7 @@ impl<'a> Machine<'a> {
             lines,
             steps: kernel_steps,
             rebuilt,
+            definers: definers.clone(),
         };
         if truncated {
             self.diagnose(
@@ -3044,7 +3058,7 @@ will look undefined",
             cacheable,
             &cache_dir,
             Format::capture(&source, &self.out.interner, &self.env, files, sites, &self.wild, &roots)
-                .map(|format| format.diagnosed(&self.out.facts.diagnostics, &self.gaps)),
+                .map(|format| format.diagnosed(&self.out.facts.diagnostics, &self.gaps).with_definers(definers)),
         ) {
             let stored = captured.store(
                 directory,

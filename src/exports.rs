@@ -20,6 +20,54 @@ pub struct Exports {
     loads: Vec<Vec<u32>>,
 }
 
+/// The commands whose next name is the one they define, as `defs` were
+/// written: the defined name standing right after the command
+/// (`\\newcommand{\\x}`, `\\cs_new:Npn \\x`) in at least half of its
+/// definitions. A command that defines a name it was not given there
+/// (`\\DeclareOption`, `\\@tfor`) is none. `path` gives a file's path, or
+/// none for a file not to look at.
+pub fn written(
+    defs: &[crate::facts::Definition],
+    interner: &crate::tex::Interner,
+    path: impl Fn(crate::tex::FileId) -> Option<String>,
+) -> Vec<String> {
+    let mut texts: HashMap<crate::tex::FileId, Option<String>> = HashMap::default();
+    let mut seen: HashMap<String, (u32, u32)> = HashMap::default();
+    for def in defs {
+        let file = def.span.file;
+        let text = texts.entry(file).or_insert_with(|| path(file).and_then(|p| std::fs::read_to_string(p).ok()));
+        let Some(line) = text.as_deref().and_then(|t| t.lines().nth(def.span.line.saturating_sub(1) as usize)) else {
+            continue;
+        };
+        let by = interner.name(def.by).to_string();
+        let before: String = line.chars().take(def.span.col.saturating_sub(1) as usize).collect();
+        let next = before.trim_end().trim_end_matches('{').trim_end().ends_with(&format!("\\{by}"));
+        let count = seen.entry(by).or_default();
+        count.0 += u32::from(next);
+        count.1 += 1;
+    }
+    let mut out: Vec<String> =
+        seen.into_iter().filter(|(_, (next, all))| *next > 0 && 2 * next >= *all).map(|(by, _)| by).collect();
+    out.sort();
+    out
+}
+
+/// The definers of a run: the kernel's, those its packages were written
+/// with, and `extra` from `conventions.definers`.
+pub fn definers(analysis: &crate::machine::Analysis, extra: &[String]) -> Vec<String> {
+    let path = |file: crate::tex::FileId| {
+        (crate::query::origin(analysis, file) != "document")
+            .then(|| analysis.files.get(usize::from(file)).map(|f| f.path.clone()))
+            .flatten()
+    };
+    let mut out = written(&analysis.facts.defs, &analysis.interner, path);
+    out.extend(analysis.format.iter().flat_map(|f| f.definers.iter().cloned()));
+    out.extend(extra.iter().cloned());
+    out.sort();
+    out.dedup();
+    out
+}
+
 impl Exports {
     /// The index for `roots`, cached while the trees are unchanged.
     pub fn of(roots: &[PathBuf], cache: Option<&Path>, definers: &[String]) -> Exports {
