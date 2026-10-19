@@ -6351,13 +6351,30 @@ will look undefined",
             if !self.env.close_since(at.1, at.2, &mut self.catcodes, &typed) {
                 break;
             }
-            if nest.is_some() {
-                self.natural = None;
-                self.group_closed(nest, span);
-            }
+            self.group_dropped(nest, span);
             groups += 1;
         }
         (groups, conds)
+    }
+
+    /// A group closed without its closer being read: it gives back the
+    /// modes around its list, whose contents are unknown (tex.web § 1085),
+    /// and an output routine ends with it, the rest of its list unread
+    /// (§ 1100).
+    pub(crate) fn group_dropped(&mut self, nest: Option<crate::mode::Nest>, span: Span) {
+        let output = nest.as_ref().is_some_and(|n| n.code == Some(crate::mode::group::OUTPUT));
+        if nest.is_some() {
+            self.natural = None;
+            self.group_closed(nest, span);
+        }
+        if output {
+            let sym = self.intern("output");
+            let list =
+                self.input.iter().rposition(|f| matches!(f, Frame::Tokens { expanding: Some(s), .. } if *s == sym));
+            while list.is_some_and(|i| self.input.len() > i) {
+                self.pop_frame();
+            }
+        }
     }
 
     /// A scan begins: where the input stands, read levels not counted.
@@ -7784,6 +7801,21 @@ will look undefined",
             .get(&(span, sym))
             .filter(|site| site.progress == self.site_progress())
             .map_or(0, |site| site.repeats);
+        // One call site open more than `recursion_depth` times at once on a
+        // path that approximated: a recursion over unknown values that nests
+        // rather than reads on, which no round ends. On known values it runs
+        // as TeX runs it.
+        let rounds = usize::from(self.limits.recursion_depth);
+        if usize::from(depth) > rounds && self.approximated {
+            let graph = &self.out.graph;
+            let here =
+                self.within.iter().filter(|(s, n)| *s == sym && graph.vertex(*n).is_some_and(|v| v.span == span));
+            let nested = here.count();
+            if nested > rounds {
+                self.cut_call(sym, span, "recursion_depth", true, format!("open {nested} times at this call"));
+                return;
+            }
+        }
         if depth >= self.limits.expansion_depth || site > self.limits.site_expansions {
             let key = if depth >= self.limits.expansion_depth { "expansion_depth" } else { "site_expansions" };
             let nested = depth >= self.limits.expansion_depth;
