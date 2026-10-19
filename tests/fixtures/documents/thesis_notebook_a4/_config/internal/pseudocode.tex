@@ -1,0 +1,58 @@
+\makeatletter
+\PassOptionsToPackage{vlined,algochapter,tworuled,linesnumbered}{algorithm2e}
+\RequirePackage{algorithm2e}
+\RequirePackage{float}
+\RequirePackage{newfloat}
+
+\DeclareFloatingEnvironment[
+    fileext=lop,
+    listname=List of Algorithms,
+    name=Algorithm,
+    placement=tp,
+]{pseudo}
+
+\ifthesis@pageInFloatRef
+\InitPageCounter{pseudo}
+\def\thesissetalg{\CountThisPage{pseudo}{c@pseudo@lb}}
+\def\thepseudo{\@formatcounter p{\c@pseudo@lb}}
+\appto\makelongrefs{%
+   \def\thepseudo{Algorithm~\@formatcounter p{\c@pseudo@lb}}%
+}
+\AtBeginEnvironment{pseudo}{\HookCustomEnvCount{lop}{\thesissetalg}}
+\fi
+% \AddToHook{shipout/after}{\global\c@pseudo@lb0}
+
+\algoheightrule=1.15\p@ \algotitleheightrule=.8\p@
+\let\Comment\tcp
+\SetKwComment{tcp}{\#~}{}
+\long\def\@thesis@algo@cmtfrmt#1{{\color{gray!90!black}\footnotesize\sffamily#1}}
+\SetCommentSty{@thesis@algo@cmtfrmt}
+\SetNoFillComment \algoskipindent.5em
+\def\thesisalgoindent{1.75em}%
+\SetKwSty{textbf}
+\def\PreCode{\Indm}\def\StartCode{\Indp\vspace*{-\parskip}\par}\def\EndCode{\Indm}
+\SetKw{KwOr}{or}\SetKw{KwAnd}{and}\SetKw{KwIs}{is}
+\SetKw{KwBreak}{break}\SetKw{KwContinue}{continue}\SetKw{KwNot}{not}\SetKw{KwStep}{step}
+\def\@thesis@algo@def@style{\rmfamily\upshape}
+\def\@thesisalgo@init{%
+  \IncMargin{\thesisalgoindent}\def\Int{{\@thesis@algo@def@style int}}\def\Matrix{{\@thesis@algo@def@style 2DMatrix}}\def\True{{\@thesis@algo@def@style true}}\def\False{{\@thesis@algo@def@style false}}%
+}
+\def\@thesisalgo@exit{\DecMargin{\thesisalgoindent}}
+\preto\algocf@algorithm{\@thesisalgo@init}
+\preto\endalgocf@algorithm{\@thesisalgo@exit}
+\SetKwFor{ForAll}{for all}{do}{endfa}
+
+\SetAlFnt{\small}
+\DontPrintSemicolon
+
+\appto\captionsngerman{\def\pseudoname{Algorithmus}\def\pseudoautorefname{\pseudoname}}
+\appto\captionsenglish{\def\pseudoname{Algorithm}\def\pseudoautorefname{\pseudoname}}
+\crefname{pseudo}{Alg.}{Alg.}
+
+% i do not like InOut
+\SetKwInput{Input}{In}
+\SetKwInput{Output}{Out}
+\SetArgSty{}
+\SetAlgoHangIndent{2.5em}
+
+\newcommand*\AlgoLineRef[2][line]{#1~\thesis@disablehyper{\ref{#2}}}

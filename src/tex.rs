@@ -1,7 +1,7 @@
 //! Concrete TeX object model: category codes, tokens, the mouth, and meanings.
 //! References: The TeXbook, tex.web, xparse, ltcmd.
 
-use std::collections::HashMap;
+use crate::fixed::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
@@ -14,20 +14,20 @@ pub type FileId = u16;
 /// A position in a source file: which [`FileId`], which line, which column.
 /// Every [`Token`] carries one, and it is what every fact and diagnostic
 /// points back to.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, PartialOrd, Ord)]
 pub struct Span {
     pub file: FileId,
     pub line: u32,
     pub col: u32,
 }
 
-/// How a [`Span`] and a [`Sym`] are written by serde.  Without a
+/// How a [`Span`] and a [`Sym`] are written by serde. Without a
 /// [`codec::Mode`] in force they are written as they are; a package cache
 /// writes them against its own name and file tables instead, so that it can
 /// be installed into a run that numbers names and files differently.
 pub mod codec {
+    use crate::fixed::HashMap;
     use std::cell::RefCell;
-    use std::collections::HashMap;
     use std::rc::Rc;
 
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -170,7 +170,7 @@ impl fmt::Display for Span {
 pub struct Sym(pub u32);
 
 /// Active characters have their own region of the meaning table (tex.web
-/// § 344), so `~` and `\~` never share a meaning.  satex keeps that region
+/// § 344), so `~` and `\~` never share a meaning. satex keeps that region
 /// under a prefix that cannot be written in a source file.
 pub const ACTIVE: char = '\u{1}';
 
@@ -178,35 +178,246 @@ pub const ACTIVE: char = '\u{1}';
 /// unknown `\the\count0`: U+10FFFF is a noncharacter no document spells.
 pub const UNKNOWN_CHAR: char = '\u{10FFFF}';
 
+/// The name of the token that stands for text satex cannot know
+/// ([`Machine::unknown`](crate::machine::Machine)): no file can spell it
+/// with the catcodes a run starts with.
+pub const UNKNOWN_CS: &str = "\u{2}unknown:";
+
 /// One digit, `0` to `9`, of an unknown number: what taking one token
 /// from unknown digits yields (a character of category 12, tex.web § 465).
 pub const UNKNOWN_DIGIT: char = '\u{10FFFE}';
 
-/// Whether character codes `a` and `b` may be equal when one is
-/// [`UNKNOWN_CHAR`] (the digits of a number, its sign, or a roman numeral)
-/// or [`UNKNOWN_DIGIT`] (one digit).
-pub fn may_equal_unknown_char(a: u32, b: u32) -> bool {
-    let unknown = UNKNOWN_CHAR as u32;
-    let one = UNKNOWN_DIGIT as u32;
-    if a == one || b == one {
-        let other = if a == one { b } else { a };
-        return other == one || other == unknown || char::from_u32(other).is_some_and(|c| c.is_ascii_digit());
+/// One digit, `1` to `9`, of an unknown number: the first of a spelling
+/// that `\the` and `\number` print, which never has a leading zero
+/// (tex.web §§ 103, 104).
+pub const UNKNOWN_NONZERO: char = '\u{10FFFB}';
+
+/// Any one character: what `\lowercase` makes of a character whose code
+/// is not known, its category kept.
+pub const UNKNOWN_ANY: char = '\u{10FFFA}';
+
+/// One letter (category 11) of unknown text.
+pub const UNKNOWN_LETTER: char = '\u{10FFFD}';
+
+/// One character of category 12 of unknown text, not known to be a digit.
+pub const UNKNOWN_OTHER: char = '\u{10FFFC}';
+
+/// Whether `c` is one character of unknown text.
+pub fn is_unknown_char(c: char) -> bool {
+    matches!(c, UNKNOWN_CHAR | UNKNOWN_DIGIT | UNKNOWN_NONZERO | UNKNOWN_LETTER | UNKNOWN_OTHER | UNKNOWN_ANY)
+}
+
+/// Whether `c` is one unknown digit.
+pub fn is_unknown_digit(c: char) -> bool {
+    matches!(c, UNKNOWN_DIGIT | UNKNOWN_NONZERO)
+}
+
+/// The characters an unknown character of a number may be.
+pub fn unknown_number_chars(c: char) -> Option<&'static str> {
+    match c {
+        UNKNOWN_DIGIT => Some("0123456789"),
+        UNKNOWN_NONZERO => Some("123456789"),
+        UNKNOWN_CHAR => Some("0123456789-"),
+        _ => None,
     }
-    let digit =
-        |c: u32| c == unknown || char::from_u32(c).is_some_and(|c| c.is_ascii_digit() || "-ivxlcdm".contains(c));
-    (a == unknown || b == unknown) && digit(a) && digit(b)
+}
+
+/// Whether character codes `a` and `b` may be equal when one is
+/// [`UNKNOWN_CHAR`] (the digits of a number or its sign),
+/// [`UNKNOWN_DIGIT`] (one digit), [`UNKNOWN_NONZERO`] (one digit but `0`),
+/// [`UNKNOWN_LETTER`] or [`UNKNOWN_OTHER`].
+pub fn may_equal_unknown_char(a: u32, b: u32) -> bool {
+    let (letter, other) = (UNKNOWN_LETTER as u32, UNKNOWN_OTHER as u32);
+    if a == UNKNOWN_ANY as u32 || b == UNKNOWN_ANY as u32 {
+        return true;
+    }
+    let is = |c: u32, f: fn(char) -> bool| char::from_u32(c).is_some_and(f);
+    // What each unknown character may be, the unknown ones included.
+    let may_be = |c: u32, f: fn(char) -> bool| is(c, is_unknown_char) || is(c, f);
+    if a == letter || b == letter {
+        let x = if a == letter { b } else { a };
+        return may_be(x, char::is_alphabetic);
+    }
+    if a == other || b == other {
+        let x = if a == other { b } else { a };
+        return may_be(x, |c| !c.is_alphabetic());
+    }
+    // Otherwise the characters of a number each may be meet.
+    let (Some(x), Some(y)) = (char::from_u32(a), char::from_u32(b)) else { return false };
+    match (unknown_number_chars(x), unknown_number_chars(y)) {
+        (Some(xs), Some(ys)) => xs.chars().any(|c| ys.contains(c)),
+        (Some(xs), None) => xs.contains(y),
+        (None, Some(ys)) => ys.contains(x),
+        (None, None) => false,
+    }
+}
+
+/// What unknown text may hold: a set of token classes, ordered by
+/// inclusion. Digits ⊑ a number (sign, point) ⊑ a dimension (unit letters)
+/// ⊑ balanced text without control sequences ⊑ any text.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub struct TextClass(pub u8);
+
+impl TextClass {
+    pub const EMPTY: Self = Self(0);
+    /// `0`–`9` of category 12.
+    pub const DIGIT: Self = Self(1);
+    /// `+`, `-`, `.` and `,` of category 12.
+    pub const SIGN: Self = Self(2);
+    /// Category 11.
+    pub const LETTER: Self = Self(4);
+    /// Any other character of category 12, or of another character
+    /// category that does not open a group.
+    pub const OTHER: Self = Self(8);
+    pub const SPACE: Self = Self(16);
+    /// Balanced braces.
+    pub const BRACE: Self = Self(32);
+    /// Control sequences, and so anything.
+    pub const CS: Self = Self(64);
+    /// What nothing known types to: characters neither active nor braces.
+    pub const WIDE: Self = Self(Self::PRINTED.0 | Self::LETTER.0);
+    pub const NUMBER: Self = Self(Self::DIGIT.0 | Self::SIGN.0);
+    /// What `\string`, `\meaning` and `\detokenize` print: characters of
+    /// category 12 and spaces (tex.web § 464).
+    pub const PRINTED: Self = Self(Self::NUMBER.0 | Self::OTHER.0 | Self::SPACE.0);
+    pub const ANY: Self = Self(127);
+    /// The one-letter spellings of the classes, in bit order: how a typed
+    /// token names its class.
+    const LETTERS: [char; 7] = ['d', 's', 'l', 'o', '_', 'b', 'c'];
+
+    /// What `\detokenize` makes of text of this class: letters and
+    /// braces become category 12, a name its characters and perhaps a
+    /// space (tex.web § 262, § 464).
+    pub fn printed(self) -> Self {
+        let mut c = self.0 & Self::PRINTED.0;
+        if self.meets(Self(Self::LETTER.0 | Self::BRACE.0)) {
+            c |= Self::OTHER.0;
+        }
+        if self.meets(Self::CS) {
+            c |= Self::PRINTED.0;
+        }
+        Self(c)
+    }
+
+    pub fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    pub fn meets(self, other: Self) -> bool {
+        self.0 & other.0 != 0
+    }
+
+    /// The class of one token that is known, or an unknown character.
+    pub fn of(tok: Tok) -> Self {
+        match tok {
+            Tok::Chr(c, Catcode::Other) if c.is_ascii_digit() || is_unknown_digit(c) => Self::DIGIT,
+            Tok::Chr(c, Catcode::Other) if "+-.,".contains(c) => Self::SIGN,
+            Tok::Chr(c, Catcode::Other) if c == UNKNOWN_CHAR => Self::NUMBER,
+            Tok::Chr(_, Catcode::Letter) => Self::LETTER,
+            Tok::Chr(_, Catcode::Space) => Self::SPACE,
+            Tok::Chr(_, Catcode::Begin | Catcode::End) => Self::BRACE,
+            Tok::Chr(_, Catcode::Active | Catcode::Param) => Self::CS,
+            Tok::Chr(..) => Self::OTHER,
+            _ => Self::CS,
+        }
+    }
+
+    /// Whether text of this class may hold `tok`.
+    pub fn holds(self, tok: Tok) -> bool {
+        self.meets(Self::of(tok))
+    }
+
+    /// The class as its letters.
+    pub fn spell(self) -> String {
+        Self::LETTERS.iter().enumerate().filter(|(i, _)| self.0 & (1 << i) != 0).map(|(_, c)| *c).collect()
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        let mut class = Self::EMPTY;
+        for c in text.chars() {
+            class.0 |= 1 << Self::LETTERS.iter().position(|l| *l == c)?;
+        }
+        Some(class)
+    }
+
+    /// One character of this class, when every character it may hold has
+    /// the same category: what taking one token from such text yields.
+    pub fn one_char(self) -> Option<Tok> {
+        if self == Self::EMPTY || self.meets(Self(Self::SPACE.0 | Self::BRACE.0 | Self::CS.0)) {
+            return None;
+        }
+        Some(match self {
+            Self::DIGIT => Tok::Chr(UNKNOWN_DIGIT, Catcode::Other),
+            c if Self::NUMBER.contains(c) => Tok::Chr(UNKNOWN_CHAR, Catcode::Other),
+            Self::LETTER => Tok::Chr(UNKNOWN_LETTER, Catcode::Letter),
+            c if c.meets(Self::LETTER) => return None,
+            _ => Tok::Chr(UNKNOWN_OTHER, Catcode::Other),
+        })
+    }
+}
+
+/// Hashes names for the interner: fast, as the table is never iterated.
+#[derive(Default, Clone, Copy)]
+pub struct NameHash;
+
+pub struct NameHasher(u64);
+
+impl std::hash::BuildHasher for NameHash {
+    type Hasher = NameHasher;
+    fn build_hasher(&self) -> NameHasher {
+        NameHasher(0)
+    }
+}
+
+impl std::hash::Hasher for NameHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        const K: u64 = 0x517c_c1b7_2722_0a95;
+        let (chunks, remainder) = bytes.as_chunks::<8>();
+        for &c in chunks {
+            self.0 = (self.0.rotate_left(5) ^ u64::from_le_bytes(c)).wrapping_mul(K);
+        }
+        let mut tail = 0u64;
+        for &b in remainder {
+            tail = tail << 8 | u64::from(b);
+        }
+        self.0 = (self.0.rotate_left(5) ^ tail).wrapping_mul(K);
+    }
+    fn write_u64(&mut self, w: u64) {
+        self.0 = (self.0.rotate_left(5) ^ w).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+    fn write_u8(&mut self, w: u8) {
+        self.write_u64(u64::from(w));
+    }
+    fn write_u32(&mut self, w: u32) {
+        self.write_u64(u64::from(w));
+    }
+    fn write_usize(&mut self, w: usize) {
+        self.write_u64(w as u64);
+    }
+    fn write_isize(&mut self, w: isize) {
+        self.write_u64(w as u64);
+    }
+    fn finish(&self) -> u64 {
+        self.0 ^ (self.0 >> 29)
+    }
 }
 
 /// The table of control sequence names: every [`Sym`] is an index into it,
 /// and [`Token`] carries the [`Sym`] rather than the text.
 #[derive(Default, Clone)]
 pub struct Interner {
-    map: HashMap<Rc<str>, Sym>,
+    map: std::collections::HashMap<Rc<str>, Sym, NameHash>,
     names: Vec<Rc<str>>,
     /// While a package cache is being captured: every name asked for, in the
     /// order it was first asked for, which is the order a run that does not
     /// have them yet would number them in.
     touched: Option<(Vec<u64>, Vec<Sym>)>,
+    /// Numbered register names already interned, so a hot read formats none.
+    registers: std::collections::HashMap<(&'static str, i64), Sym, NameHash>,
 }
 
 impl Interner {
@@ -214,6 +425,8 @@ impl Interner {
     /// against it stay valid.
     pub fn from_names(names: Vec<String>) -> Interner {
         let mut interner = Interner::default();
+        interner.map.reserve(names.len());
+        interner.names.reserve(names.len());
         for name in names {
             interner.intern(&name);
         }
@@ -231,6 +444,25 @@ impl Interner {
                 sym
             }
         };
+        self.touch(sym);
+        sym
+    }
+
+    /// The name of a numbered register: `prefix`, `kind`, then `index`.
+    pub fn register(&mut self, prefix: char, kind: &'static str, index: i64) -> Sym {
+        let sym = match self.registers.get(&(kind, index)) {
+            Some(&sym) => sym,
+            None => {
+                let sym = self.intern(&format!("{prefix}{kind}{index}"));
+                self.registers.insert((kind, index), sym);
+                sym
+            }
+        };
+        self.touch(sym);
+        sym
+    }
+
+    fn touch(&mut self, sym: Sym) {
         if let Some((seen, order)) = &mut self.touched {
             let word = sym.0 as usize / 64;
             if seen.len() <= word {
@@ -241,7 +473,6 @@ impl Interner {
                 order.push(sym);
             }
         }
-        sym
     }
 
     /// The names asked for so far while recording, in order.
@@ -318,27 +549,13 @@ pub enum Catcode {
 }
 
 impl Catcode {
-    pub fn from_u8(n: u8) -> Option<Catcode> {
+    const BY_CODE: [Catcode; 16] = {
         use Catcode::*;
-        Some(match n {
-            0 => Escape,
-            1 => Begin,
-            2 => End,
-            3 => Math,
-            4 => Tab,
-            5 => Eol,
-            6 => Param,
-            7 => Sup,
-            8 => Sub,
-            9 => Ignored,
-            10 => Space,
-            11 => Letter,
-            12 => Other,
-            13 => Active,
-            14 => Comment,
-            15 => Invalid,
-            _ => return None,
-        })
+        [Escape, Begin, End, Math, Tab, Eol, Param, Sup, Sub, Ignored, Space, Letter, Other, Active, Comment, Invalid]
+    };
+
+    pub fn from_u8(n: u8) -> Option<Catcode> {
+        Self::BY_CODE.get(n as usize).copied()
     }
 }
 
@@ -355,6 +572,20 @@ pub struct CatcodeTable {
     /// A character past 255 not in `wide`: 12 in INITEX, 11 once a format
     /// has classified the letters.
     wide_default: Catcode,
+    /// Characters whose category satex could not pin down, each with the
+    /// categories it may have, one bit each (all for the top of the
+    /// lattice). tex.web has no such state. [`CatcodeTable::get`] still
+    /// answers with the last one known, a guess no reader may trust
+    /// without asking [`CatcodeTable::is_unknown`] first.
+    unknown: Rc<std::collections::BTreeMap<char, u16>>,
+    /// The hull of the character codes a `\catcode` through a number satex
+    /// could not pin down may have named: those categories are unknown but
+    /// the ones assigned since, which `known` holds.
+    reach: Option<(u32, u32)>,
+    /// The categories those writes may have stored, one bit each: a character
+    /// in reach is its last known category or one of these.
+    reach_cats: u16,
+    known: Rc<std::collections::BTreeSet<char>>,
 }
 
 impl PartialEq for CatcodeTable {
@@ -362,6 +593,10 @@ impl PartialEq for CatcodeTable {
         self.ascii == other.ascii
             && self.wide_default == other.wide_default
             && (Rc::ptr_eq(&self.wide, &other.wide) || self.wide == other.wide)
+            && (Rc::ptr_eq(&self.unknown, &other.unknown) || self.unknown == other.unknown)
+            && self.reach == other.reach
+            && self.reach_cats == other.reach_cats
+            && (Rc::ptr_eq(&self.known, &other.known) || self.known == other.known)
     }
 }
 
@@ -385,7 +620,15 @@ impl CatcodeTable {
         ascii[b'\r' as usize] = Catcode::Eol;
         ascii[b' ' as usize] = Catcode::Space;
         ascii[0x7f] = Catcode::Invalid;
-        Self { ascii, wide: Rc::default(), wide_default: Catcode::Other }
+        Self {
+            ascii,
+            wide: Rc::default(),
+            wide_default: Catcode::Other,
+            unknown: Rc::default(),
+            reach: None,
+            reach_cats: 0,
+            known: Rc::default(),
+        }
     }
 
     /// INITEX defaults plus the assignments `latex.ltx` makes.
@@ -417,10 +660,82 @@ impl CatcodeTable {
         let n = c as u32;
         if n < 256 {
             self.ascii[n as usize] = cat;
-        } else {
-            if self.wide.get(&c) != Some(&cat) {
-                Rc::make_mut(&mut self.wide).insert(c, cat);
-            }
+        } else if self.wide.get(&c) != Some(&cat) {
+            Rc::make_mut(&mut self.wide).insert(c, cat);
+        }
+        // An assignment satex could follow makes the category known again.
+        if self.unknown.contains_key(&c) {
+            Rc::make_mut(&mut self.unknown).remove(&c);
+        }
+        if self.reaches(c) && !self.known.contains(&c) {
+            Rc::make_mut(&mut self.known).insert(c);
+        }
+    }
+
+    /// Whether the category of `c` is not known: [`CatcodeTable::get`]'s
+    /// answer for it is a guess, and everything that dispatches on it must
+    /// widen instead.
+    #[inline]
+    pub fn is_unknown(&self, c: char) -> bool {
+        self.may(c) != 0
+    }
+
+    /// The categories `c` may have, one bit each.
+    pub fn cats(&self, c: char) -> u16 {
+        match self.may(c) {
+            0 => 1 << self.get(c) as u8,
+            may => may,
+        }
+    }
+
+    /// [`CatcodeTable::cats`] where more than one, else 0: what the save
+    /// stack keeps beside the category.
+    pub fn may(&self, c: char) -> u16 {
+        let reach = self.reaches(c) && !self.known.contains(&c);
+        let own = self.unknown.get(&c).copied().unwrap_or(1 << self.get(c) as u8);
+        let cats = if reach { own | self.reach_cats } else { own };
+        if cats.count_ones() > 1 { cats } else { 0 }
+    }
+
+    /// `\catcode` was given a number satex does not know: the character's
+    /// category is anything from here on.
+    pub fn set_unknown(&mut self, c: char) {
+        self.set_may(c, u16::MAX);
+    }
+
+    /// The character's category is one of `cats`, one bit each.
+    pub fn set_may(&mut self, c: char, cats: u16) {
+        if let Some(cat) = (cats.count_ones() == 1).then(|| Catcode::from_u8(cats.trailing_zeros() as u8)).flatten() {
+            return self.set(c, cat);
+        }
+        Rc::make_mut(&mut self.unknown).insert(c, cats);
+        if self.known.contains(&c) {
+            Rc::make_mut(&mut self.known).remove(&c);
+        }
+    }
+
+    /// `\catcode` assigned one of `cats` (one bit per category) through a
+    /// character number satex could not pin down (tex.web § 1232): each
+    /// character in `lo..=hi` is its old category or one of `cats`.
+    pub fn set_reach(&mut self, lo: u32, hi: u32, cats: u16) {
+        let reach = self.reach.map_or((lo, hi), |(a, b)| (a.min(lo), b.max(hi)));
+        self.reach = Some(reach);
+        self.reach_cats |= cats;
+        let known: std::collections::BTreeSet<char> =
+            self.known.iter().copied().filter(|&c| !(lo..=hi).contains(&(c as u32))).collect();
+        self.known = Rc::new(known);
+    }
+
+    fn reaches(&self, c: char) -> bool {
+        self.reach.is_some_and(|(lo, hi)| (lo..=hi).contains(&(c as u32)))
+    }
+
+    /// Put back what [`Env`](crate::env::Env)'s save stack saved: `may` as
+    /// [`CatcodeTable::may`] gave it.
+    pub fn restore(&mut self, c: char, cat: Catcode, may: u16) {
+        self.set(c, cat);
+        if may != 0 {
+            self.set_may(c, may);
         }
     }
 
@@ -439,6 +754,76 @@ impl CatcodeTable {
             }
         }
         out
+    }
+
+    /// Whether the two tables say different things about `c`.
+    fn differs(&self, other: &CatcodeTable, c: char) -> bool {
+        self.cats(c) != other.cats(c)
+    }
+
+    /// The characters the two tables do not agree about: over the category
+    /// lattice of tex.web § 232 the join knows one only where both sides
+    /// know it and name the same one.
+    pub fn disagreements(&self, other: &CatcodeTable) -> Vec<char> {
+        let mut out = Vec::new();
+        for code in 0..256u32 {
+            let c = char::from_u32(code).expect("below the surrogates");
+            if self.differs(other, c) {
+                out.push(c);
+            }
+        }
+        // The wide characters two tables may part about: those either one
+        // gave a category or marked, the rest being the shared default.
+        let marked = [&self.known, &other.known];
+        let mut wide: std::collections::BTreeSet<char> = marked
+            .iter()
+            .flat_map(|set| set.iter().copied())
+            .chain(self.unknown.keys().chain(other.unknown.keys()).copied())
+            .filter(|c| *c as u32 >= 256)
+            .collect();
+        if !Rc::ptr_eq(&self.wide, &other.wide) {
+            wide.extend(self.wide.keys().chain(other.wide.keys()).copied());
+        }
+        for c in wide {
+            if self.differs(other, c) {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// Widen this table to cover `other` as well: the reach is the hull of
+    /// both (widened, a bound that moved goes to the end of the codes), and
+    /// a character in it is still known only where both sides know it and
+    /// name the same category.
+    fn join_reach(&mut self, other: &CatcodeTable, widen: bool) {
+        let Some((lo, hi)) = other.reach else { return };
+        let reach = match self.reach {
+            None => (lo, hi),
+            Some((a, b)) if widen => (if lo < a { 0 } else { a }, if hi > b { char::MAX as u32 } else { b }),
+            Some((a, b)) => (a.min(lo), b.max(hi)),
+        };
+        let candidates: Vec<char> = self.known.union(&other.known).copied().collect();
+        let known: std::collections::BTreeSet<char> = candidates
+            .into_iter()
+            .filter(|c| !self.is_unknown(*c) && !other.is_unknown(*c) && self.get(*c) == other.get(*c))
+            .collect();
+        self.reach = Some(reach);
+        self.reach_cats |= other.reach_cats;
+        self.known = Rc::new(known);
+    }
+
+    /// The join of the two tables over the category lattice, written here.
+    pub fn join(&mut self, other: &CatcodeTable) {
+        self.join_widen(other, false);
+    }
+
+    /// [`CatcodeTable::join`], widening the reach of unpinned writes.
+    pub fn join_widen(&mut self, other: &CatcodeTable, widen: bool) {
+        self.join_reach(other, widen);
+        for c in self.disagreements(other) {
+            self.set_may(c, self.cats(c) | other.cats(c));
+        }
     }
 
     pub fn apply(&mut self, deltas: &[(char, u8)]) {
@@ -461,6 +846,17 @@ pub enum Tok {
     Cs(Sym),
     Chr(char, Catcode),
     Param(u8),
+}
+
+impl Tok {
+    /// The token as one word, for hashing many fast.
+    pub fn word(self) -> u64 {
+        match self {
+            Tok::Cs(sym) => u64::from(sym.0),
+            Tok::Chr(c, cat) => 1 << 62 | u64::from(c) << 8 | cat as u64,
+            Tok::Param(n) => 2 << 62 | u64::from(n),
+        }
+    }
 }
 
 /// One token as the [`Mouth`] produces it: a [`Tok`] paired with the [`Span`]
@@ -508,39 +904,102 @@ impl Token {
     }
 }
 
+/// A token list as satex shows it: on the terminal (tex.web § 59).
 pub fn detokenize(toks: &[Token], it: &Interner) -> String {
-    detokenize_escaped(toks, it, Some('\\'))
+    detokenize_by(toks, it, Some('\\'), &|c: char| c.is_alphabetic(), Selector::File { newline: None })
 }
 
-/// [`detokenize`] under an `\escapechar`: `None` when it names no
-/// character, and then no escape is printed (tex.web § 63, `print_esc`).
-pub fn detokenize_escaped(toks: &[Token], it: &Interner, escape: Option<char>) -> String {
-    detokenize_by(toks, it, escape, &|c: char| c.is_alphabetic())
+/// A name satex made for its own bookkeeping rather than one a document
+/// wrote: a register, a code table entry or a marker for something unknown.
+/// They start with a character no control sequence name can.
+fn is_internal(name: &str) -> bool {
+    matches!(name.chars().next(), Some('\u{1}'..='\u{8}'))
 }
 
-/// [`detokenize_escaped`] as the engine prints it: whether a one-character
-/// control sequence gets a space after it depends on that character's
-/// category code now (tex.web § 262), so `\_ ` under expl3's catcodes.
-pub fn detokenize_in(toks: &[Token], it: &Interner, escape: Option<char>, cats: &CatcodeTable) -> String {
-    detokenize_by(toks, it, escape, &|c| cats.get(c) == Catcode::Letter)
+/// tex.web § 49: whether the engine can show a character as itself, which
+/// is `' '` through `'~'`. A Unicode engine shows anything past 255 too.
+pub fn is_printable(c: char) -> bool {
+    let k = c as u32;
+    (0x20..=0x7e).contains(&k) || k > 0xff
 }
 
-fn detokenize_by(toks: &[Token], it: &Interner, escape: Option<char>, letter: &dyn Fn(char) -> bool) -> String {
+/// tex.web § 49: a character the engine cannot show prints as `^^X`, with
+/// `X` the character 64 above it below `@` and 64 below it above, and as
+/// `^^` with two lowercase hex digits from 128 up.
+pub fn printable(c: char) -> String {
+    let k = c as u32;
+    if is_printable(c) {
+        c.to_string()
+    } else if k < 0x40 {
+        format!("^^{}", char::from(k as u8 + 0x40))
+    } else if k < 0x80 {
+        format!("^^{}", char::from(k as u8 - 0x40))
+    } else {
+        format!("^^{k:02x}")
+    }
+}
+
+/// A token list as LuaTeX hands it to Lua (`\directlua`, `\luaescapestring`):
+/// every character as itself, never as `^^X` (probed: `a^^Jb` arrives as
+/// the bytes 97, 10, 98).
+pub fn lua_string(toks: &[Token], it: &Interner) -> String {
+    detokenize_by(toks, it, Some('\\'), &|c: char| c.is_alphabetic(), Selector::NewString)
+}
+
+/// Where tex.web § 59 `print` sends text.
+#[derive(Clone, Copy)]
+pub enum Selector {
+    /// A string (`\detokenize`, `\meaning`, `\scantokens`): every
+    /// character as itself.
+    NewString,
+    /// A file or the terminal: `^^X` for what the engine cannot show, and a
+    /// line break at `\newlinechar`, tested before that conversion.
+    File { newline: Option<char> },
+}
+
+/// A token list as the engine prints it (tex.web § 292 `show_token_list`),
+/// with `\escapechar` `escape` (§ 63; `None` prints none). A one-character control sequence gets a space after it when that
+/// character's category is letter now (§ 262), so `\_ ` under expl3's catcodes.
+pub fn detokenize_in(toks: &[Token], it: &Interner, escape: Option<char>, cats: &CatcodeTable, to: Selector) -> String {
+    detokenize_by(toks, it, escape, &|c| cats.get(c) == Catcode::Letter, to)
+}
+
+fn detokenize_by(
+    toks: &[Token],
+    it: &Interner,
+    escape: Option<char>,
+    letter: &dyn Fn(char) -> bool,
+    to: Selector,
+) -> String {
     let mut out = String::new();
+    // tex.web § 59: a string takes each character as it is; a file breaks
+    // the line at `\newlinechar`, else shows what it cannot as `^^X` (§ 49).
+    let put = |out: &mut String, c: char| match to {
+        Selector::File { newline } if newline == Some(c) => out.push('\n'),
+        Selector::File { .. } if !is_printable(c) => out.push_str(&printable(c)),
+        _ => out.push(c),
+    };
     for t in toks {
         match t.tok {
             Tok::Cs(sym) => {
                 let name = it.name(sym);
-                out.extend(escape);
+                // tex.web § 63 `print_esc`.
+                escape.into_iter().for_each(|c| put(&mut out, c));
                 // tex.web § 262: the control sequence with the empty name
                 // prints as `\csname\endcsname`.
                 if name.is_empty() {
                     out.push_str("csname");
-                    out.extend(escape);
+                    escape.into_iter().for_each(|c| put(&mut out, c));
                     out.push_str("endcsname ");
                     continue;
                 }
-                out.push_str(name);
+                // A satex-own name is left as it stands, so its markers stay
+                // recognizable.
+                if is_internal(name) {
+                    out.push_str(name);
+                } else {
+                    name.chars().for_each(|c| put(&mut out, c));
+                }
                 // tex.web § 262 (`print_cs`): a multi-letter name always ends
                 // with a space, and a one-character name does when that
                 // character's category is letter — `\a ` but `\!`.
@@ -550,11 +1009,12 @@ fn detokenize_by(toks: &[Token], it: &Interner, escape: Option<char>, letter: &d
                     out.push(' ');
                 }
             }
+            // tex.web § 294: a parameter character prints doubled.
             Tok::Chr(c, Catcode::Param) => {
-                out.push(c);
-                out.push(c);
+                put(&mut out, c);
+                put(&mut out, c);
             }
-            Tok::Chr(c, _) => out.push(c),
+            Tok::Chr(c, _) => put(&mut out, c),
             Tok::Param(n) => {
                 out.push('#');
                 out.push((b'0' + n) as char);
@@ -655,7 +1115,7 @@ pub fn brace_group(s: &str) -> Option<(&str, &str)> {
 }
 
 /// Where a line's comment starts: its first `%` not escaped by a `\`
-/// (The TeXbook, ch. 2).  A document that gives `%` another category code
+/// (The TeXbook, ch. 2). A document that gives `%` another category code
 /// is beyond what this says.
 pub fn comment_start(line: &str) -> Option<usize> {
     let mut chars = line.char_indices();
@@ -700,6 +1160,13 @@ pub struct Mouth {
     /// appends it then, so a change later on the same line only affects the
     /// lines after it (tex.web § 362).
     line_end: EndLineChar,
+    /// The character the last unknown-text token stood for. Only catcode
+    /// 13 runs a meaning (tex.web §§ 232, 344), so the character is what
+    /// bounds what that token may do.
+    pub last_unknown: Option<char>,
+    /// The character of several possible categories the last token met:
+    /// the reader may split the path on it and read again.
+    pub undecided: Option<char>,
     pub file: FileId,
 }
 
@@ -721,10 +1188,26 @@ pub struct LineMark {
 pub struct EndLineChar(pub i32);
 
 impl EndLineChar {
+    /// No value satex could follow: what a line ends with, or whether
+    /// anything is appended, is not known. tex.web has no such state. It
+    /// is the top of the lattice for this parameter.
+    pub const UNKNOWN: Self = Self(i32::MIN);
+
+    pub fn is_unknown(self) -> bool {
+        self.0 == Self::UNKNOWN.0
+    }
+
     /// The character appended, if the value names one (tex.web § 362:
-    /// outside 0..=255 nothing is appended).
+    /// outside 0..=255 nothing is appended). Ask
+    /// [`EndLineChar::is_unknown`] first, where `None` means not known.
     pub fn char(self) -> Option<char> {
         u8::try_from(self.0).ok().map(char::from)
+    }
+
+    /// The join of two values: a line ends the same way on both sides or
+    /// it is not known how it ends.
+    pub fn join(self, other: Self) -> Self {
+        if self == other { self } else { Self::UNKNOWN }
     }
 }
 
@@ -744,6 +1227,8 @@ impl Mouth {
             state: LineState::New,
             force_eof: None,
             line_end: EndLineChar::default(),
+            last_unknown: None,
+            undecided: None,
             file,
         }
     }
@@ -804,6 +1289,18 @@ impl Mouth {
         mouth
     }
 
+    /// This mouth reading what `fresh` reads, which begins with what this
+    /// one has read so far; else the line where it differs first.
+    pub fn retext(&self, fresh: &Mouth) -> Result<Self, u32> {
+        match self.src[..self.pos].iter().zip(fresh.src.iter()).position(|(a, b)| a != b) {
+            None if fresh.src.len() >= self.pos => Ok(Mouth { src: fresh.src.clone(), ..self.clone() }),
+            at => {
+                let at = at.unwrap_or(fresh.src.len());
+                Err(1 + self.src[..at].iter().filter(|&&c| c == '\n').count() as u32)
+            }
+        }
+    }
+
     /// `\endinput` sets `force_eof` (tex.web §§ 362, 360).
     pub fn end_input(&mut self) {
         self.force_eof.get_or_insert(self.line);
@@ -814,14 +1311,37 @@ impl Mouth {
         self.force_eof.is_some()
     }
 
+    /// Whether the flag `\endinput` set is still waiting for a new line.
+    /// tex.web's `force_eof` is one global, so a file opened before the flag
+    /// fires takes it over (tex.web § 362).
+    pub fn pending_eof(&self) -> bool {
+        self.force_eof.is_some_and(|line| line >= self.line)
+    }
+
+    /// Hand the pending flag to this mouth. A file `start_input` opened
+    /// reads its first line without asking, so it ends after that line. A
+    /// pseudo file asks before its first line, so it yields nothing
+    /// (tex.web § 362, etex.ch § 362).
+    pub fn inherit_eof(&mut self, asks_first_line: bool) {
+        self.force_eof = Some(match asks_first_line {
+            true => self.line.saturating_sub(1),
+            false => self.line,
+        });
+    }
+
+    /// Give up the pending flag, which another file has taken over.
+    pub fn release_eof(&mut self) {
+        self.force_eof = None;
+    }
+
     /// How many characters of the file have been read.
     pub fn offset(&self) -> usize {
         self.pos
     }
 
-    /// Tells the texts of two mouths apart.
-    pub fn source_id(&self) -> usize {
-        self.src.as_ptr() as usize
+    /// The text this mouth reads: held, its address tells two texts apart.
+    pub fn text(&self) -> &std::rc::Rc<[char]> {
+        &self.src
     }
 
     /// The text from `line`, `col` up to what was read last.
@@ -844,6 +1364,11 @@ impl Mouth {
 
     pub fn here(&self) -> Span {
         Span::new(self.file, self.line, self.col)
+    }
+
+    /// Characters read so far and in all.
+    pub fn read(&self) -> (usize, usize) {
+        (self.pos, self.src.len())
     }
 
     fn bump(&mut self) -> Option<char> {
@@ -896,6 +1421,24 @@ impl Mouth {
         }
     }
 
+    /// Drop the rest of the line the mouth stands in: where that began,
+    /// or `None` at the start of a line.
+    pub fn skip_line(&mut self) -> Option<(u32, u32)> {
+        if self.col == 1 {
+            return None;
+        }
+        let from = (self.line, self.col);
+        while let Some(n) = self.peek_at(0) {
+            if n == '\n' || n == '\r' {
+                break;
+            }
+            self.bump();
+        }
+        self.end_line();
+        self.state = LineState::New;
+        Some(from)
+    }
+
     fn end_line(&mut self) {
         if self.peek_at(0) == Some('\r') && self.peek_at(1) == Some('\n') {
             self.bump();
@@ -926,6 +1469,12 @@ impl Mouth {
             None if self.line_ends_at(self.pos) => {
                 self.skip_trailing_spaces();
                 self.end_line();
+                // The name is the character the line ends with, which is
+                // not known here (tex.web § 240).
+                if self.line_end.is_unknown() {
+                    self.state = LineState::Middle;
+                    return Some(it.intern(UNKNOWN_CS));
+                }
                 let appended = self.line_end.char()?;
                 self.state = match cats.get(appended) {
                     Catcode::Letter | Catcode::Space => LineState::Skipping,
@@ -935,6 +1484,13 @@ impl Mouth {
             }
             None => self.bump()?,
         };
+        // Whether the name is this one character or goes on is the category
+        // of `first`, which is not known: the name is not either.
+        if cats.is_unknown(first) {
+            self.state = LineState::Middle;
+            self.undecided = Some(first);
+            return Some(it.intern(UNKNOWN_CS));
+        }
         if cats.get(first) != Catcode::Letter {
             self.state = if cats.get(first) == Catcode::Space { LineState::Skipping } else { LineState::Middle };
             let mut buf = [0u8; 4];
@@ -942,6 +1498,12 @@ impl Mouth {
         }
         let mut name = String::from(first);
         while let Some(c) = self.peek_at(0) {
+            // A character that may or may not carry the name on.
+            if cats.is_unknown(c) {
+                self.state = LineState::Middle;
+                self.undecided = Some(c);
+                return Some(it.intern(UNKNOWN_CS));
+            }
             if cats.get(c) == Catcode::Letter {
                 self.bump();
                 name.push(c);
@@ -953,6 +1515,12 @@ impl Mouth {
                     name.push(decoded);
                 }
                 _ => {
+                    // Whether the appended character carries the name on
+                    // is not known, so the name is not either.
+                    if self.line_ends_at(self.pos) && self.line_end.is_unknown() {
+                        self.state = LineState::Middle;
+                        return Some(it.intern(UNKNOWN_CS));
+                    }
                     // The appended `\endlinechar` is the buffer's last
                     // character: a letter ends the name (tex.web § 356).
                     if self.line_ends_at(self.pos)
@@ -997,12 +1565,20 @@ impl Mouth {
             };
             // A line of the file ends where the file says, whatever the
             // catcode of character 10 or 13; what TeX sees there is the
-            // appended `\endlinechar` (tex.web § 362).  `^^J` written out is
+            // appended `\endlinechar` (tex.web § 362). `^^J` written out is
             // an ordinary character, of category 12 in LaTeX.
             let cat = match written && (c == '\n' || c == '\r') {
                 true => Catcode::Eol,
                 false => cats.get(c),
             };
+            // A category satex could not follow: what this character does to
+            // the input is not known, so it stands for text that is not.
+            if cat != Catcode::Eol && cats.is_unknown(c) {
+                self.state = LineState::Middle;
+                self.last_unknown = Some(c);
+                self.undecided = Some(c);
+                return Some(Token::new(Tok::Cs(it.intern(UNKNOWN_CS)), span));
+            }
             match cat {
                 Catcode::Ignored | Catcode::Invalid => continue,
                 Catcode::Comment => {
@@ -1019,6 +1595,12 @@ impl Mouth {
                 Catcode::Eol => {
                     if c == '\r' && self.peek_at(0) == Some('\n') {
                         self.bump();
+                    }
+                    // What the line ends with is not known, so what it puts
+                    // in the input is text that is not (tex.web § 240).
+                    if self.line_end.is_unknown() {
+                        self.state = LineState::New;
+                        return Some(Token::new(Tok::Cs(it.intern(UNKNOWN_CS)), span));
                     }
                     let appended = match self.line_end.char() {
                         None => {
@@ -1099,25 +1681,44 @@ impl ParameterText {
     /// [`parameterize`].
     pub fn from_tokens(toks: &[Token], mark: impl Fn(Sym) -> bool) -> ParameterText {
         let mut items = Vec::new();
-        let mut arity = 0;
+        let mut arity = 0u8;
         let mut brace_end = false;
         let mut i = 0;
         while i < toks.len() {
             let t = toks[i];
             if t.is_cat(Catcode::Param) || t.cs().is_some_and(&mark) {
                 match toks.get(i + 1).map(|n| n.tok) {
-                    Some(Tok::Chr(d, _)) if d.is_ascii_digit() && d != '0' => {
-                        arity = arity.max(d as u8 - b'0');
-                        items.push(ParamItem::Param(d as u8 - b'0'));
-                        i += 2;
-                        continue;
-                    }
+                    // tex.web § 476 (`hash_brace`): a `#` at the end of the
+                    // parameter text takes the body's `{` with it.
                     None => {
                         brace_end = true;
                         i += 1;
                         continue;
                     }
-                    _ => {}
+                    // tex.web § 479: the parameters are numbered as they
+                    // come, whatever digit stands there. The digit is read
+                    // only when it is the one expected.
+                    Some(Tok::Chr(d, _)) if d.is_ascii_digit() && d as u8 - b'0' == arity + 1 && arity < 9 => {
+                        arity += 1;
+                        items.push(ParamItem::Param(arity));
+                        i += 2;
+                        continue;
+                    }
+                    // "Parameters must be numbered consecutively": a token
+                    // that is not the next number goes back and is read on,
+                    // while the parameter takes the number it should have
+                    // had. Past nine, "You already have nine parameters"
+                    // drops the `#` and the token read with it.
+                    Some(_) => {
+                        if arity < 9 {
+                            arity += 1;
+                            items.push(ParamItem::Param(arity));
+                            i += 1;
+                        } else {
+                            i += 2;
+                        }
+                        continue;
+                    }
                 }
             }
             items.push(ParamItem::Lit(t.tok));
@@ -1189,7 +1790,7 @@ pub struct ArgSpec {
 impl ArgSpec {
     /// A `\def` whose parameter text has delimiters reads exactly that
     /// (tex.web §§ 391-399): each `#n` is undelimited or runs to the text
-    /// after it.  `None` for a parameter text of bare `#n`s.
+    /// after it. `None` for a parameter text of bare `#n`s.
     pub fn from_parameter_text(text: &ParameterText, interner: &Interner) -> Option<ArgSpec> {
         if !text.brace_end && !text.items.iter().any(|i| matches!(i, ParamItem::Lit(_))) {
             return None;
@@ -1247,47 +1848,36 @@ pub fn expl3_arity(name: &str) -> Option<u8> {
     Some(signature.len() as u8)
 }
 
-/// Which TeX register kind a `\countdef`-style name addresses: count, dimen,
-/// skip, muskip, toks, box, or a read/write stream. [`Meaning::Register`]
-/// pairs it with the register number.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
-pub enum RegKind {
-    Count,
-    Dimen,
-    Skip,
-    MuSkip,
-    Toks,
-    Box,
-    Read,
-    Write,
-    /// `\chardef` and `\mathchardef`: a constant, not a register, whose
-    /// number is its value (tex.web § 1224).  The two are different
-    /// meanings, so `\ifx` tells them apart.
-    Char,
-    MathChar,
+named_enum! {
+    /// Which TeX register kind a `\countdef`-style name addresses: count, dimen,
+    /// skip, muskip, toks, box, or a read/write stream. [`Meaning::Register`]
+    /// pairs it with the register number.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+    pub enum RegKind {
+        Count => "count",
+        Dimen => "dimen",
+        Skip => "skip",
+        MuSkip => "muskip",
+        Toks => "toks",
+        Box => "box",
+        Read => "read",
+        Write => "write",
+        /// `\chardef` and `\mathchardef`: a constant, not a register, whose
+        /// number is its value (tex.web § 1224). The two are different
+        /// meanings, so `\ifx` tells them apart.
+        Char => "char",
+        MathChar => "mathchar",
+        /// `\Umathchardef` and `\Umathcharnumdef`: a `\Umathchar` constant,
+        /// which `\ifx` and `\meaning` tell from a `\mathchar` one (XeTeX
+        /// reference; LuaTeX manual, "Math").
+        UMathChar => "Umathchar",
+    }
 }
 
 /// The number of a register allocated by a modeled `\newcount` and its
 /// relatives, which satex does not number: its value lives on its own name
 /// rather than on the numbered register.
 pub const UNNUMBERED: u16 = u16::MAX;
-
-impl RegKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            RegKind::Count => "count",
-            RegKind::Dimen => "dimen",
-            RegKind::Skip => "skip",
-            RegKind::MuSkip => "muskip",
-            RegKind::Toks => "toks",
-            RegKind::Box => "box",
-            RegKind::Read => "read",
-            RegKind::Write => "write",
-            RegKind::Char => "char",
-            RegKind::MathChar => "mathchar",
-        }
-    }
-}
 
 /// The compiled meaning of a macro: [`ParameterText`] to match, replacement
 /// [`Token`]s to substitute into, and the `\long`/`\outer`/`\protected`
@@ -1324,7 +1914,7 @@ impl MacroDef {
 }
 
 /// tex.web § 507: `\ifx` compares two macros by their prefixes, parameter
-/// text and replacement text; how satex came to record the parameters is
+/// text and replacement text. How satex came to record the parameters is
 /// not part of the meaning.
 impl PartialEq for MacroDef {
     fn eq(&self, other: &Self) -> bool {

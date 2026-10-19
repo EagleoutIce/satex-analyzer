@@ -1,7 +1,8 @@
 //! Queries and filters over a finished analysis.
 //! Filters: `tag=switch and package~^my` evaluated against record fields.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use crate::fixed::HashMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use regex::Regex;
@@ -275,10 +276,12 @@ pub enum Query {
     /// The keys an environment or command's optional argument accepts;
     /// takes a name, so [`run`] cannot answer it; see [`options`].
     Options,
+    /// The text the run computes the document typesets; see [`typeset`].
+    Typeset,
 }
 
 impl Query {
-    pub const ALL: [(&'static str, Query); 19] = [
+    pub const ALL: [(&'static str, Query); 20] = [
         ("definitions", Query::Definitions),
         ("expansions", Query::Expansions),
         ("dependencies", Query::Dependencies),
@@ -298,6 +301,7 @@ impl Query {
         ("gaps", Query::Gaps),
         ("pgfkeys", Query::Pgfkeys),
         ("options", Query::Options),
+        ("typeset", Query::Typeset),
     ];
 
     pub fn parse(name: &str) -> Option<Query> {
@@ -337,6 +341,311 @@ fn gaps(analysis: &Analysis) -> Vec<Record> {
         .collect()
 }
 
+/// What the main file's top-level calls did, at most 8 lines: what a macro
+/// inserts and what it defines, the text a primitive sets, and each
+/// conditional's outcome. `rows` are trace records, `file` the main file's
+/// short name.
+pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
+    fn f<'a>(r: &'a Record, k: &str) -> &'a Json {
+        static NULL: Json = Json::Null;
+        r.get(k).unwrap_or(&NULL)
+    }
+    let lines: Vec<&str> = source.lines().collect();
+    let ours: Vec<&Record> =
+        rows.iter().filter(|r| f(r, "file") == file || f(r, "depth").as_u64() != Some(0)).collect();
+    let short = |s: &str, n: usize| {
+        if s.chars().count() > n { s.chars().take(n).collect::<String>() + "…" } else { s.to_string() }
+    };
+    // The call as written: from its column to the first space.
+    let written = |r: &Record| {
+        let (l, c) = (f(r, "line").as_u64().unwrap_or(0) as usize, f(r, "col").as_u64().unwrap_or(1) as usize);
+        let text = lines.get(l.wrapping_sub(1)).and_then(|t| t.get(c.saturating_sub(1)..)).unwrap_or("");
+        text.split_whitespace().next().unwrap_or("").trim_end_matches(',').to_string()
+    };
+    let mut out: Vec<String> = Vec::new();
+    for (i, r) in ours.iter().enumerate() {
+        if f(r, "file") != file || f(r, "depth").as_u64() != Some(0) {
+            continue;
+        }
+        let name = f(r, "name").as_str().unwrap_or("");
+        if matches!(
+            name,
+            "\\documentclass"
+                | "\\makeatletter"
+                | "\\makeatother"
+                | "\\usepackage"
+                | "\\begin"
+                | "\\end"
+                | "\\document"
+        ) {
+            continue;
+        }
+        let call = if f(r, "step") == "expand" { name.to_string() } else { written(r) };
+        let at = format!("l.{} {call}", f(r, "line"));
+        let then = match (f(r, "step").as_str(), f(r, "detail").as_str()) {
+            (Some("condition"), Some("undecided")) => "undecided".to_string(),
+            (Some("branch"), Some(arm)) if !out.last().is_some_and(|l| l.starts_with(&at)) => arm.to_string(),
+            (Some("expand"), _) if r.get("inserts").is_some() => {
+                let mut defines: Vec<String> = ours[i + 1..]
+                    .iter()
+                    .take_while(|n| f(n, "depth").as_u64() != Some(0))
+                    .filter(|n| f(n, "step") == "define")
+                    .filter_map(|n| f(n, "name").as_str().map(str::to_string))
+                    .collect();
+                let inserts = short(f(r, "inserts").as_str().unwrap_or(""), 40);
+                let inserts = if inserts.is_empty() { "nothing".to_string() } else { inserts };
+                defines.dedup();
+                if defines.len() > 3 {
+                    let more = format!("… {} more", defines.len() - 3);
+                    defines.truncate(3);
+                    defines.push(more);
+                }
+                match defines.is_empty() {
+                    true => inserts,
+                    false => format!("{inserts} (defines {})", defines.join(" ")),
+                }
+            }
+            _ => match f(r, "sets").as_str() {
+                Some(text) => short(text, 30),
+                None => continue,
+            },
+        };
+        let entry = format!("{at} ⇒ {then}");
+        if out.last() != Some(&entry) {
+            out.push(entry);
+        }
+    }
+    if out.len() > 8 {
+        let more = out.len() - 7;
+        out.truncate(7);
+        out.push(format!("… {more} more"));
+    }
+    out
+}
+
+/// The text the document typesets, one record per paragraph, then the
+/// named assumptions it rests on. Text set under an undecided conditional
+/// reads `{taken|not taken}`, one choice per conditional. Text set in a box
+/// reads `⟦…⟧`: it reaches the page only if the box is used. `c…` is a
+/// character a loop set any number of times. `·` is a gap where the line
+/// breaker may set a hyphen (tex.web § 923).
+fn typeset(analysis: &Analysis) -> Vec<Record> {
+    let text = &analysis.facts.text;
+    let mut arms = text.arms.iter().peekable();
+    let (mut was_boxed, mut prev_line) = (false, None);
+    let mut out = Vec::new();
+    let (mut line, mut first, mut choice) = (String::new(), None, None::<(crate::env::NodeId, [String; 2])>);
+    let mut causes: Vec<Cause> = Vec::new();
+    let close = |line: &mut String, choice: &mut Option<(crate::env::NodeId, [String; 2])>, causes: &mut Vec<Cause>| {
+        if let Some((on, [yes, no])) = choice.take() {
+            let _ = write!(line, "{}{yes}{}{no}{}", note("{"), note("|"), note("}"));
+            causes.push(Cause::Choice(on, format!("{{{}|{}}}", unmarked(&yes), unmarked(&no))));
+        }
+    };
+    let mut on_page = vec![false; text.at.len()];
+    for &(from, to) in &text.placed {
+        let end = on_page.len();
+        on_page[(from as usize).min(end)..(to as usize).min(end)].fill(true);
+    }
+    for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
+        let site = Span {
+            file: text.site.get(i).map_or(spot.span.file, |s| s.file),
+            ..text.site.get(i).copied().unwrap_or(spot.span)
+        };
+        let arm = arms.next_if(|a| a.0 as usize <= i).filter(|a| a.0 as usize == i);
+        let boxed = !on_page[i]
+            && spot
+                .modes
+                .within(crate::mode::Modes::INTERNAL_VERTICAL.union(crate::mode::Modes::RESTRICTED_HORIZONTAL));
+        let unknown = crate::tex::is_unknown_char(c);
+        let mut c = if unknown { note("⟨?⟩") } else { public(c) };
+        if unknown {
+            causes.push(Cause::Unknown(site));
+        }
+        if text.repeats.binary_search(&(i as u32)).is_ok() {
+            c = format!("{c}{}", note("…"));
+        }
+        if text.hyphens.binary_search(&(i as u32)).is_ok() {
+            c = format!("{}{c}", note("·"));
+        }
+        let piece = if boxed { format!("{}{c}{}", note("⟦"), note("⟧")) } else { c };
+        let new_line = if piece.trim().is_empty() { false } else { prev_line.replace(site.line) != Some(site.line) };
+        if !std::mem::replace(&mut was_boxed, boxed)
+            && new_line
+            && text.closed.binary_search(&(i as u32)).is_ok()
+            && !line.trim().is_empty()
+        {
+            close(&mut line, &mut choice, &mut causes);
+            out.push(paragraph(
+                analysis,
+                first.take().unwrap_or(site),
+                &std::mem::take(&mut line),
+                std::mem::take(&mut causes),
+            ));
+        }
+        if !piece.trim().is_empty() {
+            first.get_or_insert(site);
+        }
+        match arm {
+            Some(&(_, on, taken)) => {
+                if choice.as_ref().is_some_and(|(n, _)| *n != on) {
+                    close(&mut line, &mut choice, &mut causes);
+                }
+                choice.get_or_insert_with(|| (on, Default::default())).1[usize::from(!taken)].push_str(&piece);
+            }
+            None => {
+                close(&mut line, &mut choice, &mut causes);
+                line.push_str(&piece);
+            }
+        }
+    }
+    close(&mut line, &mut choice, &mut causes);
+    if !line.trim().is_empty() {
+        out.push(paragraph(analysis, first.unwrap_or_default(), &line, causes));
+    }
+    let mut named: Vec<&str> = Vec::new();
+    for d in analysis.facts.diagnostics.iter().filter(|d| d.severity == crate::facts::Severity::Assumption) {
+        if !named.contains(&d.code) {
+            named.push(d.code);
+            let mut record = place(analysis, d.span);
+            record.insert("kind".into(), json!("assumption"));
+            record.insert("origin".into(), json!(origin(analysis, d.span.file)));
+            record.insert("detail".into(), json!(d.code));
+            out.push(record);
+        }
+    }
+    out
+}
+
+/// What made a character of the typeset text uncertain.
+enum Cause {
+    /// A `{a|b}` choice set under the undecided conditional at this node.
+    Choice(crate::env::NodeId, String),
+    /// A character the run could not compute, set here.
+    Unknown(Span),
+}
+
+/// A character as typeset text: satex's private-use sentinels become their
+/// public notation or vanish.
+fn public(c: char) -> String {
+    match c {
+        '\u{10FF00}'..='\u{10FFFF}' | '\u{E000}'..='\u{F8FF}' => String::new(),
+        _ => c.to_string(),
+    }
+}
+
+fn strip_private(s: &str) -> String {
+    s.chars().filter(|c| !matches!(*c, '\u{10FF00}'..='\u{10FFFF}')).collect()
+}
+
+/// `s` cut to about 60 characters.
+fn clip(s: &str) -> String {
+    if s.chars().count() <= 60 { s.to_string() } else { format!("{}…", s.chars().take(60).collect::<String>()) }
+}
+
+const NOTE: (char, char) = ('\u{E000}', '\u{E001}');
+
+/// `s` as satex's own notation, not a typeset character.
+fn note(s: &str) -> String {
+    format!("{}{s}{}", NOTE.0, NOTE.1)
+}
+
+fn unmarked(s: &str) -> String {
+    s.chars().filter(|c| !matches!(*c, '\u{E000}' | '\u{E001}')).collect()
+}
+
+/// A paragraph record: `detail` is plain, `marked` wraps the notation in
+/// private-use characters, `causes` says why each choice or unknown is there.
+fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>) -> Record {
+    let marked = tidy(marked);
+    let mut record = place(analysis, at);
+    record.insert("kind".into(), json!("paragraph"));
+    record.insert("detail".into(), json!(unmarked(&marked)));
+    record.insert("marked".into(), json!(marked));
+    let mut seen: Vec<(String, u32)> = Vec::new();
+    let mut why = Vec::new();
+    for cause in causes {
+        let (mark, line, test, reads) = match cause {
+            Cause::Choice(on, mark) => {
+                let site = analysis.graph.vertices.get(on as usize).map(|v| v.span).unwrap_or_default();
+                let (test, reads) = test_text(analysis, site);
+                (mark, site.line, test, reads)
+            }
+            Cause::Unknown(site) => ("⟨?⟩".to_string(), site.line, String::new(), Vec::new()),
+        };
+        if !seen.contains(&(mark.clone(), line)) {
+            seen.push((mark.clone(), line));
+            why.push(json!({"mark": clip(&strip_private(&mark)), "line": line, "test": clip(&strip_private(&test)), "reads": reads}));
+        }
+    }
+    if !why.is_empty() {
+        record.insert("causes".into(), json!(why));
+    }
+    record
+}
+
+/// The source of the undecided test of the conditional at `site`, and the
+/// control sequences it reads.
+fn test_text(analysis: &Analysis, site: Span) -> (String, Vec<String>) {
+    let Some(cond) = analysis.facts.conditionals.iter().find(|c| c.at == site) else { return Default::default() };
+    let Ok(source) = std::fs::read_to_string(analysis.file_name(site.file)) else { return Default::default() };
+    let Some(row) = source.lines().nth((site.line as usize).saturating_sub(1)) else { return Default::default() };
+    let end = cond
+        .test_end
+        .filter(|e| e.file == site.file && e.line == site.line && e.col > site.col)
+        .map(|e| e.col as usize - 1);
+    let from = site.col as usize - 1;
+    let row: String = row.chars().skip(from).take(end.map_or(usize::MAX, |e| e - from)).collect();
+    let test = row.split('%').next().unwrap_or("").trim().to_string();
+    let reads = regex::Regex::new(r"\\(?:[A-Za-z@]+|.)")
+        .map(|re| re.find_iter(&test).skip(1).map(|m| m.as_str().to_string()).collect())
+        .unwrap_or_default();
+    (test, reads)
+}
+
+/// Adjacent box marks and unknown characters merged.
+fn tidy(line: &str) -> String {
+    let (open, shut) = NOTE;
+    let line = line
+        .replace(&format!("⟧{shut}{open}⟦"), "")
+        .replace(&format!("⟨?⟩{shut}{open}⟨?⟩"), "⟨?⟩")
+        .replace(&format!("⟨?⟩{shut}{open}⟨?⟩"), "⟨?⟩");
+    regex::Regex::new(&format!("{open}⟦{shut}\\s*{open}⟧{shut}"))
+        .map_or(line.clone(), |blank| blank.replace_all(&line, "").into_owned())
+        .replace(&format!("{open}{shut}"), "")
+        .trim()
+        .to_string()
+}
+
+/// How the text [`typeset`] computes compares with what an engine set,
+/// whitespace aside: `equal`, `covers` (the engine's text is one of the
+/// choices, so sound), or `DIFFERS` (unsound).
+pub fn typeset_verdict(computed: &str, typeset: &str) -> &'static str {
+    let squeeze = |s: &str| s.replace("⟨?⟩", "\u{10FFFF}").chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    let (computed, typeset) = (squeeze(computed), squeeze(typeset));
+    if computed == typeset {
+        return "equal";
+    }
+    let mut pattern = String::from("^");
+    for c in computed.chars() {
+        match c {
+            '{' | '⟦' => pattern.push_str("(?:"),
+            '|' => pattern.push('|'),
+            '}' => pattern.push(')'),
+            '⟧' => pattern.push_str(")?"),
+            crate::tex::UNKNOWN_CHAR => pattern.push_str(".+?"),
+            '…' => pattern.push('+'),
+            '·' => pattern.push_str("-?"),
+            c => pattern.push_str(&regex::escape(&c.to_string())),
+        }
+    }
+    pattern.push('$');
+    match regex::Regex::new(&pattern) {
+        Ok(re) if re.is_match(&typeset) => "covers",
+        _ => "DIFFERS",
+    }
+}
+
 pub fn run(analysis: &Analysis, query: Query, filter: &Filter) -> Vec<Record> {
     let all = match query {
         Query::Definitions => definitions(analysis),
@@ -362,6 +671,7 @@ pub fn run(analysis: &Analysis, query: Query, filter: &Filter) -> Vec<Record> {
         // The name to look up arrives with `--for`, which `run` has no room
         // for: `cmd::query` calls `options` directly.
         Query::Options => Vec::new(),
+        Query::Typeset => typeset(analysis),
     };
     all.into_iter().filter(|r| filter.accepts(r)).collect()
 }
@@ -386,9 +696,8 @@ fn symbol(analysis: &Analysis, sym: Option<Sym>) -> Json {
 /// project; `library` for everything else the run read.
 pub fn origin(analysis: &Analysis, file: crate::tex::FileId) -> &'static str {
     let path = |id: crate::tex::FileId| analysis.files.get(id as usize).map(|f| Path::new(&f.path));
-    let project = path(analysis.main_file).and_then(Path::parent);
-    let inside = match (path(file), project) {
-        (Some(file), Some(root)) if !root.as_os_str().is_empty() => file.starts_with(root),
+    let inside = match (path(file), path(analysis.main_file)) {
+        (Some(file), Some(main)) => crate::paths::within(&crate::paths::dir_of(main), file),
         _ => false,
     };
     if file == analysis.main_file || inside { "document" } else { "library" }
@@ -409,32 +718,15 @@ fn definitions(analysis: &Analysis) -> Vec<Record> {
             record.insert("origin".into(), json!(origin(analysis, def.span.file)));
             record.insert("mode".into(), json!(def.mode.as_str()));
             record.insert("arity".into(), json!(def.arity()));
-            record.insert("takes".into(), takes_of(analysis, def.name, def.mac.as_deref(), None));
-            record.insert(
-                "signature".into(),
-                match def.mac.as_ref().and_then(|m| m.arg_spec.as_ref()) {
-                    Some(spec) => json!(spec.raw),
-                    None => Json::Null,
-                },
-            );
-            record.insert(
-                "parameters".into(),
-                match &def.mac {
-                    Some(m) => json!(m.parameter_text.render(&analysis.interner)),
-                    None => Json::Null,
-                },
-            );
+            let mac = def.mac.as_deref();
+            record.insert("takes".into(), takes_of(analysis, def.name, mac, None));
+            record.insert("signature".into(), json!(mac.and_then(|m| m.arg_spec.as_ref()).map(|s| &s.raw)));
+            record.insert("parameters".into(), json!(mac.map(|m| m.parameter_text.render(&analysis.interner))));
             record.insert("global".into(), json!(def.global));
             record.insert("certain".into(), json!(def.certain));
             record.insert("depth".into(), json!(def.depth));
             record.insert("node".into(), json!(def.node));
-            record.insert(
-                "body".into(),
-                match &def.mac {
-                    Some(m) => json!(detokenize(&m.replacement_text, &analysis.interner)),
-                    None => Json::Null,
-                },
-            );
+            record.insert("body".into(), json!(mac.map(|m| detokenize(&m.replacement_text, &analysis.interner))));
             record
         })
         .collect()
@@ -574,7 +866,13 @@ fn dependency_graph(analysis: &Analysis) -> Vec<Record> {
         .collect()
 }
 
+/// Each step, with what a macro call inserts and the text a step set at
+/// its own position (`\meaning`, `\the`, a character).
 fn trace(analysis: &Analysis) -> Vec<Record> {
+    let mut set: HashMap<Span, String> = HashMap::default();
+    for (c, spot) in analysis.facts.text.chars.chars().zip(&analysis.facts.text.at) {
+        set.entry(spot.span).or_default().push(c);
+    }
     analysis
         .trace
         .iter()
@@ -584,7 +882,28 @@ fn trace(analysis: &Analysis) -> Vec<Record> {
             record.insert("depth".into(), json!(event.depth));
             record.insert("step".into(), json!(event.kind.as_str()));
             record.insert("name".into(), json!(analysis.interner.cs(event.name)));
-            record.insert("detail".into(), json!(event.detail.as_deref()));
+            let expand = matches!(event.kind, crate::machine::Step::Expand);
+            record.insert("detail".into(), json!(if expand { None } else { event.detail.as_deref() }));
+            if expand && let Some(body) = event.detail.as_deref() {
+                record.insert("inserts".into(), json!(body));
+            } else if expand {
+                let call = analysis.facts.expansions.iter().find(|e| e.span == event.span && e.name == event.name);
+                let def = call.and_then(|call| match call.meaning {
+                    crate::facts::MeaningKind::Macro(n) => {
+                        analysis.facts.defs.iter().find(|d| d.node == n).map(|d| (call, d))
+                    }
+                    _ => None,
+                });
+                if let Some((call, m)) = def.and_then(|(call, d)| Some((call, d.mac.as_ref()?))) {
+                    let args: Vec<Vec<_>> = call.arguments.iter().map(|a| a.to_vec()).collect();
+                    if let Some(body) = crate::machine::substitute(m, &args, usize::MAX) {
+                        record.insert("inserts".into(), json!(detokenize(&body, &analysis.interner)));
+                    }
+                }
+            }
+            if let Some(text) = set.get(&event.span) {
+                record.insert("sets".into(), json!(text));
+            }
             record
         })
         .collect()
@@ -730,6 +1049,8 @@ fn diagnostics(analysis: &Analysis) -> Vec<Record> {
             record.insert("code".into(), json!(d.code));
             record.insert("message".into(), json!(d.message));
             record.insert("count".into(), json!(d.count));
+            let origin = d.origin.map(|o| format!("{}:{}:{}", analysis.short_name(o.file), o.line, o.col));
+            record.insert("origin".into(), json!(origin));
             record
         })
         .collect()
@@ -1447,7 +1768,9 @@ fn offered_options(analysis: &Analysis, all: bool) -> Vec<Record> {
         let name = analysis.interner.name(subject);
         // `\DeclareOption*` and the keys a package declares for itself are
         // not options a document can pass.
-        let internal = name.is_empty() || name.contains('@') || !name.starts_with(|c: char| c.is_ascii_alphanumeric());
+        let internal = name.is_empty()
+            || analysis.settings.conventions.is_internal(name)
+            || !name.starts_with(|c: char| c.is_ascii_alphanumeric());
         if internal && !all {
             continue;
         }
@@ -1505,6 +1828,51 @@ fn offered_options(analysis: &Analysis, all: bool) -> Vec<Record> {
         out.push(record);
     }
     out
+}
+
+/// The options `package` (a class or package name) declares, each with its
+/// default when one is known: `\DeclareOption`'s, and the keys of the
+/// family named after the package (kvoptions uses `\@currname`, xkeyval's
+/// `\DeclareOptionX` `\@currname.\@currext`).
+pub fn package_options(analysis: &Analysis, package: &str) -> Vec<(String, Option<String>)> {
+    let mut out: BTreeMap<String, Option<String>> = BTreeMap::new();
+    for def in &analysis.facts.defs {
+        if def.tag == "option" && def.package.is_some_and(|p| analysis.interner.name(p) == package) {
+            let name = def.subject.map(|s| analysis.interner.name(s)).unwrap_or_default();
+            if name.starts_with(|c: char| c.is_ascii_alphanumeric()) && !analysis.settings.conventions.is_internal(name)
+            {
+                out.entry(name.to_string()).or_default();
+            }
+        }
+    }
+    for ext in ["", ".sty", ".cls"] {
+        for (key, _, default) in keyval_keys(analysis, &format!("KV@{package}{ext}@")) {
+            out.insert(key, default);
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// `satex controls`: what each of `names` governs, or with none named the
+/// document's switches (every one with `all`), in document order.  Several
+/// names answer in one table: each row keeps the switch or option it
+/// belongs to in `for`, so one answer is still traceable to the name that
+/// asked for it.
+pub fn controls_of(analysis: &Analysis, names: &[String], all: bool) -> Vec<Record> {
+    let mut records = if names.is_empty() {
+        switches(analysis, all)
+    } else {
+        let mut out = Vec::new();
+        for name in names {
+            for mut record in controls(analysis, name) {
+                record.insert("for".into(), json!(name.trim_start_matches('\\')));
+                out.push(record);
+            }
+        }
+        out
+    };
+    in_document_order(analysis, &mut records);
+    records
 }
 
 pub fn controls(analysis: &Analysis, name: &str) -> Vec<Record> {
@@ -1799,16 +2167,14 @@ fn unprintable_name(name: &str) -> bool {
     name.is_empty() || name.chars().any(|c| c.is_control())
 }
 
-/// A name only a package's or the kernel's own internals would spell:
-/// LaTeX2e's `@` convention, an expl3 function (`_..._:...`) whether public
-/// or private, and expl3's own `__` prefix for what is private even among
-/// those.
-fn internal_name(name: &str) -> bool {
+/// A name only a package's or the kernel's own internals would spell, by
+/// `conventions.internal` (LaTeX2e's `@`, expl3's `:` and `__`).
+fn internal_name(analysis: &Analysis, name: &str) -> bool {
     // A name a `\csname`-style construction built out of another one's own
     // spelling (`\@testopt`'s internal partner for `\section`, say) carries
     // a literal backslash as its first character; no document ever writes
     // that out by hand.
-    name.contains('@') || name.contains(':') || name.starts_with("__") || name.starts_with('\\')
+    analysis.settings.conventions.is_internal(name) || name.starts_with('\\')
 }
 
 /// Where a name in scope came from, for `scope`'s ordering and its
@@ -1849,7 +2215,7 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
     let mut rows: Vec<(u8, Record)> = Vec::new();
     for def in latest.values() {
         let name = analysis.interner.name(def.name);
-        if unprintable_name(name) || (!all && internal_name(name)) {
+        if unprintable_name(name) || (!all && internal_name(analysis, name)) {
             continue;
         }
         let mut record = place(analysis, def.span);
@@ -1880,7 +2246,8 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
         // every number and character it has ever seen, which would
         // otherwise outnumber the useful primitives and macros many times
         // over.
-        if unprintable_name(name) || (!all && (internal_name(name) || !matches!(tag, "primitive" | "macro"))) {
+        if unprintable_name(name) || (!all && (internal_name(analysis, name) || !matches!(tag, "primitive" | "macro")))
+        {
             continue;
         }
         let mut record = Map::new();
@@ -1942,7 +2309,7 @@ fn shape_bounds(shape: &str) -> (u8, Option<u8>) {
 /// ([`crate::probe`]) — at the end of the run, or at `\begin{document}`
 /// with `preamble`.
 pub fn signature(analysis: &Analysis, sym: crate::tex::Sym, mac: &crate::tex::MacroDef) -> Option<crate::tex::ArgSpec> {
-    probed(analysis, sym, Some(mac), Some(false)).filter(|p| p.complete).map(|p| p.spec)
+    probed(analysis, sym, Some(mac), Some(crate::probe::State::End)).filter(|p| p.complete).map(|p| p.spec)
 }
 
 /// `view` is `None` where a listing reports many names at once and only
@@ -1953,7 +2320,7 @@ fn probed(
     analysis: &Analysis,
     sym: crate::tex::Sym,
     mac: Option<&crate::tex::MacroDef>,
-    view: Option<bool>,
+    view: Option<crate::probe::State>,
 ) -> Option<crate::probe::Probed> {
     if let Some(spec) = mac.and_then(|m| m.arg_spec.as_ref()) {
         return Some(crate::probe::Probed { spec: spec.clone(), complete: true, error: None, forms: Vec::new() });
@@ -1961,11 +2328,18 @@ fn probed(
     let own = mac
         .and_then(|m| crate::tex::ArgSpec::from_parameter_text(&m.parameter_text, &analysis.interner))
         .map(|spec| crate::tex::ArgSpec { raw: crate::probe::raw_of(&spec.items), ..spec });
-    let Some(preamble) = view else {
+    let Some(at) = view else {
         return own.map(|spec| crate::probe::Probed { spec, complete: true, error: None, forms: Vec::new() });
     };
+    // A state the run did not keep: the end of the run's.
+    let kept = match at {
+        crate::probe::State::Preamble => analysis.preamble.is_some(),
+        crate::probe::State::Start => analysis.preamble.is_some() && analysis.kernel.is_some(),
+        crate::probe::State::End => true,
+    };
+    let at = if kept { at } else { crate::probe::State::End };
     // Where the run could not say, what the parameter text reads is certain.
-    crate::probe::probe(analysis, sym, preamble && analysis.preamble.is_some())
+    crate::probe::probe(analysis, sym, at)
         .or_else(|| own.map(|spec| crate::probe::Probed { spec, complete: false, error: None, forms: Vec::new() }))
 }
 
@@ -1974,7 +2348,12 @@ fn probed(
 /// unbounded (`\csname`, `\halign`) or the probe could not see the end.
 /// A primitive's bounds are what satex was seen to read for it, or its
 /// catalog entry.
-fn takes_of(analysis: &Analysis, sym: crate::tex::Sym, mac: Option<&crate::tex::MacroDef>, view: Option<bool>) -> Json {
+fn takes_of(
+    analysis: &Analysis,
+    sym: crate::tex::Sym,
+    mac: Option<&crate::tex::MacroDef>,
+    view: Option<crate::probe::State>,
+) -> Json {
     let (mut low, mut high) = match analysis.env.meaning(sym).prim() {
         Some(prim) => match analysis.facts.shapes.get(&sym) {
             Some(shape) => shape_bounds(shape),
@@ -2021,7 +2400,7 @@ fn effective_of(
     analysis: &Analysis,
     sym: crate::tex::Sym,
     mac: Option<&crate::tex::MacroDef>,
-    view: Option<bool>,
+    view: Option<crate::probe::State>,
 ) -> String {
     use crate::tex::ArgType as A;
     let cs = analysis.interner.cs(sym);
@@ -2253,11 +2632,18 @@ enum Window {
     All,
     Preamble,
     Document,
+    /// The document's start, where a name means what the format made it.
+    Start,
 }
 
 impl Window {
-    fn view(self) -> Option<bool> {
-        Some(self == Window::Preamble)
+    fn view(self) -> Option<crate::probe::State> {
+        use crate::probe::State;
+        Some(match self {
+            Window::Preamble => State::Preamble,
+            Window::Start => State::Start,
+            Window::All | Window::Document => State::End,
+        })
     }
 }
 
@@ -2271,7 +2657,7 @@ fn uses_in(analysis: &Analysis, sym: Sym, window: Window) -> u32 {
         .filter(|e| e.name == sym)
         .filter(|e| match (window, boundary, e.node) {
             (Window::All, ..) | (_, None, _) => true,
-            (Window::Preamble, Some(b), Some(n)) => n < b,
+            (Window::Preamble | Window::Start, Some(b), Some(n)) => n < b,
             (Window::Document, Some(b), Some(n)) => n >= b,
             (_, Some(_), None) => false,
         })
@@ -2284,28 +2670,16 @@ fn record_for_def(analysis: &Analysis, def: &crate::facts::Definition, window: W
     record.insert("name".into(), json!(analysis.interner.cs(def.name)));
     record.insert("tag".into(), json!(def.tag));
     record.insert("by".into(), json!(analysis.interner.cs(def.by)));
+    if analysis.facts.defs.iter().any(|d| d.name == def.name && d.via == Some(def.name) && d.node > def.node) {
+        record.insert("once".into(), json!(true));
+    }
     // A class is loaded the same way a package is (`def.package` names
     // either), but reads oddly as "package article" for a `\documentclass`;
     // the file it came from says which it really is.
     let kind = class_or_package(analysis, def.package, def.span.file);
     record.insert(kind.into(), symbol(analysis, def.package));
     record.insert("arity".into(), json!(def.arity()));
-    record.insert("takes".into(), takes_of(analysis, def.name, def.mac.as_deref(), window.view()));
-    record.insert(
-        "signature".into(),
-        match probed(analysis, def.name, def.mac.as_deref(), window.view()) {
-            Some(p) if p.complete => json!(p.spec.raw),
-            Some(p) => json!(format!("{}…", p.spec.raw)),
-            None => Json::Null,
-        },
-    );
-    if let Some(p) = probed(analysis, def.name, def.mac.as_deref(), window.view()).filter(|p| !p.forms.is_empty()) {
-        record.insert("forms".into(), json!(p.forms.iter().map(|f| f.raw.clone()).collect::<Vec<_>>()));
-    }
-    record.insert("effective".into(), json!(effective_of(analysis, def.name, def.mac.as_deref(), window.view())));
-    if let Some(error) = probed(analysis, def.name, def.mac.as_deref(), window.view()).and_then(|p| p.error) {
-        record.insert("error".into(), json!(error));
-    }
+    insert_call_shape(&mut record, analysis, def.name, def.mac.as_deref(), window.view(), true);
     record.insert("certain".into(), json!(def.certain));
     record.insert("context".into(), json!(def_context_label(analysis, &[(def.context.to_vec(), def.via)])));
     let (body, primitive) = body_of(analysis, def.name, def.mac.as_deref());
@@ -2332,11 +2706,45 @@ fn record_for_def(analysis: &Analysis, def: &crate::facts::Definition, window: W
     record
 }
 
+/// What a call of `sym` reads: `takes`, `signature`, `effective`, the
+/// `error` the probe raised if any, and with `forms` the forms it found.
+fn insert_call_shape(
+    record: &mut Record,
+    analysis: &Analysis,
+    sym: Sym,
+    mac: Option<&crate::tex::MacroDef>,
+    view: Option<crate::probe::State>,
+    forms: bool,
+) {
+    record.insert("takes".into(), takes_of(analysis, sym, mac, view));
+    let probe = probed(analysis, sym, mac, view);
+    record.insert(
+        "signature".into(),
+        match &probe {
+            Some(p) if p.complete => json!(p.spec.raw),
+            Some(p) => json!(format!("{}…", p.spec.raw)),
+            None => Json::Null,
+        },
+    );
+    if let Some(p) = probe.as_ref().filter(|p| forms && !p.forms.is_empty()) {
+        record.insert("forms".into(), json!(p.forms.iter().map(|f| f.raw.clone()).collect::<Vec<_>>()));
+    }
+    record.insert("effective".into(), json!(effective_of(analysis, sym, mac, view)));
+    if let Some(error) = probe.and_then(|p| p.error) {
+        record.insert("error".into(), json!(error));
+    }
+}
+
 /// A record for a name with no recorded definition site: a kernel primitive
 /// or macro this run never redefined, reported from its final meaning —
 /// the branch `explain` falls back to.
 fn record_for_kernel(analysis: &Analysis, sym: Sym, window: Window) -> Option<Record> {
-    let meaning = analysis.env.meaning(sym);
+    record_for_meaning(analysis, sym, window, analysis.env.meaning(sym))
+}
+
+/// [`record_for_kernel`] of the meaning `sym` has somewhere else than at
+/// the end of the run.
+fn record_for_meaning(analysis: &Analysis, sym: Sym, window: Window, meaning: Meaning) -> Option<Record> {
     if matches!(meaning, Meaning::Undefined) {
         return None;
     }
@@ -2374,22 +2782,7 @@ fn record_for_kernel(analysis: &Analysis, sym: Sym, window: Window) -> Option<Re
     };
     record.insert("arity".into(), json!(arity));
     record.insert("context".into(), json!(where_label(analysis, &[Vec::new()])));
-    record.insert("takes".into(), takes_of(analysis, sym, meaning.as_macro().map(|m| &**m), window.view()));
-    record.insert(
-        "signature".into(),
-        match probed(analysis, sym, meaning.as_macro().map(|m| &**m), window.view()) {
-            Some(p) if p.complete => json!(p.spec.raw),
-            Some(p) => json!(format!("{}…", p.spec.raw)),
-            None => Json::Null,
-        },
-    );
-    record.insert(
-        "effective".into(),
-        json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), window.view())),
-    );
-    if let Some(error) = probed(analysis, sym, meaning.as_macro().map(|m| &**m), window.view()).and_then(|p| p.error) {
-        record.insert("error".into(), json!(error));
-    }
+    insert_call_shape(&mut record, analysis, sym, meaning.as_macro().map(|m| &**m), window.view(), false);
     let (body, primitive) = body_of(analysis, sym, meaning.as_macro().map(|m| &**m));
     record.insert("body".into(), body);
     if primitive {
@@ -2495,13 +2888,8 @@ fn explain_boundary(analysis: &Analysis, at: &ExplainAt) -> Result<Option<NodeId
 /// The latest definition of `sym` at or before `boundary`; `None` for the
 /// boundary means no cutoff, so the latest definition overall.
 fn def_at(analysis: &Analysis, sym: Sym, boundary: Option<NodeId>) -> Option<&crate::facts::Definition> {
-    analysis
-        .facts
-        .defs
-        .iter()
-        .filter(|d| d.name == sym)
-        .filter(|d| boundary.is_none_or(|b| d.node <= b))
-        .max_by_key(|d| d.node)
+    let defs = || analysis.facts.defs.iter().filter(|d| d.name == sym).filter(|d| boundary.is_none_or(|b| d.node <= b));
+    defs().filter(|d| d.via != Some(sym)).max_by_key(|d| d.node).or_else(|| defs().max_by_key(|d| d.node))
 }
 
 /// The environments open at `node`, outermost first, replayed from the
@@ -2712,40 +3100,16 @@ fn split_by_environment(analysis: &Analysis, sym: Sym, base: &Record) -> Option<
     if contexts.len() <= 1 {
         return None;
     }
-    let mut groups: Vec<(Option<String>, Vec<Vec<Sym>>)> = Vec::new();
-    for ctx in contexts {
+    let errors = contexts.into_iter().map(|ctx| {
         let error = analysis
             .facts
             .raised
             .iter()
             .find(|r| r.name == sym && r.context.as_ref() == ctx.as_slice())
             .map(|r| r.text.clone());
-        match groups.iter_mut().find(|(e, _)| *e == error) {
-            Some((_, ctxs)) => ctxs.push(ctx),
-            None => groups.push((error, vec![ctx])),
-        }
-    }
-    if groups.len() <= 1 {
-        return None;
-    }
-    Some(
-        groups
-            .into_iter()
-            .map(|(error, ctxs)| {
-                let mut record = base.clone();
-                match error {
-                    Some(text) => {
-                        record.insert("error".into(), json!(text));
-                    }
-                    None => {
-                        record.remove("error");
-                    }
-                }
-                record.insert("context".into(), json!(where_label(analysis, &ctxs)));
-                record
-            })
-            .collect(),
-    )
+        (error, ctx)
+    });
+    meanings_by_error(analysis, base, errors)
 }
 
 /// Environment-context meanings for a name with no real use to read them
@@ -2755,9 +3119,21 @@ fn split_by_environment(analysis: &Analysis, sym: Sym, base: &Record) -> Option<
 /// each raises against `base`'s own (probed outside any environment)
 /// error. `None` when none of them differed.
 fn probe_context_meanings(analysis: &Analysis, sym: Sym, base: &Record) -> Option<Vec<Record>> {
+    let errors = crate::probe::probe_contexts(analysis, sym)
+        .into_iter()
+        .map(|(env, error)| (error, env.map_or_else(Vec::new, |e| vec![e])));
+    meanings_by_error(analysis, base, errors)
+}
+
+/// One copy of `base` per distinct error among `errors`, each labelled with
+/// every context that raised it.  `None` when they all raised the same.
+fn meanings_by_error(
+    analysis: &Analysis,
+    base: &Record,
+    errors: impl Iterator<Item = (Option<String>, Vec<Sym>)>,
+) -> Option<Vec<Record>> {
     let mut groups: Vec<(Option<String>, Vec<Vec<Sym>>)> = Vec::new();
-    for (env, error) in crate::probe::probe_contexts(analysis, sym) {
-        let ctx = env.map_or_else(Vec::new, |e| vec![e]);
+    for (error, ctx) in errors {
         match groups.iter_mut().find(|(e, _)| *e == error) {
             Some((_, ctxs)) => ctxs.push(ctx),
             None => groups.push((error, vec![ctx])),
@@ -2855,7 +3231,17 @@ pub fn explain_at(
         } else {
             let doc_def = def_at(analysis, sym, None);
             let preamble_boundary = explain_boundary(analysis, &ExplainAt::Preamble).ok().flatten();
-            let preamble_def = preamble_boundary.and_then(|b| def_at(analysis, sym, Some(b)));
+            let preamble_call = preamble_boundary.and_then(|b| {
+                analysis
+                    .facts
+                    .expansions
+                    .iter()
+                    .filter(|e| e.name == sym && e.span.file == analysis.main_file)
+                    .filter_map(|e| e.node)
+                    .filter(|n| *n <= b)
+                    .max()
+            });
+            let preamble_def = preamble_boundary.and_then(|b| def_at(analysis, sym, Some(preamble_call.unwrap_or(b))));
             match (preamble_def, doc_def) {
                 (None, None) => {
                     let base = record_for_kernel(analysis, sym, Window::All);
@@ -2872,6 +3258,25 @@ pub fn explain_at(
                 }
                 // Only one of the two exists, or they agree: nothing to tell
                 // apart, so `when` would only be noise on the one record shown.
+                // Used in the preamble with the meaning the format gave it,
+                // which the run later replaced (`\documentclass` by an
+                // error): both, each where it holds.
+                (None, Some(doc))
+                    if preamble_call.is_some()
+                        && analysis.kernel.as_ref().is_some_and(|kernel| {
+                            !matches!(kernel.meaning(sym), Meaning::Undefined)
+                                && doc.mac.as_deref() != kernel.meaning(sym).as_macro().map(|m| &**m)
+                        }) =>
+                {
+                    let kernel = analysis.kernel.as_ref().map(|k| k.meaning(sym)).unwrap_or(Meaning::Undefined);
+                    if let Some(mut record) = record_for_meaning(analysis, sym, Window::Start, kernel) {
+                        record.insert("when".into(), json!("preamble"));
+                        out.push(record);
+                    }
+                    let mut record = record_for_def(analysis, doc, Window::Document);
+                    record.insert("when".into(), json!("document"));
+                    out.push(record);
+                }
                 (None, Some(def)) | (Some(def), None) => out.push(record_for_def(analysis, def, Window::All)),
                 (Some(a), Some(b)) if a.node == b.node => out.push(record_for_def(analysis, b, Window::All)),
                 (Some(preamble), Some(doc)) => {
@@ -3231,7 +3636,7 @@ enum KeyDialect<'a> {
 /// asked for by its base name (`itemize`, not `\begin{itemize}`):
 /// `\newenvironment` makes the code that reads `[…]` the environment's own
 /// macro.
-fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, String)> {
+fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<String>)> {
     // `within` is what dynamically enclosed a call, but a common dispatch
     // idiom (`\@testopt`/`\@ifnextchar` re-invoking the command itself to
     // consume `[…]`) drops the chain — the re-invoked call is recorded with
@@ -3243,27 +3648,50 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, String)>
     // walk stays linear in the run rather than rescanning every expansion
     // at every node.
     const MAX_VISITED: usize = 4_000;
-    let mut by_name: HashMap<Sym, Vec<&crate::facts::Expansion>> = HashMap::new();
+    let mut by_name: HashMap<Sym, Vec<&crate::facts::Expansion>> = HashMap::default();
     for e in &analysis.facts.expansions {
         by_name.entry(e.name).or_default().push(e);
     }
     let mut seen: BTreeSet<Sym> = BTreeSet::from([sym]);
     let mut frontier = vec![sym];
+    let mut parent: HashMap<Sym, Sym> = HashMap::default();
     while let Some(current) = frontier.pop() {
         if let Some(dialect) = key_dispatch(analysis.interner.name(current)) {
-            let found = by_name.get(&current).into_iter().flatten().find_map(|e| {
-                let first = e.arguments.first()?;
-                let text = detokenize(first, &analysis.interner);
-                // `\pgfkeys`/`\pgfqkeys` take one argument that mixes the
-                // path with the assignments under it (`/mytool,width=2cm`),
-                // so only what precedes the first comma is the path;
-                // `\setkeys`-style dispatchers pass the bare family instead,
-                // where this is a no-op.
-                let family = text.split(',').next()?.trim().trim_start_matches('/').split('/').next()?;
-                (!family.is_empty()).then(|| family.to_string())
+            // The call this name's own code made comes first: the library
+            // calls the same dispatcher for its own keys.
+            let mut calls: Vec<_> = by_name.get(&current).into_iter().flatten().collect();
+            calls.sort_by_key(|e| !e.within.is_some_and(|w| seen.contains(&w)));
+            // A dispatcher whose argument the run did not record is read
+            // off the asked name's own body: `\def\fa[#1]{\pgfkeys{/fa/.cd,#1}}`.
+            let spelled = format!("\\{} {{", analysis.interner.name(current));
+            let from_body = parent.get(&current).filter(|&&p| p == sym).into_iter().find_map(|&s| {
+                let m = analysis.env.meaning(s).as_macro()?.clone();
+                let body = detokenize(&m.replacement_text, &analysis.interner);
+                let at = body.find(&spelled)? + spelled.len();
+                Some(body[at..].split(['}', ',']).next()?.to_string())
             });
-            if let Some(family) = found {
-                return Some((dialect, family));
+            let texts = calls.into_iter().filter_map(|e| Some(detokenize(e.arguments.first()?, &analysis.interner)));
+            let mut found: Vec<String> = texts
+                .chain(from_body)
+                .filter_map(|text| {
+                    // `\pgfkeys`/`\pgfqkeys` take one argument that mixes the
+                    // path with the assignments under it (`/mytool/.cd,width=2cm`),
+                    // so only what precedes the first comma is the path;
+                    // `\setkeys`-style dispatchers pass the bare family instead.
+                    let path = text.split(',').next()?.trim();
+                    let family = match dialect {
+                        KeyDialect::Pgf if path.starts_with('/') => path.trim_end_matches("/.cd").to_string(),
+                        _ => path.trim_start_matches('/').split('/').next()?.to_string(),
+                    };
+                    (!family.is_empty()).then_some(family)
+                })
+                .collect();
+            // Every family the code reads, in the order it was seen to
+            // (enumitem reads `enumitem-resume` and `enumitem`).
+            let mut known = BTreeSet::new();
+            found.retain(|f| known.insert(f.clone()));
+            if !found.is_empty() {
+                return Some((dialect, found));
             }
         }
         let Some(index) = analysis.calls.get(current) else { continue };
@@ -3273,6 +3701,7 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, String)>
                 break;
             }
             if seen.insert(callee) {
+                parent.insert(callee, current);
                 frontier.push(callee);
             }
         }
@@ -3290,9 +3719,9 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, String)>
 pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
     let wanted = name.trim_start_matches('\\');
     let Some(sym) = analysis.interner.lookup(wanted) else { return Vec::new() };
-    let Some((dialect, family)) = key_family(analysis, sym) else {
+    let Some((dialect, families)) = key_family(analysis, sym) else {
         let mac = analysis.env.meaning(sym).as_macro().map(|m| (**m).clone());
-        let shape = effective_of(analysis, sym, mac.as_ref(), Some(false));
+        let shape = effective_of(analysis, sym, mac.as_ref(), Some(crate::probe::State::End));
         if !shape.contains('[') {
             return Vec::new();
         }
@@ -3305,29 +3734,79 @@ pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
         );
         return vec![record];
     };
-    let mut out = match dialect {
-        KeyDialect::Pgf => pgfkeys(analysis, Some(&family)),
-        KeyDialect::Keyval(prefix) => analysis
-            .facts
-            .defs
+    let out: Vec<Record> = match dialect {
+        KeyDialect::Pgf => {
+            // `.search also` stores the paths it adds in the family's
+            // `.unknown` handler; they follow the family's own keys.
+            let mut families = families;
+            let mut out = Vec::new();
+            let also = Regex::new(r"/[A-Za-z][^,{}\s\\]*").expect("valid regex");
+            let mut rank = 0;
+            while rank < families.len() && rank < 8 {
+                let path = format!("{}/", families[rank]);
+                for mut record in pgfkeys(analysis, Some(&path)) {
+                    let key = record.get("key").and_then(Json::as_str).unwrap_or_default().to_string();
+                    if key == format!("{path}.unknown") {
+                        let code = record.get("value").and_then(Json::as_str).unwrap_or_default();
+                        for m in also.find_iter(code) {
+                            if !families.iter().any(|f| f == m.as_str()) {
+                                families.push(m.as_str().to_string());
+                            }
+                        }
+                    }
+                    if key[path.len()..].contains("/.") || key[path.len()..].starts_with('.') {
+                        continue;
+                    }
+                    record.insert("rank".into(), json!(rank));
+                    record.insert("family".into(), json!(families[rank]));
+                    out.push(record);
+                }
+                rank += 1;
+            }
+            return out;
+        }
+        KeyDialect::Keyval(prefix) => families
             .iter()
-            .filter(|def| def.tag == "key")
-            .filter_map(|def| {
-                let subject = def.subject?;
-                let key = analysis.interner.name(subject);
-                (analysis.interner.name(def.name) == format!("{prefix}{family}@{key}")).then(|| {
-                    let mut record = place(analysis, def.span);
-                    record.insert("key".into(), json!(key));
-                    record.insert("package".into(), symbol(analysis, def.package));
-                    record
-                })
+            .flat_map(|family| {
+                keyval_keys(analysis, &format!("{prefix}{family}@")).into_iter().map(move |k| (family, k))
+            })
+            .map(|(family, (key, def, default))| {
+                let mut record = place(analysis, def.span);
+                record.insert("family".into(), json!(family));
+                record.insert("key".into(), json!(key));
+                record.insert("default".into(), default.map_or(Json::Null, |d| json!(d)));
+                record.insert("package".into(), symbol(analysis, def.package));
+                record
             })
             .collect(),
     };
-    for record in &mut out {
-        record.insert("family".into(), json!(family));
-    }
     out
+}
+
+/// The keys a keyval-style family holds: every macro defined as
+/// `⟨store⟩⟨key⟩` (keyval's `\define@key` convention, which xkeyval,
+/// kvoptions and private copies share), with the default its
+/// `⟨store⟩⟨key⟩@default` passes when one was given.
+pub fn keyval_keys<'a>(
+    analysis: &'a Analysis,
+    store: &str,
+) -> Vec<(String, &'a crate::facts::Definition, Option<String>)> {
+    let mut keys: BTreeMap<&str, &crate::facts::Definition> = BTreeMap::new();
+    let mut defaults: HashMap<&str, String> = HashMap::default();
+    for def in &analysis.facts.defs {
+        let Some(key) = analysis.interner.name(def.name).strip_prefix(store) else { continue };
+        let Some(mac) = def.mac.as_ref().filter(|_| !key.is_empty()) else { continue };
+        if let Some(base) = key.strip_suffix("@default") {
+            // `\KV@fam@key{⟨default⟩}`: the braced part is the value.
+            let body = detokenize(&mac.replacement_text, &analysis.interner);
+            if let (Some(a), Some(b)) = (body.find('{'), body.rfind('}')) {
+                defaults.insert(base, body[a + 1..b].to_string());
+            }
+        } else if !key.contains('@') {
+            keys.insert(key, def);
+        }
+    }
+    keys.into_iter().map(|(key, def)| (key.to_string(), def, defaults.get(key).cloned())).collect()
 }
 
 /// Where a control sequence built by a library's own code was asked for: the

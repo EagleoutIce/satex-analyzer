@@ -1,0 +1,17 @@
+\documentclass{article}
+\usepackage{comment}
+\excludecomment{foo}
+\begin{document}
+\begin{comment}
+\end{document} { \undefinedmacro
+\begin{comment} % nested is not counted
+\end{comment}
+\gdef\AfterA{}
+\begin{foo}
+\end{document}
+} \end{foox}
+\end{foo}
+\gdef\AfterB{}
+\section{After}\label{after}
+\gdef\SatexReachedEnd{}
+\end{document}

@@ -1,0 +1,22 @@
+% TODO: add to toc but disable number more elegantly
+\newenvironment{abstract}{\cleardoublepage\begingroup\section*{\translate{abstract}}\addcontentsline{toc}{chapter}{Abstract}}{\thesis@voidpar\endgroup\bigskip\thesis@voidpar}
+\newenvironment{acknowledgements}{\cleardoublepage\begingroup\section*{\translate{acknowledgements}}}{\thesis@voidpar\endgroup\bigskip\thesis@voidpar}
+% \addcontentsline{toc}{chapter}{Acknowledgements}
+
+% \addcontentsline{toc}{chapter}{Conventions}
+\newenvironment{conventions}{\cleardoublepage\begingroup\section*{\translate{conventions}}}{\thesis@voidpar\endgroup\bigskip\thesis@voidpar}
+
+\RequirePackage{enumitem}
+
+\appto\extrasngerman{%
+   \Crefname{rqsi}{Forschungsfrage}{Forschungsfragen}
+   \Crefname{rqsii}{Forschungsfrage}{Forschungsfragen}
+}
+\appto\extrasenglish{%
+   \Crefname{rqsi}{Research Question}{Research Questions}
+   \Crefname{rqsii}{Research Question}{Research Questions}
+}
+
+\newlist{rqs}{enumerate}{5}
+\setlist[rqs]{leftmargin=*,label*={.\arabic*}}
+\setlist[rqs,1]{label={\textsc{rq}\arabic*}}

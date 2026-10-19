@@ -7,12 +7,13 @@ use super::{Context, Format, Output};
 use crate::config::Config;
 use crate::render;
 
+pub mod archive;
 pub mod build;
 
-/// The cache directory in effect: `cache_dir:`/`--set cache_dir=...`, or the
+/// The cache directory in effect: `cache.dir:`/`--set cache.dir=...`, or the
 /// platform default.
 fn directory(cfg: &Config) -> Option<std::path::PathBuf> {
-    cfg.cache_dir.clone().or_else(crate::format::default_cache_dir)
+    cfg.cache.dir.clone().or_else(crate::format::default_cache_dir)
 }
 
 /// Status of the kernel cache and the package caches: what `satex cache`
@@ -84,12 +85,19 @@ pub fn status(context: &Context, out: &mut impl Write) -> Result<Output, String>
             );
         }
         let (count, bytes) = crate::format::package_caches(directory);
+        let index = &analysis.settings.cache.index;
+        let prepares = if index.packages.is_empty() {
+            let found = build::discover_expensive(directory, build::EXPENSIVE_BYTES);
+            let found = found.iter().map(|(name, _)| name).filter(|name| !index.common.contains(name));
+            index.common.iter().chain(found).map(String::as_str).collect::<Vec<_>>().join(", ")
+        } else {
+            index.packages.join(", ")
+        };
         let _ = writeln!(
             out,
-            "  {} {count} stored, {} (`satex cache build` prepares {})",
+            "  {} {count} stored, {} (`satex cache build` prepares {prepares})",
             render::label("package caches"),
             bytesize::ByteSize(bytes),
-            analysis.settings.cache_index.packages.join(", ")
         );
     }
     if fmt.lines > 0 {
@@ -104,19 +112,47 @@ pub fn status(context: &Context, out: &mut impl Write) -> Result<Output, String>
     Ok(Output::Done)
 }
 
+/// `satex cache export`: write the valid caches to `target`.
+pub fn export(cfg: &Config, target: &std::path::Path, json: bool, out: &mut impl Write) -> Result<(), String> {
+    let Some(directory) = directory(cfg) else { return Err("no cache directory".into()) };
+    archive::export(&directory, target, json, out)
+}
+
+/// `satex cache import`: unpack an archive into the cache directory.
+pub fn import(cfg: &Config, source: &std::path::Path, json: bool, out: &mut impl Write) -> Result<(), String> {
+    let Some(directory) = directory(cfg) else { return Err("no cache directory".into()) };
+    archive::import(&directory, source, json, out)
+}
+
 /// `satex cache clear`: delete every cache satex keeps.
 pub fn clear(cfg: &Config, json: bool, out: &mut impl Write) -> Result<(), String> {
     let Some(directory) = directory(cfg) else { return Err("no cache directory".into()) };
+    // What the directory held before, so the report can say what was freed.
+    let size = |dir: &std::path::Path| -> u64 {
+        std::fs::read_dir(dir)
+            .map(|entries| {
+                entries.flatten().filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).map(|m| m.len()).sum()
+            })
+            .unwrap_or(0)
+    };
+    let before = size(&directory);
     let removed = crate::format::clear(&directory).map_err(|e| e.to_string())?;
+    let freed = before.saturating_sub(size(&directory));
     if json {
         let text = serde_json::to_string_pretty(&serde_json::json!({
             "removed": removed,
+            "freed_bytes": freed,
             "directory": directory.display().to_string(),
         }))
         .map_err(|e| e.to_string())?;
         let _ = writeln!(out, "{text}");
     } else {
-        let _ = writeln!(out, "removed {removed} cache file(s) from {}", directory.display());
+        let _ = writeln!(
+            out,
+            "removed {removed} cache file(s), {} freed, from {}",
+            bytesize::ByteSize(freed),
+            directory.display()
+        );
     }
     Ok(())
 }

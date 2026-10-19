@@ -1,0 +1,7 @@
+\documentclass{article}
+\newcount\n
+\n=\pdfuniformdeviate 8
+\def\down{\ifnum\n>0 .\advance\n-1 \expandafter\down\fi}
+\begin{document}
+\down
+\end{document}

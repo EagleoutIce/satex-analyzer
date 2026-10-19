@@ -10,7 +10,9 @@ use crate::tex::{CatcodeTable, Interner, Mouth, Tok};
 pub fn run(context: &Context) -> Result<Output, String> {
     let mut interner = Interner::default();
     let catcodes = CatcodeTable::latex();
-    let mut mouth = Mouth::new(context.source, 0);
+    // The mouth reads what the engine reads: bytes for `tex` and `pdftex`.
+    let source = crate::source::recode(context.source);
+    let mut mouth = Mouth::new(&source, 0);
     let mut out = Vec::new();
     while let Some(token) = mouth.next(&catcodes, &mut interner) {
         let mut record = Record::new();

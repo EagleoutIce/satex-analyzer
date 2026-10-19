@@ -1,0 +1,18 @@
+\documentclass{article}
+\usepackage{environ}
+\NewEnviron{boxed}{\fbox{\BODY}}
+\NewDocumentEnvironment{grab}{+b}{#1}{}
+\begin{document}
+\begin{boxed}
+body \emph{x}
+\end{boxed}
+\gdef\AfterA{}
+\begin{grab}
+first
+
+second
+\end{grab}
+\gdef\AfterB{}
+\section{After}\label{after}
+\gdef\SatexReachedEnd{}
+\end{document}

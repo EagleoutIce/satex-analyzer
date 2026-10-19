@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}} · satex</title>
+<meta name="description" content="{{description}}">
+<link rel="icon" href="{{root}}{{favicon}}" type="image/svg+xml">
+<link rel="alternate icon" href="{{root}}{{favpng}}" type="image/png">
+<link rel="stylesheet" href="{{root}}{{css}}">
+<script>try { const t = localStorage.getItem('satex-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}</script>
+<script src="{{root}}{{sitejs}}" defer></script>
+</head>
+<body class="{{class}}">
+<header class="top">
+  <a class="brand" href="{{root}}index.html" title="satex home"><img class="ink" src="{{root}}{{name}}" alt="SaTeX"></a>
+  <a class="version" href="{{repository}}/releases" title="releases">v{{version}}</a>
+  <nav>
+    <a href="{{root}}play/index.html">Playground</a>
+    <a href="{{root}}guide.html">Guide</a>
+    <a href="{{root}}wiki/lints.html">Lints</a>
+    <a href="{{root}}SEMANTICS.html">Semantics</a>
+    <a href="{{repository}}">GitHub</a>
+  </nav>
+  <button class="theme" id="theme" type="button" aria-label="switch between light and dark mode" title="light or dark mode"></button>
+</header>
+<div class="layout">
+  <aside class="side">{{sidebar}}</aside>
+  <main>{{body}}</main>
+  <nav class="toc" id="toc" aria-label="on this page"></nav>
+</div>
+<footer>
+  <img class="ink" src="{{root}}{{name}}" alt="" height="20">
+  <span>satex {{version}} · built {{date}}</span>
+  <nav>
+    <a href="{{repository}}">GitHub</a>
+    <a href="{{root}}guide.html">Guide</a>
+    <a href="{{root}}wiki/lints.html">Wiki</a>
+    <a href="https://crates.io/crates/{{crate}}">crates.io</a>
+    <a href="{{repository}}/releases">Releases</a>
+    <a href="{{repository}}/blob/main/LICENSE">MIT license</a>
+  </nav>
+  <span class="muted">by <a href="https://github.com/EagleoutIce">Florian Sihler</a>, Ulm University</span>
+</footer>
+</body>
+</html>

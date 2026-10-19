@@ -1,0 +1,214 @@
+% TODO: clean up, heavily based on my bachelor thesis configuration
+
+\RequirePackage[
+   acronym,
+   nopostdot,
+   numberedsection=nameref,
+   section,
+   noglossaryindex,
+   translate=babel
+]{glossaries-accsupp}
+
+% \noist % disable index style file
+\RequirePackage{glossary-longragged}
+
+\newif\ifdisableside
+
+\newif\if@lglos@atinit@glossary@
+% single- and plural-page
+% this is a hack. i check if 'delimN' or 'delimR' are in the page def
+% therefore i execute the page-commands but gobble all of their outputs
+\newsavebox\@lglos@la@void
+\def\@lglos@hide@in@da@void#1{\sbox\@lglos@la@void{#1}}
+
+% TODO: translate
+\newif\iflglos@thispage@issingle@
+\let\lglos@legacy@delimN\delimN
+\let\lglos@legacy@delimR\delimR
+
+\def\lglos@delimN{%
+   \global\lglos@thispage@issingle@false\lglos@legacy@delimN
+}
+\def\lglos@delimR{%
+   \global\lglos@thispage@issingle@false\lglos@legacy@delimN
+}
+% #1 if lglos@spage or @ppage, #2 content
+\def\@glos@strutinit{\vspace{\dimexpr-\ht\strutbox+\dp\strutbox}\thesis@marginpar@font\scriptsize}
+\def\@@lglos@printpages#1#2{%
+\sidenote*{\@glos@strutinit#1:~\nohyper{#2.}%
+}%
+}
+\def\@lglos@printpages#1{%
+   \protected@edef\@tmp@curpage@pagename{\iflglos@thispage@issingle@\lglos@spage\else\lglos@ppage\fi}%
+   \expandafter\@@lglos@printpages\expandafter{\@tmp@curpage@pagename}{#1}%
+}
+\def\lglos@printpages#1{%
+   \let\delimN\lglos@delimN\let\delimR\lglos@delimR
+   \lglos@thispage@issingle@true\@lglos@hide@in@da@void{#1}%
+   \@lglos@printpages{#1}%
+}
+
+\long\def\SetTheGlossaryStyle#1{%
+   \long\gdef\lglos@headingstyle##1{#1{##1}}%
+}
+
+\def\lglos@default@headingstyle#1{%
+   \begin{center}%
+      \strut\emph{#1}%
+   \end{center}%
+}
+\def\lglos@default@headingstyle@short#1{\medskip}
+
+\def\lglos@desc@options{}
+
+\newglossarystyle{lecture@glossary}{%
+   \setglossarystyle{tree}%
+   \renewcommand\glsgroupheading[1]{%
+      \if@lglos@atinit@glossary@\else
+         \def\lglos@enddesc{\end{description}}%
+         \expandafter\lglos@enddesc
+      \fi
+      \global\@lglos@atinit@glossary@false
+      \lglos@headingstyle{\glsgetgrouptitle{##1}}%
+      \protected@edef\lglos@curdesc{\noexpand\begin{description}[\lglos@desc@options]}\expandafter\lglos@curdesc
+   }%
+   \renewenvironment{theglossary}{%
+      \parindent\z@ \parskip\z@
+      \global\@lglos@atinit@glossary@true
+   }{\end{description}}%#
+   \renewcommand\glossentry[2]{%reset of tree to pad pagenumbers
+      \hangindent\z@ \parindent\z@
+      \item[\glsentryitem{##1}\glstreenamefmt{\glstarget{##1}{\glossentryname{##1}}}]%
+      \strut\lglos@printpages{##2}\ifglshassymbol{##1}{\space(\glossentrysymbol{##1})}{}%
+      \glstreepredesc\glossentrydesc{##1}\glspostdescription{}\par
+   }%
+}
+
+\setglossarystyle{lecture@glossary}
+
+\AtEndPreamble{\makeglossaries}% so we can have new types etc.
+\preto\printglossaries{\begingroup\thesisglsinsidefalse\interlinepenalty\@M}
+\appto\printglossaries{\endgroup}
+
+\newrobustcmd*\glslong[1]{{\glsreset{#1}\gls{#1}}}\newrobustcmd*\glspllong[1]{{\glsreset{#1}\glspl{#1}}}
+\newrobustcmd*\glsshort[1]{{\glsunset{#1}\gls{#1}}}\newrobustcmd*\glsplshort[1]{{\glsunset{#1}\glspl{#1}}}
+\newrobustcmd*\Glslong[1]{{\glsreset{#1}\Gls{#1}}}\newrobustcmd*\Glspllong[1]{{\glsreset{#1}\Glspl{#1}}}
+\newrobustcmd*\Glsshort[1]{{\glsunset{#1}\Gls{#1}}}\newrobustcmd*\Glsplshort[1]{{\glsunset{#1}\Glspl{#1}}}
+
+% will be used in sidebar notes
+\glsaddstoragekey{shortdesc}{\glsentrydesc{\glslabel}}{\glsshortentrydesc}
+\def\thesis@shortgls{\protect\glsshortentrydesc{\glslabel}}
+
+% change gls base; does never print long for ac;
+\newif\ifglsshouldbeit \glsshouldbeittrue% falses are all in group
+
+\def\@thesis@gls#1#2#3{\@insertchk{\ifglsused{#1}{#3{#1}}{#2{#1}}}}
+\def\@insertchk#1{\ifx\glsinsert\@empty#1\else\glsinsert\fi}%
+\def\thesissidenotebase{% \ifglsshouldbeit\expandafter\textit\fi
+% !\glsinsert!\glslabel!\glstype @\@insertchk{\@gls@link[]{\glslabel}{x}}%
+% \glsifplural{\glslabel}{\glslink{\glslabel}{\ifglsused{\glslabel}{\glsentryplural{\glslabel}}{\glsentryfirst{\glslabel}}}}{\glslink{\glslabel}{\ifglsused{\glslabel}{\glsentryname{\glslabel}}{\glsentryfirst{\glslabel}}}%
+\ifdefempty\glscustomtext{%
+\glsifplural{%
+  \glscapscase{%
+    \@thesis@gls\glslabel\glsentryfirstplural\glsentryplural
+  }{%
+    \@thesis@gls\glslabel\Glsentryfirstplural\Glsentryplural
+  }{%
+    \mfirstucMakeUppercase{\@thesis@gls\glslabel\glsentryfirstplural\glsentryplural}%
+  }%
+}{%
+  \glscapscase{%
+      \@thesis@gls\glslabel\glsentryfirst\glsentryname
+  }{%
+      \@thesis@gls\glslabel\Glsentryfirst\Glsentryname
+  }{%
+    \mfirstucMakeUppercase{\@thesis@gls\glslabel\glsentryfirst\glsentryname}%
+  }%
+}%
+}{\glslink{\glslabel}{\@insertchk{\glscustomtext}}}}%
+
+\def\thesissidenotesymbol{%
+   \ifglsshouldbeit\expandafter\textsl\fi{\@insertchk{\glssymbol{\glslabel}}}%
+}
+\def\thesis@sidesymbol#1{%
+   \disablesidefalse\glslink{#1}{\textbf{\glsentrytext{#1}}}:\disablesidetrue\space\thesis@shortgls
+}
+\robustify\thesis@sidesymbol
+
+\newif\ifthesisglsinside \thesisglsinsidetrue
+
+\def\GlsResetSide#1{\checkoddpage\csundef{gls@lock@#1@\number\oddpage@page}}
+
+% #1 will only be executed if not locked; #2 is the label; #3 is else
+\def\thesisgls@lockForPage#1#2#3{\ifthesisglsinside% we identify the exact page:
+   \checkoddpage% used so i do not have to fiddle with page label
+   % we lock the current label for the page;
+   \ifcsname gls@lock@#2@\number\oddpage@page\endcsname
+   {#3}%
+   \else
+   \expandafter\gdef\csname gls@lock@#2@\number\oddpage@page\endcsname{}\relax
+   #1\fi
+\else
+   #3%
+\fi}
+
+
+\def\thesissidenotegls{\ifinsidenote\else
+   \global\glsshouldbeittrue
+   % disableside to restrict (may-be infinite) propagation
+   \thesisgls@lockForPage{\thesissidenotebase\sidenote{\protect\thesis@sidesymbol{\glslabel}}}{\glslabel}{\global\glsshouldbeitfalse\thesissidenotebase}%
+   \fi
+}
+\robustify\thesissidenotegls
+\def\thesissidenoteGls{%
+   \global\glsshouldbeittrue\thesisgls@lockForPage{\thesissidenotebase\sidenote{\protect\disablesidefalse\protect\glslink{\glslabel}{\textbf{\capitalisewords{\glsentrytext{\glslabel}}}:\protect\disablesidetrue\protect\space\thesis@shortgls}}}{\glslabel}{\global\glsshouldbeitfalse\thesissidenotebase}%
+}
+\robustify\thesissidenoteGls
+\def\thesissidenoteSymbol{%
+   \ifmmode\thesissidenotesymbol\else\global\glsshouldbeittrue\thesisgls@lockForPage{\thesissidenotesymbol\sidenote{\protect\disablesidefalse\protect\glslink{\glslabel}{\textbf{{\glssymbol{\glslabel}}}}:\protect\disablesidetrue\protect\space\thesis@shortgls}}{\glslabel}{\global\glsshouldbeitfalse\thesissidenotesymbol}\fi%
+}
+\robustify\thesissidenoteSymbol
+
+% thesissidenotebase deals with proper plural handling :)
+\AtBeginDocument{\defglsentryfmt[\acronymtype]{%
+   {\ifdisableside\global\glsshouldbeitfalse\thesissidenotebase\else\thesissidenotegls\fi}%
+}
+\defglsentryfmt{%
+   {\ifdisableside\global\glsshouldbeitfalse\thesissidenotebase\else\thesissidenoteGls\fi}%
+}}
+\newglossary[ntsl]{notation}{nts}{nto}{Notations}
+\defglsentryfmt[notation]{%
+   \ifdisableside\global\glsshouldbeitfalse\thesissidenotesymbol\else\thesissidenoteSymbol\fi
+}
+
+\def\sidesymbol#1{%
+   \begingroup\def\glslabel{#1}\ifdisableside\else
+   \global\glsshouldbeittrue\thesisgls@lockForPage{\sidenote{\protect\disablesidefalse\protect\glslink{\glslabel}{\textbf{{\glssymbol{\glslabel}}}}:\protect\disablesidetrue\protect\space\thesis@shortgls}}{\glslabel}{}%
+   \fi\endgroup
+}
+\RequirePackage{pgffor}
+\def\showsymbols{\@ifstar\@showsymbols\@sh@wsymbols}
+\def\@showsymbols#1{\smash{\clap{\foreach \x in {#1}{\GlsResetSide{\x}\sidesymbol{\x}}}}}
+\def\@sh@wsymbols#1{\smash{\clap{\foreach \x in {#1}{\sidesymbol{\x}}}}}%
+
+
+\def\glsac#1{\glsentrylong{#1} (\gls{#1})}
+\def\glsplac#1{\glsentrylongpl{#1} (\glspl{#1})}
+
+\renewcommand*\glsdohyperlink[2]{%
+   \@glsshowtarget{#1}\thesis@disablehyper{\hyperlink{#1}{#2}}%
+}
+\glsenablehyper
+\def\lglos@spage{\translate{on-page}}\def\lglos@ppage{\translate{on-pages}}
+
+% \paletteA
+\RequirePackage{needspace}
+
+\def\thesisstyle#1{%
+   \par\needspace{2.25\baselineskip}\strut{%
+      % \raisebox{\dimexpr.5\ht\strutbox-.5pt}
+      \large\textrm{#1}\thinspace{\raisebox{.5\height}{\tikz{\draw[thick,line cap=round] (0,0) -- (1,0);}}}%
+   }%
+   \smallskip\par
+}
+\SetTheGlossaryStyle{\thesisstyle}

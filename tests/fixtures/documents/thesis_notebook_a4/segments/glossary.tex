@@ -1,0 +1,94 @@
+% normal glossary
+\newglossaryentry{formal:model}{%
+  name={model},plural={models},
+  description={%
+    Finite set of \glspl{formal:model-element} \ldots
+  },%
+  shortdesc={Set of \glspl{formal:model-element}.}
+}
+\newglossaryentry{formal:model-element}{%
+  name={model element},plural={model elements},
+  description={%
+    Component of a \gls{formal:model} \ldots
+  },%
+  shortdesc={Uniquely identified element of a \gls{formal:model}.}
+}
+
+\newglossaryentry{formal:external-factor}{%
+  name={external factor}, plural={external factors},
+  description={%
+    A factor defined outside of the \gls{formal:model} and its expressions. Its change can yield completely different values inferred by the solver.
+  },%
+  shortdesc={Factors outside of a \gls{formal:model}[models] control}%
+}
+
+\newglossaryentry{def:behavioral-equivalence}{%
+  name={behavioral equivalence},
+  first={behavioral equivalence [first use!]},
+  description={%
+    Two \glspl{formal:model}~\(A\) and~\(B\) have the same observable behavior for all \textit{variables} they do have in common\ldots
+  },%
+  shortdesc={%
+    All \textit{variables} in common evaluate to the same value for all external factors.%
+  }%
+}
+
+
+% acronyms
+\newacronym{cpo}{CPO}{Complete Partial Order}
+\newacronym{ast}{AST}{Abstract Syntax Tree}
+\newacronym{ip}{IP}{Intellectual Property}
+\newacronym[plural={Internet Protocol addresses}]{net:ip}{IP address}{Internet Protocol address}
+
+
+% notations
+\newglossaryentry{not:N}{%
+  name={Natural Number}, symbol={\ensuremath{\mathbb{N}}},
+  type={notation},
+  description={%
+    Describes the set of non negative integers: \(\{1, 2, \ldots\}\). If~\(0\) is to be included, it is indexed as \(\mathbb{N}_0\).
+  },%
+  shortdesc={%
+    Set of non-negative ints.
+  }%
+}
+
+\newglossaryentry{not:Z}{%
+  name={Integer}, symbol={\ensuremath{\mathbb{Z}}},
+  type={notation},
+  description={%
+    Describes the set of non negative as well as the negative integers: \(\{\ldots, -1, 0, 1, 2, \ldots\}\).
+  },%
+  shortdesc={%
+    Set of integers.
+  }%
+}
+
+
+\newglossaryentry{not:R}{%
+  name={real number}, symbol={\ensuremath{\mathbb{R}}},
+  type={notation},
+  description={%
+    Describes the set of real numbers.
+  },%
+  shortdesc={%
+    Set of real numbers.
+  }%
+}
+
+\newglossaryentry{not:C}{%
+  name={Complex}, symbol={\ensuremath{\mathbb{C}}}, type={notation},
+  description={Describes the set of complex numbers.},
+  shortdesc={Set of complex numbers.}%
+}
+
+\newglossaryentry{not:P}{%
+  name={powerset}, symbol={\ensuremath{\mathcal{P}}},
+  type={notation},
+  description={%
+    With \(\P(X)\) we denote the powerset of a set \(X\). That is, the set of all subsets of \(X\), including the empty set and \(X\) itself.
+  },%
+  shortdesc={%
+    Describes the powerset \(\P(X)\) of a set \(X\).
+  }%
+}

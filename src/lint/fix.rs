@@ -2,15 +2,16 @@
 //! a command starts, so the extent of what to change is read from the source
 //! there, tokenized the way TeX's mouth tokenizes it.
 
+use crate::fixed::HashMap;
 use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::path::Path;
 use std::rc::Rc;
 
 use serde_json::{Value as Json, json};
 
 use crate::builtins::{LoadKind, Primitive};
-use crate::facts::{CsnameRole, Definition, Load};
+use crate::facts::{CsnameRole, Definition, Load, Quantity};
 use crate::machine::Analysis;
 use crate::tex::{Catcode, CatcodeTable, FileId, Interner, Mouth, Span, Sym, Tok};
 
@@ -32,11 +33,7 @@ impl Applicability {
     }
 
     pub fn parse(text: &str) -> Option<Applicability> {
-        match text {
-            "safe" => Some(Applicability::Safe),
-            "unsafe" => Some(Applicability::Unsafe),
-            _ => None,
-        }
+        [Applicability::Safe, Applicability::Unsafe].into_iter().find(|a| a.as_str() == text)
     }
 }
 
@@ -53,7 +50,7 @@ impl Pos {
         Pos { line, col }
     }
 
-    fn of(span: Span) -> Pos {
+    pub(crate) fn of(span: Span) -> Pos {
         Pos::new(span.line, span.col)
     }
 }
@@ -138,20 +135,23 @@ impl Text {
 
     /// The byte offset of a position.  One column past the last character
     /// is the end of the line, and a position on the line after the last is
-    /// the end of the file.
+    /// the end of the file.  A column counts what the engine reads, so under
+    /// an 8-bit engine it counts bytes ([`crate::source`]).
     pub fn offset(&self, pos: Pos) -> Option<usize> {
         let (start, end) = self.line_range(pos.line)?;
         let skip = pos.col.checked_sub(1)? as usize;
-        match self.body[start..end].char_indices().nth(skip) {
-            Some((i, _)) => Some(start + i),
-            None if self.body[start..end].chars().count() == skip => Some(end),
-            None => None,
+        let line = &self.body[start..end];
+        match crate::source::columns(line).cmp(&skip) {
+            std::cmp::Ordering::Less => None,
+            std::cmp::Ordering::Equal => Some(end),
+            std::cmp::Ordering::Greater => Some(start + crate::source::byte_of_col(line, pos.col)),
         }
     }
 
     pub fn pos(&self, offset: usize) -> Pos {
         let index = self.starts.partition_point(|start| *start <= offset).max(1) - 1;
-        let col = self.body[self.starts[index]..offset].chars().count() as u32 + 1;
+        let start = self.starts[index];
+        let col = crate::source::col_of_byte(&self.body[start..], offset - start);
         Pos::new(index as u32 + 1, col)
     }
 
@@ -171,6 +171,19 @@ impl Text {
         let offset = self.offset(pos)?;
         Some((pos.line - 1, self.body[start..offset].encode_utf16().count() as u32))
     }
+
+    /// The satex column of an LSP column (UTF-16 code units) on `line`.
+    pub fn from_utf16(&self, line: u32, utf16: u32) -> u32 {
+        let text = self.line(line);
+        let mut units = 0u32;
+        for (at, c) in text.char_indices() {
+            if units >= utf16 {
+                return crate::source::col_of_byte(text, at);
+            }
+            units += c.len_utf16() as u32;
+        }
+        crate::source::col_of_byte(text, text.len())
+    }
 }
 
 /// The files the fixes read, each read once: through the overlay, so that a
@@ -178,15 +191,29 @@ impl Text {
 #[derive(Default)]
 pub struct Sources {
     texts: RefCell<HashMap<String, Option<Rc<Text>>>>,
+    /// [`editable`] canonicalizes the file and every root of the
+    /// installation, so it is asked once per path, not once per fix.
+    editable: RefCell<HashMap<String, bool>>,
+    cats: RefCell<HashMap<FileId, CatcodeTable>>,
 }
 
 impl Sources {
     pub fn get(&self, path: &str) -> Option<Rc<Text>> {
-        self.texts
-            .borrow_mut()
-            .entry(path.to_string())
-            .or_insert_with(|| crate::overlay::read_to_string(Path::new(path)).ok().map(|t| Rc::new(Text::new(t))))
-            .clone()
+        if let Some(text) = self.texts.borrow().get(path) {
+            return text.clone();
+        }
+        let text = crate::overlay::read_to_string(Path::new(path)).ok().map(|t| Rc::new(Text::new(t)));
+        self.texts.borrow_mut().insert(path.to_string(), text.clone());
+        text
+    }
+
+    pub(crate) fn editable(&self, analysis: &Analysis, path: &str) -> bool {
+        if let Some(&known) = self.editable.borrow().get(path) {
+            return known;
+        }
+        let known = editable(analysis, path);
+        self.editable.borrow_mut().insert(path.to_string(), known);
+        known
     }
 }
 
@@ -206,7 +233,7 @@ pub fn editable(analysis: &Analysis, path: &str) -> bool {
         .filter_map(|root| root.canonicalize().ok())
         .any(|root| canonical.starts_with(root));
     let main = Path::new(analysis.file_name(analysis.main_file)).canonicalize();
-    let project = main.ok().and_then(|main| main.parent().map(Path::to_path_buf));
+    let project = main.ok().map(|main| crate::paths::dir_of(&main));
     !installed && project.is_some_and(|root| canonical.starts_with(root))
 }
 
@@ -242,7 +269,8 @@ impl Scan {
     pub fn at(text: &Text, pos: Pos, cats: CatcodeTable) -> Option<Scan> {
         let offset = text.offset(pos)?;
         Some(Scan {
-            mouth: Mouth::new(&text.body[offset..], 0),
+            // The mouth reads what the engine reads, bytes or characters.
+            mouth: Mouth::new(&crate::source::recode(&text.body[offset..]), 0),
             cats,
             interner: Interner::default(),
             origin: pos,
@@ -413,16 +441,30 @@ impl<'a> Edits<'a> {
 
     /// Insert `%` right after the last character of a line — the fix for a
     /// line end that fell into a macro body as a stray space token (tex.web
-    /// § 347: end-of-line becomes a space in state M; `%` would have
-    /// swallowed it instead).
+    /// § 347: end-of-line becomes a space in state M, where `%` would have
+    /// swallowed it).
     pub fn insert_percent(&self, span: Span) -> Option<Vec<Edit>> {
         let (path, _) = self.text(span.file)?;
         let pos = Pos::of(span);
         Some(vec![Edit { path, start: pos, end: pos, replacement: "%".to_string() }])
     }
 
+    /// Delete the line end at `span` and the next line's indentation, so
+    /// the `}` that starts the next line closes the body on this one.
+    pub fn join_next_line(&self, span: Span) -> Option<Vec<Edit>> {
+        let (path, text) = self.text(span.file)?;
+        let indent = text.line(span.line + 1).chars().take_while(|c| c.is_whitespace()).count() as u32;
+        let blanks = text.line(span.line).trim_end_matches(' ').chars().count() as u32 + 1;
+        Some(vec![Edit {
+            path,
+            start: Pos::new(span.line, span.col.min(blanks)),
+            end: Pos::new(span.line + 1, indent + 1),
+            replacement: String::new(),
+        }])
+    }
+
     pub fn path(&self, path: &str) -> Option<(String, Rc<Text>)> {
-        if !editable(self.analysis, path) {
+        if !self.sources.editable(self.analysis, path) {
             return None;
         }
         Some((path.to_string(), self.sources.get(path)?))
@@ -432,6 +474,15 @@ impl<'a> Edits<'a> {
     /// in a package or class, which `\usepackage` and `\documentclass` make
     /// it (source2e, ltclass.dtx).
     fn cats(&self, file: FileId) -> CatcodeTable {
+        if let Some(cats) = self.sources.cats.borrow().get(&file) {
+            return cats.clone();
+        }
+        let cats = self.build_cats(file);
+        self.sources.cats.borrow_mut().insert(file, cats.clone());
+        cats
+    }
+
+    fn build_cats(&self, file: FileId) -> CatcodeTable {
         let mut cats = CatcodeTable::latex();
         let kind = self.analysis.files.get(file as usize).map(|f| f.kind);
         if matches!(kind, Some(LoadKind::Package | LoadKind::Class)) {
@@ -524,11 +575,24 @@ impl<'a> Edits<'a> {
         Some(edits)
     }
 
+    /// A line written as the file's very first, which is the only place
+    /// TeX reads a `%&` format line (web2c manual, "Format files").
+    pub fn insert_first(&self, file: FileId, line: &str) -> Option<Vec<Edit>> {
+        let (path, text) = self.text(file)?;
+        // A file that already starts with `%&` has its format chosen.
+        if text.line(1).trim_start().starts_with("%&") {
+            return None;
+        }
+        let start = Pos::new(1, 1);
+        Some(vec![Edit { path, start, end: start, replacement: format!("{line}\n") }])
+    }
+
     /// Insert a line of its own before the line `at` starts, when `at` is
     /// the first thing on it.
     pub fn insert_before(&self, at: Span, line: &str) -> Option<Vec<Edit>> {
         let (path, text) = self.text(at.file)?;
-        let before: String = text.line(at.line).chars().take(at.col.saturating_sub(1) as usize).collect();
+        let at_line = text.line(at.line);
+        let before = &at_line[..crate::source::byte_of_col(at_line, at.col)];
         if !before.trim().is_empty() {
             return None;
         }
@@ -561,19 +625,18 @@ impl<'a> Edits<'a> {
     /// The source a quantity was set from, up to where the observed unit
     /// text is complete.  `via` is the control sequence the file called
     /// where the unit was set.
-    pub fn quantity(
-        &self,
-        span: Span,
-        number: &str,
-        unit: &str,
-        via: Option<&str>,
-        replacement: &str,
-    ) -> Option<Vec<Edit>> {
+    pub fn quantity(&self, q: &Quantity, via: Option<&str>, replacement: &str) -> Option<Vec<Edit>> {
         /// Lexemes a unit may take before the source is given up on.
         const STEPS: usize = 8;
+        let (span, number, unit) = (q.span, q.number.as_str(), q.unit.as_str());
         let (path, text) = self.text(span.file)?;
         let start = Pos::of(span);
         let mut scan = Scan::at(&text, start, self.cats(span.file))?;
+        // A command sets the unit itself (`\%`, `\degree`) only when the
+        // unit's first character does not stand after it in this file:
+        // in `13\,ms` the letters set it, and `\,` is only spacing.
+        let sets_unit =
+            |at: Pos| q.unit_span.file != span.file || (q.unit_span.line, q.unit_span.col) <= (at.line, at.col);
         let mut digits = String::new();
         while let Some(Tok::Chr(c, Catcode::Other)) = scan.peek().map(|l| l.tok) {
             if !(c.is_ascii_digit() || (matches!(c, '.' | ',') && !digits.is_empty())) {
@@ -587,6 +650,9 @@ impl<'a> Edits<'a> {
         }
         let mut seen = String::new();
         let mut end = None;
+        // Whether a command stood for the rest of the unit rather than the
+        // source spelling it out.
+        let mut by_command = false;
         for _ in 0..STEPS {
             if seen == unit {
                 break;
@@ -608,10 +674,16 @@ impl<'a> Edits<'a> {
                         end = Some(group.end);
                         continue;
                     }
+                    if !sets_unit(lexeme.start) {
+                        // Spacing between the number and its unit: `13\,ms`.
+                        end = Some(lexeme.end);
+                        continue;
+                    }
                     if name == "%" {
                         seen.push('%');
                     } else if via == Some(name.as_str()) {
                         seen = unit.to_string();
+                        by_command = true;
                     }
                 }
                 _ => return None,
@@ -621,17 +693,44 @@ impl<'a> Edits<'a> {
         if seen != unit {
             return None;
         }
+        // The command stood for the whole unit, yet the source reads on
+        // with letters: what they set is not covered, so offer no edit.
+        if by_command && matches!(scan.peek().map(|l| l.tok), Some(Tok::Chr(_, Catcode::Letter))) {
+            return None;
+        }
         Some(vec![Edit { path, start, end: end?, replacement: replacement.to_string() }])
     }
 
     /// Delete a command whose one argument reads `key`: `\label{sec:x}`.
     pub fn delete_command(&self, span: Span, key: &str) -> Option<Vec<Edit>> {
+        self.delete_call(span, key).or_else(|| self.delete_call(self.command_of(span)?, key))
+    }
+
+    fn delete_call(&self, span: Span, key: &str) -> Option<Vec<Edit>> {
         let (path, text, mut scan, cs) = self.command(span)?;
         let group = scan.group()?;
         if text.slice(group.inner_start, group.inner_end)?.trim() != key {
             return None;
         }
         Some(vec![removal(&text, &path, cs.start, group.end)])
+    }
+
+    /// Where the command whose argument holds `span` stands: an occurrence
+    /// derived from a written line is recorded at the key's own text, which
+    /// is the only span its tokens carry.
+    fn command_of(&self, span: Span) -> Option<Span> {
+        let (_, text) = self.text(span.file)?;
+        let mut scan = Scan::at(&text, Pos::new(span.line, 1), self.cats(span.file))?;
+        let mut last = None;
+        while let Some(lexeme) = scan.advance() {
+            if lexeme.start >= Pos::of(span) {
+                break;
+            }
+            if scan.name(&lexeme).is_some() {
+                last = Some(lexeme.start);
+            }
+        }
+        last.map(|at| Span::new(span.file, at.line, at.col))
     }
 
     /// Replace the argument of `\end{old}`-like commands by `new`.
@@ -779,16 +878,17 @@ impl<'a> Edits<'a> {
             return None;
         }
         let mut replacement = format!("\\{alternative}{{{inner}}}");
-        // TeX skipped the spaces after `\endcsname`; after `}` they would count.
+        // TeX skipped the spaces after `\endcsname`.  After `}` they would count.
         let end = match scan.peek() {
             Some(next) if next.start.line == endcsname.end.line => next.start,
             _ => {
-                let rest: String = text.line(endcsname.end.line).chars().skip(endcsname.end.col as usize - 1).collect();
-                let blank = rest.chars().take_while(|c| cats_space(*c)).count();
-                if !rest[rest.char_indices().nth(blank).map_or(rest.len(), |(i, _)| i)..].starts_with('%') {
+                let end_line = text.line(endcsname.end.line);
+                let rest = &end_line[crate::source::byte_of_col(end_line, endcsname.end.col)..];
+                let blank: usize = rest.chars().take_while(|c| cats_space(*c)).map(char::len_utf8).sum();
+                if !rest[blank..].starts_with('%') {
                     replacement.push('%');
                 }
-                Pos::new(endcsname.end.line, endcsname.end.col + blank as u32)
+                Pos::new(endcsname.end.line, endcsname.end.col + crate::source::columns(&rest[..blank]) as u32)
             }
         };
         Some(vec![Edit { path, start, end, replacement }])
@@ -827,10 +927,12 @@ impl<'a> Edits<'a> {
         let start = Pos::new(line, col);
         let end = match words.get(index + 1) {
             Some((next, _)) => Pos::new(line, *next),
-            None => Pos::new(line, col + word.chars().count() as u32),
+            None => Pos::new(line, col + crate::source::columns(word) as u32),
         };
         let start = match (words.get(index + 1), index.checked_sub(1)) {
-            (None, Some(previous)) => Pos::new(line, words[previous].0 + words[previous].1.chars().count() as u32),
+            (None, Some(previous)) => {
+                Pos::new(line, words[previous].0 + crate::source::columns(words[previous].1) as u32)
+            }
             _ => start,
         };
         Some(vec![Edit { path, start, end, replacement: String::new() }])
@@ -845,18 +947,18 @@ fn cats_space(c: char) -> bool {
 fn words(line: &str) -> Vec<(u32, &str)> {
     let mut out = Vec::new();
     let mut start = None;
-    for (col, (i, c)) in line.char_indices().enumerate() {
+    for (i, c) in line.char_indices() {
         match (c.is_whitespace(), start) {
-            (false, None) => start = Some((col, i)),
-            (true, Some((col0, i0))) => {
-                out.push((col0 as u32 + 1, &line[i0..i]));
+            (false, None) => start = Some(i),
+            (true, Some(i0)) => {
+                out.push((crate::source::col_of_byte(line, i0), &line[i0..i]));
                 start = None;
             }
             _ => {}
         }
     }
-    if let Some((col0, i0)) = start {
-        out.push((col0 as u32 + 1, &line[i0..]));
+    if let Some(i0) = start {
+        out.push((crate::source::col_of_byte(line, i0), &line[i0..]));
     }
     out
 }
@@ -864,9 +966,10 @@ fn words(line: &str) -> Vec<(u32, &str)> {
 /// The lines from `start` to `end` when nothing else stands on them but
 /// blanks and a comment, deleted with their line ends.
 fn whole_lines(text: &Text, path: &str, start: Pos, end: Pos) -> Option<Edit> {
-    let before: String = text.line(start.line).chars().take(start.col as usize - 1).collect();
-    let after: String = text.line(end.line).chars().skip(end.col as usize - 1).collect();
-    let after = after.trim_start();
+    let start_line = text.line(start.line);
+    let end_line = text.line(end.line);
+    let before = &start_line[..crate::source::byte_of_col(start_line, start.col)];
+    let after = end_line[crate::source::byte_of_col(end_line, end.col)..].trim_start();
     if !before.trim().is_empty() || !(after.is_empty() || after.starts_with('%')) {
         return None;
     }

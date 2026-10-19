@@ -1,0 +1,14 @@
+\documentclass{article}
+\usepackage{tikz}
+\makeatletter
+% An unknown non-negative width, and a difference of two: any sign.
+\setbox0\hbox{\the\pdfrandomseed}
+\setbox2\hbox{\romannumeral\pdfrandomseed}
+\newdimen\Interval \Interval=\pdfuniformdeviate 65536000 sp\relax
+\newdimen\Unknown \Unknown=\wd2 \advance\Unknown by -\wd0
+\pgfsetcornersarced{\pgfpoint{4pt}{4pt}}\pgfpathmoveto{\pgfpoint{0pt}{0pt}}\pgfpathlineto{\pgfpoint{\Interval}{0pt}}\pgfpathlineto{\pgfpoint{\Interval}{\Interval}}\pgfpathclose\pgfsyssoftpath@getcurrentpath\PathA\pgfprocessround\PathA\RoundedA \gdef\AfterRound{}
+\makeatother
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

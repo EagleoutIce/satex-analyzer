@@ -1,0 +1,13 @@
+satex: cache kernel pdftex: reused
+satex: cache class article: reused
+satex: cache package segments: 1 reused
+30.285s  461 MiB peak  |  budget exhausted  |  291 files  5.4k lines  159.5M tokens  |  15.2k definitions  27.5k expansions  1.4k occurrences  710 diagnostics  |  47.9k vertices  108.9k edges  |  300k names  340 save-stack  5.2k held  710 loop heads
+  hot steps 227.9k expl3-code.tex:1800  215.7k expl3-code.tex:2551  168.2k expl3-code.tex:1781  165.1k expl3-code.tex:4069  151.8k expl3-code.tex:5105  149.5k expl3-code.tex:10514  149.5k expl3-code.tex:10515  140.3k expl3-code.tex:2679  140.1k expl3-code.tex:10512  119k expl3-code.tex:10527
+  hot forks 149.1k main.tex:31  110.9k expl3-code.tex:2549  100.5k expl3-code.tex:12513  54.8k latex.ltx:18766  52.1k expl3-code.tex:12480  42.8k expl3-code.tex:4069  29.1k expl3-code.tex:6900  18.6k expl3-code.tex:12504  18.2k expl3-code.tex:4059  14.6k expl3-code.tex:9953
+  hot joins 240.2k main.tex:31  6.5k main.tex:35  5.8k main.tex:30  248 main.tex:34  216 main.tex:32  1 main.tex:0
+  hot heads 43.8k main.tex:31  32.2k expl3-code.tex:12513  25.6k latex.ltx:18766  21.2k expl3-code.tex:4069  20.2k expl3-code.tex:12480  13.9k expl3-code.tex:2549  8.7k expl3-code.tex:4059  4.3k expl3-code.tex:10527  3k expl3-code.tex:6900  2k main.tex:35
+satex: limits.repeat_failures = 8 was reached 303× (first at tikz.code.tex:3886); raise it with --set limits.repeat_failures=<larger>
+satex: limits.site_expansions = 16384 was reached 1× (first at expl3-code.tex:1797); raise it with --set limits.site_expansions=<larger>
+satex: limits.expansion_depth = 512 was reached 5× (first at expl3-code.tex:10960); raise it with --set limits.expansion_depth=<larger>
+satex: limits.choices = 8 was reached 13× (first at expl3-code.tex:5513); raise it with --set limits.choices=<larger>
+satex: limits.seconds = 30 was reached 2× (first at main.tex:31); raise it with --set limits.seconds=<larger>

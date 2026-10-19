@@ -1,0 +1,14 @@
+\documentclass{article}
+\usepackage{pgfmath}
+% pgfmath on an unknown integer, three times.
+\pgfmathparse{\pdfuniformdeviate 100+1}
+\global\let\ParseA\pgfmathresult
+\pgfmathparse{\pdfuniformdeviate 100+1}
+\global\let\ParseB\pgfmathresult
+\pgfmathparse{\pdfuniformdeviate 100+1}
+\global\let\ParseC\pgfmathresult
+\gdef\AfterParse{}
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

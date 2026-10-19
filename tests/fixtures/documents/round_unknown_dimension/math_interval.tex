@@ -1,0 +1,14 @@
+\documentclass{article}
+\usepackage{tikz}
+\makeatletter
+% An unknown non-negative width, and a difference of two: any sign.
+\setbox0\hbox{\the\pdfrandomseed}
+\setbox2\hbox{\romannumeral\pdfrandomseed}
+\newdimen\Interval \Interval=\pdfuniformdeviate 65536000 sp\relax
+\newdimen\Unknown \Unknown=\wd2 \advance\Unknown by -\wd0
+\pgfmathparse{round(\Interval)}\global\let\RoundA\pgfmathresult \pgfmathparse{floor(\Interval)}\global\let\FloorA\pgfmathresult \pgfmathparse{int(\Interval)}\global\let\IntA\pgfmathresult \ifdim\RoundA pt<-1pt \gdef\NegativeRound{}\fi \ifdim\FloorA pt<-1pt \gdef\NegativeFloor{}\fi \ifdim\IntA pt<-1pt \gdef\NegativeInt{}\fi \gdef\AfterMath{}
+\makeatother
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

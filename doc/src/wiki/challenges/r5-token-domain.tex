@@ -1,0 +1,5 @@
+\documentclass{article}
+\begin{document}
+\edef\x{\ifodd\pdfuniformdeviate 2 ab\else\fi}
+\ifx\x\empty empty\else nonempty\fi
+\end{document}

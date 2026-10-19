@@ -1,0 +1,7 @@
+\documentclass{article}
+\def\open{\begingroup\itshape}
+\def\close{\endgroup}
+\begin{document}
+{\gdef\x{ after the group}\aftergroup\x inside}
+\open italic\close{} upright
+\end{document}

@@ -1,5 +1,7 @@
 <!-- generated from doc/src/wiki/lsp.md.in by satex-doc; do not edit -->
 
+<p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
+
 # Language Server
 
 `satex lsp` serves the Language Server Protocol on top of the existing lints and queries: diagnostics from [lint](lints.md), hover and definitions from [`explain`](queries.md#explain), completion from [`scope`](../../README.md#comprehension), and any [query request](queries.md#json-requests) through `workspace/executeCommand`.
@@ -10,7 +12,7 @@ satex lsp --port 9257        # TCP instead, bound to 127.0.0.1
 satex lsp --port 9257 --host 0.0.0.0
 ```
 
-A document is re-analyzed `lsp.debounce_ms` after its last edit. Requests wait for the first analysis. `\input` and `\include` see the unsaved text of other open documents.
+A document is re-analyzed `lsp.debounce_ms` after its last edit. The run keeps checkpoints of its whole state at line starts in the document's own files. The next run resumes from the last one whose input is unchanged, so an edit late in the document reruns only what follows it. The result is the same as a full run. While a run goes on, hover, completion and signature help are answered from the last analysis at once. Requests wait for the first analysis. `\input` and `\include` see the unsaved text of other open documents. A file without `\documentclass` is analyzed as part of the document that reads it: the one `-f` names, else the root the client's workspace folder holds. Every path is answered as the client named it, so a folder opened through a symlink keeps its name.
 
 ## Capabilities
 
@@ -26,9 +28,13 @@ A document is re-analyzed `lsp.debounce_ms` after its last edit. Requests wait f
 | Rename | `textDocument/prepareRename`, `textDocument/rename` | `satex query definitions`/`expansions`/`occurrences` |
 | Run any query | `workspace/executeCommand` (`satex/query`) | `satex query --request` |
 
+A run can stop before a later file defines a name. Then go-to-definition scans the source instead. It follows the `\input`, `\include`, `\subfile`, `\usepackage`, `\RequirePackage`, `\documentclass` and `\LoadClass` the files spell out. Each name resolves beside the document first, then through the same search as a run. The scan reads at most 200 files, breadth first. In each file it looks for definition commands: `\def` and its relatives, `\let`, `\newcommand` and its relatives, the `\NewDocumentCommand` family, `\cs_new:Npn` style and `\csdef`. Hover marks such a site as not reached by the analysis, and the server log names it. A name the analysis knows never takes this path.
+
 Rename moves every name one declaration made from one key. `\newcounter{step}` allocates `\c@step`, `\thestep`, `\p@step`, `\cl@step` and `\theHstep`, so renaming the counter rewrites the key inside all of them, in `\stepcounter{step}` and in `\thestep`. `\newenvironment{note}` defines `\note` and `\endnote`, so its key, `\begin{note}` and `\end{note}` move together. A name `\csname` builds is rewritten where the file spells it out character for character. The rename is refused, with the site named, when a name it would build is already defined, when a definition or use lies in a file satex may not edit, or when a name is built while the document runs and no site spells it.
 
 Completion looks at the text before the cursor: after `\` it offers the commands in scope there, with a snippet for their arguments. Inside `\begin{` environment names. Inside a reference or citation argument the document's labels or keys.
+A built-in list of common commands (`\ref`, `\cref`, the `cite` family, `\begin`, `\usepackage`, `\input`) says what their argument takes, so the first `\ref{` of a document already offers its labels.
+What the run saw a command do adds to that list, so a package's or your own wrapper gets the same completion once it is used.
 
 `workspace/executeCommand` runs `satex/query` with one argument, a [query request](queries.md#json-requests). Without `file` it applies to the open document.
 
@@ -88,3 +94,14 @@ vim.lsp.config.satex = {
 }
 vim.lsp.enable("satex")
 ```
+
+### TeXstudio
+
+TeXstudio has no LSP client. It reads the LaTeX log, so `satex lint --format texlog` writes findings in that form: errors as `! Package satex Error: …` with `l.⟨line⟩`, the rest as `Package satex Warning: … on input line ⟨line⟩.` Append them to the log after compiling, then let TeXstudio show the log. Under *Options → Configure TeXstudio → Build*, set *Build & View* to
+
+```
+txs:///compile | satex lint -f %.tex --format texlog >> %.log | txs:///view-log | txs:///view
+```
+
+The findings then appear in the log panel and as error and warning marks in the editor.
+

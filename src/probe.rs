@@ -8,7 +8,9 @@
 
 use crate::config::{Config, Limits};
 use crate::machine::{Analysis, Machine};
+use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::tex::{ArgSpec, ArgType, FileId, Sym, Token};
 
@@ -16,8 +18,46 @@ use crate::tex::{ArgSpec, ArgType, FileId, Sym, Token};
 /// thousand, or a million where hyperref's `\\GetTitleString` loops over
 /// its title; a runaway loop is cut off here.
 const PROBE_STEPS: u64 = 2_000_000;
-/// And the time it may take, whatever it reads.
-const PROBE_SECONDS: u64 = 5;
+/// Tokens all runs answering one question may read together, however many
+/// runs it takes: a question costs at most this plus one run.
+const QUESTION_STEPS: u64 = 8 * PROBE_STEPS;
+
+/// Set while a request waits for the engine: probes run in the
+/// [`background`] stop, and what they found is not kept.
+pub static WANTED: AtomicBool = AtomicBool::new(false);
+
+thread_local! {
+    static BACKGROUND: Cell<bool> = const { Cell::new(false) };
+}
+
+/// `f` run as work nobody waits for: `None` when a request came first.
+pub fn background<T>(f: impl FnOnce() -> T) -> Option<T> {
+    BACKGROUND.set(true);
+    let out = f();
+    BACKGROUND.set(false);
+    (!preempted()).then_some(out)
+}
+
+/// A request waits and this thread's work is [`background`].
+pub(crate) fn preempted() -> bool {
+    BACKGROUND.get() && WANTED.load(Ordering::Relaxed)
+}
+
+/// Tokens the runs of one question read so far ([`QUESTION_STEPS`]).
+#[derive(Default)]
+struct Spent(Cell<u64>);
+
+impl Spent {
+    /// What `run` watched, unless the question has read its tokens.
+    fn run(&self, run: impl FnOnce() -> Option<Watch>) -> Option<Watch> {
+        if self.0.get() >= QUESTION_STEPS || preempted() {
+            return None;
+        }
+        let watch = run()?;
+        self.0.set(self.0.get() + watch.steps);
+        Some(watch)
+    }
+}
 /// Mandatory arguments offered: TeX's parameter texts stop at nine (The
 /// TeXbook, chapter 20), so reading all of these means reading on.
 const TAIL: usize = 10;
@@ -79,11 +119,13 @@ pub struct Demand {
     pub want: Want,
 }
 
+#[derive(Clone)]
 pub struct Watch {
     pub(crate) file: FileId,
+    pub(crate) sym: Sym,
     pub demand: Option<Demand>,
     /// Names `\let` or `\futurelet` to a probe character, by its offset.
-    peeked: std::collections::HashMap<Sym, usize>,
+    peeked: crate::fixed::HashMap<Sym, usize>,
     /// Characters a peeked probe character was compared with by `\ifx`:
     /// what the command looks for there (`\@ifnextchar`, ltcmd's `t`, `d`,
     /// `e`), by offset.
@@ -100,6 +142,8 @@ pub struct Watch {
     /// the main loop's own.
     pub boxed: bool,
     pub exhausted: bool,
+    /// Tokens the sandbox read up to the end of this run.
+    pub steps: u64,
     pub error: Option<String>,
     raw: Vec<(Sym, usize, usize, Vec<Token>)>,
     calls: usize,
@@ -107,9 +151,10 @@ pub struct Watch {
 }
 
 impl Watch {
-    pub(crate) fn new(file: FileId) -> Self {
+    pub(crate) fn new(file: FileId, sym: Sym) -> Self {
         Watch {
             file,
+            sym,
             demand: None,
             peeked: Default::default(),
             looked_for: Vec::new(),
@@ -119,6 +164,7 @@ impl Watch {
             reached: None,
             boxed: false,
             exhausted: false,
+            steps: 0,
             error: None,
             raw: Vec::new(),
             calls: 0,
@@ -183,14 +229,30 @@ impl Watch {
 
 /// What `sym` takes where the run ended, or at `\begin{document}` with
 /// `preamble`; computed once per name and view.
-pub fn probe(analysis: &Analysis, sym: Sym, preamble: bool) -> Option<Probed> {
-    if let Some(found) = analysis.probes.lock().ok().and_then(|p| p.get(&(sym, preamble)).cloned()) {
+/// Which state of the run a probe starts from.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum State {
+    /// The end of the run.
+    End,
+    /// `\begin{document}`.
+    Preamble,
+    /// The document's start: the format's meanings.
+    Start,
+}
+
+pub fn probe(analysis: &Analysis, sym: Sym, at: State) -> Option<Probed> {
+    if let Some(found) = analysis.probes.lock().ok().and_then(|p| p.get(&(sym, at)).cloned()) {
         return found;
     }
     let cfg = sandbox_config(&analysis.settings);
-    let found = Prober { cfg: &cfg, analysis, sym, preamble, context: None, seen: Default::default() }.derive();
-    if let Ok(mut probes) = analysis.probes.lock() {
-        probes.insert((sym, preamble), found.clone());
+    let found = crate::progress::because("its arguments", || {
+        Prober { cfg: &cfg, analysis, sym, at, context: None, seen: Default::default(), spent: Spent::default() }
+            .derive()
+    });
+    if !preempted()
+        && let Ok(mut probes) = analysis.probes.lock()
+    {
+        probes.insert((sym, at), found.clone());
     }
     found
 }
@@ -208,7 +270,7 @@ const CLOSURE_CAP: usize = 500;
 
 /// The names reachable from `start` in `analysis.calls`, breadth first,
 /// bounded by `CLOSURE_DEPTH`/`CLOSURE_CAP`.
-pub(crate) fn closure(analysis: &Analysis, start: Sym) -> std::collections::HashSet<Sym> {
+pub(crate) fn closure(analysis: &Analysis, start: Sym) -> crate::fixed::HashSet<Sym> {
     closure_bounded(analysis, start, CLOSURE_DEPTH, CLOSURE_CAP)
 }
 
@@ -218,13 +280,8 @@ pub(crate) fn closure(analysis: &Analysis, start: Sym) -> std::collections::Hash
 /// defines a command reaches eventually) — the two answer different
 /// questions, so callers that want "the mechanism a definition site is
 /// specific to" ask shallow.
-pub(crate) fn closure_bounded(
-    analysis: &Analysis,
-    start: Sym,
-    depth: usize,
-    cap: usize,
-) -> std::collections::HashSet<Sym> {
-    let mut seen = std::collections::HashSet::new();
+pub(crate) fn closure_bounded(analysis: &Analysis, start: Sym, depth: usize, cap: usize) -> crate::fixed::HashSet<Sym> {
+    let mut seen = crate::fixed::HashSet::default();
     seen.insert(start);
     let mut frontier = vec![start];
     for _ in 0..depth {
@@ -295,18 +352,20 @@ fn candidate_environments(analysis: &Analysis, sym: Sym) -> Vec<Sym> {
 /// not what the command's signature is — a probe run that decides `\item`
 /// takes an optional argument no longer counts as "the plain call took
 /// nothing", the signature probe's own condition for reporting an error.
-fn probe_bare_error(analysis: &Analysis, sym: Sym, context: Option<Sym>) -> Option<String> {
+fn probe_bare_error(analysis: &Analysis, sym: Sym, context: Option<Sym>, spent: &Spent) -> Option<String> {
     let cfg = sandbox_config(&analysis.settings);
-    let mut machine = Machine::sandbox(&cfg, analysis, false)?;
-    if let Some(env) = context {
-        enter_environment(&mut machine, env);
-    }
-    // A real `\item` alone in a document is never truly at EOF right after
-    // it — something else always follows, even if only `\end{…}` — and a
-    // lookahead such as `\@ifnextchar[` needs a real token to compare, not
-    // an empty file, to take the branch a real call would. `.` is inert to
-    // read as text and, in `catcode 12`, never a delimiter of its own.
-    let watch = machine.run_probe(sym, ".");
+    let watch = spent.run(|| {
+        let mut machine = Machine::sandbox(&cfg, analysis, State::End)?;
+        if let Some(env) = context {
+            enter_environment(&mut machine, env);
+        }
+        // A real `\item` alone in a document is never truly at EOF right after
+        // it — something else always follows, even if only `\end{…}` — and a
+        // lookahead such as `\@ifnextchar[` needs a real token to compare, not
+        // an empty file, to take the branch a real call would. `.` is inert to
+        // read as text and, in `catcode 12`, never a delimiter of its own.
+        Some(machine.run_probe(sym, "."))
+    })?;
     if watch.exhausted {
         return None;
     }
@@ -321,13 +380,17 @@ pub fn probe_contexts(analysis: &Analysis, sym: Sym) -> Vec<(Option<Sym>, Option
     if let Some(found) = analysis.context_probes.lock().ok().and_then(|p| p.get(&sym).cloned()) {
         return found;
     }
-    let mut found = vec![(None, probe_bare_error(analysis, sym, None))];
-    found.extend(
-        candidate_environments(analysis, sym)
-            .into_iter()
-            .map(|env| (Some(env), probe_bare_error(analysis, sym, Some(env)))),
-    );
-    if let Ok(mut cache) = analysis.context_probes.lock() {
+    let spent = Spent::default();
+    let bare = |env: Option<Sym>| {
+        let why = env
+            .map_or("what it raises alone".into(), |e| format!("what it raises in {{{}}}", analysis.interner.name(e)));
+        (env, crate::progress::because(why, || probe_bare_error(analysis, sym, env, &spent)))
+    };
+    let mut found = vec![bare(None)];
+    found.extend(candidate_environments(analysis, sym).into_iter().map(|env| bare(Some(env))));
+    if !preempted()
+        && let Ok(mut cache) = analysis.context_probes.lock()
+    {
         cache.insert(sym, found.clone());
     }
     found
@@ -345,17 +408,20 @@ fn enter_environment(machine: &mut Machine, env: Sym) {
 
 fn sandbox_config(base: &Config) -> Config {
     Config {
-        load_packages: false,
-        load_classes: false,
-        load_inputs: false,
-        load_format: false,
-        use_kpsewhich: false,
-        cache: false,
+        load: crate::config::Load {
+            packages: false,
+            classes: false,
+            inputs: false,
+            format: false,
+            ..Default::default()
+        },
+        texmf: crate::config::Texmf { kpsewhich: false, ..base.texmf.clone() },
+        cache: crate::config::Cache { enabled: false, ..base.cache.clone() },
         record_arguments: false,
         verbose: 0,
         trace: false,
         timings: false,
-        limits: Limits { steps: PROBE_STEPS, seconds: PROBE_SECONDS, ..base.limits.clone() },
+        limits: Limits { steps: PROBE_STEPS, seconds: 0, ..base.limits.clone() },
         ..base.clone()
     }
 }
@@ -364,13 +430,14 @@ struct Prober<'c, 'a> {
     cfg: &'c Config,
     analysis: &'a Analysis,
     sym: Sym,
-    preamble: bool,
+    at: State,
     /// An environment to really `\begin` in the sandbox, real kernel code
     /// and all, before probing `sym`: what it takes and raises inside
     /// that environment instead of outside every one.
     context: Option<Sym>,
     /// Runs already made, by probe text.
-    seen: std::cell::RefCell<std::collections::HashMap<String, Option<Rc<Watch>>>>,
+    seen: std::cell::RefCell<crate::fixed::HashMap<String, Option<Rc<Watch>>>>,
+    spent: Spent,
 }
 
 impl Prober<'_, '_> {
@@ -383,12 +450,14 @@ impl Prober<'_, '_> {
         let watch = match known {
             Some(watch) => watch?,
             None => {
-                let watch = Machine::sandbox(self.cfg, self.analysis, self.preamble)
-                    .map(|mut machine| {
+                let watch = self
+                    .spent
+                    .run(|| {
+                        let mut machine = Machine::sandbox(self.cfg, self.analysis, self.at)?;
                         if let Some(env) = self.context {
                             enter_environment(&mut machine, env);
                         }
-                        machine.run_probe(self.sym, &text)
+                        Some(machine.run_probe(self.sym, &text))
                     })
                     .filter(|watch| !watch.exhausted)
                     .map(Rc::new);

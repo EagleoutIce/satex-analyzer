@@ -2,8 +2,8 @@
 //! `\fontdimen`, `\fontcharwd` and `\iffontchar` answer with the numbers the
 //! engine would read.
 
+use crate::fixed::{HashMap, HashSet};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -136,11 +136,11 @@ impl Metrics {
         self.info(c).is_some()
     }
 
-    /// Whether the font has a boundary character or a program for the left
-    /// boundary (tex.web § 545: a first or last instruction with a
-    /// `skip_byte` of 255).
-    pub fn has_boundary(&self) -> bool {
-        self.lig_kern.first().is_some_and(|i| i[0] == 255) || self.lig_kern.last().is_some_and(|i| i[0] == 255)
+    /// pdfTeX's `\tagcode`: 1, 2 or 4 for a character with a ligature/kerning
+    /// program, a successor or an extensible recipe (tex.web § 544), 0 for
+    /// one with none, -1 for one the font does not have.
+    pub fn tag_code(&self, c: u32) -> i64 {
+        self.info(c).map_or(-1, |info| [0, 1, 2, 4][usize::from(info[2] & 3)])
     }
 
     /// The instruction of `left`'s ligature/kerning program for `right`
@@ -155,6 +155,31 @@ impl Metrics {
         if first[0] > STOP_FLAG {
             k = 256 * usize::from(first[2]) + usize::from(first[3]);
         }
+        self.run_program(k, right, z)
+    }
+
+    /// The right boundary character (tex.web § 545: the `next_char` of a
+    /// first instruction whose `skip_byte` is 255): the character a word's
+    /// last one ligatures or kerns with where the word ends.
+    pub fn boundary_char(&self) -> Option<u32> {
+        let first = self.lig_kern.first()?;
+        (first[0] == 255).then(|| u32::from(first[1]))
+    }
+
+    /// The instruction of the left boundary's program for `right`, the
+    /// first character of a word (tex.web §§ 545, 1034: `bchar_label`, from
+    /// a last instruction whose `skip_byte` is 255).
+    pub fn left_boundary(&self, right: u32, z: Scaled) -> Option<LigKern> {
+        let last = self.lig_kern.last()?;
+        if last[0] != 255 {
+            return None;
+        }
+        self.run_program(256 * usize::from(last[2]) + usize::from(last[3]), right, z)
+    }
+
+    /// A ligature/kerning program from instruction `k` on, for `right`
+    /// (tex.web § 1039, `main_lig_loop+2`).
+    fn run_program(&self, mut k: usize, right: u32, z: Scaled) -> Option<LigKern> {
         loop {
             let [skip, next, op, rem] = *self.lig_kern.get(k)?;
             if u32::from(next) == right && skip <= STOP_FLAG {
@@ -206,8 +231,8 @@ pub fn store_scaled(fix: i64, z: Scaled) -> Scaled {
 type SearchIndex = HashMap<Vec<PathBuf>, Rc<HashMap<String, PathBuf>>>;
 
 thread_local! {
-    static INDEX: RefCell<SearchIndex> = RefCell::new(HashMap::new());
-    static LOADED: RefCell<HashMap<PathBuf, Option<Rc<Metrics>>>> = RefCell::new(HashMap::new());
+    static INDEX: RefCell<SearchIndex> = RefCell::new(HashMap::default());
+    static LOADED: RefCell<HashMap<PathBuf, Option<Rc<Metrics>>>> = RefCell::new(HashMap::default());
     static INSTALLED: RefCell<Option<Option<HashSet<String>>>> = const { RefCell::new(None) };
 }
 
@@ -233,7 +258,7 @@ pub fn locate(base: &Path, roots: &[PathBuf], name: &str, ext: &str) -> Option<P
 }
 
 fn index(roots: &[PathBuf]) -> HashMap<String, PathBuf> {
-    let mut found = HashMap::new();
+    let mut found = HashMap::default();
     let wanted = |relative: &str| FONT_DIRECTORIES.iter().any(|d| relative.starts_with(d));
     for root in roots.iter().rev() {
         if let Ok(text) = std::fs::read_to_string(root.join("ls-R")) {

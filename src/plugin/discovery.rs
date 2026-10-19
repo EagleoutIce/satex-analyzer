@@ -71,6 +71,46 @@ fn head_of(path: &Path) -> String {
     String::from_utf8_lossy(&buffer).into_owned()
 }
 
+/// Whether `text` is a document's own: it names its class or opens it.
+pub fn is_document(text: &str) -> bool {
+    text.contains("\\documentclass") || text.contains("\\begin{document}")
+}
+
+/// The root a `% !TeX root` line in `text`, the file at `path`, names.
+pub fn declared_root(path: &Path, text: &str) -> Option<PathBuf> {
+    super::magic::scan(text)
+        .into_iter()
+        .find(|magic| magic.key.eq_ignore_ascii_case("TeX root"))
+        .map(|magic| path.with_file_name(magic.value.trim()))
+        .filter(|root| root.is_file())
+}
+
+/// Whether `text` names the file `stem` the way a load does: as a path
+/// argument, `{stem}`, `{dir/stem.tex}` or `\input stem `.
+fn names(text: &str, file: &Path) -> bool {
+    let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+    let name = file.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+    !stem.is_empty()
+        && (text.match_indices(stem).any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            let after = text[at + stem.len()..].chars().next();
+            (matches!(before, Some('{' | '/')) || text[..at].ends_with("\\input "))
+                && matches!(after, None | Some('}' | '.' | ' ' | '\n'))
+        }) || names_by_pattern(text, stem, name))
+}
+
+/// Whether a name with a parameter in braces (`{fancyqr-style-#1.code}`,
+/// as a package inputs its parts) spells `stem` or `name`.
+fn names_by_pattern(text: &str, stem: &str, name: &str) -> bool {
+    static ARG: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let arg = ARG.get_or_init(|| regex::Regex::new(r"\{([^{}\s]*#[1-9][^{}\s]*)\}").expect("valid regex"));
+    arg.captures_iter(text).any(|c| {
+        let pattern = regex::escape(&c[1]).replace(r"\#", "#");
+        let pattern = regex::Regex::new(r"#[1-9]").expect("valid regex").replace_all(&pattern, "[^/{}]+");
+        regex::Regex::new(&format!("^{pattern}$")).is_ok_and(|re| re.is_match(name) || re.is_match(stem))
+    })
+}
+
 fn classify(path: &Path) -> Option<Found> {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
     let found = |kind| Some(Found { kind, path: path.to_path_buf(), declares_root: None });
@@ -85,13 +125,8 @@ fn classify(path: &Path) -> Option<Found> {
         Some("dtx" | "fdd" | "ins") => found(Kind::Literate),
         Some("tex" | "ltx" | "Rnw") => {
             let head = head_of(path);
-            let declares_root = super::magic::scan(&head)
-                .into_iter()
-                .find(|magic| magic.key.eq_ignore_ascii_case("TeX root"))
-                .map(|magic| path.with_file_name(magic.value.trim()))
-                .filter(|root| root.is_file());
-            let kind = if head.contains("\\documentclass") { Kind::Document } else { Kind::Input };
-            Some(Found { kind, path: path.to_path_buf(), declares_root })
+            let kind = if is_document(&head) { Kind::Document } else { Kind::Input };
+            Some(Found { kind, path: path.to_path_buf(), declares_root: declared_root(path, &head) })
         }
         Some("cls") => found(Kind::Class),
         Some("sty") => found(Kind::Package),
@@ -112,7 +147,7 @@ pub fn scan_with(root: &Path, threads: usize) -> Discovery {
     };
     let mut builder = ignore::WalkBuilder::new(root);
     builder.max_depth(Some(MAX_DEPTH)).threads(threads.max(1));
-    let files = match threads > 1 {
+    let mut files = match threads > 1 {
         true => {
             let collected = std::sync::Mutex::new(Vec::new());
             builder.build_parallel().run(|| {
@@ -137,6 +172,11 @@ pub fn scan_with(root: &Path, threads: usize) -> Discovery {
             .collect(),
     };
 
+    // The parallel walker hands files back in whatever order its threads
+    // finish in, and `read_dir` is not sorted either.  `declared_root` takes
+    // the first `% !TeX root` it meets, so the walk order would decide which
+    // one a project with several of them starts from.
+    files.sort_by(|a, b| a.path.cmp(&b.path));
     let mut found = Discovery { root: root.to_path_buf(), respects_ignores: true, ..Discovery::default() };
     for file in files {
         found.declared_root = found.declared_root.take().or(file.declares_root);
@@ -186,11 +226,7 @@ impl Discovery {
         if let Some(first) = self.typeset.first() {
             return Some(first.clone());
         }
-        let folder = self.root.file_name().and_then(|s| s.to_str()).unwrap_or_default();
-        let rank = |path: &PathBuf| {
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
-            (path.components().count(), u8::from(stem != "main"), u8::from(stem != folder), path.clone())
-        };
+        let rank = |path: &&PathBuf| self.rank(path);
         self.documents
             .iter()
             .min_by_key(|path| rank(path))
@@ -206,6 +242,58 @@ impl Discovery {
             })
             .or_else(|| self.literate.iter().min_by_key(|path| rank(path)))
             .cloned()
+    }
+
+    /// How likely `path` is the root, least first: a build file or an
+    /// `% arara:` line naming it, then the document closest to the
+    /// directory, preferring `main.tex` and the directory's own name.
+    fn rank(&self, path: &Path) -> (bool, usize, bool, bool, PathBuf) {
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+        let folder = self.root.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+        let hinted = self.build.iter().any(|b| head_of(b).contains(name)) || head_of(path).contains("% arara:");
+        (!hinted, path.components().count(), stem != "main", stem != folder, path.to_path_buf())
+    }
+
+    /// The documents that may read `file`, likeliest first: those naming
+    /// it, directly or through inputs that do, then the one a run starts
+    /// from. Only a run tells which one reads it.
+    pub fn candidate_roots(&self, file: &Path) -> Vec<PathBuf> {
+        let texts: Vec<(&PathBuf, String)> = self
+            .documents
+            .iter()
+            .chain(&self.inputs)
+            .chain(&self.packages)
+            .chain(&self.classes)
+            .filter(|p| !crate::paths::same_file(p, file))
+            .map(|p| (p, head_of(p)))
+            .collect();
+        let mut named = vec![file.to_path_buf()];
+        let mut next = 0;
+        while next < named.len() {
+            let file = named[next].clone();
+            next += 1;
+            for (path, text) in &texts {
+                if names(text, &file) && !named.contains(path) {
+                    named.push(path.to_path_buf());
+                }
+            }
+        }
+        let mut roots: Vec<PathBuf> = named.iter().filter(|p| self.documents.contains(p)).cloned().collect();
+        roots.sort_by_cached_key(|p| self.rank(p));
+        roots.extend(self.root_document().filter(|r| !roots.contains(r) && !crate::paths::same_file(r, file)));
+        roots
+    }
+
+    /// The project's packages and classes that read `file` as a part of
+    /// their own (`\input{name-#1.code}`), nearest first.
+    pub fn package_owners(&self, file: &Path) -> Vec<PathBuf> {
+        self.packages
+            .iter()
+            .chain(&self.classes)
+            .filter(|p| !crate::paths::same_file(p, file) && names(&head_of(p), file))
+            .cloned()
+            .collect()
     }
 
     /// The documents that could be the root, when more than one could and

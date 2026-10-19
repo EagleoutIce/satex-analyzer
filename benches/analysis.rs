@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-use satex::config::Config;
+use satex::config::{Config, Load, Texmf};
 use satex::machine::Machine;
 use satex::query::{self, Filter, Query};
 use satex::tex::{CatcodeTable, Interner, Mouth};
@@ -53,11 +53,8 @@ fn package(macros: usize) -> String {
 
 fn local() -> Config {
     Config {
-        load_packages: false,
-        load_classes: false,
-        load_inputs: false,
-        load_format: false,
-        use_kpsewhich: false,
+        load: Load { packages: false, classes: false, inputs: false, format: false, ..Default::default() },
+        texmf: Texmf { kpsewhich: false, ..Texmf::default() },
         ..Config::default()
     }
 }

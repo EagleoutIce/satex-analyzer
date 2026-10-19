@@ -1,0 +1,11 @@
+\documentclass{scrartcl}
+\usepackage{tikz}
+% pgfmath on an unknown integer behind an operator, and a rounded node
+% around a strut in a box: pgfmath parses unknown digits one by one.
+\newcount\c \c=\pdfrandomseed
+\pgfmathparse{1-\number\c}
+\setbox0=\hbox{\tikz{\node[rounded corners=3pt,draw] {\strut};}}
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

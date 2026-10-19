@@ -2,6 +2,8 @@
 
 Just select and or create an issue, work on that in your own fork and open a pull-request!
 
+How to build, test and debug satex quickly is in [doc/developing.md](doc/developing.md).
+
 Run `scripts/setup-hooks.sh` once per clone. It points git at `.githooks`, which checks your commit message, keeps conflict markers and stray `dbg!` calls out of a commit, and runs `cargo fmt --all --check` and clippy before a push, which CI checks too.
 
 Commit messages follow the conventional form `type(scope): subject`, with a lowercase subject and no full stop. The types are:

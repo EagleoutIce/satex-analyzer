@@ -1,0 +1,9 @@
+\documentclass{article}
+% A plain \loop whose bound is the engine's random seed: undecided.
+\count255=\pdfrandomseed
+\loop\advance\count255 1 \ifnum\count255<100 \repeat
+\gdef\AfterLoop{}
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

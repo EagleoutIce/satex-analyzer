@@ -1,8 +1,10 @@
 //! The command line: one module per group of commands.
 
 pub mod cache;
+pub mod compile;
 mod graph;
 mod inspect;
+pub mod install;
 mod lint;
 pub mod lsp;
 pub mod query;
@@ -55,6 +57,9 @@ pub enum Command {
     Query {
         /// The query to run; see `satex query --list`.
         #[arg(value_name = "NAME")]
+        #[cfg_attr(not(target_os = "emscripten"), arg(add = clap_complete::ArgValueCandidates::new(|| {
+            crate::query::Query::ALL.iter().map(|(n, _)| clap_complete::CompletionCandidate::new(*n)).collect::<Vec<_>>()
+        })))]
         name: Option<String>,
         /// Filter expression, for example `tag=switch and package~^my`.
         #[arg(long, value_name = "EXPR")]
@@ -93,6 +98,12 @@ pub enum Command {
         /// Explain one rule and how to fix what it reports.
         #[arg(long, value_name = "CODE", help_heading = "Rules")]
         explain: Option<String>,
+        /// List chktex's warnings and the rule that covers each.
+        #[arg(long, help_heading = "Rules")]
+        chktex: bool,
+        /// Print every finding, instead of a count for a rule that repeats.
+        #[arg(long, help_heading = "Selection")]
+        no_group: bool,
         /// Apply the safe fixes to the project's files, lint again until
         /// nothing fixable is left, and report what remains.
         #[arg(long, help_heading = "Fixes")]
@@ -216,6 +227,15 @@ pub enum Command {
         /// default only the files of the document itself are shown.
         #[arg(long)]
         include_internal: bool,
+        /// Text read at `--at` as if it stood there in the file, such as
+        /// `\mymacro{x}`: the trace shows what it expands to in the state the
+        /// document has there. The file on disk is not changed.
+        #[arg(long, value_name = "TEXT", requires = "at")]
+        inject: Option<String>,
+        /// Where `--inject` puts its text, `[FILE:]LINE[:COL]`; the main file
+        /// without FILE, the start of the line without COL.
+        #[arg(long, value_name = "LINE[:COL]", requires = "inject")]
+        at: Option<String>,
     },
     /// The interpreted LaTeX2e kernel and the package caches.  Without a
     /// further command, prints their status.
@@ -223,8 +243,45 @@ pub enum Command {
         #[command(subcommand)]
         action: Option<CacheAction>,
     },
+    /// Build the document with latexmk, or the engine where latexmk is
+    /// missing, and explain each error and warning the log reports by what
+    /// the analysis found there.  Never opens a viewer.  The build runs the
+    /// project's own code, its latexmkrc and what it lets TeX run, so build
+    /// only projects you trust.
+    Compile,
+    /// Install the packages the document loads that this machine does not
+    /// have.  Asks first, never elevates, and is never run by `lint --fix`.
+    Install {
+        /// Install these packages instead of the ones the document needs.
+        #[arg(value_name = "PACKAGE")]
+        packages: Vec<String>,
+        /// Install without asking.
+        #[arg(long)]
+        yes: bool,
+        /// Print the commands and run nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Install into your own TEXMF tree, which needs no elevation
+        /// (TeX Live manual, `--usermode`).
+        #[arg(long)]
+        usermode: bool,
+    },
     /// The token stream the mouth produces.
     Tokens,
+    /// Print the shell completion script: bash, zsh, fish, elvish or
+    /// powershell.  Values complete from the running binary.  `install
+    /// [bash|zsh|fish]` registers it in that shell's startup file; without a
+    /// shell, in every shell installed or in use.
+    Completions {
+        #[arg(value_name = "SHELL", value_parser = clap::builder::PossibleValuesParser::new(
+            ["bash", "zsh", "fish", "elvish", "powershell", "install"].map(clap::builder::PossibleValue::new)
+                .into_iter().chain([clap::builder::PossibleValue::new("json").hide(true)])))]
+        shell: String,
+        /// The shell `install` sets up; without it, every shell installed
+        /// or in use.
+        #[arg(value_name = "TARGET", value_parser = ["bash", "zsh", "fish"])]
+        target: Option<String>,
+    },
     /// A Language Server Protocol server: a thin facade over the queries and
     /// lints above, driven by `initialize`/`didOpen`/`didChange` instead of
     /// one-shot arguments.  Stdio by default; `--port` switches to TCP.
@@ -235,6 +292,9 @@ pub enum Command {
         /// Interface to bind when `--port` is given.
         #[arg(long, value_name = "HOST")]
         host: Option<String>,
+        /// Stdio, the default: accepted because language clients pass it.
+        #[arg(long, hide = true)]
+        stdio: bool,
     },
 }
 
@@ -242,7 +302,7 @@ pub enum Command {
 #[derive(Subcommand)]
 pub enum CacheAction {
     /// Interpret the kernel, replacing its cache, and the given packages —
-    /// or `cache_index`'s configured ones when none are given.  Builds only
+    /// or `cache.index`'s configured ones when none are given.  Builds only
     /// what is missing or stale; `--refresh` rebuilds everything.
     Build {
         /// Packages to prepare instead of the configured ones.
@@ -260,6 +320,20 @@ pub enum CacheAction {
         #[arg(long, value_name = "PATH")]
         preamble: Option<std::path::PathBuf>,
     },
+    /// Write the valid caches of the cache directory into one archive.
+    Export {
+        /// The archive to write.
+        #[arg(value_name = "ARCHIVE")]
+        archive: std::path::PathBuf,
+    },
+    /// Unpack an archive into the cache directory. A cache it holds that
+    /// this build cannot use is skipped with a line saying why. A directory
+    /// names its `satex-cache.bin`.
+    Import {
+        /// The archive, or a bundle directory holding one.
+        #[arg(value_name = "ARCHIVE")]
+        archive: std::path::PathBuf,
+    },
     /// Delete every cache: the interpreted kernel and the package caches.
     Clear,
     /// Apply the size and staleness pruning now.
@@ -274,8 +348,10 @@ impl Command {
                 | Command::Query { request: Some(_), .. }
                 | Command::Lint { rules: true, .. }
                 | Command::Lint { explain: Some(_), .. }
+                | Command::Lint { chktex: true, .. }
                 | Command::Cache { action: Some(_) }
                 | Command::Lsp { .. }
+                | Command::Completions { .. }
         )
     }
 
@@ -303,6 +379,14 @@ impl Command {
         matches!(self, Command::Lint { fix: true, .. } | Command::Lint { diff: true, .. })
     }
 
+    /// Whether the command's own output already lists the gaps.  `query
+    /// gaps` prints exactly the records the footer would summarize, so the
+    /// footer would repeat them and point the reader at the command they
+    /// are already running.
+    pub fn reports_gaps(&self) -> bool {
+        matches!(self, Command::Query { name: Some(n), request: None, .. } if n == "gaps")
+    }
+
     /// Whether `format` is something this command can print, matching the
     /// precedence its own `run` gives its flags (`--rules` before
     /// `--explain` before the findings themselves) — and a hint for what to
@@ -312,16 +396,19 @@ impl Command {
     pub fn check_format(&self, format: Format) -> Result<(), String> {
         let generic = matches!(format, Format::Text | Format::Json | Format::Csv | Format::Markdown);
         let (ok, hint): (bool, &str) = match self {
-            Command::Lint { rules: true, .. } => (generic, "text, json, csv or markdown"),
+            Command::Lint { rules: true, .. } | Command::Lint { chktex: true, .. } => {
+                (generic, "text, json, csv or markdown")
+            }
             Command::Lint { explain: Some(_), .. } => (matches!(format, Format::Text | Format::Json), "text or json"),
-            Command::Lint { .. } => (
-                generic || matches!(format, Format::Github | Format::Sarif | Format::Lsp),
-                "text, json, csv, markdown, github, sarif or lsp",
+            Command::Lint { .. } | Command::Compile => (
+                generic || matches!(format, Format::Github | Format::Sarif | Format::Lsp | Format::Texlog),
+                "text, json, csv, markdown, github, sarif, lsp or texlog",
             ),
-            Command::Summary { .. } | Command::Cache { action: None } => {
+            Command::Summary { .. } | Command::Cache { action: None } | Command::Install { .. } => {
                 (matches!(format, Format::Text | Format::Json), "text or json")
             }
             Command::Dependencies => (matches!(format, Format::Text | Format::Json | Format::Dot), "text, json or dot"),
+            Command::Trace { .. } => (generic || format == Format::Compact, "text, json, csv, markdown or compact"),
             _ => (generic, "text, json, csv or markdown"),
         };
         if ok { Ok(()) } else { Err(format!("`--format {}` does not apply here; try {hint}", format.as_str())) }
@@ -351,13 +438,23 @@ impl Command {
                 *list,
                 out,
             ),
+            Command::Trace { .. } if context.format == crate::plugin::format::Format::Compact => {
+                query::trace_compact(context, out)
+            }
             Command::Trace { filter, interactive, from, to, lines, include_internal, .. } => {
                 let file = trace_file(&[from.as_deref(), to.as_deref(), lines.as_deref()])?;
                 query::trace(context, filter.as_deref(), *interactive, *include_internal, file.as_deref(), out)
             }
-            Command::Lint { filter, all, rules, explain, fix, unsafe_fixes, diff } => {
+            Command::Lint { filter, all, rules, explain, chktex, fix, unsafe_fixes, diff, no_group: _ } => {
                 let fixing = lint::Fixing { fix: *fix, unsafe_fixes: *unsafe_fixes, diff: *diff };
-                lint::run(context, filter.as_deref(), *all, *rules, explain.as_deref(), fixing, out)
+                let selection = lint::Selection {
+                    filter: filter.as_deref(),
+                    all: *all,
+                    rules: *rules,
+                    explain: explain.as_deref(),
+                    chktex: *chktex,
+                };
+                lint::run(context, selection, fixing, out)
             }
             Command::Summary { all, depth } => summary::run(context, *all, *depth, out),
             Command::Scope { at, filter, all } => inspect::scope(context, at.as_deref(), filter.as_deref(), *all),
@@ -378,17 +475,19 @@ impl Command {
             // `Lsp` before a `Context` exists, the same way it does
             // `Query { request: Some(_) }`.
             Command::Cache { action: Some(_) } => Ok(Output::Done),
-            Command::Lsp { .. } => Ok(Output::Done),
+            Command::Lsp { .. } | Command::Completions { .. } => Ok(Output::Done),
+            Command::Compile => compile::run(context),
+            Command::Install { packages, yes, dry_run, usermode } => {
+                let options = install::Options { yes: *yes, dry_run: *dry_run, usermode: *usermode };
+                install::run(context, packages, options, out)
+            }
             Command::Tokens => tokens::run(context),
         }
     }
 }
 
 pub fn parse_filter(text: Option<&str>) -> Result<crate::query::Filter, String> {
-    match text {
-        None => Ok(crate::query::Filter::Always),
-        Some(text) => crate::query::Filter::parse(text),
-    }
+    text.map_or(Ok(crate::query::Filter::Always), crate::query::Filter::parse)
 }
 
 pub fn parse_position(text: &str) -> Result<(u32, u32), String> {
@@ -446,6 +545,30 @@ pub fn split_file(text: &str) -> (Option<String>, &str) {
 }
 
 /// The one file `--from`, `--to` and `--lines` agree on, if they name any.
+/// `text` with `inject` put before the character at `line` and `col`
+/// (both from 1; `col` 0 is the start of the line), and the position just
+/// after it: what `trace --inject` traces.
+pub fn inject_text(text: &str, line: u32, col: u32, inject: &str) -> Result<(String, (u32, u32)), String> {
+    let past = || format!("the file has no line {line}");
+    if line == 0 {
+        return Err(past());
+    }
+    let mut start = 0;
+    for _ in 1..line {
+        start += text[start..].find('\n').ok_or_else(past)? + 1;
+    }
+    let row = text[start..].split('\n').next().unwrap_or_default();
+    let at = start + row.char_indices().nth(col.saturating_sub(1) as usize).map_or(row.len(), |(i, _)| i);
+    let mut out = String::with_capacity(text.len() + inject.len());
+    out.push_str(&text[..at]);
+    out.push_str(inject);
+    out.push_str(&text[at..]);
+    let lines = inject.matches('\n').count() as u32;
+    let last = inject.rsplit('\n').next().unwrap_or_default().chars().count() as u32;
+    let end_col = if lines == 0 { col.max(1) + last } else { last + 1 };
+    Ok((out, (line + lines, end_col)))
+}
+
 pub fn trace_file(specs: &[Option<&str>]) -> Result<Option<String>, String> {
     let mut found: Option<String> = None;
     for spec in specs.iter().flatten() {

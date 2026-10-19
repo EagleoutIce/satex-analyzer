@@ -1,6 +1,6 @@
 <!-- generated from doc/src/README.md.in by satex-doc; do not edit -->
 
-# SaTeX - Static Analysis for (La)TeX and Friends
+<p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
 
 An abstract interpreter for (La)TeX and related engines with the ability to expands macros, execute primitives, track dynamic catcode changes, recursion, and more. While SaTeX is context and path-sensitive, it does not typeset the document.
 Instead, SaTeX can lint your documents to find various issues (including quick-fixes and the identification of unused or missing macros), slice your document, analyze its performance, jump to definitions,  explore package options and their consequences.
@@ -24,11 +24,19 @@ Yet, please avoid AI-only contributions. Humans are still considered responsible
 
 ## Install
 
-Prebuilt binaries for Linux, macOS and Windows (x86-64 and ARM64) are attached to every [release](../../releases). With Rust installed, `cargo install satex-analyzer` installs the `satex` command. To build from source:
+Prebuilt binaries for Linux and macOS (x86-64 and ARM64) and Windows (x86-64) are attached to every [release](../../releases). With Rust installed, `cargo install satex-analyzer` installs the `satex` command. `cargo install --git https://github.com/EagleoutIce/satex-analyzer` installs the latest version from the repository. To build from source:
 
 ```sh
 cargo build --release
 ./target/release/satex --help
+```
+
+Shell completion: after installing, run `satex completions install` once. It adds the hook to the startup file of your shell (bash, zsh or fish). `satex completions <shell>` prints the script for bash, zsh, fish, elvish or powershell. Query names and `--set` keys complete from the program itself. See the [command line page](doc/wiki/cli.md).
+
+```sh
+source <(satex completions bash)                          # bash: add to ~/.bashrc
+source <(satex completions zsh)                           # zsh: add to ~/.zshrc
+satex completions fish > ~/.config/fish/completions/satex.fish
 ```
 
 Current version: {{version}}. `satex --version` also lists the plugins included in this build and the configuration in effect:
@@ -46,7 +54,7 @@ Current version: {{version}}. `satex --version` also lists the plugins included 
 
 Provides context-sensitive diagnostics like undefined names, duplicates, dead code, and misused conditionals.
 
-{{run(8): satex lint -f samples/paper.tex}}
+{{run(24): satex lint -f samples/paper.tex}}
 
 <details>
 <summary> List all rules alongside a description with <code>--rules</code> </summary>
@@ -146,7 +154,7 @@ Shows what a build costs: which packages and files dominate, and what to do abou
 {{run(6): satex lint -f samples/paper.tex --filter 'category=performance'}}
 
 `--timings` breaks the time down per phase and file, `--stats` sums up counts and wall time. Both measure the run itself and change between runs.
-The kernel and the packages are interpreted once and cached. `satex cache build` prepares the packages in `cache_index` ahead of time.
+The kernel and the packages are interpreted once and cached. `satex cache build` prepares the packages in `cache.index` ahead of time.
 
 <details>
 <summary>The cached kernel with <code>cache</code></summary>
@@ -199,7 +207,7 @@ Every command prints text by default. You can use `--format json`, `csv` or `mar
 
 ## Configuration
 
-SaTeX merges its built-in defaults, your global `~/.config/satex/satex.yaml`, every `satex.yaml` from the filesystem root down to the document, `--config FILE`, and `--set PATH=VALUE`, each overriding the one before. `satex --version` lists what was used. Plugins detect the installation, engine, output and build system (latexmk, make, l3build, …). TeX, e-TeX, pdfTeX and LaTeX2e are modelled in full. XeTeX, LuaTeX and ConTeXt are experimental. See the [configuration wiki page](doc/wiki/configuration.md).
+SaTeX merges its built-in defaults, your global `~/.config/satex/satex.yaml`, every `satex.yaml` from the filesystem root down to the document, `--config FILE`, and `--set PATH=VALUE`, each overriding the one before. `satex --version` lists what was used. Plugins detect the installation, engine, output and build system (latexmk, make, l3build, …). TeX, e-TeX, pdfTeX and LaTeX2e are modeled in full. XeTeX, LuaTeX and ConTeXt are experimental. See the [configuration wiki page](doc/wiki/configuration.md).
 
 ## How it works
 
@@ -227,7 +235,7 @@ There are various preexisting analysis approaches for TeX, albeit none offer ful
 - [unravel](https://ctan.org/pkg/unravel) steps through TeX's expansion as a debugger, but runs one concrete execution for this.
 - [TexLab](https://github.com/latex-lsp/texlab) is a language server that gives editor features from a syntax tree, without expanding macros.
 - [unified-latex](https://github.com/siefkenj/unified-latex) parses LaTeX into a syntax tree for transformation, and does not expand macros in general.
-- [ChkTeX](https://www.nongnu.org/chktex/) is a token-level linter for typographic and style mistakes (it does not expand macros).
+- [ChkTeX](https://www.nongnu.org/chktex/) is a token-level linter for typographic and style mistakes (it does not expand macros). The [chktex coverage table](https://eagleoutice.github.io/satex-analyzer/chktex-coverage) lists its 49 warnings and the satex rule for each.
 
 
 [concrete semantics]: https://eagleoutice.github.io/satex-analyzer/SEMANTICS

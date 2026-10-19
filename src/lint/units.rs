@@ -1,12 +1,12 @@
 //! Numbers set next to their unit by hand, which siunitx does properly.
 
-use std::collections::HashSet;
+use crate::fixed::HashSet;
 
 use crate::builtins::LoadKind;
 use crate::facts::Quantity;
 use crate::lint::fix::{Applicability, Fix};
 use crate::lint::shared::document_start;
-use crate::lint::{Category, Report, Rule, Severity};
+use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 use crate::machine::Analysis;
 use crate::tex::FileId;
 
@@ -16,22 +16,19 @@ pub static RULES: &[Rule] = &[Rule {
     severity: Severity::Info,
     summary: "a number and its unit are set by hand where siunitx would set them",
     explanation: "\
-`2ms` sets the number and the unit as one word, so the line may break between
-them and the unit is italic in math mode.  `2\\,\\mathrm{ms}` puts the space in
-by hand, which fixes neither the unit's own spacing nor the decimal marker, and
-a `\\newcommand` that holds the unit only hides the same markup.  The SI
-brochure (9th ed., § 5.4.3) asks for a non-breaking space between a value and
-its unit, and for the unit in an upright font.  siunitx does all of it:
-`\\qty{2}{\\milli\\second}` (`\\SI` before version 3).
+`2ms` sets the number and the unit as one word, so the line may break
+between them and the unit is italic in math.  The
+[SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed.,
+§ 5.4.3) asks for a non-breaking space and an upright unit, and
+[siunitx](https://ctan.org/pkg/siunitx) does both.
 
-The rule reads what the run typeset, not the source: a digit run followed by
-letters, with no space token between them.  The unit has to be an SI symbol or
-one of the units the SI accepts (brochure, tables 1-4 and § 4.1), the number
-has to start a word, and the quantity has to be set by the document rather than
-handed to a package's own command, so a document that already formats its units
-with siunitx, units or physics is left alone.
+The rule reads what the run typeset: a digit run followed by letters with no
+space token between them, where the unit is an SI symbol and the document
+set it itself.
 
 Fix by loading `\\usepackage{siunitx}` and writing `\\qty{⟨number⟩}{⟨unit⟩}`.",
+    references: &[Ref { source: Source::SiBrochure, at: "5.4.3" }, Ref { source: Source::Siunitx, at: "\\qty" }],
+    fixes: &[Applicability::Unsafe],
     run: hand_set_quantity,
 }];
 
@@ -163,25 +160,32 @@ fn package_files(analysis: &Analysis) -> HashSet<FileId> {
 fn hand_set_quantity(report: &mut Report) {
     let analysis = report.analysis;
     let packages = package_files(analysis);
-    let loaded = analysis.facts.loads.iter().any(|load| load.kind.is_package() && load.name == "siunitx");
+    let loaded = crate::lint::shared::loaded(analysis, "siunitx");
     let begin = document_start(analysis);
-    let document = |file| crate::query::origin(analysis, file) == "document";
+    let view = report.text();
+    let document = |file| view.document(file);
     let quantities: Vec<Quantity> = analysis
         .facts
         .quantities
         .iter()
-        .filter(|q| !q.within.iter().any(|file| packages.contains(file)))
-        .filter(|q| document(q.span.file) && document(q.unit_span.file))
-        .filter(|q| !plural(&q.number, &q.unit))
+        // Set on every run (a path that lost track of a key may typeset a
+        // length no real run does), in the document's own text, not a count.
+        .filter(|q| {
+            q.certain
+                && document(q.span.file)
+                && document(q.unit_span.file)
+                && !q.within.iter().any(|file| packages.contains(file))
+                && !plural(&q.number, &q.unit)
+        })
         .cloned()
         .collect();
-    // Only the first finding brings the package in; the rest would overlap it.
+    // Only the first finding brings the package in.  The rest would overlap it.
     let mut load = !loaded;
     for q in quantities {
         let Some(unit) = siunitx(&q.unit) else { continue };
         let call = call(analysis, &q.number, &unit);
         let via = q.via.map(|sym| report.cs(sym).trim_start_matches('\\').to_string());
-        let mut edits = report.edits().quantity(q.span, &q.number, &q.unit, via.as_deref(), &call);
+        let mut edits = report.edits().quantity(&q, via.as_deref(), &call);
         if let (Some(edits), Some(begin), true) = (edits.as_mut(), begin, load) {
             edits.extend(report.edits().insert_before(begin, "\\usepackage{siunitx}").unwrap_or_default());
             load = false;

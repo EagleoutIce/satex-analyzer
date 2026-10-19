@@ -1,0 +1,8 @@
+\documentclass{article}
+\makeatletter
+\def\hook{A}
+\g@addto@macro\hook{B}
+\def\once{\global\let\once\relax first}
+\begin{document}
+\hook, \once\once, \csname h\@gobble Xook\endcsname, \meaning\hook
+\end{document}

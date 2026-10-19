@@ -53,8 +53,11 @@ mt.__len = function() return 0 end
 mt.__tostring = function() return "" end
 mt.__eq = function() return false end
 local function readonly(name, mode)
-  if mode and not mode:match("^r") then return nil, "read-only" end
-  return io.open(name, mode)
+  if mode ~= nil and mode ~= "r" and mode ~= "rb" then return nil, "read-only" end
+  local f, err = io.open(name, "r")
+  if not f then return nil, err end
+  return { read = function(_, ...) return f:read(...) end, lines = function(_, ...) return f:lines(...) end,
+    seek = function(_, ...) return f:seek(...) end, close = function() return f:close() end }
 end
 local handle = { read = function() return "" end, close = function() return true end,
   lines = function() return function() return nil end end }
@@ -117,8 +120,11 @@ impl L3build {
     /// documentation sit below it.
     pub fn read(dir: &Path) -> Option<L3build> {
         let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        let home = crate::paths::home_dir();
         let mut root = None;
-        for ancestor in dir.ancestors() {
+        // Never above the repository, the home directory, or what another
+        // user owns: a `build.lua` there is no part of this bundle.
+        for ancestor in dir.ancestors().take_while(|a| Some(*a) != home.as_deref() && owned_alike(&dir, a)) {
             if ancestor.join(FILE).is_file() {
                 root = Some(ancestor);
                 break;
@@ -211,7 +217,7 @@ impl L3build {
         for pattern in self.list(patterns) {
             let joined = base.join(&pattern);
             let Some(joined) = joined.to_str() else { continue };
-            for path in glob::glob(joined).into_iter().flatten().flatten() {
+            for path in crate::paths::glob(joined) {
                 if path.is_file() && !out.contains(&path) {
                     out.push(path);
                 }
@@ -323,23 +329,46 @@ fn normalize(path: &Path) -> PathBuf {
     out
 }
 
-/// l3build's own defaults, where the installation keeps them.
+/// l3build's own defaults, where the installation keeps them.  The locator
+/// comes from the provider, since MiKTeX's is `miktex-kpsewhich`.
 fn defaults_file() -> Option<PathBuf> {
-    let output = std::process::Command::new("kpsewhich").arg("l3build-variables.lua").output().ok()?;
+    let locator = super::Provider::kpsewhich_of(None)?;
+    let output = std::process::Command::new(locator).arg("l3build-variables.lua").output().ok()?;
     let path = String::from_utf8(output.stdout).ok()?.trim().to_string();
     (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
 type Evaluated = (BTreeMap<String, (Var, bool)>, Option<String>);
 
+/// Whether `a` has the owner `dir` has.
+fn owned_alike(dir: &Path, a: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let owner = |p: &Path| std::fs::metadata(p).map(|m| m.uid()).ok();
+        owner(dir).is_some() && owner(dir) == owner(a)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (dir, a);
+        true
+    }
+}
+
 fn evaluate(root: &Path, defaults: Option<&Path>) -> Option<Evaluated> {
-    let texlua = which::which("texlua").ok()?;
+    let texlua = crate::paths::which("texlua").ok()?;
     let script = std::env::temp_dir().join(format!(
         "satex-l3build-{}-{:?}.lua",
         std::process::id(),
         std::thread::current().id()
     ));
-    std::fs::write(&script, EVALUATOR).ok()?;
+    // A new file only this user may write: never one that is there, or a
+    // link another user planted.
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    std::io::Write::write_all(&mut options.open(&script).ok()?, EVALUATOR.as_bytes()).ok()?;
     let defaults = defaults.map(|p| p.display().to_string()).unwrap_or_default();
     let output = std::process::Command::new(texlua)
         .arg(&script)

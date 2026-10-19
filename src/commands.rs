@@ -1,10 +1,9 @@
-//! The engine primitives beyond the interpreter's core: TeX's glue and
-//! token-list parameters, the quantities the engine computes (`last_item`),
-//! the font tables, and the commands whose effect is typesetting, output or
-//! diagnostics.  Each reads exactly the operands the engine reads (tex.web
-//! parts 30 and 49, etex_man § 3, the pdfTeX manual), so the input stays in
-//! step, and each answers with the engine's value wherever that value does
-//! not depend on typesetting.
+//! The engine primitives beyond the interpreter's core: glue and token-list
+//! parameters, engine-computed quantities (`last_item`), font tables, and
+//! commands whose effect is typesetting, output or diagnostics.
+//! Each reads exactly the operands the engine reads (tex.web parts 30 and
+//! 49, etex_man § 3, the pdfTeX manual) and answers with the engine's value
+//! wherever that does not depend on typesetting.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -12,19 +11,25 @@ use std::rc::Rc;
 use crate::builtins::DefMode;
 use crate::builtins::{CodeTable, Cond, Convert, FontParam, LastItem, Primitive, Special, Syntax};
 use crate::env::GroupKind;
-use crate::machine::{CondLimit, Machine};
+use crate::machine::{CondLimit, Machine, Unk};
 use crate::mode::group;
 use crate::tex::{Catcode, Meaning, RegKind, Span, Sym, Tok, Token};
 use crate::value::{Scaled, UNIT, Value};
 
-/// Keeps the font tables and the other engine state out of the namespace
-/// control sequences live in, as the register names are kept out of it.
+/// Keeps font tables and other engine state out of the control-sequence namespace.
 const ENGINE: char = '\u{4}';
+
+/// `ENGINE` and `font`: the slot `\the\font` reads. A constant so reading it per character costs no formatting.
+const FONT_SLOT: &str = "\u{4}font";
+
+/// The five macros LaTeX keeps the current font in (fntguide § 2).
+pub(crate) const NFSS: [&str; 5] = ["cf@encoding", "f@family", "f@series", "f@shape", "f@size"];
 /// etex_man § 3: `\eTeXversion` and `\eTeXrevision`.
 const ETEX_VERSION: i64 = 2;
 const ETEX_REVISION: &str = ".6";
 /// The pdfTeX manual: `\pdftexversion` is 140 for 1.40, and
 /// `\pdftexrevision` the last part of the version of the TeX Live binary.
+/// Read from the installed `pdftex` where there is one, these where not.
 const PDFTEX_VERSION: i64 = 140;
 const PDFTEX_REVISION: &str = "29";
 /// `\XeTeXversion` and `\XeTeXrevision` of XeTeX 0.999998.
@@ -51,17 +56,38 @@ const SCALE_UNITY: i64 = 1000;
 /// tex.web § 1259: an improper `at` size is replaced by 10pt.
 const DEFAULT_AT: Scaled = 10 * UNIT;
 
+/// `\pdftexversion` and `\pdftexrevision` of the installed engine: version
+/// 1.40.28 is 140 and "28" (the pdfTeX manual).
+fn pdftex_release() -> (i64, String) {
+    let parsed = crate::distribution::engine_release("pdftex").and_then(|v| {
+        let mut parts = v.split('.');
+        let (major, minor, revision) = (parts.next()?, parts.next()?, parts.next()?);
+        let version = major.parse::<i64>().ok()? * 100 + minor.parse::<i64>().ok()?;
+        revision.parse::<u32>().ok()?;
+        Some((version, revision.to_string()))
+    });
+    parsed.unwrap_or((PDFTEX_VERSION, PDFTEX_REVISION.to_string()))
+}
+
+/// `\XeTeXversion` and `\XeTeXrevision` of the installed engine: version
+/// 0.999997 is 0 and ".999997" (the XeTeX reference).
+fn xetex_release() -> (i64, String) {
+    let parsed = crate::distribution::engine_release("xetex").and_then(|v| {
+        let (major, revision) = v.split_once('.')?;
+        revision.parse::<u32>().ok()?;
+        Some((major.parse::<i64>().ok()?, format!(".{revision}")))
+    });
+    parsed.unwrap_or((XETEX_VERSION, XETEX_REVISION.to_string()))
+}
+
 thread_local! {
-    /// pdfTeX's `\ifincsname`: how many `\csname` or `\ifcsname` scans are
-    /// open.  They nest only while one runs, so a counter is exact.
+    /// pdfTeX's `\ifincsname`: how many `\csname`/`\ifcsname` scans are open. Nest only while running, so a counter is exact.
     static IN_CSNAME: Cell<usize> = const { Cell::new(0) };
-    /// How many conditionals are reading their test, which the engine has
-    /// already put on its condition stack (tex.web § 495).
+    /// Conditionals reading their test, already on the condition stack (tex.web § 495).
     static TESTING: Cell<usize> = const { Cell::new(0) };
 }
 
-/// A `\csname` or `\ifcsname` starts scanning its name, which is what
-/// `\ifincsname` asks about; [`leave_csname`] ends it.
+/// Starts a `\csname`/`\ifcsname` scan. [`leave_csname`] ends it.
 pub fn enter_csname() -> usize {
     IN_CSNAME.with(|depth| depth.replace(depth.get() + 1))
 }
@@ -70,7 +96,7 @@ pub fn leave_csname(depth: usize) {
     IN_CSNAME.with(|d| d.set(depth));
 }
 
-/// A conditional's test is being read; see `Machine::eval_condition`.
+/// A conditional's test is being read. See `Machine::eval_condition`.
 pub fn enter_test() -> usize {
     TESTING.with(|depth| depth.replace(depth.get() + 1))
 }
@@ -79,10 +105,32 @@ pub fn leave_test(depth: usize) {
     TESTING.with(|d| d.set(depth));
 }
 
+/// The engine keys `\pdfmatch` leaves for `\pdflastmatch`: the groups
+/// kept and each group's `⟨position⟩->⟨text⟩`.
+const LAST_MATCH: &str = "lastmatch.";
+const LAST_MATCH_COUNT: &str = "lastmatch.count";
+/// What `\pdflastmatch` is for a group that did not take part.
+const NO_MATCH: &str = "-1->";
+
 fn chars(text: &str, span: Span) -> Vec<Token> {
     text.chars()
         .map(|c| Token::new(Tok::Chr(c, if c == ' ' { Catcode::Space } else { Catcode::Other }), span))
         .collect()
+}
+
+/// The family of font table entries one write may reach: a font's
+/// `\fontdimen`s, its `\lpcode`s, or one `\hyphenchar`/`\skewchar` entry.
+fn font_field_family(font: u32, field: &str) -> String {
+    if let Some(rest) = field.strip_prefix('p')
+        && !rest.is_empty()
+        && rest.bytes().all(|b| b.is_ascii_digit())
+    {
+        return format!("font{font}.p");
+    }
+    match field.split_once('.') {
+        Some((name, _)) => format!("font{font}.{name}."),
+        None => format!("font{font}.{field}"),
+    }
 }
 
 fn text_of_value(value: &Value) -> Option<String> {
@@ -110,7 +158,7 @@ enum FontSource {
 }
 
 impl Machine<'_> {
-    fn engine_sym(&mut self, key: &str) -> Sym {
+    pub(crate) fn engine_sym(&mut self, key: &str) -> Sym {
         self.intern(&format!("{ENGINE}{key}"))
     }
 
@@ -119,9 +167,63 @@ impl Machine<'_> {
         self.env.value(sym).as_int()
     }
 
-    fn set_engine(&mut self, key: &str, value: Value, global: bool) {
+    /// `\pdfrefximage⟨n⟩`: a box of the image's size, depth zero, where
+    /// the size is known.
+    fn ref_ximage(&mut self, n: Option<i64>) {
+        let dim = |m: &mut Self, k: &str| Some(crate::mode::Dim::exact(m.engine_int(&format!("ximage.{}.{k}", n?))?));
+        let item = match (dim(self, "w"), dim(self, "h")) {
+            (Some(w), Some(h)) => crate::mode::Item::Box([w, h, crate::mode::Dim::exact(0)]),
+            _ => crate::mode::Item::Unknown,
+        };
+        self.append_item(item);
+    }
+
+    pub(crate) fn set_engine(&mut self, key: &str, value: Value, global: bool) {
         let sym = self.engine_sym(key);
         self.env.set_value(sym, value, global);
+    }
+
+    /// The slot standing for a whole family of engine keys, e.g. every
+    /// `charclass.⟨n⟩`. A real key never holds an `ENGINE` character, so this is none of them.
+    fn unpinned_sym(&mut self, family: &str) -> Sym {
+        self.engine_sym(&format!("{family}{ENGINE}any"))
+    }
+
+    /// A write through a number satex could not pin down: any key of the
+    /// family may hold it, and an unwritten one is no longer at its default.
+    fn weaken_engine(&mut self, family: &str, global: bool) {
+        let prefix = format!("{ENGINE}{family}");
+        let targets: Vec<Sym> = self.env.bound().into_iter().filter(|&s| self.name(s).starts_with(&prefix)).collect();
+        for sym in targets {
+            self.env.set_value(sym, Value::Unknown, global);
+        }
+        let any = self.unpinned_sym(family);
+        self.env.set_value(any, Value::Unknown, global);
+    }
+
+    /// Whether such a write may have reached this family.
+    fn engine_unpinned(&mut self, family: &str) -> bool {
+        let sym = self.unpinned_sym(family);
+        self.env.get(sym).is_some()
+    }
+
+    /// An engine integer, 0 for a never-set key.
+    /// `None` if the key, or an unpinned write, left it unknown.
+    pub(crate) fn engine_slot_int(&mut self, family: &str, key: &str) -> Option<i64> {
+        if self.engine_unpinned(family) {
+            return None;
+        }
+        let sym = self.engine_sym(key);
+        match self.env.get(sym) {
+            None => Some(0),
+            Some(_) => self.env.value(sym).as_int(),
+        }
+    }
+
+    /// Whether `\openout` left the stream open (tex.web § 1374).
+    /// `None` if an unpinned number opened or closed one.
+    pub(crate) fn write_open(&mut self, stream: i64) -> Option<bool> {
+        self.engine_slot_int("write_open.", &format!("write_open.{stream}")).map(|n| n == 1)
     }
 
     /// `\globaldefs` (tex.web § 1214): positive makes every assignment
@@ -131,22 +233,41 @@ impl Machine<'_> {
         self.env.value(sym).as_int().unwrap_or(0)
     }
 
-    pub fn apply_global_defs(&mut self) {
-        match self.global_defs() {
-            0 => {}
-            n => self.prefixes.global = n > 0,
+    /// `None` if `\globaldefs` holds an unknown number, so it is not read
+    /// back as the 0 that leaves the prefix alone.
+    fn global_defs_known(&mut self) -> Option<i64> {
+        let sym = self.intern("globaldefs");
+        match self.env.get(sym) {
+            None => Some(0),
+            Some(_) => self.env.value(sym).as_int(),
         }
     }
 
-    fn take_global(&mut self) -> bool {
-        let global = self.prefixes.global;
-        self.prefixes = Default::default();
-        global
+    /// Whether the scope of the assignment that follows is unknown
+    /// (tex.web § 1214: positive `\globaldefs` makes it global, negative
+    /// local). Then made global and its write widened, since the name may
+    /// still hold what it held before.
+    pub fn apply_global_defs(&mut self) -> bool {
+        match self.global_defs_known() {
+            Some(0) => false,
+            Some(n) => {
+                self.prefixes.global = n > 0;
+                false
+            }
+            None => {
+                self.prefixes.global = true;
+                true
+            }
+        }
+    }
+
+    pub(crate) fn take_global(&mut self) -> bool {
+        std::mem::take(&mut self.prefixes).global
     }
 
     /// `scan_optional_equals` (tex.web § 405).
     pub fn scan_optional_equals(&mut self) {
-        if let Some(token) = self.next_non_blank_x()
+        if let Some(token) = self.next_non_blank_x_token()
             && !matches!(token.tok, Tok::Chr('=', Catcode::Other))
         {
             self.probe_scans(token, "=");
@@ -154,17 +275,7 @@ impl Machine<'_> {
         }
     }
 
-    fn next_non_blank_x(&mut self) -> Option<Token> {
-        loop {
-            let token = self.next_x_token()?;
-            if !token.is_space() {
-                return Some(token);
-            }
-        }
-    }
-
-    /// A ⟨general text⟩ read the way `scan_toks(false, true)` reads it:
-    /// expanded as an `\edef` body is (tex.web § 473).
+    /// A ⟨general text⟩, expanded as an `\edef` body is (tex.web § 473, `scan_toks(false, true)`).
     fn expanded_general_text(&mut self) -> Vec<Token> {
         let body = self.read_general_text();
         self.expand_tokens(Rc::from(body))
@@ -176,8 +287,18 @@ impl Machine<'_> {
         self.text_known(&body)
     }
 
-    /// Tokens as the characters `\detokenize` writes, `None` when they hold
-    /// unknown text or a control sequence under an unknown `\escapechar`.
+    /// What is known of the start of a text: the characters before its
+    /// first unknown token, and whether that is all of it.
+    pub(crate) fn known_prefix(&mut self, tokens: &[Token]) -> (String, bool) {
+        let known = tokens.iter().take_while(|t| !self.has_unknown(std::slice::from_ref(t))).count();
+        match self.text_known(&tokens[..known]) {
+            Some(text) => (text, known == tokens.len()),
+            None => (String::new(), false),
+        }
+    }
+
+    /// Tokens as `\detokenize` writes them. `None` if unknown, or a
+    /// control sequence under an unknown `\escapechar`.
     pub(crate) fn text_known(&mut self, tokens: &[Token]) -> Option<String> {
         if self.has_unknown(tokens) {
             return None;
@@ -187,7 +308,13 @@ impl Machine<'_> {
             None if tokens.iter().any(|t| t.cs().is_some()) => return None,
             None => None,
         };
-        Some(crate::tex::detokenize_in(tokens, &self.out.interner, escape, &self.catcodes))
+        Some(crate::tex::detokenize_in(
+            tokens,
+            &self.out.interner,
+            escape,
+            &self.catcodes,
+            crate::tex::Selector::NewString,
+        ))
     }
 
     // ---- parameters ------------------------------------------------------
@@ -233,13 +360,38 @@ impl Machine<'_> {
         })
     }
 
-    /// The value of one of this module's internal quantities; its operands
-    /// are read here.  `None` when the engine's answer depends on
-    /// typesetting.
+    /// The value of one of this module's internal quantities, its operands
+    /// read here. `None` if the engine's answer depends on typesetting.
     pub fn extra_quantity(&mut self, p: Primitive, sym: Sym) -> Option<Value> {
         match p {
             Primitive::GlueParameter { .. } | Primitive::TokensParameter => {
                 Some(self.env.value(self.env.identity(sym)))
+            }
+            // pdfTeX's last object, annotation, link, form and image
+            // numbers index its object table: at least 0 and, like every
+            // index the engine keeps, under `\maxdimen`, so an expl3 store
+            // of one (`\intarray_gset:Nnn`) does not overflow.
+            Primitive::LastItem(_)
+                if self.name(self.env.identity(sym)) == "pdflastximage"
+                    && let Some(n) = self.engine_slot_int("ximages", "ximages") =>
+            {
+                Some(Value::Int(n))
+            }
+            Primitive::LastItem(_)
+                if matches!(
+                    self.name(self.env.identity(sym)),
+                    "pdflastobj"
+                        | "pdflastannot"
+                        | "pdflastlink"
+                        | "pdflastxform"
+                        | "pdflastximage"
+                        | "pdflastximagepages"
+                ) =>
+            {
+                Some(Value::Num {
+                    quantity: crate::value::Quantity::Int,
+                    num: crate::value::Num::range(0, crate::value::MAX_DIMEN),
+                })
             }
             Primitive::LastItem(item) => self.last_item(item),
             Primitive::Special(special) => self.special_value(special, sym),
@@ -258,11 +410,55 @@ impl Machine<'_> {
             L::Skip => self.last_value(crate::mode::Removed::Glue),
             L::Kern => self.last_value(crate::mode::Removed::Kern),
             L::Penalty => self.last_value(crate::mode::Removed::Penalty),
-            L::NodeType | L::Badness => None,
+            // etex.ch: 0 a character, 7 a ligature, 11 glue, 12 a kern, 13 a
+            // penalty, read off the tail of the list.
+            L::NodeType => {
+                let n = self.natural?;
+                // A word being set ends in its character (tex.web § 1034).
+                let (tail, ligature) = match n.pending {
+                    Some(_) => (crate::mode::Last::Char(None), None),
+                    None => (n.tail[0], n.ligature),
+                };
+                match tail {
+                    // Not known which: 0 or 7, never glue, a kern or a penalty.
+                    crate::mode::Last::Char(_) => Some(ligature.map_or(
+                        Value::Num { quantity: crate::value::Quantity::Int, num: crate::value::Num::range(0, 7) },
+                        |lig| Value::Int(if lig { 7 } else { 0 }),
+                    )),
+                    crate::mode::Last::Glue(..) => int(11),
+                    crate::mode::Last::Kern(_) => int(12),
+                    crate::mode::Last::Penalty(_) => int(13),
+                    // -1 an empty list, 1 an hlist.
+                    crate::mode::Last::Empty => int(-1),
+                    crate::mode::Last::Box => int(1),
+                    crate::mode::Last::Whatsit => int(9),
+                    // A box, rule, insertion, mark, adjust, discretionary or
+                    // math node, and in math a noad (etex.ch: 15).
+                    crate::mode::Last::Other => {
+                        let hi = if self.mode.meets(crate::mode::Modes::ANY_MATH) { 15 } else { 10 };
+                        Some(Value::Num { quantity: crate::value::Quantity::Int, num: crate::value::Num::range(1, hi) })
+                    }
+                    crate::mode::Last::Unknown(_) => None,
+                }
+            }
+            L::Badness => {
+                let sym = self.intern("badness");
+                match self.env.value(sym) {
+                    Value::Int(b) => int(b),
+                    _ => None,
+                }
+            }
             L::InputLineNo => self.input_line().map(|line| Value::Int(line.into())),
             L::EtexVersion => int(ETEX_VERSION),
-            L::PdftexVersion => int(PDFTEX_VERSION),
-            L::GroupLevel => int(self.env.group_level() as i64),
+            L::PdftexVersion => int(pdftex_release().0),
+            // A group standing for any number of groups: at least the rest.
+            L::GroupLevel => match self.env.many_groups() {
+                false => int(self.env.group_level() as i64),
+                true => Some(Value::Num {
+                    quantity: crate::value::Quantity::Int,
+                    num: crate::value::Num::range(self.env.group_level() as i64, i32::MAX.into()),
+                }),
+            },
             L::GroupType => match (self.env.group_kind(), self.env.nest()) {
                 (None, _) => int(0),
                 (Some(_), Some(nest)) => nest.code.map(|code| Value::Int(code.into())),
@@ -270,7 +466,17 @@ impl Machine<'_> {
                 (Some(GroupKind::SemiSimple), None) => int(group::SEMI_SIMPLE.into()),
                 (Some(GroupKind::Math { .. }), None) => int(group::MATH_SHIFT.into()),
             },
-            L::IfLevel => int((self.conds.len() + TESTING.with(Cell::get)) as i64),
+            // A conditional standing for any number of them: at least the rest.
+            L::IfLevel => {
+                let level = (self.conds.iter().filter(|c| !c.many).count() + TESTING.with(Cell::get)) as i64;
+                match self.conds.iter().any(|c| c.many) {
+                    false => int(level),
+                    true => Some(Value::Num {
+                        quantity: crate::value::Quantity::Int,
+                        num: crate::value::Num::range(level, i32::MAX.into()),
+                    }),
+                }
+            }
             // etex.ch: the innermost conditional, which is the one whose test
             // is being read if there is one.
             L::IfType | L::IfBranch => {
@@ -281,11 +487,12 @@ impl Machine<'_> {
                         _ => int(0),
                     };
                 }
-                let Some(frame) = self.conds.last().copied() else { return int(0) };
+                let Some((kind, limit)) = self.conds.last().map(|frame| (frame.kind, frame.limit)) else {
+                    return int(0);
+                };
                 match item {
-                    L::IfType => frame.kind.map(|k| Value::Int(k.into())),
-                    _ if frame.undecided => None,
-                    _ => int(match frame.limit {
+                    L::IfType => kind.map(|k| Value::Int(k.into())),
+                    _ => int(match limit {
                         CondLimit::Else | CondLimit::Or => 1,
                         CondLimit::Fi => -1,
                     }),
@@ -293,15 +500,16 @@ impl Machine<'_> {
             }
             L::GlueStretch | L::GlueShrink | L::GlueStretchOrder | L::GlueShrinkOrder => {
                 let glue = self.scan_glue_spec(false)?;
-                let part =
-                    if matches!(item, L::GlueStretch | L::GlueStretchOrder) { glue.stretch } else { glue.shrink };
+                use crate::value::Quantity;
                 Some(match item {
-                    L::GlueStretch | L::GlueShrink => Value::Dimen(part.amount),
-                    _ => Value::Int(part.order.into()),
+                    L::GlueStretch => Value::from_num(Quantity::Dimen, glue.stretch),
+                    L::GlueShrink => Value::from_num(Quantity::Dimen, glue.shrink),
+                    L::GlueStretchOrder => Value::from_num(Quantity::Int, glue.stretch_order),
+                    _ => Value::from_num(Quantity::Int, glue.shrink_order),
                 })
             }
-            L::GlueToMu => self.scan_glue_spec(false).map(Value::MuGlue),
-            L::MuToGlue => self.scan_glue_spec(true).map(Value::Glue),
+            L::GlueToMu => self.scan_glue_spec(false).map(|g| g.value(true)),
+            L::MuToGlue => self.scan_glue_spec(true).map(|g| g.value(false)),
             L::FontCharWd | L::FontCharHt | L::FontCharDp | L::FontCharIc => {
                 let font = self.scan_font_ident();
                 let c = self.scan_int();
@@ -334,14 +542,25 @@ impl Machine<'_> {
                 let n = self.scan_int()?;
                 self.par_shape_item(item, n).map(Value::Dimen)
             }
-            L::ShellEscape => int(match self.cfg.shell_escape {
+            L::ShellEscape => int(match self.out.plugins.shell_escape {
                 crate::config::ShellEscape::None => 0,
                 crate::config::ShellEscape::Full => 1,
                 crate::config::ShellEscape::Restricted => 2,
             }),
-            // The clock, the random generator and the output position.
-            L::ElapsedTime | L::RandomSeed | L::LastXPos | L::LastYPos => None,
-            L::XetexVersion => int(XETEX_VERSION),
+            // pdfTeX's clock: scaled seconds since the run began, stopping
+            // at 2^31-1, so never negative. Its interval is left to the
+            // test or assignment that reads it, as a register's is.
+            L::ElapsedTime => Some(Value::Num {
+                quantity: crate::value::Quantity::Int,
+                num: crate::value::Num::range(0, crate::value::MAX_INT),
+            }),
+            // The random generator and the output position.
+            L::RandomSeed | L::LastXPos | L::LastYPos => None,
+            L::XetexVersion => int(xetex_release().0),
+            // Unlike the other engines' version primitives, LuaTeX's varies
+            // meaningfully across installs, so it is read from the real
+            // `luatex --version` for this run rather than a constant.
+            L::LuatexVersion => crate::plugin::lua::engine_version(self.cfg).map(Value::Int),
             L::PdfPageCount => {
                 self.read_file_name();
                 None
@@ -350,8 +569,8 @@ impl Machine<'_> {
         }
     }
 
-    /// XeTeX's font queries.  A TFM font answers without reading further
-    /// operands (xetex.web, `not_native_font_error`); an installed font
+    /// XeTeX's font queries. A TFM font answers without reading further
+    /// operands (xetex.web, `not_native_font_error`). An installed font
     /// answers from the tables satex reads (`cmap`, `GSUB`'s scripts).
     fn xetex_query(&mut self, query: crate::builtins::XeQuery) -> Option<Value> {
         use crate::builtins::XeQuery as Q;
@@ -460,7 +679,9 @@ impl Machine<'_> {
                 let which = self.name(self.env.identity(by)).to_string();
                 self.box_dimen(&which, n)
             }
-            Special::ParShape => self.engine_int("parshape").or(Some(0)).map(Value::Int),
+            // tex.web § 1248: `\parshape` reads back the number of lines it
+            // was given, 0 until it is given one.
+            Special::ParShape => Some(self.engine_slot_int("parshape", "parshape").map_or(Value::Unknown, Value::Int)),
             Special::UCode { math, num } => {
                 let c = self.scan_int().and_then(|c| u32::try_from(c).ok()).and_then(char::from_u32)?;
                 // "Can't use \Umathcode as a number (try \Umathcodenum)".
@@ -468,15 +689,20 @@ impl Machine<'_> {
                     return Some(Value::Int(0));
                 }
                 let table = if math { CodeTable::Math } else { CodeTable::Delimiter };
-                Some(Value::Int(self.char_code(table, c)))
+                Some(self.char_code_known(table, c).map_or(Value::Unknown, Value::Int))
             }
             Special::CharClass => {
                 let c = self.scan_int()?;
-                Some(Value::Int(self.engine_int(&format!("charclass.{c}")).unwrap_or(0)))
+                let class = self.engine_slot_int("charclass.", &format!("charclass.{c}"));
+                Some(class.map_or(Value::Unknown, Value::Int))
             }
             Special::InterCharToks => {
                 let (a, b) = (self.scan_int(), self.scan_int());
-                let sym = self.engine_sym(&format!("interchartoks.{}.{}", a?, b?));
+                let (a, b) = (a?, b?);
+                if self.engine_unpinned("interchartoks.") {
+                    return Some(Value::Unknown);
+                }
+                let sym = self.engine_sym(&format!("interchartoks.{a}.{b}"));
                 match self.env.value(sym) {
                     Value::Unknown if self.env.get(sym).is_none() => Some(Value::Toks(Rc::from(Vec::new()))),
                     value => Some(value),
@@ -485,7 +711,10 @@ impl Machine<'_> {
             Special::Penalties => {
                 let n = self.scan_int()?;
                 let name = self.name(by).to_string();
-                let count = self.engine_int(&format!("{name}.count")).unwrap_or(0);
+                let family = format!("{name}.");
+                let Some(count) = self.engine_slot_int(&family, &format!("{name}.count")) else {
+                    return Some(Value::Unknown);
+                };
                 if n <= 0 {
                     return Some(Value::Int(if n == 0 { count } else { 0 }));
                 }
@@ -493,12 +722,13 @@ impl Machine<'_> {
                     return Some(Value::Int(0));
                 }
                 let k = n.min(count);
-                Some(Value::Int(self.engine_int(&format!("{name}.{k}")).unwrap_or(0)))
+                let value = self.engine_slot_int(&family, &format!("{name}.{k}"));
+                Some(value.map_or(Value::Unknown, Value::Int))
             }
         }
     }
 
-    fn assign_special(&mut self, special: Special, by: Sym) {
+    fn assign_special(&mut self, special: Special, by: Sym, span: Span) {
         match special {
             // tex.web § 1247: `\wd⟨n⟩=⟨dimen⟩` changes a box satex does not
             // build.
@@ -513,8 +743,20 @@ impl Machine<'_> {
             // tex.web § 1248.
             Special::ParShape => {
                 self.scan_optional_equals();
-                let lines = self.scan_int().unwrap_or(0).max(0);
+                let scanned = self.scan_int();
                 let global = self.take_global();
+                // tex.web § 1248: the count says how many ⟨dimen⟩ pairs
+                // follow. An unpinned count leaves both the shape and what
+                // to read for it unknown.
+                let Some(lines) = scanned.map(|n| n.max(0)) else {
+                    self.weaken_engine("parshape", global);
+                    return self.diagnose(
+                        crate::facts::Severity::Unsupported,
+                        "unknown-parshape",
+                        span,
+                        "\\parshape was given a number satex could not pin down; its lines were not read".into(),
+                    );
+                };
                 for k in 1..=lines {
                     let indent = self.scan_dimen().map_or(Value::Unknown, Value::Dimen);
                     let length = self.scan_dimen().map_or(Value::Unknown, Value::Dimen);
@@ -536,9 +778,26 @@ impl Machine<'_> {
                 };
                 let global = self.take_global();
                 let table = if math { CodeTable::Math } else { CodeTable::Delimiter };
-                if let Some(c) = c {
-                    let sym = self.char_code_sym(table, c);
-                    self.env.set_value(sym, code.map_or(Value::Unknown, Value::Int), global);
+                let named = self.env.identity(by);
+                let limit = crate::builtins::limit(self.name(named), self.out.plugins.engine);
+                match c {
+                    Some(c) => {
+                        let sym = self.char_code_sym(table, c);
+                        let stored = match limit {
+                            Some(limit) => self.limited(named, sym, limit, code, span),
+                            None => Some(code.map_or(Value::Unknown, Value::Int)),
+                        };
+                        if let Some(stored) = stored {
+                            self.env.set_value(sym, stored, global);
+                        }
+                    }
+                    // Any character may be the one assigned.
+                    None => {
+                        // A checked code may be stored as something else.
+                        let value =
+                            if limit.is_some() { Value::Unknown } else { code.map_or(Value::Unknown, Value::Int) };
+                        self.weaken_code_table(table, None, &value, global)
+                    }
                 }
             }
             Special::CharClass => {
@@ -546,8 +805,10 @@ impl Machine<'_> {
                 self.scan_optional_equals();
                 let class = self.scan_int().map_or(Value::Unknown, Value::Int);
                 let global = self.take_global();
-                if let Some(c) = c {
-                    self.set_engine(&format!("charclass.{c}"), class, global);
+                match c {
+                    Some(c) => self.set_engine(&format!("charclass.{c}"), class, global),
+                    // Any character's class may be the one assigned.
+                    None => self.weaken_engine("charclass.", global),
                 }
             }
             Special::InterCharToks => {
@@ -555,16 +816,30 @@ impl Machine<'_> {
                 self.scan_optional_equals();
                 let toks = self.read_general_text();
                 let global = self.take_global();
-                if let (Some(a), Some(b)) = (a, b) {
-                    self.set_engine(&format!("interchartoks.{a}.{b}"), Value::Toks(Rc::from(toks)), global);
+                match (a, b) {
+                    (Some(a), Some(b)) => {
+                        self.set_engine(&format!("interchartoks.{a}.{b}"), Value::Toks(Rc::from(toks)), global)
+                    }
+                    // Any pair of classes may be the one assigned.
+                    _ => self.weaken_engine("interchartoks.", global),
                 }
             }
             // etex_man § 3.12.
             Special::Penalties => {
                 self.scan_optional_equals();
-                let count = self.scan_int().unwrap_or(0).max(0);
+                let scanned = self.scan_int();
                 let global = self.take_global();
                 let name = self.name(by).to_string();
+                // etex_man § 3.12: the count says how many penalties follow.
+                let Some(count) = scanned.map(|n| n.max(0)) else {
+                    self.weaken_engine(&format!("{name}."), global);
+                    return self.diagnose(
+                        crate::facts::Severity::Unsupported,
+                        "unknown-penalties",
+                        span,
+                        format!("\\{name} was given a number satex could not pin down; its penalties were not read"),
+                    );
+                };
                 for k in 1..=count {
                     let value = self.scan_int().map_or(Value::Unknown, Value::Int);
                     self.set_engine(&format!("{name}.{k}"), value, global);
@@ -580,9 +855,20 @@ impl Machine<'_> {
         self.engine_sym(&format!("font{font}.{field}"))
     }
 
-    fn font_field(&mut self, font: u32, field: &str) -> Value {
+    pub(crate) fn font_field(&mut self, font: u32, field: &str) -> Value {
         let sym = self.font_key(font, field);
         self.env.value(sym)
+    }
+
+    /// Whether the entry was assigned at all. An entry set to an unknown
+    /// value, or reachable by an unpinned write, is no longer the font
+    /// file's value.
+    fn font_field_set(&mut self, font: u32, field: &str) -> bool {
+        if self.engine_unpinned(&font_field_family(font, field)) {
+            return true;
+        }
+        let sym = self.font_key(font, field);
+        self.env.get(sym).is_some()
     }
 
     /// Font data is not subject to grouping (tex.web § 1253).
@@ -633,13 +919,17 @@ impl Machine<'_> {
             let bare = std::path::Path::new(&file).file_name()?.to_str()?.to_string();
             ["", "otf", "ttf"].iter().find_map(|ext| crate::tfm::locate(&base, &roots, &bare, ext))?
         };
+        self.register_file(path.display().to_string(), crate::builtins::LoadKind::Font);
         crate::otf::load(&path)
     }
 
     fn find_tfm(&mut self, name: &str) -> Option<Rc<crate::tfm::Metrics>> {
         let base = self.base().to_path_buf();
         let roots = self.resolver_mut().distribution().roots.clone();
-        crate::tfm::locate(&base, &roots, name, "tfm").and_then(|path| crate::tfm::load(&path))
+        let path = crate::tfm::locate(&base, &roots, name, "tfm")?;
+        // A file the run reads, as `satex query files` lists it.
+        self.register_file(path.display().to_string(), crate::builtins::LoadKind::Font);
+        crate::tfm::load(&path)
     }
 
     /// Whether the font is an OpenType or AAT font (XeTeX's native fonts),
@@ -665,7 +955,7 @@ impl Machine<'_> {
     /// `scan_font_ident`): `\font` for the current one, a font identifier,
     /// or `\textfont⟨n⟩` and its relatives.
     pub fn scan_font_ident(&mut self) -> Option<u32> {
-        let token = self.next_non_blank_x()?;
+        let token = self.next_non_blank_x_token()?;
         let meaning = match token.cs().or_else(|| self.active_cs(token)) {
             Some(sym) => self.env.meaning(sym),
             None => Meaning::Undefined,
@@ -678,6 +968,12 @@ impl Machine<'_> {
                 let family = self.scan_int()?;
                 self.family_font(by, family)
             }
+            // A name of unknown meaning may be a font identifier: which
+            // font it selects is not known.
+            Meaning::Unknown => {
+                self.unread(token);
+                None
+            }
             _ => {
                 // "Missing font identifier": the token goes back and the
                 // null font is used.
@@ -687,18 +983,106 @@ impl Machine<'_> {
         }
     }
 
+    /// tex.web § 232: `\nullfont` until a font is selected; `None` where a
+    /// selection satex could not follow left the current font unknown.
     pub(crate) fn current_font(&mut self) -> Option<u32> {
-        self.engine_int("font").map_or(Some(0), |f| u32::try_from(f).ok())
+        u32::try_from(self.engine_slot_int("font", "font")?).ok()
     }
 
-    fn family_font(&mut self, by: Sym, family: i64) -> Option<u32> {
-        let key = format!("{}.{family}", self.name(by));
-        self.engine_int(&key).map_or(Some(0), |f| u32::try_from(f).ok())
+    /// Whether the current font is known to be `\nullfont`: no character
+    /// set in it shows.
+    pub(crate) fn in_nullfont(&mut self) -> bool {
+        let Some(sym) = self.out.interner.lookup(FONT_SLOT) else { return false };
+        self.env.slot_value(sym) == Some(0)
     }
 
-    /// `\font⟨cs⟩=⟨file name⟩⟨at clause⟩` (tex.web §§ 1257-1260): a font
-    /// already loaded at that size is shared, a font that cannot be loaded
-    /// leaves `\nullfont`, anything else is loaded anew.
+    /// The font id for [`crate::facts::FontState`]. Read with
+    /// `Env::slot_value` so observing adds no read a package cache would depend on.
+    fn observed_font(&mut self) -> u16 {
+        let Some(sym) = self.out.interner.lookup(FONT_SLOT) else { return 0 };
+        self.env.slot_value(sym).and_then(|f| u16::try_from(f).ok()).unwrap_or(0)
+    }
+
+    /// The body of a macro, without recording a read.
+    fn nfss_body(&self, name: Option<Sym>) -> Option<&Rc<[Token]>> {
+        match &self.env.slot(name?)?.meaning {
+            Meaning::Macro(m) => Some(&m.replacement_text),
+            _ => None,
+        }
+    }
+
+    /// Where that body lives, which is all the per-character check needs.
+    fn nfss_at(&self, name: Option<Sym>) -> Option<*const u8> {
+        self.nfss_body(name).map(|body| Rc::as_ptr(body).cast())
+    }
+
+    /// Which row of [`crate::machine::Analysis::font_states`] the character
+    /// about to be set belongs to. Called once per character; the five
+    /// NFSS macros are re-resolved only when a body's token list changed.
+    pub(crate) fn observed_font_state(&mut self) -> u16 {
+        if self.font_watch.names.is_none() {
+            self.font_watch.names = Some(NFSS.map(|name| self.out.interner.lookup(name)));
+        }
+        let names = self.font_watch.names.unwrap_or([None; 5]);
+        let at = names.map(|name| self.nfss_at(name));
+        if at == self.font_watch.at {
+            return self.font_watch.state;
+        }
+        let bodies = names.map(|name| self.nfss_body(name).cloned());
+        let text = |body: &Option<Rc<[Token]>>| match body {
+            Some(body) => Rc::from(crate::tex::text_of(body, &self.out.interner)),
+            None => Rc::from(""),
+        };
+        let state = crate::facts::FontState {
+            encoding: text(&bodies[0]),
+            family: text(&bodies[1]),
+            series: text(&bodies[2]),
+            shape: text(&bodies[3]),
+            size: text(&bodies[4]),
+            font: self.observed_font(),
+        };
+        let states = &mut self.out.font_states;
+        let row = match states.iter().position(|kept| *kept == state) {
+            Some(row) => row,
+            None if states.len() < usize::from(u16::MAX) => {
+                states.push(state);
+                states.len() - 1
+            }
+            // Too many states to fit: left at "not known" rather than
+            // pointed at the wrong row.
+            None => 0,
+        };
+        self.font_watch.bodies = bodies;
+        self.font_watch.at = at;
+        self.font_watch.state = row as u16;
+        self.font_watch.state
+    }
+
+    /// The fonts the run loaded, by the number `\the\font` gives them, with
+    /// TFM name and load size (tex.web § 1257). A native XeTeX font has no
+    /// TFM and is left out.
+    pub(crate) fn collect_fonts(&mut self) {
+        let count = self.font_count();
+        self.out.fonts = (0..=count)
+            .map(|id| {
+                let native = id > 0 && self.font_native(id) != Some(false);
+                match native {
+                    true => None,
+                    false => Some(crate::machine::FontUse { name: self.font_name(id)?, size: self.font_size(id)? }),
+                }
+            })
+            .collect();
+    }
+
+    /// tex.web § 232: every math family starts at `\nullfont`.
+    pub(crate) fn family_font(&mut self, by: Sym, family: i64) -> Option<u32> {
+        let name = self.name(by).to_string();
+        u32::try_from(self.engine_slot_int(&format!("{name}."), &format!("{name}.{family}"))?).ok()
+    }
+
+    /// `\font⟨cs⟩=⟨file name⟩⟨at clause⟩` (tex.web §§ 1257-1260). A font
+    /// already loaded at that size is shared, one that cannot load leaves
+    /// `\nullfont`, else it loads anew.
     pub fn load_font(&mut self, by: Sym, span: Span) {
         let Some(name_cs) = self.read_r_token() else { return };
         let global = self.prefixes.global;
@@ -717,12 +1101,12 @@ impl Machine<'_> {
             self.set_font_field(font, "cs", Value::Int(i64::from(name_cs.0)));
         }
         self.prefixes.global = global;
-        self.define(name_cs, Meaning::Primitive(Primitive::FontIdent(font)), by, DefMode::Declare, span, None);
+        self.define(name_cs, Meaning::Primitive(Primitive::FontIdent(font)), by, DefMode::Declare, span);
     }
 
     /// Where the engine finds the font (tex.web § 563; xetex.web
-    /// `load_native_font`: a quoted name is tried as an installed font
-    /// first, an unquoted one only once no TFM file has it).
+    /// `load_native_font`). A quoted name is tried as an installed font
+    /// first. Unquoted, only after no TFM file has it.
     fn find_font(&mut self, name: &str, quoted: bool) -> FontSource {
         use crate::config::Engine;
         let engine = self.out.plugins.engine;
@@ -758,8 +1142,7 @@ impl Machine<'_> {
     }
 
     /// XeTeX's lookup of an installed font: `[file]` through kpathsea,
-    /// anything else by name through fontconfig.  `None` when fontconfig
-    /// cannot be asked.
+    /// else by name through fontconfig. `None` if fontconfig can't be asked.
     fn native_font_exists(&mut self, spec: &str) -> Option<bool> {
         let name = spec.split(':').next().unwrap_or(spec);
         if let Some(file) = name.strip_prefix('[') {
@@ -835,8 +1218,8 @@ impl Machine<'_> {
         font
     }
 
-    /// `\fontdimen⟨n⟩⟨font⟩`, `\hyphenchar⟨font⟩`, `\skewchar⟨font⟩`,
-    /// `\lpcode⟨font⟩⟨char⟩`: which entry of the font tables they name.
+    /// Which font-table entry `\fontdimen⟨n⟩⟨font⟩`, `\hyphenchar⟨font⟩`,
+    /// `\skewchar⟨font⟩` or `\lpcode⟨font⟩⟨char⟩` names.
     fn font_entry(&mut self, param: FontParam, by: Sym) -> Option<(u32, String)> {
         match param {
             FontParam::Dimen => {
@@ -846,9 +1229,11 @@ impl Machine<'_> {
             }
             FontParam::HyphenChar => Some((self.scan_font_ident()?, "hyphenchar".into())),
             FontParam::SkewChar => Some((self.scan_font_ident()?, "skewchar".into())),
-            FontParam::CharCode(_) => {
+            FontParam::CharCode(_) | FontParam::TagCode { .. } => {
                 let font = self.scan_font_ident();
                 let c = self.scan_int();
+                // A `\let` copy writes the table of the primitive it copies.
+                let by = self.env.identity(by);
                 Some((font?, format!("{}.{}", self.name(by), c?)))
             }
         }
@@ -861,10 +1246,15 @@ impl Machine<'_> {
         self.font_dimen(font, k)?.as_dimen()
     }
 
-    fn font_dimen(&mut self, font: u32, k: usize) -> Option<Value> {
+    pub(crate) fn font_dimen(&mut self, font: u32, k: usize) -> Option<Value> {
         let stored = self.font_field(font, &format!("p{k}"));
         if !matches!(stored, Value::Unknown) {
             return Some(stored);
+        }
+        // An assignment satex could not follow put the font file's own
+        // parameter out of reach (tex.web § 580).
+        if self.font_field_set(font, &format!("p{k}")) {
+            return Some(Value::Unknown);
         }
         let params = self.font_params(font)?;
         if k == 0 || k as i64 > params {
@@ -893,9 +1283,21 @@ impl Machine<'_> {
 
     fn font_param_value(&mut self, param: FontParam, by: Sym) -> Option<Value> {
         let (font, field) = self.font_entry(param, by)?;
-        let stored = self.font_field(font, &field);
+        self.font_entry_value(param, font, &field)
+    }
+
+    /// `\lpcode⟨font⟩⟨c⟩`.
+    pub(crate) fn lp_code(&mut self, font: u32, c: u32) -> Option<i64> {
+        self.font_entry_value(FontParam::CharCode(0), font, &format!("lpcode.{c}"))?.as_int()
+    }
+
+    fn font_entry_value(&mut self, param: FontParam, font: u32, field: &str) -> Option<Value> {
+        let stored = self.font_field(font, field);
         if !matches!(stored, Value::Unknown) {
             return Some(stored);
+        }
+        if self.font_field_set(font, field) {
+            return Some(Value::Unknown);
         }
         match param {
             FontParam::Dimen => {
@@ -905,6 +1307,11 @@ impl Machine<'_> {
             FontParam::HyphenChar if font == 0 => Some(Value::Int('-' as i64)),
             FontParam::SkewChar if font == 0 => Some(Value::Int(-1)),
             FontParam::CharCode(default) => Some(Value::Int(default.into())),
+            FontParam::TagCode { .. } if font == 0 => Some(Value::Int(-1)),
+            FontParam::TagCode { .. } => {
+                let c = field.rsplit('.').next()?.parse().ok()?;
+                Some(Value::Int(self.font_metrics(font)?.tag_code(c)))
+            }
             _ => None,
         }
     }
@@ -920,9 +1327,9 @@ impl Machine<'_> {
         self.font_metrics(font).map(|m| m.param_count())
     }
 
-    /// Assignments to the font tables are global (tex.web § 1253); a
-    /// `\fontdimen` past the end of the table extends it, but only for the
-    /// font loaded last (tex.web § 580).
+    /// Assignments to the font tables are global (tex.web § 1253). A
+    /// `\fontdimen` past the end extends the table, but only for the font
+    /// loaded last (tex.web § 580).
     fn assign_font_param(&mut self, param: FontParam, by: Sym) {
         let entry = self.font_entry(param, by);
         self.scan_optional_equals();
@@ -931,21 +1338,61 @@ impl Machine<'_> {
             _ => self.scan_int().map_or(Value::Unknown, Value::Int),
         };
         self.prefixes = Default::default();
-        let Some((font, field)) = entry else { return };
+        // A write whose font or entry satex could not pin down may have
+        // reached any of them.
+        let Some((font, field)) = entry else { return self.weaken_font_fields(param, by) };
+        let mut value = value;
         if param == FontParam::Dimen {
             let Ok(k) = field[1..].parse::<i64>() else { return };
-            let params = self.font_params(font).unwrap_or(i64::MAX);
-            if k > params {
-                if font < self.font_count() {
-                    return;
+            match self.font_params(font) {
+                Some(params) if k > params => {
+                    // tex.web § 580: only the font loaded last grows.
+                    if font < self.font_count() {
+                        return;
+                    }
+                    self.set_font_field(font, "params", Value::Int(k));
                 }
-                self.set_font_field(font, "params", Value::Int(k));
+                Some(_) => {}
+                // How many parameters the font has is not known, so
+                // whether the write reached the table is not either.
+                None => value = Value::Unknown,
             }
             if k <= 0 {
                 return;
             }
         }
+        if let FontParam::TagCode { lig } = param {
+            // pdftex.web `set_tag_code`: -7 to -1 name the tags to clear as
+            // bits, anything else clears none.
+            value = match (self.font_entry_value(param, font, &field), value) {
+                (Some(Value::Int(tag)), _) if tag <= 0 || (tag == 1 && !lig) => Value::Int(tag),
+                (Some(Value::Int(tag)), Value::Int(v)) => {
+                    Value::Int(if (-v.clamp(-7, 0)) & tag == 0 { tag } else { 0 })
+                }
+                _ => Value::Unknown,
+            };
+        }
         self.set_font_field(font, &field, value);
+    }
+
+    /// Every font-table entry an unpinned write may have reached
+    /// (tex.web § 1253). Font tables are not grouped.
+    fn weaken_font_fields(&mut self, param: FontParam, by: Sym) {
+        // `font⟨n⟩.p` catches `params` too, which is right: a `\fontdimen`
+        // past the end grows the table (tex.web § 580).
+        let field = match param {
+            FontParam::Dimen => "p1".to_string(),
+            FontParam::HyphenChar => "hyphenchar".into(),
+            FontParam::SkewChar => "skewchar".into(),
+            FontParam::CharCode(_) | FontParam::TagCode { .. } => {
+                let by = self.env.identity(by);
+                format!("{}.0", self.name(by))
+            }
+        };
+        for font in 0..=self.font_count() {
+            let family = font_field_family(font, &field);
+            self.weaken_engine(&family, true);
+        }
     }
 
     pub(crate) fn font_name_text(&mut self, font: u32) -> String {
@@ -955,9 +1402,8 @@ impl Machine<'_> {
         }
     }
 
-    /// What `\fontname` prints: the name, with an `at` clause when the size
-    /// is not the design size (tex.web § 1261); XeTeX quotes an installed
-    /// font's name.
+    /// What `\fontname` prints: the name, with an `at` clause if the size
+    /// isn't the design size (tex.web § 1261). XeTeX quotes an installed font's name.
     pub(crate) fn font_name_known(&mut self, font: u32) -> Option<String> {
         let name = self.font_name(font)?;
         match self.font_native(font) {
@@ -979,30 +1425,34 @@ impl Machine<'_> {
     // ---- executing ----------------------------------------------------------
 
     /// The effect of one of this module's primitives when the stomach obeys
-    /// it, or, for a [`Convert`], when the gullet expands it.
+    /// it, or the gullet expands it for a [`Convert`].
     pub fn execute_extra(&mut self, p: Primitive, by: Sym, span: Span) {
         match p {
             Primitive::GlueParameter { mu } => {
                 self.scan_optional_equals();
                 let glue = self.scan_glue_spec(mu);
-                let value = match (glue, mu) {
-                    (Some(g), false) => Value::Glue(g),
-                    (Some(g), true) => Value::MuGlue(g),
-                    (None, _) => Value::Unknown,
-                };
+                let value = glue.map_or(Value::Unknown, |g| g.value(mu));
                 let by = self.env.identity(by);
                 self.assign_value(by, value, span);
             }
             Primitive::TokensParameter => {
                 self.scan_optional_equals();
-                let toks = self.read_general_text();
+                let mut toks = self.read_general_text();
                 let by = self.env.identity(by);
+                // tex.web § 1226: the output routine is stored inside its
+                // own brace pair, so `\the\output` shows it braced and
+                // firing it opens a group.
+                if self.name(by) == "output" {
+                    let at = toks.first().map_or(span, |t| t.span);
+                    toks.insert(0, Token::new(Tok::Chr('{', Catcode::Begin), at));
+                    toks.push(Token::new(Tok::Chr('}', Catcode::End), toks.last().map_or(span, |t| t.span)));
+                }
                 self.assign_value(by, Value::Toks(Rc::from(toks)), span);
             }
             // "You can't use `\lastpenalty' in vertical mode": a last item
             // is only ever read.
             Primitive::LastItem(_) => {}
-            Primitive::Special(special) => self.assign_special(special, by),
+            Primitive::Special(special) => self.assign_special(special, by, span),
             Primitive::FontParam(param) => self.assign_font_param(param, by),
             // tex.web § 1217: selecting a font is a local assignment.
             Primitive::FontIdent(font) => {
@@ -1020,8 +1470,35 @@ impl Machine<'_> {
 
     fn obey_command(&mut self, syntax: Syntax, by: Sym, span: Span) {
         match syntax {
-            Syntax::Nothing => {}
+            Syntax::Nothing | Syntax::Whatsit | Syntax::Limits => {}
+            Syntax::MathComp(t) => {
+                if self.mode.meets(crate::mode::Modes::ANY_MATH) {
+                    self.math_comp(t);
+                }
+            }
+            Syntax::Number if self.name(self.env.identity(by)) == "pdfrefximage" => {
+                let n = self.scan_int();
+                self.ref_ximage(n);
+            }
+            Syntax::Number if let Some(shift) = self.math_char_command(by) => {
+                let code = self.scan_int().map(|v| v >> shift);
+                self.math_code_char(code);
+            }
             Syntax::Number => {
+                self.scan_int();
+            }
+            Syntax::NamesNumber => {
+                let span = self.definition_site(span);
+                let Some(name) = self.read_r_token() else { return };
+                let relax = crate::env::Binding::builtin(Meaning::Primitive(Primitive::Relax));
+                self.env.set(name, relax, self.prefixes.global);
+                self.read_equals();
+                self.scan_int();
+                self.define(name, Meaning::Unknown, by, crate::builtins::DefMode::Declare, span);
+            }
+            Syntax::NumberIsNumber => {
+                self.scan_int();
+                self.read_equals();
                 self.scan_int();
             }
             Syntax::Dimen => {
@@ -1039,7 +1516,12 @@ impl Machine<'_> {
                 self.env.set_value(sym, Value::Int(mode.into()), true);
             }
             Syntax::GeneralText => {
-                self.read_general_text();
+                let text = self.read_general_text();
+                let name = self.name(by);
+                let patterns = name == "patterns";
+                if patterns || name == "hyphenation" {
+                    self.store_hyphenation(patterns, &text);
+                }
             }
             Syntax::NumberText => {
                 self.scan_int();
@@ -1074,11 +1556,23 @@ impl Machine<'_> {
             // `box_flag` (or `global_box_flag`), and an `\afterassignment`
             // token is read once it has begun.
             Syntax::SetBox => {
-                let register = self.scan_int();
+                let register = self.scan_number();
+                // An unpinned number names a register in the interval its scan left.
+                let within = match register {
+                    Some(_) => None,
+                    // At most two intervals are kept: the first, and the hull of the rest.
+                    None => self.take_index().and_then(|mut parts| {
+                        parts.sort_by_key(|p| p.lo);
+                        let first = parts.first()?;
+                        let rest = parts.get(1..).filter(|r| !r.is_empty()).unwrap_or(&parts[..1]);
+                        let lo = rest.iter().map(|p| p.lo).min()?;
+                        let hi = rest.iter().map(|p| p.hi).max()?;
+                        Some([(first.lo, first.hi), (lo, hi)])
+                    }),
+                };
                 self.scan_optional_equals();
-                let global = self.prefixes.global;
-                self.prefixes = Default::default();
-                self.scan_box(crate::mode::BoxContext::Set { register, global }, span);
+                let global = self.take_global();
+                self.scan_box(crate::mode::BoxContext::Set { register, global, within }, span);
             }
             Syntax::VSplit => {
                 self.scan_int();
@@ -1092,19 +1586,32 @@ impl Machine<'_> {
                 let stream = self.scan_int();
                 self.scan_optional_equals();
                 let name = self.read_file_name();
-                if let (true, Some(stream)) = (immediate, stream) {
-                    self.set_engine(&format!("write_open.{stream}"), Value::Int(1), true);
-                    // The file exists from here on, which `\input` of it
-                    // (the `.aux` file at `\end{document}`) finds.
-                    self.set_engine(&format!("written.{}", name.trim()), Value::Int(1), true);
-                    self.stream_files.insert(stream, name.trim().to_string());
+                match (immediate, stream) {
+                    (true, Some(stream)) => {
+                        self.set_engine(&format!("write_open.{stream}"), Value::Int(1), true);
+                        // The file exists from here on, which `\input` of it
+                        // (the `.aux` file at `\end{document}`) finds.
+                        self.set_engine(&format!("written.{}", name.trim()), Value::Int(1), true);
+                        self.stream_files.insert(stream, name.trim().to_string());
+                        self.open_output(&name, true);
+                    }
+                    // Any stream may be the one opened.
+                    (true, None) => {
+                        self.set_engine(&format!("written.{}", name.trim()), Value::Int(1), true);
+                        self.open_output(&name, false);
+                        self.weaken_engine("write_open.", true);
+                    }
+                    _ => {}
                 }
             }
             Syntax::CloseOut => {
                 let immediate = std::mem::take(&mut self.prefixes.immediate);
                 let stream = self.scan_int();
-                if let (true, Some(stream)) = (immediate, stream) {
-                    self.set_engine(&format!("write_open.{stream}"), Value::Int(0), true);
+                match (immediate, stream) {
+                    (true, Some(stream)) => self.set_engine(&format!("write_open.{stream}"), Value::Int(0), true),
+                    // Any stream may be the one closed.
+                    (true, None) => self.weaken_engine("write_open.", true),
+                    _ => {}
                 }
             }
             Syntax::FamilyFont => {
@@ -1112,9 +1619,14 @@ impl Machine<'_> {
                 self.scan_optional_equals();
                 let font = self.scan_font_ident();
                 let global = self.take_global();
-                if let Some(family) = family {
-                    let key = format!("{}.{family}", self.name(by));
-                    self.set_engine(&key, font.map_or(Value::Unknown, |f| Value::Int(f.into())), global);
+                let name = self.name(by).to_string();
+                match family {
+                    Some(family) => {
+                        let value = font.map_or(Value::Unknown, |f| Value::Int(f.into()));
+                        self.set_engine(&format!("{name}.{family}"), value, global);
+                    }
+                    // Any family may be the one assigned.
+                    None => self.weaken_engine(&format!("{name}."), global),
                 }
             }
             Syntax::CopyFont { amount } => {
@@ -1124,28 +1636,35 @@ impl Machine<'_> {
                     self.scan_int();
                 }
                 let copy = font.map(|font| self.copy_font(font));
-                if let Some(copy) = copy {
-                    self.set_font_field(copy, "cs", Value::Int(i64::from(name_cs.0)));
-                }
-                self.define(
-                    name_cs,
-                    Meaning::Primitive(Primitive::FontIdent(copy.unwrap_or(0))),
-                    by,
-                    DefMode::Declare,
-                    span,
-                    None,
-                );
+                // A copy of a font satex could not name is no font it
+                // knows, and not `\nullfont` either.
+                let Some(copy) = copy else {
+                    self.define(name_cs, Meaning::Unknown, by, DefMode::Declare, span);
+                    return;
+                };
+                self.set_font_field(copy, "cs", Value::Int(i64::from(name_cs.0)));
+                self.define(name_cs, Meaning::Primitive(Primitive::FontIdent(copy)), by, DefMode::Declare, span);
             }
             Syntax::UMathCharDef { num } => {
                 let Some(name) = self.read_r_token() else { return };
                 self.scan_optional_equals();
                 let code = if num { self.scan_int() } else { self.scan_umath_char() };
+                // `\Umathcharnumdef` range-checks its packed code the way
+                // `\Umathcodenum` does, and recovers the same way.
+                let named = self.env.identity(by);
+                let code = match crate::builtins::limit(self.name(named), self.out.plugins.engine).filter(|_| num) {
+                    Some(limit) => match self.limited(named, name, limit, code, span) {
+                        Some(stored) => stored.as_int(),
+                        None => code,
+                    },
+                    None => code,
+                };
                 let Some(code) = code else {
-                    self.define(name, Meaning::Unknown, by, DefMode::Declare, span, None);
+                    self.define(name, Meaning::Unknown, by, DefMode::Declare, span);
                     return;
                 };
-                let meaning = Meaning::Register(RegKind::MathChar, code as u16);
-                self.define(name, meaning, by, DefMode::Declare, span, None);
+                let meaning = Meaning::Register(RegKind::UMathChar, code as u16);
+                self.define(name, meaning, by, DefMode::Declare, span);
                 self.env.set_value(name, Value::Int(code), true);
             }
             Syntax::SetFontId => {
@@ -1209,11 +1728,7 @@ impl Machine<'_> {
                 if self.scan_keyword("struct") {
                     self.scan_int();
                 }
-                if self.scan_keyword("num") {
-                    self.scan_int();
-                } else if self.scan_keyword("name") {
-                    self.read_general_text();
-                }
+                self.scan_id();
                 if self.scan_keyword("xyz") {
                     if self.scan_keyword("zoom") {
                         self.scan_int();
@@ -1239,11 +1754,7 @@ impl Machine<'_> {
             Syntax::PdfThread => {
                 self.scan_rule_spec();
                 self.scan_attr();
-                if self.scan_keyword("num") {
-                    self.scan_int();
-                } else if self.scan_keyword("name") {
-                    self.read_general_text();
-                }
+                self.scan_id();
             }
             Syntax::PdfXForm => {
                 self.scan_attr();
@@ -1253,34 +1764,91 @@ impl Machine<'_> {
                 self.scan_int();
             }
             Syntax::PdfXImage => {
-                self.scan_rule_spec();
+                let spec = self.scan_rule_spec();
                 self.scan_attr();
+                let mut page = Some(1);
                 if self.scan_keyword("named") {
                     self.read_general_text();
+                    page = None;
                 } else if self.scan_keyword("page") {
-                    self.scan_int();
+                    page = self.scan_int();
                 }
                 if self.scan_keyword("colorspace") {
                     self.scan_int();
                 }
-                for pagebox in ["mediabox", "cropbox", "bleedbox", "trimbox", "artbox"] {
-                    if self.scan_keyword(pagebox) {
-                        break;
-                    }
+                // The pdfTeX manual: the crop box unless `\pdfpagebox` or a
+                // keyword names another (1 media, 2 crop).
+                let boxes = ["mediabox", "cropbox", "bleedbox", "trimbox", "artbox"];
+                let param = self.intern("pdfpagebox");
+                let mut which = match self.env.get(param) {
+                    None => Some(0),
+                    Some(_) => self.env.value(param).as_int().map(|n| n.max(0) as usize),
+                };
+                if let Some(k) = boxes.iter().position(|b| self.scan_keyword(b)) {
+                    which = Some(k + 1);
                 }
                 // pdfTeX reads the file name as an expanded general text.
                 let file = self.read_general_text();
                 let file = self.expand_tokens(file.into());
                 let name = self.text_of(&file);
-                crate::observe::image(self, &name, span);
+                let path = crate::observe::image(self, &name, span);
+                let which = match which {
+                    Some(1) => Some("media"),
+                    Some(0 | 2) => Some("crop"),
+                    _ => None,
+                };
+                let pdf = path.as_ref().is_some_and(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pdf")));
+                // A PDF file this run made through `\write18` is what the
+                // engine reads, not what was on disk before.
+                let produced = self.produced_page(&name);
+                // Logged, as every file the run reads (`crate::overlay::log`).
+                let read = |p: std::path::PathBuf| crate::overlay::read_bytes(&p).ok();
+                let size = match pdf {
+                    _ if produced.is_some() => {
+                        produced.flatten().filter(|_| page == Some(1) && spec == [None; 3] && which.is_some())
+                    }
+                    true => path
+                        .filter(|_| spec == [None; 3])
+                        .zip(which)
+                        .zip(page)
+                        .and_then(|((p, w), n)| crate::pdfbox::page_box(&read(p)?, w, n)),
+                    // A PNG or JPEG: its pixels at its resolution, else at
+                    // `\pdfimageresolution`.
+                    false => {
+                        let param = self.intern("pdfimageresolution");
+                        let dpi = self.env.value(param).as_int();
+                        path.filter(|_| spec == [None; 3])
+                            .zip(dpi)
+                            .and_then(|(p, dpi)| crate::pdfbox::raster_size(&read(p)?, dpi))
+                    }
+                };
+                // pdfTeX numbers images from 1 and keeps their sizes for
+                // `\pdfrefximage`.
+                let n = self.engine_slot_int("ximages", "ximages").map(|n| n + 1);
+                self.set_engine("ximages", n.map_or(Value::Unknown, Value::Int), true);
+                if let Some(n) = n {
+                    for (k, sp) in [("w", size.map(|s| s.0)), ("h", size.map(|s| s.1))] {
+                        self.set_engine(&format!("ximage.{n}.{k}"), sp.map_or(Value::Unknown, Value::Int), true);
+                    }
+                }
             }
             Syntax::PdfColorStack => {
-                self.scan_int();
-                if self.scan_keyword("set") || self.scan_keyword("push") {
+                let stack = self.scan_int();
+                let op = if self.scan_keyword("push") {
                     self.read_general_text();
-                } else if !self.scan_keyword("pop") {
+                    crate::facts::StackOp::Push
+                } else if self.scan_keyword("pop") {
+                    crate::facts::StackOp::Pop
+                } else if self.scan_keyword("set") {
+                    self.read_general_text();
+                    crate::facts::StackOp::Set
+                } else {
+                    // `current` takes no general text (pdfTeX manual § 8.9.8):
+                    // it re-issues the stack's own color, not a new one.
                     self.scan_keyword("current");
-                }
+                    crate::facts::StackOp::Current
+                };
+                crate::observe::color_stack(self, stack, op, span);
             }
             Syntax::PdfCatalog => {
                 self.read_general_text();
@@ -1295,7 +1863,7 @@ impl Machine<'_> {
     /// its 27-bit code.
     fn scan_delimiter(&mut self) {
         loop {
-            let Some(token) = self.next_non_blank_x() else { return };
+            let Some(token) = self.next_non_blank_x_token() else { return };
             let meaning = token.cs().map(|sym| self.env.meaning(sym));
             match meaning {
                 Some(Meaning::Primitive(Primitive::Relax)) => continue,
@@ -1325,6 +1893,15 @@ impl Machine<'_> {
         }
     }
 
+    /// The pdfTeX manual's `num ⟨integer⟩` or `name ⟨general text⟩`, if either.
+    fn scan_id(&mut self) {
+        if self.scan_keyword("num") {
+            self.scan_int();
+        } else if self.scan_keyword("name") {
+            self.read_general_text();
+        }
+    }
+
     /// The pdfTeX manual's ⟨action spec⟩.
     fn scan_action(&mut self) {
         if self.scan_keyword("user") {
@@ -1348,11 +1925,7 @@ impl Machine<'_> {
             if self.scan_keyword("file") {
                 self.read_general_text();
             }
-            if self.scan_keyword("num") {
-                self.scan_int();
-            } else if self.scan_keyword("name") {
-                self.read_general_text();
-            }
+            self.scan_id();
         }
     }
 
@@ -1369,25 +1942,36 @@ impl Machine<'_> {
     /// e-TeX's `\readline⟨n⟩to⟨cs⟩` (etex_man § 3.2): the line as characters
     /// of category 12, a space as 10, with the `\endlinechar` at its end.
     fn read_line_verbatim(&mut self, by: Sym, span: Span) {
-        let stream = self.scan_int().unwrap_or(-1);
+        let stream = self.scan_int();
         self.scan_keyword("to");
         let Some(name) = self.read_r_token() else { return };
-        // tex.web § 484: a stream that is not open is the terminal.
-        if !(0..16).contains(&stream) || self.stream_at_end(stream) {
-            if self.terminal_read_is_fatal(span) {
+        let open = self.stream_open(stream);
+        if open != Some(true) {
+            // tex.web § 484: a stream that is not open is the terminal; a
+            // number satex could not pin down may name an open stream
+            // instead, so it never ends the job.
+            if open == Some(false) && self.terminal_read_is_fatal(span) {
                 return;
             }
-            self.define(name, Meaning::Unknown, by, DefMode::Declare, span, None);
+            self.define(name, Meaning::Unknown, by, DefMode::Declare, span);
             return;
         }
+        let stream = stream.expect("an open stream has a number");
         let mut line = self.take_stream_line(stream).unwrap_or_default();
         let sym = self.intern("endlinechar");
-        if let Some(c) = self.env.value(sym).as_int().and_then(|c| u8::try_from(c).ok()) {
+        let end_line = self.env.value(sym).as_int();
+        if let Some(Ok(c)) = end_line.map(u8::try_from) {
             line.push(char::from(c));
         }
-        let body = chars(&line, span);
-        let meaning = self.make_macro(Default::default(), None, body);
-        self.define(name, meaning, by, DefMode::Declare, span, None);
+        let mut body = chars(&line, span);
+        // tex.web § 482: the character appended is the one `\endlinechar`
+        // names, which is not known.
+        if end_line.is_none() {
+            let unknown = self.unknown_text(Unk::Any, span);
+            body.push(unknown);
+        }
+        let meaning = self.make_macro(Default::default(), body);
+        self.define(name, meaning, by, DefMode::Declare, span);
     }
 
     // ---- expandable ---------------------------------------------------------
@@ -1396,8 +1980,8 @@ impl Machine<'_> {
         use Convert as C;
         let text: Option<String> = match convert {
             C::EtexRevision => Some(ETEX_REVISION.into()),
-            C::PdftexRevision => Some(PDFTEX_REVISION.into()),
-            C::XetexRevision => Some(XETEX_REVISION.into()),
+            C::PdftexRevision => Some(pdftex_release().1),
+            C::XetexRevision => Some(xetex_release().1),
             C::FontId => self.scan_font_ident().map(|f| f.to_string()),
             C::Xetex(crate::builtins::XeQuery::GlyphName) => self.xetex_glyph_name(),
             C::Xetex(query) => match self.xetex_query(query) {
@@ -1412,10 +1996,31 @@ impl Machine<'_> {
                 None
             }
             C::StrCmp => {
-                let a = self.expanded_text();
-                let b = self.expanded_text();
-                a.zip(b).map(|(a, b)| {
-                    match a.cmp(&b) {
+                let a = self.expanded_general_text();
+                let b = self.expanded_general_text();
+                let ((pa, ka), (pb, kb)) = (self.known_prefix(&a), self.known_prefix(&b));
+                // Two texts whose known beginnings differ compare by them,
+                // whatever their unknown rest holds.
+                let order = match ka && kb {
+                    true => Some(pa.cmp(&pb)),
+                    false => pa.chars().zip(pb.chars()).find(|(x, y)| x != y).map(|(x, y)| x.cmp(&y)).or({
+                        // A known text that is a proper prefix of the other's known part comes first.
+                        match (ka, kb) {
+                            (true, _) if pb.len() > pa.len() => Some(std::cmp::Ordering::Less),
+                            (_, true) if pa.len() > pb.len() => Some(std::cmp::Ordering::Greater),
+                            _ => None,
+                        }
+                    }),
+                };
+                // Undecided: one of the three results, one split where it is tested.
+                if order.is_none() {
+                    let texts = ["-1", "0", "1"].map(|r| {
+                        r.chars().map(|c| Token::new(Tok::Chr(c, Catcode::Other), span)).collect::<Rc<[Token]>>()
+                    });
+                    return vec![self.one_of(texts.into(), span)];
+                }
+                order.map(|order| {
+                    match order {
                         std::cmp::Ordering::Less => "-1",
                         std::cmp::Ordering::Equal => "0",
                         std::cmp::Ordering::Greater => "1",
@@ -1468,19 +2073,25 @@ impl Machine<'_> {
                 // web2c drops the quotes a name may carry, and a file the
                 // engine cannot find gives the empty string.
                 let name = self.expanded_text().map(|name| name.replace('"', ""));
-                let path = name.map(|name| self.locate_input(&name));
-                match (convert, path) {
-                    (_, None) => None,
+                let bytes = name.and_then(|name| self.input_bytes(&name));
+                match (convert, bytes) {
+                    // A file the run made with what it holds unknown.
+                    (C::FileSize, None) => {
+                        return self.digits_in(crate::value::Num::range(0, crate::value::MAX_INT), span);
+                    }
                     (_, Some(None)) => Some(String::new()),
-                    (C::FileSize, Some(Some(p))) => std::fs::metadata(p).ok().map(|m| m.len().to_string()),
-                    _ => None,
+                    (C::FileSize, Some(Some(b))) => Some(b.len().to_string()),
+                    // The date of a file that exists: its time is not
+                    // read, its form is known (unknown text instead lets a
+                    // parse of it run past its end).
+                    _ => return self.unknown_pdf_date(span),
                 }
             }
             C::FileDump => {
                 let offset = if self.scan_keyword("offset") { self.scan_int() } else { Some(0) };
                 let length = if self.scan_keyword("length") { self.scan_int() } else { Some(0) };
                 let name = self.expanded_text();
-                let bytes = name.and_then(|name| self.locate_input(&name)).and_then(|p| std::fs::read(p).ok());
+                let bytes = name.and_then(|name| self.input_bytes(&name)).flatten();
                 match (bytes, offset, length) {
                     (Some(bytes), Some(offset), Some(length)) => {
                         let start = (offset.max(0) as usize).min(bytes.len());
@@ -1494,7 +2105,7 @@ impl Machine<'_> {
                 let file = self.scan_keyword("file");
                 let text = self.expanded_text();
                 let bytes = match text {
-                    Some(text) if file => self.locate_input(&text).and_then(|p| std::fs::read(p).ok()),
+                    Some(text) if file => self.input_bytes(&text).flatten(),
                     Some(text) => Some(text.into_bytes()),
                     None => None,
                 };
@@ -1503,15 +2114,45 @@ impl Machine<'_> {
                 })
             }
             C::Match => {
-                self.scan_keyword("icase");
-                if self.scan_keyword("subcount") {
-                    self.scan_int();
-                }
-                self.expanded_text();
-                self.expanded_text();
-                None
+                let icase = self.scan_keyword("icase");
+                let subcount = if self.scan_keyword("subcount") { self.scan_int() } else { Some(-1) };
+                let pattern = self.expanded_text();
+                let subject = self.expanded_text();
+                return self.pdf_match(icase, subcount, pattern, subject, span);
             }
-            C::LastMatch | C::PageRef | C::XFormName | C::InsertHt | C::MarginKern | C::UniformDeviate | C::Marks => {
+            C::LastMatch => {
+                return match self.scan_int() {
+                    Some(n) => self.pdf_last_match(n, span),
+                    None => vec![self.unknown_text(Unk::Any, span)],
+                };
+            }
+            // The pdfTeX manual: `\pdfuniformdeviate n` is a number in [0, n)
+            // for n > 0 and in (n, 0] for n < 0. Which one is not known, so
+            // it is digits typed with that interval.
+            C::UniformDeviate => {
+                return match self.scan_int() {
+                    Some(n) if n > 0 => self.digits_in(crate::value::Num::range(0, n - 1), span),
+                    Some(n) if n < 0 => self.digits_in(crate::value::Num::range(n + 1, 0), span),
+                    Some(_) => self.text_tokens("0", span),
+                    None => self.digits_in(crate::value::Num::range(-2_147_483_646, 2_147_483_646), span),
+                };
+            }
+            // pdfTeX: the width of the left margin kern the box's list
+            // starts with, past a `\leftskip`; 0pt with none. A line made
+            // by the line breaker starts with the one it put there.
+            C::LeftMarginKern => {
+                let n = self.scan_int();
+                let dims = self.box_dims(n);
+                let hbox = n.is_some_and(|k| self.box_state(k) == crate::mode::BoxState::HBox);
+                match self.box_line(n) {
+                    Some(Some((w, h, d, Some(kern)))) if hbox && dims == [w, h, d].map(crate::mode::Dim::exact) => {
+                        // No kern prints as `0pt` (pdfTeX's `print("0")`).
+                        Some(if kern == 0 { "0pt".into() } else { crate::value::render_dimen(kern) })
+                    }
+                    _ => None,
+                }
+            }
+            C::PageRef | C::XFormName | C::InsertHt | C::MarginKern | C::Marks => {
                 self.scan_int();
                 None
             }
@@ -1520,16 +2161,17 @@ impl Machine<'_> {
                 self.scan_int();
                 None
             }
-            C::NormalDeviate | C::CreationDate | C::PdftexBanner | C::Mark => None,
+            C::CreationDate => return self.creation_date(span),
+            C::NormalDeviate | C::PdftexBanner | C::Mark => None,
             // The pdfTeX manual: stacks are numbered from 1, 0 being the
-            // default colour stack.
+            // default color stack.
             C::ColorStackInit => {
                 self.scan_keyword("page");
                 self.scan_keyword("direct");
                 self.read_general_text();
-                let next = self.engine_int("colorstacks").unwrap_or(0) + 1;
-                self.set_engine("colorstacks", Value::Int(next), true);
-                Some(next.to_string())
+                let next = self.engine_slot_int("colorstacks", "colorstacks").map(|n| n + 1);
+                self.set_engine("colorstacks", next.map_or(Value::Unknown, Value::Int), true);
+                next.map(|n| n.to_string())
             }
             C::Primitive => {
                 self.primitive_meaning(span);
@@ -1539,7 +2181,57 @@ impl Machine<'_> {
         // What the engine gives and satex cannot know is unknown text.
         match text {
             Some(t) => chars(&t, span),
-            None => vec![self.unknown_token(span)],
+            None => vec![self.unknown_text(Unk::Any, span)],
+        }
+    }
+
+    /// The pdfTeX manual: `\pdfmatch` is -1 for a pattern that does not
+    /// compile (the last match stays), 0 for no match (it is cleared), 1
+    /// for a match. `subcount` bounds the groups kept, -1 keeps them all.
+    fn pdf_match(
+        &mut self,
+        icase: bool,
+        subcount: Option<i64>,
+        pattern: Option<String>,
+        subject: Option<String>,
+        span: Span,
+    ) -> Vec<Token> {
+        let (Some(pattern), Some(subject), Some(subcount)) = (pattern, subject, subcount) else {
+            self.set_engine(LAST_MATCH_COUNT, Value::Unknown, true);
+            return vec![self.unknown_text(Unk::Any, span)];
+        };
+        let Ok(re) = regex::RegexBuilder::new(&pattern).case_insensitive(icase).build() else {
+            return chars("-1", span);
+        };
+        let groups: Vec<Option<(usize, String)>> = match re.captures(&subject) {
+            None => Vec::new(),
+            Some(c) => c.iter().map(|m| m.map(|m| (m.start(), m.as_str().to_string()))).collect(),
+        };
+        let kept = if subcount < 0 { groups.len() } else { groups.len().min(subcount as usize) };
+        self.set_engine(LAST_MATCH_COUNT, Value::Int(kept as i64), true);
+        for (i, group) in groups.iter().take(kept).enumerate() {
+            let text = match group {
+                Some((at, text)) => format!("{at}->{text}"),
+                None => NO_MATCH.to_string(),
+            };
+            self.set_engine(&format!("{LAST_MATCH}{i}"), Value::Toks(Rc::from(chars(&text, span))), true);
+        }
+        chars(if groups.is_empty() { "0" } else { "1" }, span)
+    }
+
+    /// `\pdflastmatch n`: `⟨position⟩->⟨text⟩` of group `n` of the last
+    /// match, `-1->` for a group there is none of.
+    fn pdf_last_match(&mut self, n: i64, span: Span) -> Vec<Token> {
+        match self.engine_slot_int(LAST_MATCH, LAST_MATCH_COUNT) {
+            None => vec![self.unknown_text(Unk::Any, span)],
+            Some(count) if n < 0 || n >= count => chars(NO_MATCH, span),
+            Some(_) => {
+                let sym = self.engine_sym(&format!("{LAST_MATCH}{n}"));
+                match self.env.value(sym) {
+                    Value::Toks(text) => text.iter().map(|t| Token::new(t.tok, span)).collect(),
+                    _ => vec![self.unknown_text(Unk::Any, span)],
+                }
+            }
         }
     }
 
@@ -1564,7 +2256,7 @@ impl Machine<'_> {
             {
                 vec![Token::new(Tok::Chr(c, cat), span)]
             }
-            _ => vec![self.unknown_token(span)],
+            _ => vec![self.unknown_text(Unk::Any, span)],
         }
     }
 
@@ -1577,6 +2269,18 @@ impl Machine<'_> {
     pub(crate) fn locate_input(&mut self, name: &str) -> Option<std::path::PathBuf> {
         let base = self.base().to_path_buf();
         self.resolver_mut().resolve(name, crate::builtins::LoadKind::Input, &base)
+    }
+
+    /// The bytes of the file the engine finds by `name`: what this run wrote
+    /// to it, else what is on disk. `Some(None)` when there is none, `None`
+    /// when the run wrote it with what it holds unknown.
+    pub(crate) fn input_bytes(&mut self, name: &str) -> Option<Option<Vec<u8>>> {
+        match (self.written_text(name), self.locate_input(name)) {
+            (Some(Some(text)), _) => Some(Some(text.into_bytes())),
+            (_, Some(path)) => Some(crate::overlay::read_bytes(&path).ok()),
+            (Some(None), None) => None,
+            (None, None) => Some(None),
+        }
     }
 
     /// `\pdfprimitive⟨cs⟩`: the primitive of that name, whatever the name
@@ -1604,18 +2308,6 @@ impl Machine<'_> {
     /// The conditionals this module adds (see [`Cond`]).
     pub fn eval_extra_condition(&mut self, cond: Cond) -> Option<bool> {
         match cond {
-            Cond::AbsNum => {
-                let a = self.scan_int();
-                let relation = self.scan_relation_x();
-                let b = self.scan_int();
-                crate::scan::compare_abs(a, relation, b)
-            }
-            Cond::AbsDim => {
-                let a = self.scan_dimen();
-                let relation = self.scan_relation_x();
-                let b = self.scan_dimen();
-                crate::scan::compare_abs(a, relation, b)
-            }
             Cond::FontChar => {
                 let font = self.scan_font_ident();
                 let c = self.scan_int();
@@ -1645,7 +2337,7 @@ impl Machine<'_> {
     /// tex.web § 503: the relation of `\ifnum`/`\ifdim`, a character of
     /// category 12 after expansion and blanks.
     pub fn scan_relation_x(&mut self) -> Option<char> {
-        let token = self.next_non_blank_x()?;
+        let token = self.next_non_blank_x_token()?;
         match token.tok {
             Tok::Chr(c @ ('<' | '=' | '>'), Catcode::Other) => Some(c),
             _ => {
@@ -1657,21 +2349,50 @@ impl Machine<'_> {
 
     /// `\the` of a font-valued quantity: the font identifier (tex.web § 465).
     pub fn font_identifier(&mut self, p: Primitive, sym: Sym, span: Span) -> Option<Vec<Token>> {
+        // tex.web § 465: `\the` of a font gives its identifier. One satex
+        // cannot name is some identifier: unknown, never no token at all.
+        let unknown = |m: &mut Self| Some(vec![Token::new(Tok::Cs(m.unknown), span)]);
         let font = match p {
-            Primitive::FontDef => self.current_font()?,
+            Primitive::FontDef => match self.current_font() {
+                Some(font) => font,
+                None => return self.current_font_identifiers(span).or_else(|| unknown(self)),
+            },
             Primitive::FontIdent(font) => font,
             Primitive::Command(Syntax::FamilyFont) => {
-                let family = self.scan_int()?;
-                self.family_font(sym, family)?
+                let font = self.scan_int().and_then(|family| self.family_font(sym, family));
+                match font {
+                    Some(font) => font,
+                    None => return unknown(self),
+                }
             }
             _ => return None,
         };
-        let cs = if font == 0 {
-            self.intern("nullfont")
-        } else {
-            let index = self.font_field(font, "cs").as_int()?;
-            Sym(u32::try_from(index).ok()?)
-        };
-        Some(vec![Token::new(Tok::Cs(cs), span)])
+        match self.font_cs(font) {
+            Some(cs) => Some(vec![Token::new(Tok::Cs(cs), span)]),
+            None => unknown(self),
+        }
+    }
+
+    /// The current font a join left one of a few: a token for one of
+    /// their identifiers, which a path parts on where it matters.
+    fn current_font_identifiers(&mut self, span: Span) -> Option<Vec<Token>> {
+        if self.engine_unpinned("font") {
+            return None;
+        }
+        let slot = self.engine_sym("font");
+        let fonts = self.env.get(slot)?.value.exact_ints()?;
+        let texts = (fonts.into_iter())
+            .map(|font| Some(Rc::from([Token::new(Tok::Cs(self.font_cs(u32::try_from(font).ok()?)?), span)])))
+            .collect::<Option<Vec<Rc<[Token]>>>>()?;
+        Some(vec![self.one_of(texts, span)])
+    }
+
+    /// The identifier font `font` was loaded under.
+    fn font_cs(&mut self, font: u32) -> Option<Sym> {
+        if font == 0 {
+            return Some(self.intern("nullfont"));
+        }
+        let index = self.font_field(font, "cs").as_int()?;
+        Some(Sym(u32::try_from(index).ok()?))
     }
 }

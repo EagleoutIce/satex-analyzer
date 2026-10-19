@@ -1,0 +1,7 @@
+\documentclass{article}
+\newcount\n \n=\pdfuniformdeviate 8
+\def\cheap{\ifnum\n>0 \advance\n-1 \expandafter\cheap\fi}
+\def\costly{\ifnum\n>0 \setbox0\hbox{\tiny long body}\advance\n-1 \expandafter\costly\fi}
+\begin{document}
+\cheap\costly done
+\end{document}

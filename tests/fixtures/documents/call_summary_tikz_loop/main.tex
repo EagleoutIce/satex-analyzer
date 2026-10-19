@@ -1,0 +1,12 @@
+\documentclass{article}
+\usepackage{tikz}
+% Twenty nodes of unknown height in a loop.
+\begin{document}
+\begin{tikzpicture}
+\foreach \i in {1,...,20} {
+  \node[draw, text width=3cm, rounded corners] at (0,\i) {\rule{1pt}{\pdfrandomseed sp}A};
+}
+\end{tikzpicture}
+\gdef\AfterPicture{}
+\gdef\SatexReachedEnd{}
+\end{document}

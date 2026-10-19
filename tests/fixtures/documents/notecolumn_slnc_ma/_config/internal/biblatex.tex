@@ -1,0 +1,97 @@
+\PassOptionsToPackage{threshold=1}{csquotes}
+\RequirePackage{csquotes}
+\PassOptionsToPackage{
+   backend=biber,
+   backref=true,
+   sorting=nyvt,
+   style=numeric,
+   backreffloats=true,
+}{biblatex}
+\RequirePackage{biblatex}
+
+\defbibheading{bibliography}[\bibname]{\chapter{#1}}
+\DefineBibliographyStrings{english}{backrefpage={On page}, backrefpages={On pages}}
+\DefineBibliographyStrings{german}{backrefpage={Seite:}, backrefpages={Seiten:}}
+
+% page back ref in margin based on default implementation
+\ifthesis@marginpar
+\pretocmd\printbibliography{\begingroup
+\xapptobibmacro{begentry}{%
+  \def\margincontent{}%
+  \iflistundef{pageref}{}%
+    {\appto\margincontent{\printtext{%
+       \ifnumgreater{\value{pageref}}{1}%
+         {\bibstring{backrefpages}\ppspace}%
+         {\bibstring{backrefpage}\ppspace}%
+       \printlist[pageref][-\value{listtotal}]{pageref}.}}}%
+   \iffieldundef{url}{}{\iffieldundef{urlyear}{}%
+    {\ifx\margincontent\@empty\else\appto\margincontent{\endgraf}\fi\appto\margincontent{\setunit*{\addspace}%
+     \usebibmacro{urldate}}}}%
+   \marginpar{\vspace{\dimexpr-\ht\strutbox+\dp\strutbox}\thesis@marginpar@font\footnotesize\nohyper{\margincontent}}%
+}{}{}}\relax\relax
+
+\apptocmd\printbibliography{\endgroup}\relax\relax
+
+% kill the original macros as we moved them to the margin
+\newbibmacro*{url+urldate}{\usebibmacro{url}}
+\renewbibmacro*{pageref}{}
+\fi
+
+% lockcites in the sidebar inspired by my bachelor's thesis, we cite by section
+\def\thesis@sidecite@do#1{\tiny\color{darkgray}\plaincite{#1}~\thesis@sidecite{#1}}
+\def\@locksidecite{%
+   \expandafter\expandafter\expandafter\xdef\expandafter\csname mcited\etry\endcsname{\thesection}%
+   \sidenote[\z@]{\protect\thesis@sidecite@do{\etry}}%
+}
+\newif\if@sidecite@doreset@
+\def\forcecite#1{{\@sidecite@doreset@true\sidecite{#1}\plaincite{#1}}}
+\def\sidecite#1{%
+   \@for\etry:={#1}\do{%
+      \if@sidecite@doreset@
+         \csundef{mcited\etry}%
+      \fi
+      \expandafter\ifcsname mcited\etry\endcsname\xdef\@tmp{\thesection}%
+         \expandafter\expandafter\expandafter\ifx\expandafter\csname mcited\etry\endcsname
+            \@tmp
+         \else
+            \@locksidecite
+         \fi
+      \else
+         \@locksidecite
+      \fi
+   }%
+}
+
+\RequirePackage{letltxmacro}
+\LetLtxMacro\plaincite\cite
+% \ifthesis@print\else
+\ifthesis@citeInMarginpar
+\renewcommand*\cite[2][]{\ifdisableside\else\sidecite{#2}\fi\plaincite[#1]{#2}}
+\fi% \fi
+
+\DeclareFieldFormat{thesis@mp@author}{x#1x}
+\DeclareLabeltitle{\field{shorttitle}\field{title}}
+\DeclareFieldFormat{thesis@mp@title}{\normalfont#1}
+
+\def\thesis@lhook@hr#1{\thesis@disablehyper{\href{\thefield{url}}{#1}}}%
+\def\thesis@lhook@doi#1{\thesis@disablehyper{\href{https://doi.org/\thefield{doi}}{#1}}}%
+\def\thesis@hook@do{%
+   \gdef\@tmp##1{##1}%
+   \ifhyperref{\iffieldundef{url}{%
+      \iffieldundef{doi}{}{%
+         \gdef\@tmp{\thesis@lhook@doi}%
+      }%
+   }{\gdef\@tmp{\thesis@lhook@hr}}}{}}
+\DeclareCiteCommand{\thesis@sidecite}{}
+  {%
+   \usebibmacro{bibindex}%
+   \usebibmacro{begentry}%
+   \printnames[labelname][1-1]{author} (\printfield{year}),%
+   \setunit{\space}\newblock
+   \printtext{\thesis@hook@do}%
+   \@tmp{\printfield{labeltitle}}\newunit\newblock
+   \usebibmacro{finentry}%
+  }{}{}
+
+\DefineBibliographyStrings{english}{andothers={et~al\adddot}}
+\DefineBibliographyStrings{german}{andothers={et~al\adddot}}
