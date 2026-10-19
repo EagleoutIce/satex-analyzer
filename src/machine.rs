@@ -369,8 +369,12 @@ pub struct Analysis {
     pub held_tokens_left: usize,
     /// The most loop heads one drive kept at once.
     pub loop_heads: usize,
-    /// The most paths one drive held at once, the running one included.
+    /// The most paths one drive held at once, the running one included,
+    /// while the document's own text ran.
     pub peak_paths: usize,
+    /// The same while the output routine ran (tex.web § 1025), which
+    /// LaTeX's page code makes on a page satex does not know.
+    pub peak_output_paths: usize,
     /// Undecided choices made, each replay of one included: the work of
     /// the paths, which `steps` counts only in part.
     pub forks: u64,
@@ -1550,7 +1554,7 @@ pub struct Machine<'a> {
     join_hooks: Vec<Sym>,
     /// The running path started a join point ([`Machine::join_commands`]):
     /// it waits there for the others.
-    at_join: bool,
+    pub(crate) at_join: bool,
     /// The conditional the running path closed last, by its `\if…` and the
     /// stack depth below it: paths that closed the same one and stand at
     /// one place join there whatever else tells them apart.
@@ -1613,6 +1617,10 @@ pub struct Machine<'a> {
     /// the last item it moved, and an output routine leaves the items from
     /// the break on, the last one among them, after its own).
     pub(crate) main_tail: crate::mode::Last,
+    /// The depth the page would be packed with (tex.web § 669 `vpack`):
+    /// the last box's where only penalties and the like follow it, zero
+    /// after glue or a kern.
+    pub(crate) main_depth: crate::mode::Dim,
     /// The names a definition of a name built from unknown text may have
     /// made: one that seems undefined and matches may be defined.
     pub(crate) wild: Wild,
@@ -1677,6 +1685,7 @@ struct PathState {
     output_active: bool,
     natural: Option<crate::mode::Natural>,
     main_tail: crate::mode::Last,
+    main_depth: crate::mode::Dim,
     wild: Wild,
     quantity: crate::observe::Quantities,
     noexpanded: Option<Token>,
@@ -2018,6 +2027,7 @@ impl<'a> Machine<'a> {
                 held_tokens_left: 0,
                 loop_heads: 0,
                 peak_paths: 0,
+                peak_output_paths: 0,
                 forks: 0,
                 hot: HOT.load(std::sync::atomic::Ordering::Relaxed).then(Default::default),
                 joined_slots: 0,
@@ -2198,6 +2208,7 @@ impl<'a> Machine<'a> {
             page_grew: false,
             natural: None,
             main_tail: crate::mode::Last::UNKNOWN,
+            main_depth: crate::mode::Dim::ANY,
             wild: Wild::default(),
             trace_full: false,
             checkpoints: Default::default(),
@@ -9941,6 +9952,7 @@ will look undefined",
             output_active: self.output_active,
             natural: self.natural,
             main_tail: self.main_tail,
+            main_depth: self.main_depth,
             wild: self.wild.clone(),
             quantity: self.quantity.clone(),
             noexpanded: self.noexpanded,
@@ -10028,6 +10040,7 @@ will look undefined",
         self.page_grew = state.page_grew;
         self.natural = state.natural;
         self.main_tail = state.main_tail;
+        self.main_depth = state.main_depth;
         self.wild = state.wild;
     }
 

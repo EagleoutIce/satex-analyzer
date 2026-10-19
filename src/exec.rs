@@ -487,13 +487,14 @@ impl Machine<'_> {
             // § 1060, § 1103); `\mkern` and `\mskip` in math units.
             P::Typeset(crate::builtins::Typeset::Number) => {
                 let penalty = self.scan_number();
+                let before = self.main_tail;
                 self.append_item(crate::mode::Item::Penalty(penalty));
                 // tex.web §§ 1005, 1012: a forced break on the main vertical
                 // list ejects the page, which is then empty.
                 // § 1103: a penalty on the main vertical list builds the page.
                 if self.mode == crate::mode::Modes::VERTICAL {
                     match penalty.filter(|p| *p <= -10000) {
-                        Some(p) => self.fire_up(p, span),
+                        Some(p) => self.fire_up(p, before, span),
                         None => self.build_page(span),
                     }
                 }
