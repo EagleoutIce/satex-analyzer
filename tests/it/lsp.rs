@@ -954,3 +954,22 @@ fn completion_offers_keys_in_key_lists() {
     assert!(labels(&family).contains(&"width"), "{:?}", labels(&family));
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// Inside `\cite{` the databases' entries are offered, found by a word of
+/// the title as well as by key, with author and year beside the key.
+#[test]
+fn citation_keys_come_from_the_databases() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\cite{}\n\\bibliography{refs}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("cite", text);
+    std::fs::write(
+        dir.join("refs.bib"),
+        "@article{knuth84, author = {Donald E. Knuth}, title = {Literate Programming}, year = 1984}\n",
+    )
+    .unwrap();
+    let items = complete(&mut server, &uri, 2, 6);
+    let entry = items.iter().find(|i| i["label"] == "knuth84").unwrap_or_else(|| panic!("{:?}", labels(&items)));
+    assert_eq!(entry["detail"], "Knuth (1984)");
+    assert!(entry["filterText"].as_str().unwrap_or_default().contains("Literate Programming"), "{entry}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
