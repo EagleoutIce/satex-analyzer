@@ -461,7 +461,9 @@ impl<'a> Report<'a> {
 pub fn lint(analysis: &Analysis) -> Vec<Record> {
     let mut out = Vec::new();
     let sources = fix::Sources::default();
+    crate::progress::bar("lint: the text as set", 0, 2, (0, 0), None, &[]);
     let text = text::View::of(analysis, &sources);
+    crate::progress::bar("lint: what the run defined and used", 1, 2, (0, 0), None, &[]);
     let index = Index::of(analysis);
     let mut raised: crate::fixed::HashSet<usize> = crate::fixed::HashSet::default();
     let rules: Vec<&Rule> =

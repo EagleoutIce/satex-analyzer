@@ -57,9 +57,14 @@ impl Bars {
         self.erase(out);
         let width = terminal_size::terminal_size_of(std::io::stderr()).map_or(80, |(w, _)| w.0 as usize);
         let all: Vec<&String> = self.lines.iter().flat_map(|(_, lines)| lines).collect();
+        // Wrapping off while the bars are drawn (DECAWM): where the width
+        // was misreported, a long line is clipped at the margin instead of
+        // wrapping onto a row the next erase does not reach.
+        let _ = write!(out, "\x1b[?7l");
         for (i, line) in all.iter().enumerate() {
             let _ = write!(out, "{}{}", if i > 0 { "\n" } else { "" }, fit(line, width.saturating_sub(1)));
         }
+        let _ = write!(out, "\x1b[?7h");
         self.drawn = all.len();
         let _ = out.flush();
     }
