@@ -58,13 +58,15 @@ impl Machine<'_> {
                     | crate::builtins::Typeset::Delimiter
             ) | Primitive::Accent
                 | Primitive::Pdf(_)
-                | Primitive::Write
                 | Primitive::Command(_)
                 | Primitive::Unmodeled
                 | Primitive::AlignMark
                 | Primitive::AlignTab
                 | Primitive::Lua(_)
-        ) || matches!(p, Primitive::Mode(cmd) if cmd != crate::builtins::ModeCmd::Par)
+                | Primitive::Write
+        ) && !self.immediate_whatsit(p)
+            && !crate::builtins::assignment(p)
+            || matches!(p, Primitive::Mode(cmd) if cmd != crate::builtins::ModeCmd::Par)
         {
             self.material = true;
             self.natural_before(p, by, span);
@@ -125,6 +127,14 @@ impl Machine<'_> {
             self.widen_since(0);
             self.env.set_recent(recent);
         }
+    }
+
+    /// tex.web § 1375: `\immediate` before `\write`, `\openout` or
+    /// `\closeout` does it at once and leaves no whatsit on the list.
+    fn immediate_whatsit(&self, p: Primitive) -> bool {
+        use crate::builtins::Syntax;
+        self.prefixes.immediate
+            && matches!(p, Primitive::Write | Primitive::Command(Syntax::OpenOut | Syntax::CloseOut))
     }
 
     /// tex.web § 1212: a prefix before a command that is no assignment is

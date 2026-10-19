@@ -3046,10 +3046,23 @@ impl Machine<'_> {
                 self.box_changed(n, BoxState::Unknown);
                 self.fetched.clear();
                 // A void register splits off nothing and packs nothing (§ 977).
-                if state != BoxState::Void {
-                    self.set_badness(false);
+                if state == BoxState::Void {
+                    return self.box_end(context, state, [Dim::ANY; 3]);
                 }
-                return self.box_end(context, state, [Dim::ANY; 3]);
+                self.set_badness(false);
+                // tex.web § 977: what is left keeps part of the material and
+                // gains `\splittopskip` at its top, packed to its natural size.
+                let top = self.glue_parameter("splittopskip").map_or(Dim::ANY, |g| Dim::exact(g.width.max(0)));
+                let left = dims[1].extended_by(dims[2]).extended_by(top);
+                if !left.is_any() {
+                    self.set_box_dims(n, [Dim::ANY, Dim::range(0, left.hi), Dim::ANY]);
+                }
+                // The part split off is packed to the height asked for, its
+                // depth at most `\splitmaxdepth`.
+                let ht = to.map_or(Dim::ANY, Dim::exact);
+                let dp = max.map_or(Dim::ANY, |m| Dim::range(Dim::ANY.lo, m));
+                let state = if real == Some(BoxState::VBox) { BoxState::VBox } else { state };
+                return self.box_end(context, state, [Dim::ANY, ht, dp]);
             }
             BoxCmd::HBox => {
                 // A box appended to a vertical list may take `\vadjust`
