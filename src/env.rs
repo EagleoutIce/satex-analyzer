@@ -2401,8 +2401,8 @@ mod tests {
         let interner = Interner::default();
         // The table as the machine builds it: 256 one-of names, the rest
         // serials, and the names typed with a length bound.
-        let size = crate::machine::BOUNDED_BASE
-            + BOUNDED.len() * 2 * MAX_LEN as usize * (crate::machine::REST_SERIALS + 1);
+        let size =
+            crate::machine::BOUNDED_BASE + BOUNDED.len() * 2 * MAX_LEN as usize * (crate::machine::REST_SERIALS + 1);
         let syms: Vec<Sym> = (0..size as u32).map(|i| Sym(1000 + i)).collect();
         let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2) };
         let digit = |c| Token::new(Tok::Chr(c, crate::tex::Catcode::Other), Span::default());
