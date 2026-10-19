@@ -490,3 +490,23 @@ fn a_theme_is_read_after_the_class_it_expects() {
     let off = Config { load: Load { expect_detect: false, ..cfg.load.clone() }, ..cfg };
     assert!(undefined(&Machine::analyze(source, Some(&path), &off)) > 0);
 }
+
+/// A package that uses a command it never loads is read again with the
+/// package on disk that defines it, found by the names their definers
+/// define: the commands the kernel's own definitions are written with,
+/// which satex finds itself.
+#[test]
+fn an_unloaded_package_is_found_by_what_it_defines() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-expect-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("rules.sty");
+    let source = "\\ProvidesPackage{rules}\n\\newcommand\\rules{\\toprule\\midrule\\bottomrule}\n\\rules\n";
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    let loads: Vec<&str> = analysis.facts.loads.iter().map(|l| l.name.as_str()).collect();
+    assert!(loads.contains(&"booktabs"), "{loads:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

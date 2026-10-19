@@ -12,7 +12,7 @@ use crate::tex::{Interner, Meaning, Span, Sym};
 use crate::value::Value;
 
 /// Cache version: different encodings get different files.
-const ENCODING_VERSION: u32 = 4;
+const ENCODING_VERSION: u32 = 5;
 
 /// What a cache means, bumped by hand whenever the interpreter would
 /// analyse a cached file differently. Caches are keyed on it, not on the
@@ -69,6 +69,9 @@ pub struct Format {
     /// The gaps the kernel build recorded, so a document that reaches the
     /// same gap is deduplicated against them on both paths.
     gaps: Vec<(String, u32)>,
+    /// The commands the kernel wrote its definitions with, the name right
+    /// after them ([`crate::exports::written`]).
+    definers: Vec<String>,
 }
 
 /// The run's diagnostic codes, fact tags and metadata fields are
@@ -694,6 +697,7 @@ impl Format {
             wild: wild.clone(),
             diagnostics: Vec::new(),
             gaps: Vec::new(),
+            definers: Vec::new(),
         })
     }
 
@@ -791,6 +795,15 @@ impl Format {
     }
 
     /// Where the kernel defined each name: symbol, file and line.
+    pub fn definers(&self) -> &[String] {
+        &self.definers
+    }
+
+    pub(crate) fn with_definers(mut self, definers: Vec<String>) -> Format {
+        self.definers = definers;
+        self
+    }
+
     pub fn sites(&self) -> &[(u32, u16, u32)] {
         &self.sites
     }
@@ -878,6 +891,7 @@ mod tests {
             aliases: Vec::new(),
             diagnostics: vec![(1, "invalid-code".into(), "invalid code (8217)".into(), Span::new(3, 2, 1), 2)],
             gaps: vec![("unsupported-primitive".into(), 0)],
+            definers: vec!["def".into()],
             wild: {
                 let mut wild = crate::machine::Wild::default();
                 wild.add("MT@inh@".into(), String::new(), false, Some(crate::tex::Meaning::Unknown));

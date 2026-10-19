@@ -28,7 +28,7 @@ project:
   ignore_other_configs: false  # true: satex.yaml files above this one and the global one are not read
 conventions:  # how TeX is usually written, where the text alone does not say
   internal: ['@', '^__', '_.*:']  # regexes marking internal names (hidden from listings and completion, private to lints)
-  definers: [def, gdef, edef, xdef, let, chardef, mathchardef, countdef, dimendef, skipdef, toksdef, newif, newcount, newdimen, newskip, newtoks, newbox, newlength, newcommand, renewcommand, providecommand, DeclareRobustCommand, newrobustcmd, renewrobustcmd, providerobustcmd, NewDocumentCommand, RenewDocumentCommand, ProvideDocumentCommand, DeclareDocumentCommand, NewExpandableDocumentCommand]  # commands whose next name is the one they define, for reading what packages on disk define
+  definers: []  # more commands whose next name is the one they define; satex finds those the kernel defines with itself
 lints:
   unused-definition:
     report_public: true  # also flag a public name
