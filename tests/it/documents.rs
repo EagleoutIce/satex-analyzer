@@ -540,3 +540,17 @@ fn include_after_a_float_with_hyperref_reads_the_next_part() {
     let Some(a) = check("include_after_float_with_hyperref", "main.tex", &[]) else { return };
     assert!(crate::support::defined(&a, "ReadB"), "the second part was not read");
 }
+
+/// fse: a short breakable tcolorbox; pdflatex sets it on one page with no
+/// error, and so must the analysis, with no page break forced in a loop.
+#[test]
+fn a_short_breakable_tcolorbox_ends_cleanly() {
+    check("breakable_tcolorbox_short_text", "main.tex", &[]);
+}
+
+/// fse: a node whose minimum height is not known. A summary of the parse
+/// of that height must not stand for later parses of known lengths.
+#[test]
+fn a_node_of_unknown_minimum_height_parses_its_other_lengths() {
+    check("tikz_node_unknown_minimum_height", "main.tex", &[]);
+}

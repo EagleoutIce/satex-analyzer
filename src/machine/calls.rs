@@ -32,6 +32,9 @@ pub(crate) struct CallRec {
     leaky: bool,
     /// Its arguments held unknown text.
     unknown: bool,
+    /// Where the list below the call's text stood: a run ends cleanly
+    /// only on that list as the call left it.
+    below: Option<(usize, usize)>,
 }
 
 /// One recorded run: the names it wrote, as it left them, and the names
@@ -40,6 +43,20 @@ pub(crate) struct CallRec {
 struct Run {
     writes: Vec<(Sym, Option<Binding>)>,
     reads: Vec<Sym>,
+}
+
+/// Where a list stands: its text and position, or a file's place.
+fn frame_mark(frame: &super::Frame) -> (usize, usize) {
+    use super::Frame;
+    match frame {
+        Frame::Tokens { toks, pos, .. } => (toks.as_ptr() as usize, *pos),
+        Frame::Returned(tokens) => (tokens.as_ptr() as usize, tokens.len()),
+        Frame::File { mouth, .. } => {
+            (mouth.here().file as usize, (mouth.here().line as usize) << 20 | mouth.here().col as usize)
+        }
+        Frame::Pseudo { pos, at, .. } => (at.line as usize, *pos),
+        Frame::Boundary => (0, 0),
+    }
 }
 
 /// Reads logged at most while calls are recorded.
@@ -105,6 +122,7 @@ impl Machine<'_> {
                 material: self.material,
                 leaky: false,
                 unknown,
+                below: self.input.last().map(frame_mark),
             };
             crate::push_shared(&mut self.call_recs, rec);
         }
@@ -201,7 +219,11 @@ impl Machine<'_> {
         {
             let rec = Rc::make_mut(&mut self.call_recs).pop().expect("one");
             let main = self.reading_command && self.step_depth == 1;
+            // Nothing below the call's text was read or given back to: a
+            // look-ahead past its end leaves its run unfinished.
+            let intact = self.input.len() == rec.base && self.input.last().map(frame_mark) == rec.below;
             let clean = main
+                && intact
                 && !rec.leaky
                 && self.env.recent_len() >= rec.recent
                 && self.env.group_level() == rec.groups

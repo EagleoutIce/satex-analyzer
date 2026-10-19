@@ -1,0 +1,9 @@
+\documentclass{article}
+\usepackage{tikz}
+\newdimen\dd
+\begin{document}
+\dd=\pdfuniformdeviate 100000sp
+\edef\h{\the\dd}
+\begin{tikzpicture}\node[minimum height=\h]{};\end{tikzpicture}
+\gdef\SatexReachedEnd{}
+\end{document}
