@@ -2399,7 +2399,11 @@ mod tests {
     #[test]
     fn widened_macro_keeps_its_text_class() {
         let interner = Interner::default();
-        let syms: Vec<Sym> = (0..256).map(|i| Sym(1000 + i)).collect();
+        // The table as the machine builds it: 256 one-of names, the rest
+        // serials, and the names typed with a length bound.
+        let size = crate::machine::BOUNDED_BASE
+            + BOUNDED.len() * 2 * MAX_LEN as usize * (crate::machine::REST_SERIALS + 1);
+        let syms: Vec<Sym> = (0..size as u32).map(|i| Sym(1000 + i)).collect();
         let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2) };
         let digit = |c| Token::new(Tok::Chr(c, crate::tex::Catcode::Other), Span::default());
         let def = crate::tex::MacroDef {
@@ -2412,7 +2416,9 @@ mod tests {
         };
         let b = widened(Binding::builtin(Meaning::Macro(std::rc::Rc::new(def))), &typed);
         let Meaning::Macro(d) = &b.meaning else { panic!("not a macro: {:?}", b.meaning) };
-        assert_eq!(d.replacement_text.iter().map(|t| t.tok).collect::<Vec<_>>(), vec![Tok::Cs(Sym(1))]);
+        // Two digits widen to digits of that length.
+        let two = syms[bounded_index(TextClass::DIGIT, true, 2, 0).expect("bounded")];
+        assert_eq!(d.replacement_text.iter().map(|t| t.tok).collect::<Vec<_>>(), vec![Tok::Cs(two)]);
         assert!(!b.certain);
     }
 
