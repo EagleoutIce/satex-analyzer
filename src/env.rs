@@ -1334,6 +1334,10 @@ impl Env {
         let own = (self.changed.len() == fork.level + 1).then(|| self.changed.pop()).flatten();
         for (sym, (slot, saved)) in path.slots.iter() {
             let i = *sym as usize;
+            // A name the path left as the fork has it is not written since.
+            if self.level[i] == *saved && same_slot(&self.slots[i], slot) {
+                continue;
+            }
             self.log(i);
             self.slots[i] = slot.clone();
             self.level[i] = *saved;

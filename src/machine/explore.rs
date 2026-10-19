@@ -1793,9 +1793,11 @@ impl Machine<'_> {
             self.resume_config(fork, other);
         }
         while self.env.depth() > keep {
+            let nest = self.env.nest();
             let mut catcodes = std::mem::take(&mut self.catcodes);
             self.env.pop_group(&mut catcodes);
             self.catcodes = catcodes;
+            self.group_dropped(nest, span);
         }
         self.diagnose(
             Severity::Assumption,
