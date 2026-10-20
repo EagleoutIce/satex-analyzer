@@ -173,6 +173,7 @@ limits:
   heads_apart: 32  # loop heads at one place kept apart for differing in code still to run, before they are joined
   meaning_splits: 4  # choices a command may have made for a name joined to several meanings to split per meaning
   widen_after: 3  # rounds a loop head reanalyzes a grown state before widening it
+  build_runs: 5  # runs of the build (latexmk rounds) to reach the fixpoint of .aux/.toc/...; past them unknown; 1 = one run, no earlier files
   recursion_depth: 100  # levels an undecided recursion is followed before it is assumed to end
   loop_heads: 512  # loop heads and entries one drive keeps with their joined states; the oldest goes first
   call_summary_after: 2  # runs of one call recorded before an unknown-operand call applies their join; 0 = never

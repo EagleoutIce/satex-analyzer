@@ -24,6 +24,9 @@ pub struct Read {
     pub path: PathBuf,
     /// Whether it was only looked for.
     pub probe: bool,
+    /// Whether only the overlay counts: a file of the build, whose copy
+    /// an engine left on disk is not the run's ([`probed_own`]).
+    pub own: bool,
     /// Its [`fingerprint`], or whether it was there.
     pub print: u64,
 }
@@ -31,7 +34,12 @@ pub struct Read {
 impl Read {
     /// Whether the file is still what the run found.
     pub fn holds(&self) -> bool {
-        self.print == if self.probe { presence(&self.path) } else { fingerprint(&self.path) }
+        self.print
+            == match (self.own, self.probe) {
+                (true, _) => own_presence(&self.path),
+                (_, true) => presence(&self.path),
+                _ => fingerprint(&self.path),
+            }
     }
 }
 
@@ -40,13 +48,33 @@ pub fn log(on: bool) -> Vec<Read> {
     LOG.with_borrow_mut(|log| std::mem::replace(log, on.then(Vec::new))).unwrap_or_default()
 }
 
-fn push(path: &Path, probe: bool, print: impl FnOnce() -> u64) {
-    LOG.with_borrow_mut(|log| log.as_mut().map(|l| l.push(Read { path: path.to_path_buf(), probe, print: print() })));
+fn push(path: &Path, probe: bool, own: bool, print: impl FnOnce() -> u64) {
+    LOG.with_borrow_mut(|log| {
+        log.as_mut().map(|l| l.push(Read { path: path.to_path_buf(), probe, own, print: print() }))
+    });
+}
+
+/// Notes that a run looked for `path`, a file of the build: only the
+/// overlay's copy counts, so the log changes when the overlay does.
+pub fn probed_own(path: &Path) {
+    push(path, true, true, || own_presence(path));
+}
+
+/// What the overlay holds at `path`, as a hash, or 0.
+fn own_presence(path: &Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    FILES.with_borrow(|files| {
+        files.get(path).map_or(0, |t| {
+            let mut hasher = std::hash::DefaultHasher::new();
+            t.hash(&mut hasher);
+            hasher.finish().max(1)
+        })
+    })
 }
 
 /// Notes that a run looked for `path`, which is a file or not.
 pub fn probed(path: &Path) {
-    push(path, true, || presence(path));
+    push(path, true, false, || presence(path));
 }
 
 /// Whether `path` is there to read: 1, else 0.
@@ -120,7 +148,7 @@ fn to_crlf(text: &str) -> String {
 /// overlay holds for it, or what is on disk.
 pub fn read_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
     let bytes = read_bytes_unlogged(path);
-    push(path, false, || hash(&bytes));
+    push(path, false, false, || hash(&bytes));
     bytes
 }
 
@@ -134,6 +162,20 @@ fn read_bytes_unlogged(path: &Path) -> std::io::Result<Vec<u8>> {
 
 pub fn set(path: &Path, text: String) {
     FILES.with(|files| files.borrow_mut().insert(path.to_path_buf(), text));
+}
+
+pub fn remove(path: &Path) {
+    FILES.with(|files| files.borrow_mut().remove(path));
+}
+
+/// What the overlay holds at `path`, never what is on disk.
+pub fn text(path: &Path) -> Option<String> {
+    FILES.with_borrow(|files| files.get(path).cloned())
+}
+
+/// Whether the overlay holds `path`.
+pub fn holds(path: &Path) -> bool {
+    FILES.with_borrow(|files| files.contains_key(path))
 }
 
 pub fn clear() {

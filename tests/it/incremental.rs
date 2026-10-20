@@ -121,7 +121,7 @@ fn a_resumed_run_says_what_a_full_run_says() {
     let mut checkpoints = Checkpoints::new(&cfg).every(64);
     let read = |p: &Path| std::fs::read_to_string(p).unwrap();
     let first = checkpoints.analyze(&read(&main), &main);
-    let full = Machine::analyze(&read(&main), Some(&main), &cfg);
+    let full = Machine::analyze_once(&read(&main), Some(&main), &cfg);
     assert_eq!(first_difference(&said(&first), &said(&full)), None, "the first run");
     let mut resumed = 0;
     for (file, from, to) in EDITS {
@@ -131,7 +131,7 @@ fn a_resumed_run_says_what_a_full_run_says() {
         std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
         let incremental = checkpoints.analyze(&read(&main), &main);
         resumed += usize::from(checkpoints.resumed.is_some());
-        let full = Machine::analyze(&read(&main), Some(&main), &cfg);
+        let full = Machine::analyze_once(&read(&main), Some(&main), &cfg);
         let at = checkpoints.resumed.clone();
         let differs = first_difference(&said(&incremental), &said(&full));
         assert_eq!(differs, None, "after replacing {from} by {to} in {file}, resumed at {at:?}");

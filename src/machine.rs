@@ -456,6 +456,22 @@ pub struct Recursion {
 }
 
 impl Analysis {
+    /// Whether `file` is the main file or lies in its directory tree.
+    pub fn project_file(&self, file: FileId) -> bool {
+        if file == self.main_file {
+            return true;
+        }
+        let main = self.files.get(usize::from(self.main_file)).map(|f| f.path.as_str()).unwrap_or_default();
+        let dir = crate::paths::dir_of(Path::new(main));
+        // A build file (`.aux`, `.toc`) is the run's own output read back:
+        // what it declares or misreads the document's calls did first.
+        self.files.get(usize::from(file)).is_some_and(|f| {
+            crate::paths::within(&dir, Path::new(&f.path)) && !self.settings.load.is_build_file(&f.path)
+        })
+    }
+}
+
+impl Analysis {
     /// Macros whose expansion was seen to reach themselves, and, for macros
     /// the run never expanded, the cycles their replacement texts name.
     pub fn recursion(&self) -> Vec<Recursion> {
@@ -2253,7 +2269,7 @@ impl<'a> Machine<'a> {
     /// say it expects loaded (`load.expect_detect`), kept when that run
     /// defines more of them.
     pub fn analyze(source: &str, path: Option<&Path>, cfg: &'a Config) -> Analysis {
-        let first = Machine::analyze_once(source, path, cfg);
+        let first = Machine::analyze_build(source, path, cfg);
         let own = matches!(
             crate::config::Profile::of_name(path, source),
             Some(crate::config::Profile::Package | crate::config::Profile::Class)
@@ -2312,6 +2328,107 @@ impl<'a> Machine<'a> {
         first
     }
 
+    /// The build as latexmk runs it (challenge 11): runs of the document
+    /// until the files it reads back (`.aux`, `.toc`, ...) are what the run
+    /// before wrote. The files live in the overlay, never on disk. A run
+    /// resumes from the last checkpoint before the first read of a file
+    /// that changed. Past `limits.build_runs` the files that still change
+    /// are read as unknown text.
+    pub fn analyze_build(source: &str, path: Option<&Path>, cfg: &'a Config) -> Analysis {
+        let runs = u32::from(cfg.limits.build_runs);
+        let Some(path) = path.filter(|_| runs > 1) else { return Machine::analyze_once(source, path, cfg) };
+        let base = Machine::base_of(Some(path));
+        let mut checkpoints = checkpoint::Checkpoints::new(cfg);
+        let mut placed: Vec<PathBuf> = Vec::new();
+        let mut run = 1;
+        // `limits.seconds` bounds the build, not each run: a run starts only
+        // while the time left would let one more as long as the last finish.
+        let started = std::time::Instant::now();
+        let budget = std::time::Duration::from_secs(cfg.limits.seconds);
+        // Later runs replay the caches the first stored: the build reports the first.
+        let mut caches = None;
+        let mut analysis = loop {
+            let before = started.elapsed();
+            let mut analysis = checkpoints.analyze(source, path);
+            analysis.build_runs = run;
+            caches.get_or_insert_with(|| (analysis.package_caches.clone(), analysis.format.clone()));
+            let took = started.elapsed() - before;
+            if cfg.limits.seconds > 0 && started.elapsed() + took > budget {
+                break analysis;
+            }
+            // What this run read that a build file defines: the keys it
+            // referenced (`\ref` tests `\r@⟨key⟩`) and the macros it expanded
+            // (`\@abspage@last` at each shipout). A changed line naming none
+            // of them changes nothing the run depends on.
+            let referenced: crate::fixed::HashSet<String> = analysis
+                .facts
+                .occurrences
+                .iter()
+                .filter(|o| matches!(o.kind, OccKind::Ref | OccKind::Cite | OccKind::KeyUse))
+                .map(|o| format!("{{{}}}", o.key))
+                .collect();
+            let expanded: crate::fixed::HashSet<&str> =
+                analysis.facts.expansions.iter().map(|e| analysis.interner.name(e.name)).collect();
+            let reads = |line: &str| {
+                referenced.iter().any(|key| line.contains(key.as_str()))
+                    || line.split('\\').skip(1).any(|cs| {
+                        let end = cs.find(|c: char| !(c.is_ascii_alphabetic() || c == '@')).unwrap_or(cs.len());
+                        end > 0 && expanded.contains(&cs[..end])
+                    })
+            };
+            let matters = |old: &str, new: &str| {
+                let (old, new): (crate::fixed::HashSet<&str>, crate::fixed::HashSet<&str>) =
+                    (old.lines().collect(), new.lines().collect());
+                old.symmetric_difference(&new).any(|line| reads(line))
+            };
+            // The build's files this run left other than it read them; the
+            // last run reads those as unknown text, so it ends there.
+            let changed: Vec<(PathBuf, String)> = analysis
+                .written
+                .iter()
+                .filter(|(name, _)| cfg.load.is_build_file(name))
+                .filter_map(|(name, text)| {
+                    let at = base.join(name);
+                    // The run's own copy only: one on disk is an engine's.
+                    let now = crate::overlay::text(&at);
+                    // A file not there yet is an empty one.
+                    if let Some(new) = text
+                        && !matters(now.as_deref().unwrap_or_default(), new)
+                    {
+                        return None;
+                    }
+                    // The next run is the last when `run + 1 == runs`: it
+                    // reads what still changed as unknown text, a widening.
+                    let text = match text {
+                        Some(t) if run + 1 < runs => t.clone(),
+                        _ => crate::tex::UNKNOWN_ANY.to_string(),
+                    };
+                    (now.as_deref() != Some(text.as_str())).then_some((at, text))
+                })
+                .collect();
+            if changed.is_empty() || run == runs {
+                break analysis;
+            }
+            for (at, text) in changed {
+                crate::overlay::set(&at, text);
+                placed.push(at);
+            }
+            run += 1;
+        };
+        placed.iter().for_each(|p| crate::overlay::remove(p));
+        (analysis.package_caches, analysis.format) = caches.unwrap_or_default();
+        analysis
+    }
+
+    /// The directory a run of the file at `path` reads from. `-f doc.tex`
+    /// has an empty parent, not a missing one, so the filter is what keeps
+    /// a bare name rooted at the working directory.
+    fn base_of(path: Option<&Path>) -> PathBuf {
+        path.and_then(|p| p.parent().map(Path::to_path_buf))
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+    }
+
     pub fn analyze_once(source: &str, path: Option<&Path>, cfg: &'a Config) -> Analysis {
         // Memory is counted per run, apart from runs beside it in the process.
         let (_run, _entered) = crate::budget::Run::start();
@@ -2323,13 +2440,7 @@ impl<'a> Machine<'a> {
     /// A run of `source` set up to read it: the format installed, the
     /// file's frame pushed, `\everyjob` run.
     fn begin(source: &str, path: Option<&Path>, cfg: &'a Config) -> (Self, FileId) {
-        // `-f doc.tex` has an empty parent, not a missing one, so the
-        // filter is what keeps a bare name rooted at the working directory.
-        let base = path
-            .and_then(|p| p.parent().map(Path::to_path_buf))
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-        let mut m = Machine::new(cfg, base);
+        let mut m = Machine::new(cfg, Machine::base_of(path));
         let engine = m.out.plugins.engine;
         // A `.dtx` is documentation with code in it; docstrip decides which
         // is which. satex interprets the code, line for line where it
@@ -5693,12 +5804,7 @@ will look undefined",
     /// Whether `file` is the document's own: the main file, or one beside
     /// it or below its directory.
     pub fn project_file(&self, file: FileId) -> bool {
-        if file == self.out.main_file {
-            return true;
-        }
-        let main = self.out.files.get(usize::from(self.out.main_file)).map(|f| f.path.as_str()).unwrap_or_default();
-        let dir = crate::paths::dir_of(Path::new(main));
-        self.out.files.get(usize::from(file)).is_some_and(|f| crate::paths::within(&dir, Path::new(&f.path)))
+        self.out.project_file(file)
     }
 
     /// [`Machine::project_file`], asked once per file.

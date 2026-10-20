@@ -33,8 +33,8 @@ pub struct Resolver {
     unpacked: std::collections::BTreeMap<String, (PathBuf, Vec<String>)>,
     /// Case mismatches found: (asked_name, found_name on disk) for each lookup.
     case_mismatches: RefCell<HashMap<(String, LoadKind), (String, String)>>,
-    /// Extensions of files an earlier build wrote, which count as absent.
-    hidden: Vec<String>,
+    /// Files an earlier build wrote count as absent (`load.build_files` off).
+    hidden: Option<crate::config::Load>,
 }
 
 impl Resolver {
@@ -47,7 +47,7 @@ impl Resolver {
             cache: HashMap::default(),
             unpacked: Default::default(),
             case_mismatches: RefCell::new(HashMap::default()),
-            hidden: Vec::new(),
+            hidden: None,
         }
     }
 
@@ -60,7 +60,7 @@ impl Resolver {
         let mut request = cfg.distribution_request();
         request.kpse_env = crate::paths::env_vars(&kpse);
         let output = crate::paths::output_dir(project, &cfg.paths.output_directory, &project.root).map(|o| o.dir);
-        let hidden = if cfg.load.build_files { Vec::new() } else { cfg.load.build_extensions.clone() };
+        let hidden = (!cfg.load.build_files).then(|| cfg.load.clone());
         Self::new(search, request).with_output(output).with_unpacked(project.unpacked()).with_hidden(hidden)
     }
 
@@ -70,14 +70,13 @@ impl Resolver {
         self
     }
 
-    /// Files with these extensions are not found (`load.build_files` off).
-    pub fn with_hidden(mut self, extensions: Vec<String>) -> Self {
-        self.hidden = extensions;
+    pub fn with_hidden(mut self, load: Option<crate::config::Load>) -> Self {
+        self.hidden = load;
         self
     }
 
     fn hidden(&self, file: &str) -> bool {
-        self.hidden.iter().any(|ext| file.strip_suffix(ext.as_str()).is_some_and(|stem| stem.ends_with('.')))
+        self.hidden.as_ref().is_some_and(|load| load.is_build_file(file))
     }
 
     pub fn with_unpacked(mut self, unpacked: std::collections::BTreeMap<String, (PathBuf, Vec<String>)>) -> Self {
@@ -124,12 +123,20 @@ impl Resolver {
 
     /// Look a name up afresh, bypassing what earlier lookups found.
     pub(crate) fn search_uncached(&self, name: &str, kind: LoadKind, base: &Path) -> Option<PathBuf> {
-        let candidates: Vec<String> = candidates(name, kind).into_iter().filter(|file| !self.hidden(file)).collect();
+        let candidates = candidates(name, kind);
         for file in &candidates {
             let output = self.output.as_deref().filter(|_| !Path::new(file).is_absolute());
             for directory in
                 output.into_iter().chain(std::iter::once(base)).chain(self.local.iter().map(PathBuf::as_path))
             {
+                // A file of the build is the run's own (the overlay), never
+                // one an earlier engine run left on disk.
+                let at = directory.join(file);
+                if self.hidden(file) && !crate::overlay::holds(&at) {
+                    // Looked for all the same: a later run that has it reads again from here.
+                    crate::overlay::probed_own(&at);
+                    continue;
+                }
                 if let Some(path) = exact_file(directory, file, HOST) {
                     return Some(path);
                 }
@@ -170,7 +177,7 @@ pub(crate) const FOLDING: Fs = Fs { folding: true };
 impl Fs {
     fn is_file(self, path: &Path) -> bool {
         crate::overlay::probed(path);
-        path.is_file() || (self.folding && folded_file(path))
+        crate::overlay::holds(path) || path.is_file() || (self.folding && folded_file(path))
     }
 }
 
@@ -252,6 +259,10 @@ fn exact_file(dir: &Path, rel: &str, fs: Fs) -> Option<PathBuf> {
     let path = dir.join(rel);
     if !fs.is_file(&path) {
         return None;
+    }
+    // A file of the overlay is spelled as it was placed there.
+    if crate::overlay::holds(&path) {
+        return Some(path);
     }
     let mut at = dir.to_path_buf();
     let mut rooted = false;

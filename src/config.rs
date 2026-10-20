@@ -67,6 +67,10 @@ pub struct Limits {
     /// How many rounds a loop head analyzes its paths again from a grown
     /// joined state before what still grows is widened (SEMANTICS § 14).
     pub widen_after: u16,
+    /// How many runs of the build (latexmk's rounds) the analysis takes to
+    /// reach the files' fixpoint; past them what still changes is unknown.
+    /// 1 runs once, with no file of an earlier run.
+    pub build_runs: u16,
     /// How many levels deep a recursion whose continuation is undecided is
     /// followed before it is assumed to end within them.
     pub recursion_depth: u16,
@@ -232,6 +236,7 @@ impl Default for Limits {
             heads_apart: 32,
             meaning_splits: 4,
             widen_after: 3,
+            build_runs: 5,
             recursion_depth: 100,
             loop_heads: 512,
             call_summary_after: 2,
@@ -580,6 +585,13 @@ pub struct Load {
     /// them by what it writes itself.
     pub build_files: bool,
     pub build_extensions: Vec<String>,
+}
+
+impl Load {
+    /// Whether `name` is a file a build writes (`build_extensions`).
+    pub fn is_build_file(&self, name: &str) -> bool {
+        self.build_extensions.iter().any(|e| name.strip_suffix(e.as_str()).is_some_and(|stem| stem.ends_with('.')))
+    }
 }
 
 impl Default for Load {

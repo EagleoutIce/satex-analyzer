@@ -3214,3 +3214,36 @@ fn char_generate_of_an_unknown_code_closes_its_csname() {
         analysis.facts.diagnostics.iter().filter(|d| d.message.contains("has no \\endcsname")).collect();
     assert!(stopped.is_empty(), "{:?}", stopped.iter().map(|d| &d.message).collect::<Vec<_>>());
 }
+
+/// The build's runs (challenge 11): a run writes its own `.aux`, and the
+/// next reads it back, so a reference finds its label. A run that read
+/// nothing a changed line defines needs no second one.
+#[test]
+fn the_build_reruns_only_for_what_it_read() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-build-runs-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |name: &str, source: &str| {
+        let path = dir.join(name);
+        std::fs::write(&path, source).unwrap();
+        Machine::analyze(source, Some(&path), &crate::support::config())
+    };
+    let referenced = run(
+        "ref.tex",
+        "\\documentclass{article}\\begin{document}\\ref{s}\\makeatletter\\@ifundefined{r@s}{\\gdef\\U{}}{\\gdef\\D{}}\\makeatother\\section{S}\\label{s}\\end{document}\n",
+    );
+    assert_eq!(referenced.build_runs, 2);
+    assert!(defined(&referenced, "D") && !defined(&referenced, "U"));
+    // A `.lof` line defining a macro: read back, it matters only where the
+    // run expanded that macro.
+    let lof = |used: &str| {
+        format!(
+            "\\def\\Seen{{0}}\\immediate\\openout1=\\jobname.lof \\write1{{\\string\\gdef\\string\\{used}{{1}}}}\\openin2=\\jobname.lof \\ifeof2 \\else\\closein2 \\input\\jobname.lof \\fi\\edef\\X{{\\Seen}}\n"
+        )
+    };
+    assert_eq!(run("seen.tex", &lof("Seen")).build_runs, 2);
+    assert_eq!(run("unseen.tex", &lof("Unseen")).build_runs, 1);
+    std::fs::remove_dir_all(dir).ok();
+}
