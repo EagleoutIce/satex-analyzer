@@ -1647,7 +1647,8 @@ impl Machine<'_> {
                             ea = ta;
                             ea_x = ta_x.clone();
                         } else {
-                            let sign = if sub { -1 } else { 1 };
+                            // The plain `+` or `-` of two exact values; `None` past an `i64`.
+                            let op = |a: i64, b: i64| if sub { a.checked_sub(b) } else { a.checked_add(b) };
                             // `x + c1 - round((x + c)/d)*d` is `c1 - c` plus
                             // the remainder `r` of rounding `y = x + c`.
                             let bound = match (ef, tf) {
@@ -1658,8 +1659,10 @@ impl Machine<'_> {
                                 _ => None,
                             };
                             ef = match (ef, tf, exact(&ea), exact(&ta)) {
-                                (Form::Lin(x, c), _, _, Some(k)) => Form::Lin(x, c + sign * k),
-                                (_, Form::Lin(x, c), Some(k), _) if !sub => Form::Lin(x, c + k),
+                                (Form::Lin(x, c), _, _, Some(k)) => op(c, k).map_or(Form::None, |c| Form::Lin(x, c)),
+                                (_, Form::Lin(x, c), Some(k), _) if !sub => {
+                                    op(c, k).map_or(Form::None, |c| Form::Lin(x, c))
+                                }
                                 _ => Form::None,
                             };
                             let max = if lv == 0 { INFINITY } else { MAX_DIMEN };
@@ -1671,7 +1674,7 @@ impl Machine<'_> {
                                 (-max, max),
                                 false,
                                 |v| add_or_sub(v[0], v[1], max, sub),
-                                |v| Some(if sub { v[0] - v[1] } else { v[0] + v[1] }),
+                                |v| op(v[0], v[1]),
                                 &mut err,
                             );
                             if let Some((lo, hi)) = bound
