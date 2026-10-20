@@ -34,7 +34,7 @@ pub(crate) struct CallRec {
     unknown: bool,
     /// Where the list below the call's text stood: a run ends cleanly
     /// only on that list as the call left it.
-    below: Option<(usize, usize)>,
+    below: Option<FrameMark>,
 }
 
 /// One recorded run: the names it wrote, as it left them, and the names
@@ -45,17 +45,38 @@ struct Run {
     reads: Vec<Sym>,
 }
 
-/// Where a list stands: its text and position, or a file's place.
-fn frame_mark(frame: &super::Frame) -> (usize, usize) {
+/// Where a list stands: its text (held, so its place is never another
+/// list's) and position, the tokens given back, or a file's place.
+#[derive(Clone)]
+enum FrameMark {
+    Tokens(Rc<[Token]>, usize),
+    Returned(Vec<Token>),
+    At(Span),
+    Other,
+}
+
+impl PartialEq for FrameMark {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Tokens(a, p), Self::Tokens(b, q)) => Rc::ptr_eq(a, b) && p == q,
+            (Self::Returned(a), Self::Returned(b)) => {
+                a.iter().map(|t| (t.tok, t.span)).eq(b.iter().map(|t| (t.tok, t.span)))
+            }
+            (Self::At(a), Self::At(b)) => a == b,
+            (Self::Other, Self::Other) => true,
+            _ => false,
+        }
+    }
+}
+
+fn frame_mark(frame: &super::Frame) -> FrameMark {
     use super::Frame;
     match frame {
-        Frame::Tokens { toks, pos, .. } => (toks.as_ptr() as usize, *pos),
-        Frame::Returned(tokens) => (tokens.as_ptr() as usize, tokens.len()),
-        Frame::File { mouth, .. } => {
-            (mouth.here().file as usize, (mouth.here().line as usize) << 20 | mouth.here().col as usize)
-        }
-        Frame::Pseudo { pos, at, .. } => (at.line as usize, *pos),
-        Frame::Boundary => (0, 0),
+        Frame::Tokens { toks, pos, .. } => FrameMark::Tokens(toks.clone(), *pos),
+        Frame::Returned(tokens) => FrameMark::Returned(tokens.clone()),
+        Frame::File { mouth, .. } => FrameMark::At(mouth.here()),
+        Frame::Pseudo { pos, at, .. } => FrameMark::At(Span::new(at.file, at.line, *pos as u32)),
+        Frame::Boundary => FrameMark::Other,
     }
 }
 
