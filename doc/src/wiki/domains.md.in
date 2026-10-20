@@ -595,6 +595,7 @@ An arm allows it unless `\ifx` would tell the two apart: a text with unknown par
 A name written after the join leaves the pairing. A per-slot write count tells which.
 A path from a join of paired paths keeps their arms. Past `limits.join_arms` arms the name with the most distinct bindings leaves the pairing first, so few-valued pairings stay.
 A loop head whose state came from such a join counts a pass as covered only when every arm of the pass lies within one arm of the head.
+A loop summary's widened join keeps the pairing too, for the names the widening left as their join: the paths through pgfmath's number loop then keep the operation stack paired with its top. Widened loop heads do not: a pass would then count as covered only within one arm, and loops that write a family per pass would not meet.
 The arms only remove combinations no arm had, so the join stays an over-approximation.
 
 ### Stacks as intervals

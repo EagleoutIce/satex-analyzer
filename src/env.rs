@@ -1455,9 +1455,10 @@ impl Env {
     /// groups. A name they left with different meanings has one of them.
     /// `after[i]` is the `\aftergroup` tokens of group `i` where they differ
     /// (tex.web § 326). With `widen`, a slot that grows holds anything of its
-    /// kind. Also returns the names the bound holds more of than `a`, and
-    /// whether its waiting tokens grew. The bindings are left as `fork` saw
-    /// them.
+    /// kind. With `paired`, the arms stay paired ([`Corr`]) in the names
+    /// the widening left as their join. Also returns the names the bound
+    /// holds more of than `a`, and whether its waiting tokens grew. The
+    /// bindings are left as `fork` saw them.
     pub fn join_paths(
         &mut self,
         fork: &Fork,
@@ -1465,6 +1466,7 @@ impl Env {
         b: &PathEnv,
         typed: &Typed,
         widen: bool,
+        paired: bool,
         after: &[Option<Vec<Token>>],
     ) -> (PathEnv, Vec<Sym>, bool) {
         self.rewind(fork);
@@ -1474,24 +1476,32 @@ impl Env {
         let mut grown = Vec::new();
         // `a`'s map, shared where the join keeps its binding.
         let mut slots = a.slots.clone();
-        let mut apart = Vec::new();
+        let (mut apart, mut lost) = (Vec::new(), Vec::new());
         for sym in touched {
             self.grow(Sym(sym));
             let i = sym as usize;
             let side =
                 |p: &PathEnv| p.slots.get(&sym).map_or_else(|| (self.slots[i].clone(), self.level[i]), Clone::clone);
             let ((old, x), (new, y)) = (side(a), side(b));
-            if !widen && !identical(&old, &new) {
-                apart.push(sym);
-            }
+            let differ = !identical(&old, &new);
             // A group end puts back what either path saved (tex.web § 283
             // keeps only what both made global).
             let level = x.max(y);
             let joined = join(old.clone(), new, self.sets, Some(typed));
             let joined = match widen {
-                true => widen_slot(&old, joined, self.sets, typed),
+                true => {
+                    let widened = widen_slot(&old, joined.clone(), self.sets, typed);
+                    // Arms stay paired in what the widening left as the join.
+                    if !identical(&joined, &widened) {
+                        lost.push(sym);
+                    }
+                    widened
+                }
                 false => joined,
             };
+            if differ {
+                apart.push(sym);
+            }
             if !same_slot(&old, &joined) {
                 grown.push(Sym(sym));
             }
@@ -1516,14 +1526,14 @@ impl Env {
         }
         let low = a.low.min(b.low);
         let journal = self.join_journals(fork, a, b, low, &mut marks);
-        let corr = (!widen).then(|| self.correlated(apart, a, b)).flatten();
+        let corr = paired.then(|| self.correlated(apart, a, b, &lost)).flatten();
         (PathEnv { slots, journal, marks: Rc::new(marks), low, corr }, grown, waiting)
     }
 
     /// The arms of a join of `a` and `b` that differ in `apart`, each
     /// path's own arms if it came from a join: `None` past `sets.meanings`
     /// arms, or when fewer than two names differ.
-    fn correlated(&self, mut apart: Vec<u32>, a: &PathEnv, b: &PathEnv) -> Option<Rc<Corr>> {
+    fn correlated(&self, mut apart: Vec<u32>, a: &PathEnv, b: &PathEnv, lost: &[u32]) -> Option<Rc<Corr>> {
         for c in [&a.corr, &b.corr].into_iter().flatten() {
             for &sym in &c.syms {
                 if !apart.contains(&sym) {
@@ -1531,6 +1541,7 @@ impl Env {
                 }
             }
         }
+        apart.retain(|sym| !lost.contains(sym));
         if apart.len() < 2 {
             return None;
         }
