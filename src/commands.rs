@@ -275,45 +275,43 @@ impl Machine<'_> {
         }
     }
 
-    /// A ⟨general text⟩, expanded as an `\edef` body is (tex.web § 473, `scan_toks(false, true)`).
     /// tex.web §§ 1101, 1012-1014: a mark the page builder or `\vsplit`
     /// hands back is a copy of one put on a list, or empty: one of the
     /// texts of its class so far.
     fn note_mark(&mut self, class: Option<i64>, text: Vec<Token>, span: Span) {
-        let key = match class {
-            Some(n) => format!("\u{4}marks.{n}"),
-            None => "\u{4}marks.any".to_string(),
-        };
-        let sym = self.intern(&key);
+        let sym = self.marks_sym(class);
         let mut texts: Vec<Rc<[Token]>> = vec![Rc::from(Vec::new()), Rc::from(text)];
         if let Some(Meaning::Macro(m)) = self.env.slot(sym).map(|b| b.meaning.clone()) {
             texts.push(m.replacement_text.clone());
         }
         let token = self.one_of(texts, span);
-        let def = crate::tex::MacroDef {
-            parameter_text: Default::default(),
-            arg_spec: None,
-            replacement_text: Rc::from(vec![token]),
-            long: false,
-            outer: false,
-            protected: false,
-        };
-        self.env.set(sym, crate::env::Binding::builtin(Meaning::Macro(Rc::new(def))), true);
+        let meaning = self.make_macro(Default::default(), vec![token]);
+        self.env.set(sym, crate::env::Binding::builtin(meaning), true);
     }
 
     /// The text a mark of `class` reads: empty before any is put.
     fn marks_of(&mut self, class: Option<i64>, span: Span) -> Vec<Token> {
-        let any = self.intern("\u{4}marks.any");
-        let Some(n) = class.filter(|_| self.env.slot(any).is_none()) else {
+        let any = self.marks_sym(None);
+        if class.is_none() || self.env.slot(any).is_some() {
             return vec![self.unknown_text(Unk::Any, span)];
-        };
-        let sym = self.intern(&format!("\u{4}marks.{n}"));
+        }
+        let sym = self.marks_sym(class);
         match self.env.slot(sym).map(|b| b.meaning.clone()) {
             Some(Meaning::Macro(m)) => m.replacement_text.to_vec(),
             _ => Vec::new(),
         }
     }
 
+    /// Where the texts of mark class `class` are kept; `None`, a class not
+    /// known, which every class may then hold.
+    fn marks_sym(&mut self, class: Option<i64>) -> Sym {
+        match class {
+            Some(n) => self.intern(&format!("\u{4}marks.{n}")),
+            None => self.intern("\u{4}marks.any"),
+        }
+    }
+
+    /// A ⟨general text⟩, expanded as an `\edef` body is (tex.web § 473, `scan_toks(false, true)`).
     fn expanded_general_text(&mut self) -> Vec<Token> {
         let body = self.read_general_text();
         self.expand_tokens(Rc::from(body))

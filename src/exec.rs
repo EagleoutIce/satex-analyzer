@@ -1655,9 +1655,9 @@ impl Machine<'_> {
             && num.hi.saturating_sub(num.lo) < i64::from(self.limits.meaning_set)
             && !self.loop_capped(site, sym)
         {
-            let values: Vec<i64> = (num.lo..=num.hi).collect();
-            if self.split(sym, t.span, values.len(), |m, arm| {
-                let v = values[arm];
+            let count = usize::try_from(num.hi - num.lo + 1).unwrap_or(0);
+            if self.split(sym, t.span, count, |m, arm| {
+                let v = num.lo + arm as i64;
                 m.refine_value(sym, crate::value::Value::from_num(crate::value::Quantity::Int, Num::exact(v)));
                 let digits = m.text_tokens(&v.to_string(), t.span);
                 m.unread_all(&digits);
@@ -2998,25 +2998,25 @@ impl Machine<'_> {
             // (§ 1009), and the total no more than what reached the list
             // since the last page.
             Owned::PageSoFar { .. } => {
-                let dimen = |lo: i64, hi: i64| Value::Num {
-                    quantity: crate::value::Quantity::Dimen,
-                    num: crate::value::Num::range(lo, hi),
-                };
+                use crate::mode::Dim;
                 let v = self.dimen_parameter("vsize").known()?;
                 let built = self.engine_slot_int("page", "page.built") == Some(1);
                 let inserts = self.engine_slot_int("page", "page.inserts") != Some(0);
                 match self.name(named) {
-                    "pagegoal" => {
-                        let lo = if inserts { -crate::value::MAX_DIMEN } else { v };
-                        // Not yet built: still the empty page's.
-                        let hi = if built { v } else { crate::value::MAX_DIMEN };
-                        Some(if lo == hi { Value::Dimen(v) } else { dimen(lo, hi) })
-                    }
+                    // An unknown flag reads as not built and as inserted:
+                    // each only widens the goal toward what it may be.
+                    "pagegoal" => Some(
+                        Dim::range(
+                            if inserts { -crate::value::MAX_DIMEN } else { v },
+                            if built { v } else { crate::value::MAX_DIMEN },
+                        )
+                        .value(),
+                    ),
                     // At most the length: it leaves out the last depth, the
                     // glue the page discarded and what waits to be added.
                     "pagetotal" => {
                         let l = self.page_length();
-                        (!l.is_any()).then(|| if l.hi <= 0 { Value::Dimen(0) } else { dimen(0, l.hi) })
+                        (!l.is_any()).then(|| Dim::range(0, l.hi.max(0)).value())
                     }
                     _ => None,
                 }

@@ -1479,13 +1479,8 @@ impl Machine<'_> {
         };
         // §§ 1096, 987: a paragraph that holds something adds its lines to
         // the main vertical list, and the page builder takes them.
-        if only
-            && to == Modes::VERTICAL
-            && !self.output_active
-            && !matches!(n.tail[0], Last::Empty)
-            && n.tail[0] != Last::UNKNOWN
-        {
-            self.set_engine("page.built", Value::Int(1), true);
+        if only && to == Modes::VERTICAL && !matches!(n.tail[0], Last::Empty) && n.tail[0] != Last::UNKNOWN {
+            self.freeze_page();
         }
         // tex.web § 889: each line is a box of the line width, so the
         // vertical list is at least that wide.  A paragraph that may hold
@@ -3221,12 +3216,20 @@ impl Machine<'_> {
     /// mode says it certainly went into a box of its own (tex.web § 1000).
     /// Past this point the page dimensions are the page builder's, not read
     /// as an empty page's, since satex does not run the page builder.
+    /// §§ 987, 1000: material on the page freezes its goal; an output
+    /// routine's list is not the page.
+    fn freeze_page(&mut self) {
+        if !self.output_active {
+            self.set_engine("page.built", Value::Int(1), true);
+        }
+    }
+
     pub(crate) fn touch_page(&mut self) {
         if self.mode.test(Modes::INNER) != Some(true) {
             // §§ 987, 1076: a box certainly on the main vertical list goes
             // to the page, which freezes its dimensions.
-            if self.mode == Modes::VERTICAL && !self.output_active {
-                self.set_engine("page.built", Value::Int(1), true);
+            if self.mode == Modes::VERTICAL {
+                self.freeze_page();
             }
             self.page_touched = true;
             self.page_grew = true;
