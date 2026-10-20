@@ -214,6 +214,7 @@ fn tcolorbox_of_unknown_height_keeps_its_anchors_local() {
 
 fixtures! {
     tikz_bent_path_on_background_layer("tikz_bend_pingus", "mwe.tex");
+    tikz_bend_to_a_point_of_unknown_width_closes_the_picture("tikz_bend_unknown_width", "main.tex");
     notecolumn_slnc_on_master_thesis_title_page("notecolumn_slnc_ma", "mwe.tex", "mwe.slnc");
     notecolumn_slnc_at_cleardoublepage_koma("notecolumn_slnc_koma", "mwe.tex", "mwe.slnc");
     input_path_extended_with_etoolbox_appto("input_path_appto", "main.tex");
@@ -553,4 +554,24 @@ fn a_short_breakable_tcolorbox_ends_cleanly() {
 #[test]
 fn a_node_of_unknown_minimum_height_parses_its_other_lengths() {
     check("tikz_node_unknown_minimum_height", "main.tex", &[]);
+}
+
+/// pgfmath parses a result of unknown width again: no false error.
+#[test]
+fn reparsing_a_pgfmath_result_of_unknown_width_raises_nothing() {
+    check("pgfmath_reparse_unknown_width", "main.tex", &[]);
+}
+
+/// A float after the thesis title page: the output routine stays bounded.
+#[test]
+fn a_float_after_the_title_page_stays_bounded() {
+    check("thesis_notebook_a4", "float_after_title.tex", &[]);
+}
+
+/// expl3's map depth counter in an interval: each value names the map
+/// function TeX would define and call, so the one item stays known.
+#[test]
+fn a_map_at_an_unknown_depth_keeps_its_items() {
+    let Some(a) = check("expl3_map_unknown_depth", "main.tex", &[]) else { return };
+    assert!(crate::support::defined(&a, "X"), "the map body never ran");
 }

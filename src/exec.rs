@@ -497,7 +497,8 @@ impl Machine<'_> {
             // § 1060, § 1103); `\mkern` and `\mskip` in math units.
             P::Typeset(crate::builtins::Typeset::Number) => {
                 let penalty = self.scan_number();
-                let before = self.main_tail;
+                // The item before it, where the list's tail is followed.
+                let before = self.natural.map_or(crate::mode::Last::UNKNOWN, |n| n.tail[0]);
                 self.append_item(crate::mode::Item::Penalty(penalty));
                 // tex.web §§ 1005, 1012: a forced break on the main vertical
                 // list ejects the page, which is then empty.
@@ -1646,6 +1647,24 @@ impl Machine<'_> {
         // again, the token would meet the joined meaning once more.
         if matches!(self.env.meaning(sym), Meaning::Unknown) {
             self.split_meaning(sym, t.span);
+        }
+        // tex.web § 372: the name is spelled from the number's digits. A
+        // number in a small interval is each of its values on a path of its
+        // own, so each path builds the one name TeX builds.
+        if let Some(num) = self.typed_digits_of(sym)
+            && num.hi.saturating_sub(num.lo) < i64::from(self.limits.meaning_set)
+            && !self.loop_capped(site, sym)
+        {
+            let values: Vec<i64> = (num.lo..=num.hi).collect();
+            if self.split(sym, t.span, values.len(), |m, arm| {
+                let v = values[arm];
+                m.refine_value(sym, crate::value::Value::from_num(crate::value::Quantity::Int, Num::exact(v)));
+                let digits = m.text_tokens(&v.to_string(), t.span);
+                m.unread_all(&digits);
+                true
+            }) {
+                return false;
+            }
         }
         // Unknown text of characters only (typed, no control sequence) is
         // part of the name, as unknown digits are.
@@ -2973,9 +2992,35 @@ impl Machine<'_> {
             },
             // tex.web § 986: while the page is empty the page builder has
             // not frozen its dimensions, so the read is the empty page's
-            // whatever was assigned.  Once something has reached the page
-            // satex cannot follow the page builder.
-            Owned::PageSoFar { empty } => self.page_empty().then_some(Value::Dimen(empty)),
+            // whatever was assigned.
+            Owned::PageSoFar { empty } if self.page_empty() => Some(Value::Dimen(empty)),
+            // § 987: then the goal is `\vsize`, less what inserts took
+            // (§ 1009), and the total no more than what reached the list
+            // since the last page.
+            Owned::PageSoFar { .. } => {
+                let dimen = |lo: i64, hi: i64| Value::Num {
+                    quantity: crate::value::Quantity::Dimen,
+                    num: crate::value::Num::range(lo, hi),
+                };
+                let v = self.dimen_parameter("vsize").known()?;
+                let built = self.engine_slot_int("page", "page.built") == Some(1);
+                let inserts = self.engine_slot_int("page", "page.inserts") != Some(0);
+                match self.name(named) {
+                    "pagegoal" => {
+                        let lo = if inserts { -crate::value::MAX_DIMEN } else { v };
+                        // Not yet built: still the empty page's.
+                        let hi = if built { v } else { crate::value::MAX_DIMEN };
+                        Some(if lo == hi { Value::Dimen(v) } else { dimen(lo, hi) })
+                    }
+                    // At most the length: it leaves out the last depth, the
+                    // glue the page discarded and what waits to be added.
+                    "pagetotal" => {
+                        let l = self.page_length();
+                        (!l.is_any()).then(|| if l.hi <= 0 { Value::Dimen(0) } else { dimen(0, l.hi) })
+                    }
+                    _ => None,
+                }
+            }
         }
     }
 

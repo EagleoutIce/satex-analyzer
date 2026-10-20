@@ -276,6 +276,44 @@ impl Machine<'_> {
     }
 
     /// A ⟨general text⟩, expanded as an `\edef` body is (tex.web § 473, `scan_toks(false, true)`).
+    /// tex.web §§ 1101, 1012-1014: a mark the page builder or `\vsplit`
+    /// hands back is a copy of one put on a list, or empty: one of the
+    /// texts of its class so far.
+    fn note_mark(&mut self, class: Option<i64>, text: Vec<Token>, span: Span) {
+        let key = match class {
+            Some(n) => format!("\u{4}marks.{n}"),
+            None => "\u{4}marks.any".to_string(),
+        };
+        let sym = self.intern(&key);
+        let mut texts: Vec<Rc<[Token]>> = vec![Rc::from(Vec::new()), Rc::from(text)];
+        if let Some(Meaning::Macro(m)) = self.env.slot(sym).map(|b| b.meaning.clone()) {
+            texts.push(m.replacement_text.clone());
+        }
+        let token = self.one_of(texts, span);
+        let def = crate::tex::MacroDef {
+            parameter_text: Default::default(),
+            arg_spec: None,
+            replacement_text: Rc::from(vec![token]),
+            long: false,
+            outer: false,
+            protected: false,
+        };
+        self.env.set(sym, crate::env::Binding::builtin(Meaning::Macro(Rc::new(def))), true);
+    }
+
+    /// The text a mark of `class` reads: empty before any is put.
+    fn marks_of(&mut self, class: Option<i64>, span: Span) -> Vec<Token> {
+        let any = self.intern("\u{4}marks.any");
+        let Some(n) = class.filter(|_| self.env.slot(any).is_none()) else {
+            return vec![self.unknown_text(Unk::Any, span)];
+        };
+        let sym = self.intern(&format!("\u{4}marks.{n}"));
+        match self.env.slot(sym).map(|b| b.meaning.clone()) {
+            Some(Meaning::Macro(m)) => m.replacement_text.to_vec(),
+            _ => Vec::new(),
+        }
+    }
+
     fn expanded_general_text(&mut self) -> Vec<Token> {
         let body = self.read_general_text();
         self.expand_tokens(Rc::from(body))
@@ -1515,6 +1553,10 @@ impl Machine<'_> {
                 let sym = self.intern("interactionmode");
                 self.env.set_value(sym, Value::Int(mode.into()), true);
             }
+            Syntax::GeneralText if self.name(self.env.identity(by)) == "mark" => {
+                let text = self.expanded_general_text();
+                self.note_mark(Some(0), text, span);
+            }
             Syntax::GeneralText => {
                 let text = self.read_general_text();
                 let name = self.name(by);
@@ -1523,9 +1565,11 @@ impl Machine<'_> {
                     self.store_hyphenation(patterns, &text);
                 }
             }
+            // `\marks`, the only command of this syntax.
             Syntax::NumberText => {
-                self.scan_int();
-                self.read_general_text();
+                let class = self.scan_int();
+                let text = self.expanded_general_text();
+                self.note_mark(class, text, span);
             }
             Syntax::FontText => {
                 self.scan_font_ident();
@@ -2152,7 +2196,12 @@ impl Machine<'_> {
                     _ => None,
                 }
             }
-            C::PageRef | C::XFormName | C::InsertHt | C::MarginKern | C::Marks => {
+            C::Marks => {
+                let class = self.scan_int();
+                return self.marks_of(class, span);
+            }
+            C::Mark => return self.marks_of(Some(0), span),
+            C::PageRef | C::XFormName | C::InsertHt | C::MarginKern => {
                 self.scan_int();
                 None
             }
@@ -2162,7 +2211,7 @@ impl Machine<'_> {
                 None
             }
             C::CreationDate => return self.creation_date(span),
-            C::NormalDeviate | C::PdftexBanner | C::Mark => None,
+            C::NormalDeviate | C::PdftexBanner => None,
             // The pdfTeX manual: stacks are numbered from 1, 0 being the
             // default color stack.
             C::ColorStackInit => {

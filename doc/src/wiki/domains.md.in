@@ -210,6 +210,14 @@ The sizes come from the list, as `hpack` and `vpack` would compute them:
 - A `\discretionary` adds its text without a break to the list. Its break texts do not count (§§ 651, 1119-1120).
   In inline math, `\lowercase`, `\openin`, `\closein` and `\pdffontexpand` add no atom, so loading a font in a formula keeps its size.
 - A box of a kind `satex` does not know has `Dim::ANY` for all three sizes.
+- `\vsplit` packs the part it splits off to the height asked for, with a depth of at most `\splitmaxdepth` (§ 977).
+  What is left is at most as tall as the box was, plus `\splittopskip`.
+
+### Marks
+
+A mark that `\topmarks`, `\firstmarks`, `\botmarks` or the split marks hand back is a copy of one put on a list, or empty (§§ 1012-1014).
+So each class holds one of the texts `\mark` or `\marks` gave it so far, or the empty text, as a `OneOf`.
+A class read before any mark is empty. A mark of a class `satex` cannot name makes every class unknown text.
 
 ### Paragraphs and line breaking
 
@@ -362,6 +370,7 @@ The bound is at most 20, a sign and 19 digits.
 
 A loop head counts the passes of a loop against `limits.widen_after` ([Configuration](Configuration#what-a-run-may-use)).
 A pass whose pending input holds strictly fewer tokens than the pass before is not counted (`input_bound`, `loop_bounds`).
+A join keeps the larger bound of both paths.
 Such a loop ends by construction, so each of its passes stays exact. A loop that consumes `\the\count0` digit by digit is followed to its end, not widened.
 
 ## `CatcodeTable::unknown`: category sets as a lattice element
@@ -435,7 +444,9 @@ runs instead of running on.
   make another key.
 - **What a run records.** The first `limits.call_summary_after` runs (2 by default) of a key over unknown operands run the real body
   (tex.web § 389: the body replaces the call). Each run is recorded from
-  the call until the main loop reads below the call's input level. A run
+  the call until the main loop reads below the call's input level, from
+  the list below as the call left it: a look-ahead past the call's end
+  that gives tokens back below it leaves the run unfinished. A run
   records the names it wrote, with what they hold then, and the names it
   read. A run over known operands is not recorded: what it wrote holds for
   those values alone, so joining it into a call on unknown ones would be

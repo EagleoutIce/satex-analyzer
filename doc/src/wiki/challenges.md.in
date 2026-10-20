@@ -84,6 +84,8 @@ Many macros also push their own end markers into the stream, or use `\aftergroup
 
 Conditionals branch on box sizes and page state.
 Whether a box has zero width can depend on fonts, kerning and hundreds of other things.
+Floats and breakable boxes read `\pagegoal` and `\pagetotal`, so the page builder's state is part of the control flow.
+Without a model of it, every float may land here or later, and every breakable box may split anywhere.
 
 {{example: doc/src/wiki/challenges/04-typesetting.tex}}
 
@@ -111,6 +113,13 @@ One unknown spreads: forks multiply, and arms with different code cannot be merg
 
 
 {{example: doc/src/wiki/challenges/r3-choice.tex}}
+
+**Unknown must stay cheap.** Soundness alone is not enough: an unknown value must not cost more than a known one.
+Library code walks text a token at a time. pgfmath reads a number digit by digit, expl3 wraps a message by counting its characters, and LaTeX's output routine reads every mark.
+Fed one unknown value, each such walk forks per step, and its loops meet limits instead of ending.
+satex keeps unknowns small instead: digits typed with an interval, a value that is one of a few texts, a mark that is one of the texts given to its class.
+A small interval is split into its values where a name is spelled from it, so each path builds the name TeX builds.
+Where a walk still forks per step, that is a bug to fix, not a price to pay.
 
 ### 7. Termination is not structural
 

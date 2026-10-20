@@ -2531,6 +2531,17 @@ impl Machine<'_> {
         }
         x.material |= y.material;
         x.approximated |= y.approximated;
+        // What each loop's last pass began with: the larger, so a pass
+        // counts as shrinking only below both.
+        if y.loop_bounds != x.loop_bounds {
+            let bounds = Rc::make_mut(&mut x.loop_bounds);
+            for &(id, b) in y.loop_bounds.iter() {
+                match bounds.iter_mut().find(|(l, _)| *l == id) {
+                    Some(e) => e.1 = e.1.max(b),
+                    None => bounds.push((id, b)),
+                }
+            }
+        }
         x.cut_taint = match (x.cut_taint, y.cut_taint) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),

@@ -598,14 +598,19 @@ fn material_inside_a_box_leaves_the_page_empty() {
     }
 }
 
-/// Once a box or a rule reaches the main vertical list the page builder owns
-/// these, and satex does not run it, so the answer widens rather than
-/// staying at the empty page's.
+/// Once a box or a rule reaches the main vertical list the page builder
+/// owns these (tex.web § 1076 runs `build_page`): the goal is frozen at
+/// `\vsize` (§ 987, 0pt in initex), the rest widen rather than staying at
+/// the empty page's.
 #[test]
-fn a_box_on_the_page_makes_the_page_dimensions_unknown() {
+fn a_box_on_the_page_freezes_the_goal_and_widens_the_rest() {
     for engine in ENGINES {
         for contributed in ["\\setbox0=\\hbox{}\\box0 ", "\\hrule "] {
             for (name, _) in PAGE_SO_FAR {
+                if name == "pagegoal" {
+                    assert_eq!(the(engine, contributed, "\\pagegoal"), "0.0pt", "{engine:?} after {contributed}");
+                    continue;
+                }
                 assert!(
                     widened(engine, contributed, &format!("\\{name}")),
                     "{engine:?} \\{name} after {contributed} must widen, not answer the empty page's",

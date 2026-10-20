@@ -1477,6 +1477,16 @@ impl Machine<'_> {
             self.set_prevgraf(Value::Unknown);
             return;
         };
+        // §§ 1096, 987: a paragraph that holds something adds its lines to
+        // the main vertical list, and the page builder takes them.
+        if only
+            && to == Modes::VERTICAL
+            && !self.output_active
+            && !matches!(n.tail[0], Last::Empty)
+            && n.tail[0] != Last::UNKNOWN
+        {
+            self.set_engine("page.built", Value::Int(1), true);
+        }
         // tex.web § 889: each line is a box of the line width, so the
         // vertical list is at least that wide.  A paragraph that may hold
         // nothing may add no line at all (§ 1096).
@@ -2094,6 +2104,8 @@ impl Machine<'_> {
             ModeCmd::Insert { vadjust } => {
                 if !vadjust {
                     self.scan_number();
+                    // § 1009: an insert on the page lowers its goal.
+                    self.set_engine("page.inserts", Value::Int(1), true);
                 }
                 // tex.web § 889: `\vadjust` material of any width follows
                 // the line.
@@ -3211,6 +3223,11 @@ impl Machine<'_> {
     /// as an empty page's, since satex does not run the page builder.
     pub(crate) fn touch_page(&mut self) {
         if self.mode.test(Modes::INNER) != Some(true) {
+            // §§ 987, 1076: a box certainly on the main vertical list goes
+            // to the page, which freezes its dimensions.
+            if self.mode == Modes::VERTICAL && !self.output_active {
+                self.set_engine("page.built", Value::Int(1), true);
+            }
             self.page_touched = true;
             self.page_grew = true;
             self.set_badness(false);
@@ -3228,15 +3245,11 @@ impl Machine<'_> {
         }
         self.page_touched = false;
         self.set_page_length(Dim::exact(0));
+        self.set_engine("page.built", Value::Int(0), true);
+        self.set_engine("page.inserts", Value::Int(0), true);
         let sym = self.intern("outputpenalty");
         self.env.set_value(sym, Value::Int(penalty), true);
-        // § 1017: the page up to the break, which stays behind it.
-        let before = match self.natural {
-            Some(n) if self.main_tail == Last::Penalty(penalty) => n.tail[1],
-            _ => Last::UNKNOWN,
-        };
         self.set_box(Some(255), BoxState::VBox, true, None);
-        self.set_box_last(Some(255), before);
         // § 1017: packed to the page goal, its depth at most `\maxdepth`.
         let dimen = |m: &mut Self, name: &str| {
             let sym = m.intern(name);
@@ -3310,7 +3323,7 @@ impl Machine<'_> {
 
     /// How much the page holds: the main vertical list's length, kept in
     /// `para` while a paragraph begun on it is open.
-    fn page_length(&self) -> Dim {
+    pub(crate) fn page_length(&self) -> Dim {
         match self.natural {
             Some(n) if self.mode == Modes::VERTICAL => n.along,
             Some(n) => n.para.along,
