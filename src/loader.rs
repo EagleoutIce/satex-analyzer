@@ -75,7 +75,7 @@ impl Resolver {
         self
     }
 
-    fn hidden(&self, file: &str) -> bool {
+    fn hidden(&self, file: &Path) -> bool {
         self.hidden.as_ref().is_some_and(|load| load.is_build_file(file))
     }
 
@@ -132,7 +132,7 @@ impl Resolver {
                 // A file of the build is the run's own (the overlay), never
                 // one an earlier engine run left on disk.
                 let at = directory.join(file);
-                if self.hidden(file) && !crate::overlay::holds(&at) {
+                if self.hidden(&at) && !crate::overlay::holds(&at) {
                     // Looked for all the same: a later run that has it reads again from here.
                     crate::overlay::probed_own(&at);
                     continue;

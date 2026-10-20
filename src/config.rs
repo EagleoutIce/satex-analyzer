@@ -588,9 +588,17 @@ pub struct Load {
 }
 
 impl Load {
-    /// Whether `name` is a file a build writes (`build_extensions`).
-    pub fn is_build_file(&self, name: &str) -> bool {
-        self.build_extensions.iter().any(|e| name.strip_suffix(e.as_str()).is_some_and(|stem| stem.ends_with('.')))
+    /// Whether `path` is a file a build writes: one of `build_extensions`
+    /// named after a `.tex` file the build ran or `\include`d
+    /// (`\jobname.aux`, `chapter.aux`). A `.gls` without one is a source.
+    pub fn is_build_file(&self, path: &std::path::Path) -> bool {
+        let name = path.to_string_lossy();
+        self.build_extensions.iter().any(|e| {
+            name.strip_suffix(e.as_str()).and_then(|stem| stem.strip_suffix('.')).is_some_and(|stem| {
+                let tex = std::path::PathBuf::from(format!("{stem}.tex"));
+                tex.is_file() || crate::overlay::holds(&tex)
+            })
+        })
     }
 }
 

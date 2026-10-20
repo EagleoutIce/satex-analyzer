@@ -466,7 +466,7 @@ impl Analysis {
         // A build file (`.aux`, `.toc`) is the run's own output read back:
         // what it declares or misreads the document's calls did first.
         self.files.get(usize::from(file)).is_some_and(|f| {
-            crate::paths::within(&dir, Path::new(&f.path)) && !self.settings.load.is_build_file(&f.path)
+            crate::paths::within(&dir, Path::new(&f.path)) && !self.settings.load.is_build_file(Path::new(&f.path))
         })
     }
 }
@@ -2386,7 +2386,7 @@ impl<'a> Machine<'a> {
             let changed: Vec<(PathBuf, String)> = analysis
                 .written
                 .iter()
-                .filter(|(name, _)| cfg.load.is_build_file(name))
+                .filter(|(name, _)| cfg.load.is_build_file(&base.join(name)))
                 .filter_map(|(name, text)| {
                     let at = base.join(name);
                     // The run's own copy only: one on disk is an engine's.

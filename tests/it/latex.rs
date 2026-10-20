@@ -3245,5 +3245,9 @@ fn the_build_reruns_only_for_what_it_read() {
     };
     assert_eq!(run("seen.tex", &lof("Seen")).build_runs, 2);
     assert_eq!(run("unseen.tex", &lof("Unseen")).build_runs, 1);
+    // A `.gls` no `.tex` is named after is a source the document wrote, not
+    // a build's: it is read as it is on disk.
+    std::fs::write(dir.join("entries.gls"), "\\gdef\\G{}\n").unwrap();
+    assert!(defined(&run("source.tex", "\\input{entries.gls}\n"), "G"));
     std::fs::remove_dir_all(dir).ok();
 }
