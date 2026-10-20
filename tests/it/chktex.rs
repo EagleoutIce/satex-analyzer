@@ -914,7 +914,7 @@ fn an_abbreviation_before_a_lowercase_word_is_reported() {
 /// the text before a `\\` break.
 #[test]
 fn an_abbreviation_after_a_line_break_is_named_alone() {
-    let analysis = analyze(r"\begin{document}\parbox{3cm}{per cell\\e.g. flowR and so on}\end{document}");
+    let analysis = analyze(r"\begin{document}\parbox{3cm}{per cell\\e.g. toolx and so on}\end{document}");
     let found = findings(&analysis, "sentence-spacing");
     assert!(found.iter().any(|f| f.contains("`e.g.`")) && !found.iter().any(|f| f.contains("celle")), "{found:?}");
 }

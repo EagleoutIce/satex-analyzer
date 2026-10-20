@@ -54,10 +54,10 @@
    Links/.style={
       every path/.append style={Link}
    },
-   % for dataflow graphs
+   % for node graphs
    comm/.style={rectangle,draw=gray,text width=9mm,align=center,minimum height=5mm,font=\ttfamily,fill=white,fill opacity=1,drop shadow={fill=lightgray!50}},
-   d/.style={comm,rounded corners=2pt}, % variable def
-   u/.style={comm,rounded corners=2.5mm}, % variable use % rounded rectangle breaks anchors
+   d/.style={comm,rounded corners=2pt}, % def node
+   u/.style={comm,rounded corners=2.5mm}, % use node % rounded rectangle breaks anchors
    v/.style={comm,signal, signal to=east and west, gray, text=black, inner sep=-4pt, text width=5mm,fill=lightgray!22!white}, % values
    e/.style={comm,rounded corners=2.5mm,densely dotted,thick,fill=white}, % exit point
    F/.style={comm,draw=gray,rounded corners=2pt,fill=white,inner xsep=.5em},
@@ -112,8 +112,8 @@
 \colorlet{SoftTextGray}{BackGray!60!SoftGray}
 
 \forestset{T/.style={for tree={font=\ttfamily,align=center,l sep=0pt,l sep-=5mm,child anchor=north}}}
-\newsavebox\DataFlow
-\setbox\DataFlow=\hbox{\resizebox*!{1.25cm}{\color{lightgray!80!BaseGray}\begin{tikzpicture}[Link/.style={draw,line cap=round,gray,thick},comm/.append style={very thick}]
+\newsavebox\GraphBox
+\setbox\GraphBox=\hbox{\resizebox*!{1.25cm}{\color{lightgray!80!BaseGray}\begin{tikzpicture}[Link/.style={draw,line cap=round,gray,thick},comm/.append style={very thick}]
    \node[d] (0) at (0,0) {};
    \node[u,right=4mm] (1) at (0.east) {};
    \node[v,above=4mm] (2) at (0.north) {~~~~};

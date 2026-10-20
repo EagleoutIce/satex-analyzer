@@ -1,44 +1,44 @@
 % normal glossary
-\newglossaryentry{formal:model}{%
-  name={model},plural={models},
+\newglossaryentry{item:whole}{%
+  name={whole},plural={wholes},
   description={%
-    Finite set of \glspl{formal:model-element} \ldots
+    Finite set of \glspl{item:part} \ldots
   },%
-  shortdesc={Set of \glspl{formal:model-element}.}
+  shortdesc={Set of \glspl{item:part}.}
 }
-\newglossaryentry{formal:model-element}{%
-  name={model element},plural={model elements},
+\newglossaryentry{item:part}{%
+  name={part},plural={parts},
   description={%
-    Component of a \gls{formal:model} \ldots
+    Component of a \gls{item:whole} \ldots
   },%
-  shortdesc={Uniquely identified element of a \gls{formal:model}.}
-}
-
-\newglossaryentry{formal:external-factor}{%
-  name={external factor}, plural={external factors},
-  description={%
-    A factor defined outside of the \gls{formal:model} and its expressions. Its change can yield completely different values inferred by the solver.
-  },%
-  shortdesc={Factors outside of a \gls{formal:model}[models] control}%
+  shortdesc={Uniquely marked part of a \gls{item:whole}.}
 }
 
-\newglossaryentry{def:behavioral-equivalence}{%
-  name={behavioral equivalence},
-  first={behavioral equivalence [first use!]},
+\newglossaryentry{item:outer-factor}{%
+  name={outer factor}, plural={outer factors},
   description={%
-    Two \glspl{formal:model}~\(A\) and~\(B\) have the same observable behavior for all \textit{variables} they do have in common\ldots
+    A factor defined outside of the \gls{item:whole} and its expressions. Its change can yield completely different values inferred by the helper.
+  },%
+  shortdesc={Factors outside of a \gls{item:whole}[wholes] control}%
+}
+
+\newglossaryentry{def:same-look}{%
+  name={visual match},
+  first={visual match [first use!]},
+  description={%
+    Two \glspl{item:whole}~\(A\) and~\(B\) have the same observable shape for all \textit{labels} they do have in common\ldots
   },%
   shortdesc={%
-    All \textit{variables} in common evaluate to the same value for all external factors.%
+    All \textit{labels} in common evaluate to the same value for all outer factors.%
   }%
 }
 
 
 % acronyms
-\newacronym{cpo}{CPO}{Complete Partial Order}
-\newacronym{ast}{AST}{Abstract Syntax Tree}
-\newacronym{ip}{IP}{Intellectual Property}
-\newacronym[plural={Internet Protocol addresses}]{net:ip}{IP address}{Internet Protocol address}
+\newacronym{aaa}{AAA}{Alpha Alpha Alpha}
+\newacronym{bbb}{BBB}{Beta Beta Beta}
+\newacronym{ccc}{CCC}{Gamma Gamma Gamma}
+\newacronym[plural={Delta Delta items}]{net:ddd}{DDD item}{Delta Delta item}
 
 
 % notations

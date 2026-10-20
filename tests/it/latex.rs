@@ -958,18 +958,18 @@ fn math_braced_script_box_nucleus_size() {
 \usepackage{xcolor}
 \begin{document}
 \def\m#1{\setbox0\hbox{#1}\typeout{mark \the\wd0,\the\ht0,\the\dp0}}
-\m{\(x^{0}\)}\m{\(\textrm{cellR}^0\)}\m{\(x^{\color{gray}0}\)}\m{\(\textrm{cellR}^{\color{gray}0}\)}
-\m{\(\textrm{cellR}_0\)}\m{\(x_{0}\)}\m{\(x^{0}y\)}\m{\(x^0y\)}
+\m{\(x^{0}\)}\m{\(\textrm{toolX}^0\)}\m{\(x^{\color{gray}0}\)}\m{\(\textrm{toolX}^{\color{gray}0}\)}
+\m{\(\textrm{toolX}_0\)}\m{\(x_{0}\)}\m{\(x^{0}y\)}\m{\(x^0y\)}
 \end{document}",
     );
     assert_eq!(
         marks(&analysis),
         [
             "mark 10.2014pt,8.14003pt,0.0pt",
-            "mark 26.2917pt,8.98335pt,0.0pt",
+            "mark 28.93065pt,8.98335pt,0.0pt",
             "mark 10.2014pt,8.14003pt,0.0pt",
-            "mark 26.2917pt,8.98335pt,0.0pt",
-            "mark 26.2917pt,6.94444pt,1.49998pt",
+            "mark 28.93065pt,8.98335pt,0.0pt",
+            "mark 28.93065pt,6.94444pt,1.49998pt",
             "mark 10.2014pt,4.30554pt,1.49998pt",
             "mark 15.463pt,8.14003pt,1.94444pt",
             "mark 15.463pt,8.14003pt,1.94444pt",

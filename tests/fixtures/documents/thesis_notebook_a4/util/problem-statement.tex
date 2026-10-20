@@ -1,7 +1,7 @@
-\newcounter{pbCounter}
-\setcounter{pbCounter}{0}
-\newcommand{\pbitem}[3]{\refstepcounter{pbCounter}\label{pb:#1}\item[\texttt{Problem \thepbCounter}] -- #2 \\\\ #3}
+\newcounter{tpCounter}
+\setcounter{tpCounter}{0}
+\newcommand{\tpitem}[3]{\refstepcounter{tpCounter}\label{tp:#1}\item[\texttt{Topic \thetpCounter}] -- #2 \\\\ #3}
 
-\newcommand{\pbrefn}[2]{\hyperref[pb:#1]{Problem~\ref{pb:#1} (#2)}}
-\WithSuffix\newcommand\pbrefn*[2]{Problem~\ref*{pb:#1} (#2)}
-\newcommand{\pbref}[1]{\hyperref[pb:#1]{Problem~\ref{pb:#1}}}
+\newcommand{\tprefn}[2]{\hyperref[tp:#1]{Topic~\ref{tp:#1} (#2)}}
+\WithSuffix\newcommand\tprefn*[2]{Topic~\ref*{tp:#1} (#2)}
+\newcommand{\tpref}[1]{\hyperref[tp:#1]{Topic~\ref{tp:#1}}}
