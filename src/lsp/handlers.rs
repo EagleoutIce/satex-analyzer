@@ -774,41 +774,11 @@ fn argument_at(before: &str) -> Option<Arg<'_>> {
     None
 }
 
-/// Whether the run recorded `fact` (at `span`) as made by `\cmd`: by the
-/// call it names, or, without one, by the command spelled at that place.
-fn made_by(analysis: &Analysis, doc: &Text, call: Option<crate::tex::Sym>, span: crate::tex::Span, cmd: &str) -> bool {
-    call.is_some_and(|sym| analysis.interner.name(sym) == cmd) || {
-        span.file == analysis.main_file
-            && doc
-                .line(span.line)
-                .get(crate::source::byte_of_col(doc.line(span.line), span.col)..)
-                .and_then(|rest| rest.strip_prefix('\\'))
-                .is_some_and(|rest| {
-                    rest.strip_prefix(cmd).is_some_and(|r| !r.starts_with(|c: char| c.is_ascii_alphabetic()))
-                })
-    }
-}
-
 /// How many name characters precede the cursor on its line.
 fn before_word(doc: &Text, pos: Pos) -> u32 {
     let line = doc.line(pos.line);
     let before = &line[..crate::source::byte_of_col(line, pos.col).min(line.len())];
     before.chars().rev().take_while(|c| c.is_alphanumeric() || *c == '*').count() as u32
-}
-
-/// Whether the call spelled at `span` names `file` in its braces, so a
-/// file the call's code read on its own (`\\begin{document}` reading the
-/// `.aux` file) does not count as what the command takes.
-fn names_load(doc: &Text, span: crate::tex::Span, file: &str) -> bool {
-    let line = doc.line(span.line);
-    let rest = line.get(crate::source::byte_of_col(line, span.col)..).unwrap_or("");
-    let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
-    rest.split_once('{').and_then(|(_, r)| r.split_once('}')).is_some_and(|(arg, _)| {
-        arg.split(',').any(|a| {
-            let a = a.trim();
-            a == file || a == stem
-        })
-    })
 }
 
 /// The entries of every database the document names, once per analysis.
@@ -838,42 +808,30 @@ fn item(label: String, kind: CompletionItemKind, detail: Option<String>, rank: u
     }
 }
 
-fn seed(cmd: &str) -> (Option<crate::builtins::LoadKind>, Option<crate::builtins::OccKind>) {
-    use crate::builtins::{LoadKind as L, OccKind as O};
-    match cmd {
-        "documentclass" | "LoadClass" => (Some(L::Class), None),
-        "usepackage" | "RequirePackage" => (Some(L::Package), None),
-        "input" | "subfile" => (Some(L::Input), None),
-        "include" | "includeonly" => (Some(L::Include), None),
-        "begin" => (None, Some(O::BeginEnvironment)),
-        "end" => (None, Some(O::EndEnvironment)),
-        "includegraphics" => (None, Some(O::Graphics)),
-        "ref" | "eqref" | "pageref" | "autoref" | "nameref" | "cref" | "Cref" | "cpageref" | "Cpageref" | "vref"
-        | "Vref" | "labelcref" | "crefrange" | "Crefrange" | "subref" => (None, Some(O::Ref)),
-        c if c.contains("cite") => (None, Some(O::Cite)),
-        _ => (None, None),
-    }
-}
-
 fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: Pos) -> Vec<CompletionItem> {
     use crate::builtins::{LoadKind, OccKind};
-    let mut loads: Vec<LoadKind> = analysis
-        .facts
-        .loads
+    // What the argument at the cursor is ([`crate::roles`]): a braced one
+    // by its place, a bracketed one by every role of the command.
+    let at = crate::roles::braced_groups(arg.groups).len();
+    let roles: Vec<crate::roles::Role> =
+        crate::roles::roles(analysis, arg.cmd).into_iter().filter(|r| arg.open != '{' || r.arg == at).collect();
+    let mut loads: Vec<LoadKind> = roles
         .iter()
-        .filter(|l| made_by(analysis, doc, None, l.span, arg.cmd) && names_load(doc, l.span, &l.name))
-        .map(|l| l.kind)
+        .filter_map(|r| match r.kind {
+            crate::roles::RoleKind::Load(k) => Some(k),
+            crate::roles::RoleKind::Occ(_) => None,
+        })
         .collect();
-    let mut occs: Vec<OccKind> = analysis
-        .facts
-        .occurrences
+    let mut occs: Vec<OccKind> = roles
         .iter()
-        .filter(|o| made_by(analysis, doc, o.call.map(|c| c.0), o.span, arg.cmd))
-        .map(|o| o.kind)
+        .filter_map(|r| match r.kind {
+            crate::roles::RoleKind::Occ(k) => Some(k),
+            crate::roles::RoleKind::Load(_) => None,
+        })
         .collect();
-    let (seed_load, seed_occ) = seed(arg.cmd);
-    loads.extend(seed_load);
-    occs.extend(seed_occ);
+    // A wrapper that adds a prefix (`\ref{sec:#1}`) is given what follows it.
+    let prefix =
+        roles.iter().find(|r| r.kind == crate::roles::RoleKind::Occ(OccKind::Ref)).map_or("", |r| r.prefix.as_str());
     loads.sort_by_key(|k| *k as u8);
     loads.dedup();
     occs.sort_by_key(|k| *k as u8);
@@ -991,9 +949,12 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
                     out.push(it);
                 }
             }
-            OccKind::Ref => {
-                out.extend(keys(&[OccKind::Label]).into_iter().map(|k| item(k, CompletionItemKind::REFERENCE, None, 0)))
-            }
+            OccKind::Ref => out.extend(
+                keys(&[OccKind::Label])
+                    .into_iter()
+                    .filter_map(|k| k.strip_prefix(prefix).map(str::to_string))
+                    .map(|k| item(k, CompletionItemKind::REFERENCE, None, 0)),
+            ),
             OccKind::Cite => {
                 // The databases' entries, found by key, title, author or
                 // year; then keys a `\bibitem` or another citation gave.

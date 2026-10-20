@@ -137,10 +137,10 @@ fn location(record: &Record) -> String {
 }
 
 #[rustfmt::skip]
-const COLUMNS: [&str; 43] = [
+const COLUMNS: [&str; 44] = [
     "index", "warning", "covered", "rules", "id", "step", "severity", "category", "code", "kind", "status",
     "tag", "name", "callee", "key", "subject", "for", "when", "context", "redefined", "effective", "error",
-    "signature", "parameters", "arity", "takes", "uses", "count", "value", "default", "governs", "package",
+    "signature", "roles", "parameters", "arity", "takes", "uses", "count", "value", "default", "governs", "package",
     "class", "by", "detail", "fix", "message", "documentation", "expands", "body", "reference", "root",
     "file",
 ];

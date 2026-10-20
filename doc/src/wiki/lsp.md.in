@@ -34,7 +34,13 @@ Rename moves every name one declaration made from one key. `\newcounter{step}` a
 
 Completion looks at the text before the cursor: after `\` it offers the commands in scope there, with a snippet for their arguments. Inside `\begin{` environment names. Inside a reference or citation argument the document's labels or keys.
 A built-in list of common commands (`\ref`, `\cref`, the `cite` family, `\begin`, `\usepackage`, `\input`) says what their argument takes, so the first `\ref{` of a document already offers its labels.
-What the run saw a command do adds to that list, so a package's or your own wrapper gets the same completion once it is used.
+What each argument of a command is, its role, decides what is offered there (`roles` in [`explain`](queries.md#explain)): `#1 ref`, `#1 label`, `#1 input`, `#2 ref after sec:`. Roles come from three places, in this order:
+
+- what the run saw calls of the command do: each label, reference, citation or load, matched to the argument that held its key,
+- the command's own body in the project: an argument handed to an argument with a role has that role, behind a literal prefix or not, through any number of wrappers,
+- a seed of the kernel's and common packages' conventions, only for a command the project does not define anew. A `\ref` the document redefines is what its new body says.
+
+So `\newcommand\secref[1]{\ref{sec:#1}}` completes labels in its argument before it is ever used, and offers `intro` for the label `sec:intro`. An argument that defines a key is not also a use of it.
 
 `workspace/executeCommand` runs `satex/query` with one argument, a [query request](queries.md#json-requests). Without `file` it applies to the open document.
 

@@ -66,6 +66,7 @@ pub mod project;
 pub mod query;
 pub mod rename;
 pub mod render;
+pub mod roles;
 pub mod scan;
 pub mod source;
 pub mod tex;

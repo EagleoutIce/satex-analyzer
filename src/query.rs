@@ -2729,6 +2729,10 @@ fn insert_call_shape(
     if let Some(p) = probe.as_ref().filter(|p| forms && !p.forms.is_empty()) {
         record.insert("forms".into(), json!(p.forms.iter().map(|f| f.raw.clone()).collect::<Vec<_>>()));
     }
+    let roles = crate::roles::roles(analysis, analysis.interner.name(sym));
+    if !roles.is_empty() {
+        record.insert("roles".into(), json!(roles.iter().map(ToString::to_string).collect::<Vec<_>>()));
+    }
     record.insert("effective".into(), json!(effective_of(analysis, sym, mac, view)));
     if let Some(error) = probe.and_then(|p| p.error) {
         record.insert("error".into(), json!(error));

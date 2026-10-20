@@ -973,3 +973,27 @@ fn citation_keys_come_from_the_databases() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// What an argument is comes with the command ([`satex::roles`]): a
+/// wrapper that hands its first argument to `\ref` behind a prefix
+/// completes labels there, without the prefix, and not in its second.
+#[test]
+fn a_ref_wrapper_completes_labels_in_its_reference_argument_only() {
+    let text = "\\documentclass{article}\n\\newcommand\\secref[2]{#2 \\ref{sec:#1}}\n\\begin{document}\n\\section{A}\\label{sec:intro}\n\\secref{}{}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("refwrap", text);
+    let first = complete(&mut server, &uri, 4, 8);
+    assert!(labels(&first).contains(&"intro"), "{:?}", labels(&first));
+    let second = complete(&mut server, &uri, 4, 10);
+    assert!(!labels(&second).iter().any(|l| l.contains("intro")), "{:?}", labels(&second));
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A `\ref` the document redefined is what its new body says: no labels.
+#[test]
+fn a_redefined_ref_completes_no_labels() {
+    let text = "\\documentclass{article}\n\\renewcommand\\ref[1]{#1}\n\\begin{document}\n\\section{A}\\label{intro}\n\\ref{}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("refnew", text);
+    let items = complete(&mut server, &uri, 4, 5);
+    assert!(!labels(&items).contains(&"intro"), "{:?}", labels(&items));
+    std::fs::remove_dir_all(dir).ok();
+}
