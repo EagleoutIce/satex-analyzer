@@ -3247,6 +3247,7 @@ impl Machine<'_> {
             return;
         }
         self.page_touched = false;
+        self.ship_pending();
         self.set_page_length(Dim::exact(0));
         self.set_engine("page.built", Value::Int(0), true);
         self.set_engine("page.inserts", Value::Int(0), true);

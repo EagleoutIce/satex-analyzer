@@ -48,7 +48,7 @@ const REPLACEMENT: char = '\u{FFFD}';
 /// bytes that were no UTF-8.
 pub fn decode_counted(bytes: &[u8]) -> (String, usize) {
     if encoding() == Encoding::Bytes {
-        return (bytes.iter().map(|b| char::from(*b)).collect(), 0);
+        return (as_bytes(bytes), 0);
     }
     let mut rest = bytes;
     let mut out = String::with_capacity(bytes.len());
@@ -85,8 +85,34 @@ pub fn decode(bytes: &[u8]) -> String {
 pub fn recode(text: &str) -> Cow<'_, str> {
     match encoding() {
         Encoding::Utf8 => Cow::Borrowed(text),
-        Encoding::Bytes => Cow::Owned(text.bytes().map(char::from).collect()),
+        Encoding::Bytes => Cow::Owned(as_bytes(text.as_bytes())),
     }
+}
+
+/// Each byte a character of its own, as an 8-bit engine reads it; only
+/// the unknown text a run wrote stays one character, so it reads back as
+/// unknown.
+fn as_bytes(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    let mut at = 0;
+    while let Some(&b) = bytes.get(at) {
+        let marker = (b == 0xF4)
+            .then(|| bytes.get(at..at + 4).and_then(|s| std::str::from_utf8(s).ok()))
+            .flatten()
+            .and_then(|s| s.chars().next())
+            .filter(|c| crate::tex::is_unknown_char(*c) || crate::tex::written_class(*c).is_some());
+        match marker {
+            Some(c) => {
+                out.push(c);
+                at += 4;
+            }
+            None => {
+                out.push(char::from(b));
+                at += 1;
+            }
+        }
+    }
+    out
 }
 
 /// The byte offset in `line`, as the file writes it, of the satex column

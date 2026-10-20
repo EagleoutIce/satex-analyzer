@@ -444,7 +444,7 @@ fn role(m: &mut Machine, span: Span) -> CsnameRole {
 /// A `\write` to a file (stream 18 is the shell, and a stream never opened
 /// writes to the terminal, tex.web § 1370): `tokens` as expanded when
 /// `immediate`, otherwise as shipout expands them.
-pub fn write(m: &mut Machine, tokens: &[Token], stream: i64, immediate: bool) {
+pub fn write(m: &mut Machine, tokens: &[Token], stream: i64) {
     if m.line_defined.is_some() || stream == 18 {
         return;
     }
@@ -460,18 +460,25 @@ pub fn write(m: &mut Machine, tokens: &[Token], stream: i64, immediate: bool) {
         None if (0..16).contains(&stream) && m.out.document_depth.is_none() && m.package().is_none() => {}
         None => return,
     }
-    let expanded = if immediate { tokens.to_vec() } else { shipped(m, tokens) };
-    line(m, &expanded, span);
+    line(m, tokens, span);
 }
 
 /// A deferred `\write` is expanded at shipout, where the output routine
-/// has `\protect` act as `\noexpand` (latex.ltx, `\@outputpage`).
-fn shipped(m: &mut Machine, tokens: &[Token]) -> Vec<Token> {
+/// has `\protect` act as `\noexpand` (latex.ltx, `\@outputpage`). The
+/// page it ships with is the current one under the named assumption that
+/// pages break only where forced (`analysis.assume_forced_page_breaks`);
+/// without it its number (`\count0`, LaTeX's `\c@page`) is not known.
+pub(crate) fn shipped(m: &mut Machine, tokens: &[Token]) -> Vec<Token> {
+    m.env.push_group(crate::env::GroupKind::SemiSimple, Span::default());
+    if !m.cfg.analysis.assume_forced_page_breaks {
+        let page = m.register_sym(crate::tex::RegKind::Count, 0);
+        m.env.set_value(page, crate::value::Value::Unknown, false);
+    }
     let protect = m.out.interner.lookup("protect");
     let noexpand = m.out.interner.lookup("noexpand").and_then(|s| m.env.get(s).cloned());
-    let (Some(protect), Some(noexpand)) = (protect, noexpand) else { return m.expand_tokens(tokens.into()) };
-    m.env.push_group(crate::env::GroupKind::SemiSimple, Span::default());
-    m.env.set(protect, noexpand, false);
+    if let (Some(protect), Some(noexpand)) = (protect, noexpand) {
+        m.env.set(protect, noexpand, false);
+    }
     let out = m.expand_tokens(tokens.into());
     m.env.pop_group(&mut m.catcodes);
     out

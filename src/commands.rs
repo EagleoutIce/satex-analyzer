@@ -1650,7 +1650,12 @@ impl Machine<'_> {
                 let immediate = std::mem::take(&mut self.prefixes.immediate);
                 let stream = self.scan_int();
                 match (immediate, stream) {
-                    (true, Some(stream)) => self.set_engine(&format!("write_open.{stream}"), Value::Int(0), true),
+                    (true, Some(stream)) => {
+                        if let Some(name) = self.stream_files.get(&stream).cloned() {
+                            self.close_pending(&name);
+                        }
+                        self.set_engine(&format!("write_open.{stream}"), Value::Int(0), true)
+                    }
                     // Any stream may be the one closed.
                     (true, None) => self.weaken_engine("write_open.", true),
                     _ => {}

@@ -347,6 +347,7 @@ struct Lists {
     counter_namespace: Option<String>,
     streams: Vec<(i64, Vec<String>, usize)>,
     outputs: Vec<(String, Option<String>)>,
+    pending: Vec<(String, Vec<String>)>,
     aliases: Vec<(Sym, Sym)>,
     wild: crate::machine::Wild,
 }
@@ -1105,6 +1106,9 @@ impl Machine<'_> {
             let mut outputs: Vec<_> = self.outputs.iter().collect();
             outputs.sort();
             hash.put(&outputs);
+            let mut pending: Vec<_> = self.pending.iter().collect();
+            pending.sort();
+            hash.put(&pending);
             hash.put(&self.docstrip_dir.as_ref().map(|d| roots.canonical(d)));
             parts.push(("section and streams".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             let mut pinned: Vec<Sym> = self.pinned.iter().copied().collect();
@@ -1243,6 +1247,7 @@ impl Machine<'_> {
             section: _,
             streams: _,
             outputs: _,
+            pending: _,
             loaded: _,
             class_options: _,
             identifying: _,
@@ -2162,6 +2167,7 @@ impl Machine<'_> {
             self.streams =
                 Rc::new(lists.streams.iter().map(|(n, lines, at)| (*n, (Rc::new(lines.clone()), *at))).collect());
             self.outputs = Rc::new(lists.outputs.iter().cloned().collect());
+            self.pending = Rc::new(lists.pending.iter().cloned().collect());
             self.env.aliases = lists.aliases.iter().copied().collect();
         }
         // Changes count from the load's start, like the scalars.
@@ -3010,6 +3016,11 @@ impl Machine<'_> {
                 let mut o: Vec<_> = self.outputs.iter().map(|(n, t)| (n.clone(), t.clone())).collect();
                 o.sort();
                 o
+            },
+            pending: {
+                let mut p: Vec<_> = self.pending.iter().map(|(n, l)| (n.clone(), l.clone())).collect();
+                p.sort();
+                p
             },
             aliases: {
                 let mut a: Vec<_> = self.env.aliases.iter().map(|(k, v)| (*k, *v)).collect();

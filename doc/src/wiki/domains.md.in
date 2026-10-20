@@ -392,10 +392,11 @@ matters asks `CatcodeTable::cats` or `CatcodeTable::is_unknown` first.
 A name without an extension gets `.tex` (tex.web § 1374).
 A file the run wrote is in one of two states:
 
-- known text: `\immediate\openout` made it empty, and each `\immediate\write` to an open stream appended a line,
-- unknown text: a deferred `\write`, which acts only at shipout, or a stream number `satex` could not pin down. Such a `\write` makes every written file unknown.
+- known text: `\immediate\openout` made it empty, and each `\write` to an open stream appended a line. A deferred `\write` waits for the next shipout (§ 1370), or the end, and is expanded there with `\protect` as `\noexpand`. Its page number (`\count0`) is the current one under `analysis.assume_forced_page_breaks`, and unknown otherwise. An `\immediate\closeout` with lines still waiting makes the file unknown. Unknown text in a line is written as one character per class and lower bound, which reads back as unknown text of that class: an unknown position stays digits. Untyped text is written as `UNKNOWN_ANY`. An 8-bit read keeps such a character whole.
+- unknown text: a stream number `satex` could not pin down. Such a `\write` makes every written file unknown.
 
-A file the run did not write is what is on disk, or absent.
+The build's files (`.aux`, `.toc`, `.bbl`, ..., `load.build_extensions`) of an earlier run are the run's own: the analysis runs the build until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`), and keeps them in the overlay, never on disk. The ones an engine left on disk are read only with `load.build_files`.
+Any other file the run did not write is what is on disk, or absent.
 
 Reads look at the run's own files first (tex.web § 537):
 

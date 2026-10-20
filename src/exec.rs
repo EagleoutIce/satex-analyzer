@@ -4190,21 +4190,39 @@ impl Machine<'_> {
         let immediate = std::mem::take(&mut self.prefixes.immediate);
         let number = self.scan_number();
         let text = self.read_general_text();
-        let text = if immediate { self.expand_tokens(Rc::from(text)) } else { text };
-        crate::observe::write(self, &text, number.unwrap_or(-1), immediate);
+        // A deferred one is expanded at shipout (tex.web § 1370): here, with
+        // the page number not known, which is all LaTeX's `\protected@write`
+        // leaves to then.
+        let text = match immediate {
+            true => self.expand_tokens(Rc::from(text)),
+            false => crate::observe::shipped(self, &text),
+        };
+        crate::observe::write(self, &text, number.unwrap_or(-1));
         // tex.web § 1370: printed to the file, broken at `\newlinechar` (§ 59).
-        // A deferred one is written at shipout, unknown here.
-        let line = immediate.then(|| {
-            let newlinechar = self.intern("newlinechar");
-            let newline =
-                self.env.value(newlinechar).as_int().and_then(|c| u32::try_from(c).ok()).and_then(char::from_u32);
-            let escape = self.escape_char();
-            let to = crate::tex::Selector::File { newline };
-            crate::tex::detokenize_in(&text, &self.out.interner, escape, &self.catcodes, to)
-        });
-        self.write_output(number, line.as_deref());
-        if let (Some(18), Some(command)) = (number, &line) {
-            self.run_shell(command);
+        let newlinechar = self.intern("newlinechar");
+        let newline = self.env.value(newlinechar).as_int().and_then(|c| u32::try_from(c).ok()).and_then(char::from_u32);
+        let to = crate::tex::Selector::File { newline };
+        let escape = self.escape_char();
+        // Unknown text goes to the file as one character that reads back
+        // as unknown text of its class ([`crate::tex::Mouth::next_with`]).
+        let syms = self.typed_syms();
+        let typed = crate::env::typed!(self, syms);
+        let file: Vec<Token> = text
+            .iter()
+            .map(|t| match t.cs().is_some_and(|s| self.name(s).starts_with(crate::tex::UNKNOWN_PREFIX)) {
+                true => {
+                    let c = typed
+                        .classify(t)
+                        .map_or(crate::tex::UNKNOWN_ANY, |(c, one)| crate::tex::written_unknown(c, one));
+                    Token::new(Tok::Chr(c, Catcode::Other), t.span)
+                }
+                false => *t,
+            })
+            .collect();
+        let line = crate::tex::detokenize_in(&file, &self.out.interner, escape, &self.catcodes, to);
+        self.write_output(number, Some(&line), !immediate);
+        if number == Some(18) {
+            self.run_shell(&line);
         }
         let text = self.text_of(&text);
         // An unpinned stream may be the shell or a file the run opened, so both

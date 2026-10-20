@@ -183,6 +183,10 @@ pub const UNKNOWN_CHAR: char = '\u{10FFFF}';
 /// with the catcodes a run starts with.
 pub const UNKNOWN_CS: &str = "\u{2}unknown:";
 
+/// What the names of every kind of unknown text satex makes begin with:
+/// [`UNKNOWN_CS`], typed digits, unknown names and the rest.
+pub const UNKNOWN_PREFIX: &str = "\u{2}unknown";
+
 /// One digit, `0` to `9`, of an unknown number: what taking one token
 /// from unknown digits yields (a character of category 12, tex.web § 465).
 pub const UNKNOWN_DIGIT: char = '\u{10FFFE}';
@@ -201,6 +205,21 @@ pub const UNKNOWN_LETTER: char = '\u{10FFFD}';
 
 /// One character of category 12 of unknown text, not known to be a digit.
 pub const UNKNOWN_OTHER: char = '\u{10FFFC}';
+
+/// Unknown text of a known class written to a file: one character per
+/// class and lower bound (`class * 2 + one`), read back as that text.
+const WRITTEN_UNKNOWN: u32 = 0x10_0000;
+
+/// The character that writes unknown text of `class` to a file.
+pub fn written_unknown(class: TextClass, one: bool) -> char {
+    char::from_u32(WRITTEN_UNKNOWN + u32::from(class.0) * 2 + u32::from(one)).unwrap_or(UNKNOWN_ANY)
+}
+
+/// The class and lower bound a [`written_unknown`] character stands for.
+pub fn written_class(c: char) -> Option<(TextClass, bool)> {
+    let i = (c as u32).checked_sub(WRITTEN_UNKNOWN).filter(|i| *i < 256)?;
+    Some((TextClass((i / 2) as u8), i % 2 == 1))
+}
 
 /// Whether `c` is one character of unknown text.
 pub fn is_unknown_char(c: char) -> bool {
@@ -1167,6 +1186,9 @@ pub struct Mouth {
     /// The character of several possible categories the last token met:
     /// the reader may split the path on it and read again.
     pub undecided: Option<char>,
+    /// The class of the typed unknown text a run wrote that the last token
+    /// stands for ([`written_unknown`]).
+    pub written: Option<(TextClass, bool)>,
     pub file: FileId,
 }
 
@@ -1229,6 +1251,7 @@ impl Mouth {
             line_end: EndLineChar::default(),
             last_unknown: None,
             undecided: None,
+            written: None,
             file,
         }
     }
@@ -1577,6 +1600,13 @@ impl Mouth {
                 self.state = LineState::Middle;
                 self.last_unknown = Some(c);
                 self.undecided = Some(c);
+                return Some(Token::new(Tok::Cs(it.intern(UNKNOWN_CS)), span));
+            }
+            // Text a run wrote to a file it did not know: the same unknown
+            // text read back.
+            if written && (c == UNKNOWN_ANY || written_class(c).is_some()) {
+                self.state = LineState::Middle;
+                self.written = written_class(c);
                 return Some(Token::new(Tok::Cs(it.intern(UNKNOWN_CS)), span));
             }
             match cat {

@@ -391,6 +391,11 @@ pub struct Analysis {
     /// The package caches this run met: package, cache file, and whether it
     /// was `cached` (read), `stored`, or `stale: …` and read again.
     pub package_caches: Vec<(String, String, String)>,
+    /// What the run wrote to each file, by name: `None` where not known.
+    pub written: Vec<(String, Option<String>)>,
+    /// How many runs of the build it took to reach the fixpoint
+    /// ([`Machine::analyze_build`]).
+    pub build_runs: u32,
     /// The packages among them that were classes.
     pub class_caches: std::collections::BTreeSet<String>,
     /// Files served at least in part from a package cache replay rather
@@ -1051,6 +1056,9 @@ type Streams = Rc<HashMap<i64, (Rc<Vec<String>>, usize)>>;
 /// far, or `None` once what they hold is unknown (a deferred `\write`, an
 /// unpinned stream).
 type Outputs = Rc<HashMap<String, Option<String>>>;
+/// The lines a deferred `\write` gave each file: written at the next
+/// shipout (tex.web § 1370), not before.
+type Pending = Rc<HashMap<String, Vec<String>>>;
 
 /// The stream a number satex could not pin down names.  `i64::MIN` is past
 /// what `scan_int` can give (tex.web § 445), so no source reaches it.
@@ -1231,6 +1239,7 @@ pub struct Machine<'a> {
     streams: Streams,
     /// What this run has written to its `\openout` files.
     pub(crate) outputs: Outputs,
+    pending: Pending,
     /// The `\usedir` of a docstrip batch file: where what it generates next
     /// belongs in a distribution's tree.
     pub docstrip_dir: Option<String>,
@@ -1678,6 +1687,7 @@ struct PathState {
     pub(crate) halted: bool,
     streams: Streams,
     outputs: Outputs,
+    pending: Pending,
     loaded: Rc<Vec<String>>,
     mode: crate::mode::Modes,
     list: crate::mode::Modes,
@@ -2030,6 +2040,8 @@ impl<'a> Machine<'a> {
                 memory_reported: 0,
                 untyped: 0,
                 package_caches: Vec::new(),
+                written: Vec::new(),
+                build_runs: 1,
                 class_caches: Default::default(),
                 cached_files: Default::default(),
                 preamble: None,
@@ -2102,6 +2114,7 @@ impl<'a> Machine<'a> {
             section: None,
             streams: Rc::default(),
             outputs: Rc::default(),
+            pending: Rc::default(),
             docstrip_dir: None,
             docstrip: false,
             lua: Default::default(),
@@ -2434,6 +2447,12 @@ impl<'a> Machine<'a> {
     /// and the facts drawn from all it recorded.
     fn conclude(self, id: FileId) -> Analysis {
         let mut m = self;
+        // tex.web § 1054: `\end` ships out what is left, deferred writes too.
+        m.ship_pending();
+        let mut written: Vec<(String, Option<String>)> =
+            m.outputs.iter().map(|(n, t)| (n.clone(), t.clone())).collect();
+        written.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        m.out.written = written;
         // The document's own run only: nested runs read part of it.
         m.report_unread_inputs();
         crate::observe::text_break(&mut m);
@@ -3042,6 +3061,7 @@ will look undefined",
         // runs key their package caches apart.
         self.streams = Rc::default();
         self.outputs = Rc::default();
+        self.pending = Rc::default();
         self.carried.stream_paths.clear();
         self.carried.stream_read = None;
         self.stream_files.clear();
@@ -3400,15 +3420,19 @@ will look undefined",
     }
 
     /// A `\write` to `stream`: `text` ends up in its file when known, and
-    /// `None` makes the file's content unknown. An unpinned stream may be
-    /// any file.
-    pub(crate) fn write_output(&mut self, stream: Option<i64>, text: Option<&str>) {
+    /// `None` makes the file's content unknown; a `deferred` one waits for
+    /// the next shipout. An unpinned stream may be any file.
+    pub(crate) fn write_output(&mut self, stream: Option<i64>, text: Option<&str>, deferred: bool) {
         let Some(stream) = stream else {
             Rc::make_mut(&mut self.outputs).values_mut().for_each(|t| *t = None);
             return;
         };
         let Some(name) = self.stream_files.get(&stream).map(|n| Self::output_name(n)) else { return };
         let open = self.engine_int(&format!("write_open.{stream}"));
+        if let (true, Some(text)) = (deferred, text) {
+            Rc::make_mut(&mut self.pending).entry(name).or_default().push(text.to_string());
+            return;
+        }
         if let Some(slot) = Rc::make_mut(&mut self.outputs).get_mut(&name) {
             match (open, text, slot.as_mut()) {
                 (Some(0), ..) => {}
@@ -3417,6 +3441,32 @@ will look undefined",
                     file.push('\n');
                 }
                 _ => *slot = None,
+            }
+        }
+    }
+
+    /// tex.web § 1374: a shipout writes what deferred `\write`s left to
+    /// the files still open.
+    pub(crate) fn ship_pending(&mut self) {
+        for (name, lines) in std::mem::take(&mut self.pending).iter() {
+            if let Some(Some(file)) = Rc::make_mut(&mut self.outputs).get_mut(name) {
+                lines.iter().for_each(|l| {
+                    file.push_str(l);
+                    file.push('\n');
+                });
+            }
+        }
+    }
+
+    /// An `\immediate\closeout` of the file `name` with lines still to be
+    /// shipped: they reach it only if a shipout comes first, so what it holds
+    /// is not known.
+    pub(crate) fn close_pending(&mut self, name: &str) {
+        let name = Self::output_name(name);
+        if self.pending.get(&name).is_some_and(|l| !l.is_empty()) {
+            Rc::make_mut(&mut self.pending).remove(&name);
+            if let Some(slot) = Rc::make_mut(&mut self.outputs).get_mut(&name) {
+                *slot = None;
             }
         }
     }
@@ -3740,9 +3790,14 @@ will look undefined",
                         // that executing it later can be bounded by what
                         // that character could mean (tex.web §§ 232, 344).
                         let unknown = mouth.last_unknown.take();
+                        let written = mouth.written.take();
                         if let Some(c) = unknown {
                             self.unknown_chars.insert(t.span, c);
                         }
+                        let t = match written {
+                            Some((class, one)) => self.unknown_text(Unk::Class(class, one, None, &[]), t.span),
+                            None => t,
+                        };
                         // A letter or an other character either way: one of the two tokens.
                         let plain = (1 << Catcode::Letter as u8) | (1 << Catcode::Other as u8);
                         let chars = unknown.filter(|&c| self.catcodes.cats(c) & !plain == 0);
@@ -9939,6 +9994,7 @@ will look undefined",
             halted: self.halted,
             streams: self.streams.clone(),
             outputs: self.outputs.clone(),
+            pending: self.pending.clone(),
             loaded: self.loaded.clone(),
             mode: self.mode,
             list: self.list,
@@ -10027,6 +10083,7 @@ will look undefined",
         self.halted = state.halted;
         self.streams = state.streams;
         self.outputs = state.outputs;
+        self.pending = state.pending;
         self.loaded = state.loaded;
         self.mode = state.mode;
         self.list = state.list;
