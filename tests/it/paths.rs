@@ -246,7 +246,10 @@ fn aux_fixture(name: &str, build_file: &str, text: &str) -> (PathBuf, Analysis) 
     let doc = dir.join("x.tex");
     let source = "\\documentclass{article}\n\\begin{document}hi\\end{document}\n";
     std::fs::write(&doc, source).unwrap();
-    let analysis = Machine::analyze(source, Some(&doc), &crate::support::config());
+    // The build's own `.aux` on disk, which these tests look for.
+    let cfg =
+        Config { load: satex::config::Load { build_files: true, ..Default::default() }, ..crate::support::config() };
+    let analysis = Machine::analyze(source, Some(&doc), &cfg);
     (dir, analysis)
 }
 
@@ -300,6 +303,7 @@ fn config_output_directory_is_the_fallback() {
     std::fs::write(&doc, source).unwrap();
     let mut cfg = crate::support::config();
     cfg.paths.output_directory = "build".into();
+    cfg.load.build_files = true;
     let analysis = Machine::analyze(source, Some(&doc), &cfg);
     assert!(read_aux(&analysis).iter().all(|p| p.contains("build")));
     let _ = std::fs::remove_dir_all(&dir);

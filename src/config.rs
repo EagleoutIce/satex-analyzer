@@ -575,6 +575,11 @@ pub struct Load {
     /// Find what a package or class file expects loaded from the names it
     /// uses and the packages on disk that define them.
     pub expect_detect: bool,
+    /// Read the files an earlier build wrote (`build_extensions`) as they
+    /// are on disk. Off, they count as absent: the run over-approximates
+    /// them by what it writes itself.
+    pub build_files: bool,
+    pub build_extensions: Vec<String>,
 }
 
 impl Default for Load {
@@ -587,6 +592,43 @@ impl Default for Load {
             skip: Vec::new(),
             expect: Vec::new(),
             expect_detect: true,
+            build_files: false,
+            build_extensions: [
+                "aux",
+                "toc",
+                "lof",
+                "lot",
+                "loa",
+                "lol",
+                "out",
+                "bbl",
+                "bcf",
+                "run.xml",
+                "blg",
+                "glo",
+                "gls",
+                "glg",
+                "acn",
+                "acr",
+                "alg",
+                "ist",
+                "idx",
+                "ind",
+                "ilg",
+                "nlo",
+                "nls",
+                "slnc",
+                "brf",
+                "nav",
+                "snm",
+                "vrb",
+                "fls",
+                "fdb_latexmk",
+                "xdy",
+                "log",
+            ]
+            .map(String::from)
+            .to_vec(),
         }
     }
 }

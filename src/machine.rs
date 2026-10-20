@@ -1944,14 +1944,7 @@ impl<'a> Machine<'a> {
         let plugins = Plugins::resolve(cfg, &project);
         // TEXINPUTS etc., in kpathsea's own precedence: environment, then
         // the project's `latexmkrc`/Makefile, then `satex.yaml`'s `paths.*`.
-        let kpse_paths = crate::paths::effective_all(&project, &cfg.paths, &project.root);
-        let texinputs =
-            kpse_paths.iter().find(|e| e.variable == "TEXINPUTS").map(|e| e.dirs.clone()).unwrap_or_default();
-        let search = cfg.search_paths.iter().cloned().chain(project.search_paths()).chain(texinputs).collect();
-        let mut request = cfg.distribution_request();
-        request.kpse_env = crate::paths::env_vars(&kpse_paths);
-        let output = crate::paths::output_dir(&project, &cfg.paths.output_directory, &project.root).map(|o| o.dir);
-        let resolver = Resolver::new(search, request).with_output(output).with_unpacked(project.unpacked());
+        let resolver = Resolver::for_project(cfg, &project);
         let engine = plugins.engine;
         let mut interner = Interner::default();
         // Sym(0) is the empty name, used where an event has no subject.

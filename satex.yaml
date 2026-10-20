@@ -11,6 +11,8 @@ load:  # what to follow from the document
   skip: []  # packages to leave unread
   expect: []  # classes and packages a package or class file expects loaded before it (a beamer theme: [beamer])
   expect_detect: true  # find them from what the packages on disk define, and say so
+  build_files: false  # read the .aux, .toc, .bbl, ... an earlier build left; off: absent, the run over-approximates them
+  build_extensions: [aux, toc, lof, lot, loa, lol, out, bbl, bcf, run.xml, blg, glo, gls, glg, acn, acr, alg, ist, idx, ind, ilg, nlo, nls, slnc, brf, nav, snm, vrb, fls, fdb_latexmk, xdy, log]  # what counts as such a file
 search_paths: []  # searched before the installation
 paths:  # kpathsea variables' fallback list: tried after the
                           # environment and the project's latexmkrc/Makefile

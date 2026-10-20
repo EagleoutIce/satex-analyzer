@@ -33,6 +33,8 @@ pub struct Resolver {
     unpacked: std::collections::BTreeMap<String, (PathBuf, Vec<String>)>,
     /// Case mismatches found: (asked_name, found_name on disk) for each lookup.
     case_mismatches: RefCell<HashMap<(String, LoadKind), (String, String)>>,
+    /// Extensions of files an earlier build wrote, which count as absent.
+    hidden: Vec<String>,
 }
 
 impl Resolver {
@@ -45,6 +47,7 @@ impl Resolver {
             cache: HashMap::default(),
             unpacked: Default::default(),
             case_mismatches: RefCell::new(HashMap::default()),
+            hidden: Vec::new(),
         }
     }
 
@@ -57,13 +60,24 @@ impl Resolver {
         let mut request = cfg.distribution_request();
         request.kpse_env = crate::paths::env_vars(&kpse);
         let output = crate::paths::output_dir(project, &cfg.paths.output_directory, &project.root).map(|o| o.dir);
-        Self::new(search, request).with_output(output).with_unpacked(project.unpacked())
+        let hidden = if cfg.load.build_files { Vec::new() } else { cfg.load.build_extensions.clone() };
+        Self::new(search, request).with_output(output).with_unpacked(project.unpacked()).with_hidden(hidden)
     }
 
     /// Like web2c with `-output-directory`: a relative name is tried in `dir` first.
     pub fn with_output(mut self, dir: Option<PathBuf>) -> Self {
         self.output = dir;
         self
+    }
+
+    /// Files with these extensions are not found (`load.build_files` off).
+    pub fn with_hidden(mut self, extensions: Vec<String>) -> Self {
+        self.hidden = extensions;
+        self
+    }
+
+    fn hidden(&self, file: &str) -> bool {
+        self.hidden.iter().any(|ext| file.strip_suffix(ext.as_str()).is_some_and(|stem| stem.ends_with('.')))
     }
 
     pub fn with_unpacked(mut self, unpacked: std::collections::BTreeMap<String, (PathBuf, Vec<String>)>) -> Self {
@@ -110,7 +124,7 @@ impl Resolver {
 
     /// Look a name up afresh, bypassing what earlier lookups found.
     pub(crate) fn search_uncached(&self, name: &str, kind: LoadKind, base: &Path) -> Option<PathBuf> {
-        let candidates = candidates(name, kind);
+        let candidates: Vec<String> = candidates(name, kind).into_iter().filter(|file| !self.hidden(file)).collect();
         for file in &candidates {
             let output = self.output.as_deref().filter(|_| !Path::new(file).is_absolute());
             for directory in
