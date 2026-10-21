@@ -236,7 +236,21 @@ pub fn from_file_url(url: &str) -> Option<PathBuf> {
 /// both are made absolute against the working directory first, without
 /// resolving symlinks, so `-f main.tex` and a client's link name agree.
 pub fn within(dir: &Path, file: &Path) -> bool {
-    let absolute = |p: &Path| std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+    // `..` resolved by name: `doc/../lib/x.sty` is not in `doc`.
+    let absolute = |p: &Path| {
+        let p = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+        let mut out = std::path::PathBuf::new();
+        for c in p.components() {
+            match c {
+                std::path::Component::ParentDir => {
+                    out.pop();
+                }
+                std::path::Component::CurDir => {}
+                c => out.push(c),
+            }
+        }
+        out
+    };
     absolute(file).starts_with(absolute(dir))
 }
 
