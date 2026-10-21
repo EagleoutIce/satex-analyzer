@@ -3251,3 +3251,39 @@ fn the_build_reruns_only_for_what_it_read() {
     assert!(defined(&run("source.tex", "\\input{entries.gls}\n"), "G"));
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// `\romannumeral` of a number in a small interval is one of its numerals
+/// (tex.web § 69): a name spelled from it is each name TeX may build.
+#[test]
+fn a_roman_numeral_of_a_small_interval_names_each_value() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\\count255=\\pdfuniformdeviate 2 \\advance\\count255 1 \\expandafter\\gdef\\csname R\\romannumeral\\count255\\endcsname{}\\begin{document}x\\end{document}\n";
+    let a = Machine::analyze(source, None, &crate::support::config());
+    assert!(defined(&a, "Ri") && defined(&a, "Rii"));
+}
+
+/// A join left `\Val` one of two texts. Library code that splits it at a
+/// `.` runs away on the text without one: the document compiles, so that
+/// arm is no run of it, whatever the scan raised before (tex.web § 396).
+#[test]
+fn a_runaway_in_library_code_refutes_the_joined_text_it_split() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-joined-arm-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("frac.sty"),
+        "\\def\\getfrac#1.#2\\@@{\\gdef\\Frac{#2}}\\def\\usefrac{\\expandafter\\getfrac\\Val\\@@}\n",
+    )
+    .unwrap();
+    let source = "\\documentclass{article}\\usepackage{frac}\\ifnum\\pdfuniformdeviate2=0 \\gdef\\Val{1}\\else\\gdef\\Val{1.5}\\fi\\usefrac\n\n\\begin{document}x\\end{document}\n";
+    let path = dir.join("main.tex");
+    std::fs::write(&path, source).unwrap();
+    let a = Machine::analyze(source, Some(&path), &crate::support::config());
+    assert_eq!(body(&a, "Frac"), "5");
+    assert!(!codes(&a).iter().any(|c| c.contains("library-error") || c.contains("runaway")), "{:?}", codes(&a));
+    std::fs::remove_dir_all(dir).ok();
+}

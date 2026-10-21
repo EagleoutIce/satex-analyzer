@@ -342,7 +342,7 @@ Reading the first token of such digits splits the run into one path per case:
 
 So a loop that strips digits one by one sees the integer part end after a `0`.
 
-`\romannumeral` of an unknown number gives typed text of class `o`, possibly empty: its letters are category 12, as tex.web § 69 prints them.
+`\romannumeral` of an unknown number gives typed text of class `o`, possibly empty: its letters are category 12, as tex.web § 69 prints them. A number in a small interval (below `limits.meaning_set` values) gives one of its numerals instead, so a name spelled from it is each name TeX may build.
 A bounded number under `\number` gives typed digits with that bound.
 
 A number whose digits are not all known but begin with a digit has no sign in them: it lies in 0 to 2^31-1 (§ 445 caps it there).

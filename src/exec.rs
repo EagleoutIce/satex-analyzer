@@ -874,14 +874,25 @@ impl Machine<'_> {
                 None => {
                     // A bounded value prints as digits typed with its bound,
                     // a roman numeral as letters of category 12, perhaps none.
-                    let digits = match self.abs.take().filter(|_| kind == TextOf::Number) {
-                        Some(num) => self.digits_in(num, span),
-                        None if kind == TextOf::Roman => {
+                    let digits = match self.abs.take() {
+                        Some(num) if kind == TextOf::Number => self.digits_in(num, span),
+                        // A small interval is one of its numerals, so a name
+                        // spelled from it splits per value (tex.web § 69).
+                        Some(num)
+                            if num.lo >= value::WORD_MIN
+                                && num.hi <= value::WORD_MAX
+                                && num.hi - num.lo < i64::from(self.limits.meaning_set) =>
+                        {
+                            let texts =
+                                (num.lo..=num.hi).map(|v| Rc::from(self.text_tokens(&roman(v), span))).collect();
+                            vec![self.one_of(texts, span)]
+                        }
+                        _ if kind == TextOf::Roman => {
                             vec![self.unknown_text(Unk::Class(TextClass::OTHER, false, None, &[]), span)]
                         }
                         // Any 32-bit value: a sign and at most 10 digits
                         // (tex.web § 65), as `\the` prints it.
-                        None => self.digits_in(Num::range(value::WORD_MIN, value::WORD_MAX), span),
+                        _ => self.digits_in(Num::range(value::WORD_MIN, value::WORD_MAX), span),
                     };
                     return self.unread_all(&digits);
                 }
