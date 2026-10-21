@@ -2473,6 +2473,10 @@ impl Machine<'_> {
     fn join_configs(&mut self, fork: &Fork, a: &Config, b: &Config, widen: bool, paired: bool) -> (Config, Growth) {
         let span = self.position_span();
         self.out.heat(|h| &mut h.joins, span);
+        // Joins run many to a step: past `limits.memory` the run stops here.
+        if crate::budget::over() {
+            self.check_budget();
+        }
         let after: Vec<Option<Vec<Token>>> = a
             .env
             .after()

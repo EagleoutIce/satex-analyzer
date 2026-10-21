@@ -21,11 +21,18 @@ static LIMIT: AtomicUsize = AtomicUsize::new(0);
 pub struct Counter {
     live: AtomicIsize,
     peak: AtomicUsize,
+    /// Set once the run holds more than `limits.memory`: it stops at its
+    /// next step instead of its next periodic check.
+    over: std::sync::atomic::AtomicBool,
 }
 
 impl Counter {
     const fn new() -> Counter {
-        Counter { live: AtomicIsize::new(0), peak: AtomicUsize::new(0) }
+        Counter {
+            live: AtomicIsize::new(0),
+            peak: AtomicUsize::new(0),
+            over: std::sync::atomic::AtomicBool::new(false),
+        }
     }
 
     fn live(&self) -> usize {
@@ -112,6 +119,10 @@ fn take(bytes: usize) -> bool {
         TOTAL.fetch_sub(bytes as isize, Ordering::Relaxed);
         return false;
     }
+    let limit = LIMIT.load(Ordering::Relaxed);
+    if limit > 0 && now as usize > limit {
+        counter.over.store(true, Ordering::Relaxed);
+    }
     if now as usize > counter.peak.load(Ordering::Relaxed) {
         counter.peak.fetch_max(now as usize, Ordering::Relaxed);
     }
@@ -164,6 +175,11 @@ pub fn in_use() -> usize {
 /// process's where runs side by side hold more together.
 pub fn held() -> usize {
     in_use().max(TOTAL.load(Ordering::Relaxed).max(0) as usize)
+}
+
+/// Whether this run has held more than `limits.memory`.
+pub fn over() -> bool {
+    current().over.load(Ordering::Relaxed)
 }
 
 /// The most this run has held at once.

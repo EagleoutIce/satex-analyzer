@@ -6410,7 +6410,10 @@ will look undefined",
             self.out.steps += 1;
         }
         *mark = self.out.steps;
-        if self.out.steps.wrapping_sub(self.checked_at) >= CHECK_INTERVAL || self.out.steps >= self.cfg.limits.steps {
+        if self.out.steps.wrapping_sub(self.checked_at) >= CHECK_INTERVAL
+            || self.out.steps >= self.cfg.limits.steps
+            || crate::budget::over()
+        {
             self.checked_at = self.out.steps;
             self.check_budget();
         }
@@ -6427,7 +6430,7 @@ will look undefined",
         self.check_budget()
     }
 
-    fn check_budget(&mut self) -> bool {
+    pub(crate) fn check_budget(&mut self) -> bool {
         if self.halted {
             return true;
         }
