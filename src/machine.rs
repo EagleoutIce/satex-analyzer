@@ -463,11 +463,19 @@ impl Analysis {
         }
         let main = self.files.get(usize::from(self.main_file)).map(|f| f.path.as_str()).unwrap_or_default();
         let dir = crate::paths::dir_of(Path::new(main));
-        // A build file (`.aux`, `.toc`) is the run's own output read back:
-        // what it declares or misreads the document's calls did first.
+        // A build file (`.aux`, `.toc`), or any the run writes, is its own
+        // output read back: what it declares the document's calls did first.
         self.files.get(usize::from(file)).is_some_and(|f| {
-            crate::paths::within(&dir, Path::new(&f.path)) && !self.settings.load.is_build_file(Path::new(&f.path))
+            let path = Path::new(&f.path);
+            crate::paths::within(&dir, path)
+                && !self.settings.load.is_build_file(path)
+                && !self.written.iter().any(|(name, _)| path.ends_with(name))
         })
+    }
+
+    /// The path of `file`, as the run read it.
+    pub fn file_path(&self, file: FileId) -> Option<&Path> {
+        self.files.get(usize::from(file)).map(|f| Path::new(f.path.as_str()))
     }
 }
 
@@ -5804,7 +5812,9 @@ will look undefined",
     /// Whether `file` is the document's own: the main file, or one beside
     /// it or below its directory.
     pub fn project_file(&self, file: FileId) -> bool {
-        self.out.project_file(file)
+        // What the run writes is listed in `written` only once it ends.
+        let path = self.out.file_path(file);
+        self.out.project_file(file) && !path.is_some_and(|p| self.outputs.keys().any(|name| p.ends_with(name)))
     }
 
     /// [`Machine::project_file`], asked once per file.
