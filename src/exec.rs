@@ -4222,8 +4222,10 @@ impl Machine<'_> {
             .iter()
             .map(|t| match t.cs().is_some_and(|s| self.name(s).starts_with(crate::tex::UNKNOWN_PREFIX)) {
                 true => {
+                    // One of several texts: the class they share.
                     let c = typed
                         .classify(t)
+                        .or_else(|| typed.one_of_class(t))
                         .map_or(crate::tex::UNKNOWN_ANY, |(c, one)| crate::tex::written_unknown(c, one));
                     Token::new(Tok::Chr(c, Catcode::Other), t.span)
                 }
