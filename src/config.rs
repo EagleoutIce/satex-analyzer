@@ -28,6 +28,9 @@ pub struct Limits {
     /// third stops the run. The termination guard: the run spends at most
     /// 3 times this per line read. 0 turns it off.
     pub line_steps: u64,
+    /// Steps a line a run wrote may take where satex replays it to see
+    /// what it names (labels, keys). Past them that line names nothing.
+    pub replay_steps: u64,
     /// How often one construct satex cannot follow may be met at one place
     /// before the expansion it is in is given up the same way.  A path that
     /// fails at a site once fails there again on every round, so counting
@@ -166,6 +169,7 @@ impl Limits {
             "expansion_depth" => self.expansion_depth.into(),
             "site_expansions" => self.site_expansions.into(),
             "line_steps" => self.line_steps,
+            "replay_steps" => self.replay_steps,
             "repeat_failures" => self.repeat_failures.into(),
             "seconds" => self.seconds,
             "choices" => self.choices.into(),
@@ -226,6 +230,9 @@ impl Default for Limits {
             // Measured: the heaviest line of a long thesis takes 34-67M
             // steps (about 30 s); a stuck line costs at most 3 times this.
             line_steps: 100_000_000,
+            // Measured: a `\newlabel` or `\@writefile` line takes a few
+            // thousand steps; one of unknown text may take any number.
+            replay_steps: 1_000_000,
             // Measured: the kernel's own `\if` chains report a handful of
             // the same gap while they are still making progress, and no
             // document needed more than a few before the path repeated

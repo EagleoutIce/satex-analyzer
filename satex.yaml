@@ -164,6 +164,7 @@ limits:
   file_depth: 64  # how deep \input and \usepackage may nest
   expansion_depth: 512  # how often one macro may be nested in itself before its recursion is widened
   site_expansions: 16384  # how often one call site may expand without reading on
+  replay_steps: 1000000  # steps a line the run wrote may take where satex replays it for what it names
   seconds: 300  # wall-clock limit per run, 0 for none
   repeat_failures: 8  # times one gap may be met at one place before the expansion is dropped
   choices: 8  # undecided choices one command may make on one path

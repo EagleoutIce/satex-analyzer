@@ -5488,7 +5488,9 @@ will look undefined",
         self.halted = false;
         self.out.exhausted = false;
         self.out.steps = 0;
+        self.budget = Some(self.cfg.limits.replay_steps);
         self.run();
+        self.budget = None;
         let defined = self.line_defined.take().unwrap_or_default();
         defined
             .into_iter()
