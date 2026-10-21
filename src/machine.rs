@@ -5153,6 +5153,52 @@ will look undefined",
         Some(prefix)
     }
 
+    /// The texts `body` spells when each one-of token in it is one of its
+    /// texts, at most `limits.meaning_set` of them; `None` without such a
+    /// token or past the bound.
+    fn spelled_bodies(&self, body: &[Token]) -> Option<Vec<Rc<[Token]>>> {
+        let limit = usize::from(self.limits.meaning_set);
+        let mut bodies: Vec<Vec<Token>> = vec![Vec::new()];
+        let mut split = false;
+        for t in body {
+            match self.one_of_members(*t) {
+                Some(texts) => {
+                    split = true;
+                    if bodies.len() * texts.len() > limit {
+                        return None;
+                    }
+                    bodies = bodies
+                        .iter()
+                        .flat_map(|b| texts.iter().map(move |x| b.iter().chain(x.iter()).copied().collect()))
+                        .collect();
+                }
+                None => bodies.iter_mut().for_each(|b| b.push(*t)),
+            }
+        }
+        if !split {
+            return None;
+        }
+        bodies.dedup();
+        Some(bodies.into_iter().map(Rc::from).collect())
+    }
+
+    /// A macro whose body holds texts a join left is one of the bodies
+    /// they spell where a test asks whether it is empty (`\ifx` with an
+    /// empty macro, tex.web § 507, as LaTeX's list loops do): the test
+    /// then splits per body, and each arm keeps its own.
+    pub(crate) fn spread_joined_body(&mut self, t: Token) {
+        let Some(sym) = t.cs() else { return };
+        let Meaning::Macro(m) = self.env.meaning(sym) else { return };
+        let Some(bodies) = self.spelled_bodies(&m.replacement_text) else { return };
+        let may: Vec<Meaning> = bodies
+            .into_iter()
+            .map(|text| Meaning::Macro(Rc::new(crate::tex::MacroDef { replacement_text: text, ..(*m).clone() })))
+            .collect();
+        if may.len() > 1 {
+            self.refine_to(sym, &may);
+        }
+    }
+
     pub fn define(&mut self, name: Sym, meaning: Meaning, by: Sym, mode: DefMode, span: Span) -> NodeId {
         // A command that has defined something has read its arguments.
         self.finish_shape();

@@ -1947,6 +1947,24 @@ impl Machine<'_> {
         }
         let b = self.next_token();
         let b_marked = b.is_some_and(|b| self.read_noexpanded(b));
+        // A list library code tests against an empty macro: per body
+        // ([`Machine::spread_joined_body`]), as LaTeX's list loops need. The
+        // document's own test stays undecided, its text read per arm.
+        if let Some(b) = b.filter(|b| !self.own_file(a.span.file) && !self.own_file(b.span.file)) {
+            let empty = |m: &Self, t: Token| {
+                t.cs().is_some_and(|s| {
+                    m.env
+                        .meaning(s)
+                        .as_macro()
+                        .is_some_and(|d| d.replacement_text.is_empty() && d.parameter_text.items.is_empty())
+                })
+            };
+            if empty(self, b) {
+                self.spread_joined_body(a);
+            } else if empty(self, a) {
+                self.spread_joined_body(b);
+            }
+        }
         let split_b = b.is_some_and(|b| self.split_one_of(b));
         // A look-ahead TeX does not make: both operands go back as they
         // were read, behind their markers.

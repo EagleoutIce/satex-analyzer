@@ -3287,3 +3287,129 @@ fn a_runaway_in_library_code_refutes_the_joined_text_it_split() {
     assert!(!codes(&a).iter().any(|c| c.contains("library-error") || c.contains("runaway")), "{:?}", codes(&a));
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// `\z` holds the text a join left `\x` with, one of two bodies. Library
+/// code testing it against an empty macro (as LaTeX's list loops do)
+/// splits per body (tex.web § 507), and each arm keeps its own, so the
+/// same test inside the arm is decided.
+#[test]
+fn ifx_splits_a_body_a_join_left() {
+    if !installed() {
+        return;
+    }
+    let root = crate::support::tmp_root().join(format!("satex-ifx-split-{}", std::process::id()));
+    let (dir, lib) = (root.join("doc"), root.join("lib"));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(
+        lib.join("emptiness.sty"),
+        "\\def\\check{\\ifx\\z\\empty\\gdef\\E{}\\ifx\\z\\empty\\else\\gdef\\Never{}\\fi\\else\\gdef\\N{}\\fi}\n",
+    )
+    .unwrap();
+    let source = "\\documentclass{article}\\usepackage{../lib/emptiness}\\ifnum\\pdfuniformdeviate2=0 \\def\\x{}\\else\\def\\x{y}\\fi\\edef\\z{\\x}\\check\\begin{document}x\\end{document}\n";
+    let path = dir.join("main.tex");
+    std::fs::write(&path, source).unwrap();
+    let a = Machine::analyze(source, Some(&path), &crate::support::config());
+    assert!(defined(&a, "E") && defined(&a, "N"));
+    assert!(!defined(&a, "Never"));
+    std::fs::remove_dir_all(root).ok();
+}
+
+/// What TeX reads each argument as ([`satex::roles::Ty`]), seen in the run
+/// and handed on through wrappers.
+mod types {
+    use super::*;
+
+    /// `cmd`'s argument types as signatures show them, in a run of `body`
+    /// after a preamble of lengths, a box and a counter.
+    fn types(body: &str, cmds: &[&str]) -> Vec<Vec<String>> {
+        let dir = crate::support::tmp_root().join(format!("satex-types-{}-{}", cmds[0], std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let source = format!(
+            "\\documentclass{{article}}\n\\newlength\\mylen\n\\newsavebox\\mybox\n\\newcounter{{foo}}\n{body}\n\\end{{document}}\n"
+        );
+        let path = dir.join("main.tex");
+        std::fs::write(&path, &source).unwrap();
+        let a = Machine::analyze(&source, Some(&path), &crate::support::config());
+        let shown = |cmd: &&str| {
+            let roles = satex::roles::roles(&a, cmd);
+            satex::roles::arg_types(&roles).iter().map(|(arg, t)| format!("#{} {t}", arg + 1)).collect()
+        };
+        let found = cmds.iter().map(shown).collect();
+        std::fs::remove_dir_all(dir).ok();
+        found
+    }
+
+    #[test]
+    fn a_setlength_wrapper_takes_glue() {
+        if !installed() {
+            return;
+        }
+        let found = types(
+            "\\newcommand\\setw[1]{\\setlength{\\mylen}{#1}}\n\\begin{document}\n\\setw{3pt}",
+            &["setw", "setlength"],
+        );
+        assert_eq!(found, [vec!["#1 glue"], vec!["#1 skip register"]]);
+    }
+
+    #[test]
+    fn a_usebox_wrapper_takes_a_box() {
+        if !installed() {
+            return;
+        }
+        let found = types(
+            "\\newcommand\\showb[1]{\\usebox{#1}}\n\\newcommand\\cp[1]{\\copy#1}\n\\begin{document}\n\\showb{\\mybox}\\cp{\\mybox}",
+            &["showb", "cp"],
+        );
+        assert_eq!(found, [vec!["#1 box"], vec!["#1 box"]]);
+    }
+
+    #[test]
+    fn a_setcounter_wrapper_takes_a_counter_and_a_number() {
+        if !installed() {
+            return;
+        }
+        let found = types("\\newcommand\\setc[2]{\\setcounter{#1}{#2}}\n\\begin{document}\n\\setc{foo}{2}", &["setc"]);
+        assert_eq!(found, [vec!["#1 counter", "#2 number"]]);
+    }
+
+    /// One argument read as glue in one call and as a number in another
+    /// is a quantity: the join of the two.
+    #[test]
+    fn uses_that_disagree_join_upward() {
+        if !installed() {
+            return;
+        }
+        let found = types(
+            "\\newcommand\\amount[2]{\\ifnum#1=0 \\hspace{#2}\\else\\setcounter{foo}{#2}\\fi}\n\\begin{document}\n\\amount{0}{1em}\\amount{1}{2}",
+            &["amount"],
+        );
+        assert_eq!(found, [vec!["#1 number", "#2 quantity"]]);
+    }
+
+    /// A wrapper that is never called gets its types from the body: the
+    /// call it makes hands `#1` on to an argument that has one.
+    #[test]
+    fn a_wrapper_inherits_types_through_its_body() {
+        if !installed() {
+            return;
+        }
+        let found = types(
+            "\\newcommand\\wrapw[1]{\\innerw{#1}}\n\\newcommand\\innerw[1]{\\setlength{\\mylen}{#1}}\n\\begin{document}\n\\innerw{1pt}",
+            &["wrapw"],
+        );
+        assert_eq!(found, [vec!["#1 glue"]]);
+    }
+
+    #[test]
+    fn the_lattice_orders_registers_below_their_values() {
+        use satex::roles::Ty;
+        use satex::tex::RegKind;
+        assert_eq!(Ty::Reg(RegKind::Dimen).join(Ty::Reg(RegKind::Skip)), Ty::Glue);
+        assert_eq!(Ty::Box.join(Ty::Dimen), Ty::Quantity);
+        assert_eq!(Ty::Named(RegKind::Count).join(Ty::Key), Ty::Name);
+        assert_eq!(Ty::Cs.join(Ty::Number), Ty::Top);
+        assert!(Ty::Dimen.leq(Ty::Glue) && !Ty::Glue.leq(Ty::Dimen));
+        assert_eq!(Ty::Bottom.join(Ty::Box), Ty::Box);
+    }
+}
