@@ -189,6 +189,13 @@ fn command_hover(analysis: &Analysis, name: &str) -> Option<String> {
         if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
             markdown.push_str(&format!("`\\{name}{}`\n\n", usage(sig)));
         }
+        let types = arg_types(record, text("signature").filter(|s| !s.is_empty()));
+        for (arg, ty) in &types {
+            markdown.push_str(&format!("- `{arg}` {ty}\n"));
+        }
+        if !types.is_empty() {
+            markdown.push('\n');
+        }
         if let Some(doc) = documented(record) {
             if !doc.text.is_empty() {
                 markdown.push_str(&format!("{}\n\n", doc.text));
@@ -214,6 +221,22 @@ fn command_hover(analysis: &Analysis, name: &str) -> Option<String> {
         }
     }
     Some(markdown)
+}
+
+/// The types a record gives its braced arguments ([`crate::roles::Ty`]),
+/// each by its `⟨argN⟩` in the usage line of `sig`, without one by its
+/// place among the braced ones.
+fn arg_types(record: &Record, sig: Option<&str>) -> Vec<(String, String)> {
+    let line = sig.map(usage).unwrap_or_else(|| (1..=9).map(|n| format!("{{⟨arg{n}⟩}}")).collect());
+    let braced: Vec<&str> = line.split('{').skip(1).filter_map(|s| s.split_once('}').map(|(a, _)| a)).collect();
+    let types = record.get("types").and_then(Json::as_array).into_iter().flatten().filter_map(Json::as_str);
+    types
+        .filter_map(|t| {
+            let (n, ty) = t.strip_prefix('#')?.split_once(' ')?;
+            let arg = braced.get(n.parse::<usize>().ok()?.checked_sub(1)?)?;
+            Some((arg.to_string(), ty.to_string()))
+        })
+        .collect()
 }
 
 /// The comment block above the definition a record names.
@@ -281,6 +304,7 @@ pub fn signature_help(analysis: &Analysis, doc: &Text, position: Position) -> Op
     let record = records.iter().find(|r| r.get("signature").and_then(Json::as_str).is_some_and(|s| !s.is_empty()))?;
     let label = format!("\\{name}{}", usage(record.get("signature").and_then(Json::as_str)?));
     let comment = documented(record);
+    let types = arg_types(record, record.get("signature").and_then(Json::as_str));
     let mut parameters = Vec::new();
     for n in 1..=9u8 {
         let arg = format!("⟨arg{n}⟩");
@@ -288,6 +312,11 @@ pub fn signature_help(analysis: &Analysis, doc: &Text, position: Position) -> Op
             break;
         }
         let text = comment.as_ref().and_then(|d| d.params.iter().find(|(k, _)| *k == n)).map(|(_, t)| t.clone());
+        let ty = types.iter().find(|(a, _)| *a == arg).map(|(_, t)| t.clone());
+        let text = match (ty, text) {
+            (Some(ty), Some(text)) => Some(format!("{ty}: {text}")),
+            (ty, text) => ty.or(text),
+        };
         parameters.push(lsp_types::ParameterInformation {
             label: lsp_types::ParameterLabel::Simple(arg),
             documentation: text.map(lsp_types::Documentation::String),
@@ -726,10 +755,32 @@ pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> Comple
         }
         _ => {
             let typed = cs_re().find(before).map_or("", |m| &m.as_str()[1..]);
-            let (items, more) = command_items(analysis, pos, typed);
+            let (mut items, more) = command_items(analysis, pos, typed);
+            // In an argument TeX reads as a quantity, the names holding one
+            // that fits come first.
+            if let Some(want) = argument_at(before).and_then(|arg| quantity_wanted(analysis, &arg)) {
+                for item in &mut items {
+                    let sym = analysis.interner.lookup(&item.label);
+                    let ty = sym.and_then(|s| crate::roles::Ty::of_meaning(&analysis.env.meaning(s)));
+                    if ty.is_some_and(|t| t.leq(want)) {
+                        item.sort_text = item.sort_text.take().map(|s| format!("!{s}"));
+                    }
+                }
+            }
             CompletionResponse::List(lsp_types::CompletionList { is_incomplete: more, items })
         }
     }
+}
+
+/// The quantity the braced argument `arg` is read as ([`crate::roles::Ty`]),
+/// a register's for a register name.
+fn quantity_wanted(analysis: &Analysis, arg: &Arg) -> Option<crate::roles::Ty> {
+    use crate::roles::Ty;
+    let at = crate::roles::braced_groups(arg.groups).len();
+    let roles = crate::roles::roles(analysis, arg.cmd);
+    let (_, ty) = crate::roles::arg_types(&roles).into_iter().find(|(a, _)| arg.open == '{' && *a == at)?;
+    let ty = if matches!(ty, Ty::Reg(_)) { ty.parent() } else { ty };
+    ty.leq(Ty::Quantity).then_some(ty)
 }
 
 /// How many commands one completion answer lists; the client asks again as
@@ -819,14 +870,14 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
         .iter()
         .filter_map(|r| match r.kind {
             crate::roles::RoleKind::Load(k) => Some(k),
-            crate::roles::RoleKind::Occ(_) => None,
+            _ => None,
         })
         .collect();
     let mut occs: Vec<OccKind> = roles
         .iter()
         .filter_map(|r| match r.kind {
             crate::roles::RoleKind::Occ(k) => Some(k),
-            crate::roles::RoleKind::Load(_) => None,
+            _ => None,
         })
         .collect();
     // A wrapper that adds a prefix (`\ref{sec:#1}`) is given what follows it.

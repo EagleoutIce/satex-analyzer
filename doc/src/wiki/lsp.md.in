@@ -42,6 +42,13 @@ What each argument of a command is, its role, decides what is offered there (`ro
 
 So `\newcommand\secref[1]{\ref{sec:#1}}` completes labels in its argument before it is ever used, and offers `intro` for the label `sec:intro`. An argument that defines a key is not also a use of it.
 
+Each argument also has a type: what TeX read it as (`types` in [`explain`](queries.md#explain), the [argument type lattice](domains.md#argument-types-the-ty-lattice)).
+The run notes the tokens of the user's files that a scanner read as a number, dimen or glue, that an assignment named as a register, that `\copy` or `\setbox` read as a box number, or whose characters `\csname` formed into a register's name.
+Each such token belongs to the braced argument of the command its text stands in, and flows through wrappers as a role does.
+Types of one argument join: `\setlength` shows `#1 skip register, #2 glue`, `\usebox` `#1 box`, `\setcounter` `#1 counter, #2 number`, and an argument read once as glue and once as a number is a `quantity`.
+The hover lists the type of each `⟨argN⟩` under the usage line, and the signature help puts it in front of the parameter's comment.
+Inside an argument read as a quantity, completion lists the names that hold one that fits first: `\setlength{\` offers the lengths before other commands.
+
 `workspace/executeCommand` runs `satex/query` with one argument, a [query request](queries.md#json-requests). Without `file` it applies to the open document.
 
 ## Configuration

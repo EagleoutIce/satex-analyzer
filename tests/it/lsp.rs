@@ -997,3 +997,39 @@ fn a_redefined_ref_completes_no_labels() {
     assert!(!labels(&items).contains(&"intro"), "{:?}", labels(&items));
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// What TeX reads each argument as ([`satex::roles::Ty`]) comes with the
+/// signature: the hover lists it per argument, the signature help per
+/// parameter.
+#[test]
+fn hover_and_signature_help_show_argument_types() {
+    let text = "\\documentclass{article}\n\\newlength\\mylen\n\\newcommand\\setw[1]{\\setlength{\\mylen}{#1}}\n\\begin{document}\n\\setw{3pt}\n\\setw{1em}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("types", text);
+    let id = server.request(
+        "textDocument/signatureHelp",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 5, "character": 7 } }),
+    );
+    let help = server.response(id)["result"].clone();
+    assert_eq!(help["signatures"][0]["parameters"][0]["documentation"], "glue", "{help}");
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 4, "character": 2 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("- `⟨arg1⟩` glue"), "{hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An argument TeX reads as a length narrows what a name there may be:
+/// the length registers come before the rest.
+#[test]
+fn a_length_argument_completes_lengths_first() {
+    let text = "\\documentclass{article}\n\\newlength\\zlen\n\\newcommand\\zcmd{}\n\\begin{document}\n\\zcmd\\zcmd\\zcmd\\setlength{\\zlen}{1pt}\n\\setlength{\\z}{2pt}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("lengths", text);
+    let items = complete(&mut server, &uri, 5, 13);
+    assert_eq!(labels(&items).first(), Some(&"zlen"), "{:?}", labels(&items));
+    assert!(labels(&items).contains(&"zcmd"), "{:?}", labels(&items));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}

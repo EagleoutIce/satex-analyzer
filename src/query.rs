@@ -2730,8 +2730,17 @@ fn insert_call_shape(
         record.insert("forms".into(), json!(p.forms.iter().map(|f| f.raw.clone()).collect::<Vec<_>>()));
     }
     let roles = crate::roles::roles(analysis, analysis.interner.name(sym));
-    if !roles.is_empty() {
-        record.insert("roles".into(), json!(roles.iter().map(ToString::to_string).collect::<Vec<_>>()));
+    let named: Vec<String> =
+        roles.iter().filter(|r| !matches!(r.kind, crate::roles::RoleKind::Type(_))).map(ToString::to_string).collect();
+    if !named.is_empty() {
+        record.insert("roles".into(), json!(named));
+    }
+    let types = crate::roles::arg_types(&roles);
+    if !types.is_empty() {
+        record.insert(
+            "types".into(),
+            json!(types.iter().map(|(arg, t)| format!("#{} {t}", arg + 1)).collect::<Vec<_>>()),
+        );
     }
     record.insert("effective".into(), json!(effective_of(analysis, sym, mac, view)));
     if let Some(error) = probe.and_then(|p| p.error) {

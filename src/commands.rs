@@ -1598,7 +1598,7 @@ impl Machine<'_> {
             // `box_flag` (or `global_box_flag`), and an `\afterassignment`
             // token is read once it has begun.
             Syntax::SetBox => {
-                let register = self.scan_number();
+                let register = self.scan_box_number();
                 // An unpinned number names a register in the interval its scan left.
                 let within = match register {
                     Some(_) => None,

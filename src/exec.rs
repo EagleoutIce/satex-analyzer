@@ -1417,6 +1417,9 @@ impl Machine<'_> {
         self.last_named_cs = Some(self.intern(&name));
         crate::observe::csname(self, &name, span);
         let sym = self.intern(&name);
+        if let Meaning::Register(kind, _) = self.env.meaning(sym) {
+            crate::observe::arg_type(self, at, crate::roles::Ty::Named(kind));
+        }
         let relax = Meaning::Primitive(Primitive::Relax);
         if !self.env.is_defined(sym) {
             // A name of a family a loop may have defined (`\a5` after a
@@ -2561,7 +2564,7 @@ impl Machine<'_> {
             }
             // tex.web § 505: a register no `\setbox` has filled is void.
             Cond::Box => {
-                let n = self.scan_number()?;
+                let n = self.scan_box_number()?;
                 let state = self.box_state(n);
                 if state == crate::mode::BoxState::Unknown {
                     return None;
@@ -2913,6 +2916,14 @@ impl Machine<'_> {
     /// ⟨number⟩ (tex.web § 440); see [`crate::scan`].
     pub fn scan_number(&mut self) -> Option<i64> {
         self.scanning_value(Self::scan_int)
+    }
+
+    /// A box register's number (tex.web § 1079).
+    pub(crate) fn scan_box_number(&mut self) -> Option<i64> {
+        self.scratch.box_number = true;
+        let n = self.scan_number();
+        self.scratch.box_number = false;
+        n
     }
 
     /// Run a value scan; a condition it could not decide leaves the value
@@ -3522,6 +3533,7 @@ impl Machine<'_> {
     pub fn assign_register(&mut self, name: Sym, kind: RegKind, span: Span) {
         // tex.web § 1224: a register in the stomach is always assigned. The
         // `=` is optional (§ 405).
+        crate::observe::arg_type(self, span, crate::roles::Ty::Reg(kind));
         self.read_equals();
         let value = self.scan_register_value(kind);
         let global = self.take_global();

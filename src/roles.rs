@@ -1,9 +1,11 @@
 //! What a command's arguments are: a label it defines, a key it references,
-//! a file it reads. Completion and signatures ask this.
+//! a file it reads, and the [`Ty`] TeX's scanners read it as. Completion and
+//! signatures ask this.
 //!
 //! Three sources, in this order:
 //! - the run's evidence: the calls that made an occurrence or a load,
-//!   matched to the braced argument that held its key or name;
+//!   matched to the braced argument that held its key or name, and the
+//!   tokens a scanner read, matched to the braced argument they stand in;
 //! - the flow through the project's macro bodies: an argument handed on,
 //!   behind a literal prefix or not, to an argument with a role has it too;
 //! - a seed of the kernel's and common packages' conventions, for commands
@@ -11,20 +13,147 @@
 
 use crate::builtins::{LoadKind, OccKind};
 use crate::machine::Analysis;
-use crate::tex::{Catcode, Tok, Token};
+use crate::tex::{Catcode, RegKind, Tok, Token};
 
 /// What one argument is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RoleKind {
     Occ(OccKind),
     Load(LoadKind),
+    Type(Ty),
 }
 
 impl RoleKind {
-    pub fn as_str(self) -> &'static str {
+    /// The type the role gives its argument: a key or a name is a name.
+    pub fn ty(self) -> Ty {
         match self {
-            RoleKind::Occ(k) => k.as_str(),
-            RoleKind::Load(k) => k.as_str(),
+            RoleKind::Occ(_) => Ty::Key,
+            RoleKind::Load(_) => Ty::File,
+            RoleKind::Type(t) => t,
+        }
+    }
+}
+
+impl std::fmt::Display for RoleKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RoleKind::Occ(k) => f.write_str(k.as_str()),
+            RoleKind::Load(k) => f.write_str(k.as_str()),
+            RoleKind::Type(t) => t.fmt(f),
+        }
+    }
+}
+
+/// What text an argument holds, as TeX reads it. Ordered by the texts each
+/// admits, so a join goes up to the nearest common one: a register's name
+/// is text of its value's kind, and a dimension is glue without stretch
+/// (tex.web §§ 440, 448, 461, 1224).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Ty {
+    Bottom,
+    /// ⟨number⟩ (`scan_int`, § 440).
+    Number,
+    /// ⟨dimen⟩ (`scan_dimen`, § 448).
+    Dimen,
+    /// ⟨glue⟩ (`scan_glue`, § 461).
+    Glue,
+    /// ⟨mudimen⟩ or ⟨muglue⟩ (§ 461 with `mu`).
+    MuGlue,
+    /// Any of the four.
+    Quantity,
+    /// A register an assignment names (§ 1224).
+    Reg(RegKind),
+    /// A box register's number (`\box`, `\copy`, `\setbox`, § 1079).
+    Box,
+    /// The characters of a register's name a `\csname` forms (LaTeX's
+    /// `c@⟨counter⟩`).
+    Named(RegKind),
+    Key,
+    File,
+    /// Characters forming a name.
+    Name,
+    /// A control sequence an assignment defines (`get_r_token`, § 1215).
+    Cs,
+    Top,
+}
+
+impl Ty {
+    /// The next type up.
+    pub fn parent(self) -> Ty {
+        use Ty::*;
+        match self {
+            Bottom => Bottom,
+            Dimen | Reg(RegKind::Skip) => Glue,
+            Number | Glue | MuGlue => Quantity,
+            Reg(RegKind::Count) | Box => Number,
+            Reg(RegKind::Dimen) => Dimen,
+            Reg(RegKind::MuSkip) => MuGlue,
+            Named(_) | Key | File => Name,
+            Reg(_) | Quantity | Name | Cs | Top => Top,
+        }
+    }
+
+    /// The least type above both.
+    pub fn join(self, other: Ty) -> Ty {
+        let up = |t: Ty| std::iter::successors(Some(t), |t| (*t != Ty::Top).then(|| t.parent()));
+        match (self, other) {
+            (Ty::Bottom, t) | (t, Ty::Bottom) => t,
+            _ => up(other).find(|t| up(self).any(|s| s == *t)).unwrap_or(Ty::Top),
+        }
+    }
+
+    pub fn leq(self, other: Ty) -> bool {
+        self.join(other) == other
+    }
+
+    /// The type of a name's own text: a register or parameter is text of
+    /// its kind, a `\chardef` constant a number.
+    pub fn of_meaning(meaning: &crate::tex::Meaning) -> Option<Ty> {
+        use crate::builtins::Primitive as P;
+        Some(match meaning {
+            crate::tex::Meaning::Register(RegKind::Char | RegKind::MathChar | RegKind::UMathChar, _) => Ty::Number,
+            crate::tex::Meaning::Register(k, _) => Ty::Reg(*k),
+            m => match m.prim()? {
+                P::IntegerParameter => Ty::Reg(RegKind::Count),
+                P::DimenParameter => Ty::Reg(RegKind::Dimen),
+                P::GlueParameter { mu } => Ty::Reg(if mu { RegKind::MuSkip } else { RegKind::Skip }),
+                _ => return None,
+            },
+        })
+    }
+
+    /// What a scanner calls the quantity it reads ([`crate::machine::Machine::probe_scans`]).
+    pub fn scanned(what: &str) -> Option<Ty> {
+        Some(match what {
+            "number" => Ty::Number,
+            "dimen" => Ty::Dimen,
+            "glue" => Ty::Glue,
+            "mudimen" | "muglue" => Ty::MuGlue,
+            _ => return None,
+        })
+    }
+}
+
+impl std::fmt::Display for Ty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Ty::Reg(k) => write!(f, "{} register", k.as_str()),
+            Ty::Named(RegKind::Count) => f.write_str("counter"),
+            Ty::Named(k) => write!(f, "{} name", k.as_str()),
+            t => f.write_str(match t {
+                Ty::Bottom => "nothing",
+                Ty::Number => "number",
+                Ty::Dimen => "dimen",
+                Ty::Glue => "glue",
+                Ty::MuGlue => "muglue",
+                Ty::Quantity => "quantity",
+                Ty::Box => "box",
+                Ty::Key => "key",
+                Ty::File => "file",
+                Ty::Name => "name",
+                Ty::Cs => "control sequence",
+                _ => "any",
+            }),
         }
     }
 }
@@ -32,7 +161,7 @@ impl RoleKind {
 impl std::fmt::Display for Role {
     /// `#1 ref`, or with the text a wrapper puts before it, `#1 ref after sec:`.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "#{} {}", self.arg + 1, self.kind.as_str())?;
+        write!(f, "#{} {}", self.arg + 1, self.kind)?;
         if !self.prefix.is_empty() {
             write!(f, " after {}", self.prefix)?;
         }
@@ -54,7 +183,8 @@ const DEPTH: usize = 6;
 
 /// The roles of `cmd`'s arguments.
 pub fn roles(analysis: &Analysis, cmd: &str) -> Vec<Role> {
-    let mut out = roles_at(analysis, cmd, 0);
+    let typed = typed(analysis);
+    let mut out = roles_at(analysis, &typed, cmd, 0);
     // An argument that defines a key is not also a use of it: the run
     // reading its own label back is no reference.
     let defines = |arg: usize, out: &[Role]| {
@@ -63,18 +193,146 @@ pub fn roles(analysis: &Analysis, cmd: &str) -> Vec<Role> {
     };
     let all = out.clone();
     out.retain(|r| !(matches!(r.kind, RoleKind::Occ(OccKind::Ref | OccKind::KeyUse)) && defines(r.arg, &all)));
-    out.sort_by_key(|r| (r.arg, r.prefix.clone(), r.kind.as_str()));
+    // Types an argument was seen to take join to one.
+    let mut joined: Vec<Role> = Vec::new();
+    for r in out.iter().filter(|r| matches!(r.kind, RoleKind::Type(_))) {
+        match joined.iter_mut().find(|j| j.arg == r.arg) {
+            Some(j) => j.kind = RoleKind::Type(j.kind.ty().join(r.kind.ty())),
+            None => joined.push(r.clone()),
+        }
+    }
+    out.retain(|r| !matches!(r.kind, RoleKind::Type(_)));
+    out.extend(joined);
+    out.sort_by_key(|r| (r.arg, r.prefix.clone(), r.kind.to_string()));
     out.dedup();
     out
 }
 
-fn roles_at(analysis: &Analysis, cmd: &str, depth: usize) -> Vec<Role> {
+/// The type of each argument `roles` names: what TeX read it as, else
+/// what its other roles make it (a key, a file). Sorted by argument.
+pub fn arg_types(roles: &[Role]) -> Vec<(usize, Ty)> {
+    let read = |r: &&Role| {
+        matches!(r.kind, RoleKind::Type(_))
+            || !roles.iter().any(|o| o.arg == r.arg && matches!(o.kind, RoleKind::Type(_)))
+    };
+    let mut out: Vec<(usize, Ty)> = Vec::new();
+    for r in roles.iter().filter(read) {
+        match out.iter_mut().find(|(arg, _)| *arg == r.arg) {
+            Some((_, t)) => *t = t.join(r.kind.ty()),
+            None => out.push((r.arg, r.kind.ty())),
+        }
+    }
+    out.sort_by_key(|(arg, _)| *arg);
+    out
+}
+
+/// The command and braced argument each typed token stands in.
+type Typed = Vec<(String, usize, Ty)>;
+
+/// The run's typed tokens ([`crate::facts::Facts::types`]), each matched to
+/// the braced argument of the command its source text stands in. A
+/// definition's body is no argument (`\def\x{…}`), and a name the run
+/// left a register or constant is no command (`\setlength\x{…}`).
+fn typed(analysis: &Analysis) -> Typed {
+    // Each file's text and where its lines start.
+    let mut texts: crate::fixed::HashMap<crate::tex::FileId, Option<(String, Vec<usize>)>> = Default::default();
+    let defs = analysis.facts.defs.iter().filter(|d| analysis.project_file(d.span.file));
+    let bodies: Vec<crate::tex::Span> =
+        defs.filter_map(|d| d.mac.as_ref()?.replacement_text.first().map(|t| t.span)).collect();
+    for at in bodies.iter().chain(analysis.facts.types.keys()) {
+        texts.entry(at.file).or_insert_with(|| {
+            let path = &analysis.files.get(usize::from(at.file))?.path;
+            let text = crate::overlay::read_to_string(std::path::Path::new(path)).ok()?;
+            let lines = std::iter::once(0).chain(text.match_indices('\n').map(|(i, _)| i + 1)).collect();
+            Some((text, lines))
+        });
+    }
+    let source = |at: crate::tex::Span| -> Option<(&str, usize)> {
+        let (text, lines) = texts.get(&at.file)?.as_ref()?;
+        let start = *lines.get(usize::try_from(at.line).ok()?.checked_sub(1)?)?;
+        Some((text, start + crate::source::byte_of_col(&text[start..], at.col)))
+    };
+    let bodies: crate::fixed::HashSet<(crate::tex::FileId, usize)> =
+        bodies.iter().filter_map(|at| Some((at.file, source(*at)?.1))).collect();
+    let mut out = Vec::new();
+    for (at, ty) in &analysis.facts.types {
+        let Some((text, byte)) = source(*at) else { continue };
+        let Some((cmd, arg, open)) = enclosing_call(text, byte) else { continue };
+        let first = text.len() - text[open + 1..].trim_start().len();
+        let Some(sym) = analysis.interner.lookup(cmd) else { continue };
+        let meaning = analysis.env.meaning(sym);
+        let command = !matches!(meaning, crate::tex::Meaning::Register(..))
+            && !matches!(meaning.prim(), Some(crate::builtins::Primitive::Register(_)));
+        if command && !bodies.contains(&(at.file, first)) {
+            out.push((cmd.to_string(), arg, *ty));
+        }
+    }
+    out
+}
+
+/// The command whose braced argument holds byte `at` of `text`: its name,
+/// the argument's place among its braced ones (`[…]` ones skipped) and
+/// where its `{` stands. It looks back no further than the paragraph:
+/// an argument that spans one is rare, and so is not worth a scan of the
+/// whole file per token.
+fn enclosing_call(text: &str, at: usize) -> Option<(&str, usize, usize)> {
+    let b = text.as_bytes();
+    let back = |i: usize| i.checked_sub(1).filter(|j| !(b[*j] == b'\n' && b.get(j + 1) == Some(&b'\n')));
+    // Out to the group `at` stands in.
+    let (mut i, mut depth) = (at, 0);
+    loop {
+        i = back(i)?;
+        match b[i] {
+            b'}' => depth += 1,
+            b'{' if depth == 0 => break,
+            b'{' => depth -= 1,
+            _ => {}
+        }
+    }
+    let open = i;
+    // The groups before it, back to the command's name.
+    let mut arg = 0;
+    loop {
+        while back(i).is_some_and(|j| b[j].is_ascii_whitespace()) {
+            i -= 1;
+        }
+        let (open, close) = match b.get(back(i)?)? {
+            b'}' => (b'{', b'}'),
+            b']' => (b'[', b']'),
+            _ => break,
+        };
+        arg += usize::from(open == b'{');
+        let mut depth = 0;
+        loop {
+            i = back(i)?;
+            depth += i32::from(b[i] == close) - i32::from(b[i] == open);
+            if depth == 0 {
+                break;
+            }
+        }
+    }
+    if back(i).is_some_and(|j| b[j] == b'*') {
+        i -= 1;
+    }
+    let end = i;
+    while back(i).is_some_and(|j| b[j].is_ascii_alphabetic() || b[j] == b'@') {
+        i -= 1;
+    }
+    (back(i).is_some_and(|j| b[j] == b'\\') && i < end).then(|| (&text[i..end], arg, open))
+}
+
+fn roles_at(analysis: &Analysis, typed: &Typed, cmd: &str, depth: usize) -> Vec<Role> {
     let mut out = evidence(analysis, cmd);
+    out.extend(typed.iter().filter(|(c, ..)| c == cmd).map(|(_, arg, ty)| Role {
+        arg: *arg,
+        kind: RoleKind::Type(*ty),
+        prefix: String::new(),
+    }));
     let body = project_body(analysis, cmd);
     if let Some(body) = &body
         && depth < DEPTH
     {
-        out.extend(flow(analysis, body, depth));
+        out.extend(flow(analysis, typed, body, depth));
     }
     // A command the project defines anew is what its body says.
     if body.is_none() {
@@ -154,7 +412,7 @@ fn project_body(analysis: &Analysis, cmd: &str) -> Option<std::rc::Rc<[Token]>> 
 
 /// The roles a body gives its parameters: `#i` in a braced argument of a
 /// command with a role there, after literal characters or not.
-fn flow(analysis: &Analysis, body: &[Token], depth: usize) -> Vec<Role> {
+fn flow(analysis: &Analysis, typed: &Typed, body: &[Token], depth: usize) -> Vec<Role> {
     let mut out = Vec::new();
     for (at, t) in body.iter().enumerate() {
         let Tok::Cs(sym) = t.tok else { continue };
@@ -163,10 +421,12 @@ fn flow(analysis: &Analysis, body: &[Token], depth: usize) -> Vec<Role> {
         if groups.iter().all(|g| param_after(analysis, g).is_none()) {
             continue;
         }
-        let known = roles_at(analysis, callee, depth + 1);
+        let known = roles_at(analysis, typed, callee, depth + 1);
         for (j, group) in groups.iter().enumerate() {
             let Some((i, prefix)) = param_after(analysis, group) else { continue };
-            for r in known.iter().filter(|r| r.arg == j) {
+            // A type is the whole argument's, not of what follows a prefix.
+            let whole = |r: &&Role| !matches!(r.kind, RoleKind::Type(_)) || prefix.is_empty() && r.prefix.is_empty();
+            for r in known.iter().filter(|r| r.arg == j).filter(whole) {
                 out.push(Role { arg: i, kind: r.kind, prefix: format!("{}{prefix}", r.prefix) });
             }
         }

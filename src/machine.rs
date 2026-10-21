@@ -1193,6 +1193,8 @@ pub(crate) struct Scratch {
     /// How often satex approximated so far: a limitation reported, a
     /// widening, unknown text made. Only monotone.
     pub(crate) approximations: u64,
+    /// The number being scanned names a box register.
+    pub(crate) box_number: bool,
     /// [`Scratch::approximations`] when the main loop took its command.
     pub(crate) approximations_at_command: u64,
 }
@@ -9746,6 +9748,11 @@ will look undefined",
     /// (`number`, `dimen`, `glue`, …), which a probe learns a primitive's
     /// grammar from (The TeXbook, chapter 24).
     pub(crate) fn probe_scans(&mut self, token: Token, what: &str) {
+        let boxed = std::mem::take(&mut self.scratch.box_number);
+        if let Some(ty) = crate::roles::Ty::scanned(what) {
+            let ty = if boxed { crate::roles::Ty::Box } else { ty };
+            crate::observe::arg_type(self, token.span, ty);
+        }
         if let Some(watch) = &mut self.probe
             && token.span.file == watch.file
         {
@@ -9939,7 +9946,10 @@ will look undefined",
         }
         self.name_token = Some(t);
         match t.tok {
-            Tok::Cs(sym) => Some(sym),
+            Tok::Cs(sym) => {
+                crate::observe::arg_type(self, t.span, crate::roles::Ty::Cs);
+                Some(sym)
+            }
             Tok::Chr(c, Catcode::Active) => Some(self.active_sym(c)),
             _ => {
                 self.probe_scans(t, "cs");

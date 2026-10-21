@@ -429,6 +429,10 @@ pub struct Facts {
     /// `[]` for an optional one and `*` for a star: observed while it ran,
     /// not declared anywhere.
     pub shapes: crate::fixed::HashMap<Sym, String>,
+    /// What TeX read each token of the user's files as, joined over the
+    /// run ([`crate::roles::Ty`]): a scanner's quantity, a register an
+    /// assignment named, a register's name a `\csname` formed.
+    pub types: crate::fixed::HashMap<Span, crate::roles::Ty>,
     pub expansions: Vec<Expansion>,
     pub loads: Vec<Load>,
     pub occurrences: Vec<Occurrence>,

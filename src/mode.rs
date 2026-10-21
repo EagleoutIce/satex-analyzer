@@ -2226,7 +2226,7 @@ impl Machine<'_> {
             // tex.web § 1110: `\unhbox` and `\unvbox` empty the register,
             // the `copy` forms do not.
             Material::Unpackage { take } => {
-                let n = self.scan_number();
+                let n = self.scan_box_number();
                 let dims = self.box_dims(n);
                 let first = self.box_first(n);
                 let solid = n.map(|n| self.intern(&format!("\u{4}box.solid.{n}")));
@@ -2901,7 +2901,7 @@ impl Machine<'_> {
                 // `\box⟨n⟩` fetches a register and leaves it void
                 // (tex.web § 1079).
                 Meaning::Primitive(Primitive::Register(crate::tex::RegKind::Box)) => {
-                    let n = self.scan_number();
+                    let n = self.scan_box_number();
                     let dims = self.box_dims(n);
                     let last = self.box_last(n);
                     let fetched = self.fetch_box(n, true);
@@ -2938,7 +2938,7 @@ impl Machine<'_> {
     pub(crate) fn begin_box(&mut self, kind: BoxCmd, context: BoxContext, span: Span) {
         let (code, modes) = match kind {
             BoxCmd::Copy => {
-                let n = self.scan_number();
+                let n = self.scan_box_number();
                 let dims = self.box_dims(n);
                 let last = self.box_last(n);
                 let state = self.fetch_box(n, false);

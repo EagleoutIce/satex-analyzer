@@ -7,6 +7,20 @@ use crate::facts::CsnameRole;
 use crate::machine::Machine;
 use crate::tex::{Catcode, Span, Tok, Token};
 
+/// TeX read the token at `span` as `ty`: a fact of the user's own files.
+pub fn arg_type(m: &mut Machine, span: Span, ty: crate::roles::Ty) {
+    if !m.own_file(span.file) || m.out.facts.types.len() >= m.cfg.limits.facts {
+        return;
+    }
+    let slot = m.out.facts.types.entry(span).or_insert(crate::roles::Ty::Bottom);
+    // The token a `\csname` formed stands at the name's first character:
+    // what reads that token reads the register, not this text.
+    if matches!(*slot, crate::roles::Ty::Named(_)) && !matches!(ty, crate::roles::Ty::Named(_)) {
+        return;
+    }
+    *slot = slot.join(ty);
+}
+
 /// A `\csname…\endcsname` just formed `name`.
 pub fn csname(m: &mut Machine, name: &str, span: Span) {
     let role = role(m, span);
