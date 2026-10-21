@@ -332,10 +332,18 @@ impl Machine<'_> {
         self.halted = true;
     }
 
-    /// Whether the running path took an arm over unknown text: what it
-    /// meets next holds only where that text has the arm's shape.
+    /// Whether the running path took an arm over unknown text or over a
+    /// meaning or text a join left: what it meets next holds only where
+    /// that text has the arm's shape.
     pub(crate) fn took_unknown_arm(&self) -> bool {
-        self.choices.iter().any(|c| c.by == self.unknown || self.is_unknown_name(c.by))
+        self.choices.iter().any(|c| c.joined || c.by == self.unknown || self.is_unknown_name(c.by))
+    }
+
+    /// The choice just made picks one of the meanings or texts a join left.
+    pub(crate) fn joined_arm(&mut self) {
+        if let Some(c) = self.choices.last_mut() {
+            c.joined = true;
+        }
     }
 
     /// Whether the run may be on one of several paths: what it does now

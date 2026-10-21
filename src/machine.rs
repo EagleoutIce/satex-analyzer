@@ -8118,8 +8118,10 @@ will look undefined",
             && !self.keep_errors
             && self.took_unknown_arm()
         {
+            // The arm is refuted, whatever error the scan raised on it before.
             let text = format!("Paragraph ended before \\{} was complete", self.name(sym));
-            self.dropping.get_or_insert(text);
+            self.dropping = Some(text);
+            self.dropping_possible = false;
         }
         let runaway = std::mem::take(&mut self.runaway);
         if runaway != Runaway::No {
@@ -9388,6 +9390,13 @@ will look undefined",
                 self.unread(t);
                 return ends_in_unknown(self, &mut out, k, t.span, "the end of a conditional open around it");
             }
+            // One of several texts, one of which may hold the delimiter: a
+            // path per text, each matched token by token (tex.web § 392).
+            if self.one_of_members(t).is_some_and(|texts| texts.iter().any(|x| x.iter().any(|y| matches(0, y))))
+                && self.split_one_of(t)
+            {
+                continue;
+            }
             if depth == 0 && joined_at.is_none() && self.one_of_members(t).is_some() {
                 joined_at = Some(out.len());
             }
@@ -10357,6 +10366,7 @@ will look undefined",
         !one_of
             && self.may_split_meaning()
             && self.split(sym, span, classes.len(), |m, arm| {
+                m.joined_arm();
                 m.refine_to(sym, &classes[arm].1);
                 true
             })
@@ -10422,6 +10432,7 @@ will look undefined",
         let Some(sym) = t.cs() else { return false };
         let Some(texts) = self.one_of_members(t) else { return false };
         self.split(sym, site, texts.len(), |m, arm| {
+            m.joined_arm();
             m.unread_all(&texts[arm]);
             true
         })
