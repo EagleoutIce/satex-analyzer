@@ -972,6 +972,11 @@ impl Env {
         self.marks.last().and_then(|m| m.nest)
     }
 
+    /// The nests the open groups saved, innermost last.
+    pub fn nests(&self) -> impl Iterator<Item = Option<Nest>> + '_ {
+        self.marks.iter().map(|m| m.nest)
+    }
+
     /// Whether an `\halign` or `\valign` group is open anywhere.
     pub fn in_alignment(&self) -> bool {
         self.marks.iter().any(|m| m.nest.is_some_and(|n| n.code == Some(crate::mode::group::ALIGN)))

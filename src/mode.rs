@@ -147,6 +147,8 @@ pub struct Nest {
     pub from: u32,
     /// An `\halign`'s rows, or a `\noalign` in one.
     pub align: Option<Align>,
+    /// How many conditionals were open when the group opened.
+    pub conds: u32,
 }
 
 /// What an `\halign` keeps while its rows go onto the enclosing list
@@ -200,6 +202,7 @@ impl Nest {
             natural: join_natural(self.natural, other.natural),
             placed: self.placed && other.placed,
             from: self.from.min(other.from),
+            conds: self.conds.min(other.conds),
             align: match (self.align, other.align) {
                 (Some(a), Some(b)) => Some(a.join(b)),
                 _ => None,
@@ -1676,6 +1679,7 @@ impl Machine<'_> {
             placed: false,
             from: self.out.facts.text.at.len() as u32,
             align: None,
+            conds: self.conds.len() as u32,
         }
     }
 
@@ -1773,7 +1777,6 @@ impl Machine<'_> {
         // tex.web § 1100: what the output routine left on its list goes
         // back onto the page, ahead of what waits.
         if nest.code == Some(group::OUTPUT) {
-            self.output_active = false;
             self.page_touched |= material;
             // § 1026: the page builder resumes where the routine was
             // fired, whichever way its code went: paths parted inside it
@@ -3219,7 +3222,7 @@ impl Machine<'_> {
     /// §§ 987, 1000: material on the page freezes its goal; an output
     /// routine's list is not the page.
     fn freeze_page(&mut self) {
-        if !self.output_active {
+        if !self.output_active() {
             self.set_engine("page.built", Value::Int(1), true);
         }
     }
@@ -3243,11 +3246,18 @@ impl Machine<'_> {
     /// a group of its own in internal vertical mode. Without an output
     /// routine the page is shipped out (§ 1023).
     pub(crate) fn fire_up(&mut self, penalty: i64, before: Last, span: Span) {
-        if !self.page_touched || self.output_active {
+        if !self.page_touched || self.output_active() {
             return;
         }
         self.page_touched = false;
         self.ship_pending();
+        // § 1017: `\box255` is as wide as the widest item up to the break:
+        // all of the page at a forced break, else at most that.
+        let wide = match &mut self.natural {
+            Some(n) if self.mode == Modes::VERTICAL => std::mem::replace(&mut n.wide, Dim::exact(0)),
+            _ => Dim::ANY,
+        };
+        let width = if penalty <= -10000 { wide } else { Dim::exact(0).join(wide) };
         self.set_page_length(Dim::exact(0));
         self.set_engine("page.built", Value::Int(0), true);
         self.set_engine("page.inserts", Value::Int(0), true);
@@ -3271,7 +3281,7 @@ impl Machine<'_> {
             Some(max) => Dim::range(0, max.max(0)),
             None => Dim::ANY,
         };
-        self.set_box_dims(Some(255), [Dim::range(0, crate::value::MAX_DIMEN), height, depth]);
+        self.set_box_dims(Some(255), [width.at_least_zero(), height, depth]);
         // § 1017: the page runs up to the break, which stays behind: its
         // last item is what preceded the penalty.
         self.set_box_last(Some(255), before);
@@ -3279,7 +3289,6 @@ impl Machine<'_> {
             Some(tokens) if !tokens.is_empty() => {
                 let output = self.intern("output");
                 self.push_inserted(output, tokens, span);
-                self.output_active = true;
                 self.open_list(Some(group::OUTPUT), Modes::INTERNAL_VERTICAL, 0, span);
             }
             Some(_) => self.set_box(Some(255), BoxState::Void, true, None),
@@ -3301,7 +3310,7 @@ impl Machine<'_> {
         if self.cfg.analysis.assume_forced_page_breaks {
             return;
         }
-        if !std::mem::take(&mut self.page_grew) || self.output_active || !self.page_touched {
+        if !std::mem::take(&mut self.page_grew) || self.output_active() || !self.page_touched {
             return;
         }
         // § 1008: the page fills only past its goal, `\vsize` without inserts.

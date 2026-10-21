@@ -1347,8 +1347,6 @@ pub struct Machine<'a> {
     pub(crate) abs_odd: Option<bool>,
     /// Whether the run said the dependency graph is full.
     graph_full_noted: bool,
-    /// tex.web § 989 `output_active`: the output routine runs.
-    pub(crate) output_active: bool,
     /// [`Machine::abs`] as the few intervals it is the hull of, when an
     /// expression left a set of them (`\numexpr` past its range is 0, not
     /// every number down to 0). Only the number scan that read it may
@@ -1667,6 +1665,14 @@ pub struct Machine<'a> {
     /// What a `\scantokens` pseudo file is expanded as, so that its end
     /// can be told (see [`Machine::bump_expanding`]).
     pub(crate) pseudo_file: Sym,
+    /// `\output`, whose inserted list is the output routine's text.
+    pub(crate) output_sym: Sym,
+    /// Whether the call whose arguments are being read stands in library
+    /// code (its token is not the document's own).
+    call_in_library: bool,
+    /// Set while the output routine ends ([`Machine::end_output`]): its
+    /// own list goes then, not one read to its end.
+    ending_output: bool,
     /// Set in a sandbox run by [`crate::probe`]: what it watches for.
     pub(crate) probe: Option<Box<crate::probe::Watch>>,
     /// Where this run keeps its checkpoints, if anywhere ([`Checkpoints`]).
@@ -1718,7 +1724,6 @@ struct PathState {
     material: bool,
     page_touched: bool,
     page_grew: bool,
-    output_active: bool,
     natural: Option<crate::mode::Natural>,
     main_tail: crate::mode::Last,
     main_depth: crate::mode::Dim,
@@ -1989,6 +1994,7 @@ impl<'a> Machine<'a> {
         let unknown_digits = interner.intern("\u{2}unknown digits:");
         let unknown_more = interner.intern("\u{2}unknown more digits:");
         let pseudo_file = interner.intern("\u{2}pseudo file:");
+        let output_sym = interner.intern("output");
         let table = kernel_meanings(&mut interner, engine);
         let mut env = Env::with_capacity(interner.len());
         for (sym, meaning) in table {
@@ -2123,7 +2129,6 @@ impl<'a> Machine<'a> {
             abs_exact: None,
             abs_odd: None,
             graph_full_noted: false,
-            output_active: false,
             abs_parts: None,
             abs_from: None,
             abs_whole: false,
@@ -2235,6 +2240,9 @@ impl<'a> Machine<'a> {
             stack_base: 0,
             scanner: Scanner::Normal,
             pseudo_file,
+            output_sym,
+            call_in_library: false,
+            ending_output: false,
             probe: None,
             material: false,
             page_touched: false,
@@ -4041,6 +4049,18 @@ will look undefined",
             }
             Some(Frame::Tokens { expanding, held, upper, .. }) => {
                 self.held_tokens = self.held_tokens.saturating_sub(held);
+                // § 1025: the output routine's text read to its end with its
+                // group still open (a cut dropped the closing brace): the
+                // routine ends with its text, before what called it reads on.
+                if !self.ending_output && expanding == Some(self.output_sym) && !upper && self.output_active() {
+                    let nests: Vec<_> = self.env.nests().collect();
+                    let output =
+                        nests.iter().position(|n| n.is_some_and(|n| n.code == Some(crate::mode::group::OUTPUT)));
+                    if let Some(p) = output {
+                        let conds = nests[p].map_or(0, |n| n.conds as usize);
+                        self.close_since((conds, self.env.group_id_at(p), self.env.assignments));
+                    }
+                }
                 if let Some(sym) = expanding.filter(|_| !upper) {
                     if let Some(n) = self.expanding.get_mut(sym.0 as usize) {
                         *n = n.saturating_sub(1);
@@ -4374,6 +4394,9 @@ will look undefined",
         }
         let inner = crate::observe::current_environment(self);
         let nest = self.env.nest();
+        if let Some(n) = nest.filter(|n| n.code == Some(crate::mode::group::OUTPUT)) {
+            self.end_output(n, span);
+        }
         // tex.web §§ 1100, 1133: a box's paragraph ends before `unsave`,
         // so it is broken with the box's own `\hsize`.
         if nest.is_some_and(|n| n.level) && self.mode.meets(crate::mode::Modes::HORIZONTAL) {
@@ -4661,7 +4684,7 @@ will look undefined",
     pub(crate) fn note_text(&mut self, c: char, span: Span) {
         const LIMIT: usize = 1 << 16;
         // Heads and feet the output routine sets are no text of the document.
-        if self.output_active {
+        if self.output_active() {
             return;
         }
         crate::observe::typeset(self, c, span);
@@ -5462,6 +5485,7 @@ will look undefined",
         m.typed_syms = None;
         m.typed_syms();
         m.pseudo_file = m.out.interner.intern("\u{2}pseudo file:");
+        m.output_sym = m.out.interner.intern("output");
         m.halted = false;
         m.out.steps = 0;
         // Nobody is there to answer, but a read from the terminal (a file
@@ -6565,18 +6589,41 @@ will look undefined",
     /// and an output routine ends with it, the rest of its list unread
     /// (§ 1100).
     pub(crate) fn group_dropped(&mut self, nest: Option<crate::mode::Nest>, span: Span) {
-        let output = nest.as_ref().is_some_and(|n| n.code == Some(crate::mode::group::OUTPUT));
+        if let Some(n) = nest.filter(|n| n.code == Some(crate::mode::group::OUTPUT)) {
+            self.end_output(n, span);
+        }
         if nest.is_some() {
             self.natural = None;
             self.group_closed(nest, span);
         }
-        if output {
-            let sym = self.intern("output");
-            let list =
-                self.input.iter().rposition(|f| matches!(f, Frame::Tokens { expanding: Some(s), .. } if *s == sym));
-            while list.is_some_and(|i| self.input.len() > i) {
-                self.pop_frame();
+    }
+
+    /// tex.web § 989 `output_active`: an output group is open (§§ 1025, 1100).
+    pub(crate) fn output_active(&self) -> bool {
+        self.env.nests().flatten().any(|n| n.code == Some(crate::mode::group::OUTPUT))
+    }
+
+    /// tex.web § 1100: the output routine ends as one unit. The rest of its
+    /// list is flushed, and the conditionals it opened close with it: a cut
+    /// inside it may have dropped their `\fi`, never to be read.
+    pub(crate) fn end_output(&mut self, nest: crate::mode::Nest, span: Span) {
+        let sym = self.intern("output");
+        let list = self.input.iter().rposition(|f| matches!(f, Frame::Tokens { expanding: Some(s), .. } if *s == sym));
+        let outer = std::mem::replace(&mut self.ending_output, true);
+        while list.is_some_and(|i| self.input.len() > i) {
+            self.pop_frame();
+        }
+        self.ending_output = outer;
+        if self.conds.len() > nest.conds as usize {
+            while self.conds.len() > nest.conds as usize {
+                self.pop_conditional();
             }
+            self.diagnose(
+                Severity::Assumption,
+                "unbalanced-path",
+                span,
+                "the output routine ended inside conditionals it opened; they are assumed closed with it".into(),
+            );
         }
     }
 
@@ -10124,7 +10171,6 @@ will look undefined",
             material: self.material,
             page_touched: self.page_touched,
             page_grew: self.page_grew,
-            output_active: self.output_active,
             natural: self.natural,
             main_tail: self.main_tail,
             main_depth: self.main_depth,
@@ -10212,7 +10258,6 @@ will look undefined",
         self.list = state.list;
         self.material = state.material;
         self.page_touched = state.page_touched;
-        self.output_active = state.output_active;
         self.page_grew = state.page_grew;
         self.natural = state.natural;
         self.main_tail = state.main_tail;

@@ -1331,7 +1331,6 @@ impl Machine<'_> {
             abs_exact: _,
             abs_odd: _,
             graph_full_noted: _,
-            output_active: _,
             abs_parts: _,
             abs_from: _,
             abs_whole: _,
@@ -1380,6 +1379,9 @@ impl Machine<'_> {
             stack_base: _,
             scanner: _,
             pseudo_file: _,
+            output_sym: _,
+            call_in_library: _,
+            ending_output: _,
             probe: _,
             // Used at next step, never across load.
             cacheable_load: _,

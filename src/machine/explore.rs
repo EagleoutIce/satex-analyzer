@@ -30,6 +30,9 @@ pub(super) struct Choice {
     by: Sym,
     arms: usize,
     arm: usize,
+    /// One of the meanings or texts a join left: on this arm the run holds
+    /// only where the join's sources agree with the path.
+    joined: bool,
 }
 
 /// A path parked between two commands.
@@ -314,11 +317,11 @@ impl Machine<'_> {
         }
         let arm = self.script.get(i).copied().unwrap_or(0);
         self.out.heat(|h| &mut h.forks, span);
-        match self.output_active {
+        match self.output_active() {
             true => self.out.output_forks += 1,
             false => self.out.forks += 1,
         }
-        self.choices.push(Choice { span, by, arms, arm });
+        self.choices.push(Choice { span, by, arms, arm, joined: false });
         Some(arm)
     }
 
@@ -395,7 +398,7 @@ impl Machine<'_> {
             }
             let next = if finished { None } else { Some(self.explore(&mut paths, true)) };
             self.waiting = paths.parked.len() + paths.done.len();
-            let peak = match self.output_active {
+            let peak = match self.output_active() {
                 true => &mut self.out.peak_output_paths,
                 false => &mut self.out.peak_paths,
             };
@@ -2551,7 +2554,6 @@ impl Machine<'_> {
             (a, b) => a.or(b),
         };
         x.page_touched |= y.page_touched;
-        x.output_active |= y.output_active;
         x.page_grew |= y.page_grew;
         x.natural = crate::mode::join_natural(x.natural, y.natural);
         x.main_tail = x.main_tail.merge(y.main_tail);

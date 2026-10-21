@@ -542,6 +542,11 @@ dropped, so both go on with the same counters.
   have run on. Closers in the dropped text are counted through macros
   without parameters (`\close` for `\endgroup`). Where the dropped text closes
   fewer, the levels it leaves open become [stacks as intervals](#stacks-as-intervals).
+- **Output routine as a unit:** a path is in the output routine while an
+  output group is open (tex.web § 989), never by a flag a join could keep.
+  When that group ends, by its `}` or a cut, the rest of its list is
+  flushed and the conditionals it opened close with it (§ 1100), an
+  assumption: a cut inside it may have dropped their `\fi`.
 - **Covered passes:** a pass of a summarized loop ends only while a waiting
   path went on past that loop's summary. Other waiting arms are not its
   continuation: without such a path the pass is cut and goes on.
