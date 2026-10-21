@@ -1336,7 +1336,7 @@ impl Machine<'_> {
         let pre = self.int_parameter("pretolerance");
         let low = match (width.known(), least, pre) {
             (Some(w), Some(s), Some(pre)) if line_box.hi <= w => {
-                let b = badness(w - line_box.lo, s);
+                let b = crate::linebreak::badness(w - line_box.lo, s);
                 b <= 99 && (line + b).pow(2) < 2 * line * line && b <= tol && (pre < 0 || b <= pre)
             }
             _ => false,
@@ -5202,25 +5202,6 @@ fn box_value(state: BoxState) -> Value {
         BoxState::VBox => Value::Int(2),
         BoxState::Unknown => Value::Unknown,
     }
-}
-
-/// tex.web § 108 `badness`: about 100(t/s)³, 10000 when s ≤ 0 or past it.
-fn badness(t: Scaled, s: Scaled) -> i64 {
-    const INF_BAD: i64 = 10000;
-    if t == 0 {
-        return 0;
-    }
-    if s <= 0 {
-        return INF_BAD;
-    }
-    let r = if t <= 7_230_584 {
-        t * 297 / s
-    } else if s >= 1_663_497 {
-        t / (s / 297)
-    } else {
-        t
-    };
-    if r > 1290 { INF_BAD } else { (r * r * r + 0o400000) / 0o1000000 }
 }
 
 /// [`Nest::part`] of a math group that is a script.

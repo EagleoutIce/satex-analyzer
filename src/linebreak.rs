@@ -372,7 +372,7 @@ fn skip_discardable(items: &[Kp], mut s: usize) -> usize {
 }
 
 /// § 108.
-fn badness(t: i64, s: i64) -> i64 {
+pub(crate) fn badness(t: i64, s: i64) -> i64 {
     if t == 0 {
         return 0;
     }
@@ -539,8 +539,15 @@ impl Pass {
             }
             if e == n {
                 // § 874: the fewest demerits, first on ties, among nodes made at the end.
+                let ends = || active.iter().filter(|r| r.passive.is_some_and(|q| passive[q].0 == n));
+                // A forced break mid-paragraph keeps a node per fitness class
+                // (§ 836): with `\adjdemerits` the lines after it choose
+                // among them, which this segment cannot know.
+                if !self.end_hyphenated && adj != 0 && ends().any(|r| ends().any(|o| o.fit != r.fit)) {
+                    return None;
+                }
                 let mut bestr: Option<&Active> = None;
-                for r in active.iter().filter(|r| r.passive.is_some_and(|q| passive[q].0 == n)) {
+                for r in ends() {
                     if bestr.is_none_or(|b| r.total < b.total) {
                         bestr = Some(r);
                     }
