@@ -6,7 +6,6 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
 /// What the whole process holds, for allocations made outside any run.
@@ -35,50 +34,40 @@ impl Counter {
 }
 
 thread_local! {
-    /// The run this thread allocates for; null outside one.
-    static CURRENT: Cell<*const Counter> = const { Cell::new(std::ptr::null()) };
+    /// The run this thread allocates for; none outside one.
+    static CURRENT: Cell<Option<&'static Counter>> = const { Cell::new(None) };
 }
 
 fn current() -> &'static Counter {
-    // SAFETY: a non-null pointer is a `Run`'s counter, kept alive by the
-    // `Entered` guard that set it on this thread.
-    let ptr = CURRENT.try_with(Cell::get).unwrap_or(std::ptr::null());
-    if ptr.is_null() { &PROCESS } else { unsafe { &*ptr } }
+    CURRENT.try_with(Cell::get).ok().flatten().unwrap_or(&PROCESS)
 }
 
 /// One run's counter. Threads the run starts enter it too ([`Run::enter`]).
-#[derive(Clone)]
-pub struct Run(Arc<Counter>);
+/// It lives as long as the process: a few bytes a run, never a dangling one.
+#[derive(Clone, Copy)]
+pub struct Run(&'static Counter);
 
 impl Run {
     /// A fresh counter, entered on this thread until the guard drops.
     pub fn start() -> (Run, Entered) {
-        let run = Run(Arc::new(Counter::new()));
-        let entered = run.enter();
-        (run, entered)
+        let run = Run(Box::leak(Box::new(Counter::new())));
+        (run, run.enter())
     }
 
     /// The run this thread counts for, to hand to a thread it starts.
     pub fn current() -> Option<Run> {
-        let ptr = CURRENT.with(Cell::get);
-        // SAFETY: as in `current`; the Arc is alive while entered.
-        (!ptr.is_null()).then(|| unsafe {
-            Arc::increment_strong_count(ptr);
-            Run(Arc::from_raw(ptr))
-        })
+        CURRENT.with(Cell::get).map(Run)
     }
 
     /// Counts this thread's allocations for the run until the guard drops.
     pub fn enter(&self) -> Entered {
-        let outer = CURRENT.with(|c| c.replace(Arc::as_ptr(&self.0)));
-        Entered { _run: self.clone(), outer }
+        Entered { outer: CURRENT.with(|c| c.replace(Some(self.0))) }
     }
 }
 
 /// Restores the thread's previous run when dropped.
 pub struct Entered {
-    _run: Run,
-    outer: *const Counter,
+    outer: Option<&'static Counter>,
 }
 
 impl Drop for Entered {
@@ -110,12 +99,14 @@ pub struct Counted;
 fn take(bytes: usize) -> bool {
     let counter = current();
     let now = counter.live.fetch_add(bytes as isize, Ordering::Relaxed) + bytes as isize;
-    let total = TOTAL.fetch_add(bytes as isize, Ordering::Relaxed) + bytes as isize;
+    TOTAL.fetch_add(bytes as isize, Ordering::Relaxed);
     let ceiling = ceiling();
     if ceiling > 0
         && !std::ptr::eq(counter, &PROCESS)
+        // The run's own bytes only: runs side by side are stopped together
+        // between tokens ([`held`]), never by failing one's allocation.
         // A ceiling past `isize::MAX` (on wasm32) is no ceiling, not a negative one.
-        && now.max(total) > isize::try_from(ceiling).unwrap_or(isize::MAX)
+        && now > isize::try_from(ceiling).unwrap_or(isize::MAX)
     {
         counter.live.fetch_sub(bytes as isize, Ordering::Relaxed);
         TOTAL.fetch_sub(bytes as isize, Ordering::Relaxed);
@@ -201,6 +192,6 @@ mod tests {
         let (run, _entered) = Run::start();
         assert_eq!(in_use(), 0);
         let handed = Run::current().expect("entered");
-        assert!(Arc::ptr_eq(&run.0, &handed.0));
+        assert!(std::ptr::eq(run.0, handed.0));
     }
 }
