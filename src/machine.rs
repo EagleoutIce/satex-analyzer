@@ -8081,6 +8081,7 @@ will look undefined",
 
         self.scan_abandoned = false;
         self.arm_assumed = false;
+        self.call_in_library = !self.own_file(span.file);
         let arguments = self.read_arguments(&m);
         let abandoned = self.scan_abandoned;
         if let Some(watch) = &mut self.probe {
@@ -9202,6 +9203,26 @@ will look undefined",
                     .as_ref()
                     .is_some_and(|c| !matches!(t.tok, Tok::Chr(_, Catcode::Begin | Catcode::End)) && c.may_be(t.tok))
         };
+        // Where the argument of a call begun in library code first took the
+        // document's own text. Run on to the file's end, the scan is no run
+        // of the document: the text is given back and the argument is
+        // unknown, so the document is still read.
+        let mut source_at: Option<usize> = None;
+        let begun_in_library = self.call_in_library;
+        let gives_back = |m: &mut Self, out: &mut Vec<Token>, k: usize, span: Span, end: &str| -> Vec<Token> {
+            let tail = out.split_off(k);
+            m.unread_all(&tail);
+            m.runaway = Runaway::No;
+            m.scan_abandoned = true;
+            m.diagnose(
+                Severity::Warning,
+                "argument-ends-in-unknown",
+                span,
+                format!("a delimited argument begun in library code ran on through the document to {end}; the document text is given back and the argument is unknown"),
+            );
+            out.push(m.unknown_text(Unk::Any, span));
+            strip_braces(std::mem::take(out))
+        };
         loop {
             let Some(t) = self.next_token() else {
                 if let Some(k) = unknown_at
@@ -9210,8 +9231,17 @@ will look undefined",
                     let span = out[k].span;
                     return ends_in_unknown(self, &mut out, k, span, "the end of the file");
                 }
+                // Library code runs through the rest of the document only on
+                // a run TeX would stop with an error: never the document's.
+                if let Some(k) = source_at.filter(|_| self.runaway == Runaway::FileEnded) {
+                    let span = out[k].span;
+                    return gives_back(self, &mut out, k, span, "the end of the file");
+                }
                 break;
             };
+            if begun_in_library && source_at.is_none() && self.own_file(t.span.file) {
+                source_at = Some(out.len());
+            }
             // Past unknown text at level 0, source text is never read into
             // the argument: it ends in that text, so an approximation
             // gobbles no file.

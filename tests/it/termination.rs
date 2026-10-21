@@ -811,7 +811,9 @@ mod convergence {
 }
 \end{tikzpicture}";
         let Some(a) = latex("tikz-nodes", &document(preamble, body), |_| {}) else { return };
-        converged(&a, 30_000);
+        // A library scan that runs to the file's end gives the document's
+        // text back instead of swallowing it, so the rest is read too.
+        converged(&a, 32_000);
     }
 
     /// An environment whose name is one of two: `\end` looks its hooks up
