@@ -1542,6 +1542,10 @@ impl Env {
             }
         }
         apart.retain(|sym| !lost.contains(sym));
+        // Names the arms were paired in already come first and are kept.
+        let paired = |s: &u32| [&a.corr, &b.corr].into_iter().flatten().any(|c| c.syms.contains(s));
+        apart.sort_by_key(|s| !paired(s));
+        apart.truncate(self.sets.names);
         if apart.len() < 2 {
             return None;
         }
@@ -1858,6 +1862,7 @@ impl Corr {
 pub struct SetLimits {
     pub meanings: usize,
     pub arms: usize,
+    pub names: usize,
     pub values: usize,
     pub intervals: usize,
 }
@@ -1867,6 +1872,7 @@ impl Default for SetLimits {
         SetLimits {
             meanings: MAY_MEANINGS,
             arms: MAY_MEANINGS,
+            names: 64,
             values: crate::value::MAY_VALUES,
             intervals: crate::value::MAY_INTERVALS,
         }

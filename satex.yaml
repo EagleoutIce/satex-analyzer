@@ -180,6 +180,7 @@ limits:
   cycle_after: 2  # repeats of one call in the same state before its path ends (the only path is summarized); 0 = never
   meaning_set: 8  # meanings a join keeps as a set before the meaning is unknown
   join_arms: 32  # paths a join keeps paired (which binding goes with which), 0 pairs none
+  join_names: 64  # names a join pairs at most; the rest are joined apart
   value_set: 8  # values a join keeps for a count or dimension before only the interval
   interval_set: 4  # members a join keeps for a number once intervals are among them, before only their hull
   degrade_at_percent: 100  # of limits.steps past which the precision limits are halved, step by step; 100 = never

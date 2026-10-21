@@ -2520,6 +2520,7 @@ impl<'a> Machine<'a> {
         m.env.sets = crate::env::SetLimits {
             meanings: usize::from(limits.meaning_set).max(1),
             arms: usize::from(limits.join_arms),
+            names: usize::from(limits.join_names),
             values: usize::from(limits.value_set).max(1),
             intervals: usize::from(limits.interval_set).max(1),
         };
@@ -6392,6 +6393,7 @@ will look undefined",
         self.env.sets = crate::env::SetLimits {
             meanings: usize::from(limits.meaning_set),
             arms: usize::from(limits.join_arms),
+            names: usize::from(limits.join_names),
             values: usize::from(limits.value_set),
             intervals: usize::from(limits.interval_set),
         };
