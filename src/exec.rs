@@ -124,7 +124,7 @@ impl Machine<'_> {
                 span,
                 "\\globaldefs holds a number satex does not know; what the assignment left is unknown".into(),
             );
-            self.widen_since(0);
+            self.widen_recent();
             self.env.set_recent(recent);
         }
     }

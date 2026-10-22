@@ -7743,7 +7743,7 @@ will look undefined",
                     });
                     self.assign_register(sym, kind, span);
                     if let Some(recent) = recent {
-                        self.widen_since(0);
+                        self.widen_recent();
                         self.env.set_recent(recent);
                     }
                     // tex.web § 1269: a register assignment is a prefixed
@@ -11577,9 +11577,19 @@ impl Machine<'_> {
     /// What was assigned after assignment `mark` (and since the recent list
     /// was cleared) may hold anything of its kind; 0 widens all of it.
     pub(crate) fn widen_since(&mut self, mark: u64) {
-        let syms = self.typed_syms();
         let written = self.env.written_after(mark);
-        self.env.widen(&written, None, &crate::env::typed!(self, syms));
+        self.widen_names(&written);
+    }
+
+    /// What was written since [`crate::env::Env::clear_recent`] may hold anything.
+    pub(crate) fn widen_recent(&mut self) {
+        let written = self.env.recent_since(0);
+        self.widen_names(&written);
+    }
+
+    fn widen_names(&mut self, written: &[Sym]) {
+        let syms = self.typed_syms();
+        self.env.widen(written, None, &crate::env::typed!(self, syms));
         // After: widening writes, and those are no news.
         self.env.clear_recent();
     }

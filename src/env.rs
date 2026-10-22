@@ -1147,8 +1147,9 @@ impl Env {
     /// The names written after assignment `mark` since [`Env::clear_recent`],
     /// each once.
     pub fn written_after(&self, mark: u64) -> Vec<Sym> {
-        let syms = self.recent_since(0);
-        syms.into_iter().filter(|s| self.stamp.get(s.0 as usize).is_none_or(|&at| at > mark)).collect()
+        // The stamps, not `recent`: a widening clears that, and a later cut
+        // may reach back past it.
+        self.stamp.iter().enumerate().filter(|&(_, &at)| at > mark).map(|(i, _)| Sym(i as u32)).collect()
     }
 
     /// `syms` may hold anything of their kind. With `toward`, each is
