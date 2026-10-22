@@ -1936,6 +1936,7 @@ impl Machine<'_> {
     /// two passes of one loop, `pass`): they stand at different points.
     fn widen_input(&mut self, a: &Input, b: &Input, span: Span, widen: bool, pass: bool) -> Option<Input> {
         let (a, b) = (live_frames(a), live_frames(b));
+        let now = (self.conds.len(), self.env.group_id(), self.env.assignments);
         let tokens = |text: Vec<Token>, at| Frame::Tokens {
             held: text.len(),
             toks: Rc::from(text),
@@ -1949,7 +1950,7 @@ impl Machine<'_> {
             for (x, y) in a.iter().zip(&b) {
                 let frame = match (pending(&[x]), pending(&[y])) {
                     _ if place(x) == place(y) => (*x).clone(),
-                    (Some(p), Some(q)) => tokens(self.widen_text(&p, &q, span, widen, pass)?, stamp(&[x, y])),
+                    (Some(p), Some(q)) => tokens(self.widen_text(&p, &q, span, widen, pass)?, stamp(&[x, y], now)),
                     _ => return None,
                 };
                 input.push(frame);
@@ -1959,7 +1960,7 @@ impl Machine<'_> {
         let shared = a.iter().zip(&b).take_while(|(x, y)| place(x) == place(y)).count();
         let (p, q) = (pending(&a[shared..])?, pending(&b[shared..])?);
         let mut input: Vec<Frame> = a[..shared].iter().map(|f| (*f).clone()).collect();
-        let at = stamp(&a[shared..].iter().chain(&b[shared..]).copied().collect::<Vec<_>>());
+        let at = stamp(&a[shared..].iter().chain(&b[shared..]).copied().collect::<Vec<_>>(), now);
         input.push(tokens(self.widen_text(&p, &q, span, widen, pass)?, at));
         Some(input.into_iter().collect())
     }
@@ -2802,9 +2803,10 @@ pub(super) fn lower(at: Option<(usize, u64, u64)>, frame: Option<&Frame>) -> Opt
     Some(at.map_or(*b, |a| (a.0.min(b.0), a.1.min(b.1), a.2.min(b.2))))
 }
 
-/// The stamp a list joined from `frames` keeps: the lowest of theirs.
-fn stamp(frames: &[&Frame]) -> (usize, u64, u64) {
-    frames.iter().fold(None, |at, f| lower(at, Some(f))).unwrap_or((usize::MAX, u64::MAX, 0))
+/// The stamp a list joined from `frames` keeps: the lowest of theirs, or
+/// `now` for text given back, which dropped loses no earlier writes.
+fn stamp(frames: &[&Frame], now: (usize, u64, u64)) -> (usize, u64, u64) {
+    frames.iter().fold(None, |at, f| lower(at, Some(f))).unwrap_or(now)
 }
 
 /// The input levels that still have something to read.
