@@ -3612,6 +3612,38 @@ pub fn pgfkeys(analysis: &Analysis, prefix: Option<&str>) -> Vec<Record> {
         .collect()
 }
 
+/// The keys l3keys holds (`\keys_define:nn`): each `key code > ⟨path⟩`
+/// macro, with its type (`choice`) and default, as [`pgfkeys`] gives pgf's.
+fn l3keys(analysis: &Analysis, prefix: Option<&str>) -> Vec<Record> {
+    let text = |root: &str, path: &str| {
+        let sym = analysis.interner.lookup(&format!("key {root} > {path}"))?;
+        let m = analysis.env.meaning(sym).as_macro()?.clone();
+        Some(detokenize(&m.replacement_text, &analysis.interner))
+    };
+    (0..analysis.interner.len() as u32)
+        .map(Sym)
+        .filter_map(|sym| {
+            let path = analysis.interner.name(sym).strip_prefix("key code > ")?;
+            if prefix.is_some_and(|p| !path.starts_with(p)) || analysis.env.meaning(sym).as_macro().is_none() {
+                return None;
+            }
+            let mut record = place(analysis, defined_at(analysis, sym));
+            record.insert("key".into(), json!(path));
+            record.insert("kind".into(), json!(text("type", path).unwrap_or_else(|| "code".into())));
+            record.insert("default".into(), text("default", path).map_or(Json::Null, |d| json!(d)));
+            Some(record)
+        })
+        .collect()
+}
+
+/// The keys pgfkeys and l3keys hold under `prefix`: a path with `/`
+/// between its parts, from `/` for pgf's.
+pub fn stored_keys(analysis: &Analysis, prefix: Option<&str>) -> Vec<Record> {
+    let mut keys = pgfkeys(analysis, prefix);
+    keys.extend(l3keys(analysis, prefix));
+    keys
+}
+
 /// Whether a called name is a key dispatcher, and if so, the prefix the
 /// same dialect stores its keys under: pgfkeys and l3keys keep their own
 /// store ([`pgfkeys`] reads it), and every keyval dialect — keyval itself,
@@ -3757,7 +3789,14 @@ pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
             let mut rank = 0;
             while rank < families.len() && rank < 8 {
                 let path = format!("{}/", families[rank]);
-                for mut record in pgfkeys(analysis, Some(&path)) {
+                let keys = stored_keys(analysis, Some(&path));
+                // A choice's values are no keys of their own (`mode/fast`).
+                let choices: Vec<String> = keys
+                    .iter()
+                    .filter(|r| r.get("kind").and_then(Json::as_str).is_some_and(|k| k.contains("choice")))
+                    .filter_map(|r| Some(format!("{}/", r.get("key")?.as_str()?)))
+                    .collect();
+                for mut record in keys {
                     let key = record.get("key").and_then(Json::as_str).unwrap_or_default().to_string();
                     if key == format!("{path}.unknown") {
                         let code = record.get("value").and_then(Json::as_str).unwrap_or_default();
@@ -3767,7 +3806,11 @@ pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
                             }
                         }
                     }
-                    if key[path.len()..].contains("/.") || key[path.len()..].starts_with('.') {
+                    if key[path.len()..].contains("/.")
+                        || key[path.len()..].starts_with('.')
+                        || key.ends_with("/unknown")
+                        || choices.iter().any(|c| key.starts_with(c.as_str()))
+                    {
                         continue;
                     }
                     record.insert("rank".into(), json!(rank));

@@ -284,16 +284,24 @@
     const [{ EditorView, basicSetup }, language, lint, ac, view, st, { oneDark }, tex] = await Promise.all(EDITOR.concat(self.siteTex()));
     const KIND = { 3: 'function', 14: 'keyword', 9: 'namespace', 18: 'variable' };
     async function complete(ctx) {
-      const word = ctx.matchBefore(/[A-Za-z@*_:]*/);
-      const before = ctx.state.sliceDoc(word.from - 1, word.from);
-      if (!ctx.explicit && before !== '\\' && before !== '{') return null;
+      // a command's name, or a key or value in a list (`/demo/mode=fa`)
+      const word = ctx.matchBefore(/[A-Za-z@*_:]*/), key = ctx.matchBefore(/[\w@*:./-]*/);
+      const before = ctx.state.sliceDoc(word.from - 1, word.from), line = ctx.state.doc.lineAt(ctx.pos);
+      // inside a {…} or […] the cursor's list item starts after `{`, `[`, `,` or `=`
+      const open = [...line.text.slice(0, key.from - line.from)].reduce((d, c) => d + ('{['.includes(c)) - ('}]'.includes(c)), 0) > 0;
+      const item = open && /[{[,=]\s*$/.test(line.text.slice(0, key.from - line.from));
+      if (!ctx.explicit && before !== '\\' && before !== '{' && !item) return null;
       push();
       const items = await completions(position(ctx.state.doc, ctx.pos));
+      // an item that replaces a range (a key path) starts where that range does
+      const edit = items.find((i) => i.textEdit)?.textEdit;
+      const from = edit ? at(ctx.state.doc, edit.range.start) : before === '\\' ? word.from : key.from;
+      const typed = ctx.state.sliceDoc(from, ctx.pos);
       return {
-        from: word.from, filter: false,
-        options: rank(items, word.text).slice(0, 200).map((i) => ({
+        from, to: edit ? Math.max(at(ctx.state.doc, edit.range.end), ctx.pos) : ctx.pos, filter: false,
+        options: rank(items, typed).slice(0, 200).map((i) => ({
           label: i.label, usage: i.detail, type: KIND[i.kind] ?? 'text',
-          apply: i.insertTextFormat === 2 ? ac.snippet(i.insertText.replace(/\$\{?(\d+)\}?/g, '#{$1}')) : i.insertText ?? i.label,
+          apply: i.insertTextFormat === 2 ? ac.snippet((i.insertText ?? i.textEdit?.newText ?? i.label).replace(/\$\{?(\d+)\}?/g, '#{$1}')) : i.textEdit?.newText ?? i.insertText ?? i.label,
         })),
       };
     }

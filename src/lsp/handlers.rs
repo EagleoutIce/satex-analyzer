@@ -762,7 +762,8 @@ pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> Comple
                 for item in &mut items {
                     let sym = analysis.interner.lookup(&item.label);
                     let ty = sym.and_then(|s| crate::roles::Ty::of_meaning(&analysis.env.meaning(s)));
-                    if ty.is_some_and(|t| t.leq(want)) {
+                    let register = want == crate::roles::Ty::Register && matches!(ty, Some(crate::roles::Ty::Reg(_)));
+                    if register || ty.is_some_and(|t| t.leq(want)) {
                         item.sort_text = item.sort_text.take().map(|s| format!("!{s}"));
                     }
                 }
@@ -773,14 +774,14 @@ pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> Comple
 }
 
 /// The quantity the braced argument `arg` is read as ([`crate::roles::Ty`]),
-/// a register's for a register name.
+/// a register's for a register name, or any register's.
 fn quantity_wanted(analysis: &Analysis, arg: &Arg) -> Option<crate::roles::Ty> {
     use crate::roles::Ty;
     let at = crate::roles::braced_groups(arg.groups).len();
     let roles = crate::roles::roles(analysis, arg.cmd);
     let (_, ty) = crate::roles::arg_types(&roles).into_iter().find(|(a, _)| arg.open == '{' && *a == at)?;
     let ty = if matches!(ty, Ty::Reg(_)) { ty.parent() } else { ty };
-    ty.leq(Ty::Quantity).then_some(ty)
+    (ty.leq(Ty::Quantity) || ty == Ty::Register).then_some(ty)
 }
 
 /// How many commands one completion answer lists; the client asks again as
@@ -799,6 +800,8 @@ struct Arg<'a> {
     open: char,
     groups: &'a str,
     col: u32,
+    /// The argument's text up to the cursor.
+    inside: &'a str,
 }
 
 fn argument_at(before: &str) -> Option<Arg<'_>> {
@@ -817,6 +820,7 @@ fn argument_at(before: &str) -> Option<Arg<'_>> {
                     open: c,
                     groups: caps.get(2)?.as_str(),
                     col: crate::source::col_of_byte(before, start),
+                    inside: &before[i + 1..],
                 });
             }
             _ => {}
@@ -917,20 +921,10 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
         return option_items(analysis, &target);
     }
     // A key list in braces (`\pgfkeys{…}`, `\tikzset{…}`, a macro that
-    // hands its argument to one): a `/path` typed so far completes to the
-    // keys under it, else the keys of the family the command sets.
-    if arg.open == '{' && loads.is_empty() {
-        let typed = arg_item(doc, pos);
-        if typed.starts_with('/') {
-            let paths = key_paths(analysis, doc, pos, &typed);
-            if !paths.is_empty() {
-                return paths;
-            }
-        }
-    }
+    // hands its argument to one).
     if arg.open == '{' && loads.is_empty() && occs.iter().all(|k| matches!(k, OccKind::Key | OccKind::KeyUse)) {
-        let keys = option_items(analysis, arg.cmd);
-        if !keys.is_empty() && !keys.iter().all(|k| k.detail.as_deref().is_some_and(|d| d.contains("positional"))) {
+        let keys = key_items(analysis, doc, arg, pos);
+        if !keys.is_empty() {
             return keys;
         }
     }
@@ -1049,35 +1043,106 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
     out
 }
 
-/// The keys `name`'s optional argument feeds, from [`query::options`].
-/// The item of a key list the cursor is in, from its `,` or `{`.
-fn arg_item(doc: &Text, pos: Pos) -> String {
-    let line = doc.line(pos.line);
-    let before = &line[..crate::source::byte_of_col(line, pos.col).min(line.len())];
-    before.rsplit([',', '{']).next().unwrap_or_default().trim_start().to_string()
-}
-
-/// Every pgf key under the directory of `typed` (`/demo/m` → `/demo/`),
-/// replacing what was typed.
-fn key_paths(analysis: &Analysis, doc: &Text, pos: Pos, typed: &str) -> Vec<CompletionItem> {
-    let dir = &typed[..typed.rfind('/').map_or(0, |i| i + 1)];
-    let range =
-        Range { start: to_lsp(doc, Pos::new(pos.line, pos.col - typed.chars().count() as u32)), end: to_lsp(doc, pos) };
-    query::pgfkeys(analysis, Some(dir))
-        .into_iter()
-        .filter_map(|r| {
-            let key = r.get("key")?.as_str()?.to_string();
-            if key[dir.len().min(key.len())..].contains("/.") || key.ends_with("/.unknown") {
-                return None;
+/// The items of a key list at the cursor, from the keys the run stored
+/// ([`query::stored_keys`]): after `key=`, the choices of that key; a
+/// `/path` typed so far, the keys under its directory, replacing it; after
+/// a `/path/.cd` or a family's name, the keys under it; else the keys of
+/// the family the command sets ([`option_items`]).
+fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<CompletionItem> {
+    let mut items = Vec::new();
+    let mut depth = 0u32;
+    let mut from = 0;
+    for (i, c) in arg.inside.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                items.push(&arg.inside[from..i]);
+                from = i + 1;
             }
-            let detail = ["kind", "default"].iter().filter_map(|f| r.get(*f)?.as_str()).collect::<Vec<_>>().join("  ");
-            let mut it = item(key.clone(), CompletionItemKind::PROPERTY, Some(detail), 0);
-            it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text: key }));
-            Some(it)
-        })
+            _ => {}
+        }
+    }
+    let typed = arg.inside[from..].trim_start();
+    let stored = |dir: &str| query::stored_keys(analysis, Some(dir));
+    let field = |r: &Record, f: &str| r.get(f).and_then(Json::as_str).unwrap_or_default().to_string();
+    // The directory relative keys resolve in: the last one the list
+    // changed to, else the families the command reads.
+    let switched = items.iter().rev().find_map(|item| {
+        let key = item.split('=').next()?.trim();
+        if let Some(dir) = key.strip_suffix("/.cd") {
+            return Some(dir.to_string());
+        }
+        let family = stored(key).into_iter().any(|r| field(&r, "key") == key && field(&r, "kind") == "is family");
+        family.then(|| key.to_string())
+    });
+    let mut dirs: Vec<String> = match &switched {
+        Some(dir) => vec![dir.clone()],
+        None => query::options(analysis, arg.cmd).iter().map(|r| field(r, "family")).collect(),
+    };
+    dirs.dedup();
+    // The direct children of `dir`, not its handlers (`.cd`, `.unknown`).
+    let children = |dir: &str| -> Vec<(String, Record)> {
+        stored(dir)
+            .into_iter()
+            .filter_map(|r| {
+                let name = field(&r, "key")[dir.len()..].to_string();
+                let hidden = name.is_empty() || name.contains('/') || name.starts_with('.') || name == "unknown";
+                (!hidden).then_some((name, r))
+            })
+            .collect()
+    };
+    let detail = |r: &Record| {
+        ["kind", "default"].iter().map(|f| field(r, f)).filter(|d| !d.is_empty()).collect::<Vec<_>>().join("  ")
+    };
+    let under = |key: &str| -> Vec<String> {
+        match key.starts_with('/') {
+            true => vec![format!("{key}/")],
+            false => dirs.iter().map(|d| format!("{}/{key}/", d.trim_end_matches('/'))).collect(),
+        }
+    };
+    if let Some((key, _)) = typed.split_once('=') {
+        // The values a key takes: its choices, or a switch's two.
+        let mut out = Vec::new();
+        for dir in under(key.trim()) {
+            let path = dir.trim_end_matches('/');
+            if stored(path).iter().any(|r| field(r, "key") == path && field(r, "kind") == "is if") {
+                out.extend(["true", "false"].map(|v| item(v.into(), CompletionItemKind::ENUM_MEMBER, None, 0)));
+            }
+            out.extend(
+                children(&dir).into_iter().map(|(n, _)| item(n, CompletionItemKind::ENUM_MEMBER, Some(path.into()), 0)),
+            );
+        }
+        return out;
+    }
+    if typed.starts_with('/') {
+        let dir = &typed[..typed.rfind('/').map_or(0, |i| i + 1)];
+        let start = to_lsp(doc, Pos::new(pos.line, pos.col - typed.chars().count() as u32));
+        let range = Range { start, end: to_lsp(doc, pos) };
+        return children(dir)
+            .into_iter()
+            .map(|(name, r)| {
+                let key = format!("{dir}{name}");
+                let mut it = item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 0);
+                it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text: key }));
+                it
+            })
+            .collect();
+    }
+    if switched.is_none() {
+        let keys = option_items(analysis, arg.cmd);
+        if !keys.iter().all(|k| k.detail.as_deref().is_some_and(|d| d.contains("positional"))) {
+            return keys;
+        }
+        return Vec::new();
+    }
+    dirs.iter()
+        .flat_map(|d| children(&format!("{}/", d.trim_end_matches('/'))))
+        .map(|(name, r)| item(name, CompletionItemKind::PROPERTY, Some(detail(&r)), 0))
         .collect()
 }
 
+/// The keys `name`'s optional argument feeds, from [`query::options`].
 fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
     query::options(analysis, name)
         .iter()
