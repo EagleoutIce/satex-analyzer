@@ -3427,3 +3427,16 @@ fn implicit_braces_keep_a_formula_width() {
     assert_eq!(body(&a, "A"), body(&a, "B"));
     assert!(body(&a, "C").ends_with("pt") && !body(&a, "C").contains('\u{2}'), "{}", body(&a, "C"));
 }
+
+/// A script with no nucleus gets an empty one (tex.web § 1176): a footnote
+/// mark's superscript keeps its width, the script's and `\scriptspace`.
+#[test]
+fn a_script_without_nucleus_keeps_its_width() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\\begin{document}\\setbox0\\hbox{$^{1}$}\\xdef\\A{\\the\\wd0}\\setbox0\\hbox{\\footnotemark}\\xdef\\B{\\the\\wd0}\\end{document}\n";
+    let a = Machine::analyze(source, None, &crate::support::config());
+    assert_eq!(body(&a, "A"), "4.48613pt");
+    assert_eq!(body(&a, "B"), "4.48613pt");
+}

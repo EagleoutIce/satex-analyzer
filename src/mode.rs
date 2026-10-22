@@ -4401,6 +4401,16 @@ impl Machine<'_> {
                 n.script = Some(sup);
                 self.natural = Some(n);
             }
+            // § 1176: no noad to take it: a new one, its nucleus empty, an
+            // empty box for the script's shifts (§ 756).
+            Some(mut n)
+                if n.math_prev.is_none() && n.math_box.is_none() && n.scripted.is_none() && n.script.is_none() =>
+            {
+                self.next_atom(&mut n);
+                n.math_box = Some((0, 0));
+                n.script = Some(sup);
+                self.natural = Some(n);
+            }
             _ => self.natural = None,
         }
     }
