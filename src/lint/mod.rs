@@ -461,16 +461,16 @@ impl<'a> Report<'a> {
 pub fn lint(analysis: &Analysis) -> Vec<Record> {
     let mut out = Vec::new();
     let sources = fix::Sources::default();
-    crate::progress::bar("lint: the text as set", 0, 2, (0, 0), None, &[]);
+    crate::progress::bar("lint: the text as set", 0, 2, (0, 0), (0, 0), None, &[]);
     let text = text::View::of(analysis, &sources);
-    crate::progress::bar("lint: what the run defined and used", 1, 2, (0, 0), None, &[]);
+    crate::progress::bar("lint: what the run defined and used", 1, 2, (0, 0), (0, 0), None, &[]);
     let index = Index::of(analysis);
     let mut raised: crate::fixed::HashSet<usize> = crate::fixed::HashSet::default();
     let rules: Vec<&Rule> =
         all().filter(|rule| !analysis.settings.lint_off.iter().any(|code| code == rule.code)).collect();
     for (i, &rule) in rules.iter().enumerate() {
         let label = format!("lint {}", rule.code);
-        crate::progress::bar(&label, i, rules.len(), (0, 0), None, &[]);
+        crate::progress::bar(&label, i, rules.len(), (0, 0), (0, 0), None, &[]);
         crate::progress::tell(crate::progress::Status { text: label, phase: "lint".into(), ..Default::default() });
         let mut report = Report {
             analysis,

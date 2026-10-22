@@ -5767,7 +5767,11 @@ will look undefined",
     /// like a hang.
     fn report_progress(&mut self) {
         // Progress shows regardless of `--verbose`: of the one-time caching
-        // work, or else of the document.
+        // work, or else of the document. A written line replayed for what
+        // it names is no part of that.
+        if self.line_defined.is_some() {
+            return;
+        }
         if self.out.steps.is_multiple_of(2048) {
             let probing = self.probe.as_ref().map(|w| w.sym);
             let (label, frame, phase) = match (self.format_progress, self.recording_package()) {
@@ -5854,7 +5858,9 @@ will look undefined",
                 why: if probing.is_some() { crate::progress::why() } else { String::new() },
             });
             let label = if subs.is_empty() && !file.is_empty() { format!("{label}:{line}") } else { label };
-            crate::progress::bar(&label, read, all, lines, clock, &subs);
+            let at = self.guard_key(self.position_span());
+            let here = self.guard.lines.get(&at).map_or(0, |e| e.0);
+            crate::progress::bar(&label, read, all, lines, (self.out.steps, here), clock, &subs);
         }
         let every = match self.cfg.verbose {
             0 | 1 => return,

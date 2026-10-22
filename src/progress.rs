@@ -144,7 +144,23 @@ pub struct Sub {
 /// characters of a file read, and under it `↳ file:line [##---] 24%` for the
 /// innermost file when it is another one. Approximate, since what a file
 /// loads is not counted, but cheap.
-pub fn bar(label: &str, reached: usize, total: usize, lines: (u64, u64), clock: Option<(u64, u64)>, subs: &[Sub]) {
+/// Which run of the build the bars are of (latexmk's rounds).
+static RUN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+pub fn set_run(run: u32) {
+    RUN.store(run, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// `steps`: the tokens read so far, and on the line being read.
+pub fn bar(
+    label: &str,
+    reached: usize,
+    total: usize,
+    lines: (u64, u64),
+    steps: (u64, u64),
+    clock: Option<(u64, u64)>,
+    subs: &[Sub],
+) {
     if total == 0 || !active() {
         return;
     }
@@ -156,14 +172,22 @@ pub fn bar(label: &str, reached: usize, total: usize, lines: (u64, u64), clock: 
             text.to_string()
         }
     };
-    let label = clip(label, LABEL);
-    let count = |n: u64| if n >= 10_000 { format!("{:.1}k", n as f64 / 1000.0) } else { n.to_string() };
+    let run = RUN.load(std::sync::atomic::Ordering::Relaxed);
+    let label = clip(&if run > 1 { format!("run {run}: {label}") } else { label.to_string() }, LABEL);
+    let count = |n: u64| match n {
+        1_000_000.. => format!("{:.1}M", n as f64 / 1e6),
+        10_000.. => format!("{:.1}k", n as f64 / 1e3),
+        _ => n.to_string(),
+    };
     let lines = match lines {
         (0, _) => String::new(),
         (all, 0) => format!(" {} lines", count(all)),
         (all, cached) => format!(" {} lines ({} cached)", count(all), count(cached)),
     };
-    let clock = format!("{lines}{}", clock.map(|(spent, limit)| format!(" {spent}/{limit}s")).unwrap_or_default());
+    let tokens = if steps.0 > 0 { format!(" {} steps", count(steps.0)) } else { String::new() };
+    let here = if steps.1 >= 100_000 { format!(" {} on this line", count(steps.1)) } else { String::new() };
+    let clock =
+        format!("{lines}{tokens}{}", clock.map(|(spent, limit)| format!(" {spent}/{limit}s")).unwrap_or_default());
     let (dim, done, bold) =
         (Style::new().dimmed(), Style::new().fg_color(Some(AnsiColor::Green.into())), Style::new().bold());
     let paint = |text: String| {
@@ -185,7 +209,12 @@ pub fn bar(label: &str, reached: usize, total: usize, lines: (u64, u64), clock: 
             let path = std::path::absolute(&sub.path).unwrap_or_else(|_| sub.path.clone().into());
             format!("\x1b]8;;file://{}\x1b\\{name}\x1b]8;;\x1b\\", path.display())
         };
-        lines.push(paint(format!("  {dim}↳{dim:#} {name} [{done}{full}{done:#}{dim}{empty}{dim:#}] {pct:>3}%")));
+        lines.push(paint(format!(
+            "  {dim}↳{dim:#} {name} [{done}{full}{done:#}{dim}{empty}{dim:#}] {pct:>3}%{dim}{here}{dim:#}"
+        )));
+    }
+    if subs.iter().all(|s| s.total == 0) && !here.is_empty() {
+        lines[0].push_str(&paint(format!("{dim}{here}{dim:#}")));
     }
     let me = std::thread::current().id();
     let mut bars = lock();
