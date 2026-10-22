@@ -1964,7 +1964,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "pdfpagewidth", P::DimenParameter);
         put(it, "pdflastxpos", P::LastItem(LastItem::LastXPos));
         put(it, "pdflastypos", P::LastItem(LastItem::LastYPos));
-        put(it, "pdfsavepos", P::Command(Syntax::Nothing));
+        put(it, "pdfsavepos", P::Command(Syntax::Whatsit));
     }
     if matches!(engine, Engine::PdfTeX | Engine::LuaTeX) {
         put(it, "efcode", P::FontParam(FontParam::CharCode(1000)));
