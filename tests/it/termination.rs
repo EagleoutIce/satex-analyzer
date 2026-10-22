@@ -248,7 +248,7 @@ mod self_referential_macros {
         );
         let widened = messages(&analysis, "recursion-widened");
         assert_eq!(widened.len(), 1, "{widened:?}");
-        assert!(widened[0].contains("\\q: expanded 7 times"), "{widened:?}");
+        assert!(widened[0].contains("\\q: expanded again and again into itself"), "{widened:?}");
     }
 }
 

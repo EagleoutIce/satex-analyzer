@@ -8338,18 +8338,19 @@ will look undefined",
         let never_read = self.limits.site_expansions.saturating_mul(16);
         let spinning = unread > never_read;
         if depth >= self.limits.expansion_depth || visits > self.limits.site_expansions || stuck || spinning {
+            // Without the counts: the same cut met again is one finding.
             let reason = if depth >= self.limits.expansion_depth {
-                format!("re-entered {depth} times")
+                "re-entered past limits.expansion_depth".to_string()
             } else if spinning {
-                format!("expanded {unread} times without reading on, whatever it assigned")
+                "expanded again and again without reading on, whatever it assigned".to_string()
             } else if nesting {
-                format!("re-entered {deeper} times with the same arguments and input, nested deeper each time")
+                "re-entered with the same arguments and input, nested deeper each time".to_string()
             } else if self_fixed_point {
-                format!("expanded {visits} times")
+                "expanded again and again into itself".to_string()
             } else if stuck {
-                format!("expanded {visits} times without finding the delimiter its argument ends at")
+                "expanded again and again without finding the delimiter its argument ends at".to_string()
             } else {
-                format!("expanded {visits} times without reading on")
+                "expanded past limits.site_expansions without reading on".to_string()
             };
             let key = match () {
                 _ if depth >= self.limits.expansion_depth => "expansion_depth",
