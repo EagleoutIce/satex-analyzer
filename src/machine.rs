@@ -5211,6 +5211,19 @@ will look undefined",
     pub fn define(&mut self, name: Sym, meaning: Meaning, by: Sym, mode: DefMode, span: Span) -> NodeId {
         // A command that has defined something has read its arguments.
         self.finish_shape();
+        // tex.web §§ 489-510: `\fi`, `\else` and `\or` close conditionals;
+        // library code of a document that compiles never makes them
+        // anything else. Here an approximation fed it the name: the path
+        // is no run of the document.
+        // The names themselves: a name `\let` to one may be redefined.
+        if matches!(self.name(name), "fi" | "else" | "or")
+            && !self.own_file(span.file)
+            && self.cfg.compiles()
+            && self.probe.is_none()
+        {
+            self.dropping = Some(format!("library code redefines \\{}", self.name(name)));
+            self.dropping_possible = false;
+        }
         if let Meaning::Register(kind, index) = &meaning {
             self.note_register_origin(*kind, *index);
         }
