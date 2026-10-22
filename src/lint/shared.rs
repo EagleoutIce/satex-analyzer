@@ -337,3 +337,51 @@ fn live_vertices(index: &Index) -> Vec<bool> {
     }
     live
 }
+
+/// A runaway (tex.web §§ 336, 396) in library code whose unclosed text is
+/// the document's own: the call at the diagnostic's origin opens a `{`
+/// that the file or the paragraph ends inside. The message says so, at
+/// that call.
+pub fn own_runaway(analysis: &Analysis, d: &crate::facts::Diagnostic) -> Option<(Span, String)> {
+    let at = d.origin.filter(|_| d.code == "runaway-argument" && !analysis.project_file(d.span.file))?;
+    let text = crate::overlay::read_to_string(analysis.file_path(at.file)?).ok()?;
+    let start = text.split_inclusive('\n').take(usize::try_from(at.line).ok()?.checked_sub(1)?).map(str::len).sum();
+    let rest = &text[start + crate::source::byte_of_col(&text[start..], at.col)..];
+    let name: String = rest.chars().skip(1).take_while(|c| c.is_ascii_alphabetic() || *c == '@').collect();
+    let mut chars = rest.chars().skip(1 + name.len());
+    // Its arguments: `[…]` and `{…}` groups, up to a `}` that closes the
+    // last one opened. Only a macro not `\long` ends at a blank line.
+    let par = d.message.starts_with("Paragraph ended");
+    let (mut depth, mut blank) = (0u32, false);
+    let end = loop {
+        let Some(c) = chars.next() else {
+            if depth == 0 {
+                return None;
+            }
+            break "the file ends inside it";
+        };
+        match c {
+            '\n' if depth > 0 && blank && par => break "the paragraph ends inside it",
+            '%' => {
+                chars.by_ref().find(|&c| c == '\n');
+                blank = true;
+                continue;
+            }
+            '\n' => blank = true,
+            c if c.is_whitespace() => continue,
+            '[' if depth == 0 => {
+                chars.by_ref().find(|&c| c == ']');
+            }
+            '{' => depth += 1,
+            '}' if depth > 0 => depth -= 1,
+            '\\' if depth > 0 => {
+                chars.next();
+            }
+            _ if depth == 0 => return None,
+            _ => {}
+        }
+        blank &= c == '\n';
+    };
+    let first = d.message.split(':').next().unwrap_or(&d.message);
+    Some((at, format!("{first}: the argument of \\{name} opened here never closes, {end}")))
+}

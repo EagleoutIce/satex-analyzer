@@ -1033,3 +1033,94 @@ fn a_length_argument_completes_lengths_first() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A pgfkeys list completes keys and values from the keys the run stored:
+/// a `/path` the keys under it, `key=` a choice key's choices or a switch's
+/// `true`/`false`, a family named before the keys under it.
+#[test]
+fn key_lists_complete_paths_choices_and_family_keys() {
+    let text = "\\documentclass{article}\n\\usepackage{pgfkeys}\n\\newif\\ifdemodraft\n\\pgfkeys{/demo/.is family, /demo,\n  width/.initial=2cm,\n  color/.style={},\n  draft/.is if=demodraft,\n  mode/.is choice, mode/fast/.code={}, mode/safe/.code={},\n  label/.code 2 args={},\n}\n\\begin{document}\n\\pgfkeys{/demo/mode=fast, /demo/}\n\\pgfkeys{/demo/.cd, mode=}\n\\pgfkeys{/demo/draft=}\n\\pgfkeys{/demo, wi}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("keylist", text);
+    let paths = complete(&mut server, &uri, 11, 32);
+    for key in ["/demo/width", "/demo/color", "/demo/draft", "/demo/mode", "/demo/label"] {
+        assert!(labels(&paths).contains(&key), "{key}: {:?}", labels(&paths));
+    }
+    assert!(!labels(&paths).contains(&"/demo/mode/fast"), "{:?}", labels(&paths));
+    assert_eq!(paths[0]["textEdit"]["range"]["start"]["character"], 26, "{}", paths[0]);
+    let choices = complete(&mut server, &uri, 12, 25);
+    assert_eq!(labels(&choices), ["fast", "safe"]);
+    let switch = complete(&mut server, &uri, 13, 21);
+    assert_eq!(labels(&switch), ["false", "true"]);
+    let family = complete(&mut server, &uri, 14, 18);
+    assert!(labels(&family).contains(&"width"), "{:?}", labels(&family));
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Hovering a key in an argument that cites shows its database entry, in
+/// `\cite` and in a wrapper that hands its argument on.
+#[test]
+fn hovering_a_citation_shows_its_entry() {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-citehover-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("refs.bib"),
+        "@article{knuth84, author = {Donald E. Knuth}, title = {Literate Programming}, journal = {The Computer Journal}, year = 1984}\n",
+    )
+    .unwrap();
+    let text = "\\documentclass{article}\n\\newcommand\\mycite[1]{see \\cite{#1}}\n\\begin{document}\n\\cite{x, knuth84} and \\mycite{knuth84}\n\\bibliography{refs}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("citehover", text);
+    let hover = |server: &mut Server, character: u32| {
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": character } }),
+        );
+        server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
+    };
+    let cite = hover(&mut server, 12);
+    assert!(cite.contains("**Literate Programming**"), "{cite}");
+    assert!(cite.contains("Donald E. Knuth · 1984 · The Computer Journal"), "{cite}");
+    assert!(cite.contains("- `journal` The Computer Journal"), "{cite}");
+    assert!(cite.contains("`refs.bib:1`"), "{cite}");
+    let wrapped = hover(&mut server, 33);
+    assert!(wrapped.contains("**Literate Programming**"), "{wrapped}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A runaway in package code over an argument the document leaves open is
+/// the document's error, at the call that opens it.
+#[test]
+fn an_unclosed_argument_is_the_document_s_error() {
+    let text =
+        "\\documentclass{article}\n\\usepackage{pgfkeys}\n\\begin{document}\n\\pgfkeys{/demo/a=1,\n\\end{document}\n";
+    let (server, _, published, dir) = open_loaded("unclosed", text);
+    let diagnostics = published["params"]["diagnostics"].as_array().cloned().unwrap_or_default();
+    assert!(!diagnostics.iter().any(|d| d["code"] == "caused-library-error"), "{published}");
+    let own = diagnostics.iter().find(|d| d["code"] == "raised-error").unwrap_or_else(|| panic!("{published}"));
+    assert!(
+        own["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("the argument of \\pgfkeys opened here never closes, the file ends inside it"),
+        "{own}"
+    );
+    assert_eq!(own["range"]["start"]["line"], 3, "{own}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// l3keys keys complete the same way: a command handing its argument to
+/// `\keys_set:nn` offers its module's keys, and a choice key its choices.
+#[test]
+fn l3keys_complete_keys_and_choices() {
+    let text = "\\documentclass{article}\n\\ExplSyntaxOn\n\\keys_define:nn {zmod} { size .choice:, size/big .code:n = {}, size/small .code:n = {}, width .tl_set:N = \\l_tmpa_tl }\n\\NewDocumentCommand\\zset{m}{\\keys_set:nn{zmod}{#1}}\n\\ExplSyntaxOff\n\\begin{document}\n\\zset{width=1}\n\\zset{}\n\\zset{size=}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("l3keys", text);
+    let keys = complete(&mut server, &uri, 7, 6);
+    assert!(labels(&keys).contains(&"width") && labels(&keys).contains(&"size"), "{:?}", labels(&keys));
+    assert!(!labels(&keys).iter().any(|k| k.contains('/')), "{:?}", labels(&keys));
+    let choices = complete(&mut server, &uri, 8, 11);
+    assert_eq!(labels(&choices), ["big", "small"]);
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}

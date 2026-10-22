@@ -1,6 +1,7 @@
 use crate::builtins::OccKind;
 use crate::facts::{LoadStatus, MeaningKind};
 use crate::lint::fix::{Applicability, Fix};
+use crate::lint::shared::own_runaway;
 use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 use crate::plugin::Provider;
 use crate::tex::{Span, Sym};
@@ -117,7 +118,9 @@ Running the document reaches `\\errmessage`, which every LaTeX error
 (`\\PackageError`, `\\msg_error:nn`, the kernel's own) ends in: a real run
 stops there.  A more specific rule that explains the same error reports it
 instead.  An error reached only on a path satex could not decide, or after it
-lost track of the mode, is not one a real run need reach, and is not reported.",
+lost track of the mode, is not one a real run need reach, and is not reported.
+A runaway in package code over an argument the document leaves open is the
+document's error too: it is shown at the call that opens it.",
         references: &[],
         fixes: &[],
         run: raised_errors,
@@ -130,7 +133,9 @@ lost track of the mode, is not one a real run need reach, and is not reported.",
         explanation: "\
 An engine error such as `Argument has an extra }` arises inside package code.
 The cause is the document's own call into that code.  The finding sits at
-that call and names the package line where the error arose.  Each call and
+that call and names the package line where the error arose.  A runaway
+over the document's own unclosed argument is not one: `raised-error` reports
+it.  Each call and
 error code is one finding, with a count when it repeats.
 
 When satex had to approximate on the way, the error may not be TeX's.  Nor
@@ -451,8 +456,15 @@ fn raised_errors(report: &mut Report) {
     let analysis = report.analysis();
     let view = report.text();
     let mut seen = crate::fixed::HashSet::default();
+    // A runaway in library code over the document's own unclosed text, in
+    // place of TeX's message about the library macro.
+    let own: Vec<_> =
+        analysis.facts.diagnostics.iter().filter(|d| exact(d)).filter_map(|d| own_runaway(analysis, d)).collect();
     for (i, o) in analysis.facts.occurrences.iter().enumerate() {
         if !crate::lint::shared::is_error(analysis, o) || !o.certain || !seen.insert((o.span, o.key.as_str())) {
+            continue;
+        }
+        if own.iter().any(|(at, _)| at.file == o.span.file && at.line == o.span.line) {
             continue;
         }
         let mut span = o.span;
@@ -477,6 +489,14 @@ fn raised_errors(report: &mut Report) {
             None => report.add(span, "", message, None),
         }
     }
+    for (span, message) in own {
+        report.add(span, "", message, None);
+    }
+}
+
+/// An engine error raised on a path the analysis followed exactly.
+fn exact(d: &crate::facts::Diagnostic) -> bool {
+    d.severity == crate::facts::Severity::Warning
 }
 
 /// Engine errors in library files, shown at the user's call that led there.
@@ -499,7 +519,8 @@ fn caused_library_errors(report: &mut Report) {
             continue;
         }
         let Some(origin) = d.origin else { continue };
-        if view.document(d.span.file) || !view.document(origin.file) {
+        let own = exact(d) && own_runaway(analysis, d).is_some();
+        if own || view.document(d.span.file) || !view.document(origin.file) {
             continue;
         }
         let same = |(e, o, _, _): &&mut Row| e.code == d.code && o.file == origin.file && o.line == origin.line;
@@ -513,7 +534,7 @@ fn caused_library_errors(report: &mut Report) {
         let at = format!("{}:{}", analysis.short_name(d.span.file), d.span.line);
         let mut message = format!("error in {at}: {}, caused here{times}", d.message);
         // An error on an approximated path, or after one, may not be TeX's.
-        let exact = d.severity == crate::facts::Severity::Warning;
+        let exact = exact(d);
         match before {
             _ if !exact => message.push_str(" (the analysis approximated on the way: may not be TeX's)"),
             Some(first) => message
