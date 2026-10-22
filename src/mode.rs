@@ -1891,13 +1891,28 @@ impl Machine<'_> {
                 self.build_page(span);
             }
         } else if nest.code == Some(group::INSERT) {
-            self.append_item(Item::Zero);
+            // An ins or adjust node: no size, the list's tail, and to the
+            // line breaker an item before glue as a whatsit is (§§ 147, 866).
+            self.append_item(Item::Whatsit);
             // tex.web § 889: `\vadjust` material follows the line, as wide
             // as it is (§ 668).
             if nest.part == 1
                 && let Some(n) = &mut self.natural
             {
                 n.wide = n.wide.max(natural.map_or(Dim::ANY, |m| m.wide.at_least_zero()));
+                // § 889: after its line, with no interline glue, the line's
+                // depth kept for the next: the paragraph grows by the
+                // material's size; last on it, its depth may be the list's.
+                if self.mode == Modes::HORIZONTAL {
+                    match natural {
+                        Some(m) => {
+                            let size = m.along.extended_by(m.depth.at_least_zero());
+                            n.para.along = n.para.along.extended_by(size);
+                            n.para.depth = n.para.depth.join(m.depth.at_least_zero());
+                        }
+                        None => n.para.lost = true,
+                    }
+                }
             }
         } else if nest.code == Some(group::MATH_SHIFT) {
             self.close_math(natural);
@@ -2107,12 +2122,14 @@ impl Machine<'_> {
                 }
                 // tex.web § 889: `\vadjust` material of any width follows
                 // the line.
-                if vadjust && let Some(n) = &mut self.natural {
-                    // tex.web § 889: it goes onto the vertical list after its
-                    // line, which grows by what satex does not follow.
-                    // tex.web §§ 796, 1076: from a box appended to a
-                    // vertical list, or an alignment's cell, it moves out the
-                    // same way; the mark makes that list's size unknown.
+                // tex.web §§ 796, 1076: from a box appended to a vertical
+                // list, or an alignment's cell, it moves out after that
+                // list's line: the mark makes that list's size unknown. In a
+                // paragraph its size is added where it closes (§ 889).
+                if vadjust
+                    && self.mode != Modes::HORIZONTAL
+                    && let Some(n) = &mut self.natural
+                {
                     n.para.lost = true;
                 }
                 if vadjust && self.mode.meets(Modes::RESTRICTED_HORIZONTAL) {
