@@ -3413,3 +3413,17 @@ mod types {
         assert_eq!(Ty::Bottom.join(Ty::Box), Ty::Box);
     }
 }
+
+/// An implicit brace opens and closes a math group as `{` and `}` do
+/// (tex.web § 1063): `\mathrm` (`\bgroup`…`\egroup`) keeps the formula's
+/// width known.
+#[test]
+fn implicit_braces_keep_a_formula_width() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\\begin{document}\\setbox0\\hbox{${s}$}\\xdef\\A{\\the\\wd0}\\setbox0\\hbox{$\\bgroup s\\egroup$}\\xdef\\B{\\the\\wd0}\\setbox0\\hbox{$\\mathrm{s}$}\\xdef\\C{\\the\\wd0}\\end{document}\n";
+    let a = Machine::analyze(source, None, &crate::support::config());
+    assert_eq!(body(&a, "A"), body(&a, "B"));
+    assert!(body(&a, "C").ends_with("pt") && !body(&a, "C").contains('\u{2}'), "{}", body(&a, "C"));
+}

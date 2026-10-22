@@ -7128,6 +7128,9 @@ will look undefined",
             }
             // tex.web § 370: an undefined name is an error and adds nothing.
             Meaning::Undefined => !self.may_be_defined(sym),
+            // An implicit brace, `$` or space acts as the character it was
+            // `\let` to (§ 1063): `\bgroup` opens a math group as `{` does.
+            Meaning::Char(_, Catcode::Begin | Catcode::End | Catcode::Math | Catcode::Space) => true,
             meaning => self.expandable_meaning(&meaning),
         }
     }
