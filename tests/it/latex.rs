@@ -3349,7 +3349,8 @@ mod types {
             "\\newcommand\\setw[1]{\\setlength{\\mylen}{#1}}\n\\begin{document}\n\\setw{3pt}",
             &["setw", "setlength"],
         );
-        assert_eq!(found, [vec!["#1 glue"], vec!["#1 skip register"]]);
+        // The value of a skip register is glue (`\setlength`'s body: `#1 #2\relax`).
+        assert_eq!(found, [vec!["#1 glue"], vec!["#1 skip register", "#2 glue"]]);
     }
 
     #[test]

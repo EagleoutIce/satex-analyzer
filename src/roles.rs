@@ -63,6 +63,9 @@ pub enum Ty {
     Quantity,
     /// A register an assignment names (§ 1224).
     Reg(RegKind),
+    /// A register of a kind the text does not fix: what a body assigns
+    /// `#i` to (`#1#2\relax`).
+    Register,
     /// A box register's number (`\box`, `\copy`, `\setbox`, § 1079).
     Box,
     /// The characters of a register's name a `\csname` forms (LaTeX's
@@ -89,7 +92,7 @@ impl Ty {
             Reg(RegKind::Dimen) => Dimen,
             Reg(RegKind::MuSkip) => MuGlue,
             Named(_) | Key | File => Name,
-            Reg(_) | Quantity | Name | Cs | Top => Top,
+            Reg(_) | Register | Quantity | Name | Cs | Top => Top,
         }
     }
 
@@ -148,6 +151,7 @@ impl std::fmt::Display for Ty {
                 Ty::MuGlue => "muglue",
                 Ty::Quantity => "quantity",
                 Ty::Box => "box",
+                Ty::Register => "register",
                 Ty::Key => "key",
                 Ty::File => "file",
                 Ty::Name => "name",
@@ -202,6 +206,24 @@ pub fn roles(analysis: &Analysis, cmd: &str) -> Vec<Role> {
         }
     }
     out.retain(|r| !matches!(r.kind, RoleKind::Type(_)));
+    // What the body does with an argument no use typed.
+    let body = analysis.interner.lookup(cmd).and_then(|s| analysis.env.meaning(s).as_macro().cloned());
+    let (statics, pairs) = body.map(|m| assigned(analysis, &m.replacement_text)).unwrap_or_default();
+    // The value of a register a use named is of that register's kind.
+    for (reg, value) in pairs {
+        let named = joined.iter().find(|j| j.arg == reg).map(|j| j.kind.ty());
+        if let Some(Ty::Reg(kind)) = named
+            && !joined.iter().any(|j| j.arg == value)
+            && Ty::Reg(kind).parent().leq(Ty::Quantity)
+        {
+            joined.push(Role { arg: value, kind: RoleKind::Type(Ty::Reg(kind).parent()), prefix: String::new() });
+        }
+    }
+    for (arg, ty) in statics {
+        if !joined.iter().any(|j| j.arg == arg) {
+            joined.push(Role { arg, kind: RoleKind::Type(ty), prefix: String::new() });
+        }
+    }
     out.extend(joined);
     out.sort_by_key(|r| (r.arg, r.prefix.clone(), r.kind.to_string()));
     out.dedup();
@@ -225,6 +247,9 @@ pub fn arg_types(roles: &[Role]) -> Vec<(usize, Ty)> {
     out.sort_by_key(|(arg, _)| *arg);
     out
 }
+
+/// Each parameter with its type.
+type ParamTypes = Vec<(usize, Ty)>;
 
 /// The command and braced argument each typed token stands in.
 type Typed = Vec<(String, usize, Ty)>;
@@ -432,6 +457,89 @@ fn flow(analysis: &Analysis, typed: &Typed, body: &[Token], depth: usize) -> Vec
         }
     }
     out
+}
+
+/// The types a body's own assignments and scanners give its parameters
+/// (tex.web §§ 1224, 1057): `#i` after a register heading an assignment
+/// is its value, after `\penalty`, `\kern` or `\hskip` a number, dimen or
+/// glue; `#i` heading an assignment (after `\advance`, or with `\relax`
+/// ending the value) names a register and the `#j` after it is a
+/// quantity; `#i` in `\csname…\endcsname` is a name, and the `#j` after
+/// such a name heading an assignment a quantity.
+/// Also each register parameter with the parameter of its value.
+fn assigned(analysis: &Analysis, body: &[Token]) -> (ParamTypes, Vec<(usize, usize)>) {
+    use crate::builtins::{Primitive as P, Typeset};
+    let toks: Vec<&Token> =
+        body.iter().filter(|t| !matches!(t.tok, Tok::Chr(_, Catcode::Space) | Tok::Chr('=', Catcode::Other))).collect();
+    let prim = |k: usize| match toks.get(k)?.tok {
+        Tok::Cs(s) => analysis.env.meaning(s).prim(),
+        _ => None,
+    };
+    let starts = |k: usize| {
+        k == 0
+            || matches!(toks[k - 1].tok, Tok::Chr(_, Catcode::Begin | Catcode::End))
+            || matches!(prim(k - 1), Some(P::Relax | P::Prefix(_) | P::Arith(_)))
+    };
+    let param = |k: usize| match toks.get(k)?.tok {
+        Tok::Param(n) => Some(usize::from(n).saturating_sub(1)),
+        _ => None,
+    };
+    let mut out = Vec::new();
+    let mut pairs = Vec::new();
+    let mut csname = None;
+    for k in 0..toks.len() {
+        match prim(k) {
+            Some(P::Csname) => csname = Some(k),
+            Some(P::Endcsname) => csname = None,
+            _ => {}
+        }
+        let Some(i) = param(k) else { continue };
+        if csname.is_some() {
+            out.push((i, Ty::Name));
+            continue;
+        }
+        let Some(before) = k.checked_sub(1) else { continue };
+        // The operand before `#i`: a register, a parameter or a formed name.
+        let head = match prim(before) {
+            Some(P::Endcsname) => (0..before).rev().find(|&h| prim(h) == Some(P::Csname)),
+            _ => Some(before),
+        };
+        let reg = match toks[before].tok {
+            Tok::Cs(s) => Ty::of_meaning(&analysis.env.meaning(s)),
+            _ => None,
+        };
+        let scans = prim(before).and_then(crate::builtins::pdf_string_skip);
+        let ty = match (prim(before), reg, param(before)) {
+            _ if scans == Some(Typeset::Number) => Some(Ty::Number),
+            _ if scans == Some(Typeset::Dimen) => Some(Ty::Dimen),
+            _ if scans == Some(Typeset::Glue) => Some(Ty::Glue),
+            _ if !head.is_some_and(starts) => None,
+            (_, Some(Ty::Reg(kind)), _) => Some(Ty::Reg(kind).parent()).filter(|t| t.leq(Ty::Quantity)),
+            // Text then text (`#1#2`) is an assignment only where `\advance`
+            // heads it or `\relax` ends the value.
+            _ if !(head.is_some_and(|h| h > 0 && matches!(prim(h - 1), Some(P::Arith(_))))
+                || prim(k + 1) == Some(P::Relax)) =>
+            {
+                None
+            }
+            (_, _, Some(j)) if j != i => {
+                out.push((j, Ty::Register));
+                pairs.push((j, i));
+                Some(Ty::Quantity)
+            }
+            (Some(P::Endcsname), ..) => Some(Ty::Quantity),
+            _ => None,
+        };
+        out.extend(ty.map(|t| (i, t)));
+    }
+    let mut joined: Vec<(usize, Ty)> = Vec::new();
+    for (i, t) in out {
+        match joined.iter_mut().find(|(j, _)| *j == i) {
+            Some((_, u)) => *u = u.join(t),
+            None => joined.push((i, t)),
+        }
+    }
+    (joined, pairs)
 }
 
 /// The braced groups that follow a command in a body, `[…]` ones skipped.

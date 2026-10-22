@@ -398,6 +398,7 @@ any
 │   ├── file                       a file a load reads (from a role)
 │   └── counter, ⟨kind⟩ name       a register's name `\csname` forms
 ├── control sequence               what an assignment defines
+├── register                       of a kind the text does not fix
 └── toks register                  and any other register
 nothing                            below every type
 ```
@@ -408,6 +409,7 @@ The lattice is a tree, so the join of two disagreeing uses never stays at a memb
 The run notes the type of each token of the user's files once it is read (`Facts::types`, joined per place), and each place is matched to the braced argument of the command its text stands in.
 A role ([what an argument is for](lsp.md)) gives a type only where no scanner did: a key or label is a `key`, a load a `file`.
 A wrapper inherits types the way it inherits roles: an argument handed whole to an argument with a type has that type.
+An argument no use typed takes the type its macro's body gives it (`roles::assigned`, tex.web §§ 1224, 1057). `#i` after a register heading an assignment is that register's value. After `\penalty`, `\kern` or `\hskip` it is a number, dimen or glue. `#i` heading an assignment (after `\advance`, or with `\relax` ending the value) is a `register` and the `#j` after it a `quantity`, as in the kernel's `\setlength` (`#1#2\relax`). Where a use typed `#i` as a register, `#j` is its value's type: a skip register's is `glue`. `#i` inside `\csname…\endcsname` is a `name`. These types stay with the macro itself: a wrapper inherits only types a use showed.
 
 Each quantity type is read into its [value domain](#value-what-a-control-sequence-or-register-holds): a number into a count `Num`, a dimen into a dimension `Num`, glue and muglue into a `GlueHull`, a box number into the [box domain](#boxes).
 Set lifting stays below this lattice, in the value domains.

@@ -48,6 +48,13 @@ Each such token belongs to the braced argument of the command its text stands in
 Types of one argument join: `\setlength` shows `#1 skip register, #2 glue`, `\usebox` `#1 box`, `\setcounter` `#1 counter, #2 number`, and an argument read once as glue and once as a number is a `quantity`.
 The hover lists the type of each `⟨argN⟩` under the usage line, and the signature help puts it in front of the parameter's comment.
 Inside an argument read as a quantity, completion lists the names that hold one that fits first: `\setlength{\` offers the lengths before other commands.
+A command no use typed takes the types its body gives its parameters: the kernel's `\setlength` (`#1#2\relax`) shows `#1 register, #2 quantity` before the document calls it.
+
+In a key list (`\pgfkeys{…}`, `\tikzset{…}`, a macro handing its argument to `\pgfkeys` or `\keys_set:nn`) completion offers the keys pgfkeys and l3keys stored in the run.
+A `/path` lists the keys under its directory. After `/demo/.cd` or a family's name (`.is family`), plain names resolve there, else in the families the command sets.
+After `key=` it offers the key's choices (`mode/fast`, l3keys' `.choice:` and `.bool_set:N`), or `true` and `false` for an `.is if` key.
+
+Hovering a key in an argument that cites (the `cite` role, so wrappers too) shows its entry from the databases the document names: title, author, year, venue and every field, with its place in the `.bib` file.
 
 `workspace/executeCommand` runs `satex/query` with one argument, a [query request](queries.md#json-requests). Without `file` it applies to the open document.
 

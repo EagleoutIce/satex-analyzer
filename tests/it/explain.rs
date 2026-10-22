@@ -755,3 +755,28 @@ fn a_list_tex_inserts_charges_nothing_to_the_macro_that_set_it_off() {
     let analysis = analyze(r"\def\foo{}\def\bar{}\everypar{\foo\bar}\def\twice#1{#1#1}\twice{ab}");
     assert_eq!(explain_one(&analysis, "twice").get("expands"), None);
 }
+
+/// A macro no use typed takes the types its body's assignments and
+/// scanners give its parameters ([`satex::roles`]).
+#[test]
+fn a_body_types_the_parameters_it_assigns() {
+    let analysis = analyze(
+        r"\def\setlen#1#2{#1#2\relax}\def\hsp#1{\hskip#1\relax}\def\setc#1#2{\global\csname c@#1\endcsname#2\relax}\countdef\n=10 \def\setn#1{\n=#1}\def\pair#1#2{#1#2}\def\twice#1{#1#1\relax}",
+    );
+    let types = |name: &str| explain_one(&analysis, name).get("types").cloned().unwrap_or_default();
+    assert_eq!(types("setlen"), json!(["#1 register", "#2 quantity"]));
+    assert_eq!(types("hsp"), json!(["#1 glue"]));
+    assert_eq!(types("setc"), json!(["#1 name", "#2 quantity"]));
+    assert_eq!(types("setn"), json!(["#1 number"]));
+    // Text then text is no assignment.
+    assert_eq!(types("pair"), Json::Null);
+    assert_eq!(types("twice"), Json::Null);
+}
+
+/// The kernel's `\setlength` is typed though the document never calls it.
+#[test]
+fn an_uncalled_kernel_macro_is_typed_by_its_body() {
+    let analysis = analyze_kernel(r"\relax");
+    let record = explain_one(&analysis, "setlength");
+    assert_eq!(record.get("types"), Some(&json!(["#1 register", "#2 quantity"])), "{record:?}");
+}

@@ -153,9 +153,11 @@
   /** A hover's Markdown: its usage lines colored, each ⟨argN⟩ elsewhere in the kind its usage gave it. */
   const card = (value) => {
     const kinds = {};
+    // the argument types the hover lists (`- `⟨arg1⟩` glue`, roles::Ty), shown in the usage line too
+    const types = Object.fromEntries([...value.matchAll(/^- `⟨(arg\d+)⟩` ((?:\w+ )?(?:register|name)|number|dimen|glue|muglue|quantity|box|key|file|counter|control sequence|any)$/gm)].map((m) => [m[1], m[2]]));
     const html = markdown(value).replace(/<code>([^<]*⟨arg\d+⟩[^<]*)<\/code>/g, (m, code) => {
       if (/^⟨arg\d+⟩$/.test(code)) return m;
-      const u = cards.usage(unescape(code));
+      const u = cards.usage(unescape(code), types);
       Object.assign(kinds, u.kinds);
       return `<code class="usage">${u.html}</code>`;
     });
