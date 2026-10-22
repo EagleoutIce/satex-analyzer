@@ -187,20 +187,14 @@ fixtures! {
 }
 
 /// Capabilities: unknown inputs, typesetting feedback, package interpreters.
-/// A footnote gives the box an unknown size, so pgfmath draws the frame on
-/// approximated values and may misread a number. That call is summarized:
-/// the path never reads on into the list's `\end{enumerate}`. The
-/// misread itself is still said, as a gap (pgfmath decorrelation, open).
+/// A footnote in the box: its mark, a script with no nucleus (tex.web
+/// § 1176), and its insert, no breakpoint (§ 866), keep the box's size
+/// known, so pgfmath draws the frame on known values and misreads nothing.
 #[test]
 fn tcolorbox_with_a_footnote_in_a_list_item_ends() {
-    let found = check_allowing(
-        "tcolorbox_footnote_in_list",
-        "mwe.tex",
-        &[],
-        &["missing-number", "runaway-argument", "extra-right-brace"],
-    );
+    let found = check_allowing("tcolorbox_footnote_in_list", "mwe.tex", &[], &[]);
     let Some(analysis) = found else { return };
-    assert!(count(&analysis, "fault-contained") > 0);
+    assert_eq!(count(&analysis, "fault-contained"), 0);
 }
 
 /// Capabilities: unknown inputs, global state, typesetting feedback.
