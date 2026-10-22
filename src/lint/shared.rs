@@ -203,7 +203,11 @@ impl<'a> Index<'a> {
             defs.filter_map(|d| d.mac.as_ref()).flat_map(|m| m.replacement_text.iter().map(|t| t.span)).collect()
         });
         let foreign = self.origin(o.span.file) != "document" || bodies.contains(&o.span);
-        o.call.filter(|(_, at)| foreign && *at != o.span && self.origin(at.file) == "document")
+        // The innermost command of the call's own text (`\begin{nb}` inside
+        // `\sbox{…}{…}`) is closer than the call, for an occurrence at it too.
+        let outer = o.call.is_some_and(|(_, at)| at == o.span);
+        let inner = o.site.filter(|(_, at)| (foreign || outer) && self.origin(at.file) == "document");
+        inner.or(o.call.filter(|(_, at)| foreign && *at != o.span && self.origin(at.file) == "document"))
     }
 
     pub fn document_start(&self) -> Option<Span> {

@@ -1519,6 +1519,9 @@ pub struct Machine<'a> {
     /// a macro body of the project's included: where its own text put what
     /// the call `file_call` does.
     project_site: Option<Span>,
+    /// The innermost command of the file call's own text: the last control
+    /// sequence run that stands after the call in its file.
+    text_site: Option<(Sym, Span)>,
     /// The name `\csname` built last, at the text its name came from: no
     /// command the document wrote there.
     pub(crate) built_name: Option<(Sym, Span)>,
@@ -2192,6 +2195,7 @@ impl<'a> Machine<'a> {
             recent_file_spans: Vec::new(),
             file_call: None,
             project_site: None,
+            text_site: None,
             built_name: None,
             file_calls: Vec::new(),
             written_lines: Vec::new(),
@@ -4970,6 +4974,7 @@ will look undefined",
             package: self.package(),
             expanded: self.project_site,
             call: self.file_call,
+            site: self.text_site,
             within: self.within.last().map(|(_, node)| *node),
             cds: self.cds.to_vec(),
             section: self.section.clone(),
@@ -5003,6 +5008,7 @@ will look undefined",
             span,
             expanded: context.expanded.filter(|e| *e != span),
             call: context.call,
+            site: context.site.filter(|s| s.1 != span),
             package: context.package,
             node,
             section: context.section.clone(),
@@ -7649,9 +7655,12 @@ will look undefined",
         // A control sequence read straight from a file starts a new call. One
         // that came out of a macro body is part of the call already running.
         if self.last_file == Some(span.file) {
+            self.text_site = None;
             self.file_call = Some((sym, span));
             self.finish_shape();
             self.call_shape = Some(Rc::new((sym, span, String::new(), self.within.len())));
+        } else if self.file_call.is_some_and(|(_, c)| c.file == span.file && (span.line, span.col) > (c.line, c.col)) {
+            self.text_site = Some((sym, span));
         }
         // Text a join or a gap left: what the path does next is not known exactly.
         if matches!(self.env.meaning(sym), Meaning::Unknown) {

@@ -177,6 +177,9 @@ pub struct Occurrence {
     /// The call read straight from a file that was running: the site a
     /// key built in a macro body belongs to.
     pub call: Option<(Sym, Span)>,
+    /// The innermost command of `call`'s own text it came out of: a
+    /// `\begin` inside the call's braced argument.
+    pub site: Option<(Sym, Span)>,
     pub package: Option<Sym>,
     pub node: NodeId,
     /// The sectioning unit this stands in, or `None` before the first one.

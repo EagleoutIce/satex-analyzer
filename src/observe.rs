@@ -174,6 +174,7 @@ pub struct OccContext {
     pub package: Option<crate::tex::Sym>,
     pub expanded: Option<Span>,
     pub call: Option<(crate::tex::Sym, Span)>,
+    pub site: Option<(crate::tex::Sym, Span)>,
     pub within: Option<crate::env::NodeId>,
     pub cds: Vec<crate::graph::ControlDep>,
     pub section: Option<std::rc::Rc<str>>,
