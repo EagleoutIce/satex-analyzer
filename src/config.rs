@@ -1312,11 +1312,14 @@ pub struct BuildCost {
     pub tokens: u64,
     /// The share of the run's tokens the part must take.
     pub share: f64,
+    /// Paragraph text the body must set for `\includeonly` to be worth a
+    /// draft build's bother: a book, not a thesis that builds in seconds.
+    pub characters: u64,
 }
 
 impl Default for BuildCost {
     fn default() -> BuildCost {
-        BuildCost { tokens: 2_000_000, share: 0.5 }
+        BuildCost { tokens: 2_000_000, share: 0.5, characters: 500_000 }
     }
 }
 

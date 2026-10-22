@@ -130,7 +130,9 @@ Fix by dumping the preamble into a format and starting every build from it.",
 numbers and labels from their `.aux` files (source2e, ltfiles.dtx).  A draft
 build of one chapter then skips the rest.  The rule fires when the document
 `\\include`s at least two parts, no `\\includeonly` is in force, and the body
-is most of what the build interprets and no small one.
+is most of what the build interprets.  It also has to set a book's worth of
+paragraph text, `lints.build-cost.characters` in `satex.yaml`: a shorter
+document builds whole in seconds.
 
 Fix by listing the parts being written in `\\includeonly` while drafting.",
         references: &[Ref { source: Source::Source2e, at: "ltfiles.dtx" }],
@@ -464,7 +466,9 @@ fn includeonly_available<'a>(report: &mut Report<'a>) {
         .filter(|l| l.span.file == analysis.main_file && stem(&l.name).is_some_and(|s| aux.contains(s)))
         .map(|l| l.name.as_str())
         .collect();
-    if only || parts.len() < 2 || !analysis.settings.lints.build_cost.costly(body, body + preamble) {
+    let cost = &analysis.settings.lints.build_cost;
+    let long = analysis.justified_text >= cost.characters;
+    if only || parts.len() < 2 || !long || !cost.costly(body, body + preamble) {
         return;
     }
     let Some(span) = report.index().document_start() else { return };
@@ -472,7 +476,7 @@ fn includeonly_available<'a>(report: &mut Report<'a>) {
     report.add_fix(
         span,
         "",
-        format!("the build reads all {} \\include'd parts, and the body is most of its tokens", parts.len()),
+        format!("the build reads all {} \\include'd parts", parts.len()),
         Fix::new("while drafting, list only the parts being written in \\includeonly", Applicability::Unsafe, edits),
     );
 }

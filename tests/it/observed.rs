@@ -17,6 +17,10 @@ fn analyze(source: &str) -> Analysis {
 /// A document written to a directory of its own, beside the files it names;
 /// the lints read those files too, so the directory outlives the analysis.
 fn analyze_in(name: &str, source: &str, beside: &[(&str, &str)]) -> Analysis {
+    analyze_in_with(name, source, beside, &crate::support::config())
+}
+
+fn analyze_in_with(name: &str, source: &str, beside: &[(&str, &str)], cfg: &Config) -> Analysis {
     let dir: PathBuf = crate::support::tmp_root().join(format!("satex-observed-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temporary directory");
     for (file, text) in beside {
@@ -24,7 +28,7 @@ fn analyze_in(name: &str, source: &str, beside: &[(&str, &str)]) -> Analysis {
     }
     let main = dir.join(format!("{name}.tex"));
     std::fs::write(&main, source).expect("write document");
-    Machine::analyze(source, Some(Path::new(&main)), &crate::support::config())
+    Machine::analyze(source, Some(Path::new(&main)), cfg)
 }
 
 fn keys(analysis: &Analysis, kind: OccKind) -> Vec<(String, u32)> {
@@ -326,14 +330,21 @@ fn includeonly_is_suggested_for_costly_included_parts_built_whole() {
             "\\documentclass{{report}}\n{COSTLY}\n{preamble}\\begin{{document}}\n\\include{{part-a}}\n\\include{{part-b}}\n\\end{{document}}\n"
         )
     };
-    let whole = analyze_in("includeonly-whole", &doc(""), &parts);
+    // Two parts of no text are no book: quiet by default.
+    let short = analyze_in("includeonly-short", &doc(""), &parts);
+    assert!(findings(&short, "includeonly-available").is_empty());
+    let mut cfg = crate::support::config();
+    cfg.lints.build_cost.characters = 0;
+    let whole = analyze_in_with("includeonly-whole", &doc(""), &parts, &cfg);
     assert_eq!(findings(&whole, "includeonly-available").len(), 1);
     // A part's checkpoint in its own `.aux` file is no label.
     assert!(findings(&whole, "unused-label").is_empty());
-    let only = analyze_in("includeonly-only", &doc("\\includeonly{part-a}\n"), &parts);
+    let only = analyze_in_with("includeonly-only", &doc("\\includeonly{part-a}\n"), &parts, &cfg);
     assert!(findings(&only, "includeonly-available").is_empty());
     let cheap = [("part-a.tex", "A."), ("part-b.tex", "B.")];
-    assert!(findings(&analyze_in("includeonly-cheap", &doc(""), &cheap), "includeonly-available").is_empty());
+    assert!(
+        findings(&analyze_in_with("includeonly-cheap", &doc(""), &cheap, &cfg), "includeonly-available").is_empty()
+    );
 }
 
 #[test]

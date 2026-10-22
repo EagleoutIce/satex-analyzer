@@ -49,6 +49,7 @@ lints:
   build-cost:  # when preamble-cost and includeonly-available suggest saving a part of the build
     tokens: 2000000  # a part below this reads in well under a second
     share: 0.5  # the share of the run's tokens the part must take
+    characters: 500000  # includeonly-available: paragraph text the body sets, about 200 pages
   microtype-available:
     characters: 2500  # justified paragraph text the body must set, about a page
   ellipsis-dots:
