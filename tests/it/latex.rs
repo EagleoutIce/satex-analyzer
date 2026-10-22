@@ -3315,6 +3315,34 @@ fn ifx_splits_a_body_a_join_left() {
     std::fs::remove_dir_all(root).ok();
 }
 
+/// tex.web § 1100: an output routine in library code that would close
+/// the conditional its caller opened is no run of a document that
+/// compiles; the caller's conditional stays open for its own `\fi`.
+#[test]
+fn an_output_routine_never_closes_its_callers_conditional() {
+    if !installed() {
+        return;
+    }
+    let root = crate::support::tmp_root().join(format!("satex-output-fi-{}", std::process::id()));
+    let (dir, lib) = (root.join("doc"), root.join("lib"));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(
+        lib.join("outfi.sty"),
+        "\\output={\\setbox0\\box255 \\ifnum\\pdfuniformdeviate 2=0 \\let\\next\\relax\\else\\def\\next{\\fi}\\fi\\next}\n\
+\\def\\run{\\ifnum1=1 \\hbox{}\\par\\penalty-10000 \\gdef\\after{}\\fi}\n",
+    )
+    .unwrap();
+    let source = "\\documentclass{article}\\usepackage{../lib/outfi}\\begin{document}\\run\\end{document}\n";
+    let path = dir.join("main.tex");
+    std::fs::write(&path, source).unwrap();
+    let a = Machine::analyze(source, Some(&path), &crate::support::config());
+    assert!(defined(&a, "after"));
+    let extra: Vec<_> = a.facts.diagnostics.iter().filter(|d| d.code == "extra-fi").collect();
+    assert!(extra.is_empty(), "{extra:?}");
+    std::fs::remove_dir_all(root).ok();
+}
+
 /// What TeX reads each argument as ([`satex::roles::Ty`]), seen in the run
 /// and handed on through wrappers.
 mod types {

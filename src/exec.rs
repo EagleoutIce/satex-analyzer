@@ -2280,9 +2280,34 @@ impl Machine<'_> {
         self.unread(Token::new(Tok::Cs(relax), span));
     }
 
+    /// tex.web § 1100: an output routine of a document that compiles
+    /// closes only the conditionals it opened. Library code that would
+    /// close one opened before it runs on approximated values: the path
+    /// is no run of the document.
+    fn closes_before_output(&mut self, span: Span) -> bool {
+        let Some(opened) =
+            self.env.nests().flatten().find(|n| n.code == Some(crate::mode::group::OUTPUT)).map(|n| n.conds)
+        else {
+            return false;
+        };
+        if self.conds.len() > opened as usize
+            || self.own_file(span.file)
+            || !self.cfg.compiles()
+            || self.probe.is_some()
+        {
+            return false;
+        }
+        self.dropping = Some("the output routine closes a conditional opened before it".into());
+        self.dropping_possible = false;
+        true
+    }
+
     /// `\else` and `\or`: the taken arm is over.
     fn conditional_else(&mut self, span: Span) {
         self.unfold_conditional(span);
+        if self.closes_before_output(span) {
+            return;
+        }
         if let Some(frame) = self.conds.last() {
             self.note_cond_mark(frame.at, span, false);
         }
@@ -2348,6 +2373,9 @@ impl Machine<'_> {
     /// `\fi` ends the level.
     pub(crate) fn conditional_fi(&mut self, span: Span) {
         self.unfold_conditional(span);
+        if self.closes_before_output(span) {
+            return;
+        }
         if self.conds.is_empty() {
             // tex.web § 510: "Extra \fi", ignored.
             self.diagnose(Severity::Warning, "extra-fi", span, "\\fi outside a conditional".into());

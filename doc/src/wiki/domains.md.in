@@ -727,6 +727,8 @@ A path that raises an error with an exact cause, a name certainly
 undefined expanded or run, is dropped even when its state is
 approximated (assumption: the document compiles). Its texts never reach
 a join, so a walk past an undefined delimiter adds nothing.
+Library code that redefines `\fi`, `\else` or `\or`, or an output routine in library code that closes a conditional opened before it ran, drops its path the same way.
+A cut keeps the lists that hold the document's own text, and one inside an output routine ends only the routine (tex.web § 1100), so the command that called the page builder reads on.
 
 ## `limits`: where the domains stop being precise
 
