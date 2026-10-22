@@ -159,12 +159,30 @@ right, and reports a space inside the parentheses only where a real space
 token became glue.  A missing space is the noisier half, because `word(s)` is
 ordinary English, so those findings come as notes.
 
+Code shown as text is not prose.  The rule skips text in the typewriter
+family (`\\ttdefault`) and a call: a `(` right after a name, around a list of
+single words or nothing, as in `plot(x, y)` or `c(1, 2, 3)`.
+
 Fix by moving the space to the other side of the parenthesis.",
         references: &[Ref { source: Source::Chktex, at: "36" }, Ref { source: Source::Chktex, at: "37" }],
         fixes: &[Applicability::Unsafe],
         run: parenthesis_spacing,
     },
 ];
+
+/// The `)` of a call `name(a, b)` whose `(` stands at `open`: right after
+/// a name, around a list of single words or none, on one line.  Prose sets
+/// a space in front of a parenthesis, and a parenthetical is not a list.
+fn call(view: &View, open: usize) -> Option<usize> {
+    let name = |c: char| c.is_alphanumeric() || c == '_' || c == '.';
+    if view.char_at(open)? != '(' || !open.checked_sub(1).and_then(|k| view.char_at(k)).is_some_and(name) {
+        return None;
+    }
+    let close = (open + 1..open + 64).find(|&k| matches!(view.char_at(k), Some(')' | '(' | '\n') | None))?;
+    let args = view.slice(open + 1..close);
+    let list = view.char_at(close) == Some(')') && args.split(',').all(|a| !a.trim().contains(char::is_whitespace));
+    (list && (args.contains(',') || !args.contains(char::is_whitespace))).then_some(close)
+}
 
 /// chktex's `Linker`: the commands a tie belongs in front of.  chktex's own
 /// policy, not a claim about what the names mean.
@@ -561,9 +579,20 @@ fn double_space(report: &mut Report) {
 
 fn parenthesis_spacing(report: &mut Report) {
     let view = report.text();
+    let mono = crate::lint::shared::macro_text(report.analysis(), "ttdefault");
+    let mut code = HashSet::default();
     let mut findings = Vec::new();
     for i in view.prose_text() {
         let Some(paren) = view.char_at(i).filter(|c| matches!(c, '(' | ')')) else { continue };
+        // Code shown as text: set in the typewriter family, or a call.
+        let typewriter = view.font(i).is_some_and(|f| mono.as_deref() == Some(&*f.family));
+        if typewriter || code.contains(&i) {
+            continue;
+        }
+        if let Some(close) = call(view, i) {
+            code.insert(close);
+            continue;
+        }
         let open = paren == '(';
         let inside = match open {
             true => Some(i + 1),
