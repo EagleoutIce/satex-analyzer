@@ -133,6 +133,9 @@ fn record_location(record: &Record, sources: &Sources) -> Option<Location> {
 /// meanings when preamble and document differ, and where it comes from.
 pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Option<Hover> {
     let pos = to_pos(doc, position);
+    if let Some(markdown) = cite_hover(analysis, doc.line(pos.line), pos.col) {
+        return Some(markdown_hover(markdown));
+    }
     let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
     let markdown = if is_command {
         placed(analysis, command_hover(analysis, &name)?, &name, path, pos)
@@ -140,6 +143,36 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
         load_hover(analysis, path, pos, &name)?
     };
     Some(markdown_hover(markdown))
+}
+
+/// The database entry of the key under column `col` of `line`, in an
+/// argument [`crate::roles`] says cites: what it names and every field.
+fn cite_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
+    let (before, after) = line.split_at(crate::source::byte_of_col(line, col).min(line.len()));
+    let arg = argument_at(before).filter(|a| a.open == '{')?;
+    let at = crate::roles::braced_groups(arg.groups).len();
+    let cite = crate::roles::RoleKind::Occ(crate::builtins::OccKind::Cite);
+    crate::roles::roles(analysis, arg.cmd).iter().find(|r| r.arg == at && r.kind == cite)?;
+    let start = before.rfind([',', '{']).map_or(0, |i| i + 1);
+    let key = format!("{}{}", &before[start..], &after[..after.find([',', '}']).unwrap_or(after.len())]);
+    let e = bib_entries(analysis).iter().find(|e| e.key == key.trim())?;
+    let field = |names: &[&str]| e.fields.iter().find(|(n, _)| names.contains(&n.as_str())).map(|(_, v)| v.as_str());
+    let venue = field(&["journal", "journaltitle", "booktitle", "publisher", "school", "institution", "howpublished"]);
+    let mut markdown = format!("### `{}` — {}\n\n", e.key, e.kind);
+    if !e.title.is_empty() {
+        markdown.push_str(&format!("**{}**\n\n", e.title));
+    }
+    let line: Vec<&str> =
+        [e.author.as_str(), e.year.as_str(), venue.unwrap_or_default()].into_iter().filter(|s| !s.is_empty()).collect();
+    if !line.is_empty() {
+        markdown.push_str(&format!("{}\n\n", line.join(" · ")));
+    }
+    for (name, value) in &e.fields {
+        markdown.push_str(&format!("- `{name}` {value}\n"));
+    }
+    let file = e.file.rsplit(['/', '\\']).next().unwrap_or_default();
+    markdown.push_str(&format!("\n`{file}:{}`\n\n", e.line));
+    Some(markdown)
 }
 
 /// The hover of the control sequence `name` apart from where it stands:
@@ -847,8 +880,13 @@ fn bib_entries(analysis: &Analysis) -> &[crate::plugin::bib::Entry] {
             .filter(|o| o.kind == crate::builtins::OccKind::Bibliography)
             .filter_map(|o| crate::plugin::bib::resolve(analysis, &o.key))
             .filter(|path| seen.insert(path.clone()))
-            .filter_map(|path| std::fs::read_to_string(path).ok())
-            .flat_map(|text| crate::plugin::bib::entries(&text))
+            .filter_map(|path| Some((crate::overlay::read_to_string(&path).ok()?, path)))
+            .flat_map(|(text, path)| {
+                let file = path.to_string_lossy().into_owned();
+                crate::plugin::bib::entries(&text)
+                    .into_iter()
+                    .map(move |e| crate::plugin::bib::Entry { file: file.clone(), ..e })
+            })
             .collect()
     })
 }

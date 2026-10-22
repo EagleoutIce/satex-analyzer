@@ -20,10 +20,10 @@ A document is re-analyzed `lsp.debounce_ms` after its last edit. The run keeps c
 | --- | --- | --- |
 | Diagnostics | `textDocument/publishDiagnostics`, on open/change/save | `satex lint --format lsp` |
 | Quick fixes | `textDocument/codeAction` | the `fix`/`unsafe fix` edits [lint](lints.md#quick-fixes) attaches to a finding |
-| Hover | `textDocument/hover` | `satex explain` |
+| Hover | `textDocument/hover` | `satex explain`; on a citation key its database entry |
 | Definition | `textDocument/definition` | `satex explain` |
 | References | `textDocument/references` | `satex query expansions`/`occurrences` |
-| Completion | `textDocument/completion` | `satex scope`, plus label/citation/environment keys from `occurrences` |
+| Completion | `textDocument/completion` | `satex scope`, plus label/citation/environment keys from `occurrences` and stored pgfkeys/l3keys keys |
 | Document symbols | `textDocument/documentSymbol` | sections, labels and document-defined names |
 | Rename | `textDocument/prepareRename`, `textDocument/rename` | `satex query definitions`/`expansions`/`occurrences` |
 | Run any query | `workspace/executeCommand` (`satex/query`) | `satex query --request` |

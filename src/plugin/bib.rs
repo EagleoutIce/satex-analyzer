@@ -15,6 +15,10 @@ pub struct Entry {
     pub title: String,
     pub author: String,
     pub year: String,
+    /// Every field as written, braces dropped, in entry order.
+    pub fields: Vec<(String, String)>,
+    /// The database it was read from, when known.
+    pub file: String,
 }
 
 /// A database as BibTeX finds it: `⟨name⟩.bib` beside the document, or the
@@ -72,11 +76,12 @@ pub fn entries(text: &str) -> Vec<Entry> {
         let key = body[..end].trim();
         if !key.is_empty() {
             let mut entry = Entry { key: key.to_string(), line, kind, ..Default::default() };
-            for (name, value) in fields(&body[end..], if open == '(' { ')' } else { '}' }) {
+            entry.fields = fields(&body[end..], if open == '(' { ')' } else { '}' });
+            for (name, value) in &entry.fields {
                 match name.as_str() {
-                    "title" => entry.title = value,
-                    "author" => entry.author = value,
-                    "year" => entry.year = value,
+                    "title" => entry.title = value.clone(),
+                    "author" => entry.author = value.clone(),
+                    "year" => entry.year = value.clone(),
                     "date" if entry.year.is_empty() => entry.year = value.chars().take(4).collect(),
                     _ => {}
                 }
