@@ -6183,7 +6183,7 @@ will look undefined",
                 "That makes 100 errors; please try again: TeX would stop here (tex.web § 82); satex gives up the expansion and reads on".into(),
             );
             self.tex_errors = 0;
-            self.give_up_lists(false);
+            self.give_up_lists(false, false);
         }
     }
 
@@ -6616,7 +6616,10 @@ will look undefined",
     /// instead of its own (tex.web § 336 balances a file end the same way).
     /// With `own`, down to the first list that still holds the document's
     /// text instead. Returns the groups and conditionals closed.
-    fn give_up_lists(&mut self, own: bool) -> (usize, usize) {
+    /// With `called`, down to the first list of library code that holds
+    /// the document's text: a command the document called reads on, so its
+    /// closers and resets stay (`\include` resets `\@auxout`).
+    fn give_up_lists(&mut self, own: bool, called: bool) -> (usize, usize) {
         let mut at = None;
         loop {
             let pending = match self.input.last() {
@@ -6626,11 +6629,19 @@ will look undefined",
                     None => break,
                 },
             };
-            if own && pending.into_iter().any(|f| self.own_file(f)) {
+            let mine = pending.iter().filter(|&&f| self.own_file(f)).count();
+            if (own && mine > 0) || (called && mine > 0 && mine < pending.len()) {
                 break;
             }
+            // tex.web § 1100: the output routine ends as a unit, and what
+            // called the page builder reads on.
+            let output = matches!(self.input.last(), Some(Frame::Tokens { expanding: Some(s), upper: false, .. }) if *s == self.output_sym)
+                && self.output_active();
             at = explore::lower(at, self.input.last());
             self.pop_frame();
+            if output {
+                break;
+            }
         }
         self.mark_cut_scans();
         let closed = at.map_or((0, 0), |at| self.close_since(at));
@@ -6786,7 +6797,7 @@ will look undefined",
             return;
         }
         let span = self.position_span();
-        let balanced = Self::closed_note(self.give_up_lists(true));
+        let balanced = Self::closed_note(self.give_up_lists(true, false));
         self.diagnose(
             Severity::Imprecision,
             "fault-contained",
@@ -6805,7 +6816,7 @@ will look undefined",
     /// An expansion nested deeper than satex follows: its assignments become
     /// unknown, its pending lists are dropped, and the run reads on.
     fn abandon_nesting(&mut self) {
-        let balanced = Self::closed_note(self.give_up_lists(false));
+        let balanced = Self::closed_note(self.give_up_lists(false, false));
         let (file, line) = self.position();
         self.diagnose(
             Severity::Unsupported,
@@ -7001,8 +7012,10 @@ will look undefined",
     /// assumption.
     fn resync(&mut self) {
         self.leak_call_recs();
-        self.give_up_lists(false);
-        if std::mem::take(&mut self.guard_seen.cut) {
+        let output = self.output_active();
+        self.give_up_lists(false, true);
+        // An output routine's text flows nowhere: no unknown token for it.
+        if std::mem::take(&mut self.guard_seen.cut) && !(output && !self.output_active()) {
             let at = self.position_span();
             let unknown = self.unknown_text(Unk::Any, at);
             self.push_tokens(Rc::from(vec![unknown]));
