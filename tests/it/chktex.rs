@@ -1405,7 +1405,7 @@ fn a_package_error_the_document_causes_is_shown_at_the_cause() {
 
 /// An error that only a path through an unknown value raises (fit around
 /// a box of unknown width) is a possible one: pdflatex raises none here, so
-/// satex gives at most a note, never a warning or an error.
+/// satex gives at most a precision note, which an editor does not show.
 #[test]
 fn an_error_only_an_approximation_raises_is_a_note() {
     let Some(analysis) = latex(
@@ -1423,7 +1423,7 @@ fn an_error_only_an_approximation_raises_is_a_note() {
     };
     let rows: Vec<_> = satex::lint::lint(&analysis)
         .into_iter()
-        .filter(|r| r["code"] == "caused-library-error" && r["severity"] != "info")
+        .filter(|r| r["code"] == "caused-library-error" && r["category"] != "precision")
         .collect();
     assert!(rows.is_empty(), "{rows:?}");
 }
@@ -1572,4 +1572,80 @@ fn a_package_command_for_a_mark_is_not_an_escape() {
     let source = "\\documentclass{article}\n\\usepackage{algorithm2e}\n\\begin{document}\n\\begin{algorithm}\n\\Return\\; foo\n\\end{algorithm}\n\\end{document}\n";
     let Some(doc) = on_disk("algo-endline", source, true) else { return };
     assert!(findings(&doc.analysis, "unintended-escape").is_empty());
+}
+
+/// A label a saved box writes stands at the command of the box's text that
+/// writes it, not at `\sbox`.  pdflatex, run twice, reports `nb:A` and
+/// `nb:B` multiply defined and nothing else: a box used once, a resized box
+/// and a node write their labels once.
+#[test]
+fn a_label_in_a_box_is_placed_at_its_environment_and_counted_once() {
+    let Some(analysis) = latex(
+        r"\documentclass{article}
+\usepackage{tikz}
+\newcounter{nbid}
+\newenvironment{nb}[1]{\refstepcounter{nbid}\label{nb:#1}\begin{tabular}{l}}{\end{tabular}}
+\newsavebox{\mybox}
+\begin{document}
+\sbox{\mybox}{\parbox{3cm}{%
+  \begin{nb}{A}x\end{nb}}}
+\usebox{\mybox}
+\resizebox{2cm}{!}{\begin{nb}{B}y\end{nb}}
+\begin{tikzpicture}\node {\parbox{2cm}{\begin{nb}{C}z\end{nb}}};\end{tikzpicture}
+\begin{figure}\begin{nb}{A}w\end{nb}\end{figure}
+\sbox{\mybox}{\parbox{3cm}{%
+  \begin{nb}{B}v\end{nb}}}\usebox{\mybox}
+See \ref{nb:A}, \ref{nb:B}, \ref{nb:C}.
+\end{document}",
+    ) else {
+        return;
+    };
+    let mut found = placed(&analysis, "duplicate-label");
+    found.sort();
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[0].starts_with("12:") && !found[0].starts_with("12:1 "), "{found:?}");
+    assert!(found[0].contains("`nb:A` is already defined at <input>:8:"), "{found:?}");
+    assert!(found[1].starts_with("14:") && !found[1].starts_with("14:1 "), "{found:?}");
+    assert!(found[1].contains("`nb:B` is already defined at <input>:10:"), "{found:?}");
+}
+
+/// A reference whose label may stand in a part the run never read is the
+/// analysis's gap: a precision note, not a warning.
+#[test]
+fn a_reference_into_an_unread_part_is_a_precision_note() {
+    if satex::paths::which("kpsewhich").is_err() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-chktex-unread-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temporary directory");
+    std::fs::write(dir.join("part.tex"), "\\section{P}\\label{sec:p}\n").expect("write part");
+    let source = "\\documentclass{report}\n\\begin{document}\n\\iffalse\n\\include{part}\n\\fi\nSee~\\ref{sec:p}.\n\\end{document}\n";
+    let path = dir.join("main.tex");
+    std::fs::write(&path, source).expect("write document");
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let analysis = Machine::analyze(source, Some(&path), &cfg);
+    let rows: Vec<_> =
+        satex::lint::lint(&analysis).into_iter().filter(|r| r["code"] == "undefined-reference").collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["category"], "precision", "{rows:?}");
+    assert!(rows[0]["message"].as_str().unwrap_or_default().contains("never read"), "{rows:?}");
+}
+
+/// Code shown as text is no prose: a call `c(1, 2, 3)` and typewriter text
+/// keep their parentheses, a parenthetical set against a word does not.
+#[test]
+fn parenthesis_spacing_skips_code() {
+    let Some(analysis) = latex(
+        r"\documentclass{article}
+\begin{document}
+Run x = c(1, 2, 3) then plot(x, y) and f() and \texttt{g( x )}.
+
+A word(with a gap) and ( spaced ) text.
+\end{document}",
+    ) else {
+        return;
+    };
+    let found = placed(&analysis, "parenthesis-spacing");
+    assert!(found.iter().all(|f| f.starts_with("5:")), "{found:?}");
+    assert_eq!(found.len(), 3, "{found:?}");
 }

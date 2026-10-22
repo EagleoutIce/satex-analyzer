@@ -721,8 +721,10 @@ fn findings_section(
 }
 
 /// What the analysis could not fully resolve, collapsed to a count and the
-/// distinct causes rather than one line per site. It is a widened recursion
-/// or a reached budget, never a defect in the document.
+/// distinct causes rather than one line per site. It is a widened recursion,
+/// a reached budget, or a finding the analysis may cause (an error on an
+/// approximated path, an absence in a part it never read), never a defect
+/// in the document.
 fn precision_line(records: &[&Record]) -> String {
     let mut causes: Vec<String> = records.iter().map(|r| r.get("name").map(plain).unwrap_or_default()).collect();
     causes.sort();
@@ -731,7 +733,7 @@ fn precision_line(records: &[&Record]) -> String {
         "{} {}",
         heading("precision"),
         label(&format!(
-            "{} where the analysis had to widen ({}) \u{2014} `satex lint --filter category=precision` shows them, `satex query gaps` lists what it could not parse at all",
+            "{} where the analysis approximated ({}) \u{2014} `satex lint --filter category=precision` shows them, `satex query gaps` lists what it could not parse at all",
             plural(records.len(), "note"),
             causes.join(", ")
         ))

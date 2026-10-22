@@ -138,8 +138,7 @@ fn unused_color(report: &mut Report) {
         if def.package.is_some() || used.contains(def.name.as_str()) {
             continue;
         }
-        let note = report.unread("used").unwrap_or_default();
-        report.add(def.span, &def.name, format!("color `{}` is never used{note}", def.name), None);
+        report.add_absent("used", def.span, &def.name, format!("color `{}` is never used", def.name), None);
     }
 }
 

@@ -226,8 +226,8 @@ fn unused_label(report: &mut Report) {
         .collect();
     for (span, via, key) in unused {
         let message = format!("label `{key}` is never referenced{}", via.as_deref().unwrap_or_default());
-        if let Some(note) = report.unread("referenced") {
-            report.add(span, &key, format!("{message}{note}"), None);
+        if report.unread("referenced").is_some() {
+            report.add_absent("referenced", span, &key, message, None);
             continue;
         }
         // Deleting the call would take what else it does with it.
@@ -472,8 +472,8 @@ fn unused_definition(report: &mut Report) {
         {
             continue;
         }
-        if let Some(note) = report.unread("used") {
-            report.add(def.span, &name, format!("{name} is never used{note}"), None);
+        if report.unread("used").is_some() {
+            report.add_absent("used", def.span, &name, format!("{name} is never used"), None);
             continue;
         }
         let edits = report.edits().delete_definition(def);

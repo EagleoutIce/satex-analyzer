@@ -147,8 +147,8 @@ fn unreferenced_numbered_display(report: &mut Report) {
         findings.push((occurrence.span, name.to_string(), message, edit));
     }
     for (span, name, message, edit) in findings {
-        if let Some(note) = report.unread("referenced") {
-            report.add(span, &name, format!("{message}{note}"), None);
+        if report.unread("referenced").is_some() {
+            report.add_absent("referenced", span, &name, message, None);
             continue;
         }
         report.add_fix(

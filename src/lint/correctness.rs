@@ -138,9 +138,10 @@ over the document's own unclosed argument is not one: `raised-error` reports
 it.  Each call and
 error code is one finding, with a count when it repeats.
 
-When satex had to approximate on the way, the error may not be TeX's.  Nor
-may any error after such a one: TeX's recovery left a state that may not be
-TeX's.  The finding is then a warning that names the earlier error.",
+When satex had to approximate on the way, the error may not be TeX's: it is
+a precision note, not a finding.  An exact error after such a one may be its
+echo, as TeX's recovery left a state that may not be TeX's.  The finding is
+then a warning that names the earlier error.",
         references: &[Ref { source: Source::TeXbook, at: "chapter 27" }],
         fixes: &[],
         run: caused_library_errors,
@@ -227,7 +228,8 @@ Fix with `\\newcommand`, or load the package that was supposed to define it.",
         summary: "\\ref names a label that is never defined",
         explanation: "\
 No `\\label` in the document or its inputs declares this key, so the reference
-prints `??`.
+prints `??`.  When the run left a project file unread, the label may stand
+there: the finding is then a precision note.
 
 Fix by adding the `\\label`, or by correcting the key.",
         references: &[Ref { source: Source::Source2e, at: "ltxref.dtx" }],
@@ -241,7 +243,9 @@ Fix by adding the `\\label`, or by correcting the key.",
         summary: "the same label is defined twice",
         explanation: "\
 LaTeX warns `Label … multiply defined` and every reference resolves to the
-later one. Only the kernel's `\\newlabel` (and zref's) warn: a name another
+later one.  The finding stands at the innermost command of the document's
+text that writes the label: the `\\begin` inside a `\\sbox` argument, not the
+`\\sbox`. Only the kernel's `\\newlabel` (and zref's) warn: a name another
 package writes to the `.aux` file twice, such as a tikzmark, is not checked.
 
 Fix by renaming one of them.",
@@ -541,14 +545,13 @@ fn caused_library_errors(report: &mut Report) {
                 .push_str(&format!(" (may follow from the analysis gap at {}: check that first)", report.place(first))),
             None => {}
         }
-        // An error only an approximated path raised is a possible one, not
-        // a defect to fix: a note, never a warning.
-        let severity = match (exact, before) {
-            (false, _) => Severity::Info,
-            (true, None) => Severity::Error,
-            (true, Some(_)) => Severity::Warning,
-        };
-        report.add_as(severity, origin, d.code, message, None);
+        // An error only an approximated path raised is the analysis's, not
+        // a defect to fix: a precision note.
+        match before {
+            _ if !exact => report.add_imprecision(origin, d.code, message),
+            None => report.add_as(Severity::Error, origin, d.code, message, None),
+            Some(_) => report.add_as(Severity::Warning, origin, d.code, message, None),
+        }
     }
 }
 
@@ -741,11 +744,7 @@ fn undefined_reference(report: &mut Report) {
         .collect();
     for (span, via, key) in missing {
         let message = format!("no \\label{{{key}}} anywhere in the document{}", via.unwrap_or_default());
-        if let Some(note) = report.unread("defined") {
-            report.add_as(Severity::Info, span, &key, format!("{message}{note}"), None);
-            continue;
-        }
-        report.add(span, &key, message, Some(format!("add \\label{{{key}}} where it belongs")));
+        report.add_absent("defined", span, &key, message, Some(format!("add \\label{{{key}}} where it belongs")));
     }
 }
 

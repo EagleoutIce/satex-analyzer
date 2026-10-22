@@ -189,11 +189,7 @@ fn unused_bibitem(report: &mut Report) {
         .map(|o| (o.span, o.key.clone()))
         .collect();
     for (span, key) in unused {
-        report.add(
-            span,
-            &key,
-            format!("\\bibitem `{key}` is never cited{}", report.unread("cited").unwrap_or_default()),
-            Some(format!("cite `{key}`, or delete its \\bibitem")),
-        );
+        let fix = Some(format!("cite `{key}`, or delete its \\bibitem"));
+        report.add_absent("cited", span, &key, format!("\\bibitem `{key}` is never cited"), fix);
     }
 }

@@ -422,6 +422,26 @@ impl<'a> Report<'a> {
         self.add_as(Severity::Info, span, name, format!("{message} (may follow from {cause}: check that first)"), None);
     }
 
+    /// A finding that the analysis may cause rather than the document: a
+    /// `precision` note, which the text output folds into a count and an
+    /// editor does not show.
+    pub fn add_imprecision(&mut self, span: Span, name: &str, message: String) {
+        self.add_as(Severity::Info, span, name, message, None);
+        if let Some(record) = self.out.last_mut() {
+            record.insert("category".into(), json!(Category::Precision.as_str()));
+        }
+    }
+
+    /// A finding that something is absent from the whole document: a
+    /// `precision` note naming the part the run did not read, if any, as
+    /// that part may hold it.
+    pub fn add_absent(&mut self, later: &str, span: Span, name: &str, message: String, fix: Option<String>) {
+        match self.unread(later) {
+            Some(note) => self.add_imprecision(span, name, format!("{message}{note}")),
+            None => self.add(span, name, message, fix),
+        }
+    }
+
     /// The note for a finding that something is absent from the whole
     /// document, when the run did not read all of it: the part it left
     /// may hold what is missing.  `None` when the run read everything.
