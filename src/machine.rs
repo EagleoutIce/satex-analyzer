@@ -2365,19 +2365,19 @@ impl<'a> Machine<'a> {
         let budget = std::time::Duration::from_secs(cfg.limits.seconds);
         // Later runs replay the caches the first stored: the build reports the first.
         let mut caches = None;
-        // The last run that was not stopped by a budget: a later one that is
-        // stops nowhere near the fixpoint, so the build says what it said.
+        // The last run that was not stopped by a budget.
         let mut complete: Option<Analysis> = None;
         let mut analysis = loop {
             let before = started.elapsed();
+            crate::progress::set_run(run);
             let mut analysis = checkpoints.analyze(source, path);
             analysis.build_runs = run;
-            if analysis.exhausted
-                && let Some(done) = complete.take()
-            {
-                break done;
-            }
             caches.get_or_insert_with(|| (analysis.package_caches.clone(), analysis.format.clone()));
+            // A budget stopped it: no other run, and the last one that ran
+            // to its end says more than this one.
+            if analysis.exhausted {
+                break complete.take().unwrap_or(analysis);
+            }
             let took = started.elapsed() - before;
             if cfg.limits.seconds > 0 && started.elapsed() + took > budget {
                 break analysis;
@@ -2440,8 +2440,9 @@ impl<'a> Machine<'a> {
                 placed.push(at);
             }
             run += 1;
-            complete = (!analysis.exhausted).then_some(analysis);
+            complete = Some(analysis);
         };
+        crate::progress::set_run(1);
         placed.iter().for_each(|p| crate::overlay::remove(p));
         (analysis.package_caches, analysis.format) = caches.unwrap_or_default();
         analysis
