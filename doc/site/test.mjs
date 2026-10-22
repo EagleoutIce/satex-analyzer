@@ -284,7 +284,7 @@ async function browser() {
     const half = await dragTo(await js(`const r = document.querySelector('.play-split').getBoundingClientRect(); return r.x + r.width / 2 + 7`));
     check('panes snap and fold', folded[0] === 'editor' && back === '' && half[0] === '' && half[1] === '50.0%', JSON.stringify([folded, back, half]));
     check('header: kernel, command line, run, upload, link', await js(`return !document.querySelector('.act, #play-query, #play-reset') && !!document.querySelector('#play-kernel') && !!document.querySelector('#play-args')`));
-    check('findings', await until(`return document.querySelectorAll('#lsp-diagnostics li').length > 0`));
+    check('findings', await until(`return document.querySelectorAll('#lsp-diagnostics li[data-i]').length > 0`));
     const kernels = await js(`return [...document.querySelectorAll('#play-kernel option')].map((o) => [o.textContent, o.disabled, o.title])`);
     check('kernel labels carry their own size', kernels.some(([t]) => /^pdfTeX · [\d.]+ MiB$/.test(t)) && kernels.some(([t]) => /^plain TeX · \d+ KiB$/.test(t)) && !kernels.some(([t]) => /\+/.test(t)),
       kernels.map((k) => k[0]).join(' | '));
@@ -292,17 +292,17 @@ async function browser() {
     check('editor highlighted', await js(`return document.querySelectorAll('.cm-content .tok-cmd').length > 3`));
 
     // every finding, unfolded, shows one severity: its own
-    const sevs = await js(`const out = []; for (const li of document.querySelectorAll('#lsp-diagnostics li')) { li.querySelector('.why').click(); }
+    const sevs = await js(`const out = []; for (const li of document.querySelectorAll('#lsp-diagnostics li[data-i]')) { li.querySelector('.why').click(); }
       await new Promise((r) => setTimeout(r, 100));
-      for (const li of document.querySelectorAll('#lsp-diagnostics li')) out.push([li.querySelectorAll('.sev').length, !!li.querySelector('.explain'), li.querySelector('code').textContent, li.querySelector('.sev').textContent]);
+      for (const li of document.querySelectorAll('#lsp-diagnostics li[data-i]')) out.push([li.querySelectorAll('.sev').length, !!li.querySelector('.explain'), li.querySelector('code').textContent, li.querySelector('.sev').textContent]);
       return out;`);
     check('one severity per finding', sevs.length && sevs.every(([n, open]) => n === 1 && open), JSON.stringify(sevs));
     const differs = sevs.filter(([, , code, sev]) => manifest.rules[code] && manifest.rules[code].severity !== sev);
     console.log(`     ${differs.length} of them differ from their rule's default severity`);
     // hovering a finding moves and resizes nothing
-    const boxes = `return [...document.querySelectorAll('#lsp-diagnostics li')].slice(0, 3).map((li) => { const r = li.getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map(Math.round).join(); }).join(' ') + ' ' + document.getElementById('lsp-diagnostics').scrollHeight`;
+    const boxes = `return [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].slice(0, 3).map((li) => { const r = li.getBoundingClientRect(); return [r.x, r.y, r.width, r.height].map(Math.round).join(); }).join(' ') + ' ' + document.getElementById('lsp-diagnostics').scrollHeight`;
     const still = await js(boxes);
-    const first = await js(`const r = document.querySelector('#lsp-diagnostics li').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]`);
+    const first = await js(`const r = document.querySelector('#lsp-diagnostics li[data-i]').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]`);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: first[0], y: first[1] });
     await sleep(400);
     const hovered = await js(boxes);
@@ -421,10 +421,10 @@ async function browser() {
     p = await spot('\\begin{document}', 0);
     await mouse(...p);
     await send('Input.insertText', { text: '\\newcommand\\again{\\again}\n' });
-    const lowered = await until(`return [...document.querySelectorAll('#lsp-diagnostics li')].some((li) => li.querySelector('code').textContent === 'unguarded-recursion')`, 60000) &&
-      await js(`const li = [...document.querySelectorAll('#lsp-diagnostics li')].find((li) => li.querySelector('code').textContent === 'unguarded-recursion');
+    const lowered = await until(`return [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].some((li) => li.querySelector('code').textContent === 'unguarded-recursion')`, 60000) &&
+      await js(`const li = [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].find((li) => li.querySelector('code').textContent === 'unguarded-recursion');
         if (!li.querySelector('.explain')) li.querySelector('.why').click(); await new Promise((r) => setTimeout(r, 100));
-        const again = [...document.querySelectorAll('#lsp-diagnostics li')].find((li) => li.querySelector('code').textContent === 'unguarded-recursion');
+        const again = [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].find((li) => li.querySelector('code').textContent === 'unguarded-recursion');
         return [again.querySelectorAll('.sev').length, again.querySelector('.sev').textContent, /\berror\b/.test(again.querySelector('.explain').textContent.split('.')[0])];`);
     check('lowered severity shown once', lowered && lowered[0] === 1 && lowered[1] !== manifest.rules['unguarded-recursion'].severity && !lowered[2], JSON.stringify(lowered));
 

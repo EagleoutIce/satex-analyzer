@@ -473,20 +473,44 @@
       d.fixes.slice(1).map((f, j) => fixButton(f, j + 1, '')).join('') +
       `<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
       (unfolded.has(key(d)) ? explanation(d) : '') + '</li>';
-    // grouped by the rule's category, as the command line prints them
-    const groups = new Map();
+    // grouped by the rule's category, as the command line prints them: a header with
+    // the category's icon, its count and severities, folding its findings
+    const groups = new Map(CATEGORIES.map(([cat]) => [cat, []]));
     ds.forEach((d, i) => {
       const cat = manifest.rules[d.code]?.category ?? 'other';
-      groups.set(cat, [...(groups.get(cat) ?? []), item(d, i)]);
+      groups.set(cat, [...(groups.get(cat) ?? []), [d, i]]);
     });
-    list.innerHTML = [...groups].map(([cat, items]) =>
-      (groups.size > 1 ? `<li class="cat-head">${escape(cat)} <span class="muted">${items.length}</span></li>` : '') + items.join('')).join('');
+    list.innerHTML = [...groups].filter(([, rows]) => rows.length).map(([cat, rows]) => {
+      const sevs = ['error', 'warning', 'info'].map((s) => [s, rows.filter(([d]) => sev(d) === s || (s === 'info' && sev(d) === 'hint')).length]).filter(([, n]) => n);
+      const label = `${cat}: ${rows.length} finding${rows.length > 1 ? 's' : ''}`;
+      return `<li class="cat-group cat-${escape(cat)}"><details${folded.has(cat) ? '' : ' open'} data-cat="${escape(cat)}">` +
+        `<summary class="cat-head" aria-label="${escape(label)}"><span class="cat-icon" aria-hidden="true">${catIcon(cat)}</span>` +
+        `<span class="cat-name">${escape(cat)}</span><span class="cat-count">${rows.length}</span>` +
+        `<span class="cat-sevs" aria-hidden="true">${sevs.map(([s, n]) => `<span class="cat-sev sev-${s}" title="${n} ${s}">${n}</span>`).join('')}</span></summary>` +
+        `<ul class="cat-items">${rows.map(([d, i]) => item(d, i)).join('')}</ul></details></li>`;
+    }).join('');
   }
+  /** The lint categories in the command line's order, each with its icon (24-unit strokes). */
+  const CATEGORIES = [
+    ['correctness', '<path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/>'],
+    ['security', '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'],
+    ['style', '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13 7l4 4"/>'],
+    ['performance', '<path d="M13 3L5 14h6l-1 7 8-11h-6z"/>'],
+    ['precision', '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>'],
+  ];
+  const catIcon = (cat) => `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${(CATEGORIES.find(([c]) => c === cat) ?? [, '<circle cx="12" cy="12" r="4"/>'])[1]}</svg>`;
+  /** The categories folded away, kept across checks. */
+  const folded = new Set();
+  list.addEventListener('toggle', (e) => {
+    const cat = e.target.dataset?.cat;
+    if (cat) { if (e.target.open) folded.delete(cat); else folded.add(cat); }
+  }, true);
   const unfolded = new Set();
   function unfold(i, toggle = true) {
     const d = diagnostics[uri()]?.[i];
     if (!d) return;
     if (toggle && unfolded.has(key(d))) unfolded.delete(key(d)); else unfolded.add(key(d));
+    folded.delete(manifest.rules[d.code]?.category ?? 'other');
     render();
     list.querySelector(`li[data-i="${i}"]`)?.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }

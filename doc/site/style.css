@@ -389,6 +389,20 @@ main td .badges, main td .cat { white-space: nowrap; }
 .cm-completionDetail { font-style: normal; } .cm-completionDetail .arg { font-size: 11px; padding: 0 .25rem; }
 .cm-tooltip-autocomplete li[aria-selected] .cm-completionDetail * { color: inherit; }
 .cm-tooltip-autocomplete li[aria-selected] .cm-completionDetail .arg { background: color-mix(in srgb, var(--panel) 25%, transparent); border-color: currentColor; }
-/* findings grouped by category */
-.cat-head { list-style: none; margin: .6rem 0 .2rem; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
-.cat-head:first-child { margin-top: 0; }
+/* findings grouped by category: a folding header with icon, count and severities */
+.diagnostics .cat-group { --k: var(--c0); } .diagnostics li.cat-group { padding: 0; border: 0; background: none; box-shadow: none; cursor: default; margin: 0 0 .5rem; }
+.diagnostics .cat-correctness { --k: var(--c1); } .diagnostics .cat-security { --k: var(--c5); } .diagnostics .cat-style { --k: var(--c6); }
+.diagnostics .cat-performance { --k: var(--c3); } .diagnostics .cat-precision { --k: var(--c4); }
+.cat-head { display: flex; align-items: center; gap: .5rem; padding: .3rem .45rem; border-radius: 8px; cursor: pointer; list-style: none; user-select: none;
+  font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--fg); transition: background-color var(--quick); }
+.cat-head::-webkit-details-marker { display: none; }
+.cat-head:hover { background: var(--sunk); }
+.cat-head:focus-visible { outline: 2px solid var(--k); outline-offset: 1px; }
+.cat-icon { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; color: var(--k); background: color-mix(in srgb, var(--k) 14%, transparent); }
+.cat-count { min-width: 1.4rem; padding: 0 .4rem; border-radius: 999px; text-align: center; letter-spacing: 0; color: var(--k); background: color-mix(in srgb, var(--k) 14%, transparent); }
+.cat-sevs { display: flex; gap: .55rem; margin-left: auto; font-weight: 600; letter-spacing: 0; color: var(--muted); }
+.cat-sev::before { content: var(--glyph); color: var(--sev); margin-right: .2rem; font-size: 9px; }
+/* the section's own ▸ (.sect summary::before) turns with this group's state */
+.sect details:not([open]) > .cat-head::before { transform: none; }
+.sect details[open] > .cat-head::before { transform: rotate(90deg); }
+.cat-items { list-style: none; margin: .3rem 0 0 .95rem; padding: 0 0 0 .7rem; border-left: 2px solid color-mix(in srgb, var(--k) 28%, transparent); }
