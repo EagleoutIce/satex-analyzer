@@ -382,7 +382,7 @@ Such a loop ends by construction, so each of its passes stays exact. A loop that
 
 ## Argument types: the `Ty` lattice
 
-[`src/roles.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/roles.rs) types each braced argument of a command by what TeX read it as.
+[`src/roles.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/roles.rs) types each argument of a command by what TeX read it as. The record numbers them by their place in the usage line, optional ones counted.
 A type stands for the texts an argument may hold, so a type is below another when every text it admits the other admits too.
 The order follows tex.web's scanners: `scan_int` (§ 440), `scan_dimen` (§ 448), `scan_glue` (§ 461), a register an assignment names (§ 1224), a box number (§ 1079), `get_r_token` (§ 1215).
 A register's name is text of its value's kind, because a scanner reads the register's value there (§ 413). A dimension is glue without stretch.
@@ -404,6 +404,7 @@ any
 │   ├── file                       a file a load reads (from a role)
 │   └── counter, ⟨kind⟩ name       a register's name `\csname` forms
 ├── control sequence               what an assignment defines
+├── options                        the key list a load takes before its name (from a role)
 ├── register                       of a kind the text does not fix
 └── toks register                  and any other register
 nothing                            below every type

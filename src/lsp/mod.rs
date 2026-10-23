@@ -27,6 +27,7 @@
 
 mod doccomment;
 mod handlers;
+mod knowledge;
 mod primitives;
 mod unreached;
 #[cfg(target_os = "emscripten")]

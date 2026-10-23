@@ -1021,6 +1021,59 @@ fn hover_and_signature_help_show_argument_types() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A command with several definitions shows the one in force at the cursor,
+/// the others folded under a heading; each usage line carries its own types.
+#[test]
+fn hover_shows_the_active_definition_and_folds_the_others() {
+    let text = "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("active", text);
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 0, "character": 4 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    let (main, more) = hover.split_once("#### More definitions").unwrap_or((&hover, ""));
+    assert!(main.contains("— preamble"), "{hover}");
+    assert!(main.contains("- `⟨arg1⟩` options") && main.contains("- `⟨arg2⟩` file"), "{hover}");
+    assert!(more.contains("— document") && !more.contains("— preamble"), "{hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What a quantity is, from the knowledge base, under the hover of a command
+/// that reads one; the completion detail of a command carries the types.
+#[test]
+fn hover_explains_quantities_and_completion_types_arguments() {
+    let text = "\\documentclass{article}\n\\newlength\\mylen\n\\begin{document}\n\\setlength{\\mylen}{3pt}\n\\setle\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("about", text);
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": 3 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("#### About glue") && hover.contains("plus"), "{hover}");
+    let items = complete(&mut server, &uri, 4, 6);
+    let detail = items.iter().find(|i| i["label"] == "setlength").and_then(|i| i["detail"].as_str());
+    assert!(detail.is_some_and(|d| d.contains("{1: skip register}") && d.contains("{2: glue}")), "{detail:?}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The style a `\bibliographystyle` names is hovered with what it does.
+#[test]
+fn hover_shows_the_bibliography_style() {
+    let text = "\\documentclass{article}\n\\begin{document}\nx\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("bst", text);
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": 20 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("BibTeX style") && hover.contains("sorted by author"), "{hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// An argument TeX reads as a length narrows what a name there may be:
 /// the length registers come before the rest.
 #[test]
@@ -1047,6 +1100,10 @@ fn key_lists_complete_paths_choices_and_family_keys() {
     }
     assert!(!labels(&paths).contains(&"/demo/mode/fast"), "{:?}", labels(&paths));
     assert_eq!(paths[0]["textEdit"]["range"]["start"]["character"], 26, "{}", paths[0]);
+    // A key that takes a value ends in `=` with the cursor after it; a switch does not.
+    let inserted = |key: &str| paths.iter().find(|i| i["label"] == key).map(|i| i["textEdit"]["newText"].clone());
+    assert_eq!(inserted("/demo/width"), Some(json!("/demo/width=$1")), "{paths:?}");
+    assert_eq!(inserted("/demo/draft"), Some(json!("/demo/draft")), "{paths:?}");
     let choices = complete(&mut server, &uri, 12, 25);
     assert_eq!(labels(&choices), ["fast", "safe"]);
     let switch = complete(&mut server, &uri, 13, 21);

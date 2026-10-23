@@ -2706,6 +2706,25 @@ fn record_for_def(analysis: &Analysis, def: &crate::facts::Definition, window: W
     record
 }
 
+/// The numbered arguments of a signature, by their place in the usage line
+/// (`effective_of` counts the same).
+fn argument_slots(items: &[crate::tex::ArgType]) -> Vec<(usize, &crate::tex::ArgType)> {
+    use crate::tex::ArgType as A;
+    let mut n = 0;
+    let mut out = Vec::new();
+    for item in items {
+        match item {
+            A::Mandatory | A::Optional(_) | A::Delimited { .. } | A::Until(_) => {
+                n += 1;
+                out.push((n, item));
+            }
+            A::Embellishment(e) => n += e.chars().count(),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// What a call of `sym` reads: `takes`, `signature`, `effective`, the
 /// `error` the probe raised if any, and with `forms` the forms it found.
 fn insert_call_shape(
@@ -2730,17 +2749,46 @@ fn insert_call_shape(
         record.insert("forms".into(), json!(p.forms.iter().map(|f| f.raw.clone()).collect::<Vec<_>>()));
     }
     let roles = crate::roles::roles(analysis, analysis.interner.name(sym));
-    let named: Vec<String> =
-        roles.iter().filter(|r| !matches!(r.kind, crate::roles::RoleKind::Type(_))).map(ToString::to_string).collect();
+    // Roles and types name the braced arguments; the record names every
+    // argument by its place in the usage line.
+    let slots = argument_slots(probe.as_ref().map_or(&[][..], |p| &p.spec.items[..]));
+    let place = |braced: usize| {
+        slots
+            .iter()
+            .filter(|(_, i)| matches!(i, crate::tex::ArgType::Mandatory | crate::tex::ArgType::Until(_)))
+            .nth(braced)
+            .map_or(braced + 1, |(n, _)| *n)
+    };
+    let named: Vec<String> = roles
+        .iter()
+        .filter(|r| !matches!(r.kind, crate::roles::RoleKind::Type(_)))
+        .map(|r| ToString::to_string(r).replacen(&format!("#{}", r.arg + 1), &format!("#{}", place(r.arg)), 1))
+        .collect();
     if !named.is_empty() {
         record.insert("roles".into(), json!(named));
     }
-    let types = crate::roles::arg_types(&roles);
+    use crate::roles::{RoleKind, Ty};
+    let mut types: Vec<(usize, Ty)> =
+        crate::roles::arg_types(&roles).into_iter().map(|(arg, t)| (place(arg), t)).collect();
+    // The options a loading command takes before the name it loads.
+    for r in roles.iter().filter(|r| {
+        matches!(r.kind, RoleKind::Load(crate::builtins::LoadKind::Package | crate::builtins::LoadKind::Class))
+    }) {
+        let name = place(r.arg);
+        if let Some((n, _)) = slots.iter().rev().find(|(n, i)| {
+            *n < name
+                && matches!(
+                    i,
+                    crate::tex::ArgType::Optional(_) | crate::tex::ArgType::Delimited { required: false, .. }
+                )
+        }) {
+            types.push((*n, Ty::Options));
+        }
+    }
+    types.sort_by_key(|(n, _)| *n);
+    types.dedup_by_key(|(n, _)| *n);
     if !types.is_empty() {
-        record.insert(
-            "types".into(),
-            json!(types.iter().map(|(arg, t)| format!("#{} {t}", arg + 1)).collect::<Vec<_>>()),
-        );
+        record.insert("types".into(), json!(types.iter().map(|(arg, t)| format!("#{arg} {t}")).collect::<Vec<_>>()));
     }
     record.insert("effective".into(), json!(effective_of(analysis, sym, mac, view)));
     if let Some(error) = probe.and_then(|p| p.error) {

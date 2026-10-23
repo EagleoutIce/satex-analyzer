@@ -77,6 +77,8 @@ pub enum Ty {
     Name,
     /// A control sequence an assignment defines (`get_r_token`, § 1215).
     Cs,
+    /// The key list a loading command takes in its optional argument.
+    Options,
     Top,
 }
 
@@ -92,7 +94,7 @@ impl Ty {
             Reg(RegKind::Dimen) => Dimen,
             Reg(RegKind::MuSkip) => MuGlue,
             Named(_) | Key | File => Name,
-            Reg(_) | Register | Quantity | Name | Cs | Top => Top,
+            Reg(_) | Register | Quantity | Name | Cs | Options | Top => Top,
         }
     }
 
@@ -156,6 +158,7 @@ impl std::fmt::Display for Ty {
                 Ty::File => "file",
                 Ty::Name => "name",
                 Ty::Cs => "control sequence",
+                Ty::Options => "options",
                 _ => "any",
             }),
         }
@@ -187,8 +190,17 @@ const DEPTH: usize = 6;
 
 /// The roles of `cmd`'s arguments.
 pub fn roles(analysis: &Analysis, cmd: &str) -> Vec<Role> {
+    roles_typed(analysis, &typed(analysis), cmd)
+}
+
+/// The roles of each of `cmds`, the run's typed tokens read once.
+pub fn roles_many(analysis: &Analysis, cmds: &[&str]) -> Vec<Vec<Role>> {
     let typed = typed(analysis);
-    let mut out = roles_at(analysis, &typed, cmd, 0);
+    cmds.iter().map(|c| roles_typed(analysis, &typed, c)).collect()
+}
+
+fn roles_typed(analysis: &Analysis, typed: &Typed, cmd: &str) -> Vec<Role> {
+    let mut out = roles_at(analysis, typed, cmd, 0);
     // An argument that defines a key is not also a use of it: the run
     // reading its own label back is no reference.
     let defines = |arg: usize, out: &[Role]| {

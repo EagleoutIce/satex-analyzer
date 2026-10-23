@@ -928,6 +928,10 @@ pub fn relate(m: &mut Machine) {
                 if name.is_empty() || name.contains(char::is_whitespace) || !tried.insert(name.clone()) {
                     continue;
                 }
+                if line.head == "bibstyle" {
+                    m.occurrence_in(OccKind::BibStyle, name, None, line.span, &line.context);
+                    continue;
+                }
                 // BibTeX's `\bibdata` names databases, found or not.
                 if name.ends_with(".bib")
                     || line.head == "bibdata"

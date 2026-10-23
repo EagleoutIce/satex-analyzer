@@ -138,9 +138,9 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
     }
     let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
     let markdown = if is_command {
-        placed(analysis, command_hover(analysis, &name)?, &name, path, pos)
+        placed(analysis, command_hover(analysis, &name, active_at(analysis, &name, path, pos))?, &name, path, pos)
     } else {
-        load_hover(analysis, path, pos, &name)?
+        load_hover(analysis, path, pos, &name).or_else(|| bib_style_hover(analysis, path, pos, &name))?
     };
     Some(markdown_hover(markdown))
 }
@@ -178,8 +178,17 @@ fn cite_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
 /// The hover of the control sequence `name` apart from where it stands:
 /// what may be kept.
 pub fn command_markdown(analysis: &Analysis, name: &str) -> Option<String> {
-    command_hover(analysis, name)
+    command_hover(analysis, name, None)
 }
+
+/// The record of `name` in force at `pos` of `path`, when its definitions differ.
+fn active_at(analysis: &Analysis, name: &str, path: &str, pos: Pos) -> Option<Record> {
+    let at = query::ExplainAt::At(query::At { file: Some(path.to_string()), line: pos.line, col: pos.col, end: None });
+    query::explain_at(analysis, &[name.to_string()], false, Some(&at)).ok()?.0.into_iter().next()
+}
+
+/// The heading above the definitions that do not hold where the cursor is.
+pub const MORE_DEFINITIONS: &str = "#### More definitions";
 
 /// `markdown` with the primitive's syntax under its first heading, where
 /// `name` still means the primitive at `at`.
@@ -199,8 +208,16 @@ pub fn markdown_hover(markdown: String) -> Hover {
     }
 }
 
-fn command_hover(analysis: &Analysis, name: &str) -> Option<String> {
-    let (records, _) = query::explain(analysis, &[name.to_string()], false).ok()?;
+fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Option<String> {
+    let (mut records, _) = query::explain(analysis, &[name.to_string()], false).ok()?;
+    // The definition in force at the cursor first, the others after it.
+    let place = |r: &Record| (r.get("path").cloned(), r.get("line").cloned());
+    if let Some(active) = active {
+        match records.iter().position(|r| place(r) == place(&active)) {
+            Some(i) => records[..=i].rotate_right(1),
+            None => records.insert(0, active),
+        }
+    }
     let mut markdown = String::new();
     if records.is_empty() {
         let path = analysis.file_name(analysis.main_file).to_string();
@@ -213,7 +230,11 @@ fn command_hover(analysis: &Analysis, name: &str) -> Option<String> {
             markdown.push_str(&format!("`{}:{}` (source scan)\n\n", site.path, site.pos.line));
         }
     }
-    for record in &records {
+    for (n, record) in records.iter().enumerate() {
+        if n == 1 {
+            markdown.push_str(&super::knowledge::about(&topics(analysis, name, &records)));
+            markdown.push_str(&format!("{MORE_DEFINITIONS}\n\n"));
+        }
         let text = |key: &str| record.get(key).and_then(Json::as_str);
         match text("when") {
             Some(w) => markdown.push_str(&format!("### `\\{name}` — {w}\n\n")),
@@ -222,7 +243,7 @@ fn command_hover(analysis: &Analysis, name: &str) -> Option<String> {
         if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
             markdown.push_str(&format!("`\\{name}{}`\n\n", usage(sig)));
         }
-        let types = arg_types(record, text("signature").filter(|s| !s.is_empty()));
+        let types = arg_types(record);
         for (arg, ty) in &types {
             markdown.push_str(&format!("- `{arg}` {ty}\n"));
         }
@@ -253,22 +274,36 @@ fn command_hover(analysis: &Analysis, name: &str) -> Option<String> {
             markdown.push_str(&format!("{}\n\n", foot.join(" · ")));
         }
     }
+    if records.len() == 1 {
+        markdown.push_str(&super::knowledge::about(&topics(analysis, name, &records)));
+    }
     Some(markdown)
 }
 
-/// The types a record gives its braced arguments ([`crate::roles::Ty`]),
-/// each by its `⟨argN⟩` in the usage line of `sig`, without one by its
-/// place among the braced ones.
-fn arg_types(record: &Record, sig: Option<&str>) -> Vec<(String, String)> {
-    let line = sig.map(usage).unwrap_or_else(|| (1..=9).map(|n| format!("{{⟨arg{n}⟩}}")).collect());
-    let braced: Vec<&str> = line.split('{').skip(1).filter_map(|s| s.split_once('}').map(|(a, _)| a)).collect();
+/// The knowledge-base topics a command's hover touches: the types of its
+/// arguments, and the kind of quantity a register or parameter holds.
+fn topics(analysis: &Analysis, name: &str, records: &[Record]) -> Vec<String> {
+    let mut out: Vec<String> = records
+        .iter()
+        .flat_map(|r| r.get("types").and_then(Json::as_array).into_iter().flatten().filter_map(Json::as_str))
+        .filter_map(|t| Some(t.split_once(' ')?.1.to_string()))
+        .collect();
+    if let Some(meaning) = analysis.interner.lookup(name).map(|s| analysis.env.meaning(s)) {
+        out.extend(crate::roles::Ty::of_meaning(&meaning).map(|t| t.to_string()));
+        if let Some(crate::builtins::Primitive::Register(k)) = meaning.prim() {
+            out.push(k.as_str().to_string());
+        }
+    }
+    out
+}
+
+/// The types a record gives its arguments ([`crate::roles::Ty`]), each by
+/// its `⟨argN⟩` in the usage line.
+fn arg_types(record: &Record) -> Vec<(String, String)> {
     let types = record.get("types").and_then(Json::as_array).into_iter().flatten().filter_map(Json::as_str);
     types
-        .filter_map(|t| {
-            let (n, ty) = t.strip_prefix('#')?.split_once(' ')?;
-            let arg = braced.get(n.parse::<usize>().ok()?.checked_sub(1)?)?;
-            Some((arg.to_string(), ty.to_string()))
-        })
+        .filter_map(|t| t.strip_prefix('#')?.split_once(' '))
+        .map(|(n, ty)| (format!("⟨arg{n}⟩"), ty.to_string()))
         .collect()
 }
 
@@ -337,7 +372,7 @@ pub fn signature_help(analysis: &Analysis, doc: &Text, position: Position) -> Op
     let record = records.iter().find(|r| r.get("signature").and_then(Json::as_str).is_some_and(|s| !s.is_empty()))?;
     let label = format!("\\{name}{}", usage(record.get("signature").and_then(Json::as_str)?));
     let comment = documented(record);
-    let types = arg_types(record, record.get("signature").and_then(Json::as_str));
+    let types = arg_types(record);
     let mut parameters = Vec::new();
     for n in 1..=9u8 {
         let arg = format!("⟨arg{n}⟩");
@@ -443,6 +478,46 @@ pub fn usage(sig: &str) -> String {
         }
     }
     out
+}
+
+/// The style a `\bibliographystyle` names: its `.bst` file when BibTeX
+/// finds one, the databases it formats and what it does.
+fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<String> {
+    use crate::builtins::OccKind;
+    let on = |o: &&crate::facts::Occurrence, kind| {
+        o.kind == kind && o.span.line == pos.line && analysis.file_name(o.span.file) == path
+    };
+    analysis.facts.occurrences.iter().find(|o| o.key == word && on(o, OccKind::BibStyle))?;
+    let mut md = format!("### `{word}` — BibTeX style\n\n");
+    let file = format!("{word}.bst");
+    let dirs = crate::paths::effective(
+        "BSTINPUTS",
+        &analysis.project,
+        &analysis.settings.paths.bstinputs,
+        &analysis.project.root,
+    );
+    let beside = Path::new(path).parent().map(|d| d.join(&file));
+    match beside.into_iter().chain(dirs.dirs.iter().map(|d| d.join(&file))).find(|p| p.is_file()) {
+        Some(found) => md.push_str(&format!("`{}`\n\n", found.display())),
+        None => {}
+    }
+    let databases: Vec<&str> = analysis
+        .facts
+        .occurrences
+        .iter()
+        .filter(|o| o.kind == OccKind::Bibliography)
+        .map(|o| o.key.as_str())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if !databases.is_empty() {
+        md.push_str(&format!(
+            "It formats the cited entries of {}.\n\n",
+            databases.iter().map(|d| format!("`{d}`")).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    md.push_str(&super::knowledge::about(&[format!("bst {word}")]));
+    Some(md)
 }
 
 /// A package or class name in `\usepackage`, `\RequirePackage` or
@@ -1081,6 +1156,27 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
     out
 }
 
+/// Whether a stored key is set with a value (`key=…`): not a switch, a
+/// family or a key with a default, and code or a style only when it reads `#1`.
+fn takes_value(r: &Record) -> bool {
+    let f = |k: &str| r.get(k).and_then(Json::as_str).unwrap_or_default();
+    match f("kind") {
+        _ if !f("default").is_empty() => false,
+        "is if" | "is family" | "bool" | "bool_set" | "bool_set_inverse" => false,
+        "style" | "code" | "code args" | "" => r.get("value").and_then(Json::as_str).is_none_or(|v| v.contains("#1")),
+        _ => true,
+    }
+}
+
+/// A key's completion: the key, then `=` with the cursor after it where it takes a value.
+fn key_item(mut it: CompletionItem, key: &str, r: &Record) -> CompletionItem {
+    if takes_value(r) {
+        it.insert_text = Some(format!("{}=$1", key.replace('$', "\\$")));
+        it.insert_text_format = Some(InsertTextFormat::SNIPPET);
+    }
+    it
+}
+
 /// The items of a key list at the cursor, from the keys the run stored
 /// ([`query::stored_keys`]): after `key=`, the choices of that key; a
 /// `/path` typed so far, the keys under its directory, replacing it; after
@@ -1161,8 +1257,9 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
             .into_iter()
             .map(|(name, r)| {
                 let key = format!("{dir}{name}");
-                let mut it = item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 0);
-                it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text: key }));
+                let mut it = key_item(item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 0), &key, &r);
+                let new_text = it.insert_text.take().unwrap_or(key);
+                it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
                 it
             })
             .collect();
@@ -1176,7 +1273,7 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
     }
     dirs.iter()
         .flat_map(|d| children(&format!("{}/", d.trim_end_matches('/'))))
-        .map(|(name, r)| item(name, CompletionItemKind::PROPERTY, Some(detail(&r)), 0))
+        .map(|(name, r)| key_item(item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 0), &name, &r))
         .collect()
 }
 
@@ -1194,17 +1291,13 @@ fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
             let detail = [kind.map(str::to_string), default.map(|d| format!("default: {d}")), Some(family.to_string())];
             let detail: Vec<String> = detail.into_iter().flatten().filter(|d| !d.is_empty()).collect();
             let rank = r.get("rank").and_then(Json::as_u64).unwrap_or(0) as usize;
-            let mut it = item(
+            let it = item(
                 key.to_string(),
                 CompletionItemKind::PROPERTY,
                 Some(detail.join("  ")),
                 rank * 10_000 + i.min(9_999),
             );
-            if default.is_none() && kind.is_none() {
-                it.insert_text = Some(format!("{key}=$1"));
-                it.insert_text_format = Some(InsertTextFormat::SNIPPET);
-            }
-            Some(it)
+            Some(key_item(it, key, r))
         })
         .collect()
 }
@@ -1418,7 +1511,36 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
     items.sort_by_cached_key(|i| (!i.label.to_lowercase().starts_with(&typed), i.sort_text.clone()));
     let more = items.len() > COMMANDS_SHOWN;
     items.truncate(COMMANDS_SHOWN);
+    let all = {
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        crate::roles::roles_many(analysis, &names)
+    };
+    for (item, roles) in items.iter_mut().zip(all) {
+        item.detail = item.detail.take().map(|d| typed_usage(&d, &roles));
+    }
     (items, more)
+}
+
+/// A usage line with each braced argument's type after its number
+/// (`{1}` is `{1: skip register}`), as far as the roles know it.
+fn typed_usage(usage: &str, roles: &[crate::roles::Role]) -> String {
+    let types = crate::roles::arg_types(roles);
+    let mut out = String::new();
+    let (mut rest, mut braced) = (usage, 0);
+    while let Some(open) = rest.find('{') {
+        let Some(close) = rest[open..].find('}').map(|c| open + c) else { break };
+        let inside = &rest[open + 1..close];
+        out.push_str(&rest[..open + 1]);
+        out.push_str(inside);
+        if !inside.is_empty() && inside.chars().all(|c| c.is_ascii_digit()) {
+            if let Some((_, ty)) = types.iter().find(|(a, _)| *a == braced) {
+                out.push_str(&format!(": {ty}"));
+            }
+            braced += 1;
+        }
+        rest = &rest[close..];
+    }
+    out + rest
 }
 
 /// The paragraphs the document's own files set, in reading order: `satex

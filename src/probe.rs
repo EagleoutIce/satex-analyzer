@@ -586,11 +586,15 @@ impl Prober<'_, '_> {
             // A starred form may read other arguments than the plain one
             // (`\@ifstar\a\b`, `\a` delimited): the star is taken, and
             // what follows it is wanted delimited, where nothing was.
-            let star_same = !star_seen && adds("*").is_some();
+            // A control sequence wanted here is no star or optional argument:
+            // those read as the wrong token it is refused (`\newif`).
+            let cs_here = plain.demand.is_none() && wants_cs(&plain, at);
+            let star_same = !star_seen && !cs_here && adds("*").is_some();
             // Or it reads other arguments than the plain form (`\@ifstar\a\b`,
             // `\a` taking two): the star was looked for, and taken.
             let star_own = !star_seen
                 && !star_same
+                && !cs_here
                 && (plain.demand.is_none() || plain.looked_for.contains(&(at, '*')))
                 && self.run(&prefix, "*").is_some_and(|(n, w)| {
                     n >= 1
@@ -599,7 +603,7 @@ impl Prober<'_, '_> {
                             || w.demand.as_ref().is_some_and(|d| d.at == at + 1 && d.want == Want::Until))
                 });
             let star = star_same || star_own;
-            let optional = if bare == Some(at) { None } else { adds("[P]") };
+            let optional = if bare == Some(at) || cs_here { None } else { adds("[P]") };
             let optional_first = star && optional.is_some() && adds("[P]*").is_some() && adds("*[P]").is_none();
             if star && !optional_first {
                 items.push(ArgType::Star);
@@ -659,7 +663,11 @@ impl Prober<'_, '_> {
             }
             // A keyword a scanner tried here, with the quantity after it.
             let quantity = |w: &Watch, p: usize| {
-                w.scanned.iter().find(|(q, k)| *q == p && QUANTITIES.contains(&k.as_str())).map(|(_, k)| k.clone())
+                w.scanned
+                    .iter()
+                    .find(|(q, k)| *q == p && QUANTITIES.contains(&k.as_str()))
+                    .map(|(_, k)| k.clone())
+                    .or_else(|| wants_cs(w, p).then(|| "cs".to_string()))
             };
             // Those tried after a quantity began here are its own (units,
             // `true`); those before it are the command's (`=`, `to`).
@@ -789,6 +797,12 @@ impl Prober<'_, '_> {
         }
         (items, complete, error, forms)
     }
+}
+
+/// Whether a control sequence is read at `at`, or inside the group the
+/// probe offered there: a macro's argument it hands to `\let`.
+fn wants_cs(w: &Watch, at: usize) -> bool {
+    w.scanned.iter().any(|(q, k)| k == "cs" && (*q == at || *q == at + 1))
 }
 
 /// What `Machine::probe_scans` calls the quantities it reads.

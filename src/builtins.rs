@@ -490,6 +490,8 @@ pub enum OccKind {
     /// What the document hands the PDF writer: a `\pdfliteral`, a `\pdfobj`
     /// or a `\special`, with the payload as its key.
     Pdf,
+    /// The BibTeX style a `\bibstyle` line of the `.aux` file names.
+    BibStyle,
 }
 
 impl OccKind {
@@ -540,6 +542,7 @@ impl OccKind {
             OccKind::Entry => "entry",
             OccKind::Accent => "accent",
             OccKind::Pdf => "pdf",
+            OccKind::BibStyle => "bib-style",
         }
     }
 }

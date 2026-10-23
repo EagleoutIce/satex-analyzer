@@ -780,3 +780,24 @@ fn an_uncalled_kernel_macro_is_typed_by_its_body() {
     let record = explain_one(&analysis, "setlength");
     assert_eq!(record.get("types"), Some(&json!(["#1 register", "#2 quantity"])), "{record:?}");
 }
+
+/// Types name each argument by its place in the usage line, optional ones
+/// counted: a loading command's options are a key list, its name a file. A
+/// command that defines a control sequence reads one: `\newif`'s signature.
+#[test]
+fn types_count_optional_arguments_and_type_a_control_sequence() {
+    if !installed() {
+        return;
+    }
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let analysis = Machine::analyze("\\documentclass{article}\n\\begin{document}\\end{document}", None, &cfg);
+    for name in ["usepackage", "documentclass"] {
+        let records = query::explain(&analysis, &[name.to_string()], false).unwrap().0;
+        assert!(
+            records.iter().any(|r| r.get("types") == Some(&json!(["#1 options", "#2 file"]))),
+            "{name}: {records:?}"
+        );
+    }
+    let newif = explain_one(&analysis, "newif");
+    assert_eq!(newif.get("signature"), Some(&json!("⟨cs⟩")), "{newif:?}");
+}
