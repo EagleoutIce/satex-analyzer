@@ -1639,7 +1639,7 @@ pub struct Machine<'a> {
     pub(crate) list: crate::mode::Modes,
     /// Whether anything may have been put on a list: until then e-TeX's
     /// `\lastnodetype` of the empty main vertical list is -1.
-    pub(crate) material: bool,
+    pub(crate) material: u8,
     /// Whether a box or a rule may have reached the main vertical list, so
     /// that the page builder has frozen the page dimensions (tex.web
     /// §§ 987, 1000).  Until then `\pagegoal` reads `\maxdimen` and the
@@ -1726,7 +1726,7 @@ struct PathState {
     loaded: Rc<Vec<String>>,
     mode: crate::mode::Modes,
     list: crate::mode::Modes,
-    material: bool,
+    material: u8,
     page_touched: bool,
     page_grew: bool,
     natural: Option<crate::mode::Natural>,
@@ -2250,10 +2250,14 @@ impl<'a> Machine<'a> {
             call_in_library: false,
             ending_output: false,
             probe: None,
-            material: false,
+            material: 0,
             page_touched: false,
             page_grew: false,
-            natural: None,
+            // tex.web § 991: the job starts with an empty page.
+            natural: Some(crate::mode::Natural {
+                tail: [crate::mode::Last::Empty; crate::mode::TAIL],
+                ..Default::default()
+            }),
             main_tail: crate::mode::Last::UNKNOWN,
             main_depth: crate::mode::Dim::ANY,
             wild: Wild::default(),

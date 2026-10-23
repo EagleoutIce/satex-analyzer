@@ -68,7 +68,16 @@ impl Machine<'_> {
             && !crate::builtins::assignment(p)
             || matches!(p, Primitive::Mode(cmd) if cmd != crate::builtins::ModeCmd::Par)
         {
-            self.material = true;
+            // A `\write` is a whatsit, which the page builder does not count.
+            self.material |= match p {
+                // What a box brings along it says itself.
+                Primitive::Write
+                | Primitive::Mode(
+                    crate::builtins::ModeCmd::Vertical(crate::builtins::Material::Unpackage { .. })
+                    | crate::builtins::ModeCmd::Horizontal(crate::builtins::Material::Unpackage { .. }),
+                ) => crate::mode::MATERIAL,
+                _ => crate::mode::MATERIAL | crate::mode::BOXED,
+            };
             self.natural_before(p, by, span);
         }
         if p == Primitive::Typeset(crate::builtins::Typeset::Plain) {
@@ -3080,11 +3089,13 @@ impl Machine<'_> {
                         )
                         .value(),
                     ),
-                    // At most the length: it leaves out the last depth, the
-                    // glue the page discarded and what waits to be added.
+                    // At most the length and the `\topskip` glue (§ 1001):
+                    // it leaves out the last depth, the glue the page
+                    // discarded and what waits to be added.
                     "pagetotal" => {
                         let l = self.page_length();
-                        (!l.is_any()).then(|| Dim::range(0, l.hi.max(0)).value())
+                        let top = self.glue_parameter("topskip")?.width.max(0);
+                        (!l.is_any()).then(|| Dim::range(0, l.hi.max(0).saturating_add(top)).value())
                     }
                     _ => None,
                 }

@@ -28,7 +28,7 @@ pub(crate) struct CallRec {
     /// The list being built: a run that added to it typesets, which a
     /// summary does not carry.
     natural: Option<crate::mode::Natural>,
-    material: bool,
+    material: u8,
     leaky: bool,
     /// Its arguments held unknown text.
     unknown: bool,

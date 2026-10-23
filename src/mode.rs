@@ -137,8 +137,8 @@ pub struct Nest {
     pub shift: Dim,
     /// How the box is packed (tex.web § 644).
     pub to: Packing,
-    /// Whether anything may have been put on the enclosing list.
-    pub material: bool,
+    /// What may have been put on the enclosing list ([`MATERIAL`], [`BOXED`]).
+    pub material: u8,
     /// The enclosing list's natural size, and whether the box goes onto
     /// that list when it ends (tex.web § 1076 `box_end`).
     pub natural: Option<Natural>,
@@ -198,7 +198,7 @@ impl Nest {
             target: if self.target == other.target { self.target } else { None },
             shift: if self.shift == other.shift { self.shift } else { Dim::ANY },
             to: if self.to == other.to { self.to } else { Packing::To(Dim::ANY) },
-            material: self.material || other.material,
+            material: self.material | other.material,
             natural: join_natural(self.natural, other.natural),
             placed: self.placed && other.placed,
             from: self.from.min(other.from),
@@ -866,6 +866,14 @@ impl Reads {
 /// width, height, depth, and the left margin kern pdfTeX put first in it.
 pub type Line = (Scaled, Scaled, Scaled, Option<Scaled>);
 
+/// A list holds an item.
+pub(crate) const MATERIAL: u8 = 1;
+/// A list may hold a box or a rule, which the page builder counts (§ 1000).
+pub(crate) const BOXED: u8 = 2;
+
+/// What a box register records beside its state, each reset when it changes.
+const BOX_SLOTS: [&str; 12] = ["wd", "ht", "dp", "first", "solid", "last", "one", "lw", "lh", "ld", "lmk", "lead"];
+
 /// Which item `\unskip`, `\unkern` or `\unpenalty` takes away.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Removed {
@@ -1013,7 +1021,7 @@ impl Machine<'_> {
     /// new_graf`): the paragraph starts and `token` is read again.  `true`
     /// when that happened; `false` when `token` is to be obeyed as it is.
     pub(crate) fn horizontal_material(&mut self, token: Token) -> bool {
-        self.material = true;
+        self.material = MATERIAL | BOXED;
         // A paragraph the main vertical list gets the lines of.
         if self.mode.meets(Modes::VERTICAL) {
             self.main_tail = Last::UNKNOWN;
@@ -1601,7 +1609,7 @@ impl Machine<'_> {
 
     /// An unknown command may have started or ended a paragraph.
     pub(crate) fn widen_mode(&mut self) {
-        self.material = true;
+        self.material = MATERIAL | BOXED;
         self.set_badness(false);
         self.natural = None;
         let mut mode = self.mode;
@@ -1649,7 +1657,7 @@ impl Machine<'_> {
         self.open_group(GroupKind::Simple, at);
         self.record(Step::OpenGroup, Sym(0), at);
         self.env.set_nest(self.nest_here(code, true, part));
-        self.material = false;
+        self.material = 0;
         // tex.web § 1083: a box's horizontal list starts at 1000.
         self.natural = Some(Natural { space_factor: Some(1000), tail: [Last::Empty; TAIL], ..Natural::default() });
         self.mode = modes;
@@ -1777,7 +1785,7 @@ impl Machine<'_> {
         // tex.web § 1100: what the output routine left on its list goes
         // back onto the page, ahead of what waits.
         if nest.code == Some(group::OUTPUT) {
-            self.page_touched |= material;
+            self.page_touched |= material & BOXED != 0;
             // § 1026: the page builder resumes where the routine was
             // fired, whichever way its code went: paths parted inside it
             // meet there.
@@ -2017,7 +2025,7 @@ impl Machine<'_> {
         if self.horizontal_material(token) {
             return;
         }
-        self.material = true;
+        self.material = MATERIAL | BOXED;
         self.end_word();
         // tex.web § 1138: `$$` is display math only in unrestricted
         // horizontal mode.
@@ -2256,6 +2264,10 @@ impl Machine<'_> {
                 let state = self.fetch_box(n, take);
                 // A void register adds nothing.
                 let ranges = std::mem::take(&mut self.fetched);
+                // A box known to hold no box or rule brings none along.
+                if state != BoxState::Void && line != Some(None) {
+                    self.material |= BOXED;
+                }
                 if state != BoxState::Void {
                     self.place_chars(
                         ranges,
@@ -2282,7 +2294,7 @@ impl Machine<'_> {
                         n.tail = [Last::Empty; TAIL];
                         n.tail[0] = Last::Box;
                         n.line = line;
-                        self.material = true;
+                        self.material = MATERIAL | BOXED;
                     }
                 } else if state != BoxState::Void {
                     self.unpackage(state, dims, first, solid);
@@ -3046,9 +3058,32 @@ impl Machine<'_> {
                 // of it off, packed to the height asked for, and the
                 // register is void.
                 let max = self.dimen_parameter("splitmaxdepth").known();
+                // § 970: a page whose first box follows a whatsit breaks at
+                // its `\topskip` glue when that box does not fit: only what
+                // came before splits off.
+                let lead = n.map(|k| {
+                    let key = self.intern(&format!("\u{4}box.lead.{k}"));
+                    self.env.value(key)
+                });
+                if let (BoxState::Unknown, Some(Value::Dimen(top)), Some(h)) = (state, lead, to)
+                    && real == Some(BoxState::VBox)
+                    && h < top
+                {
+                    let sym = self.intern("badness");
+                    self.env.set_value(sym, Value::Int(if h > 0 { 10000 } else { 0 }), true);
+                    self.box_changed(n, BoxState::Unknown);
+                    self.fetched.clear();
+                    self.box_end(context, BoxState::VBox, [Dim::exact(0), Dim::exact(h), Dim::exact(0)]);
+                    if let BoxContext::Set { register, .. } = context {
+                        self.set_box_line(register, None);
+                    }
+                    return;
+                }
                 if let (BoxState::Unknown, Some(line), Some(h), Some(max)) = (state, line, to, max)
                     && real == Some(BoxState::VBox)
-                    && dims == line.map_or([Dim::exact(0); 3], |(w, h, d, _)| [w, h, d].map(Dim::exact))
+                    // The list splits, not its packing: a box packed to
+                    // another height (`\box255`) splits alike.
+                    && [dims[0], dims[2]] == line.map_or([Dim::exact(0); 2], |(w, _, d, _)| [w, d].map(Dim::exact))
                 {
                     let (w, d) = line.map_or((0, 0), |(w, _, d, _)| (w, d));
                     let d = if d > max { max.max(0) } else { d };
@@ -3302,6 +3337,11 @@ impl Machine<'_> {
         // § 1017: the page runs up to the break, which stays behind: its
         // last item is what preceded the penalty.
         self.set_box_last(Some(255), before);
+        let lead = self.engine_sym("page.lead");
+        let lead = self.env.value(lead);
+        self.set_box_slot(Some(255), "lead", lead);
+        self.set_engine("page.lead", Value::Int(0), true);
+        self.set_engine("page.mark", Value::Int(0), true);
         match self.every("output") {
             Some(tokens) if !tokens.is_empty() => {
                 let output = self.intern("output");
@@ -3396,7 +3436,8 @@ impl Machine<'_> {
     /// An item goes onto the current list: its natural size grows by it
     /// (tex.web §§ 651-656 `hpack`, 669-670 `vpack`).
     pub(crate) fn append_item(&mut self, item: Item) {
-        self.material = true;
+        self.material |=
+            if matches!(item, Item::Box(_) | Item::Rule { .. } | Item::Unknown) { MATERIAL | BOXED } else { MATERIAL };
         if self.mode.meets(Modes::VERTICAL) {
             self.main_tail = match (self.mode == Modes::VERTICAL, &item) {
                 (false, _) | (_, Item::Unknown | Item::Glue(_, None)) => Last::UNKNOWN,
@@ -3415,6 +3456,22 @@ impl Machine<'_> {
                 (_, Item::Glue(..) | Item::Kern(_)) => Dim::exact(0),
                 (_, Item::Penalty(_) | Item::Zero | Item::Whatsit) => self.main_depth,
             };
+        }
+        // tex.web § 1001: the first box on the page gets `\topskip` glue,
+        // a legal break when a whatsit precedes it (§ 973).
+        if self.mode == Modes::VERTICAL && self.page_empty() {
+            match item {
+                Item::Whatsit => self.set_engine("page.mark", Value::Int(1), true),
+                Item::Box([_, h, _]) => {
+                    let top = self.glue_parameter("topskip").filter(|g| g.shrink.amount == 0);
+                    let lead = match (self.engine_slot_int("page", "page.mark"), h.known(), top) {
+                        (Some(1), Some(h), Some(g)) => Value::Dimen(g.width.max(h)),
+                        _ => Value::Int(0),
+                    };
+                    self.set_engine("page.lead", lead, true);
+                }
+                _ => {}
+            }
         }
         // tex.web §§ 987, 1000: the page builder freezes the page dimensions
         // when a box or rule reaches the main vertical list, not for glue,
@@ -3475,9 +3532,21 @@ impl Machine<'_> {
             self.natural = Some(n);
             return;
         }
-        let Some(horizontal) = self.list_kind() else {
-            self.natural = None;
-            return;
+        // The main vertical list is the page's: tracked as a vertical list,
+        // and glue, kerns and penalties are discarded while the page is
+        // empty (tex.web § 1000).
+        let horizontal = match self.list_kind() {
+            Some(h) => h,
+            None if self.mode == Modes::VERTICAL => {
+                if self.page_empty() && matches!(item, Item::Glue(..) | Item::Kern(_) | Item::Penalty(_)) {
+                    return;
+                }
+                false
+            }
+            None => {
+                self.natural = None;
+                return;
+            }
         };
         let skips = self.interline();
         if horizontal && n.para.items.is_some() {
@@ -3874,7 +3943,7 @@ impl Machine<'_> {
     /// same word, or with the font's left boundary at the word's start.
     /// Other ligatures, missing characters and native fonts are not followed.
     pub(crate) fn append_char(&mut self, c: u32) {
-        self.material = true;
+        self.material = MATERIAL | BOXED;
         // The lines a paragraph breaks into are boxes, so a character set
         // outside a box will reach the page.
         self.touch_page();
@@ -4613,7 +4682,7 @@ impl Machine<'_> {
     /// character or ligature.
     fn italic_correction(&mut self) {
         crate::observe::close_overhang(self);
-        self.material = true;
+        self.material = MATERIAL | BOXED;
         self.end_word();
         let Some(n) = self.natural else { return };
         match n.tail[0] {
@@ -4846,7 +4915,7 @@ impl Machine<'_> {
         // The main vertical list: its last item, whether the page builder
         // took it or not. A penalty may have been the page break, which
         // makes it 10000 (tex.web § 1013), so `\lastpenalty` stays unknown.
-        if self.natural.is_none() && self.mode == Modes::VERTICAL {
+        if self.mode == Modes::VERTICAL {
             return match (removed, self.main_tail) {
                 (Removed::Penalty, Last::Penalty(_) | Last::Unknown(_)) => None,
                 (_, tail) => tail.reads().value(removed),
@@ -5049,7 +5118,7 @@ impl Machine<'_> {
         };
         let sym = self.box_sym(n);
         self.env.set_value(sym, box_value(state), global);
-        for dimen in ["wd", "ht", "dp", "first", "solid", "last", "one", "lw", "lh", "ld", "lmk"] {
+        for dimen in BOX_SLOTS {
             let key = self.intern(&format!("\u{4}box.{dimen}.{n}"));
             self.env.set_value(key, Value::Unknown, global);
         }
@@ -5185,7 +5254,7 @@ impl Machine<'_> {
     }
 
     fn reset_box_dimens(&mut self, n: i64) {
-        for dimen in ["wd", "ht", "dp", "first", "solid", "last", "one", "lw", "lh", "ld", "lmk"] {
+        for dimen in BOX_SLOTS {
             let key = self.intern(&format!("\u{4}box.{dimen}.{n}"));
             if self.env.get(key).is_some() {
                 self.env.set_value_in_place(key, Value::Unknown);

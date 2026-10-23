@@ -442,7 +442,7 @@ impl Machine<'_> {
         match item {
             // What the last node of the current list is: typesetting.
             // etex.ch: `\lastnodetype` of an empty list is -1.
-            L::NodeType if !self.material && self.mode == crate::mode::Modes::VERTICAL => int(-1),
+            L::NodeType if self.material == 0 && self.mode == crate::mode::Modes::VERTICAL => int(-1),
             L::Skip => self.last_value(crate::mode::Removed::Glue),
             L::Kern => self.last_value(crate::mode::Removed::Kern),
             L::Penalty => self.last_value(crate::mode::Removed::Penalty),

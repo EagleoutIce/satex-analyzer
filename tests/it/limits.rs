@@ -598,6 +598,16 @@ fn material_inside_a_box_leaves_the_page_empty() {
     }
 }
 
+/// The first box on the page gets `\topskip` glue above it (tex.web
+/// § 1001), which `\pagetotal` counts: pdftex says 10.0pt here.
+#[test]
+fn the_page_total_counts_the_topskip_glue() {
+    for engine in ENGINES {
+        let total = the(engine, "\\topskip=10pt \\setbox0=\\hbox{}\\box0 ", "\\pagetotal");
+        assert_ne!(total, "0.0pt", "{engine:?}");
+    }
+}
+
 /// Once a box or a rule reaches the main vertical list the page builder
 /// owns these (tex.web § 1076 runs `build_page`): the goal is frozen at
 /// `\vsize` (§ 987, 0pt in initex), the rest widen rather than staying at
@@ -609,6 +619,11 @@ fn a_box_on_the_page_freezes_the_goal_and_widens_the_rest() {
             for (name, _) in PAGE_SO_FAR {
                 if name == "pagegoal" {
                     assert_eq!(the(engine, contributed, "\\pagegoal"), "0.0pt", "{engine:?} after {contributed}");
+                    continue;
+                }
+                // An empty box under no `\topskip` adds nothing (§ 1001).
+                if name == "pagetotal" && contributed.contains("hbox") {
+                    assert_eq!(the(engine, contributed, "\\pagetotal"), "0.0pt", "{engine:?}");
                     continue;
                 }
                 assert!(

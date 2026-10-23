@@ -3469,3 +3469,19 @@ fn a_script_without_nucleus_keeps_its_width() {
     assert_eq!(body(&a, "A"), "4.48613pt");
     assert_eq!(body(&a, "B"), "4.48613pt");
 }
+
+/// tex.web §§ 991, 1000: the job starts with an empty page, and glue or a
+/// penalty on it is discarded. A class's `\clearpage` (KOMA's `\onecolumn`)
+/// on the empty page leaves `\pagetotal` at 0pt, as pdflatex reports.
+#[test]
+fn the_page_stays_empty_through_a_class_clearpage() {
+    if !installed() {
+        return;
+    }
+    for class in ["article", "scrartcl", "scrbook"] {
+        let a = analyze(&format!(
+            "\\documentclass{{{class}}}\\xdef\\pre{{\\the\\pagetotal}}\\begin{{document}}\\xdef\\doc{{\\the\\pagetotal}}\\end{{document}}"
+        ));
+        assert_eq!((body(&a, "pre").as_str(), body(&a, "doc").as_str()), ("0.0pt", "0.0pt"), "{class}");
+    }
+}
