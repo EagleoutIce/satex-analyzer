@@ -80,9 +80,6 @@ fn frame_mark(frame: &super::Frame) -> FrameMark {
     }
 }
 
-/// Reads logged at most while calls are recorded.
-const READ_LOG: usize = 1 << 22;
-
 /// What the recorded runs of one call did.
 #[derive(Clone, Default)]
 pub(crate) struct CallRuns {
@@ -127,7 +124,7 @@ impl Machine<'_> {
             if self.call_recs.is_empty() {
                 self.env.log_reads(false);
                 self.env.log_reads(true);
-            } else if self.env.read_log_len() > READ_LOG {
+            } else if self.env.read_log_len() > crate::env::READ_LOG {
                 self.leak_call_recs();
                 self.env.log_reads(false);
             }

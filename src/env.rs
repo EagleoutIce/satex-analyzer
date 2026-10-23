@@ -234,7 +234,12 @@ pub struct Env {
     /// While calls are recorded: every name read, in order.
     logging: std::cell::Cell<bool>,
     read_log: std::cell::RefCell<Vec<u32>>,
+    /// The log passed [`READ_LOG`] and stopped: it reaches back nowhere.
+    log_full: std::cell::Cell<bool>,
 }
+
+/// How many reads the log holds: a call that reads more is no summary.
+pub const READ_LOG: usize = 1 << 22;
 
 /// Which part of a binding a read looked at.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -570,13 +575,21 @@ impl Env {
     #[inline]
     fn log_read(&self, sym: Sym) {
         if self.logging.get() {
-            self.read_log.borrow_mut().push(sym.0);
+            let mut log = self.read_log.borrow_mut();
+            if log.len() >= READ_LOG {
+                log.clear();
+                self.logging.set(false);
+                self.log_full.set(true);
+            } else {
+                log.push(sym.0);
+            }
         }
     }
 
     /// Log every name read from now on (`on`), or stop and forget the log.
     pub fn log_reads(&self, on: bool) {
         self.logging.set(on);
+        self.log_full.set(false);
         if !on {
             self.read_log.borrow_mut().clear();
         }
@@ -589,6 +602,9 @@ impl Env {
     /// The names read since the log was `from` long, each once, sorted;
     /// `None` when the log does not reach back that far.
     pub fn reads_since(&self, from: usize) -> Option<Vec<Sym>> {
+        if self.log_full.get() {
+            return None;
+        }
         let log = self.read_log.borrow();
         let mut syms: Vec<u32> = log.get(from..)?.to_vec();
         syms.sort_unstable();
