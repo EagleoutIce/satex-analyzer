@@ -1471,6 +1471,9 @@ pub struct Machine<'a> {
     /// Tokens taken from a file so far: the measure of progress through the
     /// source that tells a loop from a helper called again further down.
     source_progress: u64,
+    /// The assignment count when the document's own text was last read:
+    /// a list entered before it called that text, and reads on past a cut.
+    doc_mark: u64,
     /// Of those, lines read by `\read`: a path's place in the source
     /// leaves them out, as it does the stream position ([`Streams`]).
     lines_read: u64,
@@ -1717,6 +1720,7 @@ struct PathState {
     last_file: Option<FileId>,
     file_call: Option<(Sym, Span)>,
     source_progress: u64,
+    doc_mark: u64,
     lines_read: u64,
     file_depth: u16,
     pub(crate) halted: bool,
@@ -2179,6 +2183,7 @@ impl<'a> Machine<'a> {
             shape_memo: std::cell::RefCell::new(vec![None; SHAPE_MEMO]),
             cond_sites: Default::default(),
             source_progress: 0,
+            doc_mark: 0,
             lines_read: 0,
             call_shape: None,
             edef_depth: 0,
@@ -3956,6 +3961,9 @@ will look undefined",
                             self.guard_seen.level = self.guard.lines.get(&key).map_or(0, |e| e.1);
                         }
                         self.source_progress += 1;
+                        if self.own_file(t.span.file) {
+                            self.doc_mark = self.env.assignments;
+                        }
                         self.env.clear_recent();
                         let main = self.reading_command && self.step_depth == 1;
                         self.read_on(t.span, main);
@@ -6635,6 +6643,11 @@ will look undefined",
             };
             let mine = pending.iter().filter(|&&f| self.own_file(f)).count();
             if (own && mine > 0) || (called && mine > 0 && mine < pending.len()) {
+                break;
+            }
+            // A list entered before the document's text was last read
+            // called that text (`\include` around a chapter): it reads on.
+            if called && matches!(self.input.last(), Some(Frame::Tokens { at, .. }) if at.2 < self.doc_mark) {
                 break;
             }
             // tex.web § 1100: the output routine ends as a unit, and what
@@ -10313,6 +10326,7 @@ will look undefined",
             last_file: self.last_file,
             file_call: self.file_call,
             source_progress: self.source_progress,
+            doc_mark: self.doc_mark,
             lines_read: self.lines_read,
             file_depth: self.file_depth,
             halted: self.halted,
@@ -10402,6 +10416,7 @@ will look undefined",
         self.last_file = state.last_file;
         self.file_call = state.file_call;
         (self.source_progress, self.lines_read) = (state.source_progress, state.lines_read);
+        self.doc_mark = state.doc_mark;
         self.file_depth = state.file_depth;
         self.halted = state.halted;
         self.streams = state.streams;

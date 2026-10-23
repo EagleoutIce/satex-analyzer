@@ -735,6 +735,7 @@ approximated (assumption: the document compiles). Its texts never reach
 a join, so a walk past an undefined delimiter adds nothing.
 Library code that redefines `\fi`, `\else` or `\or`, or an output routine in library code that closes a conditional opened before it ran, drops its path the same way.
 A cut keeps the lists that hold the document's own text, and one inside an output routine ends only the routine (tex.web § 1100), so the command that called the page builder reads on.
+A list still waiting while the document's text was read called that text (`\include` around a chapter): a cut keeps it, so what the chapter assigned is not widened.
 
 ## `limits`: where the domains stop being precise
 

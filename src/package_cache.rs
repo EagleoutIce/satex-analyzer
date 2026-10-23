@@ -1257,6 +1257,7 @@ impl Machine<'_> {
             last_named_cs: _,
             font_watch: _,
             source_progress: _,
+            doc_mark: _,
             lines_read: _,
             call_shape: _,
             gaps: _,
