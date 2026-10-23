@@ -577,6 +577,10 @@ dropped, so both go on with the same counters.
 - **Pending `\fi`s:** an arm of the document's commands whose next tokens
   are `\fi`s in token lists reads them at once, as TeX would. The exits of a
   recursion's passes then stand in one place and join when parked.
+- **What a pass wrote:** the names whose bindings differ between where
+  the passes began and where the summary is taken. A name changed on one
+  side only is compared with what it held at the fork, so a name set back
+  to that binding (`\thepage` around a `\protected@write`) is not widened.
 - **Widened pass:** a summary first runs the loop's body once more from
   the widened state, and only the next meet cuts. A pass writes names
   the widening opens (`\csname a\the\n\endcsname` with `\n` unknown)
