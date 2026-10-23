@@ -235,8 +235,8 @@ def bundle(satex, work):
     shutil.copytree(samples, project, ignore=shutil.ignore_patterns("satex.yaml"))
     for doc in docs[:len(roots(EXAMPLES))]:
         shutil.copy2(doc, project / doc.name)
-    for database in EXAMPLES.glob("*.bib"):
-        shutil.copy2(database, project / database.name)
+    for companion in {c for files in projects().values() for c in files}:
+        shutil.copy2(EXAMPLES / companion, project / companion)
     (project / "satex.yaml").write_text(config.replace("/texmf.bundle", str(tree)))
     tables, shared = [], read[KERNELS[0][0]]
     for i, (kernel, _, flags) in enumerate(KERNELS):
@@ -313,6 +313,12 @@ def commands():
     """`examples/commands.txt`: the command each example runs, `lint` unless named there."""
     named = dict(line.split(": ", 1) for line in (EXAMPLES / "commands.txt").read_text().splitlines() if line and not line.startswith("#"))
     return {name: named.get(name, "lint") for name in roots(EXAMPLES)}
+
+
+def projects():
+    """`examples/projects.txt`: the files each example reads besides itself."""
+    lines = (EXAMPLES / "projects.txt").read_text().splitlines()
+    return {k: v.split() for k, v in (line.split(": ", 1) for line in lines if line and not line.startswith("#"))}
 
 
 TOKEN = re.compile(r"(?P<com>%.*)|(?P<cmd>\\(?:[A-Za-z@]+|.))|(?P<br>[{}\[\]])|(?P<num>\d+(?:\.\d+)?)")
@@ -468,7 +474,7 @@ def playground(satex, wasm, work, out):
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
         "kernels": kernels, "packages": extra, "unavailable": UNAVAILABLE, "queries": queries, "filtered": [q for q in queries if per_file(q)], "rules": rules,
         "completion": json.loads(run(str(satex), "completions", "json")), "samples": samples, "sample": "hello.tex", "root": "../",
-        "commands": {name: command for name, command in commands().items() if command != "lint"},
+        "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(),
     }
     sizes = {k["id"]: f"{k['size'] / 2**20:.1f} MiB gz, {len(k['files'])} files" for k in kernels}
     print(f"playground: wasm {len(wasm_bytes) / 2**20:.1f} MiB, {sizes}; {len(extra)} packages on demand, "

@@ -148,7 +148,8 @@ function SatexEngine(createSatex, progress = () => {}) {
     wasm = await compile(given.wasm ?? base + manifest.wasm, manifest.wasmSize);
     const imported = await bundle(base, entry, null, fetching);
     const decoder = new TextDecoder();
-    const samples = Object.fromEntries(manifest.samples.map((name) => [name, decoder.decode(files.get(`/work/${name}`))]));
+    const shown = [...new Set([...manifest.samples, ...Object.values(manifest.projects ?? {}).flat()])];
+    const samples = Object.fromEntries(shown.map((name) => [name, decoder.decode(files.get(`/work/${name}`))]));
     return { samples, imported };
   }
 

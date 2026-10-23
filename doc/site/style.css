@@ -406,3 +406,7 @@ main td .badges, main td .cat { white-space: nowrap; }
 .sect details:not([open]) > .cat-head::before { transform: none; }
 .sect details[open] > .cat-head::before { transform: rotate(90deg); }
 .cat-items { list-style: none; margin: .3rem 0 0 .95rem; padding: 0 0 0 .7rem; border-left: 2px solid color-mix(in srgb, var(--k) 28%, transparent); }
+
+/* a hover's other definitions, folded */
+details.more > summary { color: var(--muted); cursor: pointer; font-size: .85em; margin-top: .4rem; }
+details.more[open] > summary { margin-bottom: .3rem; }

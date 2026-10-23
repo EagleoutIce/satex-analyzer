@@ -93,6 +93,12 @@
   // The samples are one project whose every file is its own root; an upload has one root.
   // Read-only files (`ro`) are kernel or package files opened by a definition: never sent or run.
   const state = { dir: '/work', texts: {}, original: {}, file: manifest.sample, root: null, kernel: 0, loaded: new Set([0]), upload: false, ro: {} };
+  // An example may read more files (`manifest.projects`): its tabs, analyzed together with it, rooted at it.
+  const projects = manifest.projects ?? {};
+  const shared = new Set(Object.values(projects).flat());
+  const projectOf = (name) => name in projects ? name : Object.keys(projects).find((r) => projects[r].includes(name)) ?? null;
+  /** Data files (a database, a style) go to the file system, not to the language server as TeX. */
+  const data = (name) => /\.(bib|bst|bbl|txt|md|ya?ml)$/i.test(name);
   const path = (name) => `${state.dir}/${name}`;
   const uri = (name = state.file) => `file://${path(name)}`;
 
@@ -152,16 +158,23 @@
   const unescape = (s) => s.replace(/&(lt|gt|quot|amp);/g, (m, e) => ({ lt: '<', gt: '>', quot: '"', amp: '&' })[e]);
   /** A hover's Markdown: its usage lines colored, each ⟨argN⟩ elsewhere in the kind its usage gave it. */
   const card = (value) => {
-    const kinds = {};
-    // the argument types the hover lists (`- `⟨arg1⟩` glue`, roles::Ty), shown in the usage line too
-    const types = Object.fromEntries([...value.matchAll(/^- `⟨(arg\d+)⟩` ((?:\w+ )?(?:register|name)|number|dimen|glue|muglue|quantity|box|key|file|counter|control sequence|any)$/gm)].map((m) => [m[1], m[2]]));
-    const html = markdown(value).replace(/<code>([^<]*⟨arg\d+⟩[^<]*)<\/code>/g, (m, code) => {
-      if (/^⟨arg\d+⟩$/.test(code)) return m;
-      const u = cards.usage(unescape(code), types);
-      Object.assign(kinds, u.kinds);
-      return `<code class="usage">${u.html}</code>`;
-    });
-    return cards.slots(html, kinds).replace(/<p>((?:\s|·|<a [^>]*>[^<]*<\/a>)+)<\/p>$/, '<p class="foot">$1</p>');
+    // each definition is its own section: its types belong to its own usage line
+    const section = (md) => {
+      const kinds = {};
+      // the argument types the section lists (`- `⟨arg1⟩` glue`, roles::Ty), shown in the usage line too
+      const types = Object.fromEntries([...md.matchAll(/^- `⟨(arg\d+)⟩` ((?:\w+ )?(?:register|name)|number|dimen|glue|muglue|quantity|box|key|file|counter|control sequence|options|any)$/gm)].map((m) => [m[1], m[2]]));
+      const html = markdown(md).replace(/<code>([^<]*⟨arg\d+⟩[^<]*)<\/code>/g, (m, code) => {
+        if (/^⟨arg\d+⟩$/.test(code)) return m;
+        const u = cards.usage(unescape(code), types);
+        Object.assign(kinds, u.kinds);
+        return `<code class="usage">${u.html}</code>`;
+      });
+      return cards.slots(html, kinds).replace(/<p>((?:\s|·|<a [^>]*>[^<]*<\/a>)+)<\/p>$/, '<p class="foot">$1</p>');
+    };
+    const sections = (md) => md.split(/^(?=### )/m).map(section).join('');
+    // the definitions that do not hold at the cursor fold away (lsp::handlers::MORE_DEFINITIONS)
+    const [main, more] = value.split(/^#### More definitions\n+/m);
+    return sections(main) + (more ? `<details class="more"><summary>More definitions</summary>${sections(more)}</details>` : '');
   };
 
   // ---------------------------------------------------------------- worker requests
@@ -241,6 +254,11 @@
   function push() {
     if (state.file in state.ro) return false;
     state.texts[state.file] = editor.text();
+    if (data(state.file) && synced !== version) {
+      synced = version;
+      worker.postMessage({ type: 'project', dir: state.dir, files: { [state.file]: new TextEncoder().encode(editor.text()) } });
+      return true;
+    }
     if (synced === version || !opened.has(uri())) return false;
     synced = version;
     lsp('textDocument/didChange', { textDocument: { uri: uri(), version }, contentChanges: [{ text: editor.text() }] }, true);
@@ -725,7 +743,12 @@
     if (explained !== k) return;
     explainBody.classList.remove('stale');
     const shown = rs.filter((r) => r.name === name);
-    if (shown.length) explainBody.innerHTML = shown.map(cards.explain).join('');
+    // the definition in force at the caret first, the others folded
+    const text = editor.text(), begin = text.split('\n').findIndex((l) => /\\begin\s*\{document\}/.test(l));
+    const now = at && shown.length > 1 ? (begin >= 0 ? at.line < begin : /\\documentclass/.test(text)) ? 'preamble' : 'document' : null;
+    const [first, rest] = [shown.filter((r) => !now || r.when === now), shown.filter((r) => now && r.when !== now)];
+    if (shown.length) explainBody.innerHTML = (first.length ? first : shown).map(cards.explain).join('') +
+      (first.length && rest.length ? `<details class="more"><summary>More definitions</summary>${rest.map(cards.explain).join('')}</details>` : '');
     else if (!explainBody.querySelector('.hover')) explainBody.innerHTML = `<p class="muted">satex knows no ${escape(name)} here.</p>`;
   }
   function focusExplain() {
@@ -947,7 +970,7 @@
 
   const opened = new Set();
   function open(name) {
-    if (opened.has(uri(name)) || name in state.ro) return;
+    if (opened.has(uri(name)) || name in state.ro || data(name)) return;
     opened.add(uri(name));
     checking();
     lsp('textDocument/didOpen', { textDocument: { uri: uri(name), languageId: 'latex', version, text: state.texts[name] } }, true);
@@ -969,7 +992,9 @@
     synced = version;
   }
   function drawTabs() {
-    const names = Object.keys(state.texts);
+    // the open example's files only, else every example's own
+    const mine = projects[state.project] ?? [];
+    const names = Object.keys(state.texts).filter((n) => state.upload || !shared.has(n) || mine.includes(n));
     tabs.innerHTML = (state.upload ? '<button role="tab" class="back" data-back="1" title="back to the samples">← samples</button>' : '') +
       names.map((n) => `<button role="tab" aria-selected="${n === state.file}" data-name="${escape(n)}"${n in state.ro ? ` class="ro" title="${escape(state.ro[n])}, read-only"` : ''}>${escape(n)}</button>`).join('');
     $('play-rootbox').hidden = !state.upload;
@@ -981,13 +1006,19 @@
     if (!editor || !(name in state.texts) || name === state.file) return;
     sync();
     state.file = name;
+    // a file of an example keeps its example; another example's root is the new one
+    const project = state.upload || name in state.ro ? state.project : (projects[state.project]?.includes(name) ? state.project : projectOf(name));
+    state.project = project;
     drawTabs();
     editor.set(state.texts[name], name in state.ro);
     drawRefs();
-    if (name in state.ro) render();
+    if (!state.upload && !(name in state.ro) && (project ?? null) !== state.root) {
+      state.root = project ?? null;
+      restart().then(() => { analyze(); render(); });
+    } else if (name in state.ro) render();
     else if (opened.has(uri())) { synced = version; lsp('textDocument/didChange', { textDocument: { uri: uri(), version }, contentChanges: [{ text: state.texts[name] }] }, true); analyze(); render(); }
-    else open(name);
-    if (!state.upload && !(name in state.ro) && name in sampleTexts) {
+    else { open(name); if (data(name)) render(); }
+    if (!state.upload && !(name in state.ro) && name in sampleTexts && (name in projects || !shared.has(name))) {
       history.replaceState(null, '', `#${name}`);
       args.value = commandOf(name);
       if (!plainLint()) start();
@@ -1006,7 +1037,7 @@
 
   let sampleTexts;
   async function samples(file = manifest.sample) {
-    Object.assign(state, { dir: '/work', texts: { ...sampleTexts }, original: sampleTexts, file, root: null, upload: false, ro: {} });
+    Object.assign(state, { dir: '/work', texts: { ...sampleTexts }, original: sampleTexts, file, root: projectOf(file), project: projectOf(file), upload: false, ro: {} });
     drawTabs();
     editor.set(state.texts[file]);
     await restart();
@@ -1286,7 +1317,7 @@
     if (link && !(link.f in sampleTexts)) sampleTexts[link.f] = '';
     const file = link?.f ?? (hash in sampleTexts ? hash : manifest.sample);
     if (hash.startsWith('open=')) history.replaceState(null, '', location.pathname);
-    Object.assign(state, { texts: { ...sampleTexts, ...(link ? { [link.f]: link.t } : {}) }, original: sampleTexts, file });
+    Object.assign(state, { texts: { ...sampleTexts, ...(link ? { [link.f]: link.t } : {}) }, original: sampleTexts, file, root: projectOf(file), project: projectOf(file) });
     args.value = link ? link.a : commandOf(file);
     const k = manifest.kernels.findIndex((x) => x.id === link?.k);
     if (k > 0) await kernel(k);

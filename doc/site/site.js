@@ -103,10 +103,12 @@
    * embellishment, else mandatory; a star after the name as the star's chip. Returns the HTML and the kinds by name. */
   function usage(text, types = {}) {
     const kinds = {};
+    types = { ...types };
     let n = 0;
-    const marked = String(text ?? '').replace(/([{[(<]?)(⟨arg(\d+)⟩|\d)([}\])>]?)(\??)/g, (m, open, arg, k, close, opt, at, all) => {
+    const marked = String(text ?? '').replace(/([{[(<]?)(⟨arg(\d+)⟩|\d)(?:: ([^}\])>⟩]+))?([}\])>]?)(\??)/g, (m, open, arg, k, ty, close, opt, at, all) => {
       if (!k && (!open || !close || +arg !== n + 1)) return m;
       n = k ? +k : n + 1;
+      if (ty) types[`arg${n}`] = ty;
       kinds[`arg${n}`] = open === '[' ? 'opt' : !opt ? 'mand' : open === '{' && /[^A-Za-z0-9\s\]})>]/.test(all[at - 1] ?? '') ? 'emb' : 'opt';
       return `${open}\uE000${n}\uE001${close}${opt}`;
     }).replace(/^(\\[A-Za-z@]+)\*\??/, '$1\uE002'); // a star after the name: the s argument
