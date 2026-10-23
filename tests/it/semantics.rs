@@ -2321,6 +2321,13 @@ const TEXWEB: &[crate::support::BodyRow] = &[
         r"{\catcode1=12 \gdef\x{a^^Ab}}\newlinechar=1 \everyeof{\noexpand}\edef\r{\expandafter\scantokens\expandafter{\x}}",
         &[("r", "a b ")],
     ),
+    // A write to a stream not known adds a line of unknown text to each
+    // open file: the lines known before it stay.
+    (
+        "a_write_to_an_unknown_stream_keeps_the_known_lines",
+        r"\immediate\openout3=twun.tex \immediate\write3{a}\immediate\write\numexpr\pdfuniformdeviate2+3\relax{b}\immediate\closeout3 \openin1=twun.tex \read1 to\x",
+        &[("x", "a ")],
+    ),
     // § 59: a file line breaks at `\newlinechar` before `^^` notation.
     (
         "write_splits_at_an_unprintable_newlinechar",

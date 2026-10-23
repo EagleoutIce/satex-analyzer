@@ -3576,8 +3576,15 @@ will look undefined",
     /// `None` makes the file's content unknown; a `deferred` one waits for
     /// the next shipout. An unpinned stream may be any file.
     pub(crate) fn write_output(&mut self, stream: Option<i64>, text: Option<&str>, deferred: bool) {
+        // Any stream: each file open may get a line of unknown text.
         let Some(stream) = stream else {
-            Rc::make_mut(&mut self.outputs).values_mut().for_each(|t| *t = None);
+            let open: Vec<String> = self.stream_files.values().map(|n| Self::output_name(n)).collect();
+            let outputs = Rc::make_mut(&mut self.outputs);
+            for name in &open {
+                if let Some(slot) = outputs.get_mut(name) {
+                    unknown_line(slot);
+                }
+            }
             return;
         };
         let Some(name) = self.stream_files.get(&stream).map(|n| Self::output_name(n)) else { return };
@@ -3593,7 +3600,7 @@ will look undefined",
                     file.push_str(text);
                     file.push('\n');
                 }
-                _ => *slot = None,
+                _ => unknown_line(slot),
             }
         }
     }
@@ -3619,7 +3626,7 @@ will look undefined",
         if self.pending.get(&name).is_some_and(|l| !l.is_empty()) {
             Rc::make_mut(&mut self.pending).remove(&name);
             if let Some(slot) = Rc::make_mut(&mut self.outputs).get_mut(&name) {
-                *slot = None;
+                unknown_line(slot);
             }
         }
     }
@@ -12185,5 +12192,17 @@ impl CondDepth {
             _ => {}
         }
         None
+    }
+}
+
+/// A file that may have got a line not known, or nothing: one line of
+/// unknown text, which reads back as any text, empty too. The lines
+/// known before it stay. Two in a row are one.
+fn unknown_line(file: &mut Option<String>) {
+    if let Some(text) = file {
+        let line = format!("{}\n", crate::tex::UNKNOWN_ANY);
+        if !text.ends_with(&line) {
+            text.push_str(&line);
+        }
     }
 }
