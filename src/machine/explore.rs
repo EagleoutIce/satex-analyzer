@@ -1402,7 +1402,7 @@ impl Machine<'_> {
         // have met a head to widen at (each deeper in conditionals or
         // groups), so their join only lists what they held so far.
         let began = std::mem::replace(&mut summarized.joined, here.clone_config());
-        let written = here.env.differing(&began.env);
+        let written = here.env.differing_over(&began.env, |s| Some(self.env.at_fork(fork, s)));
         paths.stopped.push(summarized);
         keep_last(&mut paths.stopped, self.limits.loop_heads);
         self.resume_config(fork, Config::new(here.state, joined.env, false));

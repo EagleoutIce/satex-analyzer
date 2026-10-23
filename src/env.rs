@@ -341,11 +341,28 @@ impl PathEnv {
     /// their one fork: what one of them changed that the other does not
     /// hold.
     pub fn differing(&self, other: &PathEnv) -> Vec<Sym> {
+        self.differing_over(other, |_| None)
+    }
+
+    /// As [`PathEnv::differing`], a name only one path changed compared
+    /// with what it held at the fork (`base`, when known): changed back to
+    /// the same binding, it does not differ.
+    pub fn differing_over(&self, other: &PathEnv, base: impl Fn(u32) -> Option<Option<Binding>>) -> Vec<Sym> {
+        let differs = |k: &u32, b: &Option<Binding>| base(*k).is_none_or(|old| !same_slot(&old, b));
         let mut out: Vec<Sym> = (self.slots.iter())
-            .filter(|(k, (mine, _))| other.slots.get(k).is_none_or(|(theirs, _)| !same_slot(mine, theirs)))
+            .filter(|(k, (mine, _))| match other.slots.get(k) {
+                Some((theirs, _)) => !same_slot(mine, theirs),
+                None => differs(k, mine),
+            })
             .map(|(k, _)| Sym(*k))
             .collect();
-        out.extend(other.slots.keys().filter(|k| !self.slots.contains_key(k)).map(|k| Sym(*k)));
+        out.extend(
+            other
+                .slots
+                .iter()
+                .filter(|(k, (theirs, _))| !self.slots.contains_key(k) && differs(k, theirs))
+                .map(|(k, _)| Sym(*k)),
+        );
         out
     }
 
@@ -1291,6 +1308,20 @@ impl Env {
             self.trail.clear();
         } else {
             debug_assert!(self.trail.len() >= fork.trail);
+        }
+    }
+
+    /// What `sym` held when `fork` was made: the first change since saved
+    /// it on the trail, or nothing changed it.
+    pub fn at_fork(&self, fork: &Fork, sym: u32) -> Option<Binding> {
+        let (mut e, mut first) = (self.trailed.get(sym as usize).copied().unwrap_or(NONE), None);
+        while e != NONE && e as usize >= fork.trail {
+            first = Some(e as usize);
+            e = self.trail[e as usize].3;
+        }
+        match first {
+            Some(e) => self.trail[e].1.clone(),
+            None => self.slots.get(sym as usize).cloned().flatten(),
         }
     }
 
