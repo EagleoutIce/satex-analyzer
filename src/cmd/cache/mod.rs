@@ -34,6 +34,7 @@ pub fn status(context: &Context, out: &mut impl Write) -> Result<Output, String>
             "cached": fmt.cached,
             "state": state,
             "cache_dir": directory.as_ref().map(|d| d.display().to_string()),
+            "key": crate::format::cache_key(),
             "preload": analysis.plugins.preload.as_ref().map(|preload| serde_json::json!({
                 "name": preload.name,
                 "how": preload.how,
@@ -113,9 +114,15 @@ pub fn status(context: &Context, out: &mut impl Write) -> Result<Output, String>
 }
 
 /// `satex cache export`: write the valid caches to `target`.
-pub fn export(cfg: &Config, target: &std::path::Path, json: bool, out: &mut impl Write) -> Result<(), String> {
+pub fn export(
+    cfg: &Config,
+    target: &std::path::Path,
+    filter: (&[String], &[String]),
+    json: bool,
+    out: &mut impl Write,
+) -> Result<(), String> {
     let Some(directory) = directory(cfg) else { return Err("no cache directory".into()) };
-    archive::export(&directory, target, json, out)
+    archive::export(&directory, target, filter, json, out)
 }
 
 /// `satex cache import`: unpack an archive into the cache directory.

@@ -10,7 +10,6 @@
         <select id="play-kernel" aria-label="kernel" title="the TeX engine and format"></select>
         <button id="play-link" class="pill" type="button" title="a link that restores the project's files, the open file, the command and the kernel">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 9a3 3 0 0 0 4.2.2l2-2a3 3 0 0 0-4.2-4.2l-.8.8"/><path d="M9 7a3 3 0 0 0-4.2-.2l-2 2a3 3 0 0 0 4.2 4.2l.8-.8"/></svg><span class="label">Copy link</span></button>
-        <button id="play-run" class="runbtn" type="button" disabled title="run the satex command in the console below (Enter there, Ctrl+Enter in the editor). It checks the project, it does not run your document">Loading…</button>
       </span>
     </div>
     <div class="work">
@@ -36,7 +35,7 @@
         <div id="play-output" class="output"></div>
       </div>
       <label class="ask cmd"><span>$ satex</span><input id="play-args" value="lint" spellcheck="false" autocomplete="off" aria-label="satex command" aria-controls="play-complete"
-        title="lint, explain \cmd, query …, rename NAME, fix [rule]. Tab completes, Enter runs, Up and Down go through earlier commands."><span class="hint">Tab completes · Enter runs · ↑ history</span><ul id="play-complete" class="complete" role="listbox" hidden></ul></label>
+        title="lint, explain \cmd, query …, rename NAME, fix [rule]. Tab completes, Enter runs, Up and Down go through earlier commands."><span class="hint">Tab completes · Enter runs · ↑ history</span><button id="play-run" class="runbtn" type="button" disabled title="run the satex command in the console below (Enter there, Ctrl+Enter in the editor). It checks the project, it does not run your document">Loading…</button><ul id="play-complete" class="complete" role="listbox" hidden></ul></label>
       </div>
     </div>
     <input id="play-files" type="file" multiple hidden><input id="play-folder" type="file" webkitdirectory multiple hidden>
@@ -53,7 +52,7 @@
     <div class="statusbar" aria-live="polite"><progress id="play-progress" max="1" value="0" aria-label="loading"></progress><span id="play-status">Fetching satex and the TeX bundle…</span>
       <span id="play-pills" class="pills"></span>
       <span class="statdetail"><button id="t-time" class="stat-time" type="button" aria-expanded="false" aria-controls="t-detail" title="timings and size of the last run" hidden><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.2 1.5"/></svg><span id="t-time-text"></span></button>
-        <dl id="t-detail" class="stat-pop" hidden><dt>init</dt><dd id="t-init"></dd><dt>check</dt><dd id="t-check"></dd><dt>last run</dt><dd id="t-stats"></dd></dl></span></div>
+        <dl id="t-detail" class="stat-pop" hidden><dt>init</dt><dd id="t-init"></dd><dt>fetched</dt><dd id="t-load"></dd><dt>caches</dt><dd id="t-cache"></dd><dt>check</dt><dd id="t-check"></dd><dt>last run</dt><dd id="t-stats"></dd></dl></span></div>
   </section>
 </div>
 <ul id="play-ctx" class="ctx" role="menu" hidden></ul>

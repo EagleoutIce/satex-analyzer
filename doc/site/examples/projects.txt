@@ -1,3 +1,0 @@
-# The files an example reads besides itself: tabs next to it, analyzed together with it.
-citations.tex: refs.bib
-thesis.tex: chapter.tex refs.bib

@@ -51,24 +51,33 @@ fn run() -> Result<(), String> {
     // Both builds from one source and profile: a cache is keyed on the build that wrote it.
     say("2/4 satex for this machine");
     step(cargo().args(["build", "--profile", profile, "--bin", "satex"]))?;
-    say("3/4 satex for the browser");
-    step(
+    // The site's runs need only the native build; it reads the wasm last,
+    // once `ready` names it built, so the two overlap.
+    say("3/4 satex for the browser, beside 4/4 the site: the pages, the TeX files and caches the playground loads");
+    let wasm_dir = target.join("wasm32-unknown-emscripten").join(profile);
+    let ready = target.join("playground-wasm.ready");
+    let _ = std::fs::remove_file(&ready);
+    let mut site = Command::new("python3")
+        .arg("doc/site/build.py")
+        .arg("--satex")
+        .arg(target.join(profile).join("satex"))
+        .arg("--wasm")
+        .arg(&wasm_dir)
+        .args(["--precompress", "--out"])
+        .arg(&out)
+        .env("SATEX_WASM_READY", &ready)
+        .current_dir(root)
+        .spawn()
+        .map_err(|e| format!("cannot run python3: {e}"))?;
+    let built = step(
         cargo()
             .args(["build", "--profile", profile, "--target", "wasm32-unknown-emscripten", "--bin", "satex"])
             .env("PATH", &path),
-    )?;
-    say("4/4 the site: the pages, the TeX files and caches the playground loads");
-    step(
-        Command::new("python3")
-            .arg("doc/site/build.py")
-            .arg("--satex")
-            .arg(target.join(profile).join("satex"))
-            .arg("--wasm")
-            .arg(target.join("wasm32-unknown-emscripten").join(profile))
-            .args(["--precompress", "--out"])
-            .arg(&out)
-            .current_dir(root),
-    )?;
+    );
+    let _ = std::fs::write(&ready, if built.is_ok() { "ok" } else { "failed" });
+    let status = site.wait().map_err(|e| e.to_string())?;
+    built?;
+    status.success().then_some(()).ok_or_else(|| format!("doc/site/build.py failed ({status})"))?;
     let site = root.join(&out);
     let port = free_port(&port)?;
     println!(

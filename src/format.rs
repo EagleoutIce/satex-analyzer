@@ -364,6 +364,12 @@ fn split_cache_name(name: &str) -> Option<(&str, &str, &str)> {
     Some((family, key, hash))
 }
 
+/// The package or class a cache file holds, `None` for a kernel or an index.
+pub(crate) fn cache_holds(name: &str) -> Option<&str> {
+    let (family, ..) = split_cache_name(name)?;
+    family.strip_prefix("package-")?.rsplit_once("-v").map(|(held, _)| held)
+}
+
 /// Whether a cache file name is one this build can use: its key and encoding.
 pub(crate) fn is_current_cache(name: &str) -> bool {
     let version = if name.starts_with("package-") { PACKAGE_ENCODING_VERSION } else { ENCODING_VERSION };

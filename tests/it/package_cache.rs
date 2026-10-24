@@ -1063,7 +1063,7 @@ impl Portable {
 
     fn export(&self, cfg: &Config) {
         let mut out = Vec::new();
-        satex::cmd::cache::export(cfg, &self.archive, false, &mut out).expect("export");
+        satex::cmd::cache::export(cfg, &self.archive, (&[], &[]), false, &mut out).expect("export");
     }
 
     fn import(&self, cfg: &Config) -> String {
@@ -1348,4 +1348,26 @@ fn a_changed_package_of_a_class_rebuilds_only_that_package() {
     assert_eq!(served(&again, "pb"), Some(true), "{:?}", again.package_caches);
     assert_ne!(served(&again, "pa"), Some(true), "{:?}", again.package_caches);
     same_facts(&run_cold(&dir, WITH_CLASS), &again);
+}
+
+/// `--only` and `--without` keep the caches that hold, or do not hold, the named package.
+#[test]
+fn an_export_can_be_limited_to_a_package() {
+    let p = Portable::new("archive-filter");
+    let cfg = p.built();
+    let count = |only: &[&str], without: &[&str]| {
+        let (only, without): (Vec<String>, Vec<String>) =
+            (only.iter().map(|s| s.to_string()).collect(), without.iter().map(|s| s.to_string()).collect());
+        let mut out = Vec::new();
+        satex::cmd::cache::export(&cfg, &p.archive, (&only, &without), true, &mut out).expect("export");
+        let said: serde_json::Value = serde_json::from_slice(&out).expect("json");
+        (said["entries"].as_u64().unwrap(), said["holds"].as_object().unwrap().keys().cloned().collect::<Vec<_>>())
+    };
+    let (all, held) = count(&[], &[]);
+    assert!(held.iter().any(|n| n.starts_with("package-demo-")), "{held:?}");
+    let (only, held) = count(&["demo"], &[]);
+    assert_eq!((only, held.len() as u64), (1, 1), "{held:?}");
+    let (without, held) = count(&[], &["demo"]);
+    assert_eq!(without + only, all);
+    assert!(held.iter().all(|n| !n.starts_with("package-demo-")), "{held:?}");
 }

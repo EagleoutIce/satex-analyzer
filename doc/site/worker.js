@@ -127,6 +127,18 @@ function SatexEngine(createSatex, progress = () => {}) {
     return imported;
   }
 
+  /** Several bundles: all downloads start at once, the files and caches join the tree in order. */
+  async function bundles(base, entries, given = []) {
+    const downloads = entries.map((entry, i) => given[i] ?? bytes(base + entry.bundle, entry.label, entry.size));
+    const done = { lines: [], status: 0, ms: 0 };
+    for (const [i, entry] of entries.entries()) {
+      const imported = await bundle(base, entry, null, downloads[i]);
+      done.lines.push(...imported.lines);
+      done.ms += imported.ms;
+    }
+    return done;
+  }
+
   /** Files under `dir`: a new project's replace the last one's, added ones join them,
    * `removed` ones leave. A running language server sees the change at once. */
   function project(dir, given, replace = false, removed = []) {
@@ -160,7 +172,7 @@ function SatexEngine(createSatex, progress = () => {}) {
     return { samples, imported };
   }
 
-  return { init, run, lsp, reset, bundle, project, read };
+  return { init, run, lsp, reset, bundle, bundles, project, read };
 }
 
 if (typeof module === 'object' && module.exports) {
@@ -183,6 +195,8 @@ if (typeof module === 'object' && module.exports) {
         self.postMessage({ type: 'ready', ...(await engine.init(data.base, data.manifest, given)) });
       } else if (data.type === 'bundle') {
         self.postMessage({ type: 'bundle', id: data.entry.id, ...(await engine.bundle(data.base, data.entry, data.given)) });
+      } else if (data.type === 'bundles') {
+        self.postMessage({ type: 'bundle', ids: data.entries.map((e) => e.id), ...(await engine.bundles(data.base, data.entries, data.given)) });
       } else if (data.type === 'project') {
         engine.project(data.dir, data.files ?? {}, data.replace, data.removed);
       } else if (data.type === 'read') {

@@ -30,7 +30,25 @@ let t = performance.now();
 const given = base.startsWith('file:') ? { js: undefined, wasm: await bytes(manifest.wasm), bundle: await bytes(manifest.kernels[0].bundle) } : {};
 const { samples, imported } = await engine.init(base, manifest, given);
 console.log(`init: ${Math.round(performance.now() - t)} ms, ${imported.lines.map((l) => l[1]).join(' ')}`);
+// The bundles a document's files name (a package or class), and those they need, not loaded into `have` yet:
+// what the page fetches before a project's first run.
+const offered = manifest.packages ?? [];
+const NAMED = /\\(?:documentclass|usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
+const needed = (kernel, files, have) => {
+  const picked = new Set();
+  const pick = (id) => { const e = offered.find((p) => p.id === id); if (e && !picked.has(e)) { picked.add(e); e.needs.forEach((n) => pick(`${kernel.id}/${n}`)); } };
+  for (const f of files) for (const m of (samples[f] ?? '').matchAll(NAMED)) for (const n of m[1].split(',').map((x) => x.trim())) { pick(`${kernel.id}/${n}`); pick(`${kernel.id}/${n}.cls`); }
+  return [...picked].filter((e) => !have.has(e.id));
+};
+const fetchedHere = new Set();
+const fetchFor = async (eng, kernel, files) => {
+  const entries = needed(kernel, files, fetchedHere);
+  entries.forEach((e) => fetchedHere.add(e.id));
+  await eng.bundles(base, entries, base.startsWith('file:') ? await Promise.all(entries.map((e) => bytes(e.bundle))) : undefined);
+  return entries;
+};
 for (const name of manifest.samples) {
+  await fetchFor(engine, manifest.kernels[0], [name, ...(manifest.projects?.[name] ?? [])]);
   const run = await engine.run(['-v', 'lint', '-f', name], { [`/work/${name}`]: new TextEncoder().encode(samples[name]) });
   const out = run.lines.filter((l) => l[0] === 'out').map((l) => l[1]);
   const summary = out.find((l) => /\d+ errors?, \d+ warnings?/.test(l));
@@ -54,23 +72,39 @@ for (const entry of manifest.kernels.slice(1)) {
 const unresolved = (run, id) => run.lines.some((l) => l[1].includes(`\`${id}\` is not in this installation`) || l[1].includes(`\`${id}.sty\` is not in this installation`));
 const usePackage = (id) => new TextEncoder().encode(`\\documentclass{article}\n\\usepackage{${id}}\n\\begin{document}\nText.\n\\end{document}\n`);
 const packageRun = (id, kernel) => engine.run([...kernel.args, 'lint', '-f', 'probe.tex'], { '/work/probe.tex': usePackage(id) });
-const offered = manifest.packages ?? [];
-const micro = offered.find((p) => p.id === 'microtype');
+const micro = offered.find((p) => p.name === 'microtype' && p.kernel === manifest.kernels[0].id);
 check('microtype is offered on demand', !!micro && micro.size < 2 ** 20, micro ? `${micro.files.length} files, ${micro.size} bytes` : offered.map((p) => p.id).join(' '));
-check('the first download stays small', manifest.kernels[0].size < 12 * 2 ** 20, `${manifest.kernels[0].size} bytes`);
+check('the first download stays small', manifest.kernels[0].size < 8 * 2 ** 20, `${manifest.kernels[0].size} bytes`);
 if (micro) check('microtype is missing before its bundle', unresolved(await packageRun('microtype', manifest.kernels[0]), 'microtype'));
 t = performance.now();
 for (const entry of offered) await engine.bundle(base, entry, base.startsWith('file:') ? await bytes(entry.bundle) : undefined);
 const stillMissing = [];
-for (const entry of offered) {
-  let ok = false;
-  for (const kernel of manifest.kernels) {
-    const run = await packageRun(entry.id, kernel);
-    if ((ok = typeof run.status === 'number' && run.status <= 1 && !unresolved(run, entry.id))) break;
-  }
-  if (!ok) stillMissing.push(entry.id);
+for (const entry of offered.filter((p) => !p.label.endsWith('.cls'))) {
+  const kernel = manifest.kernels.find((k) => k.id === entry.kernel);
+  const run = await packageRun(entry.name, kernel);
+  if (!(typeof run.status === 'number' && run.status <= 1 && !unresolved(run, entry.name))) stillMissing.push(entry.id);
 }
 check(`${offered.length} packages on demand resolve`, offered.length >= 20 && !stillMissing.length, `${Math.round(performance.now() - t)} ms; missing ${stillMissing.join(' ')}`);
+
+// An example opened as the page opens it: only the bundles its files name, and the ones those need.
+// Its findings are the ones the build found against the whole installation.
+{
+  const second = (await load(null, manifest.worker))(await load(manifest.js));
+  const { samples: texts } = await second.init(base, manifest, base.startsWith('file:') ? { wasm: await bytes(manifest.wasm), bundle: await bytes(manifest.kernels[0].bundle) } : {});
+  const home = await text('index.html');
+  const tabs = [...home.matchAll(/<button role="tab"[^>]*id="ex-tab-\d+">([^<]+)<\/button>/g)].map((m) => m[1]);
+  const built = [...home.matchAll(/<script type="application\/json" class="ex-data">(.*?)<\/script>/gs)].map((m) => JSON.parse(m[1]).lints.map((d) => `${d.code}@${d.start[0] + 1}`).sort().join());
+  const kernel = manifest.kernels[0];
+  fetchedHere.clear();
+  for (const [i, name] of tabs.entries()) {
+    t = performance.now();
+    const entries = await fetchFor(second, kernel, [name, ...(manifest.projects?.[name] ?? [])]);
+    const run = await second.run([...kernel.args, 'lint', '--format', 'lsp', '-f', name]);
+    const found = JSON.parse(run.lines.filter((l) => l[0] === 'out').map((l) => l[1]).join('\n') || '[]')
+      .flatMap((f) => (f.diagnostics ?? []).map((d) => `${d.code}@${d.range.start.line + 1}`)).sort().join();
+    check(`${name} opens with its ${entries.length} bundles only`, found === built[i], `${entries.reduce((n, e) => n + e.size, 0)} bytes, ${Math.round(performance.now() - t)} ms; ${found === built[i] ? found.split(',').filter(Boolean).length + ' findings' : `got [${found}] want [${built[i]}]`}`);
+  }
+}
 
 // The language server: a finding for the default file, a completion, a hover.
 const uri = `file:///work/${manifest.sample}`;
@@ -257,6 +291,11 @@ async function browser() {
     check('ready without a run', await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 240000),
       await js(`return document.getElementById('play-status').textContent`));
     await shot('play-ready');
+    check('Run sits in the console bar', await js(`return !!document.getElementById('play-run').closest('.ask')`));
+    check('the engine selector shows its name only', await js(`const k = document.getElementById('play-kernel'); return k.selectedOptions[0].textContent === 'pdfTeX'`),
+      await js(`return document.getElementById('play-kernel').selectedOptions[0].textContent`));
+    check('links are neither underlined nor bold', await js(`return [...document.querySelectorAll('a')].every((a) => getComputedStyle(a).textDecorationLine === 'none' && +getComputedStyle(a).fontWeight < 600)`));
+    check('GitHub is an icon in the header', await js(`return !!document.querySelector('.top nav a.icon svg')`));
     check('no output panel for plain lint', await js(`return document.getElementById('play-out').hidden`));
     // flowR's layout: the project's files in a tree left of the editor, the examples under them
     check('file tree beside the editor', await js(`const t = document.getElementById('play-tree'), e = document.getElementById('play-editor').getBoundingClientRect();

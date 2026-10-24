@@ -325,6 +325,12 @@ pub enum CacheAction {
         /// The archive to write.
         #[arg(value_name = "ARCHIVE")]
         archive: std::path::PathBuf,
+        /// Only the caches holding this package or class (repeatable).
+        #[arg(long, value_name = "NAME")]
+        only: Vec<String>,
+        /// Not the caches holding this package or class (repeatable).
+        #[arg(long, value_name = "NAME")]
+        without: Vec<String>,
     },
     /// Unpack an archive into the cache directory. A cache it holds that
     /// this build cannot use is skipped with a line saying why. A directory

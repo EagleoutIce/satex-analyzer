@@ -25,7 +25,7 @@ body {
   font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
+a:hover { color: color-mix(in srgb, var(--accent) 65%, var(--fg)); text-decoration: none; }
 code, pre, textarea, input, select, .cm-editor { font: 14px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
 code { background: var(--sunk); border-radius: 4px; padding: .1em .3em; }
 pre { background: var(--sunk); border: 1px solid var(--border); border-radius: 8px; padding: .8rem 1rem; overflow-x: auto; }
@@ -44,10 +44,12 @@ h1 { font-size: 1.9rem; margin-top: .5rem; }
 .brand img { height: 30px; display: block; transition: opacity var(--quick); }
 .brand:hover img { opacity: .75; }
 .version { color: var(--muted); font-size: .8rem; border: 1px solid var(--border); border-radius: 999px; padding: 0 .55rem; }
-.top nav { display: flex; gap: 1.1rem; flex-wrap: wrap; margin-left: auto; font-weight: 500; }
+.top nav { display: flex; gap: 1.1rem; flex-wrap: wrap; margin-left: auto; font-weight: 400; }
 /* header links read as text, the accent only on hover */
 .top nav a { color: var(--fg); padding: .15rem .1rem; border-bottom: 2px solid transparent; transition: color var(--quick), border-color var(--quick); }
-.top nav a:hover, .top nav a:focus-visible { color: var(--accent); border-bottom-color: currentColor; text-decoration: none; }
+.top nav a:hover, .top nav a:focus-visible { color: var(--accent); text-decoration: none; }
+.top nav a.icon { display: inline-flex; align-items: center; }
+.top nav a.icon svg { width: 1.25rem; height: 1.25rem; fill: currentColor; }
 .version:hover { color: var(--accent); text-decoration: none; }
 /* the day/night switch, as in flowR's playground: a sky pill with clouds by day, stars by night, and the sun or moon as its knob */
 #theme { --night: radial-gradient(1px 1px at 62% 30%, #fff 60%, transparent), radial-gradient(1.5px 1.5px at 78% 62%, #fff 60%, transparent), radial-gradient(1px 1px at 88% 28%, #fff 60%, transparent), radial-gradient(1px 1px at 70% 78%, #fff 60%, transparent), #211042;
@@ -512,3 +514,7 @@ details.more[open] > summary { margin-bottom: .3rem; }
   .work { flex-direction: column; } .work > .editor { flex: none; height: 55vh; } .tree { width: auto; max-width: none; max-height: 14rem; } .treegrip { display: none; }
   .pill .label, .ask .hint { display: none; } .filebar { flex-wrap: wrap-reverse; }
 }
+
+.ask .runbtn { flex: none; margin-left: .4rem; }
+.ts-other > summary { cursor: pointer; color: var(--muted); font-size: .8rem; padding: .15rem 0; }
+.ts-other[open] > summary { margin-bottom: .2rem; }

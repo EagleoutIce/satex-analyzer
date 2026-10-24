@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::format::{HASHES_FILE, SEMANTIC_VERSION, cache_key, is_current_cache};
+use crate::format::{HASHES_FILE, SEMANTIC_VERSION, cache_holds, cache_key, is_current_cache};
 
 const MAGIC: &str = "satex-cache-archive";
 
@@ -32,12 +32,24 @@ fn exportable(name: &str) -> bool {
     name == HASHES_FILE || (name.ends_with(".postcard") && is_current_cache(name))
 }
 
-pub fn export(directory: &Path, target: &Path, json: bool, out: &mut impl Write) -> Result<(), String> {
+/// Writes the caches of `directory` to `target`: those holding a package of `only` (all, when it is
+/// empty) and none of `without`. The JSON line names what each cache holds.
+pub fn export(
+    directory: &Path,
+    target: &Path,
+    (only, without): (&[String], &[String]),
+    json: bool,
+    out: &mut impl Write,
+) -> Result<(), String> {
     let target = archive_path(target);
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(directory).map_err(|e| format!("{}: {e}", directory.display()))?.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
+        let held = cache_holds(&name);
+        let wanted = only.is_empty() || held.is_some_and(|h| only.iter().any(|o| o == h));
         if exportable(&name)
+            && wanted
+            && held.is_none_or(|h| !without.iter().any(|o| o == h))
             && let Ok(bytes) = std::fs::read(entry.path())
         {
             entries.push((name, bytes));
@@ -45,12 +57,13 @@ pub fn export(directory: &Path, target: &Path, json: bool, out: &mut impl Write)
     }
     entries.sort();
     let count = entries.len();
+    let holds: std::collections::BTreeMap<_, _> =
+        entries.iter().filter_map(|(n, _)| Some((n.clone(), cache_holds(n)?.to_string()))).collect();
     let archive = Archive { magic: MAGIC.into(), semantic: SEMANTIC_VERSION, key: cache_key().into(), entries };
     let bytes = postcard::to_allocvec(&archive).map_err(|e| e.to_string())?;
     std::fs::write(&target, &bytes).map_err(|e| format!("{}: {e}", target.display()))?;
     if json {
-        let value =
-            serde_json::json!({ "archive": target.display().to_string(), "entries": count, "bytes": bytes.len() });
+        let value = serde_json::json!({ "archive": target.display().to_string(), "entries": count, "bytes": bytes.len(), "holds": holds });
         let _ = writeln!(out, "{value}");
     } else {
         let _ = writeln!(

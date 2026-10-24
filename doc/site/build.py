@@ -9,7 +9,7 @@ files` says the samples and the offered packages read, and its caches from `sate
     build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site-out
 """
 
-import argparse, base64, concurrent.futures, datetime, gzip, hashlib, html, json, os, re, shutil, subprocess, sys, tomllib
+import argparse, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, subprocess, sys, time, tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,11 +25,32 @@ def digest(data):
 
 
 # How many satex runs go at once: each takes a core and up to a few GB.
-JOBS = max(1, min(8, (os.cpu_count() or 2) // 2))
+JOBS = max(1, (os.cpu_count() or 2) // 2)
 # What `satex query files` listed, by what it depends on: the document, the
 # flags, the project config and the installation (its ls-R files). A listing
 # does not depend on the satex build, so a rebuild reuses it; --fresh drops it.
 LISTINGS = {}
+# The satex binary's digest, its cache key (what the analysis is: reporting code
+# aside) and whether to ignore remembered results (--fresh): set by main().
+BINARY, KEY, FRESH, SATEX = "", "", False, None
+
+
+def memo(work, label, parts, make):
+    """`make()`, remembered in WORK/memo under `label` while `parts` (what it depends on) stay the
+    same: a build that changes only the page's code reuses every satex run."""
+    path = work / "memo" / f"{label}-{digest(json.dumps(parts, default=str).encode())}.pkl"
+    if path.exists() and not FRESH:
+        return pickle.loads(path.read_bytes())
+    value = make()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(pickle.dumps(value))
+    return value
+
+
+def tree_digest(root):
+    """What the text files under `root` say."""
+    return digest(b"".join(p.name.encode() + p.read_bytes() for p in sorted(root.rglob("*"))
+                           if p.is_file() and p.suffix in (".tex", ".bib", ".sty", ".cls", ".yaml", ".cfg", ".def", ".txt")))
 
 
 def installation_stamp():
@@ -206,107 +227,177 @@ UNAVAILABLE = [("LuaTeX", "Not available yet: the LuaTeX kernel is cut short at 
                 "Every check rebuilds it: 7 s natively, about half a minute in the browser.")]
 
 
+SAMPLE = "hello.tex"  # the document the playground opens with: the first download holds what it reads
+
+
+def file_of(name):
+    """The file a package (`name`) or class (`name.cls`) is."""
+    return name if name.endswith(".cls") else f"{name}.sty"
+
+
+def probe_doc(probes, name):
+    stem = name.removesuffix(".cls")
+    head = f"\\documentclass{{{stem}}}" if name.endswith(".cls") else f"\\documentclass{{article}}\n\\usepackage{{{stem}}}"
+    doc = probes / f"{stem}.tex"
+    doc.write_text(head + "\n\\begin{document}\nText.\n\\end{document}\n")
+    return doc
+
+
 def bundle(satex, work):
-    """The TeX files the samples read under each kernel, laid out like texmf-dist, with
-    the caches a run against that tree alone builds: the browser's runs then replay them.
-    Returns one file table per kernel: the first holds the samples, the others what they add."""
-    samples = ROOT / "samples"
+    """What the browser downloads, by the same steps for every kernel and package.
+    A kernel's bundle: the TeX files the default sample reads, laid out like texmf-dist,
+    and the cache entries (`satex cache export`) running it builds. A package's or class's
+    bundle, for each kernel: the files and cache entries a document loading it adds to those,
+    less what the bundles of the packages it loads itself hold (its `needs`).
+    Returns the kernels' file tables, the packages' entries, the sample names and the project."""
     docs = sources()
-    names = [p.name for p in docs]
     dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
-    tree, project = work / "texmf.bundle", work / "work"
-    for d in (tree, project):
+    tree, project, probes = work / "texmf.bundle", work / "work", work / "probes"
+    for d in (tree, project, probes):
         shutil.rmtree(d, ignore_errors=True)
+    probes.mkdir(parents=True)
     env = dict(os.environ, SATEX_CACHE=str(work / "cache-install"))
-    read = {kernel: set() for kernel, _, _ in KERNELS}
-    jobs = [(kernel, flags, doc) for kernel, _, flags in KERNELS for doc in docs]
+    bundled = lambda p: f"/texmf.bundle/{p.relative_to(dist).as_posix()}"
+
+    def listed(job):
+        flags, doc, cwd = job
+        read = {(cwd / e).resolve() for e in files_read(satex, flags, doc, cwd, env) if (cwd / e).resolve().is_relative_to(dist)}
+        # What another option would read instead (`[11pt]`: size11.clo for size10.clo): the files
+        # of the same kind beside each one read. Classes, packages and documents load by name.
+        return read | {q for p in read if p.suffix not in (".sty", ".cls", ".tex", ".ltx") for q in p.parent.glob(f"*{p.suffix}")}
+
+    absent = {}
+    reads = {}  # (kernel, document or package) -> the distribution files it reads
     with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
-        listed = pool.map(lambda j: files_read(satex, j[1], j[2], ROOT, env), jobs)
-        for (kernel, _, _), paths in zip(jobs, listed):
-            for entry in paths:
-                path = Path(entry) if Path(entry).is_absolute() else ROOT / entry
-                if path.resolve().is_relative_to(dist):
-                    read[kernel].add(path.resolve())
-    for path in set().union(*read.values()):
+        jobs = [(kernel, flags, doc) for kernel, _, flags in KERNELS for doc in docs]
+        for (kernel, _, doc), paths in zip(jobs, pool.map(lambda j: listed((j[1], j[2], ROOT)), jobs)):
+            reads[(kernel, doc.name)] = paths
+        # The names: the list's, then every package or class an example reads.
+        every = list(dict.fromkeys(package_names() + sorted(
+            f"{p.stem}.cls" if p.suffix == ".cls" else p.stem for paths in reads.values() for p in paths if p.suffix in (".sty", ".cls"))))
+        # Names the installation has (test fixtures' names are not); plain TeX loads no LaTeX package.
+        have = set(Path(p).name for p in subprocess.run(["kpsewhich", *map(file_of, every)], capture_output=True, text=True).stdout.split())
+        every = [n for n in every if file_of(n) in have]
+        pjobs = [(kernel, flags, name) for kernel, _, flags in KERNELS if kernel != "plain" for name in every]
+        for (kernel, _, name), paths in zip(pjobs, pool.map(lambda j: listed((j[1], probe_doc(probes, j[2]), probes)), pjobs)):
+            if file_of(name) in {p.name for p in paths}:
+                reads[(kernel, name)] = paths
+            else:
+                absent.setdefault(kernel, []).append(name)
+    for kernel, names in absent.items():
+        print(f"playground: {len(names)} packages not offered under {kernel} (they do not load there)", file=sys.stderr)
+    for path in set().union(*reads.values()):  # the build tree: every file any of them reads
         target = tree / path.relative_to(dist)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
-    config = (SITE / "playground.yaml").read_text()
-    shutil.copytree(samples, project, ignore=shutil.ignore_patterns("satex.yaml"))
+    config = (SITE / "playground.yaml").read_text().replace("/texmf.bundle", str(tree))
+    shutil.copytree(ROOT / "samples", project, ignore=shutil.ignore_patterns("satex.yaml"))
     for doc in docs[:len(roots(EXAMPLES))]:
         shutil.copy2(doc, project / doc.name)
-    for companion in {c for files in projects().values() for c in files}:
-        shutil.copy2(EXAMPLES / companion, project / companion)
-    (project / "satex.yaml").write_text(config.replace("/texmf.bundle", str(tree)))
-    tables, shared = [], read[KERNELS[0][0]]
-    for i, (kernel, _, flags) in enumerate(KERNELS):
+    for doc in sources():
+        for companion in projects()[doc.name]:
+            shutil.copy2(doc.parent / companion, project / companion)
+    (project / "satex.yaml").write_text(config)
+    (probes / "satex.yaml").write_text(config)
+
+    # Kernels: the sample's files and the cache entries of running it.
+    tables, have = [], set()
+    for kernel, _, flags in KERNELS:
         cache = work / f"cache-{kernel}"
-        env = dict(os.environ, SATEX_CACHE=str(cache))
-        with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
-            list(pool.map(lambda name: subprocess.run([str(satex), *flags, "lint", "-f", name], cwd=project, env=env,
-                                                      capture_output=True, check=False), names))
+        shutil.rmtree(cache, ignore_errors=True)
+        kenv = dict(os.environ, SATEX_CACHE=str(cache))
+        subprocess.run([str(satex), *flags, "lint", "-f", SAMPLE], cwd=project, env=kenv, capture_output=True, check=False)
         archive = work / f"satex-cache-{kernel}.bin"
-        run(str(satex), "cache", "export", str(archive), env=env)
-        own = sorted(read[kernel]) if i == 0 else sorted(read[kernel] - shared)
-        files = {f"/texmf.bundle/{p.relative_to(dist).as_posix()}": p.read_bytes() for p in own}
-        files[f"/kernels/{kernel}/satex-cache.bin"] = archive.read_bytes()
-        tables.append(files)
+        run(str(satex), "cache", "export", str(archive), env=kenv)
+        files = {bundled(p): p.read_bytes() for p in sorted(reads[(kernel, SAMPLE)]) if bundled(p) not in have}
+        have |= set(files)
+        tables.append({**files, f"/kernels/{kernel}/satex-cache.bin": archive.read_bytes()})
+    kernels = [k for k, _, _ in KERNELS]
+
+    # Packages: the files a probe document reads. The cache entries are those the examples' runs, from a
+    # copy of the kernel's caches, made for a package, whichever document loaded it: a package's entry
+    # holds the state of everything loaded before it, so a probe's own would rarely match a document's.
+    def fresh(kernel, flags):
+        """One cache archive per package or class held by the entries running every example made,
+        from a copy of the kernel's caches (`satex cache export --only`)."""
+        return memo(work, f"fresh-{kernel}", [KEY, kernel, flags, tree_digest(project)], lambda: fresh_run(kernel, flags))
+
+    def fresh_run(kernel, flags):
+        cache = work / f"cache-docs-{kernel}"
+        shutil.rmtree(cache, ignore_errors=True)
+        shutil.copytree(work / f"cache-{kernel}", cache, copy_function=os.link, ignore=shutil.ignore_patterns("*.lock"))
+        penv = dict(os.environ, SATEX_CACHE=str(cache))
+        with concurrent.futures.ThreadPoolExecutor(JOBS) as inner:
+            list(inner.map(lambda d: subprocess.run([str(satex), *flags, "lint", "-f", d.name], cwd=project, env=penv,
+                                                    capture_output=True, check=False), docs))
+        out = work / f"export-{kernel}.bin"
+        held = set(json.loads(run(str(satex), "--format", "json", "cache", "export", str(out), env=penv))["holds"].values())
+        archives = {}
+        for stem in sorted(held):
+            run(str(satex), "cache", "export", str(out), "--only", stem, env=penv)
+            archives[stem] = out.read_bytes()
+        out.unlink()
+        shutil.rmtree(cache, ignore_errors=True)
+        return archives
+
+    parts = {}  # (kernel, name) -> [files, cache archive, direct needs]
+    ran = {kernel: fresh(kernel, flags) for kernel, _, flags in KERNELS}
+    for (kernel, name) in reads:
+        if name in {d.name for d in docs}:
+            continue
+        k = kernels.index(kernel)
+        held = set(tables[0]) | set(tables[k])
+        seen = {p.name for p in reads[(kernel, name)]}
+        parts[(kernel, name)] = [
+            {bundled(p): p for p in reads[(kernel, name)] if bundled(p) not in held},
+            ran[kernel].get(name.removesuffix(".cls")),
+            {x for x in every if x != name and (kernel, x) in reads and file_of(x) in seen}]
+    # needs: the packages it loads, transitively. Their items are not repeated here, unless they need this one back.
+    need = {}
+    for (kernel, name), (_, _, direct) in parts.items():
+        reach, stack = set(), list(direct)
+        while stack:
+            x = stack.pop()
+            if x not in reach:
+                reach.add(x)
+                stack += parts[(kernel, x)][2]
+        need[(kernel, name)] = reach
+    packages = []
+    for (kernel, name), (files, cache, _) in sorted(parts.items()):
+        covered = [parts[(kernel, x)] for x in need[(kernel, name)] if name not in need[(kernel, x)]]
+        files = {f: p.read_bytes() for f, p in files.items() if not any(f in c[0] for c in covered)}
+        parts[(kernel, name)][:2] = [files, cache]
+    for (kernel, name), (files, cache, _) in sorted(parts.items()):
+        if cache:
+            files = {**files, f"/kernels/{kernel}/{name}/satex-cache.bin": cache}
+        if files:
+            packages.append((kernel, name, files, sorted(x for x in need[(kernel, name)] if parts[(kernel, x)][0] or parts[(kernel, x)][1])))
     for path in sorted(project.iterdir()):
         if path.is_file() and path.name != "satex.yaml":
             tables[0][f"/work/{path.name}"] = path.read_bytes()
-    tables[0]["/work/satex.yaml"] = config.encode()
-    return tables, names, project
+    tables[0]["/work/satex.yaml"] = config.replace(str(tree), "/texmf.bundle").encode()
+    return tables, packages, [p.name for p in docs], project
 
 
 def package_names():
-    """doc/site/packages.txt, then satex.yaml's `cache.index.common`, each once."""
-    names = re.sub(r"#.*", "", (SITE / "packages.txt").read_text()).split()
+    """The packages and classes to offer: those the tests' fixtures, the examples and samples
+    load, satex.yaml's `cache.index.common`, then doc/site/packages.txt, each once.
+    A class is `name.cls`; a name no installation file backs is dropped when probed."""
+    name = r"[A-Za-z][\w.-]*"
+    found = re.compile(r"\\+(documentclass|usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^{}#\\]*)\}")
+    texts = [p.read_text(errors="replace") for pattern in ("tests/**/*.tex", "tests/**/*.rs", "tests/**/*.sty", "samples/*.tex", "doc/site/examples/*.tex")
+             for p in sorted(ROOT.glob(pattern))]
+    scanned = []
+    for text in texts:
+        for kind, names in found.findall(text):
+            scanned += [n.strip() + (".cls" if kind == "documentclass" else "") for n in names.split(",") if re.fullmatch(name, n.strip())]
+    listed = re.sub(r"#.*", "", (SITE / "packages.txt").read_text()).split()
     config = (ROOT / "satex.yaml").read_text()
     common = re.search(r"^\s*common:\s*\[([^\]]*)\]", config, flags=re.M)
     if not common and re.search(r"^\s*common:", config, flags=re.M):
         sys.exit("build.py: satex.yaml's cache.index.common must stay a [a, b, ...] flow list")
-    return list(dict.fromkeys(names + [n.strip() for n in (common.group(1).split(",") if common else []) if n.strip()]))
-
-
-def packages(satex, work, have):
-    """One bundle per package of `package_names()`: the distribution files a document
-    loading it reads under each kernel, but those the browser has with that kernel
-    loaded (`have`, one set per kernel).
-    A name satex finds no file for is left out, and said."""
-    dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
-    probes = work / "probes"
-    shutil.rmtree(probes, ignore_errors=True)
-    probes.mkdir(parents=True)
-    env = dict(os.environ, SATEX_CACHE=str(work / "cache-install"))
-
-    def probe(name):
-        cls = name.endswith(".cls")
-        stem = name.removesuffix(".cls")
-        doc = probes / f"{stem}.tex"
-        head = f"\\documentclass{{{stem}}}" if cls else f"\\documentclass{{article}}\n\\usepackage{{{stem}}}"
-        doc.write_text(head + "\n\\begin{document}\nText.\n\\end{document}\n")
-        seen, files = set(), {}
-        for (_, _, flags), loaded in zip(KERNELS, have):
-            for entry in files_read(satex, flags, doc, probes, env):
-                path = (probes / entry).resolve()
-                if not path.is_relative_to(dist):
-                    continue
-                seen.add(path.name)
-                bundled = f"/texmf.bundle/{path.relative_to(dist).as_posix()}"
-                if bundled not in loaded:
-                    files[bundled] = path
-        if (f"{stem}.cls" if cls else f"{stem}.sty") not in seen:
-            return name, None
-        return name, {path: files[path].read_bytes() for path in sorted(files)}
-
-    found = {}
-    with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
-        for name, files in pool.map(probe, package_names()):
-            if files is None:
-                print(f"playground: no {name} in this installation, not offered", file=sys.stderr)
-            else:
-                found[name.removesuffix(".cls")] = files
-    return found
+    configured = [n.strip() for n in (common.group(1).split(",") if common else []) if n.strip()]
+    return list(dict.fromkeys(sorted(scanned) + configured + listed))
 
 
 def commands():
@@ -316,9 +407,14 @@ def commands():
 
 
 def projects():
-    """`examples/projects.txt`: the files each example reads besides itself."""
-    lines = (EXAMPLES / "projects.txt").read_text().splitlines()
-    return {k: v.split() for k, v in (line.split(": ", 1) for line in lines if line and not line.startswith("#"))}
+    """The files each document reads beside itself (`satex query files`): tabs next to it,
+    analyzed together with it. Its own build files (`thesis.aux`) are not among them."""
+    out = {}
+    for doc in sources():
+        read = {(doc.parent / e).resolve() for e in files_read(SATEX, KERNELS[0][2], doc, doc.parent, dict(os.environ))}
+        here = doc.parent.resolve()
+        out[doc.name] = sorted(p.name for p in read if p.parent == here and p.stem != doc.stem and p.exists())
+    return out
 
 
 TOKEN = re.compile(r"(?P<com>%.*)|(?P<cmd>\\(?:[A-Za-z@]+|.))|(?P<br>[{}\[\]])|(?P<num>\d+(?:\.\d+)?)")
@@ -366,6 +462,11 @@ def explained(satex, project, env, name, names, dist):
     playground's: a distribution file under /texmf.bundle, a project file by its name."""
     if not names:
         return {}
+    return memo(work_of(env), "explained", [BINARY, name, sorted(names), tree_digest(project), str(dist)],
+                lambda: explained_run(satex, project, env, name, names, dist))
+
+
+def explained_run(satex, project, env, name, names, dist):
     done = subprocess.run([str(satex), "explain", *sorted(names), "--format", "json", "-f", name], cwd=project, env=env,
                           capture_output=True, text=True)
     by = {}
@@ -378,9 +479,19 @@ def explained(satex, project, env, name, names, dist):
     return by
 
 
+def work_of(env):
+    """The scratch directory the cache directory of `env` lies in."""
+    return Path(env["SATEX_CACHE"]).parent
+
+
 def findings(satex, project, env, name, source):
     """The example's findings: ranges as the language server reports them, with the text
     each fix replaces."""
+    return memo(work_of(env), "findings", [BINARY, name, source, tree_digest(project)],
+                lambda: findings_run(satex, project, env, name, source))
+
+
+def findings_run(satex, project, env, name, source):
     lsp = json.loads(subprocess.run([str(satex), "lint", "--format", "lsp", "-f", name], cwd=project, env=env,
                                     capture_output=True, text=True).stdout or "[]")
     rows = json.loads(subprocess.run([str(satex), "lint", "--format", "json", "-f", name], cwd=project, env=env,
@@ -440,7 +551,18 @@ def examples(satex, work, project):
 
 
 def playground(satex, wasm, work, out):
-    tables, samples, project = bundle(satex, work)
+    offered = package_names()
+    sources_ = [(d.name, d.read_bytes()) for d in sources()] + [(c, (d.parent / c).read_bytes()) for d in sources() for c in projects()[d.name]]
+    tables, packages, samples, project = memo(
+        work, "bundle", [KEY, LISTINGS.get("@stamp"), offered, sources_, tree_digest(ROOT / "samples"), (SITE / "playground.yaml").read_text(),
+                         inspect.getsource(bundle)],
+        lambda: bundle(satex, work))
+    # `cargo playground` builds the wasm meanwhile and names it done here.
+    ready = os.environ.get("SATEX_WASM_READY")
+    while ready and not Path(ready).exists():
+        time.sleep(1)
+    if ready and Path(ready).read_text() != "ok":
+        sys.exit("playground: the wasm build failed")
     wasm_bytes = (wasm / "satex.wasm").read_bytes()
     kernels = []
     for (kernel, label, flags), files in zip(KERNELS, tables):
@@ -449,35 +571,38 @@ def playground(satex, wasm, work, out):
                         "bundle": emit_local(out, f"play/{kernel}.bin.gz", packed),
                         "files": [[path, len(data)] for path, data in files.items()]})
     extra = []
-    for name, files in packages(satex, work, [set(tables[0]) | set(t) for t in tables]).items():
-        if not files:  # all in the first download already
-            continue
+    for kernel, name, files, needs in packages:
         packed = gzip.compress(b"".join(files.values()), 9, mtime=0)
-        extra.append({"id": name, "label": name, "size": len(packed), "bundle": emit_local(out, f"play/pkg/{name}.bin.gz", packed),
+        extra.append({"id": f"{kernel}/{name}", "name": name.removesuffix(".cls"), "kernel": kernel, "needs": needs, "label": name,
+                      "size": len(packed), "bundle": emit_local(out, f"play/pkg/{kernel}-{name}.bin.gz", packed),
                       "files": [[path, len(data)] for path, data in files.items()]})
-    queries = [line.split()[0] for line in run(str(satex), "query", "--list").splitlines()[1:] if line.strip()]
-    env = dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))
-    sample = (EXAMPLES / roots(EXAMPLES)[0]).name
+    def facts():
+        """What satex says about itself: its queries, which of them name their file, its rules, its completions."""
+        queries = [line.split()[0] for line in run(str(satex), "query", "--list").splitlines()[1:] if line.strip()]
+        env = dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))
+        sample = (EXAMPLES / roots(EXAMPLES)[0]).name
 
-    def per_file(query):
-        """Whether the query's rows name their file: the playground then shows the open file's rows only."""
-        done = subprocess.run([str(satex), "query", query, "--filter", f"file={sample}", "--format", "json", "-f", sample],
-                              cwd=project, env=env, capture_output=True, text=True)
-        try:
-            return done.returncode == 0 and len(json.loads(done.stdout or "[]")) > 0
-        except json.JSONDecodeError:
-            return False
-    rules = {r["code"]: {**r, **json.loads(run(str(satex), "lint", "--explain", r["code"], "--format", "json"))}
-             for r in json.loads(run(str(satex), "lint", "--rules", "--format", "json"))}
+        def per_file(query):
+            """Whether the query's rows name their file: the playground then shows the open file's rows only."""
+            done = subprocess.run([str(satex), "query", query, "--filter", f"file={sample}", "--format", "json", "-f", sample],
+                                  cwd=project, env=env, capture_output=True, text=True)
+            try:
+                return done.returncode == 0 and len(json.loads(done.stdout or "[]")) > 0
+            except json.JSONDecodeError:
+                return False
+        rules = {r["code"]: {**r, **json.loads(run(str(satex), "lint", "--explain", r["code"], "--format", "json"))}
+                 for r in json.loads(run(str(satex), "lint", "--rules", "--format", "json"))}
+        return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json"))
+    queries, filtered, rules, completion = memo(work, "facts", [BINARY, tree_digest(project)], facts)
     manifest = {
         "js": emit_local(out, "play/satex.js", (wasm / "satex.js").read_bytes()),
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
-        "kernels": kernels, "packages": extra, "unavailable": UNAVAILABLE, "queries": queries, "filtered": [q for q in queries if per_file(q)], "rules": rules,
-        "completion": json.loads(run(str(satex), "completions", "json")), "samples": samples, "sample": "hello.tex", "root": "../",
+        "kernels": kernels, "packages": extra, "unavailable": UNAVAILABLE, "queries": queries, "filtered": filtered, "rules": rules,
+        "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(),
     }
     sizes = {k["id"]: f"{k['size'] / 2**20:.1f} MiB gz, {len(k['files'])} files" for k in kernels}
-    print(f"playground: wasm {len(wasm_bytes) / 2**20:.1f} MiB, {sizes}; {len(extra)} packages on demand, "
+    print(f"playground: wasm {len(wasm_bytes) / 2**20:.1f} MiB, {sizes}; {len(extra)} package bundles on demand, "
           f"{sum(p['size'] for p in extra) / 2**20:.1f} MiB gz in all", file=sys.stderr)
     return manifest, examples(satex, work, project)
 
@@ -492,14 +617,18 @@ def main():
     ap.add_argument("--work", type=Path, help="scratch directory (default: OUT/../site-work)")
     ap.add_argument("--precompress", action="store_true",
                     help="write a .gz beside each compressible file, for a server that serves those as GitHub Pages compresses")
-    ap.add_argument("--fresh", action="store_true", help="list every file read anew instead of reusing WORK/listings.json")
+    ap.add_argument("--fresh", action="store_true", help="redo every satex run instead of reusing WORK/listings.json and WORK/memo")
     args = ap.parse_args()
+    global BINARY, KEY, FRESH, SATEX
+    SATEX = args.satex.resolve()
+    BINARY, FRESH = digest(args.satex.resolve().read_bytes()), args.fresh
+    KEY = json.loads(subprocess.run([str(args.satex), "cache", "--format", "json"], capture_output=True, text=True).stdout or "{}").get("key") or BINARY
     out, work = args.out.resolve(), (args.work or args.out.resolve().parent / "site-work").resolve()
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
     work.mkdir(parents=True, exist_ok=True)
     listings = work / "listings.json"
-    stamp = installation_stamp()
+    stamp = installation_stamp() + ";" + KEY
     if listings.exists() and not args.fresh:
         LISTINGS.update(json.loads(listings.read_text()))
     if LISTINGS.get("@stamp") != stamp:

@@ -221,7 +221,7 @@
   // ---------------------------------------------------------------- worker requests
 
   const waiting = {}; // reply type -> resolver; runs, reads and kernel loads go one at a time, in order
-  const REPLY = { run: 'result', bundle: 'bundle', init: 'ready', read: 'file' };
+  const REPLY = { run: 'result', bundle: 'bundle', bundles: 'bundle', init: 'ready', read: 'file' };
   let line_ = Promise.resolve();
   const ask = (msg, transfer = []) => {
     const asked = line_.then(() => new Promise((resolve, reject) => {
@@ -345,6 +345,8 @@
 
   async function codemirror(parent, text) {
     const [{ EditorView, basicSetup }, language, lint, ac, view, st, { oneDark }, tex] = await Promise.all(EDITOR.concat(self.siteTex()));
+    /** Words (file names in arguments) the server resolves a definition for, by start offset. */
+    const resolves = new Map();
     const KIND = { 3: 'function', 14: 'keyword', 9: 'namespace', 18: 'variable' };
     async function complete(ctx) {
       // a command's name, or a key or value in a list (`/demo/mode=fa`)
@@ -410,7 +412,7 @@
         return span;
       } }] }), hover,
         linkField, markField, view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
-        EditorView.updateListener.of((u) => { if (u.docChanged) changed(); else if (u.selectionSet) explainSoon(); }), theme.of([]), lock.of([])],
+        EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); }), theme.of([]), lock.of([])],
     });
     // the site's light/dark choice (site.js) picks the editor's theme
     const scheme = () => ev.dispatch({ effects: theme.reconfigure(self.siteDark?.() ? oneDark : []) });
@@ -418,16 +420,28 @@
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', scheme);
     scheme();
     const doc = () => ev.state.doc;
-    /** The command under the mouse: its range in the document, or null. */
+    /** The command, or a word that resolves to a file, under the mouse: its range, or null. */
     const under = (e) => {
       const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY });
       if (pos == null) return null;
       const l = doc().lineAt(pos), w = wordAt(l.text, pos - l.from);
-      return w && w[3] ? [l.from + w[0], l.from + w[1]] : null;
+      return w && (w[3] || resolves.get(l.from + w[0])) ? [l.from + w[0], l.from + w[1]] : null;
     };
+    function resolve(e) {
+      const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY });
+      if (pos == null) return;
+      const l = doc().lineAt(pos), w = wordAt(l.text, pos - l.from);
+      if (!w || w[3] || resolves.has(l.from + w[0])) return;
+      resolves.set(l.from + w[0], false);
+      lsp('textDocument/definition', { textDocument: { uri: uri() }, position: position(doc(), pos) }).catch(() => null).then((r) => {
+        if (!(Array.isArray(r) ? r.length : r)) return;
+        resolves.set(l.from + w[0], true);
+        underline(under(e));
+      });
+    }
     let linked = null;
     const underline = (r) => { if (String(r) !== String(linked)) { linked = r; ev.dispatch({ effects: link.of(r) }); } };
-    parent.addEventListener('mousemove', (e) => { underline(e.ctrlKey || e.metaKey ? under(e) : null); const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY }); if (pos != null) explainSoon(position(doc(), pos)); });
+    parent.addEventListener('mousemove', (e) => { const ctrl = e.ctrlKey || e.metaKey; if (ctrl) resolve(e); underline(ctrl ? under(e) : null); const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY }); if (pos != null) explainSoon(position(doc(), pos)); });
     parent.addEventListener('mouseleave', () => underline(null));
     addEventListener('keyup', (e) => (e.key === 'Control' || e.key === 'Meta') && underline(null));
     parent.addEventListener('mousedown', (e) => {
@@ -498,16 +512,29 @@
     if (target !== uri()) return;
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
     if (!rows || target !== uri()) return;
-    const mine = rows.filter((r) => r.kind === 'paragraph' && r.path?.endsWith(state.file));
-    typesetBody.innerHTML = mine.length
-      ? mine.map((r) => `<p class="ts" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span>${escape(r.detail ?? '')}</p>`).join('')
-      : '<p class="muted">This file sets no paragraph.</p>';
+    const paragraphs = rows.filter((r) => r.kind === 'paragraph');
+    const row = (r) => `<p class="ts" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span>${escape(r.detail ?? '')}</p>`;
+    // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
+    const html = [];
+    for (let i = 0; i < paragraphs.length;) {
+      const r = paragraphs[i];
+      if (r.path?.endsWith(state.file)) { html.push(row(r)); i++; continue; }
+      let j = i;
+      while (j < paragraphs.length && paragraphs[j].path === r.path) j++;
+      const run = paragraphs.slice(i, j), name = (r.path ?? '').split('/').pop();
+      html.push(`<details class="ts-other"><summary>⟨${escape(name)}⟩ · ${run.length} paragraph${run.length > 1 ? 's' : ''}</summary>${run.map(row).join('')}</details>`);
+      i = j;
+    }
+    typesetBody.innerHTML = html.length ? html.join('') : '<p class="muted">The document sets no paragraph.</p>';
   }
   typesetBody.addEventListener('click', (e) => {
     const p = e.target.closest('.ts');
     if (!p) return;
     const at = { line: +p.dataset.line - 1, character: Math.max(+p.dataset.col - 1, 0) };
-    editor.focus({ start: at, end: at });
+    if (p.dataset.path && !p.dataset.path.endsWith(state.file)) {
+      const name = Object.keys(state.texts).find((n) => !(n in state.ro) && p.dataset.path.endsWith(n));
+      openPlace(name ?? p.dataset.path, at);
+    } else editor.focus({ start: at, end: at });
   });
 
   async function show(target, ds) {
@@ -643,10 +670,20 @@
     const a = e.target.closest('a.place, a.cs');
     if (!a || !editor) return;
     e.preventDefault();
-    if (a.classList.contains('cs')) return explainName(a.dataset.cs);
-    const file = a.dataset.path;
-    const name = Object.keys(state.texts).find((n) => !(n in state.ro) && (path(n) === file || n === file || file.endsWith('/' + n)));
-    openPlace(name ?? file, { line: Number(a.dataset.line) - 1, character: 0 });
+    if (a.classList.contains('cs') && !(e.ctrlKey || e.metaKey)) return explainName(a.dataset.cs);
+    const go = (file, line) => {
+      const name = Object.keys(state.texts).find((n) => !(n in state.ro) && (path(n) === file || n === file || file.endsWith('/' + n)));
+      return openPlace(name ?? file, { line: line - 1, character: 0 });
+    };
+    // Ctrl (Cmd) on a command in the Explain panel goes to its definition, as in the editor.
+    if (a.classList.contains('cs')) {
+      explainRecords(a.dataset.cs).then((rs) => {
+        const r = rs.find((x) => x.name === a.dataset.cs && x.path && x.line);
+        if (r) go(r.path, r.line); else toast(`No definition found for ${a.dataset.cs}`);
+      }).catch(() => toast('No definition found'));
+      return;
+    }
+    go(a.dataset.path, Number(a.dataset.line));
   });
   async function renameTo(newName, position = editor.position()) {
     try {
@@ -764,15 +801,16 @@
     if (!w?.[3]) return;
     return explainName(`\\${w[2]}`, at);
   }
-  /** Runs `satex explain name` unless the same text was explained already. */
+  /** `satex explain name`, answered by the language server from the analysis it holds,
+   *  unless the same text was explained already. */
   async function explainRecords(name) {
     sync();
     const target = state.root ?? (state.file in state.ro ? manifest.sample : state.file);
     const k = `${name}|${target}|${version}|${state.kernel}`;
     if (!explanations.has(k)) {
-      const edits = Object.fromEntries(Object.entries(state.texts).filter(([n]) => !(n in state.ro)).map(([n, text]) => [path(n), text]));
-      explanations.set(k, ask({ type: 'run', args: [...flags(), 'explain', name, '--format', 'json', '-f', target], edits, cwd: state.dir })
-        .then((data) => JSON.parse(data.lines.filter(([kind]) => kind === 'out').map(([, t]) => plain(t)).join('\n') || '[]')).catch(() => []));
+      const request = { file: path(target), queries: [{ type: 'explain', names: [name] }] };
+      explanations.set(k, lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] })
+        .then((r) => r?.[0]?.records ?? []).catch(() => []));
     }
     return explanations.get(k);
   }
@@ -862,6 +900,7 @@
   }
   const outBox = $('play-out');
   $('play-outclose').onclick = () => { outBox.hidden = true; };
+  const edits = () => Object.fromEntries(Object.entries(state.texts).filter(([name]) => !(name in state.ro)).map(([name, text]) => [path(name), text]));
   async function start() {
     sync();
     const a = argv();
@@ -869,9 +908,8 @@
     status.textContent = 'running…';
     delete status.dataset.done;
     cmd.textContent = `satex ${words(args.value).filter((x) => x !== 'satex').join(' ')}`;
-    const edits = Object.fromEntries(Object.entries(state.texts).filter(([name]) => !(name in state.ro)).map(([name, text]) => [path(name), text]));
     try {
-      const data = await ask({ type: 'run', args: a, edits, cwd: state.dir });
+      const data = await ask({ type: 'run', args: a, edits: edits(), cwd: state.dir });
       let stats = '', summary = '';
       const raw = data.lines.map(([kind, text]) => {
         if (kind === 'out') { if (/\d+ errors?, \d+ warnings?/.test(plain(text))) summary = plain(text).trim(); return ansi(text); }
@@ -892,6 +930,8 @@
       const failed = typeof data.status !== 'number' || data.status > 1;
       status.textContent = `${command() ?? 'run'} · exit ${data.status}`;
       status.title = summary;
+      const cached = cacheReport(data.lines);
+      if (cached) status.textContent += ` · ${cached}`;
       // plain lint's findings are the panel's: its output would repeat them
       outBox.hidden = (plainLint() || explainedHere) && !failed;
       if (!outBox.hidden) foldConsole(false, false);
@@ -1066,6 +1106,7 @@
     following = true;
     sync();
     await followRoot();
+    await fetchPackages(wanted_(named(Object.entries(state.texts).filter(([n]) => !(n in state.ro)).map(([, t]) => t))));
     store();
     opened.clear();
     asked.clear();
@@ -1329,44 +1370,78 @@
     kernelBox.value = i;
   }
 
-  /** Packages beyond the first download: a bundle each, fetched the first time a finding
-   * or a run says one is not in this installation; then the server and the run start over. */
+  /** Packages beyond the first download: a bundle each per kernel (the files and cache entries a
+   * document loading it adds), with the bundles it needs. Fetched before a project's first run for
+   * what its files name, and again whenever a finding or a run says one is not in this installation. */
   const PACKAGES = new Map((manifest.packages ?? []).map((p) => [p.id, p]));
   const fetchedPackages = new Map(); // id -> its load
   const MISSING = /`([^`\s]+)` is not in this installation/g;
-  /** The offered packages `texts` say are missing, not asked for yet. */
-  const missing = (texts) => [...new Set(texts.flatMap((t) => [...String(t).matchAll(MISSING)].map((m) => m[1].replace(/\.(sty|cls)$/, ''))))]
-    .filter((id) => PACKAGES.has(id) && !fetchedPackages.has(id));
+  const NAMED = /\\(?:documentclass|usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
+  /** The bundles of the current kernel for `names` (a class too), and what those need, not yet asked for. */
+  function wanted_(names) {
+    const kernel = manifest.kernels[state.kernel].id;
+    const todo = new Set();
+    const add = (id) => {
+      const entry = PACKAGES.get(id);
+      if (!entry || todo.has(id)) return;
+      todo.add(id);
+      entry.needs.forEach((n) => add(`${kernel}/${n}`));
+    };
+    for (const n of names) { add(`${kernel}/${n}`); add(`${kernel}/${n}.cls`); }
+    return [...todo].filter((id) => !fetchedPackages.has(id));
+  }
+  /** The packages and classes the project's own files name. */
+  const named = (texts) => [...new Set(texts.flatMap((t) => [...String(t).matchAll(NAMED)].flatMap((m) => m[1].split(',').map((x) => x.trim()).filter(Boolean))))];
+  const missing = (texts) => wanted_([...new Set(texts.flatMap((t) => [...String(t).matchAll(MISSING)].map((m) => m[1].replace(/\.(sty|cls)$/, ''))))]);
+  const loadedList = [], inFlight = new Set();
   async function fetchPackages(ids) {
     if (!ids.length) return false;
-    const label = ids.join(', ');
-    status.textContent = `fetching ${label} (${size(ids.reduce((n, id) => n + PACKAGES.get(id).size, 0))})…`;
+    const entries = ids.map((id) => PACKAGES.get(id));
+    const label = entries.map((e) => e.label).join(', ');
+    status.textContent = `fetching ${entries.map((e) => `${e.label} ${size(e.size)}`).join(', ')} …`;
     const t = performance.now();
-    const loading = ids.map((id) => {
-      const entry = PACKAGES.get(id);
-      const load = (async () => {
-        const given = location.protocol === 'file:' ? await local(entry.bundle) : undefined;
-        await ask({ type: 'bundle', base, entry, given }, given ? [given.buffer] : []);
-      })();
-      fetchedPackages.set(id, load);
-      return load;
-    });
-    try { await Promise.all(loading); } catch (e) { toast(`${label} did not load: ${e.message}`); return false; }
+    const given = location.protocol === 'file:' ? await Promise.all(entries.map((e) => local(e.bundle))) : undefined;
+    const load = ask({ type: 'bundles', base, entries, given }, given ? given.map((g) => g.buffer) : []);
+    ids.forEach((id) => { fetchedPackages.set(id, load); inFlight.add(id); });
+    try { await load; } catch (e) { ids.forEach((id) => fetchedPackages.delete(id)); toast(`${label} did not load: ${e.message}`); return false; } finally { ids.forEach((id) => inFlight.delete(id)); }
     bar.hidden = true;
     loads.clear();
     status.textContent = `${label} fetched in ${secs(performance.now() - t)}`;
     status.dataset.packages = [...fetchedPackages.keys()].join(' ');
-    timing('t-init', `${$('t-init').textContent} · ${label} ${secs(performance.now() - t)}`, 'time to fetch and set up each kernel and package');
+    loadedList.push(...entries.map((e) => `${e.label} ${size(e.size)}`));
+    timing('t-load', `${loadedList.join(', ')} · last ${secs(performance.now() - t)}`, 'packages fetched after the first download');
     return true;
+  }
+  /** What a run's cache report says: the packages and classes served from the caches, the ones analysed anew. */
+  function cacheReport(lines) {
+    const reused = [], fresh = [];
+    let segments = 0;
+    for (const [, text] of lines) {
+      const m = plain(text).match(/cache (?:kernel|class|package) (\S+): (reused|rebuilt \((.*)\))/);
+      if (m) (m[2] === 'reused' ? reused : fresh).push(m[3] ? `${m[1]} (${m[3]})` : m[1]);
+      const s = plain(text).match(/cache package segments: (\d+) reused/);
+      if (s) segments = Number(s[1]);
+    }
+    if (!reused.length && !fresh.length && !segments) return '';
+    const detail = [reused.length && `cached: ${reused.join(', ')}`, segments && `${segments} package segment${segments > 1 ? 's' : ''} cached`, fresh.length && `analysed anew: ${fresh.join(', ')}`].filter(Boolean).join(' · ');
+    timing('t-cache', detail, 'what the last run reused from the caches and what it analysed again');
+    return `${reused.length + segments} cached${fresh.length ? ` · fresh: ${fresh.map((f) => f.split(' ')[0]).join(', ')}` : ''}`;
   }
   /** After findings or a run name missing packages: fetch them, start over. */
   async function fetchMissing(texts) {
-    if (!await fetchPackages(missing(texts))) return;
+    if (!await fetchPackages(missing(texts))) return false;
     await restart();
     if (!plainLint()) await start();
+    return true;
   }
-  kernelBox.innerHTML = manifest.kernels.map((k, i) => `<option value="${i}" title="download ${size(k.size)}">${k.label} · ${size(k.size)}</option>`).join('') +
-    (manifest.unavailable ?? []).map(([label, why]) => `<option disabled title="${escape(why)}">${label} · not available</option>`).join('');
+  // Closed, the selector shows the engine's name; its sizes only while the list is open.
+  kernelBox.innerHTML = manifest.kernels.map((k, i) => `<option value="${i}" title="download ${size(k.size)}" data-name="${k.label}" data-more="${size(k.size)}"></option>`).join('') +
+    (manifest.unavailable ?? []).map(([label, why]) => `<option disabled title="${escape(why)}" data-name="${label}" data-more="not available"></option>`).join('');
+  const kernelList = (sizes) => { for (const o of kernelBox.options) o.textContent = sizes ? `${o.dataset.name} · ${o.dataset.more}` : o.dataset.name; };
+  kernelList(false);
+  kernelBox.addEventListener('mousedown', () => kernelList(true));
+  kernelBox.addEventListener('blur', () => kernelList(false));
+  kernelBox.addEventListener('change', () => kernelList(false));
   kernelBox.onchange = async () => {
     manualKernel = true;
     kernelBox.disabled = true;
@@ -1547,9 +1622,20 @@
           pending.delete(m.id);
           if (m.error) p.reject(new Error(m.error.message.replace(/^[\w/]+: /, ''))); else p.resolve(m.result ?? null);
         } else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) {
+          // Findings that come from a missing package wait for it: shown once its bundle is in.
+          const unresolved = m.params.diagnostics.filter((d) => d.code === 'unresolved-file').map((d) => d.message);
+          const waiting = missing(unresolved);
+          if ((waiting.length || inFlight.size) && m.params.uri === uri()) {
+            const names = [...new Set([...waiting, ...inFlight])].map((id) => PACKAGES.get(id).label).join(', ');
+            status.textContent = `loading ${names}…`;
+            lspStatus.textContent = `loading ${names}…`;
+            if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok) { show(m.params.uri, m.params.diagnostics); typeset(m.params.uri); } });
+            continue;
+          }
           show(m.params.uri, m.params.diagnostics);
           typeset(m.params.uri);
-          fetchMissing(m.params.diagnostics.filter((d) => d.code === 'unresolved-file').map((d) => d.message));
+          if (m.params.uri === uri()) lsp('satex/caches', { textDocument: { uri: m.params.uri } }).then((r) => cacheReport((r ?? []).map((l) => ['err', l]))).catch(() => {});
+          fetchMissing(unresolved);
         }
       }
     } else if (data.type === 'progress') {
