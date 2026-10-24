@@ -797,9 +797,10 @@
     // the definition in force at the caret first, the others folded
     const text = editor.text(), begin = text.split('\n').findIndex((l) => /\\begin\s*\{document\}/.test(l));
     const now = at && shown.length > 1 ? (begin >= 0 ? at.line < begin : /\\documentclass/.test(text)) ? 'preamble' : 'document' : null;
-    const [first, rest] = [shown.filter((r) => !now || r.when === now), shown.filter((r) => now && r.when !== now)];
-    if (shown.length) explainBody.innerHTML = (first.length ? first : shown).map(cards.explain).join('') +
-      (first.length && rest.length ? `<details class="more"><summary>More definitions</summary>${rest.map(cards.explain).join('')}</details>` : '');
+    let first = shown.filter((r) => !now || r.when === now), rest = shown.filter((r) => !first.includes(r));
+    if (!first.length) [first, rest] = [shown.slice(0, 1), shown.slice(1)];
+    if (shown.length) explainBody.innerHTML = first.map(cards.explain).join('') +
+      (rest.length ? `<details class="more"><summary>More definitions</summary>${rest.map(cards.explain).join('')}</details>` : '');
     else if (!explainBody.querySelector('.hover')) explainBody.innerHTML = `<p class="muted">satex knows no ${escape(name)} here.</p>`;
   }
   function focusExplain() {

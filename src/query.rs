@@ -3192,6 +3192,11 @@ fn split_by_environment(analysis: &Analysis, sym: Sym, base: &Record) -> Option<
 /// each raises against `base`'s own (probed outside any environment)
 /// error. `None` when none of them differed.
 fn probe_context_meanings(analysis: &Analysis, sym: Sym, base: &Record) -> Option<Vec<Record>> {
+    // The bare call hands its `.` to a mandatory argument: what it raises
+    // then is about that argument (`\end{.}`), as in the signature probe.
+    if base.get("takes").and_then(|t| t.get("min")).and_then(Json::as_u64).unwrap_or(0) > 0 {
+        return None;
+    }
     let errors = crate::probe::probe_contexts(analysis, sym)
         .into_iter()
         .map(|(env, error)| (error, env.map_or_else(Vec::new, |e| vec![e])));

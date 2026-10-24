@@ -647,6 +647,24 @@ fn item_context_meanings_show_with_no_document_uses_at_all() {
     }
 }
 
+/// The bare probe hands `.` to `\end`'s argument, so `\end{.}` mismatches
+/// whatever is open: an error about the probe's argument, not a meaning.
+#[test]
+fn end_has_one_meaning_and_no_probed_error() {
+    if !installed() {
+        return;
+    }
+    let analysis = Machine::analyze(
+        "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n",
+        None,
+        &crate::support::config(),
+    );
+    let (records, _) =
+        query::explain(&analysis, &["end".to_string()], false).unwrap_or_else(|e| panic!("did not explain: {e}"));
+    assert_eq!(records.len(), 1, "{records:?}");
+    assert!(str_field(&records[0], "error").is_none(), "{records:?}");
+}
+
 #[test]
 fn macro_redefined_inside_a_custom_environment_is_a_distinct_meaning() {
     let analysis = analyze_kernel(
