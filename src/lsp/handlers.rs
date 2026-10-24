@@ -480,16 +480,29 @@ pub fn usage(sig: &str) -> String {
     out
 }
 
-/// The style a `\bibliographystyle` names: its `.bst` file when BibTeX
-/// finds one, the databases it formats and what it does.
+/// The style a `\bibliographystyle` names or biblatex's `style=` option
+/// gives: its `.bst` or `.bbx` file when one is found, the databases it
+/// formats and what it does.
 fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<String> {
     use crate::builtins::OccKind;
-    let on = |o: &&crate::facts::Occurrence, kind| {
-        o.kind == kind && o.span.line == pos.line && analysis.file_name(o.span.file) == path
-    };
-    analysis.facts.occurrences.iter().find(|o| o.key == word && on(o, OccKind::BibStyle))?;
-    let mut md = format!("### `{word}` — BibTeX style\n\n");
-    let file = format!("{word}.bst");
+    let here = |line: u32, file| line == pos.line && analysis.file_name(file) == path;
+    let bibtex = analysis
+        .facts
+        .occurrences
+        .iter()
+        .any(|o| o.key == word && o.kind == OccKind::BibStyle && here(o.span.line, o.span.file));
+    let style = |o: &String| o.split_once('=').is_some_and(|(k, v)| k.trim() == "style" && v.trim() == word);
+    let load = analysis
+        .facts
+        .loads
+        .iter()
+        .find(|l| l.name == "biblatex" && here(l.span.line, l.span.file) && l.options.iter().any(style));
+    if !bibtex && load.is_none() {
+        return None;
+    }
+    let (what, ext, topic) = if bibtex { ("BibTeX", "bst", "bst") } else { ("biblatex", "bbx", "biblatex style") };
+    let mut md = format!("### `{word}` — {what} style\n\n");
+    let file = format!("{word}.{ext}");
     let dirs = crate::paths::effective(
         "BSTINPUTS",
         &analysis.project,
@@ -497,7 +510,9 @@ fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Opt
         &analysis.project.root,
     );
     let beside = Path::new(path).parent().map(|d| d.join(&file));
-    match beside.into_iter().chain(dirs.dirs.iter().map(|d| d.join(&file))).find(|p| p.is_file()) {
+    let shipped =
+        load.and_then(|l| l.path.as_deref()).and_then(|p| Path::new(p).parent()).map(|d| d.join("bbx").join(&file));
+    match beside.into_iter().chain(shipped).chain(dirs.dirs.iter().map(|d| d.join(&file))).find(|p| p.is_file()) {
         Some(found) => md.push_str(&format!("`{}`\n\n", found.display())),
         None => {}
     }
@@ -516,7 +531,7 @@ fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Opt
             databases.iter().map(|d| format!("`{d}`")).collect::<Vec<_>>().join(", ")
         ));
     }
-    md.push_str(&super::knowledge::about(&[format!("bst {word}")]));
+    md.push_str(&super::knowledge::about(&[format!("{topic} {word}")]));
     Some(md)
 }
 

@@ -100,3 +100,18 @@ SIAM style: numeric labels, entries sorted by author.
 
 ## bst acm
 ACM style: numeric labels, entries sorted by author.
+
+## biblatex style numeric
+biblatex style: numeric labels such as `[1]`, in citation order. Pair it with `\printbibliography`.
+
+## biblatex style alphabetic
+biblatex style: labels from author and year, as in `[Knu86]`, entries sorted by label.
+
+## biblatex style authoryear
+biblatex style: author-year citations such as `(Knuth 1986)`, entries sorted by author and year.
+
+## biblatex style authortitle
+biblatex style: author-title citations, entries sorted by author and title.
+
+## biblatex style verbose
+biblatex style: the first citation of a work prints its full entry in a footnote.

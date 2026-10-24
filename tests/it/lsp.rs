@@ -1074,6 +1074,21 @@ fn hover_shows_the_bibliography_style() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// biblatex's `style=` option is hovered like a BibTeX style.
+#[test]
+fn hover_shows_the_biblatex_style() {
+    let text = "\\documentclass{article}\n\\usepackage[style=authoryear]{biblatex}\n\\addbibresource{refs.bib}\n\\begin{document}\nx\n\\printbibliography\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("blxstyle", text);
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 22 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("biblatex style") && hover.contains("author-year"), "{hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// An argument TeX reads as a length narrows what a name there may be:
 /// the length registers come before the rest.
 #[test]
