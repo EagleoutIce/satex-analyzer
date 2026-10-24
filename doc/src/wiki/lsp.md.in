@@ -12,7 +12,7 @@ satex lsp --port 9257        # TCP instead, bound to 127.0.0.1
 satex lsp --port 9257 --host 0.0.0.0
 ```
 
-A document is re-analyzed `lsp.debounce_ms` after its last edit. The run keeps checkpoints of its whole state at line starts in the document's own files. The next run resumes from the last one whose input is unchanged, so an edit late in the document reruns only what follows it. The result is the same as a full run. While a run goes on, hover, completion and signature help are answered from the last analysis at once. Requests wait for the first analysis. `\input` and `\include` see the unsaved text of other open documents. A file without `\documentclass` is analyzed as part of the document that reads it: the one `-f` names, else the root the client's workspace folder holds. Every path is answered as the client named it, so a folder opened through a symlink keeps its name.
+A document is re-analyzed `lsp.debounce_ms` after its last edit. The run keeps checkpoints of its whole state at line starts in the document's own files. The next run resumes from the last one whose input is unchanged, so an edit late in the document reruns only what follows it. The result is the same as a full run. Each analysis is the build as latexmk runs it, and its files (`.aux`, the `.bbl` made from the cited entries) stay for the next one, so a later edit usually needs one run. Queries and the playground's panels read that one analysis, never a run of their own. While a run goes on, hover, completion and signature help are answered from the last analysis at once. Requests wait for the first analysis. `\input` and `\include` see the unsaved text of other open documents. A file without `\documentclass` is analyzed as part of the document that reads it: the one `-f` names, else the root the client's workspace folder holds. Every path is answered as the client named it, so a folder opened through a symlink keeps its name.
 
 ## Capabilities
 
@@ -34,7 +34,7 @@ Rename moves every name one declaration made from one key. `\newcounter{step}` a
 
 Completion looks at the text before the cursor: after `\` it offers the commands in scope there, with a snippet for their arguments. Inside `\begin{` environment names. Inside a reference or citation argument the document's labels or keys.
 Inside a file argument the files of its extension that start with the typed text: the project's, and for classes, packages, `.bib` and `.bst` the installation's too. A package option whose value the run loaded as a file completes those files (biblatex's `style=` the `.bbx` styles).
-A built-in list of common commands (`\ref`, `\cref`, the `cite` family, `\begin`, `\usepackage`, `\input`, `\bibliography`) says what their argument takes, so the first `\ref{` of a document already offers its labels.
+A built-in list of common commands (`\ref`, `\cref`, the `cite` family, `\begin`, `\usepackage`, `\input`) says what their argument takes, so the first `\ref{` of a document already offers its labels.
 What each argument of a command is, its role, decides what is offered there (`roles` in [`explain`](queries.md#explain)): `#1 ref`, `#1 label`, `#1 input`, `#2 ref after sec:`. Roles come from three places, in this order:
 
 - what the run saw calls of the command do: each label, reference, citation or load, matched to the argument that held its key,
@@ -42,6 +42,10 @@ What each argument of a command is, its role, decides what is offered there (`ro
 - a seed of the kernel's and common packages' conventions, only for a command the project does not define anew. A `\ref` the document redefines is what its new body says.
 
 So `\newcommand\secref[1]{\ref{sec:#1}}` completes labels in its argument before it is ever used, and offers `intro` for the label `sec:intro`. An argument that defines a key is not also a use of it.
+
+A value the run writes into a build file another tool reads gets that tool's input type: an argument written as `\bibdata{…}` into the `.aux` or as a datasource into the `.bcf` is a `.bib` database, one written as `\bibstyle{…}` a `.bst` style. So `\bibliography`, `\addbibresource` and any wrapper of them complete those files, and show `file (.bib)` or `file (.bst)` in their usage. The file kind (`FileKind`) gives the extension and the installation tree that completion searches. A completed name in braces closes the brace unless one follows.
+
+A key has a kind too: `\ref{` is a `label`, `\cite{` a `citation key`, so the signature and hover say which, and completion offers the labels there and never the citations.
 
 Each argument also has a type: what TeX read it as (`types` in [`explain`](queries.md#explain), the [argument type lattice](domains.md#argument-types-the-ty-lattice)).
 The run notes the tokens of the user's files that a scanner read as a number, dimen or glue, that an assignment named as a register, that `\copy` or `\setbox` read as a box number, or whose characters `\csname` formed into a register's name.

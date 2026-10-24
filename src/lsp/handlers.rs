@@ -622,6 +622,42 @@ fn load_target(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<
     Some(GotoDefinitionResponse::Array(vec![Location { uri, range: Range { start: zero, end: zero } }]))
 }
 
+/// The file an argument typed [`crate::roles::Ty::File`] names under the
+/// cursor, found beside the document or the project, through kpathsea for
+/// databases, with the extensions of its kind.
+fn file_target(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<GotoDefinitionResponse> {
+    let line = doc.line(pos.line);
+    let (before, after) = line.split_at(crate::source::byte_of_col(line, pos.col).min(line.len()));
+    let arg = argument_at(before).filter(|a| a.open == '{')?;
+    let at = crate::roles::braced_groups(arg.groups).len();
+    let roles = crate::roles::roles(analysis, arg.cmd);
+    let ty =
+        roles.iter().filter(|r| r.arg == at).map(|r| r.kind.ty()).find(|t| matches!(t, crate::roles::Ty::File(_)))?;
+    let name = format!(
+        "{}{}",
+        arg.inside.rsplit(',').next().unwrap_or_default().trim_start(),
+        after.split([',', '}']).next().unwrap_or_default().trim_end()
+    );
+    let (exts, _) = file_exts(analysis, ty)?;
+    let main = analysis
+        .files
+        .get(usize::from(analysis.main_file))
+        .map(|f| crate::paths::dir_of(std::path::Path::new(&f.path)));
+    let dirs = [Some(analysis.project.root.clone()), main];
+    let beside = dirs.into_iter().flatten().flat_map(|d| {
+        let names = std::iter::once(name.clone()).chain(exts.iter().map(|e| format!("{name}.{e}"))).collect::<Vec<_>>();
+        names.into_iter().map(move |n| d.join(n))
+    });
+    let found = beside
+        .chain(crate::plugin::bib::resolve(analysis, &name).filter(|_| exts.iter().any(|e| e == "bib")))
+        .find(|p| p.is_file())?;
+    let zero = Position { line: 0, character: 0 };
+    Some(GotoDefinitionResponse::Array(vec![Location {
+        uri: path_uri(&found.to_string_lossy()),
+        range: Range { start: zero, end: zero },
+    }]))
+}
+
 /// `textDocument/definition`: the load target ([`load_target`]) if the
 /// cursor sits on one; else every definition site [`query::explain`] knows
 /// for the control sequence under the cursor, or the `\label`, `\bibitem`
@@ -629,7 +665,7 @@ fn load_target(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<
 pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Option<GotoDefinitionResponse> {
     let pos = to_pos(doc, position);
     let (name, is_command) = word_at(doc.line(pos.line), pos.col)?;
-    if let Some(target) = load_target(analysis, path, pos, &name) {
+    if let Some(target) = file_target(analysis, doc, pos).or_else(|| load_target(analysis, path, pos, &name)) {
         return Some(target);
     }
     let sources = Sources::default();
@@ -874,7 +910,27 @@ pub fn completion(analysis: &Analysis, doc: &Text, position: Position) -> Comple
     let (before, after) = line.split_at(crate::source::byte_of_col(line, pos.col).min(line.len()));
     match argument_at(before) {
         Some(arg) if !cs_re().is_match(before) => {
-            CompletionResponse::Array(argument_items(analysis, doc, &arg, after, pos))
+            let mut items = argument_items(analysis, doc, &arg, after, pos);
+            // A braced name replaces the word typed and the rest of it, and closes the brace.
+            let typed = arg.inside.rsplit(',').next().unwrap_or_default().trim_start();
+            if arg.open == '{' && !typed.contains('=') {
+                let rest = after.chars().take_while(|c| c.is_alphanumeric() || ":-_./*".contains(*c)).count();
+                let close = if after[after.char_indices().nth(rest).map_or(after.len(), |(i, _)| i)..].starts_with('}')
+                {
+                    ""
+                } else {
+                    "}"
+                };
+                let range = Range {
+                    start: to_lsp(doc, Pos::new(pos.line, pos.col - typed.chars().count() as u32)),
+                    end: to_lsp(doc, Pos::new(pos.line, pos.col + rest as u32)),
+                };
+                for it in items.iter_mut().filter(|i| i.text_edit.is_none() && i.insert_text.is_none()) {
+                    let new_text = format!("{}{close}", it.label);
+                    it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
+                }
+            }
+            CompletionResponse::Array(items)
         }
         _ => {
             let typed = cs_re().find(before).map_or("", |m| &m.as_str()[1..]);
@@ -1043,7 +1099,7 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
     }
     // A file argument: the files of the extension its role reads.
     let typed = arg.inside.rsplit(',').next().unwrap_or_default().trim();
-    let mut out = files(analysis, roles.iter().filter_map(|r| file_exts(analysis, r.kind)), typed);
+    let mut out = files(analysis, roles.iter().filter_map(|r| file_exts(analysis, r.kind.ty())), typed);
     let keys = |kinds: &[OccKind]| -> BTreeSet<String> {
         let occ = analysis.facts.occurrences.iter().filter(|o| kinds.contains(&o.kind) && !o.key.is_empty());
         occ.map(|o| o.key.clone()).collect()
@@ -1251,34 +1307,26 @@ fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
 }
 
 /// Extensions of files, and the installation's tree their program searches.
-type FileKind = (Vec<String>, Option<&'static str>);
+type Exts = (Vec<String>, Option<&'static str>);
 
-/// The files an argument of role `kind` names: kpathsea's `TEXINPUTS`,
-/// `BSTINPUTS` or `BIBINPUTS` tree, none for `.tex`, whose tree files are
-/// documentation, never a document's input.
-fn file_exts(analysis: &Analysis, kind: crate::roles::RoleKind) -> Option<FileKind> {
-    use crate::builtins::{LoadKind as L, OccKind as O};
-    use crate::roles::RoleKind as R;
-    let (ext, tree) = match kind {
-        R::Load(L::Class) => ("cls", Some("tex")),
-        R::Load(L::Package) => ("sty", Some("tex")),
-        R::Load(L::Input | L::Include) => ("tex", None),
-        R::Occ(O::Bibliography) => ("bib", Some("bibtex/bib")),
-        R::Occ(O::BibStyle) => ("bst", Some("bibtex/bst")),
+/// The files an argument of type `ty` names, by [`crate::roles::FileKind`].
+fn file_exts(analysis: &Analysis, ty: crate::roles::Ty) -> Option<Exts> {
+    use crate::roles::{FileKind, Ty};
+    let Ty::File(kind) = ty else { return None };
+    match kind {
         // The extensions the run's own graphics had.
-        R::Occ(O::Graphics) => {
-            let occ = analysis.facts.occurrences.iter().filter(|o| o.kind == O::Graphics);
+        FileKind::Graphic => {
+            let occ = analysis.facts.occurrences.iter().filter(|o| o.kind == crate::builtins::OccKind::Graphics);
             let exts: BTreeSet<String> = occ.filter_map(|o| Some(o.key.rsplit_once('.')?.1.to_string())).collect();
-            return Some((exts.into_iter().collect(), None));
+            Some((exts.into_iter().collect(), None))
         }
-        _ => return None,
-    };
-    Some((vec![ext.to_string()], tree))
+        k => Some((vec![k.ext()?.to_string()], k.tree())),
+    }
 }
 
 /// The extensions of the files loading `package` with option `key=v` read
 /// by the name `v`, as [`file_exts`] gives them.
-fn option_files(analysis: &Analysis, package: &str, key: &str) -> Option<FileKind> {
+fn option_files(analysis: &Analysis, package: &str, key: &str) -> Option<Exts> {
     let loads = &analysis.facts.loads;
     let at = loads.iter().position(|l| l.name == package && l.kind == crate::builtins::LoadKind::Package)?;
     let value = loads[at].options.iter().find_map(|o| o.split_once('=').filter(|(k, _)| k.trim() == key))?.1.trim();
@@ -1286,12 +1334,13 @@ fn option_files(analysis: &Analysis, package: &str, key: &str) -> Option<FileKin
     let exts: BTreeSet<String> = nested
         .filter_map(|l| l.name.rsplit_once('.').filter(|(stem, _)| *stem == value).map(|(_, ext)| ext.to_string()))
         .collect();
-    (!exts.is_empty()).then(|| (exts.into_iter().collect(), Some("tex")))
+    let tree = exts.first().and_then(|e| crate::roles::FileKind::of_ext(e)).and_then(|k| k.tree());
+    (!exts.is_empty()).then(|| (exts.into_iter().collect(), tree))
 }
 
 /// The files of each `(extensions, tree)` kind whose name starts with
 /// `typed`: the project's first, then the installation's.
-fn files(analysis: &Analysis, kinds: impl Iterator<Item = FileKind>, typed: &str) -> Vec<CompletionItem> {
+fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) -> Vec<CompletionItem> {
     let mut out = Vec::new();
     for (exts, tree) in kinds {
         let exts: Vec<&str> = exts.iter().map(String::as_str).collect();

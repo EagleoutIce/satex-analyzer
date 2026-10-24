@@ -181,12 +181,17 @@ pub struct OccContext {
     pub certain: bool,
 }
 
+/// The element biber reads a database from in the `.bcf`.
+const DATASOURCE: &str = "bcf:datasource";
+
 /// A line a `\write` handed a file: the command it starts with (empty for
 /// text such as a `.bcf`'s XML), the text of its arguments, and the names
 /// running it where the file is read back defined.
 #[derive(Clone)]
 pub struct WrittenLine {
     head: String,
+    /// The XML element each of `args` is the content of.
+    elements: Vec<String>,
     args: Vec<String>,
     /// The arguments that are text the document gave the writing call,
     /// each where its own text stands.
@@ -234,8 +239,10 @@ pub fn defined_name(m: &mut Machine, sym: crate::tex::Sym) {
         defined.push(sym);
         return;
     }
-    // Otherwise a name a document call defines from its own arguments.
-    if m.package().is_some() || m.reading_format() {
+    // Otherwise a name a document call defines from its own arguments: one
+    // `\csname` built from text, not a token of the code (`\reserved@a`
+    // holds no key `a`).
+    if m.package().is_some() || m.reading_format() || m.last_named_cs != Some(sym) {
         return;
     }
     let Some((call, span)) = m.file_call else { return };
@@ -507,9 +514,17 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
     let Some((head, mut at)) = head(m, tokens) else {
         // Text, not a command: the element contents of an XML file.
         let text = m.text_of(tokens);
-        let args = text.split(['<', '>']).skip(2).step_by(2).map(|t| t.trim().to_string()).collect();
+        let (elements, args) = text
+            .split('<')
+            .skip(1)
+            .filter_map(|t| t.split_once('>'))
+            .map(|(tag, content)| {
+                (tag.split_whitespace().next().unwrap_or_default().to_string(), content.trim().to_string())
+            })
+            .unzip();
         m.written_lines.push(WrittenLine {
             head: String::new(),
+            elements,
             args,
             keys: Vec::new(),
             parts: std::rc::Rc::from([]),
@@ -555,7 +570,7 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
         m.out.timings.written_line((span.file, span.line), steps, &text);
     }
     let parts = call_parts(m, span);
-    m.written_lines.push(WrittenLine { head, args, keys, parts, defined, span, context });
+    m.written_lines.push(WrittenLine { head, elements: Vec::new(), args, keys, parts, defined, span, context });
 }
 
 /// Where the writing call's own text ends: at the next control sequence
@@ -922,7 +937,7 @@ pub fn relate(m: &mut Machine) {
                 m.occurrence_in(OccKind::Entry, key.clone(), Some(line.head.clone()), *at, &context);
             }
         }
-        for arg in &line.args {
+        for (n, arg) in line.args.iter().enumerate() {
             for name in crate::tex::comma_split(arg) {
                 let name = name.trim().to_string();
                 if name.is_empty() || name.contains(char::is_whitespace) || !tried.insert(name.clone()) {
@@ -932,12 +947,21 @@ pub fn relate(m: &mut Machine) {
                     m.occurrence_in(OccKind::BibStyle, name, None, line.span, &line.context);
                     continue;
                 }
-                // BibTeX's `\bibdata` names databases, found or not.
+                // What BibTeX (`\bibdata`) or biber (`bcf:datasource`) reads names databases, found or not.
+                let found = crate::plugin::bib::resolve(&m.out, &name);
                 if name.ends_with(".bib")
                     || line.head == "bibdata"
-                    || crate::plugin::bib::resolve(&m.out, &name).is_some()
+                    || line.elements.get(n).is_some_and(|e| e == DATASOURCE)
+                    || found.is_some()
                 {
-                    m.occurrence_in(OccKind::Bibliography, name, None, line.span, &line.context);
+                    // The build reads it: the bibliography tool's input.
+                    if let Some(path) = &found {
+                        m.note_read_file(path);
+                    }
+                    // Written later, it stands where the document's call gave the name.
+                    let given = m.out.facts.occurrences.iter().find(|o| o.kind == OccKind::Key && o.key == name);
+                    let at = given.map_or(line.span, |o| o.span);
+                    m.occurrence_in(OccKind::Bibliography, name, None, at, &line.context);
                 }
             }
         }

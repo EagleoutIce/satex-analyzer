@@ -388,6 +388,15 @@ pub fn run_request_value(body: &Json, cfg: &Config, cli_file: Option<&Path>) -> 
     Ok(queries.iter().map(|entry| answer(&analysis, &source, entry)).collect())
 }
 
+/// [`run_request_value`] from an analysis already made of `source` with
+/// arguments recorded, as the language server holds one. `None` only when
+/// the request asks for another configuration, which is another analysis.
+pub fn answer_request(body: &Json, analysis: &crate::machine::Analysis, source: &str) -> Option<Vec<Json>> {
+    let queries = body.get("queries").and_then(Json::as_array)?;
+    (body.get("config").is_none() && !queries.is_empty())
+        .then(|| queries.iter().map(|entry| answer(analysis, source, entry)).collect())
+}
+
 fn read_request(request: &str) -> Result<String, String> {
     if request == "-" {
         let mut buf = String::new();

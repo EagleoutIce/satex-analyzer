@@ -841,6 +841,27 @@ mod roots {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// `satex/query` answers from the open buffer's analysis, not the
+    /// file on disk: the playground's explain panel asks it on hover.
+    #[test]
+    fn a_query_answers_from_the_open_buffer() {
+        let main = format!("{PRELUDE}\\def\\greet{{disk}}\n");
+        let (mut server, uri, dir) = project("query", &[("main.tex", &main)], "main.tex");
+        let text = format!("{PRELUDE}\\def\\greet{{buffer}}\n");
+        server.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+        );
+        let file = dir.join("main.tex").display().to_string();
+        let request = json!({ "file": file, "queries": [{ "type": "explain", "names": ["\\greet"] }] });
+        let id =
+            server.request("workspace/executeCommand", json!({ "command": "satex/query", "arguments": [request] }));
+        let reply = server.response(id);
+        assert!(reply["result"][0].to_string().contains("buffer"), "{reply}");
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// `a.tex` names the file but does not read it; of `b.tex` and `c.tex`,
     /// which both read it, the likelier one answers, and keeps answering.
     #[test]
@@ -1034,7 +1055,7 @@ fn hover_shows_the_active_definition_and_folds_the_others() {
     let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
     let (main, more) = hover.split_once("#### More definitions").unwrap_or((&hover, ""));
     assert!(main.contains("— preamble"), "{hover}");
-    assert!(main.contains("- `⟨arg1⟩` options") && main.contains("- `⟨arg2⟩` file"), "{hover}");
+    assert!(main.contains("- `⟨arg1⟩` options") && main.contains("- `⟨arg2⟩` class (.cls)"), "{hover}");
     assert!(more.contains("— document") && !more.contains("— preamble"), "{hover}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
@@ -1114,6 +1135,126 @@ fn file_arguments_complete_their_files_by_extension() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&dir2);
+}
+
+/// A value the run writes into a build file another tool reads takes that
+/// tool's input type: biblatex's `\addbibresource` and a user wrapper of
+/// `\bibliography` complete databases, with no command named.
+#[test]
+fn databases_complete_by_the_build_file_they_reach() {
+    let wrap = "\\documentclass{article}\n\\newcommand\\mybib[1]{\\bibliography{#1}}\n\\begin{document}\nx\n\\mybib{re}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("bibwrap", wrap);
+    std::fs::write(dir.join("refs.bib"), "").unwrap();
+    let items = complete(&mut server, &uri, 4, 9);
+    assert!(labels(&items).contains(&"refs"), "{:?}", labels(&items));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    if !crate::support::installed() {
+        return;
+    }
+    let blx = "\\documentclass{article}\n\\usepackage{biblatex}\n\\addbibresource{re}\n\\begin{document}\nx\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("bibresource", blx);
+    std::fs::write(dir.join("refs.bib"), "").unwrap();
+    let items = complete(&mut server, &uri, 2, 18);
+    assert!(labels(&items).iter().any(|l| l.starts_with("refs")), "{:?}", labels(&items));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Files of two kinds join to a file of no kind, and a file is a name.
+#[test]
+fn file_kinds_join_to_a_file() {
+    use satex::roles::{FileKind as F, KeyKind as K, Ty};
+    assert_eq!(Ty::File(F::Bib).join(Ty::File(F::Tex)), Ty::File(F::Any));
+    assert_eq!(Ty::File(F::Bib).join(Ty::File(F::Bib)), Ty::File(F::Bib));
+    assert_eq!(Ty::File(F::Bib).join(Ty::Key(K::Any)), Ty::Name);
+    assert_eq!(Ty::Key(K::Label).join(Ty::Key(K::Cite)), Ty::Key(K::Any));
+    assert_eq!(Ty::Key(K::Label).to_string(), "label");
+    assert!(Ty::File(F::Bst).leq(Ty::File(F::Any)));
+    assert_eq!(Ty::File(F::Bib).to_string(), "bibliography database (.bib)");
+    assert_eq!(Ty::File(F::Any).to_string(), "file");
+}
+
+/// A reference takes labels, a citation takes entries: the signature says
+/// which, and neither completion offers the other's keys.
+#[test]
+fn keys_are_labels_or_citations() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\section{A}\\label{sec:intro}\\cite{a} \\ref{} \\cite{}\n\\begin{thebibliography}{9}\\bibitem{knuth} K.\\end{thebibliography}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("keykinds", text);
+    let at = text.lines().nth(2).unwrap();
+    let col = |pat: &str| (at.find(pat).unwrap() + pat.len()) as u32;
+    let refs = complete(&mut server, &uri, 2, col("\\ref{"));
+    assert!(labels(&refs).contains(&"sec:intro") && !labels(&refs).contains(&"knuth"), "{:?}", labels(&refs));
+    let cites = complete(&mut server, &uri, 2, col("\\ref{} \\cite{"));
+    assert!(labels(&cites).contains(&"knuth") && !labels(&cites).contains(&"sec:intro"), "{:?}", labels(&cites));
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": col("\\ref") - 2 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("- `⟨arg1⟩` label") && hover.contains("About label"), "{hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A file argument leads to its file: the `\input` to `.tex`, the database
+/// to `.bib`, by the argument's type and not the command's name.
+#[test]
+fn definition_on_a_file_argument_opens_the_file() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\bibliography{refs}\n\\input{chapter}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("filedef", text);
+    std::fs::write(dir.join("chapter.tex"), "x\n").unwrap();
+    std::fs::write(dir.join("refs.bib"), "").unwrap();
+    for (line, col, file) in [(3, 9, "chapter.tex"), (2, 16, "refs.bib")] {
+        let id = server.request(
+            "textDocument/definition",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": col } }),
+        );
+        let result = server.response(id)["result"].clone();
+        assert!(result.to_string().contains(file), "{file}: {result}");
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A braced name closes its brace unless one follows, and replaces the rest
+/// of the word under the cursor.
+#[test]
+fn a_completed_name_closes_its_brace() {
+    let text = "\\documentclass{article}\n\\begin{document}\n\\section{A}\\label{sec:intro}\n\\ref{sec:in\n\\ref{sec:in}\n\\ref{sec:inxx}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("closing", text);
+    let edit = |server: &mut Server, line, col| {
+        let items = complete(server, &uri, line, col);
+        let it = items.iter().find(|i| i["label"] == "sec:intro").unwrap_or_else(|| panic!("{:?}", labels(&items)));
+        (
+            it["textEdit"]["newText"].as_str().unwrap_or_default().to_string(),
+            it["textEdit"]["range"]["end"]["character"].clone(),
+        )
+    };
+    assert_eq!(edit(&mut server, 3, 11).0, "sec:intro}");
+    assert_eq!(edit(&mut server, 4, 11).0, "sec:intro");
+    assert_eq!(edit(&mut server, 5, 11), ("sec:intro".to_string(), json!(13)));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Database and style arguments show as files in the usage, by the build
+/// file the run writes them to.
+#[test]
+fn bibliography_arguments_are_typed_as_files() {
+    let text = "\\documentclass{article}\n\\begin{document}\nx\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("bibtypes", text);
+    for line in [3, 4] {
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": 5 } }),
+        );
+        let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+        let kind = if line == 3 { "bibliography style (.bst)" } else { "bibliography database (.bib)" };
+        assert!(hover.contains(&format!("- `⟨arg1⟩` {kind}")) && !hover.contains("About key"), "{hover}");
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// An argument TeX reads as a length narrows what a name there may be:
@@ -1222,4 +1363,62 @@ fn l3keys_complete_keys_and_choices() {
     assert_eq!(labels(&choices), ["big", "small"]);
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
+}
+
+/// The rows of `satex/typeset` for a root with an `\input` file and a bibliography.
+fn typeset_of_a_root(tag: &str) -> Vec<Value> {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-typeset-{tag}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let text = "\\documentclass{article}\n\\begin{document}\n\\input{chapter}\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
+    let main = dir.join("main.tex");
+    std::fs::write(&main, text).unwrap();
+    std::fs::write(dir.join("chapter.tex"), "Chapter text \\cite{a}.\n").unwrap();
+    std::fs::write(dir.join("refs.bib"), "@book{a, author={Doe, J.}, title={A Title}, year={2020}, publisher={P}}\n")
+        .unwrap();
+    let uri = fixture_uri(&main);
+    let mut server = Server::start_with(&dir, &dir, &["--set", "limits.seconds=0"]);
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    server.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
+    );
+    server.notification("textDocument/publishDiagnostics");
+    let mut rows = Vec::new();
+    for _ in 0..20 {
+        let id = server.request("satex/typeset", json!({ "textDocument": { "uri": uri } }));
+        rows = server.response(id)["result"].as_array().cloned().unwrap_or_default();
+        if rows.iter().any(|r| r["detail"].as_str().is_some_and(|d| d.contains("A Title"))) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    rows
+}
+
+/// The paragraphs of an `\input` file come with the file they are set in.
+#[test]
+fn typeset_of_a_root_lists_an_input_file() {
+    if satex::paths::which("kpsewhich").is_err() {
+        return;
+    }
+    let rows = typeset_of_a_root("input");
+    assert!(rows.iter().any(|r| r["path"].as_str().is_some_and(|p| p.ends_with("chapter.tex"))), "{rows:?}");
+}
+
+/// To do: the server analyzes a document in one run (`Checkpoints::analyze`), so the .bbl the build's
+/// bibliography tool would make is not typeset here, as `satex query typeset` has it.
+#[test]
+fn typeset_of_a_root_lists_the_bibliography() {
+    if satex::paths::which("kpsewhich").is_err() {
+        return;
+    }
+    let rows = typeset_of_a_root("bibliography");
+    assert!(
+        rows.iter().any(|r| r["path"] == "main.tex" && r["detail"].as_str().is_some_and(|d| d.contains("A Title"))),
+        "{rows:?}"
+    );
 }

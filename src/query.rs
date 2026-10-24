@@ -2753,24 +2753,49 @@ fn insert_call_shape(
     // Roles and types name the braced arguments; the record names every
     // argument by its place in the usage line.
     let slots = argument_slots(probe.as_ref().map_or(&[][..], |p| &p.spec.items[..]));
-    let place = |braced: usize| {
-        slots
-            .iter()
-            .filter(|(_, i)| matches!(i, crate::tex::ArgType::Mandatory | crate::tex::ArgType::Until(_)))
-            .nth(braced)
-            .map_or(braced + 1, |(n, _)| *n)
-    };
+    // A braced group stands for the next item that reads one: a numbered
+    // argument, or a name the call defines (`\newcommand{\x}`), which has
+    // no number and takes no type here.
+    let braced_items: Vec<Option<usize>> = probe
+        .as_ref()
+        .map_or(&[][..], |p| &p.spec.items[..])
+        .iter()
+        .filter_map(|item| {
+            use crate::tex::ArgType as A;
+            match item {
+                A::Mandatory | A::Until(_) => slots.iter().find(|(_, i)| std::ptr::eq(*i, item)).map(|(n, _)| Some(*n)),
+                A::Quantity(k) if k == "cs" => Some(None),
+                _ => None,
+            }
+        })
+        .collect();
+    let place_of_braced = |braced: usize| braced_items.get(braced).copied().unwrap_or(Some(braced + 1));
+    let place = |braced: usize| place_of_braced(braced).unwrap_or(0);
     let named: Vec<String> = roles
         .iter()
         .filter(|r| !matches!(r.kind, crate::roles::RoleKind::Type(_)))
-        .map(|r| ToString::to_string(r).replacen(&format!("#{}", r.arg + 1), &format!("#{}", place(r.arg)), 1))
+        .map(|r| {
+            let at = place_of_braced(r.arg).map_or("⟨cs⟩".to_string(), |n| format!("#{n}"));
+            ToString::to_string(r).replacen(&format!("#{}", r.arg + 1), &at, 1)
+        })
         .collect();
     if !named.is_empty() {
         record.insert("roles".into(), json!(named));
     }
     use crate::roles::{RoleKind, Ty};
     let mut types: Vec<(usize, Ty)> =
-        crate::roles::arg_types(&roles).into_iter().map(|(arg, t)| (place(arg), t)).collect();
+        crate::roles::arg_types(&roles).into_iter().filter_map(|(arg, t)| Some((place_of_braced(arg)?, t))).collect();
+    // What the run read in the `[…]` arguments, each at its optional slot.
+    let optional: Vec<usize> = slots
+        .iter()
+        .filter(|(_, i)| {
+            matches!(i, crate::tex::ArgType::Optional(_) | crate::tex::ArgType::Delimited { required: false, .. })
+        })
+        .map(|(n, _)| *n)
+        .collect();
+    for (j, t) in crate::roles::optional_types(analysis, analysis.interner.name(sym)) {
+        types.extend(optional.get(j).map(|n| (*n, t)));
+    }
     // The options a loading command takes before the name it loads.
     for r in roles.iter().filter(|r| {
         matches!(r.kind, RoleKind::Load(crate::builtins::LoadKind::Package | crate::builtins::LoadKind::Class))

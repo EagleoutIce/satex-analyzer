@@ -68,10 +68,46 @@ A command name: `\name` of letters, or `\` and one other character. It is an arg
 `\newif\iffoo` defines `\iffoo`, `\footrue` and `\foofalse`. `\iffoo ...\else ...\fi` tests it.
 
 ## key
-A name a label, a citation or a key list is looked up by. It is case sensitive.
+A name something is looked up by: a label, a citation or an option. It is case sensitive.
+
+## label
+A name `\label` defines and `\ref` looks up. It is case sensitive. Citation keys do not go here.
+
+## citation key
+The key of an entry in a `.bib` file or a `\bibitem`, which `\cite` looks up. It is case sensitive. Labels do not go here.
+
+## option key
+A key of a key list (`\pgfkeys`, `\tikzset`, a package option), with an optional value after `=`.
+
+## environment name
+The name `\begin` opens and `\end` closes.
 
 ## file, input file
 A file name without a trailing space. TeX adds the extension (`.tex`, `.sty`, `.cls`, `.bib`) where the command expects one, and searches the project and the TeX tree.
+
+## TeX file (.tex)
+A document part `\input` or `\include` reads. The extension may be left out.
+
+## package (.sty)
+A package `\usepackage` loads from the project or the TeX tree.
+
+## class (.cls)
+The class `\documentclass` loads from the project or the TeX tree.
+
+## bibliography database (.bib)
+A `.bib` file, or a comma separated list of them, that BibTeX or biber reads the entries from. The extension may be left out.
+
+## bibliography style (.bst)
+A BibTeX style, chosen by name: it decides how entries are sorted and printed. The extension is left out.
+
+## biblatex bibliography style (.bbx)
+A biblatex style for the list of references, chosen by `style=`.
+
+## biblatex citation style (.cbx)
+A biblatex style for citations, chosen by `citestyle=`.
+
+## graphic file
+A figure file. The extension may be left out when the driver knows several.
 
 ## options
 The key list in the optional argument of `\documentclass`, `\usepackage` or `\RequirePackage`: `[a4paper, 11pt]` or `[style=numeric, backend=biber]`.

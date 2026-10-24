@@ -810,14 +810,31 @@ fn types_count_optional_arguments_and_type_a_control_sequence() {
     }
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let analysis = Machine::analyze("\\documentclass{article}\n\\begin{document}\\end{document}", None, &cfg);
-    for name in ["usepackage", "documentclass"] {
+    for (name, ty) in [("usepackage", "package (.sty)"), ("documentclass", "class (.cls)")] {
         let records = query::explain(&analysis, &[name.to_string()], false).unwrap().0;
         assert!(
-            records.iter().any(|r| r.get("types") == Some(&json!(["#1 options", "#2 file"]))),
+            records.iter().any(|r| r.get("types") == Some(&json!(["#1 options".to_string(), format!("#2 {ty}")]))),
             "{name}: {records:?}"
         );
     }
     let newif = explain_one(&analysis, "newif");
     assert_eq!(newif.get("signature"), Some(&json!("\\if⟨name⟩")), "{newif:?}");
     assert_eq!(newif.get("types"), Some(&json!(["#1 conditional"])), "{newif:?}");
+}
+
+/// The name `\newcommand{\x}` defines is read from the first braced group;
+/// that group is no numbered argument, so its type stays off the body.
+#[test]
+fn the_defined_name_types_no_numbered_argument() {
+    if !installed() {
+        return;
+    }
+    let analysis = Machine::analyze(
+        "\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\\greet{you}\\end{document}",
+        None,
+        &crate::support::config(),
+    );
+    let record = explain_one(&analysis, "newcommand");
+    let types = record.get("types").cloned().unwrap_or_default().to_string();
+    assert!(!types.contains("control sequence"), "{record:?}");
 }

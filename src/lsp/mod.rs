@@ -284,6 +284,11 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
             Ok(Json::Array(ask(engine_tx, |reply| EngineMsg::Typeset(uri, reply))?))
         }
+        // The cache report of the last analysis: which kernel, class and package caches it reused or rebuilt.
+        "satex/caches" => {
+            let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(ask(engine_tx, |reply| EngineMsg::Caches(uri, reply))?).unwrap())
+        }
         "textDocument/hover" => {
             let p: HoverParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let uri = p.text_document_position_params.text_document.uri;
@@ -412,6 +417,7 @@ enum EngineMsg {
     CodeAction(Uri, Sender<Vec<Json>>),
     ExecuteCommand(Json, Sender<Result<Vec<Json>, String>>),
     Typeset(Uri, Sender<Vec<Json>>),
+    Caches(Uri, Sender<Vec<String>>),
     Shutdown,
 }
 
@@ -472,6 +478,8 @@ struct Engine {
     /// Each document's loads, when its hovers were last kept: the kernel's
     /// and the packages' names mean the same while these do.
     preambles: HashMap<Uri, Vec<String>>,
+    /// Each document's text before `\begin{document}` at its last run.
+    preamble_texts: HashMap<Uri, String>,
     /// Where each document's hovers are kept between sessions, and the
     /// names it defines itself, which are never kept there.
     stores: HashMap<Uri, (std::path::PathBuf, std::collections::HashSet<String>)>,
@@ -492,7 +500,8 @@ impl EngineMsg {
             | EngineMsg::SignatureHelp(uri, ..)
             | EngineMsg::Completion(uri, ..)
             | EngineMsg::DocumentSymbol(uri, ..)
-            | EngineMsg::Typeset(uri, ..) => Some(uri),
+            | EngineMsg::Typeset(uri, ..)
+            | EngineMsg::Caches(uri, ..) => Some(uri),
             _ => None,
         }
     }
@@ -520,6 +529,7 @@ impl Engine {
             hovers: Hovers::default(),
             prefill: Default::default(),
             preambles: HashMap::default(),
+            preamble_texts: HashMap::default(),
             stores: HashMap::default(),
             checkpoints: HashMap::default(),
             inbox: None,
@@ -547,6 +557,14 @@ impl Engine {
         self.dirty.retain(|d| d != uri);
         let Some(doc) = self.docs.get_mut(uri) else { return };
         let changed = !doc.analysis.as_ref().is_some_and(|a| Rc::ptr_eq(a, &analysis));
+        let preamble = text.split("\\begin{document}").next().unwrap_or_default().to_string();
+        let same = self.preamble_texts.insert(uri.clone(), preamble.clone()).is_some_and(|p| p == preamble);
+        if changed
+            && same
+            && let Some(old) = &doc.analysis
+        {
+            carry_probes(old, &analysis);
+        }
         doc.analysis = Some(analysis.clone());
         self.runs.retain(|_, run| Rc::strong_count(&run.analysis) > 1);
         if changed {
@@ -630,13 +648,17 @@ impl Engine {
         }
         let source = crate::overlay::read_to_string(root).unwrap_or_default();
         let analysis = Rc::new(self.serving(|engine| {
+            let cfg = engine.cfg;
             match discovery::is_document(&source) {
-                true => engine
-                    .checkpoints
-                    .entry(key.clone())
-                    .or_insert_with(|| crate::machine::Checkpoints::new(engine.cfg))
-                    .analyze(&source, root),
-                false => Machine::analyze(&source, Some(root), engine.cfg),
+                // The build's files (`.aux`, the `.bbl`) stay for the next run.
+                true => Machine::build(
+                    engine.checkpoints.entry(key.clone()).or_insert_with(|| crate::machine::Checkpoints::new(cfg)),
+                    &source,
+                    root,
+                    cfg,
+                    true,
+                ),
+                false => Machine::analyze(&source, Some(root), cfg),
             }
         }));
         // The server's stderr is the client's log.
@@ -824,6 +846,7 @@ impl Engine {
                 self.actions.remove(&uri);
                 self.dirty.retain(|d| d != &uri);
                 self.preambles.remove(&uri);
+                self.preamble_texts.remove(&uri);
                 self.prefill.retain(|(u, _)| u != &uri);
                 if let Ok(mut hovers) = self.hovers.lock() {
                     hovers.retain(|(u, _), _| u != &uri);
@@ -836,6 +859,7 @@ impl Engine {
             | EngineMsg::Completion(..)
             | EngineMsg::DocumentSymbol(..)
             | EngineMsg::Typeset(..)
+            | EngineMsg::Caches(..)
             | EngineMsg::WorkspaceSymbol(..)) => {
                 if let Some(uri) = msg.uri().or_else(|| self.docs.keys().next()).cloned() {
                     self.ensure(&uri);
@@ -870,8 +894,16 @@ impl Engine {
                 let _ = reply.send(self.actions.get(&uri).cloned().unwrap_or_default());
             }
             EngineMsg::ExecuteCommand(body, reply) => {
+                // An open document's own analysis answers; another file is run.
+                let file = body.get("file").and_then(Json::as_str).map(PathBuf::from);
+                let open = self.docs.iter().find(|(_, d)| file.as_ref().is_none_or(|f| *f == d.path));
+                let held = open.map(|(uri, _)| uri.clone()).and_then(|uri| {
+                    self.fresh(&uri);
+                    with_doc(&self.docs, &uri, |a, text| crate::cmd::query::answer_request(&body, a, text.body()))?
+                });
                 let active = self.docs.values().next().map(|d| d.path.clone()).unwrap_or_else(|| self.root.clone());
-                let result = crate::cmd::query::run_request_value(&body, self.cfg, Some(&active));
+                let result =
+                    held.map_or_else(|| crate::cmd::query::run_request_value(&body, self.cfg, Some(&active)), Ok);
                 let _ = reply.send(result);
             }
         }
@@ -950,6 +982,9 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, msg: EngineMsg) -> Option<E
         EngineMsg::Typeset(uri, reply) => {
             let result = with_doc(docs, &uri, |analysis, _| handlers::typeset(analysis));
             let _ = reply.send(result.unwrap_or_default());
+        }
+        EngineMsg::Caches(uri, reply) => {
+            let _ = reply.send(with_doc(docs, &uri, |analysis, _| analysis.cache_report()).unwrap_or_default());
         }
         msg => return Some(msg),
     }
@@ -1039,6 +1074,29 @@ fn with_doc<T>(docs: &HashMap<Uri, Doc>, uri: &Uri, f: impl FnOnce(&Analysis, &T
     // Columns count what this document's engine reads, whatever was
     // analyzed last on this thread (`crate::source`).
     Some(crate::source::with(analysis.plugins.engine.encoding(), || f(analysis, &text)))
+}
+
+/// What `old` probed of names the package code defines, by name, in
+/// `new`, made of the same preamble and loads: such a name means at the
+/// preamble's end and at the start what it meant there. Probes at the end,
+/// and of names the document defines, are its own.
+fn carry_probes(old: &Analysis, new: &Analysis) {
+    let loads = |a: &Analysis| a.facts.loads.iter().map(|l| l.name.clone()).collect::<Vec<_>>();
+    if loads(old) != loads(new) {
+        return;
+    }
+    let own: HashSet<&str> =
+        new.facts.defs.iter().filter(|d| d.package.is_none()).map(|d| new.interner.name(d.name)).collect();
+    let (Ok(from), Ok(mut to)) = (old.probes.lock(), new.probes.lock()) else { return };
+    for (&(sym, at), probed) in from.iter() {
+        let name = old.interner.name(sym);
+        if at != crate::probe::State::End
+            && !own.contains(name)
+            && let Some(sym) = new.interner.lookup(name)
+        {
+            to.entry((sym, at)).or_insert_with(|| probed.clone());
+        }
+    }
 }
 
 /// `path` with symlinks resolved, where it exists: the key of a file.
