@@ -45,7 +45,7 @@ use crate::tex::codec::{self, Mode};
 use crate::tex::{CatcodeTable, EndLineChar, FileId, LineMark, MacroDef, Meaning, Mouth, RegKind, Span, Sym, Token};
 use crate::value::Value;
 
-const ENCODING_VERSION: u32 = 4;
+use crate::format::PACKAGE_ENCODING_VERSION as ENCODING_VERSION;
 /// The file number that stands for "the site of this load" in a cached span.
 const LOAD_SITE: FileId = FileId::MAX;
 /// A file number no run hands out: a file a segment names that this run has

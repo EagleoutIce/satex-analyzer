@@ -13,6 +13,8 @@ use crate::value::Value;
 
 /// Cache version: different encodings get different files.
 const ENCODING_VERSION: u32 = 5;
+/// The encoding of the package caches, versioned apart from the kernel's.
+pub(crate) const PACKAGE_ENCODING_VERSION: u32 = 4;
 
 /// What a cache means, bumped by hand whenever the interpreter would
 /// analyse a cached file differently. Caches are keyed on it, not on the
@@ -364,9 +366,10 @@ fn split_cache_name(name: &str) -> Option<(&str, &str, &str)> {
 
 /// Whether a cache file name is one this build can use: its key and encoding.
 pub(crate) fn is_current_cache(name: &str) -> bool {
+    let version = if name.starts_with("package-") { PACKAGE_ENCODING_VERSION } else { ENCODING_VERSION };
     (name.starts_with("format-") || name.starts_with("package-"))
         && split_cache_name(name)
-            .is_some_and(|(family, key, _)| key == cache_key() && family.ends_with(&format!("-v{ENCODING_VERSION}")))
+            .is_some_and(|(family, key, _)| key == cache_key() && family.ends_with(&format!("-v{version}")))
 }
 
 /// The part of a cache name every interpreter version shares.
@@ -985,7 +988,9 @@ mod tests {
         assert!(is_current_cache(&name(key)));
         assert!(!is_current_cache(&name(&format!("{key}d0123456789abcdef"))));
         assert!(!is_current_cache(&name(&key[..key.len() - 1])));
-        assert!(!is_current_cache(&format!("package-a-v{}-{key}-0123.postcard", ENCODING_VERSION + 1)));
+        let package = PACKAGE_ENCODING_VERSION;
+        assert!(is_current_cache(&format!("package-a-v{package}-{key}-0123.postcard")));
+        assert!(!is_current_cache(&format!("package-a-v{}-{key}-0123.postcard", package + 1)));
         // A build whose key extends this one's is another build to `miss_reason`.
         let dir = std::env::temp_dir().join(format!("satex-miss-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
