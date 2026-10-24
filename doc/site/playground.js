@@ -6,9 +6,9 @@
   const $ = (id) => document.getElementById(id);
   const manifest = JSON.parse($('satex-play').textContent);
   const base = new URL(manifest.root, document.baseURI).href;
-  const [tabs, args, button, status, output, lspStatus, list, count, cmd, kernelBox, rootBox, toastBox, ctxMenu] =
+  const [tabs, args, button, status, output, lspStatus, list, count, cmd, kernelBox, toastBox, ctxMenu, treeBox, examplesBox] =
     ['play-tabs', 'play-args', 'play-run', 'play-status', 'play-output', 'lsp-status', 'lsp-diagnostics', 'lsp-count',
-      'play-cmd', 'play-kernel', 'play-root', 'play-toast', 'play-ctx'].map($);
+      'play-cmd', 'play-kernel', 'play-toast', 'play-ctx', 'play-files-tree', 'play-examples'].map($);
   // Panes snap, as in flowR's playground: a splitter dragged into a pane's last half
   // minimum folds that pane away, a click on the folded splitter brings it back; near a
   // third, half or two thirds it rests there. A section's grip sets its height, dragged
@@ -79,6 +79,26 @@
       }, keep);
       grip.addEventListener('dblclick', () => { height(null); keep(); });
     }
+
+    // the file tree: a toggle in the tab row, a grip for its width; folded on narrow screens
+    const tree = $('play-tree'), toggle = $('play-treetoggle'), work = tree.parentElement;
+    const showTree = (on) => { tree.hidden = !on; toggle.setAttribute('aria-expanded', on); };
+    showTree(kept.tree ?? !matchMedia('(max-width: 52rem)').matches);
+    toggle.onclick = () => { showTree(tree.hidden); kept.tree = !tree.hidden; keep(); };
+    if (kept.treeWidth) work.style.setProperty('--tree', `${kept.treeWidth}px`);
+    drag($('play-treegrip'), () => tree.getBoundingClientRect().width, (m, e, w) => {
+      const want = w + m.clientX - e.clientX;
+      if (want < PANES.min * rem() / 3) return showTree(false);
+      kept.treeWidth = Math.round(clamp(want, 7 * rem(), work.getBoundingClientRect().width / 2));
+      work.style.setProperty('--tree', `${kept.treeWidth}px`);
+    }, keep);
+    // the run output over the command line: its grip sets its height
+    const out = $('play-out');
+    if (kept.term) out.style.setProperty('--h', `${kept.term}px`);
+    drag($('play-termgrip'), () => out.getBoundingClientRect().height, (m, e, h) => {
+      kept.term = Math.round(clamp(h - (m.clientY - e.clientY), 4 * rem(), innerHeight * 0.75));
+      out.style.setProperty('--h', `${kept.term}px`);
+    }, keep);
   }
   // The worker's code comes with the page: file:// pages cannot start a worker from a file.
   const worker = new Worker(URL.createObjectURL(new Blob([manifest.worker], { type: 'text/javascript' })));
@@ -89,11 +109,13 @@
   const size = (n) => n < 2 ** 20 ? `${Math.ceil(n / 1024)} KiB` : `${(n / 2 ** 20).toFixed(1)} MiB`;
   const started = performance.now();
 
-  // The project: its directory, its files' texts, the open file and the root a run reads.
-  // The samples are one project whose every file is its own root; an upload has one root.
+  // The project, as in flowR's playground: its files in the tree, the open ones as tabs, one
+  // root that runs and the language server analyze, its \input files with it. An example
+  // (`manifest.projects` names the files it reads besides itself) or an upload is a project.
+  // `texts` holds every file under `dir`: an example's edits stay while another one is open.
   // Read-only files (`ro`) are kernel or package files opened by a definition: never sent or run.
-  const state = { dir: '/work', texts: {}, original: {}, file: manifest.sample, root: null, kernel: 0, loaded: new Set([0]), upload: false, ro: {} };
-  // An example may read more files (`manifest.projects`): its tabs, analyzed together with it, rooted at it.
+  const state = { dir: '/work', texts: {}, file: null, root: manifest.sample, kernel: 0, loaded: new Set([0]), upload: false, ro: {},
+    example: manifest.sample, files: [], open: [], lists: {} };
   const projects = manifest.projects ?? {};
   const shared = new Set(Object.values(projects).flat());
   const projectOf = (name) => name in projects ? name : Object.keys(projects).find((r) => projects[r].includes(name)) ?? null;
@@ -252,7 +274,7 @@
   /** Sends the buffer to the server unless it already has it: the text
    * only, so what is asked meanwhile is answered from the last analysis. */
   function push() {
-    if (state.file in state.ro) return false;
+    if (!state.file || state.file in state.ro) return false;
     state.texts[state.file] = editor.text();
     if (data(state.file) && synced !== version) {
       synced = version;
@@ -475,6 +497,7 @@
     }
     diagnostics[target] = ds.map((d) => ({ ...d, fixes: by.get(key(d)) ?? [] }));
     if (target === uri()) render();
+    drawTree();
   }
   /** Each finding: its severity, place, rule and message once. */
   function render() {
@@ -809,6 +832,7 @@
     return [...flags(), '--stats', ...(a.some((x) => x.startsWith('--color')) ? [] : ['--color', 'always']), ...a];
   }
   const outBox = $('play-out');
+  $('play-outclose').onclick = () => { outBox.hidden = true; };
   async function start() {
     sync();
     const a = argv();
@@ -839,7 +863,6 @@
       status.textContent = `${command() ?? 'run'} ${secs(data.ms)} · exit ${data.status}${plainLint() && summary ? ` · ${summary}` : ''}`;
       // plain lint's findings are the panel's: its output would repeat them
       outBox.hidden = (plainLint() || explainedHere) && !failed;
-      outBox.open = !outBox.hidden;
       status.dataset.done = data.status;
       if (missing([printed]).length) fetchMissing([printed]);
     } catch (e) {
@@ -895,7 +918,7 @@
       const [k, eq] = [cur.split('=')[0], cur.includes('=')];
       items = !eq ? Object.entries(tree.config_keys).map(([key, v]) => [`${key}=`, JSON.stringify(v)])
         : Array.isArray(tree.config_keys[k]) && /lint|rule/.test(k) ? tree.rules.map((r) => [`${k}=[${r}]`, manifest.rules[r]?.message]) : [];
-    } else if (flag?.takes_value && flag.long === 'file') items = Object.keys(state.texts).filter((n) => !(n in state.ro)).map((n) => [n, 'file']);
+    } else if (flag?.takes_value && flag.long === 'file') items = state.files.map((n) => [n, 'file']);
     else if (flag?.takes_value && flag.long === 'explain') items = tree.rules.map((r) => [r, manifest.rules[r]?.message]);
     else if (flag?.takes_value && flag.long === 'at') items = atChoices(node.name);
     else if (flag?.takes_value) items = [];
@@ -927,7 +950,7 @@
         [`${p.line + 1}`, 'the caret\'s line'], [`${file}:${p.line + 1}`, 'the caret\'s line, in this file']];
     }
     return [[`${p.line + 1}:${p.character + 1}`, 'the caret'], [`${file}:${p.line + 1}:${p.character + 1}`, 'the caret, in this file'],
-      ...Object.keys(state.texts).filter((n) => !(n in state.ro)).map((n) => [`${n}:`, 'a file of the project, then LINE:COL'])];
+      ...state.files.map((n) => [`${n}:`, 'a file of the project, then LINE:COL'])];
   }
   function draw() {
     menu.hidden = !choices.length;
@@ -968,6 +991,7 @@
 
   // ---------------------------------------------------------------- files, projects, kernels
 
+  let sampleTexts;
   const opened = new Set();
   function open(name) {
     if (opened.has(uri(name)) || name in state.ro || data(name)) return;
@@ -975,74 +999,247 @@
     checking();
     lsp('textDocument/didOpen', { textDocument: { uri: uri(name), languageId: 'latex', version, text: state.texts[name] } }, true);
   }
-  /** Starts the language server again: another kernel or another project. */
+  function close(name) {
+    if (!opened.delete(uri(name))) return;
+    lsp('textDocument/didClose', { textDocument: { uri: uri(name) } }, true);
+    delete diagnostics[uri(name)];
+  }
+  const encode = (text) => new TextEncoder().encode(text);
+  /** The project's texts into the worker's file system, which a new language server boots from. */
+  const store = (names = state.files, removed = []) => worker.postMessage({ type: 'project', dir: state.dir, removed,
+    files: Object.fromEntries(names.filter((n) => n in state.texts && !(n in state.ro)).map((n) => [n, encode(state.texts[n])])) });
+  const OPEN_AT_START = 16;
+  /** Starts the language server again: another kernel, project or root. */
   async function restart() {
     sync();
+    store();
     opened.clear();
     asked.clear();
     for (const p of pending.values()) p.resolve(null);
     pending.clear();
-    const root = state.root ? ['-f', state.root] : [];
-    worker.postMessage({ type: 'reset', args: [...flags(), ...root], cwd: state.dir });
+    worker.postMessage({ type: 'reset', args: [...flags(), '-f', state.root], cwd: state.dir });
     lspStatus.textContent = 'language server: starting…';
     await lsp('initialize', { processId: null, rootUri: `file://${state.dir}`, capabilities: {} });
     lsp('initialized', {}, true);
-    if (state.root) open(state.root);
+    open(state.root);
     open(state.file);
+    // the server publishes findings of open files only: the project's own, up to a few, for the tree's counts
+    for (const n of state.files.slice(0, OPEN_AT_START)) open(n);
     synced = version;
   }
-  function drawTabs() {
-    // the open example's files only, else every example's own
-    const mine = projects[state.project] ?? [];
-    const names = Object.keys(state.texts).filter((n) => state.upload || !shared.has(n) || mine.includes(n));
-    tabs.innerHTML = (state.upload ? '<button role="tab" class="back" data-back="1" title="back to the samples">← samples</button>' : '') +
-      names.map((n) => `<button role="tab" aria-selected="${n === state.file}" data-name="${escape(n)}"${n in state.ro ? ` class="ro" title="${escape(state.ro[n])}, read-only"` : ''}>${escape(n)}</button>`).join('');
-    $('play-rootbox').hidden = !state.upload;
+
+  // ---------------------------------------------------------------- the file tree and the tabs
+
+  const KINDS = { tex: 'c4', ltx: 'c4', bib: 'c5', bst: 'c5', sty: 'c6', cls: 'c6', cfg: 'c6', def: 'c6' };
+  const fileIcon = (name) => `<svg class="ficon" viewBox="0 0 16 16" aria-hidden="true" style="--k: var(--${KINDS[name.split('.').pop()] ?? 'c0'})"><path d="M4 1.5h5.5L13 5v9.5H4z"/><path d="M9.5 1.5V5H13"/></svg>`;
+  /** A file's findings as a count in its worst severity's color. */
+  function tally(name) {
+    const ds = diagnostics[uri(name)] ?? [];
+    if (!ds.length) return '';
+    const worst = ['error', 'warning'].find((s) => ds.some((d) => sev(d) === s)) ?? 'info';
+    return `<span class="tcount sev-${worst}" title="${ds.length} finding${ds.length > 1 ? 's' : ''}">${ds.length}</span>`;
   }
+  /** A root candidate: a TeX file that starts a document. */
+  const rootable = (name) => /\.(tex|ltx)$/.test(name) && /\\documentclass|\\begin\s*\{document\}|\\bye\b/.test(state.texts[name] ?? '');
+  const foldedDirs = new Set();
+  function drawTree() {
+    const names = [...state.files].sort((a, b) => a.localeCompare(b));
+    const rows = [], seen = new Set();
+    for (const n of names) {
+      const parts = n.split('/');
+      for (let d = 1; d < parts.length; d++) {
+        const dir = parts.slice(0, d).join('/');
+        if (!seen.has(dir)) { seen.add(dir); if (![...foldedDirs].some((f) => dir.startsWith(f + '/'))) rows.push(`<div class="folder${foldedDirs.has(dir) ? ' folded' : ''}" role="treeitem" tabindex="0" data-folder="${escape(dir)}" style="--depth: ${d - 1}"><span class="tname">${escape(parts[d - 1])}</span></div>`); }
+      }
+      if ([...foldedDirs].some((f) => n.startsWith(f + '/'))) continue;
+      const root = n === state.root;
+      rows.push(`<div class="file${root ? ' root' : ''}" role="treeitem" tabindex="0" data-name="${escape(n)}" style="--depth: ${parts.length - 1}"${n === state.file ? ' aria-current="true"' : ''} title="${escape(n)}">` +
+        `${fileIcon(n)}<span class="tname">${escape(parts.at(-1))}</span>${root ? '<span class="rootmark" title="the root: runs and the language server read the project from here">root</span>' : ''}${tally(n)}` +
+        `<span class="tacts">${!root && rootable(n) ? '<button type="button" class="tact" data-act="root" title="make this the root">◎</button>' : ''}` +
+        `<button type="button" class="tact" data-act="rename" title="rename ${escape(n)}">✎</button><button type="button" class="tact" data-act="delete" title="delete ${escape(n)}">×</button></span></div>`);
+    }
+    treeBox.innerHTML = rows.join('');
+    const examples = Object.keys(sampleTexts ?? {}).filter((n) => !shared.has(n));
+    examplesBox.innerHTML = examples.map((n) => {
+      const more = projects[n]?.length;
+      return `<div class="file ex" role="listitem" tabindex="0" data-example="${escape(n)}"${!state.upload && n === state.example ? ' aria-current="true"' : ''} title="${escape(n)}${more ? ` and ${projects[n].join(', ')}` : ''}, in place of the project's files">` +
+        `${fileIcon(n)}<span class="tname">${escape(n)}</span>${more ? `<span class="tmore">+${more}</span>` : ''}</div>`;
+    }).join('');
+  }
+  function drawTabs() {
+    tabs.innerHTML = state.open.map((n) => `<button role="tab" aria-selected="${n === state.file}" data-name="${escape(n)}"${n in state.ro ? ` class="ro" title="${escape(state.ro[n])}, read-only"` : ` title="${escape(n)}${n === state.root ? ', the root' : ''}"`}>` +
+      `${escape(n)}<span class="x" role="button" aria-label="close ${escape(n)}" title="close"></span></button>`).join('');
+    tabs.querySelector('[aria-selected=true]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+  const redraw = () => { drawTabs(); drawTree(); };
   /** The command a sample comes with: plain lint unless the manifest says otherwise. */
   const commandOf = (name) => manifest.commands?.[name] ?? 'lint';
-  /** Shows `name` in the editor; the language server gets it if it does not have it. */
+  /** Shows `name` in the editor, as a tab; the language server gets it if it does not have it. */
   function choose(name) {
-    if (!editor || !(name in state.texts) || name === state.file) return;
+    if (!editor || !(name in state.texts)) return;
+    if (!state.open.includes(name)) state.open.push(name);
+    if (name === state.file) return redraw();
     sync();
     state.file = name;
-    // a file of an example keeps its example; another example's root is the new one
-    const project = state.upload || name in state.ro ? state.project : (projects[state.project]?.includes(name) ? state.project : projectOf(name));
-    state.project = project;
-    drawTabs();
+    redraw();
     editor.set(state.texts[name], name in state.ro);
     drawRefs();
-    if (!state.upload && !(name in state.ro) && (project ?? null) !== state.root) {
-      state.root = project ?? null;
-      restart().then(() => { analyze(); render(); });
-    } else if (name in state.ro) render();
-    else if (opened.has(uri())) { synced = version; lsp('textDocument/didChange', { textDocument: { uri: uri(), version }, contentChanges: [{ text: state.texts[name] }] }, true); analyze(); render(); }
-    else { open(name); if (data(name)) render(); }
-    if (!state.upload && !(name in state.ro) && name in sampleTexts && (name in projects || !shared.has(name))) {
-      history.replaceState(null, '', `#${name}`);
-      args.value = commandOf(name);
-      if (!plainLint()) start();
-    }
+    open(name);
+    synced = version; // the server has this text: opened with it, or kept in sync with it
+    render();
+    typeset(uri());
+  }
+  /** Closes a tab; the last one closed leaves the root open. */
+  function closeTab(name) {
+    const i = state.open.indexOf(name);
+    if (i < 0) return;
+    state.open.splice(i, 1);
+    if (name in state.ro) { delete state.ro[name]; delete state.texts[name]; }
+    if (!state.open.length) state.open.push(state.root);
+    if (name === state.file) { state.file = null; choose(state.open[Math.min(i, state.open.length - 1)]); } else redraw();
   }
   tabs.onclick = (e) => {
     const tab = e.target.closest('button');
-    if (tab?.dataset.back) samples();
-    else if (tab) choose(tab.dataset.name);
+    if (!tab) return;
+    if (e.target.closest('.x')) closeTab(tab.dataset.name); else choose(tab.dataset.name);
   };
+  tabs.onauxclick = (e) => { const tab = e.target.closest('button'); if (tab && e.button === 1) closeTab(tab.dataset.name); };
+  tabs.ondblclick = (e) => { const n = e.target.closest('button')?.dataset.name; if (n && !(n in state.ro)) renameFile(n); };
+
+  /** An example in place of the project: its files (as last edited), its root, its command. */
+  async function example(ex, { file = ex, list = null, root = ex, command = null } = {}) {
+    if (!editor || !(ex in sampleTexts)) return;
+    sync();
+    if (state.upload) Object.assign(state, { dir: '/work', texts: { ...sampleTexts }, upload: false, lists: {} });
+    for (const n of Object.keys(state.ro)) delete state.texts[n];
+    state.ro = {};
+    state.files = state.lists[ex] ??= list ?? [ex, ...(projects[ex] ?? [])];
+    Object.assign(state, { example: ex, root: state.files.includes(root) ? root : ex, open: [...state.files], file: state.files.includes(file) ? file : ex });
+    editor.set(state.texts[state.file]);
+    history.replaceState(null, '', `#${encodeURIComponent(ex)}`);
+    redraw();
+    await restart();
+    args.value = command ?? commandOf(ex);
+    outBox.hidden = true;
+    if (!plainLint()) start();
+  }
+  /** Another root: the server starts over from it. */
+  async function makeRoot(name) {
+    state.root = name;
+    redraw();
+    await restart();
+    toast(`${name} is the root`);
+  }
+  examplesBox.onclick = (e) => { const row = e.target.closest('[data-example]'); if (row) example(row.dataset.example); };
+  treeBox.onclick = (e) => {
+    const folder = e.target.closest('[data-folder]');
+    if (folder) { const f = folder.dataset.folder; if (foldedDirs.has(f)) foldedDirs.delete(f); else foldedDirs.add(f); return drawTree(); }
+    const row = e.target.closest('[data-name]');
+    if (!row || e.target.closest('.renaming')) return;
+    const name = row.dataset.name, act = e.target.closest('.tact')?.dataset.act;
+    if (act === 'root') makeRoot(name);
+    else if (act === 'rename') renameFile(name);
+    else if (act === 'delete') deleteFile(name, e.target.closest('.tact'));
+    else choose(name);
+  };
+  for (const box of [treeBox, examplesBox]) box.onkeydown = (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-name], [data-example], [data-folder]')) { e.preventDefault(); e.target.click(); } };
   addEventListener('hashchange', () => {
     const h = decodeURIComponent(location.hash.slice(1)), opening = h.match(/^open=(.+):(\d+)$/);
     if (opening) openPlace(opening[1], { line: Number(opening[2]) - 1, character: 0 });
-    else if (!h.startsWith('s=')) choose(h);
+    else if (!h.startsWith('s=') && h in sampleTexts && !shared.has(h)) example(h);
   });
 
-  let sampleTexts;
-  async function samples(file = manifest.sample) {
-    Object.assign(state, { dir: '/work', texts: { ...sampleTexts }, original: sampleTexts, file, root: projectOf(file), project: projectOf(file), upload: false, ro: {} });
-    drawTabs();
-    editor.set(state.texts[file]);
-    await restart();
-    args.value = commandOf(file);
-    if (!plainLint()) start();
+  /** A name box in the tree, at `row` or at the end: Enter takes the name, Escape cancels. */
+  function nameBox(value, row, done) {
+    const box = Object.assign(document.createElement('input'), { className: 'tnamebox', value, spellcheck: false });
+    box.setAttribute('aria-label', 'file name');
+    const holder = Object.assign(document.createElement('div'), { className: 'file renaming' });
+    holder.style.setProperty('--depth', row?.style.getPropertyValue('--depth') || 0);
+    holder.append(box);
+    if (row) row.replaceWith(holder); else treeBox.append(holder);
+    box.focus();
+    box.setSelectionRange(0, value.lastIndexOf('.') > 0 ? value.lastIndexOf('.') : value.length);
+    let finished = false;
+    const finish = (name) => { if (finished) return; finished = true; drawTree(); if (name != null) done(name.trim()); };
+    box.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(box.value); } else if (e.key === 'Escape') { e.preventDefault(); finish(null); }
+    };
+    box.onblur = () => finish(box.value === value ? null : box.value);
+  }
+  const valid = (name, old = null) => {
+    if (!name || name === old) return false;
+    if (/^\/|(^|\/)\.\.?(\/|$)|\/$/.test(name)) return toast('A name inside the project: no leading /, no . or .. parts'), false;
+    if (name in state.texts && !(name in state.ro)) return toast(`${name} is already in the project`), false;
+    return true;
+  };
+  /** A new, empty file in the project, opened. */
+  function newFile() {
+    let n = 1;
+    while (`section${n}.tex` in state.texts) n++;
+    $('play-tree').hidden = false;
+    nameBox(`section${n}.tex`, null, (name) => {
+      if (!valid(name)) return;
+      state.texts[name] = '';
+      state.files.push(name);
+      store([name]);
+      choose(name);
+      const stem = name.replace(/\.tex$/, '');
+      toast(/\.tex$/.test(name) ? `${name} added: \\input{${stem}} in ${state.root} reads it` : `${name} added`);
+    });
+  }
+  /** The project's references to a file (`\input{chapter}`, `\bibliography{refs}`), renamed with it. */
+  function relink(from, to) {
+    const strip = (n) => n.replace(/\.(tex|bib)$/, '');
+    const same = (arg) => arg === from || (strip(arg) === strip(from) && strip(from) !== from);
+    let n = 0;
+    for (const name of state.files) {
+      if (data(name) || !(name in state.texts)) continue;
+      const text = state.texts[name].replace(/(\\(?:input|include|includeonly|subfile|bibliography|addbibresource|InputIfFileExists)\s*\{)([^}]*)\}/g, (m, cs, list) =>
+        cs + list.split(',').map((arg) => { const a = arg.trim(); if (!same(a)) return arg; n++; return arg.replace(a, a === from ? to : strip(to)); }).join(',') + '}');
+      if (text === state.texts[name]) continue;
+      if (name === state.file) editor.set(text); else state.texts[name] = text;
+      if (opened.has(uri(name)) && name !== state.file) lsp('textDocument/didChange', { textDocument: { uri: uri(name), version: ++version }, contentChanges: [{ text }] }, true);
+    }
+    return n;
+  }
+  function renameFile(name) {
+    const row = treeBox.querySelector(`[data-name="${CSS.escape(name)}"]`);
+    if (!row) { $('play-tree').hidden = false; drawTree(); }
+    nameBox(name, treeBox.querySelector(`[data-name="${CSS.escape(name)}"]`), async (to) => {
+      if (!valid(to, name)) return;
+      sync();
+      state.texts[to] = state.texts[name];
+      delete state.texts[name];
+      for (const list of [state.files, state.open]) { const i = list.indexOf(name); if (i >= 0) list[i] = to; }
+      if (state.file === name) state.file = to;
+      close(name);
+      store([to], [name]);
+      const links = relink(name, to);
+      toast(`Renamed to ${to}${links ? `, ${links} reference${links > 1 ? 's' : ''} updated` : ''}`);
+      if (state.root === name) { state.root = to; redraw(); await restart(); } else { redraw(); open(state.file); analyze(); }
+    });
+  }
+  /** Deletes a file: the first click asks, the second within a few seconds deletes. */
+  async function deleteFile(name, button) {
+    if (state.files.length < 2) return toast('A project keeps at least one file');
+    if (button && !button.classList.contains('sure')) {
+      button.classList.add('sure');
+      button.textContent = 'delete?';
+      setTimeout(() => button.isConnected && drawTree(), 3000);
+      return;
+    }
+    state.files.splice(state.files.indexOf(name), 1);
+    const tab = state.open.indexOf(name);
+    if (tab >= 0) state.open.splice(tab, 1);
+    close(name);
+    delete state.texts[name];
+    store([], [name]);
+    toast(`Deleted ${name}`);
+    const rootGone = state.root === name;
+    if (rootGone) state.root = state.files.find(rootable) ?? state.files[0];
+    if (!state.open.length) state.open.push(state.root);
+    if (state.file === name) { state.file = null; choose(state.open[Math.min(Math.max(tab, 0), state.open.length - 1)]); } else redraw();
+    if (rootGone) await restart(); else analyze();
   }
 
   /** A kernel's bundle, fetched once, then the server and the run start over with it. */
@@ -1143,35 +1340,33 @@
       .filter((n) => n in texts);
     return named.length ? named : Object.keys(texts).filter((n) => /\\documentclass/.test(texts[n]) && /\\begin\s*\{document\}/.test(texts[n]));
   }
-  /** A new project: a .zip or a folder, its root found, the samples set aside. */
-  async function project(files, label) {
+  /** A new project: a .zip or a folder, its root found, the examples set aside. */
+  async function project(files, label, root = null) {
+    sync();
     const decoder = new TextDecoder();
     const texts = Object.fromEntries(Object.entries(files).filter(([n]) => TEXT.test(n)).sort(([a], [b]) => a.localeCompare(b)).map(([n, d]) => [n, decoder.decode(d)]));
     const found = roots(texts);
     if (!found.length) throw new Error('no root document: no file has \\documentclass and \\begin{document}');
-    Object.assign(state, { dir: '/work/upload', texts, original: { ...texts }, root: found[0], file: found[0], upload: true, ro: {} });
-    rootBox.innerHTML = found.map((n) => `<option>${escape(n)}</option>`).join('');
+    const first = root in texts ? root : found[0];
+    Object.assign(state, { dir: '/work/upload', texts, root: first, file: first, open: [first], files: Object.keys(texts), example: null, upload: true, ro: {} });
     worker.postMessage({ type: 'project', dir: state.dir, files, replace: true });
-    drawTabs();
+    redraw();
     editor.set(texts[state.file]);
     history.replaceState(null, '', location.pathname);
-    toast(`${label}: ${Object.keys(files).length} files, root ${state.root}${found.length > 1 ? ` (${found.length} candidates: choose under root)` : ''}`);
+    toast(`${label}: ${Object.keys(files).length} files, root ${state.root}${found.length > 1 ? ` (${found.length} candidates: ◎ in the tree makes another the root)` : ''}`);
     await restart();
     args.value = 'lint';
+    outBox.hidden = true;
   }
-  /** Single files join the open project as tabs; images and the like only its file system. */
+  /** Single files join the open project; images and the like only its file system. */
   async function add(files) {
     const decoder = new TextDecoder();
     const texts = Object.entries(files).filter(([n]) => TEXT.test(n)).map(([n, d]) => [n, decoder.decode(d)]);
     Object.assign(state.texts, Object.fromEntries(texts));
+    for (const [n] of texts) if (!state.files.includes(n)) state.files.push(n);
     worker.postMessage({ type: 'project', dir: state.dir, files });
-    if (state.upload) {
-      const all = roots(Object.fromEntries(Object.entries(state.texts).filter(([n]) => !(n in state.ro))));
-      rootBox.innerHTML = all.map((n) => `<option${n === state.root ? ' selected' : ''}>${escape(n)}</option>`).join('');
-    }
-    await restart();
-    drawTabs();
-    if (texts.length) choose(texts[0][0]);
+    if (texts.length) choose(texts[0][0]); else redraw();
+    analyze();
     const n = Object.keys(files).length;
     toast(`Added ${n === 1 ? Object.keys(files)[0] : `${n} files`}`);
   }
@@ -1199,12 +1394,11 @@
     }
     return into;
   }
-  rootBox.onchange = async () => { state.root = rootBox.value; await restart(); };
   const picked = (e) => { upload([...e.target.files].map((f) => [f.webkitRelativePath || f.name, f])); e.target.value = ''; };
   $('play-files').onchange = $('play-folder').onchange = picked;
   const upMenu = $('play-upmenu');
   $('play-upload').onclick = () => { upMenu.hidden = !upMenu.hidden; };
-  upMenu.onclick = (e) => { const b = e.target.closest('[data-pick]'); if (b) { upMenu.hidden = true; $(`play-${b.dataset.pick}`).click(); } };
+  upMenu.onclick = (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; upMenu.hidden = true; if (b.dataset.pick === 'new') newFile(); else $(`play-${b.dataset.pick}`).click(); };
   // Files dragged over the page, the editor too: the drop zone covers it until the drop,
   // Escape, a click, or the drag leaving the window.
   const drop = $('play-drop');
@@ -1229,7 +1423,10 @@
   const through = async (bytes, stream) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
   async function permalink() {
     sync();
-    const data = { f: state.file, t: editor.text(), a: args.value, k: manifest.kernels[state.kernel].id, c: editor.cursor() };
+    // the project: an example's changed files, or all of an upload's text files
+    const files = state.files.filter((n) => n in state.texts && (state.upload || state.texts[n] !== sampleTexts[n]));
+    const data = { x: state.example, r: state.root, l: state.files, p: Object.fromEntries(files.map((n) => [n, state.texts[n]])),
+      f: state.file in state.ro ? state.root : state.file, a: args.value, k: manifest.kernels[state.kernel].id, c: editor.cursor() };
     const packed = await through(new TextEncoder().encode(JSON.stringify(data)), new CompressionStream('deflate-raw'));
     let s = '';
     for (let i = 0; i < packed.length; i += 0x8000) s += String.fromCharCode(...packed.subarray(i, i + 0x8000));
@@ -1242,7 +1439,7 @@
     const link = await permalink();
     history.replaceState(null, '', link);
     try { await navigator.clipboard.writeText(link); } catch {}
-    toast(state.upload ? 'Link copied. It holds only the open file, not the whole project.' : 'Link copied');
+    toast(state.upload ? 'Link copied. It holds the project\'s text files, not its images.' : 'Link copied');
   };
 
   // ---------------------------------------------------------------- start
@@ -1313,31 +1510,34 @@
     bar.hidden = true;
     sampleTexts = ready.samples;
     const hash = decodeURIComponent(location.hash.slice(1));
-    const link = hash.startsWith('s=') ? await restore(hash.slice(2)) : null;
-    if (link && !(link.f in sampleTexts)) sampleTexts[link.f] = '';
-    const file = link?.f ?? (hash in sampleTexts ? hash : manifest.sample);
+    let link = hash.startsWith('s=') ? await restore(hash.slice(2)) : null;
+    // a link from before projects: one file and its text
+    if (link && !link.p) link = { ...link, x: projectOf(link.f) ?? link.f, p: { [link.f]: link.t } };
+    if (link?.x && !(link.x in sampleTexts)) sampleTexts[link.x] = '';
     if (hash.startsWith('open=')) history.replaceState(null, '', location.pathname);
-    Object.assign(state, { texts: { ...sampleTexts, ...(link ? { [link.f]: link.t } : {}) }, original: sampleTexts, file, root: projectOf(file), project: projectOf(file) });
-    args.value = link ? link.a : commandOf(file);
+    const ex = link ? link.x : hash in sampleTexts && !shared.has(hash) ? hash : projectOf(hash) ?? manifest.sample;
+    state.texts = { ...sampleTexts, ...(link?.x ? link.p : {}) };
     const k = manifest.kernels.findIndex((x) => x.id === link?.k);
     if (k > 0) await kernel(k);
     kernelBox.value = state.kernel;
     try {
-      editor = await codemirror($('play-editor'), state.texts[file]);
+      editor = await codemirror($('play-editor'), '');
       $('play-source').remove();
     } catch (e) {
       console.warn('CodeMirror did not load, the editor is a textarea', e);
       editor = textarea($('play-source'));
-      editor.set(state.texts[file]);
     }
-    if (link?.c) editor.select(link.c);
-    drawTabs();
     button.textContent = 'Run';
     button.disabled = false;
-    await restart();
+    if (link && !link.x) {
+      await project(Object.fromEntries(Object.entries(link.p).map(([n, t]) => [n, encode(t)])), 'From the link', link.r);
+      if (link.f in state.texts) choose(link.f);
+      args.value = link.a;
+    } else await example(ex, { file: link?.f ?? (shared.has(hash) ? hash : ex), list: link?.l, root: link?.r, command: link?.a });
+    if (link?.c) editor.select(link.c);
     const opening = hash.match(/^open=(.+):(\d+)$/);
     if (opening) await openPlace(opening[1], { line: Number(opening[2]) - 1, character: 0 });
-    if (!plainLint()) return start();
+    if (!plainLint()) return link && !link.x ? start() : undefined;
     status.textContent = 'Ready. Findings update as you type; Enter runs the command.';
     status.dataset.done = 'ready';
   })().catch((e) => { status.textContent = `the playground failed: ${e.message}`; status.dataset.done = 'error'; });

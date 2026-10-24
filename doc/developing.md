@@ -156,7 +156,10 @@ It sets up the engine and returns, and `src/lsp/wasm.rs` exports `satex_lsp`, wh
 The command line is the one way to act. `lint`, `explain`, `query` and the rest are runs. `rename` and `fix` are language server edits applied in the editor.
 Plain `lint` runs only on Enter: the findings panel already shows the language server's.
 F2, the context menu and Ctrl+click rename, explain and go to a definition. A definition in a bundle file opens read-only.
-Uploaded files join the open project. A folder or a zip is unpacked in the page and goes to `/work/upload`. A permalink is the open file, the arguments, the kernel and the selection, deflated into the URL's hash.
+The layout follows flowR's playground. The project's files are a tree left of the editor, the open ones are tabs, the command line and its output sit under the editor, the analysis is on the right.
+A project is an example (`examples/projects.txt` names the files it reads besides itself) or an upload. One file is its root. Runs and the language server start there, so an `\input` file is analyzed with it.
+The tree adds, renames and deletes files and makes another file the root. A rename also renames the `\input`, `\include` and `\bibliography` arguments that name the file.
+Uploaded files join the open project. A folder or a zip is unpacked in the page and goes to `/work/upload`. A permalink is the project's changed files, the root, the open file, the arguments, the kernel and the selection, deflated into the URL's hash.
 `doc/site/playground.yaml` is the satex.yaml of those runs.
 
 `cargo playground` does all of it and serves the result at <http://127.0.0.1:8000/play/> (`--port`, `--out`). It builds with the incremental `playground` profile, so a rebuild after an edit takes seconds; `--release` builds what the published site ships.

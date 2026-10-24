@@ -127,10 +127,17 @@ function SatexEngine(createSatex, progress = () => {}) {
     return imported;
   }
 
-  /** Files under `dir`: a new project's replace the last one's, added ones join them. */
-  function project(dir, given, replace = false) {
+  /** Files under `dir`: a new project's replace the last one's, added ones join them,
+   * `removed` ones leave. A running language server sees the change at once. */
+  function project(dir, given, replace = false, removed = []) {
+    const live = (f) => { if (server) try { f(server.FS); } catch {} };
     if (replace) for (const path of [...files.keys()]) if (path.startsWith(dir + '/')) files.delete(path);
-    for (const [path, data] of Object.entries(given)) files.set(`${dir}/${path}`, data);
+    for (const name of removed) { files.delete(`${dir}/${name}`); live((fs) => fs.unlink(`${dir}/${name}`)); }
+    for (const [name, data] of Object.entries(given)) {
+      const path = `${dir}/${name}`;
+      files.set(path, data);
+      live((fs) => { fs.mkdirTree(path.slice(0, path.lastIndexOf('/'))); fs.writeFile(path, data); });
+    }
   }
 
   /** A file of the tree by its path, or the first whose name is `path`'s last part. */
@@ -177,7 +184,7 @@ if (typeof module === 'object' && module.exports) {
       } else if (data.type === 'bundle') {
         self.postMessage({ type: 'bundle', id: data.entry.id, ...(await engine.bundle(data.base, data.entry, data.given)) });
       } else if (data.type === 'project') {
-        engine.project(data.dir, data.files, data.replace);
+        engine.project(data.dir, data.files ?? {}, data.replace, data.removed);
       } else if (data.type === 'read') {
         self.postMessage({ type: 'file', ...engine.read(data.path) });
       } else if (data.type === 'reset') {

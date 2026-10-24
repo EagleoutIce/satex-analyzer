@@ -258,12 +258,15 @@ async function browser() {
       await js(`return document.getElementById('play-status').textContent`));
     await shot('play-ready');
     check('no output panel for plain lint', await js(`return document.getElementById('play-out').hidden`));
+    // flowR's layout: the project's files in a tree left of the editor, the examples under them
+    check('file tree beside the editor', await js(`const t = document.getElementById('play-tree'), e = document.getElementById('play-editor').getBoundingClientRect();
+      return !t.hidden && t.getBoundingClientRect().right <= e.left + 1 && !!t.querySelector('.file.root[data-name="${manifest.sample}"]') && t.querySelectorAll('#play-examples [data-example]').length > 3`));
     for (const width of [1866, 1480]) {
       await send('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false });
       await sleep(300);
-      const fit = await js(`const r = (s) => document.querySelector(s).getBoundingClientRect(); return [r('.play-split').left, r('.play-split').right, r('.play-tools').right, r('#play-link').right, r('.top nav').right, r('#theme').right, innerWidth, document.documentElement.scrollWidth]`);
-      check(`playground spans the window at ${width}px`, fit[0] === 0 && Math.abs(fit[1] - fit[6]) < 2 && Math.abs(fit[2] - fit[6]) < 2, JSON.stringify(fit));
-      check(`header fits at ${width}px`, fit.slice(3, 6).every((x) => x <= fit[6]) && fit[7] <= fit[6], JSON.stringify(fit));
+      const fit = await js(`const r = (s) => document.querySelector(s).getBoundingClientRect(); return [r('.play-split').left, r('.play-split').right, r('#play-run').right, r('#play-link').right, r('.top nav').right, r('#theme').right, innerWidth, document.documentElement.scrollWidth]`);
+      check(`playground spans the window at ${width}px`, fit[0] === 0 && Math.abs(fit[1] - fit[6]) < 2, JSON.stringify(fit));
+      check(`header fits at ${width}px`, fit.slice(2, 6).every((x) => x <= fit[6]) && fit[7] <= fit[6], JSON.stringify(fit));
     }
     await send('Emulation.clearDeviceMetricsOverride');
     // panes snap: dragged to an edge a pane folds, a click on the splitter brings it back, near half it rests at half
@@ -340,7 +343,7 @@ async function browser() {
     const explainAt = await atItems('explain --at ');
     check('explain --at completes', ['preamble', 'document'].every((x) => explainAt.some(([l]) => l === x)) && explainAt.some(([l]) => /^hello\.tex:\d+$/.test(l)) && explainAt.every(([, d]) => d), JSON.stringify(explainAt));
     const scopeAt = await atItems('scope --at ');
-    check('scope --at completes', scopeAt.some(([l]) => /^\d+:\d+$/.test(l)) && scopeAt.some(([l]) => l === 'macros.tex:') && scopeAt.every(([, d]) => d), JSON.stringify(scopeAt.slice(0, 4)));
+    check('scope --at completes', scopeAt.some(([l]) => /^\d+:\d+$/.test(l)) && scopeAt.some(([l]) => l === `${manifest.sample}:`) && scopeAt.every(([, d]) => d), JSON.stringify(scopeAt.slice(0, 4)));
     await key('Escape');
     await js(`delete document.getElementById('play-status').dataset.done; document.getElementById('play-args').value = 'query definitions'`);
     await js(`document.getElementById('play-args').focus()`);
@@ -443,7 +446,30 @@ async function browser() {
     check('ctrl+click opens a kernel file read-only', await until(`return !!document.querySelector('#play-tabs .ro[aria-selected=true]')`, 20000),
       await js(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent + ' / ' + document.getElementById('play-toast').textContent`));
 
-    // uploads: one file joins the tabs; a folder becomes the project
+    // projects: an example's files in the tree, its root marked; an \input file is analyzed with the root
+    await js(`document.querySelector('#play-examples [data-example="thesis.tex"]').click()`);
+    check('an example is a project', await until(`return [...document.querySelectorAll('#play-files-tree .file')].map((f) => f.dataset.name).join() === 'chapter.tex,refs.bib,thesis.tex'
+      && !!document.querySelector('#play-files-tree .root[data-name="thesis.tex"]') && !document.querySelector('#play-tabs .ro')`, 20000),
+      await js(`return [...document.querySelectorAll('#play-files-tree .file')].map((f) => f.dataset.name).join()`));
+    check('an input file is analyzed with its root', await until(`return !!document.querySelector('#play-files-tree [data-name="chapter.tex"] .tcount')`, 60000));
+    await shot('play-project');
+    // renaming a file renames the root's \input of it
+    await js(`document.querySelector('#play-files-tree [data-name="chapter.tex"] [data-act=rename]').click()`);
+    await js(`document.querySelector('.tnamebox').value = 'background.tex'`);
+    await key('Enter');
+    check('rename follows into \\input', await until(`return /1 reference updated/.test(document.getElementById('play-toast').textContent)
+      && !!document.querySelector('#play-tabs [data-name="background.tex"]')`, 5000), await js(`return document.getElementById('play-toast').textContent`));
+    // a new file opens as a tab; delete asks once more
+    await js(`document.getElementById('play-upload').click(); document.querySelector('#play-upmenu [data-pick=new]').click()`);
+    await js(`document.querySelector('.tnamebox').value = 'notes.tex'`);
+    await key('Enter');
+    check('new file', await until(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent === 'notes.tex' && !!document.querySelector('#play-files-tree [data-name="notes.tex"]')`, 5000));
+    await js(`const del = () => document.querySelector('#play-files-tree [data-name="notes.tex"] [data-act=delete]'); del().click(); del().click()`);
+    check('delete', await until(`return !document.querySelector('#play-files-tree [data-name="notes.tex"]') && !document.querySelector('#play-tabs [data-name="notes.tex"]')`, 5000));
+    await js(`document.querySelector('#play-examples [data-example="${manifest.sample}"]').click()`);
+    await until(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent === '${manifest.sample}'`, 10000);
+
+    // uploads: one file joins the project; a folder becomes the project
     const dir = mkdtempSync(join(tmpdir(), 'satex-up-'));
     writeFileSync(join(dir, 'extra.tex'), '\\newcommand\\extra{x}\n');
     await upload('play-files', [join(dir, 'extra.tex')]);
@@ -454,8 +480,8 @@ async function browser() {
     writeFileSync(join(folder, 'main.tex'), '\\documentclass{article}\n\\begin{document}\n\\input{chapters/one}\n\\end{document}\n');
     writeFileSync(join(folder, 'chapters/one.tex'), 'One -- two.\n');
     await upload('play-folder', [folder]);
-    check('folder upload', await until(`return [...document.querySelectorAll('#play-tabs [role=tab]')].map((t) => t.textContent).join() === '← samples,chapters/one.tex,main.tex'`, 30000),
-      await js(`return [...document.querySelectorAll('#play-tabs [role=tab]')].map((t) => t.textContent).join()`));
+    const tree = `[...document.querySelectorAll('#play-files-tree .file')].map((f) => f.dataset.name).join() + ' | ' + [...document.querySelectorAll('#play-tabs [role=tab]')].map((t) => t.textContent).join()`;
+    check('folder upload', await until(`return ${tree} === 'chapters/one.tex,main.tex | main.tex' && !!document.querySelector('#play-files-tree .root[data-name="main.tex"]')`, 30000), await js(`return ${tree}`));
 
     // a package beyond the first download: fetched when the findings say it is missing
     const micro = join(dir, 'micro');
