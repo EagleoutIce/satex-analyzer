@@ -645,6 +645,16 @@ impl Env {
         }
     }
 
+    /// The meaning, for a reader that tells a macro from anything else but
+    /// not one macro from another: a macro's text is not read.
+    pub fn shape(&self, sym: Sym) -> Meaning {
+        self.log_read(sym);
+        if self.tracking.get() {
+            self.note_read(sym, ReadKind::Shape);
+        }
+        self.slot(sym).map_or(Meaning::Undefined, |b| b.meaning.clone())
+    }
+
     /// Whether `sym` means an `\outer` macro. tex.web § 336 checks this for
     /// every token read — engine bookkeeping, not a read of the meaning, so
     /// nothing is recorded or cloned.

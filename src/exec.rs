@@ -1426,7 +1426,7 @@ impl Machine<'_> {
         self.last_named_cs = Some(self.intern(&name));
         crate::observe::csname(self, &name, span);
         let sym = self.intern(&name);
-        if let Meaning::Register(kind, _) = self.env.meaning(sym) {
+        if let Meaning::Register(kind, _) = self.env.shape(sym) {
             crate::observe::arg_type(self, at, crate::roles::Ty::Named(kind));
         }
         let relax = Meaning::Primitive(Primitive::Relax);
@@ -1968,10 +1968,15 @@ impl Machine<'_> {
                         .is_some_and(|d| d.replacement_text.is_empty() && d.parameter_text.items.is_empty())
                 })
             };
-            if empty(self, b) {
-                self.spread_joined_body(a);
-            } else if empty(self, a) {
-                self.spread_joined_body(b);
+            // Only two macros can have a body to spread: what tells a
+            // macro from the rest is all this reads of them.
+            let macro_ = |m: &Self, t: Token| t.cs().is_some_and(|s| m.env.shape(s).as_macro().is_some());
+            if macro_(self, a) && macro_(self, b) {
+                if empty(self, b) {
+                    self.spread_joined_body(a);
+                } else if empty(self, a) {
+                    self.spread_joined_body(b);
+                }
             }
         }
         let split_b = b.is_some_and(|b| self.split_one_of(b));

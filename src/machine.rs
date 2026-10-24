@@ -8195,7 +8195,7 @@ will look undefined",
             self.within.last().map(|(_, n)| *n),
             self.cds.to_vec(),
         );
-        let defs = self.env.defs(sym);
+        let defs = self.env.link_defs(sym);
         let definition = defs.first().copied();
         self.link_reads(node, sym, &defs);
         if let Some(caller) = self.within.last().map(|(name, _)| *name) {
@@ -8534,6 +8534,8 @@ will look undefined",
         if !self.stubs.as_ref().is_some_and(|t| t.contains_key(&sym)) {
             return false;
         }
+        // Only a stub looks at whether the name has definition sites.
+        self.env.defs(sym);
         let Some(file) = defs.first().and_then(|d| self.out.graph.vertex(*d)).map(|v| v.span.file) else {
             return true;
         };

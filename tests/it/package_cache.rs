@@ -1299,3 +1299,53 @@ fn a_replay_is_not_charged_to_the_line_that_loads_it() {
         assert!(definitions(&a).iter().any(|(name, _)| name == "busydone"), "{run} run");
     }
 }
+
+/// A class that loads two packages, and a package of the same name loaded
+/// by a document.
+fn class_project(name: &str) -> PathBuf {
+    let dir = project(name);
+    std::fs::write(
+        dir.join("mycls.cls"),
+        "\\ProvidesClass{mycls}\n\\LoadClass{article}\n\\RequirePackage{pa}\n\\RequirePackage{pb}\n",
+    )
+    .expect("mycls.cls");
+    std::fs::write(dir.join("pa.sty"), "\\ProvidesPackage{pa}\n\\def\\pamacro{a}\n").expect("pa.sty");
+    std::fs::write(dir.join("pb.sty"), "\\ProvidesPackage{pb}\n\\def\\pbmacro{b}\n").expect("pb.sty");
+    dir
+}
+
+const WITH_CLASS: &str = "\\documentclass{mycls}\n\\begin{document}\\pamacro\\pbmacro\\end{document}\n";
+
+#[test]
+fn each_package_a_class_loads_has_a_cache_entry_of_its_own() {
+    if !installed() {
+        return;
+    }
+    let dir = class_project("class-entries");
+    run_latex(&dir, "\\relax\n", true);
+    let first = run_latex(&dir, WITH_CLASS, true);
+    for package in ["pa", "pb"] {
+        assert_eq!(served(&first, package), Some(false), "{package}: {:?}", first.package_caches);
+    }
+    // Another class that loads one of them finds the entry the first class made.
+    std::fs::write(dir.join("other.cls"), "\\ProvidesClass{other}\n\\LoadClass{article}\n\\RequirePackage{pb}\n")
+        .unwrap();
+    let source = "\\documentclass{other}\n\\begin{document}\\pbmacro\\end{document}\n";
+    let other = run_latex(&dir, source, true);
+    assert_eq!(served(&other, "pb"), Some(true), "{:?}", other.package_caches);
+}
+
+#[test]
+fn a_changed_package_of_a_class_rebuilds_only_that_package() {
+    if !installed() {
+        return;
+    }
+    let dir = class_project("class-edit");
+    run_latex(&dir, "\\relax\n", true);
+    run_latex(&dir, WITH_CLASS, true);
+    std::fs::write(dir.join("pa.sty"), "\\ProvidesPackage{pa}\n\\def\\pamacro{changed}\n").unwrap();
+    let again = run_latex(&dir, WITH_CLASS, true);
+    assert_eq!(served(&again, "pb"), Some(true), "{:?}", again.package_caches);
+    assert_ne!(served(&again, "pa"), Some(true), "{:?}", again.package_caches);
+    same_facts(&run_cold(&dir, WITH_CLASS), &again);
+}
