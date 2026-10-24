@@ -59,3 +59,18 @@ fn an_aligned_table_is_quiet() {
     );
     assert!(found.is_empty(), "{found:?}");
 }
+
+/// Two numbers already stand apart: a centred column of 0.92 and 1.5.
+#[test]
+fn two_numbers_make_a_column() {
+    if !installed() {
+        return;
+    }
+    let found = findings(
+        "two",
+        "\\begin{tabular}{lc}\nMethod & Score \\\\ \\hline\nOurs & 0.92 \\\\\nLol & 1.5 \\\\\n\\end{tabular}",
+    );
+    for code in ["numbers-not-aligned", "inconsistent-precision", "table-rules"] {
+        assert!(found.iter().any(|f| f.starts_with(code)), "{code}: {found:?}");
+    }
+}

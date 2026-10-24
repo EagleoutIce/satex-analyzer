@@ -152,6 +152,15 @@ fn a_package_a_running_macro_calls_is_used() {
     assert_eq!(reported("unused-package-idle", &idle, "unused-package"), 1);
 }
 
+/// The class sets the page (`\textheight`), which the kernel reads for every page.
+#[test]
+fn the_document_class_is_never_unused() {
+    if installed() {
+        let source = "\\documentclass{article}\n\\begin{document}\n\\end{document}\n";
+        assert_eq!(reported("unused-class", source, "unused-package"), 0);
+    }
+}
+
 /// A package that only changes settings acts without any of its names
 /// being used.
 #[test]

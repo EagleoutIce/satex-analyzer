@@ -283,7 +283,8 @@ fn number(cell: &str) -> Option<Number> {
 
 /// Each column of numbers: its number, type and numbers with where the
 /// first stands. A column is one of numbers when, below the rows heading
-/// it, every cell that has text is a number, three or more.
+/// it, every cell that has text is a number, two or more: two can
+/// already stand apart.
 fn number_columns(table: &Table) -> Vec<(usize, char, Vec<Number>, Pos)> {
     let mut out = Vec::new();
     for (j, &kind) in table.columns.iter().enumerate() {
@@ -292,7 +293,7 @@ fn number_columns(table: &Table) -> Vec<(usize, char, Vec<Number>, Pos)> {
         let Some(first) = first else { continue };
         let numbers: Option<Vec<Number>> =
             cells[first..].iter().filter(|(text, _)| !text.is_empty()).map(|(text, _)| number(text)).collect();
-        if let Some(numbers) = numbers.filter(|n| n.len() >= 3) {
+        if let Some(numbers) = numbers.filter(|n| n.len() >= 2) {
             out.push((j + 1, kind, numbers, cells[first].1));
         }
     }

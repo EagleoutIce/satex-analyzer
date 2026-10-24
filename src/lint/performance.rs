@@ -27,9 +27,9 @@ Fix by deleting the later `\\usepackage`.",
         severity: Severity::Info,
         summary: "a loaded package defines nothing the document uses",
         explanation: "\
-Every name the package defines is unused.  The package may still be needed for
-its side effects — page layout, hooks, fonts, `\\AtBeginDocument` code — so this
-is a hint, not a verdict.
+Every name the package defines is unused, and no code outside it reads a
+setting it made (a class's `\\textheight` is read for every page).  It may
+still act through hooks or fonts, so this is a hint, not a verdict.
 
 Fix, if the package really is unused, by deleting the `\\usepackage`: it is read
 on every build.",
@@ -175,26 +175,6 @@ fn unused_package(report: &mut Report) {
     // A package's names: those the format did not have and whose meaning
     // the run ends with is the one the package gave them, a scratch name it
     // once set (`\@tempa`) not.
-    // A parameter TeX reads as it typesets (`\parskip`) left other than
-    // the format had it acts whatever the document does.
-    let mut provided: BTreeMap<Sym, BTreeSet<Sym>> = BTreeMap::new();
-    let mut acts: BTreeSet<Sym> = BTreeSet::new();
-    for sym in analysis.env.bound() {
-        let Some(binding) = analysis.env.slot(sym) else { continue };
-        let Some(file) = binding.defs.last().and_then(|&n| analysis.graph.vertex(n)).map(|v| v.span.file) else {
-            continue;
-        };
-        let format = analysis.kernel.as_ref().and_then(|k| k.slot(sym));
-        let setting = matches!(binding.meaning.prim(), Some(p) if p.is_parameter())
-            && format.is_none_or(|f| f.value != binding.value);
-        for package in of(file) {
-            if setting {
-                acts.insert(package);
-            } else if format.is_none() && analysis.env.is_defined(sym) {
-                provided.entry(package).or_default().insert(sym);
-            }
-        }
-    }
     // Used is what the document's body expands, and what the text of a
     // macro so expanded calls, through any number of macros: the path that
     // would expand it may be one this run did not take. What
@@ -215,6 +195,58 @@ fn unused_package(report: &mut Report) {
             }
             && end.is_none_or(|e| span.file != e.file || (span.line, span.col) < (e.line, e.col))
     };
+    // A parameter TeX reads as it typesets (`\parskip`) left other than
+    // the format had it acts whatever the document does, a register so left
+    // once code outside the package reads it while the body is typeset (the
+    // class's `\textheight`): vertices are numbered in the order the run made them.
+    let ended = analysis
+        .facts
+        .occurrences
+        .iter()
+        .find(|o| o.kind == crate::builtins::OccKind::EndEnvironment && o.key == "document");
+    let typeset = analysis
+        .facts
+        .expansions
+        .iter()
+        .filter(|e| body(e.span))
+        .filter_map(|e| e.node)
+        .chain(ended.map(|o| o.node))
+        .min();
+    let mut readers: BTreeMap<crate::env::NodeId, BTreeSet<crate::tex::FileId>> = BTreeMap::new();
+    for from in typeset.unwrap_or(crate::env::NodeId::MAX)..analysis.graph.len() as crate::env::NodeId {
+        let Some(reader) = analysis.graph.vertex(from) else { continue };
+        for &(to, kind) in analysis.graph.outgoing(from) {
+            if kind.intersects(crate::graph::EdgeKind::READS) {
+                readers.entry(to).or_default().insert(reader.span.file);
+            }
+        }
+    }
+    let mut provided: BTreeMap<Sym, BTreeSet<Sym>> = BTreeMap::new();
+    let mut acts: BTreeSet<Sym> = BTreeSet::new();
+    for sym in analysis.env.bound() {
+        let Some(binding) = analysis.env.slot(sym) else { continue };
+        let Some((&last, file)) = binding.defs.last().and_then(|n| Some((n, analysis.graph.vertex(*n)?.span.file)))
+        else {
+            continue;
+        };
+        let format = analysis.kernel.as_ref().and_then(|k| k.slot(sym));
+        let parameter = matches!(binding.meaning.prim(), Some(p) if p.is_parameter());
+        let register = matches!(binding.meaning, crate::tex::Meaning::Register(..));
+        let set = (parameter || register) && format.is_none_or(|f| f.value != binding.value);
+        // Its own setting: no other code of the run wrote it (`\count@` is everyone's).
+        let read = |package: &Sym| {
+            let own = |f: &crate::tex::FileId| files[package].contains(f);
+            binding.defs.iter().filter_map(|&n| analysis.graph.vertex(n)).all(|v| own(&v.span.file))
+                && readers.get(&last).is_some_and(|r| r.iter().any(|f| !own(f)))
+        };
+        for package in of(file) {
+            if set && (parameter || read(&package)) {
+                acts.insert(package);
+            } else if format.is_none() && analysis.env.is_defined(sym) {
+                provided.entry(package).or_default().insert(sym);
+            }
+        }
+    }
     let graph = &analysis.calls;
     let roots: crate::fixed::HashSet<Sym> =
         analysis.facts.expansions.iter().filter(|e| body(e.span)).map(|e| e.name).collect();
