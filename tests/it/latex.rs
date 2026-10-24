@@ -3282,6 +3282,26 @@ fn the_build_makes_a_bbl_from_the_cited_entries() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Paths that wrote different lines to the `.aux` join (tex.web § 1370):
+/// the next run reads what either wrote, not one path's file.
+#[test]
+fn the_aux_of_two_paths_holds_what_either_wrote() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-joined-aux-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("two.tex");
+    let source = "\\documentclass{article}\\makeatletter\\providecommand\\foo{C}\n\\begin{document}\n\
+        \\if A\\foo\\gdef\\GotA{}\\fi \\if B\\foo\\gdef\\GotB{}\\fi\n\
+        \\ifodd\\pdfuniformdeviate9 \\immediate\\write\\@auxout{\\string\\gdef\\string\\foo{A}}\\else\
+        \\immediate\\write\\@auxout{\\string\\gdef\\string\\foo{B}}\\fi\n\\end{document}\n";
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    std::fs::remove_dir_all(dir).ok();
+    assert!(defined(&analysis, "GotA") && defined(&analysis, "GotB"));
+}
+
 /// `\romannumeral` of a number in a small interval is one of its numerals
 /// (tex.web § 69): a name spelled from it is each name TeX may build.
 #[test]
@@ -3466,7 +3486,7 @@ mod types {
         use satex::tex::RegKind;
         assert_eq!(Ty::Reg(RegKind::Dimen).join(Ty::Reg(RegKind::Skip)), Ty::Glue);
         assert_eq!(Ty::Box.join(Ty::Dimen), Ty::Quantity);
-        assert_eq!(Ty::Named(RegKind::Count).join(Ty::Key), Ty::Name);
+        assert_eq!(Ty::Named(RegKind::Count).join(Ty::Key(satex::roles::KeyKind::Any)), Ty::Name);
         assert_eq!(Ty::Cs.join(Ty::Number), Ty::Top);
         assert!(Ty::Dimen.leq(Ty::Glue) && !Ty::Glue.leq(Ty::Dimen));
         assert_eq!(Ty::Bottom.join(Ty::Box), Ty::Box);
@@ -3504,6 +3524,46 @@ fn a_script_without_nucleus_keeps_its_width() {
 /// penalty on it is discarded. A class's `\clearpage` (KOMA's `\onecolumn`)
 /// on the empty page leaves `\pagetotal` at 0pt, as pdflatex reports.
 #[test]
+fn a_float_flushed_by_clearpage_leaves_the_map_depth_known() {
+    if !installed() {
+        return;
+    }
+    let a = analyze(
+        "\\documentclass{article}\\begin{document}\\begin{figure}[h!]\\end{figure}\\clearpage\\ExplSyntaxOn\\xdef\\depth{\\int_use:N\\g__kernel_prg_map_int}\\ExplSyntaxOff\\end{document}",
+    );
+    assert_eq!(body(&a, "depth"), "0");
+}
+
+/// `\include` flushes the float with its `\clearpage` from the output
+/// routine, the class's as well as the kernel's.
+fn include_float_depth(class: &str, tag: &str) -> String {
+    let dir =
+        crate::support::scratch_dir(std::env::temp_dir().join(format!("satex-incl-{tag}-{}", std::process::id())));
+    std::fs::write(dir.join("p.tex"), "\\begin{figure}[h!]\n\\end{figure}\n").unwrap();
+    let source = format!(
+        "\\documentclass{{{class}}}\\begin{{document}}\\include{{p}}\\ExplSyntaxOn\\xdef\\depth{{\\int_use:N\\g__kernel_prg_map_int}}\\ExplSyntaxOff\\end{{document}}"
+    );
+    let doc = dir.join("doc.tex");
+    std::fs::write(&doc, &source).unwrap();
+    body(&Machine::analyze(&source, Some(&doc), &crate::support::config()), "depth")
+}
+
+#[test]
+fn a_float_in_an_include_leaves_the_map_depth_known() {
+    if installed() {
+        assert_eq!(include_float_depth("article", "article"), "0");
+    }
+}
+
+/// KOMA's float lists join to several texts; each read of them splits.
+#[test]
+fn a_float_in_a_koma_include_leaves_the_map_depth_known() {
+    if installed() {
+        assert_eq!(include_float_depth("scrartcl", "koma"), "0");
+    }
+}
+
+#[test]
 fn the_page_stays_empty_through_a_class_clearpage() {
     if !installed() {
         return;
@@ -3514,4 +3574,34 @@ fn the_page_stays_empty_through_a_class_clearpage() {
         ));
         assert_eq!((body(&a, "pre").as_str(), body(&a, "doc").as_str()), ("0.0pt", "0.0pt"), "{class}");
     }
+}
+
+/// `\@doclearpage` splits the page's whatsit off (`\vsplit` to 0pt breaks
+/// at the `\topskip` glue after it, § 970) and puts it back: a whatsit, no
+/// box, so a second `\clearpage` ships nothing, as pdflatex counts.
+#[test]
+fn a_second_clearpage_ships_no_page() {
+    if !installed() {
+        return;
+    }
+    let a = analyze(
+        "\\documentclass{article}\\makeatletter\\begin{document}Text\\clearpage\\xdef\\A{\\the\\c@page}\\clearpage\\xdef\\B{\\the\\c@page}\\end{document}",
+    );
+    assert_eq!((body(&a, "A").as_str(), body(&a, "B").as_str()), ("2", "2"));
+}
+
+/// One-letter keys referenced before and after their labels, at the
+/// default build: the kernel's `\reserved@a` declares no key `a`.
+#[test]
+fn short_keys_stay_labels_and_references() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::scratch_dir(std::env::temp_dir().join(format!("satex-keys-{}", std::process::id())));
+    let source = "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\nSee \\ref{a} and \\ref{b}.\n\\section{A}\\label{a}\\section{B}\\label{b}\n\\ref{a} and \\autoref{b}.\n\\end{document}\n";
+    let doc = dir.join("doc.tex");
+    std::fs::write(&doc, source).unwrap();
+    let a = Machine::analyze(source, Some(&doc), &crate::support::config());
+    assert_eq!(keys(&a, OccKind::Label), ["a", "b"]);
+    assert_eq!(keys(&a, OccKind::Ref).len(), 4, "{:?}", keys(&a, OccKind::Ref));
 }

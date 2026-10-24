@@ -76,6 +76,10 @@ impl Machine<'_> {
                     crate::builtins::ModeCmd::Vertical(crate::builtins::Material::Unpackage { .. })
                     | crate::builtins::ModeCmd::Horizontal(crate::builtins::Material::Unpackage { .. }),
                 ) => crate::mode::MATERIAL,
+                // tex.web §§ 1075, 1100: `\shipout` puts nothing on the list,
+                // and an insertion is no box the page builder counts (§ 1000).
+                Primitive::Mode(crate::builtins::ModeCmd::ShipOut) => 0,
+                Primitive::Mode(crate::builtins::ModeCmd::Insert { .. }) => crate::mode::MATERIAL,
                 _ => crate::mode::MATERIAL | crate::mode::BOXED,
             };
             self.natural_before(p, by, span);
@@ -4307,7 +4311,7 @@ impl Machine<'_> {
             })
             .collect();
         let line = crate::tex::detokenize_in(&file, &self.out.interner, escape, &self.catcodes, to);
-        self.write_output(number, Some(&line), !immediate);
+        self.write_output(number, &line, !immediate);
         if number == Some(18) {
             self.run_shell(&line);
         }

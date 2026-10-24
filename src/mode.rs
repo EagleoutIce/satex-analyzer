@@ -2296,6 +2296,10 @@ impl Machine<'_> {
                         n.line = line;
                         self.material = MATERIAL | BOXED;
                     }
+                } else if state == BoxState::VBox && line == Some(None) && self.list_kind() != Some(true) {
+                    // § 970: a split-off part ahead of the first box holds
+                    // whatsits and marks, no box.
+                    self.append_item(Item::Zero);
                 } else if state != BoxState::Void {
                     self.unpackage(state, dims, first, solid);
                     // § 1110: the list's tail is the box's last item.

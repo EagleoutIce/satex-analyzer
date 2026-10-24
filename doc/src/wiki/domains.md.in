@@ -400,8 +400,10 @@ any
 │   └── muglue                     muglue or mudimen
 │       └── muskip register
 ├── name                           characters forming one
-│   ├── key                        a label, reference or key (from a role)
-│   ├── file                       a file a load reads (from a role)
+│   ├── key                        a key of no known kind
+│   │   └── label, citation key, option key, environment name   what the key names (from a role)
+│   ├── file                       a file of no known kind
+│   │   └── file (.tex, .sty, .cls, .bib, .bst, .bbx, .cbx, graphic)   the kind the program reading it fixes (from a role)
 │   └── counter, ⟨kind⟩ name       a register's name `\csname` forms
 ├── control sequence               what an assignment defines
 ├── options                        the key list a load takes before its name (from a role)
@@ -410,11 +412,12 @@ any
 nothing                            below every type
 ```
 
-`nothing` is below every type. The join is the nearest type above both (`Ty::join`): a dimen register and a skip register join to `glue`, a box number and a dimen to `quantity`, a counter and a key to `name`.
+`nothing` is below every type. The join is the nearest type above both (`Ty::join`): a dimen register and a skip register join to `glue`, a box number and a dimen to `quantity`, a counter and a key to `name`. Two key kinds join to `key` (a label and a citation key). Two file kinds join to `file`: a `.bib` and a `.tex` use of one argument give a file of no known kind.
+A key kind (`KeyKind`) is what conventions and lints match on: a label prefix, a citation's database entry, an option of a key list. The role or occurrence kind gives it, never the command's name. A file kind carries its extension and the installation tree its program searches (`FileKind`), the one table completion reads.
 The lattice is a tree, so the join of two disagreeing uses never stays at a member: an argument read once as glue and once as a number is a `quantity`, not the set of both.
 
 The run notes the type of each token of the user's files once it is read (`Facts::types`, joined per place), and each place is matched to the braced argument of the command its text stands in.
-A role ([what an argument is for](lsp.md)) gives a type only where no scanner did: a key or label is a `key`, a load a `file`.
+A role ([what an argument is for](lsp.md)) gives a type only where no scanner did: a key or label is a `key`, a load a `file` of its kind, a value written into a build file another tool reads (`\bibdata` in the `.aux`, a `bcf:datasource` in the `.bcf`) a `.bib` file, a `\bibstyle` a `.bst` file.
 A wrapper inherits types the way it inherits roles: an argument handed whole to an argument with a type has that type.
 An argument no use typed takes the type its macro's body gives it (`roles::assigned`, tex.web §§ 1224, 1057). `#i` after a register heading an assignment is that register's value. After `\penalty`, `\kern` or `\hskip` it is a number, dimen or glue. `#i` heading an assignment (after `\advance`, or with `\relax` ending the value) is a `register` and the `#j` after it a `quantity`, as in the kernel's `\setlength` (`#1#2\relax`). Where a use typed `#i` as a register, `#j` is its value's type: a skip register's is `glue`. `#i` inside `\csname…\endcsname` is a `name`. These types stay with the macro itself: a wrapper inherits only types a use showed.
 
@@ -448,7 +451,13 @@ A name without an extension gets `.tex` (tex.web § 1374).
 A file the run wrote is in one of two states:
 
 - known text: `\immediate\openout` made it empty, and each `\write` to an open stream appended a line. A deferred `\write` waits for the next shipout (§ 1370), or the end, and is expanded there with `\protect` as `\noexpand`. Its page number (`\count0`) is the current one under `analysis.assume_forced_page_breaks`, and unknown otherwise. An `\immediate\closeout` with lines still waiting makes the file unknown. Unknown text in a line is written as one character per class and lower bound, which reads back as unknown text of that class: an unknown position stays digits. Untyped text is written as `UNKNOWN_ANY`. An 8-bit read keeps such a character whole.
-- unknown text: a stream number `satex` could not pin down. Such a `\write` makes every written file unknown.
+- unknown text: a stream number `satex` could not pin down. Such a `\write` adds one line of unknown text to every open file, and the known lines stay.
+
+Two paths join their files line by line (`join_written`): the lines both begin and end with stay.
+Lines between that pair up keep the characters both begin and end with, and the place they differ is one unknown character of the class both parts read back as.
+A control word cut into, or braces that do not balance, widen the place to the whole line.
+Any other difference is one line of unknown text, and an unknown line absorbs the unknown line before it, so joins settle.
+A file only one path wrote joins with an empty one. Deferred lines still waiting join the same way.
 
 The build's files (`.aux`, `.toc`, `.bbl`, ..., `load.build_extensions`) of an earlier run are the run's own: the analysis runs the build until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`), and keeps them in the overlay, never on disk. The ones an engine left on disk are read only with `load.build_files`.
 Any other file the run did not write is what is on disk, or absent.
@@ -480,6 +489,7 @@ one of up to 8 meanings the family's writes gave, or any past them. A
 [meaning set](#meaning-sets-what-a-control-sequence-may-mean). The join is
 the union, meanings joined per pattern. Past 1024 patterns, they widen to
 what they share. A cache keeps the patterns, not their meanings.
+
 
 A name of wholly unknown text adds no family. The standing assumption
 (`unknown-name-defines-fresh`, an imprecision) is that it is a new name:

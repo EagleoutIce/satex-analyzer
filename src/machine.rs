@@ -2366,10 +2366,24 @@ impl<'a> Machine<'a> {
     /// that changed. Past `limits.build_runs` the files that still change
     /// are read as unknown text.
     pub fn analyze_build(source: &str, path: Option<&Path>, cfg: &'a Config) -> Analysis {
-        let runs = u32::from(cfg.limits.build_runs);
-        let Some(path) = path.filter(|_| runs > 1) else { return Machine::analyze_once(source, path, cfg) };
+        match path.filter(|_| cfg.limits.build_runs > 1) {
+            Some(path) => Machine::build(&mut checkpoint::Checkpoints::new(cfg), source, path, cfg, false),
+            None => Machine::analyze_once(source, path, cfg),
+        }
+    }
+
+    /// [`Machine::analyze_build`] from `checkpoints`. With `keep`, the build's
+    /// files stay in the overlay, so the next build of an edit starts from
+    /// them (the language server's).
+    pub fn build(
+        checkpoints: &mut checkpoint::Checkpoints<'a>,
+        source: &str,
+        path: &Path,
+        cfg: &'a Config,
+        keep: bool,
+    ) -> Analysis {
+        let runs = u32::from(cfg.limits.build_runs).max(1);
         let base = Machine::base_of(Some(path));
-        let mut checkpoints = checkpoint::Checkpoints::new(cfg);
         let mut placed: Vec<PathBuf> = Vec::new();
         let mut run = 1;
         // `limits.seconds` bounds the build, not each run: a run starts only
@@ -2462,7 +2476,9 @@ impl<'a> Machine<'a> {
             complete = Some(analysis);
         };
         crate::progress::set_run(1);
-        placed.iter().for_each(|p| crate::overlay::remove(p));
+        if !keep {
+            placed.iter().for_each(|p| crate::overlay::remove(p));
+        }
         (analysis.package_caches, analysis.format) = caches.unwrap_or_default();
         analysis
     }
@@ -3620,10 +3636,9 @@ will look undefined",
         Some(w.zip(h))
     }
 
-    /// A `\write` to `stream`: `text` ends up in its file when known, and
-    /// `None` makes the file's content unknown; a `deferred` one waits for
-    /// the next shipout. An unpinned stream may be any file.
-    pub(crate) fn write_output(&mut self, stream: Option<i64>, text: Option<&str>, deferred: bool) {
+    /// A `\write` of `text` to `stream`: a `deferred` one waits for the
+    /// next shipout. An unpinned stream may be any file.
+    pub(crate) fn write_output(&mut self, stream: Option<i64>, text: &str, deferred: bool) {
         // Any stream: each file open may get a line of unknown text.
         let Some(stream) = stream else {
             let open: Vec<String> = self.stream_files.values().map(|n| Self::output_name(n)).collect();
@@ -3637,14 +3652,14 @@ will look undefined",
         };
         let Some(name) = self.stream_files.get(&stream).map(|n| Self::output_name(n)) else { return };
         let open = self.engine_int(&format!("write_open.{stream}"));
-        if let (true, Some(text)) = (deferred, text) {
+        if deferred {
             Rc::make_mut(&mut self.pending).entry(name).or_default().push(text.to_string());
             return;
         }
         if let Some(slot) = Rc::make_mut(&mut self.outputs).get_mut(&name) {
-            match (open, text, slot.as_mut()) {
-                (Some(0), ..) => {}
-                (Some(1), Some(text), Some(file)) => {
+            match (open, slot.as_mut()) {
+                (Some(0), _) => {}
+                (Some(1), Some(file)) => {
                     file.push_str(text);
                     file.push('\n');
                 }
@@ -12256,4 +12271,133 @@ fn unknown_line(file: &mut Option<String>) {
             text.push_str(&line);
         }
     }
+}
+
+/// What two paths wrote to their files, joined (tex.web § 1370): a file
+/// only one wrote joins with an empty one, an unknown one stays unknown.
+fn join_outputs(a: &Outputs, b: &Outputs) -> Outputs {
+    if a == b {
+        return a.clone();
+    }
+    let text = |m: &Outputs, n| m.get(n).cloned().unwrap_or(Some(String::new()));
+    let names: HashSet<&String> = a.keys().chain(b.keys()).collect();
+    Rc::new(
+        names.into_iter().map(|n| (n.clone(), text(a, n).zip(text(b, n)).map(|(x, y)| join_written(&x, &y)))).collect(),
+    )
+}
+
+/// [`join_outputs`] of the lines deferred `\write`s left for the next shipout.
+fn join_pending(a: &Pending, b: &Pending) -> Pending {
+    if a == b {
+        return a.clone();
+    }
+    let text = |m: &Pending, n| m.get(n).map(|l| l.join("\n")).unwrap_or_default();
+    let names: HashSet<&String> = a.keys().chain(b.keys()).collect();
+    let lines = |n| join_written(&text(a, n), &text(b, n)).lines().map(str::to_string).collect();
+    Rc::new(names.into_iter().map(|n| (n.clone(), lines(n))).collect())
+}
+
+/// A file as either of two paths left it: the lines both begin and end
+/// with stay, lines between that pair up join one by one ([`join_line`]),
+/// any other difference is one line of unknown text. An unknown line
+/// absorbs the unknown line before it, so joins settle.
+fn join_written(a: &str, b: &str) -> String {
+    if a == b {
+        return a.to_string();
+    }
+    let (x, y): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
+    let head = x.iter().zip(&y).take_while(|(p, q)| p == q).count();
+    let tail = x[head..].iter().rev().zip(y[head..].iter().rev()).take_while(|(p, q)| p == q).count();
+    let (mx, my) = (&x[head..x.len() - tail], &y[head..y.len() - tail]);
+    let mut out: Vec<String> = x[..head].iter().map(|s| s.to_string()).collect();
+    let push = |out: &mut Vec<String>, line: String| match (
+        out.last().and_then(|l| unknown_line_class(l)),
+        unknown_line_class(&line),
+    ) {
+        (Some(p), Some(q)) => *out.last_mut().expect("a last line") = written_char(p | q, false).to_string(),
+        _ => out.push(line),
+    };
+    if mx.len() == my.len() {
+        mx.iter().zip(my).for_each(|(p, q)| push(&mut out, join_line(p, q)));
+    } else {
+        // Line ends read back as spaces, an empty line as `\par`.
+        let class = mx.iter().chain(my).fold(crate::tex::TextClass::SPACE.0, |c, l| {
+            c | l.chars().map(char_class).fold(if l.is_empty() { 127 } else { 0 }, |c, d| c | d)
+        });
+        push(&mut out, written_char(class, false).to_string());
+    }
+    x[x.len() - tail..].iter().for_each(|l| push(&mut out, l.to_string()));
+    out.into_iter().map(|l| l + "\n").collect()
+}
+
+/// The class a line of one unknown character stands for.
+fn unknown_line_class(line: &str) -> Option<u8> {
+    let mut chars = line.chars();
+    let c = chars.next().filter(|_| chars.next().is_none())?;
+    (c == crate::tex::UNKNOWN_ANY || crate::tex::written_class(c).is_some()).then(|| char_class(c))
+}
+
+/// The written character that reads back as unknown text of `class`.
+fn written_char(class: u8, one: bool) -> char {
+    match class & crate::tex::TextClass::CS.0 {
+        0 => crate::tex::written_unknown(crate::tex::TextClass(class), one),
+        _ => crate::tex::UNKNOWN_ANY,
+    }
+}
+
+/// One line two paths wrote apart in one place: the characters both begin
+/// and end with stay, the place is one unknown character of both parts'
+/// class. A control word cut into, unknown text next to the place and
+/// unbalanced braces become part of it.
+fn join_line(p: &str, q: &str) -> String {
+    let (x, y): (Vec<char>, Vec<char>) = (p.chars().collect(), q.chars().collect());
+    let letter = |c: &char| c.is_ascii_alphabetic() || *c == '@';
+    let open = |c: &char| *c == crate::tex::UNKNOWN_ANY || crate::tex::written_class(*c).is_some();
+    let mut head = x.iter().zip(&y).take_while(|(a, b)| a == b).count();
+    let room = x.len().min(y.len()) - head;
+    let mut tail = x.iter().rev().zip(y.iter().rev()).take(room).take_while(|(a, b)| a == b).count();
+    let word = x[..head].iter().rposition(|c| !letter(c)).map_or(0, |i| i + 1);
+    if word > 0 && x[word - 1] == '\\' {
+        head = word - 1;
+    }
+    head -= x[..head].iter().rev().take_while(|c| open(c)).count();
+    tail -= x[x.len() - tail..].iter().take_while(|c| open(c)).count();
+    let part = |head: usize, tail: usize| [&x[head..x.len() - tail], &y[head..y.len() - tail]];
+    let balanced = |s: &[char]| {
+        s.iter().try_fold(0i32, |d, &c| Some(d + i32::from(c == '{') - i32::from(c == '}')).filter(|d| *d >= 0))
+            == Some(0)
+    };
+    if !part(head, tail).iter().all(|s| balanced(s)) {
+        (head, tail) = (0, 0);
+    }
+    // A control word the place ends in runs on into the letters after it.
+    if part(head, tail).iter().any(|s| s.contains(&'\\')) {
+        tail -= x[x.len() - tail..].iter().take_while(|c| letter(c)).count();
+    }
+    let parts = part(head, tail);
+    let class = parts.iter().flat_map(|s| s.iter()).fold(0, |c, &ch| c | char_class(ch));
+    // Surely one character: each part holds one that is not unknown text
+    // that may be empty.
+    let one =
+        parts.iter().all(|s| s.iter().any(|c| !open(c) || crate::tex::written_class(*c).is_some_and(|(_, one)| one)));
+    x[..head].iter().copied().chain([written_char(class, one)]).chain(x[x.len() - tail..].iter().copied()).collect()
+}
+
+/// The class of what a written character reads back as.
+fn char_class(c: char) -> u8 {
+    use crate::tex::{Catcode as C, TextClass as T};
+    if let Some((class, _)) = crate::tex::written_class(c) {
+        return class.0;
+    }
+    let cat = match c {
+        '@' => return T::LETTER.0 | T::OTHER.0,
+        ' ' => C::Space,
+        '{' => C::Begin,
+        '}' => C::End,
+        '\\' | '%' | '#' | '&' | '$' | '^' | '_' | '~' => C::Active,
+        _ if c.is_ascii_alphabetic() => C::Letter,
+        _ if c.is_ascii_graphic() => C::Other,
+        _ => C::Active,
+    };
+    T::of(crate::tex::Tok::Chr(c, cat)).0
 }

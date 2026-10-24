@@ -65,8 +65,11 @@ fn broken_gaps(analysis: &Analysis) -> BTreeSet<(&'static str, u16, u32)> {
 /// text's own ordering.
 fn fact_keys(analysis: &Analysis) -> BTreeSet<(String, String, u16, u32)> {
     let mut set = BTreeSet::new();
+    // A write is a fact by its place: what it writes is a value, which a
+    // higher limit may make more precise (a page count of 1, not 1 or 2).
     for o in &analysis.facts.occurrences {
-        set.insert((format!("{:?}", o.kind), o.key.clone(), o.span.file, o.span.line));
+        let key = if o.kind == satex::builtins::OccKind::Write { String::new() } else { o.key.clone() };
+        set.insert((format!("{:?}", o.kind), key, o.span.file, o.span.line));
     }
     for d in &analysis.facts.defs {
         set.insert(("def".to_string(), analysis.interner.name(d.name).to_string(), d.span.file, d.span.line));
