@@ -821,7 +821,7 @@ fn a_hand_written_name_is_fixed_to_cref_when_cleveref_is_loaded() {
 }
 
 #[test]
-fn a_hand_written_name_asks_for_cleveref_when_it_is_missing() {
+fn a_hand_written_name_loads_cleveref_after_hyperref_when_it_is_missing() {
     if !crate::support::installed() {
         return;
     }
@@ -830,7 +830,9 @@ fn a_hand_written_name_asks_for_cleveref_when_it_is_missing() {
     assert_eq!(found.len(), 1, "{found:?}");
     let message = found[0]["message"].as_str().unwrap();
     assert!(message.contains("load cleveref (after hyperref)") && message.contains(r"\Cref{sec:x}"), "{message}");
-    assert!(replacements(&found[0]).is_empty(), "{found:?}");
+    // The fix loads it on a line after hyperref's.
+    assert_eq!(replacements(&found[0]), ["\n\\usepackage{cleveref}", r"\Cref{sec:x}"], "{found:?}");
+    assert_eq!(found[0]["edits"][0]["start"]["line"], 2, "{found:?}");
 }
 
 #[test]
@@ -868,7 +870,9 @@ fn a_plain_document_is_told_to_load_cleveref_for_a_named_reference() {
     let found = cleveref_records("cleveref-plain", body);
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0]["message"].as_str().unwrap().contains("load cleveref"), "{found:?}");
-    assert!(replacements(&found[0]).is_empty(), "{found:?}");
+    // No `\usepackage` to follow: the load goes before `\begin{document}`.
+    assert_eq!(replacements(&found[0]), ["\\usepackage{cleveref}\n", r"\Cref{sec:a}"], "{found:?}");
+    assert_eq!(found[0]["edits"][0]["start"]["line"], 2, "{found:?}");
 }
 
 #[test]

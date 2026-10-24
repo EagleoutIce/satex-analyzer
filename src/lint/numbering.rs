@@ -33,7 +33,7 @@ Whether the document loaded cleveref is read from the run.  If it did, the
 fix writes `\\Cref{sec:x}`, or `\\cref` after a lowercase word, and the rule
 speaks only where cleveref would set the very word written (`Sec.` stays
 where it sets `Section`).  If it did
-not, the finding asks to load it after hyperref and has no fix.
+not, the fix also loads it, after the last `\\usepackage` of the preamble.
 
 Fix by writing `\\Cref{sec:x}` and loading cleveref.",
         references: &[Ref { source: Source::Cleveref, at: "2" }],
@@ -394,26 +394,17 @@ fn prefer_cleveref(report: &mut Report) {
         if cleveref && !same {
             continue;
         }
-        if cleveref {
-            let edit = Edit {
-                path: n.path,
-                start: Pos::new(n.line, n.start as u32 + 1),
-                end: Pos::new(n.line, n.end as u32 + 1),
-                replacement: format!("{command}{{{labels}}}"),
-            };
-            let message = format!(
-                "`{}` names the reference by hand, where `{command}{{{labels}}}` reads the name from the label",
-                n.source
-            );
-            let fix = Fix::new(format!("write `{command}{{{labels}}}`"), Applicability::Unsafe, Some(vec![edit]));
-            report.add_fix(at, "cleveref", message, fix);
-        } else {
-            let message = format!(
-                "`{}` names the reference by hand: load cleveref (after hyperref) and write `{command}{{{labels}}}`",
-                n.source
-            );
-            let fix = Fix::new("load cleveref after hyperref", Applicability::Unsafe, None);
-            report.add_fix(at, "load", message, fix);
-        }
+        let call = format!("{command}{{{labels}}}");
+        let start = Pos::new(n.line, n.start as u32 + 1);
+        let replace = Edit { path: n.path, start, end: Pos::new(n.line, n.end as u32 + 1), replacement: call.clone() };
+        // Loaded, it asks for nothing more.
+        let mut fixed = edits.ensure_package("cleveref");
+        fixed.iter_mut().for_each(|e| e.push(replace.clone()));
+        let (name, how, load) = match cleveref {
+            true => ("cleveref", format!(", where `{call}` reads the name from the label"), ""),
+            false => ("load", format!(": load cleveref (after hyperref) and write `{call}`"), "load cleveref and "),
+        };
+        let fix = Fix::new(format!("{load}write `{call}`"), Applicability::Unsafe, fixed);
+        report.add_fix(at, name, format!("`{}` names the reference by hand{how}", n.source), fix);
     }
 }

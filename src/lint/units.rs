@@ -5,7 +5,6 @@ use crate::fixed::HashSet;
 use crate::builtins::LoadKind;
 use crate::facts::Quantity;
 use crate::lint::fix::{Applicability, Fix};
-use crate::lint::shared::document_start;
 use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 use crate::machine::Analysis;
 use crate::tex::FileId;
@@ -161,7 +160,6 @@ fn hand_set_quantity(report: &mut Report) {
     let analysis = report.analysis;
     let packages = package_files(analysis);
     let loaded = crate::lint::shared::loaded(analysis, "siunitx");
-    let begin = document_start(analysis);
     let view = report.text();
     let document = |file| view.document(file);
     let quantities: Vec<Quantity> = analysis
@@ -186,8 +184,8 @@ fn hand_set_quantity(report: &mut Report) {
         let call = call(analysis, &q.number, &unit);
         let via = q.via.map(|sym| report.cs(sym).trim_start_matches('\\').to_string());
         let mut edits = report.edits().quantity(&q, via.as_deref(), &call);
-        if let (Some(edits), Some(begin), true) = (edits.as_mut(), begin, load) {
-            edits.extend(report.edits().insert_before(begin, "\\usepackage{siunitx}").unwrap_or_default());
+        if let (Some(edits), true) = (edits.as_mut(), load) {
+            edits.extend(report.edits().ensure_package("siunitx").unwrap_or_default());
             load = false;
         }
         let set = match (q.unit.chars().all(char::is_alphabetic), spaced(&q)) {

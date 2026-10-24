@@ -178,7 +178,7 @@ fn computer_modern_in_t1(report: &mut Report) {
     let ec = set_in(report, report.text(), "T1", Some(KERNEL_ROMAN));
     let Some(first) = ec.first else { return };
     let span = document_start(analysis).unwrap_or(first);
-    let edits = report.edits().insert_before(span, "\\usepackage{lmodern}");
+    let edits = report.edits().ensure_package("lmodern");
     report.add_fix(
         span,
         "T1",
@@ -211,7 +211,7 @@ fn microtype_available(report: &mut Report) {
         return;
     }
     let Some(span) = document_start(analysis) else { return };
-    let edits = report.edits().insert_before(span, "\\usepackage{microtype}");
+    let edits = report.edits().ensure_package("microtype");
     report.add_fix(
         span,
         "microtype",

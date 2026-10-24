@@ -587,6 +587,27 @@ impl<'a> Edits<'a> {
         Some(vec![Edit { path, start, end: start, replacement: format!("{line}\n") }])
     }
 
+    /// Load `package` in the preamble: on a line after the document's last
+    /// `\usepackage` (after hyperref, which asks to come late), else before
+    /// `\begin{document}`. No edit where it is loaded already.
+    pub fn ensure_package(&self, package: &str) -> Option<Vec<Edit>> {
+        if crate::lint::shared::loaded(self.analysis, package) {
+            return Some(Vec::new());
+        }
+        let line = format!("\\usepackage{{{package}}}");
+        let mut loads =
+            self.analysis.facts.loads.iter().rev().filter(|l| l.kind == LoadKind::Package && l.by.is_none());
+        let last = loads.find_map(|l| {
+            let (path, text, mut scan, cs) = self.command(l.span)?;
+            scan.name(&cs).filter(|n| *n == "usepackage")?;
+            scan.optional();
+            let end = scan.group()?.end;
+            let at = Pos::new(end.line, text.line(end.line).chars().count() as u32 + 1);
+            Some(vec![Edit { path, start: at, end: at, replacement: format!("\n{line}") }])
+        });
+        last.or_else(|| self.insert_before(crate::lint::shared::document_start(self.analysis)?, &line))
+    }
+
     /// Insert a line of its own before the line `at` starts, when `at` is
     /// the first thing on it.
     pub fn insert_before(&self, at: Span, line: &str) -> Option<Vec<Edit>> {

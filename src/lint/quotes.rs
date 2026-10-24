@@ -3,7 +3,7 @@
 //! the encoding and the document language make of them.
 
 use crate::lint::fix::{Applicability, Fix};
-use crate::lint::shared::{document_start, loaded, macro_text};
+use crate::lint::shared::{loaded, macro_text};
 use crate::lint::text::{PUNCTUATION, Rewrite, View};
 use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 use crate::machine::Analysis;
@@ -468,8 +468,7 @@ fn csquotes_available(report: &mut Report) {
         Some(package) => format!(", and \\enquote sets the marks {package} asks for in the language in force"),
         None => String::new(),
     };
-    let edits =
-        document_start(analysis).and_then(|begin| report.edits().insert_before(begin, "\\usepackage{csquotes}"));
+    let edits = report.edits().ensure_package("csquotes");
     report.add_fix(
         span,
         "csquotes",
