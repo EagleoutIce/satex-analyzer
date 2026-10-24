@@ -47,7 +47,7 @@ The run notes the tokens of the user's files that a scanner read as a number, di
 Each such token belongs to the braced argument of the command its text stands in, and flows through wrappers as a role does.
 Types of one argument join: `\setlength` shows `#1 skip register, #2 glue`, `\usebox` `#1 box`, `\setcounter` `#1 counter, #2 number`, and an argument read once as glue and once as a number is a `quantity`.
 The record numbers the types by the argument's place in the usage line, optional arguments counted: `\usepackage[⟨arg1⟩]{⟨arg2⟩}` has `#1 options, #2 file`. The options of a load are a key list, its name a file.
-A command that defines a control sequence reads one, so `\newif` has the signature `⟨cs⟩`.
+A command that defines a control sequence reads one, so `\newif` has the signature `\if⟨name⟩`: a control sequence it makes a conditional (`#1 conditional`).
 The hover lists the type of each `⟨argN⟩` under the usage line, and the signature help puts it in front of the parameter's comment.
 The completion detail of a command shows them in its usage line: `\setlength{1: skip register}{2: glue}`.
 Under the hover of a command that reads a quantity, a short explanation from the knowledge base follows: what a glue, a dimen, a number, a muglue or a box is, with examples. The base is `src/lsp/knowledge.md`, one `## name, alias` entry each. A register or parameter is explained by the kind of value it holds.
@@ -61,7 +61,8 @@ After `key=` it offers the key's choices (`mode/fast`, l3keys' `.choice:` and `.
 
 A command with several definitions shows the one in force at the cursor. The others follow under a `More definitions` heading, which the playground folds.
 Hovering the style of `\bibliographystyle` shows its `.bst` file when BibTeX finds one, the databases it formats and what the standard styles do. The style is read from the `\bibstyle` line the run writes to the `.aux` file.
-A style given as a biblatex option and the bibliography the typeset pass sets are not shown: the run makes no `.bbl`.
+A style given as the biblatex option `style=` is shown the same way, with its `.bbx` file.
+The typeset pass sets the bibliography from a `.bbl` satex writes itself from the `.bib` entries the document cites, in biber's format under biblatex and BibTeX's `thebibliography` otherwise. It lives in the build's virtual files and no `.bbl` of LaTeX's is read.
 
 Hovering a key in an argument that cites (the `cite` role, so wrappers too) shows its entry from the databases the document names: title, author, year, venue and every field, with its place in the `.bib` file.
 

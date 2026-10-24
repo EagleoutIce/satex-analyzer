@@ -129,6 +129,180 @@ fn fields(body: &str, close: char) -> Vec<(String, String)> {
     }
     out
 }
+/// What the bibliography tool would hand the typesetting pass: a `.bbl`
+/// of the cited `entries`, written by satex itself and never read from a
+/// build. With `datalist` (biblatex's list name, from its `.bcf`) it is
+/// biber's format, else BibTeX's `thebibliography` (`natbib` labels).
+pub fn virtual_bbl(entries: &[&Entry], datalist: Option<&str>, natbib: bool) -> String {
+    match datalist {
+        Some(list) => biber_bbl(entries, list),
+        None => bibtex_bbl(entries, natbib),
+    }
+}
+
+/// The `Last, First and …` names of a field, as (family, given).
+fn names(value: &str) -> Vec<(String, String)> {
+    value
+        .split(" and ")
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(|n| match n.split_once(',') {
+            Some((last, first)) => (last.trim().to_string(), first.trim().to_string()),
+            None => match n.rsplit_once(' ') {
+                Some((first, last)) => (last.to_string(), first.trim().to_string()),
+                None => (n.to_string(), String::new()),
+            },
+        })
+        .collect()
+}
+
+/// A TeX-safe field value: the characters TeX reads as syntax escaped.
+fn safe(value: &str) -> String {
+    let mut out = String::new();
+    let mut prev = ' ';
+    for c in value.chars() {
+        if matches!(c, '%' | '&' | '#' | '_') && prev != '\\' {
+            out.push('\\');
+        }
+        out.push(c);
+        prev = c;
+    }
+    out
+}
+
+fn field<'a>(e: &'a Entry, names: &[&str]) -> Option<&'a str> {
+    e.fields.iter().find(|(n, v)| names.contains(&n.as_str()) && !v.is_empty()).map(|(_, v)| v.as_str())
+}
+
+fn bibtex_bbl(entries: &[&Entry], natbib: bool) -> String {
+    let mut out = format!("\\begin{{thebibliography}}{{{}}}\n", "9".repeat(entries.len().to_string().len()));
+    for e in entries {
+        let who = names(field(e, &["author", "editor"]).unwrap_or_default());
+        let year = field(e, &["year", "date"]).map(|y| y.chars().take(4).collect::<String>()).unwrap_or_default();
+        let author = who
+            .iter()
+            .map(|(l, f)| if f.is_empty() { l.clone() } else { format!("{f} {l}") })
+            .collect::<Vec<_>>()
+            .join(", ");
+        if natbib {
+            let last = who.first().map_or(e.key.as_str(), |(l, _)| l.as_str());
+            out.push_str(&format!("\\bibitem[{}({year}){}]{{{}}}\n", safe(last), safe(last), e.key));
+        } else {
+            out.push_str(&format!("\\bibitem{{{}}}\n", e.key));
+        }
+        out.push_str(&format!("{}.\n", safe(&author)));
+        if let Some(title) = field(e, &["title"]) {
+            out.push_str(&format!("\\newblock {}.\n", safe(title)));
+        }
+        let venue = field(e, &["journal", "journaltitle", "booktitle", "publisher", "school", "institution"]);
+        let tail = [venue.map(safe), Some(year).filter(|y| !y.is_empty())].into_iter().flatten().collect::<Vec<_>>();
+        if !tail.is_empty() {
+            out.push_str(&format!("\\newblock {}.\n", tail.join(", ")));
+        }
+        out.push('\n');
+    }
+    out.push_str("\\end{thebibliography}\n");
+    out
+}
+
+/// A 32-digit hex string standing for `text`, for the hashes biber gives names.
+fn hash(text: &str) -> String {
+    let fnv = |seed: u64| text.bytes().fold(seed, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
+    format!("{:016x}{:016x}", fnv(0xcbf2_9ce4_8422_2325), fnv(0x8422_2325_cbf2_9ce4))
+}
+
+/// Fields biber hands over in a form of their own, or not at all.
+const OWN_FORM: [&str; 17] = [
+    "author",
+    "editor",
+    "translator",
+    "publisher",
+    "location",
+    "address",
+    "institution",
+    "school",
+    "organization",
+    "url",
+    "doi",
+    "eprint",
+    "file",
+    "abstract",
+    "keywords",
+    "date",
+    "month",
+];
+
+fn biber_bbl(entries: &[&Entry], list: &str) -> String {
+    let mut out = String::from(
+        "% $ biblatex auxiliary file $\n% $ biblatex bbl format version 3.3 $\n% Do not modify the above lines!\n\
+\\begingroup\n\\makeatletter\n\\@ifundefined{ver@biblatex.sty}\n  {\\@latex@error\n     {Missing 'biblatex' package}\n     \
+{The bibliography requires the 'biblatex' package.}\n      \\aftergroup\\endinput}\n  {}\n\\endgroup\n\n\
+\\refsection{0}\n",
+    );
+    out.push_str(&format!("  \\datalist[entry]{{{list}}}\n"));
+    let initial = |s: &str| s.chars().next().map(|c| format!("{c}\\bibinitperiod")).unwrap_or_default();
+    for e in entries {
+        out.push_str(&format!("    \\entry{{{}}}{{{}}}{{}}{{}}\n", e.key, e.kind));
+        let mut sortinit = String::new();
+        for role in ["author", "editor", "translator"] {
+            let who = names(field(e, &[role]).unwrap_or_default());
+            if who.is_empty() {
+                continue;
+            }
+            out.push_str(&format!("      \\name{{{role}}}{{{}}}{{}}{{%\n", who.len()));
+            for (family, given) in &who {
+                let given_initials: Vec<String> = given.split_whitespace().map(initial).collect();
+                out.push_str(&format!(
+                    "        {{{{hash={}}}{{%\n           family={{{}}},\n           familyi={{{}}},\n           given={{{}}},\n           giveni={{{}}}}}}}%\n",
+                    hash(&format!("{family},{given}")),
+                    safe(family),
+                    initial(family),
+                    safe(given),
+                    given_initials.join("")
+                ));
+            }
+            out.push_str("      }\n");
+            if sortinit.is_empty() {
+                sortinit = who[0].0.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+            }
+            let all = hash(&who.iter().map(|(f, g)| format!("{f},{g}")).collect::<Vec<_>>().join(";"));
+            out.push_str(&format!("      \\strng{{namehash}}{{{all}}}\n      \\strng{{fullhash}}{{{all}}}\n"));
+        }
+        let lists = [("publisher", "publisher"), ("location", "location"), ("address", "location")]
+            .into_iter()
+            .chain([("institution", "institution"), ("school", "institution"), ("organization", "organization")]);
+        for (given, made) in lists {
+            if let Some(value) = field(e, &[given]) {
+                out.push_str(&format!("      \\list{{{made}}}{{1}}{{%\n        {{{}}}%\n      }}\n", safe(value)));
+            }
+        }
+        if sortinit.is_empty() {
+            sortinit = field(e, &["title"])
+                .and_then(|t| t.chars().next())
+                .map(|c| c.to_uppercase().to_string())
+                .unwrap_or_default();
+        }
+        out.push_str(&format!(
+            "      \\field{{sortinit}}{{{sortinit}}}\n      \\field{{sortinithash}}{{{}}}\n",
+            hash(&sortinit)
+        ));
+        for (name, value) in e.fields.iter().filter(|(n, v)| !v.is_empty() && !OWN_FORM.contains(&n.as_str())) {
+            let name = if name == "journal" { "journaltitle" } else { name.as_str() };
+            let value = safe(value);
+            let value = if name == "pages" { value.replace("--", "\\bibrangedash ") } else { value };
+            out.push_str(&format!("      \\field{{{name}}}{{{value}}}\n"));
+        }
+        if let Some(date) = field(e, &["date"]).filter(|_| field(e, &["year"]).is_none()) {
+            out.push_str(&format!("      \\field{{year}}{{{}}}\n", date.chars().take(4).collect::<String>()));
+        }
+        for (name, value) in e.fields.iter().filter(|(n, v)| matches!(n.as_str(), "doi" | "url") && !v.is_empty()) {
+            out.push_str(&format!("      \\verb{{{name}}}\n      \\verb {value}\n      \\endverb\n"));
+        }
+        out.push_str("    \\endentry\n");
+    }
+    out.push_str("  \\enddatalist\n\\endrefsection\n\\endinput\n");
+    out
+}
 
 fn count_lines(text: &str) -> u32 {
     u32::try_from(text.bytes().filter(|b| *b == b'\n').count()).unwrap_or(u32::MAX)

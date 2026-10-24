@@ -3252,6 +3252,36 @@ fn the_build_reruns_only_for_what_it_read() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// The bibliography goes into the typeset pass: the build makes its own
+/// `.bbl` from the entries the document cites, so `\bibliography` sets
+/// them and `\cite` finds its label. An entry no `\cite` names is not set.
+#[test]
+fn the_build_makes_a_bbl_from_the_cited_entries() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-bbl-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("refs.bib"),
+        "@article{k1,\n  author = {Doe, Jane and Roe, Richard},\n  title = {A Title},\n  journal = {A Journal},\n  year = 2001,\n}\n@book{k2, author={Poe, Edgar}, title={Unused}, year=1999}\n",
+    )
+    .unwrap();
+    let source = "\\documentclass{article}\\begin{document}\\cite{k1}\\bibliographystyle{plain}\\bibliography{refs}\\makeatletter\\@ifundefined{b@k1}{\\gdef\\Missing{}}{\\gdef\\Found{}}\\@ifundefined{b@k2}{\\gdef\\Unset{}}{\\gdef\\Set{}}\\makeatother\\end{document}\n";
+    let path = dir.join("doc.tex");
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    assert!(defined(&analysis, "Found") && !defined(&analysis, "Missing"), "{:?}", analysis.build_runs);
+    assert!(defined(&analysis, "Unset") && !defined(&analysis, "Set"));
+    // biblatex reads biber's format: its toggle says the file was found.
+    let source = "\\documentclass{article}\\usepackage[style=authoryear]{biblatex}\\addbibresource{refs.bib}\\begin{document}\\cite{k1}\\printbibliography\\makeatletter\\iftoggle{blx@bbldone}{\\gdef\\Found{}}{\\gdef\\Missing{}}\\makeatother\\end{document}\n";
+    let path = dir.join("blx.tex");
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    assert!(defined(&analysis, "Found") && !defined(&analysis, "Missing"), "{:?}", analysis.build_runs);
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// `\romannumeral` of a number in a small interval is one of its numerals
 /// (tex.web § 69): a name spelled from it is each name TeX may build.
 #[test]

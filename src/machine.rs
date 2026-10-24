@@ -2422,7 +2422,7 @@ impl<'a> Machine<'a> {
             };
             // The build's files this run left other than it read them; the
             // last run reads those as unknown text, so it ends there.
-            let changed: Vec<(PathBuf, String)> = analysis
+            let mut changed: Vec<(PathBuf, String)> = analysis
                 .written
                 .iter()
                 .filter(|(name, _)| cfg.load.is_build_file(&base.join(name)))
@@ -2445,6 +2445,12 @@ impl<'a> Machine<'a> {
                     (now.as_deref() != Some(text.as_str())).then_some((at, text))
                 })
                 .collect();
+            // The bibliography tool's file, made from the .bib entries cited.
+            if let Some((at, text)) = Machine::virtual_bbl(&analysis, &base, path)
+                && crate::overlay::text(&at).as_deref() != Some(text.as_str())
+            {
+                changed.push((at, text));
+            }
             if changed.is_empty() || run == runs {
                 break analysis;
             }
@@ -2459,6 +2465,48 @@ impl<'a> Machine<'a> {
         placed.iter().for_each(|p| crate::overlay::remove(p));
         (analysis.package_caches, analysis.format) = caches.unwrap_or_default();
         analysis
+    }
+
+    /// The `.bbl` the build's bibliography tool would make from the
+    /// entries the document cites, as satex writes it: where it goes and
+    /// its text. None without a bibliography database or a citation.
+    fn virtual_bbl(analysis: &Analysis, base: &Path, path: &Path) -> Option<(PathBuf, String)> {
+        let mut keys: Vec<&str> = Vec::new();
+        for o in analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Cite) {
+            if !keys.contains(&o.key.as_str()) {
+                keys.push(&o.key);
+            }
+        }
+        let mut databases: Vec<&str> = Vec::new();
+        for o in analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Bibliography) {
+            if !databases.contains(&o.key.as_str()) {
+                databases.push(&o.key);
+            }
+        }
+        let known: Vec<crate::plugin::bib::Entry> = databases
+            .iter()
+            .filter_map(|name| crate::plugin::bib::resolve(analysis, name))
+            .filter_map(|file| std::fs::read_to_string(file).ok())
+            .flat_map(|text| crate::plugin::bib::entries(&text))
+            .collect();
+        let all = keys.contains(&"*");
+        let cited: Vec<&crate::plugin::bib::Entry> = if all {
+            known.iter().collect()
+        } else {
+            keys.iter().filter_map(|k| known.iter().find(|e| e.key == *k)).collect()
+        };
+        if cited.is_empty() {
+            return None;
+        }
+        let loaded = |name: &str| analysis.facts.loads.iter().any(|l| l.name == name);
+        // biblatex names its list in the `.bcf` it wrote.
+        let list = loaded("biblatex").then(|| {
+            let bcf = analysis.written.iter().find(|(name, _)| name.ends_with(".bcf")).and_then(|(_, t)| t.as_deref());
+            bcf.and_then(|t| t.split("<bcf:datalist").nth(1)?.split("name=\"").nth(1)?.split('"').next())
+                .unwrap_or("nty/global//global/global/global")
+        });
+        let text = crate::plugin::bib::virtual_bbl(&cited, list, loaded("natbib"));
+        Some((base.join(path.file_stem()?).with_extension("bbl"), text))
     }
 
     /// The directory a run of the file at `path` reads from. `-f doc.tex`
@@ -5637,6 +5685,7 @@ will look undefined",
         let mut watch = *self.probe.take().expect("set above");
         watch.exhausted = watch.reached.is_none() && (self.halted || self.out.exhausted);
         watch.steps = self.out.steps;
+        watch.switch = self.out.interner.lookup("ifP").is_some_and(|s| self.is_switch(s));
         let interner = &self.out.interner;
         let catcodes = &self.catcodes;
         let typable = |t: &Token| match t.tok {
