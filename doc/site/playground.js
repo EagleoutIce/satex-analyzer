@@ -13,6 +13,7 @@
   // minimum folds that pane away, a click on the folded splitter brings it back; near a
   // third, half or two thirds it rests there. A section's grip sets its height, dragged
   // under half the minimum it closes the section. Sizes are kept per browser.
+  let foldConsole; // the satex console's fold, set below
   const PANES = { min: 15, snap: [1 / 3, 1 / 2, 2 / 3], within: 1, minSection: 4 }; // rem, fractions
   {
     const rem = () => parseFloat(getComputedStyle(document.documentElement).fontSize);
@@ -92,6 +93,15 @@
       kept.treeWidth = Math.round(clamp(want, 7 * rem(), work.getBoundingClientRect().width / 2));
       work.style.setProperty('--tree', `${kept.treeWidth}px`);
     }, keep);
+    // the satex console folds away; the state is remembered
+    foldConsole = (folded, remember = true) => {
+      $('play-termbody').hidden = folded;
+      $('play-termtoggle').setAttribute('aria-expanded', !folded);
+      $('play-term').classList.toggle('folded', folded);
+      if (remember) { kept.console = folded; keep(); }
+    };
+    $('play-termtoggle').onclick = () => foldConsole(!$('play-termbody').hidden);
+    foldConsole(!!kept.console, false);
     // the run output over the command line: its grip sets its height
     const out = $('play-out');
     if (kept.term) out.style.setProperty('--h', `${kept.term}px`);
@@ -132,6 +142,15 @@
     toastTimer = setTimeout(() => toastBox.classList.remove('on'), 2600);
   }
   const timing = (id, text, title = '') => Object.assign($(id), { textContent: text, title });
+  // The status bar: one time, a pill per non-empty severity; the rest in a pop-up on the time.
+  const shownTime = (text) => { $('t-time').hidden = false; $('t-time-text').textContent = text; };
+  $('t-time').onclick = () => { const pop = $('t-detail'); pop.hidden = !pop.hidden; $('t-time').setAttribute('aria-expanded', !pop.hidden); };
+  addEventListener('mousedown', (e) => { if (!e.target.closest('.statdetail')) { $('t-detail').hidden = true; $('t-time').setAttribute('aria-expanded', false); } });
+  function pills(ds) {
+    const n = (s) => ds.filter((d) => (sev(d) === 'hint' ? 'info' : sev(d)) === s).length;
+    const shown = [['error', 'error'], ['warning', 'warning'], ['info', 'suggestion']].map(([s, w]) => [s, w, n(s)]).filter(([, , c]) => c);
+    $('play-pills').innerHTML = shown.map(([s, w, c]) => `<span class="pill-sev sev-${s}" title="${c} ${w}${c > 1 ? 's' : ''} in the open file">${c} ${w}${c > 1 ? 's' : ''}</span>`).join('');
+  }
 
   /** SGR codes to the classes build.py's ansi() writes; OSC hyperlinks and cursor moves dropped. */
   function ansi(text) {
@@ -289,7 +308,11 @@
   /** Once typing pauses: the buffer, and an analysis of it. */
   function sync() {
     clearTimeout(timer);
-    if (push()) { analyze(); explainSoon(); }
+    if (push()) {
+      // the root's text may now ask for another engine
+      if (state.file === state.root && wanted() !== state.kernel && !manualKernel && !following) { following = true; restart().finally(() => { following = false; }); return; }
+      analyze(); explainSoon();
+    }
   }
   function analyze() { checking(); lsp('satex/analyze', {}, true); }
   function checking() { lspStatus.textContent = 'checking…'; checkStart = performance.now(); }
@@ -504,7 +527,8 @@
     const ds = diagnostics[uri()] ?? [];
     editor.diagnostics(ds);
     count.textContent = ds.length;
-    if (checkStart) timing('t-check', `check ${secs(performance.now() - checkStart)}`, 'the language server analyzed the open file');
+    pills(ds);
+    if (checkStart) { timing('t-check', secs(performance.now() - checkStart), 'the language server analyzed the open file'); shownTime(secs(performance.now() - checkStart)); }
     checkStart = 0;
     lspStatus.textContent = state.file in state.ro ? 'read-only file' : ds.length ? '' : 'none';
     const fixButton = (f, j, cls) => `<button class="small apply${cls}" data-j="${j}" title="${escape(f.title)}">Fix <span class="fix fix-${f.safety}">${f.safety}</span></button>`;
@@ -709,11 +733,15 @@
       ['Copy link to this line', '', lineLink],
     ];
     if (!items.length) return false;
+    showMenu(items, x, y);
+    return true;
+  }
+  /** The page's one context menu: [label, hint, action] rows at (x, y). */
+  function showMenu(items, x, y) {
     ctxMenu.innerHTML = items.map(([label, hint], i) => `<li role="menuitem" tabindex="-1" data-i="${i}">${escape(label)}<span class="muted">${escape(hint)}</span></li>`).join('');
     ctxMenu.hidden = false;
-    Object.assign(ctxMenu.style, { left: `${Math.min(x, innerWidth - ctxMenu.offsetWidth - 8)}px`, top: `${Math.min(y, innerHeight - ctxMenu.offsetHeight - 8)}px` });
+    Object.assign(ctxMenu.style, { left: `${Math.max(4, Math.min(x, innerWidth - ctxMenu.offsetWidth - 8))}px`, top: `${Math.max(4, Math.min(y, innerHeight - ctxMenu.offsetHeight - 8))}px` });
     ctxMenu.onclick = (e) => { const li = e.target.closest('li'); if (li) { ctxMenu.hidden = true; items[li.dataset.i][2](); } };
-    return true;
   }
   addEventListener('mousedown', (e) => { if (!e.target.closest('.ctx')) for (const m of document.querySelectorAll('.ctx')) m.hidden = true; });
   addEventListener('keydown', (e) => { if (e.key === 'Escape') { for (const m of document.querySelectorAll('.ctx')) m.hidden = true; drop.hidden = true; } });
@@ -859,16 +887,20 @@
       if (explainedHere) { explained = ''; explainName(records[0].name, null, records); explainBox.scrollIntoView({ block: 'nearest' }); }
       const [time, peak, files, tokens] = [/^(\S+?)s/, /([\d.]+ \w+) peak/, /([\d.k]+) files/, /([\d.kM]+) tokens/].map((r) => stats.match(r)?.[1]);
       timing('t-stats', stats ? [`${time} s`, peak && `${peak} peak`, `${files} files`, `${tokens} tokens`].filter(Boolean).join(' · ') : '', stats);
+      shownTime(`${secs(data.ms)}`);
       const failed = typeof data.status !== 'number' || data.status > 1;
-      status.textContent = `${command() ?? 'run'} ${secs(data.ms)} · exit ${data.status}${plainLint() && summary ? ` · ${summary}` : ''}`;
+      status.textContent = `${command() ?? 'run'} · exit ${data.status}`;
+      status.title = summary;
       // plain lint's findings are the panel's: its output would repeat them
       outBox.hidden = (plainLint() || explainedHere) && !failed;
+      if (!outBox.hidden) foldConsole(false, false);
       status.dataset.done = data.status;
       if (missing([printed]).length) fetchMissing([printed]);
     } catch (e) {
       status.textContent = `the run failed: ${e.message}`;
       status.dataset.done = 'error';
       outBox.hidden = false;
+      foldConsole(false, false);
     }
     button.disabled = false;
   }
@@ -1009,9 +1041,30 @@
   const store = (names = state.files, removed = []) => worker.postMessage({ type: 'project', dir: state.dir, removed,
     files: Object.fromEntries(names.filter((n) => n in state.texts && !(n in state.ro)).map((n) => [n, encode(state.texts[n])])) });
   const OPEN_AT_START = 16;
+  // The engine follows the root: a `% !TEX program =` comment or a package only XeTeX has, else pdfTeX
+  // (plain TeX for a `\bye` file without a class). Choosing in the selector overrides it until the root changes.
+  let manualKernel = false, following = false;
+  const ENGINES = { xelatex: 'xetex', xetex: 'xetex', pdflatex: 'pdftex', pdftex: 'pdftex', latex: 'pdftex', tex: 'plain', plain: 'plain' };
+  function engineOf(text = '') {
+    const magic = text.match(/^%\s*!T[eE]X\s+(?:TS-)?program\s*=\s*(\w+)/m);
+    if (magic && ENGINES[magic[1].toLowerCase()]) return ENGINES[magic[1].toLowerCase()];
+    if (/\\(?:usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{[^}]*\b(?:fontspec|unicode-math|polyglossia|xltxtra|xunicode)\b/.test(text)) return 'xetex';
+    return /\\bye\b/.test(text) && !/\\documentclass/.test(text) ? 'plain' : 'pdftex';
+  }
+  const wanted = () => Math.max(0, manifest.kernels.findIndex((k) => k.id === engineOf(state.texts[state.root])));
+  /** Loads and selects the engine the root asks for, unless the selector was used; true if it changed. */
+  async function followRoot() {
+    const want = wanted();
+    if (manualKernel || want === state.kernel) return false;
+    try { await kernel(want); } catch (e) { toast(`the ${manifest.kernels[want].label} kernel did not load: ${e.message}`); return false; }
+    toast(`${manifest.kernels[want].label} selected for ${state.root}`);
+    return true;
+  }
   /** Starts the language server again: another kernel, project or root. */
   async function restart() {
+    following = true;
     sync();
+    await followRoot();
     store();
     opened.clear();
     asked.clear();
@@ -1026,6 +1079,7 @@
     // the server publishes findings of open files only: the project's own, up to a few, for the tree's counts
     for (const n of state.files.slice(0, OPEN_AT_START)) open(n);
     synced = version;
+    following = false;
   }
 
   // ---------------------------------------------------------------- the file tree and the tabs
@@ -1114,6 +1168,7 @@
     for (const n of Object.keys(state.ro)) delete state.texts[n];
     state.ro = {};
     state.files = state.lists[ex] ??= list ?? [ex, ...(projects[ex] ?? [])];
+    manualKernel = false;
     Object.assign(state, { example: ex, root: state.files.includes(root) ? root : ex, open: [...state.files], file: state.files.includes(file) ? file : ex });
     editor.set(state.texts[state.file]);
     history.replaceState(null, '', `#${encodeURIComponent(ex)}`);
@@ -1126,6 +1181,7 @@
   /** Another root: the server starts over from it. */
   async function makeRoot(name) {
     state.root = name;
+    manualKernel = false;
     redraw();
     await restart();
     toast(`${name} is the root`);
@@ -1142,6 +1198,18 @@
     else if (act === 'delete') deleteFile(name, e.target.closest('.tact'));
     else choose(name);
   };
+  treeBox.oncontextmenu = (e) => {
+    const row = e.target.closest('.file[data-name]');
+    if (!row || e.target.closest('.renaming')) return;
+    e.preventDefault();
+    const name = row.dataset.name, ro = name in state.ro;
+    showMenu([
+      ...(/\.(tex|ltx)$/.test(name) && name !== state.root ? [['Use as root', '', () => makeRoot(name)]] : []),
+      ['Open', '', () => choose(name)],
+      ...(ro ? [] : [['Rename…', 'F2', () => renameFile(name)], ['Delete', '', () => deleteFile(name)]]),
+    ], e.clientX, e.clientY);
+  };
+  treeBox.addEventListener('keydown', (e) => { const row = e.target.closest?.('.file[data-name]'); if (e.key === 'F2' && row && !e.target.closest('.renaming')) { e.preventDefault(); renameFile(row.dataset.name); } });
   for (const box of [treeBox, examplesBox]) box.onkeydown = (e) => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-name], [data-example], [data-folder]')) { e.preventDefault(); e.target.click(); } };
   addEventListener('hashchange', () => {
     const h = decodeURIComponent(location.hash.slice(1)), opening = h.match(/^open=(.+):(\d+)$/);
@@ -1299,6 +1367,7 @@
   kernelBox.innerHTML = manifest.kernels.map((k, i) => `<option value="${i}" title="download ${size(k.size)}">${k.label} · ${size(k.size)}</option>`).join('') +
     (manifest.unavailable ?? []).map(([label, why]) => `<option disabled title="${escape(why)}">${label} · not available</option>`).join('');
   kernelBox.onchange = async () => {
+    manualKernel = true;
     kernelBox.disabled = true;
     try { await kernel(+kernelBox.value); await restart(); if (!plainLint()) await start(); } catch (e) { toast(`the kernel did not load: ${e.message}`); kernelBox.value = state.kernel; }
     kernelBox.disabled = false;
@@ -1348,6 +1417,7 @@
     const found = roots(texts);
     if (!found.length) throw new Error('no root document: no file has \\documentclass and \\begin{document}');
     const first = root in texts ? root : found[0];
+    manualKernel = false;
     Object.assign(state, { dir: '/work/upload', texts, root: first, file: first, open: [first], files: Object.keys(texts), example: null, upload: true, ro: {} });
     worker.postMessage({ type: 'project', dir: state.dir, files, replace: true });
     redraw();
@@ -1397,7 +1467,13 @@
   const picked = (e) => { upload([...e.target.files].map((f) => [f.webkitRelativePath || f.name, f])); e.target.value = ''; };
   $('play-files').onchange = $('play-folder').onchange = picked;
   const upMenu = $('play-upmenu');
-  $('play-upload').onclick = () => { upMenu.hidden = !upMenu.hidden; };
+  // fixed, placed under its button: the tree clips and the editor's layers would cover an inner one
+  $('play-upload').onclick = (e) => {
+    upMenu.hidden = !upMenu.hidden;
+    if (upMenu.hidden) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    Object.assign(upMenu.style, { left: `${Math.max(4, Math.min(r.left, innerWidth - upMenu.offsetWidth - 8))}px`, top: `${r.bottom + 4}px` });
+  };
   upMenu.onclick = (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; upMenu.hidden = true; if (b.dataset.pick === 'new') newFile(); else $(`play-${b.dataset.pick}`).click(); };
   // Files dragged over the page, the editor too: the drop zone covers it until the drop,
   // Escape, a click, or the drag leaving the window.
@@ -1506,7 +1582,7 @@
       given = { js, wasm, bundle };
     }
     const ready = await ask({ type: 'init', base, manifest, given }, given ? Object.values(given).map((b) => b.buffer) : []);
-    timing('t-init', `init ${secs(performance.now() - started)}`, 'time to fetch satex and the pdfTeX kernel and set them up');
+    timing('t-init', secs(performance.now() - started), 'time to fetch satex and the pdfTeX kernel and set them up');
     bar.hidden = true;
     sampleTexts = ready.samples;
     const hash = decodeURIComponent(location.hash.slice(1));
@@ -1518,7 +1594,7 @@
     const ex = link ? link.x : hash in sampleTexts && !shared.has(hash) ? hash : projectOf(hash) ?? manifest.sample;
     state.texts = { ...sampleTexts, ...(link?.x ? link.p : {}) };
     const k = manifest.kernels.findIndex((x) => x.id === link?.k);
-    if (k > 0) await kernel(k);
+    if (k >= 0) { manualKernel = true; if (k > 0) await kernel(k); }
     kernelBox.value = state.kernel;
     try {
       editor = await codemirror($('play-editor'), '');
