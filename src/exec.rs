@@ -4498,7 +4498,7 @@ impl Machine<'_> {
 
     /// `\newif`: `\if⟨name⟩` with `\⟨name⟩true` defined (latex.ltx).
     /// Primitive copies like expl3's `\if_false:` are not switches.
-    fn is_switch(&self, sym: Sym) -> bool {
+    pub(crate) fn is_switch(&self, sym: Sym) -> bool {
         if !matches!(self.env.meaning(sym).prim(), Some(Primitive::If(Cond::True | Cond::False))) {
             return false;
         }

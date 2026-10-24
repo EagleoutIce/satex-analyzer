@@ -783,7 +783,8 @@ fn an_uncalled_kernel_macro_is_typed_by_its_body() {
 
 /// Types name each argument by its place in the usage line, optional ones
 /// counted: a loading command's options are a key list, its name a file. A
-/// command that defines a control sequence reads one: `\newif`'s signature.
+/// command that defines a control sequence reads one, a conditional for
+/// `\newif`: `\if⟨name⟩`, typed `conditional`.
 #[test]
 fn types_count_optional_arguments_and_type_a_control_sequence() {
     if !installed() {
@@ -799,5 +800,6 @@ fn types_count_optional_arguments_and_type_a_control_sequence() {
         );
     }
     let newif = explain_one(&analysis, "newif");
-    assert_eq!(newif.get("signature"), Some(&json!("⟨cs⟩")), "{newif:?}");
+    assert_eq!(newif.get("signature"), Some(&json!("\\if⟨name⟩")), "{newif:?}");
+    assert_eq!(newif.get("types"), Some(&json!(["#1 conditional"])), "{newif:?}");
 }

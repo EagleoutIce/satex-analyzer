@@ -145,6 +145,8 @@ pub struct Watch {
     /// Tokens the sandbox read up to the end of this run.
     pub steps: u64,
     pub error: Option<String>,
+    /// The run left the probe name a conditional (`\newif\ifP` made it one).
+    pub switch: bool,
     raw: Vec<(Sym, usize, usize, Vec<Token>)>,
     calls: usize,
     pub bound: Vec<Bound>,
@@ -166,6 +168,7 @@ impl Watch {
             exhausted: false,
             steps: 0,
             error: None,
+            switch: false,
             raw: Vec::new(),
             calls: 0,
             bound: Vec::new(),
@@ -744,8 +747,13 @@ impl Prober<'_, '_> {
                 && demand.is_none()
                 && let Some(kind) = quantity(&plain, at)
             {
-                let text = format!("{} ", sample(&kind));
-                found = Some((ArgType::Quantity(kind), text));
+                // A control sequence the run left a conditional is one.
+                let spelled = format!("{} ", sample(&kind));
+                let kind = match kind.as_str() {
+                    "cs" if self.run(&prefix, &spelled).is_some_and(|(_, w)| w.switch) => SWITCH.to_string(),
+                    _ => kind,
+                };
+                found = Some((ArgType::Quantity(kind), spelled));
             }
             if let Some((item, text)) = found {
                 items.push(item);
@@ -808,12 +816,16 @@ fn wants_cs(w: &Watch, at: usize) -> bool {
 /// What `Machine::probe_scans` calls the quantities it reads.
 const QUANTITIES: [&str; 6] = ["number", "dimen", "glue", "mudimen", "muglue", "cs"];
 
+/// The control sequence a `\newif` reads, as its signature writes it.
+pub const SWITCH: &str = "\\if⟨name⟩";
+
 /// A value of each quantity, as a call writes it.
 fn sample(kind: &str) -> &'static str {
     match kind {
         "number" => "1",
         "mudimen" | "muglue" => "1mu",
-        "cs" => "\\P",
+        "cs" => "\\ifP",
+        k if k == SWITCH => "\\ifP",
         _ => "1pt",
     }
 }
@@ -842,6 +854,7 @@ pub fn raw_of(items: &[ArgType]) -> String {
             ArgType::Literal(text) => raw.push_str(text),
             ArgType::Keyword { word, value: Some(value) } => raw.push_str(&format!("[{word} ⟨{value}⟩]")),
             ArgType::Keyword { word, value: None } => raw.push_str(&format!("[{word}]")),
+            ArgType::Quantity(value) if value == SWITCH => raw.push_str(value),
             ArgType::Quantity(value) => raw.push_str(&format!("⟨{value}⟩")),
             ArgType::TokenFlag(c) => raw.push_str(&format!("t{c}")),
             ArgType::Delimited { open, close, required, default } => {

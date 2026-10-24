@@ -2433,6 +2433,7 @@ fn effective_of(
                         let value = value.as_deref().map(|v| format!(" ⟨{v}⟩")).unwrap_or_default();
                         let _ = write!(body, " [{word}{value}]");
                     }
+                    A::Quantity(value) if value == crate::probe::SWITCH => body.push_str(value),
                     A::Quantity(value) => {
                         let _ = write!(body, "⟨{value}⟩");
                     }
@@ -2783,6 +2784,17 @@ fn insert_call_shape(
                 )
         }) {
             types.push((*n, Ty::Options));
+        }
+    }
+    // A control sequence the call defines as a conditional (`\newif`).
+    let mut place_of = 0;
+    for item in probe.as_ref().map_or(&[][..], |p| &p.spec.items[..]) {
+        use crate::tex::ArgType as A;
+        match item {
+            A::Quantity(k) if k == crate::probe::SWITCH => types.push((place_of + 1, Ty::Switch)),
+            A::Mandatory | A::Optional(_) | A::Delimited { .. } | A::Until(_) => place_of += 1,
+            A::Embellishment(e) => place_of += e.chars().count(),
+            _ => {}
         }
     }
     types.sort_by_key(|(n, _)| *n);

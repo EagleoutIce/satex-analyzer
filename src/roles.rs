@@ -77,6 +77,8 @@ pub enum Ty {
     Name,
     /// A control sequence an assignment defines (`get_r_token`, § 1215).
     Cs,
+    /// A conditional `\newif` defines (`\if⟨name⟩`).
+    Switch,
     /// The key list a loading command takes in its optional argument.
     Options,
     Top,
@@ -94,6 +96,7 @@ impl Ty {
             Reg(RegKind::Dimen) => Dimen,
             Reg(RegKind::MuSkip) => MuGlue,
             Named(_) | Key | File => Name,
+            Switch => Cs,
             Reg(_) | Register | Quantity | Name | Cs | Options | Top => Top,
         }
     }
@@ -158,6 +161,7 @@ impl std::fmt::Display for Ty {
                 Ty::File => "file",
                 Ty::Name => "name",
                 Ty::Cs => "control sequence",
+                Ty::Switch => "conditional",
                 Ty::Options => "options",
                 _ => "any",
             }),
