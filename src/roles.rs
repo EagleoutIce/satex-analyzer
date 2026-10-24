@@ -613,6 +613,8 @@ fn seed(cmd: &str) -> Vec<Role> {
         "begin" => first(RoleKind::Occ(O::BeginEnvironment)),
         "end" => first(RoleKind::Occ(O::EndEnvironment)),
         "includegraphics" => first(RoleKind::Occ(O::Graphics)),
+        "bibliography" => first(RoleKind::Occ(O::Bibliography)),
+        "bibliographystyle" => first(RoleKind::Occ(O::BibStyle)),
         "label" => first(RoleKind::Occ(O::Label)),
         "crefrange" | "Crefrange" => {
             (0..2).map(|arg| Role { arg, kind: RoleKind::Occ(O::Ref), prefix: String::new() }).collect()

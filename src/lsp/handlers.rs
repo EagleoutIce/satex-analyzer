@@ -993,30 +993,16 @@ fn item(label: String, kind: CompletionItemKind, detail: Option<String>, rank: u
 
 fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: Pos) -> Vec<CompletionItem> {
     use crate::builtins::{LoadKind, OccKind};
+    use crate::roles::RoleKind as R;
     // What the argument at the cursor is ([`crate::roles`]): a braced one
     // by its place, a bracketed one by every role of the command.
     let at = crate::roles::braced_groups(arg.groups).len();
     let roles: Vec<crate::roles::Role> =
         crate::roles::roles(analysis, arg.cmd).into_iter().filter(|r| arg.open != '{' || r.arg == at).collect();
-    let mut loads: Vec<LoadKind> = roles
-        .iter()
-        .filter_map(|r| match r.kind {
-            crate::roles::RoleKind::Load(k) => Some(k),
-            _ => None,
-        })
-        .collect();
-    let mut occs: Vec<OccKind> = roles
-        .iter()
-        .filter_map(|r| match r.kind {
-            crate::roles::RoleKind::Occ(k) => Some(k),
-            _ => None,
-        })
-        .collect();
+    let mut occs: Vec<OccKind> =
+        roles.iter().filter_map(|r| if let R::Occ(k) = r.kind { Some(k) } else { None }).collect();
     // A wrapper that adds a prefix (`\ref{sec:#1}`) is given what follows it.
-    let prefix =
-        roles.iter().find(|r| r.kind == crate::roles::RoleKind::Occ(OccKind::Ref)).map_or("", |r| r.prefix.as_str());
-    loads.sort_by_key(|k| *k as u8);
-    loads.dedup();
+    let prefix = roles.iter().find(|r| r.kind == R::Occ(OccKind::Ref)).map_or("", |r| r.prefix.as_str());
     occs.sort_by_key(|k| *k as u8);
     occs.dedup();
     let first_group = || {
@@ -1025,22 +1011,18 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
         g.captures(arg.groups).map(|c| c[1].trim().to_string())
     };
     if arg.open == '[' {
-        if loads.iter().any(|k| matches!(k, LoadKind::Class | LoadKind::Package)) {
+        if roles.iter().any(|r| matches!(r.kind, R::Load(LoadKind::Class | LoadKind::Package))) {
             // `\usepackage[…]{name}`: the name follows the cursor.
             static NAME: OnceLock<Regex> = OnceLock::new();
             let name = NAME.get_or_init(|| Regex::new(r"^[^\]]*\]\s*\{([^{},]*)").unwrap());
             let Some(package) = name.captures(after).map(|c| c[1].trim().to_string()) else { return Vec::new() };
-            return query::package_options(analysis, &package)
-                .into_iter()
-                .map(|(key, default)| {
-                    item(
-                        key,
-                        CompletionItemKind::PROPERTY,
-                        Some(default.map_or(package.clone(), |d| format!("default: {d}  ({package})"))),
-                        0,
-                    )
-                })
-                .collect();
+            // `key=…` whose value the run loaded as a file (biblatex's `style=` a `.bbx`).
+            if let Some((key, typed)) = arg.inside.rsplit(',').next().and_then(|o| o.split_once('=')) {
+                return files(analysis, option_files(analysis, &package, key.trim()).into_iter(), typed.trim());
+            }
+            let detail = |d: Option<String>| d.map_or(package.clone(), |d| format!("default: {d}  ({package})"));
+            let options = query::package_options(analysis, &package).into_iter();
+            return options.map(|(key, d)| item(key, CompletionItemKind::PROPERTY, Some(detail(d)), 0)).collect();
         }
         let target = match occs.contains(&OccKind::BeginEnvironment) {
             true => first_group().unwrap_or_default(),
@@ -1050,38 +1032,21 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
     }
     // A key list in braces (`\pgfkeys{…}`, `\tikzset{…}`, a macro that
     // hands its argument to one).
-    if arg.open == '{' && loads.is_empty() && occs.iter().all(|k| matches!(k, OccKind::Key | OccKind::KeyUse)) {
+    if arg.open == '{'
+        && !roles.iter().any(|r| matches!(r.kind, R::Load(_)))
+        && occs.iter().all(|k| matches!(k, OccKind::Key | OccKind::KeyUse))
+    {
         let keys = key_items(analysis, doc, arg, pos);
         if !keys.is_empty() {
             return keys;
         }
     }
-    let mut out = Vec::new();
-    let roots = &analysis.distribution.roots;
-    for &kind in &loads {
-        match kind {
-            LoadKind::Class | LoadKind::Package => {
-                let ext = if kind == LoadKind::Class { ".cls" } else { ".sty" };
-                let mut names = project_files(analysis, &[&ext[1..]]);
-                names.extend(crate::distribution::names_with(roots, ext));
-                out.extend(names.into_iter().map(|n| item(n, CompletionItemKind::MODULE, Some(ext.into()), 1)));
-            }
-            LoadKind::Input | LoadKind::Include => {
-                out.extend(
-                    project_files(analysis, &["tex"]).into_iter().map(|n| item(n, CompletionItemKind::FILE, None, 0)),
-                );
-            }
-            _ => {}
-        }
-    }
+    // A file argument: the files of the extension its role reads.
+    let typed = arg.inside.rsplit(',').next().unwrap_or_default().trim();
+    let mut out = files(analysis, roles.iter().filter_map(|r| file_exts(analysis, r.kind)), typed);
     let keys = |kinds: &[OccKind]| -> BTreeSet<String> {
-        analysis
-            .facts
-            .occurrences
-            .iter()
-            .filter(|o| kinds.contains(&o.kind) && !o.key.is_empty())
-            .map(|o| o.key.clone())
-            .collect()
+        let occ = analysis.facts.occurrences.iter().filter(|o| kinds.contains(&o.kind) && !o.key.is_empty());
+        occ.map(|o| o.key.clone()).collect()
     };
     for kind in &occs {
         match kind {
@@ -1091,14 +1056,8 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
                 let close = after.starts_with('}');
                 // A name already written after the cursor stays as it is.
                 let fresh = close || after.trim().is_empty();
-                if !snippet {
-                    out.extend(
-                        open.iter()
-                            .rev()
-                            .enumerate()
-                            .map(|(i, e)| item(e.clone(), CompletionItemKind::MODULE, Some("open here".into()), i)),
-                    );
-                }
+                let here = open.iter().rev().enumerate().filter(|_| !snippet);
+                out.extend(here.map(|(i, e)| item(e.clone(), CompletionItemKind::MODULE, Some("open here".into()), i)));
                 for (env, items) in environments(analysis, pos) {
                     if !snippet && open.contains(&env) {
                         continue;
@@ -1122,12 +1081,11 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
                     out.push(it);
                 }
             }
-            OccKind::Ref => out.extend(
-                keys(&[OccKind::Label])
-                    .into_iter()
-                    .filter_map(|k| k.strip_prefix(prefix).map(str::to_string))
-                    .map(|k| item(k, CompletionItemKind::REFERENCE, None, 0)),
-            ),
+            OccKind::Ref => {
+                let labels =
+                    keys(&[OccKind::Label]).into_iter().filter_map(|k| Some(k.strip_prefix(prefix)?.to_string()));
+                out.extend(labels.map(|k| item(k, CompletionItemKind::REFERENCE, None, 0)));
+            }
             OccKind::Cite => {
                 // The databases' entries, found by key, title, author or
                 // year; then keys a `\bibitem` or another citation gave.
@@ -1149,20 +1107,9 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
                     }
                 }));
                 let known: BTreeSet<&str> = entries.iter().map(|e| e.key.as_str()).collect();
-                out.extend(
-                    keys(&[OccKind::BibItem, OccKind::Cite])
-                        .into_iter()
-                        .filter(|k| !known.contains(k.as_str()))
-                        .map(|k| item(k, CompletionItemKind::REFERENCE, None, 1)),
-                );
-            }
-            OccKind::Graphics => {
-                let exts: BTreeSet<String> =
-                    keys(&[OccKind::Graphics]).iter().filter_map(|k| Some(k.rsplit_once('.')?.1.to_string())).collect();
-                let exts: Vec<&str> = exts.iter().map(String::as_str).collect();
-                out.extend(
-                    project_files(analysis, &exts).into_iter().map(|n| item(n, CompletionItemKind::FILE, None, 0)),
-                );
+                let other =
+                    keys(&[OccKind::BibItem, OccKind::Cite]).into_iter().filter(|k| !known.contains(k.as_str()));
+                out.extend(other.map(|k| item(k, CompletionItemKind::REFERENCE, None, 1)));
             }
             _ => {}
         }
@@ -1232,14 +1179,8 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
     dirs.dedup();
     // The direct children of `dir`, not its handlers (`.cd`, `.unknown`).
     let children = |dir: &str| -> Vec<(String, Record)> {
-        stored(dir)
-            .into_iter()
-            .filter_map(|r| {
-                let name = field(&r, "key")[dir.len()..].to_string();
-                let hidden = name.is_empty() || name.contains('/') || name.starts_with('.') || name == "unknown";
-                (!hidden).then_some((name, r))
-            })
-            .collect()
+        let named = stored(dir).into_iter().map(|r| (field(&r, "key")[dir.len()..].to_string(), r));
+        named.filter(|(n, _)| !(n.is_empty() || n.contains('/') || n.starts_with('.') || n == "unknown")).collect()
     };
     let detail = |r: &Record| {
         ["kind", "default"].iter().map(|f| field(r, f)).filter(|d| !d.is_empty()).collect::<Vec<_>>().join("  ")
@@ -1281,10 +1222,8 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
     }
     if switched.is_none() {
         let keys = option_items(analysis, arg.cmd);
-        if !keys.iter().all(|k| k.detail.as_deref().is_some_and(|d| d.contains("positional"))) {
-            return keys;
-        }
-        return Vec::new();
+        let positional = keys.iter().all(|k| k.detail.as_deref().is_some_and(|d| d.contains("positional")));
+        return if positional { Vec::new() } else { keys };
     }
     dirs.iter()
         .flat_map(|d| children(&format!("{}/", d.trim_end_matches('/'))))
@@ -1305,16 +1244,69 @@ fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
             let kind = r.get("kind").and_then(Json::as_str).filter(|k| *k != "code");
             let detail = [kind.map(str::to_string), default.map(|d| format!("default: {d}")), Some(family.to_string())];
             let detail: Vec<String> = detail.into_iter().flatten().filter(|d| !d.is_empty()).collect();
-            let rank = r.get("rank").and_then(Json::as_u64).unwrap_or(0) as usize;
-            let it = item(
-                key.to_string(),
-                CompletionItemKind::PROPERTY,
-                Some(detail.join("  ")),
-                rank * 10_000 + i.min(9_999),
-            );
-            Some(key_item(it, key, r))
+            let rank = r.get("rank").and_then(Json::as_u64).unwrap_or(0) as usize * 10_000 + i.min(9_999);
+            Some(key_item(item(key.to_string(), CompletionItemKind::PROPERTY, Some(detail.join("  ")), rank), key, r))
         })
         .collect()
+}
+
+/// Extensions of files, and the installation's tree their program searches.
+type FileKind = (Vec<String>, Option<&'static str>);
+
+/// The files an argument of role `kind` names: kpathsea's `TEXINPUTS`,
+/// `BSTINPUTS` or `BIBINPUTS` tree, none for `.tex`, whose tree files are
+/// documentation, never a document's input.
+fn file_exts(analysis: &Analysis, kind: crate::roles::RoleKind) -> Option<FileKind> {
+    use crate::builtins::{LoadKind as L, OccKind as O};
+    use crate::roles::RoleKind as R;
+    let (ext, tree) = match kind {
+        R::Load(L::Class) => ("cls", Some("tex")),
+        R::Load(L::Package) => ("sty", Some("tex")),
+        R::Load(L::Input | L::Include) => ("tex", None),
+        R::Occ(O::Bibliography) => ("bib", Some("bibtex/bib")),
+        R::Occ(O::BibStyle) => ("bst", Some("bibtex/bst")),
+        // The extensions the run's own graphics had.
+        R::Occ(O::Graphics) => {
+            let occ = analysis.facts.occurrences.iter().filter(|o| o.kind == O::Graphics);
+            let exts: BTreeSet<String> = occ.filter_map(|o| Some(o.key.rsplit_once('.')?.1.to_string())).collect();
+            return Some((exts.into_iter().collect(), None));
+        }
+        _ => return None,
+    };
+    Some((vec![ext.to_string()], tree))
+}
+
+/// The extensions of the files loading `package` with option `key=v` read
+/// by the name `v`, as [`file_exts`] gives them.
+fn option_files(analysis: &Analysis, package: &str, key: &str) -> Option<FileKind> {
+    let loads = &analysis.facts.loads;
+    let at = loads.iter().position(|l| l.name == package && l.kind == crate::builtins::LoadKind::Package)?;
+    let value = loads[at].options.iter().find_map(|o| o.split_once('=').filter(|(k, _)| k.trim() == key))?.1.trim();
+    let nested = loads[at + 1..].iter().take_while(|l| l.depth > loads[at].depth);
+    let exts: BTreeSet<String> = nested
+        .filter_map(|l| l.name.rsplit_once('.').filter(|(stem, _)| *stem == value).map(|(_, ext)| ext.to_string()))
+        .collect();
+    (!exts.is_empty()).then(|| (exts.into_iter().collect(), Some("tex")))
+}
+
+/// The files of each `(extensions, tree)` kind whose name starts with
+/// `typed`: the project's first, then the installation's.
+fn files(analysis: &Analysis, kinds: impl Iterator<Item = FileKind>, typed: &str) -> Vec<CompletionItem> {
+    let mut out = Vec::new();
+    for (exts, tree) in kinds {
+        let exts: Vec<&str> = exts.iter().map(String::as_str).collect();
+        let mut names: Vec<(String, usize)> = project_files(analysis, &exts).into_iter().map(|n| (n, 0)).collect();
+        for (ext, dir) in exts.iter().filter_map(|e| Some((e, tree?))) {
+            let found = crate::distribution::names_with(&analysis.distribution.roots, dir, &format!(".{ext}"));
+            names.extend(found.into_iter().map(|n| (n, 1)));
+        }
+        let detail = Some(format!(".{}", exts.join(", .")));
+        let names = names.into_iter().filter(|(n, _)| n.starts_with(typed));
+        out.extend(names.map(|(n, rank)| item(n, CompletionItemKind::FILE, detail.clone(), rank)));
+    }
+    out.sort_by(|a, b| (&a.label, &a.sort_text).cmp(&(&b.label, &b.sort_text)));
+    out.dedup_by(|a, b| a.label == b.label);
+    out
 }
 
 /// Files under the project root with one of `exts`, relative and without

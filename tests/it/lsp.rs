@@ -1089,6 +1089,33 @@ fn hover_shows_the_biblatex_style() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A file argument completes the files of its extension that start with
+/// what is typed: the project's databases, the installation's styles.
+#[test]
+fn file_arguments_complete_their_files_by_extension() {
+    let text = "\\documentclass{article}\n\\begin{document}\nx\n\\bibliographystyle{pl}\n\\bibliography{re}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("bibfiles", text);
+    for name in ["refs", "rest", "other"] {
+        std::fs::write(dir.join(format!("{name}.bib")), "").unwrap();
+    }
+    let bibs = complete(&mut server, &uri, 4, 16);
+    assert!(["refs", "rest"].iter().all(|n| labels(&bibs).contains(n)), "{:?}", labels(&bibs));
+    assert!(labels(&bibs).iter().all(|l| l.starts_with("re")), "{:?}", labels(&bibs));
+    let styles = complete(&mut server, &uri, 3, 21);
+    assert!(labels(&styles).contains(&"plain"), "{:?}", labels(&styles));
+    assert!(labels(&styles).iter().all(|l| l.starts_with("pl")), "{:?}", labels(&styles));
+    server.shutdown();
+    let blx =
+        "\\documentclass{article}\n\\usepackage[style=authoryear]{biblatex}\n\\begin{document}\nx\n\\end{document}\n";
+    let (mut server, uri, _, dir2) = open_loaded("bbxfiles", blx);
+    let bbx = complete(&mut server, &uri, 1, 20);
+    assert!(["authoryear", "authortitle"].iter().all(|n| labels(&bbx).contains(n)), "{:?}", labels(&bbx));
+    assert!(labels(&bbx).iter().all(|l| l.starts_with("au")), "{:?}", labels(&bbx));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&dir2);
+}
+
 /// An argument TeX reads as a length narrows what a name there may be:
 /// the length registers come before the rest.
 #[test]

@@ -104,11 +104,19 @@ impl Trees {
     }
 }
 
-/// The installation's file names ending in `ext` (`.cls`), sorted: the
-/// index a run searched, read from memory once it has been built.
-pub fn names_with(roots: &[PathBuf], ext: &str) -> Vec<String> {
-    let (index, _) = index_for(roots, None);
-    let mut names: Vec<String> = index.keys().filter_map(|n| n.strip_suffix(ext)).map(str::to_string).collect();
+/// The installation's file names ending in `ext` (`.cls`) under `dir` of
+/// each root, sorted: for `tex` the index a run searched, read from memory
+/// once it has been built; another tree (`bibtex/bst`) walked.
+pub fn names_with(roots: &[PathBuf], dir: &str, ext: &str) -> Vec<String> {
+    let names: Vec<String> = match dir {
+        "tex" => index_for(roots, None).0.keys().cloned().collect(),
+        _ => {
+            let mut tree = HashMap::default();
+            roots.iter().for_each(|root| walk(&root.join(dir), &mut tree));
+            tree.into_keys().collect()
+        }
+    };
+    let mut names: Vec<String> = names.iter().filter_map(|n| n.strip_suffix(ext)).map(str::to_string).collect();
     names.sort();
     names
 }
