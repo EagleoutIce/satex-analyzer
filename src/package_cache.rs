@@ -2607,6 +2607,10 @@ impl Machine<'_> {
         }
         let total = self.out.steps - rec.before.steps;
         if rec.chain.is_empty() {
+            if rec.served > 0 {
+                let state = format!("{} % cached, rest read", rec.served * 100 / total.max(1));
+                self.out.package_caches.push((rec.name.clone(), rec.cache.display().to_string(), state));
+            }
             if rec.served == 0 {
                 let why = rec.log.spoiled.unwrap_or("no line of it was at rest");
                 self.out.package_caches.push((

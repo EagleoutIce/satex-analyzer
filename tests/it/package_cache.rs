@@ -1371,3 +1371,24 @@ fn an_export_can_be_limited_to_a_package() {
     assert_eq!(without + only, all);
     assert!(held.iter().all(|n| !n.starts_with("package-demo-")), "{held:?}");
 }
+
+/// `\RequirePackage` on a package's last line looks past its end for `[`
+/// while the load is still running: the package it names is read, on a
+/// run that stores the cache and on one that replays it.
+#[test]
+fn a_package_loaded_on_the_last_line_is_read_cold_and_warm() {
+    if !installed() {
+        return;
+    }
+    let dir = class_project("last-line");
+    run_latex(&dir, "\\relax\n", true);
+    for run in ["cold", "warm"] {
+        let analysis = run_latex(&dir, WITH_CLASS, true);
+        let undefined: Vec<_> = satex::lint::lint(&analysis)
+            .into_iter()
+            .filter(|r| r["code"] == "undefined-control-sequence")
+            .map(|r| r["message"].to_string())
+            .collect();
+        assert!(undefined.is_empty(), "{run}: {undefined:?}");
+    }
+}

@@ -4073,10 +4073,11 @@ will look undefined",
                     }
                 }
             }
-            // The end of a captured package's file is a checkpoint regardless of
-            // who found it: a look-ahead past the end pops the frame like the main
-            // loop does, and the segment needs an end to be replayed to.
-            if self.package_capture.is_some() {
+            // The end of a captured package's file is a checkpoint when the main
+            // loop reads past it. A look-ahead past it (`\@ifnextchar` after a
+            // `\RequirePackage` on the last line) is a command still running,
+            // which a replay to that end would drop.
+            if self.package_capture.is_some() && self.reading_command {
                 self.checkpoint_at_end();
             }
             let outer = std::mem::replace(&mut self.popping_in_read, true);
