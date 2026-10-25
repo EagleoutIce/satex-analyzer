@@ -2790,7 +2790,17 @@ impl<'a> Machine<'a> {
             // (siunitx's `\day` is `d` in a PDF string) is not the document's.
             let facts = &self.out.facts;
             let kept = (facts.diagnostics.clone(), facts.occurrences.len(), facts.raised.len(), self.tex_errors);
-            let expanded = self.expand_as_pdf_string(&tokens);
+            // A look-ahead in it ends at the field's end (`\\` reads past
+            // `B` in `\author{A\\ B}`): the conditional it left open there
+            // is this rendering's, closed with it.
+            let conds = self.conds.len();
+            // A field the run never set holds the format's default. Its own
+            // definitions stand where the field was set (`\gdef\@title`).
+            let Some(at) = self.out.facts.defs.iter().rev().find(|d| d.name == sym).map(|d| d.span) else { return };
+            let expanded = self.expand_as_pdf_string(&tokens, at);
+            while self.conds.len() > conds {
+                self.pop_conditional();
+            }
             let facts = &mut self.out.facts;
             facts.diagnostics = kept.0;
             facts.occurrences.truncate(kept.1);
@@ -2811,22 +2821,29 @@ impl<'a> Machine<'a> {
     /// its own `\pdfstringdef\⟨cs⟩{⟨text⟩}` makes it (hyperref manual,
     /// "PDF strings"), and `\⟨cs⟩` is read back.  Without it the list is
     /// expanded in a group, and what is left of it as characters is the text.
-    fn expand_as_pdf_string(&mut self, tokens: &[Token]) -> Vec<Token> {
+    fn expand_as_pdf_string(&mut self, tokens: &[Token], span: Span) -> Vec<Token> {
         self.env.push_group(GroupKind::SemiSimple, Span::default());
-        if let Some(define) = self.out.interner.lookup("pdfstringdef")
-            && self.env.meaning(define).as_macro().is_some()
-        {
+        // hyperref's PDF string, else what LaTeX writes text with
+        // (`\protected@edef`, `\protect` as `\noexpand`): a robust `\\`
+        // stays a command.
+        let definer = ["pdfstringdef", "protected@edef"]
+            .into_iter()
+            .filter_map(|name| self.out.interner.lookup(name))
+            .find(|&sym| self.env.meaning(sym).as_macro().is_some());
+        if let Some(define) = definer {
             let target = self.intern("satex@pdfstring");
-            let span = Span::default();
+
             let mut run = vec![Token::new(Tok::Cs(define), span), Token::new(Tok::Cs(target), span)];
             run.push(Token::new(Tok::Chr('{', Catcode::Begin), span));
             run.extend_from_slice(tokens);
             run.push(Token::new(Tok::Chr('}', Catcode::End), span));
             self.run_tokens(Rc::from(run));
-            let written =
-                self.env.meaning(target).as_macro().map(|m| self.text_of(&m.replacement_text)).unwrap_or_default();
+            let body = self.env.meaning(target).as_macro().map(|m| m.replacement_text.to_vec()).unwrap_or_default();
             self.env.pop_group(&mut self.catcodes);
-            return decode_pdf_string(&written)
+            if self.name(define) != "pdfstringdef" {
+                return body;
+            }
+            return decode_pdf_string(&self.text_of(&body))
                 .chars()
                 .map(|c| Token::new(Tok::Chr(c, text_catcode(c)), span))
                 .collect();

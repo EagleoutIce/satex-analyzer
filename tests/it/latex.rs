@@ -189,12 +189,12 @@ fn a_name_read_under_assumed_category_codes_is_no_certain_error() {
                 let get = |k: &str| f.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
                 format!("{} {}", get("severity"), get("message"))
             })
-            .filter(|f| f.contains("`{y"))
+            .filter(|f| f.contains("{y"))
             .collect::<Vec<_>>()
     };
-    assert_eq!(severity("", 0), ["error `\\x`{y is never defined in this run"]);
+    assert_eq!(severity("", 0), ["error `\\x{y` is never defined in this run"]);
     let assumed = severity("\\begingroup\\catcode`\\{=11 \\spin\\endgroup", 400_000);
-    assert_eq!(assumed, ["warning `\\x`{y is undefined where the analysis assumed category codes back after a cut"]);
+    assert_eq!(assumed, ["warning `\\x{y` is undefined where the analysis assumed category codes back after a cut"]);
 }
 
 /// Only `\newlabel` warns about a name defined twice (pdflatex: "Label
@@ -517,10 +517,10 @@ fn the_title_spells_a_logo_the_way_the_pdf_does() {
 
 /// Documents and the metadata fields they record, with the text of each.
 const METADATA: &[crate::support::BodyRow] = &[
-    // `\pdfstringdef` expands what it can, robust commands included; a name
-    // with an `@` in it is a macro like any other, so its text stands.
+    // Without hyperref the text is what LaTeX writes it as
+    // (`\protected@edef`): a protected command stays a command, no text.
     (
-        "an_internal_command_in_the_date_expands_like_any_macro",
+        "a_protected_command_in_the_date_stays_a_command",
         r"\documentclass{article}
 \makeatletter
 \protected\def\my@mark{M}
@@ -529,7 +529,7 @@ const METADATA: &[crate::support::BodyRow] = &[
 \begin{document}
 \title{T}\author{A}\maketitle
 \end{document}",
-        &[("date", "SeptemberM22, 2026")],
+        &[("date", "September22, 2026")],
     ),
     (
         "texorpdfstring_gives_the_title_its_pdf_form",
@@ -3641,4 +3641,18 @@ fn a_wide_random_integer_is_taken_apart_and_put_back_together() {
         &crate::support::config(),
     );
     assert!(broken_gaps(&analysis).is_empty(), "{:?}", broken_gaps(&analysis));
+}
+
+/// `\\` in `\author` looks ahead for `*` when satex renders the field for
+/// its text: the look-ahead ends with the field, and nothing it opened
+/// reaches the document. pdflatex: no error.
+#[test]
+fn a_line_break_in_the_author_leaves_the_document_balanced() {
+    if !installed() {
+        return;
+    }
+    let analysis =
+        analyze("\\documentclass{article}\\title{T}\\author{A\\\\ B}\\begin{document}\\maketitle\\end{document}");
+    assert!(broken_gaps(&analysis).is_empty(), "{:?}", broken_gaps(&analysis));
+    assert_eq!(metadata(&analysis, "author"), "A B");
 }

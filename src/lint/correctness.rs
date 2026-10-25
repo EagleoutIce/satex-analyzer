@@ -435,14 +435,14 @@ fn undefined_control_sequences(report: &mut Report) {
         let (severity, message) = if assumed && odd {
             (
                 Severity::Warning,
-                format!("{name} is undefined where the analysis assumed category codes back after a cut"),
+                format!("`{name}` is undefined where the analysis assumed category codes back after a cut"),
             )
         } else if expansion.meaning == MeaningKind::UndefinedApproximated {
-            (Severity::Info, format!("{name} is undefined on a path the analysis approximated"))
+            (Severity::Info, format!("`{name}` is undefined on a path the analysis approximated"))
         } else if expansion.cds.is_empty() {
-            (Severity::Error, format!("{name} is never defined in this run"))
+            (Severity::Error, format!("`{name}` is never defined in this run"))
         } else {
-            (Severity::Warning, format!("{name} is undefined on a path satex could not decide"))
+            (Severity::Warning, format!("`{name}` is undefined on a path satex could not decide"))
         };
         report.add_as(
             severity,
