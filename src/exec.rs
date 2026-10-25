@@ -517,6 +517,7 @@ impl Machine<'_> {
                 // list ejects the page, which is then empty.
                 // § 1103: a penalty on the main vertical list builds the page.
                 if self.mode == crate::mode::Modes::VERTICAL {
+                    self.take_contributions();
                     match penalty.filter(|p| *p <= -10000) {
                         Some(p) => self.fire_up(p, before, span),
                         None => self.build_page(span),

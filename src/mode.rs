@@ -444,6 +444,10 @@ pub struct Natural {
     /// they take items away (§ 1105).  `\sw@slant` in the LaTeX kernel
     /// reaches three deep.
     pub tail: [Last; TAIL],
+    /// How many items the list holds at least: items leave only from its
+    /// end (tex.web §§ 1080, 1105), so it is not empty while this is not
+    /// zero. Followed on internal vertical lists.
+    pub held: u8,
     /// The font and character of the word being set that ligatures and
     /// kerns with what comes next, not yet counted (tex.web § 1034 `cur_l`).
     pub pending: Option<(u32, u32)>,
@@ -591,6 +595,7 @@ impl Natural {
         }
         self.tail[0] = item;
         self.ligature = None;
+        self.held = self.held.saturating_add(1);
     }
 
     /// An item came off the list. What it uncovers past the window is not
@@ -602,6 +607,13 @@ impl Natural {
         }
         self.tail[TAIL - 1] = Last::UNKNOWN;
         self.ligature = None;
+        self.held = self.held.saturating_sub(1);
+    }
+
+    /// The list is empty again.
+    fn emptied(&mut self) {
+        self.tail = [Last::Empty; TAIL];
+        self.held = 0;
     }
 
     /// An item that may or may not have been appended: the tail is the one
@@ -729,6 +741,7 @@ impl Natural {
             prior: self.prior || other.prior,
             capped: self.capped || other.capped,
             tail: std::array::from_fn(|k| self.tail[k].merge(other.tail[k])),
+            held: self.held.min(other.held),
             pending: self.pending,
             space_factor: if self.space_factor == other.space_factor { self.space_factor } else { None },
             ligature: if self.ligature == other.ligature { self.ligature } else { None },
@@ -887,9 +900,13 @@ pub type Line = (Scaled, Scaled, Scaled, Option<Scaled>);
 pub(crate) const MATERIAL: u8 = 1;
 /// A list may hold a box or a rule, which the page builder counts (§ 1000).
 pub(crate) const BOXED: u8 = 2;
+/// A list may hold a forced break, a penalty of -10000 or less, where
+/// `\vsplit` stops (tex.web § 970).
+pub(crate) const BREAKS: u8 = 4;
 
 /// What a box register records beside its state, each reset when it changes.
-const BOX_SLOTS: [&str; 12] = ["wd", "ht", "dp", "first", "solid", "last", "one", "lw", "lh", "ld", "lmk", "lead"];
+const BOX_SLOTS: [&str; 16] =
+    ["wd", "ht", "dp", "first", "solid", "last", "one", "lw", "lh", "ld", "lmk", "lead", "calm", "held", "nh", "nd"];
 
 /// Which item `\unskip`, `\unkern` or `\unpenalty` takes away.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1097,6 +1114,7 @@ impl Machine<'_> {
             prior: !indented,
             capped: outer.capped,
             tail: [if indented { Last::Box } else { Last::Empty }; TAIL],
+            held: u8::from(indented),
             pending: None,
             space_factor: Some(1000),
             ligature: None,
@@ -1162,8 +1180,9 @@ impl Machine<'_> {
             Some(crate::linebreak::Kp::Box { chr: Some((font, c)), .. }) => self.left_margin_kern(font, c),
             _ => None,
         };
-        after.tail = [Last::Empty; TAIL];
+        after.emptied();
         after.tail[0] = Last::Box;
+        after.held = 1;
         after.line = Some((w, h, d, kern));
     }
 
@@ -1496,8 +1515,12 @@ impl Machine<'_> {
         let graf = self.mode.and(Modes::HORIZONTAL);
         let only = graf == self.mode;
         self.mode = self.mode.map(|m| if m == Modes::HORIZONTAL { to } else { m });
-        // tex.web § 1094: a `\par` in vertical mode leaves the list alone.
+        // tex.web § 1094: a `\par` in vertical mode leaves the list alone,
+        // and on the main vertical list builds the page.
         if graf.is_empty() {
+            if self.mode == Modes::VERTICAL {
+                self.take_contributions();
+            }
             self.mark_hyphens(false);
             return;
         }
@@ -1589,6 +1612,10 @@ impl Machine<'_> {
         }
         // Where the mode was in doubt, the vertical list may be as it was.
         self.natural = Some(if only { after } else { after.join(n) });
+        // § 669: the main list's depth is its last line's.
+        if only && to == Modes::VERTICAL {
+            self.main_depth = after.depth;
+        }
         // tex.web § 889: `\vadjust` material follows the lines on the
         // vertical list, so its forced breaks (a float's) reach the page
         // builder there: read as the commands that put them.
@@ -1659,7 +1686,7 @@ impl Machine<'_> {
 
     /// An unknown command may have started or ended a paragraph.
     pub(crate) fn widen_mode(&mut self) {
-        self.material = MATERIAL | BOXED;
+        self.material = MATERIAL | BOXED | BREAKS;
         self.set_badness(false);
         self.natural = None;
         let mut mode = self.mode;
@@ -1909,6 +1936,13 @@ impl Machine<'_> {
             if kind != BoxState::Unknown {
                 self.set_box_dims(register, dims);
             }
+            // A vbox with no forced break, where `\vsplit` stops (§ 970).
+            if matches!(nest.code, Some(group::VBOX | group::VTOP)) && material & BREAKS == 0 {
+                self.set_box_calm(register);
+            }
+            if kind == BoxState::VBox && n.held > 0 {
+                self.set_box_slot(register, "held", Value::Int(n.held.into()));
+            }
             // A naturally packed vbox of one line or nothing: what
             // `\vsplit` and `\unvbox` find in it.
             if nest.code == Some(group::VBOX) && nest.to == Packing::Natural && !n.capped {
@@ -1918,11 +1952,11 @@ impl Machine<'_> {
                     _ => {}
                 }
             }
-            // What `\unvbox` of it starts with (§ 1110): its list's first
-            // height, when the list is as it was packed. `\unhbox` adds the
+            // What `\unvbox` of it adds (§ 1110): its list's first height
+            // and natural size, however it was packed. `\unhbox` adds the
             // sum along its list.
-            if kind == BoxState::VBox && nest.to == Packing::Natural && !n.capped {
-                self.set_box_first(register, n.first.unwrap_or(Dim::exact(0)));
+            if kind == BoxState::VBox {
+                self.set_box_natural(register, n.first.unwrap_or(Dim::exact(0)), [n.along, n.depth]);
             } else if kind == BoxState::HBox {
                 self.set_box_first(register, n.along);
             }
@@ -2036,7 +2070,7 @@ impl Machine<'_> {
             && let Some(mut n) = outer
         {
             // Its list starts empty (tex.web § 1174).
-            n.tail = [Last::Empty; TAIL];
+            n.emptied();
             self.natural = Some(n);
         }
     }
@@ -2305,8 +2339,12 @@ impl Machine<'_> {
             // the `copy` forms do not.
             Material::Unpackage { take } => {
                 let n = self.scan_box_number();
-                let dims = self.box_dims(n);
-                let first = self.box_first(n);
+                let mut dims = self.box_dims(n);
+                let first = self.box_dim_slot(n, "first");
+                // A vbox gives back its list at its natural size (§ 1110).
+                if let Some(h) = self.box_dim_slot(n, "nh") {
+                    dims = [dims[0], h, self.box_dim_slot(n, "nd").unwrap_or(Dim::ANY)];
+                }
                 let solid = n.map(|n| self.intern(&format!("\u{4}box.solid.{n}")));
                 let solid = match solid.map(|k| self.env.value(k)) {
                     Some(Value::Int(k)) => u8::try_from(k).ok(),
@@ -2314,7 +2352,13 @@ impl Machine<'_> {
                 };
                 let last = self.box_last(n);
                 let line = self.box_line(n);
+                let calm = self.box_calm(n);
+                let held = self.natural.map(|m| m.held.saturating_add(self.box_held(n)));
                 let state = self.fetch_box(n, take);
+                // A vbox's forced breaks come along onto a vertical list.
+                if state != BoxState::Void && !calm && self.list_kind() != Some(true) {
+                    self.material |= BREAKS;
+                }
                 // A void register adds nothing.
                 let ranges = std::mem::take(&mut self.fetched);
                 // A box known to hold no box or rule brings none along.
@@ -2344,8 +2388,9 @@ impl Machine<'_> {
                         n.depth = Dim::exact(d);
                         n.wide = n.wide.max(Dim::exact(w));
                         n.first = Some(Dim::exact(h));
-                        n.tail = [Last::Empty; TAIL];
+                        n.emptied();
                         n.tail[0] = Last::Box;
+                        n.held = 1;
                         n.line = line;
                         self.material = MATERIAL | BOXED;
                     }
@@ -2371,6 +2416,10 @@ impl Machine<'_> {
                     {
                         n.tail[0] = last;
                     }
+                    // § 1110: the box's items, not the one item it stood for.
+                    if let (Some(n), Some(held)) = (&mut self.natural, held) {
+                        n.held = held;
+                    }
                 }
             }
             // tex.web § 463 `scan_rule_spec`: a `\vrule` is 0.4pt wide unless
@@ -2380,12 +2429,13 @@ impl Machine<'_> {
                 let [width, height, depth] = self.scan_rule_spec();
                 let item = match self.list_kind() {
                     Some(true) => Item::Rule { width: Some(width.unwrap_or(Some(DEFAULT_RULE))), height, depth },
-                    Some(false) => Item::Rule {
+                    // The main vertical list's too (§ 463).
+                    Some(false) | None if self.mode.within(Modes::ANY_VERTICAL) => Item::Rule {
                         width,
                         height: Some(height.unwrap_or(Some(DEFAULT_RULE))),
                         depth: Some(depth.unwrap_or(Some(0))),
                     },
-                    None => Item::Unknown,
+                    _ => Item::Unknown,
                 };
                 self.append_item(item);
             }
@@ -2831,7 +2881,7 @@ impl Machine<'_> {
         self.tpl_set("start", start);
         // § 787: each cell is a list of its own.
         if let Some(n) = &mut self.natural {
-            n.tail = [Last::Empty; TAIL];
+            n.emptied();
             (n.space_factor, n.ligature) = (Some(1000), None);
         }
     }
@@ -2989,7 +3039,7 @@ impl Machine<'_> {
                 Meaning::Primitive(Primitive::Register(crate::tex::RegKind::Box)) => {
                     let n = self.scan_box_number();
                     let dims = self.box_dims(n);
-                    let last = self.box_last(n);
+                    let last = self.box_kept(n);
                     let fetched = self.fetch_box(n, true);
                     self.box_end(context, fetched, dims);
                     return self.carry_last(context, last);
@@ -3026,7 +3076,7 @@ impl Machine<'_> {
             BoxCmd::Copy => {
                 let n = self.scan_box_number();
                 let dims = self.box_dims(n);
-                let last = self.box_last(n);
+                let last = self.box_kept(n);
                 let state = self.fetch_box(n, false);
                 self.box_end(context, state, dims);
                 return self.carry_last(context, last);
@@ -3053,7 +3103,7 @@ impl Machine<'_> {
                         // `\prevdepth` stays as it was.
                         (n.along, n.depth, n.wide, n.first, n.line) =
                             (Dim::exact(0), Dim::exact(0), Dim::exact(0), None, None);
-                        n.tail = [Last::Empty; TAIL];
+                        n.emptied();
                         self.natural = Some(n);
                         self.box_end(context, BoxState::HBox, [w, h, d].map(Dim::exact));
                         if let BoxContext::Set { register, .. } = context {
@@ -3069,7 +3119,7 @@ impl Machine<'_> {
                         n.depth = Dim::exact(0);
                         n.prior = true;
                         n.solid = 0;
-                        n.tail = [Last::Empty; TAIL];
+                        n.emptied();
                         if n.para.items.is_some() {
                             n.para.items = Some(0);
                         }
@@ -3089,7 +3139,10 @@ impl Machine<'_> {
                                 n.pending = None;
                                 n.space_factor = None;
                                 n.ligature = None;
+                                n.held = n.held.saturating_sub(1);
                             }
+                            // At most one item went (§ 1080).
+                            (Some(false), Some(n)) => *n = Natural { held: n.held.saturating_sub(1), ..Natural::any() },
                             _ => self.natural = None,
                         }
                         BoxState::Unknown
@@ -3122,6 +3175,20 @@ impl Machine<'_> {
                     let key = self.intern(&format!("\u{4}box.lead.{k}"));
                     self.env.value(key)
                 });
+                let calm = self.box_calm(n);
+                // §§ 972-974: with no forced break, a split to `\maxdimen`
+                // and `\splitmaxdepth` that large finds no prefix too full
+                // (sums stay within `\maxdimen`), so the list's end, at the
+                // eject cost, wins: all of it splits off.
+                let max_dimen = crate::value::MAX_DIMEN;
+                if calm && real == Some(BoxState::VBox) && to.zip(max).is_some_and(|(h, m)| h.min(m) >= max_dimen) {
+                    let last = self.box_kept(n);
+                    self.box_changed(n, BoxState::Void);
+                    self.fetched.clear();
+                    self.set_badness(false);
+                    self.box_end(context, BoxState::VBox, [dims[0], Dim::exact(max_dimen), Dim::ANY]);
+                    return self.carry_last(context, last);
+                }
                 if let (BoxState::Unknown, Some(Value::Dimen(top)), Some(h)) = (state, lead, to)
                     && real == Some(BoxState::VBox)
                     && h < top
@@ -3163,6 +3230,9 @@ impl Machine<'_> {
                     return;
                 }
                 self.box_changed(n, BoxState::Unknown);
+                if calm {
+                    self.set_box_calm(n);
+                }
                 self.fetched.clear();
                 // A void register splits off nothing and packs nothing (§ 977).
                 if state == BoxState::Void {
@@ -3181,7 +3251,9 @@ impl Machine<'_> {
                 let ht = to.map_or(Dim::ANY, Dim::exact);
                 let dp = max.map_or(Dim::ANY, |m| Dim::range(Dim::ANY.lo, m));
                 let state = if real == Some(BoxState::VBox) { BoxState::VBox } else { state };
-                return self.box_end(context, state, [Dim::ANY, ht, dp]);
+                self.box_end(context, state, [Dim::ANY, ht, dp]);
+                // § 973: `vert_break` stops at the first forced break.
+                return self.carry_last(context, (Last::UNKNOWN, true, 0));
             }
             BoxCmd::HBox => {
                 // A box appended to a vertical list may take `\vadjust`
@@ -3319,8 +3391,9 @@ impl Machine<'_> {
             _ => self.append_item(Item::Box(dims)),
         }
         if alone && let Some(n) = &mut self.natural {
-            n.tail = [Last::Empty; TAIL];
+            n.emptied();
             n.tail[0] = Last::Box;
+            n.held = 1;
         }
     }
 
@@ -3337,15 +3410,29 @@ impl Machine<'_> {
     }
 
     pub(crate) fn touch_page(&mut self) {
-        if self.mode.test(Modes::INNER) != Some(true) {
+        // A paragraph's material goes to the list the paragraph is on
+        // (tex.web § 1096): in a vbox, never to the page.
+        let outer = Modes::HORIZONTAL.union(Modes::DISPLAY_MATH);
+        if self.mode.meets(Modes::VERTICAL) || self.mode.meets(outer) && self.list.meets(Modes::VERTICAL) {
             // §§ 987, 1076: a box certainly on the main vertical list goes
             // to the page, which freezes its dimensions.
             if self.mode == Modes::VERTICAL {
                 self.freeze_page();
+                self.set_engine("page.rule", Value::Int(0), true);
             }
             self.page_touched = true;
             self.page_grew = true;
             self.set_badness(false);
+        }
+    }
+
+    /// tex.web §§ 994, 1056: a rule on the main vertical list waits on the
+    /// contribution list, which the page builder empties at its next run
+    /// (after a box, a penalty, `\par`, a paragraph begun): only then are
+    /// the page's dimensions frozen.
+    pub(crate) fn take_contributions(&mut self) {
+        if self.engine_slot_int("page", "page.rule") != Some(0) {
+            self.touch_page();
         }
     }
 
@@ -3367,6 +3454,11 @@ impl Machine<'_> {
             _ => Dim::ANY,
         };
         let width = if penalty <= -10000 { wide } else { Dim::exact(0).join(wide) };
+        // At a forced break the page holds all of the list (its top
+        // discards are not counted, § 1000) and `\topskip` glue (§ 1001).
+        let top = self.glue_parameter("topskip").map_or(Dim::ANY, |g| Dim::range(0, g.width.max(0)));
+        let along = self.page_length();
+        let natural = along.extended_by(top);
         self.set_page_length(Dim::exact(0));
         self.set_engine("page.built", Value::Int(0), true);
         self.set_engine("page.inserts", Value::Int(0), true);
@@ -3391,6 +3483,11 @@ impl Machine<'_> {
             None => Dim::ANY,
         };
         self.set_box_dims(Some(255), [width.at_least_zero(), height, depth]);
+        if penalty <= -10000 {
+            self.set_box_natural(Some(255), Dim::range(0, natural.hi.max(0)), [natural, self.main_depth]);
+        }
+        // § 1005: the page ends at its first forced break.
+        self.set_box_calm(Some(255));
         // § 1017: the page runs up to the break, which stays behind: its
         // last item is what preceded the penalty.
         self.set_box_last(Some(255), before);
@@ -3421,6 +3518,7 @@ impl Machine<'_> {
     /// glue: `\outputpenalty` 10000), the other goes on; they join where
     /// they meet again.
     pub(crate) fn build_page(&mut self, span: Span) {
+        self.take_contributions();
         if self.cfg.analysis.assume_forced_page_breaks {
             return;
         }
@@ -3493,6 +3591,10 @@ impl Machine<'_> {
     /// An item goes onto the current list: its natural size grows by it
     /// (tex.web §§ 651-656 `hpack`, 669-670 `vpack`).
     pub(crate) fn append_item(&mut self, item: Item) {
+        let fresh = self.page_empty();
+        if matches!(item, Item::Unknown | Item::Penalty(None)) | matches!(item, Item::Penalty(Some(p)) if p <= -10000) {
+            self.material |= BREAKS;
+        }
         self.material |=
             if matches!(item, Item::Box(_) | Item::Rule { .. } | Item::Unknown) { MATERIAL | BOXED } else { MATERIAL };
         if self.mode.meets(Modes::VERTICAL) {
@@ -3533,8 +3635,10 @@ impl Machine<'_> {
         // tex.web §§ 987, 1000: the page builder freezes the page dimensions
         // when a box or rule reaches the main vertical list, not for glue,
         // kerns, penalties, marks or whatsits, and never for a box's contents.
-        if matches!(item, Item::Box(_) | Item::Rule { .. } | Item::Unknown) {
-            self.touch_page();
+        match item {
+            Item::Rule { .. } if self.mode == Modes::VERTICAL => self.set_engine("page.rule", Value::Int(1), true),
+            Item::Box(_) | Item::Rule { .. } | Item::Unknown => self.touch_page(),
+            _ => {}
         }
         self.end_word();
         let Some(mut n) = self.natural else { return };
@@ -3597,6 +3701,11 @@ impl Machine<'_> {
             None if self.mode == Modes::VERTICAL => {
                 if self.page_empty() && matches!(item, Item::Glue(..) | Item::Kern(_) | Item::Penalty(_)) {
                     return;
+                }
+                // The page's first box: the interline glue before it is
+                // discarded too, and no depth precedes it.
+                if fresh && matches!(item, Item::Box(_) | Item::Rule { .. }) {
+                    (n.depth, n.prev_depth) = (Dim::exact(0), None);
                 }
                 false
             }
@@ -3718,9 +3827,12 @@ impl Machine<'_> {
                 }
             }
             Item::Rule { width, height, depth } => {
+                // tex.web § 1056: no interline glue before or after a rule.
+                if !horizontal {
+                    n.prev_depth = None;
+                }
                 n.boxed(horizontal, [rule(width), rule(height), rule(depth)], skips);
                 n.solid = n.solid.saturating_add(1);
-                // tex.web § 1056: no interline glue after a rule.
                 if !horizontal {
                     n.prev_depth = None;
                 }
@@ -4924,6 +5036,7 @@ impl Machine<'_> {
                     }
                 }
                 n.tail = [Last::UNKNOWN; TAIL];
+                n.held = n.held.saturating_sub(1);
                 self.natural = Some(n);
                 return;
             }
@@ -5188,6 +5301,14 @@ impl Machine<'_> {
         self.set_box_slot(register, "first", first.value());
     }
 
+    /// A vbox's list as `\unvbox` finds it: first height, natural height
+    /// and depth, whatever it was packed to (§ 1110).
+    fn set_box_natural(&mut self, register: Option<i64>, first: Dim, [h, d]: [Dim; 2]) {
+        self.set_box_first(register, first);
+        self.set_box_slot(register, "nh", h.value());
+        self.set_box_slot(register, "nd", d.value());
+    }
+
     /// What register `register`'s vbox holds: nothing (`None`), or one
     /// line, an hbox (tex.web § 889).
     fn set_box_line(&mut self, register: Option<i64>, line: Option<Line>) {
@@ -5243,10 +5364,40 @@ impl Machine<'_> {
         self.env.set_value_in_place(key, value);
     }
 
-    /// A box set from another register's keeps what its list ends with.
-    fn carry_last(&mut self, context: BoxContext, last: Last) {
+    /// Whether register `n`'s list holds no forced break.
+    fn box_calm(&mut self, n: Option<i64>) -> bool {
+        n.is_some_and(|n| {
+            let key = self.intern(&format!("\u{4}box.calm.{n}"));
+            self.env.value(key) == Value::Int(1)
+        })
+    }
+
+    /// How many items register `n`'s vbox holds at least.
+    fn box_held(&mut self, n: Option<i64>) -> u8 {
+        let Some(n) = n else { return 0 };
+        let key = self.intern(&format!("\u{4}box.held.{n}"));
+        self.env.value(key).as_int().and_then(|k| u8::try_from(k).ok()).unwrap_or(0)
+    }
+
+    fn set_box_calm(&mut self, register: Option<i64>) {
+        self.set_box_slot(register, "calm", Value::Int(1));
+    }
+
+    /// What a box set from register `n`'s keeps of its list: its last
+    /// item, whether it holds no forced break, and how many items.
+    fn box_kept(&mut self, n: Option<i64>) -> (Last, bool, u8) {
+        (self.box_last(n), self.box_calm(n), self.box_held(n))
+    }
+
+    fn carry_last(&mut self, context: BoxContext, (last, calm, held): (Last, bool, u8)) {
         if let BoxContext::Set { register, .. } = context {
             self.set_box_last(register, last);
+            if calm {
+                self.set_box_calm(register);
+            }
+            if held > 0 {
+                self.set_box_slot(register, "held", Value::Int(held.into()));
+            }
         }
     }
 
@@ -5270,11 +5421,11 @@ impl Machine<'_> {
         }
     }
 
-    /// The height of the first box in register `n`'s vertical list, or
-    /// the width along its horizontal list, where that is recorded.
-    fn box_first(&mut self, n: Option<i64>) -> Option<Dim> {
+    /// A length register `n` records (`first`: the height of the first box
+    /// of its vertical list, the width along its horizontal one).
+    fn box_dim_slot(&mut self, n: Option<i64>, which: &str) -> Option<Dim> {
         let n = n?;
-        let key = self.intern(&format!("\u{4}box.first.{n}"));
+        let key = self.intern(&format!("\u{4}box.{which}.{n}"));
         match self.box_slot(key) {
             Value::Dimen(d) => Some(Dim::exact(d)),
             Value::Num { quantity: crate::value::Quantity::Dimen, num } => Some(Dim::range(num.lo, num.hi)),

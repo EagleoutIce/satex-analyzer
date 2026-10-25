@@ -474,6 +474,12 @@ impl Machine<'_> {
                         let hi = if self.mode.meets(crate::mode::Modes::ANY_MATH) { 15 } else { 10 };
                         Some(Value::Num { quantity: crate::value::Quantity::Int, num: crate::value::Num::range(1, hi) })
                     }
+                    // An item of an internal vertical list (etex.ch: 1-14).
+                    crate::mode::Last::Unknown(_)
+                        if n.held > 0 && self.mode == crate::mode::Modes::INTERNAL_VERTICAL =>
+                    {
+                        Some(Value::Num { quantity: crate::value::Quantity::Int, num: crate::value::Num::range(1, 14) })
+                    }
                     crate::mode::Last::Unknown(_) => None,
                 }
             }

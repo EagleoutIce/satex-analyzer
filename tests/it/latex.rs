@@ -3588,6 +3588,55 @@ fn a_second_clearpage_ships_no_page() {
     assert_eq!((body(&a, "A").as_str(), body(&a, "B").as_str()), ("2", "2"));
 }
 
+/// tex.web §§ 970-977: a list with no forced break splits off whole to
+/// `\maxdimen`; one with a forced break does not. A list that held items
+/// is not empty after `\lastbox` took one: `\lastnodetype` is no -1.
+#[test]
+fn a_split_to_maxdimen_takes_a_list_without_forced_breaks() {
+    if !installed() {
+        return;
+    }
+    let a = analyze(
+        r"\documentclass{article}\begin{document}\splitmaxdepth=\maxdimen
+\setbox1\vbox to 100pt{\vskip 0pt plus 1fil\hbox{x}\vskip 0pt plus 1fil}
+\setbox2\vbox{\unvcopy1}\setbox3\vsplit2 to\maxdimen \xdef\W{\ifvoid2 v\else n\fi}
+\setbox2\vbox{\hbox{a}\penalty-10000\hbox{b}}\setbox3\vsplit2 to\maxdimen \xdef\F{\ifvoid2 v\else n\fi}
+\setbox2\vbox{\unvcopy1\unskip\setbox0\lastbox\xdef\T{\ifnum\lastnodetype<0 e\else f\fi}}
+\end{document}",
+    );
+    assert_eq!((body(&a, "W").as_str(), body(&a, "T").as_str()), ("v", "f"));
+    // pdflatex: n; satex may not know which.
+    assert_ne!(body(&a, "F"), "v");
+}
+
+/// A float page: its marks pass (latex.ltx `\__mark_prepare_and_extract:nn`)
+/// leaves the main list empty, so a second `\clearpage` ships nothing.
+#[test]
+fn a_float_page_then_two_clearpages_count_as_pdflatex() {
+    if !installed() {
+        return;
+    }
+    let a = analyze(
+        r"\documentclass{article}\begin{document}Text\begin{figure}[p]x\end{figure}\clearpage\clearpage\xdef\P{\the\value{page}}\end{document}",
+    );
+    assert_eq!(body(&a, "P"), "3");
+}
+
+/// A here-float between two paragraphs, then `\clearpage`: the output
+/// group closes with its own `}` on every path (pdflatex: one page).
+#[test]
+fn a_here_float_then_clearpage_closes_each_output_once() {
+    if !installed() {
+        return;
+    }
+    let a = analyze(
+        r"\documentclass{article}\begin{document}Text\begin{figure}[h]x\end{figure}Text\clearpage\xdef\P{\the\value{page}}\end{document}",
+    );
+    let c = codes(&a);
+    assert!(!c.iter().any(|c| c == "fault-contained" || c.contains("error")), "{c:?}");
+    assert_eq!(body(&a, "P"), "2");
+}
+
 /// One-letter keys referenced before and after their labels, at the
 /// default build: the kernel's `\reserved@a` declares no key `a`.
 #[test]

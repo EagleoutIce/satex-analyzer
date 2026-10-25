@@ -608,14 +608,20 @@ fn the_page_total_counts_the_topskip_glue() {
     }
 }
 
-/// Once a box or a rule reaches the main vertical list the page builder
+/// Once a box reaches the main vertical list the page builder
 /// owns these (tex.web § 1076 runs `build_page`): the goal is frozen at
 /// `\vsize` (§ 987, 0pt in initex), the rest widen rather than staying at
 /// the empty page's.
 #[test]
 fn a_box_on_the_page_freezes_the_goal_and_widens_the_rest() {
     for engine in ENGINES {
-        for contributed in ["\\setbox0=\\hbox{}\\box0 ", "\\hrule "] {
+        // A rule waits on the contribution list, which only the next box,
+        // penalty or `\par` hands to the page builder (§§ 994, 1056):
+        // etex reads the empty page's values after `\hrule` alone.
+        for (name, empty) in PAGE_SO_FAR {
+            assert_eq!(the(engine, "\\hrule ", &format!("\\{name}")), empty, "{engine:?} \\{name} after \\hrule");
+        }
+        for contributed in ["\\setbox0=\\hbox{}\\box0 "] {
             for (name, _) in PAGE_SO_FAR {
                 if name == "pagegoal" {
                     assert_eq!(the(engine, contributed, "\\pagegoal"), "0.0pt", "{engine:?} after {contributed}");

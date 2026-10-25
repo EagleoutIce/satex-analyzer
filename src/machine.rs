@@ -4266,9 +4266,12 @@ will look undefined",
     /// A loop that re-expands its result with `\expandafter` does not nest.
     fn end_used_up_lists(&mut self) {
         // A pseudo file stays until a read meets its end (tex.web § 362).
-        while let Some(Frame::Tokens { toks, pos, expanding, .. }) = self.input.last()
+        // The open output's text stays too: its `}` may be the token given
+        // back, and closes from there (§ 1100); a read past it ends the group.
+        while let Some(Frame::Tokens { toks, pos, expanding, upper, .. }) = self.input.last()
             && *pos >= toks.len()
             && *expanding != Some(self.pseudo_file)
+            && !(*expanding == Some(self.output_sym) && !*upper && self.output_active())
         {
             self.pop_frame();
         }

@@ -1431,12 +1431,28 @@ impl Env {
             return false;
         }
         self.rewind(fork);
+        // What `fork` saw of each name the running path changed, built once
+        // and shared: each path lays its own changes over it, so the cost is
+        // the names plus each path's changes, not their product.
+        let mut seen = Changed::new();
+        for sym in live.slots.keys() {
+            self.grow(Sym(*sym));
+            let i = *sym as usize;
+            seen.insert_mut(*sym, (self.slots[i].clone(), self.level[i]));
+        }
         for path in paths.iter_mut() {
-            for sym in live.slots.keys() {
-                if !path.slots.contains_key(sym) {
-                    self.grow(Sym(*sym));
-                    let i = *sym as usize;
-                    path.slots.insert_mut(*sym, (self.slots[i].clone(), self.level[i]));
+            // Whichever is smaller is laid over the other.
+            if path.slots.size() * 2 <= seen.size() {
+                let mut slots = seen.clone();
+                for (sym, slot) in path.slots.iter() {
+                    slots.insert_mut(*sym, slot.clone());
+                }
+                path.slots = slots;
+            } else {
+                for (sym, slot) in seen.iter() {
+                    if !path.slots.contains_key(sym) {
+                        path.slots.insert_mut(*sym, slot.clone());
+                    }
                 }
             }
             path.low = path.low.min(live.low);

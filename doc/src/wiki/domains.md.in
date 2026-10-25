@@ -177,7 +177,10 @@ item's reading, zero where it is of another kind (§ 424). Whether a character n
 a flag whose top is "not known".  `\lastnodetype` reads both (etex.ch), so it
 is exact where the font's ligature/kerning program was followed (tex.web
 §§ 1034-1040, boundary characters included). Where the flag is not known it
-is the interval 0 to 7, never glue, a kern or a penalty. Reading the tail
+is the interval 0 to 7, never glue, a kern or a penalty. A list also keeps
+how many items it holds at least (`held`): items leave only from its end
+(§§ 1080, 1105), so an internal vertical list with an unknown tail but items
+left reads 1 to 14, never -1. Reading the tail
 inside a word does not end the word (§ 1036). A `\write` is a whatsit, or
 nothing after `\immediate` (§ 1375), as are `\pdfstartlink`, `\pdfendlink`,
 `\pdfsave` and `\pdfrestore`.
@@ -213,7 +216,13 @@ The sizes come from the list, as `hpack` and `vpack` would compute them:
 - A box of a kind `satex` does not know has `Dim::ANY` for all three sizes.
 - `\vsplit` packs the part it splits off to the height asked for, with a depth of at most `\splitmaxdepth` (§ 977).
   What is left is at most as tall as the box was, plus `\splittopskip`.
+- A vbox register records whether its list may hold a forced break, a penalty of -10000 or less (`calm` when not).
+  `\box`, `\copy` and `\unvbox` carry it, and `\box255` and any part `\vsplit` splits off have none (§§ 973, 1005).
+  Split to `\maxdimen` with `\splitmaxdepth` that large, such a list goes off whole and the register is void (§§ 972-974): sums stay within `\maxdimen`, so no break is too full.
+- A vbox register also records its list's natural height and depth, whatever it was packed to: `\unvbox` adds those (§ 1110).
+  `\box255` at a forced break holds the whole page: the list's length plus the `\topskip` glue (§§ 1001, 1017).
 - The main vertical list is tracked from the job's empty page on (§ 991). Glue, kerns and penalties on an empty page are dropped (§ 1000).
+  So are the interline glue and the depth before the page's first box. A rule takes no interline glue (§ 1056).
   `\pagetotal` is at most the list's length plus the `\topskip` glue above the first box (§ 1001).
 - A page whose first box follows a whatsit has a legal break at that box's `\topskip` glue (§ 973).
   `\box255` of such a page splits there when the box does not fit, so the part split off holds no box.
