@@ -373,7 +373,7 @@ pub fn run_request_value(body: &Json, cfg: &Config, cli_file: Option<&Path>) -> 
         .map(std::path::PathBuf::from)
         .or_else(|| cli_file.map(Path::to_path_buf))
         .ok_or("the request names no `file`, and none was given with -f")?;
-    let source = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let source = crate::overlay::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
     let queries = body.get("queries").and_then(Json::as_array).cloned().unwrap_or_default();
     if queries.is_empty() {
         return Err("the request has no `queries` to run".into());

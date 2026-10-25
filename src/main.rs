@@ -498,7 +498,7 @@ fn resolve_profile(cli: &Cli, cfg: &Config, source: Option<&str>) -> Result<sate
     let text = match source.filter(|s| !s.is_empty()) {
         Some(text) => text,
         None => {
-            owned = cli.file.as_deref().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+            owned = cli.file.as_deref().and_then(|p| satex::overlay::read_to_string(p).ok()).unwrap_or_default();
             &owned
         }
     };
@@ -903,7 +903,7 @@ fn inject(cli: &Cli, source: &mut String, text: &str, at: &str) -> Result<Inject
 
 fn read_source(path: Option<&Path>) -> Result<String, String> {
     match path {
-        Some(path) => std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display())),
+        Some(path) => satex::overlay::read_to_string(path).map_err(|e| format!("{}: {e}", path.display())),
         None => {
             let mut buf = String::new();
             io::stdin().read_to_string(&mut buf).map_err(|e| e.to_string())?;
