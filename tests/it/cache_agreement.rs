@@ -113,7 +113,7 @@ fn a_run_that_builds_the_caches_and_one_that_reads_them_agree() {
     // compare two cold runs.
     let warm = run(&dir, PACKAGES);
     let served = |package: &str| {
-        warm.package_caches.iter().any(|(name, .., state)| name == package && state.as_str() == "cached")
+        warm.package_caches.iter().any(|(name, .., state)| name == package && satex::machine::cache_served(state))
     };
     assert!(served("xcolor"), "xcolor was replayed: {:?}", warm.package_caches);
     assert!(served("etoolbox"), "etoolbox was replayed: {:?}", warm.package_caches);

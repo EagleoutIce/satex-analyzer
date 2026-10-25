@@ -80,8 +80,8 @@ fn preamble(lines: &str) -> String {
 fn served(analysis: &Analysis, package: &str) -> Option<bool> {
     analysis.package_caches.iter().rev().find(|(name, ..)| name == package).and_then(|(.., state)| {
         match state.as_str() {
-            "cached" => Some(true),
-            "stored" => Some(false),
+            state if satex::machine::cache_served(state) => Some(true),
+            state if state.ends_with("stored") => Some(false),
             _ => None,
         }
     })
@@ -309,7 +309,7 @@ fn a_name_the_package_no_longer_defines_is_undefined() {
     let source = "\\documentclass{article}\n\\usepackage{outer}\n\\begin{document}\\innermacro{x}\\end{document}\n";
     let undefined = |a: &Analysis| {
         let named = |r: &serde_json::Map<String, serde_json::Value>| {
-            r["message"].as_str().is_some_and(|m| m.contains("\\innermacro "))
+            r["message"].as_str().is_some_and(|m| m.contains("`\\innermacro`"))
         };
         satex::lint::lint(a).iter().any(|r| r["code"] == "undefined-control-sequence" && named(r))
     };

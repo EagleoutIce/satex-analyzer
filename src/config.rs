@@ -714,11 +714,16 @@ pub struct Cache {
     /// the packages they read.
     #[serde(default)]
     pub index: CacheIndex,
+    /// Characters before a package's end within which every line start is
+    /// a checkpoint: its last command may read past the end (`\color` ends
+    /// in `\ignorespaces`), and the line it began on is then the end a
+    /// replay can resume from.
+    pub tail: usize,
 }
 
 impl Default for Cache {
     fn default() -> Cache {
-        Cache { enabled: true, dir: None, rebuild: false, index: CacheIndex::default() }
+        Cache { enabled: true, dir: None, rebuild: false, index: CacheIndex::default(), tail: 256 }
     }
 }
 

@@ -98,6 +98,7 @@ texmf:
 cache:
   enabled: true  # keep the interpreted kernel and packages between runs
   # dir: ~/.cache/satex     # else $SATEX_CACHE, else the platform default
+  tail: 256  # characters before a package's end where every line start is a checkpoint
   index:  # packages `satex cache build` prepares, or, when
                             # empty, whatever ordinary runs already found
                             # expensive to interpret (measured, not a hand-picked list)

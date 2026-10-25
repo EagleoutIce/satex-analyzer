@@ -1329,6 +1329,11 @@ impl Mouth {
         self.force_eof.get_or_insert(self.line);
     }
 
+    /// The characters still to read.
+    pub fn left(&self) -> usize {
+        self.src.len().saturating_sub(self.pos)
+    }
+
     /// Whether `\endinput` has ended the file at the end of its line.
     pub fn ending(&self) -> bool {
         self.force_eof.is_some()

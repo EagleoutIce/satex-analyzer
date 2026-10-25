@@ -821,6 +821,15 @@ fn family(name: &str) -> String {
 
 /// Delete the caches no build can use and bound the rest: see
 /// [`crate::format::prune_caches`].
+/// Whether a run's state for a package cache says it was replayed: whole,
+/// or up to the last line its end left at rest, the rest read.
+pub fn served(state: &str) -> bool {
+    state == "cached" || state.ends_with(PARTLY)
+}
+
+/// The state of a cache replayed up to a line its end cannot be resumed from.
+const PARTLY: &str = "% cached, rest read";
+
 pub fn prune(dir: &Path, bound: u64) -> crate::format::Pruned {
     crate::format::prune_caches(dir, ENCODING_VERSION, bound)
 }
@@ -1065,8 +1074,7 @@ impl Machine<'_> {
             parts.push(("engine".into(), std::mem::replace(&mut hash, Fnv::new()).0));
             let mut settings = self.cfg.clone();
             settings.source = None;
-            settings.cache =
-                crate::config::Cache { enabled: true, dir: None, rebuild: false, index: Default::default() };
+            settings.cache = crate::config::Cache::default();
             // Only what changes the interpretation keys a cache: not how a
             // run reports, lints or traces, not its resource limits, and not
             // the engine as configured (the engine in effect is keyed above).
@@ -2378,7 +2386,8 @@ impl Machine<'_> {
         }
         let Some(mark) = mouth.line_mark() else { return };
         let long_enough = self.out.steps - rec.marks.steps >= SEGMENT_TOKENS;
-        if mark.line <= rec.last_line || !(long_enough || mark.ended) {
+        let tail = mouth.left() <= self.cfg.cache.tail;
+        if mark.line <= rec.last_line || !(long_enough || mark.ended || tail) {
             return;
         }
         if self.rest_state(rec.frame + 1) != rec.rest {
@@ -2608,7 +2617,7 @@ impl Machine<'_> {
         let total = self.out.steps - rec.before.steps;
         if rec.chain.is_empty() {
             if rec.served > 0 {
-                let state = format!("{} % cached, rest read", rec.served * 100 / total.max(1));
+                let state = format!("{} {PARTLY}", rec.served * 100 / total.max(1));
                 self.out.package_caches.push((rec.name.clone(), rec.cache.display().to_string(), state));
             }
             if rec.served == 0 {
