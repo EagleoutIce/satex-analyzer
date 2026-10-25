@@ -111,6 +111,7 @@ cache:
 # preload: preamble.tex     # a preamble to read as this project's format, the
                             # way mylatexformat dumps one; a %& line or -fmt=
                             # in the build configuration names it otherwise
+# pretex: '\def\draft{}'   # TeX code read before the document (latexmk -usepretex)
 
 opaque_conditionals: []  # conditionals to leave undecided, both arms analyzed
 expand_in_reports: []  # macros to expand when reporting a value, e.g. today

@@ -907,6 +907,10 @@ pub struct Config {
     /// configuration names it.
     #[serde(default)]
     pub preload: Option<PathBuf>,
+    /// TeX code read before the document's first line, as latexmk's
+    /// `-usepretex` hands the engine: `\def\draft{}` and the like.
+    #[serde(default)]
+    pub pretex: String,
     pub limits: Limits,
     /// Effect summaries for macros satex should not follow ([`Stub`]), by name.
     pub stubs: std::collections::BTreeMap<String, Stub>,
@@ -1010,6 +1014,7 @@ impl Default for Config {
             texmf: Texmf::default(),
             cache: Cache::default(),
             preload: None,
+            pretex: String::new(),
             limits: Limits::default(),
             stubs: std::collections::BTreeMap::new(),
             plugins: PluginSwitches::default(),

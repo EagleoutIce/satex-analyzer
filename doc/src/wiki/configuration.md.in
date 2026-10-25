@@ -89,6 +89,8 @@ TeXworks/TeXShop `% !TeX` comments (`program`, `root`, `encoding`, `spellcheck`)
 
 The `.fmt` a build starts from instead of the stock `latex`, such as the ones `mylatexformat` dumps from a document's own preamble. SaTeX finds it in the `%&⟨format⟩` line TeX reads before anything else, in a `-fmt=` the build configuration passes to the engine, or in `preload:` in `satex.yaml`. Since a `.fmt` is a memory dump SaTeX cannot read, it interprets the preamble that was dumped instead: the file of the project named after the format, up to `\endofdump`, `\dump` or `\begin{document}`. The result is cached with the kernel, so a document that starts from its own format gets its own cache entry.
 
+`pretex:` in `satex.yaml` is TeX code read before the document's first line, the code latexmk's `-usepretex` hands the engine, such as `\def\draft{}` for a document that tests it.
+
 `satex cache build --preamble preamble.tex` builds that cache from a preamble directly. Controlled with `plugins.preload` in `satex.yaml`.
 
 ### discovery
