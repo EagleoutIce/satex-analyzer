@@ -718,10 +718,11 @@ impl Machine<'_> {
             (b, a)
         } else {
             // tex.web § 1221: optional spaces, optional `=`, then at most one
-            // space. `\let\@sptoken= ` makes a space the meaning.
+            // space. `\let\@sptoken= ` makes a space the meaning. Only an
+            // `=` of category 12 (`other_token+"="`): an active `=` is the source.
             self.skip_spaces();
             let mut token = self.next_token();
-            if token.is_some_and(|t| t.is_char('=')) {
+            if token.is_some_and(|t| t.tok == Tok::Chr('=', Catcode::Other)) {
                 token = self.next_token();
                 if token.is_some_and(|t| t.is_space()) {
                     token = self.next_token();

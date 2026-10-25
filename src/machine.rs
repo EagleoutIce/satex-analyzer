@@ -1215,6 +1215,8 @@ pub(crate) struct Scratch {
     pub(crate) box_number: bool,
     /// [`Scratch::approximations`] when the main loop took its command.
     pub(crate) approximations_at_command: u64,
+    /// A file ended while a conditional's text was skipped (tex.web § 336).
+    pub(crate) skip_ended: bool,
 }
 
 /// The interpreter itself: reads [`Token`]s from the input stack, expands
@@ -4107,13 +4109,18 @@ will look undefined",
             // loop reads past it. A look-ahead past it (`\@ifnextchar` after a
             // `\RequirePackage` on the last line) is a command still running,
             // which a replay to that end would drop.
-            if self.package_capture.is_some() && self.reading_command {
-                self.checkpoint_at_end();
-            }
-            let outer = std::mem::replace(&mut self.popping_in_read, true);
-            self.pop_frame();
-            self.popping_in_read = outer;
+            self.end_input_frame();
         }
+    }
+
+    /// Pops the frame whose input ran out, as a read past its end does.
+    fn end_input_frame(&mut self) {
+        if self.package_capture.is_some() && self.reading_command {
+            self.checkpoint_at_end();
+        }
+        let outer = std::mem::replace(&mut self.popping_in_read, true);
+        self.pop_frame();
+        self.popping_in_read = outer;
     }
 
     /// tex.web §§ 336-339 `check_outer_validity`: an `\outer` control sequence met while
@@ -4166,6 +4173,7 @@ will look undefined",
             self.runaway = Runaway::FileEnded;
             return;
         }
+        self.scratch.skip_ended = self.scanner == Scanner::Skipping;
         let span = file.map_or_else(|| self.position_span(), |f| Span::new(f, 0, 0));
         self.diagnose(
             Severity::Warning,
@@ -10455,7 +10463,21 @@ will look undefined",
     /// stack holds or a file, and no token budget cuts it short.
     fn pass_text_in(&mut self, to_fi: bool, at: Span) -> Option<(Primitive, Span)> {
         let mut nesting = CondDepth::default();
-        while let Some(t) = self.next_token() {
+        loop {
+            let Some(t) = self.next_token() else {
+                // tex.web §§ 336, 362: a file that ends inside skipped text is
+                // closed and `\fi` inserted. It ends this skip or one nested
+                // level; the rest is skipped on in the file below.
+                if !std::mem::take(&mut self.scratch.skip_ended) {
+                    break;
+                }
+                let end = self.position_span();
+                if nesting.feed(Some(Primitive::Fi)).is_some() {
+                    return Some((Primitive::Fi, end));
+                }
+                self.end_input_frame();
+                continue;
+            };
             if let Some(log) = &mut self.skip_log {
                 log.push(t);
             }

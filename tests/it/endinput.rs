@@ -101,6 +101,24 @@ fn a_macro_from_another_file_ends_the_file_being_read() {
 }
 
 #[test]
+fn a_file_ending_inside_skipped_text_inserts_fi() {
+    if !installed() {
+        return;
+    }
+    // tex.web §§ 336, 362: the file closes and `\fi` is inserted ("Incomplete
+    // \iffalse"). It ends the skip, or one nested level, and the rest is
+    // skipped on in the file below. pdftex: a, b and skipped undefined, mend
+    // and after defined.
+    let dir = scratch("skip");
+    std::fs::write(dir.join("s1.tex"), "\\iffalse \\def\\a{1}\n").unwrap();
+    std::fs::write(dir.join("s2.tex"), "\\iffalse \\iftrue \\def\\b{1}\n").unwrap();
+    let source = format!("{PRELUDE}\\input s1 \\def\\mend{{1}}\n\\input s2 \\def\\skipped{{1}}\\fi\\def\\after{{1}}\n");
+    let analysis = analyze_files(&source, &dir.join("main.tex"));
+    assert_eq!(state(&analysis, &["a", "mend", "b", "skipped", "after"]), "a=0 mend=1 b=0 skipped=0 after=1");
+    assert!(diagnosed(&analysis, "unterminated-conditional").is_empty());
+}
+
+#[test]
 fn a_file_opened_on_the_same_line_takes_the_flag_over() {
     if !installed() {
         return;

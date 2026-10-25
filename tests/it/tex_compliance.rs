@@ -361,6 +361,15 @@ fn a_let_copy_of_aftergroup_still_ends_the_group() {
     check(&format!(r"{AB}\let\ag\aftergroup\let\bg={{ \let\eg=}} \bg\ag\a\eg"), "A");
 }
 
+/// tex.web § 1221: only an `=` of category 12 is `\let`'s optional equals.
+/// An active `=` is the token whose meaning is copied (listings saves an
+/// active character this way), and what follows it is not read.
+#[test]
+fn let_copies_an_active_equals_sign() {
+    check(r"\catcode61=13 \def={A}\let\x=\relax\catcode61 12 \edef\R{\x}", "A");
+    check(r"\catcode61=13 \def={A}\def\s#1#2{\let#1#2}\s\x=\catcode61 12 \edef\R{\x B}", "AB");
+}
+
 /// tex.web § 269: the tokens go back into the input at the end of the group,
 /// in front of what followed it, so the macro among them reads its arguments
 /// from there.
