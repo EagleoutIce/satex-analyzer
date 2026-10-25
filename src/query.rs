@@ -2562,7 +2562,18 @@ fn body_of(analysis: &Analysis, sym: crate::tex::Sym, mac: Option<&crate::tex::M
     match mac {
         Some(m) => (json!(detokenize(&m.replacement_text, &analysis.interner)), false),
         None => match analysis.env.meaning(sym) {
-            Meaning::Primitive(_) => (json!(analysis.interner.cs(sym)), true),
+            // A name `\let` to a primitive (a `\newif` switch is `\iffalse`)
+            // shows the primitive by its own name.
+            Meaning::Primitive(p) => {
+                let names = crate::builtins::primitive_names(analysis.plugins.engine);
+                let own = |n: &str| names.get(n) == Some(&p);
+                let name = analysis.interner.name(sym);
+                let shown = match own(name) {
+                    true => name.to_string(),
+                    false => names.keys().filter(|n| own(n)).min().cloned().unwrap_or_else(|| name.to_string()),
+                };
+                (json!(format!("\\{shown}")), true)
+            }
             _ => (Json::Null, false),
         },
     }

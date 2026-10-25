@@ -81,6 +81,16 @@ fn primitive_body_and_kind() {
     assert_eq!(str_field(&record, "kind"), Some("primitive"));
 }
 
+/// A `\newif` switch is `\let` to `\iffalse`: its body names that
+/// primitive, and a conditional takes no arguments.
+#[test]
+fn a_switch_shows_the_conditional_it_is() {
+    let analysis = analyze(r"\let\ifdraft=\iffalse");
+    let record = explain_one(&analysis, "ifdraft");
+    assert_eq!(str_field(&record, "body"), Some(r"\iffalse"));
+    assert_eq!(str_field(&record, "effective"), Some(r"\ifdraft"));
+}
+
 #[test]
 fn expands_lists_callees_in_order_deduplicated() {
     // `expands` is what a call actually ran, not what the body merely names
