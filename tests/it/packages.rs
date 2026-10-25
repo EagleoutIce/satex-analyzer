@@ -510,3 +510,15 @@ fn an_unloaded_package_is_found_by_what_it_defines() {
     assert!(loads.contains(&"booktabs"), "{loads:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// soul spaces a text word by word, reading `\textbackslash` as one
+/// token of it (soul.sty `\SOUL@splittoken`). pdflatex: no error.
+#[test]
+fn soul_spaces_a_text_with_a_command_in_it() {
+    if !crate::support::installed() {
+        return;
+    }
+    crate::support::assert_clean(
+        "\\documentclass{article}\\usepackage{soul}\\begin{document}\\so{\\textbackslash ab}\\end{document}",
+    );
+}
