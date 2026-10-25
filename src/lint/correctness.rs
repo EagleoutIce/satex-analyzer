@@ -365,8 +365,8 @@ fn unguarded_recursion(report: &mut Report) {
             (
                 Severity::Warning,
                 format!(
-                    "{name} names itself in its replacement text with no conditional to stop it; \
-                     nothing expands it, so this is read off the text"
+                    "{name} names itself in its replacement text with no conditional to stop it. \
+                     Nothing expands it, so this is read off the text"
                 ),
             )
         };
@@ -781,7 +781,7 @@ fn duplicate_label(report: &mut Report) {
         report.add(
             span,
             &labels[0].0,
-            format!("label {}", each.join("; ")),
+            format!("label {}", each.join(", and ")),
             Some("rename one of the two labels".into()),
         );
     }

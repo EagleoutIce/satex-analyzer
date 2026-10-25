@@ -54,6 +54,8 @@ lints:
     characters: 2500  # justified paragraph text the body must set, about a page
   ellipsis-dots:
     center: '=+-<>'  # chktex CenterDots: an ellipsis between these wants \cdots
+  table-rules:
+    rows: 3  # rows with text, header included, before booktabs rules are asked for
 # profile: package          # forces one instead of detecting it from the input
 
 # Sensible defaults per kind of input, chosen automatically by the input's

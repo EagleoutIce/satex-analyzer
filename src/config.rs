@@ -1301,6 +1301,21 @@ pub struct Lints {
     pub build_cost: BuildCost,
     pub microtype_available: MicrotypeAvailable,
     pub ellipsis_dots: EllipsisDots,
+    pub table_rules: TableRules,
+}
+
+/// `lints.table-rules:` in `satex.yaml`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TableRules {
+    /// Rows with text, header included, a table needs for its rules to matter.
+    pub rows: usize,
+}
+
+impl Default for TableRules {
+    fn default() -> TableRules {
+        TableRules { rows: 3 }
+    }
 }
 
 /// `lints.build-cost:` in `satex.yaml`: when a part of the build is worth

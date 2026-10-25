@@ -35,7 +35,7 @@ all numbers, three or more, set in a column that does not align them.",
         summary: "the numbers of a table column give different numbers of decimals",
         explanation: "\
 `1.5`, `2.25` and `3` in one column claim three different precisions, and do
-not line up even at their decimal mark.  Give them one precision; an `S`
+not line up even at their decimal mark.  Give them one precision.  An `S`
 column of [siunitx](https://ctan.org/pkg/siunitx) rounds them with
 `round-mode = places, round-precision = …`.",
         references: &[Ref { source: Source::Siunitx, at: "4.6" }],
@@ -68,7 +68,8 @@ over an `S` column of bare numbers.",
 different weights, `\\toprule`, `\\midrule` and `\\bottomrule`, with space
 around them, and asks for no vertical rules at all (§ 2 of its manual): the
 columns are separated by their space, and `\\hline` sets every rule alike and
-too close to the text.",
+too close to the text.  A table of fewer rows than `lints.table-rules.rows`
+(3) is left alone.",
         references: &[Ref { source: Source::Booktabs, at: "2" }],
         fixes: &[],
         run: table_rules,
@@ -88,6 +89,8 @@ struct Table {
     hline: bool,
     /// The rows that are cells only, each cell's text and where it starts.
     rows: Vec<Vec<(String, Pos)>>,
+    /// Every row with text, spanning cells or not.
+    lines: usize,
 }
 
 /// A number as a table cell spells it.
@@ -128,7 +131,7 @@ fn read(text: &Text, begin: Span, skip: usize) -> Option<Table> {
     scan.optional();
     let spec = scan.group()?;
     let (columns, vertical) = columns(text.slice(spec.inner_start, spec.inner_end)?, 0)?;
-    let mut table = Table { begin, columns, vertical, hline: false, rows: Vec::new() };
+    let mut table = Table { begin, columns, vertical, hline: false, rows: Vec::new(), lines: 0 };
     let (mut row, mut cell, mut depth, mut spans) = (Vec::new(), None::<Pos>, 0usize, false);
     // Environments a cell holds, whose `\end` ends no table.
     let mut nested = 0usize;
@@ -189,6 +192,7 @@ fn cell_text(text: &Text, start: Option<Pos>, end: Pos) -> (String, Pos) {
 /// empty last line after a final `\\` is none.
 fn push_row(table: &mut Table, row: Vec<(String, Pos)>, spans: bool) {
     let empty = row.iter().all(|(text, _)| text.is_empty());
+    table.lines += usize::from(!empty);
     if !spans && !empty && row.len() <= table.columns.len() {
         table.rows.push(row);
     }
@@ -282,10 +286,10 @@ fn number(cell: &str) -> Option<Number> {
 }
 
 /// Each column of numbers: its number, type and numbers with where the
-/// first stands. A column is one of numbers when, below the rows heading
-/// it, every cell that has text is a number, two or more: two can
-/// already stand apart.
-fn number_columns(table: &Table) -> Vec<(usize, char, Vec<Number>, Pos)> {
+/// first stands, and its header. A column is one of numbers when, below the
+/// rows heading it, every cell that has text is a number, two or more: two
+/// can already stand apart.
+fn number_columns(table: &Table) -> Vec<(usize, char, Vec<Number>, Pos, String)> {
     let mut out = Vec::new();
     for (j, &kind) in table.columns.iter().enumerate() {
         let cells: Vec<&(String, Pos)> = table.rows.iter().filter_map(|row| row.get(j)).collect();
@@ -294,7 +298,9 @@ fn number_columns(table: &Table) -> Vec<(usize, char, Vec<Number>, Pos)> {
         let numbers: Option<Vec<Number>> =
             cells[first..].iter().filter(|(text, _)| !text.is_empty()).map(|(text, _)| number(text)).collect();
         if let Some(numbers) = numbers.filter(|n| n.len() >= 2) {
-            out.push((j + 1, kind, numbers, cells[first].1));
+            let header = cells[..first].iter().rev().find(|(text, _)| !text.is_empty());
+            let header = header.map_or("Header", |(text, _)| text.as_str()).to_string();
+            out.push((j + 1, kind, numbers, cells[first].1, header));
         }
     }
     out
@@ -311,7 +317,7 @@ fn all_equal<T: PartialEq>(mut values: impl Iterator<Item = T>) -> bool {
 
 fn numbers_not_aligned(report: &mut Report) {
     for table in tables(report) {
-        for (column, kind, numbers, at) in number_columns(&table) {
+        for (column, kind, numbers, at, header) in number_columns(&table) {
             if !matches!(kind, 'l' | 'c' | 'r' | 'p' | 'X') {
                 continue;
             }
@@ -320,38 +326,45 @@ fn numbers_not_aligned(report: &mut Report) {
             if same_decimals && (kind == 'r' || same_digits) {
                 continue;
             }
-            let decimal = numbers.iter().any(|n| n.decimals.is_some());
-            let (message, fix) = match decimal {
-                true => (
-                    format!("the numbers of column {column} do not line up at their decimal mark"),
-                    "use siunitx's `S` column (`\\usepackage{siunitx}`), with the header in braces: `{Header}`",
+            let siunitx = format!(
+                "add `\\usepackage{{siunitx}}`, set column {column} as `S` and brace its header: `{{{header}}}`"
+            );
+            let (message, fix) = match (numbers.iter().any(|n| n.decimals.is_some()), kind) {
+                (true, 'r') => (
+                    format!("numeric column {column} is right-aligned, not on the decimal separator: use siunitx `S`"),
+                    siunitx,
                 ),
-                false => (
-                    format!("the numbers of column {column} do not line up at their last digit"),
-                    "right-align the column (`r`), or use siunitx's `S` column",
+                (true, _) => (
+                    format!(
+                        "numeric column {column} is set `{kind}`: align its decimal separators with siunitx `S`, or at least use `r`"
+                    ),
+                    siunitx,
+                ),
+                (false, _) => (
+                    format!("numeric column {column} is set `{kind}`: right-align it with `r`, or use siunitx `S`"),
+                    format!("set column {column} as `r` in the column specification"),
                 ),
             };
-            report.add(span_at(&table, at), "tabular", message, Some(fix.to_string()));
+            report.add(span_at(&table, at), "tabular", message, Some(fix));
         }
     }
 }
 
 fn inconsistent_precision(report: &mut Report) {
     for table in tables(report) {
-        for (column, _, numbers, at) in number_columns(&table) {
-            if !numbers.iter().any(|n| n.decimals.is_some()) {
-                continue;
-            }
-            let places: Vec<usize> = numbers.iter().map(|n| n.decimals.unwrap_or(0)).collect();
-            let (low, high) = (places.iter().min().copied().unwrap_or(0), places.iter().max().copied().unwrap_or(0));
+        for (column, _, numbers, at, _) in number_columns(&table) {
+            let places = numbers.iter().map(|n| n.decimals.unwrap_or(0));
+            let (low, high) = (places.clone().min().unwrap_or(0), places.max().unwrap_or(0));
             if low == high {
                 continue;
             }
             report.add(
                 span_at(&table, at),
                 "tabular",
-                format!("the numbers of column {column} give {low} to {high} decimals"),
-                Some("give them one precision; an `S` column rounds with `round-mode = places`".to_string()),
+                format!(
+                    "numeric column {column} mixes {low} to {high} decimal places: give every number one precision"
+                ),
+                Some("round them by hand, or let siunitx `S` round with `round-mode = places`".to_string()),
             );
         }
     }
@@ -359,16 +372,14 @@ fn inconsistent_precision(report: &mut Report) {
 
 fn unit_in_cells(report: &mut Report) {
     for table in tables(report) {
-        for (column, _, numbers, at) in number_columns(&table) {
+        for (column, _, numbers, at, header) in number_columns(&table) {
             let Some(unit) = numbers[0].unit.clone() else { continue };
             if numbers.iter().all(|n| n.unit.as_deref() == Some(unit.as_str())) {
                 report.add(
                     span_at(&table, at),
                     "tabular",
-                    format!("every number of column {column} carries the unit `{unit}`"),
-                    Some(format!(
-                        "name the unit once, in the header (`Quantity / {unit}`), and give the numbers alone"
-                    )),
+                    format!("every number in column {column} repeats the unit `{unit}`: name it once in the header"),
+                    Some(format!("head the column `{header} / {unit}` and leave bare numbers in the cells")),
                 );
             }
         }
@@ -376,21 +387,20 @@ fn unit_in_cells(report: &mut Report) {
 }
 
 fn table_rules(report: &mut Report) {
-    for table in tables(report) {
+    let rows = report.analysis().settings.lints.table_rules.rows;
+    for table in tables(report).into_iter().filter(|t| t.lines >= rows) {
         let how = match (table.vertical, table.hline) {
             (true, true) => "vertical rules and `\\hline`",
             (true, false) => "vertical rules",
             (false, true) => "`\\hline`",
             (false, false) => continue,
         };
+        let drop = if table.vertical { "drop the `|` and " } else { "" };
         report.add(
             table.begin,
             "tabular",
-            format!("the table is ruled with {how}"),
-            Some(
-                "rule it with booktabs's `\\toprule`, `\\midrule` and `\\bottomrule`, and no vertical rules"
-                    .to_string(),
-            ),
+            format!("{how} instead of booktabs rules: {drop}use `\\toprule`, `\\midrule`, `\\bottomrule`"),
+            Some("add `\\usepackage{booktabs}`, put `\\toprule` above the header, `\\midrule` below it and `\\bottomrule` at the end".to_string()),
         );
     }
 }

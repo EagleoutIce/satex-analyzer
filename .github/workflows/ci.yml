@@ -15,10 +15,10 @@ on:
 permissions:
   contents: read
 
-# A new push replaces the run of the same branch; main keeps its runs.
+# A new push replaces the running run of the same ref.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -36,14 +36,14 @@ jobs:
     name: Test ubuntu-latest (${{ matrix.shard }})
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     # The TeX Live image already holds a full installation, which the
     # engine-dependent tests need; installing one with apt takes minutes.
     container: texlive/texlive:latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [cache, slow, rest, compliance]
+        shard: ['1/6', '2/6', '3/6', '4/6', '5/6', '6/6', compliance]
     steps:
       # Lua and LPeg are compiled from C; the TeX Live image has no compiler.
       - name: Install a C toolchain
@@ -57,7 +57,7 @@ jobs:
         with:
           # One cache for every shard: they build the same dependencies.
           shared-key: quick-linux
-          save-if: ${{ matrix.shard == 'rest' && github.ref == 'refs/heads/main' }}
+          save-if: ${{ matrix.shard == '1/6' && github.ref == 'refs/heads/main' }}
           cache-on-failure: true
 
       # Fails in seconds if the image ever stops shipping TeX, which would
@@ -85,7 +85,7 @@ jobs:
     name: Test ${{ matrix.os }}
     if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -172,7 +172,7 @@ jobs:
     name: Full ubuntu-latest ${{ matrix.tl }} (${{ matrix.shard }})
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     container: ${{ matrix.container }}
     strategy:
       fail-fast: false
@@ -189,7 +189,7 @@ jobs:
             container: texlive/texlive:TL2022-historic
           - tl: TL2019
             container: texlive/texlive:TL2019-historic
-        shard: [cache, slow, rest, compliance]
+        shard: ['1/6', '2/6', '3/6', '4/6', '5/6', '6/6', compliance]
     steps:
       - name: Install a C toolchain
         run: apt-get update && apt-get install -y --no-install-recommends build-essential
@@ -203,7 +203,7 @@ jobs:
           # Rust build products do not depend on the TeX Live version, so
           # every version shares one cache.
           shared-key: full-linux
-          save-if: ${{ matrix.tl == 'current' && matrix.shard == 'rest' && github.ref == 'refs/heads/main' }}
+          save-if: ${{ matrix.tl == 'current' && matrix.shard == '1/6' && github.ref == 'refs/heads/main' }}
           cache-on-failure: true
 
       - name: The distribution is really there
@@ -237,7 +237,7 @@ jobs:
     name: Full ${{ matrix.os }} (current)
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -299,7 +299,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v5
 
@@ -370,9 +370,9 @@ jobs:
           cache-on-failure: true
 
       - name: Build satex-doc
-        run: cargo build --release --features doc --bin satex-doc
+        run: cargo build --locked --profile ci --features doc --bin satex-doc
 
       - name: Check citations against the live upstream commit
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: target/release/satex-doc --check-citations
+        run: target/ci/satex-doc --check-citations

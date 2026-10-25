@@ -372,7 +372,10 @@ impl<'a> Report<'a> {
         record.insert("reference".into(), json!(self.reference));
         let origin = self.index.origin(span.file);
         record.insert("origin".into(), json!(origin));
-        record.insert("message".into(), json!(message));
+        record.insert("message".into(), json!(code(&message)));
+        if let Some(group) = self.index.group(span) {
+            record.insert("group".into(), json!(group));
+        }
         // A fix only ever changes the user's own files: its edits all land
         // in files satex may change, and one with no edits, only advice, is
         // given where the finding is in the user's own files.
@@ -380,7 +383,7 @@ impl<'a> Report<'a> {
             !edits.is_empty() && edits.iter().all(|e| self.sources.editable(self.analysis, &e.path))
         });
         let advice = edits.is_some() || origin == "document";
-        record.insert("fix".into(), json!(fix.filter(|_| advice)));
+        record.insert("fix".into(), json!(fix.filter(|_| advice).as_deref().map(code)));
         if let Some((applicability, edits)) = edits {
             debug_assert!(
                 self.rule.fixes.contains(&applicability),
@@ -472,10 +475,64 @@ impl<'a> Report<'a> {
         record.insert("name".into(), json!(name));
         record.insert("reference".into(), json!(self.reference));
         record.insert("origin".into(), json!("build"));
-        record.insert("message".into(), json!(message));
-        record.insert("fix".into(), json!(fix));
+        record.insert("message".into(), json!(code(&message)));
+        record.insert("fix".into(), json!(fix.as_deref().map(code)));
         self.out.push(record);
     }
+}
+
+/// `text` with each control sequence outside backticks, and the groups
+/// right after it, in backticks: code font in every front end.
+fn code(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    for (i, part) in text.split('`').enumerate() {
+        if i > 0 {
+            out.push('`');
+        }
+        let mut rest = part;
+        while let Some(at) = rest.find('\\').filter(|_| i % 2 == 0) {
+            let end = at + cs_len(&rest[at..]);
+            out.push_str(&rest[..at]);
+            out.extend(['`'].into_iter().chain(rest[at..end].chars()).chain(['`']));
+            rest = &rest[end..];
+        }
+        out.push_str(rest);
+    }
+    out
+}
+
+/// The length of the control sequence `s` starts with, with the brace or
+/// bracket groups right after it: `\usepackage[T1]{fontenc}`.
+fn cs_len(s: &str) -> usize {
+    let b = s.as_bytes();
+    let letter = |i: usize| {
+        b.get(i).is_some_and(|&c| {
+            c.is_ascii_alphabetic()
+                || c == b'@'
+                || c == b'_'
+                || (c == b':' && i > 1 && b.get(i + 1).is_some_and(u8::is_ascii_alphabetic))
+        })
+    };
+    let mut end = 1;
+    if letter(1) {
+        while letter(end) {
+            end += 1;
+        }
+    } else if let Some(c) = s[1..].chars().next() {
+        end += c.len_utf8();
+    }
+    while let Some(&open) = b.get(end).filter(|c| matches!(c, b'{' | b'[')) {
+        let close = if open == b'{' { b'}' } else { b']' };
+        let mut depth = 0i32;
+        let Some(len) = b[end..].iter().position(|&c| {
+            depth += i32::from(c == open) - i32::from(c == close);
+            depth == 0
+        }) else {
+            break;
+        };
+        end += len + 1;
+    }
+    end
 }
 
 pub fn lint(analysis: &Analysis) -> Vec<Record> {
@@ -616,4 +673,49 @@ pub fn cites(rule: &Rule) -> String {
 
 pub fn explanation(code: &str) -> Option<&'static Rule> {
     all().find(|rule| rule.code == code)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn control_sequences_are_code() {
+        let code = super::code;
+        assert_eq!(code("delete \\usepackage[T1]{fontenc} and `\\x`"), "delete `\\usepackage[T1]{fontenc}` and `\\x`");
+        assert_eq!(code("\\tl_set:Nn: \\\\ ends \\x{y"), "`\\tl_set:Nn`: `\\\\` ends `\\x`{y");
+    }
+
+    /// Messages are short sentences: no string literal of a rule joins
+    /// clauses with `;`.  Explanations and tests are prose of their own.
+    #[test]
+    fn no_message_has_a_semicolon() {
+        for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lint")).unwrap() {
+            let path = entry.unwrap().path();
+            let all = std::fs::read_to_string(&path).unwrap();
+            let text = all.split("#[cfg(test)]").next().unwrap_or_default().as_bytes();
+            let ident = |i: usize| i > 0 && (text[i - 1].is_ascii_alphanumeric() || text[i - 1] == b'_');
+            let find = |from: usize, end: &[u8]| from + text[from..].windows(end.len()).position(|w| w == end).unwrap();
+            let mut i = 0;
+            while i < text.len() {
+                i = match &text[i..] {
+                    [b'/', b'/', ..] => find(i, b"\n"),
+                    [b'\'', b'\\', ..] => find(i + 2, b"'") + 1,
+                    [b'\'', _, b'\'', ..] => i + 3,
+                    [b'r', b'#', b'"', ..] if !ident(i) => find(i + 3, b"\"#") + 2,
+                    [b'r', b'"', ..] if !ident(i) => find(i + 2, b"\"") + 1,
+                    [b'"', ..] => {
+                        let mut end = i + 1;
+                        while text[end] != b'"' {
+                            end += if text[end] == b'\\' { 2 } else { 1 };
+                        }
+                        let literal = String::from_utf8_lossy(&text[i + 1..end]);
+                        let doc = String::from_utf8_lossy(&text[..i]).trim_end().ends_with("explanation:");
+                        let prose = literal.contains("; ") || literal.contains(";\\\n");
+                        assert!(doc || !prose, "{}: {literal:?}", path.display());
+                        end + 1
+                    }
+                    _ => i + 1,
+                };
+            }
+        }
+    }
 }

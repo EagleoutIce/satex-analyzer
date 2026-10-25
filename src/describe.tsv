@@ -1,0 +1,1292 @@
+	The null control sequence, which does nothing.
+ 	Control space, a normal interword space.
+-	Discretionary hyphen, a place where a word may be hyphenated.
+/	Italic correction, adds the slant overhang of the previous character.
+@empty	Macro with an empty expansion.
+@firstoftwo	Takes two arguments and keeps the first.
+@for	Loops over a comma list.
+@gobble	Takes one argument and discards it.
+@gobbletwo	Takes two arguments and discards them.
+@ifnextchar	Branches on the next non-space token.
+@ifpackageloaded	Branches on whether a package is loaded.
+@ifstar	Branches on a following star.
+@ifundefined	Branches on whether a name is undefined.
+@namedef	Defines a macro from a name.
+@nameuse	Uses a macro from a name.
+@onlypreamble	Allows a command only in the preamble.
+@secondoftwo	Takes two arguments and keeps the second.
+@tempa	Scratch macro for temporary definitions.
+@tempb	Scratch macro for temporary definitions.
+@tempboxa	Scratch box for temporary use.
+@tempcnta	Scratch counter for temporary use.
+@tempdima	Scratch dimension for temporary use.
+@whilenum	Loops while a number test holds.
+Alph	Prints a counter as an uppercase letter.
+AtBeginDocument	Adds code to run at the start of the document.
+AtBeginDvi	Adds material to the first page.
+AtEndDocument	Adds code to run at the end of the document.
+AtEndOfClass	Adds code to run after the class is loaded.
+AtEndOfPackage	Adds code to run after the package is loaded.
+ClassError	Reports a class error.
+ClassWarning	Reports a class warning.
+DeclareDocumentCommand	Defines a command with an argument specification.
+DeclareFontFamily	Declares a font family for an encoding.
+DeclareFontShape	Declares a font shape and its files.
+DeclareMathOperator	Defines a math operator command.
+DeclareMathSymbol	Defines a math symbol.
+DeclareOption	Defines what a package or class option does.
+DeclareRobustCommand	Defines a command that survives moving arguments.
+DeclareSymbolFont	Declares a math symbol font.
+DeclareTextCommand	Defines a text command for an encoding.
+ExecuteOptions	Runs the code of options as if they were passed.
+ExplSyntaxOff	Switches back to normal syntax.
+ExplSyntaxOn	Switches to expl3 syntax.
+GenericError	Reports an error with a custom prefix.
+Huge	Switches to the largest size.
+IfBooleanTF	Tests a boolean argument.
+IfFileExists	Runs code depending on whether a file exists.
+IfNoValueTF	Tests whether an optional argument was given.
+IfValueTF	Tests whether an optional argument has a value.
+InputIfFileExists	Reads a file if it exists, else runs other code.
+LARGE	Switches to a very large size.
+LaTeX	Prints the LaTeX logo.
+LaTeXe	Prints the LaTeX2e logo.
+Large	Switches to a larger size.
+LoadClass	Loads another class from within a class.
+MessageBreak	Breaks a line inside a message.
+NeedsTeXFormat	Checks which format runs the file.
+NewDocumentCommand	Defines a new command with an argument specification.
+NewDocumentEnvironment	Defines a new environment with an argument specification.
+NewExpandableDocumentCommand	Defines an expandable command with an argument specification.
+P	Prints the paragraph sign.
+PackageError	Reports a package error.
+PackageInfo	Writes a package note to the log.
+PackageWarning	Reports a package warning.
+PassOptionsToClass	Passes options to a class loaded later.
+PassOptionsToPackage	Passes options to a package loaded later.
+ProcessOptions	Runs the code of the given options.
+ProvideDocumentCommand	Defines a command with an argument specification if it is new.
+ProvidesClass	Declares the name and date of a class.
+ProvidesFile	Declares the name and date of a file.
+ProvidesPackage	Declares the name and date of a package.
+RenewDocumentCommand	Redefines a command with an argument specification.
+RenewDocumentEnvironment	Redefines an environment with an argument specification.
+RequirePackage	Loads packages, also usable in class and package files.
+Roman	Prints a counter in uppercase roman numerals.
+S	Prints the section sign.
+SetMathAlphabet	Sets a math alphabet font.
+TeX	Prints the TeX logo.
+TeXXeTstate	Switches mixed-direction typesetting on or off.
+Uchar	Typesets the Unicode character with a given number.
+Ucharcat	Typesets a character with a given number and category.
+Udelcode	Delimiter code of a Unicode character.
+Udelcodenum	Delimiter code of a character, as a number.
+Udelimiter	Math delimiter given by class, family and slot.
+Udelimiterover	Draws a delimiter over math material.
+Udelimiterunder	Draws a delimiter under math material.
+Uhextensible	Builds a horizontally extensible delimiter.
+Uleft	Opens a math delimiter pair of variable size.
+Umathaccent	Puts an accent over math in Unicode math.
+Umathaxis	Height of the math axis.
+Umathbinbinspacing	Space between binary and binary atoms in Unicode math.
+Umathbinclosespacing	Space between binary and closing atoms in Unicode math.
+Umathbininnerspacing	Space between binary and inner atoms in Unicode math.
+Umathbinopenspacing	Space between binary and opening atoms in Unicode math.
+Umathbinopspacing	Space between binary and operator atoms in Unicode math.
+Umathbinordspacing	Space between binary and ordinary atoms in Unicode math.
+Umathbinpunctspacing	Space between binary and punctuation atoms in Unicode math.
+Umathbinrelspacing	Space between binary and relation atoms in Unicode math.
+Umathchar	Math character given by class, family and slot.
+Umathcharclass	Math class of a character.
+Umathchardef	Defines a name for a math character.
+Umathcharfam	Family of a math character.
+Umathcharnum	Math character given as a single number.
+Umathcharnumdef	Defines a name for a math character number.
+Umathcharslot	Slot of a math character.
+Umathclosebinspacing	Space between closing and binary atoms in Unicode math.
+Umathcloseclosespacing	Space between closing and closing atoms in Unicode math.
+Umathcloseinnerspacing	Space between closing and inner atoms in Unicode math.
+Umathcloseopenspacing	Space between closing and opening atoms in Unicode math.
+Umathcloseopspacing	Space between closing and operator atoms in Unicode math.
+Umathcloseordspacing	Space between closing and ordinary atoms in Unicode math.
+Umathclosepunctspacing	Space between closing and punctuation atoms in Unicode math.
+Umathcloserelspacing	Space between closing and relation atoms in Unicode math.
+Umathcode	Math code of a character in Unicode math.
+Umathcodenum	Math code of a character, as a number.
+Umathconnectoroverlapmin	Minimum overlap of extensible delimiter parts.
+Umathfractiondelsize	Delimiter size in fractions.
+Umathfractiondenomdown	Downward shift of a fraction denominator.
+Umathfractiondenomvgap	Gap above a fraction denominator.
+Umathfractionnumup	Upward shift of a fraction numerator.
+Umathfractionnumvgap	Gap below a fraction numerator.
+Umathfractionrule	Thickness of a fraction rule.
+Umathinnerbinspacing	Space between inner and binary atoms in Unicode math.
+Umathinnerclosespacing	Space between inner and closing atoms in Unicode math.
+Umathinnerinnerspacing	Space between inner and inner atoms in Unicode math.
+Umathinneropenspacing	Space between inner and opening atoms in Unicode math.
+Umathinneropspacing	Space between inner and operator atoms in Unicode math.
+Umathinnerordspacing	Space between inner and ordinary atoms in Unicode math.
+Umathinnerpunctspacing	Space between inner and punctuation atoms in Unicode math.
+Umathinnerrelspacing	Space between inner and relation atoms in Unicode math.
+Umathlimitabovebgap	Gap between operator and limit above.
+Umathlimitabovekern	Kern for the limit above an operator.
+Umathlimitabovevgap	Vertical gap above an operator limit.
+Umathlimitbelowbgap	Gap between operator and limit below.
+Umathlimitbelowkern	Kern for the limit below an operator.
+Umathlimitbelowvgap	Vertical gap below an operator limit.
+Umathnolimitsubfactor	Factor for subscript placement without limits.
+Umathnolimitsupfactor	Factor for superscript placement without limits.
+Umathopbinspacing	Space between operator and binary atoms in Unicode math.
+Umathopclosespacing	Space between operator and closing atoms in Unicode math.
+Umathopenbinspacing	Space between opening and binary atoms in Unicode math.
+Umathopenclosespacing	Space between opening and closing atoms in Unicode math.
+Umathopeninnerspacing	Space between opening and inner atoms in Unicode math.
+Umathopenopenspacing	Space between opening and opening atoms in Unicode math.
+Umathopenopspacing	Space between opening and operator atoms in Unicode math.
+Umathopenordspacing	Space between opening and ordinary atoms in Unicode math.
+Umathopenpunctspacing	Space between opening and punctuation atoms in Unicode math.
+Umathopenrelspacing	Space between opening and relation atoms in Unicode math.
+Umathoperatorsize	Minimum size of display operators.
+Umathopinnerspacing	Space between operator and inner atoms in Unicode math.
+Umathopopenspacing	Space between operator and opening atoms in Unicode math.
+Umathopopspacing	Space between operator and operator atoms in Unicode math.
+Umathopordspacing	Space between operator and ordinary atoms in Unicode math.
+Umathoppunctspacing	Space between operator and punctuation atoms in Unicode math.
+Umathoprelspacing	Space between operator and relation atoms in Unicode math.
+Umathordbinspacing	Space between ordinary and binary atoms in Unicode math.
+Umathordclosespacing	Space between ordinary and closing atoms in Unicode math.
+Umathordinnerspacing	Space between ordinary and inner atoms in Unicode math.
+Umathordopenspacing	Space between ordinary and opening atoms in Unicode math.
+Umathordopspacing	Space between ordinary and operator atoms in Unicode math.
+Umathordordspacing	Space between ordinary and ordinary atoms in Unicode math.
+Umathordpunctspacing	Space between ordinary and punctuation atoms in Unicode math.
+Umathordrelspacing	Space between ordinary and relation atoms in Unicode math.
+Umathoverbarkern	Kern above an overbar.
+Umathoverbarrule	Thickness of an overbar.
+Umathoverbarvgap	Gap below an overbar.
+Umathoverdelimiterbgap	Gap between material and an over delimiter.
+Umathoverdelimitervgap	Gap above an over delimiter.
+Umathpunctbinspacing	Space between punctuation and binary atoms in Unicode math.
+Umathpunctclosespacing	Space between punctuation and closing atoms in Unicode math.
+Umathpunctinnerspacing	Space between punctuation and inner atoms in Unicode math.
+Umathpunctopenspacing	Space between punctuation and opening atoms in Unicode math.
+Umathpunctopspacing	Space between punctuation and operator atoms in Unicode math.
+Umathpunctordspacing	Space between punctuation and ordinary atoms in Unicode math.
+Umathpunctpunctspacing	Space between punctuation and punctuation atoms in Unicode math.
+Umathpunctrelspacing	Space between punctuation and relation atoms in Unicode math.
+Umathquad	Quad width of math fonts.
+Umathradicaldegreeafter	Space after the degree of a radical.
+Umathradicaldegreebefore	Space before the degree of a radical.
+Umathradicaldegreeraise	Raise of the degree of a radical.
+Umathradicalkern	Kern above a radical.
+Umathradicalrule	Thickness of a radical rule.
+Umathradicalvgap	Gap between a radical and its content.
+Umathrelbinspacing	Space between relation and binary atoms in Unicode math.
+Umathrelclosespacing	Space between relation and closing atoms in Unicode math.
+Umathrelinnerspacing	Space between relation and inner atoms in Unicode math.
+Umathrelopenspacing	Space between relation and opening atoms in Unicode math.
+Umathrelopspacing	Space between relation and operator atoms in Unicode math.
+Umathrelordspacing	Space between relation and ordinary atoms in Unicode math.
+Umathrelpunctspacing	Space between relation and punctuation atoms in Unicode math.
+Umathrelrelspacing	Space between relation and relation atoms in Unicode math.
+Umathskewedfractionhgap	Horizontal gap in skewed fractions.
+Umathskewedfractionvgap	Vertical gap in skewed fractions.
+Umathspaceafterscript	Space after scripts in Unicode math.
+Umathstackdenomdown	Downward shift of a stack denominator.
+Umathstacknumup	Upward shift of a stack numerator.
+Umathstackvgap	Gap in stacked material.
+Umathsubshiftdown	Downward shift of a subscript.
+Umathsubshiftdrop	Subscript drop below the base.
+Umathsubsupshiftdown	Downward shift of a subscript with a superscript.
+Umathsubsupvgap	Gap between subscript and superscript.
+Umathsubtopmax	Highest the subscript top may reach.
+Umathsupbottommin	Lowest the superscript bottom may reach.
+Umathsupshiftdrop	Superscript drop above the base.
+Umathsupshiftup	Upward shift of a superscript.
+Umathsupsubbottommax	Highest the bottom of a superscript with subscript may reach.
+Umathunderbarkern	Kern below an underbar.
+Umathunderbarrule	Thickness of an underbar.
+Umathunderbarvgap	Gap above an underbar.
+Umathunderdelimiterbgap	Gap between material and an under delimiter.
+Umathunderdelimitervgap	Gap below an under delimiter.
+Umiddle	Inserts a delimiter in the middle of a \Uleft and \Uright pair.
+Unosubscript	Typesets the next math item without a subscript.
+Unosuperscript	Typesets the next math item without a superscript.
+Uoverdelimiter	Draws a delimiter over math material.
+Uradical	Draws a radical with given delimiter.
+Uright	Closes a math delimiter pair of variable size.
+Uroot	Draws a radical with a degree.
+Uskewed	Builds a skewed fraction.
+Uskewedwithdelims	Builds a skewed fraction with delimiters.
+Ustack	Stacks math material.
+Ustartdisplaymath	Starts display math.
+Ustartmath	Starts inline math.
+Ustopdisplaymath	Ends display math.
+Ustopmath	Ends inline math.
+Usubscript	Typesets the next math item as a subscript.
+Usuperscript	Typesets the next math item as a superscript.
+Uunderdelimiter	Draws a delimiter under math material.
+Uvextensible	Builds a vertically extensible delimiter.
+XeTeXOTcountfeatures	Number of OpenType features of a script and language.
+XeTeXOTcountlanguages	Number of OpenType languages of a script.
+XeTeXOTcountscripts	Number of OpenType scripts of the font.
+XeTeXOTfeaturetag	OpenType feature tag by index.
+XeTeXOTlanguagetag	OpenType language tag by index.
+XeTeXOTscripttag	OpenType script tag by index.
+XeTeXcharclass	Inter-character class of a character.
+XeTeXcharglyph	Glyph index of a character in the current font.
+XeTeXcountfeatures	Number of features of a font.
+XeTeXcountglyphs	Number of glyphs in a font.
+XeTeXcountselectors	Number of selectors of a feature.
+XeTeXcountvariations	Number of variation axes of a font.
+XeTeXdashbreakstate	Allows line breaks after dashes.
+XeTeXdefaultencoding	Default input encoding of the next files.
+XeTeXdelcode	Delimiter code of a character.
+XeTeXdelcodenum	Delimiter code of a character, as a number.
+XeTeXdelimiter	Math delimiter given by class, family and slot.
+XeTeXfeaturecode	Feature code of a font.
+XeTeXfeaturename	Name of a font feature.
+XeTeXfindfeaturebyname	Looks up a font feature by name.
+XeTeXfindselectorbyname	Looks up a feature selector by name.
+XeTeXfindvariationbyname	Looks up a variation axis by name.
+XeTeXfirstfontchar	First character of the font.
+XeTeXfonttype	Technology of the current font.
+XeTeXgenerateactualtext	Adds ActualText entries to PDF output.
+XeTeXglyph	Typesets a glyph by its index.
+XeTeXglyphbounds	Bounding box of a glyph.
+XeTeXglyphindex	Glyph index by glyph name.
+XeTeXglyphname	Glyph name by index.
+XeTeXhyphenatablelength	Longest word length that may be hyphenated.
+XeTeXinputencoding	Input encoding of the current file.
+XeTeXinputnormalization	Unicode normalization applied to input.
+XeTeXinterchartokenstate	Switches inter-character tokens on or off.
+XeTeXinterchartoks	Tokens inserted between characters of two classes.
+XeTeXinterwordspaceshaping	Controls shaping of interword spaces.
+XeTeXisdefaultselector	Tests whether a selector is the default.
+XeTeXisexclusivefeature	Tests whether a feature is exclusive.
+XeTeXlastfontchar	Last character of the font.
+XeTeXlinebreaklocale	Locale used for line breaking.
+XeTeXlinebreakpenalty	Penalty at a locale-driven break.
+XeTeXlinebreakskip	Glue at a locale-driven break.
+XeTeXmathaccent	Puts an accent over math.
+XeTeXmathchar	Math character given by class, family and slot.
+XeTeXmathchardef	Defines a name for a math character.
+XeTeXmathcharnum	Math character given as a single number.
+XeTeXmathcharnumdef	Defines a name for a math character number.
+XeTeXmathcode	Math code of a character.
+XeTeXmathcodenum	Math code of a character, as a number.
+XeTeXpdffile	Includes pages of a PDF file.
+XeTeXpdfpagecount	Number of pages of a PDF file.
+XeTeXpicfile	Includes a picture file.
+XeTeXprotrudechars	Enables margin protrusion of characters.
+XeTeXradical	Draws a radical sign.
+XeTeXrevision	Revision string of XeTeX.
+XeTeXselectorcode	Selector code of a font feature.
+XeTeXselectorname	Name of a feature selector.
+XeTeXtracingfonts	Reports fonts as they are loaded.
+XeTeXupwardsmode	Sets the vertical text flow direction.
+XeTeXuseglyphmetrics	Uses glyph metrics for sizes.
+XeTeXvariation	Value of a variation axis.
+XeTeXvariationdefault	Default value of a variation axis.
+XeTeXvariationmax	Largest value of a variation axis.
+XeTeXvariationmin	Smallest value of a variation axis.
+XeTeXvariationname	Name of a variation axis.
+XeTeXversion	Version number of XeTeX.
+above	Starts a generalized fraction with an explicit rule thickness.
+abovedisplayshortskip	Glue above a display when the line before it is short.
+abovedisplayskip	Glue above a display math formula.
+abovewithdelims	Fraction with delimiters and an explicit rule thickness.
+abstract	Environment for the abstract.
+accent	Puts an accent over the following character.
+addtocounter	Adds a value to a counter.
+addtolength	Adds a value to a length.
+adjdemerits	Demerits for adjacent lines with incompatible fitness classes.
+adjustspacing	Switches font expansion on for interword glue adjustment.
+advance	Adds a value to a register.
+afterassignment	Saves a token to insert after the next assignment.
+aftergroup	Saves a token to insert after the current group ends.
+alignmark	Parameter character inside Lua-aware alignment preambles.
+aligntab	The alignment tab character as a control sequence.
+alph	Prints a counter as a lowercase letter.
+and	Separates authors in the title block.
+appendix	Switches to appendix numbering.
+arabic	Prints a counter in Arabic digits.
+array	Environment for a math array.
+arrayrulewidth	Thickness of table rules.
+arraystretch	Scales row height in tables.
+atop	Fraction without a rule.
+atopwithdelims	Fraction without a rule, with delimiters.
+attribute	Value of a node attribute register.
+attributedef	Gives a name to a node attribute register.
+author	Sets the document authors.
+automaticdiscretionary	Controls automatic discretionaries after explicit hyphens.
+automatichyphenmode	Allows breaks after explicit hyphen characters.
+automatichyphenpenalty	Penalty for a break after an explicit hyphen.
+badness	Badness of the most recently packaged box.
+bar	Puts a bar over math.
+baselineskip	Desired distance between baselines of consecutive lines.
+baselinestretch	Scales the line spacing.
+batchmode	Runs without terminal output or interaction.
+begin	Starts an environment.
+beginL	Starts left-to-right text.
+beginR	Starts right-to-left text.
+begincsname	Forms a control sequence name without defining it as relax.
+begingroup	Starts a semi-simple group.
+belowdisplayshortskip	Glue below a display when the line before it is short.
+belowdisplayskip	Glue below a display math formula.
+bfseries	Switches to bold.
+bibitem	Starts an entry in a bibliography list.
+bibliography	Includes the bibliography from database files.
+bibliographystyle	Selects the bibliography style.
+bigskip	Adds a large vertical space.
+binoppenalty	Penalty for a line break after a binary operator.
+bodydir	Sets the writing direction of the page body.
+bodydirection	Sets the writing direction of the page body.
+boldmath	Switches math to bold.
+botmark	Mark text from the end of the current page.
+botmarks	Bottom mark of a given mark class.
+boundary	Inserts a boundary whatsit with a given value.
+box	Uses the contents of a box register and empties it.
+boxdir	Sets the writing direction of a box.
+boxdirection	Sets the writing direction of a box.
+boxmaxdepth	Maximum depth a box may have.
+breakafterdirmode	Controls line breaking after a direction change.
+brokenpenalty	Penalty for breaking a line after a hyphenated line.
+caption	Adds a caption to a float.
+catcode	Category code of a character.
+catcodetable	Selects a saved category code table.
+center	Environment that centers its text.
+centering	Centers the following text.
+chapter	Starts a chapter with a heading.
+char	Typesets the character with the given number.
+chardef	Defines a name for a character code.
+circle	Draws a circle in a picture.
+cite	Cites bibliography entries.
+cleaders	Centered leaders that repeat a box or rule.
+cleardoublepage	Ends the page and starts on an odd page.
+clearmarks	Clears the marks of a mark class.
+clearpage	Ends the page and flushes floats.
+cline	Draws a line across some columns of a table.
+closein	Closes an input stream.
+closeout	Closes an output stream.
+clubpenalties	Penalties after the first lines of a paragraph.
+clubpenalty	Penalty for a page break after the first line of a paragraph.
+columnwidth	Width of a column.
+compoundhyphenmode	Controls hyphenation of compound words.
+copy	Uses the contents of a box register and keeps it.
+copyfont	Makes a copy of a font under a new identity.
+copyright	Prints the copyright symbol.
+count	Integer register.
+countdef	Gives a name to an integer register.
+cr	Ends a row in an alignment.
+crampeddisplaystyle	Selects cramped display math style.
+crampedscriptscriptstyle	Selects cramped scriptscript math style.
+crampedscriptstyle	Selects cramped script math style.
+crampedtextstyle	Selects cramped text math style.
+crcr	Ends a row only if the row is not already ended.
+creationdate	Date and time the job started, as text.
+csname	Starts building a control sequence name from tokens.
+csstring	Gives the name of a control sequence as characters.
+currentgrouplevel	Nesting depth of the current group.
+currentgrouptype	Kind of the current group as a number.
+currentifbranch	Which branch of the innermost conditional is being read.
+currentiflevel	Nesting depth of conditionals.
+currentiftype	Kind of the innermost conditional.
+dag	Prints a dagger.
+date	Sets the document date.
+day	Day of the month the job started.
+ddag	Prints a double dagger.
+ddot	Puts two dots over math.
+deadcycles	Number of output routine runs without a shipout.
+def	Defines a macro.
+defaulthyphenchar	Hyphen character a font gets when loaded.
+defaultskewchar	Skew character a font gets when loaded.
+deferred	Delays a Lua-level action until the box is shipped out.
+delcode	Delimiter code of a character.
+delimiter	Math delimiter given by a number.
+delimiterfactor	Part of a variable delimiter's height that must be covered.
+delimitershortfall	Largest amount a variable delimiter may fall short.
+description	Environment for a list with labeled items.
+detokenize	Turns tokens into characters.
+dimen	Dimension register.
+dimendef	Gives a name to a dimension register.
+dimexpr	Evaluates an arithmetic expression for a dimension.
+directlua	Runs Lua code at once.
+discretionary	Specifies a break point with pre, post and no-break text.
+discretionaryligaturemode	Controls ligatures across discretionaries.
+displayindent	Indentation of the display being typeset.
+displaylimits	Puts limits above and below in display style only.
+displaymath	Environment for an unnumbered display formula.
+displaystyle	Selects display math style.
+displaywidowpenalties	Penalties before the last lines of a paragraph before a display.
+displaywidowpenalty	Penalty for a page break before the last line before a display.
+displaywidth	Width of the display being typeset.
+divide	Divides a register by a number.
+documentclass	Selects the document class and its options.
+dot	Puts a dot over math.
+dotfill	Fills with dots.
+dots	Prints an ellipsis in text or math.
+doublehyphendemerits	Demerits for consecutive hyphenated lines.
+dp	Depth of a box register.
+draftmode	Switches output generation off.
+dump	Writes a format file and ends the run.
+dviextension	Writes a DVI special or extension command.
+dvifeedback	Queries DVI back-end state.
+dvivariable	Reads or sets a DVI back-end variable.
+eTeXVersion	Major version of the e-TeX extensions.
+eTeXglueshrinkorder	Order of infinity of a glue's shrink component.
+eTeXgluestretchorder	Order of infinity of a glue's stretch component.
+eTeXminorversion	Minor version of the e-TeX extensions.
+eTeXrevision	Revision string of the e-TeX extensions.
+eTeXversion	Version number of the e-TeX extensions.
+edef	Defines a macro and expands its body at once.
+efcode	Expansion factor of a character for font expansion.
+elapsedtime	Time since the job or the last timer reset.
+else	Starts the alternative branch of a conditional.
+emergencystretch	Extra stretch allowed in the last line breaking pass.
+emph	Emphasizes text.
+end	Ends the job.
+endL	Ends left-to-right text.
+endR	Ends right-to-left text.
+endcsname	Ends the control sequence name begun by \csname.
+endgroup	Ends a semi-simple group.
+endinput	Stops reading the current input file after this line.
+endlinechar	Character appended to every input line.
+endlocalcontrol	Ends a local control sequence of Lua-driven input.
+enlargethispage	Makes the current page larger or smaller.
+ensuremath	Typesets its argument in math mode if needed.
+enumerate	Environment for a numbered list.
+eqnarray	Environment for aligned numbered equations.
+eqno	Puts an equation number at the right of a display.
+equation	Environment for a numbered display equation.
+errhelp	Help text shown after \errmessage.
+errmessage	Reports an error with a custom message.
+errorcontextlines	Number of context lines shown in error messages.
+errorstopmode	Stops and asks for help at every error.
+escapechar	Character printed before control sequence names.
+etoksapp	Appends the expansion of tokens to a token register.
+etokspre	Prepends the expansion of tokens to a token register.
+evensidemargin	Left margin on even pages.
+everycr	Tokens inserted after every row end in an alignment.
+everydisplay	Tokens inserted at the start of every display.
+everyeof	Tokens inserted when an input file ends.
+everyhbox	Tokens inserted at the start of every horizontal box.
+everyjob	Tokens inserted when a job starts.
+everymath	Tokens inserted at the start of inline math.
+everypar	Tokens inserted at the start of every paragraph.
+everyvbox	Tokens inserted at the start of every vertical box.
+exceptionpenalty	Penalty for a break at an exception discretionary.
+exhyphenchar	Hyphen character used for explicit hyphens.
+exhyphenpenalty	Penalty for a break after an explicit hyphen.
+expandafter	Expands the token after the next one first.
+expanded	Expands tokens fully inside a braced argument.
+expandglyphsinfont	Enables font expansion for a font.
+explicitdiscretionary	Controls discretionaries from explicit hyphens.
+explicithyphenpenalty	Penalty for a break at an explicit hyphen.
+fam	Current math family number.
+fbox	Makes a framed box.
+fi	Ends a conditional.
+figure	Environment for a floating figure.
+filedump	Dumps part of a file as hexadecimal.
+filemoddate	Modification date of a file.
+filesize	Size of a file in bytes.
+finalhyphendemerits	Demerits for hyphenating the second-to-last line.
+firstmark	Mark text from the first mark of the current page.
+firstmarks	First mark of a given mark class.
+firstvalidlanguage	Lowest language number that may carry patterns.
+fixupboxesmode	Controls how boxes are fixed up after changes.
+floatingpenalty	Penalty added after a split insertion.
+flushleft	Environment with ragged-right text.
+flushright	Environment with ragged-left text.
+fnsymbol	Prints a counter as a footnote symbol.
+font	Selects or defines a font.
+fontchardp	Depth of a character in a font.
+fontcharht	Height of a character in a font.
+fontcharic	Italic correction of a character in a font.
+fontcharwd	Width of a character in a font.
+fontdimen	Font parameter.
+fontencoding	Sets the font encoding.
+fontfamily	Sets the font family.
+fontid	Internal number of a font.
+fontname	Name of a font file as text.
+fontseries	Sets the font series.
+fontshape	Sets the font shape.
+fontsize	Selects a font size and baseline skip.
+footnote	Adds a footnote.
+footnotemark	Prints a footnote mark only.
+footnotetext	Sets the text of a footnote for an earlier mark.
+footskip	Distance from text bottom to footer baseline.
+formatname	Name of the format being used.
+frac	Typesets a fraction.
+framebox	Makes a framed box of a given width and alignment.
+frenchspacing	Uses equal spacing after sentences.
+fussy	Makes line breaking strict.
+futurelet	Assigns the token after next to a name, then continues.
+gdef	Defines a macro globally.
+gleaders	Leaders aligned on the page grid.
+glet	Makes a global copy of a meaning.
+global	Makes the next assignment global.
+globaldefs	Forces all assignments to be local or global.
+glossary	Adds a glossary entry.
+glueexpr	Evaluates an arithmetic expression for glue.
+glueshrink	Shrink component of a glue.
+glueshrinkorder	Order of infinity of a glue's shrink component.
+gluestretch	Stretch component of a glue.
+gluestretchorder	Order of infinity of a glue's stretch component.
+gluetomu	Converts glue to math glue.
+glyphdimensionsmode	Controls which dimensions glyph nodes use.
+gtoksapp	Appends tokens to a token register globally.
+gtokspre	Prepends tokens to a token register globally.
+halign	Starts an alignment of rows.
+hangafter	Number of lines affected by a hanging indentation.
+hangindent	Hanging indentation of a paragraph.
+hat	Puts a hat over math.
+hbadness	Badness above which underfull and overfull horizontal boxes are reported.
+hbox	Builds a horizontal box.
+headheight	Height of the header.
+headsep	Space between header and text.
+hfil	Infinitely stretchable horizontal glue.
+hfill	Horizontal glue that stretches more than \hfil.
+hfilneg	Horizontal glue that cancels \hfil.
+hfuzz	Overfull amount tolerated in horizontal boxes.
+hjcode	Character code used for hyphenation.
+hline	Draws a horizontal line across a table.
+hoffset	Horizontal offset of the page on the sheet.
+holdinginserts	Keeps insertions in the output routine's box.
+hpack	Packs material into a horizontal box.
+hrule	Horizontal rule.
+hrulefill	Fills with a horizontal rule.
+hsize	Width of lines in paragraphs.
+hskip	Horizontal glue.
+hspace	Inserts horizontal space.
+hss	Horizontal glue that stretches and shrinks infinitely.
+ht	Height of a box register.
+huge	Switches to a huge size.
+hyphenation	Declares hyphenation points for words.
+hyphenationbounds	Controls hyphenation near word boundaries.
+hyphenationmin	Shortest word that may be hyphenated.
+hyphenchar	Hyphen character of a font.
+hyphenpenalty	Penalty for a break at an automatic hyphen.
+hyphenpenaltymode	Controls how hyphen penalties apply.
+if	Tests whether two character codes are equal.
+ifabsdim	Tests the absolute value of a dimension.
+ifabsnum	Tests the absolute value of an integer.
+ifcase	Selects a branch by a number.
+ifcat	Tests whether two category codes are equal.
+ifcondition	Wraps a condition test as a conditional.
+ifcsname	Tests whether a control sequence name is defined.
+ifdefined	Tests whether a control sequence is defined.
+ifdim	Compares two dimensions.
+ifeof	Tests whether an input stream has ended.
+iffalse	Always takes the false branch.
+iffontchar	Tests whether a font has a character.
+ifhbox	Tests whether a register holds a horizontal box.
+ifhmode	Tests for horizontal mode.
+ifincsname	Tests whether expansion is inside \csname.
+ifinner	Tests for an inner mode.
+ifmmode	Tests for math mode.
+ifnum	Compares two integers.
+ifodd	Tests whether an integer is odd.
+ifpdfabsdim	Tests the absolute value of a dimension.
+ifpdfabsnum	Tests the absolute value of an integer.
+ifpdfprimitive	Tests whether a name still has its primitive meaning.
+ifprimitive	Tests whether a name still has its primitive meaning.
+ifthenelse	Tests a condition and chooses code.
+iftrue	Always takes the true branch.
+ifvbox	Tests whether a register holds a vertical box.
+ifvmode	Tests for vertical mode.
+ifvoid	Tests whether a box register is empty.
+ifx	Tests whether two tokens have the same meaning.
+ignoreligaturesinfont	Disables ligatures of a font.
+ignoreprimitiveerror	Silences errors from redefining primitives.
+ignorespaces	Skips following space tokens.
+immediate	Performs the next write, open or close at once.
+immediateassigned	Performs the following assignments at once.
+immediateassignment	Performs the following assignment at once.
+include	Reads another file on a new page.
+includeonly	Restricts which included files are read.
+indent	Starts a paragraph with an indentation box.
+index	Adds an index entry.
+initcatcodetable	Sets a category code table to its initial state.
+input	Reads another file.
+inputlineno	Current line number of the input file.
+insert	Starts an insertion into a page insert class.
+insertht	Height already used by an insertion class.
+insertpenalties	Number of held-over insertions on the page.
+int	Prints the integral sign.
+interactionmode	Current level of user interaction.
+interlinepenalties	Penalties between lines of a paragraph.
+interlinepenalty	Penalty for a page break between lines.
+item	Starts an item in a list.
+itemindent	Indentation of the first line of a list item.
+itemize	Environment for a bulleted list.
+itemsep	Space between list items.
+itshape	Switches to italic.
+jobname	Name of the job.
+kern	Inserts a fixed space.
+kill	Discards the current line of a tabbing environment.
+knaccode	Kana accent code of a character for a Japanese font.
+knbccode	Kana break code of a character.
+knbscode	Kana break-space code of a character.
+label	Names the current counter value for references.
+labelsep	Space between list label and text.
+labelwidth	Width of a list label.
+language	Current hyphenation language number.
+large	Switches to a large size.
+lastbox	Removes and uses the last box of the list.
+lastkern	Size of the last kern.
+lastlinefit	Adjusts the last line of a paragraph to a fitness.
+lastnamedcs	Last control sequence looked up by name.
+lastnodetype	Type of the last node of the list.
+lastpenalty	Value of the last penalty.
+lastsavedboxresourceindex	Index of the last saved box resource.
+lastsavedimageresourceindex	Index of the last saved image resource.
+lastsavedimageresourcepages	Page count of the last saved image resource.
+lastskip	Value of the last glue.
+lastxpos	Horizontal position recorded by \savepos.
+lastypos	Vertical position recorded by \savepos.
+latelua	Runs Lua code when the node is shipped out.
+lateluafunction	Runs a Lua function when the node is shipped out.
+lccode	Lowercase code of a character.
+ldots	Prints an ellipsis.
+leaders	Fills glue with repeated boxes or rules.
+left	Opens a math delimiter pair of variable size.
+lefteqn	Typesets an equation part flush left.
+leftghost	Invisible node at the left of a line.
+lefthyphenmin	Smallest number of letters left before a hyphen.
+leftmargin	Indentation of a list.
+leftmarginkern	Kern at the left margin for protrusion.
+leftskip	Glue added at the left of every line.
+leqno	Puts an equation number at the left of a display.
+let	Makes a name mean the same as another token.
+letcharcode	Gives a name the meaning of a character.
+letterspacefont	Makes a letterspaced copy of a font.
+lim	Prints the limit operator.
+limits	Puts limits above and below an operator.
+line	Draws a line in a picture.
+linebreak	Suggests or forces a line break.
+linedir	Sets the writing direction of a line.
+linedirection	Sets the writing direction of a line.
+linepenalty	Penalty added for every line of a paragraph.
+lineskip	Glue between lines that are too close.
+lineskiplimit	Minimum gap before \lineskip is used.
+linewidth	Width of the current line.
+list	Environment for a customized list.
+listoffigures	Prints the list of figures.
+listoftables	Prints the list of tables.
+listparindent	Paragraph indentation inside a list.
+localbrokenpenalty	Penalty for a break after a hyphenated line, locally.
+localinterlinepenalty	Penalty between lines, locally.
+localleftbox	Box inserted at the left of lines.
+localrightbox	Box inserted at the right of lines.
+long	Allows a macro to take arguments with \par.
+loop	Starts a loop that ends at \repeat.
+looseness	Asks for a paragraph longer or shorter than ideal.
+lower	Lowers a box.
+lowercase	Changes tokens to lowercase.
+lpcode	Left protrusion amount of a character.
+lq	Prints a left single quote.
+luabytecode	Lua bytecode register.
+luabytecodecall	Calls a Lua bytecode register.
+luacopyinputnodes	Copies node data on input.
+luadef	Defines a name for a Lua function.
+luaescapestring	Escapes a string for use inside Lua code.
+luafunction	Calls a numbered Lua function.
+luafunctioncall	Calls a numbered Lua function.
+luatexbanner	Banner text of LuaTeX.
+luatexrevision	Revision letters of LuaTeX.
+luatexversion	Version number of LuaTeX.
+mag	Magnification of the whole document.
+makeatletter	Makes @ a letter.
+makeatother	Makes @ an ordinary character again.
+makebox	Makes a box of a given width and alignment.
+makeindex	Enables writing of index entries.
+makelabel	Typesets a list label.
+maketitle	Prints the title block.
+marginpar	Puts a note in the margin.
+marginparsep	Space between text and margin notes.
+marginparwidth	Width of margin notes.
+mark	Inserts a mark for use in page headings.
+marks	Inserts a mark of a given class.
+math	Environment for an inline formula.
+mathaccent	Puts an accent over a math formula.
+mathbf	Sets math in bold.
+mathbin	Treats the following math as a binary operator.
+mathcal	Sets math in calligraphic.
+mathchar	Typesets a math character by code.
+mathchardef	Defines a name for a math character code.
+mathchoice	Chooses math material by the current style.
+mathclose	Treats the following math as a closing delimiter.
+mathcode	Math code of a character.
+mathdefaultsmode	Controls default math parameters.
+mathdelimitersmode	Controls the spacing of math delimiters.
+mathdir	Sets the writing direction in math.
+mathdirection	Sets the writing direction in math.
+mathdisplayskipmode	Controls when display skips are inserted.
+mathemptydisplaymode	Controls handling of an empty display.
+matheqdirmode	Controls equation direction handling.
+matheqnogapstep	Step used for the gap before an equation number.
+mathflattenmode	Controls flattening of nested math lists.
+mathinner	Treats the following math as an inner atom.
+mathit	Sets math in italic.
+mathitalicsmode	Controls italic correction in math.
+mathnolimitsmode	Controls how limits are placed when not displayed.
+mathnormal	Sets math in the math italic font.
+mathop	Treats the following math as a large operator.
+mathopen	Treats the following math as an opening delimiter.
+mathoption	Sets an option of the math engine.
+mathord	Treats the following math as an ordinary symbol.
+mathpenaltiesmode	Controls math penalties.
+mathpunct	Treats the following math as punctuation.
+mathrel	Treats the following math as a relation.
+mathrm	Sets math in roman.
+mathrulesfam	Family that supplies math rule thickness.
+mathrulesmode	Controls how math rules are made.
+mathrulethicknessmode	Controls how rule thickness is chosen.
+mathscriptboxmode	Controls boxing of script material.
+mathscriptcharmode	Controls character handling in scripts.
+mathscriptsmode	Controls script placement.
+mathsf	Sets math in sans serif.
+mathstyle	Current math style as a number.
+mathsurround	Space inserted around inline math.
+mathsurroundmode	Controls how math surround is applied.
+mathsurroundskip	Glue inserted around inline math.
+mathtt	Sets math in monospace.
+mathversion	Selects a math version.
+maxdeadcycles	Largest number of output runs without a shipout.
+maxdepth	Maximum depth of the page box.
+mbox	Makes a box that is never broken.
+mdfivesum	MD5 checksum of a string or file.
+mdseries	Switches to medium weight.
+meaning	Describes the meaning of a token as text.
+medmuskip	Medium math space.
+medskip	Adds a medium vertical space.
+message	Writes a message to the terminal and log.
+middle	Inserts a delimiter in the middle of a \left and \right pair.
+minipage	Environment for a box with paragraph text.
+mkern	Inserts a kern in math units.
+month	Month the job started.
+moveleft	Moves a box to the left.
+moveright	Moves a box to the right.
+mskip	Inserts math glue.
+muexpr	Evaluates an arithmetic expression for math glue.
+multicolumn	Spans several columns of a table.
+multiply	Multiplies a register by a number.
+multiput	Places repeated objects in a picture.
+muskip	Math glue register.
+muskipdef	Gives a name to a math glue register.
+mutoglue	Converts math glue to glue.
+newbox	Allocates a box register.
+newcommand	Defines a new command.
+newcount	Allocates an integer register.
+newcounter	Creates a counter.
+newdimen	Allocates a dimension register.
+newenvironment	Defines a new environment.
+newfam	Allocates a math family.
+newfont	Defines a name for a font.
+newif	Creates a boolean switch.
+newinsert	Allocates an insertion class.
+newlanguage	Allocates a language number.
+newlength	Creates a length register.
+newline	Breaks the line without ending the paragraph.
+newlinechar	Character that starts a new line when written.
+newmuskip	Allocates a math glue register.
+newpage	Ends the current page.
+newread	Allocates an input stream.
+newsavebox	Creates a box register.
+newskip	Allocates a glue register.
+newtheorem	Defines a theorem-like environment.
+newtoks	Allocates a token list register.
+newwrite	Allocates an output stream.
+noalign	Inserts material between rows of an alignment.
+noboundary	Suppresses boundary ligatures and kerns.
+nocite	Adds entries to the bibliography without citing.
+noexpand	Stops expansion of the next token.
+nofiles	Stops writing auxiliary files.
+nohrule	Marks a box without a horizontal rule.
+noindent	Starts a paragraph without indentation.
+nokerns	Disables kerns in a font.
+noligs	Disables ligatures in a font.
+nolimits	Puts limits as scripts beside an operator.
+nolinebreak	Discourages a line break.
+nonfrenchspacing	Uses wider spacing after sentences.
+nonscript	Cancels the next glue in a script style.
+nonstopmode	Runs without stopping at errors.
+nonumber	Suppresses the equation number of a line.
+nopagebreak	Discourages a page break.
+normaldeviate	Random number with a normal distribution.
+normalfont	Switches to the document font.
+normalsize	Switches to the normal size.
+nospaces	Controls whether spaces are dropped in text.
+novrule	Marks a box without a vertical rule.
+nulldelimiterspace	Width of an empty delimiter.
+nullfont	Font with no characters.
+number	Gives a number as decimal digits.
+numexpr	Evaluates an arithmetic expression for an integer.
+oddsidemargin	Left margin on odd pages.
+omit	Skips the template of an alignment cell.
+onecolumn	Switches to one-column layout.
+openin	Opens an input stream.
+openout	Opens an output stream.
+or	Separates the cases of \ifcase.
+outer	Forbids a macro inside arguments and skipped text.
+output	Token list that builds the page.
+outputbox	Box register used by the output routine.
+outputmode	Selects DVI or PDF output.
+outputpenalty	Penalty at the chosen page break.
+oval	Draws an oval in a picture.
+over	Fraction with the default rule thickness.
+overbrace	Draws a brace over math material.
+overfullrule	Width of the rule marking overfull boxes.
+overline	Draws a line over math material.
+overwithdelims	Fraction with delimiters and default rule.
+pagebottomoffset	Offset of the page bottom on the sheet.
+pagebreak	Suggests or forces a page break.
+pagedepth	Depth of material on the current page.
+pagedir	Sets the writing direction of the page.
+pagedirection	Sets the writing direction of the page.
+pagediscards	List of items discarded at the last page break.
+pagefilllstretch	Third-order stretch of the current page.
+pagefillstretch	Second-order stretch of the current page.
+pagefilstretch	First-order stretch of the current page.
+pagegoal	Height the current page aims for.
+pageheight	Height of the paper.
+pageleftoffset	Offset of the page left edge on the sheet.
+pagenumbering	Selects the page number format and resets the page.
+pageref	Refers to a label by its page number.
+pagerightoffset	Offset of the page right edge on the sheet.
+pageshrink	Shrink of the current page.
+pagestretch	Finite stretch of the current page.
+pagestyle	Sets the page style for headers and footers.
+pagetopoffset	Offset of the page top on the sheet.
+pagetotal	Height of material on the current page.
+pagewidth	Width of the paper.
+par	Ends a paragraph.
+paragraph	Starts a run-in paragraph heading.
+parbox	Makes a box with paragraph text.
+pardir	Sets the writing direction of a paragraph.
+pardirection	Sets the writing direction of a paragraph.
+parfillskip	Glue added at the end of the last line.
+parindent	Width of the paragraph indentation.
+parshape	Sets individual line shapes for a paragraph.
+parshapedimen	Reads a dimension from the paragraph shape.
+parshapeindent	Reads an indentation from the paragraph shape.
+parshapelength	Reads a line length from the paragraph shape.
+parskip	Glue added between paragraphs.
+part	Starts a part with a heading.
+partokencontext	Context of the token that started the paragraph.
+partokenname	Name of the token that starts a paragraph.
+partopsep	Extra space around a list that starts a paragraph.
+patterns	Adds hyphenation patterns.
+pausing	Pauses after each input line for editing.
+pdfadjustinterwordglue	Adjusts interword glue to font expansion.
+pdfadjustspacing	Switches font expansion on.
+pdfannot	Adds an annotation.
+pdfappendkern	Appends a kern after fonts.
+pdfcatalog	Adds entries to the document catalog.
+pdfcolorstack	Pushes, pops or sets a color stack entry.
+pdfcolorstackinit	Creates a color stack.
+pdfcompresslevel	Compression level of PDF streams.
+pdfcopyfont	Makes a copy of a font.
+pdfcreationdate	Creation date and time of the PDF.
+pdfdecimaldigits	Digits after the decimal point in PDF output.
+pdfdest	Defines a named destination.
+pdfdestmargin	Margin around a destination.
+pdfdraftmode	Switches PDF output off.
+pdfeachlinedepth	Minimum depth of every line.
+pdfeachlineheight	Minimum height of every line.
+pdfelapsedtime	Time since the job or the last timer reset.
+pdfendlink	Ends a link annotation.
+pdfendthread	Ends an article thread.
+pdfescapehex	Turns a string into hexadecimal.
+pdfescapename	Escapes a string for use as a PDF name.
+pdfescapestring	Escapes a string for use as a PDF string.
+pdfextension	Dispatches pdfTeX extension commands.
+pdffakespace	Inserts a fake space for text extraction.
+pdffeedback	Queries pdfTeX state.
+pdffiledump	Dumps part of a file as hexadecimal.
+pdffilemoddate	Modification date of a file.
+pdffilesize	Size of a file in bytes.
+pdffirstlineheight	Minimum height of the first line.
+pdffontattr	Adds attributes to a font.
+pdffontexpand	Enables expansion limits for a font.
+pdffontname	Resource name of a font.
+pdffontobjnum	Object number of a font.
+pdffontsize	Size of a font.
+pdfforcepagebox	Selects the page box used for included PDFs.
+pdfgamma	Gamma value of included images.
+pdfgentounicode	Enables generation of ToUnicode maps.
+pdfglyphtounicode	Maps a glyph name to Unicode.
+pdfhorigin	Horizontal origin of the page.
+pdfignoreddimen	Dimension value that means ignore.
+pdfimageapplygamma	Applies gamma to included images.
+pdfimagegamma	Gamma of included images.
+pdfimagehicolor	Allows high-color images.
+pdfimageresolution	Resolution of included images.
+pdfincludechars	Forces characters into the embedded font.
+pdfinclusioncopyfonts	Copies fonts of included PDFs.
+pdfinclusionerrorlevel	Severity of errors in included PDFs.
+pdfinfo	Adds entries to the info dictionary.
+pdfinfoomitdate	Omits dates from the info dictionary.
+pdfinsertht	Height already used by an insertion class.
+pdfinterwordspaceoff	Ends real interword spaces in text extraction.
+pdfinterwordspaceon	Starts real interword spaces in text extraction.
+pdflastannot	Object number of the last annotation.
+pdflastlinedepth	Depth of the last line.
+pdflastlink	Object number of the last link.
+pdflastmatch	Part of the last regular expression match.
+pdflastobj	Object number of the last object.
+pdflastxform	Object number of the last form.
+pdflastximage	Object number of the last image.
+pdflastximagecolordepth	Color depth of the last image.
+pdflastximagepages	Page count of the last image.
+pdflastxpos	Horizontal position recorded by \pdfsavepos.
+pdflastypos	Vertical position recorded by \pdfsavepos.
+pdflinkmargin	Margin around link boxes.
+pdfliteral	Inserts raw PDF operators.
+pdfmajorversion	Major version of the PDF written.
+pdfmapfile	Reads a font map file.
+pdfmapline	Adds a font map line.
+pdfmatch	Matches a regular expression.
+pdfmdfivesum	MD5 checksum of a string or file.
+pdfminorversion	Minor version of the PDF written.
+pdfmovechars	Moves characters in the font encoding.
+pdfnames	Adds entries to the names dictionary.
+pdfnobuiltintounicode	Disables a built-in ToUnicode map for a font.
+pdfnoligatures	Disables ligatures of a font.
+pdfnormaldeviate	Random number with a normal distribution.
+pdfobj	Writes a PDF object.
+pdfobjcompresslevel	Compression level of object streams.
+pdfomitcharset	Omits the character set entry.
+pdfomitinfodict	Omits the info dictionary.
+pdfomitprocset	Omits the ProcSet entry.
+pdfoptionalwaysusepdfpagebox	Always uses the selected page box of included PDFs.
+pdfoptionpdfinclusionerrorlevel	Severity of errors in included PDFs.
+pdfoptionpdfminorversion	Minor version of the PDF written.
+pdfoutline	Adds a bookmark entry.
+pdfoutput	Selects PDF or DVI output.
+pdfpageattr	Adds entries to every page dictionary.
+pdfpagebox	Page box used for included PDFs.
+pdfpageheight	Height of the paper.
+pdfpageref	Object number of a page.
+pdfpageresources	Adds entries to the page resources.
+pdfpagesattr	Adds entries to the page tree.
+pdfpagewidth	Width of the paper.
+pdfpkmode	Mode for generated bitmap fonts.
+pdfpkresolution	Resolution of generated bitmap fonts.
+pdfprependkern	Prepends a kern before fonts.
+pdfprimitive	Uses a name's original primitive meaning.
+pdfprotrudechars	Enables margin protrusion of characters.
+pdfptexuseunderscore	Allows underscore in object names.
+pdfpxdimen	Dimension of one pixel.
+pdfrandomseed	Seed of the random number generator.
+pdfrefobj	References an object on the page.
+pdfrefxform	References a form on the page.
+pdfrefximage	References an image on the page.
+pdfresettimer	Resets the timer for \pdfelapsedtime.
+pdfrestore	Restores a saved graphics state.
+pdfretval	Result of the last pdfTeX call.
+pdfrunninglinkoff	Turns off links in running headers.
+pdfrunninglinkon	Turns on links in running headers.
+pdfsave	Saves the graphics state.
+pdfsavepos	Records the current position on the page.
+pdfsetmatrix	Sets the transformation matrix.
+pdfsetrandomseed	Sets the seed of the random generator.
+pdfshellescape	Whether shell commands may be run.
+pdfstartlink	Starts a link annotation.
+pdfstartthread	Starts an article thread.
+pdfstrcmp	Compares two strings.
+pdfsuppressptexinfo	Controls pdfTeX version info in the PDF.
+pdfsuppresswarningdupdest	Silences duplicate destination warnings.
+pdfsuppresswarningdupmap	Silences duplicate map line warnings.
+pdfsuppresswarningpagegroup	Silences page group warnings.
+pdftexbanner	Banner text of pdfTeX.
+pdftexrevision	Revision letters of pdfTeX.
+pdftexversion	Version number of pdfTeX.
+pdfthread	Defines an article thread.
+pdfthreadmargin	Margin around thread boxes.
+pdftracingfonts	Reports fonts used in more detail.
+pdftrailer	Adds entries to the trailer.
+pdftrailerid	Sets the file identifier in the trailer.
+pdfunescapehex	Turns hexadecimal back into a string.
+pdfuniformdeviate	Random integer below a bound.
+pdfuniqueresname	Makes resource names unique.
+pdfvariable	Reads or sets a pdfTeX parameter.
+pdfvorigin	Vertical origin of the page.
+pdfxform	Saves material as a form XObject.
+pdfxformname	Resource name of a form.
+pdfximage	Loads an image.
+pdfximagebbox	Bounding box of an image.
+penalty	Inserts a penalty for breaking.
+picture	Environment for a picture drawing.
+poptabs	Restores tab stops.
+postdisplaypenalty	Penalty for a page break after a display.
+postexhyphenchar	Character after an explicit hyphen break.
+posthyphenchar	Character after a hyphen break.
+pounds	Prints the pound sign.
+prebinoppenalty	Penalty before a binary operator.
+predisplaydirection	Text direction before a display.
+predisplaygapfactor	Factor for the gap before a display.
+predisplaypenalty	Penalty for a page break before a display.
+predisplaysize	Width of the line before a display.
+preexhyphenchar	Character before an explicit hyphen break.
+prehyphenchar	Character before a hyphen break.
+prerelpenalty	Penalty before a relation.
+pretolerance	Badness allowed in the first pass without hyphenation.
+prevdepth	Depth of the last box on the vertical list.
+prevgraf	Number of lines of the previous paragraph.
+primitive	Uses a name's original primitive meaning.
+printindex	Prints the index.
+prod	Prints the product sign.
+protect	Protects a fragile command in a moving argument.
+protected	Keeps a macro unexpanded in edefs and writes.
+protrudechars	Enables margin kerning for characters.
+protrusionboundary	Controls protrusion at boundaries.
+providecommand	Defines a command only if it is new.
+pushtabs	Saves tab stops.
+put	Places an object in a picture.
+pxdimen	Dimension of one pixel.
+quitvmode	Leaves vertical mode and starts a paragraph.
+quotation	Environment for an indented multi-paragraph quotation.
+quote	Environment for a short indented quotation.
+radical	Draws a radical sign.
+raggedleft	Sets the following text ragged-left.
+raggedright	Sets the following text ragged-right.
+raise	Raises a box.
+raisebox	Raises or lowers a box.
+randomseed	Seed of the random number generator.
+read	Reads a line from a file into a macro.
+readline	Reads a line from a file as characters.
+ref	Refers to a label by its number.
+refstepcounter	Increments a counter and makes it referable.
+relax	Does nothing, stops number scanning.
+relpenalty	Penalty for a break after a relation.
+renewcommand	Redefines an existing command.
+renewenvironment	Redefines an existing environment.
+repeat	Ends a loop and repeats it.
+resettimer	Resets the timer for \elapsedtime.
+right	Closes a math delimiter pair of variable size.
+rightghost	Invisible node at the right of a line.
+righthyphenmin	Smallest number of letters right after a hyphen.
+rightmarginkern	Kern at the right margin for protrusion.
+rightskip	Glue added at the right of every line.
+rmfamily	Switches to the roman family.
+roman	Prints a counter in lowercase roman numerals.
+romannumeral	Gives a number in lowercase roman numerals.
+rpcode	Right protrusion amount of a character.
+rq	Prints a right single quote.
+rule	Draws a rule of given width and height.
+savebox	Saves text in a box register with optional positioning.
+saveboxresource	Saves a box as a reusable resource.
+savecatcodetable	Saves the current category codes in a table.
+saveimageresource	Saves an image as a reusable resource.
+savepos	Records the current position on the page.
+savinghyphcodes	Saves hyphenation codes with patterns.
+savingvdiscards	Keeps items discarded at page breaks.
+sbox	Saves text in a box register.
+scantextokens	Reads tokens as if they came from a file, without an end-of-file check.
+scantokens	Reads tokens as if they came from a file.
+scriptfont	Font of a family in script style.
+scriptscriptfont	Font of a family in scriptscript style.
+scriptscriptstyle	Selects scriptscript math style.
+scriptspace	Space added after scripts.
+scriptstyle	Selects script math style.
+scrollmode	Runs without stopping at errors, but accepts terminal input.
+scshape	Switches to small caps.
+section	Starts a section with a heading.
+selectfont	Applies pending font changes.
+setbox	Assigns to a box register.
+setcounter	Sets a counter to a value.
+setfontid	Selects a font by its internal number.
+setlanguage	Switches the language inside a paragraph.
+setlength	Sets a length to a value.
+setrandomseed	Sets the seed of the random generator.
+settodepth	Sets a length to the depth of text.
+settoheight	Sets a length to the height of text.
+settowidth	Sets a length to the width of text.
+sfcode	Space factor code of a character.
+sffamily	Switches to the sans serif family.
+shapemode	Controls how \parshape and friends are used.
+shbscode	Space-before code of a character for Japanese fonts.
+shellescape	Whether shell commands may be run.
+shipout	Sends a box to the output file.
+shortstack	Stacks short lines in a box.
+show	Shows the meaning of a token.
+showbox	Shows the contents of a box.
+showboxbreadth	Number of items shown in box displays.
+showboxdepth	Nesting depth shown in box displays.
+showgroups	Shows the open groups.
+showifs	Shows the open conditionals.
+showlists	Shows the current lists.
+showstream	Stream used for \show output.
+showthe	Shows the value of an internal quantity.
+showtokens	Shows the tokens of a list.
+skewchar	Skew character of a font.
+skip	Glue register.
+skipdef	Gives a name to a glue register.
+sloppy	Makes line breaking tolerant.
+slshape	Switches to slanted.
+small	Switches to a small size.
+smallskip	Adds a small vertical space.
+spacefactor	Current space factor.
+spaceskip	Glue used instead of the font's interword glue.
+span	Merges cells of an alignment.
+special	Passes text to the output driver.
+splitbotmark	Last mark of a split box.
+splitbotmarks	Last mark of a given class in a split box.
+splitdiscards	List of items discarded at a split.
+splitfirstmark	First mark of a split box.
+splitfirstmarks	First mark of a given class in a split box.
+splitmaxdepth	Maximum depth of a split box.
+splittopskip	Glue at the top of a split box.
+sqrt	Typesets a square root.
+stackrel	Puts one symbol over another.
+stbscode	Space-between code of a character for Japanese fonts.
+stepcounter	Increments a counter and resets its subordinates.
+strcmp	Compares two strings.
+stretch	Gives rubber length of a given stretch.
+string	Gives a control sequence name as characters.
+subparagraph	Starts a run-in subparagraph heading.
+subsection	Starts a subsection with a heading.
+subsubsection	Starts a subsubsection with a heading.
+sum	Prints the summation sign.
+suppressfontnotfounderror	Silences missing font errors.
+suppressifcsnameerror	Silences errors inside \ifcsname.
+suppresslongerror	Silences errors about missing \long.
+suppressmathparerror	Silences errors about \par in math.
+suppressoutererror	Silences errors about \outer macros.
+suppressprimitiveerror	Silences errors about primitive redefinition.
+symbol	Prints a character by its slot number.
+synctex	Controls generation of SyncTeX data.
+tabbing	Environment for text with tab stops.
+tabcolsep	Padding between table columns.
+table	Environment for a floating table.
+tableofcontents	Prints the table of contents.
+tabskip	Glue between columns of an alignment.
+tabular	Environment for a table with aligned columns.
+tagcode	Tag code of a character in a font.
+text	Sets text inside math.
+textasciicircum	Prints a caret.
+textasciitilde	Prints a tilde.
+textbackslash	Prints a backslash.
+textbar	Prints a vertical bar.
+textbf	Sets text in bold.
+textdir	Sets the writing direction of text.
+textdirection	Sets the writing direction of text.
+textfont	Font of a family in text style.
+textgreater	Prints a greater-than sign.
+textheight	Height of the text block.
+textit	Sets text in italic.
+textless	Prints a less-than sign.
+textmd	Sets text in medium weight.
+textnormal	Sets text in the document font.
+textrm	Sets text in the roman family.
+textsc	Sets text in small caps.
+textsf	Sets text in the sans serif family.
+textsl	Sets text in slanted.
+textstyle	Selects text math style.
+texttt	Sets text in the monospace family.
+textunderscore	Prints an underscore.
+textup	Sets text in upright shape.
+textwidth	Width of the text block.
+thanks	Adds a footnote to the title block.
+the	Gives the value of an internal quantity as tokens.
+thebibliography	Environment for a manual bibliography.
+thickmuskip	Thick math space.
+thinmuskip	Thin math space.
+thispagestyle	Sets the page style for this page only.
+tilde	Puts a tilde over math.
+time	Minutes since midnight when the job started.
+tiny	Switches to the smallest size.
+title	Sets the document title.
+today	Prints the current date.
+toks	Token list register.
+toksapp	Appends tokens to a token register.
+toksdef	Gives a name to a token list register.
+tokspre	Prepends tokens to a token register.
+tolerance	Badness allowed in the second pass.
+topmargin	Top margin of the page.
+topmark	Mark text from the top of the previous page.
+topmarks	Top mark of a given mark class.
+topsep	Space above and below a list.
+topskip	Glue at the top of the page box.
+tpack	Packs material into a top-aligned vertical box.
+tracingassigns	Reports assignments in the log.
+tracingcommands	Reports commands in the log.
+tracingfonts	Reports fonts used.
+tracinggroups	Reports group entry and exit.
+tracingifs	Reports conditional tests.
+tracinglostchars	Reports characters missing from the font.
+tracingmacros	Reports macro expansion in the log.
+tracingnesting	Reports unclosed groups and conditionals at file ends.
+tracingonline	Shows tracing output on the terminal as well.
+tracingoutput	Shows shipped boxes in the log.
+tracingpages	Reports page break computations.
+tracingparagraphs	Reports line breaking computations.
+tracingrestores	Reports values restored at group end.
+tracingscantokens	Reports pseudo files from \scantokens.
+tracingstacklevels	Reports macro nesting depth.
+tracingstats	Reports memory use.
+ttfamily	Switches to the monospace family.
+twocolumn	Switches to two-column layout.
+typein	Asks for terminal input.
+typeout	Writes a message to the terminal and log.
+uccode	Uppercase code of a character.
+uchyph	Allows hyphenation of words that start with a capital.
+unboldmath	Switches math back to normal weight.
+underbrace	Draws a brace under math material.
+underline	Draws a line under math material.
+unexpanded	Prevents expansion of tokens in edef and write.
+unhbox	Unpacks a horizontal box and empties it.
+unhcopy	Unpacks a horizontal box and keeps it.
+uniformdeviate	Random integer below a bound.
+unkern	Removes the last kern.
+unless	Negates the following conditional.
+unpenalty	Removes the last penalty.
+unskip	Removes the last glue.
+unvbox	Unpacks a vertical box and empties it.
+unvcopy	Unpacks a vertical box and keeps it.
+uppercase	Changes tokens to uppercase.
+upshape	Switches to upright shape.
+usebox	Typesets the contents of a box register.
+useboxresource	Places a saved box resource.
+usefont	Sets encoding, family, series and shape.
+useimageresource	Places a saved image resource.
+usepackage	Loads packages.
+vadjust	Inserts material in the vertical list after the line.
+valign	Starts an alignment of columns.
+value	Gives the value of a counter as a number.
+variablefam	Family used by variable-family math characters.
+vbadness	Badness above which underfull and overfull vertical boxes are reported.
+vbox	Builds a vertical box aligned at the bottom.
+vcenter	Builds a vertical box centered on the math axis.
+vec	Puts a vector arrow over math.
+vector	Draws an arrow in a picture.
+verb	Prints its argument exactly, inline.
+verbatim	Environment that prints its text exactly.
+verse	Environment for poetry.
+vfil	Infinitely stretchable vertical glue.
+vfill	Vertical glue that stretches more than \vfil.
+vfilneg	Vertical glue that cancels \vfil.
+vfuzz	Overfull amount tolerated in vertical boxes.
+vline	Draws a vertical line in a table cell.
+voffset	Vertical offset of the page on the sheet.
+vpack	Packs material into a vertical box.
+vrule	Vertical rule.
+vsize	Height of the page body.
+vskip	Vertical glue.
+vspace	Inserts vertical space.
+vsplit	Splits a part off a vertical box.
+vss	Vertical glue that stretches and shrinks infinitely.
+vtop	Builds a vertical box aligned at the top.
+wd	Width of a box register.
+widowpenalties	Penalties before the last lines of a paragraph.
+widowpenalty	Penalty for a page break before the last line.
+wordboundary	Marks a word boundary for ligatures and kerns.
+write	Writes text to a file or the log.
+xdef	Defines a macro globally and expands its body at once.
+xleaders	Leaders with evenly spread boxes.
+xspaceskip	Glue used instead of the interword glue after punctuation.
+xtoksapp	Appends the expansion of tokens to a token register.
+xtokspre	Prepends the expansion of tokens to a token register.
+year	Year the job started.

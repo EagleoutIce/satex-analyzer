@@ -838,3 +838,29 @@ fn the_defined_name_types_no_numbered_argument() {
     let types = record.get("types").cloned().unwrap_or_default().to_string();
     assert!(!types.contains("control sequence"), "{record:?}");
 }
+
+#[test]
+fn description_for_a_primitive_and_a_kernel_macro() {
+    if !installed() {
+        return;
+    }
+    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let analysis = Machine::analyze(r"\documentclass{article}\begin{document}\end{document}", None, &cfg);
+    for name in ["endcsname", "section"] {
+        let does = str_field(&explain_one(&analysis, name), "does").map(str::to_owned);
+        assert!(does.is_some_and(|d| d.len() > 10), "\\{name} lacks a description");
+    }
+}
+
+#[test]
+fn every_builtin_primitive_has_a_description() {
+    use satex::config::Engine::{LuaTeX, PdfTeX, Tex, XeTeX};
+    let mut missing: Vec<&str> = [Tex, PdfTeX, LuaTeX, XeTeX]
+        .into_iter()
+        .flat_map(|e| satex::builtins::primitive_names(e).keys().map(String::as_str))
+        .filter(|n| satex::query::describe(n).is_none())
+        .collect();
+    missing.sort_unstable();
+    missing.dedup();
+    assert!(missing.is_empty(), "{} primitives lack a line in src/describe.tsv:\n{}", missing.len(), missing.join("\n"));
+}

@@ -240,6 +240,9 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
             Some(w) => markdown.push_str(&format!("### `\\{name}` — {w}\n\n")),
             None => markdown.push_str(&format!("### `\\{name}`\n\n")),
         }
+        if let Some(does) = text("does") {
+            markdown.push_str(&format!("{does}\n\n"));
+        }
         if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
             markdown.push_str(&format!("`\\{name}{}`\n\n", usage(sig)));
         }

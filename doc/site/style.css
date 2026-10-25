@@ -324,7 +324,7 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 
 /* findings: actions on hover; menus; rename box; definition links */
 .diagnostics li { position: relative; }
-.acts { position: absolute; top: .4rem; right: .5rem; display: flex; gap: .3rem; padding-left: .5rem; background: var(--panel); opacity: 0; pointer-events: none; transition: opacity var(--quick); }
+.acts { position: absolute; bottom: .35rem; right: .5rem; display: flex; gap: .3rem; padding-left: .5rem; background: var(--panel); opacity: 0; pointer-events: none; transition: opacity var(--quick); }
 .diagnostics li:hover > .acts, .diagnostics li:focus-within > .acts { opacity: 1; pointer-events: auto; }
 .badge { position: relative; display: inline-block; } .badge > * { transition: opacity .18s var(--ease), transform .18s var(--ease); }
 .badge .as-badge { position: absolute; left: 0; top: 50%; translate: 0 -50%; z-index: 1; white-space: nowrap; opacity: 0; transform: scale(.94); pointer-events: none; }
@@ -518,3 +518,33 @@ details.more[open] > summary { margin-bottom: .3rem; }
 .ask .runbtn { flex: none; margin-left: .4rem; }
 .ts-other > summary { cursor: pointer; color: var(--muted); font-size: .8rem; padding: .15rem 0; }
 .ts-other[open] > summary { margin-bottom: .2rem; }
+
+/* finding cards, after flowR's: rule first, severity and place at the right, then the message */
+.f-head { display: flex; align-items: center; gap: .5rem; }
+.f-head .rule { font: 600 .82rem ui-monospace, Menlo, monospace; margin-right: auto; overflow-wrap: anywhere; }
+.f-head .loc { font: 500 .78rem ui-monospace, Menlo, monospace; color: var(--muted); }
+.diagnostics .msg { margin-top: .25rem; overflow-wrap: anywhere; }
+.diagnostics .msg code { font: .85em ui-monospace, Menlo, monospace; }
+.diagnostics li.obj-group { padding: 0; border: 0; background: none; box-shadow: none; cursor: default; margin: 0 0 .4rem; }
+.obj-group > details > .cat-head { text-transform: none; letter-spacing: 0; font-size: 12px; }
+.obj-group > details > .cat-head .cat-count { color: var(--sev); background: color-mix(in srgb, var(--sev) 14%, transparent); }
+.obj-group > details > .cat-items { border-left-color: color-mix(in srgb, var(--sev) 40%, transparent); }
+/* a running check: an indeterminate bar and the phase */
+.check { display: flex; align-items: center; gap: .6rem; margin: 0 0 .6rem; font-size: .82rem; color: var(--muted); }
+.check[hidden] { display: none; }
+.ibar { flex: none; position: relative; width: 7rem; height: .4rem; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.ibar::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 40%; border-radius: inherit; background: var(--accent); animation: ibar 1.1s var(--ease) infinite; }
+@keyframes ibar { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
+@media (prefers-reduced-motion: reduce) { .ibar::after { animation-duration: 3s; } }
+.og-error { --sev: var(--error); } .og-warning { --sev: var(--warning); } .og-info { --sev: var(--info); }
+
+/* findings as a flat list, after flowR's: a thin severity line at the left, even tight gaps, no boxes */
+.diagnostics li:not(.cat-group, .obj-group) { padding: .3rem .4rem .3rem .7rem; margin: 0 0 .2rem; border: 0; border-left: 2px solid var(--sev); border-radius: 0 6px 6px 0; background: none; box-shadow: none; }
+.diagnostics li:not(.cat-group, .obj-group):hover, .diagnostics li.open:not(.cat-group, .obj-group) { background: var(--sunk); box-shadow: none; }
+.diagnostics li:hover > .acts, .diagnostics li:focus-within > .acts { background: var(--sunk); }
+.diagnostics li.open .msg + *, .diagnostics li .msg + * { margin-top: .3rem; }
+.cat-items { margin-top: .15rem; padding-left: 0; border-left: 0; }
+.obj-group > details > .cat-items { border-left: 0; }
+/* the console's run: a secondary action */
+.runbtn { background: transparent; color: var(--fg); border-color: var(--border); font-weight: 500; }
+.runbtn:hover:not(:disabled) { background: var(--sunk); color: var(--accent); border-color: var(--accent); box-shadow: none; transform: none; }

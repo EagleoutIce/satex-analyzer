@@ -184,7 +184,7 @@ fn stray_space(report: &mut Report) {
                     (true, false) => "may insert",
                 };
                 let name = report.cs(def.name);
-                let message = format!("{name}'s body ends a line without `%`; using {name} {verb} a space there");
+                let message = format!("{name}'s body ends a line without `%`, so using {name} {verb} a space there");
                 // A body whose `}` starts the next line closes on this one instead.
                 let closes = i + 1 == body.len()
                     && text.as_deref().is_some_and(|t| t.line(tok.span.line + 1).trim_start().starts_with('}'));
@@ -346,7 +346,7 @@ fn primitive_tex_command(report: &mut Report) {
         });
         let (message, fix) = match alternate {
             Some((role, (purpose, found))) => (
-                format!("{name} is plain TeX; here it {purpose}"),
+                format!("{name} is plain TeX. Here it {purpose}"),
                 found.map(|sym| {
                     let edits = report.edits().csname(expansion.span, role, sym);
                     let spelled = interfaces.entry(sym).or_insert_with(|| interface(analysis, sym)).clone();
@@ -357,7 +357,7 @@ fn primitive_tex_command(report: &mut Report) {
                 (format!("{name} is plain TeX, and LaTeX has no interface of its own for it"), None)
             }
             None => (
-                format!("{name} is plain TeX; LaTeX has its own interface for this"),
+                format!("{name} is plain TeX, and LaTeX has its own interface for this"),
                 Some(Fix::new(format!("use {alternative}"), Applicability::Unsafe, None)),
             ),
         };

@@ -216,7 +216,7 @@ fn microtype_available(report: &mut Report) {
         span,
         "microtype",
         format!(
-            "microtype is not loaded; under {} it evens out the spacing and line breaks of the {} characters \
+            "microtype is not loaded. Under {} it evens out the spacing and line breaks of the {} characters \
              the body sets justified",
             plugins.engine.as_str(),
             analysis.justified_text

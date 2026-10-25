@@ -103,7 +103,7 @@ fn a_solo_end_is_reported() {
     };
     let found = findings(&analysis, "environment-mismatch");
     assert!(
-        found.iter().any(|f| f.contains(r"\begin{document}") && f.contains(r"ended by \end{itemize}")),
+        found.iter().any(|f| f.contains(r"\begin{document}") && f.contains(r"ended by `\end{itemize}`")),
         "{found:?}"
     );
 }
@@ -115,7 +115,7 @@ fn an_environment_never_closed_is_reported() {
     };
     let found = findings(&analysis, "environment-mismatch");
     assert_eq!(found.len(), 1, "{found:?}");
-    assert!(found[0].contains(r"\begin{itemize}") && found[0].contains(r"ended by \end{document}"), "{found:?}");
+    assert!(found[0].contains(r"\begin{itemize}") && found[0].contains(r"ended by `\end{document}`"), "{found:?}");
 }
 
 /// An error inside the environment may have ended it: the mismatch after
@@ -1466,7 +1466,7 @@ fn a_label_from_a_macro_body_is_reported_at_the_call() {
     let Some(analysis) = latex(&format!("{GREET}\\greet{{world}}\n\\end{{document}}\n")) else { return };
     let found = placed(&analysis, "unused-label");
     assert_eq!(found.len(), 1, "{found:?}");
-    assert!(found[0].starts_with("4:1 ") && found[0].contains("via \\greet"), "{found:?}");
+    assert!(found[0].starts_with("4:1 ") && found[0].contains("via `\\greet`"), "{found:?}");
 }
 
 #[test]

@@ -179,7 +179,7 @@ fn csname_is_matched_to_the_interface_for_what_it_was_formed_for() {
     assert_eq!(found.len(), expected.len(), "{found:?}");
     for (fix, want) in found.iter().zip(expected) {
         let fix = fix.as_deref().unwrap_or_default();
-        assert!(fix.starts_with(&format!("use {want}")) && fix.contains("etoolbox"), "{fix} for {want}");
+        assert!(fix.starts_with(&format!("use `{want}`")) && fix.contains("etoolbox"), "{fix} for {want}");
     }
 
     // `\gdef`, `\let` and `\let`-to-a-name-formed-by-\csname have no kernel
@@ -188,7 +188,7 @@ fn csname_is_matched_to_the_interface_for_what_it_was_formed_for() {
     // back with nothing to act on.
     let without = analyze(&format!("\\documentclass{{article}}\n{body}"));
     let found = fixes(&without);
-    let expected = [Some("use \\@namedef"), Some("use \\@ifundefined"), Some("use \\@nameuse")];
+    let expected = [Some("use `\\@namedef`"), Some("use `\\@ifundefined`"), Some("use `\\@nameuse`")];
     assert_eq!(found.iter().map(Option::as_deref).collect::<Vec<_>>(), expected);
 }
 
@@ -369,7 +369,7 @@ fn marked_content_in_literals_has_to_balance() {
     // The special closes the BDC the second literal left open.
     assert_eq!(
         messages,
-        ["\\pdfliteral closes the graphics state (`Q`) that nothing here opened: \
+        ["`\\pdfliteral` closes the graphics state (`Q`) that nothing here opened: \
                             no matching `q` precedes it"]
     );
     let undefined = findings(&analysis, "undefined-optional-content");
@@ -391,7 +391,7 @@ fn marked_content_left_open_is_reported_where_it_opens() {
     let unbalanced = findings(&analysis, "unbalanced-pdf-content");
     assert_eq!(unbalanced.len(), 1, "{unbalanced:?}");
     assert!(
-        unbalanced[0].0.starts_with("\\pdfliteral opens marked content (`BDC`) and never closes it (`EMC`)"),
+        unbalanced[0].0.starts_with("`\\pdfliteral` opens marked content (`BDC`) and never closes it (`EMC`)"),
         "{unbalanced:?}"
     );
     assert!(findings(&analysis, "undefined-optional-content").is_empty(), "no resources were observed");
@@ -467,7 +467,7 @@ fn unclosed_graphics_state_is_reported_once() {
     assert_eq!(unbalanced.len(), 1, "{unbalanced:?}");
     assert_eq!(
         unbalanced[0].0,
-        "\\pdfliteral opens the graphics state (`q`) and never closes it (`Q`): color, line width and the \
+        "`\\pdfliteral` opens the graphics state (`q`) and never closes it (`Q`): color, line width and the \
          current transform leak into everything typeset after it"
     );
     assert_eq!(unbalanced[0].1.as_deref(), Some("add the matching `Q` in the same group before it ends"));
@@ -502,7 +502,7 @@ fn the_special_form_is_named_in_its_own_finding() {
     );
     let unbalanced = findings(&analysis, "unbalanced-pdf-content");
     assert_eq!(unbalanced.len(), 1, "{unbalanced:?}");
-    assert!(unbalanced[0].0.starts_with("\\special{pdf:…} opens"), "{unbalanced:?}");
+    assert!(unbalanced[0].0.starts_with("`\\special{pdf:…}` opens"), "{unbalanced:?}");
 }
 
 /// The interpreter can record the same content-stream operator twice under

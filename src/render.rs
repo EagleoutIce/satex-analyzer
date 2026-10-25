@@ -137,11 +137,11 @@ fn location(record: &Record) -> String {
 }
 
 #[rustfmt::skip]
-const COLUMNS: [&str; 45] = [
+const COLUMNS: [&str; 46] = [
     "index", "warning", "covered", "rules", "id", "step", "severity", "category", "code", "kind", "status",
     "tag", "name", "callee", "key", "subject", "for", "when", "context", "redefined", "effective", "error",
     "signature", "roles", "types", "parameters", "arity", "takes", "uses", "count", "value", "default", "governs", "package",
-    "class", "by", "detail", "fix", "message", "documentation", "expands", "body", "reference", "root",
+    "class", "by", "detail", "fix", "message", "does", "documentation", "expands", "body", "reference", "root",
     "file",
 ];
 
@@ -178,8 +178,8 @@ fn terminal_width() -> usize {
         .unwrap_or(DEFAULT_WIDTH)
 }
 
-const SHRINK_FIRST: [&str; 9] =
-    ["body", "detail", "parameters", "signature", "effective", "documentation", "fix", "expands", "path"];
+const SHRINK_FIRST: [&str; 10] =
+    ["body", "detail", "parameters", "signature", "effective", "does", "documentation", "fix", "expands", "path"];
 
 /// Free text gives way before the columns that identify a row.
 fn shrink_rank(column: &str) -> usize {
@@ -1490,7 +1490,7 @@ pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
             "code": record.get("code"),
             "source": "satex",
             "message": plain(record.get("message").unwrap_or(&Json::Null)),
-            "data": { "fix": record.get("fix"), "applicability": record.get("applicability") },
+            "data": { "fix": record.get("fix"), "applicability": record.get("applicability"), "group": record.get("group") },
         });
         let changes: serde_json::Map<String, Json> = edits_by_file(record)
             .into_iter()

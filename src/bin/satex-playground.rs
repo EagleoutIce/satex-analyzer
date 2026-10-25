@@ -1,7 +1,12 @@
 //! satex-playground: builds the site and its playground from this tree and
 //! serves it on localhost, as `doc/developing.md` describes step by step.
 //!
-//!   cargo playground [--port 8000] [--out target/site]
+//!   cargo playground [--port 8000] [--out target/site] [--dev]
+//!
+//! `--dev` serves `doc/site`'s CSS, JS and the playground page straight from
+//! the sources and reloads the open page when they change (CSS without a
+//! reload). It reuses an existing build in `--out` and builds only when none
+//! exists. The other pages and the wasm still need a rebuild.
 //!
 //! It needs what the site's workflow has: Python 3, pandoc and pdftocairo,
 //! git, and `rustup`. The Rust target `wasm32-unknown-emscripten` is added
@@ -24,20 +29,28 @@ fn main() -> ExitCode {
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
     let (mut port, mut out, mut profile) = ("8000".to_string(), PathBuf::from("target/site"), "playground");
+    let mut dev = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--port" => port = args.next().ok_or("--port needs a number")?,
             "--out" => out = args.next().ok_or("--out needs a directory")?.into(),
             // What the published site ships: slower to build, faster to run.
             "--release" => profile = "release",
+            "--dev" => dev = true,
             _ => {
                 return Err(format!(
-                    "unknown argument `{arg}`; usage: cargo playground [--port N] [--out DIR] [--release]"
+                    "unknown argument `{arg}`; usage: cargo playground [--port N] [--out DIR] [--release] [--dev]"
                 ));
             }
         }
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dev = dev.then(|| root.join("doc/site"));
+    if dev.is_some() && root.join(&out).join("play/index.html").is_file() {
+        let port = free_port(&port)?;
+        println!("satex-playground: dev mode on the existing build in {}; http://127.0.0.1:{port}/play/", out.display());
+        return serve(&root.join(&out), port.parse().map_err(|_| "no port".to_string())?, dev);
+    }
     say("1/4 the toolchain: Rust's wasm32-unknown-emscripten and the Emscripten SDK");
     let wasm = wasm_cargo()?;
     let cargo = || {
@@ -83,26 +96,26 @@ fn run() -> Result<(), String> {
     println!(
         "satex-playground: serving http://127.0.0.1:{port}/play/ (the site at http://127.0.0.1:{port}/); Ctrl+C stops"
     );
-    serve(&site, port.parse().map_err(|_| "no port".to_string())?)
+    serve(&site, port.parse().map_err(|_| "no port".to_string())?, dev)
 }
 
 /// Serves `site` on 127.0.0.1 the way a static host such as GitHub Pages
 /// does: the type by extension, the `.gz` beside a file to a client that
 /// takes gzip (`build.py --precompress`), and pages revalidated while
 /// assets, whose names carry their content's hash, are kept for good.
-fn serve(site: &Path, port: u16) -> Result<(), String> {
+fn serve(site: &Path, port: u16, dev: Option<PathBuf>) -> Result<(), String> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", port)).map_err(|e| format!("port {port}: {e}"))?;
     let site = site.canonicalize().map_err(|e| format!("{}: {e}", site.display()))?;
     for stream in listener.incoming().flatten() {
-        let site = site.clone();
+        let (site, dev) = (site.clone(), dev.clone());
         std::thread::spawn(move || {
-            let _ = respond(stream, &site);
+            let _ = respond(stream, &site, dev.as_deref());
         });
     }
     Ok(())
 }
 
-fn respond(mut stream: std::net::TcpStream, site: &Path) -> std::io::Result<()> {
+fn respond(mut stream: std::net::TcpStream, site: &Path, dev: Option<&Path>) -> std::io::Result<()> {
     use std::io::{BufRead, Write};
     let mut reader = std::io::BufReader::new(stream.try_clone()?);
     let mut request = String::new();
@@ -120,6 +133,14 @@ fn respond(mut stream: std::net::TcpStream, site: &Path) -> std::io::Result<()> 
     let (method, target) = (words.next().unwrap_or_default(), words.next().unwrap_or("/"));
     let path = target.split(['?', '#']).next().unwrap_or("/");
     let path = percent_encoding::percent_decode_str(path).decode_utf8_lossy().into_owned();
+    if let Some(src) = dev {
+        if path == "/__dev/events" {
+            return watch(stream, src);
+        }
+        if let Some((name, body)) = dev_source(&path, site, src) {
+            return send(&mut stream, method, &name, "no-cache", false, dev_inject(&name, body));
+        }
+    }
     let mut file = site.join(path.trim_start_matches('/'));
     if file.is_dir() && !path.ends_with('/') {
         let head = format!(
@@ -139,10 +160,22 @@ fn respond(mut stream: std::net::TcpStream, site: &Path) -> std::io::Result<()> 
     let zipped = file.with_file_name(format!("{name}.gz"));
     let encoded = gzip && zipped.is_file();
     let body = std::fs::read(if encoded { &zipped } else { &file })?;
-    let cache = cache_control(&name);
+    let body = if dev.is_some() && !encoded { dev_inject(&name, body) } else { body };
+    send(&mut stream, method, &name, cache_control(&name), encoded, body)
+}
+
+fn send(
+    stream: &mut std::net::TcpStream,
+    method: &str,
+    name: &str,
+    cache: &str,
+    encoded: bool,
+    body: Vec<u8>,
+) -> std::io::Result<()> {
+    use std::io::Write;
     let mut head = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: {cache}\r\nVary: Accept-Encoding\r\nConnection: close\r\n",
-        content_type(&name),
+        content_type(name),
         body.len(),
     );
     if encoded {
@@ -154,6 +187,72 @@ fn respond(mut stream: std::net::TcpStream, site: &Path) -> std::io::Result<()> 
         stream.write_all(&body)?;
     }
     stream.flush()
+}
+
+/// Dev mode: a page gets the reload client.
+fn dev_inject(name: &str, body: Vec<u8>) -> Vec<u8> {
+    if !name.ends_with(".html") {
+        return body;
+    }
+    String::from_utf8_lossy(&body).replace("</body>", "<script src=\"/__dev.js\"></script></body>").into_bytes()
+}
+
+/// Dev mode: what `path` is when read from `doc/site` instead of the build:
+/// the reload client, a hashed asset (`style-0123456789ab.css`) whose source
+/// is `doc/site/style.css`, or the playground page filled from `play.html`
+/// into the built page, with the built manifest and the current `worker.js`.
+fn dev_source(path: &str, site: &Path, src: &Path) -> Option<(String, Vec<u8>)> {
+    if path == "/__dev.js" {
+        return Some(("dev.js".into(), include_bytes!("../../doc/site/dev.js").to_vec()));
+    }
+    if path == "/play/" || path == "/play/index.html" {
+        let built = std::fs::read_to_string(site.join("play/index.html")).ok()?;
+        let (lo, hi) = (built.find("<main>")? + 6, built.find("</main>")?);
+        let marker = "id=\"satex-play\" type=\"application/json\">";
+        let m = built.find(marker)? + marker.len();
+        let manifest = &built[m..m + built[m..].find("</script>")?];
+        let mut manifest: serde_json::Value = serde_json::from_str(&manifest.replace("<\\/", "</")).ok()?;
+        manifest["worker"] = std::fs::read_to_string(src.join("worker.js")).ok()?.into();
+        let json = manifest.to_string().replace("</", "<\\/");
+        let page = std::fs::read_to_string(src.join("play.html")).ok()?;
+        let page = page.replace("{{manifest}}", &json).replace("{{root}}", "../").replace("{{playjs}}", "play/playground.js");
+        return Some(("index.html".into(), format!("{}{page}{}", &built[..lo], &built[hi..]).into_bytes()));
+    }
+    let name = path.rsplit('/').next()?;
+    let (stem, ext) = name.split_once('.')?;
+    let stem = stem
+        .rsplit_once('-')
+        .filter(|(_, h)| h.len() == 12 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map_or(stem, |(s, _)| s);
+    let file = src.join(format!("{stem}.{ext}"));
+    (matches!(ext, "css" | "js") && file.is_file()).then(|| (name.to_string(), std::fs::read(file).unwrap_or_default()))
+}
+
+/// Dev mode: the newest modification time under `dir`, for CSS and the rest.
+fn stamps(dir: &Path) -> (std::time::SystemTime, std::time::SystemTime) {
+    let (mut css, mut rest) = (std::time::UNIX_EPOCH, std::time::UNIX_EPOCH);
+    for e in walkdir::WalkDir::new(dir).into_iter().flatten().filter(|e| e.file_type().is_file()) {
+        let Some(t) = e.metadata().ok().and_then(|m| m.modified().ok()) else { continue };
+        let slot = if e.path().extension().is_some_and(|x| x == "css") { &mut css } else { &mut rest };
+        *slot = (*slot).max(t);
+    }
+    (css, rest)
+}
+
+/// Dev mode: an event stream that says `css` or `reload` when `dir` changes.
+fn watch(mut stream: std::net::TcpStream, dir: &Path) -> std::io::Result<()> {
+    use std::io::Write;
+    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n: ok\n\n")?;
+    let mut seen = stamps(dir);
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let now = stamps(dir);
+        let event = if now.1 != seen.1 { "data: reload\n\n" } else if now.0 != seen.0 { "data: css\n\n" } else { ": \n\n" };
+        seen = now;
+        // The idle comment also notices a closed page.
+        stream.write_all(event.as_bytes())?;
+        stream.flush()?;
+    }
 }
 
 /// How long a browser may keep a file: for good when its name carries its

@@ -90,6 +90,35 @@ pub fn document_start(analysis: &Analysis) -> Option<Span> {
         .map(|o| o.span)
 }
 
+/// The tables and figures the run entered and left, outermost first.
+fn objects(analysis: &Analysis) -> Vec<(Span, Span, &'static str)> {
+    let kind = |key: &str| match key.trim_end_matches('*') {
+        "table" | "sidewaystable" | "longtable" | "tabular" | "tabularx" => Some("table"),
+        "figure" | "sidewaysfigure" => Some("figure"),
+        _ => None,
+    };
+    let mut marks: Vec<(Span, bool, &str)> = analysis
+        .facts
+        .occurrences
+        .iter()
+        .filter(|o| matches!(o.kind, OccKind::BeginEnvironment | OccKind::EndEnvironment) && kind(&o.key).is_some())
+        .map(|o| (o.span, o.kind == OccKind::BeginEnvironment, o.key.as_str()))
+        .collect();
+    marks.sort_unstable();
+    marks.dedup();
+    let (mut open, mut out) = (Vec::new(), Vec::new());
+    for (span, begin, key) in marks {
+        if begin {
+            open.push((span, key));
+        } else if let Some(i) = open.iter().rposition(|(b, k): &(Span, &str)| *k == key && b.file == span.file) {
+            let (b, k) = open.remove(i);
+            out.push((b, span, kind(k).unwrap_or("table")));
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
 /// A set of [`Sym`]s as a bitmap: the rules ask after names far more often
 /// than the run makes them.
 #[derive(Default)]
@@ -129,6 +158,7 @@ pub struct Index<'a> {
     sites: OnceCell<Sites>,
     origins: RefCell<Vec<Option<&'static str>>>,
     live: OnceCell<Vec<bool>>,
+    objects: OnceCell<Vec<(Span, Span, &'static str)>>,
 }
 
 impl<'a> Index<'a> {
@@ -155,6 +185,7 @@ impl<'a> Index<'a> {
             sites: OnceCell::new(),
             origins: RefCell::new(vec![None; analysis.files.len()]),
             live: OnceCell::new(),
+            objects: OnceCell::new(),
         }
     }
 
@@ -212,6 +243,14 @@ impl<'a> Index<'a> {
 
     pub fn document_start(&self) -> Option<Span> {
         *self.document_start.get_or_init(|| document_start(self.analysis))
+    }
+
+    /// The outermost table or figure around `span`, as `table@line:col`:
+    /// findings on one object share it.
+    pub fn group(&self, span: Span) -> Option<String> {
+        let objects = self.objects.get_or_init(|| objects(self.analysis));
+        let (begin, _, kind) = objects.iter().find(|(b, e, _)| b.file == span.file && (*b..=*e).contains(&span))?;
+        Some(format!("{kind}@{}:{}", begin.line, begin.col))
     }
 
     /// [`Analysis::recursion`] runs two strongly-connected-component passes

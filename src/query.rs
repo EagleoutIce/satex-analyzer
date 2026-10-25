@@ -2598,6 +2598,36 @@ fn documentation(
     None
 }
 
+/// One line per primitive and documented kernel command: what it is for.
+const DESCRIPTIONS: &str = include_str!("describe.tsv");
+
+/// The one-line description of a kernel or primitive command, by name
+/// without the backslash.
+pub fn describe(name: &str) -> Option<&'static str> {
+    static TABLE: std::sync::OnceLock<HashMap<&'static str, &'static str>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| DESCRIPTIONS.lines().filter_map(|l| l.split_once('\t')).collect()).get(name).copied()
+}
+
+/// Adds the `documentation`/`reference` link and, when the name has one, the
+/// `does` description.
+fn document(
+    record: &mut Record,
+    analysis: &Analysis,
+    sym: crate::tex::Sym,
+    package: Option<&str>,
+    is_class: bool,
+    meaning: &Meaning,
+    kernel: bool,
+) {
+    if let Some((doc, link)) = documentation(analysis, sym, package, is_class, meaning, kernel) {
+        record.insert("documentation".into(), json!(doc));
+        record.insert("reference".into(), json!(link));
+        if let Some(text) = describe(analysis.interner.name(sym)) {
+            record.insert("does".into(), json!(text));
+        }
+    }
+}
+
 /// A manual on texdoc.org, which serves the same PDF a local `texdoc` opens.
 fn texdoc(name: &str) -> String {
     format!("https://texdoc.org/serve/{name}/0")
@@ -2698,12 +2728,7 @@ fn record_for_def(analysis: &Analysis, def: &crate::facts::Definition, window: W
     }
     let package_name = def.package.map(|p| analysis.interner.name(p));
     let kernel = is_kernel_file(analysis, def.span.file);
-    if let Some((doc, link)) =
-        documentation(analysis, def.name, package_name, kind == "class", &analysis.env.meaning(def.name), kernel)
-    {
-        record.insert("documentation".into(), json!(doc));
-        record.insert("reference".into(), json!(link));
-    }
+    document(&mut record, analysis, def.name, package_name, kind == "class", &analysis.env.meaning(def.name), kernel);
     record
 }
 
@@ -2893,10 +2918,7 @@ fn record_for_meaning(analysis: &Analysis, sym: Sym, window: Window, meaning: Me
             record.insert("expands".into(), json!(expanded));
         }
     }
-    if let Some((doc, link)) = documentation(analysis, sym, None, false, &meaning, true) {
-        record.insert("documentation".into(), json!(doc));
-        record.insert("reference".into(), json!(link));
-    }
+    document(&mut record, analysis, sym, None, false, &meaning, true);
     Some(record)
 }
 

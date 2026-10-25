@@ -161,8 +161,8 @@ fn an_undefined_name_past_an_approximation_is_a_possible_error() {
     assert_eq!(
         found,
         [
-            "error \\undefinedbaz is never defined in this run",
-            "info \\undefinedfoo is undefined on a path the analysis approximated"
+            "error `\\undefinedbaz` is never defined in this run",
+            "info `\\undefinedfoo` is undefined on a path the analysis approximated"
         ]
     );
 }
@@ -189,12 +189,12 @@ fn a_name_read_under_assumed_category_codes_is_no_certain_error() {
                 let get = |k: &str| f.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
                 format!("{} {}", get("severity"), get("message"))
             })
-            .filter(|f| f.contains("x{y"))
+            .filter(|f| f.contains("`{y"))
             .collect::<Vec<_>>()
     };
-    assert_eq!(severity("", 0), ["error \\x{y is never defined in this run"]);
+    assert_eq!(severity("", 0), ["error `\\x`{y is never defined in this run"]);
     let assumed = severity("\\begingroup\\catcode`\\{=11 \\spin\\endgroup", 400_000);
-    assert_eq!(assumed, ["warning \\x{y is undefined where the analysis assumed category codes back after a cut"]);
+    assert_eq!(assumed, ["warning `\\x`{y is undefined where the analysis assumed category codes back after a cut"]);
 }
 
 /// Only `\newlabel` warns about a name defined twice (pdflatex: "Label

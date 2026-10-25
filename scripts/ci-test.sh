@@ -1,64 +1,37 @@
 #!/usr/bin/env bash
-# Runs one shard of the integration test suite.  All integration tests build
-# into one binary (`tests/it/main.rs`, one `mod` per former test file), so
-# shards select by module path instead of by `--test` target.  The shards are
-# balanced by how long their modules take; `rest` is every module the other
-# shards do not claim, so a new test file lands in a shard instead of being
-# dropped.
+# Runs one shard of the integration suite (`tests/it`, one binary).
+#   scripts/ci-test.sh K/N      shard K of N (1-based)
+#   scripts/ci-test.sh compliance
+# Tests are dealt round-robin from the sorted list, the long ones of
+# tests/slow.txt first, so every shard gets a similar share of both.
+# A new test lands in a shard by itself.  Shard 1 also runs the unit tests.
+# The compliance ledger fails on purpose while it has open entries, so it
+# is a shard of its own, reported non-blocking.
 set -euo pipefail
-
-usage() {
-    echo "usage: $0 <cache|slow|compliance|rest>" >&2
-    exit 2
-}
-
-# `package_cache` interprets the kernel twice; the `slow` modules each drive
-# the engine or a whole installation.  Together they are half the wall time.
-CACHE_SHARD=(package_cache)
-SLOW_SHARD=(no_hang l3build build_lints mutation corpus)
-# Held apart from `rest`: it fails on purpose while the known-divergence
-# ledger has entries, and CI reports it non-blocking instead of hiding it.
-COMPLIANCE_SHARD=(compliance_matrix)
-
 cd "$(dirname "$0")/.."
 
-all=()
-for file in tests/it/*.rs; do
-    name="$(basename "$file" .rs)"
-    [[ "$name" == "main" ]] && continue
-    all+=("$name")
-done
+profile="${CARGO_PROFILE:-ci}"
+run() { cargo test --locked --profile "$profile" --features doc --no-fail-fast "$@"; }
 
-claimed=("${CACHE_SHARD[@]}" "${SLOW_SHARD[@]}" "${COMPLIANCE_SHARD[@]}")
-for target in "${claimed[@]}"; do
-    [[ " ${all[*]} " == *" $target "* ]] || { echo "$0: no tests/it/$target.rs; fix the shards" >&2; exit 1; }
-done
+if [[ "${1-}" == compliance ]]; then
+    set -x
+    run --test it -- compliance_matrix::
+    exit
+fi
+[[ "${1-}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || { echo "usage: $0 <K/N|compliance>" >&2; exit 2; }
+k=${BASH_REMATCH[1]} n=${BASH_REMATCH[2]}
+(( k <= n )) || { echo "$0: shard $k of $n" >&2; exit 2; }
 
-run_lib=0
-case "${1-}" in
-    cache) modules=("${CACHE_SHARD[@]}") ;;
-    slow) modules=("${SLOW_SHARD[@]}") ;;
-    compliance) modules=("${COMPLIANCE_SHARD[@]}") ;;
-    rest)
-        modules=()
-        for target in "${all[@]}"; do
-            [[ " ${claimed[*]} " == *" $target "* ]] || modules+=("$target")
-        done
-        # The unit tests are quick and ride along with the small modules.
-        # A filter after `--` applies to every target in the invocation, so
-        # `--lib` gets its own unfiltered `cargo test` call.
-        run_lib=1
-        ;;
-    *) usage ;;
-esac
-
-filters=()
-for module in "${modules[@]}"; do
-    filters+=("${module}::")
-done
+mapfile -t tests < <(
+    run --test it -- --list 2>/dev/null | sed -n 's/: test$//p' | LC_ALL=C sort |
+        awk -v k="$k" -v n="$n" '
+            FILENAME == "tests/slow.txt" { slow[$0] = 1; next }
+            /^compliance_matrix::/ { next }
+            { c = ($0 in slow) ? "s" : "f"; if (i[c]++ % n + 1 == k) print }
+        ' tests/slow.txt -
+)
+(( ${#tests[@]} > 0 )) || { echo "$0: shard $k/$n is empty" >&2; exit 1; }
 
 set -x
-if [[ "$run_lib" == 1 ]]; then
-    cargo test --locked --profile "${CARGO_PROFILE:-ci}" --features doc --no-fail-fast --lib
-fi
-cargo test --locked --profile "${CARGO_PROFILE:-ci}" --features doc --no-fail-fast --test it -- "${filters[@]}"
+if (( k == 1 )); then run --lib; fi
+run --test it -- --exact "${tests[@]}"

@@ -1,8 +1,9 @@
 name: Pages
 
+# The site builds a release binary and a wasm one: a release or a manual run.
 on:
   push:
-    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -17,6 +18,7 @@ concurrency:
 jobs:
   generate:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     container: texlive/texlive:latest
     steps:
       # Lua and LPeg are compiled from C; pandoc renders the Markdown,
@@ -32,6 +34,9 @@ jobs:
         with:
           targets: wasm32-unknown-emscripten
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: pages
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # Compiles Lua for the browser; see `.cargo/config.toml`.
       - uses: mymindstorm/setup-emsdk@v14
         with:
@@ -64,6 +69,7 @@ jobs:
   publish:
     needs: generate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}

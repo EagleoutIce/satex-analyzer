@@ -315,7 +315,10 @@
     }
   }
   function analyze() { checking(); lsp('satex/analyze', {}, true); }
-  function checking() { lspStatus.textContent = 'checking…'; checkStart = performance.now(); }
+  const checkBox = $('lsp-check');
+  /** The indeterminate bar of a running check, with the phase it is in; the worker reports none, the waits for packages are the phases. */
+  const phase = (text) => { checkBox.hidden = !text; checkBox.lastElementChild.textContent = text ?? ''; lspStatus.textContent = text ?? ''; };
+  function checking() { phase('checking…'); checkStart = performance.now(); }
 
   /** Completion order: the project's own commands, then the documented ones, internals
    * (`@`, `_`, `:` in the name) last; within each, prefix matches, then shorter names. */
@@ -557,14 +560,28 @@
     pills(ds);
     if (checkStart) { timing('t-check', secs(performance.now() - checkStart), 'the language server analyzed the open file'); shownTime(secs(performance.now() - checkStart)); }
     checkStart = 0;
+    phase();
     lspStatus.textContent = state.file in state.ro ? 'read-only file' : ds.length ? '' : 'none';
     const fixButton = (f, j, cls) => `<button class="small apply${cls}" data-j="${j}" title="${escape(f.title)}">Fix <span class="fix fix-${f.safety}">${f.safety}</span></button>`;
     const item = (d, i) => `<li class="f-${sev(d)}${d.fixes.length ? ' fixable' : ''}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
-      `<span class="badge"><span class="sev sev-${sev(d)}">${sev(d)}</span>${d.fixes.length ? fixButton(d.fixes[0], 0, ' as-badge') : ''}</span> <b>${d.range.start.line + 1}:${d.range.start.character + 1}</b> ` +
-      `<code>${escape(d.code ?? '')}</code> <span class="msg">${inline(d.message)}</span><span class="acts">` +
+      `<div class="f-head"><code class="rule">${escape(d.code ?? '')}</code><span class="badge"><span class="sev sev-${sev(d)}">${sev(d)}</span>${d.fixes.length ? fixButton(d.fixes[0], 0, ' as-badge') : ''}</span>` +
+      `<b class="loc">${d.range.start.line + 1}:${d.range.start.character + 1}</b></div><div class="msg">${inline(d.message)}</div><span class="acts">` +
       d.fixes.slice(1).map((f, j) => fixButton(f, j + 1, '')).join('') +
       `<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
       (unfolded.has(key(d)) ? explanation(d) : '') + '</li>';
+    /** Findings of one object (`group`, "table@12:1") fold together under a header; a lone one stays flat. */
+    const fold = (id, cls, head, rows, inner) => `<li class="${cls}"><details${folded.has(id) ? '' : ' open'} data-fold="${escape(id)}"><summary class="cat-head" aria-label="${escape(head)}">${inner}</summary>` +
+      `<ul class="cat-items">${rows}</ul></details></li>`;
+    const grouped = (cat, rows) => {
+      const by = Map.groupBy(rows, ([d]) => groupOf(d) ?? Symbol());
+      return [...by].map(([g, rs]) => {
+        if (typeof g !== 'string' || rs.length < 2) return rs.map(([d, i]) => item(d, i)).join('');
+        const [kind, at] = g.split('@');
+        const label = `${kind[0].toUpperCase()}${kind.slice(1)}${at ? ` at ${at}` : ''}`;
+        return fold(`${cat}|${g}`, `obj-group og-${['error', 'warning'].find((s) => rs.some(([d]) => sev(d) === s)) ?? 'info'}`, `${label}: ${rs.length} findings`,
+          rs.map(([d, i]) => item(d, i)).join(''), `<span class="cat-name">${escape(label)}</span><span class="cat-count">${rs.length}</span>`);
+      }).join('');
+    };
     // grouped by the rule's category, as the command line prints them: a header with
     // the category's icon, its count and severities, folding its findings
     const groups = new Map(CATEGORIES.map(([cat]) => [cat, []]));
@@ -575,11 +592,9 @@
     list.innerHTML = [...groups].filter(([, rows]) => rows.length).map(([cat, rows]) => {
       const sevs = ['error', 'warning', 'info'].map((s) => [s, rows.filter(([d]) => sev(d) === s || (s === 'info' && sev(d) === 'hint')).length]).filter(([, n]) => n);
       const label = `${cat}: ${rows.length} finding${rows.length > 1 ? 's' : ''}`;
-      return `<li class="cat-group cat-${escape(cat)}"><details${folded.has(cat) ? '' : ' open'} data-cat="${escape(cat)}">` +
-        `<summary class="cat-head" aria-label="${escape(label)}"><span class="cat-icon" aria-hidden="true">${catIcon(cat)}</span>` +
+      return fold(cat, `cat-group cat-${escape(cat)}`, label, grouped(cat, rows), `<span class="cat-icon" aria-hidden="true">${catIcon(cat)}</span>` +
         `<span class="cat-name">${escape(cat)}</span><span class="cat-count">${rows.length}</span>` +
-        `<span class="cat-sevs" aria-hidden="true">${sevs.map(([s, n]) => `<span class="cat-sev sev-${s}" title="${n} ${s}">${n}</span>`).join('')}</span></summary>` +
-        `<ul class="cat-items">${rows.map(([d, i]) => item(d, i)).join('')}</ul></details></li>`;
+        `<span class="cat-sevs" aria-hidden="true">${sevs.map(([s, n]) => `<span class="cat-sev sev-${s}" title="${n} ${s}">${n}</span>`).join('')}</span>`);
     }).join('');
   }
   /** The lint categories in the command line's order, each with its icon (24-unit strokes). */
@@ -593,16 +608,18 @@
   const catIcon = (cat) => `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${(CATEGORIES.find(([c]) => c === cat) ?? [, '<circle cx="12" cy="12" r="4"/>'])[1]}</svg>`;
   /** The categories folded away, kept across checks. */
   const folded = new Set();
+  const groupOf = (d) => d.group ?? d.data?.group;
   list.addEventListener('toggle', (e) => {
-    const cat = e.target.dataset?.cat;
-    if (cat) { if (e.target.open) folded.delete(cat); else folded.add(cat); }
+    const id = e.target.dataset?.fold;
+    if (id) { if (e.target.open) folded.delete(id); else folded.add(id); }
   }, true);
   const unfolded = new Set();
   function unfold(i, toggle = true) {
     const d = diagnostics[uri()]?.[i];
     if (!d) return;
     if (toggle && unfolded.has(key(d))) unfolded.delete(key(d)); else unfolded.add(key(d));
-    folded.delete(manifest.rules[d.code]?.category ?? 'other');
+    const cat = manifest.rules[d.code]?.category ?? 'other';
+    folded.delete(cat); folded.delete(`${cat}|${groupOf(d)}`);
     render();
     list.querySelector(`li[data-i="${i}"]`)?.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   }
@@ -1628,7 +1645,7 @@
           if ((waiting.length || inFlight.size) && m.params.uri === uri()) {
             const names = [...new Set([...waiting, ...inFlight])].map((id) => PACKAGES.get(id).label).join(', ');
             status.textContent = `loading ${names}…`;
-            lspStatus.textContent = `loading ${names}…`;
+            phase(`loading ${names}…`);
             if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok) { show(m.params.uri, m.params.diagnostics); typeset(m.params.uri); } });
             continue;
           }
