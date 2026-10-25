@@ -48,7 +48,10 @@ fn run() -> Result<(), String> {
     let dev = dev.then(|| root.join("doc/site"));
     if dev.is_some() && root.join(&out).join("play/index.html").is_file() {
         let port = free_port(&port)?;
-        println!("satex-playground: dev mode on the existing build in {}; http://127.0.0.1:{port}/play/", out.display());
+        println!(
+            "satex-playground: dev mode on the existing build in {}; http://127.0.0.1:{port}/play/",
+            out.display()
+        );
         return serve(&root.join(&out), port.parse().map_err(|_| "no port".to_string())?, dev);
     }
     say("1/4 the toolchain: Rust's wasm32-unknown-emscripten and the Emscripten SDK");
@@ -215,7 +218,8 @@ fn dev_source(path: &str, site: &Path, src: &Path) -> Option<(String, Vec<u8>)> 
         manifest["worker"] = std::fs::read_to_string(src.join("worker.js")).ok()?.into();
         let json = manifest.to_string().replace("</", "<\\/");
         let page = std::fs::read_to_string(src.join("play.html")).ok()?;
-        let page = page.replace("{{manifest}}", &json).replace("{{root}}", "../").replace("{{playjs}}", "play/playground.js");
+        let page =
+            page.replace("{{manifest}}", &json).replace("{{root}}", "../").replace("{{playjs}}", "play/playground.js");
         return Some(("index.html".into(), format!("{}{page}{}", &built[..lo], &built[hi..]).into_bytes()));
     }
     let name = path.rsplit('/').next()?;
@@ -242,12 +246,19 @@ fn stamps(dir: &Path) -> (std::time::SystemTime, std::time::SystemTime) {
 /// Dev mode: an event stream that says `css` or `reload` when `dir` changes.
 fn watch(mut stream: std::net::TcpStream, dir: &Path) -> std::io::Result<()> {
     use std::io::Write;
-    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n: ok\n\n")?;
+    stream
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\n\r\n: ok\n\n")?;
     let mut seen = stamps(dir);
     loop {
         std::thread::sleep(std::time::Duration::from_millis(250));
         let now = stamps(dir);
-        let event = if now.1 != seen.1 { "data: reload\n\n" } else if now.0 != seen.0 { "data: css\n\n" } else { ": \n\n" };
+        let event = if now.1 != seen.1 {
+            "data: reload\n\n"
+        } else if now.0 != seen.0 {
+            "data: css\n\n"
+        } else {
+            ": \n\n"
+        };
         seen = now;
         // The idle comment also notices a closed page.
         stream.write_all(event.as_bytes())?;
