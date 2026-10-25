@@ -202,6 +202,8 @@ pub struct Env {
     /// Per `recent` entry, [`Env::assignments`] when it was made; 0 when
     /// unknown.
     recent_at: Vec<u64>,
+    /// [`Env::assignments`] when the log was last cleared or set.
+    recent_from: u64,
     /// Per slot, [`Env::assignments`] at the write its binding came from.
     /// A group end puts back the old one, so a name whose write a group
     /// end undid is not widened.
@@ -225,6 +227,9 @@ pub struct Env {
     /// state a later read may see (catcodes, `\\read`): equal counts
     /// mean an unchanged state.
     pub effective: u64,
+    /// The part of `effective` that a write to a slot made, each one
+    /// logged in `recent`: the rest is state no slot holds.
+    pub slot_changes: u64,
     /// How large a set of meanings or values a join keeps.
     pub sets: SetLimits,
     /// While a package cache is being captured: every slot read, as a bit
@@ -845,6 +850,7 @@ impl Env {
             b.meaning == binding.meaning && same_value(&b.value, &binding.value) && b.may == binding.may
         }) {
             self.effective += 1;
+            self.slot_changes += 1;
         }
         self.recent.push(sym.0);
         self.recent_at.push(self.assignments);
@@ -914,6 +920,7 @@ impl Env {
     /// register slot has).
     pub fn set_value(&mut self, sym: Sym, value: Value, global: bool) {
         self.effective += 1;
+        self.slot_changes += 1;
         if self.tracking.get() {
             self.note_read(sym, ReadKind::Kept);
         }
@@ -931,6 +938,7 @@ impl Env {
     /// one that did not keeps.
     pub fn set_value_in_place(&mut self, sym: Sym, value: Value) {
         self.effective += 1;
+        self.slot_changes += 1;
         self.grow(sym);
         let i = sym.0 as usize;
         self.log(i);
@@ -1161,11 +1169,25 @@ impl Env {
     pub fn set_recent(&mut self, recent: Vec<Sym>) {
         self.recent = recent.into_iter().map(|s| s.0).collect();
         self.recent_at = vec![0; self.recent.len()];
+        self.recent_from = self.assignments;
     }
 
     pub fn clear_recent(&mut self) {
         self.recent.clear();
         self.recent_at.clear();
+        self.recent_from = self.assignments;
+    }
+
+    /// The names written after assignment `at`, sorted, each once, a write
+    /// undone since too; `None` when the log was cleared since.
+    pub fn written_since(&self, at: u64) -> Option<Vec<Sym>> {
+        if self.recent_from > at {
+            return None;
+        }
+        let mut syms = self.recent[self.recent_at.partition_point(|&s| s <= at)..].to_vec();
+        syms.sort_unstable();
+        syms.dedup();
+        Some(syms.into_iter().map(Sym).collect())
     }
 
     pub fn recent_len(&self) -> usize {
@@ -1227,6 +1249,7 @@ impl Env {
     fn wrote_in_place(&mut self, i: usize) {
         self.assignments += 1;
         self.effective += 1;
+        self.slot_changes += 1;
         self.recent.push(i as u32);
         self.recent_at.push(self.assignments);
         self.stamp[i] = self.assignments;

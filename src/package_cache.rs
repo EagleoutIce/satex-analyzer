@@ -1246,6 +1246,7 @@ impl Machine<'_> {
             env,
             definition_sites: _,
             expansion_sites: _,
+            site_writes: _,
             shape_memo: _,
             cond_sites: _,
             // In segment's lists and scalars.

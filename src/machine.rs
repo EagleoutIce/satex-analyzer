@@ -1464,6 +1464,9 @@ pub struct Machine<'a> {
     /// duplicate what it observed.
     definition_sites: crate::fixed::LookupMap<(Span, Sym), usize>,
     expansion_sites: crate::fixed::LookupMap<(Span, Sym), Site>,
+    /// Per site, the names written in the round before its last expansion
+    /// and what they held then, under [`Site::assigned`] of that one.
+    site_writes: HashMap<(Span, Sym), (u64, Rc<[(Sym, Option<Binding>)]>)>,
     /// Hashes of input lists' pending heads, by list and position: a deep
     /// input below a call is hashed once, not at every call.
     shape_memo: std::cell::RefCell<Vec<ShapeSlot>>,
@@ -1815,6 +1818,10 @@ struct Site {
     /// row met the same shape, nesting and bindings.
     effective: u64,
     cycled: u32,
+    /// [`Env::effective`] less its slot writes, [`Env::recent_len`] and
+    /// [`Env::assignments`] at the last expansion here.
+    other: u64,
+    assigned: u64,
     /// [`Env::assignments`] when the recursion through this site began:
     /// a cut widens only what was written after it.
     recent: u64,
@@ -1837,6 +1844,8 @@ impl Site {
             deeper: 0,
             effective: u64::MAX,
             cycled: 0,
+            other: u64::MAX,
+            assigned: u64::MAX,
             recent: 0,
         }
     }
@@ -2181,6 +2190,7 @@ impl<'a> Machine<'a> {
             def_body_depth: None,
             definition_sites: Default::default(),
             expansion_sites: Default::default(),
+            site_writes: Default::default(),
             shape_memo: std::cell::RefCell::new(vec![None; SHAPE_MEMO]),
             cond_sites: Default::default(),
             source_progress: 0,
@@ -8173,6 +8183,34 @@ will look undefined",
     /// and what the rounds before it assigned may hold anything of its
     /// kind (tex.web § 366: the call is replaced by its expansion, so
     /// dropping it would claim it expanded to nothing).
+    /// Whether the round since the last expansion at `key`, with the same
+    /// arguments, input and nesting and no file read, wrote the names the
+    /// round before it wrote, back to what they held then, and changed
+    /// nothing else: TeX is in the state it was in, though it assigned
+    /// (tex.web § 366). Notes this round's writes for the next.
+    fn rewrites_last_round(&mut self, key: (Span, Sym), shape: u64, nest: (usize, usize)) -> bool {
+        let Some(site) = self.expansion_sites.get(&key).copied() else { return false };
+        let repeat = site.shape == shape && site.nest == nest && site.unread > 1;
+        if !repeat || site.effective == self.env.effective {
+            return false;
+        }
+        let names = match self.env.written_since(site.assigned) {
+            Some(names) if site.other == self.env.effective - self.env.slot_changes => names,
+            _ => {
+                self.site_writes.remove(&key);
+                return false;
+            }
+        };
+        let now: Rc<[(Sym, Option<Binding>)]> = names.into_iter().map(|s| (s, self.env.slot_at(s.0))).collect();
+        let same = self.site_writes.get(&key).is_some_and(|(at, then)| {
+            *at == site.assigned
+                && then.len() == now.len()
+                && then.iter().zip(now.iter()).all(|((a, x), (b, y))| a == b && crate::env::same_slot(x, y))
+        });
+        self.site_writes.insert(key, (self.env.assignments, now));
+        same
+    }
+
     fn cut_call(&mut self, sym: Sym, span: Span, key: &'static str, nested: bool, reason: String) {
         self.record_with(Step::Widen, sym, span, || Some("recursion"));
         if self.cfg.verbose >= 4 {
@@ -8390,6 +8428,8 @@ will look undefined",
         let (shape, levels, under) = self.call_shape_hash(&arguments, below);
         let nest = (self.conds.len(), self.env.depth());
         let effective = self.env.effective;
+        let rewritten = self.rewrites_last_round((span, sym), shape, nest);
+        let (other, assigned) = (effective - self.env.slot_changes, self.env.assignments);
         let (shrinking, unread, deeper, cycled) = match self.expansion_sites.get_mut(&(span, sym)) {
             Some(site) => {
                 self.undo.push(Undo::Site((span, sym), *site));
@@ -8403,11 +8443,12 @@ will look undefined",
                 site.deeper = if grew { site.deeper + 1 } else { 0 };
                 let same = site.shape == shape
                     && nest == site.nest
-                    && site.effective == effective
+                    && (site.effective == effective || rewritten)
                     && site.scans == self.step_depth;
                 site.scans = self.step_depth;
                 site.cycled = if same { site.cycled + 1 } else { 0 };
                 (site.shape, site.levels, site.nest, site.effective) = (shape, levels, nest, effective);
+                (site.other, site.assigned) = (other, assigned);
                 (size < std::mem::replace(&mut site.size, size), site.unread, site.deeper, site.cycled)
             }
             None => (true, 1, 0, 0),

@@ -233,6 +233,24 @@ mod self_referential_macros {
         assert_eq!(endless, 1);
     }
 
+    /// A loop that assigns every round but leaves each name as it held it
+    /// a round before is in the state it was in (tex.web § 366), as a
+    /// quark is. pgfmath's `\pgfmath@ensurenumberlength`, handed its own
+    /// sentinel on a path over unknown text, loops so. The cycle cut ends
+    /// it after `cycle_after` repeats, not after the 16 × 16384 rounds a
+    /// loop that writes is otherwise given.
+    #[test]
+    fn a_loop_writing_back_the_same_state_is_a_cycle() {
+        let analysis = Machine::analyze(
+            "\\catcode`\\{=1 \\catcode`\\}=2 \\def\\a{\\count1=3 \\advance\\count1 -1 \\def\\t{x}\\a}\\a",
+            None,
+            &cfg(),
+        );
+        let widened = messages(&analysis, "recursion-widened");
+        assert!(widened.iter().any(|m| m.contains("it meets the state it was in before")), "{widened:?}");
+        assert!(analysis.steps < 2_000, "{} steps", analysis.steps);
+    }
+
     /// With the cycle cut off (`cycle_after: 0`), the quark rule bounds the
     /// same fixed point, and it follows `recursion_depth`, not a hardcoded
     /// constant.

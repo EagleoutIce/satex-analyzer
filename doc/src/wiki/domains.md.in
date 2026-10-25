@@ -610,7 +610,9 @@ dropped, so both go on with the same counters.
 - **Endless loops:** a call that meets a state it was in before
   (`limits.cycle_after`) ends its path only while another path waits to
   read on. A path no other path covers is summarized and goes on, since
-  the repeat may come from satex's own imprecision.
+  the repeat may come from satex's own imprecision. A round that
+  assigns is still such a repeat when it wrote the names the round
+  before wrote, back to what they held then, and changed nothing else.
 - **Unwinding:** every cut (a loop summary, a recursion past
   `limits.expansion_depth`, the line guard) drops token lists and closes
   what their text opened, by identity. Each list records the conditionals,
