@@ -40,8 +40,8 @@
   // playground's Explain panel, its run output and its hover cards.
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   /** TeX source colored like the editor: commands, braces, parameters, comments. */
-  const tex = (text) => esc(text).replace(/(%[^\n]*)|(\\(?:[A-Za-z@_:]+|.))|([{}[\]])|(#+\d)/g, (m, com, cmd, br) =>
-    `<span class="tok-${com ? 'com' : cmd ? 'cmd' : br ? 'br' : 'arg'}">${m}</span>`);
+  const tex = (text, link = false) => esc(text).replace(/(%[^\n]*)|(\\(?:[A-Za-z@_:]+|.))|([{}[\]])|(#+\d)/g, (m, com, cmd, br) =>
+    `<span class="tok-${com ? 'com' : cmd ? 'cmd' : br ? 'br' : 'arg'}">${link && cmd && /^\\[A-Za-z@_:]+$/.test(m) ? `<a class="cs bl" href="#" data-cs="${m}" title="explain ${m}">${m}</a>` : m}</span>`);
   /** `code`, links and bold of satex's Markdown; a `file:line` is a place. */
   const inline = (t) => esc(t).split(/(`[^`]+`)/).map((p, i) => {
     if (!(i % 2)) return p.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
@@ -191,14 +191,14 @@
     if (r.types?.length) rows.push(['types', `<span class="chips">${Object.entries(types).map(([n, t]) => `<span class="x-type"><code>#${n.slice(3)}</code> ${esc(t)}</span>`).join('')}</span>`]);
     if (r.forms?.length) rows.push(['forms', r.forms.map((f) => `<code>${esc(f)}</code>`).join(' ')]);
     if (primitive) rows.push(['body', 'none: a TeX primitive']);
-    else if (r.body != null) rows.push(['body', r.body === '' ? '<span class="muted">empty</span>' : `<pre class="x-body"><code>${tex(r.body)}</code></pre>`]);
+    else if (r.body != null) rows.push(['body', r.body === '' ? '<span class="muted">empty</span>' : `<pre class="x-body"><code>${tex(r.body, true)}</code></pre>`]);
     if (r.by) rows.push(['by', csChip(r.by)]);
     const owner = r.class ? `class ${esc(r.class)}` : r.package ? (r.package === 'kernel' ? 'the kernel' : `package ${esc(r.package)}`) : '';
     if (r.path && r.line) rows.push(['defined at', `${placeLink(r.path, r.line, r.file)}${owner ? ` <span class="muted">· ${owner}</span>` : ''}`]);
     else if (owner) rows.push(['from', owner]);
     if (r.context) rows.push(['context', esc(r.context)]);
     if (r.uses != null) rows.push(['uses', r.uses ? `${r.uses} in this run` : 'none in this run']);
-    if (r.expands?.length) rows.push(['expands', `<span class="chips">${r.expands.map(csChip).join('')}</span>`]);
+    for (const [key, label] of [['expands', 'always expands'], ['may_expand', 'may expand']]) if (r[key]?.length) rows.push([label, `<span class="chips">${r[key].map(csChip).join('')}</span>`]);
     if (r.error) rows.push(['error', `<span class="x-err">${esc(r.error)}</span>`]);
     if (r.reference) rows.push(['docs', `<a href="${esc(r.reference)}" target="_blank" rel="noopener">${esc(r.documentation ?? 'documentation')} ↗</a>`]);
     const tags = [primitive ? 'primitive' : r.tag, r.when && `in the ${r.when}`, r.certain === false && 'uncertain'].filter(Boolean);

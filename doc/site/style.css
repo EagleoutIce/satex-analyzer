@@ -192,6 +192,8 @@ code .arg { font-size: 12px; padding: 0 .3rem; }
 .chips { display: inline-flex; flex-wrap: wrap; gap: .25rem; }
 .x-type { font-size: 12.5px; color: var(--muted); } .x-type code { color: var(--c4); margin-right: .2rem; }
 .cs { display: inline-block; font: 12px/1.6 ui-monospace, Menlo, monospace; padding: 0 .45rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.cs.bl { display: inline; font: inherit; padding: 0; border-radius: 0; background: none; color: inherit; text-decoration: underline dotted; text-underline-offset: 2px; }
+.cs.bl:hover { text-decoration: underline; background: none; }
 .cs:hover { text-decoration: none; background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .place { font: 12.5px ui-monospace, Menlo, monospace; }
 .stale { opacity: .55; transition: opacity var(--quick); }
@@ -520,11 +522,15 @@ details.more[open] > summary { margin-bottom: .3rem; }
 .ts-other[open] > summary { margin-bottom: .2rem; }
 
 /* finding cards, after flowR's: rule first, severity and place at the right, then the message */
-.f-head { display: flex; align-items: center; gap: .5rem; }
-.f-head .rule { font: 600 .82rem ui-monospace, Menlo, monospace; margin-right: auto; overflow-wrap: anywhere; }
+.f-head { display: flex; align-items: baseline; gap: .45rem; }
+.f-head .msg { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.f-head .rn { font-weight: 700; }
+.f-head .msg code, .diagnostics .msg code { font: .85em ui-monospace, Menlo, monospace; }
+.f-head .badge, .f-head .loc { flex: none; }
+.f-head .sev { border: 0; padding: 0; font-size: 0; }
+.f-head .sev::before { content: var(--glyph); font-size: .78rem; }
+.f-head .badge .as-badge { left: auto; right: 0; background: var(--sunk); }
 .f-head .loc { font: 500 .78rem ui-monospace, Menlo, monospace; color: var(--muted); }
-.diagnostics .msg { margin-top: .25rem; overflow-wrap: anywhere; }
-.diagnostics .msg code { font: .85em ui-monospace, Menlo, monospace; }
 .diagnostics li.obj-group { padding: 0; border: 0; background: none; box-shadow: none; cursor: default; margin: 0 0 .4rem; }
 .obj-group > details > .cat-head { text-transform: none; letter-spacing: 0; font-size: 12px; }
 .obj-group > details > .cat-head .cat-count { color: var(--sev); background: color-mix(in srgb, var(--sev) 14%, transparent); }
@@ -539,7 +545,7 @@ details.more[open] > summary { margin-bottom: .3rem; }
 .og-error { --sev: var(--error); } .og-warning { --sev: var(--warning); } .og-info { --sev: var(--info); }
 
 /* findings as a flat list, after flowR's: a thin severity line at the left, even tight gaps, no boxes */
-.diagnostics li:not(.cat-group, .obj-group) { padding: .3rem .4rem .3rem .7rem; margin: 0 0 .2rem; border: 0; border-left: 2px solid var(--sev); border-radius: 0 6px 6px 0; background: none; box-shadow: none; }
+.diagnostics li:not(.cat-group, .obj-group) { padding: .2rem .4rem .2rem .6rem; margin: 0 0 .1rem; border: 0; border-left: 2px solid var(--sev); border-radius: 0 6px 6px 0; background: none; box-shadow: none; }
 .diagnostics li:not(.cat-group, .obj-group):hover, .diagnostics li.open:not(.cat-group, .obj-group) { background: var(--sunk); box-shadow: none; }
 .diagnostics li:hover > .acts, .diagnostics li:focus-within > .acts { background: var(--sunk); }
 .diagnostics li.open .msg + *, .diagnostics li .msg + * { margin-top: .3rem; }

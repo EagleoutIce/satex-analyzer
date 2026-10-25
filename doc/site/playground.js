@@ -564,8 +564,8 @@
     lspStatus.textContent = state.file in state.ro ? 'read-only file' : ds.length ? '' : 'none';
     const fixButton = (f, j, cls) => `<button class="small apply${cls}" data-j="${j}" title="${escape(f.title)}">Fix <span class="fix fix-${f.safety}">${f.safety}</span></button>`;
     const item = (d, i) => `<li class="f-${sev(d)}${d.fixes.length ? ' fixable' : ''}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
-      `<div class="f-head"><code class="rule">${escape(d.code ?? '')}</code><span class="badge"><span class="sev sev-${sev(d)}">${sev(d)}</span>${d.fixes.length ? fixButton(d.fixes[0], 0, ' as-badge') : ''}</span>` +
-      `<b class="loc">${d.range.start.line + 1}:${d.range.start.character + 1}</b></div><div class="msg">${inline(d.message)}</div><span class="acts">` +
+      `<div class="f-head"><span class="msg"><b class="rn">${escape(d.code ?? '')}</b>: ${inline(d.message)}</span><span class="badge"><span class="sev sev-${sev(d)}" title="${sev(d)}" aria-label="${sev(d)}"></span>${d.fixes.length ? fixButton(d.fixes[0], 0, ' as-badge') : ''}</span>` +
+      `<b class="loc">${d.range.start.line + 1}:${d.range.start.character + 1}</b></div><span class="acts">` +
       d.fixes.slice(1).map((f, j) => fixButton(f, j + 1, '')).join('') +
       `<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
       (unfolded.has(key(d)) ? explanation(d) : '') + '</li>';
