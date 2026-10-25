@@ -48,7 +48,7 @@ Fix by renaming or deleting one of them.",
         code: "unused-bibitem",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "a \\bibitem written in the document is never cited",
+        summary: "a `\\bibitem` written in the document is never cited",
         explanation: "\
 A `thebibliography` written by hand lists what it lists, cited or not.  A
 database only contributes what is cited, so its entries are not reported.
@@ -154,7 +154,7 @@ fn duplicate_bibliography_entry(report: &mut Report) {
                     None => continue,
                     Some(at) => {
                         first_item = Some(at);
-                        (*span, format!("`{key}` is already declared by the \\bibitem at {}", report.place(at)))
+                        (*span, format!("`{key}` is already declared by the `\\bibitem` at {}", report.place(at)))
                     }
                 },
                 Declared::Entry { file, line, at } => {
@@ -189,7 +189,7 @@ fn unused_bibitem(report: &mut Report) {
         .map(|o| (o.span, o.key.clone()))
         .collect();
     for (span, key) in unused {
-        let fix = Some(format!("cite `{key}`, or delete its \\bibitem"));
-        report.add_absent("cited", span, &key, format!("\\bibitem `{key}` is never cited"), fix);
+        let fix = Some(format!("cite `{key}`, or delete its `\\bibitem`"));
+        report.add_absent("cited", span, &key, format!("`\\bibitem` `{key}` is never cited"), fix);
     }
 }

@@ -57,7 +57,7 @@ a conditional terminates it.",
         code: "package-after-preamble",
         category: Category::Performance,
         severity: Severity::Warning,
-        summary: "a package is loaded after \\begin{document}",
+        summary: "a package is loaded after `\\begin{document}`",
         explanation: "\
 `\\usepackage` belongs in the preamble.  After `\\begin{document}` LaTeX raises
 `\\usepackage before \\begin{document}` and the package cannot set anything up.
@@ -155,7 +155,7 @@ fn duplicate_package(report: &mut Report) {
             load.span,
             &load.name,
             format!("{} is already loaded{by} at {}", load.name, report.place(at)),
-            Fix::new(format!("delete this \\usepackage{{{}}}", load.name), Applicability::Safe, edits),
+            Fix::new(format!("delete this `\\usepackage{{{}}}`", load.name), Applicability::Safe, edits),
         );
     }
 }
@@ -278,7 +278,7 @@ fn unused_package(report: &mut Report) {
             &load.name,
             format!("{} defines {} names, none of which are used", load.name, names.len()),
             Fix::new(
-                format!("delete \\usepackage{{{}}} if its side effects are not needed", load.name),
+                format!("delete `\\usepackage{{{}}}` if its side effects are not needed", load.name),
                 Applicability::Unsafe,
                 edits,
             ),
@@ -324,8 +324,8 @@ fn package_after_preamble(report: &mut Report) {
         report.add_fix(
             load.span,
             &load.name,
-            format!("{} is loaded after \\begin{{document}}", load.name),
-            Fix::new("move the \\usepackage into the preamble", Applicability::Unsafe, edits),
+            format!("{} is loaded after `\\begin{{document}}`", load.name),
+            Fix::new("move the `\\usepackage` into the preamble", Applicability::Unsafe, edits),
         );
     }
     let refused = refused_loads(report, end);
@@ -334,8 +334,8 @@ fn package_after_preamble(report: &mut Report) {
         report.add_fix(
             load.span,
             &load.name,
-            format!("{} is requested after \\begin{{document}}, where LaTeX refuses it", load.name),
-            Fix::new("move the \\usepackage into the preamble", Applicability::Unsafe, edits),
+            format!("{} is requested after `\\begin{{document}}`, where LaTeX refuses it", load.name),
+            Fix::new("move the `\\usepackage` into the preamble", Applicability::Unsafe, edits),
         );
     }
 }
@@ -508,7 +508,7 @@ fn includeonly_available<'a>(report: &mut Report<'a>) {
     report.add_fix(
         span,
         "",
-        format!("the build reads all {} \\include'd parts", parts.len()),
-        Fix::new("while drafting, list only the parts being written in \\includeonly", Applicability::Unsafe, edits),
+        format!("the build reads all {} `\\include`'d parts", parts.len()),
+        Fix::new("while drafting, list only the parts being written in `\\includeonly`", Applicability::Unsafe, edits),
     );
 }

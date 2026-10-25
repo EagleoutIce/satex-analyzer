@@ -473,7 +473,7 @@ fn space_before_command(report: &mut Report) {
         let footnote = FOOTNOTE.contains(&what.as_str());
         let cost = match footnote {
             true => "so the mark can be set away from the word it belongs to",
-            false => "so the mark can move to the next line, and \\pageref can then name the next page",
+            false => "so the mark can move to the next line, and `\\pageref` can then name the next page",
         };
         let fix = (at.line == span.line).then(|| write_over(&path, at, width, ""));
         report.add_fix(

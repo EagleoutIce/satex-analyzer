@@ -426,5 +426,5 @@ pub fn own_runaway(analysis: &Analysis, d: &crate::facts::Diagnostic) -> Option<
         blank &= c == '\n';
     };
     let first = d.message.split(':').next().unwrap_or(&d.message);
-    Some((at, format!("{first}: the argument of \\{name} opened here never closes, {end}")))
+    Some((at, format!("{first}: the argument of `\\{name}` opened here never closes, {end}")))
 }

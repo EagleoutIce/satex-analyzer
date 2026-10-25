@@ -103,7 +103,7 @@ fn a_solo_end_is_reported() {
     };
     let found = findings(&analysis, "environment-mismatch");
     assert!(
-        found.iter().any(|f| f.contains(r"\begin{document}") && f.contains(r"ended by `\end{itemize}`")),
+        found.iter().any(|f| f.contains(r"\begin{document}") && f.contains(r"ended by \end{itemize}")),
         "{found:?}"
     );
 }
@@ -115,7 +115,7 @@ fn an_environment_never_closed_is_reported() {
     };
     let found = findings(&analysis, "environment-mismatch");
     assert_eq!(found.len(), 1, "{found:?}");
-    assert!(found[0].contains(r"\begin{itemize}") && found[0].contains(r"ended by `\end{document}`"), "{found:?}");
+    assert!(found[0].contains(r"\begin{itemize}") && found[0].contains(r"ended by \end{document}"), "{found:?}");
 }
 
 /// An error inside the environment may have ended it: the mismatch after

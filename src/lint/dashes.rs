@@ -170,8 +170,8 @@ fn run(
     if between == Between::Spaces && n == 1 && numeric_around(view, start, end) {
         let both = quantity_around(view, quantities, start, end);
         let more = match (both, siunitx) {
-            (true, true) => ", or write the whole range with siunitx's \\qtyrange",
-            (true, false) => ", and siunitx sets a range of quantities with \\qtyrange",
+            (true, true) => ", or write the whole range with siunitx's `\\qtyrange`",
+            (true, false) => ", and siunitx sets a range of quantities with `\\qtyrange`",
             _ => "",
         };
         let message = format!("a hyphen between numbers is read as a minus sign, which is set in math mode{more}");

@@ -57,8 +57,8 @@ Fix by declaring the group, or by correcting the name.",
 /// own spelling, read off the same `detail` [`classify`] itself switches on.
 fn emitter(detail: &str) -> &'static str {
     match detail {
-        "special" => "\\special{pdf:…}",
-        _ => "\\pdfliteral",
+        "special" => "`\\special{pdf:…}`",
+        _ => "`\\pdfliteral`",
     }
 }
 

@@ -26,7 +26,7 @@ Fix by declaring the entry, or by correcting the key.",
         code: "shell-escape",
         category: Category::Security,
         severity: Severity::Warning,
-        summary: "the document runs a program through \\write18",
+        summary: "the document runs a program through `\\write18`",
         explanation: "\
 `\\write18` hands its text to the shell.  A run only does that when the engine
 was started with `--shell-escape`, or with `--shell-restricted` and the
@@ -150,7 +150,7 @@ then a warning that names the earlier error.",
         code: "undefined-environment",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "\\begin names an environment that is not defined",
+        summary: "`\\begin` names an environment that is not defined",
         explanation: "\
 `\\begin{name}` expands `\\name`, and nothing defines it.  A real run reports
 `Environment name undefined`.
@@ -198,7 +198,7 @@ Fix by giving all the options to the first load, or by using
         code: "already-defined",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "\\newcommand redefines an existing name",
+        summary: "`\\newcommand` redefines an existing name",
         explanation: "\
 `\\newcommand` refuses to redefine and raises `Command … already defined`.
 
@@ -211,7 +211,7 @@ Fix with `\\renewcommand` if the redefinition is intended, or pick another name.
         code: "not-defined",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "\\renewcommand targets a name that does not exist",
+        summary: "`\\renewcommand` targets a name that does not exist",
         explanation: "\
 `\\renewcommand` requires an existing definition and raises
 `Undefined control sequence`.
@@ -225,7 +225,7 @@ Fix with `\\newcommand`, or load the package that was supposed to define it.",
         code: "undefined-reference",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "\\ref names a label that is never defined",
+        summary: "`\\ref` names a label that is never defined",
         explanation: "\
 No `\\label` in the document or its inputs declares this key, so the reference
 prints `??`.  When the run left a project file unread, the label may stand
@@ -273,7 +273,7 @@ the old value explicitly.  `satex query catcodes` shows the current table.",
         code: "environment-mismatch",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "\\end names an environment other than the one that is open",
+        summary: "`\\end` names an environment other than the one that is open",
         explanation: "\
 Environments nest like brackets: the name `\\end` gives has to match the one
 `\\begin` most recently opened.  chktex tracks this as warnings 9 (`'%s'
@@ -302,7 +302,7 @@ environments first.",
         code: "expl-syntax-left-on",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "\\ExplSyntaxOn is never turned off",
+        summary: "`\\ExplSyntaxOn` is never turned off",
         explanation: "\
 With expl3 syntax on, spaces are ignored and `_` and `:` are letters, so
 ordinary text stops working.
@@ -449,7 +449,7 @@ fn undefined_control_sequences(report: &mut Report) {
             expansion.span,
             &name,
             message,
-            Some(format!("define {name} or load the package that provides it")),
+            Some(format!("define `{name}` or load the package that provides it")),
         );
     }
 }
@@ -568,7 +568,7 @@ fn undefined_environments(report: &mut Report) {
             report.add_doubted(span, &name, message, &cause);
             continue;
         }
-        report.add(span, &name, message, Some(format!("\\newenvironment{{{name}}}{{…}}{{…}}")));
+        report.add(span, &name, message, Some(format!("`\\newenvironment{{{name}}}{{…}}{{…}}`")));
     }
 }
 
@@ -632,7 +632,7 @@ fn option_clash(report: &mut Report) {
             &load.name,
             format!("{} was first loaded at {} without {}", load.name, report.place(at), extra.join(", ")),
             Fix::new(
-                format!("move the options to the first \\usepackage{{{}}}", load.name),
+                format!("move the options to the first `\\usepackage{{{}}}`", load.name),
                 Applicability::Unsafe,
                 edits,
             ),
@@ -657,7 +657,7 @@ fn already_defined(report: &mut Report) {
             span,
             &name,
             format!("{name} is already defined"),
-            Fix::new(format!("use \\renewcommand{{{name}}} instead"), Applicability::Unsafe, edits),
+            Fix::new(format!("use `\\renewcommand{{{name}}}` instead"), Applicability::Unsafe, edits),
         );
     }
     let analysis = report.analysis();
@@ -679,7 +679,7 @@ fn already_defined(report: &mut Report) {
             span,
             &name,
             message,
-            Fix::new(format!("use \\renewcommand{{{name}}} instead"), Applicability::Unsafe, edits),
+            Fix::new(format!("use `\\renewcommand{{{name}}}` instead"), Applicability::Unsafe, edits),
         );
     }
 }
@@ -707,7 +707,7 @@ fn not_defined(report: &mut Report) {
             span,
             &name,
             format!("{name} is not defined here"),
-            Fix::new(format!("use \\newcommand{{{name}}} instead"), Applicability::Safe, edits),
+            Fix::new(format!("use `\\newcommand{{{name}}}` instead"), Applicability::Safe, edits),
         );
     }
 }
@@ -743,8 +743,8 @@ fn undefined_reference(report: &mut Report) {
         })
         .collect();
     for (span, via, key) in missing {
-        let message = format!("no \\label{{{key}}} anywhere in the document{}", via.unwrap_or_default());
-        report.add_absent("defined", span, &key, message, Some(format!("add \\label{{{key}}} where it belongs")));
+        let message = format!("no `\\label{{{key}}}` anywhere in the document{}", via.unwrap_or_default());
+        report.add_absent("defined", span, &key, message, Some(format!("add `\\label{{{key}}}` where it belongs")));
     }
 }
 
@@ -820,7 +820,7 @@ fn expl_syntax_left_on(report: &mut Report) {
         Span::default(),
         "\\ExplSyntaxOn",
         "expl3 syntax is still in force at the end of the run".into(),
-        Some("add \\ExplSyntaxOff".into()),
+        Some("add `\\ExplSyntaxOff`".into()),
     );
 }
 
@@ -905,18 +905,18 @@ fn shell_escape(report: &mut Report) {
                 Some(allowed) if !allowed.contains(&program) => {
                     (Severity::Error, format!("`{program}` is not one of the programs a restricted build runs"))
                 }
-                Some(_) => (Severity::Info, format!("`{program}` runs through \\write18")),
+                Some(_) => (Severity::Info, format!("`{program}` runs through `\\write18`")),
                 // Nothing to read texmf.cnf with, so the allowed list is
                 // unknown: say so rather than call the program disallowed.
                 None => (
                     Severity::Warning,
                     format!(
-                        "`{program}` runs through \\write18, and satex found no kpathsea program \
+                        "`{program}` runs through `\\write18`, and satex found no kpathsea program \
                          to read shell_escape_commands from"
                     ),
                 ),
             },
-            _ => (Severity::Info, format!("`{program}` runs through \\write18")),
+            _ => (Severity::Info, format!("`{program}` runs through `\\write18`")),
         };
         report.add_as(severity, occurrence.span, &program, message, None);
     }
@@ -1009,8 +1009,8 @@ fn environment_mismatch(report: &mut Report) {
             report.add_fix(
                 span,
                 &found,
-                format!("{message}: \\end{{{found}}} closes nothing that is open"),
-                Fix::new(format!("delete this \\end{{{found}}}"), Applicability::Unsafe, edits),
+                format!("{message}: `\\end{{{found}}}` closes nothing that is open"),
+                Fix::new(format!("delete this `\\end{{{found}}}`"), Applicability::Unsafe, edits),
             );
             continue;
         }
@@ -1019,7 +1019,11 @@ fn environment_mismatch(report: &mut Report) {
             span,
             &found,
             message,
-            Fix::new(format!("write \\end{{{open}}}, or close \\begin{{{open}}} first"), Applicability::Unsafe, edits),
+            Fix::new(
+                format!("write `\\end{{{open}}}`, or close `\\begin{{{open}}}` first"),
+                Applicability::Unsafe,
+                edits,
+            ),
         );
     }
 }
@@ -1056,7 +1060,7 @@ fn undefined_glossary_entry(report: &mut Report) {
             span,
             &key,
             format!("no entry `{key}` is declared"),
-            Some(format!("declare it with \\newglossaryentry{{{key}}}")),
+            Some(format!("declare it with `\\newglossaryentry{{{key}}}`")),
         );
     }
 }

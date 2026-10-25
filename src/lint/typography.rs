@@ -18,7 +18,7 @@ pub static RULES: &[Rule] = &[
         code: "ot1-font-encoding",
         category: Category::Style,
         severity: Severity::Info,
-        summary: "accented letters are built with \\accent because the text is set in OT1",
+        summary: "accented letters are built with `\\accent` because the text is set in OT1",
         explanation: "\
 OT1, LaTeX's default text encoding, has no accented letters: it builds each
 one with the `\\accent` primitive (ot1enc.def, fntguide § 5).  TeX does not
@@ -148,7 +148,7 @@ fn ot1_font_encoding(report: &mut Report) {
         span,
         "OT1",
         format!(
-            "the document set {} characters in OT1, first at {}, which builds accented letters with \\accent \
+            "the document set {} characters in OT1, first at {}, which builds accented letters with `\\accent` \
              ({} in that text, first at {}): TeX does not hyphenate words containing them and the PDF text holds \
              accent and letter apart",
             ot1.count,
@@ -158,9 +158,9 @@ fn ot1_font_encoding(report: &mut Report) {
         ),
         Fix::new(
             if ot1.kernel_roman {
-                "load \\usepackage[T1]{fontenc} and \\usepackage{lmodern}"
+                "load `\\usepackage[T1]{fontenc}` and `\\usepackage{lmodern}`"
             } else {
-                "load \\usepackage[T1]{fontenc}"
+                "load `\\usepackage[T1]{fontenc}`"
             },
             Applicability::Unsafe,
             edits,
@@ -188,7 +188,7 @@ fn computer_modern_in_t1(report: &mut Report) {
             ec.count,
             report.place(first)
         ),
-        Fix::new("load \\usepackage{lmodern}, or install cm-super", Applicability::Unsafe, edits),
+        Fix::new("load `\\usepackage{lmodern}`, or install cm-super", Applicability::Unsafe, edits),
     );
 }
 
@@ -221,6 +221,6 @@ fn microtype_available(report: &mut Report) {
             plugins.engine.as_str(),
             analysis.justified_text
         ),
-        Fix::new("load \\usepackage{microtype}", Applicability::Unsafe, edits),
+        Fix::new("load `\\usepackage{microtype}`", Applicability::Unsafe, edits),
     );
 }

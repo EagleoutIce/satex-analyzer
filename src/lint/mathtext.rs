@@ -65,7 +65,7 @@ Fix by putting the script between `{` and `}`.",
         code: "delimiter-not-followed",
         category: Category::Correctness,
         severity: Severity::Warning,
-        summary: "\\left, \\right or \\middle is followed by a brace or a math shift",
+        summary: "`\\left`, `\\right` or `\\middle` is followed by a brace or a math shift",
         explanation: "\
 `\\left`, `\\right` and `\\middle` scan a delimiter: one character with a
 `\\delcode`, or one control sequence made by `\\delimiter` (tex.web § 1161).

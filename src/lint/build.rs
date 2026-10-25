@@ -21,7 +21,7 @@ pub static RULES: &[Rule] = &[
         code: "build-shell-escape-missing",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "the document runs programs through \\write18, but the build does not allow it",
+        summary: "the document runs programs through `\\write18`, but the build does not allow it",
         explanation: "\
 The run reached `\\write18`, which only hands its text to the shell when the
 engine is started with `-shell-escape` (or `-shell-restricted` and a program
@@ -44,7 +44,7 @@ Fix by adding `-shell-escape` to the command, e.g.
         code: "build-shell-escape-unneeded",
         category: Category::Security,
         severity: Severity::Warning,
-        summary: "the build allows \\write18, but the document never uses it",
+        summary: "the build allows `\\write18`, but the document never uses it",
         explanation: "\
 `-shell-escape` lets every package and every `.aux` or `.bbl` line the
 document reads run any program as you.  The run reached no `\\write18`, so the
@@ -405,7 +405,7 @@ fn shell_escape_missing(report: &mut Report) {
                 &rc.path,
                 line,
                 &format!("${name}"),
-                format!("the document runs programs through \\write18, but `${name}` is `{current}`"),
+                format!("the document runs programs through `\\write18`, but `${name}` is `{current}`"),
                 Some(format!("${name} = '{}';", with_option(&current, "-shell-escape"))),
             );
         }
@@ -418,7 +418,7 @@ fn shell_escape_missing(report: &mut Report) {
                 directive.line,
                 &directive.rule,
                 format!(
-                    "the document runs programs through \\write18, but `% arara: {}` has no `shell: yes`",
+                    "the document runs programs through `\\write18`, but `% arara: {}` has no `shell: yes`",
                     directive.rule
                 ),
                 Some(format!("% arara: {}: {{ shell: yes }}", directive.rule)),
@@ -582,7 +582,7 @@ fn engine_mismatch(report: &mut Report) {
                 line,
                 what.as_str(),
                 format!(
-                    "`{what}` waits for a {}, but line {at} of the document sets \\pdfoutput={value}",
+                    "`{what}` waits for a {}, but line {at} of the document sets `\\pdfoutput`={value}",
                     if pdf { "PDF" } else { "DVI file" }
                 ),
                 None,

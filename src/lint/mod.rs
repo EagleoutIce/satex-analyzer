@@ -372,7 +372,7 @@ impl<'a> Report<'a> {
         record.insert("reference".into(), json!(self.reference));
         let origin = self.index.origin(span.file);
         record.insert("origin".into(), json!(origin));
-        record.insert("message".into(), json!(code(&message)));
+        record.insert("message".into(), json!(message));
         if let Some(group) = self.index.group(span) {
             record.insert("group".into(), json!(group));
         }
@@ -383,7 +383,7 @@ impl<'a> Report<'a> {
             !edits.is_empty() && edits.iter().all(|e| self.sources.editable(self.analysis, &e.path))
         });
         let advice = edits.is_some() || origin == "document";
-        record.insert("fix".into(), json!(fix.filter(|_| advice).as_deref().map(code)));
+        record.insert("fix".into(), json!(fix.filter(|_| advice)));
         if let Some((applicability, edits)) = edits {
             debug_assert!(
                 self.rule.fixes.contains(&applicability),
@@ -411,8 +411,8 @@ impl<'a> Report<'a> {
         let defs = &self.analysis.facts.defs;
         let def = defs.iter().find(|d| d.name == sym && self.index().origin(d.span.file) == "document");
         let note = match def {
-            Some(d) => format!(" (via {name}, defined at {})", self.place(d.span)),
-            None => format!(" (via {name})"),
+            Some(d) => format!(" (via `{name}`, defined at {})", self.place(d.span)),
+            None => format!(" (via `{name}`)"),
         };
         (at, Some(note))
     }
@@ -475,64 +475,10 @@ impl<'a> Report<'a> {
         record.insert("name".into(), json!(name));
         record.insert("reference".into(), json!(self.reference));
         record.insert("origin".into(), json!("build"));
-        record.insert("message".into(), json!(code(&message)));
-        record.insert("fix".into(), json!(fix.as_deref().map(code)));
+        record.insert("message".into(), json!(message));
+        record.insert("fix".into(), json!(fix));
         self.out.push(record);
     }
-}
-
-/// `text` with each control sequence outside backticks, and the groups
-/// right after it, in backticks: code font in every front end.
-fn code(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 8);
-    for (i, part) in text.split('`').enumerate() {
-        if i > 0 {
-            out.push('`');
-        }
-        let mut rest = part;
-        while let Some(at) = rest.find('\\').filter(|_| i % 2 == 0) {
-            let end = at + cs_len(&rest[at..]);
-            out.push_str(&rest[..at]);
-            out.extend(['`'].into_iter().chain(rest[at..end].chars()).chain(['`']));
-            rest = &rest[end..];
-        }
-        out.push_str(rest);
-    }
-    out
-}
-
-/// The length of the control sequence `s` starts with, with the brace or
-/// bracket groups right after it: `\usepackage[T1]{fontenc}`.
-fn cs_len(s: &str) -> usize {
-    let b = s.as_bytes();
-    let letter = |i: usize| {
-        b.get(i).is_some_and(|&c| {
-            c.is_ascii_alphabetic()
-                || c == b'@'
-                || c == b'_'
-                || (c == b':' && i > 1 && b.get(i + 1).is_some_and(u8::is_ascii_alphabetic))
-        })
-    };
-    let mut end = 1;
-    if letter(1) {
-        while letter(end) {
-            end += 1;
-        }
-    } else if let Some(c) = s[1..].chars().next() {
-        end += c.len_utf8();
-    }
-    while let Some(&open) = b.get(end).filter(|c| matches!(c, b'{' | b'[')) {
-        let close = if open == b'{' { b'}' } else { b']' };
-        let mut depth = 0i32;
-        let Some(len) = b[end..].iter().position(|&c| {
-            depth += i32::from(c == open) - i32::from(c == close);
-            depth == 0
-        }) else {
-            break;
-        };
-        end += len + 1;
-    }
-    end
 }
 
 pub fn lint(analysis: &Analysis) -> Vec<Record> {
@@ -677,12 +623,6 @@ pub fn explanation(code: &str) -> Option<&'static Rule> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn control_sequences_are_code() {
-        let code = super::code;
-        assert_eq!(code("delete \\usepackage[T1]{fontenc} and `\\x`"), "delete `\\usepackage[T1]{fontenc}` and `\\x`");
-        assert_eq!(code("\\tl_set:Nn: \\\\ ends \\x{y"), "`\\tl_set:Nn`: `\\\\` ends `\\x`{y");
-    }
 
     /// Messages are short sentences: no string literal of a rule joins
     /// clauses with `;`.  Explanations and tests are prose of their own.

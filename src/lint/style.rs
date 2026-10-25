@@ -184,7 +184,8 @@ fn stray_space(report: &mut Report) {
                     (true, false) => "may insert",
                 };
                 let name = report.cs(def.name);
-                let message = format!("{name}'s body ends a line without `%`, so using {name} {verb} a space there");
+                let message =
+                    format!("`{name}`'s body ends a line without `%`, so using `{name}` {verb} a space there");
                 // A body whose `}` starts the next line closes on this one instead.
                 let closes = i + 1 == body.len()
                     && text.as_deref().is_some_and(|t| t.line(tok.span.line + 1).trim_start().starts_with('}'));
@@ -236,7 +237,12 @@ fn unused_label(report: &mut Report) {
             continue;
         }
         let edits = report.edits().delete_command(span, &key);
-        report.add_fix(span, &key, message, Fix::new(format!("delete \\label{{{key}}}"), Applicability::Unsafe, edits));
+        report.add_fix(
+            span,
+            &key,
+            message,
+            Fix::new(format!("delete `\\label{{{key}}}`"), Applicability::Unsafe, edits),
+        );
     }
 }
 
@@ -259,7 +265,7 @@ fn group_local_definition(report: &mut Report) {
             def.span,
             &name,
             format!("{name} is defined inside a group and disappears when it closes"),
-            Some("move it out of the group, or write \\global before it".to_string()),
+            Some("move it out of the group, or write `\\global` before it".to_string()),
         );
     }
 }
@@ -269,22 +275,22 @@ fn group_local_definition(report: &mut Report) {
 /// Companion).  `latex_alternatives` in `satex.yaml` adds to this or
 /// overrides an entry.
 const LATEX_ALTERNATIVES: &[(&str, &str)] = &[
-    ("above", "\\frac"),
-    ("advance", "\\addtocounter or \\addtolength"),
-    ("chardef", "\\newcommand"),
-    ("copy", "\\usebox"),
-    ("count", "\\newcounter and \\value"),
-    ("countdef", "\\newcounter"),
-    ("cr", "\\\\"),
-    ("crcr", "\\\\"),
-    ("csname", "\\@nameuse"),
-    ("dimen", "\\newlength"),
-    ("dimendef", "\\newlength"),
-    ("divide", "\\setlength with calc"),
-    ("font", "\\newfont or \\selectfont"),
-    ("hskip", "\\hspace"),
-    ("vskip", "\\vspace"),
-    ("openout", "\\newwrite"),
+    ("above", "`\\frac`"),
+    ("advance", "`\\addtocounter` or `\\addtolength`"),
+    ("chardef", "`\\newcommand`"),
+    ("copy", "`\\usebox`"),
+    ("count", "`\\newcounter` and `\\value`"),
+    ("countdef", "`\\newcounter`"),
+    ("cr", "`\\\\`"),
+    ("crcr", "`\\\\`"),
+    ("csname", "`\\@nameuse`"),
+    ("dimen", "`\\newlength`"),
+    ("dimendef", "`\\newlength`"),
+    ("divide", "`\\setlength` with calc"),
+    ("font", "`\\newfont` or `\\selectfont`"),
+    ("hskip", "`\\hspace`"),
+    ("vskip", "`\\vspace`"),
+    ("openout", "`\\newwrite`"),
 ];
 
 // The rest of chktex's `Primitives` list has no LaTeX interface at all:
@@ -346,7 +352,7 @@ fn primitive_tex_command(report: &mut Report) {
         });
         let (message, fix) = match alternate {
             Some((role, (purpose, found))) => (
-                format!("{name} is plain TeX. Here it {purpose}"),
+                format!("`{name}` is plain TeX. Here it {purpose}"),
                 found.map(|sym| {
                     let edits = report.edits().csname(expansion.span, role, sym);
                     let spelled = interfaces.entry(sym).or_insert_with(|| interface(analysis, sym)).clone();
@@ -354,10 +360,10 @@ fn primitive_tex_command(report: &mut Report) {
                 }),
             ),
             None if alternative.is_empty() => {
-                (format!("{name} is plain TeX, and LaTeX has no interface of its own for it"), None)
+                (format!("`{name}` is plain TeX, and LaTeX has no interface of its own for it"), None)
             }
             None => (
-                format!("{name} is plain TeX, and LaTeX has its own interface for this"),
+                format!("`{name}` is plain TeX, and LaTeX has its own interface for this"),
                 Some(Fix::new(format!("use {alternative}"), Applicability::Unsafe, None)),
             ),
         };
@@ -387,10 +393,10 @@ fn csname_alternative(analysis: &Analysis, role: CsnameRole) -> (&'static str, O
             ("defines a control sequence by name globally", &["csgdef"])
         }
         CsnameRole::Define { global: false, expand: true } => {
-            ("defines a control sequence by name with \\edef", &["csedef"])
+            ("defines a control sequence by name with `\\edef`", &["csedef"])
         }
         CsnameRole::Define { global: true, expand: true } => {
-            ("defines a control sequence by name with \\xdef", &["csxdef"])
+            ("defines a control sequence by name with `\\xdef`", &["csxdef"])
         }
         CsnameRole::Let => ("lets a control sequence named by text", &["cslet"]),
         CsnameRole::LetTo => ("lets a control sequence to one named by text", &["letcs"]),
@@ -411,7 +417,7 @@ fn interface(analysis: &Analysis, sym: crate::tex::Sym) -> String {
         .find(|def| def.name == sym)
         .and_then(|def| def.package)
         .map(|package| format!(" ({})", analysis.interner.name(package)));
-    format!("{}{}", analysis.interner.cs(sym), package.unwrap_or_default())
+    format!("`{}`{}", analysis.interner.cs(sym), package.unwrap_or_default())
 }
 
 /// Whether `name` (a control word, as [`Report::cs`] writes it) is one a
@@ -481,7 +487,7 @@ fn unused_definition(report: &mut Report) {
             def.span,
             &name,
             format!("{name} is never used"),
-            Fix::new(format!("delete {name}"), Applicability::Unsafe, edits),
+            Fix::new(format!("delete `{name}`"), Applicability::Unsafe, edits),
         );
     }
 }
@@ -519,7 +525,7 @@ fn dead_definition(report: &mut Report) {
                 first.span,
                 &rendered,
                 format!("{rendered} is redefined at {} before anything uses it", report.place(second.span)),
-                Fix::new(format!("delete this definition of {rendered}"), applicability, edits),
+                Fix::new(format!("delete this definition of `{rendered}`"), applicability, edits),
             );
         }
     }

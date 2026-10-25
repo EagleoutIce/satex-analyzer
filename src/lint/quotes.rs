@@ -287,7 +287,7 @@ fn shown(want: &str) -> String {
 /// How the document should spell the mark instead, given what it loaded.
 fn advice(enquote: bool, want: &str) -> String {
     match enquote {
-        true => format!("write {}, or \\enquote{{…}} from csquotes", shown(want)),
+        true => format!("write {}, or `\\enquote{{…}}` from csquotes", shown(want)),
         false => format!("write {}", shown(want)),
     }
 }
@@ -465,7 +465,7 @@ fn csquotes_available(report: &mut Report) {
     let Some(span) = first else { return };
     let language = ["babel", "polyglossia"].iter().find(|name| loaded(analysis, name));
     let follows = match language {
-        Some(package) => format!(", and \\enquote sets the marks {package} asks for in the language in force"),
+        Some(package) => format!(", and `\\enquote` sets the marks {package} asks for in the language in force"),
         None => String::new(),
     };
     let edits = report.edits().ensure_package("csquotes");
@@ -473,6 +473,6 @@ fn csquotes_available(report: &mut Report) {
         span,
         "csquotes",
         format!("the document sets {count} quotation marks by hand and csquotes is not loaded{follows}"),
-        Fix::new("load \\usepackage{csquotes} and write \\enquote{…}", Applicability::Unsafe, edits),
+        Fix::new("load `\\usepackage{csquotes}` and write `\\enquote{…}`", Applicability::Unsafe, edits),
     );
 }

@@ -1342,7 +1342,7 @@ fn an_unclosed_argument_is_the_document_s_error() {
         own["message"]
             .as_str()
             .unwrap_or_default()
-            .contains("the argument of \\pgfkeys opened here never closes, the file ends inside it"),
+            .contains("the argument of `\\pgfkeys` opened here never closes, the file ends inside it"),
         "{own}"
     );
     assert_eq!(own["range"]["start"]["line"], 3, "{own}");
