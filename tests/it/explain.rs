@@ -869,3 +869,16 @@ fn every_builtin_primitive_has_a_description() {
         missing.join("\n")
     );
 }
+
+#[test]
+fn expands_splits_always_from_conditional_arms() {
+    // Meanings decide: `\ifx` opens an arm and `\fi` closes it, so `\p` runs
+    // whatever the test says and `\q` only in the taken arm.
+    let analysis = analyze(r"\def\p{P}\def\q{Q}\def\r{R}\def\a{\p\ifx\p\p\q\else\r\fi\p}\a");
+    let record = explain_one(&analysis, "a");
+    let names = |field| -> Vec<&str> {
+        record.get(field).and_then(Json::as_array).map_or(vec![], |a| a.iter().map(|v| v.as_str().unwrap()).collect())
+    };
+    assert_eq!(names("expands"), vec![r"\p"]);
+    assert_eq!(names("may_expand"), vec![r"\q"]);
+}

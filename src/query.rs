@@ -2517,24 +2517,42 @@ fn effective_of(
 /// `calls` (the names its body merely names): every [`crate::facts::Expansion`]
 /// recorded with this macro as its caller (`within`), deduplicated and
 /// capped so the record stays a summary rather than a full trace.  Empty for
-/// a macro this run never invoked, even one with calls in its body.
-fn expands_of(analysis: &Analysis, sym: crate::tex::Sym) -> Vec<Json> {
-    let mut seen = std::collections::BTreeSet::new();
-    let mut out = Vec::new();
-    for expansion in &analysis.facts.expansions {
-        if expansion.within != Some(sym) {
-            continue;
-        }
-        let name = analysis.interner.cs(expansion.name);
-        if !seen.insert(name.clone()) {
-            continue;
-        }
-        out.push(json!(name));
-        if out.len() >= 12 {
-            break;
+/// a macro this run never invoked, even one with calls in its body.  Split by
+/// the body's conditional nesting, read from meanings: a name outside every
+/// `\if…` arm always runs (`expands`), one inside an arm may (`may_expand`).
+fn insert_expands(record: &mut Record, analysis: &Analysis, sym: Sym, mac: &crate::tex::MacroDef) {
+    use crate::builtins::Primitive as P;
+    let mut always = BTreeSet::new();
+    let mut depth = 0usize;
+    for token in mac.replacement_text.iter() {
+        let crate::tex::Tok::Cs(name) = token.tok else { continue };
+        match analysis.env.meaning(name) {
+            Meaning::Primitive(P::If(_)) => depth += 1,
+            Meaning::Primitive(P::Fi) => depth = depth.saturating_sub(1),
+            Meaning::Primitive(P::Else | P::Or) => {}
+            _ if depth == 0 => {
+                always.insert(name);
+            }
+            _ => {}
         }
     }
-    out
+    let mut seen = BTreeSet::new();
+    let (mut definite, mut potential) = (Vec::new(), Vec::new());
+    for expansion in &analysis.facts.expansions {
+        // The conditionals themselves are the split, not a callee.
+        let test =
+            matches!(analysis.env.meaning(expansion.name), Meaning::Primitive(P::If(_) | P::Else | P::Or | P::Fi));
+        if expansion.within != Some(sym) || test || !seen.insert(expansion.name) || seen.len() > 12 {
+            continue;
+        }
+        let list = if always.contains(&expansion.name) { &mut definite } else { &mut potential };
+        list.push(json!(analysis.interner.cs(expansion.name)));
+    }
+    for (key, list) in [("expands", definite), ("may_expand", potential)] {
+        if !list.is_empty() {
+            record.insert(key.into(), json!(list));
+        }
+    }
 }
 
 /// `body` and, when the meaning is a primitive rather than a macro, the
@@ -2722,9 +2740,8 @@ fn record_for_def(analysis: &Analysis, def: &crate::facts::Definition, window: W
     // What this run actually expanded while executing the body, not what
     // the body merely names (that duplicated this and is what the `calls`
     // query is for).
-    let expanded = expands_of(analysis, def.name);
-    if !expanded.is_empty() {
-        record.insert("expands".into(), json!(expanded));
+    if let Some(mac) = def.mac.as_deref() {
+        insert_expands(&mut record, analysis, def.name, mac);
     }
     let package_name = def.package.map(|p| analysis.interner.name(p));
     let kernel = is_kernel_file(analysis, def.span.file);
@@ -2912,11 +2929,8 @@ fn record_for_meaning(analysis: &Analysis, sym: Sym, window: Window, meaning: Me
         record.remove("tag");
         record.insert("kind".into(), json!("primitive"));
     }
-    if meaning.as_macro().is_some() {
-        let expanded = expands_of(analysis, sym);
-        if !expanded.is_empty() {
-            record.insert("expands".into(), json!(expanded));
-        }
+    if let Some(mac) = meaning.as_macro() {
+        insert_expands(&mut record, analysis, sym, mac);
     }
     document(&mut record, analysis, sym, None, false, &meaning, true);
     Some(record)

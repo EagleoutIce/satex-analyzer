@@ -137,11 +137,11 @@ fn location(record: &Record) -> String {
 }
 
 #[rustfmt::skip]
-const COLUMNS: [&str; 46] = [
+const COLUMNS: [&str; 47] = [
     "index", "warning", "covered", "rules", "id", "step", "severity", "category", "code", "kind", "status",
     "tag", "name", "callee", "key", "subject", "for", "when", "context", "redefined", "effective", "error",
     "signature", "roles", "types", "parameters", "arity", "takes", "uses", "count", "value", "default", "governs", "package",
-    "class", "by", "detail", "fix", "message", "does", "documentation", "expands", "body", "reference", "root",
+    "class", "by", "detail", "fix", "message", "does", "documentation", "expands", "may_expand", "body", "reference", "root",
     "file",
 ];
 
@@ -178,8 +178,19 @@ fn terminal_width() -> usize {
         .unwrap_or(DEFAULT_WIDTH)
 }
 
-const SHRINK_FIRST: [&str; 10] =
-    ["body", "detail", "parameters", "signature", "effective", "does", "documentation", "fix", "expands", "path"];
+const SHRINK_FIRST: [&str; 11] = [
+    "body",
+    "detail",
+    "parameters",
+    "signature",
+    "effective",
+    "does",
+    "documentation",
+    "fix",
+    "expands",
+    "may_expand",
+    "path",
+];
 
 /// Free text gives way before the columns that identify a row.
 fn shrink_rank(column: &str) -> usize {
