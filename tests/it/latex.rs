@@ -3619,3 +3619,26 @@ fn forced_breaks_in_vadjust_material_fire_the_output() {
     );
     assert_eq!(body(&a, "so"), "[-10004][-10003][-10001]");
 }
+
+/// `pretex` is read before the document's first line (latexmk's
+/// `-usepretex`): a switch it defines decides the document's test.
+#[test]
+fn pretex_code_runs_before_the_document() {
+    let mut cfg = crate::support::config();
+    cfg.pretex = "\\def\\draft{}".into();
+    let a = Machine::analyze("\\ifdefined\\draft\\def\\mode{draft}\\else\\def\\mode{final}\\fi\n", None, &cfg);
+    assert_eq!(body(&a, "mode"), "draft");
+}
+
+/// tagpdf's namespace id under `\DocumentMetadata`: `\int_rand:n` past
+/// 2^17 takes `\uniformdeviate`'s digits apart (`\__fp_randint_split_o:Nw`
+/// reads the first one) and puts them back together. pdflatex: no error.
+#[test]
+fn a_wide_random_integer_is_taken_apart_and_put_back_together() {
+    let analysis = Machine::analyze(
+        "\\documentclass{article}\n\\ExplSyntaxOn\n\\int_set:Nn \\l_tmpa_int {\\int_rand:n{16777215}}\n\\ExplSyntaxOff\n\\begin{document}x\\end{document}\n",
+        None,
+        &crate::support::config(),
+    );
+    assert!(broken_gaps(&analysis).is_empty(), "{:?}", broken_gaps(&analysis));
+}

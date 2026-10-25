@@ -15,8 +15,18 @@ use crate::value::{
 /// ([`Machine::digits_in`]).
 pub(crate) const TYPED_DIGITS: &str = "\u{2}unknown digits:";
 
-/// The number places `[i, j)` of a `k`-digit number in `num` spell.
+/// The number places `[i, j)` of a `k`-digit number in `num` spell. A
+/// length `k` of 0 is one not known, of at least two digits, and `j` of 0
+/// then the end.
 fn places(num: Num, (k, i, j): (u32, u32, u32)) -> Num {
+    if k == 0 {
+        return match (i, j) {
+            (0, 0) => num,
+            (0, j) => Num::range(10i64.pow(j - 1), 10i64.pow(j) - 1),
+            (_, 0) => Num::range(0, num.hi.max(0)),
+            _ => Num::range(0, 10i64.pow(j - i) - 1),
+        };
+    }
     let (p, m) = (10i64.pow(k - j), 10i64.pow(j - i));
     let (lo, hi) = (num.lo.max(0) / p, num.hi.max(0) / p);
     match lo / m == hi / m {
@@ -934,10 +944,11 @@ impl Machine<'_> {
     }
 
     /// What TeX may read as the first token of the digits `whole` stands
-    /// for, which lie in `num`: one arm per sign, zero and length, each
-    /// with the interval `whole` has on it and the tokens it spells. In
-    /// an arm of `k > 1` digits these are its first place and the rest,
-    /// slices of `whole` ([`Machine::slice_token`]).
+    /// for, which lie in `num`: one arm for a sign, for one digit and for
+    /// several, each with the interval `whole` has on it and the tokens it
+    /// spells. Several digits are its first place and the rest, slices of
+    /// `whole` ([`Machine::slice_token`]) of the length both ends have, or
+    /// of one not known.
     pub(crate) fn digit_arms(&mut self, whole: Sym, num: Num, span: Span) -> Vec<(Num, Vec<Token>)> {
         let mut arms = Vec::new();
         if num.lo < 0 {
@@ -946,22 +957,15 @@ impl Machine<'_> {
             text.extend(self.digits_in(magnitude, span));
             arms.push((Num::range(num.lo, num.hi.min(-1)), text));
         }
-        if num.lo <= 0 && num.hi >= 0 {
-            arms.push((Num::exact(0), self.text_tokens("0", span)));
+        if num.hi >= 0 && num.lo <= 9 {
+            arms.push((Num::range(num.lo.max(0), num.hi.min(9)), vec![Token::new(Tok::Cs(whole), span)]));
         }
-        for k in 1..=19u32 {
-            let p = 10i64.saturating_pow(k - 1);
-            let (a, b) = (num.lo.max(p), num.hi.min(p.saturating_mul(10) - 1));
-            if a > b {
-                continue;
-            }
-            let part = Num::range(a, b);
-            let text = match k {
-                1 => vec![Token::new(Tok::Cs(whole), span)],
-                _ => {
-                    vec![self.slice_token(whole, part, (k, 0, 1), span), self.slice_token(whole, part, (k, 1, k), span)]
-                }
-            };
+        if num.hi >= 10 {
+            let part = Num::range(num.lo.max(10), num.hi);
+            let len = |n: i64| n.to_string().len() as u32;
+            let k = if len(part.lo) == len(part.hi) { len(part.hi) } else { 0 };
+            let text =
+                vec![self.slice_token(whole, part, (k, 0, 1), span), self.slice_token(whole, part, (k, 1, k), span)];
             arms.push((part, text));
         }
         arms

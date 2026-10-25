@@ -2654,6 +2654,11 @@ impl<'a> Machine<'a> {
             m.run_tokens(toks);
             m.out.steps = 0;
         }
+        let cfg = m.cfg;
+        if !cfg.pretex.is_empty() {
+            let toks = m.tokenize(&cfg.pretex);
+            m.push_tokens(toks.into());
+        }
         // `--steps` counts the document's tokens, not the job's nor what
         // installing the format took.
         m.read = 0;
@@ -8953,6 +8958,40 @@ will look undefined",
             Some(t) if let Some(num) = t.cs().and_then(|sym| self.typed_digits_of(sym)) => {
                 let sym = t.cs().expect("typed digits are a name");
                 if let Some((whole, k, i, j)) = self.typed_slice(sym) {
+                    // Places from `i` to the end of a number of a length not
+                    // known: one when it has `i + 1` digits, else that place
+                    // and the rest, an arm each.
+                    if k == 0 && j == 0 {
+                        let whole_num = self.typed_digits_of(whole).unwrap_or(num);
+                        let q = 10i64.saturating_pow(i + 1);
+                        let mut arms = Vec::new();
+                        if whole_num.lo < q {
+                            arms.push((crate::value::Num::range(whole_num.lo, whole_num.hi.min(q - 1)), vec![t]));
+                        }
+                        let more = crate::value::Num::range(whole_num.lo.max(q), whole_num.hi);
+                        if more.lo <= more.hi {
+                            let first = self.slice_token(whole, more, (0, i, i + 1), t.span);
+                            let rest = self.slice_token(whole, more, (0, i + 1, 0), t.span);
+                            arms.push((more, vec![first, rest]));
+                        }
+                        if let [(_, text)] = &arms[..] {
+                            if text.len() == 1 {
+                                return vec![t];
+                            }
+                            let text = text.clone();
+                            self.unread_all(&text);
+                            return self.read_undelimited();
+                        }
+                        if self.split(sym, t.span, arms.len(), |m, arm| {
+                            let (part, text) = &arms[arm];
+                            m.refine_value(whole, crate::value::Value::from_num(crate::value::Quantity::Int, *part));
+                            m.unread_all(text);
+                            true
+                        }) {
+                            return self.read_undelimited();
+                        }
+                        return vec![t];
+                    }
                     if j - i > 1 {
                         let whole_num = self.typed_digits_of(whole).unwrap_or(num);
                         let first = self.slice_token(whole, whole_num, (k, i, i + 1), t.span);
@@ -8972,12 +9011,17 @@ will look undefined",
                     return self.read_undelimited();
                 }
                 // Digits of any length (a 32-bit value nothing bounds): a split
-                // keeps nothing of their bound and costs a path per length,
-                // so they stay one argument, an assumption said once below.
+                // keeps nothing of their bound, so they stay one argument, an
+                // assumption said once below.
                 let any = |lo: i64, hi: i64| lo <= 1 && hi >= 1_000_000_000;
                 let unbounded = any(num.lo.max(1), num.hi)
                     && (num.lo >= 0 || any(num.hi.min(-1).saturating_neg(), num.lo.saturating_neg()));
                 let arms = if unbounded { Vec::new() } else { self.digit_arms(sym, num, t.span) };
+                if let [(_, text)] = &arms[..] {
+                    let text = text.clone();
+                    self.unread_all(&text);
+                    return self.read_undelimited();
+                }
                 if !unbounded
                     && self.split(sym, t.span, arms.len(), |m, arm| {
                         let (part, text) = &arms[arm];
