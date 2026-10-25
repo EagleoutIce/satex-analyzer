@@ -244,6 +244,11 @@ pub enum State {
 }
 
 pub fn probe(analysis: &Analysis, sym: Sym, at: State) -> Option<Probed> {
+    // A conditional reads a test, then skips text (tex.web §§ 494-500):
+    // what it skips is no argument (a `\newif` switch is `\iffalse`).
+    if matches!(analysis.env.meaning(sym).prim(), Some(crate::builtins::Primitive::If(_))) {
+        return None;
+    }
     if let Some(found) = analysis.probes.lock().ok().and_then(|p| p.get(&(sym, at)).cloned()) {
         return found;
     }
