@@ -1425,8 +1425,15 @@ impl Machine<'_> {
         span: Span,
         depth: (usize, usize, usize),
     ) -> Next {
-        let written = self.env.recent_since(paths.stopped[l].recent);
+        // A name the pass wrote and certainly put back to what the summary
+        // holds (a nesting depth up and down again) stays as it is. An
+        // unknown or joined value equal to the summary's is no such value:
+        // it may differ in what it stands for, with the names it goes with.
         let summary = paths.stopped[l].joined.env.clone();
+        let differ: std::collections::HashSet<Sym> =
+            self.env.path(fork).differing_over(&summary, |s| Some(self.env.at_fork(fork, s))).into_iter().collect();
+        let mut written = self.env.recent_since(paths.stopped[l].recent);
+        written.retain(|s| differ.contains(s) || !self.env.slot(*s).is_some_and(|b| b.certain));
         let syms = self.typed_syms();
         if self.cfg.verbose >= 4 {
             crate::progress::note!("satex: loop at {span:?} met again at {depth:?}, covered by its summary");

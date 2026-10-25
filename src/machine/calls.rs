@@ -115,9 +115,16 @@ impl Machine<'_> {
         (def, span, h.finish())
     }
 
+    /// `limits.call_summary_after` for a call the main loop expands, 0 for
+    /// one a scan expands: the scan reads its text, so a run of it ends
+    /// with the scanning command, which a summary would skip.
+    fn summary_after(&self) -> usize {
+        if self.step_depth == 1 { usize::from(self.limits.call_summary_after) } else { 0 }
+    }
+
     /// As a call's body is pushed: record the run while runs are missing.
     pub(crate) fn record_call(&mut self, key: CallKey, unknown: bool) {
-        let needed = usize::from(self.limits.call_summary_after);
+        let needed = self.summary_after();
         let runs = self.call_runs.entry(key).or_default();
         if !runs.leaky && runs.runs.len() + runs.active < needed {
             runs.active += 1;
@@ -149,7 +156,7 @@ impl Machine<'_> {
     /// A call met again with unknown operands: its recorded runs, joined,
     /// stand for it. `true` when they do.
     pub(crate) fn summarize_call(&mut self, key: CallKey, arguments: &[Vec<Token>]) -> bool {
-        let needed = usize::from(self.limits.call_summary_after);
+        let needed = self.summary_after();
         let Some(runs) = self.call_runs.get(&key) else { return false };
         if needed == 0 || runs.leaky || runs.runs.len() < needed {
             return false;

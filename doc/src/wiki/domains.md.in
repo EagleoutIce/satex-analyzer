@@ -517,6 +517,8 @@ runs instead of running on.
   read. A run over known operands is not recorded: what it wrote holds for
   those values alone, so joining it into a call on unknown ones would be
   silently wrong.
+  Only calls the main loop expands are recorded and summarized. A call a scan expands (`\ht\@currbox`) gives its text to that scan.
+  Its run would end with the scanning command and record that command's assignment, and a summary would leave the scan without the text it reads.
 - **When it applies.** On the third call and later, and only if an operand
   is unknown: an argument holds unknown text, or a name the runs read holds
   unknown text or several meanings. A number not known exactly does not
@@ -869,6 +871,10 @@ whose rounds land on different sites.  Such a loop meets its loop head
 again when it is decided by an undecided conditional, since paths meet by
 what is left to read, and is then analyzed to a fixpoint.  Only a loop that
 never meets a split is left to the stall limit.
+
+A pass met again after its loop was summarized widens the names it left different from the summary, and the names it left with an uncertain value (joined, widened or unknown).
+An uncertain value equal to the summary's is equal as an abstraction only: it may stand for another value, tied to names that differ (pgfmath's current token and its number register).
+A certain value equal to the summary's is the summary's value, so it stays.
 
 ## Soundness invariant
 
