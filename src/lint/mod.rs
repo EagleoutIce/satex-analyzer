@@ -17,7 +17,7 @@ pub mod pdf;
 pub mod performance;
 pub mod precision;
 pub mod quotes;
-mod shared;
+pub(crate) mod shared;
 pub mod sourcetext;
 pub mod spacing;
 pub mod style;

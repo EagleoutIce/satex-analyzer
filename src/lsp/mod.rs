@@ -595,6 +595,9 @@ impl Engine {
             (None, false) => Vec::new(),
         };
         let mut tried = Vec::new();
+        // The first root whose run began the document: an input no root
+        // reads is read after its preamble, as that root would read it.
+        let mut preamble: Option<PathBuf> = None;
         let dir = if crate::paths::within(&self.root, path) { self.root.clone() } else { crate::paths::dir_of(path) };
         let searched = move || discovery::scan(&dir).candidate_roots(path);
         let candidates = known.into_iter().chain(input.then(searched).into_iter().flatten());
@@ -607,6 +610,9 @@ impl Engine {
             if self.runs.get(&root_key).is_some_and(|r| r.reads.contains(&key)) {
                 self.owners.insert(key, root);
                 return run;
+            }
+            if preamble.is_none() && crate::lint::shared::document_start(&run.0).is_some() {
+                preamble = Some(root.clone());
             }
             // A root that does not read the file is dropped.
             drop(run);
@@ -628,6 +634,17 @@ impl Engine {
             );
             crate::overlay::set(&root, text);
             return self.run(&root);
+        }
+        // LaTeX's own hook reads it once the root's preamble is done.
+        if input && let Some(root) = preamble {
+            let dir = crate::paths::dir_of(&root);
+            let name = |p: &Path| p.strip_prefix(&dir).unwrap_or(p).with_extension("").display().to_string();
+            let stem = root.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            let part = dir.join(format!(".satex-part-{stem}.tex"));
+            let text =
+                format!("\\AddToHook{{begindocument/end}}{{\\input{{{}}}}}\\input{{{}}}\n", name(path), name(&root));
+            crate::overlay::set(&part, text);
+            return self.run(&part);
         }
         self.run(path)
     }

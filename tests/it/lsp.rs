@@ -664,20 +664,38 @@ fn labels(items: &[Value]) -> Vec<&str> {
 fn open_loaded(tag: &str, text: &str) -> (Server, String, Value, std::path::PathBuf) {
     let dir = crate::support::tmp_root().join(format!("satex-lsp-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let file = dir.join("main.tex");
-    std::fs::write(&file, text).unwrap();
-    let uri = fixture_uri(&file);
-    let cache = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("lsp-cache");
-    let mut server = Server::start_with(&cache, &dir, &["--set", "limits.seconds=0"]);
+    std::fs::write(dir.join("main.tex"), text).unwrap();
+    let mut server = serve(&dir, true);
+    let (uri, published) = open_file(&mut server, &dir, "main.tex");
+    (server, uri, published, dir)
+}
+
+/// An initialized server over `dir`: with the LaTeX format, classes and
+/// packages when `loaded`, else plain TeX only.
+fn serve(dir: &std::path::Path, loaded: bool) -> Server {
+    let mut server = match loaded {
+        true => {
+            let cache = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("lsp-cache");
+            Server::start_with(&cache, dir, &["--set", "limits.seconds=0"])
+        }
+        false => Server::start(dir),
+    };
     let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
     server.response(id);
     server.notify("initialized", json!({}));
+    server
+}
+
+/// `name` in `dir` opened, with the diagnostics published for it.
+fn open_file(server: &mut Server, dir: &std::path::Path, name: &str) -> (String, Value) {
+    let uri = fixture_uri(&dir.join(name));
+    let text = std::fs::read_to_string(dir.join(name)).unwrap();
     server.notify(
         "textDocument/didOpen",
         json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
     );
     let published = server.notification("textDocument/publishDiagnostics");
-    (server, uri, published, dir)
+    (uri, published)
 }
 
 /// Inside an argument the list comes from what the run saw the command do.
@@ -799,23 +817,23 @@ mod roots {
     /// A project of `files` in a fresh directory, served from there with
     /// `open` opened and its diagnostics waited out.
     fn project(tag: &str, files: &[(&str, &str)], open: &str) -> (Server, String, std::path::PathBuf) {
+        project_with(tag, files, open, false)
+    }
+
+    fn project_with(
+        tag: &str,
+        files: &[(&str, &str)],
+        open: &str,
+        loaded: bool,
+    ) -> (Server, String, std::path::PathBuf) {
         let dir = crate::support::tmp_root().join(format!("satex-lsp-roots-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         for (name, text) in files {
             std::fs::write(dir.join(name), text).unwrap();
         }
-        let mut server = Server::start(&dir);
-        let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
-        server.response(id);
-        server.notify("initialized", json!({}));
-        let uri = fixture_uri(&dir.join(open));
-        let text = std::fs::read_to_string(dir.join(open)).unwrap();
-        server.notify(
-            "textDocument/didOpen",
-            json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
-        );
-        server.notification("textDocument/publishDiagnostics");
+        let mut server = serve(&dir, loaded);
+        let (uri, _) = open_file(&mut server, &dir, open);
         (server, uri, dir)
     }
 
@@ -836,6 +854,19 @@ mod roots {
         let main = format!("{PRELUDE}\\def\\greet#1{{Hello, #1!}}\n\\input{{chap}}\n");
         let (mut server, uri, dir) =
             project("input", &[("main.tex", &main), ("chap.tex", "\\greet{world}\n")], "chap.tex");
+        assert_eq!(greet_defined_in(&mut server, &uri), fixture_uri(&dir.join("main.tex")));
+        server.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A root whose run never reaches the file (here it ends first) still
+    /// lends it its preamble: the file is read after it, so what the
+    /// preamble defines is defined there.
+    #[test]
+    fn an_input_no_root_reaches_is_read_after_its_root_s_preamble() {
+        let main = "\\documentclass{article}\n\\newcommand\\greet[1]{Hello, #1!}\n\\begin{document}\nx\n\\end{document}\n\\input{chap}\n";
+        let (mut server, uri, dir) =
+            project_with("unreached", &[("main.tex", main), ("chap.tex", "\\greet{world}\n")], "chap.tex", true);
         assert_eq!(greet_defined_in(&mut server, &uri), fixture_uri(&dir.join("main.tex")));
         server.shutdown();
         let _ = std::fs::remove_dir_all(&dir);
