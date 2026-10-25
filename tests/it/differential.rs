@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::support::analyze_latex;
 use satex::config::Config;
 use satex::machine::Machine;
 
@@ -430,7 +431,7 @@ fn paragraph_lines_match_pdflatex() {
         par("Typesetting paragraphs with dependencies requires careful hyphenation of words.", "rB"),
         par("\\centering files, dependencies, more", "rC"),
     );
-    let analysis = Machine::analyze(&source, None, &crate::support::config());
+    let analysis = analyze_latex(&source);
     let value = |name: &str| {
         let sym = analysis.interner.lookup(name);
         let def = sym.and_then(|sym| analysis.facts.defs.iter().rev().find(|d| d.name == sym));
@@ -483,7 +484,7 @@ fn a_section_number_and_its_title_are_apart() {
         return;
     }
     let source = "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nText.\n\\end{document}\n";
-    let analysis = satex::machine::Machine::analyze(source, None, &crate::support::config());
+    let analysis = analyze_latex(source);
     let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
     let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
     assert!(texts.contains(&"1 Intro"), "{texts:?}");

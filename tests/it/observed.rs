@@ -5,14 +5,11 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::support::analyze_latex as analyze;
 use crate::support::installed;
 use satex::builtins::OccKind;
 use satex::config::Config;
 use satex::machine::{Analysis, Machine};
-
-fn analyze(source: &str) -> Analysis {
-    Machine::analyze(source, None, &crate::support::config())
-}
 
 /// A document written to a directory of its own, beside the files it names;
 /// the lints read those files too, so the directory outlives the analysis.

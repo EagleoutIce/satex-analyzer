@@ -2,7 +2,7 @@
 //! what it prints of literals is read back, the modules it loads are
 //! dependencies, and catcode tables switch the regime.
 
-use crate::support::defined;
+use crate::support::{analyze_latex, defined};
 use satex::builtins::{LoadKind, OccKind};
 use satex::config::{Config, Engine};
 use satex::machine::{Analysis, Machine};
@@ -93,8 +93,7 @@ fn luacode_environments_keep_the_stream_in_step() {
 \\begin{luacode}\nlocal x = \"{}\"\ntex.print(\"\\\\gdef\\\\fromlua{1}\")\n\\end{luacode}\n\
 \\begin{luacode*}\nlocal y = \"}{\" -- % braces and percent are other here\ntex.print(\"\\\\gdef\\\\starred{2}\")\n\\end{luacode*}\n\
 \\begin{document}\n\\fromlua\n\\end{document}\n";
-    let cfg = crate::support::config();
-    let analysis = Machine::analyze(source, None, &cfg);
+    let analysis = analyze_latex(source);
     assert_eq!(analysis.plugins.engine, Engine::LuaTeX);
     // `tex.print` runs inside the environment's group, hence `\gdef`.
     assert!(defined(&analysis, "fromlua"));
@@ -201,7 +200,7 @@ fn an_upper_case_magic_comment_selects_the_engine() {
     // TeXworks and TeXShop read `% !TEX program` and `% !TEX TS-program` alike.
     for magic in ["% !TEX program = xelatex", "% !TeX TS-program = XeLaTeX"] {
         let source = format!("{magic}\n\\relax\n");
-        let analysis = Machine::analyze(&source, None, &crate::support::config());
+        let analysis = analyze_latex(&source);
         assert_eq!(analysis.plugins.engine, Engine::XeTeX, "{magic}");
     }
 }

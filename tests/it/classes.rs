@@ -3,7 +3,7 @@
 //! without a cut, keeps the expl3 map depth, ends on the page pdflatex
 //! ends on, and raises no error of its own.
 
-use crate::support::{broken_gaps, codes, installed, last_body as body};
+use crate::support::{analyze_latex, broken_gaps, codes, installed, last_body as body};
 use satex::machine::{Analysis, Machine};
 
 /// Cuts that end or blur a run: none may happen in a plain document.
@@ -73,7 +73,7 @@ fn beamer() {
     }
     let source = "\\documentclass{beamer}\n\\begin{document}\n\\begin{frame}{One}\\begin{itemize}\\item a\\end{itemize}\\end{frame}\n\
                   \\ExplSyntaxOn\\xdef\\depth{\\int_use:N\\g__kernel_prg_map_int}\\ExplSyntaxOff\n\\end{document}\n";
-    let a = Machine::analyze(source, None, &crate::support::config());
+    let a = analyze_latex(source);
     assert!(!a.facts.diagnostics.iter().any(|d| CUTS.contains(&d.code)), "beamer: cut");
     assert_eq!(body(&a, "depth"), "0");
 }

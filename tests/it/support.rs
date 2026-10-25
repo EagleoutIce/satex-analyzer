@@ -163,6 +163,32 @@ pub fn analyze_kernel(source: &str) -> Analysis {
     satex::machine::Machine::analyze(source, None, &cfg)
 }
 
+/// `source` analysed on the default [`config`], with no file name.
+pub fn analyze_latex(source: &str) -> Analysis {
+    satex::machine::Machine::analyze(source, None, &config())
+}
+
+/// Fails when the run of `source` has broken gaps, listing them.
+pub fn assert_clean(source: &str) {
+    let gaps = broken_gaps(&analyze_latex(source));
+    assert!(gaps.is_empty(), "broken gaps: {gaps:?}");
+}
+
+/// Fails unless the last body of `\name` after `source` is `expected`.
+pub fn assert_body(source: &str, name: &str, expected: &str) {
+    assert_eq!(last_body(&analyze_latex(source), name), expected, "\\{name}");
+}
+
+/// Fails unless `source` yields exactly `count` lint records with `code`.
+pub fn assert_lint(source: &str, code: &str, count: usize) {
+    let found: Vec<String> = satex::lint::lint(&analyze_latex(source))
+        .iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some(code))
+        .map(|f| f.get("message").and_then(|m| m.as_str()).unwrap_or_default().to_string())
+        .collect();
+    assert_eq!(found.len(), count, "{code}: {found:?}");
+}
+
 /// Every name the run defined, on any path.
 pub fn names(analysis: &Analysis) -> Vec<String> {
     analysis.facts.defs.iter().map(|d| analysis.interner.name(d.name).to_string()).collect()

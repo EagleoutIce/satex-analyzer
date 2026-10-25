@@ -1,14 +1,10 @@
 //! LaTeX2e as documented: what the kernel's own interfaces do.
 
-use crate::support::{broken_gaps, codes, marks};
+use crate::support::analyze_latex as analyze;
+use crate::support::{assert_body, broken_gaps, codes, marks};
 use crate::support::{defined, installed, last_body as body};
 use satex::builtins::OccKind;
 use satex::machine::{Analysis, Machine};
-
-fn analyze(source: &str) -> Analysis {
-    let cfg = crate::support::config();
-    Machine::analyze(source, None, &cfg)
-}
 
 /// Tests that the last body of `\key` after the document is `want`.
 macro_rules! body_cases {
@@ -1263,7 +1259,7 @@ mod document_metadata {
             return;
         }
         let source = "\\documentclass[9pt]{article}\n\\usepackage{tikz,graphicx,etoolbox}\n\\usepackage{hyperref}\n\\usetikzlibrary{decorations.pathmorphing,shadows,arrows.meta}\n\\begin{document}\n\\section{One}\\label{sec:one}\n\\begin{tikzpicture}\\node[draw,circle] (a) {x};\\node[draw] (b) at (2,1) {y};\\draw[->] (a) -- (b);\\end{tikzpicture}\n\\end{document}\n";
-        let analysis = Machine::analyze(source, None, &crate::support::config());
+        let analysis = crate::support::analyze_latex(source);
         let exhausted: Vec<_> =
             unsupported(&analysis).into_iter().filter(|&(code, _)| code == "budget-exhausted").collect();
         assert_eq!(exhausted, Vec::new());
@@ -2866,7 +2862,7 @@ fn a_lookahead_at_a_cell_end_meets_its_v_part() {
     if !installed() {
         return;
     }
-    let analysis = analyze(
+    assert_body(
         r"\documentclass{article}
 \begin{document}
 \def\look{\futurelet\next\record}
@@ -2879,8 +2875,9 @@ fn a_lookahead_at_a_cell_end_meets_its_v_part() {
 \setbox0\vbox{\halign{#\kern1pt&#\cr \omit a\look&b\cr}}
 \xdef\result{\seen}
 \end{document}",
+        "result",
+        "vvovo",
     );
-    assert_eq!(body(&analysis, "result"), "vvovo");
 }
 
 /// siunitx collects an `S` cell token by token with `\peek_...` until it
@@ -3310,7 +3307,7 @@ fn a_roman_numeral_of_a_small_interval_names_each_value() {
         return;
     }
     let source = "\\documentclass{article}\\count255=\\pdfuniformdeviate 2 \\advance\\count255 1 \\expandafter\\gdef\\csname R\\romannumeral\\count255\\endcsname{}\\begin{document}x\\end{document}\n";
-    let a = Machine::analyze(source, None, &crate::support::config());
+    let a = analyze(source);
     assert!(defined(&a, "Ri") && defined(&a, "Rii"));
 }
 
@@ -3502,7 +3499,7 @@ fn implicit_braces_keep_a_formula_width() {
         return;
     }
     let source = "\\documentclass{article}\\begin{document}\\setbox0\\hbox{${s}$}\\xdef\\A{\\the\\wd0}\\setbox0\\hbox{$\\bgroup s\\egroup$}\\xdef\\B{\\the\\wd0}\\setbox0\\hbox{$\\mathrm{s}$}\\xdef\\C{\\the\\wd0}\\end{document}\n";
-    let a = Machine::analyze(source, None, &crate::support::config());
+    let a = analyze(source);
     assert_eq!(body(&a, "A"), body(&a, "B"));
     assert!(body(&a, "C").ends_with("pt") && !body(&a, "C").contains('\u{2}'), "{}", body(&a, "C"));
 }
@@ -3515,7 +3512,7 @@ fn a_script_without_nucleus_keeps_its_width() {
         return;
     }
     let source = "\\documentclass{article}\\begin{document}\\setbox0\\hbox{$^{1}$}\\xdef\\A{\\the\\wd0}\\setbox0\\hbox{\\footnotemark}\\xdef\\B{\\the\\wd0}\\end{document}\n";
-    let a = Machine::analyze(source, None, &crate::support::config());
+    let a = analyze(source);
     assert_eq!(body(&a, "A"), "4.48613pt");
     assert_eq!(body(&a, "B"), "4.48613pt");
 }
@@ -3528,10 +3525,11 @@ fn a_float_flushed_by_clearpage_leaves_the_map_depth_known() {
     if !installed() {
         return;
     }
-    let a = analyze(
+    assert_body(
         "\\documentclass{article}\\begin{document}\\begin{figure}[h!]\\end{figure}\\clearpage\\ExplSyntaxOn\\xdef\\depth{\\int_use:N\\g__kernel_prg_map_int}\\ExplSyntaxOff\\end{document}",
+        "depth",
+        "0",
     );
-    assert_eq!(body(&a, "depth"), "0");
 }
 
 /// `\include` flushes the float with its `\clearpage` from the output
@@ -3614,10 +3612,11 @@ fn forced_breaks_in_vadjust_material_fire_the_output() {
     if !installed() {
         return;
     }
-    let a = analyze(
+    assert_body(
         "\\documentclass{article}\\gdef\\so{}\\output{\\xdef\\so{\\so[\\the\\outputpenalty]}\\shipout\\box255}\\begin{document}x\\vadjust{\\penalty-10004\\vbox{}\\penalty-10003}y\\par\\end{document}",
+        "so",
+        "[-10004][-10003][-10001]",
     );
-    assert_eq!(body(&a, "so"), "[-10004][-10003][-10001]");
 }
 
 /// `pretex` is read before the document's first line (latexmk's
@@ -3635,12 +3634,9 @@ fn pretex_code_runs_before_the_document() {
 /// reads the first one) and puts them back together. pdflatex: no error.
 #[test]
 fn a_wide_random_integer_is_taken_apart_and_put_back_together() {
-    let analysis = Machine::analyze(
+    crate::support::assert_clean(
         "\\documentclass{article}\n\\ExplSyntaxOn\n\\int_set:Nn \\l_tmpa_int {\\int_rand:n{16777215}}\n\\ExplSyntaxOff\n\\begin{document}x\\end{document}\n",
-        None,
-        &crate::support::config(),
     );
-    assert!(broken_gaps(&analysis).is_empty(), "{:?}", broken_gaps(&analysis));
 }
 
 /// `\\` in `\author` looks ahead for `*` when satex renders the field for

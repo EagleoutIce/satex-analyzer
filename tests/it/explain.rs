@@ -3,7 +3,7 @@
 use crate::support::{analyze_kernel, analyze_plain as analyze};
 use serde_json::{Value as Json, json};
 
-use crate::support::installed;
+use crate::support::{analyze_latex, installed};
 use satex::config::{Config, Load};
 use satex::machine::{Analysis, Machine};
 use satex::query::{self, Record};
@@ -105,7 +105,7 @@ fn origin_present_for_a_kernel_name() {
     }
     // With the real kernel loaded, a name with no definition site of its own
     // (a primitive) still carries the format's path, not a null one.
-    let analysis = Machine::analyze(r"\relax", None, &crate::support::config());
+    let analysis = analyze_latex(r"\relax");
     let record = explain_one(&analysis, "relax");
     assert_eq!(str_field(&record, "package"), Some("kernel"));
     assert!(
