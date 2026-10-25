@@ -311,6 +311,14 @@ fn map_over_unknown_token_list_is_summarized_once() {
     assert!(strays.is_empty(), "{strays:?}");
 }
 
+/// The map defines its body under the name its unknown depth spells, then
+/// calls that name: the same number, so the same name, and the body runs.
+#[test]
+fn map_of_unknown_depth_calls_the_body_it_defined() {
+    let Some(a) = check("expl_map_unknown_depth", "main.tex", &[]) else { return };
+    assert!(defined(&a, "fooa") && defined(&a, "foob"), "the map's body did not run on each item");
+}
+
 peak_fixtures! {
     pgfmath_of_unknown_integer_stays_a_number("pgfmath_unknown_seed", "main.tex");
 }

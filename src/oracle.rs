@@ -295,7 +295,7 @@ fn token_ends(t: Token, a: &Analysis, want: &[char], at: usize, depth: u8) -> BT
         return out;
     }
     // A name built around gaps: its known parts in order.
-    let spelled = unknown.split(REST_SERIAL).next().unwrap_or(unknown);
+    let spelled = unknown.split([REST_SERIAL, crate::machine::NAME_NUMBER]).next().unwrap_or(unknown);
     let mut at_set = BTreeSet::from([at]);
     let mut parts = spelled.split([crate::machine::UNKNOWN_NAME_GAP, crate::machine::UNKNOWN_DIGITS_GAP]);
     let lit = |at_set: BTreeSet<usize>, s: &str| -> BTreeSet<usize> {

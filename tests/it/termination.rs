@@ -902,7 +902,8 @@ Some text with microtype protrusion and expansion.
         };
         assert_eq!(run(""), (true, false));
         assert_eq!(run("\\def\\axyb{}"), (true, true));
-        assert_eq!(run("\\expandafter\\def\\csname a\\u b\\endcsname{}"), (true, true));
+        // The same digits spell the same name: the one just defined.
+        assert_eq!(run("\\expandafter\\def\\csname a\\u b\\endcsname{}"), (false, true));
         assert_eq!(run("\\def\\cxyd{}\\def\\xab{}"), (true, false));
     }
 

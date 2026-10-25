@@ -2738,6 +2738,9 @@ fn join_names(a: &Accum, b: &Accum, limit: usize) -> Option<Accum> {
     n.closed = n.closed && other.closed;
     n.stopped = n.stopped.or(other.stopped);
     n.gap_digits &= other.gap_digits;
+    if n.number != other.number {
+        n.number = None;
+    }
     n.names = all;
     if n.names.len() > limit {
         n.collapse();

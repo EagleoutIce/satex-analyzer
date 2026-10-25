@@ -991,6 +991,25 @@ impl Machine<'_> {
         vec![Token::new(Tok::Cs(sym), span)]
     }
 
+    /// The digits of count register `reg`, which holds a number in `num`.
+    /// Read again before it is written, it holds the same number: the same
+    /// token, so a test or a name split that narrows one read narrows the
+    /// other (`\int_use:N` twice in one `\tl_map_inline:nn`).
+    pub(crate) fn register_digits(&mut self, reg: Sym, num: Num, span: Span) -> Vec<Token> {
+        let storage = self.storage(reg);
+        let key = (storage, self.env.stamp_of(storage), num.lo, num.hi);
+        if let Some(&sym) = self.scratch.read_digits.get(&key)
+            && self.typed_digits_of(sym).is_some()
+        {
+            return vec![Token::new(Tok::Cs(sym), span)];
+        }
+        let tokens = self.digits_in(num, span);
+        if let [Token { tok: Tok::Cs(sym), .. }] = tokens[..] {
+            self.scratch.read_digits.insert(key, sym);
+        }
+        tokens
+    }
+
     /// tex.web §§ 453-458: the ⟨unit of measure⟩, applied to
     /// `integer + fraction/2^16`.
     ///

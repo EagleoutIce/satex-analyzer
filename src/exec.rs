@@ -1175,6 +1175,9 @@ impl Machine<'_> {
             // A bounded number (`\the\numexpr`, a register in an interval)
             // prints as digits typed with its bound.
             Some(Value::Unknown) | None if level == Some(RegKind::Count) => match self.abs.take() {
+                Some(num) if matches!(self.env.meaning(sym), Meaning::Register(RegKind::Count, _)) => {
+                    self.register_digits(sym, num, span)
+                }
                 Some(num) => self.digits_in(num, span),
                 // No interval: any 32-bit value, as an unknown count
                 // register prints (tex.web § 465 prints both alike).
@@ -1416,8 +1419,8 @@ impl Machine<'_> {
         // A name built from unknown text is known by the text around it.
         let name = match name {
             Ok(name) => name,
-            Err((prefix, suffix, digits)) => {
-                let token = self.unknown_name_token(&prefix, &suffix, digits, at);
+            Err((prefix, suffix, digits, number)) => {
+                let token = self.unknown_name_token(&prefix, &suffix, digits, number, at);
                 return self.unread(token);
             }
         };
@@ -1547,7 +1550,7 @@ impl Machine<'_> {
     fn scan_csname_at(
         &mut self,
         span: Span,
-    ) -> (Result<String, (String, String, bool)>, Span, Vec<crate::tex::FileId>) {
+    ) -> (Result<String, crate::machine::Gapped>, Span, Vec<crate::tex::FileId>) {
         let depth = crate::commands::enter_csname();
         let found = self.scan_csname_chars(span);
         crate::commands::leave_csname(depth);
@@ -1558,7 +1561,7 @@ impl Machine<'_> {
     fn scan_csname_chars(
         &mut self,
         span: Span,
-    ) -> (Result<String, (String, String, bool)>, Span, Vec<crate::tex::FileId>) {
+    ) -> (Result<String, crate::machine::Gapped>, Span, Vec<crate::tex::FileId>) {
         let mut start = Accum::for_name();
         start.name.as_deref_mut().expect("a name scan").site = span;
         let mut acc = match self.cfg.arm_joins {
@@ -1701,7 +1704,12 @@ impl Machine<'_> {
             || self.typed_text_of(t).is_some()
         {
             let digits = self.is_unknown_digits(sym);
-            self.scans.last_mut().and_then(|a| a.name.as_deref_mut()).expect("the name scan").unknown_part(digits);
+            let number = self.typed_digits_of(sym).map(|_| sym);
+            self.scans
+                .last_mut()
+                .and_then(|a| a.name.as_deref_mut())
+                .expect("the name scan")
+                .unknown_part(digits, number);
             return false;
         }
         // tex.web § 370: expanding an undefined control sequence reports

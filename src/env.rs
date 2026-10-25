@@ -1209,6 +1209,11 @@ impl Env {
             .collect()
     }
 
+    /// The assignment that last wrote `sym` on this path (0: none).
+    pub fn stamp_of(&self, sym: Sym) -> u64 {
+        self.stamp.get(sym.0 as usize).copied().unwrap_or(0)
+    }
+
     /// The names written after assignment `mark` since [`Env::clear_recent`],
     /// each once.
     pub fn written_after(&self, mark: u64) -> Vec<Sym> {

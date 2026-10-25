@@ -878,6 +878,8 @@ pub(crate) struct NameAccum {
     /// Whether every unknown part, and what the names differ in, is
     /// digits: the name is then the text around a number.
     pub(crate) gap_digits: bool,
+    /// The typed digits that are its one unknown part.
+    pub(crate) number: Option<Sym>,
     /// The `\csname` that reads it: where its choices are made.
     pub(crate) site: Span,
 }
@@ -892,6 +894,7 @@ impl Default for NameAccum {
             closed: false,
             stopped: None,
             gap_digits: true,
+            number: None,
             site: Span::default(),
         }
     }
@@ -907,8 +910,9 @@ impl NameAccum {
     /// An unknown part, digits or not: what came before it is the
     /// prefix, and the name goes on after it. Text between two unknown
     /// parts becomes part of the gap.
-    pub(crate) fn unknown_part(&mut self, digits: bool) {
+    pub(crate) fn unknown_part(&mut self, digits: bool, number: Option<Sym>) {
         self.gap_digits &= digits;
+        self.number = if self.names.iter().all(|(p, _)| p.is_none()) { number } else { None };
         for (prefix, name) in &mut self.names {
             if prefix.is_some() && !name.chars().all(|c| c.is_ascii_digit()) {
                 self.gap_digits = false;
@@ -922,6 +926,9 @@ impl NameAccum {
     /// what they all end with after it.
     pub(crate) fn collapse(&mut self) {
         let names = std::mem::take(&mut self.names);
+        if names.len() > 1 {
+            self.number = None;
+        }
         let mut all = names.iter();
         let mut one = all.next().expect("a name").clone();
         for other in all {
@@ -939,6 +946,10 @@ impl NameAccum {
         self.names = vec![one];
     }
 }
+
+/// A name built around unknown text: its prefix, its suffix, whether the
+/// gap is digits, and the number they are when one number.
+pub(crate) type Gapped = (String, String, bool, Option<Sym>);
 
 /// What an expanding scan has made so far. It goes with the path, so the
 /// arms of a choice inside the scan join where they meet again. Older
@@ -995,12 +1006,12 @@ impl Accum {
     /// when it has one.
     /// The name built, or the text around its unknown part and whether
     /// that part is digits.
-    pub(crate) fn built(&self) -> Result<String, (String, String, bool)> {
+    pub(crate) fn built(&self) -> Result<String, Gapped> {
         let mut n = self.name.as_deref().cloned().unwrap_or_default();
         n.collapse();
         match n.names.remove(0) {
             (None, name) => Ok(name),
-            (Some(prefix), name) => Err((prefix, name, n.gap_digits)),
+            (Some(prefix), name) => Err((prefix, name, n.gap_digits, n.number.filter(|_| n.gap_digits))),
         }
     }
 
@@ -1191,6 +1202,12 @@ pub(crate) struct Scratch {
     pub(crate) repeat_cut: Option<(&'static str, Span)>,
     /// `gaps_raised` when each conditional's test was read, by where it stands.
     pub(crate) cond_gaps: HashMap<Span, u64>,
+    /// The families of names built from unknown digits whose number's own
+    /// name was defined ([`Machine::unknown_name_token`]).
+    pub(crate) numbered: Vec<Sym>,
+    /// The typed digits `\the` gave per count register, last write and
+    /// interval ([`Machine::register_digits`]).
+    pub(crate) read_digits: HashMap<(Sym, u64, i64, i64), Sym>,
     /// How often satex approximated so far: a limitation reported, a
     /// widening, unknown text made. Only monotone.
     pub(crate) approximations: u64,
@@ -5422,7 +5439,20 @@ will look undefined",
                 "a name built from unknown text was defined; it is assumed to be a new name".into(),
             );
         } else if let Some((prefix, suffix)) = pattern {
-            self.wild.add(prefix, suffix, self.name_gap_is_digits(name), Some(meaning.clone()));
+            let digits = self.name_gap_is_digits(name);
+            self.numbered_may_be(name, &meaning, |p, s| {
+                (p.starts_with(prefix.as_str()) || prefix.starts_with(p))
+                    && (s.ends_with(suffix.as_str()) || suffix.ends_with(s))
+            });
+            if self.name(name).contains(NAME_NUMBER) {
+                let mut binding = Binding::new(meaning.clone(), node);
+                binding.certain = false;
+                self.env.set(name, binding, global);
+                if !self.scratch.numbered.contains(&name) {
+                    self.scratch.numbered.push(name);
+                }
+            }
+            self.wild.add(prefix, suffix, digits, Some(meaning.clone()));
             self.diagnose(
                 Severity::Imprecision,
                 "unknown-name",
@@ -5430,6 +5460,9 @@ will look undefined",
                 "a name built from unknown text was defined; which one is not known".into(),
             );
         } else if !self.pinned.contains(&name) {
+            self.numbered_may_be(name, &meaning, |p, s| {
+                spelled.len() >= p.len() + s.len() && spelled.starts_with(p) && spelled.ends_with(s)
+            });
             let mut binding = Binding::new(meaning, node);
             // An engine parameter's value stays with the parameter: latex.ltx
             // makes `\everypar` a `\newtoks` and sets the primitive through
@@ -11727,6 +11760,9 @@ pub(crate) const UNKNOWN_NAME_GAP: char = '\u{3}';
 /// [`UNKNOWN_NAME_GAP`] where the unknown part is digits.
 pub(crate) const UNKNOWN_DIGITS_GAP: char = '\u{7}';
 const GAPS: [char; 2] = [UNKNOWN_NAME_GAP, UNKNOWN_DIGITS_GAP];
+/// After a name built around one number's unknown digits: that number's
+/// token, so the names one number spells are one name.
+pub(crate) const NAME_NUMBER: char = '\u{5}';
 /// After [`UNKNOWN_NAME`]: the names of typed unknown text, the class as
 /// its letters and `+` (at least one token) or `*` (perhaps none).
 pub(crate) const TYPED_TEXT: &str = "text of:";
@@ -11767,6 +11803,7 @@ impl Machine<'_> {
 
     pub(crate) fn name_pattern(&self, sym: Sym) -> Option<(String, String)> {
         let rest = self.out.interner.name(sym).strip_prefix(UNKNOWN_NAME)?;
+        let rest = rest.split_once(NAME_NUMBER).map_or(rest, |(family, _)| family);
         let (prefix, suffix) = rest.split_once(GAPS)?;
         Some((prefix.to_string(), suffix.to_string()))
     }
@@ -12152,15 +12189,58 @@ impl Machine<'_> {
         }
     }
 
+    /// `name` was defined as `meaning`: a number's own name of a family it
+    /// may be (`shares` its prefix and suffix) may now mean that, too.
+    fn numbered_may_be(&mut self, name: Sym, meaning: &Meaning, shares: impl Fn(&str, &str) -> bool) {
+        for i in 0..self.scratch.numbered.len() {
+            let sym = self.scratch.numbered[i];
+            let Some((p, s)) = self.name_pattern(sym).filter(|_| sym != name) else { continue };
+            let Some(mut b) = self.env.slot(sym).filter(|b| !b.defs.is_empty() && shares(&p, &s)).cloned() else {
+                continue;
+            };
+            let mut may: Vec<Meaning> = b.may.as_deref().map_or_else(|| vec![b.meaning.clone()], <[Meaning]>::to_vec);
+            if !may.contains(meaning) {
+                may.push(meaning.clone());
+            }
+            b.meaning = Meaning::Unknown;
+            b.may = (may.len() <= Wild::MEANINGS && !may.contains(&Meaning::Unknown)).then(|| may.into());
+            let global = b.global;
+            self.env.set(sym, b, global);
+        }
+    }
+
     /// Whether `sym` stands for a name built from partly unknown text.
+    /// A number's own name that holds a definition is not one: it is that
+    /// definition's ([`Machine::unknown_name_token`]).
     pub(crate) fn is_unknown_name(&self, sym: Sym) -> bool {
-        self.out.interner.name(sym).starts_with(UNKNOWN_NAME)
+        let name = self.out.interner.name(sym);
+        name.starts_with(UNKNOWN_NAME)
+            && !(name.contains(NAME_NUMBER) && self.env.slot(sym).is_some_and(|b| !b.defs.is_empty()))
     }
 
     /// The one control sequence `\csname` builds from partly unknown text.
-    pub(crate) fn unknown_name_token(&mut self, prefix: &str, suffix: &str, digits: bool, span: Span) -> Token {
+    /// Around one number's digits it is that number's own name: what was
+    /// defined under it stays, until a name it may also be is defined.
+    pub(crate) fn unknown_name_token(
+        &mut self,
+        prefix: &str,
+        suffix: &str,
+        digits: bool,
+        number: Option<Sym>,
+        span: Span,
+    ) -> Token {
         let gap = if digits { UNKNOWN_DIGITS_GAP } else { UNKNOWN_NAME_GAP };
-        let sym = self.intern(&format!("{UNKNOWN_NAME}{prefix}{gap}{suffix}"));
+        let family = format!("{UNKNOWN_NAME}{prefix}{gap}{suffix}");
+        let sym = match number {
+            Some(n) => {
+                let sym = self.intern(&format!("{family}{NAME_NUMBER}{}", n.0));
+                if self.env.slot(sym).is_some_and(|b| !b.defs.is_empty()) {
+                    return Token::new(Tok::Cs(sym), span);
+                }
+                sym
+            }
+            None => self.intern(&family),
+        };
         // Each undefined name it may spell may now be `\relax` (tex.web § 372).
         // A wholly unknown name is a fresh one, as for `\def` (unknown-name-defines-fresh).
         if !(prefix.is_empty() && suffix.is_empty()) {

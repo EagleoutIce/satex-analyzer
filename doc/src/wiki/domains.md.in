@@ -499,6 +499,14 @@ one of up to 8 meanings the family's writes gave, or any past them. A
 the union, meanings joined per pattern. Past 1024 patterns, they widen to
 what they share. A cache keeps the patterns, not their meanings.
 
+A name around one number's unknown digits is that number's own name.
+`\the` of a count register gives the same typed digits token until the
+register is written, so `\tl_map_inline:nn` defines its body under
+`__tl_map_⟨n⟩:w` and calls that same name. Defining it binds it exactly.
+A later definition of a name of the family that may be the same name (a
+spelled one, or another number's) joins its meaning into the set it may
+hold, a weak update.
+
 
 A name of wholly unknown text adds no family. The standing assumption
 (`unknown-name-defines-fresh`, an imprecision) is that it is a new name:
