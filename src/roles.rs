@@ -77,52 +77,41 @@ pub enum FileKind {
     Any,
 }
 
+/// Each kind's extension, label (as signatures and hovers say it) and the
+/// installation's tree of such files, empty where none: the run decides a
+/// graphic's extension, and the `.tex` files of the tree are documentation.
+const FILE_KINDS: [(FileKind, &str, &str, &str); 9] = [
+    (FileKind::Tex, "tex", "TeX file", ""),
+    (FileKind::Sty, "sty", "package", "tex"),
+    (FileKind::Cls, "cls", "class", "tex"),
+    (FileKind::Bib, "bib", "bibliography database", "bibtex/bib"),
+    (FileKind::Bst, "bst", "bibliography style", "bibtex/bst"),
+    (FileKind::Bbx, "bbx", "biblatex bibliography style", "tex"),
+    (FileKind::Cbx, "cbx", "biblatex citation style", "tex"),
+    (FileKind::Graphic, "", "graphic file", ""),
+    (FileKind::Any, "", "file", ""),
+];
+
 impl FileKind {
-    /// The extension, none where the run decides.
+    fn row(self) -> (&'static str, &'static str, &'static str) {
+        FILE_KINDS.iter().find(|r| r.0 == self).map_or(("", "file", ""), |r| (r.1, r.2, r.3))
+    }
+
     pub fn ext(self) -> Option<&'static str> {
-        Some(match self {
-            FileKind::Tex => "tex",
-            FileKind::Sty => "sty",
-            FileKind::Cls => "cls",
-            FileKind::Bib => "bib",
-            FileKind::Bst => "bst",
-            FileKind::Bbx => "bbx",
-            FileKind::Cbx => "cbx",
-            FileKind::Graphic | FileKind::Any => return None,
-        })
+        Some(self.row().0).filter(|e| !e.is_empty())
     }
 
-    /// What the file is, as the signature and hover say it.
     pub fn label(self) -> &'static str {
-        match self {
-            FileKind::Tex => "TeX file",
-            FileKind::Sty => "package",
-            FileKind::Cls => "class",
-            FileKind::Bib => "bibliography database",
-            FileKind::Bst => "bibliography style",
-            FileKind::Bbx => "biblatex bibliography style",
-            FileKind::Cbx => "biblatex citation style",
-            FileKind::Graphic => "graphic file",
-            FileKind::Any => "file",
-        }
+        self.row().1
     }
 
-    /// The installation's tree of such files. None for `.tex`, whose tree
-    /// files are documentation, never a document's input.
     pub fn tree(self) -> Option<&'static str> {
-        match self {
-            FileKind::Sty | FileKind::Cls | FileKind::Bbx | FileKind::Cbx => Some("tex"),
-            FileKind::Bib => Some("bibtex/bib"),
-            FileKind::Bst => Some("bibtex/bst"),
-            _ => None,
-        }
+        Some(self.row().2).filter(|t| !t.is_empty())
     }
 
     /// The kind whose extension is `ext`.
     pub fn of_ext(ext: &str) -> Option<FileKind> {
-        [FileKind::Tex, FileKind::Sty, FileKind::Cls, FileKind::Bib, FileKind::Bst, FileKind::Bbx, FileKind::Cbx]
-            .into_iter()
-            .find(|k| k.ext() == Some(ext))
+        FILE_KINDS.iter().find(|r| !ext.is_empty() && r.1 == ext).map(|r| r.0)
     }
 }
 
