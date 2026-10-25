@@ -2010,6 +2010,14 @@ impl Machine<'_> {
         // letter, and its calls stay text a scan reads.
         let shared = head.iter().zip(other).take_while(|(x, y)| x.tok == y.tok).count();
         let shared = if self.whole(&head[shared..]) && self.whole(&other[shared..]) { shared } else { 0 };
+        // Where a number's scan ends, texts alike but for numbers, one typed
+        // with its interval on some path: the digits of each hull.
+        if matches!(self.unit, Unit::Number)
+            && let Some(mut text) = self.join_numbers_in(head, other, widen, span)
+        {
+            text.extend_from_slice(tail);
+            return Some(text);
+        }
         // Data that code still to run reads is part of that code: two
         // paths with it differ in code. Data read first (a value being
         // scanned) is data.
@@ -2214,6 +2222,42 @@ impl Machine<'_> {
         Some(self.unknown_text(Unk::Of(&texts), span))
     }
 
+    /// `x` and `y` token for token, but where both spell numbers
+    /// ([`Machine::number_text`]): those are the digits of their hull. `None`
+    /// when they differ otherwise, or no number is typed digits.
+    fn join_numbers_in(&mut self, x: &[Token], y: &[Token], widen: bool, span: Span) -> Option<Vec<Token>> {
+        let typed = |m: &Self, t: &Token| t.cs().is_some_and(|s| m.is_unknown_digits(s));
+        // A number's text from the start: one typed token, or a digit run.
+        let run = |m: &Self, t: &[Token]| match t.first() {
+            Some(f) if typed(m, f) => 1,
+            _ => t.iter().take_while(|t| matches!(t.tok, Tok::Chr('0'..='9', Catcode::Other))).count(),
+        };
+        let (mut out, mut i, mut j, mut any) = (Vec::new(), 0, 0, false);
+        while i < x.len() || j < y.len() {
+            if let (Some(a), Some(b)) = (x.get(i), y.get(j))
+                && a.tok == b.tok
+            {
+                out.push(*a);
+                (i, j) = (i + 1, j + 1);
+                continue;
+            }
+            let (m, n) = (run(self, &x[i..]), run(self, &y[j..]));
+            let (p, q) = (&x[i..i + m], &y[j..j + n]);
+            let (a, b) = (self.number_text(p)?, self.number_text(q)?);
+            // Widened, a hull that grew jumps to the end of its range.
+            let hull = if widen { a.widen(&a.join(&b)) } else { a.join(&b) };
+            any |= typed(self, &p[0]) || typed(self, &q[0]);
+            // A typed side that holds the hull already stands for it: the
+            // join settles.
+            match [(p, a), (q, b)].into_iter().find(|&(t, n)| n == hull && typed(self, &t[0])) {
+                Some((t, _)) => out.push(t[0]),
+                None => out.extend(self.digits_in(hull, span)),
+            }
+            (i, j) = (i + m, j + n);
+        }
+        any.then_some(out)
+    }
+
     /// Whether `text` holds code still to run: a control sequence or an
     /// active character, other than typed data or one of data texts.
     fn holds_code(&self, text: &[Token]) -> bool {
@@ -2296,10 +2340,13 @@ impl Machine<'_> {
     /// The number a text is: digits, or one token of digits typed with
     /// an interval. `None` for any other text.
     fn number_text(&self, text: &[Token]) -> Option<Num> {
+        // Whole typed digits by the interval they were made with, which
+        // holds every path's narrowing of them; a slice may begin with 0.
         if let [t] = text
-            && let Some(num) = t.cs().and_then(|sym| self.typed_digits_of(sym))
+            && let Some(name) = t.cs().and_then(|sym| self.name(sym).strip_prefix(crate::scan::TYPED_DIGITS))
         {
-            return Some(num);
+            let (lo, hi) = name.split_once('#')?.0.split_once("..")?;
+            return Some(Num::range(lo.parse().ok()?, hi.parse().ok()?));
         }
         if text.is_empty() || text.len() > 10 {
             return None;

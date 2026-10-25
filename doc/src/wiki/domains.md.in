@@ -360,6 +360,9 @@ So a loop that strips digits one by one sees the integer part end after a `0`.
 
 `\romannumeral` of an unknown number gives typed text of class `o`, possibly empty: its letters are category 12, as tex.web § 69 prints them. A number in a small interval (below `limits.meaning_set` values) gives one of its numerals instead, so a name spelled from it is each name TeX may build.
 A bounded number under `\number` gives typed digits with that bound.
+Where a ⟨number⟩'s scan ends, paths whose texts left differ only in numbers, one of them typed digits, join: each such number becomes typed digits over the hull, even behind code still to run.
+A literal `0` on one path and digits typed 0 to 16383 on the other give digits typed 0 to 16383.
+The hull takes typed digits by the interval they were made with, which holds every path's narrowing of them.
 
 A number whose digits are not all known but begin with a digit has no sign in them: it lies in 0 to 2^31-1 (§ 445 caps it there).
 The same holds for a name of several meanings, each a macro without parameters whose text is digits beginning so, or `\relax` (a "Missing number", 0).
