@@ -911,3 +911,30 @@ Some text with microtype protrusion and expansion.
         assert!(a.forks <= 64 * 2, "{} forks", a.forks);
     }
 }
+
+/// A line-budget cut that drops no list (the lists left called the
+/// document's text: a `\@ifstar`/`\@ifnextchar` look ahead) widens only
+/// what was written since that text, never every name: `\newcommand` stays
+/// the kernel's, so `\foo` is defined after the cut.
+#[test]
+fn cut_after_a_look_ahead_keeps_earlier_definitions() {
+    let mut cfg = Config {
+        load: satex::config::Load { packages: false, classes: false, ..Default::default() },
+        ..crate::support::config()
+    };
+    cfg.limits.line_steps = 300;
+    let analysis = Machine::analyze(
+        "\\makeatletter\\def\\h{\\@ifstar\\hh\\hh}\\def\\hh#1{\\@ifnextchar[\\relax\\relax}\\makeatother\n\
+         \\h*{T}\\h{U}\\h{V} x \\newcommand\\foo{x}\\foo\n",
+        None,
+        &cfg,
+    );
+    let never: Vec<_> = analysis
+        .facts
+        .expansions
+        .iter()
+        .filter(|e| e.meaning == satex::facts::MeaningKind::Undefined)
+        .map(|e| analysis.interner.name(e.name).to_string())
+        .collect();
+    assert!(never.is_empty(), "undefined on an exact path: {never:?}");
+}

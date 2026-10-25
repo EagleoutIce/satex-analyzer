@@ -613,6 +613,9 @@ dropped, so both go on with the same counters.
   have run on. Closers in the dropped text are counted through macros
   without parameters (`\close` for `\endgroup`). Where the dropped text closes
   fewer, the levels it leaves open become [stacks as intervals](#stacks-as-intervals).
+  A cut that drops no list (what is left called the document's text, as a
+  look-ahead does) widens only what was written since the document's last
+  token, never every name.
 - **Output routine as a unit:** a path is in the output routine while an
   output group is open (tex.web § 989), never by a flag a join could keep.
   When that group ends, by its `}` or a cut, the rest of its list is

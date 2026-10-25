@@ -65,6 +65,7 @@ pub(crate) mod explore;
 mod package_cache;
 use package_cache::Delta;
 pub use package_cache::prune as prune_caches;
+pub use package_cache::served as cache_served;
 
 /// One kind of thing the interpreter did, recorded as an [`Event`] in the
 /// trace.
@@ -2713,7 +2714,6 @@ impl<'a> Machine<'a> {
             );
         }
         m.out.plugins.depp = crate::plugin::depp::Depp::read(&m.out);
-        m.collect_metadata();
         m.say_clock();
         m.out.timings.finish();
         m.out.calls.finish();
@@ -2766,25 +2766,11 @@ impl<'a> Machine<'a> {
         self.render_metadata(field, sym);
     }
 
-    fn collect_metadata(&mut self) {
-        for (field, name) in Self::METADATA {
-            if self.out.metadata.iter().any(|entry| entry.field == field) {
-                continue;
-            }
-            let Some(sym) = self.out.interner.lookup(name) else { continue };
-            self.render_metadata(field, sym);
-        }
-    }
-
     fn render_metadata(&mut self, field: &'static str, sym: Sym) {
         {
             let Some(macro_def) = self.env.meaning(sym).as_macro().cloned() else { return };
             let source = crate::tex::detokenize(&macro_def.replacement_text, &self.out.interner);
             let source = squeeze(&source);
-            // `\@title` starts out as the kernel's "no \title given" warning.
-            if source.contains("@latex@") {
-                return;
-            }
             let tokens = macro_def.replacement_text.to_vec();
             // satex's own rendering, which no TeX run does: what it raises
             // (siunitx's `\day` is `d` in a PDF string) is not the document's.
@@ -6755,10 +6741,16 @@ will look undefined",
             }
         }
         self.mark_cut_scans();
-        let closed = at.map_or((0, 0), |at| self.close_since(at));
+        // Nothing dropped: the cut readers still left the expansions since the
+        // document's last token unfinished, so only their writes are unknown.
+        let Some(at) = at else {
+            self.widen_since(self.doc_mark);
+            return (0, 0);
+        };
+        let closed = self.close_since(at);
         // What the dropped calls assigned and the closed groups left holds
         // anything of its kind; values the groups gave back stay.
-        self.widen_since(at.map_or(0, |at| at.2));
+        self.widen_since(at.2);
         closed
     }
 
