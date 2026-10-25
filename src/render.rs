@@ -720,22 +720,21 @@ fn findings_section(
     out.push('\n');
 }
 
-/// What the analysis could not fully resolve, collapsed to a count and the
-/// distinct causes rather than one line per site. It is a widened recursion,
-/// a reached budget, or a finding the analysis may cause (an error on an
-/// approximated path, an absence in a part it never read), never a defect
-/// in the document.
+/// What the analysis could not fully resolve, collapsed to one count per
+/// rule rather than one line per site. It is a widened recursion, a reached
+/// budget, or a finding the analysis may cause (an error on an approximated
+/// path, an absence in a part it never read), never a defect in the document.
 fn precision_line(records: &[&Record]) -> String {
-    let mut causes: Vec<String> = records.iter().map(|r| r.get("name").map(plain).unwrap_or_default()).collect();
-    causes.sort();
-    causes.dedup();
+    let mut codes: Vec<String> = records.iter().map(|r| r.get("code").map(plain).unwrap_or_default()).collect();
+    codes.sort();
+    let rules: Vec<String> = codes.chunk_by(|a, b| a == b).map(|c| format!("{} {}", c[0], c.len())).collect();
     format!(
         "{} {}",
         heading("precision"),
         label(&format!(
-            "{} where the analysis approximated ({}) \u{2014} `satex lint --filter category=precision` shows them, `satex query gaps` lists what it could not parse at all",
-            plural(records.len(), "note"),
-            causes.join(", ")
+            "{} withheld as the run approximated or left parts unread ({}) \u{2014} `satex lint --filter category=precision` shows them",
+            plural(records.len(), "finding"),
+            rules.join(", ")
         ))
     )
 }

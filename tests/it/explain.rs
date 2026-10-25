@@ -862,5 +862,10 @@ fn every_builtin_primitive_has_a_description() {
         .collect();
     missing.sort_unstable();
     missing.dedup();
-    assert!(missing.is_empty(), "{} primitives lack a line in src/describe.tsv:\n{}", missing.len(), missing.join("\n"));
+    assert!(
+        missing.is_empty(),
+        "{} primitives lack a line in src/describe.tsv:\n{}",
+        missing.len(),
+        missing.join("\n")
+    );
 }
