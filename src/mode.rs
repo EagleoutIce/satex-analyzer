@@ -468,6 +468,11 @@ pub struct Natural {
     /// it holds, its width, height and depth, and the left margin kern
     /// pdfTeX put at its start (`None`: not known).
     pub line: Option<Line>,
+    /// The forced breaks (penalties of -10000 or less) its `\vadjust`
+    /// material carries to the page, first and last: they follow the
+    /// paragraph's lines onto the main vertical list (tex.web § 889) and
+    /// fire the output routine there (§ 1005). A LaTeX float brings two.
+    pub forced: [Option<i32>; 2],
     /// In inline math: the last math character (family, font, char), whose
     /// italic correction and kern wait for the next (tex.web §§ 752, 755).
     /// `Some(None)`: not known.
@@ -519,6 +524,17 @@ pub struct Scripted {
 }
 
 impl Natural {
+    /// A forced break `\vadjust` material carries ([`Natural::forced`]).
+    /// A later one counts after a box or other node only: the first emptied the page,
+    /// and a penalty on an empty page is discarded (tex.web § 1000).
+    fn force(&mut self, penalty: i32, after_box: bool) {
+        match self.forced[0] {
+            None => self.forced[0] = Some(penalty),
+            Some(_) if after_box => self.forced[1] = Some(penalty),
+            Some(_) => {}
+        }
+    }
+
     /// A list whose size satex lost but whose tail it still follows is not
     /// the same as one it never followed: every length widens.
     pub fn any() -> Natural {
@@ -732,6 +748,7 @@ impl Natural {
             math_breaks: self.math_breaks.max(other.math_breaks),
             solid: self.solid.max(other.solid),
             line: if self.line == other.line { self.line } else { None },
+            forced: [self.forced[0].or(other.forced[0]), self.forced[1].or(other.forced[1])],
             para: self.para.join(other.para),
             prev_depth: join_prev(self.prev_depth, other.prev_depth),
             undo: if self.undo == other.undo { self.undo } else { None },
@@ -1086,6 +1103,7 @@ impl Machine<'_> {
             no_boundary: false,
             solid: 0,
             line: None,
+            forced: [None; 2],
             math_prev: None,
             math_class: None,
             math_pending: None,
@@ -1571,6 +1589,38 @@ impl Machine<'_> {
         }
         // Where the mode was in doubt, the vertical list may be as it was.
         self.natural = Some(if only { after } else { after.join(n) });
+        // tex.web § 889: `\vadjust` material follows the lines on the
+        // vertical list, so its forced breaks (a float's) reach the page
+        // builder there: read as the commands that put them.
+        if self.mode == Modes::VERTICAL && n.forced[0].is_some() {
+            self.replay_forced(n.forced);
+        }
+    }
+
+    /// `\penalty⟨first⟩`, then `\vbox{}\penalty⟨second⟩`, through names of
+    /// their own that no document redefines.
+    fn replay_forced(&mut self, forced: [Option<i32>; 2]) {
+        use crate::builtins::{BoxCmd, ModeCmd, Typeset};
+        let span = self.position_span();
+        let own = |m: &mut Self, name: &str, p: Primitive| {
+            let sym = m.intern(name);
+            m.env.set(sym, crate::env::Binding::builtin(Meaning::Primitive(p)), true);
+            Token::new(Tok::Cs(sym), span)
+        };
+        let penalty = own(self, "\u{2}adjust penalty", Primitive::Typeset(Typeset::Number));
+        let vbox = own(self, "\u{2}adjust vbox", Primitive::Mode(ModeCmd::Box(BoxCmd::VBox)));
+        let chr = |c: char, cat: Catcode| Token::new(Tok::Chr(c, cat), span);
+        let mut text = Vec::new();
+        for (k, p) in forced.into_iter().enumerate() {
+            let Some(p) = p else { continue };
+            if k > 0 {
+                text.extend([vbox, chr('{', Catcode::Begin), chr('}', Catcode::End)]);
+            }
+            text.push(penalty);
+            text.extend(p.to_string().chars().map(|c| chr(c, Catcode::Other)));
+            text.push(chr(' ', Catcode::Space));
+        }
+        self.push_tokens(std::rc::Rc::from(text));
     }
 
     /// tex.web § 1070 `normal_paragraph`: the paragraph shape parameters go
@@ -1917,6 +1967,9 @@ impl Machine<'_> {
                             let size = m.along.extended_by(m.depth.at_least_zero());
                             n.para.along = n.para.along.extended_by(size);
                             n.para.depth = n.para.depth.join(m.depth.at_least_zero());
+                            for p in m.forced.into_iter().flatten() {
+                                n.force(p, true);
+                            }
                         }
                         None => n.para.lost = true,
                     }
@@ -3621,6 +3674,9 @@ impl Machine<'_> {
                 }
                 // tex.web § 851: a penalty of -10000 or less forces a line
                 // break.
+                if let Some(p) = p.filter(|p| *p <= -10000 && self.mode == Modes::INTERNAL_VERTICAL) {
+                    n.force(i32::try_from(p).unwrap_or(i32::MIN), matches!(n.tail[0], Last::Box | Last::Other));
+                }
                 match p {
                     Some(p) if p <= -10000 && self.mode == Modes::HORIZONTAL => self.forced_break(&mut n),
                     _ if self.mode.meets(Modes::HORIZONTAL) && p.is_none_or(|p| p <= -10000) => {

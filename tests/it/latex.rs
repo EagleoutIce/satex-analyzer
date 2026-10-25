@@ -3605,3 +3605,17 @@ fn short_keys_stay_labels_and_references() {
     assert_eq!(keys(&a, OccKind::Label), ["a", "b"]);
     assert_eq!(keys(&a, OccKind::Ref).len(), 4, "{:?}", keys(&a, OccKind::Ref));
 }
+
+/// tex.web § 889: `\vadjust` material follows the lines, and its forced
+/// breaks fire the output routine in order; the second after the box
+/// before it reached the page the first emptied.
+#[test]
+fn forced_breaks_in_vadjust_material_fire_the_output() {
+    if !installed() {
+        return;
+    }
+    let a = analyze(
+        "\\documentclass{article}\\gdef\\so{}\\output{\\xdef\\so{\\so[\\the\\outputpenalty]}\\shipout\\box255}\\begin{document}x\\vadjust{\\penalty-10004\\vbox{}\\penalty-10003}y\\par\\end{document}",
+    );
+    assert_eq!(body(&a, "so"), "[-10004][-10003][-10001]");
+}

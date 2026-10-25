@@ -1,7 +1,7 @@
 //! The basic document classes: a small project in each, with an included
 //! chapter, a float, a cross reference and a `\clearpage`, runs to its end
-//! without a cut, keeps the expl3 map depth and the page counter known,
-//! and raises no error of its own.
+//! without a cut, keeps the expl3 map depth, ends on the page pdflatex
+//! ends on, and raises no error of its own.
 
 use crate::support::{broken_gaps, codes, installed, last_body as body};
 use satex::machine::{Analysis, Machine};
@@ -30,7 +30,7 @@ fn project(class: &str, part: &str) -> Analysis {
     Machine::analyze(&source, Some(&doc), &crate::support::config())
 }
 
-fn check(class: &str, part: &str) {
+fn check(class: &str, part: &str, pages: &str) {
     if !installed() {
         return;
     }
@@ -39,30 +39,30 @@ fn check(class: &str, part: &str) {
     assert!(cuts.is_empty(), "{class}: cut {:?}", cuts.iter().map(|d| (&d.code, &d.message)).collect::<Vec<_>>());
     assert!(broken_gaps(&a).is_empty(), "{class}: {:?}", broken_gaps(&a));
     assert_eq!(body(&a, "depth"), "0", "{class}: map depth");
-    assert!(body(&a, "pages").parse::<u32>().is_ok(), "{class}: page counter {}", body(&a, "pages"));
+    assert_eq!(body(&a, "pages"), pages, "{class}: the page counter pdflatex ends with");
     let errors: Vec<_> = codes(&a).into_iter().filter(|c| c.starts_with("undefined") || c.contains("error")).collect();
     assert!(errors.is_empty(), "{class}: {errors:?}");
 }
 
 macro_rules! classes {
-    ($($name:ident: $class:literal, $part:literal;)*) => {$(
+    ($($name:ident: $class:literal, $part:literal, $pages:literal;)*) => {$(
         #[test]
         fn $name() {
-            check($class, $part);
+            check($class, $part, $pages);
         }
     )*};
 }
 
 classes! {
-    article: "article", "section";
-    report: "report", "chapter";
-    book: "book", "chapter";
-    scrartcl: "scrartcl", "section";
-    scrreprt: "scrreprt", "chapter";
-    scrbook: "scrbook", "chapter";
-    memoir: "memoir", "chapter";
-    amsart: "amsart", "section";
-    amsbook: "amsbook", "chapter";
+    article: "article", "section", "3";
+    report: "report", "chapter", "4";
+    book: "book", "chapter", "6";
+    scrartcl: "scrartcl", "section", "3";
+    scrreprt: "scrreprt", "chapter", "4";
+    scrbook: "scrbook", "chapter", "6";
+    memoir: "memoir", "chapter", "6";
+    amsart: "amsart", "section", "3";
+    amsbook: "amsbook", "chapter", "6";
 }
 
 /// A beamer frame instead of the sectioned project.
