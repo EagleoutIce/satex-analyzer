@@ -262,9 +262,11 @@ def bundle(satex, work):
     def listed(job):
         flags, doc, cwd = job
         read = {(cwd / e).resolve() for e in files_read(satex, flags, doc, cwd, env) if (cwd / e).resolve().is_relative_to(dist)}
-        # What another option would read instead (`[11pt]`: size11.clo for size10.clo): the files
-        # of the same kind beside each one read. Classes, packages and documents load by name.
-        return read | {q for p in read if p.suffix not in (".sty", ".cls", ".tex", ".ltx") for q in p.parent.glob(f"*{p.suffix}")}
+        # What another option would read instead (`[11pt]`: size11.clo for size10.clo): the TeX
+        # inputs of the same kind beside each one read. Classes, packages and documents load by
+        # name; fonts are no option's input.
+        option = lambda p: "tex" in p.relative_to(dist).parts[:1] and p.suffix not in (".sty", ".cls", ".tex", ".ltx")
+        return read | {q for p in read if option(p) for q in p.parent.glob(f"*{p.suffix}")}
 
     absent = {}
     reads = {}  # (kernel, document or package) -> the distribution files it reads
