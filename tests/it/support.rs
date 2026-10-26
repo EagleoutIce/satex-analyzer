@@ -96,6 +96,9 @@ pub fn seed_kernel(cfg: &Config) {
     let dir = cfg.cache.dir.clone().expect("a cache directory to seed");
     let shared = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/test-kernel");
     let key = format!("{:?}", (cfg.engine, &cfg.load, &cfg.kernel, &cfg.texmf));
+    static START: std::sync::OnceLock<std::time::SystemTime> = std::sync::OnceLock::new();
+    let start = *START.get_or_init(|| std::time::SystemTime::now() - std::time::Duration::from_secs(1));
+    let mut used = Vec::new();
     {
         let mut built = BUILT.lock().unwrap_or_else(|e| e.into_inner());
         if !built.contains(&key) {
@@ -107,12 +110,26 @@ pub fn seed_kernel(cfg: &Config) {
             built.push(key);
         }
     }
-    std::fs::create_dir_all(&dir).expect("a cache directory");
-    for entry in std::fs::read_dir(&shared).expect("the shared kernel cache").flatten() {
-        let name = entry.file_name();
-        if name.to_string_lossy().starts_with("format-") && name.to_string_lossy().ends_with(".postcard") {
-            let _ = std::fs::copy(entry.path(), dir.join(&name));
+    let formats: Vec<_> = std::fs::read_dir(&shared)
+        .expect("the shared kernel cache")
+        .flatten()
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            name.starts_with("format-") && name.ends_with(".postcard")
+        })
+        .collect();
+    // Only what this process built or read: files of older interpreters stay behind.
+    for entry in &formats {
+        if entry.metadata().and_then(|m| m.modified()).is_ok_and(|m| m >= start) {
+            used.push(entry);
         }
+    }
+    if used.is_empty() {
+        used.extend(&formats);
+    }
+    std::fs::create_dir_all(&dir).expect("a cache directory");
+    for entry in used {
+        let _ = std::fs::copy(entry.path(), dir.join(entry.file_name()));
     }
 }
 
@@ -334,4 +351,14 @@ pub fn mini_config(tree: &Path, cache: &Path) -> Config {
         cache: satex::config::Cache { dir: Some(cache.to_path_buf()), ..Default::default() },
         ..config()
     }
+}
+
+/// Fails unless the run of `source` (INITEX catcodes, no format) ends with
+/// a certain `\R` whose text is `expected`, compared without white space.
+pub fn assert_r(source: &str, expected: &str) {
+    let analysis = analyze_plain(source);
+    let def = last_definition(&analysis, "R").expect("\\R is defined");
+    let got: String = last_body(&analysis, "R").split_whitespace().collect();
+    assert_eq!(got, expected.split_whitespace().collect::<String>(), "\\R");
+    assert!(def.certain, "\\R is not certain");
 }

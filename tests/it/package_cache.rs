@@ -49,23 +49,10 @@ fn analyze(dir: &Path, source: &str, cfg: &Config) -> Analysis {
 /// directory starts from one shared kernel cache, and keeps its own package
 /// caches.
 fn latex(dir: &Path) -> Config {
-    static KERNEL: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    let shared = KERNEL.get_or_init(|| {
-        let shared = crate::support::tmp_root().join(format!("satex-package-cache-kernel-{}", std::process::id()));
-        let cfg =
-            Config { cache: Cache { dir: Some(shared.clone()), ..Default::default() }, ..crate::support::config() };
-        Machine::analyze("\\relax\n", Some(&shared.join("kernel.tex")), &cfg);
-        shared
-    });
-    let cache = dir.join("cache");
-    std::fs::create_dir_all(&cache).expect("cache");
-    for entry in std::fs::read_dir(shared).expect("kernel cache").flatten() {
-        let name = entry.file_name();
-        if name.to_string_lossy().ends_with(".postcard") && !cache.join(&name).exists() {
-            std::fs::copy(entry.path(), cache.join(&name)).expect("kernel cache copied");
-        }
-    }
-    Config { cache: Cache { dir: Some(cache), ..Default::default() }, ..crate::support::config() }
+    let cfg =
+        Config { cache: Cache { dir: Some(dir.join("cache")), ..Default::default() }, ..crate::support::config() };
+    crate::support::seed_kernel(&cfg);
+    cfg
 }
 
 const DOCUMENT: &str = "\\documentclass{article}\n\\usepackage{outer}\n\\begin{document}\\outermacro\\end{document}\n";

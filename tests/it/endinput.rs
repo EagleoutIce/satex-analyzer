@@ -37,30 +37,13 @@ fn scratch(tag: &str) -> std::path::PathBuf {
 /// that read a class share one kernel cache, so each reads its own files and
 /// not latex.ltx again (as `tests/it/package_cache.rs` does).
 fn latex(dir: &std::path::Path) -> Config {
-    static KERNEL: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
-    let shared = KERNEL.get_or_init(|| {
-        let shared = crate::support::tmp_root().join(format!("satex-endinput-kernel-{}", std::process::id()));
-        let cfg = Config {
-            cache: Cache { dir: Some(shared.clone()), ..Default::default() },
-            load: Load { classes: true, ..Default::default() },
-            ..crate::support::config()
-        };
-        Machine::analyze("\\relax\n", Some(&shared.join("kernel.tex")), &cfg);
-        shared
-    });
-    let cache = dir.join("cache");
-    std::fs::create_dir_all(&cache).expect("a cache directory");
-    for entry in std::fs::read_dir(shared).expect("the kernel cache").flatten() {
-        let name = entry.file_name();
-        if name.to_string_lossy().ends_with(".postcard") && !cache.join(&name).exists() {
-            std::fs::copy(entry.path(), cache.join(&name)).expect("the kernel cache is copied");
-        }
-    }
-    Config {
-        cache: Cache { dir: Some(cache), ..Default::default() },
+    let cfg = Config {
+        cache: Cache { dir: Some(dir.join("cache")), ..Default::default() },
         load: Load { classes: true, ..Default::default() },
         ..crate::support::config()
-    }
+    };
+    crate::support::seed_kernel(&cfg);
+    cfg
 }
 
 #[test]
