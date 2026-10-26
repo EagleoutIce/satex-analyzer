@@ -24,6 +24,7 @@ type Learn = (Option<(crate::mode::Modes, crate::mode::Modes)>, Option<(Sym, Opt
 /// (character, category) pairs per text, and the rest of a one-of text to
 /// put back.
 type Operands = (Vec<Vec<(u32, u8)>>, Option<Token>);
+pub(crate) type Narrowing = (Sym, crate::value::Quantity, crate::value::Num, Option<Vec<i64>>, char, (i64, i64));
 
 /// tex.web § 1232: `"8000` is the largest math code.
 const MATH_CODE_MAX: i64 = 0x8000;
@@ -1580,7 +1581,7 @@ impl Machine<'_> {
         };
         // A name that is one of several: a path per name, on which the
         // command goes on. Each replay runs the scan's own choices again,
-        // so a site that parted `meaning_set` paths on this line already
+        // so a site that parted `meaning_set` paths since source was read
         // keeps the name whole: the family the names share.
         let names = acc.name.as_deref().map_or(0, |n| n.names.len());
         if names > 1 && self.site_forked(span) >= u32::from(self.limits.meaning_set) {
@@ -1862,6 +1863,24 @@ impl Machine<'_> {
             }
             _ => Some(x == y),
         }
+    }
+
+    /// `tokens` with typed digits a test narrowed to one number spelled
+    /// out: that is the text TeX holds there.
+    fn settled<'a>(&self, tokens: &'a [Token]) -> std::borrow::Cow<'a, [Token]> {
+        let one = |t: &Token| {
+            let sym = t.cs()?;
+            let place = self.typed_slice(sym).is_none_or(|(_, _, i, j)| j == i + 1);
+            self.typed_digits_of(sym).filter(|n| place && n.lo == n.hi).map(|n| n.lo)
+        };
+        if !tokens.iter().any(|t| one(t).is_some()) {
+            return std::borrow::Cow::Borrowed(tokens);
+        }
+        let spell = |t: &Token| match one(t) {
+            Some(n) => n.to_string().chars().map(|c| Token::new(Tok::Chr(c, Catcode::Other), t.span)).collect(),
+            None => vec![*t],
+        };
+        std::borrow::Cow::Owned(tokens.iter().flat_map(spell).collect())
     }
 
     /// Whether two texts may be one: unknown parts stand for any text
@@ -2521,7 +2540,7 @@ impl Machine<'_> {
         self.approximated = true;
         let unknown = Some((vec![vec![UNKNOWN_OPERAND]], None));
         let Some(texts) = one_of else {
-            return self.class_operands(t, noexpanded).map(|o| (vec![o], None)).or(unknown);
+            return self.class_operands(t, noexpanded).map(|o| (vec![o], Some(t))).or(unknown);
         };
 
         // Per text, from its first token.
@@ -2530,6 +2549,21 @@ impl Machine<'_> {
         let Some(members) = members else { return unknown };
         self.unread_rests(&texts, t.span);
         Some((members, Some(t)))
+    }
+
+    /// What a test of typed digits `t` against the character `c` teaches
+    /// its arms: digits begin with `0` only where the number is 0, with
+    /// `-` where it is negative, and one digit is the number itself.
+    fn digit_narrowing(&self, t: Token, c: char) -> Option<Narrowing> {
+        let sym = t.cs()?;
+        let num = self.typed_digits_of(sym)?;
+        let (relation, bound) = match c {
+            '0' if num.lo >= 0 => ('=', 0),
+            '-' => ('<', 0),
+            '1'..='9' if num.lo >= 0 && num.hi <= 9 => ('=', i64::from(c as u8 - b'0')),
+            _ => return None,
+        };
+        Some((sym, crate::value::Quantity::Int, num, None, relation, (bound, bound)))
     }
 
     /// A path per answer of a test that `t`'s texts decide apart: `true`
@@ -2798,14 +2832,11 @@ impl Machine<'_> {
                     if same(a, &mb) || same(b, &ma) {
                         return Some(true);
                     }
-                    self.narrowing = typed(a, &mb).or_else(|| typed(b, &ma)).and_then(|(sym, num, m)| {
-                        match m {
-                            Meaning::Char('0', Catcode::Other) if num.lo >= 0 => Some('='),
-                            Meaning::Char('-', Catcode::Other) => Some('<'),
-                            _ => None,
-                        }
-                        .map(|relation| (sym, crate::value::Quantity::Int, num, None, relation, (0, 0)))
-                    });
+                    let digit = |t: Token, m: &Meaning, me: &Self| match m {
+                        Meaning::Char(c, Catcode::Other) => me.digit_narrowing(t, *c),
+                        _ => None,
+                    };
+                    self.narrowing = digit(a, &mb, self).or_else(|| digit(b, &ma, self));
                 }
                 // A name that holds one of several meanings is compared
                 // member by member: decided when they all agree.
@@ -2927,6 +2958,11 @@ impl Machine<'_> {
                 let (b, tb) = self.if_operand()?;
                 let by_code = cond == Cond::Chars;
                 let (fa, fb) = (a.concat(), b.concat());
+                let digit = |t: Option<Token>, other: &[(u32, u8)], m: &Self| match other {
+                    [(c, 12)] => m.digit_narrowing(t?, char::from_u32(*c)?),
+                    _ => None,
+                };
+                self.narrowing = digit(ta, &fb, self).or_else(|| digit(tb, &fa, self));
                 if fa.contains(&UNKNOWN_OPERAND) || fb.contains(&UNKNOWN_OPERAND) {
                     return None;
                 }
@@ -2961,7 +2997,15 @@ impl Machine<'_> {
     /// `\noexpand` marker as `relax` with `no_expand_flag` when it is
     /// expandable, a meaning no other token has.
     fn ifx_meaning(&mut self, token: Token) -> Meaning {
-        let meaning = self.meaning_of(token);
+        let meaning = match self.meaning_of(token) {
+            Meaning::Macro(m) => match self.settled(&m.replacement_text) {
+                std::borrow::Cow::Owned(text) => {
+                    Meaning::Macro(Rc::new(crate::tex::MacroDef { replacement_text: text.into(), ..(*m).clone() }))
+                }
+                std::borrow::Cow::Borrowed(_) => Meaning::Macro(m),
+            },
+            meaning => meaning,
+        };
         if self.read_noexpanded(token) && self.expandable_meaning(&meaning) {
             return Meaning::Primitive(Primitive::DontExpand);
         }
@@ -2969,6 +3013,9 @@ impl Machine<'_> {
     }
 
     fn meaning_of(&mut self, token: Token) -> Meaning {
+        if let [Token { tok: Tok::Chr(c, cat), .. }] = self.settled(&[token])[..] {
+            return Meaning::Char(c, cat);
+        }
         match token.tok {
             Tok::Cs(sym) => self.env.meaning(sym),
             Tok::Chr(c, Catcode::Active) => {

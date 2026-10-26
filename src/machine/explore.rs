@@ -1408,7 +1408,7 @@ impl Machine<'_> {
         self.resume_config(fork, Config::new(here.state, joined.env, false));
         // A bound no pass moved stays; one that moved goes to its end.
         let syms = self.typed_syms();
-        self.env.widen(&written, Some(&began.env), &crate::env::typed!(self, syms));
+        self.env.widen(&written, Some((&began.env, fork)), &crate::env::typed!(self, syms));
         let here = Config::new(self.save_path(), self.env.path(fork), false);
         let env = here.env.clone();
         self.cut_loop(paths, fork, here, env, id, depth, span, by, cut)
@@ -1465,7 +1465,7 @@ impl Machine<'_> {
                 self.skip_line(at);
             }
             self.resume_config(fork, here);
-            self.env.widen(&written, Some(&summary), &crate::env::typed!(self, syms));
+            self.env.widen(&written, Some((&summary, fork)), &crate::env::typed!(self, syms));
             let here = Config::new(self.save_path(), self.env.path(fork), false);
             let env = here.env.clone();
             return self.cut_loop(paths, fork, here, env, id, entry, span, id.1, true);
@@ -1479,7 +1479,7 @@ impl Machine<'_> {
             };
             let ended = c.ended;
             self.resume_config(fork, c.clone_config());
-            self.env.widen(&written, Some(&summary), &crate::env::typed!(self, syms));
+            self.env.widen(&written, Some((&summary, fork)), &crate::env::typed!(self, syms));
             self.wild.union(&here.state.wild);
             let c = Config::new(self.save_path(), self.env.path(fork), ended);
             match i {

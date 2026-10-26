@@ -1225,10 +1225,15 @@ impl Env {
     /// `syms` may hold anything of their kind. With `toward`, each is
     /// joined with what `toward` holds and widened (an accumulator stays
     /// typed); a name `toward` never wrote may hold anything.
-    pub fn widen(&mut self, syms: &[Sym], toward: Option<&PathEnv>, typed: &Typed) {
+    pub fn widen(&mut self, syms: &[Sym], toward: Option<(&PathEnv, &Fork)>, typed: &Typed) {
         for &sym in syms {
             let i = sym.0 as usize;
-            let Some((theirs, _)) = toward.and_then(|t| t.slots.get(&sym.0).cloned()) else {
+            // What the other path holds: its own write, or the fork's
+            // binding it kept (a token list's braces survive the widening).
+            let Some(theirs) = toward.map(|(t, fork)| match t.slots.get(&sym.0) {
+                Some((b, _)) => b.clone(),
+                None => self.at_fork(fork, sym.0),
+            }) else {
                 self.widen_in_place(sym, typed);
                 continue;
             };
@@ -2033,6 +2038,7 @@ pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits, 
     let (Some(x), Some(y)) = (old, &new) else { return join(old.clone(), new, sets, Some(typed)) };
     let (meaning_grows, value_grows) = (!same_meaning(x, y), !same_value(&x.value, &y.value));
     let (xv, yv) = (x.value.num(), y.value.num());
+    let toks = typed_toks_join(&[&x.value, &y.value], typed, true);
     let mut joined = join(old.clone(), new, sets, Some(typed))?;
     if meaning_grows {
         use crate::builtins::{Cond, Primitive};
@@ -2055,7 +2061,9 @@ pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits, 
             // An empty hull (a family no write reached yet) grows by joining.
             (Some((a, p)), Some((b, q))) if a == b && p.lo > p.hi => Value::Num { quantity: a, num: p.join(&q) },
             (Some((a, p)), Some((b, q))) if a == b => Value::Num { quantity: a, num: p.widen(&p.join(&q)) },
-            _ => Value::Unknown,
+            // Token lists keep their common ends around typed text, whose
+            // class only grows: a pgfmath stack keeps its braces.
+            _ => toks.map_or(Value::Unknown, Value::Toks),
         };
     }
     Some(joined)
@@ -2366,7 +2374,7 @@ fn join(a: Option<Binding>, b: Option<Binding>, sets: SetLimits, typed: Option<&
             let mut value = x.value.clone().join(&y.value, sets);
             if matches!(value, Value::Unknown)
                 && let Some(typed) = typed
-                && let Some(text) = typed_toks_join(&[&x.value, &y.value], typed)
+                && let Some(text) = typed_toks_join(&[&x.value, &y.value], typed, false)
             {
                 value = Value::Toks(text);
             }
@@ -2386,7 +2394,7 @@ fn join(a: Option<Binding>, b: Option<Binding>, sets: SetLimits, typed: Option<&
                 // Past the limit, macros whose texts differ in balanced
                 // text without control sequences are one macro with that
                 // part typed unknown text: what they may hold stays known.
-                (false, false, Some(set)) => match typed.and_then(|typed| typed_join(&set, typed)) {
+                (false, false, Some(set)) => match typed.and_then(|typed| typed_join(&set, typed, false)) {
                     Some(meaning) => (meaning, None),
                     None => (Meaning::Unknown, None),
                 },
@@ -2416,7 +2424,9 @@ fn maybe_undefined(set: &[Meaning]) -> Option<&Meaning> {
 /// One macro for the parameterless macros `set`: their common beginning
 /// and end, and typed unknown text for what lies between, when that is
 /// balanced and holds no control sequence. `None` otherwise.
-fn typed_join(set: &[Meaning], typed: &Typed) -> Option<Meaning> {
+/// Widened, the middle has no length bound: one that grows each pass
+/// never meets.
+fn typed_join(set: &[Meaning], typed: &Typed, widen: bool) -> Option<Meaning> {
     let mut texts: Vec<&[Token]> = Vec::with_capacity(set.len());
     let mut def = None;
     for m in set {
@@ -2428,13 +2438,21 @@ fn typed_join(set: &[Meaning], typed: &Typed) -> Option<Meaning> {
         def.get_or_insert(d);
     }
     let first = texts[0];
-    let head =
+    let mut head =
         (0..first.len()).take_while(|&i| texts.iter().all(|t| t.get(i).is_some_and(|x| x.tok == first[i].tok))).count();
-    let tail = (0..first.len() - head)
+    let mut tail = (0..first.len() - head)
         .take_while(|&i| {
             texts.iter().all(|t| t.len() - head > i && t[t.len() - 1 - i].tok == first[first.len() - 1 - i].tok)
         })
         .count();
+    // Widened, typed text next to the middle joins it: the next pass then
+    // meets one typed token, not one more beside it.
+    while widen && head > 0 && typed.classify(&first[head - 1]).is_some() {
+        head -= 1;
+    }
+    while widen && tail > 0 && typed.classify(&first[first.len() - tail]).is_some() {
+        tail -= 1;
+    }
     let mut class = TextClass::EMPTY;
     let mut one = true;
     // The hull of the middles' bounds, each the sum of its tokens'.
@@ -2465,7 +2483,7 @@ fn typed_join(set: &[Meaning], typed: &Typed) -> Option<Meaning> {
     }
     let span = first.get(head).or(first.last()).map_or(Span::default(), |t| t.span);
     let mut text = first[..head].to_vec();
-    text.push(Token::new(Tok::Cs(typed.make(class, one, len)), span));
+    text.push(Token::new(Tok::Cs(typed.make(class, one, len.filter(|_| !widen))), span));
     text.extend_from_slice(&first[first.len() - tail..]);
     let def = def?;
     Some(Meaning::Macro(std::rc::Rc::new(crate::tex::MacroDef { replacement_text: text.into(), ..(**def).clone() })))
@@ -2478,7 +2496,7 @@ pub static RESUME_SLOTS: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 /// Token lists past `limits.value_set`: their common beginning and end
 /// around typed unknown text, as [`typed_join`] widens macros. A pgfmath
 /// stack keeps its braces and its numbers stay digits (tex.web § 1227).
-fn typed_toks_join(values: &[&Value], typed: &Typed) -> Option<std::rc::Rc<[Token]>> {
+fn typed_toks_join(values: &[&Value], typed: &Typed, widen: bool) -> Option<std::rc::Rc<[Token]>> {
     let mut set = Vec::new();
     for v in values {
         let lists = match v {
@@ -2500,7 +2518,7 @@ fn typed_toks_join(values: &[&Value], typed: &Typed) -> Option<std::rc::Rc<[Toke
             set.push(Meaning::Macro(std::rc::Rc::new(def)));
         }
     }
-    match typed_join(&set, typed)? {
+    match typed_join(&set, typed, widen)? {
         Meaning::Macro(d) => Some(d.replacement_text.clone()),
         _ => None,
     }

@@ -901,7 +901,9 @@ Some text with microtype protrusion and expansion.
             (crate::support::defined(&a, "Free"), crate::support::defined(&a, "Taken"))
         };
         assert_eq!(run(""), (true, false));
-        assert_eq!(run("\\def\\axyb{}"), (true, true));
+        // Digits never spell letters: only a name with digits between.
+        assert_eq!(run("\\def\\axyb{}"), (true, false));
+        assert_eq!(run("\\expandafter\\def\\csname a42b\\endcsname{}"), (true, true));
         // The same digits spell the same name: the one just defined.
         assert_eq!(run("\\expandafter\\def\\csname a\\u b\\endcsname{}"), (false, true));
         assert_eq!(run("\\def\\cxyd{}\\def\\xab{}"), (true, false));

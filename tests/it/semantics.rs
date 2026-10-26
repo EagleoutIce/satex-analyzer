@@ -1028,6 +1028,7 @@ fn an_expansion_gives_up_only_over_a_gap_satex_invented() {
 fn the_rest_of_split_unknown_text_may_hold_the_next_delimiter() {
     let source = r"\edef\next{\def\noexpand\parse##1\detokenize{macro:}##2\detokenize{->}##3\noexpand\stop
             {\edef\noexpand\out{\noexpand\if\relax\noexpand\detokenize{##3}\relax E\noexpand\else N\noexpand\fi}}}\next
+        \expandafter\def\csname u42\endcsname{x}
         \expandafter\let\expandafter\x\csname u\number\pdfuniformdeviate 99\endcsname
         \expandafter\parse\meaning\x\stop";
     let analysis = analyze(source);
@@ -1512,6 +1513,36 @@ fn one_unknown_digit_names_one_of_ten_names() {
     );
     let defined = names(&analysis);
     assert!(defined.contains(&"yes".to_string()) && !defined.contains(&"no".to_string()), "{defined:?}");
+}
+
+/// A test that narrowed unknown digits to one number leaves that
+/// number's digits: `\ifx` of a macro holding them against `0` is true.
+#[test]
+fn digits_a_test_narrowed_to_zero_are_the_digit_zero() {
+    let analysis = analyze(
+        r"\def\zero{0}\def\a#1#2\stop{\if\noexpand#10\def\n{#1}\ifx\n\zero\def\same{}\else\def\differ{}\fi\fi}
+          \edef\x{\pdfuniformdeviate 1000}\expandafter\a\x\stop",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"same".to_string()) && !defined.contains(&"differ".to_string()), "{defined:?}");
+}
+
+/// pgfmath's octal test: a number read digit by digit begins with `0`
+/// only when it is 0. The path that took the `0` arm and the one that
+/// read more digits meet at the reading loop, kept apart by what they set
+/// before it, so no path reaches the octal arm with more digits.
+#[test]
+fn a_number_read_digit_by_digit_is_octal_only_when_zero() {
+    let analysis = analyze(
+        r"\def\zero{0}\def\empty{}
+          \def\d#1{\expandafter\def\csname dig@#1\endcsname{}}\d0\d1\d2\d3\d4\d5\d6\d7\d8\d9
+          \def\op#1{\let\base\empty\def\num{}\if\noexpand#10\def\base{8}\fi\acc#1}
+          \def\acc#1{\expandafter\ifx\csname dig@\string#1\endcsname\relax\expandafter\done\else\edef\num{\num#1}\expandafter\acc\fi}
+          \def\done{\ifx\base\empty\def\dec{}\else\ifx\num\zero\def\iszero{}\else\def\octal{}\fi\fi}
+          \edef\x{\pdfuniformdeviate 1000+}\expandafter\op\x",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"dec".to_string()) && !defined.contains(&"octal".to_string()), "{defined:?}");
 }
 
 /// `\the` never prints a leading zero (tex.web § 103): a dimension of at

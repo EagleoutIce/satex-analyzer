@@ -918,7 +918,12 @@ impl Machine<'_> {
             return None;
         }
         // A test may have narrowed it on this path, to one value or few.
-        self.env.slot(sym)?.value.num().map(|(_, num)| num)
+        // A join never takes it past its type, which its name spells.
+        let num = self.env.slot(sym)?.value.num().map(|(_, num)| num)?;
+        let (lo, hi) = self.name(sym)[TYPED_DIGITS.len()..].split(['#', '@']).next()?.split_once("..")?;
+        let ty = Num::range(lo.parse().ok()?, hi.parse().ok()?);
+        let (lo, hi) = (num.lo.max(ty.lo), num.hi.min(ty.hi));
+        Some(if lo <= hi { Num::range(lo, hi) } else { ty })
     }
 
     /// A slice of typed digits: the number it is cut from, the length of

@@ -1383,7 +1383,7 @@ pub struct Machine<'a> {
     /// number: the register, its quantity, its interval, the relation and
     /// the bound, from which each arm learns.
     #[allow(clippy::type_complexity)]
-    pub(crate) narrowing: Option<(Sym, crate::value::Quantity, crate::value::Num, Option<Vec<i64>>, char, (i64, i64))>,
+    pub(crate) narrowing: Option<crate::exec::Narrowing>,
     /// Where each diagnostic was first raised, by code, place and message
     /// hash, so that a repeat is counted and not stored again.
     diag_seen: crate::fixed::LookupMap<(&'static str, Span, u64), usize>,
@@ -9064,7 +9064,7 @@ will look undefined",
                             arms.push((crate::value::Num::range(whole_num.lo, whole_num.hi.min(q - 1)), vec![t]));
                         }
                         let more = crate::value::Num::range(whole_num.lo.max(q), whole_num.hi);
-                        if more.lo <= more.hi {
+                        if whole_num.hi >= q {
                             let first = self.slice_token(whole, more, (0, i, i + 1), t.span);
                             let rest = self.slice_token(whole, more, (0, i + 1, 0), t.span);
                             arms.push((more, vec![first, rest]));
@@ -12270,7 +12270,7 @@ impl Machine<'_> {
         }
         // A name that can spell no defined name is undefined, so `\csname`
         // makes it `\relax`, locally as TeX does.
-        let meaning = match self.spells_defined(prefix, suffix) {
+        let meaning = match self.spells_defined(prefix, suffix, digits) {
             false => Meaning::Primitive(Primitive::Relax),
             true => Meaning::Unknown,
         };
@@ -12281,15 +12281,17 @@ impl Machine<'_> {
     }
 
     /// Whether a name of `prefix`, unknown text and `suffix` may be one
-    /// with a meaning besides `\relax`: a defined name of that shape, or
+    /// with a meaning besides `\relax`: a defined name of that shape (digits
+    /// in the middle where the unknown part is digits), or
     /// one a name built from unknown text may have defined.
-    fn spells_defined(&self, prefix: &str, suffix: &str) -> bool {
+    fn spells_defined(&self, prefix: &str, suffix: &str, digits: bool) -> bool {
         self.wild.overlaps_real(prefix, suffix)
             || self.env.bound().into_iter().any(|s| {
                 let name = self.out.interner.name(s);
                 name.len() >= prefix.len() + suffix.len()
                     && name.starts_with(prefix)
                     && name.ends_with(suffix)
+                    && (!digits || name[prefix.len()..name.len() - suffix.len()].bytes().all(|b| b.is_ascii_digit()))
                     && !self.is_unknown_name(s)
                     && !matches!(self.env.meaning(s), Meaning::Undefined | Meaning::Primitive(Primitive::Relax))
             })
