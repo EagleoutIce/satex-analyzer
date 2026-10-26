@@ -716,7 +716,7 @@ impl Machine<'_> {
                 self.unread_all(&[Token::new(Tok::Cs(by), span), Token::new(Tok::Cs(name), span), held]);
                 return;
             }
-            let b = b.map(|t| self.one_token(t));
+            let b = b.map(|t| self.one_token(t, false).unwrap_or(t));
             (b, a)
         } else {
             // tex.web § 1221: optional spaces, optional `=`, then at most one

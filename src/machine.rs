@@ -985,6 +985,14 @@ impl Accum {
         }
     }
 
+    /// What it made past `len` tokens, as one `unknown` token.
+    pub(crate) fn widen_from(&mut self, len: usize, unknown: Token) {
+        let mut text = self.to_vec();
+        text.truncate(len);
+        text.push(unknown);
+        (self.chunks, self.tail) = (vec![Rc::from(text)], Vec::new());
+    }
+
     pub(crate) fn to_vec(&self) -> Vec<Token> {
         let mut out = Vec::with_capacity(self.len());
         for chunk in &self.chunks {
@@ -1196,7 +1204,7 @@ pub(crate) struct Scratch {
     pub(crate) summary_of: Rc<Vec<LoopId>>,
     /// Per loop, the bounded text this path's last pass began with
     /// ([`Machine::input_bound`]).
-    pub(crate) loop_bounds: Rc<Vec<(LoopId, u32)>>,
+    pub(crate) loop_bounds: Rc<Vec<(LoopId, Option<u32>)>>,
     /// The last loop cut with no path waiting: its head, the source
     /// progress, and how often it was met there since ([`Machine::end_covered`]).
     pub(crate) recut: Option<(Span, u64, u32)>,
@@ -1740,7 +1748,7 @@ struct PathState {
     pub(crate) summary_of: Rc<Vec<LoopId>>,
     /// Per loop, the bounded text this path's last pass began with
     /// ([`Machine::input_bound`]).
-    pub(crate) loop_bounds: Rc<Vec<(LoopId, u32)>>,
+    pub(crate) loop_bounds: Rc<Vec<(LoopId, Option<u32>)>>,
     edef_depth: usize,
     pdf_string: bool,
     last_file: Option<FileId>,
@@ -1779,6 +1787,9 @@ struct PathState {
     call_recs: Rc<Vec<calls::CallRec>>,
     guard_seen: GuardSeen,
     job_ended: bool,
+    /// The path's own scans in flight ([`Machine::scan_begin`]): a cut on
+    /// one path ends no other path's scan.
+    scan_starts: Vec<(usize, bool)>,
 }
 
 /// Where a path stands in the input, for telling when two paths meet: a
@@ -6922,6 +6933,8 @@ will look undefined",
     pub(crate) fn scan_end(&mut self, id: usize) -> bool {
         let cut = self.scan_starts.get(id).is_some_and(|s| s.1);
         self.scan_starts.truncate(id);
+        // The scans it ran in read on: their text is still there.
+        self.scan_cut = self.scan_starts.iter().any(|s| s.1);
         if cut {
             let at = self.position_span();
             self.diagnose(
@@ -9229,7 +9242,10 @@ will look undefined",
             // a rest of one character or none ([`Machine::one_token`]).
             Some(t) => {
                 self.note_shape(t.span, "{}");
-                vec![self.one_token(t)]
+                match self.one_token(t, true) {
+                    Some(t) => vec![t],
+                    None => self.read_undelimited(),
+                }
             }
         }
     }
@@ -9237,36 +9253,41 @@ will look undefined",
     /// Unknown digits taken as one token (an undelimited argument, the
     /// token `\futurelet` looks at) are their first digit, one character
     /// of category 12. The rest, perhaps none, is read next (tex.web § 465
-    /// prints a number as characters).
-    pub(crate) fn one_token(&mut self, t: Token) -> Token {
-        let Some((class, true)) = self.typed_text_of(t) else { return t };
+    /// prints a number as characters). Read as an undelimited argument
+    /// (`skip`), spaces go first (tex.web § 393): text that may hold them
+    /// is its first other character, or, spaces only, none (`None`).
+    pub(crate) fn one_token(&mut self, t: Token, skip: bool) -> Option<Token> {
+        let Some((class, true)) = self.typed_text_of(t) else { return Some(t) };
         if let Some(c) = self.text_len(t).filter(|_| self.is_lead(t)).and_then(|n| self.lead_first(t, false, n)) {
-            return Token::new(c, t.span);
+            return Some(Token::new(c, t.span));
         }
         // One token read, the rest holds one fewer: none at a bound of 1.
         let len = self.text_len(t).map(|n| n - 1);
         let rest = (len != Some(0)).then(|| self.unknown_text(Unk::Class(class, false, len, &[]), t.span));
+        let spaces = skip && class.meets(TextClass::SPACE);
         if let Some(c) = class.one_char() {
             if let Some(rest) = rest {
                 self.unread(rest);
             }
-            return Token::new(c, t.span);
+            return Some(Token::new(c, t.span));
         }
         // Text over two categories: a path per category of its first
-        // character. Spaces, braces and names stay one token.
-        let chars = Self::class_chars(class);
-        let Some(sym) = t.cs().filter(|_| chars.len() > 1) else { return t };
+        // character, and one for spaces only. Braces and names stay one token.
+        let chars = Self::class_chars(if spaces { TextClass(class.0 & !TextClass::SPACE.0) } else { class });
+        let arms = chars.len() + usize::from(spaces);
+        let Some(sym) = t.cs().filter(|_| !chars.is_empty() && arms > 1) else { return Some(t) };
         let mut first = None;
-        if !self.split(sym, t.span, chars.len(), |_, arm| {
-            first = Some(chars[arm]);
+        if !self.split(sym, t.span, arms, |_, arm| {
+            first = chars.get(arm).copied();
             true
         }) {
-            return t;
+            return Some(t);
         }
+        let first = first?;
         if let Some(rest) = rest {
             self.unread(rest);
         }
-        Token::new(first.expect("an arm was entered"), t.span)
+        Some(Token::new(first, t.span))
     }
 
     /// The first character of the integer digits `t` ([`LEAD_MARK`]), at
@@ -10639,6 +10660,7 @@ will look undefined",
             call_recs: self.call_recs.clone(),
             guard_seen: self.guard_seen,
             job_ended: self.job_ended,
+            scan_starts: self.scan_starts.clone(),
         }
     }
 
@@ -10681,6 +10703,8 @@ will look undefined",
         self.call_recs = state.call_recs;
         self.guard_seen = state.guard_seen;
         self.job_ended = state.job_ended;
+        self.scan_starts = state.scan_starts;
+        self.scan_cut = self.scan_starts.iter().any(|s| s.1);
         if self.call_recs.is_empty() {
             self.env.log_reads(false);
         }

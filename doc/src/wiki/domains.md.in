@@ -410,6 +410,7 @@ The bound is at most 20, a sign and 19 digits.
 - `\the` of an unknown dimension gives at most 14: a sign, 5 digits, a point, 5 places and `pt` (§ 103).
 - A count or dimension in an interval prints with the digits of its larger bound.
 - Reading one token of bounded text leaves a rest with a bound one smaller. A rest with bound 0 is no text at all.
+- An undelimited argument skips spaces (tex.web § 393). From text that may hold spaces it is a path per category of its first other character, and one where the text is spaces only and the argument comes after it.
 - A join of texts keeps the largest bound of their differing parts. A run of unknown tokens that collapses into one token sums their bounds.
 
 A loop head counts the passes of a loop against `limits.widen_after` ([Configuration](Configuration#what-a-run-may-use)).
@@ -644,6 +645,17 @@ dropped, so both go on with the same counters.
   the widening opens (`\csname a\the\n\endcsname` with `\n` unknown)
   only when it runs, so they reach the continuation as a family. A summary
   taken while a scan is in flight cuts at once.
+- **Loop exits:** a summary cut inside a text scan (`\edef`, `\expanded`)
+  goes on where a pass already left the loop: a path that ran the loop and
+  ended the scan, from the same text made before the entry. Its `}` came
+  where the loop exits (`\prg_break_point: }`), or from the loop's own code.
+  On that path, what the passes wrote and what the scan made since the
+  entry may hold anything, and the summary's own path ends. With no such
+  path, the cut reads one unknown token at the entry and skips the scan's
+  text to its `}`.
+- **Scans per path:** which scans a cut dropped the text of is part of a
+  path. A cut on one path ends no scan of another, and a scan that ends
+  lets the scans it ran in read on.
 - **Endless loops:** a call that meets a state it was in before
   (`limits.cycle_after`) ends its path only while another path waits to
   read on. A path no other path covers is summarized and goes on, since

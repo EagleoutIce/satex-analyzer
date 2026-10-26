@@ -162,6 +162,8 @@ struct Loop {
     /// pass writes under names the widening opened (`\csname a\the\n`)
     /// is only met by running it.
     rerun: bool,
+    /// What the text scan the drive runs had made at the entry.
+    made: Option<usize>,
 }
 
 /// One input level, by identity rather than by where it stands. Never by
@@ -734,8 +736,8 @@ impl Machine<'_> {
 
     /// Paths that left what the drive runs, joined. Their input joins as
     /// one text ([`Machine::widen_input`]): a path that stopped elsewhere
-    /// still reads what it has left. A number's scan ([`Unit::Number`]) also
-    /// needs the same conditionals, groups and scans. `None` when they
+    /// still reads what it has left. A number's scan ([`Unit::Number`]) and
+    /// a definition's body also need the same conditionals, groups and scans. `None` when they
     /// cannot be one.
     fn join_done(&mut self, fork: &Fork, configs: &[Config], strict: bool) -> Option<Config> {
         // Forced, the join starts from the path deepest in groups.
@@ -747,7 +749,7 @@ impl Machine<'_> {
         };
         let mut order: Vec<Config> = vec![configs.get(start)?.clone_config()];
         order.extend(configs.iter().enumerate().filter(|&(k, _)| k != start).map(|(_, c)| c.clone_config()));
-        let stacks = strict && matches!(self.unit, Unit::Number);
+        let stacks = strict && matches!(self.unit, Unit::Number | Unit::Body { .. });
         let (mut joined, _) =
             self.fold(fork, order, 1, |x, y| same_code(&x.tag, &y.tag) && (!stacks || same_stacks(x, y)));
         (joined.len() == 1).then(|| joined.pop()).flatten()
@@ -970,7 +972,11 @@ impl Machine<'_> {
             paths.stopped[l].passes += 1;
             // Unwound to the entry, never below it: the callers' frames hold
             // their own closers (`\fi`, `\endgroup`) and the code after it.
+            let progress = here.key.progress;
             self.resume_config(&fork, here);
+            if self.exits_carry(paths, &fork, l, progress, span) {
+                return Next::None;
+            }
             let before = (self.input.iter().filter_map(place).count(), self.conds.len(), self.env.depth());
             self.unwind(entry, span);
             // Nothing left to unwind (source on top): one more unknown
@@ -1020,7 +1026,7 @@ impl Machine<'_> {
         for c in outcomes.iter_mut() {
             let bounds = Rc::make_mut(&mut c.state.loop_bounds);
             bounds.retain(|(l, _)| *l != id);
-            bounds.extend(bound.map(|b| (id, b)));
+            bounds.push((id, bound));
         }
         let entry = paths.loops.iter().find(|l| l.id == id).map(|l| (l.depth.0, l.depth.1, l.passes));
         let forced = match paths.loops.iter().position(|l| l.id == id) {
@@ -1028,7 +1034,7 @@ impl Machine<'_> {
                 let (joined, _) = self.join_configs(&fork, &paths.loops[l].joined, &here, false, true);
                 // A pass on strictly less bounded text is not counted:
                 // such passes end by construction, each state exact.
-                let before = here.state.loop_bounds.iter().find(|(l, _)| *l == id).map(|(_, b)| *b);
+                let before = here.state.loop_bounds.iter().find(|(l, _)| *l == id).and_then(|(_, b)| *b);
                 let shrinks = matches!((before, bound), (Some(a), Some(b)) if b < a);
                 let l = &mut paths.loops[l];
                 l.passes += u32::from(!shrinks);
@@ -1052,6 +1058,7 @@ impl Machine<'_> {
                     entry: here.env.clone(),
                     joined,
                     rerun: false,
+                    made: here.state.scans.last().filter(|a| a.name.is_none() && a.number.is_none()).map(Accum::len),
                 });
                 keep_last(&mut paths.loops, self.limits.loop_heads);
                 capped
@@ -1495,7 +1502,8 @@ impl Machine<'_> {
         Next::None
     }
 
-    /// A loop the verification pass did not close: its input unwinds to
+    /// A loop the verification pass did not close: where a pass already
+    /// left it, there ([`Machine::exits_carry`]); else its input unwinds to
     /// where it was entered and reads one unknown token.
     #[allow(clippy::too_many_arguments)]
     fn cut_loop(
@@ -1510,8 +1518,11 @@ impl Machine<'_> {
         by: Sym,
         cut: bool,
     ) -> Next {
+        let progress = here.key.progress;
         self.resume_config(fork, Config::new(here.state, env, false));
-        if cut {
+        let l = paths.stopped.iter().rposition(|l| l.id == id);
+        let carried = cut && l.is_some_and(|l| self.exits_carry(paths, fork, l, progress, span));
+        if cut && !carried {
             self.unwind(depth, span);
         }
         self.diagnose(
@@ -1530,10 +1541,56 @@ impl Machine<'_> {
         if !self.scratch.summary_of.contains(&id) {
             Rc::make_mut(&mut self.scratch.summary_of).push(id);
         }
+        if carried {
+            return Next::None;
+        }
         if cut {
             self.read_unknown(span);
         }
         self.explore(paths, false)
+    }
+
+    /// Paths that ran stopped loop `l` and ended the text scan it ran in,
+    /// from what it had made at the entry, left it: its `}` came where they
+    /// left (`\prg_break_point: }`, or from the loop's own code). The
+    /// summary goes on there: what the loop writes, and what the scan made
+    /// since the entry, may hold anything on them. Whether any did.
+    fn exits_carry(&mut self, paths: &mut Paths, fork: &Fork, l: usize, progress: u64, span: Span) -> bool {
+        let Some(made) = paths.stopped[l].made else { return false };
+        let id = paths.stopped[l].id;
+        let made_toks = |a: &Accum| a.to_vec().into_iter().take(made).map(|t| t.tok).collect::<Vec<_>>();
+        let before = self.scans.last().map(made_toks);
+        let exits: Vec<usize> = (0..paths.done.len())
+            .filter(|&i| {
+                let c = &paths.done[i];
+                c.key.progress == progress
+                    && c.state.loop_bounds.iter().any(|b| b.0 == id)
+                    && c.state.scans.last().map(made_toks) == before
+            })
+            .collect();
+        if exits.is_empty() {
+            return false;
+        }
+        let entry = paths.stopped[l].entry.clone();
+        let summary = Config::new(self.save_path(), self.env.path(fork), false);
+        // What the passes wrote: as the summary widens ([`Machine::summarize`]).
+        let written = summary.env.differing_over(&entry, |s| Some(self.env.at_fork(fork, s)));
+        let unknown = self.unknown_text(Unk::Any, span);
+        let syms = self.typed_syms();
+        for i in exits {
+            self.resume_config(fork, paths.done[i].clone_config());
+            self.env.widen(&written, Some((&entry, fork)), &crate::env::typed!(self, syms));
+            self.wild.union(&summary.state.wild);
+            if let Some(acc) = self.scans.last_mut() {
+                acc.widen_from(made, unknown);
+            }
+            if !self.scratch.summary_of.contains(&id) {
+                Rc::make_mut(&mut self.scratch.summary_of).push(id);
+            }
+            paths.done[i] = Config::new(self.save_path(), self.env.path(fork), false);
+        }
+        self.resume_config(fork, summary);
+        true
     }
 
     /// How many conditionals and groups `t` closes, less those it opens.
@@ -2608,6 +2665,9 @@ impl Machine<'_> {
         }
         x.material |= y.material;
         x.approximated |= y.approximated;
+        for (p, q) in x.scan_starts.iter_mut().zip(&y.scan_starts) {
+            p.1 |= q.1;
+        }
         // What each loop's last pass began with: the larger, so a pass
         // counts as shrinking only below both.
         if y.loop_bounds != x.loop_bounds {
