@@ -2635,6 +2635,11 @@ impl Machine<'_> {
         x.main_tail = x.main_tail.merge(y.main_tail);
         x.main_depth =
             crate::mode::Dim::range(x.main_depth.lo.min(y.main_depth.lo), x.main_depth.hi.max(y.main_depth.hi));
+        // A family a pass defined names in is growth: the join does not
+        // hold it in its bindings.
+        if x.wild.lacks(&y.wild) {
+            growth.parts.push("names");
+        }
         x.wild.union(&y.wild);
         // What the scans in flight made: each is the common beginning and
         // end of both, and one token for either of what lies between.

@@ -11730,6 +11730,18 @@ impl Wild {
         }
     }
 
+    /// Whether `other` holds a family of names none of these spells: its
+    /// meanings aside, which a join adds to the family's.
+    pub(crate) fn lacks(&self, other: &Wild) -> bool {
+        other.0.iter().any(|p| {
+            !self.0.iter().any(|q| {
+                p.prefix.starts_with(q.prefix.as_str())
+                    && p.suffix.ends_with(q.suffix.as_str())
+                    && (!q.digits || p.digits)
+            })
+        })
+    }
+
     pub(crate) fn union(&mut self, other: &Wild) {
         for p in &other.0 {
             self.put(p.clone());
