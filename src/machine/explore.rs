@@ -155,6 +155,9 @@ struct Loop {
     top: Option<(Level, Place)>,
     /// The join of the states the passes began in, from the entry on.
     joined: Config,
+    /// The bindings the first pass began with: what a summary widens
+    /// against, as the join already holds the last pass.
+    entry: PathEnv,
     /// Summarized, its body ran once more from the widened state: what a
     /// pass writes under names the widening opened (`\csname a\the\n`)
     /// is only met by running it.
@@ -1047,6 +1050,7 @@ impl Machine<'_> {
                     levels,
                     places,
                     top,
+                    entry: here.env.clone(),
                     joined,
                     rerun: false,
                 });
@@ -1401,14 +1405,15 @@ impl Machine<'_> {
         // hold after the passes not run is not known: the passes need not
         // have met a head to widen at (each deeper in conditionals or
         // groups), so their join only lists what they held so far.
-        let began = std::mem::replace(&mut summarized.joined, here.clone_config());
-        let written = here.env.differing_over(&began.env, |s| Some(self.env.at_fork(fork, s)));
+        summarized.joined = here.clone_config();
+        let began = summarized.entry.clone();
+        let written = here.env.differing_over(&began, |s| Some(self.env.at_fork(fork, s)));
         paths.stopped.push(summarized);
         keep_last(&mut paths.stopped, self.limits.loop_heads);
         self.resume_config(fork, Config::new(here.state, joined.env, false));
         // A bound no pass moved stays; one that moved goes to its end.
         let syms = self.typed_syms();
-        self.env.widen(&written, Some((&began.env, fork)), &crate::env::typed!(self, syms));
+        self.env.widen(&written, Some((&began, fork)), &crate::env::typed!(self, syms));
         let here = Config::new(self.save_path(), self.env.path(fork), false);
         let env = here.env.clone();
         self.cut_loop(paths, fork, here, env, id, depth, span, by, cut)
