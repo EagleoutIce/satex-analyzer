@@ -966,6 +966,8 @@ pub(crate) struct Accum {
     pub(crate) name: Option<Box<NameAccum>>,
     /// What a [`Unit::Number`] scan read: its value, else its hull.
     pub(crate) number: Option<(Option<i64>, Option<crate::value::Num>)>,
+    /// The input levels where the scan began: its text is above them.
+    base: usize,
 }
 
 impl Accum {
@@ -999,7 +1001,8 @@ impl Accum {
 
     /// One built from `toks`, standing as this one does.
     pub(crate) fn with(&self, toks: Vec<Token>) -> Accum {
-        Accum { chunks: Vec::new(), tail: toks, depth: self.depth, done: self.done, name: None, number: self.number }
+        let (depth, done, number, base) = (self.depth, self.done, self.number, self.base);
+        Accum { chunks: Vec::new(), tail: toks, depth, done, name: None, number, base }
     }
 
     /// The name a name scan built: what stands around its unknown part
@@ -6882,18 +6885,28 @@ will look undefined",
 
     /// A scan begins: where the input stands, read levels not counted.
     pub(crate) fn scan_begin(&mut self) -> usize {
-        let mut n = self.input.len();
-        while n > 0
-            && match &self.input[n - 1] {
-                Frame::Tokens { toks, pos, .. } => *pos >= toks.len(),
-                Frame::Returned(t) => t.is_empty(),
-                _ => false,
-            }
-        {
-            n -= 1;
-        }
+        let n = self.live_levels();
         self.scan_starts.push((n, false));
         self.scan_starts.len() - 1
+    }
+
+    /// The input levels, read levels not counted.
+    fn live_levels(&self) -> usize {
+        self.input.len() - self.input.iter().rev().take_while(|f| read_out(f)).count()
+    }
+
+    /// The expansions left to read: a list shared into an expansion
+    /// ([`Frame::Tokens`] `upper`) counts with it.
+    fn text_levels(&self) -> usize {
+        let (mut n, mut live) = (0, false);
+        for f in self.input.iter() {
+            if !matches!(f, Frame::Tokens { upper: true, .. }) {
+                n += usize::from(live);
+                live = false;
+            }
+            live |= !read_out(f);
+        }
+        n + usize::from(live)
     }
 
     /// A scan ends: whether a cut dropped the text it began in. Its reads
@@ -7434,7 +7447,7 @@ will look undefined",
     /// Run `acc`'s scan as paths ([`Machine::scan_as_paths`]).
     pub(crate) fn scan_paths(&mut self, unit: Unit, acc: Accum) -> Accum {
         let depth = self.scans.len();
-        self.scans.push(acc);
+        self.scans.push(Accum { base: self.text_levels(), ..acc });
         self.drive(unit, |m| m.scans.get(depth).is_none_or(|a| a.done));
         let acc = self.scans.get(depth).cloned().unwrap_or_default();
         self.scans.truncate(depth);
@@ -7519,6 +7532,37 @@ will look undefined",
         acc.done |= done;
         acc.freeze();
         done
+    }
+
+    /// Text a cut gave up, standing for one unknown token. In a scan of
+    /// text the cut loop may read the scan's text to its end: the scan
+    /// holds the token, and its text is read unexpanded to its end, its
+    /// `\fi`s beyond its own conditionals closing what is open.
+    pub(crate) fn read_unknown(&mut self, span: Span) {
+        let unknown = self.unknown_text(Unk::Any, span);
+        let body = matches!(self.unit, Unit::Body { .. });
+        let Some(acc) = self.scans.last_mut().filter(|_| body || matches!(self.unit, Unit::Expand)) else {
+            return self.push_tokens(Rc::from(vec![unknown]));
+        };
+        acc.tail.push(unknown);
+        let (base, mut depth, mut fis) = (acc.base, acc.depth, 0);
+        while self.text_levels() >= base
+            && let Some(t) = self.read(false)
+        {
+            match t.tok {
+                Tok::Chr(_, Catcode::Begin) if body => depth += 1,
+                Tok::Chr(_, Catcode::End) if body && depth == 0 => break,
+                Tok::Chr(_, Catcode::End) if body => depth -= 1,
+                _ => fis += self.closing(&t).0,
+            }
+            if fis > 0 {
+                self.pop_conditional();
+                fis = 0;
+            }
+        }
+        let acc = self.scans.last_mut().expect("the scan is in flight");
+        (acc.depth, acc.done) = (depth, true);
+        acc.freeze();
     }
 
     /// Whether the expansion that began with `gaps` raised, running at `depth`, ran
@@ -11792,6 +11836,15 @@ enum OneOfScan {
     /// Some texts hold the delimiter and some do not: a path for each
     /// group put back the token for its texts, to be read again.
     Again,
+}
+
+/// Whether nothing is left to read in `f`.
+fn read_out(f: &Frame) -> bool {
+    match f {
+        Frame::Tokens { toks, pos, .. } => *pos >= toks.len(),
+        Frame::Returned(t) => t.is_empty(),
+        _ => false,
+    }
 }
 
 /// The name of a source read from no file.

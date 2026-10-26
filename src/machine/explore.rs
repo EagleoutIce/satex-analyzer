@@ -989,8 +989,7 @@ impl Machine<'_> {
             }
             self.approximated = true;
             self.taint_after_cut();
-            let unknown = self.unknown_text(Unk::Any, span);
-            self.push_tokens(Rc::from(vec![unknown]));
+            self.read_unknown(span);
             return self.explore(paths, false);
         }
         if let Some(l) = paths.stopped.iter().position(reentry) {
@@ -1216,9 +1215,8 @@ impl Machine<'_> {
                 while self.input.iter().filter_map(place).count() > depth {
                     self.pop_frame();
                 }
-                let unknown = self.unknown_text(Unk::Any, span);
                 self.scratch.summarized.insert(span);
-                self.push_tokens(Rc::from(vec![unknown]));
+                self.read_unknown(span);
                 // Every path cut here joins one summary, widened, so the
                 // cuts reach a fixpoint instead of each running on.
                 let cut = Config::new(self.save_path(), self.env.path(&fork), false);
@@ -1533,14 +1531,13 @@ impl Machine<'_> {
             Rc::make_mut(&mut self.scratch.summary_of).push(id);
         }
         if cut {
-            let unknown = self.unknown_text(Unk::Any, span);
-            self.push_tokens(Rc::from(vec![unknown]));
+            self.read_unknown(span);
         }
         self.explore(paths, false)
     }
 
     /// How many conditionals and groups `t` closes, less those it opens.
-    fn closing(&self, t: &Token) -> (i64, i64) {
+    pub(super) fn closing(&self, t: &Token) -> (i64, i64) {
         self.closing_in(t, &mut Vec::new())
     }
 
