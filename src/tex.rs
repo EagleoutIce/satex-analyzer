@@ -1305,11 +1305,16 @@ impl Mouth {
     /// A mouth over the file `src` standing at `mark`.
     pub fn resumed(src: &str, file: FileId, mark: LineMark) -> Self {
         let mut mouth = Mouth::file(src, file);
-        mouth.pos = mark.pos.min(mouth.src.len());
-        mouth.line = mark.line;
-        mouth.col = mark.col;
-        mouth.force_eof = mark.force_eof;
+        mouth.seek(mark);
         mouth
+    }
+
+    /// This mouth standing at `mark` of its file.
+    pub fn seek(&mut self, mark: LineMark) {
+        self.pos = mark.pos.min(self.src.len());
+        self.line = mark.line;
+        self.col = mark.col;
+        self.force_eof = mark.force_eof;
     }
 
     /// This mouth reading what `fresh` reads, which begins with what this

@@ -1595,6 +1595,8 @@ pub struct Machine<'a> {
     pub command_level: bool,
     /// The cacheable load whose file is being read, and the state it began in.
     package_capture: Option<Box<package_cache::Recorder>>,
+    /// Loads whose recording waits for a nested load to end.
+    suspended: Vec<package_cache::Suspended>,
     /// The file nesting the document itself is read at: loads it makes
     /// directly are the ones a package cache serves.
     document_file_depth: u16,
@@ -2259,6 +2261,7 @@ impl<'a> Machine<'a> {
             held: Vec::new(),
             command_level: false,
             package_capture: None,
+            suspended: Vec::new(),
             document_file_depth: 0,
             popping_in_read: false,
             reading_command: false,
@@ -4255,7 +4258,10 @@ will look undefined",
                 }
                 self.file_depth = self.file_depth.saturating_sub(1);
                 if self.package_capture.as_ref().is_some_and(|c| c.file == mouth.file) {
-                    self.finish_recording();
+                    self.finish_recording(false);
+                }
+                if self.suspended.last().is_some_and(|s| s.file == mouth.file) {
+                    self.suspended.pop();
                 }
                 if self.cacheable_load == Some(mouth.file) {
                     self.end_cacheable_load();
@@ -6409,6 +6415,8 @@ will look undefined",
         let command = std::mem::take(&mut self.command_level);
         if command && self.package_capture.is_some() {
             self.maybe_checkpoint();
+        } else if command && !self.suspended.is_empty() {
+            self.maybe_resume();
         }
         self.reading_command = command;
         let token = self.read(true);
@@ -10934,8 +10942,13 @@ will look undefined",
         self.register_file(path, LoadKind::Input);
     }
 
+    /// The file of this run at `path`, compared by components (`a//b` is `a/b`).
+    pub(crate) fn file_index(&self, path: &str) -> Option<usize> {
+        self.out.files.iter().position(|f| std::path::Path::new(&f.path) == std::path::Path::new(path))
+    }
+
     pub fn register_file(&mut self, path: String, kind: LoadKind) -> FileId {
-        if let Some(i) = self.out.files.iter().position(|f| f.path == path) {
+        if let Some(i) = self.file_index(&path) {
             return i as FileId;
         }
         if self.cfg.verbose >= 1 {

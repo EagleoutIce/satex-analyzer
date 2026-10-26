@@ -236,15 +236,10 @@ fn a_replayed_package_reports_the_tokens_and_time_it_stands_for() {
     let outer = root.children.iter().find(|n| n.name == "outer.sty").expect("outer.sty in the tree");
     assert!(outer.cached, "the replayed file is marked cached");
     assert!(outer.tokens > 0, "outer.sty reports the tokens its cache stands for, got {}", outer.tokens);
-    // `inner.sty` is only reached inside outer's cached segment: this run
-    // opened no frame of its own for it, so it is folded into one line
-    // instead of shown as its own zero-cost row.
+    // `inner.sty` has a cache entry of its own, replayed between outer's segments.
+    assert_eq!(served(&second, "inner"), Some(true), "{:?}", second.package_caches);
     let text = satex::render::timings(&second, satex::render::Links(false));
-    assert!(
-        !text.lines().any(|line| line.contains("inner.sty") && line.contains("tokens")),
-        "inner.sty should not get its own row:\n{text}"
-    );
-    assert!(text.contains("inner"), "inner.sty is named in the folded line:\n{text}");
+    assert!(text.contains("inner"), "inner.sty is named:\n{text}");
 }
 
 #[test]
@@ -254,9 +249,11 @@ fn a_changed_package_file_is_read_again() {
     std::fs::write(dir.join("inner.sty"), "\\ProvidesPackage{inner}\n\\def\\innermacro#1{}\\def\\added{}\n")
         .expect("inner.sty");
     let again = run(&dir, DOCUMENT);
-    assert_eq!(served(&again, "outer"), Some(false));
+    // The nested load has its own entry: only it is read again.
+    assert_eq!(served(&again, "inner"), Some(false));
+    assert_eq!(served(&again, "outer"), Some(true), "{:?}", again.package_caches);
     assert!(
-        again.package_caches.iter().any(|(name, _, state)| name == "outer"
+        again.package_caches.iter().any(|(name, _, state)| name == "inner"
             && state.contains("content changed")
             && state.contains("inner.sty")),
         "the stale cache says why: {:?}",
@@ -281,7 +278,7 @@ fn a_same_size_edit_in_the_same_second_is_read_again() {
     std::fs::write(&path, &edited).expect("inner.sty");
     std::fs::File::options().write(true).open(&path).and_then(|f| f.set_modified(modified)).expect("set mtime");
     let again = run(&dir, DOCUMENT);
-    assert_eq!(served(&again, "outer"), Some(false), "{:?}", again.package_caches);
+    assert_eq!(served(&again, "inner"), Some(false), "{:?}", again.package_caches);
     assert!(defined(&again, "innermacrx"));
 }
 
@@ -355,7 +352,7 @@ fn a_file_that_now_shadows_a_lookup_makes_the_cache_stale() {
     assert_eq!(served(&first, "outer"), Some(false));
     std::fs::write(dir.join("inner.sty"), "\\def\\innermacro#1{}\\def\\shadowed{}\n").expect("inner.sty");
     let second = analyze(&dir, DOCUMENT, &cfg);
-    assert_eq!(served(&second, "outer"), Some(false), "{:?}", second.package_caches);
+    assert_eq!(served(&second, "inner"), Some(false), "{:?}", second.package_caches);
     assert!(defined(&second, "shadowed"));
 }
 
@@ -446,7 +443,8 @@ fn cache_build_builds_what_is_missing_and_refresh_rebuilds() {
     assert_eq!(states(false), ["outer built"]);
     assert_eq!(states(false), ["outer fresh"]);
     assert_eq!(states(true), ["outer built"]);
-    std::fs::write(dir.join("inner.sty"), "\\ProvidesPackage{inner}\n\\def\\innermacro#1{}\n").expect("inner.sty");
+    let outer = std::fs::read_to_string(dir.join("outer.sty")).expect("outer.sty");
+    std::fs::write(dir.join("outer.sty"), outer.replacen("outermacro", "outermacrx", 1)).expect("outer.sty");
     assert_eq!(states(false), ["outer rebuilt"], "a changed file is rejected and rebuilt");
 }
 
@@ -571,7 +569,7 @@ fn an_unrelated_package_removed_or_moved_keeps_the_others_served() {
 fn class_options_are_read_by_the_packages_that_declare_options() {
     let base = edit(BASE, 1, 0, &["\\usepackage{etoolbox}"]);
     let larger = edit(&base.iter().map(String::as_str).collect::<Vec<_>>(), 0, 1, &["\\documentclass[12pt]{article}"]);
-    after_edit("class-options", &base, &larger, &["etoolbox"], &["article", "amsmath", "graphicx", "xcolor"]);
+    after_edit("class-options", &base, &larger, &["etoolbox"], &["article", "amsmath", "graphics", "xcolor"]);
 }
 
 #[test]
@@ -594,7 +592,7 @@ fn an_option_of_the_package_itself_reads_it_again() {
 #[test]
 fn a_preamble_definition_of_a_name_the_package_reads_reads_it_again() {
     let defined = edit(BASE, 1, 0, &["\\makeatletter\\def\\Gin@driver{dvips.def}\\makeatother"]);
-    after_edit("read-name", &lines(BASE), &defined, &["article", "amsmath", "xcolor"], &["graphicx"]);
+    after_edit("read-name", &lines(BASE), &defined, &["article", "amsmath", "graphicx", "xcolor"], &["graphics"]);
 }
 
 /// The characters of `name`'s replacement text.

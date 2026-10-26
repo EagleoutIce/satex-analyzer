@@ -18,6 +18,11 @@
 //! typically everything up to `\ProcessOptions` — is thus shared by every
 //! document.
 //!
+//! A cacheable load inside a recorded one gets a tree of its own. The outer
+//! chain is stored up to its last checkpoint and resumes at the next line
+//! of its file at rest, as a child that names that line. Every run reads
+//! the lines between, nested load included.
+//!
 //! Register allocation is an effect, not a read: a replay allocates again
 //! from this run's counters, and every register the package allocated is
 //! renumbered to match. Names and files are written against each segment's
@@ -626,6 +631,8 @@ fn decode_effect(bytes: &[u8], syms: &[Sym], files: &[FileId]) -> Option<Effect>
 #[derive(Clone, Serialize, Deserialize)]
 struct Node<'a> {
     parent: Option<u32>,
+    /// The line it begins on, after a nested load its parent's end was read to.
+    resume: Option<u32>,
     /// Checkpoint marking where the segment ends.
     end: LineMark,
     /// Whether this is the file's end.
@@ -812,6 +819,25 @@ pub(super) struct Recorder {
     seg_copies: HashMap<Sym, (usize, i64)>,
     /// Tokens served from cache before recording.
     served: u64,
+    kind: LoadKind,
+    /// The line the first segment resumes on after a nested load.
+    resume: Option<u32>,
+}
+
+/// A load whose recording a nested cacheable load interrupted: it resumes
+/// at the next line of its file at rest, hung from `parent`.
+#[derive(Clone)]
+pub(super) struct Suspended {
+    pub(super) file: FileId,
+    frame: usize,
+    name: String,
+    kind: LoadKind,
+    cache: PathBuf,
+    site: Span,
+    root: Vec<(String, u64)>,
+    rest: Rest,
+    parent: Option<u32>,
+    parent_id: Option<u64>,
 }
 
 fn family(name: &str) -> String {
@@ -1029,14 +1055,17 @@ impl Machine<'_> {
         )
     }
 
-    /// Whether the file can be served from or recorded into cache: outer-level package/class, no conditionals.
+    /// Whether the file can be served from or recorded into cache: a package/class the document or a
+    /// recorded load reads, no conditionals.
     fn cacheable_at_push(&self, kind: LoadKind) -> bool {
+        // The file a nested load is read from must be the one recorded or suspended.
+        let outer = self.package_capture.as_ref().map(|r| &r.rest).or(self.suspended.last().map(|s| &s.rest));
+        let placed = self.file_depth == outer.map_or(self.document_file_depth, |r| r.file_depth) + 1;
         let reason = if !matches!(kind, LoadKind::Package | LoadKind::Class)
             || !self.cfg.cache.enabled
             || self.cfg.trace
             || self.budget.is_some()
-            || self.package_capture.is_some()
-            || self.file_depth != self.document_file_depth + 1
+            || !placed
         {
             return false;
         } else if self.on_paths() || !self.cds.is_empty() || self.conds.iter().any(|c| c.dep) {
@@ -1378,6 +1407,7 @@ impl Machine<'_> {
             command_level: _,
             // Cache and run bookkeeping.
             package_capture: _,
+            suspended: _,
             // Only during `\edef` body scan.
             copy_target: _,
             copies: _,
@@ -1459,6 +1489,7 @@ impl Machine<'_> {
         if !self.cacheable_at_push(kind) {
             return Mouth::file(source, id);
         }
+        self.suspend_recording();
         self.cacheable_load = Some(id);
         self.guard.held = (std::mem::take(&mut self.guard.lines), std::mem::take(&mut self.guard.forks));
         let Some(dir) = self.cache_dir() else { return Mouth::file(source, id) };
@@ -1473,14 +1504,73 @@ impl Machine<'_> {
         // A segment that read the clock replays that run's clock: only
         // under the same `clock:` setting.
         key.put(&self.cfg.clock.to_string());
-        let cache = cache_file(&dir, name, key.0);
+        let load = Suspended {
+            file: id,
+            frame: self.input.len(),
+            name: name.to_string(),
+            kind,
+            cache: cache_file(&dir, name, key.0),
+            site: span,
+            root: self.root_state(span, &path),
+            rest: self.rest_state(self.input.len() + 1),
+            parent: None,
+            parent_id: None,
+        };
+        match self.replay_from(load, None, source.lines().count() as u64) {
+            Some((mark, _)) => Mouth::resumed(source, id, mark),
+            None => Mouth::file(source, id),
+        }
+    }
+
+    /// A cacheable load inside one being recorded: store the outer chain
+    /// so far and resume it at the next line of its file at rest
+    /// ([`Machine::maybe_resume`]). Every run reads the lines between.
+    fn suspend_recording(&mut self) {
+        let Some(rec) = self.package_capture.as_ref() else { return };
+        let (file, frame, name, kind) = (rec.file, rec.frame, rec.name.clone(), rec.kind);
+        let (cache, site, root, rest) = (rec.cache.clone(), rec.site, rec.root.clone(), rec.rest.clone());
+        let stored = self.finish_recording(true);
+        self.end_cacheable_load();
+        if let Some((parent, parent_id)) = stored {
+            self.suspended.push(Suspended { file, frame, name, kind, cache, site, root, rest, parent, parent_id });
+        }
+    }
+
+    /// A suspended load's file at the start of a line, at rest: replay
+    /// what follows from its cache, else record it.
+    pub(super) fn maybe_resume(&mut self) {
+        let Some(load) = self.suspended.last() else { return };
+        let Some(Frame::File { mouth, .. }) = self.input.last() else { return };
+        let Some(mark) = mouth.line_mark().filter(|m| !m.ended && mouth.file == load.file) else { return };
+        if load.frame + 1 != self.input.len() || self.rest_state(load.frame + 1) != load.rest {
+            return;
+        }
+        let Some(load) = self.suspended.pop() else { return };
+        if !self.cacheable_at_push(load.kind) {
+            self.suspended.push(load);
+            return;
+        }
+        self.cacheable_load = Some(load.file);
+        self.guard.held = (std::mem::take(&mut self.guard.lines), std::mem::take(&mut self.guard.forks));
+        if let Some((end, _)) = self.replay_from(load, Some(mark.line), 0)
+            && let Some(Frame::File { mouth, .. }) = self.input.last_mut()
+        {
+            mouth.seek(end);
+        }
+    }
+
+    /// Install the segments of `load`'s cache that fit, from its parent on
+    /// (first those that resume on `resume`), then record the rest. Where
+    /// the file stands now, if anything was installed.
+    fn replay_from(&mut self, load: Suspended, resume: Option<u32>, lines: u64) -> Option<(LineMark, bool)> {
+        let Suspended { file: id, frame, name, kind, cache, site: span, root, rest, parent, parent_id: start_id } =
+            load;
+        let name = name.as_str();
         let started = std::time::Instant::now();
-        let root = self.root_state(span, &path);
         let before = self.before_state();
-        let rest = self.rest_state(self.input.len() + 1);
         let base = self.base.clone();
-        let mut at: Option<u32> = None;
-        let mut parent_id: Option<u64> = None;
+        let mut at: Option<u32> = parent;
+        let mut parent_id: Option<u64> = start_id;
         let mut end: Option<(LineMark, bool)> = None;
         let mut served = 0;
         let mut reason: Option<String> = None;
@@ -1493,7 +1583,7 @@ impl Machine<'_> {
             None | Some(Err(None)) => {}
             Some(Err(Some(why))) => reason = Some(why),
             Some(Ok(file)) => match file.trees.iter().position(|t| t.root == root) {
-                None if file.trees.is_empty() => {}
+                None if file.trees.is_empty() || resume.is_some() => {}
                 None => {
                     let differs = file.trees[0]
                         .root
@@ -1501,20 +1591,24 @@ impl Machine<'_> {
                         .zip(&root)
                         .find(|(a, b)| a != b)
                         .map_or("its root", |(a, _)| a.0.as_str());
+                    let path = &self.out.files[id as usize].path;
                     reason = Some(match differs {
                         "the package file" => format!("content changed: {path}"),
                         _ => format!("root differs: {differs}"),
                     });
                 }
+                // The node a suspended chain hangs from is gone: read on.
+                Some(t) if parent.is_some_and(|k| file.trees[t].nodes.get(k as usize).map(node_id) != start_id) => {}
                 Some(t) => {
                     let tree = &file.trees[t];
                     let mut children: HashMap<Option<u32>, Vec<u32>> = HashMap::default();
                     for (i, node) in tree.nodes.iter().enumerate() {
                         children.entry(node.parent).or_default().push(i as u32);
                     }
+                    let mut want = resume;
                     while let Some(kids) = children.get(&at) {
                         let mut chosen = None;
-                        for &k in kids {
+                        for &k in kids.iter().filter(|&&k| tree.nodes[k as usize].resume == want) {
                             match self.segment_fits(&tree.nodes[k as usize], &base) {
                                 Ok(clock) => {
                                     chosen = Some((k, clock));
@@ -1526,6 +1620,7 @@ impl Machine<'_> {
                             }
                         }
                         let Some((k, clock)) = chosen else { break };
+                        want = None;
                         reason = None;
                         if clock {
                             self.clock_read(span);
@@ -1545,39 +1640,38 @@ impl Machine<'_> {
                         }
                         served += node.steps;
                         at = Some(k);
+                        parent_id = Some(node_id(node));
                         end = Some((node.end, node.last));
                         if node.last {
                             break;
                         }
                     }
-                    parent_id = at.and_then(|k| tree.nodes.get(k as usize)).map(node_id);
                 }
             },
         }
+        let from = u64::from(resume.unwrap_or(0));
         if served > 0 {
             self.out.timings.credit_tokens(id, served);
             self.out.cached_files.insert(id);
             // The lines the cache stands for count as read (progress).
             self.cached_lines += match end {
                 Some((mark, false)) => u64::from(mark.line),
-                _ => source.lines().count() as u64,
-            };
+                Some((mark, true)) => lines.max(u64::from(mark.line)),
+                None => from,
+            }
+            .saturating_sub(from);
         }
         let cache_text = cache.display().to_string();
-        let mouth = match end {
-            Some((mark, _)) => Mouth::resumed(source, id, mark),
-            None => Mouth::file(source, id),
-        };
         if end.is_some_and(|(_, last)| last) {
             if self.cfg.verbose >= 1 {
                 crate::progress::note!("satex: {name} from its cache in {:?}", started.elapsed());
             }
             self.out.package_caches.push((name.to_string(), cache_text, "cached".into()));
-            return mouth;
+            return end;
         }
         if let Some(why) = &reason {
             if self.cfg.verbose >= 1 {
-                let line = end.map_or(1, |(mark, _)| mark.line);
+                let line = end.map_or(from as u32, |(mark, _)| mark.line).max(1);
                 crate::progress::note!(
                     "satex: {name}: {served} tokens from its cache; {why}, so it is read on from line {line}"
                 );
@@ -1585,7 +1679,7 @@ impl Machine<'_> {
             self.out.package_caches.push((name.to_string(), cache_text.clone(), format!("stale: {why}")));
         }
         if !self.cfg.cache.index.auto && !self.cfg.cache.index.building {
-            return mouth;
+            return end;
         }
         let lookups = self.resolver.lookups().map(|(key, _)| key.clone()).collect();
         let marks = Marks { steps: self.out.steps, ..Marks::default() };
@@ -1593,7 +1687,7 @@ impl Machine<'_> {
             file: id,
             expansions_start: self.out.facts.expansions.len(),
             log: Log::default(),
-            frame: self.input.len(),
+            frame,
             name: name.to_string(),
             cache,
             site: span,
@@ -1603,7 +1697,7 @@ impl Machine<'_> {
             before,
             rest,
             marks,
-            last_line: end.map_or(0, |(mark, _)| mark.line),
+            last_line: end.map_or(from as u32, |(mark, _)| mark.line),
             label: format!("{} {name}", if kind == LoadKind::Class { "class" } else { "package" }),
             started: std::time::Instant::now(),
             chain: Vec::new(),
@@ -1618,6 +1712,8 @@ impl Machine<'_> {
             seg_assigned: Vec::new(),
             seg_copies: HashMap::default(),
             served,
+            kind,
+            resume: resume.filter(|_| at == parent),
         };
         recorder.log.origins = origins;
         self.package_capture = Some(Box::new(recorder));
@@ -1634,7 +1730,7 @@ impl Machine<'_> {
         self.out.calls.record(true);
         self.out.observed.record(true);
         self.start_segment();
-        mouth
+        end
     }
 
     /// Whether segment's files are unchanged and this run agrees with what it read.
@@ -1711,7 +1807,7 @@ impl Machine<'_> {
                 MAIN => self.out.main_file,
                 path => {
                     let path = roots.decode(path);
-                    self.out.files.iter().position(|f| f.path == path).map_or(UNREAD, |i| i as FileId)
+                    self.file_index(&path).map_or(UNREAD, |i| i as FileId)
                 }
             })
             .collect()
@@ -1792,7 +1888,7 @@ impl Machine<'_> {
         origins.extend(st.origins.iter().copied());
         for (path, _, entry) in &st.files {
             let path = roots.decode(path);
-            if let Some(id) = self.out.files.iter().position(|f| f.path == path)
+            if let Some(id) = self.file_index(&path)
                 && let Some(slot) = self.out.entry.get_mut(id)
             {
                 *slot = entry.map(|s| span_in(s, site));
@@ -2042,12 +2138,7 @@ impl Machine<'_> {
         }
         let base_loads = before.loads as i64;
         for l in &st.loads {
-            let file = l
-                .path
-                .as_ref()
-                .map(|p| roots.decode(p))
-                .and_then(|p| self.out.files.iter().position(|f| f.path == p))
-                .map(|i| i as FileId);
+            let file = l.path.as_ref().map(|p| roots.decode(p)).and_then(|p| self.file_index(&p)).map(|i| i as FileId);
             self.out.facts.loads.push(Load {
                 name: l.name.clone(),
                 kind: l.kind,
@@ -2588,7 +2679,7 @@ impl Machine<'_> {
             }
             return;
         }
-        let Some(node) = self.encode_segment(mark) else {
+        let Some(mut node) = self.encode_segment(mark) else {
             if let Some(rec) = self.package_capture.as_mut() {
                 rec.log.spoiled.get_or_insert("a segment could not be written");
             }
@@ -2596,13 +2687,15 @@ impl Machine<'_> {
         };
         let Some(rec) = self.package_capture.as_mut() else { return };
         rec.last_line = mark.line;
+        node.resume = rec.resume.filter(|_| rec.chain.is_empty());
         rec.chain.push(node);
         self.start_segment();
     }
 
-    /// Package file ended or recording stopped: store and finish.
-    pub(super) fn finish_recording(&mut self) {
-        let Some(rec) = self.package_capture.take() else { return };
+    /// Package file ended or recording stopped: store and finish. The node
+    /// the stored chain ends at, for a `suspend`ed recording to resume from.
+    pub(super) fn finish_recording(&mut self, suspend: bool) -> Option<(Option<u32>, Option<u64>)> {
+        let rec = self.package_capture.take()?;
         crate::progress::clear();
         self.env.end_tracking();
         self.out.interner.record_touches(false);
@@ -2621,7 +2714,7 @@ impl Machine<'_> {
                 let state = format!("{} {PARTLY}", rec.served * 100 / total.max(1));
                 self.out.package_caches.push((rec.name.clone(), rec.cache.display().to_string(), state));
             }
-            if rec.served == 0 {
+            if rec.served == 0 && !suspend {
                 let why = rec.log.spoiled.unwrap_or("no line of it was at rest");
                 self.out.package_caches.push((
                     rec.name.clone(),
@@ -2629,19 +2722,17 @@ impl Machine<'_> {
                     format!("not stored: {why}"),
                 ));
             }
-            return;
+            return Some((rec.parent, rec.parent_id));
         }
-        let Some(dir) = rec.cache.parent() else { return };
-        if std::fs::create_dir_all(dir).is_err() {
-            return;
-        }
+        let dir = rec.cache.parent()?;
+        std::fs::create_dir_all(dir).ok()?;
         let Some(_lock) = crate::format::StoreLock::try_take(&rec.cache) else {
             self.out.package_caches.push((
                 rec.name.clone(),
                 rec.cache.display().to_string(),
                 "not stored: another instance is storing it".into(),
             ));
-            return;
+            return None;
         };
         rewrite_before_store(&rec.cache);
         let bytes = std::fs::read(&rec.cache).unwrap_or_default();
@@ -2650,7 +2741,7 @@ impl Machine<'_> {
         note_append(&rec.name, rec.parent, target, rec.chain.len());
         let Some(tree) = target else {
             self.out.package_caches.push((rec.name.clone(), rec.cache.display().to_string(), REWRITTEN.into()));
-            return;
+            return None;
         };
         let nodes = &mut file.trees[tree].nodes;
         let mut parent = rec.parent;
@@ -2659,6 +2750,7 @@ impl Machine<'_> {
             parent = Some(nodes.len() as u32);
             nodes.push(node);
         }
+        let ended = (parent, parent.map(|k| node_id(&nodes[k as usize])));
         if file.trees.iter().map(|t| t.nodes.len()).sum::<usize>() > MAX_NODES {
             file.trees.truncate(1);
         }
@@ -2674,37 +2766,37 @@ impl Machine<'_> {
         let stored = written.is_some() && std::fs::rename(&temporary, &rec.cache).is_ok();
         if !stored {
             let _ = std::fs::remove_file(&temporary);
+            return None;
         }
-        if stored {
-            crate::progress::done(&format!("cached {}", rec.label), rec.started.elapsed());
-            crate::format::save_hashes(dir, self.cfg.limits.cache_size.as_u64());
-            crate::format::prune_family(
-                dir,
-                &family(&rec.name),
-                crate::format::cache_key(),
-                self.cfg.limits.cache_size.as_u64(),
-            );
-            prune(dir, self.cfg.limits.cache_size.as_u64());
-            let cache_text = rec.cache.display().to_string();
-            let state = match rec.served {
-                0 => "stored".to_string(),
-                served => {
-                    // Replay entry says why it stopped.
-                    let why = match self.out.package_caches.last() {
-                        Some((name, cache, why))
-                            if *name == rec.name && *cache == cache_text && why.starts_with("stale: ") =>
-                        {
-                            let why = format!(" ({})", why.trim_start_matches("stale: "));
-                            self.out.package_caches.pop();
-                            why
-                        }
-                        _ => String::new(),
-                    };
-                    format!("{} % cached{why}, rest stored", served * 100 / total.max(1))
-                }
-            };
-            self.out.package_caches.push((rec.name.clone(), cache_text, state));
-        }
+        crate::progress::done(&format!("cached {}", rec.label), rec.started.elapsed());
+        crate::format::save_hashes(dir, self.cfg.limits.cache_size.as_u64());
+        crate::format::prune_family(
+            dir,
+            &family(&rec.name),
+            crate::format::cache_key(),
+            self.cfg.limits.cache_size.as_u64(),
+        );
+        prune(dir, self.cfg.limits.cache_size.as_u64());
+        let cache_text = rec.cache.display().to_string();
+        let state = match rec.served {
+            0 => "stored".to_string(),
+            served => {
+                // Replay entry says why it stopped.
+                let why = match self.out.package_caches.last() {
+                    Some((name, cache, why))
+                        if *name == rec.name && *cache == cache_text && why.starts_with("stale: ") =>
+                    {
+                        let why = format!(" ({})", why.trim_start_matches("stale: "));
+                        self.out.package_caches.pop();
+                        why
+                    }
+                    _ => String::new(),
+                };
+                format!("{} % cached{why}, rest stored", served * 100 / total.max(1))
+            }
+        };
+        self.out.package_caches.push((rec.name.clone(), cache_text, state));
+        Some(ended)
     }
 
     /// Segment from last checkpoint to `mark`, encoded against its own tables.
@@ -3218,6 +3310,7 @@ impl Machine<'_> {
             .collect();
         let node = Node {
             parent: None,
+            resume: None,
             end: mark,
             last: mark.ended,
             steps,
@@ -3304,6 +3397,7 @@ mod tests {
     fn node(steps: u64) -> Node<'static> {
         Node {
             parent: None,
+            resume: None,
             end: LineMark { pos: 0, line: 0, col: 0, force_eof: None, ended: false },
             last: false,
             steps,
