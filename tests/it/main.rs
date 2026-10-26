@@ -72,6 +72,7 @@ mod support;
 mod tables;
 mod termination;
 mod tex_compliance;
+mod tex_semantics;
 mod trace_range;
 mod units;
 mod write_set;
