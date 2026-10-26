@@ -12141,22 +12141,24 @@ impl Machine<'_> {
         /// Named control sequences a typed text may hold before it is any text.
         const NAMED: usize = 8;
 
-        let (mut class, mut cs, mut len) = (TextClass::EMPTY, Vec::new(), Some(0u32));
+        let (mut class, mut cs, mut len, mut one) = (TextClass::EMPTY, Vec::new(), Some(0u32), true);
         for text in texts {
-            let mut n = Some(0u32);
+            // Typed text that may be empty leaves the text perhaps empty.
+            let (mut n, mut some) = (Some(0u32), false);
             for t in *text {
-                let (c, k) = match (t.tok, self.typed_shape(*t)) {
-                    (_, Some((c, _, named))) => {
+                let (c, k, s) = match (t.tok, self.typed_shape(*t)) {
+                    (_, Some((c, s, named))) => {
                         cs.extend(named);
-                        (c, self.text_len(*t))
+                        (c, self.text_len(*t), s)
                     }
                     (Tok::Cs(sym), None) if !self.is_unknown_marker(sym) => {
                         cs.push(sym);
-                        (TextClass::EMPTY, Some(1))
+                        (TextClass::EMPTY, Some(1), true)
                     }
-                    (Tok::Cs(_), None) => (TextClass::WIDE, None),
-                    (tok, None) => (TextClass::of(tok), Some(1)),
+                    (Tok::Cs(_), None) => (TextClass::WIDE, None, false),
+                    (tok, None) => (TextClass::of(tok), Some(1), true),
                 };
+                some |= s;
                 class = class.union(c);
                 n = n.zip(k).map(|(n, k)| n.saturating_add(k));
                 cs.sort_unstable();
@@ -12169,8 +12171,8 @@ impl Machine<'_> {
                 }
             }
             len = len.zip(n).map(|(a, b)| a.max(b));
+            one &= some;
         }
-        let one = texts.iter().all(|text| !text.is_empty());
         Some((class, one, len.filter(|&n| n <= crate::env::MAX_LEN), cs))
     }
 

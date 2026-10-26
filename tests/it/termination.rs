@@ -464,6 +464,31 @@ fn digit_consuming_recursion_with_an_accumulator_converges() {
     assert!(analysis.steps < 10_000, "{} steps", analysis.steps);
 }
 
+/// hyperref's `\HyPsd@CheckCatcodes` shape over one of two texts: a scan
+/// that gives up types what it read, and typed text that may be empty
+/// keeps the argument perhaps empty. Typed as non-empty, the end test
+/// was decided "not yet" on every pass and the loop never ended.
+#[test]
+fn char_loop_over_text_that_may_be_empty_ends() {
+    let source = r"\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+        \count1=\pdfuniformdeviate 5 \count2=\pdfuniformdeviate 2 \edef\y{\the\count1}
+        \ifnum\count2=0 \edef\x{\y|}\else\edef\x{\y\noexpand\/|}\fi
+        \long\def\R#1\fi#2\E{\fi\fi#1}\def\S{}
+        \def\C#1#2\E{\ifcat\relax\noexpand#1\relax\else\expandafter\def\expandafter\S\expandafter{\S#1}\fi
+          \iftrue\ifx\scrollmode#2\scrollmode\else\R{\C#2\E}\fi\fi\E}
+        \expandafter\C\x\E\def\after{}";
+    let analysis = Machine::analyze(source, None, &cfg(400_000));
+    let limits: Vec<&str> = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .filter(|d| ["budget-exhausted", "limit-reached", "repeated-failure"].contains(&d.code))
+        .map(|d| d.message.as_str())
+        .collect();
+    assert!(limits.is_empty(), "{limits:?}");
+    assert!(analysis.steps < 100_000, "{} steps", analysis.steps);
+}
+
 /// A call re-entered with the same arguments and input, one conditional
 /// deeper each time (its `\fi` taken as its argument), never ends: it is
 /// cut after a few rounds, not at `limits.site_expansions`.
@@ -845,6 +870,18 @@ mod convergence {
         let body = r"\expandafter\begin\expandafter{\which}\expandafter\end\expandafter{\which}";
         let Some(a) = latex("one-of-environment", &document(preamble, body), |_| {}) else { return };
         converged(&a, 300);
+    }
+
+    /// hyperref's `\pdfstringdef` of a page number not known, plain and as
+    /// its page anchors make it: its char loop ends on every path instead
+    /// of running to `limits.line_steps`.
+    #[test]
+    fn pdf_string_of_an_unknown_page_number() {
+        let body = r"\makeatletter\c@page=\pdfuniformdeviate 9 \relax
+\pdfstringdef\x{\thepage}
+{\let\@number\@firstofone\Hy@unicodefalse\pdfstringdef\x{\thepage}}";
+        let Some(a) = latex("pdfstring-page", &document(r"\usepackage{hyperref}", body), |_| {}) else { return };
+        converged(&a, 20_000);
     }
 
     /// (3) An expl3 loop whose bound is `\pdfelapsedtime`.

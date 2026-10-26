@@ -143,7 +143,7 @@ look at the set.
 - A loop head widens a meaning that keeps growing, and a write `satex` cannot follow widens a name in place.
   Macros without parameters whose texts differ only in their digit runs first become one macro, with each run made typed digits.
   Otherwise a set of macros without parameters that share their `\long`, `\outer` and `\protected` prefixes widens to one such macro whose text is unknown text, bounded by the texts' length when they all have one (a write that grows the text changes its length) (`macro_hull` in [`src/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/env.rs)).
-  The text holds at least one token when every member's text does.
+  The text holds at least one token when every member's text does: a known token, or typed text that holds one. Typed text that may be empty leaves its member perhaps empty.
   So `\ifx` can still tell the widened name from a primitive, a character or a macro with parameters.
   A set that also holds undefined keeps it: the name is that macro or undefined.
   Any other set widens to an unknown meaning.
