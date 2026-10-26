@@ -1018,19 +1018,15 @@ impl Machine<'_> {
         for c in outcomes.iter_mut() {
             let bounds = Rc::make_mut(&mut c.state.loop_bounds);
             bounds.retain(|(l, _)| *l != id);
-            bounds.push((id, bound.unwrap_or(u32::MAX)));
+            bounds.extend(bound.map(|b| (id, b)));
         }
-        // The path that goes on in place has passed here too.
-        let bounds = Rc::make_mut(&mut self.scratch.loop_bounds);
-        bounds.retain(|(l, _)| *l != id);
-        bounds.push((id, bound.unwrap_or(u32::MAX)));
         let entry = paths.loops.iter().find(|l| l.id == id).map(|l| (l.depth.0, l.depth.1, l.passes));
         let forced = match paths.loops.iter().position(|l| l.id == id) {
             Some(l) => {
                 let (joined, _) = self.join_configs(&fork, &paths.loops[l].joined, &here, false, true);
                 // A pass on strictly less bounded text is not counted:
                 // such passes end by construction, each state exact.
-                let before = here.state.loop_bounds.iter().find(|(l, _)| *l == id).map(|(_, b)| *b).filter(|b| *b != u32::MAX);
+                let before = here.state.loop_bounds.iter().find(|(l, _)| *l == id).map(|(_, b)| *b);
                 let shrinks = matches!((before, bound), (Some(a), Some(b)) if b < a);
                 let l = &mut paths.loops[l];
                 l.passes += u32::from(!shrinks);
@@ -1131,15 +1127,10 @@ impl Machine<'_> {
         // A head whose input held more bounded text is an earlier pass of
         // a loop that ends by construction: neither kin nor deeper.
         let shrunk = |h: &Head| matches!((h.bound, bound), (Some(a), Some(b)) if b < a);
-        // Only a pass back is kin: a path that first comes here with other
-        // input is another run of the loop (pgfmath's one-digit number and
-        // its longer ones), kept as a head of its own.
-        let passed = here.state.loop_bounds.iter().any(|(l, _)| *l == id);
         let kin = |h: &Head| {
             let (a, b) = (&h.config.key, &here.key);
             let text = |p: &Place| matches!(p, Place::Tokens(..) | Place::Returned(..));
-            passed
-                && same(h)
+            same(h)
                 && !shrunk(h)
                 && (&a.conds, &a.groups, &a.scans) == (&b.conds, &b.groups, &b.scans)
                 && a.places.len() == b.places.len()
