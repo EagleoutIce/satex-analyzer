@@ -152,12 +152,15 @@ fn a_package_a_running_macro_calls_is_used() {
     assert_eq!(reported("unused-package-idle", &idle, "unused-package"), 1);
 }
 
-/// A command right after `\begin{document}` is the body's first use.
+/// A command right after `\begin{document}`, or one in the document's own
+/// preamble, is a use of its package.
 #[test]
-fn a_command_right_after_begin_document_is_a_use() {
+fn the_documents_first_command_and_its_preamble_are_uses() {
     if installed() {
         let source = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\\includegraphics{x}\n\\end{document}\n";
         assert_eq!(reported("unused-package-first", source, "unused-package"), 0);
+        let source = "\\documentclass{article}\n\\usepackage{etoolbox}\n\\AtEndPreamble{\\def\\foo{x}}\n\\begin{document}\\foo\n\\end{document}\n";
+        assert_eq!(reported("unused-package-preamble", source, "unused-package"), 0);
     }
 }
 

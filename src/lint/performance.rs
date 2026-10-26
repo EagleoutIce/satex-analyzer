@@ -175,7 +175,7 @@ fn unused_package(report: &mut Report) {
     // A package's names: those the format did not have and whose meaning
     // the run ends with is the one the package gave them, a scratch name it
     // once set (`\@tempa`) not.
-    // Used is what the document's body expands, and what the text of a
+    // Used is what the document's own code expands, and what the text of a
     // macro so expanded calls, through any number of macros: the path that
     // would expand it may be one this run did not take. What
     // `\begin{document}` and `\end{document}` run is the packages' own
@@ -195,6 +195,22 @@ fn unused_package(report: &mut Report) {
             }
             && end.is_none_or(|e| span.file != e.file || (span.line, span.col) < (e.line, e.col))
     };
+    // What the document's own preamble runs itself (`\AtEndPreamble`) is a
+    // use too, but not what a macro it defines would call, nor its loads,
+    // whose options run the package's own code.
+    let preamble: crate::fixed::HashSet<Sym> = analysis
+        .facts
+        .expansions
+        .iter()
+        .filter(|e| {
+            crate::query::origin(analysis, e.span.file) == "document"
+                && e.span.line > 0
+                && !body(e.span)
+                && begin.is_some_and(|b| e.span.file != b.file || (e.span.line, e.span.col) < (b.line, b.col))
+                && !analysis.facts.loads.iter().any(|l| l.span == e.span)
+        })
+        .map(|e| e.name)
+        .collect();
     // A parameter TeX reads as it typesets (`\parskip`) left other than
     // the format had it acts whatever the document does, a register so left
     // once code outside the package reads it while the body is typeset (the
@@ -269,7 +285,8 @@ fn unused_package(report: &mut Report) {
         }
         let Some(package) = analysis.interner.lookup(&load.name) else { continue };
         let Some(names) = provided.get(&package) else { continue };
-        if names.is_empty() || acts.contains(&package) || names.iter().any(|n| used.contains(n)) {
+        if names.is_empty() || acts.contains(&package) || names.iter().any(|n| used.contains(n) || preamble.contains(n))
+        {
             continue;
         }
         let edits = report.edits().delete_load(load);
