@@ -633,10 +633,10 @@ impl Analysis {
     }
 
     pub fn file_name(&self, id: FileId) -> &str {
-        self.files.get(id as usize).map_or("<input>", |f| f.path.as_str())
+        self.files.get(id as usize).map_or(NO_FILE, |f| f.path.as_str())
     }
     pub fn short_name(&self, id: FileId) -> &str {
-        self.files.get(id as usize).map_or("<input>", |f| f.short.as_str())
+        self.files.get(id as usize).map_or(NO_FILE, |f| f.short.as_str())
     }
     pub fn file_names(&self) -> Vec<String> {
         self.files.iter().map(|f| f.path.clone()).collect()
@@ -2595,7 +2595,7 @@ impl<'a> Machine<'a> {
             Some(crate::config::Profile::Class) => LoadKind::Class,
             _ => LoadKind::Input,
         };
-        let name = path.map_or_else(|| "<input>".to_string(), |p| p.display().to_string());
+        let name = path.map_or_else(|| NO_FILE.to_string(), |p| p.display().to_string());
         let id = m.register_file(name, kind);
         m.out.main_file = id;
         m.out.literate = literate;
@@ -11777,6 +11777,8 @@ enum OneOfScan {
     Again,
 }
 
+/// The name of a source read from no file.
+pub(crate) const NO_FILE: &str = "<input>";
 pub(crate) const UNKNOWN_NAME: &str = "\u{2}unknown name:";
 pub(crate) const UNKNOWN_NAME_GAP: char = '\u{3}';
 /// [`UNKNOWN_NAME_GAP`] where the unknown part is digits.

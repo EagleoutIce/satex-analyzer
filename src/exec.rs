@@ -1399,6 +1399,10 @@ impl Machine<'_> {
 
     fn job_name(&mut self) -> String {
         let path = self.out.file_name(self.out.main_file).to_string();
+        // tex.web § 532: a job read from no file is `texput`.
+        if path == crate::machine::NO_FILE {
+            return "texput".into();
+        }
         std::path::Path::new(&path).file_stem().and_then(|stem| stem.to_str()).unwrap_or("texput").to_string()
     }
 

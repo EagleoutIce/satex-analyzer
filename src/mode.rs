@@ -822,8 +822,9 @@ pub enum Last {
     /// box of a paragraph (tex.web § 1091), or one appended to an empty
     /// list.
     Box,
-    /// A whatsit node (tex.web § 1341), such as `\special`.
-    Whatsit,
+    /// A node only `\lastnodetype` tells apart, by its type (etex.ch):
+    /// 8 a discretionary, 9 a whatsit (tex.web § 1341).
+    Node(i8),
     /// Not known which item, only what the `\last…` commands may read.
     Unknown(Reads),
 }
@@ -874,7 +875,7 @@ impl Last {
             Last::Kern(k) => Reads { kern: Some(Dim::exact(k)), ..zero },
             Last::Penalty(p) => Reads { penalty: Some(crate::value::Num::exact(p)), ..zero },
             Last::Unknown(reads) => reads,
-            Last::Other | Last::Char(_) | Last::Empty | Last::Box | Last::Whatsit => zero,
+            Last::Other | Last::Char(_) | Last::Empty | Last::Box | Last::Node(_) => zero,
         }
     }
 }
@@ -2477,14 +2478,17 @@ impl Machine<'_> {
                 }
                 self.end_word();
             }
-            Material::Discretionary => {
-                // tex.web § 831: a discretionary is a legal breakpoint, and the last node.
+            // tex.web §§ 831, 1117: a discretionary is a legal breakpoint,
+            // and the last node; `\-` one with no width before a break.
+            Material::Discretionary | Material::Hyphen => {
                 if let Some(n) = &mut self.natural {
                     n.para.breakpoints = n.para.breakpoints.saturating_add(1);
                     n.para.items = None;
-                    n.pushed(Last::Other);
+                    n.pushed(Last::Node(8));
                 }
-                self.open_list(Some(group::DISC), Modes::RESTRICTED_HORIZONTAL, 1, span);
+                if material == Material::Discretionary {
+                    self.open_list(Some(group::DISC), Modes::RESTRICTED_HORIZONTAL, 1, span);
+                }
             }
             // tex.web § 774 `init_align`: the preamble and the rows are one
             // group. satex runs the cells in the alignment's list.
@@ -2501,7 +2505,7 @@ impl Machine<'_> {
                 let (width, spec) = self.space_glue(true);
                 self.append_item(Item::glue(width, spec));
             }
-            Material::Discards | Material::Hyphen => self.append_item(Item::Unknown),
+            Material::Discards => self.append_item(Item::Unknown),
         }
     }
 
@@ -3658,7 +3662,7 @@ impl Machine<'_> {
         if matches!(item, Item::Zero | Item::Whatsit) && self.mode == Modes::MATH {
             // It is the math list's tail all the same (tex.web § 1105 sees it).
             match item {
-                Item::Whatsit => n.pushed(Last::Whatsit),
+                Item::Whatsit => n.pushed(Last::Node(9)),
                 _ => n.perhaps(Last::Other),
             }
             self.natural = Some(n);
@@ -3785,7 +3789,7 @@ impl Machine<'_> {
             }
             Item::Whatsit => {
                 n.para.fresh = false;
-                n.pushed(Last::Whatsit)
+                n.pushed(Last::Node(9))
             }
             Item::Penalty(p) => {
                 // tex.web § 859: a negative penalty may make a break pay.
@@ -5368,7 +5372,7 @@ impl Machine<'_> {
             Last::Glue(_, Some(g)) => g.value(false),
             Last::Kern(k) => Value::Dimen(k),
             Last::Penalty(p) => Value::Int(p),
-            Last::Other | Last::Char(_) | Last::Box | Last::Whatsit => Value::Toks(Rc::from([])),
+            Last::Other | Last::Char(_) | Last::Box | Last::Node(_) => Value::Toks(Rc::from([])),
             // Not known: what an earlier box in the register ended with
             // no longer holds.
             Last::Glue(_, None) | Last::Empty | Last::Unknown(_) => Value::Unknown,

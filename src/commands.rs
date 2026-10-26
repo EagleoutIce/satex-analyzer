@@ -467,7 +467,7 @@ impl Machine<'_> {
                     // -1 an empty list, 1 an hlist.
                     crate::mode::Last::Empty => int(-1),
                     crate::mode::Last::Box => int(1),
-                    crate::mode::Last::Whatsit => int(9),
+                    crate::mode::Last::Node(t) => int(t.into()),
                     // A box, rule, insertion, mark, adjust, discretionary or
                     // math node, and in math a noad (etex.ch: 15).
                     crate::mode::Last::Other => {

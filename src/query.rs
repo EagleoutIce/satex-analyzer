@@ -2038,7 +2038,8 @@ pub fn summary(analysis: &Analysis) -> Node {
     }
     let main = analysis.main_file;
     let mut open = Vec::new();
-    attach(main, &mut by_file, &loads_in, &reader, &mut open).unwrap_or_else(|| Node::empty("<input>".into(), "input"))
+    attach(main, &mut by_file, &loads_in, &reader, &mut open)
+        .unwrap_or_else(|| Node::empty(crate::machine::NO_FILE.into(), "input"))
 }
 
 fn attach(
