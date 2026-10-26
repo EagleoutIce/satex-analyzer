@@ -1376,6 +1376,18 @@ fn a_line_end_between_words_is_not_a_stray_space() {
     assert!(found.iter().any(|f| f.contains("bad")), "{found:?}");
 }
 
+/// A space set as zero glue (`\nullfont`, `\spaceskip0pt`, as inside a
+/// picture) changes nothing, so its line end is no stray space.
+#[test]
+fn a_space_of_zero_glue_is_not_a_stray_space() {
+    let source = "\\documentclass{article}\n\\def\\pic{x\n}\n\\def\\bad{x\n}\n\\begin{document}\n\
+                  \\hbox{\\nullfont\\spaceskip0pt\\pic}\\bad y\n\\end{document}\n";
+    let Some(doc) = with_files("zero-glue-space", source, &[]) else { return };
+    let found = findings(&doc.analysis, "stray-space");
+    assert!(found.iter().all(|f| !f.contains("pic")), "{found:?}");
+    assert!(found.iter().any(|f| f.contains("bad")), "{found:?}");
+}
+
 /// An engine error in package code that a document line causes is shown at
 /// that line, naming where in the package it arose.
 #[test]

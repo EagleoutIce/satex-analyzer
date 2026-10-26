@@ -6559,12 +6559,16 @@ will look undefined",
                 if !self.mode.within(crate::mode::Modes::ANY_VERTICAL) {
                     self.note_text(' ', token.span);
                 }
+                let glue = self.mode.meets(crate::mode::Modes::ANY_HORIZONTAL).then(|| self.space_glue(false));
                 if self.packages.is_empty() {
+                    // A space of zero glue sets nothing, whatever the mode.
+                    let void = glue.is_some_and(|(_, spec)| spec == Some(crate::value::Glue::default()));
                     let modes = self.out.facts.spaces.entry(token.span).or_default();
-                    *modes = modes.union(self.mode);
+                    if !void {
+                        *modes = modes.union(self.mode);
+                    }
                 }
-                if self.mode.meets(crate::mode::Modes::ANY_HORIZONTAL) {
-                    let (width, spec) = self.space_glue(false);
+                if let Some((width, spec)) = glue {
                     self.append_item(crate::mode::Item::glue(width, spec));
                 }
             }

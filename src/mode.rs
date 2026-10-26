@@ -4262,6 +4262,10 @@ impl Machine<'_> {
             stretch: Stretch { amount: stretch, order: 0 },
             shrink: Stretch { amount: shrink, order: 0 },
         });
+        // Zero glue at every space factor (`\nullfont`, `\spaceskip0pt`).
+        if normal == Glue::default() && extra == Scaled::default() && xspace_skip.is_none() {
+            return (Some(normal.width), Some(normal));
+        }
         let spaced = |sf: i64| -> Glue {
             if control || sf == 1000 {
                 return normal;
