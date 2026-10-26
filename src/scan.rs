@@ -325,12 +325,11 @@ impl Machine<'_> {
     }
 
     /// ⟨number⟩ (tex.web § 440, `scan_int`).
-    pub fn scan_int(&mut self) -> Option<i64> {
-        let (negative, token) = self.scan_signs()?;
-        self.probe_scans(token, "number");
-        // Only a register read as the whole number leaves its members to
-        // the test that scans it (see `Machine::register_value`).
-        let register = token.tok == Tok::Chr('`', Catcode::Other)
+    /// Whether a number scan starting with `token` reads a whole quantity
+    /// whose interval the test that scans it may keep: a register, an
+    /// internal quantity, typed digits.
+    fn reads_whole(&self, token: Token) -> bool {
+        token.tok == Tok::Chr('`', Catcode::Other)
             || token.cs().is_some_and(|sym| {
                 self.typed_digits_of(sym).is_some()
                     || matches!(self.env.meaning(sym), Meaning::Register(..))
@@ -344,7 +343,15 @@ impl Machine<'_> {
                                 | Primitive::Expr(_)
                         )
                     )
-            });
+            })
+    }
+
+    pub fn scan_int(&mut self) -> Option<i64> {
+        let (negative, token) = self.scan_signs()?;
+        self.probe_scans(token, "number");
+        // Only a register read as the whole number leaves its members to
+        // the test that scans it (see `Machine::register_value`).
+        let register = self.reads_whole(token);
         self.abs = None;
         self.abs_exact = None;
         self.abs_parts = None;
@@ -425,8 +432,14 @@ impl Machine<'_> {
             return self.scan_digits(DECIMAL, Some(token));
         }
         if self.split_scanned(token) {
+            // Each path reads its meaning's text: whole as the scan began.
             return match self.next_x_token() {
-                Some(token) => self.scan_int_from(token),
+                Some(token) => {
+                    let whole = self.reads_whole(token);
+                    let scanned = self.scan_int_from(token);
+                    self.abs_whole |= whole;
+                    scanned
+                }
                 None => (self.missing_number(None), false),
             };
         }
@@ -533,6 +546,8 @@ impl Machine<'_> {
             (may.iter())
                 .map(|m| match m {
                     Meaning::Macro(d) if d.parameter_text.items.is_empty() => Some(d.replacement_text.clone()),
+                    // Never defined, `\relax`: the scan reads no number there.
+                    m if !self.expandable_meaning(m) => Some(std::rc::Rc::from([])),
                     _ => None,
                 })
                 .collect()
@@ -551,14 +566,14 @@ impl Machine<'_> {
     }
 
     /// Whether TeX would read `text` as satex has it: no unknown name,
-    /// digits or character in it. A token for one of several texts is
-    /// read as each of them.
+    /// untyped digits or character in it. Typed digits read as their
+    /// interval. A token for one of several texts is read as each of them.
     fn exact_text(&self, text: &[Token]) -> bool {
         text.iter().all(|t| match t.tok {
             Tok::Chr(c, _) => !crate::tex::is_unknown_char(c),
             Tok::Cs(_) if let Some(texts) = self.one_of_members(*t) => texts.iter().all(|t| self.exact_text(t)),
             Tok::Cs(sym) => {
-                !self.is_unknown_digits(sym)
+                (self.typed_digits_of(sym).is_some() || !self.is_unknown_digits(sym))
                     && !self.is_unknown_name(sym)
                     && !matches!(self.env.meaning(sym), Meaning::Unknown)
             }
@@ -919,9 +934,9 @@ impl Machine<'_> {
         }
         // A test may have narrowed it on this path, to one value or few.
         // A join never takes it past its type, which its name spells.
-        let num = self.env.slot(sym)?.value.num().map(|(_, num)| num)?;
         let (lo, hi) = self.name(sym)[TYPED_DIGITS.len()..].split(['#', '@']).next()?.split_once("..")?;
         let ty = Num::range(lo.parse().ok()?, hi.parse().ok()?);
+        let Some((_, num)) = self.env.slot(sym).and_then(|b| b.value.num()) else { return Some(ty) };
         let (lo, hi) = (num.lo.max(ty.lo), num.hi.min(ty.hi));
         Some(if lo <= hi { Num::range(lo, hi) } else { ty })
     }
@@ -988,7 +1003,7 @@ impl Machine<'_> {
         // One name per number made: a test that narrows it narrows this
         // number on its path, never another one with the same interval.
         let sym = self.intern(&format!("{TYPED_DIGITS}{}..{}#{}", num.lo, num.hi, self.out.interner.len()));
-        if self.typed_digits_of(sym).is_none() {
+        if self.env.slot(sym).is_none() {
             let mut binding = crate::env::Binding::builtin(Meaning::Char(crate::tex::UNKNOWN_CHAR, Catcode::Other));
             binding.value = Value::Num { quantity: crate::value::Quantity::Int, num };
             self.env.constant(sym, binding);

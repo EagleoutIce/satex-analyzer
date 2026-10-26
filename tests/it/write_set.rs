@@ -169,10 +169,12 @@ pub(crate) const MEANINGS: &[Row] = &[
     ("macro_digits", r"\def\d{7}", r"\edef\d{\d1}", r"\ifnum\d=7111 \def\okA{}\fi \ifnum\d<0 \def\badB{}\fi "),
     // etex: \f1..\f3 defined to their digit, \g3 not
     (
+        // etex: with `\N` below 2, `\f2` is `\relax` and `\ifnum\relax<0` is
+        // `0=0` after two errors, true: only a defined `\f2` is checked.
         "csname_family",
         "",
         r"\expandafter\edef\csname f\the\i\endcsname{\the\i}",
-        r"\expandafter\ifx\csname f3\endcsname\relax\else\def\okA{}\fi \expandafter\ifx\csname g3\endcsname\relax\else\def\badA{}\fi \ifnum\csname f2\endcsname=2 \def\okB{}\fi \ifnum\csname f2\endcsname<0 \def\badB{}\fi ",
+        r"\expandafter\ifx\csname f3\endcsname\relax\else\def\okA{}\fi \expandafter\ifx\csname g3\endcsname\relax\else\def\badA{}\fi \ifnum\csname f2\endcsname=2 \def\okB{}\fi \expandafter\ifx\csname f2\endcsname\relax\else\ifnum\csname f2\endcsname<0 \def\badB{}\fi\fi ",
     ),
     // etex: \h1..\h3 run, \count21..23=1, \count29=4
     (
