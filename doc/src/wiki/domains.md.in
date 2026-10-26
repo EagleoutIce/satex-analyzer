@@ -225,8 +225,13 @@ The sizes come from the list, as `hpack` and `vpack` would compute them:
 - A `\discretionary` adds its text without a break to the list. Its break texts do not count (§§ 651, 1119-1120).
   In inline math, `\lowercase`, `\openin`, `\closein` and `\pdffontexpand` add no atom, so loading a font in a formula keeps its size.
 - A box of a kind `satex` does not know has `Dim::ANY` for all three sizes.
-- `\vsplit` packs the part it splits off to the height asked for, with a depth of at most `\splitmaxdepth` (§ 977).
-  What is left is at most as tall as the box was, plus `\splittopskip`.
+- A vertical list records its items as a paragraph line does: boxes, rules, interline glue (§ 679), glue, kerns, penalties, whatsits and marks.
+  A paragraph, an alignment, `\unvbox` or an item not known ends the record. So does an hbox begun in vertical mode: marks, inserts and adjusts in it move out after it (§ 655).
+  A vbox register keeps the record, with its marks' texts, as a `Value::List` when it sums to the list's natural height and depth.
+- `\vsplit` of a recorded vbox runs `vert_break` and `prune_page_top` (§§ 968-977): both parts, their sizes and `\badness` are exact.
+  It sets the split marks and, with `\savingvdiscards` positive, `\splitdiscards` (etex.ch).
+  Otherwise it packs the part it splits off to the height asked for, with a depth of at most `\splitmaxdepth` (§ 977).
+  What is left is at most as tall as the box was, plus `\splittopskip`, and the split marks and discards are unknown.
 - A vbox register records whether its list may hold a forced break, a penalty of -10000 or less (`calm` when not).
   `\box`, `\copy` and `\unvbox` carry it, and `\box255` and any part `\vsplit` splits off have none (§§ 973, 1005).
   Split to `\maxdimen` with `\splitmaxdepth` that large, such a list goes off whole and the register is void (§§ 972-974): sums stay within `\maxdimen`, so no break is too full.
@@ -247,7 +252,12 @@ The sizes come from the list, as `hpack` and `vpack` would compute them:
 ### Marks
 
 A mark that `\topmarks`, `\firstmarks`, `\botmarks` or the split marks hand back is a copy of one put on a list, or empty (§§ 1012-1014).
-So each class holds one of the texts `\mark` or `\marks` gave it so far, or the empty text, as a `OneOf`.
+Where the lists are recorded, the marks are exact. The marks of earlier pages and the page's own are kept as two recorded lists, set at each forced page break.
+`\topmarks` is the last of its class on earlier pages, `\firstmarks` and `\botmarks` the page's first and last, or else that one (etex.ch classes).
+The split marks are the first and last in the part `\vsplit` split off (§ 979).
+A page break that is not forced loses the page's list.
+`\pagediscards` keeps what the page builder drops on an empty page (§ 1000, etex.ch); the routine's end empties it, then the break's penalty is dropped.
+Otherwise each class holds one of the texts `\mark` or `\marks` gave it so far, or the empty text, as a `OneOf`.
 A class read before any mark is empty. A mark of a class `satex` cannot name makes every class unknown text.
 
 ### Paragraphs and line breaking

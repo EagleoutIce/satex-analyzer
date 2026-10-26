@@ -2292,9 +2292,12 @@ impl<'a> Machine<'a> {
             page_touched: false,
             page_grew: false,
             // tex.web § 991: the job starts with an empty page.
-            natural: Some(crate::mode::Natural {
-                tail: [crate::mode::Last::Empty; crate::mode::TAIL],
-                ..Default::default()
+            // Its items are recorded for the page's marks.
+            natural: Some({
+                let mut n =
+                    crate::mode::Natural { tail: [crate::mode::Last::Empty; crate::mode::TAIL], ..Default::default() };
+                n.para.items = Some(0);
+                n
             }),
             main_tail: crate::mode::Last::UNKNOWN,
             main_depth: crate::mode::Dim::ANY,

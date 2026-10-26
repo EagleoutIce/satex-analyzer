@@ -259,6 +259,12 @@ pin! {
     p_splitfirstmark: r#"\setbox1\vbox{\mark{a}\hrule height 4pt\penalty0\mark{b}\hrule height 4pt}\setbox2\vsplit1 to 4pt \edef\R{\splitfirstmark}"# => "a";
     /// `\splitbotmark` (tex.web § 979): last mark of the box `\vsplit` cut off.
     p_splitbotmark: r#"\setbox1\vbox{\mark{a}\hrule height 4pt\mark{c}\penalty0\mark{b}\hrule height 4pt}\setbox2\vsplit1 to 4pt \edef\R{\splitbotmark}"# => "c";
+    /// `\vsplit` (tex.web §§ 968-977): interline glue (§ 679) and `\splittopskip`.
+    p_vsplit_baselines: r#"\baselineskip=12pt \setbox8\hbox{\vrule height 3pt depth 1pt}\setbox9\hbox{\vrule height 3pt depth 2pt}\setbox1\vbox{\copy8 \copy8 \penalty0 \copy9 }\splittopskip=10pt \setbox2\vsplit1 to 20pt \edef\R{\the\ht2,\the\dp2,\the\ht1,\the\dp1,\the\badness}"# => "20.0pt,0.0pt,10.0pt,2.0pt,10000";
+    /// `\vsplit` (tex.web §§ 974-975): the cheapest break, and the split box's badness.
+    p_vsplit_cost: r#"\setbox1\vbox{\hrule height 3pt\vskip 2pt plus 4pt\hrule height 3pt\vskip 2pt\hrule height 3pt\penalty-50\hrule height 9pt}\setbox2\vsplit1 to 12pt \edef\R{\the\ht2,\the\ht1,\the\badness}"# => "12.0pt,12.0pt,100";
+    /// `\topmark` (tex.web §§ 1012-1014): marks carry over pages without marks.
+    p_marks_carry: r#"\vsize=20pt \output={\xdef\R{\R[\topmark|\firstmark|\botmark]}\setbox0\box255 \deadcycles=0 }\def\R{}\mark{a}\hrule height 5pt\penalty-10000 \hrule height 5pt\penalty-10000 \mark{b}\penalty-10000 \hrule height 5pt\penalty-10000 "# => "[|a|a][a|a|a][a|b|b]";
     /// `\insert` (tex.web § 1099): its material is in an insert group (11).
     p_insert: r#"\setbox0\vbox{\insert100{\xdef\R{\the\currentgrouptype}}}"# => "11";
     /// `\vadjust` (tex.web § 1097): its material is in an insert group (11).

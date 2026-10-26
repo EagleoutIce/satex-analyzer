@@ -279,6 +279,10 @@ impl Machine<'_> {
     /// hands back is a copy of one put on a list, or empty: one of the
     /// texts of its class so far.
     fn note_mark(&mut self, class: Option<i64>, text: Vec<Token>, span: Span) {
+        // tex.web § 1101: the mark goes onto the list.
+        let t = self.kp.texts.len() as u32;
+        self.kp.texts.push(Rc::from(text.as_slice()));
+        self.append_item(crate::mode::Item::Mark(class.map(|c| crate::linebreak::Kp::Mark(c, t))));
         let sym = self.marks_sym(class);
         let mut texts: Vec<Rc<[Token]>> = vec![Rc::from(Vec::new()), Rc::from(text)];
         if let Some(Meaning::Macro(m)) = self.env.slot(sym).map(|b| b.meaning.clone()) {
@@ -287,6 +291,31 @@ impl Machine<'_> {
         let token = self.one_of(texts, span);
         let meaning = self.make_macro(Default::default(), vec![token]);
         self.env.set(sym, crate::env::Binding::builtin(meaning), true);
+    }
+
+    /// tex.web §§ 1012-1014, 979 with etex.ch classes: mark `code` (§ 382)
+    /// of `class` off the recorded lists: the marks of earlier pages, the
+    /// page's, and the part `\vsplit` split off; else [`Self::marks_of`].
+    fn mark_text(&mut self, code: u8, class: Option<i64>, span: Span) -> Vec<Token> {
+        let [split, hist, page] = ["marks.split", "marks.hist", "marks.page"].map(|k| self.list_slot(k));
+        let find = |list: &Option<crate::linebreak::VList>, first: bool| {
+            let (items, texts) = list.as_ref()?;
+            let mut found = items.iter().filter_map(|k| match *k {
+                crate::linebreak::Kp::Mark(c, t) if Some(c) == class => Some(texts[t as usize].clone()),
+                _ => None,
+            });
+            Some(if first { found.next() } else { found.last() })
+        };
+        let top = find(&hist, false);
+        let text = match code {
+            0 => top,
+            1 | 2 => find(&page, code == 1).zip(top).map(|(p, t)| p.or(t)),
+            _ => find(&split, code == 3),
+        };
+        match text {
+            Some(t) if class.is_some() => t.map_or_else(Vec::new, |t| t.to_vec()),
+            _ => self.marks_of(class, span),
+        }
     }
 
     /// The text a mark of `class` reads: empty before any is put.
@@ -2213,11 +2242,11 @@ impl Machine<'_> {
                     _ => None,
                 }
             }
-            C::Marks => {
+            C::Marks(code) => {
                 let class = self.scan_int();
-                return self.marks_of(class, span);
+                return self.mark_text(code, class, span);
             }
-            C::Mark => return self.marks_of(Some(0), span),
+            C::Mark(code) => return self.mark_text(code, Some(0), span),
             C::PageRef | C::XFormName | C::InsertHt | C::MarginKern => {
                 self.scan_int();
                 None

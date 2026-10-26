@@ -392,10 +392,11 @@ pub enum Convert {
     ColorStackInit,
     /// `\pdfximagebbox⟨image⟩⟨corner⟩`.
     ImageBBox,
-    /// `\topmark` and the other marks of the page builder.
-    Mark,
-    /// e-TeX's `\topmarks⟨number⟩` and relatives.
-    Marks,
+    /// `\topmark` and the other marks of the page builder, by their code
+    /// (tex.web § 382: top, first, bot, split first, split bot).
+    Mark(u8),
+    /// e-TeX's `\topmarks⟨number⟩` and relatives, by the same code.
+    Marks(u8),
     /// `\pdfprimitive⟨cs⟩`: the primitive of that name, whatever the name
     /// means now.
     Primitive,
@@ -905,8 +906,8 @@ pub enum Material {
     /// `\unhbox`, `\unhcopy`, `\unvbox`, `\unvcopy`: a register number;
     /// `take` for the forms that leave it void.
     Unpackage { take: bool },
-    /// `\pagediscards`, `\splitdiscards`.
-    Discards,
+    /// `\pagediscards`, `\splitdiscards` (`true`).
+    Discards(bool),
     /// `\vrule`, `\hrule`: a rule specification.
     Rule,
     /// `\hskip`, `\vskip`: glue.
@@ -1802,8 +1803,8 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     }
     // tex.web § 1171: glue that cancels the next in script styles.
     put(it, "nonscript", P::Command(Syntax::NonScript));
-    put(it, "pagediscards", P::Mode(ModeCmd::Vertical(Material::Discards)));
-    put(it, "splitdiscards", P::Mode(ModeCmd::Vertical(Material::Discards)));
+    put(it, "pagediscards", P::Mode(ModeCmd::Vertical(Material::Discards(false))));
+    put(it, "splitdiscards", P::Mode(ModeCmd::Vertical(Material::Discards(true))));
     put(it, "shipout", P::Mode(ModeCmd::ShipOut));
     put(it, "discretionary", P::Mode(ModeCmd::Horizontal(Material::Discretionary)));
     put(it, "mathchoice", P::Mode(ModeCmd::MathChoice));
@@ -1876,11 +1877,9 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "readline", P::Command(Syntax::ReadLine));
     put(it, "eTeXrevision", P::Convert(Convert::EtexRevision));
     put(it, "fontname", P::Convert(Convert::FontName));
-    for n in "topmark firstmark botmark splitfirstmark splitbotmark".split_whitespace() {
-        put(it, n, P::Convert(Convert::Mark));
-    }
-    for n in "topmarks firstmarks botmarks splitfirstmarks splitbotmarks".split_whitespace() {
-        put(it, n, P::Convert(Convert::Marks));
+    for (code, n) in (0..).zip("topmark firstmark botmark splitfirstmark splitbotmark".split_whitespace()) {
+        put(it, n, P::Convert(Convert::Mark(code)));
+        put(it, &format!("{n}s"), P::Convert(Convert::Marks(code)));
     }
     put(it, "iffontchar", P::If(Cond::FontChar));
     if engine.has_pdftex() {
@@ -2857,7 +2856,7 @@ fn material_verdict(m: Material) -> Judgment {
             V::Approximated,
             "a void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed",
         ),
-        M::Discards | M::Hyphen => {
+        M::Discards(_) | M::Hyphen => {
             at!(
                 V::Approximated,
                 "widens to Unknown. A rarely-taken tex.web path this pass does not distinguish further"

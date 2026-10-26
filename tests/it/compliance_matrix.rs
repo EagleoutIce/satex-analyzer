@@ -621,8 +621,8 @@ fn convert(name: &str, c: Convert) -> Result<Template, &'static str> {
         }
         Convert::InsertHt => plain(" 1"),
         Convert::ColorStackInit => plain("{0 g}"),
-        Convert::Mark => plain(""),
-        Convert::Marks => plain("0"),
+        Convert::Mark(_) => plain(""),
+        Convert::Marks(_) => plain("0"),
         Convert::Primitive => t(format!("\\def\\string{{oops}}\\edef\\zR{{[{cs}\\string A]}}")),
         Convert::Uchar { catcode: false } => plain(" 65"),
         Convert::Uchar { catcode: true } => plain(" 65 12"),

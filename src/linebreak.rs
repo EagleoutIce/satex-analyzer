@@ -8,10 +8,11 @@ use crate::mode::Natural;
 use crate::tfm::LigKern;
 use crate::value::{Glue, Scaled, Value};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 /// One item of a paragraph's horizontal list, as `line_break` reads it.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum Kp {
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
+pub enum Kp {
     /// A box, rule or character (`chr`: font and code; `lig`: may be a
     /// ligature).
     Box {
@@ -40,6 +41,9 @@ pub(crate) enum Kp {
     /// (none after a `\hyphenchar`, § 1039) and this many items after it
     /// as its replacement (§ 145 `replace_count`).
     Disc(Option<Dims>, u8),
+    /// A mark of a class, its text by index in [`Arena::texts`] or a
+    /// [`VList`]'s texts (§ 141).
+    Mark(i64, u32),
 }
 
 impl Kp {
@@ -54,7 +58,7 @@ impl Kp {
     }
     /// § 148 `precedes_break` and characters: glue after it is a breakpoint.
     fn non_discardable(self) -> bool {
-        matches!(self, Kp::Box { .. } | Kp::Whatsit | Kp::Disc(..))
+        matches!(self, Kp::Box { .. } | Kp::Whatsit | Kp::Disc(..) | Kp::Mark(..))
     }
 }
 
@@ -63,18 +67,20 @@ impl Kp {
 pub(crate) struct Arena {
     nodes: Vec<(Kp, u32, u32)>,
     index: HashMap<(Kp, u32), u32>,
+    pub(crate) texts: Vec<std::rc::Rc<[crate::tex::Token]>>,
 }
 
 /// Longest paragraph segment and largest arena followed.
 /// A box's width, height and depth.
 type Dims = (Scaled, Scaled, Scaled);
 
-const MAX_ITEMS: u32 = 4000;
+pub(crate) const MAX_ITEMS: u32 = 4000;
 const MAX_NODES: usize = 1 << 21;
 const INF_BAD: i64 = 10000;
 const EJECT: i64 = -10000;
 const AWFUL: i64 = 0o7777777777;
 const DECENT: u8 = 2;
+const DEPLORABLE: i64 = 100000;
 /// A line's fitness class is not known.
 pub(crate) const UNFIT: u8 = 4;
 
@@ -98,15 +104,13 @@ impl Machine<'_> {
 
     /// tex.web §§ 656-657: the stretch and the shrink of the recorded list
     /// `items`, per order.
-    pub(crate) fn kp_glue(&self, mut items: u32) -> [[Scaled; 4]; 2] {
+    pub(crate) fn kp_glue(items: &[Kp]) -> [[Scaled; 4]; 2] {
         let mut total = [[0; 4]; 2];
-        while items > 0 {
-            let (k, prev, _) = self.kp.nodes[items as usize - 1];
-            if let Kp::Glue { st, sto, sh, sho, .. } = k {
+        for k in items {
+            if let Kp::Glue { st, sto, sh, sho, .. } = *k {
                 total[0][usize::from(sto.min(3))] += st;
                 total[1][usize::from(sho.min(3))] += sh;
             }
-            items = prev;
         }
         total
     }
@@ -386,6 +390,107 @@ fn skip_discardable(items: &[Kp], mut s: usize) -> usize {
     s
 }
 
+/// § 668 `vpack`: width, natural height and depth of a vertical list,
+/// its depth at most `max`.
+pub(crate) fn vpack(items: &[Kp], max: Scaled) -> [Scaled; 3] {
+    let [mut w, mut x, mut d] = [0; 3];
+    for k in items {
+        match *k {
+            Kp::Box { w: bw, h, d: bd, .. } => (w, x, d) = (w.max(bw), x + d + h, bd),
+            Kp::Glue { w: g, .. } | Kp::Kern { w: g, .. } => (x, d) = (x + d + g, 0),
+            _ => {}
+        }
+    }
+    if d > max { [w, x + d - max, max] } else { [w, x, d] }
+}
+
+/// §§ 970-974 `vert_break`: the index of the best break of a vertical list
+/// for height `h` and depth `dmax` (its length: the end).
+fn vert_break(items: &[Kp], h: Scaled, dmax: Scaled) -> Option<usize> {
+    let (mut cur, mut prev_dp, mut st, mut sh, mut best, mut least) = (0, 0, [0; 4], 0, 0, AWFUL);
+    for i in 0..=items.len() {
+        let pi = match items.get(i) {
+            None => Some(EJECT),
+            Some(Kp::Glue { .. }) => (i > 0 && items[i - 1].non_discardable()).then_some(0),
+            Some(Kp::Kern { .. }) => matches!(items.get(i + 1), Some(Kp::Glue { .. })).then_some(0),
+            Some(Kp::Penalty(p)) => Some(*p),
+            _ => None,
+        };
+        if let Some(pi) = pi.filter(|&p| p < 10000) {
+            // § 975.
+            let b = match cur < h {
+                true if st[1..] != [0; 3] => 0,
+                true => badness(h - cur, st[0]),
+                false if cur - h > sh => AWFUL,
+                false => badness(cur - h, sh),
+            };
+            let b = match b < AWFUL {
+                true if pi <= EJECT => pi,
+                true if b < INF_BAD => b + pi,
+                true => DEPLORABLE,
+                false => b,
+            };
+            if b <= least {
+                (best, least) = (i, b);
+            }
+            if b == AWFUL || pi <= EJECT {
+                break;
+            }
+        }
+        match items.get(i) {
+            Some(&Kp::Box { h, d, .. }) => (cur, prev_dp) = (cur + prev_dp + h, d),
+            // § 976: infinite shrink is an error.
+            Some(&Kp::Glue { sho, sh: k, .. }) if sho > 0 && k != 0 => return None,
+            Some(&Kp::Glue { w, st: s, sto, sh: k, .. }) => {
+                st[usize::from(sto.min(3))] += s;
+                sh += k;
+                (cur, prev_dp) = (cur + prev_dp + w, 0);
+            }
+            Some(&Kp::Kern { w, .. }) => (cur, prev_dp) = (cur + prev_dp + w, 0),
+            _ => {}
+        }
+        if prev_dp > dmax {
+            (cur, prev_dp) = (cur + prev_dp - dmax, dmax);
+        }
+    }
+    Some(best)
+}
+
+/// A recorded vertical list kept in the environment ([`Value::List`]).
+pub(crate) type VList = (Rc<[Kp]>, Rc<[Rc<[crate::tex::Token]>]>);
+
+pub(crate) fn vlist(value: Value) -> Option<VList> {
+    match value {
+        Value::List(items, texts) => Some((items, texts)),
+        _ => None,
+    }
+}
+
+pub(crate) fn list_value(list: Option<VList>) -> Value {
+    list.map_or(Value::Unknown, |(items, texts)| Value::List(items, texts))
+}
+
+/// §§ 977-979 `vsplit` to `h`: the part split off, and the rest as
+/// `prune_page_top` (§ 968) leaves it below `\splittopskip` `top`, with
+/// the items it discards (etex.ch `\splitdiscards`).
+pub(crate) fn vsplit_list(items: &[Kp], h: Scaled, dmax: Scaled, mut top: Glue) -> Option<[Vec<Kp>; 3]> {
+    let at = vert_break(items, h, dmax)?;
+    let (mut kept, mut disc) = (Vec::new(), Vec::new());
+    for (i, &k) in items[at..].iter().enumerate() {
+        match k {
+            Kp::Glue { .. } | Kp::Kern { .. } | Kp::Penalty(_) => disc.push(k),
+            Kp::Box { h, .. } => {
+                top.width = (top.width - h).max(0);
+                kept.push(Kp::glue(top));
+                kept.extend_from_slice(&items[at + i..]);
+                break;
+            }
+            _ => kept.push(k),
+        }
+    }
+    Some([items[..at].to_vec(), kept, disc])
+}
+
 /// § 108.
 pub(crate) fn badness(t: i64, s: i64) -> i64 {
     if t == 0 {
@@ -606,5 +711,31 @@ impl Machine<'_> {
             None => n.para.items = None,
         }
         self.natural = Some(n);
+    }
+
+    /// Arena list `id` as a list of its own, with its marks' texts.
+    pub(crate) fn vlist_of(&self, id: u32) -> VList {
+        let mut texts = Vec::new();
+        let items = self.kp_list(id).into_iter().map(|k| match k {
+            Kp::Mark(c, t) => {
+                texts.push(self.kp.texts[t as usize].clone());
+                Kp::Mark(c, texts.len() as u32 - 1)
+            }
+            k => k,
+        });
+        (items.collect(), texts.into())
+    }
+
+    /// The list engine slot `key` keeps: empty before any.
+    pub(crate) fn list_slot(&mut self, key: &str) -> Option<VList> {
+        let sym = self.engine_sym(key);
+        match self.env.get(sym) {
+            None => Some((Rc::from([]), Rc::from([]))),
+            Some(_) => vlist(self.env.value(sym)),
+        }
+    }
+
+    pub(crate) fn set_list_slot(&mut self, key: &str, list: Option<VList>) {
+        self.set_engine(key, list_value(list), true);
     }
 }

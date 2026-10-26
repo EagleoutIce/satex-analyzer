@@ -926,9 +926,9 @@ pub(crate) const BOXED: u8 = 2;
 pub(crate) const BREAKS: u8 = 4;
 
 /// What a box register records beside its state, each reset when it changes.
-const BOX_SLOTS: [&str; 18] = [
+const BOX_SLOTS: [&str; 19] = [
     "wd", "ht", "dp", "first", "solid", "last", "one", "lw", "lh", "ld", "lmk", "ln", "lead", "calm", "held", "nh",
-    "nd", "node",
+    "nd", "node", "vl",
 ];
 
 /// Which item `\unskip`, `\unkern` or `\unpenalty` takes away.
@@ -962,6 +962,8 @@ pub(crate) enum Item {
     },
     Box([Dim; 3]),
     Unknown,
+    /// A mark, recorded on a vertical list; `None`: its class not known.
+    Mark(Option<crate::linebreak::Kp>),
 }
 
 impl Item {
@@ -1258,15 +1260,21 @@ impl Machine<'_> {
     /// tex.web §§ 658-667 `hpack`: the badness of list `n` packed to `w`,
     /// from its glue per order; `None` where its items are not followed.
     fn hpack_badness(&self, n: &Natural, w: Dim) -> Option<i64> {
-        let (items, x) = (n.para.items?, w.known()? - n.along.known()?);
-        let [stretch, shrink] = self.kp_glue(items);
+        Some(self.pack_badness(&self.kp_list(n.para.items?), n.along.known()?, w.known()?))
+    }
+
+    /// §§ 658-667, 672-678: the badness of recorded list `items` of
+    /// natural size `natural` packed to `to`.
+    fn pack_badness(&self, items: &[crate::linebreak::Kp], natural: Scaled, to: Scaled) -> i64 {
+        let x = to - natural;
+        let [stretch, shrink] = Self::kp_glue(items);
         let total = if x > 0 { stretch } else { shrink };
         // §§ 659, 665: only finite glue in a list that is not empty counts.
-        if x == 0 || items == 0 || total[1..].iter().any(|&t| t != 0) {
-            return Some(0);
+        if x == 0 || items.is_empty() || total[1..].iter().any(|&t| t != 0) {
+            return 0;
         }
         // § 664: a list that cannot shrink enough is overfull.
-        Some(if x < 0 && total[0] < -x { 1_000_000 } else { crate::linebreak::badness(x.abs(), total[0]) })
+        if x < 0 && total[0] < -x { 1_000_000 } else { crate::linebreak::badness(x.abs(), total[0]) }
     }
 
     /// `\prevgraf` (tex.web § 1244): not grouped.
@@ -1329,6 +1337,14 @@ impl Machine<'_> {
     }
 
     /// An integer parameter, zero where never set (tex.web § 240).
+    /// § 679: the interline glue above a box of height `h` after depth `d`.
+    fn interline_spec(&mut self, d: Dim, h: Dim) -> Option<crate::value::Glue> {
+        let (d, h, limit) = (d.known()?, h.known()?, self.dimen_parameter("lineskiplimit").known()?);
+        let mut g = self.glue_parameter("baselineskip")?;
+        g.width -= d + h;
+        if g.width < limit { self.glue_parameter("lineskip") } else { Some(g) }
+    }
+
     pub(crate) fn int_parameter(&mut self, name: &str) -> Option<i64> {
         let sym = self.intern(name);
         match self.env.value(sym) {
@@ -1783,8 +1799,11 @@ impl Machine<'_> {
         self.record(Step::OpenGroup, Sym(0), at);
         self.env.set_nest(self.nest_here(code, true, part));
         self.material = 0;
-        // tex.web § 1083: a box's horizontal list starts at 1000.
-        self.natural = Some(Natural { space_factor: Some(1000), tail: [Last::Empty; TAIL], ..Natural::default() });
+        // tex.web § 1083: a box's horizontal list starts at 1000. A
+        // vertical list's items are recorded for `\vsplit`.
+        let para = Para { items: (modes == Modes::INTERNAL_VERTICAL).then_some(0), ..Para::default() };
+        self.natural =
+            Some(Natural { space_factor: Some(1000), tail: [Last::Empty; TAIL], para, ..Natural::default() });
         self.mode = modes;
         self.list = modes;
         // tex.web § 1083: a box's vertical list starts with `\prevdepth` at
@@ -1919,6 +1938,16 @@ impl Machine<'_> {
         // back onto the page, ahead of what waits.
         if nest.code == Some(group::OUTPUT) {
             self.page_touched |= material & BOXED != 0;
+            // etex.ch: the page discards go with the routine; then the
+            // break's penalty, now 10000, is discarded (§ 1017).
+            if let Some(n) = &mut self.natural
+                && material != 0
+            {
+                n.para.items = None;
+            }
+            self.set_list_slot("disc.page", Some(Default::default()));
+            let main = self.natural.and_then(|n| n.para.items);
+            self.save_discard(main.map(|_| crate::linebreak::Kp::Penalty(10000)));
             // § 1026: the page builder resumes where the routine was
             // fired, whichever way its code went: paths parted inside it
             // meet there.
@@ -2001,6 +2030,16 @@ impl Machine<'_> {
             if matches!(nest.code, Some(group::VBOX | group::VTOP)) && material & BREAKS == 0 {
                 self.set_box_calm(register);
             }
+            // What `\vsplit` splits (§ 977): the recorded list, where it
+            // sums to the list's natural size.
+            if kind == BoxState::VBox
+                && let Some(id) = n.para.items
+                && let [_, x, d] = crate::linebreak::vpack(&self.kp_list(id), crate::value::MAX_DIMEN)
+                && [n.along, n.depth].map(|v| v.known()) == [Some(x), Some(d)]
+            {
+                let v = crate::linebreak::list_value(Some(self.vlist_of(id)));
+                self.set_box_slot(register, "vl", v);
+            }
             if kind == BoxState::VBox && n.held > 0 {
                 self.set_box_slot(register, "held", Value::Int(n.held.into()));
             }
@@ -2038,6 +2077,10 @@ impl Machine<'_> {
             // § 1076: `\vadjust` material in it follows it on the list.
             if nest.code == Some(group::ADJUSTED_HBOX) && n.para.lost && self.list_kind() != Some(true) {
                 self.append_item(Item::Unknown);
+            }
+            // § 655: marks, inserts and adjusts in it follow it, unrecorded.
+            if nest.code == Some(group::ADJUSTED_HBOX) {
+                self.record_item(None);
             }
             // § 1076: a box on the main vertical list builds the page.
             if self.mode == Modes::VERTICAL {
@@ -2566,7 +2609,27 @@ impl Machine<'_> {
                 let (width, spec) = self.space_glue(true);
                 self.append_item(Item::glue(width, spec));
             }
-            Material::Discards => self.append_item(Item::Unknown),
+            // etex.ch: the saved items go onto the list, and are no longer saved.
+            Material::Discards(split) => {
+                use crate::linebreak::Kp;
+                let key = if split { "disc.split" } else { "disc.page" };
+                let Some((items, _)) = self.list_slot(key) else { return self.append_item(Item::Unknown) };
+                self.set_list_slot(key, Some(Default::default()));
+                for &k in items.iter() {
+                    self.append_item(match k {
+                        Kp::Glue { w, st, sto, sh, sho } => {
+                            let (stretch, shrink) = (
+                                crate::value::Stretch { amount: st, order: sto },
+                                crate::value::Stretch { amount: sh, order: sho },
+                            );
+                            Item::glue(Some(w), Some(crate::value::Glue { width: w, stretch, shrink }))
+                        }
+                        Kp::Kern { w, .. } => Item::Kern(Some(w)),
+                        Kp::Penalty(p) => Item::Penalty(Some(p)),
+                        _ => Item::Unknown,
+                    });
+                }
+            }
             // etex.ch: `new_math(0, cur_chr)` where TeX--XeT is on (state
             // above zero); in math it is "Missing $" (tex.web § 1046).
             Material::LR => {
@@ -3059,6 +3122,7 @@ impl Machine<'_> {
                 if let Some(n) = &mut nest.natural {
                     n.boxed(false, [None, Some(h), Some(d)], skips);
                     n.pushed(Last::Other);
+                    n.para.items = None;
                     if lost {
                         n.widen(false);
                     }
@@ -3077,6 +3141,7 @@ impl Machine<'_> {
                 if let Some(n) = &mut nest.natural {
                     n.boxed(false, [None, Some(h), Some(d)], skips);
                     n.pushed(Last::Other);
+                    n.para.items = None;
                     // § 799: a cell's `\vadjust` material follows the row.
                     if lost {
                         n.widen(false);
@@ -3187,8 +3252,8 @@ impl Machine<'_> {
                         };
                         // tex.web § 1080: the list is empty again;
                         // `\prevdepth` stays as it was.
-                        (n.along, n.depth, n.wide, n.first, n.line) =
-                            (Dim::exact(0), Dim::exact(0), Dim::exact(0), None, None);
+                        (n.along, n.depth, n.wide, n.first, n.line, n.para.items) =
+                            (Dim::exact(0), Dim::exact(0), Dim::exact(0), None, None, None);
                         n.emptied();
                         self.natural = Some(n);
                         self.box_end(context, BoxState::HBox, [w, h, d].map(Dim::exact));
@@ -3207,9 +3272,8 @@ impl Machine<'_> {
                         n.prior = true;
                         n.solid = 0;
                         n.emptied();
-                        if n.para.items.is_some() {
-                            n.para.items = Some(0);
-                        }
+                        // The main vertical list's page is not emptied.
+                        n.para.items = n.para.items.and(self.list_kind().map(|_| 0));
                         self.natural = Some(n);
                         return self.box_end(context, BoxState::HBox, dims);
                     }
@@ -3263,6 +3327,40 @@ impl Machine<'_> {
                     self.env.value(key)
                 });
                 let calm = self.box_calm(n);
+                // §§ 977-979: a recorded list splits as TeX splits it; etex.ch
+                // sets the split marks and discards anew at each split.
+                let vl = n.map(|k| self.intern(&format!("\u{4}box.vl.{k}")));
+                let list = vl.and_then(|key| crate::linebreak::vlist(self.box_slot(key)));
+                let (top, saving) = (self.glue_parameter("splittopskip"), self.int_parameter("savingvdiscards"));
+                let parts = match (&list, to, max, top, saving) {
+                    (Some((items, _)), Some(h), Some(m), Some(top), Some(_)) if real == Some(BoxState::VBox) => {
+                        crate::linebreak::vsplit_list(items, h, m, top).map(|p| (p, h, m))
+                    }
+                    _ => None,
+                };
+                if let (Some(([head, rest, disc], h, m)), Some((_, texts))) = (parts, list) {
+                    let value = |l: &Vec<_>| Some((Rc::from(l.as_slice()), texts.clone()));
+                    self.set_list_slot("marks.split", value(&head));
+                    self.set_list_slot("disc.split", value(&disc).filter(|_| saving > Some(0)).or(value(&vec![])));
+                    self.box_changed(n, BoxState::Void);
+                    if !rest.is_empty() {
+                        self.box_changed(n, BoxState::VBox);
+                        let dims = crate::linebreak::vpack(&rest, crate::value::MAX_DIMEN);
+                        self.set_box_dims(n, dims.map(Dim::exact));
+                        self.set_box_slot(n, "vl", crate::linebreak::list_value(value(&rest)));
+                    }
+                    self.fetched.clear();
+                    let [w, x, d] = crate::linebreak::vpack(&head, m);
+                    self.set_badness(Some(self.pack_badness(&head, x, h)));
+                    self.box_end(context, BoxState::VBox, [w, h, d].map(Dim::exact));
+                    self.carry_last(context, (Last::UNKNOWN, true, 0));
+                    if let BoxContext::Set { register, .. } = context {
+                        self.set_box_slot(register, "vl", crate::linebreak::list_value(value(&head)));
+                    }
+                    return;
+                }
+                self.set_list_slot("marks.split", None);
+                self.set_list_slot("disc.split", None);
                 // §§ 972-974: with no forced break, a split to `\maxdimen`
                 // and `\splitmaxdepth` that large finds no prefix too full
                 // (sums stay within `\maxdimen`), so the list's end, at the
@@ -3546,6 +3644,20 @@ impl Machine<'_> {
         }
     }
 
+    /// etex.ch `\savingvdiscards`: an item the page builder discards
+    /// (`None`: not known which) is kept for `\pagediscards`.
+    fn save_discard(&mut self, k: Option<crate::linebreak::Kp>) {
+        let saved = match self.int_parameter("savingvdiscards") {
+            Some(..=0) => return,
+            Some(_) => self
+                .list_slot("disc.page")
+                .zip(k)
+                .map(|((items, texts), k)| ([&items[..], &[k]].concat().into(), texts)),
+            None => None,
+        };
+        self.set_list_slot("disc.page", saved);
+    }
+
     /// tex.web §§ 994, 1056: a rule on the main vertical list waits on the
     /// contribution list, which the page builder empties at its next run
     /// (after a box, a penalty, `\par`, a paragraph begun): only then are
@@ -3567,6 +3679,28 @@ impl Machine<'_> {
         }
         self.page_touched = false;
         self.ship_pending();
+        // §§ 1012-1014: the page's marks, those of earlier pages kept apart.
+        // A forced break takes the whole list; past any other, it is lost.
+        let page = match &mut self.natural {
+            Some(n) if self.mode == Modes::VERTICAL => {
+                std::mem::replace(&mut n.para.items, (penalty <= -10000).then_some(0))
+            }
+            _ => None,
+        };
+        let hist = match (self.list_slot("marks.hist"), self.list_slot("marks.page")) {
+            (Some((h, ht)), Some((p, pt))) if h.len() < crate::linebreak::MAX_ITEMS as usize => {
+                use crate::linebreak::Kp;
+                let marks = p.iter().filter_map(|k| match *k {
+                    Kp::Mark(c, t) => Some(Kp::Mark(c, t + ht.len() as u32)),
+                    _ => None,
+                });
+                Some((h.iter().copied().chain(marks).collect(), ht.iter().chain(pt.iter()).cloned().collect()))
+            }
+            _ => None,
+        };
+        self.set_list_slot("marks.hist", hist);
+        let page = page.filter(|_| penalty <= -10000).map(|id| self.vlist_of(id));
+        self.set_list_slot("marks.page", page);
         // § 1017: `\box255` is as wide as the widest item up to the break:
         // all of the page at a forced break, else at most that.
         let wide = match &mut self.natural {
@@ -3622,7 +3756,10 @@ impl Machine<'_> {
                 self.push_inserted(output, tokens, span);
                 self.open_list(Some(group::OUTPUT), Modes::INTERNAL_VERTICAL, 0, span);
             }
-            Some(_) => self.set_box(Some(255), BoxState::Void, true, None),
+            Some(_) => {
+                self.set_box(Some(255), BoxState::Void, true, None);
+                self.set_list_slot("disc.page", None);
+            }
             None => self.diagnose(
                 Severity::Imprecision,
                 "unknown-token-list",
@@ -3709,6 +3846,42 @@ impl Machine<'_> {
         }
     }
 
+    /// What item `item` is to the recorded list (`None`: not recorded,
+    /// `Some(None)`: not known).
+    fn kp_of(&self, item: &Item, horizontal: bool) -> Option<Option<crate::linebreak::Kp>> {
+        use crate::linebreak::Kp;
+        let known = |d: Option<Option<Scaled>>| d.flatten();
+        match *item {
+            Item::Penalty(Some(..=-10000)) if self.mode == Modes::HORIZONTAL => None,
+            Item::Penalty(Some(p)) => Some(Some(Kp::Penalty(p))),
+            Item::Glue(_, Some(g)) => Some(g.glue().map(Kp::glue)),
+            Item::Kern(Some(w)) => Some(Some(Kp::Kern { w, explicit: true })),
+            // § 866: a math node breaks as an explicit kern does.
+            Item::Node(10) => Some(Some(Kp::Kern { w: 0, explicit: true })),
+            Item::Node(_) => Some(Some(Kp::Whatsit)),
+            Item::Mark(k) if !horizontal => Some(k),
+            Item::Box(b) => Some(b.map(|x| x.known()).iter().copied().collect::<Option<Vec<_>>>().map(|b| Kp::Box {
+                w: b[0],
+                h: b[1],
+                d: b[2],
+                chr: None,
+                lig: false,
+            })),
+            // § 668: a running width adds nothing to a vertical list.
+            Item::Rule { width, height, depth } => {
+                let width = if horizontal { known(width) } else { width.unwrap_or(Some(0)) };
+                Some(width.zip(known(height)).zip(known(depth)).map(|((w, h), d)| Kp::Box {
+                    w,
+                    h,
+                    d,
+                    chr: None,
+                    lig: false,
+                }))
+            }
+            _ => Some(None),
+        }
+    }
+
     /// An item goes onto the current list: its natural size grows by it
     /// (tex.web §§ 651-656 `hpack`, 669-670 `vpack`).
     pub(crate) fn append_item(&mut self, item: Item) {
@@ -3735,7 +3908,7 @@ impl Machine<'_> {
                 (_, Item::Rule { depth: Some(Some(d)), .. }) => Dim::exact(*d),
                 (_, Item::Rule { .. }) => Dim::ANY,
                 (_, Item::Glue(..) | Item::Kern(_)) => Dim::exact(0),
-                (_, Item::Penalty(_) | Item::Zero | Item::Node(_)) => self.main_depth,
+                (_, Item::Penalty(_) | Item::Zero | Item::Mark(_) | Item::Node(_)) => self.main_depth,
             };
         }
         // tex.web § 1001: the first box on the page gets `\topskip` glue,
@@ -3765,7 +3938,7 @@ impl Machine<'_> {
         self.end_word();
         let Some(mut n) = self.natural else { return };
         // A whatsit in inline math has no size (tex.web § 730).
-        if matches!(item, Item::Zero | Item::Node(_)) && self.mode == Modes::MATH {
+        if matches!(item, Item::Zero | Item::Mark(_) | Item::Node(_)) && self.mode == Modes::MATH {
             // It is the math list's tail all the same (tex.web § 1105 sees it).
             match item {
                 Item::Node(t) => n.pushed(Last::Node(t)),
@@ -3822,7 +3995,7 @@ impl Machine<'_> {
             Some(h) => h,
             None if self.mode == Modes::VERTICAL => {
                 if self.page_empty() && matches!(item, Item::Glue(..) | Item::Kern(_) | Item::Penalty(_)) {
-                    return;
+                    return self.save_discard(self.kp_of(&item, false).flatten());
                 }
                 // The page's first box: the interline glue before it is
                 // discarded too, and no depth precedes it.
@@ -3837,37 +4010,16 @@ impl Machine<'_> {
             }
         };
         let skips = self.interline();
-        if horizontal && n.para.items.is_some() {
+        if n.para.items.is_some() {
             use crate::linebreak::Kp;
-            let known = |d: Option<Option<Scaled>>| d.flatten();
-            let k = match item {
-                Item::Penalty(Some(..=-10000)) if self.mode == Modes::HORIZONTAL => None,
-                Item::Penalty(Some(p)) => Some(Some(Kp::Penalty(p))),
-                Item::Glue(_, Some(g)) => Some(g.glue().map(Kp::glue)),
-                Item::Kern(Some(w)) => Some(Some(Kp::Kern { w, explicit: true })),
-                // § 866: a math node breaks as an explicit kern does.
-                Item::Node(10) => Some(Some(Kp::Kern { w: 0, explicit: true })),
-                Item::Node(_) => Some(Some(Kp::Whatsit)),
-                Item::Box(b) => {
-                    Some(b.map(|x| x.known()).iter().copied().collect::<Option<Vec<_>>>().map(|b| Kp::Box {
-                        w: b[0],
-                        h: b[1],
-                        d: b[2],
-                        chr: None,
-                        lig: false,
-                    }))
+            // § 679: interline glue above a box on a vertical list.
+            if let (false, Item::Box([_, h, _]), Some(d)) = (horizontal, &item, n.prev_depth) {
+                match self.interline_spec(d, *h) {
+                    Some(g) => self.kp_push(&mut n.para.items, Kp::glue(g)),
+                    None => n.para.items = None,
                 }
-                Item::Rule { width, height, depth } => {
-                    Some(known(width).zip(known(height)).zip(known(depth)).map(|((w, h), d)| Kp::Box {
-                        w,
-                        h,
-                        d,
-                        chr: None,
-                        lig: false,
-                    }))
-                }
-                _ => Some(None),
-            };
+            }
+            let k = self.kp_of(&item, horizontal);
             match k {
                 Some(Some(k)) => self.kp_push(&mut n.para.items, k),
                 Some(None) => n.para.items = None,
@@ -3889,7 +4041,7 @@ impl Machine<'_> {
         match item {
             // Nothing, or a whatsit: the tail is the new item or the one
             // that was there, so a last glue, kern or penalty is in doubt.
-            Item::Zero => {
+            Item::Zero | Item::Mark(_) => {
                 // A mark or insertion would end the discarding (tex.web § 879).
                 n.para.awkward |= n.para.fresh;
                 n.para.fresh = false;
@@ -4079,6 +4231,7 @@ impl Machine<'_> {
         if let Some(n) = &mut self.natural {
             n.tail = [Last::UNKNOWN; TAIL];
             n.space_factor = None;
+            n.para.items = n.para.items.filter(|_| state == BoxState::HBox);
         }
     }
 
@@ -4213,6 +4366,9 @@ impl Machine<'_> {
             Primitive::Command(Syntax::Fraction { .. }) if self.mode.within(Modes::ANY_MATH) => {
                 return self.math_fraction();
             }
+            // `note_mark` appends a mark once its text is read.
+            Primitive::Command(Syntax::NumberText) => return,
+            Primitive::Command(Syntax::GeneralText) if self.name(self.env.identity(by)) == "mark" => return,
             Primitive::Command(syntax) => match syntax {
                 Syntax::Number
                 | Syntax::Dimen

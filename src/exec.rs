@@ -1377,7 +1377,7 @@ impl Machine<'_> {
             Meaning::Primitive(Primitive::Relax) => format!("{esc}relax"),
             // tex.web § 296: a mark command shows a colon and the mark's text,
             // empty until a page is built.
-            Meaning::Primitive(p @ Primitive::Convert(crate::builtins::Convert::Mark)) => {
+            Meaning::Primitive(p @ Primitive::Convert(crate::builtins::Convert::Mark(_))) => {
                 let name = primitive_name(self.out.plugins.engine, p);
                 let original = self.env.identity(sym);
                 format!("{esc}{}:", name.as_deref().unwrap_or_else(|| self.name(original)))

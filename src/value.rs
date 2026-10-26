@@ -153,6 +153,9 @@ pub enum Value {
     /// for every kind above. Read as a value it is unknown, as a
     /// [`Value::Num`] is.
     OneOf(Rc<[Value]>),
+    /// A recorded vertical list, as `\vsplit` and the page builder read it
+    /// (tex.web §§ 968-979, 1012-1014): its items, its marks' texts by index.
+    List(Rc<[crate::linebreak::Kp]>, Rc<[Rc<[Token]>]>),
 }
 
 /// How many values a join lists before it widens to an interval, unless
@@ -627,6 +630,11 @@ impl PartialEq for Value {
             (Value::GlueNum { quantity: x, hull: a }, Value::GlueNum { quantity: y, hull: b }) => x == y && a == b,
             (Value::Color(a), Value::Color(b)) => a == b,
             (Value::OneOf(a), Value::OneOf(b)) => a == b,
+            (Value::List(a, x), Value::List(b, y)) => {
+                a == b
+                    && x.len() == y.len()
+                    && x.iter().zip(y.iter()).all(|(p, q)| Value::Toks(p.clone()) == Value::Toks(q.clone()))
+            }
             _ => false,
         }
     }
@@ -820,7 +828,9 @@ impl Value {
             Value::MuGlue(g) => render_glue(g, "mu"),
             Value::Toks(t) => format!("<{} tokens>", t.len()),
             Value::Color(c) => format!("{} {}", c.model().as_str(), c.hull.spell()),
-            Value::Unknown | Value::Num { .. } | Value::GlueNum { .. } | Value::OneOf(_) => "?".into(),
+            Value::Unknown | Value::Num { .. } | Value::GlueNum { .. } | Value::OneOf(_) | Value::List(..) => {
+                "?".into()
+            }
         }
     }
 }
