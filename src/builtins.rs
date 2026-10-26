@@ -278,9 +278,10 @@ pub enum Syntax {
     /// `\attribute⟨number⟩=⟨number⟩`.
     NumberIsNumber,
     Dimen,
-    /// `\abovewithdelims` and relatives: two delimiters, then for
-    /// `\abovewithdelims` a dimension (tex.web § 1178).
-    Delimiters {
+    /// `\over`, `\atop`, `\above` and their `withdelims` forms (tex.web
+    /// § 1181): two delimiters for these, then for `\above…` a dimension.
+    Fraction {
+        delims: bool,
         dimen: bool,
     },
     /// `\batchmode` … `\errorstopmode`: they set `\interactionmode`
@@ -350,6 +351,11 @@ pub enum Syntax {
     /// `\pdfsave`, `\pdfrestore`, `\pdfendthread` (none can be
     /// `\immediate`).
     Whatsit,
+    /// `\nonscript`: glue in math that cancels the next in script styles.
+    NonScript,
+    /// `\setlanguage⟨number⟩`: a whatsit in horizontal mode, elsewhere an
+    /// illegal case that scans nothing (tex.web § 1377).
+    SetLanguage,
 }
 
 /// An expandable primitive that yields text (tex.web § 468, `convert`; the
@@ -886,8 +892,9 @@ pub enum ModeCmd {
     MathStyle(u8),
     /// `\eqno`, `\leqno` (tex.web § 1140).
     EqNo,
-    /// `\left` (tex.web § 1191).
-    Left,
+    /// `\left`, `\middle`, `\right` (tex.web § 1191, etex.ch): a delimiter,
+    /// then the math left group closes, or opens, or both.
+    LeftRight { opens: bool, closes: bool },
 }
 
 /// What a [`ModeCmd::Horizontal`] or [`ModeCmd::Vertical`] command scans.
@@ -916,6 +923,9 @@ pub enum Material {
     NoBoundary,
     /// `\valign`, `\halign`.
     Align,
+    /// `\beginL`, `\endL`, `\beginR`, `\endR`: etex.ch's `valign` with a
+    /// positive code, a math node where TeX--XeT is on.
+    LR,
 }
 
 /// The `make_box` commands (tex.web § 1071).
@@ -937,7 +947,7 @@ impl ModeCmd {
         match self {
             ModeCmd::Horizontal(Material::Glue) | ModeCmd::Vertical(Material::Glue) => Typeset::Glue,
             ModeCmd::Shift { .. } => Typeset::Dimen,
-            ModeCmd::Left => Typeset::Delimiter,
+            ModeCmd::LeftRight { .. } => Typeset::Delimiter,
             _ => Typeset::Plain,
         }
     }
@@ -1351,7 +1361,9 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "input", P::Load(LoadKind::Input));
     put(it, "endinput", P::Endinput);
 
+    // tex.web § 1052: `\dump` is `stop` too, and ends the job (§ 1335).
     put(it, "end", P::End);
+    put(it, "dump", P::End);
     // tex.web § 1279; the kernel's `\PackageWarning`, `\GenericError` and
     // `\typeout` are its own code, which ends in these or in an
     // `\immediate\write` to a stream that is not open.
@@ -1360,14 +1372,9 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
 
     // Boxes, glue and penalties (The TeXbook, chs. 11-14), by what each one
     // scans before the material it sets.
-    for (n, scan) in [
-        ("kern", Typeset::Dimen),
-        ("mkern", Typeset::Dimen),
-        ("mskip", Typeset::Glue),
-        ("penalty", Typeset::Number),
-        ("right", Typeset::Delimiter),
-        ("middle", Typeset::Delimiter),
-    ] {
+    for (n, scan) in
+        [("kern", Typeset::Dimen), ("mkern", Typeset::Dimen), ("mskip", Typeset::Glue), ("penalty", Typeset::Number)]
+    {
         put(it, n, P::Typeset(scan));
     }
     for n in ["unpenalty", "unkern", "unskip"] {
@@ -1761,7 +1768,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "skewchar", P::FontParam(FontParam::SkewChar));
     put(it, "nullfont", P::FontIdent(0));
     put(it, "muskipdef", P::RegisterDef(RegKind::MuSkip));
-    for n in "showlists showgroups showifs dump".split_whitespace() {
+    for n in "showlists showgroups showifs".split_whitespace() {
         put(it, n, P::Command(Syntax::Nothing));
     }
     put(it, "noboundary", P::Mode(ModeCmd::Horizontal(Material::NoBoundary)));
@@ -1785,14 +1792,16 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "mathclose", P::Command(Syntax::MathComp(5)));
     put(it, "mathpunct", P::Command(Syntax::MathComp(6)));
     put(it, "mathinner", P::Command(Syntax::MathComp(7)));
-    for n in "underline overline over atop".split_whitespace() {
+    for n in "underline overline".split_whitespace() {
         put(it, n, P::Command(Syntax::Nothing));
     }
     put(it, "eqno", P::Mode(ModeCmd::EqNo));
     put(it, "leqno", P::Mode(ModeCmd::EqNo));
-    for n in "nonscript beginL endL beginR endR".split_whitespace() {
-        put(it, n, P::Command(Syntax::Nothing));
+    for n in ["beginL", "endL", "beginR", "endR"] {
+        put(it, n, P::Mode(ModeCmd::Horizontal(Material::LR)));
     }
+    // tex.web § 1171: glue that cancels the next in script styles.
+    put(it, "nonscript", P::Command(Syntax::NonScript));
     put(it, "pagediscards", P::Mode(ModeCmd::Vertical(Material::Discards)));
     put(it, "splitdiscards", P::Mode(ModeCmd::Vertical(Material::Discards)));
     put(it, "shipout", P::Mode(ModeCmd::ShipOut));
@@ -1816,23 +1825,26 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, n, P::Mode(ModeCmd::Leaders));
     }
     put(it, "vadjust", P::Mode(ModeCmd::Insert { vadjust: true }));
-    put(it, "left", P::Mode(ModeCmd::Left));
+    put(it, "left", P::Mode(ModeCmd::LeftRight { opens: true, closes: false }));
+    put(it, "middle", P::Mode(ModeCmd::LeftRight { opens: true, closes: true }));
+    put(it, "right", P::Mode(ModeCmd::LeftRight { opens: false, closes: true }));
     put(it, "lastbox", P::Mode(ModeCmd::Box(BoxCmd::LastBox)));
     put(it, "batchmode", P::Command(Syntax::Interaction(0)));
     put(it, "nonstopmode", P::Command(Syntax::Interaction(1)));
     put(it, "scrollmode", P::Command(Syntax::Interaction(2)));
     put(it, "errorstopmode", P::Command(Syntax::Interaction(3)));
-    put(it, "above", P::Command(Syntax::Dimen));
-    put(it, "abovewithdelims", P::Command(Syntax::Delimiters { dimen: true }));
-    put(it, "atopwithdelims", P::Command(Syntax::Delimiters { dimen: false }));
-    put(it, "overwithdelims", P::Command(Syntax::Delimiters { dimen: false }));
+    // tex.web § 1178: `above_code`, `over_code`, `atop_code`, then `delimited_code` plus each.
+    for (n, delims, dimen) in [("above", false, true), ("over", false, false), ("atop", false, false)] {
+        put(it, n, P::Command(Syntax::Fraction { delims, dimen }));
+        put(it, &format!("{n}withdelims"), P::Command(Syntax::Fraction { delims: true, dimen }));
+    }
     put(it, "char", P::Mode(ModeCmd::Horizontal(Material::Char)));
     for n in "mathchar delimiter radical mathaccent".split_whitespace() {
         put(it, n, P::Command(Syntax::Number));
     }
     // An extension that inserts a whatsit (tex.web part 53), except in
     // LuaTeX, where it is an integer parameter (`assign_int`).
-    put(it, "setlanguage", if engine.has_luatex() { P::IntegerParameter } else { P::Command(Syntax::Number) });
+    put(it, "setlanguage", if engine.has_luatex() { P::IntegerParameter } else { P::Command(Syntax::SetLanguage) });
     put(it, "closeout", P::Command(Syntax::CloseOut));
     put(it, "showbox", P::Command(Syntax::Number));
     put(it, "copy", P::Mode(ModeCmd::Box(BoxCmd::Copy)));
@@ -2371,11 +2383,14 @@ pub fn owned(name: &str) -> Option<Owned> {
         // tex.web § 986 (`set_page_dimen`): while the page is empty
         // `\pagegoal` reads `\maxdimen` and the other seven read zero.
         "pagegoal" => Owned::PageSoFar { empty: crate::value::MAX_DIMEN },
-        "pagetotal" | "pagedepth" | "pagestretch" | "pageshrink" | "pagefilstretch" | "pagefillstretch"
-        | "pagefilllstretch" => Owned::PageSoFar { empty: 0 },
+        _ if PAGE_SO_FAR.split_whitespace().any(|n| n == name) => Owned::PageSoFar { empty: 0 },
         _ => return None,
     })
 }
+
+/// tex.web § 982: the page builder's `page_so_far` array.
+pub const PAGE_SO_FAR: &str =
+    "pagegoal pagetotal pagestretch pagefilstretch pagefillstretch pagefilllstretch pageshrink pagedepth";
 
 /// A name of the expl3 programming layer: a function (`\tl_set:Nn`) or one
 /// of the quarks and scan marks (`\q_nil`, `\s__tl_stop`) that
@@ -2714,7 +2729,7 @@ fn syntax_verdict(s: Syntax) -> Judgment {
     match s {
         S::Nothing => at!(
             V::Approximated,
-            "no operand. The size of what `\\span`, `\\nonscript`, a fraction or `\\overline`/`\\underline` builds is widened, not computed",
+            "no operand. The size of what `\\span`, a fraction or `\\overline`/`\\underline` builds is widened, not computed",
         ),
         S::MathComp(_) => at!(
             V::Approximated,
@@ -2724,6 +2739,15 @@ fn syntax_verdict(s: Syntax) -> Judgment {
             at!(V::Approximated, "no operand. Where the scripts go is not followed, so the formula's size widens")
         }
         S::Whatsit => at!(V::Exact, "no operand, a whatsit on the current list"),
+        S::NonScript => at!(
+            V::Approximated,
+            "glue of no size in math (tex.web § 1171). Script styles, which cancel the next glue, widen"
+        ),
+        S::SetLanguage => at!(V::Exact, "a whatsit in horizontal mode, an illegal case elsewhere (tex.web § 1377)"),
+        S::Fraction { .. } => at!(
+            V::Approximated,
+            "the list so far becomes the numerator and the list starts afresh (tex.web § 1181). The fraction's size widens",
+        ),
         S::Interaction(_) => at!(V::Exact, "sets `\\interactionmode`"),
         S::Token => at!(V::Exact, "`\\show`"),
         S::Internal => at!(V::Exact, "`\\showthe`"),
@@ -2815,12 +2839,10 @@ fn mode_verdict(m: ModeCmd) -> Judgment {
             V::Approximated,
             "tex.web § 1171: the style of the atoms after it in inline math. Scripts in display style widen",
         ),
-        M::Left => {
-            at!(
-                V::Approximated,
-                "documented: satex keeps no group for it, so the display may read as inner from here on"
-            )
-        }
+        M::LeftRight { .. } => at!(
+            V::Approximated,
+            "the math left group is kept (tex.web § 1191). The size of the list it delimits widens",
+        ),
     }
 }
 
@@ -2828,7 +2850,7 @@ fn material_verdict(m: Material) -> Judgment {
     use Material as M;
     use Verdict as V;
     match m {
-        M::Char | M::Rule | M::Glue | M::Fil(_) | M::Discretionary | M::Space | M::NoBoundary => {
+        M::Char | M::Rule | M::Glue | M::Fil(_) | M::Discretionary | M::Space | M::NoBoundary | M::LR => {
             at!(V::Exact, "a real item, appended to the list satex tracks")
         }
         M::Unpackage { .. } => at!(

@@ -111,6 +111,13 @@ impl Machine<'_> {
                 n.prior |= which == prevdepth;
                 n.capped |= which == boxmaxdepth;
             }
+            // tex.web § 1245: `page_so_far` is no table entry, so global.
+            if let Some(crate::builtins::Owned::PageSoFar { .. }) = crate::builtins::owned(self.name(which)) {
+                let key = format!("page.set.{}", self.name(which));
+                let value = self.env.value(which);
+                self.set_engine(&key, value, true);
+                self.set_engine("page.set", Value::Int(1), true);
+            }
         }
         // tex.web § 1269: the `\afterassignment` token is put back only
         // once the assignment it followed is done.
@@ -484,12 +491,6 @@ impl Machine<'_> {
             P::Lua(op) => crate::plugin::lua::primitive(self, op, by, span),
             P::LuaCall { id, .. } => crate::plugin::lua::call(self, id, by, span),
             P::Docstrip(op) => crate::literate::docstrip(self, op, span),
-            // A delimiter is one token, owned by the primitive that scans it
-            // (tex.web § 1161). What it sets is material satex doesn't typeset.
-            P::Typeset(crate::builtins::Typeset::Delimiter) => {
-                self.skip_spaces();
-                self.next_token();
-            }
             P::Accent => {
                 if !self.horizontal_material(Token::new(Tok::Cs(by), span)) {
                     let code = crate::observe::accent(self, span);
@@ -556,8 +557,8 @@ impl Machine<'_> {
                         let spec = width.filter(|_| rigid).map(|width| value::Glue { width, ..Default::default() });
                         self.append_item(crate::mode::Item::glue(width, spec));
                         // tex.web § 424: `\lastskip` reads it as muglue.
-                        if let Some(crate::mode::Last::Glue(w, _)) = self.natural.map(|n| n.tail[0]) {
-                            self.set_tail(crate::mode::Last::Glue(w, None));
+                        if let Some(crate::mode::Last::Glue(w, ..)) = self.natural.map(|n| n.tail[0]) {
+                            self.set_tail(crate::mode::Last::Glue(w, Some(value::GlueHull::exact(&g)), true));
                         }
                     }
                     None => self.append_item(crate::mode::Item::Unknown),
@@ -3150,6 +3151,11 @@ impl Machine<'_> {
             // since the last page.
             Owned::PageSoFar { .. } => {
                 use crate::mode::Dim;
+                // §§ 421, 1245: an assignment reads back until the page
+                // builder moves material (§ 1004).
+                if let Some(v) = self.page_assigned(named).filter(|v| !matches!(v, Value::Int(_))) {
+                    return (v != Value::Unknown).then_some(v);
+                }
                 let v = self.dimen_parameter("vsize").known()?;
                 let built = self.engine_slot_int("page", "page.built") == Some(1);
                 let inserts = self.engine_slot_int("page", "page.inserts") != Some(0);
@@ -3216,7 +3222,7 @@ impl Machine<'_> {
         if matches!(self.env.meaning(sym).prim(), Some(Primitive::IntegerParameter | Primitive::DimenParameter)) {
             let named = self.env.identity(sym);
             if let Some(owned) = crate::builtins::owned(self.name(named)) {
-                return self.owned_value(owned, named);
+                return self.owned_value(owned, named).and_then(|v| self.read_abstract(v));
             }
             if matches!(self.name(named), "year" | "month" | "day" | "time") {
                 self.clock_read(span);

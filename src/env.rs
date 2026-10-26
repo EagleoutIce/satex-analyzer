@@ -70,7 +70,11 @@ enum Entry {
 pub enum GroupKind {
     Simple,
     SemiSimple,
-    Math { display: bool },
+    Math {
+        display: bool,
+    },
+    /// `\left`…`\right` (tex.web § 1191 `math_left_group`).
+    MathLeft,
 }
 
 impl GroupKind {
@@ -80,6 +84,7 @@ impl GroupKind {
             (GroupKind::Simple, GroupKind::Simple)
                 | (GroupKind::SemiSimple, GroupKind::SemiSimple)
                 | (GroupKind::Math { .. }, GroupKind::Math { .. })
+                | (GroupKind::MathLeft, GroupKind::MathLeft)
         )
     }
 }

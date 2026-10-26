@@ -3238,6 +3238,8 @@ impl<'a> Machine<'a> {
         let lines = text.lines().count() as u32;
         self.format_progress = Some(self.input.len() - 1);
         self.run();
+        // tex.web § 1335: `\dump` ended the format's job, not the document's.
+        self.job_ended = false;
         let kernel_steps = self.out.steps;
         self.budget = None;
         let engine = self.out.plugins.engine.as_str();
@@ -7306,6 +7308,7 @@ will look undefined",
                     crate::builtins::Syntax::PdfColorStack
                     | crate::builtins::Syntax::PdfStartLink
                     | crate::builtins::Syntax::Whatsit
+                    | crate::builtins::Syntax::NonScript
                     | crate::builtins::Syntax::OpenOut
                     | crate::builtins::Syntax::CloseOut,
                 ),
@@ -11334,6 +11337,7 @@ fn opened_by(kind: GroupKind) -> &'static str {
         GroupKind::Simple => "{",
         GroupKind::SemiSimple => "\\begingroup",
         GroupKind::Math { .. } => "$",
+        GroupKind::MathLeft => "\\left",
     }
 }
 
@@ -11358,6 +11362,7 @@ fn name_of(kind: GroupKind) -> &'static str {
         GroupKind::Simple => "}",
         GroupKind::SemiSimple => "\\endgroup",
         GroupKind::Math { .. } => "$",
+        GroupKind::MathLeft => "\\right",
     }
 }
 

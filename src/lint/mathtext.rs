@@ -4,7 +4,7 @@
 
 use crate::fixed::{HashMap, HashSet};
 
-use crate::builtins::{ModeCmd, Primitive, Typeset};
+use crate::builtins::{ModeCmd, Primitive};
 use crate::lint::fix::{Applicability, Edit, Edits, Fix, Lexeme, Pos, Scan};
 use crate::lint::text::{PUNCTUATION, Rewrite, View};
 use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
@@ -307,7 +307,7 @@ impl Files {
 
 /// tex.web §§ 1161, 1191: the commands that scan a delimiter.
 fn scans_delimiter(meaning: &Meaning) -> bool {
-    matches!(meaning.prim(), Some(Primitive::Typeset(Typeset::Delimiter) | Primitive::Mode(ModeCmd::Left)))
+    matches!(meaning.prim(), Some(Primitive::Mode(ModeCmd::LeftRight { .. })))
 }
 
 fn meaning_of(analysis: &Analysis, name: &str) -> Meaning {

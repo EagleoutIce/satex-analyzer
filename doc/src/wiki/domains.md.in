@@ -173,7 +173,11 @@ bundles the running `along`/`height`/`depth`/`wide` dimensions plus the
 list's tail, mirroring the fields `hpack`/`vpack` compute.  The tail's items
 (`Last`: a character, glue, a kern, a penalty, anything else) have
 `Last::Unknown` as their top. Glue keeps its width as a `Dim` and its
-specification as a `GlueHull`, and two glues join componentwise. Items of
+specification as a `GlueHull`, and two glues join componentwise. Glue
+also says whether it is `mu_glue`, which `\lastskip` reads in mu (§ 424):
+glues of the two levels join to an unknown specification. A node that only
+`\lastnodetype` tells apart keeps its type: a rule (3), an insertion (4), an
+adjust (6), a whatsit (9), a math node (10), a noad (15). Items of
 different kinds join to `Last::Unknown(Reads)`, which keeps what
 `\lastskip`, `\lastkern` and `\lastpenalty` may read: the join of each
 item's reading, zero where it is of another kind (§ 424). Whether a character node is a ligature is
@@ -206,6 +210,10 @@ The sizes come from the list, as `hpack` and `vpack` would compute them:
   A `\mathchardef` symbol is one atom, as a character is (§ 1155).
   Relations, openings, closings and punctuation add the space their classes call for (§§ 764-766): `\thinmuskip`, `\medmuskip` or `\thickmuskip` at its natural width, in units of the math quad over 18 (§§ 716, 732).
   A binary atom may turn ordinary (§§ 728-729), so its width is widened. An operator is shifted, so its whole size is.
+  A math group whose size is lost widens the formula, and its noad stays the tail (§ 1186). A style inside it ends with it.
+  A fraction makes the list so far its numerator and starts the list afresh (§ 1181). Its size widens.
+  A flag says whether the list may hold one already, which joins as "may": then the tail is the old one or empty.
+  `\left` opens a math left group that `\middle` and `\right` close (§ 1191, etex.ch).
 - `\unhbox` of a naturally packed hbox of boxes and rules alone adds their natural width (§ 1110).
   The register also keeps how many there are, so the list's tail is known after it: `\unskip` then takes nothing.
 - `\unhbox` of any other hbox adds the natural width recorded when it was packed, whatever it was packed to: § 1110 moves the list with its glue unset.
@@ -227,6 +235,10 @@ The sizes come from the list, as `hpack` and `vpack` would compute them:
 - The main vertical list is tracked from the job's empty page on (§ 991). Glue, kerns and penalties on an empty page are dropped (§ 1000).
   So are the interline glue and the depth before the page's first box. A rule takes no interline glue (§ 1056).
   `\pagetotal` is at most the list's length plus the `\topskip` glue above the first box (§ 1001).
+  A page dimension assigned reads back until material reaches the main vertical list, after which it is unknown (§§ 1004, 1245).
+  A new page sets them anew (§ 987).
+- An hbox packed to a size of its own records its items as a paragraph line does.
+  Its `\badness` comes from its glue per order (§§ 658-667). Otherwise it is unknown.
 - A page whose first box follows a whatsit has a legal break at that box's `\topskip` glue (§ 973).
   `\box255` of such a page splits there when the box does not fit, so the part split off holds no box.
   LaTeX's `\clearpage` relies on this to keep its `\write`s, and the page stays empty.

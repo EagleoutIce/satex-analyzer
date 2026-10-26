@@ -507,6 +507,7 @@ impl Machine<'_> {
                 (Some(GroupKind::Simple), None) => int(group::SIMPLE.into()),
                 (Some(GroupKind::SemiSimple), None) => int(group::SEMI_SIMPLE.into()),
                 (Some(GroupKind::Math { .. }), None) => int(group::MATH_SHIFT.into()),
+                (Some(GroupKind::MathLeft), None) => int(group::MATH_LEFT.into()),
             },
             // A conditional standing for any number of them: at least the rest.
             L::IfLevel => {
@@ -1512,7 +1513,7 @@ impl Machine<'_> {
 
     fn obey_command(&mut self, syntax: Syntax, by: Sym, span: Span) {
         match syntax {
-            Syntax::Nothing | Syntax::Whatsit | Syntax::Limits => {}
+            Syntax::Nothing | Syntax::Whatsit | Syntax::NonScript | Syntax::Limits => {}
             Syntax::MathComp(t) => {
                 if self.mode.meets(crate::mode::Modes::ANY_MATH) {
                     self.math_comp(t);
@@ -1529,6 +1530,11 @@ impl Machine<'_> {
             Syntax::Number => {
                 self.scan_int();
             }
+            Syntax::SetLanguage if self.mode.meets(crate::mode::Modes::ANY_HORIZONTAL) => {
+                self.scan_int();
+            }
+            // tex.web § 1377: `report_illegal_case` scans nothing.
+            Syntax::SetLanguage => {}
             Syntax::NamesNumber => {
                 let span = self.definition_site(span);
                 let Some(name) = self.read_r_token() else { return };
@@ -1546,9 +1552,11 @@ impl Machine<'_> {
             Syntax::Dimen => {
                 self.scan_dimen();
             }
-            Syntax::Delimiters { dimen } => {
-                self.scan_delimiter();
-                self.scan_delimiter();
+            Syntax::Fraction { delims, dimen } => {
+                if delims {
+                    self.scan_delimiter();
+                    self.scan_delimiter();
+                }
                 if dimen {
                     self.scan_dimen();
                 }

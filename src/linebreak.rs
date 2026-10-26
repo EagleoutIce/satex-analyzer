@@ -96,6 +96,21 @@ impl Machine<'_> {
         }));
     }
 
+    /// tex.web §§ 656-657: the stretch and the shrink of the recorded list
+    /// `items`, per order.
+    pub(crate) fn kp_glue(&self, mut items: u32) -> [[Scaled; 4]; 2] {
+        let mut total = [[0; 4]; 2];
+        while items > 0 {
+            let (k, prev, _) = self.kp.nodes[items as usize - 1];
+            if let Kp::Glue { st, sto, sh, sho, .. } = k {
+                total[0][usize::from(sto.min(3))] += st;
+                total[1][usize::from(sho.min(3))] += sh;
+            }
+            items = prev;
+        }
+        total
+    }
+
     /// `\unskip` and relatives take the recorded tail away where it is
     /// the item `last` the list's tail says.
     pub(crate) fn kp_pop(&mut self, items: &mut Option<u32>, removed: crate::mode::Removed, last: crate::mode::Last) {
@@ -111,7 +126,7 @@ impl Machine<'_> {
         );
         if hit {
             *items = match (last, k) {
-                (Last::Glue(w, _), Kp::Glue { w: v, .. }) if w.known() == Some(v) => Some(prev),
+                (Last::Glue(w, ..), Kp::Glue { w: v, .. }) if w.known() == Some(v) => Some(prev),
                 (Last::Kern(w), Kp::Kern { w: v, .. }) | (Last::Penalty(w), Kp::Penalty(v)) if w == v => Some(prev),
                 _ => None,
             };
