@@ -188,7 +188,7 @@ fn unused_package(report: &mut Report) {
         crate::query::origin(analysis, span.file) == "document"
             && match begin {
                 Some(b) if span.file == b.file => {
-                    (span.line, span.col) > (b.line, b.col + "\\begin{document}".len() as u32)
+                    (span.line, span.col) >= (b.line, b.col + "\\begin{document}".len() as u32)
                 }
                 Some(_) => true,
                 None => false,

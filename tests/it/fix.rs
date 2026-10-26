@@ -152,6 +152,15 @@ fn a_package_a_running_macro_calls_is_used() {
     assert_eq!(reported("unused-package-idle", &idle, "unused-package"), 1);
 }
 
+/// A command right after `\begin{document}` is the body's first use.
+#[test]
+fn a_command_right_after_begin_document_is_a_use() {
+    if installed() {
+        let source = "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\\includegraphics{x}\n\\end{document}\n";
+        assert_eq!(reported("unused-package-first", source, "unused-package"), 0);
+    }
+}
+
 /// The class sets the page (`\textheight`), which the kernel reads for every page.
 #[test]
 fn the_document_class_is_never_unused() {
