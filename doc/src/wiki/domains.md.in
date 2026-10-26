@@ -416,7 +416,7 @@ A loop head counts the passes of a loop against `limits.widen_after` ([Configura
 A pass whose pending input holds strictly fewer tokens than the pass before is not counted (`input_bound`, `loop_bounds`).
 A join keeps the larger bound of both paths.
 Such a loop ends by construction, so each of its passes stays exact. A loop that consumes `\the\count0` digit by digit is followed to its end, not widened.
-A loop summary widens what its passes wrote against the state the loop began in: a bound no pass moved stays, one that moved goes to the end of its range. A name the start state left as it was at the fork is widened against the fork's binding. A widened token list keeps its frame too: its middle loses its length bound and takes in the typed text beside it, so the next pass meets the same text.
+A loop summary widens what its passes wrote against the state the loop began in: a bound no pass moved stays, one that moved goes to the end of its range. A name the start state left as it was at the fork is widened against the fork's binding. A pass that defines names in a family the head has not seen (`\csname a\the\n`) grows the loop, though no binding differs: the family's names are met only by running on. A widened token list keeps its frame too: its middle loses its length bound and takes in the typed text beside it, so the next pass meets the same text.
 
 ## Argument types: the `Ty` lattice
 
