@@ -1440,8 +1440,8 @@ fn typeset_of_a_root_lists_an_input_file() {
     assert!(rows.iter().any(|r| r["path"].as_str().is_some_and(|p| p.ends_with("chapter.tex"))), "{rows:?}");
 }
 
-/// To do: the server analyzes a document in one run (`Checkpoints::analyze`), so the .bbl the build's
-/// bibliography tool would make is not typeset here, as `satex query typeset` has it.
+/// The server runs the build (`Machine::build`), so the .bbl the bibliography
+/// tool would make is typeset in the root, as `satex query typeset` has it.
 #[test]
 fn typeset_of_a_root_lists_the_bibliography() {
     if satex::paths::which("kpsewhich").is_err() {
@@ -1449,7 +1449,7 @@ fn typeset_of_a_root_lists_the_bibliography() {
     }
     let rows = typeset_of_a_root("bibliography");
     assert!(
-        rows.iter().any(|r| r["path"] == "main.tex" && r["detail"].as_str().is_some_and(|d| d.contains("A Title"))),
+        rows.iter().any(|r| r["file"] == "main.tex" && r["detail"].as_str().is_some_and(|d| d.contains("A Title"))),
         "{rows:?}"
     );
 }

@@ -2562,16 +2562,20 @@ impl Machine<'_> {
         let typed = crate::env::typed!(self, syms);
         self.out.joined_slots += (a.env.len() + b.env.len()) as u64;
         let (env, slots, waiting) = self.env.join_paths(fork, &a.env, &b.env, &typed, widen, paired, &after);
-        // Widened, a name the loop makes from a number (`\flag test 12`)
-        // is one of a family that may be defined ([`Wild`]): its members
-        // stay as defined, and one more is no growth. Without this a loop
-        // that defines one more such name per pass never meets.
+        // Widened, a name the loop makes from a number (`\flag test 12`,
+        // `\csname f\the\i`) is one of a family that may be defined
+        // ([`Wild`]): its members stay as defined, and one more is no
+        // growth. Without this a loop that defines one more such name per
+        // pass never meets.
         let slots = match widen {
             false => slots,
             true => slots
                 .into_iter()
                 .filter(|&sym| {
                     let name = self.name(sym).to_string();
+                    if name.contains(crate::machine::NAME_NUMBER) {
+                        return false;
+                    }
                     match digit_run(&name).filter(|_| !self.is_unknown_name(sym)) {
                         Some((prefix, suffix)) => {
                             let meaning = self.env.meaning(sym);

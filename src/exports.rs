@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fixed::{HashMap, HashSet};
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Exports {
@@ -22,8 +22,8 @@ pub struct Exports {
 
 /// The commands whose next name is the one they define, as `defs` were
 /// written: the defined name standing right after the command
-/// (`\\newcommand{\\x}`, `\\cs_new:Npn \\x`) in at least half of its
-/// definitions. A command that defines a name it was not given there
+/// (`\\newcommand{\\x}`, `\\cs_new:Npn \\x`) on its line in at least half
+/// of its definitions. A command that defines a name it was not given there
 /// (`\\DeclareOption`, `\\@tfor`) is none. `path` gives a file's path, or
 /// none for a file not to look at.
 pub fn written(
@@ -31,17 +31,20 @@ pub fn written(
     interner: &crate::tex::Interner,
     path: impl Fn(crate::tex::FileId) -> Option<String>,
 ) -> Vec<String> {
-    let mut texts: HashMap<crate::tex::FileId, Option<String>> = HashMap::default();
+    let mut named: HashMap<crate::tex::FileId, HashSet<(u32, String, String)>> = HashMap::default();
     let mut seen: HashMap<String, (u32, u32)> = HashMap::default();
     for def in defs {
         let file = def.span.file;
-        let text = texts.entry(file).or_insert_with(|| path(file).and_then(|p| std::fs::read_to_string(p).ok()));
-        let Some(line) = text.as_deref().and_then(|t| t.lines().nth(def.span.line.saturating_sub(1) as usize)) else {
+        let pairs = named.entry(file).or_insert_with(|| {
+            let text = path(file).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+            let (tokens, names) = tokenize(&text);
+            pairs(&tokens).map(|(line, cmd, name)| (line, names.name(cmd).into(), names.name(name).into())).collect()
+        });
+        if pairs.is_empty() {
             continue;
-        };
+        }
         let by = interner.name(def.by).to_string();
-        let before: String = line.chars().take(def.span.col.saturating_sub(1) as usize).collect();
-        let next = before.trim_end().trim_end_matches('{').trim_end().ends_with(&format!("\\{by}"));
+        let next = pairs.contains(&(def.span.line, by.clone(), interner.name(def.name).to_string()));
         let count = seen.entry(by).or_default();
         count.0 += u32::from(next);
         count.1 += 1;
@@ -50,6 +53,44 @@ pub fn written(
         seen.into_iter().filter(|(_, (next, all))| *next > 0 && 2 * next >= *all).map(|(by, _)| by).collect();
     out.sort();
     out
+}
+
+/// `text` as a package file's categories tokenize it: LaTeX's with `@` a
+/// letter, and expl3's between `\ExplSyntaxOn` (or `\ProvidesExpl...`) and
+/// `\ExplSyntaxOff` (l3kernel's interface3, "Using the LaTeX3 modules").
+fn tokenize(text: &str) -> (Vec<crate::tex::Token>, crate::tex::Interner) {
+    use crate::tex::{Catcode, CatcodeTable, Tok};
+    let (mut latex, mut expl) = (CatcodeTable::latex(), CatcodeTable::latex());
+    latex.set('@', Catcode::Letter);
+    for (c, cat) in [('@', Catcode::Letter), ('_', Catcode::Letter), (':', Catcode::Letter), ('~', Catcode::Space)]
+        .into_iter()
+        .chain([' ', '\t', '\r'].map(|c| (c, Catcode::Ignored)))
+    {
+        expl.set(c, cat);
+    }
+    let (mut names, mut mouth) = (crate::tex::Interner::default(), crate::tex::Mouth::new(text, 0));
+    let (mut tokens, mut on) = (Vec::new(), false);
+    while let Some(t) = mouth.next(if on { &expl } else { &latex }, &mut names) {
+        if let Tok::Cs(cs) = t.tok {
+            let name = names.name(cs);
+            on = (on || name == "ExplSyntaxOn" || name.starts_with("ProvidesExpl")) && name != "ExplSyntaxOff";
+        }
+        tokens.push(t);
+    }
+    (tokens, names)
+}
+
+/// Each control sequence with the name after it, past `{`, `*` and spaces
+/// (`\\newcommand*{\\x}`), and the line it stands on.
+fn pairs(tokens: &[crate::tex::Token]) -> impl Iterator<Item = (u32, crate::tex::Sym, crate::tex::Sym)> + '_ {
+    use crate::tex::{Catcode, Tok};
+    tokens.iter().enumerate().filter_map(|(i, t)| {
+        let Tok::Cs(cmd) = t.tok else { return None };
+        let skip =
+            |t: &&crate::tex::Token| matches!(t.tok, Tok::Chr('*', _) | Tok::Chr(_, Catcode::Begin | Catcode::Space));
+        let Tok::Cs(name) = tokens[i + 1..].iter().find(|t| !skip(t))?.tok else { return None };
+        Some((t.span.line, cmd, name))
+    })
 }
 
 /// The definers of a run: the kernel's, those its packages were written
@@ -175,58 +216,40 @@ impl Exports {
 
 /// Names defined after one of `definers`, and files loaded.
 fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>) {
-    let bytes = text.as_bytes();
-    let (mut defined, mut loaded) = (Vec::new(), Vec::new());
-    let word = |at: usize| -> (usize, &str) {
-        let end =
-            (at..bytes.len()).find(|&k| !(bytes[k].is_ascii_alphabetic() || bytes[k] == b'@')).unwrap_or(bytes.len());
-        (end, &text[at..end])
-    };
-    let mut i = 0;
-    let mut after: Option<&str> = None;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' => {
-                i = (i..bytes.len()).find(|&k| bytes[k] == b'\n').unwrap_or(bytes.len());
-                continue;
-            }
-            b'\\' if i + 1 < bytes.len() => {
-                let (end, name) = word(i + 1);
-                if name.is_empty() {
-                    after = None;
-                    i += 2;
-                    continue;
-                }
-                if after.is_some() {
-                    defined.push(name.to_string());
-                    after = None;
-                } else if definers.contains(name) {
-                    after = Some(name);
-                } else if matches!(name, "RequirePackage" | "usepackage" | "LoadClass" | "RequirePackageWithOptions") {
-                    let ext = if name == "LoadClass" { ".cls" } else { ".sty" };
-                    let mut k = end;
-                    if bytes.get(k) == Some(&b'[') {
-                        k = (k..bytes.len()).find(|&j| bytes[j] == b']').map_or(bytes.len(), |j| j + 1);
-                    }
-                    while bytes.get(k).is_some_and(u8::is_ascii_whitespace) {
-                        k += 1;
-                    }
-                    if bytes.get(k) == Some(&b'{')
-                        && let Some(close) = (k..bytes.len()).find(|&j| bytes[j] == b'}')
-                    {
-                        loaded.extend(text[k + 1..close].split(',').map(|n| format!("{}{ext}", n.trim())));
-                    }
-                }
-                i = end;
-                continue;
-            }
-            // `\newcommand*{\x}`.
-            b'*' | b'{' | b' ' | b'\t' | b'\n' | b'\r' => {}
-            _ => after = None,
-        }
-        i += 1;
+    use crate::tex::Tok;
+    let (tokens, names) = tokenize(text);
+    let defined = pairs(&tokens).filter(|(_, cmd, _)| definers.contains(names.name(*cmd)));
+    let mut loaded = Vec::new();
+    for (i, t) in tokens.iter().enumerate() {
+        let ext = match t.tok {
+            Tok::Cs(cs) => match names.name(cs) {
+                "LoadClass" => ".cls",
+                "RequirePackage" | "usepackage" | "RequirePackageWithOptions" => ".sty",
+                _ => continue,
+            },
+            _ => continue,
+        };
+        loaded.extend(group(&tokens[i + 1..]).split(',').map(|n| format!("{}{ext}", n.trim())));
     }
-    (defined, loaded)
+    (defined.map(|(_, _, name)| names.name(name).to_string()).collect(), loaded)
+}
+
+/// The text of the group after `[options]` that `tokens` start with; a
+/// name in it, which a macro makes, stays a backslash that matches no file.
+fn group(tokens: &[crate::tex::Token]) -> String {
+    use crate::tex::{Catcode, Tok};
+    let space = |t: &&crate::tex::Token| matches!(t.tok, Tok::Chr(_, Catcode::Space));
+    let mut rest = tokens.iter().skip_while(space).peekable();
+    if rest.peek().is_some_and(|t| t.tok == Tok::Chr('[', Catcode::Other)) {
+        rest.find(|t| t.tok == Tok::Chr(']', Catcode::Other));
+    }
+    let mut rest = rest.skip_while(space);
+    if !rest.next().is_some_and(|t| matches!(t.tok, Tok::Chr(_, Catcode::Begin))) {
+        return String::new();
+    }
+    rest.take_while(|t| !matches!(t.tok, Tok::Chr(_, Catcode::End)))
+        .map(|t| if let Tok::Chr(c, _) = t.tok { c } else { '\\' })
+        .collect()
 }
 
 #[cfg(test)]

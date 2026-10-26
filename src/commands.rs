@@ -2198,7 +2198,7 @@ impl Machine<'_> {
                 let dims = self.box_dims(n);
                 let hbox = n.is_some_and(|k| self.box_state(k) == crate::mode::BoxState::HBox);
                 match self.box_line(n) {
-                    Some(Some((w, h, d, Some(kern)))) if hbox && dims == [w, h, d].map(crate::mode::Dim::exact) => {
+                    Some(Some((w, h, d, Some(kern), _))) if hbox && dims == [w, h, d].map(crate::mode::Dim::exact) => {
                         // No kern prints as `0pt` (pdfTeX's `print("0")`).
                         Some(if kern == 0 { "0pt".into() } else { crate::value::render_dimen(kern) })
                     }

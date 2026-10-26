@@ -893,8 +893,9 @@ impl Reads {
 }
 
 /// A line of a paragraph as a box on a vertical list (tex.web § 889):
-/// width, height, depth, and the left margin kern pdfTeX put first in it.
-pub type Line = (Scaled, Scaled, Scaled, Option<Scaled>);
+/// width, height, depth, the left margin kern pdfTeX put first in it, and
+/// the natural width of its list, which `\unhbox` adds (`None`: not known).
+pub type Line = (Scaled, Scaled, Scaled, Option<Scaled>, Option<Scaled>);
 
 /// A list holds an item.
 pub(crate) const MATERIAL: u8 = 1;
@@ -905,8 +906,10 @@ pub(crate) const BOXED: u8 = 2;
 pub(crate) const BREAKS: u8 = 4;
 
 /// What a box register records beside its state, each reset when it changes.
-const BOX_SLOTS: [&str; 16] =
-    ["wd", "ht", "dp", "first", "solid", "last", "one", "lw", "lh", "ld", "lmk", "lead", "calm", "held", "nh", "nd"];
+const BOX_SLOTS: [&str; 17] = [
+    "wd", "ht", "dp", "first", "solid", "last", "one", "lw", "lh", "ld", "lmk", "ln", "lead", "calm", "held", "nh",
+    "nd",
+];
 
 /// Which item `\unskip`, `\unkern` or `\unpenalty` takes away.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1183,7 +1186,15 @@ impl Machine<'_> {
         after.emptied();
         after.tail[0] = Last::Box;
         after.held = 1;
-        after.line = Some((w, h, d, kern));
+        // § 889: its list is the paragraph's with the final glue gone (§ 816)
+        // and the skips around it.
+        let end = match before.tail[0] {
+            Last::Glue(w, _) => w,
+            _ => Dim::exact(0),
+        };
+        let skips = ["leftskip", "rightskip", "parfillskip"].map(|g| self.glue_natural(g));
+        let sum = skips.into_iter().fold(before.along.reduced_by(end), Dim::extended_by).known();
+        after.line = Some((w, h, d, kern, sum));
     }
 
     /// pdfTeX's `char_pw` at the left: `\lpcode` thousandths of the
@@ -2383,7 +2394,7 @@ impl Machine<'_> {
                 {
                     // tex.web § 1110: the line goes onto the empty list as it
                     // is, with no interline glue; nothing, for an empty box.
-                    if let (Some((w, h, d, _)), Some(n)) = (line, &mut self.natural) {
+                    if let (Some((w, h, d, ..)), Some(n)) = (line, &mut self.natural) {
                         n.along = Dim::exact(h);
                         n.depth = Dim::exact(d);
                         n.wide = n.wide.max(Dim::exact(w));
@@ -3095,7 +3106,7 @@ impl Machine<'_> {
                     // was the list's size, and the list is empty again.
                     Some(Last::Box) if self.list_kind() == Some(false) => {
                         let mut n = self.natural.expect("tail read");
-                        let Some((w, h, d, kern)) = n.line else {
+                        let Some(line @ (w, h, d, _, sum)) = n.line else {
                             self.natural = None;
                             return self.box_end(context, BoxState::Unknown, [Dim::ANY; 3]);
                         };
@@ -3107,7 +3118,8 @@ impl Machine<'_> {
                         self.natural = Some(n);
                         self.box_end(context, BoxState::HBox, [w, h, d].map(Dim::exact));
                         if let BoxContext::Set { register, .. } = context {
-                            self.set_box_line(register, Some((w, h, d, kern)));
+                            self.set_box_line(register, Some(line));
+                            self.set_box_first(register, sum.map_or(Dim::ANY, Dim::exact));
                         }
                         return;
                     }
@@ -3207,13 +3219,13 @@ impl Machine<'_> {
                     && real == Some(BoxState::VBox)
                     // The list splits, not its packing: a box packed to
                     // another height (`\box255`) splits alike.
-                    && [dims[0], dims[2]] == line.map_or([Dim::exact(0); 2], |(w, _, d, _)| [w, d].map(Dim::exact))
+                    && [dims[0], dims[2]] == line.map_or([Dim::exact(0); 2], |(w, _, d, ..)| [w, d].map(Dim::exact))
                 {
-                    let (w, d) = line.map_or((0, 0), |(w, _, d, _)| (w, d));
+                    let (w, d) = line.map_or((0, 0), |(w, _, d, ..)| (w, d));
                     let d = if d > max { max.max(0) } else { d };
                     // tex.web §§ 674, 676: a line with no glue, packed to `h`,
                     // is underfull or overfull past any stretch or shrink.
-                    let x = line.map_or(0, |(_, natural, _, _)| h - natural);
+                    let x = line.map_or(0, |(_, natural, ..)| h - natural);
                     let badness = match x.signum() {
                         1 => 10000,
                         -1 => 1_000_000,
@@ -5313,11 +5325,12 @@ impl Machine<'_> {
     /// line, an hbox (tex.web § 889).
     fn set_box_line(&mut self, register: Option<i64>, line: Option<Line>) {
         self.set_box_slot(register, "one", Value::Int(i64::from(line.is_some())));
-        if let Some((w, h, d, kern)) = line {
+        if let Some((w, h, d, kern, sum)) = line {
             self.set_box_slot(register, "lw", Value::Dimen(w));
             self.set_box_slot(register, "lh", Value::Dimen(h));
             self.set_box_slot(register, "ld", Value::Dimen(d));
             self.set_box_slot(register, "lmk", kern.map_or(Value::Unknown, Value::Dimen));
+            self.set_box_slot(register, "ln", sum.map_or(Value::Unknown, Value::Dimen));
         }
     }
 
@@ -5333,8 +5346,8 @@ impl Machine<'_> {
             Value::Int(0) => Some(None),
             Value::Int(1) => {
                 let [w, h, d] = ["lw", "lh", "ld"].map(|k| slot(self, k).as_dimen());
-                let kern = slot(self, "lmk").as_dimen();
-                Some(Some((w?, h?, d?, kern)))
+                let [kern, sum] = ["lmk", "ln"].map(|k| slot(self, k).as_dimen());
+                Some(Some((w?, h?, d?, kern, sum)))
             }
             _ => None,
         }

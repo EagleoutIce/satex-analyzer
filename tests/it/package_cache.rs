@@ -927,7 +927,9 @@ fn the_cache_directory_stays_within_its_size_bound() {
     std::fs::write(&path, DOCUMENT).unwrap();
     Machine::analyze(DOCUMENT, Some(&path), &cfg);
     let left = files_of(&cache);
-    assert!(size(&cache) <= bound, "{} > {bound}: {left:?}", size(&cache));
+    let sizes: Vec<(String, u64)> =
+        left.iter().map(|n| (n.clone(), std::fs::metadata(cache.join(n)).map_or(0, |m| m.len()))).collect();
+    assert!(size(&cache) <= bound, "{} > {bound}: {sizes:?}", size(&cache));
     assert!(left.iter().any(|n| n.starts_with("format-")), "the kernel cache is never evicted: {left:?}");
     assert!(
         !left.iter().any(|n| n.contains("0000000000000000.postcard")),

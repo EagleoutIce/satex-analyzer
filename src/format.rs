@@ -551,10 +551,11 @@ pub fn prune_caches(dir: &Path, package_encoding: u32, bound: u64) -> Pruned {
     kept.extend(others.into_iter().map(|(s, b, p)| (s, b, p, true)));
     if bound > 0 {
         kept.sort_by_key(|(stamp, ..)| std::cmp::Reverse(*stamp));
-        let mut total = 0u64;
-        for (_, bytes, path, droppable) in kept {
+        // What stays whatever its age counts first.
+        let mut total: u64 = kept.iter().filter(|k| !k.3).map(|k| k.1).sum();
+        for (_, bytes, path, _) in kept.into_iter().filter(|k| k.3) {
             total += bytes;
-            if droppable && total > bound {
+            if total > bound {
                 remove(&path, bytes);
             }
         }
