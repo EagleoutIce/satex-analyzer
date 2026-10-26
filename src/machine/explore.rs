@@ -1406,8 +1406,9 @@ impl Machine<'_> {
         paths.stopped.push(summarized);
         keep_last(&mut paths.stopped, self.limits.loop_heads);
         self.resume_config(fork, Config::new(here.state, joined.env, false));
+        // A bound no pass moved stays; one that moved goes to its end.
         let syms = self.typed_syms();
-        self.env.widen(&written, None, &crate::env::typed!(self, syms));
+        self.env.widen(&written, Some(&began.env), &crate::env::typed!(self, syms));
         let here = Config::new(self.save_path(), self.env.path(fork), false);
         let env = here.env.clone();
         self.cut_loop(paths, fork, here, env, id, depth, span, by, cut)

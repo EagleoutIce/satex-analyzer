@@ -961,7 +961,8 @@ impl Machine<'_> {
                 // they are (tex.web § 465); letters of unknown text come back
                 // as category 12 too.
                 if kind == TextOf::String && self.typed_shape(token).is_some() {
-                    let token = self.printed(token, true, span);
+                    let typed = token.cs().is_some_and(|sym| self.name(sym).starts_with(crate::scan::TYPED_DIGITS));
+                    let token = if typed { token } else { self.printed(token, true, span) };
                     return self.unread(token);
                 }
                 // Unknown text, or a name with an unknown escape, prints unknown.
@@ -1148,13 +1149,10 @@ impl Machine<'_> {
             {
                 let unit = if level == Some(RegKind::MuSkip) { "mu" } else { "pt" };
                 let num = if level == Some(RegKind::Dimen) { self.abs.take() } else { None };
-                // A sign that is known and one digit before the point: that
-                // digit typed with its interval, which a scan reads back
-                // (tex.web § 103). More digits are a token each in TeX, which
-                // an undelimited argument takes one at a time.
-                let one = 10 * crate::value::UNIT;
+                // A known sign: the integer part typed with its interval,
+                // which a scan reads back (tex.web § 103).
                 let mut tokens = match num {
-                    Some(n) if (n.lo >= 0 && n.hi < one) || (n.hi < 0 && n.lo > -one) => {
+                    Some(n) if n.lo >= 0 || n.hi < 0 => {
                         let (lo, hi) = if n.lo >= 0 { (n.lo, n.hi) } else { (-n.hi, -n.lo) };
                         let mut t = if n.lo < 0 { self.text_tokens("-", span) } else { Vec::new() };
                         let unit = crate::value::UNIT;
@@ -1697,6 +1695,12 @@ impl Machine<'_> {
             }) {
                 return false;
             }
+        }
+        // One digit is one character: the name is one of ten.
+        if let Some(num) = self.typed_digits_of(sym).filter(|n| n.lo >= 0 && n.hi <= 9) {
+            let c = if num.lo > 0 { crate::tex::UNKNOWN_NONZERO } else { crate::tex::UNKNOWN_DIGIT };
+            self.unread(Token::new(Tok::Chr(c, Catcode::Other), t.span));
+            return false;
         }
         // Unknown text of characters only (typed, no control sequence) is
         // part of the name, as unknown digits are.

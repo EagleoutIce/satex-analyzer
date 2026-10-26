@@ -2046,7 +2046,7 @@ pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits, 
             _ if switch => (Meaning::Primitive(Primitive::If(Cond::Opaque)), None),
             Some(mut texts) if texts.len() == 1 => (texts.pop().expect("one text"), None),
             Some(texts) => (Meaning::Unknown, Some(texts.into())),
-            None => (macro_hull(&joined, typed).unwrap_or(Meaning::Unknown), None),
+            None => hull_meaning(&joined, typed),
         };
     }
     if value_grows {
@@ -2061,15 +2061,27 @@ pub fn widen_slot(old: &Option<Binding>, new: Option<Binding>, sets: SetLimits, 
     Some(joined)
 }
 
+/// The meaning and set a widened binding keeps: the macros' hull, still
+/// perhaps undefined where the set held that.
+fn hull_meaning(b: &Binding, typed: &Typed) -> (Meaning, Option<std::rc::Rc<[Meaning]>>) {
+    match macro_hull(b, typed) {
+        Some(hull) if b.may.as_deref().is_some_and(|m| m.contains(&Meaning::Undefined)) => {
+            (Meaning::Unknown, Some(vec![Meaning::Undefined, hull].into()))
+        }
+        hull => (hull.unwrap_or(Meaning::Unknown), None),
+    }
+}
+
 /// A macro without parameters whose text is any text of the classes its
-/// texts have, when every meaning `b` may have is such a macro with the
-/// same prefixes: widened, it stays one, which `\ifx` can still tell from
-/// other kinds. Its length is bounded only where all texts have one
-/// length: a widened write that repeats changes it.
+/// texts have, when every defined meaning `b` may have is such a macro
+/// with the same prefixes: widened, it stays one, which `\ifx` can still
+/// tell from other kinds. Its length is bounded only where all texts have
+/// one length: a widened write that repeats changes it.
 fn macro_hull(b: &Binding, typed: &Typed) -> Option<Meaning> {
     let members = b.may.as_deref().unwrap_or(std::slice::from_ref(&b.meaning));
+    let members: Vec<&Meaning> = members.iter().filter(|m| **m != Meaning::Undefined).collect();
     let mut first: Option<&crate::tex::MacroDef> = None;
-    for m in members {
+    for m in &members {
         let Meaning::Macro(d) = m else { return None };
         let plain = d.parameter_text.items.is_empty() && !d.parameter_text.brace_end && d.arg_spec.is_none();
         let f = *first.get_or_insert(d);
@@ -2294,8 +2306,7 @@ pub fn unknown_runs(text: &[Token], typed: &Typed) -> std::rc::Rc<[Token]> {
 fn widened(mut binding: Binding, typed: &Typed) -> Binding {
     binding.value = Value::Unknown;
     if matches!(binding.meaning, Meaning::Macro(_)) || binding.may.is_some() {
-        binding.meaning = macro_hull(&binding, typed).unwrap_or(Meaning::Unknown);
-        binding.may = None;
+        (binding.meaning, binding.may) = hull_meaning(&binding, typed);
     }
     binding.certain = false;
     binding

@@ -1028,7 +1028,7 @@ fn an_expansion_gives_up_only_over_a_gap_satex_invented() {
 fn the_rest_of_split_unknown_text_may_hold_the_next_delimiter() {
     let source = r"\edef\next{\def\noexpand\parse##1\detokenize{macro:}##2\detokenize{->}##3\noexpand\stop
             {\edef\noexpand\out{\noexpand\if\relax\noexpand\detokenize{##3}\relax E\noexpand\else N\noexpand\fi}}}\next
-        \expandafter\let\expandafter\x\csname u\number\pdfuniformdeviate 9\endcsname
+        \expandafter\let\expandafter\x\csname u\number\pdfuniformdeviate 99\endcsname
         \expandafter\parse\meaning\x\stop";
     let analysis = analyze(source);
     let outs: Vec<String> = analysis
@@ -2513,4 +2513,18 @@ fn a_dimension_without_a_unit_is_an_error() {
     assert_eq!(diagnosed(&mu, "illegal-unit"), ["Illegal unit of measure (mu inserted)"]);
     let fine = analyze(r"\dimen0=3pt \dimen1=1.5 truecm \dimen2=2\dimen0 \muskip0=3mu \skip0=1pt plus 2fil");
     assert!(diagnosed(&fine, "illegal-unit").is_empty());
+}
+
+/// A loop summary widens only the bounds its passes moved: a counter
+/// counted up from 0 stays non-negative, and a name the loop may have
+/// defined stays a digits macro or undefined.
+#[test]
+fn a_summarized_loop_keeps_the_bounds_no_pass_moved() {
+    let analysis = analyze(
+        r"\countdef\i=200 \countdef\n=201 \n=\pdfelapsedtime \i=0
+          \def\lp{\ifnum\i<\n \advance\i1 \expandafter\edef\csname f\the\i\endcsname{\the\i}\relax\expandafter\lp\fi}\lp
+          \ifnum\i<0 \def\neg{}\fi \ifnum\csname f2\endcsname<0 \def\below{}\fi",
+    );
+    let defined = names(&analysis);
+    assert!(!defined.contains(&"neg".to_string()), "{defined:?}");
 }
