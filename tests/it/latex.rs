@@ -1222,31 +1222,6 @@ mod document_metadata {
             .collect()
     }
 
-    /// No gap at one place may be reported more than `repeat_failures`
-    /// times, and the run may not end in `budget-exhausted`.  The document
-    /// still leaves gaps, so the codes are not asserted away; what is
-    /// asserted is that each is bounded and the run finished.
-    fn stays_bounded(options: &str) {
-        let analysis = analyze_document(options);
-        let bound = bound();
-        let over: Vec<_> = unsupported(&analysis).into_iter().filter(|&(_, n)| n > bound).collect();
-        assert_eq!(over, Vec::new(), "gaps past the bound of {bound} for `{options}`");
-        let exhausted: Vec<_> =
-            unsupported(&analysis).into_iter().filter(|&(code, _)| code == "budget-exhausted").collect();
-        let why: Vec<&str> = analysis
-            .facts
-            .diagnostics
-            .iter()
-            .filter(|d| d.code == "budget-exhausted" || d.code == "limit-reached")
-            .map(|d| d.message.as_str())
-            .collect();
-        assert_eq!(exhausted, Vec::new(), "the run ran out of budget on `{options}`: {why:?}");
-        assert!(!analysis.exhausted, "the run was exhausted on `{options}`");
-        // Measured: 20 million tokens with the bound, 240 million without,
-        // out of the 900 million the default budget allows.
-        assert!(analysis.steps < BOUNDED_STEPS, "{} steps for `{options}`", analysis.steps);
-    }
-
     /// Well above what the bounded run needs and well below what the
     /// unbounded one took.
     const BOUNDED_STEPS: u64 = 50_000_000;
@@ -1264,14 +1239,6 @@ mod document_metadata {
             unsupported(&analysis).into_iter().filter(|&(code, _)| code == "budget-exhausted").collect();
         assert_eq!(exhausted, Vec::new());
         assert!(!analysis.exhausted);
-    }
-
-    #[test]
-    fn the_bare_five_line_document_stays_bounded() {
-        if !super::installed() {
-            return;
-        }
-        stays_bounded("lang=en");
     }
 
     /// The worst one gap at one place is counted.

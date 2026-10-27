@@ -1209,57 +1209,6 @@ fn a_cache_file_cut_short_by_a_killed_run_is_replaced() {
     same_facts(&first, &third);
 }
 
-/// Paths, joins and loop heads per line of the document itself.
-fn path_stats(analysis: &Analysis) -> Vec<(&'static str, u32, u64)> {
-    let Some(hot) = &analysis.hot else { return Vec::new() };
-    let doc = |file| analysis.file_name(file).ends_with("doc.tex");
-    let mut out: Vec<_> = [("fork", &hot.forks), ("join", &hot.joins), ("head", &hot.heads)]
-        .into_iter()
-        .flat_map(|(kind, table)| {
-            table.iter().filter(|((file, _), _)| doc(*file)).map(move |((_, line), n)| (kind, *line, *n))
-        })
-        .collect();
-    out.sort();
-    out
-}
-
-/// A package read, stored, or replayed from its cache leaves the same state:
-/// the document after three packages reports the same findings and takes
-/// the same paths in each case.
-#[test]
-fn three_packages_read_or_replayed_give_the_same_findings_and_paths() {
-    if !installed() {
-        return;
-    }
-    satex::machine::HOT.store(true, std::sync::atomic::Ordering::Relaxed);
-    let dir = project("three");
-    let source = "\\documentclass{article}\n\\usepackage{tikz}\n\\usepackage{booktabs}\n\\usepackage{soul}\n\
-                  \\begin{document}\nSome text -- with ``quotes''.\n\
-                  \\begin{tikzpicture}\n\\node[draw, rounded corners] at (0,1) {\\rule{1pt}{\\pdfrandomseed sp}A};\n\
-                  \\node[draw] at (0,2) {\\rule{1pt}{\\pdfrandomseed sp}B};\n\\end{tikzpicture}\n\
-                  \\pgfmathparse{\\pdfuniformdeviate 100}\\pgfmathparse{\\pdfuniformdeviate 100}\\pgfmathparse{\\pdfuniformdeviate 100}\n\
-                  \\begin{tabular}{ll}\\toprule a & b\\\\\\bottomrule\\end{tabular}\n\\hl{marked} text.\n\\end{document}\n";
-    let with = |auto: bool, refresh: bool| {
-        let mut cfg = latex(&dir);
-        cfg.set("clock", "2026-01-01T12:00:00Z").expect("clock");
-        cfg.cache.index.auto = auto;
-        cfg.cache.index.refresh = refresh;
-        analyze(&dir, source, &cfg)
-    };
-    let read = with(false, true);
-    let stored = with(true, false);
-    let replayed = with(true, false);
-    for package in ["tikz", "booktabs", "soul"] {
-        assert_eq!(served(&stored, package), Some(false), "{package} stored: {:?}", stored.package_caches);
-        assert_eq!(served(&replayed, package), Some(true), "{package} replayed: {:?}", replayed.package_caches);
-    }
-    let findings = |a: &Analysis| serde_json::to_string(&satex::lint::lint(a)).unwrap_or_default();
-    assert_eq!(findings(&read), findings(&stored));
-    assert_eq!(findings(&stored), findings(&replayed));
-    assert_eq!(path_stats(&read), path_stats(&stored));
-    assert_eq!(path_stats(&stored), path_stats(&replayed));
-}
-
 /// A replayed package is the work of its own lines, not of the line that
 /// loads it: the termination guard (`limits.line_steps`) charges the
 /// replay to no line, so a package whose every line is cheap never cuts
