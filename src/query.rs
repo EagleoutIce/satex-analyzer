@@ -3510,6 +3510,9 @@ pub fn produces(analysis: &Analysis, source: &str, text: &str) -> Vec<Record> {
     for def in &analysis.facts.defs {
         sites.insert(def.name, def.span);
         let Some(mac) = &def.mac else { continue };
+        if unprintable_name(analysis.interner.name(def.name)) {
+            continue;
+        }
         let body = detokenize(&mac.replacement_text, &analysis.interner);
         if !body.contains(text) {
             continue;

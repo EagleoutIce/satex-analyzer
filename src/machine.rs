@@ -2872,7 +2872,8 @@ impl<'a> Machine<'a> {
             .filter_map(|name| self.out.interner.lookup(name))
             .find(|&sym| self.env.meaning(sym).as_macro().is_some());
         if let Some(define) = definer {
-            let target = self.intern("satex@pdfstring");
+            // A name of satex's own (`\u{4}`), which no query shows.
+            let target = self.intern("\u{4}pdfstring");
 
             let mut run = vec![Token::new(Tok::Cs(define), span), Token::new(Tok::Cs(target), span)];
             run.push(Token::new(Tok::Chr('{', Catcode::Begin), span));
