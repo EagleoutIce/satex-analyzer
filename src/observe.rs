@@ -1051,9 +1051,24 @@ pub fn pdf(m: &mut Machine, op: PdfOp, span: Span) {
     let op = match op {
         PdfOp::Extension if m.scan_keyword("literal") => PdfOp::Literal,
         PdfOp::Extension if m.scan_keyword("obj") => PdfOp::Object,
-        // Another extension reads what follows by its own syntax, which the
-        // run leaves in the input as before.
-        PdfOp::Extension => return,
+        // Extensions that take general texts (LuaTeX manual, "PDF
+        // extensions"): read, so they are no text. Others read what follows
+        // by their own syntax, which the run leaves in the input as before.
+        PdfOp::Extension => {
+            const TEXTS: [(&str, usize); 7] = [
+                ("glyphtounicode", 2),
+                ("catalog", 1),
+                ("names", 1),
+                ("info", 1),
+                ("trailer", 1),
+                ("mapfile", 1),
+                ("mapline", 1),
+            ];
+            if let Some(&(_, n)) = TEXTS.iter().find(|(k, _)| m.scan_keyword(k)) {
+                (0..n).for_each(|_| drop(m.read_general_text()));
+            }
+            return;
+        }
         op => op,
     };
     let detail = match op {

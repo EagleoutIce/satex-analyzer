@@ -30,6 +30,15 @@ fn a_printed_literal_is_read_back() {
     assert!(chunk.key.starts_with("tex.print"), "{}", chunk.key);
 }
 
+/// `\pdfextension glyphtounicode` reads its two general texts (LuaTeX
+/// manual, "PDF extensions"): they set nothing, so vertical mode stays.
+#[test]
+fn an_extension_reads_its_general_texts() {
+    let analysis =
+        primitives(r"\pdfextension glyphtounicode{A}{0041}\pdfextension info{/T (x)}\ifvmode\def\stays{}\fi");
+    assert!(defined(&analysis, "stays"));
+}
+
 #[test]
 fn a_conditional_print_is_a_gap_not_a_guess() {
     let analysis = primitives("\\directlua{if os.clock() > 1 then tex.print(\"\\\\def\\\\a{}\") end}");
