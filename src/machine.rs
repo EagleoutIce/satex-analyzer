@@ -2461,8 +2461,9 @@ impl<'a> Machine<'a> {
             }
             // What this run read that a build file defines: the keys it
             // referenced (`\ref` tests `\r@⟨key⟩`) and the macros it expanded
-            // (`\@abspage@last` at each shipout). A changed line naming none
-            // of them changes nothing the run depends on.
+            // (`\@abspage@last` at each shipout) or defined (a note column's
+            // `\slnc@note`, for the lines its read loop would execute). A
+            // changed line naming none of them changes nothing the run depends on.
             let referenced: crate::fixed::HashSet<String> = analysis
                 .facts
                 .occurrences
@@ -2470,8 +2471,10 @@ impl<'a> Machine<'a> {
                 .filter(|o| matches!(o.kind, OccKind::Ref | OccKind::Cite | OccKind::KeyUse))
                 .map(|o| format!("{{{}}}", o.key))
                 .collect();
-            let expanded: crate::fixed::HashSet<&str> =
-                analysis.facts.expansions.iter().map(|e| analysis.interner.name(e.name)).collect();
+            let expanded: crate::fixed::HashSet<&str> = (analysis.facts.expansions.iter().map(|e| e.name))
+                .chain(analysis.facts.defs.iter().map(|d| d.name))
+                .map(|n| analysis.interner.name(n))
+                .collect();
             let reads = |line: &str| {
                 referenced.iter().any(|key| line.contains(key.as_str()))
                     || line.split('\\').skip(1).any(|cs| {
@@ -2484,19 +2487,21 @@ impl<'a> Machine<'a> {
                     (old.lines().collect(), new.lines().collect());
                 old.symmetric_difference(&new).any(|line| reads(line))
             };
+            // Only a file the run read, or looked for, sends it round again.
+            let looked = checkpoints.looked();
             // The build's files this run left other than it read them; the
             // last run reads those as unknown text, so it ends there.
             let mut changed: Vec<(PathBuf, String)> = analysis
                 .written
                 .iter()
-                .filter(|(name, _)| cfg.load.is_build_file(&base.join(name)))
                 .filter_map(|(name, text)| {
                     let at = base.join(name);
                     // The run's own copy only: one on disk is an engine's.
                     let now = crate::overlay::text(&at);
                     // A file not there yet is an empty one.
                     if let Some(new) = text
-                        && !matters(now.as_deref().unwrap_or_default(), new)
+                        && (!looked.iter().any(|p| p.components().eq(at.components()))
+                            || !matters(now.as_deref().unwrap_or_default(), new))
                     {
                         return None;
                     }
@@ -2504,7 +2509,8 @@ impl<'a> Machine<'a> {
                     // reads what still changed as unknown text, a widening.
                     let text = match text {
                         Some(t) if run + 1 < runs => t.clone(),
-                        _ => crate::tex::UNKNOWN_ANY.to_string(),
+                        Some(t) => either_text(now.as_deref().unwrap_or_default(), t, 1),
+                        None => crate::tex::UNKNOWN_ANY.to_string(),
                     };
                     (now.as_deref() != Some(text.as_str())).then_some((at, text))
                 })
@@ -3718,10 +3724,10 @@ will look undefined",
         if let Some(slot) = Rc::make_mut(&mut self.outputs).get_mut(&name) {
             match (open, slot.as_mut()) {
                 (Some(0), _) => {}
-                (Some(1), Some(file)) => {
-                    file.push_str(text);
-                    file.push('\n');
-                }
+                (Some(1), Some(file)) => each_text(file, |t| {
+                    t.push_str(text);
+                    t.push('\n');
+                }),
                 _ => unknown_line(slot),
             }
         }
@@ -3732,9 +3738,11 @@ will look undefined",
     pub(crate) fn ship_pending(&mut self) {
         for (name, lines) in std::mem::take(&mut self.pending).iter() {
             if let Some(Some(file)) = Rc::make_mut(&mut self.outputs).get_mut(name) {
-                lines.iter().for_each(|l| {
-                    file.push_str(l);
-                    file.push('\n');
+                each_text(file, |t| {
+                    lines.iter().for_each(|l| {
+                        t.push_str(l);
+                        t.push('\n');
+                    })
                 });
             }
         }
@@ -10770,6 +10778,24 @@ will look undefined",
         true
     }
 
+    /// One of the texts a file the build wrote may hold ([`texts_of`]), a
+    /// path for each; where no more paths may part, their join.
+    pub(crate) fn pick_text(&mut self, by: Sym, span: Span, file: String) -> String {
+        let texts: Vec<String> = texts_of(&file).into_iter().map(str::to_string).collect();
+        if texts.len() < 2 {
+            return file;
+        }
+        let mut pick = None;
+        if self.split(by, span, texts.len(), |_, arm| {
+            pick = Some(arm);
+            true
+        }) && let Some(i) = pick
+        {
+            return texts[i].clone();
+        }
+        either_text(&file, "", 1)
+    }
+
     /// A name that holds one of several meanings (a join left it so), about
     /// to be executed or compared: a path for each meaning, on which the
     /// name has that one.  Each path goes on with the command, so the paths
@@ -11060,7 +11086,8 @@ will look undefined",
                     None
                 }
             });
-        let source = source.or(written);
+        let site = by.unwrap_or_else(|| self.intern(name));
+        let source = source.or(written).map(|text| self.pick_text(site, span, text));
         // XeTeX reads a replacement character there, which satex does too;
         // LuaTeX stops with "String contains an invalid utf-8 sequence",
         // which satex cannot follow.
@@ -12585,24 +12612,59 @@ impl CondDepth {
 /// unknown text, which reads back as any text, empty too. The lines
 /// known before it stay. Two in a row are one.
 fn unknown_line(file: &mut Option<String>) {
-    if let Some(text) = file {
+    if let Some(file) = file {
         let line = format!("{}\n", crate::tex::UNKNOWN_ANY);
-        if !text.ends_with(&line) {
-            text.push_str(&line);
+        each_text(file, |text| {
+            if !text.ends_with(&line) {
+                text.push_str(&line);
+            }
+        });
+    }
+}
+
+/// The texts a written file may hold ([`crate::tex::TEXT_OR`]).
+pub(crate) fn texts_of(file: &str) -> Vec<&str> {
+    let or = format!("{}\n", crate::tex::TEXT_OR);
+    file.split(or.as_str()).collect()
+}
+
+/// `f` applied to each text `file` may hold.
+fn each_text(file: &mut String, mut f: impl FnMut(&mut String)) {
+    let mut texts: Vec<String> = texts_of(file).into_iter().map(str::to_string).collect();
+    texts.iter_mut().for_each(&mut f);
+    *file = texts.join(&format!("{}\n", crate::tex::TEXT_OR));
+}
+
+/// The texts either file may hold. Texts of as many lines join line by
+/// line ([`join_written`]): they differ in values, not in what they hold.
+/// Past `bound` texts, all join.
+fn either_text(a: &str, b: &str, bound: usize) -> String {
+    let mut texts: Vec<String> = Vec::new();
+    for t in texts_of(a).into_iter().chain(texts_of(b)) {
+        match texts.iter_mut().find(|x| x.lines().count() == t.lines().count()) {
+            Some(x) => *x = join_written(x, t),
+            None => texts.push(t.to_string()),
         }
+    }
+    match texts.len() > bound {
+        true => texts[1..].iter().fold(texts[0].clone(), |x, y| join_written(&x, y)),
+        false => texts.join(&format!("{}\n", crate::tex::TEXT_OR)),
     }
 }
 
 /// What two paths wrote to their files, joined (tex.web § 1370): a file
 /// only one wrote joins with an empty one, an unknown one stays unknown.
-fn join_outputs(a: &Outputs, b: &Outputs) -> Outputs {
+fn join_outputs(a: &Outputs, b: &Outputs, bound: usize) -> Outputs {
     if a == b {
         return a.clone();
     }
     let text = |m: &Outputs, n| m.get(n).cloned().unwrap_or(Some(String::new()));
     let names: HashSet<&String> = a.keys().chain(b.keys()).collect();
     Rc::new(
-        names.into_iter().map(|n| (n.clone(), text(a, n).zip(text(b, n)).map(|(x, y)| join_written(&x, &y)))).collect(),
+        names
+            .into_iter()
+            .map(|n| (n.clone(), text(a, n).zip(text(b, n)).map(|(x, y)| either_text(&x, &y, bound))))
+            .collect(),
     )
 }
 

@@ -2686,7 +2686,7 @@ impl Machine<'_> {
         x.page_touched |= y.page_touched;
         x.page_grew |= y.page_grew;
         // What either path wrote may be in the files (tex.web § 1370).
-        x.outputs = super::join_outputs(&x.outputs, &y.outputs);
+        x.outputs = super::join_outputs(&x.outputs, &y.outputs, usize::from(self.limits.meaning_set));
         x.pending = super::join_pending(&x.pending, &y.pending);
         x.natural = crate::mode::join_natural(x.natural, y.natural);
         x.main_tail = x.main_tail.merge(y.main_tail);

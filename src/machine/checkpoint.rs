@@ -130,6 +130,11 @@ impl<'a> Checkpoints<'a> {
         Checkpoints { cfg, setup: None, list: Vec::new(), log: Vec::new(), every: EVERY, resumed: None }
     }
 
+    /// The files the last run read or looked for.
+    pub fn looked(&self) -> Vec<PathBuf> {
+        self.log.iter().map(|r| r.path.clone()).collect()
+    }
+
     /// Checkpoints at most every `steps` steps, not [`EVERY`].
     pub fn every(self, steps: u64) -> Self {
         Checkpoints { every: steps.max(1), ..self }
@@ -177,7 +182,8 @@ impl<'a> Checkpoints<'a> {
         if let Some(taking) = m.checkpoints.on.take() {
             (self.list, self.log, self.every) = (taking.list, taking.log, taking.every);
         }
-        crate::overlay::log(false);
+        // Reads past the last checkpoint: no resume rests on them, the build's reruns do.
+        self.log.extend(crate::overlay::log(false));
         m.conclude(id)
     }
 

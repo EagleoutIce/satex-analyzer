@@ -4430,7 +4430,11 @@ impl Machine<'_> {
         self.read_equals();
         let name = self.read_file_name();
         let base = self.base().to_path_buf();
-        let path = self.resolver_mut().resolve(&name, LoadKind::Input, &base);
+        // A file this run wrote is read as written (tex.web § 537), as `\input` does.
+        let path = match self.written_text(&name).flatten() {
+            Some(_) => Some(base.join(name.trim())),
+            None => self.resolver_mut().resolve(&name, LoadKind::Input, &base),
+        };
         if let Some(path) = &path {
             self.note_read_file(path);
             if let Some(stream) = stream {
@@ -4439,7 +4443,8 @@ impl Machine<'_> {
         }
         // A file this run wrote with unknown content leaves the stream unknown.
         let Some(bytes) = self.input_bytes(&name) else { return self.unknown_stream(stream) };
-        let lines = bytes.map(|b| crate::source::decode(&b).lines().map(str::to_string).collect::<Vec<_>>());
+        let text = bytes.map(|b| self.pick_text(by, span, crate::source::decode(&b)));
+        let lines = text.map(|t| t.lines().map(str::to_string).collect::<Vec<_>>());
         self.set_stream(stream, lines);
     }
 

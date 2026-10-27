@@ -200,6 +200,10 @@ pub const UNKNOWN_NONZERO: char = '\u{10FFFB}';
 /// is not known, its category kept.
 pub const UNKNOWN_ANY: char = '\u{10FFFA}';
 
+/// A line of only this character parts the texts a file the build wrote
+/// may hold: one per path that wrote it otherwise, up to `limits.meaning_set`.
+pub const TEXT_OR: char = '\u{10FFF9}';
+
 /// One letter (category 11) of unknown text.
 pub const UNKNOWN_LETTER: char = '\u{10FFFD}';
 

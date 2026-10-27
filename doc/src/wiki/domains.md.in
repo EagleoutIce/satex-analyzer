@@ -492,13 +492,14 @@ A file the run wrote is in one of two states:
 - known text: `\immediate\openout` made it empty, and each `\write` to an open stream appended a line. A deferred `\write` waits for the next shipout (§ 1370), or the end, and is expanded there with `\protect` as `\noexpand`. Its page number (`\count0`) is the current one under `analysis.assume_forced_page_breaks`, and unknown otherwise. An `\immediate\closeout` with lines still waiting makes the file unknown. Unknown text in a line is written as one character per class and lower bound, which reads back as unknown text of that class: an unknown position stays digits. Untyped text is written as `UNKNOWN_ANY`. An 8-bit read keeps such a character whole.
 - unknown text: a stream number `satex` could not pin down. Such a `\write` adds one line of unknown text to every open file, and the known lines stay.
 
-Two paths join their files line by line (`join_written`): the lines both begin and end with stay.
+Two paths that wrote a file differently keep both texts: a file holds a set of texts, one per way the paths wrote it, up to `limits.meaning_set`. A read of such a file (`\input`, `\openin`) parts the path per text, as a name of several meanings does.
+Past the bound, the texts join line by line (`join_written`): the lines both begin and end with stay.
 Lines between that pair up keep the characters both begin and end with, and the place they differ is one unknown character of the class both parts read back as.
 A control word cut into, or braces that do not balance, widen the place to the whole line.
 Any other difference is one line of unknown text, and an unknown line absorbs the unknown line before it, so joins settle.
 A file only one path wrote joins with an empty one. Deferred lines still waiting join the same way.
 
-The build's files (`.aux`, `.toc`, `.bbl`, ..., `load.build_extensions`) of an earlier run are the run's own: the analysis runs the build until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`), and keeps them in the overlay, never on disk. The ones an engine left on disk are read only with `load.build_files`.
+The build's files (`.aux`, `.toc`, `.bbl`, ..., `load.build_extensions`) of an earlier run are the run's own: the analysis runs the build until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`), and keeps them in the overlay, never on disk. Every file the run writes and reads back goes through the overlay, whatever its extension. A changed file sends the build round again only when the run read or looked for it. The ones an engine left on disk are read only with `load.build_files`.
 Any other file the run did not write is what is on disk, or absent.
 
 Reads look at the run's own files first (tex.web § 537):
