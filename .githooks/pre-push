@@ -39,3 +39,8 @@ cargo fmt --all --check
 
 echo "pre-push: running clippy..."
 cargo clippy --locked --all-targets --all-features -- -D warnings
+
+# CI's citation-drift job: tex.web citations against the current upstream
+# commit. Stale ones are fixed with `--refresh-citations` before pushing.
+echo "pre-push: checking tex.web citations against upstream..."
+cargo run --quiet --locked --features doc --bin satex-doc -- --check-citations

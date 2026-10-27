@@ -24,4 +24,10 @@ case $tier in
     slow) args=("${slow[@]}") ;;
     *) echo "usage: $0 fast|slow|measure [args]" >&2; exit 2 ;;
 esac
-scripts/t.sh --exact "${args[@]}" "$@"
+rc=0
+scripts/t.sh --exact "${args[@]}" "$@" || rc=$?
+# The unit tests in src/ (CI runs them in shard 1): part of the daily loop.
+if [ "$tier" = fast ]; then
+    CARGO_BUILD_JOBS=${JOBS:-12} cargo test --profile "${PROFILE:-fast}" --lib -- --test-threads "${THREADS:-12}" || rc=$?
+fi
+exit $rc
