@@ -13,6 +13,13 @@
 # slowly or rate-limit; retry a few times before failing the run.
 max_retries = 3
 retry_wait_time = 5
+timeout = 60
+
+# CTAN answers a burst from one CI runner with timeouts, never with a status,
+# so requests to it go one at a time. A timeout says nothing about the link
+# (a dead page answers 404), so it never fails the run.
+accept_timeouts = true
+
 
 # Anchors like `#L1234` are GitHub's client-side rendering, not part of the
 # HTML lychee fetches, so it cannot verify them; the page returning 200 is
@@ -39,3 +46,7 @@ exclude = [
   "^file://.*/releases$",
   "^https://doi\\.org/10\\.1145/",
 ]
+
+[hosts."ctan.org"]
+concurrency = 1
+request_interval = "1s"
