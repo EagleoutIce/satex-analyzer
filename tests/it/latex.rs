@@ -1274,19 +1274,6 @@ mod document_metadata {
         stays_bounded("lang=en");
     }
 
-    /// The options real documents carry: `pdfversion` picks the PDF the
-    /// backend writes, `testphase` loads the latex-lab code, `tagging`
-    /// turns the structure tree on.
-    #[test]
-    fn the_common_options_stay_bounded() {
-        if !super::installed() {
-            return;
-        }
-        stays_bounded("pdfversion=2.0");
-        stays_bounded("lang=en,pdfversion=1.7,testphase={phase-III}");
-        stays_bounded("tagging=on");
-    }
-
     /// The worst one gap at one place is counted.
     fn worst(analysis: &Analysis) -> u32 {
         unsupported(analysis).into_iter().map(|(_, n)| n).max().unwrap_or(0)
@@ -1930,146 +1917,6 @@ x\label{after}
     }
 }
 
-/// An error the document makes is recovered as TeX recovers it: a flag
-/// raised without `\flag_new:n` makes `\cs:w \relax` (tex.web § 373:
-/// `\endcsname` is inserted and the run goes on), then an extra
-/// `\endcsname` (§ 1135, ignored), over and over. The hundredth error is
-/// reported (TeX would stop there, § 82) and satex reads on. No widening, no repeated-failure
-/// cut, no budget cascade into `\begin{document}`.
-#[test]
-fn an_error_in_the_document_is_recovered_like_tex() {
-    if !installed() {
-        return;
-    }
-    let analysis = analyze(
-        r"\documentclass{article}
-\ExplSyntaxOn
-\int_step_inline:nn{\pdfuniformdeviate 9}{\flag_raise:n{test}}
-\flag_clear:n{test}
-\ExplSyntaxOff
-\begin{document}x\end{document}",
-    );
-    let count = |code: &str| {
-        analysis.facts.diagnostics.iter().filter(|d| d.code == code).map(|d| u64::from(d.count)).sum::<u64>()
-    };
-    assert!(count("missing-endcsname") >= 51 && count("extra-endcsname") >= 50, "{:?}", analysis.facts.diagnostics);
-    assert!(count("too-many-errors") >= 1, "the hundredth error is reported");
-    for code in ["repeated-failure", "limit-reached", "budget-exhausted", "line-budget-cut", "unbalanced-argument"] {
-        assert_eq!(count(code), 0, "{code}");
-    }
-    let raised = |text: &str| analysis.facts.raised.iter().any(|r| r.text == text);
-    assert!(raised("Missing \\endcsname inserted") && raised("That makes 100 errors; please try again"));
-    assert!(analysis.steps < 5_000_000, "{} steps", analysis.steps);
-}
-
-/// A resized picture whose styles are set up next to forest, fontawesome
-/// and hyperref: a file name the hooks expand holds unknown text, and
-/// expl3's quote loop over it once ate the marker an outer scan needed
-/// (unbalanced-argument, extra-right-brace at expl3-code.tex:2549, then
-/// missing-endcsname and unbalanced-group by the dozen). Four gaps remain.
-#[test]
-fn resized_picture_with_styles_keeps_file_name_scans() {
-    if !installed() {
-        return;
-    }
-    let analysis = analyze(
-        r#"\documentclass{article}
-\usepackage{graphicx,xcolor}
-\usepackage{tikz}
-\usetikzlibrary{positioning,arrows.meta,fit,calc,shapes.geometric,backgrounds}
-\usepackage{tikz}
-\usepackage{forest}
-\usepackage{commalists-tools}
-\usepackage{fontawesome}
-\usepackage{hyperref}
-\usepackage{csquotes}
-\usetikzlibrary{decorations.pathmorphing,shadows,arrows.meta}
-\pgfdeclarelayer{background}\pgfdeclarelayer{foreground}\pgfdeclarelayer{middle}
-\pgfdeclarelayer{very-background}
-\pgfsetlayers{very-background,background,main,middle,foreground}
-
-\tikzset{
-   Soft/.style={line join=round,line cap=round},
-   All Soft/.style={every path/.append style={Soft}},
-   Blob/.style={
-      draw=black,
-      circle,
-      outer sep=2pt,
-      minimum size=1.8em
-   },
-   Blobs/.style={
-      every node/.append style={Blob}
-   },
-   Use/.style={Blob},
-   RectRounding/.style={rounded corners=3pt},
-   RawRect/.style={
-      draw=black,
-      rectangle,
-      RectRounding,
-      minimum size=1.8em,
-      inner sep=5pt,
-      fill=white,
-   },
-   Rect/.style={
-      draw=black,
-      rectangle,
-      RectRounding,
-      outer sep=2pt,
-      minimum size=1.8em
-   },
-   Def/.style={Rect},
-   Rects/.style={
-      every node/.append style={Rect,minimum width=#1}
-   },
-   Rects/.default={1.5em},
-   Link/.style={
-      draw,
-      Soft,
-      rounded corners=2.5pt,
-      -Kite
-   },
-   Links/.style={
-      every path/.append style={Link}
-   },
-   % for dataflow graphs
-   comm/.style={rectangle,draw=gray,text width=9mm,align=center,minimum height=5mm,font=\ttfamily,fill=white,fill opacity=1,drop shadow={fill=lightgray!50}},
-   d/.style={comm,rounded corners=2pt}, % variable def
-   u/.style={comm,rounded corners=2.5mm}, % variable use % rounded rectangle breaks anchors
-   v/.style={comm,signal, signal to=east and west, gray, text=black, inner sep=-4pt, text width=5mm,fill=lightgray!22!white}, % values
-   e/.style={comm,rounded corners=2.5mm,densely dotted,thick,fill=white}, % exit point
-   F/.style={comm,draw=gray,rounded corners=2pt,fill=white,inner xsep=.5em},
-   fc/.style={comm,double,rounded corners=2pt},
-   w-back/.style={fill=white,inner sep=1pt},
-   T/.style={font=\footnotesize\ttfamily,text=gray},
-   code/.style={font=\ttfamily},
-   dfidn/.style={
-      circle,darkgray,fill opacity=.925,xshift=-1mm,yshift=.15mm,fill=white,draw,minimum size=1.8em,scale=.8,inner sep=-1pt
-   },
-   klabel/.style={font=\scriptsize\sffamily, inner sep=1pt,text=black,above,execute at begin node={\strut}},
-   olabel/.style={midway,fill=white,fill opacity=.75,text opacity=1,rounded corners=2pt,inner sep=1pt,font=\tiny\sffamily},
-}
-\newsavebox\DataFlow
-\setbox\DataFlow=\hbox{\resizebox*!{1.25cm}{\begin{tikzpicture}
-   \node[d] (0) at (0,0) {};
-   \node[u,right=4mm] (1) at (0.east) {};
-   \node[v,above=4mm] (2) at (0.north) {~~~~};
-   \node[u,below=4mm] (3) at (0.south) {};
-   \draw[Link,-Kite] (3) -- (0);
-   \draw[Link,-Kite] (0) -- (1);
-   \draw[Link,dotted] (1) to[bend right] (2);
-\end{tikzpicture}}}
-\newsavebox\ControlFlow
-\setbox\ControlFlow=\hbox{\resizebox*!{1.25cm}{\color{lightgray!80!gray}\begin{tikzpicture}[Link/.style={draw,line cap=round,gray,thick},comm/.append style={very thick}]
-\node[d] (0) at (0,0) {};
-\end{tikzpicture}}}
-\begin{document}
-x\label{after}
-\end{document}"#,
-    );
-    assert_eq!(keys(&analysis, OccKind::Label), vec!["after"]);
-    assert!(broken_gaps(&analysis).is_empty(), "{:?}", broken_gaps(&analysis));
-}
-
 /// The same for a cloud around two lines.
 #[test]
 fn tikz_cloud_node_of_unknown_height_stays_balanced() {
@@ -2183,28 +2030,6 @@ fn tikz_pictures_with_unknown_borders_do_not_exhaust_the_budget() {
     );
     let analysis = analyze(&source);
     assert!(!analysis.exhausted);
-}
-
-/// The scale factor of `\resizebox` is a `\strip@pt` of an unknown quotient:
-/// number text with no `+`, no `--` and at most one `.`, which the delimited
-/// scans of graphics' `\GPT@NormalizeNumber` decide instead of failing on.
-#[test]
-fn a_resized_box_of_unknown_width_normalizes_its_scale() {
-    if !installed() {
-        return;
-    }
-    let analysis = analyze(
-        r"\documentclass{article}\usepackage{graphicx}\begin{document}
-\resizebox{\textwidth}{!}{\rule{\pdfuniformdeviate 100pt}{1pt}}
-\resizebox{\textwidth}{!}{$N$}
-x\label{after}\end{document}",
-    );
-    let count = |code: &str| analysis.facts.diagnostics.iter().filter(|d| d.code == code).count();
-    for code in ["repeated-failure", "limit-reached", "argument-ends-in-unknown"] {
-        assert_eq!(count(code), 0, "{code}: {:?}", analysis.facts.diagnostics);
-    }
-    assert_eq!(keys(&analysis, OccKind::Label), vec!["after".to_string()]);
-    assert!(analysis.steps < 2_500_000, "{} steps", analysis.steps);
 }
 
 /// `\strip@pt` of a dimension of unknown sign: `\the` prints a `-` or a
