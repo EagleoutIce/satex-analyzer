@@ -254,7 +254,8 @@ fn a_dropped_error_path_does_not_weigh_on_later_joins() {
     // The document stands in a directory of its own, so the package is not its file.
     let main = fresh("dropped-document").join("main.tex");
     let plain = run_at("dropped-plain", &doc(""), Some(&main));
-    let dropped = run_at("dropped-error", &doc(&format!("\\usepackage{{{}}}", sty.display())), Some(&main));
+    let dropped =
+        run_at("dropped-error", &doc(&format!("\\usepackage{{{}}}", crate::support::tex_path(&sty))), Some(&main));
     let codes = |a: &Analysis| {
         use satex::facts::Severity::{Unsupported, Warning};
         let faults = a.facts.diagnostics.iter().filter(|d| matches!(d.severity, Unsupported | Warning));

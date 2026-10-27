@@ -411,10 +411,6 @@ pub struct Analysis {
     pub kernel: Option<Box<Env>>,
     /// What [`crate::probe`] found per name and view, computed on demand.
     pub probes: crate::fixed::Mutex<HashMap<(Sym, crate::probe::State), Option<crate::probe::Probed>>>,
-    /// Environments open right now, outermost first (`document` excluded:
-    /// `document_depth` already answers that axis). What `explain` reads to
-    /// tell a definition made inside `enumerate` from one made outside.
-    pub env_stack: Vec<Sym>,
     /// Environments worth probing a name inside, and what that found: cache
     /// for [`crate::probe::probe_contexts`].
     pub context_probes: crate::fixed::Mutex<ContextProbes>,
@@ -1310,6 +1306,10 @@ pub struct Machine<'a> {
     pinned: crate::fixed::HashSet<Sym>,
     /// The macro whose replacement text is currently being read.
     within: Rc<Vec<(Sym, NodeId)>>,
+    /// Environments open on this path, outermost first (`document` excluded:
+    /// `document_depth` already answers that axis). What `explain` reads to
+    /// tell a definition made inside `enumerate` from one made outside.
+    pub(crate) env_stack: Rc<Vec<Sym>>,
     pub(crate) quantity: crate::observe::Quantities,
     /// Whether something that is not a character was digested since the
     /// last one, so the next breaks the word (tex.web § 1034).
@@ -1741,6 +1741,7 @@ struct PathState {
     cds: Rc<Vec<ControlDep>>,
     conds: Rc<Vec<CondFrame>>,
     within: Rc<Vec<(Sym, NodeId)>>,
+    env_stack: Rc<Vec<Sym>>,
     packages: Rc<Vec<(Sym, Vec<String>)>>,
     held_tokens: usize,
     align_state: i64,
@@ -2133,7 +2134,6 @@ impl<'a> Machine<'a> {
                 preamble: None,
                 kernel: None,
                 probes: Default::default(),
-                env_stack: Vec::new(),
                 context_probes: Default::default(),
                 takes: Default::default(),
                 bib: Default::default(),
@@ -2153,6 +2153,7 @@ impl<'a> Machine<'a> {
             unknown_chars: HashMap::default(),
             cds: Rc::default(),
             within: Rc::default(),
+            env_stack: Rc::default(),
             quantity: crate::observe::Quantities::default(),
             text_broken: true,
             box_chars: Default::default(),
@@ -5554,7 +5555,7 @@ will look undefined",
         // once per `\begin{itemize}`/`\begin{enumerate}`) hits the same site every time.
         // Without this, the first context seen there would be the only one `explain`
         // ever finds, so a context not already on record gets its own fact.
-        let current_context: Rc<[Sym]> = Rc::from(self.out.env_stack.clone());
+        let current_context: Rc<[Sym]> = Rc::from(self.env_stack.as_slice());
         let context_is_new = existing.is_some_and(|i| {
             self.out.facts.defs[i].context.as_ref() != current_context.as_ref()
                 && !self
@@ -10636,6 +10637,7 @@ will look undefined",
             cds: self.cds.clone(),
             conds: self.conds.clone(),
             within: self.within.clone(),
+            env_stack: self.env_stack.clone(),
             packages: self.packages.clone(),
             held_tokens: self.held_tokens,
             align_state: self.align_state,
@@ -10708,6 +10710,7 @@ will look undefined",
         self.cds = state.cds;
         self.conds = state.conds;
         self.within = state.within;
+        self.env_stack = state.env_stack;
         self.packages = state.packages;
         self.quantity = state.quantity;
         self.noexpanded = state.noexpanded;

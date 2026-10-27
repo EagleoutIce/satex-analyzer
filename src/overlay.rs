@@ -63,12 +63,10 @@ pub fn probed_own(path: &Path) {
 /// What the overlay holds at `path`, as a hash, or 0.
 fn own_presence(path: &Path) -> u64 {
     use std::hash::{Hash, Hasher};
-    FILES.with_borrow(|files| {
-        files.get(path).map_or(0, |t| {
-            let mut hasher = std::hash::DefaultHasher::new();
-            t.hash(&mut hasher);
-            hasher.finish().max(1)
-        })
+    text(path).map_or(0, |t| {
+        let mut hasher = std::hash::DefaultHasher::new();
+        t.hash(&mut hasher);
+        hasher.finish().max(1)
     })
 }
 
@@ -79,7 +77,7 @@ pub fn probed(path: &Path) {
 
 /// Whether `path` is there to read: 1, else 0.
 fn presence(path: &Path) -> u64 {
-    u64::from(FILES.with_borrow(|files| files.contains_key(path)) || path.is_file())
+    u64::from(holds(path) || path.is_file())
 }
 
 /// What `path` holds now, as a hash: the overlay's text, else the file's
@@ -87,7 +85,7 @@ fn presence(path: &Path) -> u64 {
 /// size or time changed.
 pub fn fingerprint(path: &Path) -> u64 {
     let stamp = |m: std::fs::Metadata| Some((m.len(), m.modified().ok()?));
-    let on_disk = !FILES.with_borrow(|files| files.contains_key(path));
+    let on_disk = !holds(path);
     let stamp = on_disk.then(|| std::fs::metadata(path).ok().and_then(stamp)).flatten();
     if let Some(stamp) = stamp
         && let Some((kept, print)) = PRINTS.with_borrow(|prints| prints.get(path).copied())
@@ -153,29 +151,41 @@ pub fn read_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
 }
 
 fn read_bytes_unlogged(path: &Path) -> std::io::Result<Vec<u8>> {
-    match FILES.with(|files| files.borrow().get(path).cloned()) {
+    match text(path) {
         // The overlay holds a file as it is written, so its bytes are its.
         Some(text) => Ok(text.into_bytes()),
         None => std::fs::read(path),
     }
 }
 
+/// The one name of the file `path` names: its directory with symlinks,
+/// `..` and short names (`RUNNER~1`, `/var` for `/private/var`) resolved,
+/// so every spelling of a path reaches one entry. A file the overlay holds
+/// need not exist, so its directory is what is resolved.
+fn key(path: &Path) -> PathBuf {
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    match (absolute.parent(), absolute.file_name()) {
+        (Some(dir), Some(name)) => std::fs::canonicalize(dir).map_or(absolute.clone(), |dir| dir.join(name)),
+        _ => absolute,
+    }
+}
+
 pub fn set(path: &Path, text: String) {
-    FILES.with(|files| files.borrow_mut().insert(path.to_path_buf(), text));
+    FILES.with(|files| files.borrow_mut().insert(key(path), text));
 }
 
 pub fn remove(path: &Path) {
-    FILES.with(|files| files.borrow_mut().remove(path));
+    FILES.with(|files| files.borrow_mut().remove(&key(path)));
 }
 
 /// What the overlay holds at `path`, never what is on disk.
 pub fn text(path: &Path) -> Option<String> {
-    FILES.with_borrow(|files| files.get(path).cloned())
+    FILES.with_borrow(|files| (!files.is_empty()).then(|| files.get(&key(path)).cloned()).flatten())
 }
 
 /// Whether the overlay holds `path`.
 pub fn holds(path: &Path) -> bool {
-    FILES.with_borrow(|files| files.contains_key(path))
+    FILES.with_borrow(|files| !files.is_empty() && files.contains_key(&key(path)))
 }
 
 pub fn clear() {
@@ -190,6 +200,19 @@ mod tests {
         let path = std::env::temp_dir().join(format!("satex-overlay-{name}-{}", std::process::id()));
         let _ = std::fs::remove_file(&path);
         path
+    }
+
+    #[test]
+    fn every_spelling_of_a_path_reaches_one_entry() {
+        let dir = scratch("spelling");
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        set(&dir.join("sub/../f.tex"), "x".into());
+        let resolved = std::fs::canonicalize(&dir).unwrap().join("f.tex");
+        assert_eq!(text(&resolved).as_deref(), Some("x"));
+        assert_eq!(read_to_string(&dir.join("f.tex")).unwrap(), "x");
+        remove(&resolved);
+        assert!(!holds(&dir.join("f.tex")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

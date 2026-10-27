@@ -385,7 +385,7 @@ pub fn environment_opened(m: &mut Machine, outer: Option<String>, span: Span) {
         // answers the preamble/document axis. This is only user
         // environments nested inside it.
         let sym = m.intern(&name);
-        m.out.env_stack.push(sym);
+        crate::push_shared(&mut m.env_stack, sym);
     }
     if let Some(node) = m.occurrence(OccKind::BeginEnvironment, name.clone(), None, at) {
         let sym = m.intern(&name);
@@ -402,8 +402,8 @@ pub fn environment_closed(m: &mut Machine, inner: Option<String>, span: Span) {
     }
     if inner != "document" {
         let sym = m.intern(&inner);
-        if let Some(pos) = m.out.env_stack.iter().rposition(|s| *s == sym) {
-            m.out.env_stack.remove(pos);
+        if let Some(pos) = m.env_stack.iter().rposition(|s| *s == sym) {
+            std::rc::Rc::make_mut(&mut m.env_stack).remove(pos);
         }
     }
     // amsmath reads a display's body as one argument (`\collect@@body#1\end#2`):

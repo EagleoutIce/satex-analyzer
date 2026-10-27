@@ -1417,14 +1417,14 @@ fn quotient(n: i64, d: i64) -> Option<i64> {
 }
 
 /// `x*n/d` rounded, ties away from zero, on unbounded integers.
-/// `None` for `d = 0`.
+/// `None` for `d = 0` or past `i64`: an overflowing corner.
 fn fract_ideal(x: i64, n: i64, d: i64) -> Option<i64> {
     if d == 0 {
         return None;
     }
     let negative = ((x < 0) != (n < 0)) != (d < 0);
     let (p, d) = ((i128::from(x) * i128::from(n)).abs(), i128::from(d).abs());
-    let q = ((2 * p + d) / (2 * d)) as i64;
+    let q = i64::try_from((2 * p + d) / (2 * d)).ok()?;
     Some(if negative { -q } else { q })
 }
 
@@ -1465,8 +1465,9 @@ fn settle((num, may): (Option<Num>, bool), err: &mut (bool, bool)) -> Num {
     }
 }
 
+/// Symmetric, so an endpoint negates and takes `abs` without overflow.
 fn unbounded() -> (i64, i64) {
-    (i64::MIN, i64::MAX)
+    (-i64::MAX, i64::MAX)
 }
 
 /// One abstract step of `scan_expr`: the exact result over every
@@ -1671,7 +1672,7 @@ impl Machine<'_> {
                                 (-max, max),
                                 false,
                                 |v| mult_and_add(v[0], v[1], 0, max),
-                                |v| Some(v[0] * v[1]),
+                                |v| v[0].checked_mul(v[1]),
                                 &mut err,
                             );
                         }

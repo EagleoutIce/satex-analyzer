@@ -247,7 +247,7 @@ fn paper_usepackage_preamble_and_document() {
     let _ = std::fs::remove_dir_all(&directory);
     assert_eq!(records.len(), 2, "records: {records:?}");
     let (preamble, document) = (&records[0], &records[1]);
-    assert_eq!(str_field(preamble, "when"), Some("preamble"));
+    assert_eq!(str_field(preamble, "when"), Some("preamble"), "records: {records:?}");
     // `\documentclass` makes `\usepackage` `\RequirePackage` (latex.ltx,
     // `\let\usepackage\RequirePackage`).
     assert_eq!(str_field(preamble, "by"), Some(r"\let"));

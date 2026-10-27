@@ -333,7 +333,7 @@ fn certain_error_drops_its_path() {
     let lib =
         crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-join-lib-{}", std::process::id())));
     std::fs::write(lib.join("arm.tex"), arm).unwrap();
-    let source = format!(r"\input {}/arm.tex \edef\z{{\m}}", lib.display());
+    let source = format!(r"\input {}/arm.tex \edef\z{{\m}}", crate::support::tex_path(&lib));
     let mut cfg = satex::config::Config { arm_joins: true, ..crate::support::bare() };
     cfg.load.inputs = true;
     let analysis = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);

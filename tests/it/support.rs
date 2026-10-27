@@ -26,6 +26,11 @@ fn bounded(mut cfg: Config) -> Config {
     // The checkout's own `satex.yaml` stubs macros while their internals do
     // not run; a test judges the interpreter, not that stand-in.
     cfg.stubs.clear();
+    // The suite's own caches, never the user's: what one run records is
+    // what the next reads, here and nowhere else.
+    if cfg.cache.dir.is_none() {
+        cfg.cache.dir = Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/test-cache"));
+    }
     // One fixed clock: runs a second apart, cached or not, agree.
     cfg.clock = satex::config::Clock::At(time::OffsetDateTime::from_unix_timestamp(1_767_268_800).expect("a date"));
     cfg.limits.steps = 300_000_000;
@@ -60,11 +65,17 @@ pub fn bare() -> Config {
 /// Where tests put their files: `satex-tests/<pid>` in the system's
 /// temporary directory. A test process removes what processes no longer
 /// running left there, so runs never pile up (where `/proc` tells which
-/// are running).
+/// are running). On Windows the directory's long name: a short one
+/// (`RUNNER~1`) has a `~`, active in LaTeX.
 pub fn tmp_root() -> PathBuf {
     static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     ROOT.get_or_init(|| {
-        let base = std::env::temp_dir().join("satex-tests");
+        let mut temp = std::env::temp_dir();
+        if cfg!(windows) {
+            let long = std::fs::canonicalize(&temp).expect("the temporary directory");
+            temp = PathBuf::from(long.to_string_lossy().trim_start_matches(r"\\?\"));
+        }
+        let base = temp.join("satex-tests");
         if Path::new("/proc/self").exists() {
             for entry in std::fs::read_dir(&base).into_iter().flatten().flatten() {
                 let pid = entry.file_name().to_str().and_then(|n| n.parse::<u32>().ok());
@@ -78,6 +89,12 @@ pub fn tmp_root() -> PathBuf {
         root
     })
     .clone()
+}
+
+/// `path` as TeX source names it: `/` between components, as TeX on
+/// Windows reads them too (a `\` would start a control sequence).
+pub fn tex_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
 }
 
 /// Recreate `dir` empty. Used to give each test its own scratch directory.

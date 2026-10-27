@@ -1353,6 +1353,8 @@ impl Machine<'_> {
             docstrip,
             pinned,
             within,
+            // Empty at every cacheable load: an environment opens a group.
+            env_stack: _,
             source: _,
             packages,
             file_depth,
@@ -3485,7 +3487,9 @@ mod tests {
     fn kernel() -> &'static Path {
         static KERNEL: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
         KERNEL.get_or_init(|| {
-            let dir = std::env::temp_dir().join(format!("satex-graft-kernel-{}", std::process::id()));
+            // The integration tests' kernel cache: kept across runs, keyed by the interpreter's digest.
+            let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/scratch/test-kernel");
+            std::fs::create_dir_all(&dir).expect("the shared kernel directory");
             let cfg = Config {
                 cache: crate::config::Cache { dir: Some(dir.clone()), ..Default::default() },
                 ..Config::default()

@@ -84,6 +84,8 @@ codegen-units = 1
 # binaries pay for and only the shipped binary profits from.
 [profile.ci]
 inherits = "release"
+# An overflow is a wrong value in release: CI fails on it, as debug does.
+overflow-checks = true
 lto = false
 codegen-units = 16
 # Local reruns rebuild in seconds; CI sets CARGO_INCREMENTAL=0.

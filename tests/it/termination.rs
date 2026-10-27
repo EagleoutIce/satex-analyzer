@@ -637,7 +637,7 @@ fn a_summarized_loop_leaves_the_rest_of_the_document_read() {
 \input{{{}/rest.tex}}
 \ifdefined\reached \else\errmessage{{not reached}}\fi
 \end{{document}}",
-        dir.display()
+        crate::support::tex_path(&dir)
     );
     let cfg = Config {
         cache: satex::config::Cache { dir: Some(dir.join("cache")), ..Default::default() },

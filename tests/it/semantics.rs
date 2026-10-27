@@ -1326,7 +1326,7 @@ fn read_appends_the_end_of_line_character_and_balances_braces() {
     let source = format!(
         r"\openin3={} \read3 to\a \read3 to\b \edef\e{{\ifeof3 E\else N\fi}}\read3 to\c
           \edef\out{{\meaning\a|\meaning\b|\meaning\c|\e\ifeof3 E\else N\fi}}",
-        file.display()
+        crate::support::tex_path(&file)
     );
     // `\ifeof` turns true only once a read has found no line left.
     assert_eq!(out(&source), r"macro:->a;b |macro:->{c d}e |macro:->\par |NE");

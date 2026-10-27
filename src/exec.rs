@@ -4624,7 +4624,7 @@ impl Machine<'_> {
     /// stack, plus the command the file called (`self.file_call`). `\item` has
     /// left the stack when `\makelabel` raises "Lonely \item", yet owns it.
     pub(crate) fn note_raised(&mut self, text: &str, at: Span) {
-        let context: Rc<[Sym]> = Rc::from(self.out.env_stack.clone());
+        let context: Rc<[Sym]> = Rc::from(self.env_stack.as_slice());
         let certain = self.exact();
         let mut names: crate::fixed::HashSet<Sym> = self.call_stack().collect();
         if let Some((sym, _)) = self.file_call {
@@ -4681,12 +4681,12 @@ fn int_arith(a: i64, b: i64, op: Arith, dimen: bool) -> Option<i64> {
 }
 
 /// [`int_arith`] on unbounded integers, for interval corners ([`Num::lift`]).
-/// `None` only for a zero divisor.
+/// `None` for a zero divisor or past `i64`: an overflowing corner.
 fn ideal_arith(a: i64, b: i64, op: Arith) -> Option<i64> {
     match op {
-        Arith::Advance => Some(a + b),
-        Arith::Multiply => Some(a * b),
-        Arith::Divide => (b != 0).then(|| a / b),
+        Arith::Advance => a.checked_add(b),
+        Arith::Multiply => a.checked_mul(b),
+        Arith::Divide => a.checked_div(b),
     }
 }
 

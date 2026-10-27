@@ -410,7 +410,7 @@ fn read_and_readline_from_a_file() {
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("data.txt");
     std::fs::write(&file, "abc\nsecond line\n").unwrap();
-    let f = file.display();
+    let f = crate::support::tex_path(&file);
     check(&format!(r"\openin3={f} \read3 to\x \edef\R{{\meaning\x}}"), "macro:->abc");
     check(&format!(r"\openin3={f} \read3 to\x\read3 to\x \ifeof3 \def\R{{T}}\else\def\R{{F}}\fi"), "F");
     check(&format!(r"\openin3={f} \read3 to\x\read3 to\x\read3 to\x \ifeof3 \def\R{{T}}\else\def\R{{F}}\fi"), "T");

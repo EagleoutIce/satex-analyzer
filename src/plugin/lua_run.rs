@@ -36,21 +36,20 @@ type R<T> = mlua::Result<T>;
 
 unsafe extern "C" {
     /// The address that makes a light userdata the unknown value
-    /// (vendor/lua-src/SATEX.patch).
-    static satex_unknown_tag: std::ffi::c_char;
+    /// (vendor/lua/SATEX.patch). Asked of C, so it is the VM's address
+    /// however the linker resolves a data symbol across the boundary.
+    safe fn satex_unknown_address() -> *mut std::ffi::c_void;
 }
 
 /// The unknown value: arithmetic, concatenation, length and indexing give
 /// it again; the patched VM fails the run when it is tested, compared,
 /// used as a key, converted or asked its type.
 fn marker(_: &State) -> R<LV> {
-    let tag = &raw const satex_unknown_tag;
-    Ok(LV::LightUserData(mlua::LightUserData(tag as *mut std::ffi::c_void)))
+    Ok(LV::LightUserData(mlua::LightUserData(satex_unknown_address())))
 }
 
 fn is_unknown(v: &LV) -> bool {
-    let tag = &raw const satex_unknown_tag;
-    matches!(v, LV::LightUserData(p) if std::ptr::eq(p.0 as *const std::ffi::c_char, tag))
+    matches!(v, LV::LightUserData(p) if std::ptr::eq(p.0, satex_unknown_address()))
 }
 
 unsafe extern "C-unwind" {

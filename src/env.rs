@@ -2193,11 +2193,16 @@ pub fn text_len(interner: &Interner, t: &Token) -> Option<u32> {
         return len.parse().ok();
     }
     let typed = name.strip_prefix(crate::scan::TYPED_DIGITS)?;
-    if let Some((_, cut)) = typed.split_once('@') {
-        let places: Vec<u32> = cut.split(':').filter_map(|x| x.parse().ok()).collect();
-        return Some(places.get(3)? - places.get(2)?);
+    let (range, cut) = typed.split_once(['@', '#'])?;
+    // A slice `[i, j)` with its end known; one to the end (`j` 0) is
+    // bounded by its interval, as other typed digits are.
+    let places: Vec<u32> = cut.split(':').filter_map(|x| x.parse().ok()).collect();
+    if let [_, _, i, j] = places[..]
+        && j > i
+    {
+        return Some(j - i);
     }
-    let (lo, hi) = typed.split_once('#')?.0.split_once("..")?;
+    let (lo, hi) = range.split_once("..")?;
     let (lo, hi): (i64, i64) = (lo.parse().ok()?, hi.parse().ok()?);
     let digits = |n: i64| n.unsigned_abs().checked_ilog10().unwrap_or(0) + 1;
     Some(digits(lo).max(digits(hi)) + u32::from(lo < 0))

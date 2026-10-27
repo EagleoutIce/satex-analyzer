@@ -112,11 +112,16 @@ diff -ru lua-5.3.6.orig/lbaselib.c lua-5.3.6/lbaselib.c
 diff -ru lua-5.3.6.orig/ldebug.c lua-5.3.6/ldebug.c
 --- lua-5.3.6.orig/ldebug.c
 +++ lua-5.3.6/ldebug.c
-@@ -650,6 +650,13 @@
+@@ -650,6 +650,18 @@
  }
  
  
-+char satex_unknown_tag;
++char satex_unknown_tag = 0;
++
++/* Its address for the host: a data symbol may link to another copy. */
++void *satex_unknown_address (void) {
++  return &satex_unknown_tag;
++}
 +
 +l_noret satex_unknown (lua_State *L) {
 +  luaG_runerror(L, "satex: unknown");
