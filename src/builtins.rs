@@ -656,6 +656,8 @@ pub enum PdfOp {
     Object,
     Special,
     Extension,
+    /// LuaTeX's `\pdfvariable ⟨name⟩ ⟨equals⟩ ⟨value⟩`.
+    Variable,
     /// `\pdfpageresources`, where a page's `/Properties` name what its
     /// marked content refers to.
     Resources,
@@ -1645,7 +1647,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
             lastsavedimageresourcepages lastxpos lastypos leftghost letcharcode linedir
              localleftbox localrightbox luatexbanner luatexrevision mathdir
              mathoption mathstyle nohrule novrule pagedir  pardir
-             pdffeedback pdfvariable protrusionboundary rightghost saveboxresource
+             pdffeedback protrusionboundary rightghost saveboxresource
             savepos textdir  toksapp tokspre tpack useboxresource
             useimageresource vpack wordboundary xtoksapp xtokspre"
             .split_whitespace()
@@ -2004,6 +2006,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     }
     if matches!(engine, Engine::LuaTeX) {
         put(it, "pdfextension", P::Pdf(PdfOp::Extension));
+        put(it, "pdfvariable", P::Pdf(PdfOp::Variable));
     }
 
     put(it, "relax", P::Relax);

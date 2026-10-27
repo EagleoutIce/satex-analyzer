@@ -445,7 +445,9 @@ impl Machine<'_> {
                             paths.parked.len()
                         );
                     }
-                    ended = true;
+                    // Out of input at its own drive's boundary, the path
+                    // finished the drive (`run_tokens`), not the job.
+                    ended = !(done(self) && matches!(self.input.last(), Some(Frame::Boundary)));
                     true
                 }
                 Some(Next::Many(outcomes)) => {

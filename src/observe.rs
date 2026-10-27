@@ -1054,6 +1054,30 @@ pub fn pdf(m: &mut Machine, op: PdfOp, span: Span) {
         // Extensions that take general texts (LuaTeX manual, "PDF
         // extensions"): read, so they are no text. Others read what follows
         // by their own syntax, which the run leaves in the input as before.
+        // LuaTeX manual, "PDF variables": a name, then the value its kind
+        // takes; the value is the backend's, not the run's.
+        PdfOp::Variable => {
+            const DIMENS: [&str; 6] = ["horigin", "vorigin", "linkmargin", "destmargin", "threadmargin", "xformmargin"];
+            const TEXTS: [&str; 6] =
+                ["pageattr", "pageresources", "pagesattr", "xformattr", "xformresources", "trailerid"];
+            if DIMENS.iter().any(|k| m.scan_keyword(k)) {
+                m.read_equals();
+                m.scan_dimen();
+            } else if TEXTS.iter().any(|k| m.scan_keyword(k)) {
+                m.read_equals();
+                drop(m.read_general_text());
+            } else {
+                while let Some(t) = m.next_token() {
+                    if !matches!(t.tok, Tok::Chr(_, Catcode::Letter)) {
+                        m.unread(t);
+                        break;
+                    }
+                }
+                m.read_equals();
+                m.scan_number();
+            }
+            return;
+        }
         PdfOp::Extension => {
             const TEXTS: [(&str, usize); 7] = [
                 ("glyphtounicode", 2),
@@ -1099,7 +1123,7 @@ pub fn pdf(m: &mut Machine, op: PdfOp, span: Span) {
             m.scan_keyword("=");
             "resources"
         }
-        PdfOp::Special | PdfOp::Extension => "special",
+        PdfOp::Special | PdfOp::Extension | PdfOp::Variable => "special",
     };
     let payload = m.read_general_text();
     record_pdf(m, &payload, detail, span);
