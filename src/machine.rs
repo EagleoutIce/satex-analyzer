@@ -2494,6 +2494,9 @@ impl<'a> Machine<'a> {
             let mut changed: Vec<(PathBuf, String)> = analysis
                 .written
                 .iter()
+                // A file a program made (`\write18`) is not text the run wrote:
+                // what is known of it (a PDF's size) is kept apart, not in the overlay.
+                .filter(|(name, text)| text.is_some() || cfg.load.is_build_file(&base.join(name)))
                 .filter_map(|(name, text)| {
                     let at = base.join(name);
                     // The run's own copy only: one on disk is an engine's.

@@ -479,7 +479,7 @@ impl Machine<'_> {
         self.count_brace(&token, -1);
         let code = match token.tok {
             // An unknown character has no known code.
-            Tok::Chr(crate::tex::UNKNOWN_DIGIT | crate::tex::UNKNOWN_NONZERO | crate::tex::UNKNOWN_CHAR, _) => None,
+            Tok::Chr(c, _) if crate::tex::is_unknown_char(c) => None,
             Tok::Chr(c, _) => Some(c as i64),
             Tok::Cs(sym) => {
                 let mut chars = self.name(sym).chars();
@@ -515,6 +515,19 @@ impl Machine<'_> {
             ((0..=9).contains(&num.lo) && num.hi <= 9).then(|| Num::range(48 + num.lo, 48 + num.hi))
         };
         if let Some(codes) = digit(&token) {
+            return Some((codes, None));
+        }
+        // A character of unknown text: the codes it may have.
+        if let Tok::Chr(c, _) = token.tok
+            && crate::tex::is_unknown_char(c)
+        {
+            let top = match crate::source::encoding() {
+                crate::config::Encoding::Bytes => 255,
+                crate::config::Encoding::Utf8 => 0x10_FFFF,
+            };
+            let codes = crate::tex::unknown_number_chars(c).map_or(Num::range(0, top), |s| {
+                s.chars().map(|d| Num::exact(d as i64)).reduce(|a, b| a.join(&b)).expect("digits")
+            });
             return Some((codes, None));
         }
         let mut hull: Option<Num> = None;
