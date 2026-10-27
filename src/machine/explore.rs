@@ -445,9 +445,7 @@ impl Machine<'_> {
                             paths.parked.len()
                         );
                     }
-                    // Out of input at its own drive's boundary, the path
-                    // finished the drive (`run_tokens`), not the job.
-                    ended = !(done(self) && matches!(self.input.last(), Some(Frame::Boundary)));
+                    ended = true;
                     true
                 }
                 Some(Next::Many(outcomes)) => {
@@ -529,10 +527,13 @@ impl Machine<'_> {
                         paths.heads.clear();
                         continue;
                     }
-                    if ended && !self.out.exhausted {
+                    // Out of input at its own drive's boundary (`run_tokens`),
+                    // the last path finished the drive, not the job.
+                    let drive_end = done(self) && matches!(self.input.last(), Some(Frame::Boundary));
+                    if ended && !drive_end && !self.out.exhausted {
                         self.end_with_the_job(&mut paths, &fork);
                     }
-                    self.halted = true;
+                    self.halted |= !drive_end;
                     self.env.unfork(fork);
                     break;
                 }
