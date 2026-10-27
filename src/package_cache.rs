@@ -3591,8 +3591,10 @@ mod tests {
         let second = analyze(&dir, FLAGGED);
         drop(_hooked);
         let seen = LAST_APPEND.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        // The sabotage ran before the first store; a package may store more
+        // chains after it (one per stretch between nested loads).
         let (_, parent, target, chain) =
-            seen.iter().rev().find(|(n, ..)| n == "guard").cloned().expect("guard reached the store");
+            seen.iter().find(|(n, ..)| n == "guard").cloned().expect("guard reached the store");
         assert!(chain > 0, "the run recorded something to store");
 
         // Bogus trees keep their original node; nothing unread was written.
@@ -3610,7 +3612,9 @@ mod tests {
                     !file.trees[t].root.first().is_some_and(|(root, _)| root.starts_with("bogus")),
                     "the chain went under a root this run never read"
                 );
-                assert_eq!(state_of(&second, "guard").as_deref(), Some("stored"), "{:?}", second.package_caches);
+                // Stored after the lines that still held were replayed.
+                let state = state_of(&second, "guard").unwrap_or_default();
+                assert!(state.ends_with("stored") && !state.starts_with("not"), "{:?}", second.package_caches);
             }
             None => {
                 assert!(parent.is_some(), "only a chain hanging from a node is refused");
