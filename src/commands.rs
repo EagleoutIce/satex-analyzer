@@ -304,7 +304,7 @@ impl Machine<'_> {
                 crate::linebreak::Kp::Mark(c, t) if Some(c) == class => Some(texts[t as usize].clone()),
                 _ => None,
             });
-            Some(if first { found.next() } else { found.last() })
+            Some(if first { found.next() } else { found.next_back() })
         };
         let top = find(&hist, false);
         let text = match code {

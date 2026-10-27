@@ -1582,8 +1582,7 @@ impl Env {
         a: &PathEnv,
         b: &PathEnv,
         typed: &Typed,
-        widen: bool,
-        paired: bool,
+        (widen, paired): (bool, bool),
         after: &[Option<Vec<Token>>],
     ) -> (PathEnv, Vec<Sym>, bool) {
         self.rewind(fork);

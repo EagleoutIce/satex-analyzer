@@ -515,9 +515,10 @@ fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Opt
     let beside = Path::new(path).parent().map(|d| d.join(&file));
     let shipped =
         load.and_then(|l| l.path.as_deref()).and_then(|p| Path::new(p).parent()).map(|d| d.join("bbx").join(&file));
-    match beside.into_iter().chain(shipped).chain(dirs.dirs.iter().map(|d| d.join(&file))).find(|p| p.is_file()) {
-        Some(found) => md.push_str(&format!("`{}`\n\n", found.display())),
-        None => {}
+    if let Some(found) =
+        beside.into_iter().chain(shipped).chain(dirs.dirs.iter().map(|d| d.join(&file))).find(|p| p.is_file())
+    {
+        md.push_str(&format!("`{}`\n\n", found.display()));
     }
     let databases: Vec<&str> = analysis
         .facts

@@ -2620,7 +2620,7 @@ impl Machine<'_> {
         let syms = self.typed_syms();
         let typed = crate::env::typed!(self, syms);
         self.out.joined_slots += (a.env.len() + b.env.len()) as u64;
-        let (env, slots, waiting) = self.env.join_paths(fork, &a.env, &b.env, &typed, widen, paired, &after);
+        let (env, slots, waiting) = self.env.join_paths(fork, &a.env, &b.env, &typed, (widen, paired), &after);
         // Widened, a name the loop makes from a number (`\flag test 12`,
         // `\csname f\the\i`) is one of a family that may be defined
         // ([`Wild`]): its members stay as defined, and one more is no

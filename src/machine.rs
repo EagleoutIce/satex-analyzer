@@ -1102,6 +1102,8 @@ type Streams = Rc<HashMap<i64, (Rc<Vec<String>>, usize)>>;
 /// The files this run opened with `\openout`, by name: the text written so
 /// far, or `None` once what they hold is unknown (a deferred `\write`, an
 /// unpinned stream).
+/// Names written and what they held then.
+type Written = Rc<[(Sym, Option<Binding>)]>;
 type Outputs = Rc<HashMap<String, Option<String>>>;
 /// The lines a deferred `\write` gave each file: written at the next
 /// shipout (tex.web § 1370), not before.
@@ -1496,7 +1498,7 @@ pub struct Machine<'a> {
     expansion_sites: crate::fixed::LookupMap<(Span, Sym), Site>,
     /// Per site, the names written in the round before its last expansion
     /// and what they held then, under [`Site::assigned`] of that one.
-    site_writes: HashMap<(Span, Sym), (u64, Rc<[(Sym, Option<Binding>)]>)>,
+    site_writes: HashMap<(Span, Sym), (u64, Written)>,
     /// Hashes of input lists' pending heads, by list and position: a deep
     /// input below a call is hashed once, not at every call.
     shape_memo: std::cell::RefCell<Vec<ShapeSlot>>,
