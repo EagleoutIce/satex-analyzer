@@ -582,7 +582,9 @@ pub(crate) struct StoreLock(#[allow(dead_code)] std::fs::File);
 
 impl StoreLock {
     pub(crate) fn try_take(target: &Path) -> Option<StoreLock> {
-        let file = std::fs::File::options().create(true).append(true).open(lock_for(target)).ok()?;
+        // Read and write, not append: Windows locks only a handle opened so.
+        let file =
+            std::fs::File::options().read(true).write(true).create(true).truncate(false).open(lock_for(target)).ok()?;
         file.try_lock().ok()?;
         Some(StoreLock(file))
     }
