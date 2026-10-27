@@ -582,16 +582,33 @@ impl Machine<'_> {
     /// untyped digits or character in it. Typed digits read as their
     /// interval. A token for one of several texts is read as each of them.
     fn exact_text(&self, text: &[Token]) -> bool {
-        text.iter().all(|t| match t.tok {
-            Tok::Chr(c, _) => !crate::tex::is_unknown_char(c),
-            Tok::Cs(_) if let Some(texts) = self.one_of_members(*t) => texts.iter().all(|t| self.exact_text(t)),
-            Tok::Cs(sym) => {
-                (self.typed_digits_of(sym).is_some() || !self.is_unknown_digits(sym))
-                    && !self.is_unknown_name(sym)
-                    && !matches!(self.env.meaning(sym), Meaning::Unknown)
+        // A worklist, not recursion: one-of texts nest one-of tokens to any
+        // depth, and each is looked at once.
+        let mut work: Vec<std::rc::Rc<[Token]>> = vec![std::rc::Rc::from(text)];
+        let mut seen: crate::fixed::HashSet<crate::tex::Sym> = crate::fixed::HashSet::default();
+        while let Some(text) = work.pop() {
+            for t in text.iter() {
+                let exact = match t.tok {
+                    Tok::Chr(c, _) => !crate::tex::is_unknown_char(c),
+                    Tok::Cs(sym) if let Some(texts) = self.one_of_members(*t) => {
+                        if seen.insert(sym) {
+                            work.extend(texts);
+                        }
+                        true
+                    }
+                    Tok::Cs(sym) => {
+                        (self.typed_digits_of(sym).is_some() || !self.is_unknown_digits(sym))
+                            && !self.is_unknown_name(sym)
+                            && !matches!(self.env.meaning(sym), Meaning::Unknown)
+                    }
+                    Tok::Param(_) => true,
+                };
+                if !exact {
+                    return false;
+                }
             }
-            Tok::Param(_) => true,
-        })
+        }
+        true
     }
 
     fn digit(&self, token: Token, radix: i64) -> Option<i64> {
