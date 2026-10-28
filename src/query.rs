@@ -428,7 +428,9 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// reads `{taken|not taken}`, one choice per conditional. Text set in a box
 /// reads `⟦…⟧`: it reaches the page only if the box is used. `c…` is a
 /// character a loop set any number of times. `·` is a gap where the line
-/// breaker may set a hyphen (tex.web § 923).
+/// breaker may set a hyphen (tex.web § 923). A run cut short ends in a
+/// `⟨?⟩` paragraph with `cut` set: `kernel` when the kernel was read only
+/// partly (it is then the only paragraph), `run` when the document was.
 fn typeset(analysis: &Analysis) -> Vec<Record> {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
@@ -502,6 +504,22 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     close(&mut line, &mut choice, &mut causes);
     if !line.trim().is_empty() {
         out.push(paragraph(analysis, first.unwrap_or_default(), &line, causes));
+    }
+    // A kernel read only partly leaves the document names the engine's
+    // format defines (`\documentclass` set as text), so none of the text is
+    // sure; a run that stopped early never set the rest.
+    let kernel_cut = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d.code, "format-truncated" | "format-incomplete" | "preload-truncated"));
+    if kernel_cut {
+        out.clear();
+    }
+    if kernel_cut || analysis.exhausted {
+        let mut rest = paragraph(analysis, Span::default(), &note("⟨?⟩"), vec![Cause::Unknown(Span::default())]);
+        rest.insert("cut".into(), json!(if kernel_cut { "kernel" } else { "run" }));
+        out.push(rest);
     }
     let mut named: Vec<&str> = Vec::new();
     for d in analysis.facts.diagnostics.iter().filter(|d| d.severity == crate::facts::Severity::Assumption) {

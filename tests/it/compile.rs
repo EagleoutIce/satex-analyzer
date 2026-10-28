@@ -17,7 +17,7 @@ fn the_build_log_is_explained_where_it_arose() {
     .unwrap();
     std::fs::write(dir.join("part.tex"), "Some \\foo text.\n").unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_satex"))
-        .args(["compile", "-f", "doc.tex", "--format", "json"])
+        .args(["compile", "-f", "doc.tex", "--format", "json", "--set", "limits.seconds=0"])
         .current_dir(&dir)
         .env_remove("DISPLAY")
         .env_remove("WAYLAND_DISPLAY")

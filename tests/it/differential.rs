@@ -383,14 +383,39 @@ fn typeset_covers(stem: &str) {
     let _one = ONE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let out = Command::new(env!("CARGO_BIN_EXE_satex"))
         .current_dir(&dir)
-        .args(["query", "typeset", "-f", &format!("{stem}.tex"), "--format", "json"])
+        // No wall clock: a busy runner must not cut the kernel build short
+        // and turn the comparison into `⟨?⟩`.
+        .args(["query", "typeset", "-f", &format!("{stem}.tex"), "--format", "json", "--set", "limits.seconds=0"])
         .output()
         .expect("satex runs");
     let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    // A run cut short typesets `⟨?⟩`, which covers anything: sound, but it
+    // would let a challenge pass without being followed.
+    let cut: Vec<&serde_json::Value> = rows.iter().filter(|r| r.get("cut").is_some()).collect();
+    assert!(cut.is_empty(), "{stem}: the run was cut short: {cut:?}");
     let computed: Vec<&str> =
         rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
     let verdict = satex::query::typeset_verdict(&computed.join(" "), &engine.join(" "));
     assert_ne!(verdict, "DIFFERS", "{stem}: pdflatex sets {engine:?}, satex computes {computed:?}");
+}
+
+/// A kernel read only partly sets nothing sure: without `\documentclass`
+/// the class name would read as text pdflatex never sets.
+#[test]
+fn a_kernel_cut_short_typesets_unknown_text() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/src/wiki/challenges");
+    let out = Command::new(env!("CARGO_BIN_EXE_satex"))
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "05-packages.tex", "--format", "json"])
+        .args(["--set", "limits.seconds=0", "--set", "limits.format_steps=20000", "--set", "cache.enabled=false"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let text: Vec<&str> =
+        rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
+    assert_eq!(text, ["⟨?⟩"]);
+    let cut: Vec<&str> = rows.iter().filter_map(|r| r["cut"].as_str()).collect();
+    assert_eq!(cut, ["kernel"]);
 }
 
 /// Capability: typesetting feedback. The hyphenation points satex marks
@@ -408,7 +433,7 @@ fn hyphenation_points_match_showhyphens() {
     .unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_satex"))
         .current_dir(&dir)
-        .args(["query", "typeset", "-f", "h.tex", "--format", "json"])
+        .args(["query", "typeset", "-f", "h.tex", "--format", "json", "--set", "limits.seconds=0"])
         .output()
         .expect("satex runs");
     let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
