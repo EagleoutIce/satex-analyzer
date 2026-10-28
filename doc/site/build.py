@@ -24,8 +24,26 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()[:12]
 
 
-# How many satex runs go at once: each takes a core and up to a few GB.
-JOBS = max(1, (os.cpu_count() or 2) // 2)
+# How many satex runs go at once: each takes a core and up to 2 GB; SATEX_SITE_JOBS overrides.
+MEMORY = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") if hasattr(os, "sysconf") else 0
+JOBS = int(os.environ.get("SATEX_SITE_JOBS") or max(1, min(os.cpu_count() or 2, MEMORY // 2**31 or 1)))
+
+
+def parallel(label, jobs, f):
+    """`f` of each job, in order, JOBS at a time, counting the finished ones on stderr."""
+    jobs, out, done = list(jobs), {}, 0
+    tty = sys.stderr.isatty()
+    with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
+        running = {pool.submit(f, job): i for i, job in enumerate(jobs)}
+        for finished in concurrent.futures.as_completed(running):
+            out[running[finished]] = finished.result()
+            done += 1
+            line = f"playground: {label}: {done}/{len(jobs)}"
+            if tty:
+                print(f"\r{line}", end="\n" if done == len(jobs) else "", file=sys.stderr, flush=True)
+            elif done == len(jobs) or done % max(1, len(jobs) // 10) == 0:
+                print(line, file=sys.stderr)
+    return [out[i] for i in range(len(jobs))]
 # What `satex query files` listed, by what it depends on: the document, the
 # flags, the project config and the installation (its ls-R files). A listing
 # does not depend on the satex build, so a rebuild reuses it; --fresh drops it.
@@ -270,24 +288,21 @@ def bundle(satex, work):
 
     absent = {}
     reads = {}  # (kernel, document or package) -> the distribution files it reads
-    print(f"playground: the files {len(docs)} examples read under {len(KERNELS)} kernels", file=sys.stderr)
-    with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
-        jobs = [(kernel, flags, doc) for kernel, _, flags in KERNELS for doc in docs]
-        for (kernel, _, doc), paths in zip(jobs, pool.map(lambda j: listed((j[1], j[2], ROOT)), jobs)):
-            reads[(kernel, doc.name)] = paths
-        # The names: the list's, then every package or class an example reads.
-        every = list(dict.fromkeys(package_names() + sorted(
-            f"{p.stem}.cls" if p.suffix == ".cls" else p.stem for paths in reads.values() for p in paths if p.suffix in (".sty", ".cls"))))
-        # Names the installation has (test fixtures' names are not); plain TeX loads no LaTeX package.
-        have = set(Path(p).name for p in subprocess.run(["kpsewhich", *map(file_of, every)], capture_output=True, text=True).stdout.split())
-        every = [n for n in every if file_of(n) in have]
-        pjobs = [(kernel, flags, name) for kernel, _, flags in KERNELS if kernel != "plain" for name in every]
-        print(f"playground: the files {len(every)} packages read, {len(pjobs)} runs", file=sys.stderr)
-        for (kernel, _, name), paths in zip(pjobs, pool.map(lambda j: listed((j[1], probe_doc(probes, j[2]), probes)), pjobs)):
-            if file_of(name) in {p.name for p in paths}:
-                reads[(kernel, name)] = paths
-            else:
-                absent.setdefault(kernel, []).append(name)
+    jobs = [(kernel, flags, doc) for kernel, _, flags in KERNELS for doc in docs]
+    for (kernel, _, doc), paths in zip(jobs, parallel("the files the examples read", jobs, lambda j: listed((j[1], j[2], ROOT)))):
+        reads[(kernel, doc.name)] = paths
+    # The names: the list's, then every package or class an example reads.
+    every = list(dict.fromkeys(package_names() + sorted(
+        f"{p.stem}.cls" if p.suffix == ".cls" else p.stem for paths in reads.values() for p in paths if p.suffix in (".sty", ".cls"))))
+    # Names the installation has (test fixtures' names are not); plain TeX loads no LaTeX package.
+    have = set(Path(p).name for p in subprocess.run(["kpsewhich", *map(file_of, every)], capture_output=True, text=True).stdout.split())
+    every = [n for n in every if file_of(n) in have]
+    pjobs = [(kernel, flags, name) for kernel, _, flags in KERNELS if kernel != "plain" for name in every]
+    for (kernel, _, name), paths in zip(pjobs, parallel("the files each package reads", pjobs, lambda j: listed((j[1], probe_doc(probes, j[2]), probes)))):
+        if file_of(name) in {p.name for p in paths}:
+            reads[(kernel, name)] = paths
+        else:
+            absent.setdefault(kernel, []).append(name)
     for kernel, names in absent.items():
         print(f"playground: {len(names)} packages not offered under {kernel} (they do not load there)", file=sys.stderr)
     for path in set().union(*reads.values()):  # the build tree: every file any of them reads
@@ -314,9 +329,7 @@ def bundle(satex, work):
         run(str(satex), "cache", "export", str(archive), env=kenv)
         return archive
 
-    print(f"playground: kernel caches for {', '.join(k for k, _, _ in KERNELS)}", file=sys.stderr)
-    with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
-        archives = list(pool.map(lambda k: kernel_caches(k[0], k[2]), KERNELS))
+    archives = parallel("kernel caches", KERNELS, lambda k: kernel_caches(k[0], k[2]))
     tables, have = [], set()
     for (kernel, _, _), archive in zip(KERNELS, archives):
         files = {bundled(p): p.read_bytes() for p in sorted(reads[(kernel, SAMPLE)]) if bundled(p) not in have}
@@ -337,7 +350,8 @@ def bundle(satex, work):
         shutil.rmtree(cache, ignore_errors=True)
         shutil.copytree(work / f"cache-{kernel}", cache, copy_function=os.link, ignore=shutil.ignore_patterns("*.lock"))
         penv = dict(os.environ, SATEX_CACHE=str(cache))
-        with concurrent.futures.ThreadPoolExecutor(JOBS) as inner:
+        # the kernels' runs go at once (`ran`), so each takes its share of the jobs
+        with concurrent.futures.ThreadPoolExecutor(max(1, JOBS // len(KERNELS))) as inner:
             list(inner.map(lambda d: subprocess.run([str(satex), *flags, "lint", "-f", d.name], cwd=project, env=penv,
                                                     capture_output=True, check=False), docs))
         out = work / f"export-{kernel}.bin"
@@ -351,8 +365,7 @@ def bundle(satex, work):
         return archives
 
     parts = {}  # (kernel, name) -> [files, cache archive, direct needs]
-    print("playground: package caches from the examples' runs", file=sys.stderr)
-    ran = {kernel: fresh(kernel, flags) for kernel, _, flags in KERNELS}
+    ran = dict(zip((k for k, _, _ in KERNELS), parallel("package caches from the examples", KERNELS, lambda k: fresh(k[0], k[2]))))
     for (kernel, name) in reads:
         if name in {d.name for d in docs}:
             continue
