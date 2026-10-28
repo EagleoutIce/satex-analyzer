@@ -14,6 +14,9 @@ export interface Work {
     files?: number;
     lines?: number;
     cached?: number;
+    /** Characters of the job's file read, of `total`. */
+    reached?: number;
+    total?: number;
     ms?: number;
     paths?: number;
     probe?: string;
@@ -90,7 +93,9 @@ export class Status implements vscode.Disposable {
             this.item.text = '$(error) satex';
             this.item.tooltip = 'The satex server stopped: see the output "satex". Click to open the satex view.';
         } else if (this.busy.text) {
-            this.item.text = `$(sync~spin) satex: ${this.busy.text}`;
+            const { reached, total } = this.busy;
+            const done = total ? ` ${Math.min(100, Math.floor((reached ?? 0) * 100 / total))}%` : '';
+            this.item.text = `$(sync~spin) satex: ${this.busy.text}${done}`;
             this.item.tooltip = explain(this.busy);
         } else {
             const counts = errors + warnings > 0 ? ` $(error) ${errors} $(warning) ${warnings}` : ' $(check)';
