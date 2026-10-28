@@ -309,6 +309,7 @@
   function sync() {
     clearTimeout(timer);
     if (push()) {
+      prefetch();
       // the root's text may now ask for another engine
       if (state.file === state.root && wanted() !== state.kernel && !manualKernel && !following) { following = true; restart().finally(() => { following = false; }); return; }
       analyze(); explainSoon();
@@ -1410,6 +1411,17 @@
 
   /** A kernel's bundle, fetched once, then the server and the run start over with it. */
   async function kernel(i) {
+    await loadKernel(i);
+    state.kernel = i;
+    kernelBox.value = i;
+  }
+  /** Fetches and sets up kernel `i`, once, without selecting it. */
+  const loadingKernels = new Map();
+  function loadKernel(i) {
+    if (!loadingKernels.has(i)) loadingKernels.set(i, fetchKernel(i).catch((e) => { loadingKernels.delete(i); throw e; }));
+    return loadingKernels.get(i);
+  }
+  async function fetchKernel(i) {
     const entry = manifest.kernels[i];
     if (!state.loaded.has(i)) {
       status.textContent = `loading the ${entry.label} kernel (${size(entry.size)})…`;
@@ -1422,8 +1434,6 @@
       loads.clear();
       status.textContent = `${entry.label} ready`;
     }
-    state.kernel = i;
-    kernelBox.value = i;
   }
 
   /** Packages beyond the first download: a bundle each per kernel (the files and cache entries a
@@ -1434,8 +1444,8 @@
   const MISSING = /`([^`\s]+)` is not in this installation/g;
   const NAMED = /\\(?:documentclass|usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
   /** The bundles of the current kernel for `names` (a class too), and what those need, not yet asked for. */
-  function wanted_(names) {
-    const kernel = manifest.kernels[state.kernel].id;
+  function wanted_(names, k = state.kernel) {
+    const kernel = manifest.kernels[k].id;
     const todo = new Set();
     const add = (id) => {
       const entry = PACKAGES.get(id);
@@ -1511,6 +1521,20 @@
   cacheBox.addEventListener('toggle', () => { if (cacheBox.open) drawCaches(); });
   cacheList.onclick = (e) => { const b = e.target.closest('button[data-path]'); if (b) uncache([b.dataset.path]); };
   $('cache-clear').onclick = async () => uncache((await ask({ type: 'caches' })).entries.map((e) => e.path));
+
+  /** What the project's files ask for, fetched in the background as soon as they name it: the
+   * kernel the root's text points to, then its bundles of the packages and classes named, so a
+   * check or a switch of kernel finds them loaded. */
+  let prefetched = Promise.resolve();
+  function prefetch() {
+    const k = manualKernel ? state.kernel : wanted();
+    const texts = Object.entries(state.texts).filter(([n]) => !(n in state.ro)).map(([, t]) => t);
+    prefetched = prefetched.then(async () => {
+      if (k !== state.kernel) await loadKernel(k);
+      const ids = wanted_(named(texts), k).filter((id) => !fetchedPackages.has(id));
+      if (ids.length) await fetchPackages(ids);
+    }).catch(() => {});
+  }
 
   /** After findings or a run name missing packages: fetch them, start over. */
   async function fetchMissing(texts) {
