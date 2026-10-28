@@ -162,7 +162,7 @@ The tree adds, renames and deletes files and makes another file the root. A rena
 Uploaded files join the open project. A folder or a zip is unpacked in the page and goes to `/work/upload`. A permalink is the project's changed files, the root, the open file, the arguments, the kernel and the selection, deflated into the URL's hash.
 `doc/site/playground.yaml` is the satex.yaml of those runs.
 
-`cargo playground` does all of it and serves the result at <http://127.0.0.1:8000/play/> (`--port`, `--out`). It builds with the incremental `playground` profile, so a rebuild after an edit takes seconds; `--release` builds what the published site ships.
+`cargo playground` does all of it and serves the result at <http://127.0.0.1:8000/play/> (`--port`, `--out`). It builds with the incremental `playground` profile, so a rebuild after an edit takes seconds; `--release` builds what the published site ships. A last build serves at once while the new one builds, and replaces it when done.
 To build and test it step by step you need the native and the wasm build, the
 [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html) (the version in the workflow), pandoc and pdftocairo:
 
