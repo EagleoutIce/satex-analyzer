@@ -278,8 +278,8 @@ body.play main { padding: 0; height: 100%; display: grid; grid-template-rows: mi
 button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .fix-safe { color: var(--safe); } .fix-unsafe { color: var(--unsafe); }
 .diagnostics li.open { box-shadow: var(--shadow); }
-.explain { margin-top: .5rem; padding-top: .5rem; border-top: 1px dashed var(--border); cursor: auto; animation: fade .25s var(--ease); }
-.explain p { margin: .35rem 0; } .explain .refs { font-size: .82rem; }
+.explain { margin-top: .5rem; padding-top: .5rem; border-top: 1px solid var(--border); cursor: auto; animation: fade .25s var(--ease); }
+.explain p { margin: .35rem 0; } .explain .refs { font-size: .82rem; margin-top: .6rem; padding-top: .45rem; border-top: 1px solid var(--border); }
 .chip { display: inline-block; font: 12px ui-monospace, Menlo, monospace; padding: 0 .45rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
 /* the editor: hover cards, underlines and gutter markers in the site's colors */
 .cm-tooltip.cm-tooltip-hover, .cm-tooltip-lint { background: var(--panel) !important; color: var(--fg); border: 1px solid var(--border) !important; border-radius: 8px; box-shadow: var(--shadow); overflow: hidden; }
@@ -544,9 +544,9 @@ details.more[open] > summary { margin-bottom: .3rem; }
 @media (prefers-reduced-motion: reduce) { .ibar::after { animation-duration: 3s; } }
 .og-error { --sev: var(--error); } .og-warning { --sev: var(--warning); } .og-info { --sev: var(--info); }
 
-/* findings as a flat list, after flowR's: a thin severity line at the left, even tight gaps, no boxes */
-.diagnostics li:not(.cat-group, .obj-group) { padding: .2rem .4rem .2rem .6rem; margin: 0 0 .1rem; border: 0; border-left: 2px solid var(--sev); border-radius: 0 6px 6px 0; background: none; box-shadow: none; }
-.diagnostics li:not(.cat-group, .obj-group):hover, .diagnostics li.open:not(.cat-group, .obj-group) { background: var(--sunk); box-shadow: none; }
+/* findings as compact boxes: a severity edge at the left, the rule and message on one line */
+.diagnostics li:not(.cat-group, .obj-group) { padding: .3rem .5rem .3rem .6rem; margin: 0 0 .3rem; border: 1px solid var(--border); border-left: 3px solid var(--sev); border-radius: 6px; background: var(--panel); box-shadow: none; }
+.diagnostics li:not(.cat-group, .obj-group):hover, .diagnostics li.open:not(.cat-group, .obj-group) { background: var(--sunk); box-shadow: var(--shadow); }
 .diagnostics li:hover > .acts, .diagnostics li:focus-within > .acts { background: var(--sunk); }
 .diagnostics li.open .msg + *, .diagnostics li .msg + * { margin-top: .3rem; }
 .cat-items { margin-top: .15rem; padding-left: 0; border-left: 0; }
