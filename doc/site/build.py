@@ -270,6 +270,7 @@ def bundle(satex, work):
 
     absent = {}
     reads = {}  # (kernel, document or package) -> the distribution files it reads
+    print(f"playground: the files {len(docs)} examples read under {len(KERNELS)} kernels", file=sys.stderr)
     with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
         jobs = [(kernel, flags, doc) for kernel, _, flags in KERNELS for doc in docs]
         for (kernel, _, doc), paths in zip(jobs, pool.map(lambda j: listed((j[1], j[2], ROOT)), jobs)):
@@ -281,6 +282,7 @@ def bundle(satex, work):
         have = set(Path(p).name for p in subprocess.run(["kpsewhich", *map(file_of, every)], capture_output=True, text=True).stdout.split())
         every = [n for n in every if file_of(n) in have]
         pjobs = [(kernel, flags, name) for kernel, _, flags in KERNELS if kernel != "plain" for name in every]
+        print(f"playground: the files {len(every)} packages read, {len(pjobs)} runs", file=sys.stderr)
         for (kernel, _, name), paths in zip(pjobs, pool.map(lambda j: listed((j[1], probe_doc(probes, j[2]), probes)), pjobs)):
             if file_of(name) in {p.name for p in paths}:
                 reads[(kernel, name)] = paths
@@ -302,15 +304,21 @@ def bundle(satex, work):
     (project / "satex.yaml").write_text(config)
     (probes / "satex.yaml").write_text(config)
 
-    # Kernels: the sample's files and the cache entries of running it.
-    tables, have = [], set()
-    for kernel, _, flags in KERNELS:
-        cache = work / f"cache-{kernel}"
-        shutil.rmtree(cache, ignore_errors=True)
-        kenv = dict(os.environ, SATEX_CACHE=str(cache))
+    # Kernels: the sample's files and the cache entries of running it, all kernels at once. A kernel's
+    # cache directory stays from the last build: satex rebuilds what this binary cannot use, and
+    # `cache export` writes only the valid entries.
+    def kernel_caches(kernel, flags):
+        kenv = dict(os.environ, SATEX_CACHE=str(work / f"cache-{kernel}"))
         subprocess.run([str(satex), *flags, "lint", "-f", SAMPLE], cwd=project, env=kenv, capture_output=True, check=False)
         archive = work / f"satex-cache-{kernel}.bin"
         run(str(satex), "cache", "export", str(archive), env=kenv)
+        return archive
+
+    print(f"playground: kernel caches for {', '.join(k for k, _, _ in KERNELS)}", file=sys.stderr)
+    with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
+        archives = list(pool.map(lambda k: kernel_caches(k[0], k[2]), KERNELS))
+    tables, have = [], set()
+    for (kernel, _, _), archive in zip(KERNELS, archives):
         files = {bundled(p): p.read_bytes() for p in sorted(reads[(kernel, SAMPLE)]) if bundled(p) not in have}
         have |= set(files)
         tables.append({**files, f"/kernels/{kernel}/satex-cache.bin": archive.read_bytes()})
@@ -343,6 +351,7 @@ def bundle(satex, work):
         return archives
 
     parts = {}  # (kernel, name) -> [files, cache archive, direct needs]
+    print("playground: package caches from the examples' runs", file=sys.stderr)
     ran = {kernel: fresh(kernel, flags) for kernel, _, flags in KERNELS}
     for (kernel, name) in reads:
         if name in {d.name for d in docs}:
