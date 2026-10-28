@@ -508,8 +508,9 @@ fn roles_at(analysis: &Analysis, typed: &Typed, cmd: &str, depth: usize) -> Vec<
     {
         out.extend(flow(analysis, typed, body, depth));
     }
-    // A command the project defines anew is what its body says.
-    if body.is_none() {
+    // A command the project defines anew is what its body says; the
+    // conventions stand in only where the run saw nothing of it.
+    if body.is_none() && !out.iter().any(|r| matches!(r.kind, RoleKind::Occ(_) | RoleKind::Load(_))) {
         out.extend(seed(cmd));
     }
     out
