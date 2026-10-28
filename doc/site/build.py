@@ -24,9 +24,17 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()[:12]
 
 
-# How many satex runs go at once: each takes a core and up to 2 GB; SATEX_SITE_JOBS overrides.
-MEMORY = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") if hasattr(os, "sysconf") else 0
-JOBS = int(os.environ.get("SATEX_SITE_JOBS") or max(1, min(os.cpu_count() or 2, MEMORY // 2**31 or 1)))
+def available_memory():
+    """The memory free for new work (Linux's MemAvailable), else half of all of it."""
+    try:
+        return int(re.search(r"MemAvailable:\s+(\d+) kB", Path("/proc/meminfo").read_text())[1]) * 1024
+    except (OSError, TypeError):
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // 2 if hasattr(os, "sysconf") else 0
+
+
+# How many satex runs go at once: each takes a core and up to 2 GB of the memory free now;
+# SATEX_SITE_JOBS overrides.
+JOBS = int(os.environ.get("SATEX_SITE_JOBS") or max(1, min(os.cpu_count() or 2, available_memory() // 2**31)))
 
 
 def parallel(label, jobs, f):
