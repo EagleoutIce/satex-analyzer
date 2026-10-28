@@ -378,6 +378,9 @@ fn typeset_covers(stem: &str) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/src/wiki/challenges");
     let engine = std::fs::read_to_string(dir.join(format!("{stem}.pdflatex.txt"))).expect("kept pdflatex text");
     let engine: Vec<&str> = engine.lines().filter(|l| !l.starts_with("! ")).collect();
+    // One at a time: racing cold runs on one kernel cache lose the kernel.
+    static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = ONE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let out = Command::new(env!("CARGO_BIN_EXE_satex"))
         .current_dir(&dir)
         .args(["query", "typeset", "-f", &format!("{stem}.tex"), "--format", "json"])
