@@ -94,3 +94,13 @@ fn diagnostics_formats_are_accepted_by_lint() {
         }
     }
 }
+
+/// `\newcommand` looks for a star (`\@star@or@long`) in front of the control
+/// sequence it reads: a star wanted there is an item of its own.
+#[test]
+fn newcommand_takes_a_star_before_its_name() {
+    let output = run(&["explain", "-f", SAMPLE, "\\newcommand", "--format", "json"]);
+    let rows: serde_json::Value = serde_json::from_slice(&output.stdout).expect("json");
+    let signature = rows[0]["signature"].as_str().unwrap_or_default();
+    assert!(signature.starts_with('s'), "{rows}");
+}
