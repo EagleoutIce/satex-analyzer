@@ -1351,6 +1351,8 @@ fn file_exts(analysis: &Analysis, ty: crate::roles::Ty) -> Option<Exts> {
             let exts: BTreeSet<String> = occ.filter_map(|o| Some(o.key.rsplit_once('.')?.1.to_string())).collect();
             Some((exts.into_iter().collect(), None))
         }
+        // `\input` adds `.tex` only to a name without an extension (tex.web § 537): any file goes.
+        FileKind::Tex => Some((vec!["tex".into(), String::new()], None)),
         k => Some((vec![k.ext()?.to_string()], k.tree())),
     }
 }
@@ -1380,17 +1382,41 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
             let found = crate::distribution::names_with(&analysis.distribution.roots, dir, &format!(".{ext}"));
             names.extend(found.into_iter().map(|n| (n, 1)));
         }
-        let detail = Some(format!(".{}", exts.join(", .")));
+        let listed: Vec<String> = exts.iter().filter(|e| !e.is_empty()).map(|e| format!(".{e}")).collect();
+        let detail = |n: &str| match n.rsplit_once('.').filter(|(_, e)| !e.contains('/')) {
+            Some((stem, ext)) => loader(analysis, ext, stem),
+            None => Some(listed.join(", ")),
+        };
         let names = names.into_iter().filter(|(n, _)| n.starts_with(typed));
-        out.extend(names.map(|(n, rank)| item(n, CompletionItemKind::FILE, detail.clone(), rank)));
+        out.extend(names.map(|(n, rank)| {
+            let detail = detail(&n);
+            item(n, CompletionItemKind::FILE, detail, rank)
+        }));
     }
     out.sort_by(|a, b| (&a.label, &a.sort_text).cmp(&(&b.label, &b.sort_text)));
     out.dedup_by(|a, b| a.label == b.label);
     out
 }
 
-/// Files under the project root with one of `exts`, relative and without
-/// the extension, as `\input` and `\includegraphics` take them.
+/// What a file of extension `ext` is, and the command this run loaded such
+/// files with (`\usepackage{stem}`), if it loaded any.
+fn loader(analysis: &Analysis, ext: &str, stem: &str) -> Option<String> {
+    let kind = crate::roles::FileKind::of_ext(ext)?;
+    let load = match kind {
+        crate::roles::FileKind::Sty => crate::builtins::LoadKind::Package,
+        crate::roles::FileKind::Cls => crate::builtins::LoadKind::Class,
+        _ => return Some(kind.label().to_string()),
+    };
+    let by = analysis.facts.loads.iter().filter(|l| l.kind == load && l.depth == 0).find_map(|l| l.by);
+    Some(match by {
+        Some(cs) => format!("{}: \\{}{{{stem}}} loads it", kind.label(), analysis.interner.name(cs)),
+        None => kind.label().to_string(),
+    })
+}
+
+/// Files under the project root with one of `exts` (`""`: any other),
+/// relative, without a listed extension, as `\input` and `\includegraphics`
+/// take them.
 fn project_files(analysis: &Analysis, exts: &[&str]) -> Vec<String> {
     let root = &analysis.project.root;
     let mut out = Vec::new();
@@ -1407,10 +1433,14 @@ fn project_files(analysis: &Analysis, exts: &[&str]) -> Vec<String> {
                 if stack.len() < 64 {
                     stack.push(path);
                 }
-            } else if path.extension().and_then(|e| e.to_str()).is_some_and(|e| exts.contains(&e))
-                && let Ok(rel) = path.with_extension("").strip_prefix(root)
-            {
-                out.push(rel.to_string_lossy().replace('\\', "/"));
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                let listed = exts.contains(&ext);
+                let shown = if listed { path.with_extension("") } else { path.clone() };
+                if (listed || exts.contains(&""))
+                    && let Ok(rel) = shown.strip_prefix(root)
+                {
+                    out.push(rel.to_string_lossy().replace('\\', "/"));
+                }
             }
         }
     }
