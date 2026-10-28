@@ -17,7 +17,7 @@ local function unknown_function() unknown() end
 -- What LuaTeX has (luatex_fields.txt): `globals[name]` and
 -- `fields[library][name]` are the type of the value.
 local globals, fields = {}, {}
-for line in satex.fields:gmatch("[^\n]+") do
+for line in satex.fields:gmatch("[^\r\n]+") do
   local kind, a, b, c = line:match("^([GF]) (%S+) (%S+) ?(%S*)$")
   if kind == "G" then globals[a] = b
   elseif kind == "F" then fields[a] = fields[a] or {} fields[a][b] = c end

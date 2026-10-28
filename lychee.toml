@@ -3,11 +3,17 @@
 #
 #   lychee --config lychee.toml \
 #     --remap "https://github\.com/EagleoutIce/satex-analyzer/blob/main/([^#]*)(#.*)? file://$PWD/\$1" \
+#     --remap '^https://mirrors\.ctan\.org/(.*)$ https://ctan.net/$1' \
 #     *.md doc/**/*.md
 #
-# The remap checks links into this repository's `main` against the checkout,
-# so a file added on a branch is found before it is merged; it needs the
-# absolute path, which a config file cannot spell.
+# The first remap checks links into this repository's `main` against the
+# checkout, so a file added on a branch is found before it is merged; it
+# needs the absolute path, which a config file cannot spell.
+# The second: `mirrors.ctan.org` redirects each request to a mirror picked
+# by location, and some serve a certificate lychee does not trust, so the
+# result would depend on which one answered. The path is the same on every
+# mirror; check it against one fixed mirror (DANTE's) instead. Both stay on
+# the command line, together.
 
 # GitHub line-anchored blobs (`#L1234`) and CTAN mirrors occasionally answer
 # slowly or rate-limit; retry a few times before failing the run.

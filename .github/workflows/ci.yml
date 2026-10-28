@@ -124,6 +124,16 @@ jobs:
         shell: bash
         run: kpsewhich latex.ltx
 
+      # .gitattributes keeps text files LF; a CRLF checkout broke the Lua
+      # tests here once, so fail early and say why if it ever comes back.
+      - name: The checkout has LF line ends
+        shell: bash
+        run: |
+          if git ls-files --eol | grep 'w/crlf'; then
+            echo "files checked out with CRLF line ends (see .gitattributes)" >&2
+            exit 1
+          fi
+
       # Most other modules assume a LaTeX kernel without saying so and fail
       # rather than skip when scheme-basic is missing a package; these are
       # the ones that either need no distribution or only what scheme-basic
@@ -262,6 +272,14 @@ jobs:
         shell: bash
         run: kpsewhich latex.ltx
 
+      - name: The checkout has LF line ends
+        shell: bash
+        run: |
+          if git ls-files --eol | grep 'w/crlf'; then
+            echo "files checked out with CRLF line ends (see .gitattributes)" >&2
+            exit 1
+          fi
+
       - name: Test
         shell: bash
         env:
@@ -329,7 +347,9 @@ jobs:
   link-check:
     name: Check documentation links
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Usually two minutes, but slow hosts plus lychee's retries have taken
+    # fourteen.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
 
@@ -341,11 +361,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           # Links into this repository's `main` are checked against the
-          # checkout (see lychee.toml).
+          # checkout, and CTAN's mirror redirector against one fixed mirror
+          # (see lychee.toml).
           args: >-
             --config lychee.toml
             --no-progress
             --remap 'https://github\.com/EagleoutIce/satex-analyzer/blob/main/([^#]*)(#.*)? file://${{ github.workspace }}/$1'
+            --remap '^https://mirrors\.ctan\.org/(.*)$ https://ctan.net/$1'
             *.md
             doc/**/*.md
           fail: true
