@@ -26,6 +26,35 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # Which job groups the change concerns (scripts/ci-changes.sh), so a
+  # change to, say, the VS Code extension alone runs no Rust tests.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      rust: ${{ steps.detect.outputs.rust }}
+      links: ${{ steps.detect.outputs.links }}
+      citations: ${{ steps.detect.outputs.citations }}
+    steps:
+      # A pull request checks out its merge commit, whose first parent is
+      # the base; a push is compared with the commit it replaced.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+
+      - id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          base=
+          case "$EVENT" in
+            pull_request) base=HEAD^1 ;;
+            push) git fetch --depth=1 origin "$BEFORE" && base=$BEFORE || true ;;
+          esac
+          scripts/ci-changes.sh "$base" | tee -a "$GITHUB_OUTPUT"
+
   # ---------------------------------------------------------------------
   # Quick tier: every push and pull request.  Three OSes, current TeX Live
   # only, the default (~11s) compliance_matrix run.  Kept fast enough that
@@ -34,7 +63,8 @@ jobs:
   # ---------------------------------------------------------------------
   quick-linux:
     name: Test ubuntu-latest (${{ matrix.shard }})
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    needs: changes
+    if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     # Shards take 15 to 30 minutes on a busy runner; the limit is there to
     # stop a hang, not a slow day.
@@ -85,7 +115,8 @@ jobs:
 
   quick-other:
     name: Test ${{ matrix.os }}
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    needs: changes
+    if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.changes.outputs.rust == 'true'
     runs-on: ${{ matrix.os }}
     # Usually 20 minutes; room for a slow runner.
     timeout-minutes: 45
@@ -315,6 +346,8 @@ jobs:
 
   lint:
     name: Lint ${{ matrix.os }}
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -349,6 +382,8 @@ jobs:
 
   link-check:
     name: Check documentation links
+    needs: changes
+    if: needs.changes.outputs.links == 'true'
     runs-on: ubuntu-latest
     # Usually two minutes, but slow hosts plus lychee's retries have taken
     # fourteen.
@@ -383,6 +418,8 @@ jobs:
   # (doc/src/tex-web-sections.tsv, doc/src/tex-web-sha.txt, SEMANTICS.md).
   citation-drift:
     name: Check citations against upstream
+    needs: changes
+    if: needs.changes.outputs.citations == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
