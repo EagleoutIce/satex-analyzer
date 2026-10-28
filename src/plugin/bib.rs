@@ -15,7 +15,7 @@ pub struct Entry {
     pub title: String,
     pub author: String,
     pub year: String,
-    /// Every field as written, braces dropped, in entry order.
+    /// Every field as written, its delimiters dropped, in entry order.
     pub fields: Vec<(String, String)>,
     /// The database it was read from, when known.
     pub file: String,
@@ -79,8 +79,8 @@ pub fn entries(text: &str) -> Vec<Entry> {
             entry.fields = fields(&body[end..], if open == '(' { ')' } else { '}' });
             for (name, value) in &entry.fields {
                 match name.as_str() {
-                    "title" => entry.title = value.clone(),
-                    "author" => entry.author = value.clone(),
+                    "title" => entry.title = unbraced(value),
+                    "author" => entry.author = unbraced(value),
                     "year" => entry.year = value.clone(),
                     "date" if entry.year.is_empty() => entry.year = value.chars().take(4).collect(),
                     _ => {}
@@ -93,7 +93,8 @@ pub fn entries(text: &str) -> Vec<Entry> {
 }
 
 /// The `name = value` fields of an entry's body, up to its `close`: a
-/// value in braces or quotes with its braces dropped, or a bare word.
+/// value in braces or quotes without them, or a bare word. Inner braces
+/// stay: `{\TeX}book` is not `\TeXbook`.
 fn fields(body: &str, close: char) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut chars = body.char_indices().peekable();
@@ -115,10 +116,19 @@ fn fields(body: &str, close: char) -> Vec<(String, String)> {
         let mut value = String::new();
         let mut depth = 0;
         let quoted = chars.next_if(|(_, c)| *c == '"').is_some();
+        let outer = usize::from(!quoted && chars.next_if(|(_, c)| *c == '{').is_some());
+        depth += outer;
         for (_, c) in chars.by_ref() {
             match c {
-                '{' => depth += 1,
-                '}' if depth > 0 => depth -= 1,
+                '}' if depth == outer && outer == 1 => break,
+                '{' => {
+                    depth += 1;
+                    value.push(c);
+                }
+                '}' if depth > 0 => {
+                    depth -= 1;
+                    value.push(c);
+                }
                 '"' if quoted && depth == 0 => break,
                 c if !quoted && depth == 0 && (c == ',' || c == close) => break,
                 c => value.push(c),
@@ -170,6 +180,17 @@ fn safe(value: &str) -> String {
     out
 }
 
+/// A field value as completion shows it: its braces dropped.
+fn unbraced(value: &str) -> String {
+    value.chars().filter(|c| !matches!(c, '{' | '}')).collect()
+}
+
+/// `text` closed with a period unless it ends a sentence already, as
+/// BibTeX's `add.period$` does: braces at the end do not count.
+fn sentence(text: &str) -> String {
+    if text.trim_end_matches('}').ends_with(['.', '?', '!']) { text.to_string() } else { format!("{text}.") }
+}
+
 fn field<'a>(e: &'a Entry, names: &[&str]) -> Option<&'a str> {
     e.fields.iter().find(|(n, v)| names.contains(&n.as_str()) && !v.is_empty()).map(|(_, v)| v.as_str())
 }
@@ -190,14 +211,14 @@ fn bibtex_bbl(entries: &[&Entry], natbib: bool) -> String {
         } else {
             out.push_str(&format!("\\bibitem{{{}}}\n", e.key));
         }
-        out.push_str(&format!("{}.\n", safe(&author)));
+        out.push_str(&format!("{}\n", sentence(&safe(&author))));
         if let Some(title) = field(e, &["title"]) {
-            out.push_str(&format!("\\newblock {}.\n", safe(title)));
+            out.push_str(&format!("\\newblock {}\n", sentence(&safe(title))));
         }
         let venue = field(e, &["journal", "journaltitle", "booktitle", "publisher", "school", "institution"]);
         let tail = [venue.map(safe), Some(year).filter(|y| !y.is_empty())].into_iter().flatten().collect::<Vec<_>>();
         if !tail.is_empty() {
-            out.push_str(&format!("\\newblock {}.\n", tail.join(", ")));
+            out.push_str(&format!("\\newblock {}\n", sentence(&tail.join(", "))));
         }
         out.push('\n');
     }
@@ -323,5 +344,15 @@ mod tests {
             ("Donald E. Knuth", "Literate Programming", "1984")
         );
         assert_eq!((e[1].key.as_str(), e[1].title.as_str(), e[1].year.as_str()), ("lamport", "\\LaTeX", "1994"));
+    }
+
+    #[test]
+    fn the_bbl_keeps_inner_braces_and_adds_no_second_period() {
+        let text = "@book{k, author = {Donald E. Knuth}, title = {The {\\TeX}book}, publisher = {A.}}\n";
+        let e = entries(text);
+        assert_eq!(e[0].title, "The \\TeXbook");
+        let bbl = virtual_bbl(&[&e[0]], None, false);
+        assert!(bbl.contains("\\newblock The {\\TeX}book.\n"), "{bbl}");
+        assert!(bbl.contains("\\newblock A.\n"), "{bbl}");
     }
 }
