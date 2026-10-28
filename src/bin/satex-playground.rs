@@ -64,6 +64,13 @@ fn run() -> Result<(), String> {
     let path = emscripten_path(root)?;
     // Where cargo puts its builds: `$CARGO_TARGET_DIR`, else `target`.
     let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
+    // One build at a time: two would share the site's work directory and its caches.
+    std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    let lock = std::fs::File::create(target.join("playground.lock")).map_err(|e| e.to_string())?;
+    if lock.try_lock().is_err() {
+        say("another playground build is running; waiting for it to finish");
+        lock.lock().map_err(|e| e.to_string())?;
+    }
     // Both builds from one source and profile: a cache is keyed on the build that wrote it.
     say("2/4 satex for this machine");
     step(cargo().args(["build", "--profile", profile, "--bin", "satex"]))?;
@@ -94,6 +101,7 @@ fn run() -> Result<(), String> {
     let status = site.wait().map_err(|e| e.to_string())?;
     built?;
     status.success().then_some(()).ok_or_else(|| format!("doc/site/build.py failed ({status})"))?;
+    drop(lock);
     let site = root.join(&out);
     let port = free_port(&port)?;
     println!(
