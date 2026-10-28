@@ -343,6 +343,10 @@ pub struct Text {
     /// Where `\par` ended a paragraph, as the number of characters set
     /// before it, ascending.
     pub pars: Vec<u32>,
+    /// The ends in `pars` a `\penalty` of at least 10000 follows before any
+    /// further text: no page break may part the paragraph from what comes
+    /// next, as after a heading (LaTeX's `\@xsect`, plain's `\beginsection`).
+    pub kept: Vec<u32>,
     /// For a character set under an undecided conditional: its index, the
     /// outermost conditional's node and the arm taken.
     pub arms: Vec<(u32, crate::env::NodeId, bool)>,

@@ -1481,6 +1481,9 @@ pub struct Machine<'a> {
     /// The outermost cacheable load and the lock other processes building
     /// its cache wait on, until its file closes ([`crate::format::build_lock`]).
     building: Option<(FileId, Rc<std::fs::File>)>,
+    /// A paragraph just ended and no space followed it yet: a `\penalty`
+    /// of 10000 now keeps it with what comes next ([`crate::facts::Text::kept`]).
+    pub(crate) par_kept: bool,
     /// Digits satex does not know, such as `\the\count0` of an unknown
     /// count: unknown text to a scan, but character tokens of category 12
     /// to `\ifx`, `\if`, `\ifcat`, `\let` and `\futurelet` (their
@@ -2247,6 +2250,7 @@ impl<'a> Machine<'a> {
             scan_undecided: false,
             cacheable_load: None,
             building: None,
+            par_kept: false,
             gaps: HashSet::default(),
             pdf_string: false,
             last_file: None,

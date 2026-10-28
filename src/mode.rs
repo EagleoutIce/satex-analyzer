@@ -1619,6 +1619,7 @@ impl Machine<'_> {
             if text.pars.last() != Some(&at) {
                 text.pars.push(at);
             }
+            self.par_kept = true;
         }
         let rigid = |g: Option<crate::value::Glue>| g.is_some_and(|g| g.stretch.amount == 0);
         if self.out.document_depth.is_some()
@@ -3892,6 +3893,17 @@ impl Machine<'_> {
     /// (tex.web §§ 651-656 `hpack`, 669-670 `vpack`).
     pub(crate) fn append_item(&mut self, item: Item) {
         let fresh = self.page_empty();
+        // right after a paragraph on the page's list: marks and writes may come between, no space
+        if self.mode.meets(Modes::ANY_VERTICAL) && matches!(item, Item::Glue(..) | Item::Kern(_)) {
+            self.par_kept = false;
+        }
+        if matches!(item, Item::Penalty(Some(10000..))) && self.mode == Modes::VERTICAL && self.par_kept {
+            let text = &mut self.out.facts.text;
+            let at = text.at.len() as u32;
+            if text.pars.last() == Some(&at) && text.kept.last() != Some(&at) {
+                text.kept.push(at);
+            }
+        }
         if matches!(item, Item::Unknown | Item::Penalty(None)) | matches!(item, Item::Penalty(Some(p)) if p <= -10000) {
             self.material |= BREAKS;
         }

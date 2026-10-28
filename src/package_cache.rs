@@ -1436,6 +1436,7 @@ impl Machine<'_> {
             // Used at next step, never across load.
             cacheable_load: _,
             building: _,
+            par_kept: _,
             par_inserted: _,
             // Output bookkeeping, not runtime state.
             diag_seen: _,

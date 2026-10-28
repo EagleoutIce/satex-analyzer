@@ -430,7 +430,8 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// character a loop set any number of times. `·` is a gap where the line
 /// breaker may set a hyphen (tex.web § 923). A run cut short ends in a
 /// `⟨?⟩` paragraph with `cut` set: `kernel` when the kernel was read only
-/// partly (it is then the only paragraph), `run` when the document was.
+/// partly (it is then the only paragraph), `run` when the document was. A
+/// paragraph no page break may part from what follows (a heading) has `kept`.
 fn typeset(analysis: &Analysis) -> Vec<Record> {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
@@ -472,12 +473,16 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         let piece = if boxed { format!("{}{c}{}", note("⟦"), note("⟧")) } else { c };
         if text.pars.binary_search(&(i as u32)).is_ok() && !line.trim().is_empty() {
             close(&mut line, &mut choice, &mut causes);
-            out.push(paragraph(
+            let mut record = paragraph(
                 analysis,
                 first.take().unwrap_or(site),
                 &std::mem::take(&mut line),
                 std::mem::take(&mut causes),
-            ));
+            );
+            if text.kept.binary_search(&(i as u32)).is_ok() {
+                record.insert("kept".into(), json!(true));
+            }
+            out.push(record);
         }
         if !piece.trim().is_empty() {
             first.get_or_insert(site);
