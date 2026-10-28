@@ -396,7 +396,7 @@ main td .badges, main td .cat { white-space: nowrap; }
 .typeset .ts:hover { background: var(--hover, rgba(127,127,127,.12)); }
 .typeset .ts-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .typeset .ts-h { margin: .7rem 0 .25rem; font-weight: 700; padding-bottom: .1rem; border-bottom: 1px solid var(--border); color: var(--accent); line-height: 1.25; }
-.typeset .ts-part, .typeset .ts-chapter { font-size: 1.35em; } .typeset .ts-section { font-size: 1.18em; } .typeset .ts-subsection { font-size: 1.06em; }
+.typeset .ts-part, .typeset .ts-chapter { font-size: 1.35em; } .typeset .ts-section, .typeset .ts-heading { font-size: 1.18em; } .typeset .ts-subsection { font-size: 1.06em; }
 .typeset .ts-note { color: var(--muted); font-family: var(--mono, monospace); font-size: .85em; }
 .typeset .ts-box { display: none; }
 .typeset.show-boxes .ts-box { --b: var(--c3); display: inline; color: color-mix(in srgb, var(--fg) 70%, var(--b)); border: 1px dashed color-mix(in srgb, var(--b) 70%, transparent);
