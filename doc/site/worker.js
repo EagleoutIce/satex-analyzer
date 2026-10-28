@@ -4,7 +4,7 @@
 // the same code in node.
 
 /* exported SatexEngine */
-function SatexEngine(createSatex, progress = () => {}, store = null) {
+function SatexEngine(createSatex, progress = () => {}, store = null, status = () => {}) {
   const files = new Map();
   let wasm = null;
   /** The cache directory outlives the page in `store` (the worker's is IndexedDB), under the
@@ -111,21 +111,27 @@ function SatexEngine(createSatex, progress = () => {}, store = null) {
 
   /** `satex lsp` in an instance that stays alive: each JSON-RPC message in, the replies out.
    * `reset` drops it: the next message starts one with these flags, in this directory. */
-  let server = null, serverArgs = [], serverCwd = '/work';
+  let server = null, serverArgs = [], serverCwd = '/work', serverLines = [];
   function reset(args = [], cwd = '/work') { server = null; serverArgs = args; serverCwd = cwd; }
   async function lsp(message) {
     if (!server) {
       // What the engine is doing while a message runs (src/lsp/wasm.rs).
-      const onStatus = (json) => self.postMessage({ type: 'status', ...JSON.parse(json) });
-      server = await boot([], {}, serverCwd, onStatus);
+      const onStatus = (json) => status(JSON.parse(json));
+      serverLines = [];
+      server = await boot(serverLines, {}, serverCwd, onStatus);
       server.callMain([...serverArgs, 'lsp']); // returns with the runtime alive, see src/lsp/wasm.rs
     }
-    const text = server.stringToNewUTF8(JSON.stringify(message));
+    const running = server, text = running.stringToNewUTF8(JSON.stringify(message));
     let out;
     try {
-      out = JSON.parse(server.UTF8ToString(server._satex_lsp(text)));
+      out = JSON.parse(running.UTF8ToString(running._satex_lsp(text)));
+    } catch (e) {
+      // an abort: what the server said last, its panic among it
+      e.message += serverLines.filter((l) => l[0] === 'err').slice(-8).map((l) => `\n${l[1]}`).join('');
+      server = null;
+      throw e;
     } finally {
-      server._free(text);
+      try { running._free(text); } catch {} // an aborted module takes no more calls
     }
     // an analysis may have cached a class or package
     if (out.some((m) => m.method === 'textDocument/publishDiagnostics')) {
@@ -268,7 +274,7 @@ if (typeof module === 'object' && module.exports) {
           if (label === phase && now - last < 100 && loaded < total) return;
           [last, phase] = [now, label];
           self.postMessage({ type: 'progress', label, loaded, total });
-        }, typeof indexedDB === 'object' ? idb() : null);
+        }, typeof indexedDB === 'object' ? idb() : null, (s) => self.postMessage({ type: 'status', ...s }));
         self.postMessage({ type: 'ready', ...(await engine.init(data.base, data.manifest, given)) });
       } else if (data.type === 'bundle') {
         self.postMessage({ type: 'bundle', id: data.entry.id, ...(await engine.bundle(data.base, data.entry, data.given)) });

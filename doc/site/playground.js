@@ -182,6 +182,8 @@
    * code, links, emphasis. A `file:line` in code is a place that opens (site.js). */
   const cards = self.satexCards;
   const inline = (t) => cards.inline(t).replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>');
+  /** A code span that is one command explains it on hover (`csTip`), as the editor's hover does. */
+  const commandRefs = (html) => html.replace(/<code>(\\[A-Za-z@]+\*?)<\/code>/g, '<code class="cs-ref" data-cs="$1" tabindex="0">$1</code>');
   const markdown = (text) => text.split(/^```\w*\n([\s\S]*?)^```\s*$/m).map((part, i) => i % 2 ? `<pre><code>${escape(part)}</code></pre>`
     : part.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean).map((b) => /^#+ /.test(b) ? `<h4>${inline(b.replace(/^#+ /, ''))}</h4>`
       : /^[-*] /.test(b) ? `<ul>${b.split(/\n(?=[-*] )/).map((li) => `<li>${inline(li.slice(2))}</li>`).join('')}</ul>` : `<p>${inline(b)}</p>`).join('')).join('');
@@ -192,8 +194,8 @@
     if (!r) return '';
     const title = r.summary ?? r.message;
     const refs = (r.references ?? []).map((x) => x.url ? `<a href="${escape(x.url)}" target="_blank" rel="noopener">${escape(x.cite)}</a>` : escape(x.cite));
-    return `<div class="explain"><p><span class="cat">${escape(r.category)}</span>${title && title !== d.message ? ` <b>${inline(title)}</b>` : ''}</p>` +
-      `${markdown(r.explanation ?? '')}<p class="refs">${[...refs, `<a href="${base}wiki/lints.html#${encodeURIComponent(d.code)}">the rule's entry</a>`].join(' · ')}</p></div>`;
+    return `<div class="explain"><p><span class="cat">${escape(r.category)}</span>${title && title !== d.message ? ` <b>${commandRefs(inline(title))}</b>` : ''}</p>` +
+      `${commandRefs(markdown(r.explanation ?? ''))}<p class="refs">${[...refs, `<a href="${base}wiki/lints.html#${encodeURIComponent(d.code)}">the rule's entry</a>`].join(' · ')}</p></div>`;
   }
   /** A hover's Markdown; its last paragraph, the places and links, is a muted footer. */
   const unescape = (s) => s.replace(/&(lt|gt|quot|amp);/g, (m, e) => ({ lt: '<', gt: '>', quot: '"', amp: '&' })[e]);
@@ -210,7 +212,7 @@
         Object.assign(kinds, u.kinds);
         return `<code class="usage">${u.html}</code>`;
       });
-      return cards.slots(html, kinds).replace(/<p>((?:\s|·|<a [^>]*>[^<]*<\/a>)+)<\/p>$/, '<p class="foot">$1</p>');
+      return cards.slots(html, kinds).replace(/<p>((?:\s|·|<a [^>]*>[^<]*<\/a>)+)<\/p>/g, '<p class="foot">$1</p>');
     };
     const sections = (md) => md.split(/^(?=### )/m).map(section).join('');
     // the definitions that do not hold at the cursor fold away (lsp::handlers::MORE_DEFINITIONS)
@@ -491,7 +493,8 @@
     const span = (r) => [at(doc(), r.start), Math.max(at(doc(), r.end), at(doc(), r.start))];
     return {
       text: () => doc().toString(),
-      set: (t, readOnly = false) => ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, effects: lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : []) }),
+      // another file's text starts at its top: the last file's scroll position may lie past its end
+      set: (t, readOnly = false) => { ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, selection: { anchor: 0 }, effects: lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : []) }); ev.scrollDOM.scrollTop = 0; },
       apply: (edits) => ev.dispatch({ changes: edits.map((e) => { const [from, to] = span(e.range); return { from, to, insert: e.newText }; }) }),
       diagnostics: (ds) => ev.dispatch(lint.setDiagnostics(ev.state, ds.map((d, i) => {
         const [from, to] = span(d.range);
@@ -547,10 +550,56 @@
     return html + '</span>'.repeat(open);
   }
   const boxesToggle = $('typeset-boxes');
+  // in the section's header: a click flips the switch, never the section's fold
+  boxesToggle.closest('label').addEventListener('click', (e) => { e.preventDefault(); boxesToggle.checked = !boxesToggle.checked; boxesToggle.onchange(); });
   try { boxesToggle.checked = localStorage.getItem('satex-typeset-boxes') === '1'; } catch {}
   const showBoxes = () => typesetBody.classList.toggle('show-boxes', boxesToggle.checked);
   boxesToggle.onchange = () => { showBoxes(); try { localStorage.setItem('satex-typeset-boxes', boxesToggle.checked ? '1' : '0'); } catch {} };
   showBoxes();
+  /** The document's outline from the root's run (`satex query occurrences`), in reading order: its
+   * sectioning units indented by level, each with its labels, then the bibliography and its entries. */
+  const outlineBody = $('outline-body');
+  const LEVELS = ['part', 'chapter', 'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph'];
+  async function outline() {
+    const request = { file: path(state.root), queries: [{ type: 'occurrences' }] };
+    const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records;
+    if (!rs) return;
+    // in source order: a sectioning unit is recorded when its contents line is written, after its labels
+    const files = [...new Set(rs.map((r) => r.path ?? r.file))], rank = (r) => files.indexOf(r.path ?? r.file);
+    const own = rs.filter((r) => !r.origin || r.origin === 'document').sort((a, b) => rank(a) - rank(b) || a.line - b.line || (a.col ?? 0) - (b.col ?? 0));
+    const sections = own.filter((r) => r.kind === 'section'), top = Math.min(...sections.map((r) => LEVELS.indexOf(r.detail)).filter((l) => l >= 0), 9);
+    const at = (r) => `data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}"`;
+    const html = [];
+    let open = null;
+    const close = () => { if (open) { html.push(open.labels.length ? `<span class="o-labels">${open.labels.join('')}</span>` : '', '</li>'); open = null; } };
+    for (const r of own) {
+      if (r.kind === 'section') {
+        close();
+        const depth = Math.max(0, LEVELS.indexOf(r.detail) - top);
+        html.push(`<li class="o-sec" style="--d:${depth}"><a href="#" class="o-go" ${at(r)} title="${escape(r.detail)} at ${escape((r.file ?? '') + ':' + r.line)}"><span class="o-kind">${escape(r.detail)}</span>${escape(r.key)}</a>`);
+        open = { labels: [] };
+      } else if (r.kind === 'label') {
+        const chip = `<a href="#" class="o-go o-label" ${at(r)} title="label at ${escape((r.file ?? '') + ':' + r.line)}">${escape(r.key)}</a>`;
+        if (open) open.labels.push(chip); else html.push(`<li class="o-sec" style="--d:0"><span class="o-labels">${chip}</span></li>`);
+      }
+    }
+    close();
+    const bib = own.filter((r) => r.kind === 'bibitem'), where = own.find((r) => r.kind === 'bibliography');
+    if (bib.length || where) html.push(`<li class="o-sec" style="--d:0"><a href="#" class="o-go" ${where ? at(where) : at(bib[0])}><span class="o-kind">bibliography</span>${bib.length} entr${bib.length === 1 ? 'y' : 'ies'}</a>` +
+      (bib.length ? `<span class="o-labels">${bib.map((r) => `<span class="o-label o-bib" title="${escape((r.file ?? '') + ':' + r.line)}">${escape(r.key)}</span>`).join('')}</span>` : '') + '</li>');
+    $('outline-count').textContent = sections.length || '';
+    outlineBody.innerHTML = html.length ? `<ul class="outline-list">${html.join('')}</ul>` : '<p class="muted">No sections, labels or bibliography yet.</p>';
+  }
+  outlineBody.addEventListener('click', (e) => {
+    const a = e.target.closest('.o-go');
+    if (!a) return;
+    e.preventDefault();
+    const name = Object.keys(state.texts).find((n) => !(n in state.ro) && a.dataset.path.endsWith(n));
+    openPlace(name ?? a.dataset.path, { line: +a.dataset.line - 1, character: Math.max(+a.dataset.col - 1, 0) });
+  });
+  /** The groups of other files unfolded, kept across checks. */
+  const tsOpen = new Set();
+  typesetBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) tsOpen.add(id); else tsOpen.delete(id); } }, true);
   async function typeset(target) {
     if (target !== uri()) return;
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
@@ -565,7 +614,8 @@
       let j = i;
       while (j < paragraphs.length && paragraphs[j].path === r.path) j++;
       const run = paragraphs.slice(i, j), name = (r.path ?? '').split('/').pop();
-      html.push(`<details class="ts-other"><summary>⟨${escape(name)}⟩ · ${run.length} paragraph${run.length > 1 ? 's' : ''}</summary>${run.map(row).join('')}</details>`);
+      const id = `${r.path}|${r.line}`;
+      html.push(`<details class="ts-other" data-id="${escape(id)}"${tsOpen.has(id) ? ' open' : ''}><summary>⟨${escape(name)}⟩ · ${run.length} paragraph${run.length > 1 ? 's' : ''}</summary>${run.map(row).join('')}</details>`);
       i = j;
     }
     typesetBody.innerHTML = html.length ? html.join('') : '<p class="muted">The document sets no paragraph.</p>';
@@ -602,12 +652,11 @@
     checkStart = 0;
     phase();
     lspStatus.textContent = state.file in state.ro ? 'read-only file' : ds.length ? '' : 'none';
-    const fixButton = (f, j, cls) => `<button class="small apply${cls}" data-j="${j}" title="${escape(f.title)}">Fix <span class="fix fix-${f.safety}">${f.safety}</span></button>`;
-    const item = (d, i) => `<li class="f-${sev(d)}${d.fixes.length ? ' fixable' : ''}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
-      `<div class="f-head"><span class="msg"><b class="rn">${escape(d.code ?? '')}</b>: ${inline(d.message)}</span><span class="badge"><span class="sev sev-${sev(d)}" title="${sev(d)}" aria-label="${sev(d)}"></span>${d.fixes.length ? fixButton(d.fixes[0], 0, ' as-badge') : ''}</span>` +
-      `<b class="loc">${d.range.start.line + 1}:${d.range.start.character + 1}</b></div><span class="acts">` +
-      d.fixes.slice(1).map((f, j) => fixButton(f, j + 1, '')).join('') +
-      `<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
+    const fixButton = (f, j) => `<button class="small apply fix-${f.safety}" data-j="${j}" title="${escape(f.title)}">Fix (${f.safety})</button>`;
+    const item = (d, i) => `<li class="f-${sev(d)}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
+      `<span class="msg"><b class="rn">${escape(d.code ?? '')}</b>: ${commandRefs(inline(d.message))}</span>` +
+      `<span class="where"><b class="loc">${d.range.start.line + 1}:${d.range.start.character + 1}</b><span class="shape" title="${sev(d)}" aria-label="${sev(d)}"></span></span>` +
+      `<span class="acts">${d.fixes.map(fixButton).join('')}<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
       (unfolded.has(key(d)) ? explanation(d) : '') + '</li>';
     /** Findings of one object (`group`, "table@12:1") fold together under a header; a lone one stays flat. */
     const fold = (id, cls, head, rows, inner) => `<li class="${cls}"><details${folded.has(id) ? '' : ' open'} data-fold="${escape(id)}"><summary class="cat-head" aria-label="${escape(head)}">${inner}</summary>` +
@@ -898,6 +947,22 @@
       (rest.length ? `<details class="more"><summary>More definitions</summary>${rest.map(cards.explain).join('')}</details>` : '');
     else if (!explainBody.querySelector('.hover')) explainBody.innerHTML = `<p class="muted">satex knows no ${escape(name)} here.</p>`;
   }
+  const csTip = Object.assign(document.createElement('div'), { className: 'cs-tip', hidden: true });
+  document.body.append(csTip);
+  document.addEventListener('mouseover', async (e) => {
+    const ref = e.target.closest?.('.cs-ref');
+    if (!ref) return;
+    const name = ref.dataset.cs, rs = (await explainRecords(name)).filter((r) => r.name === name);
+    if (!rs.length || !ref.matches(':hover')) return;
+    csTip.innerHTML = cards.explain(rs[0]);
+    csTip.hidden = false;
+    const b = ref.getBoundingClientRect(), h = csTip.offsetHeight;
+    csTip.style.left = `${Math.max(8, Math.min(b.left, innerWidth - csTip.offsetWidth - 8))}px`;
+    csTip.style.top = `${b.bottom + 6 + h > innerHeight ? Math.max(8, b.top - 6 - h) : b.bottom + 6}px`;
+  });
+  document.addEventListener('mouseout', (e) => { if (e.target.closest?.('.cs-ref')) setTimeout(() => { if (!csTip.matches(':hover')) csTip.hidden = true; }, 120); });
+  csTip.addEventListener('mouseleave', () => { csTip.hidden = true; });
+  document.addEventListener('click', (e) => { const ref = e.target.closest?.('.cs-ref'); if (ref) { csTip.hidden = true; explainName(ref.dataset.cs); } });
   function focusExplain() {
     explainBox.open = true;
     explained = '';
@@ -907,8 +972,8 @@
 
   // ---------------------------------------------------------------- runs
 
-  /** The kernel's flags; an upload, outside /work, reads the playground's satex.yaml by name. */
-  const flags = () => [...manifest.kernels[state.kernel].args, ...(state.upload ? ['--config', '/work/satex.yaml'] : [])];
+  /** The kernel's flags; a project in its own directory under /work reads the playground's satex.yaml by name. */
+  const flags = () => [...manifest.kernels[state.kernel].args, ...(state.dir !== '/work' ? ['--config', '/work/satex.yaml'] : [])];
   const command = () => words(args.value).filter((x) => x !== 'satex' && !x.startsWith('-'))[0];
   /** Plain `lint` repeats what the language server shows: it runs only when asked to. */
   const plainLint = () => words(args.value).filter((x) => x !== 'satex').join(' ') === 'lint';
@@ -957,7 +1022,7 @@
   }
   const outBox = $('play-out');
   $('play-outclose').onclick = () => { outBox.hidden = true; };
-  const edits = () => Object.fromEntries(Object.entries(state.texts).filter(([name]) => !(name in state.ro)).map(([name, text]) => [path(name), text]));
+  const edits = () => Object.fromEntries(Object.entries(state.texts).filter(([name]) => state.files.includes(name) && !(name in state.ro)).map(([name, text]) => [path(name), text]));
   async function start() {
     sync();
     const a = argv();
@@ -1267,6 +1332,8 @@
     for (const n of Object.keys(state.ro)) delete state.texts[n];
     state.ro = {};
     state.files = state.lists[ex] ??= list ?? [ex, ...(projects[ex] ?? [])];
+    // each example in its own directory: its project sees its own files only
+    state.dir = `/work/ex/${ex.replace(/\.[^.]+$/, '')}`;
     manualKernel = false;
     Object.assign(state, { example: ex, root: state.files.includes(root) ? root : ex, open: [...state.files], file: state.files.includes(file) ? file : ex });
     editor.set(state.texts[state.file]);
@@ -1496,30 +1563,119 @@
   /** The cache entries the worker keeps (worker.js), each with what it stands for; dropping one
    * restarts the language server, so the next check analyses that part again. */
   const cacheBox = $('play-cache'), cacheList = $('cache-list');
-  const CACHE_KINDS = { format: 'kernel', package: 'class or package', index: 'file index', probe: 'installation facts', 'content-hashes': 'file hashes' };
+  const CACHE_KINDS = { format: ['kernel', 'kernel'], package: ['package', 'package'], index: ['file index', 'index'], probe: ['installation facts', 'facts'], 'content-hashes': ['file hashes', 'hashes'] };
+  const cacheFilter = $('cache-filter');
+  let cacheEntries = [];
+  /** [kind, css class, name, needs] of an entry; the manifest tells a class from a package. */
   function cacheLabel(path) {
     const file = path.split('/').pop(), [kind, ...rest] = file.replace(/\.postcard$/, '').split('-');
     const name = kind === 'content' ? 'content-hashes' : kind;
     const what = rest.filter((p) => !/^(v\d+|s?[0-9a-f]{8,})$/.test(p) && p !== 'hashes').join(' ');
-    return [CACHE_KINDS[name] ?? name, what];
+    let [label, cls] = CACHE_KINDS[name] ?? [name, 'hashes'], needs = [];
+    // a package cache names what it holds before `-v<version>`: a class by its file name
+    const held = name === 'package' && /^package-(.+?)-v\d+-/.exec(file)?.[1];
+    if (held) {
+      if (held.endsWith('.cls')) [label, cls] = ['class', 'class'];
+      needs = (manifest.packages ?? []).find((p) => p.label === held)?.needs ?? [];
+      return [label, cls, held.replace(/\.cls$/, ''), needs];
+    }
+    return [label, cls, what, needs];
   }
-  async function drawCaches(entries) {
-    entries ??= (await ask({ type: 'caches' })).entries;
-    $('cache-count').textContent = entries.length || '';
-    const total = entries.reduce((n, e) => n + e.size, 0);
-    cacheList.innerHTML = entries.sort((a, b) => b.size - a.size).map((e) => {
-      const [kind, what] = cacheLabel(e.path);
-      return `<li title="${escape(e.path)}"><span class="cache-kind">${escape(kind)}</span> <b>${escape(what)}</b><span class="cache-size">${size(e.size)}</span>` +
-        `<button type="button" class="small ghost" data-path="${escape(e.path)}" aria-label="drop ${escape(what || kind)}">Drop</button></li>`;
-    }).join('') + (entries.length ? `<li class="cache-total"><span>in all</span><span class="cache-size">${size(total)}</span></li>` : '<li class="muted">Nothing cached yet.</li>');
+  /** The table: searched, sorted by a header, a class's or package's loads unfolded under it. */
+  let cacheOrder = { key: 'size', down: true };
+  const cacheBadge = (cls, text) => `<span class="cache-kind k-${cls}">${escape(text)}</span>`;
+  function drawCaches(entries) {
+    if (entries) { cacheEntries = entries; $('cache-count').textContent = entries.length || ''; }
+    const q = cacheFilter.value.trim().toLowerCase();
+    const rows = cacheEntries.map((e) => ({ e, l: cacheLabel(e.path) })).filter(({ l }) => !q || `${l[0]} ${l[2]}`.toLowerCase().includes(q));
+    const by = { size: (r) => r.e.size, name: (r) => (r.l[2] || r.l[0]).toLowerCase(), kind: (r) => r.l[0] }[cacheOrder.key];
+    rows.sort((a, b) => (by(a) < by(b) ? -1 : by(a) > by(b) ? 1 : 0) * (cacheOrder.down ? -1 : 1));
+    for (const th of cacheBox.querySelectorAll('th[data-sort]')) {
+      if (th.dataset.sort === cacheOrder.key) th.setAttribute('aria-sort', cacheOrder.down ? 'descending' : 'ascending'); else th.removeAttribute('aria-sort');
+    }
+    cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs] }, i) =>
+      `<tr title="${escape(e.path)}"><td>${cacheBadge(cls, kind)}</td>` +
+      `<td><button type="button" class="cache-name" aria-expanded="false" aria-controls="cache-sub-${i}">${escape(what || kind)}</button></td><td class="used">${usedText(cls, what)}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
+      `<td class="num">${size(e.size)}</td><td><button type="button" class="small ghost" data-path="${escape(e.path)}" aria-label="drop ${escape(what || kind)}">Drop</button></td></tr>` +
+      `<tr class="cache-sub" id="cache-sub-${i}" hidden><td></td><td colspan="5">${details(cls, what, needs)}</td></tr>`).join('') ||
+      `<tr><td colspan="6" class="muted">${cacheEntries.length ? 'No match.' : 'Nothing cached yet.'}</td></tr>`;
+    $('cache-total').textContent = rows.length ? `${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}, ${size(rows.reduce((n, { e }) => n + e.size, 0))} in total` : '';
   }
+  /** How the open document uses each class and package (`satex query dependencies` of the root):
+   * loaded by the document itself, or by which packages. */
+  let used = new Map();
+  async function usage() {
+    const request = { file: path(state.root), queries: [{ type: 'dependencies' }] };
+    const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records ?? [];
+    used = new Map();
+    for (const r of rs.filter((r) => r.kind === 'package' || r.kind === 'class')) {
+      const k = `${r.kind}:${r.name}`, u = used.get(k) ?? { own: false, by: new Set() };
+      // the document's own: loaded by no package, from a file of the project (a hook of pdftex.def runs at depth 0 too)
+      if (state.files.includes(r.file) && !r.by) u.own = true; else u.by.add(r.by ?? r.file);
+      used.set(k, u);
+    }
+  }
+  const usedText = (cls, what) => {
+    const u = used.get(`${cls}:${what}`);
+    if (!u) return '';
+    return u.own ? '<span class="use-own">by the document</span>' : `<span class="use-via" title="loaded by ${escape([...u.by].join(', '))}">via ${escape([...u.by].slice(0, 2).join(', '))}${u.by.size > 2 ? ` +${u.by.size - 2}` : ''}</span>`;
+  };
+  /** What each package (and the kernel, `null`) defines in the open document's run, and the installation's
+   * index: fetched when the dialog opens, from the root's `definitions` and `distribution` queries. */
+  let defined = new Map(), indexed = null;
+  async function facts() {
+    const request = { file: path(state.root), queries: [{ type: 'definitions' }, { type: 'distribution' }] };
+    const [defs, dist] = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null)) ?? [];
+    defined = new Map();
+    for (const r of defs?.records ?? []) {
+      const d = defined.get(r.package ?? null) ?? {};
+      const k = r.tag === 'macro' ? (/[@_:]/.test(r.name) ? 'internal macro' : 'public command') : r.tag;
+      d[k] = (d[k] ?? 0) + 1;
+      defined.set(r.package ?? null, d);
+    }
+    indexed = (dist?.records ?? []).find((r) => r.indexed != null) ?? null;
+  }
+  const DEFINED = ['public command', 'internal macro', 'environment', 'option', 'register', 'counter', 'length', 'switch', 'alias'];
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : /(s|ch)$/.test(w) ? 'es' : 's'}`;
+  /** One row's details: what it defines and loads, and where its documentation is. */
+  function details(cls, what, needs) {
+    const parts = [];
+    if (cls === 'index' && indexed) parts.push(`${indexed.indexed} files indexed${indexed.message ? ` · ${escape(indexed.message)}` : ''}`);
+    const d = cls === 'kernel' ? defined.get(null) : (cls === 'package' || cls === 'class') ? defined.get(what) : null;
+    if (d) parts.push('defines ' + DEFINED.filter((k) => d[k]).map((k) => plural(d[k], k)).join(', '));
+    else if (cls === 'package' || cls === 'class') parts.push('<span class="muted">not loaded by this document</span>');
+    if (needs.length) parts.push(`loads ${needs.map((n) => cacheBadge(n.endsWith('.cls') ? 'class' : 'package', n.replace(/\.cls$/, ''))).join(' ')}`);
+    const docs = cls === 'kernel' ? 'https://texdoc.org/serve/source2e/0' : (cls === 'package' || cls === 'class') ? `https://texdoc.org/pkg/${encodeURIComponent(what)}` : null;
+    if (docs) parts.push(`<a href="${docs}" target="_blank" rel="noopener">documentation ↗</a>`);
+    return parts.map((p) => `<div>${p}</div>`).join('');
+  }
+  const loadCaches = async () => { await usage(); drawCaches((await ask({ type: 'caches' })).entries); };
+  cacheFilter.oninput = () => drawCaches();
+  cacheBox.querySelector('thead').onclick = (e) => {
+    const key = e.target.closest('th[data-sort]')?.dataset.sort;
+    if (!key) return;
+    cacheOrder = { key, down: cacheOrder.key === key ? !cacheOrder.down : key === 'size' };
+    drawCaches();
+  };
   async function uncache(paths) {
     if (!paths.length) return;
-    await drawCaches((await ask({ type: 'uncache', paths })).entries);
+    drawCaches((await ask({ type: 'uncache', paths })).entries);
     await restart();
   }
-  cacheBox.addEventListener('toggle', () => { if (cacheBox.open) drawCaches(); });
-  cacheList.onclick = (e) => { const b = e.target.closest('button[data-path]'); if (b) uncache([b.dataset.path]); };
+  $('cache-open').onclick = async () => { cacheBox.showModal(); await facts(); loadCaches(); };
+  $('cache-close').onclick = () => cacheBox.close();
+  cacheBox.onclick = (e) => { if (e.target === cacheBox) cacheBox.close(); }; // a click on the backdrop
+  cacheList.onclick = (e) => {
+    const fold = e.target.closest('.cache-name');
+    if (fold) {
+      const open = fold.getAttribute('aria-expanded') !== 'true';
+      fold.setAttribute('aria-expanded', open);
+      $(fold.getAttribute('aria-controls')).hidden = !open;
+      return;
+    }
+    const b = e.target.closest('button[data-path]');
+    if (b) uncache([b.dataset.path]);
+  };
   $('cache-clear').onclick = async () => uncache((await ask({ type: 'caches' })).entries.map((e) => e.path));
 
   /** What the project's files ask for, fetched in the background as soon as they name it: the
@@ -1743,7 +1899,8 @@
           }
           show(m.params.uri, m.params.diagnostics);
           typeset(m.params.uri);
-          if (cacheBox.open) drawCaches();
+          outline();
+          loadCaches(); // the status bar's count, and the table if open
           if (m.params.uri === uri()) lsp('satex/caches', { textDocument: { uri: m.params.uri } }).then((r) => cacheReport((r ?? []).map((l) => ['err', l]))).catch(() => {});
           fetchMissing(unresolved);
         }

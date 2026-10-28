@@ -46,17 +46,26 @@
       <div id="lsp-check" class="check" role="status" hidden><span class="ibar" aria-hidden="true"></span><span></span></div>
       <div id="play-refs" class="refs" hidden></div>
       <ul id="lsp-diagnostics" class="diagnostics grow" aria-live="polite"></ul></details>
+    <details open class="sect" id="play-outline"><summary>Outline <b id="outline-count"></b></summary>
+      <div id="outline-body" class="outline grow"><p class="muted">The document's parts, labels and bibliography, once it is checked.</p></div></details>
     <details open class="sect" id="play-explain"><summary>Explain macro <code id="explain-name"></code></summary>
       <div id="explain-body" class="hover grow"><p class="muted">Put the cursor on a command.</p></div></details>
-    <details class="sect" id="play-typeset"><summary>Typeset</summary>
-      <label class="ts-toggle"><input type="checkbox" id="typeset-boxes"> show text set in boxes that are not output</label>
+    <details class="sect" id="play-typeset"><summary>Typeset
+      <label class="ts-toggle" title="Show the text set in boxes that never reach the page"><span>show boxed text</span><input type="checkbox" id="typeset-boxes" role="switch"></label></summary>
       <div id="typeset-body" class="typeset grow"><p class="muted">What the paragraphs of the open file set, once it is checked.</p></div></details>
-    <details class="sect" id="play-cache"><summary>Caches <b id="cache-count"></b></summary>
-      <p class="muted cache-note">What satex keeps between checks and visits: the kernels, classes and packages it analysed. A dropped entry is analysed again when needed.</p>
-      <ul id="cache-list" class="cache-list"></ul>
-      <button type="button" class="small ghost" id="cache-clear">Clear all</button></details>
+    <dialog id="play-cache" class="cache-dialog" aria-labelledby="cache-title">
+      <header><h3 id="cache-title">Caches</h3><button type="button" class="ghost small" id="cache-close" aria-label="close">✕</button></header>
+      <p class="muted cache-note">What satex keeps between checks and visits. A dropped entry is analysed again when needed.</p>
+      <input type="search" id="cache-filter" autofocus placeholder="Search kernels, classes, packages…" aria-label="search caches">
+      <div class="cache-scroll"><table class="cache-table">
+        <thead><tr><th data-sort="kind" scope="col">Kind</th><th data-sort="name" scope="col">Name</th><th scope="col">In this document</th><th scope="col" class="num">Loads</th><th data-sort="size" scope="col" class="num" aria-sort="descending">Size</th><th scope="col"><span class="sr">drop</span></th></tr></thead>
+        <tbody id="cache-list"></tbody>
+      </table></div>
+      <footer><span id="cache-total" class="muted"></span><button type="button" class="small ghost" id="cache-clear">Clear all</button></footer>
+    </dialog>
     <div class="statusbar" aria-live="polite"><progress id="play-progress" max="1" value="0" aria-label="loading"></progress><span id="play-status">Fetching satex and the TeX bundle…</span>
       <span id="play-pills" class="pills"></span>
+      <button type="button" class="stat-btn" id="cache-open" aria-haspopup="dialog" title="what satex keeps between checks and visits"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/></svg>caches <b id="cache-count"></b></button>
       <span class="statdetail"><button id="t-time" class="stat-time" type="button" aria-expanded="false" aria-controls="t-detail" title="timings and size of the last run" hidden><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.2 1.5"/></svg><span id="t-time-text"></span></button>
         <dl id="t-detail" class="stat-pop" hidden><dt>init</dt><dd id="t-init"></dd><dt>fetched</dt><dd id="t-load"></dd><dt>caches</dt><dd id="t-cache"></dd><dt>check</dt><dd id="t-check"></dd><dt>last run</dt><dd id="t-stats"></dd></dl></span></div>
   </section>

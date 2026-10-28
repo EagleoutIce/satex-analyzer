@@ -26,6 +26,8 @@ const check = (name, ok, detail = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} 
 const page = await text('play/index.html');
 const manifest = JSON.parse(page.match(/<script id="satex-play" type="application\/json">(.*?)<\/script>/s)[1]);
 const SatexEngine = await load(null, manifest.worker), createSatex = await load(manifest.js);
+// BROWSER_ONLY=1: the page in a browser alone, to iterate on its checks
+if (process.env.BROWSER_ONLY) { await browser(); process.exit(failed ? 1 : 0); }
 // The page keeps the cache directory in IndexedDB (worker.js); here a map stands in for it.
 const memory = new Map();
 const store = {
@@ -60,7 +62,9 @@ for (const name of manifest.samples) {
   const run = await engine.run(['-v', 'lint', '-f', name], { [`/work/${name}`]: new TextEncoder().encode(samples[name]) });
   const out = run.lines.filter((l) => l[0] === 'out').map((l) => l[1]);
   const summary = out.find((l) => /\d+ errors?, \d+ warnings?/.test(l));
-  const rebuilt = run.lines.filter((l) => /building kernel cache|: rebuilt \(/.test(l[1])).map((l) => l[1].trim());
+  // what the bundles hold must come from them; the project's own packages are analysed here
+  const bundled = (l) => !/cache package /.test(l) || offered.some((p) => p.name === /cache package (\S+):/.exec(l)?.[1]);
+  const rebuilt = run.lines.filter((l) => /building kernel cache|: rebuilt \(/.test(l[1]) && bundled(l[1])).map((l) => l[1].trim());
   check(`${name} lints`, run.status === 0 && summary && !rebuilt.length,
     `exit ${run.status}, ${run.ms} ms, ${summary ?? 'no summary'}${rebuilt.length ? `; not served from the bundle's caches: ${rebuilt.join('; ')}` : ''}`);
   check(`${name} carries no command line`, !/^% satex /.test(samples[name]));
@@ -101,7 +105,8 @@ for (const entry of offered) await engine.bundle(base, entry, base.startsWith('f
 const stillMissing = [];
 for (const entry of offered.filter((p) => !p.label.endsWith('.cls'))) {
   const kernel = manifest.kernels.find((k) => k.id === entry.kernel);
-  const run = await packageRun(entry.name, kernel);
+  let run;
+  try { run = await packageRun(entry.name, kernel); } catch (e) { console.log(`FAIL ${entry.id} aborted the engine: ${e.message}`); throw e; }
   if (!(typeof run.status === 'number' && run.status <= 1 && !unresolved(run, entry.name))) stillMissing.push(entry.id);
 }
 check(`${offered.length} packages on demand resolve`, offered.length >= 20 && !stillMissing.length, `${Math.round(performance.now() - t)} ms; missing ${stillMissing.join(' ')}`);
@@ -245,7 +250,10 @@ async function browser() {
     };
     const mouse = async (x, y, opts = {}) => { for (const t of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type: t, x, y, button: 'left', clickCount: 1, ...opts }); };
     /** The screen point of `needle` (its `at`-th character) in the editor's text. */
-    const spot = (needle, at = 1) => js(`for (const l of document.querySelectorAll('.cm-line')) { const i = l.textContent.indexOf(${JSON.stringify(needle)}); if (i < 0) continue;
+    const spot = async (needle, at = 1) => (await settled(needle, at)) ?? (await shot('spot-miss'), Promise.reject(new Error(`no ${needle} in the editor of ${await js(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent`)}: ${await js(`return [...document.querySelectorAll('.cm-line')].map((l) => l.textContent).join(' | ').slice(0, 200)`)}`)));
+    // the editor renders a file's lines a moment after its tab is chosen
+    const settled = async (needle, at) => { for (let i = 0; i < 25; i++, await sleep(200)) { const p = await place(needle, at); if (p) return p; } return null; };
+    const place = (needle, at = 1) => js(`for (const l of document.querySelectorAll('.cm-line')) { const i = l.textContent.indexOf(${JSON.stringify(needle)}); if (i < 0) continue;
       const w = document.createTreeWalker(l, NodeFilter.SHOW_TEXT); let n, off = i + ${at};
       while ((n = w.nextNode())) { if (off <= n.length) { const r = document.createRange(); r.setStart(n, off); r.setEnd(n, off); const b = r.getBoundingClientRect(); return [b.left + 1, b.top + b.height / 2]; } off -= n.length; } } return null;`);
     /** A screenshot into $SHOTS, when set: what the checks saw. */
@@ -270,8 +278,10 @@ async function browser() {
     const center = (sel) => js(`const e = document.querySelector(${JSON.stringify(sel)}); e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return [b.left + Math.min(4, b.width / 2), b.top + b.height / 2]`);
     // sizes and places within the example, so a scroll by a subpixel does not count
     const layout = `const f = document.querySelector('.example:not([hidden])').getBoundingClientRect(); return [...document.querySelectorAll('.example:not([hidden]) :is(pre.src, .ex-side, .ln, .lint, .src-cs)')].map((e) => { const r = e.getBoundingClientRect(); return [r.x - f.x, r.y - f.y, r.width, r.height].map(Math.round).join(); }).join(' ')`;
+    // the hello example's tab, wherever it stands: its \\greet and its redefined \\section
+    const hello = '#' + await js(`const t = [...document.querySelectorAll('.examples [role=tab]')].find((t) => /hello/.test(t.textContent)); t.click(); return t.getAttribute('aria-controls');`);
     // a command explains itself on hover: a card with its signature as chips
-    let at = await center('#ex-0 [data-cs="\\\\greet"]');
+    let at = await center(`${hello} [data-cs="\\\\greet"]`);
     const before = await js(layout);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
     check('landing command hover card', await until(`const t = document.querySelector('.tip:not([hidden])'); return t && /greet/.test(t.querySelector('.x-name')?.textContent) && t.querySelector('.sig .arg[title]')`, 5000),
@@ -280,10 +290,10 @@ async function browser() {
     const after = await js(layout);
     check('landing hover moves nothing', before === after, before === after ? '' : `${before} -> ${after}`);
     // findings are wavy underlines over the whole call, with the message on hover
-    check('wavy underlines', await js(`const l = [...document.querySelectorAll('#ex-0 .lint')]; return l.length > 0 && l.every((e) => getComputedStyle(e).textDecorationStyle === 'wavy')`));
-    check('underline spans the whole call', await js(`const k = [...document.querySelectorAll('#ex-0 [data-lint]')].find((e) => e.closest('.ln').textContent.startsWith('\\\\newcommand{\\\\section}')).dataset.lint.split(' ')[0];
-      const line = document.querySelector('#ex-0 [data-lint~="' + k + '"]').closest('.ln'); return [...line.querySelectorAll('[data-lint~="' + k + '"]')].map((e) => e.textContent).join('') === line.textContent`));
-    at = await center('#ex-0 [data-lint].f-error');
+    check('wavy underlines', await js(`const l = [...document.querySelectorAll('${hello} .lint')]; return l.length > 0 && l.every((e) => getComputedStyle(e).textDecorationStyle === 'wavy')`));
+    check('underline spans the whole call', await js(`const k = [...document.querySelectorAll('${hello} [data-lint]')].find((e) => e.closest('.ln').textContent.startsWith('\\\\newcommand{\\\\section}')).dataset.lint.split(' ')[0];
+      const line = document.querySelector('${hello} [data-lint~="' + k + '"]').closest('.ln'); return [...line.querySelectorAll('[data-lint~="' + k + '"]')].map((e) => e.textContent).join('') === line.textContent`));
+    at = await center(`${hello} [data-lint].f-error`);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
     check('landing finding hover', await until(`return /already defined/.test(document.querySelector('.tip:not([hidden]) .tip-lint')?.textContent ?? '')`, 5000));
     await shot('landing-finding-hover');
@@ -347,7 +357,8 @@ async function browser() {
     check('panes snap and fold', folded[0] === 'editor' && back === '' && half[0] === '' && half[1] === '50.0%', JSON.stringify([folded, back, half]));
     check('header: kernel, command line, run, upload, link', await js(`return !document.querySelector('.act, #play-query, #play-reset') && !!document.querySelector('#play-kernel') && !!document.querySelector('#play-args')`));
     check('findings', await until(`return document.querySelectorAll('#lsp-diagnostics li[data-i]').length > 0`));
-    const kernels = await js(`return [...document.querySelectorAll('#play-kernel option')].map((o) => [o.textContent, o.disabled, o.title])`);
+    // closed, the selector names the engine; open, each option adds its size
+    const kernels = await js(`return [...document.querySelectorAll('#play-kernel option')].map((o) => [o.dataset.name + ' · ' + o.dataset.more, o.disabled, o.title])`);
     check('kernel labels carry their own size', kernels.some(([t]) => /^pdfTeX · [\d.]+ MiB$/.test(t)) && kernels.some(([t]) => /^plain TeX · \d+ KiB$/.test(t)) && !kernels.some(([t]) => /\+/.test(t)),
       kernels.map((k) => k[0]).join(' | '));
     check('LuaTeX listed as not available', kernels.some(([t, off, why]) => /^LuaTeX/.test(t) && off && /format budget/.test(why)));
@@ -356,7 +367,7 @@ async function browser() {
     // every finding, unfolded, shows one severity: its own
     const sevs = await js(`const out = []; for (const li of document.querySelectorAll('#lsp-diagnostics li[data-i]')) { li.querySelector('.why').click(); }
       await new Promise((r) => setTimeout(r, 100));
-      for (const li of document.querySelectorAll('#lsp-diagnostics li[data-i]')) out.push([li.querySelectorAll('.sev').length, !!li.querySelector('.explain'), li.querySelector('code').textContent, li.querySelector('.sev').textContent]);
+      for (const li of document.querySelectorAll('#lsp-diagnostics li[data-i]')) out.push([li.querySelectorAll('.shape, .sev').length, !!li.querySelector('.explain'), li.querySelector('.rn').textContent, li.querySelector('.shape').title]);
       return out;`);
     check('one severity per finding', sevs.length && sevs.every(([n, open]) => n === 1 && open), JSON.stringify(sevs));
     const differs = sevs.filter(([, , code, sev]) => manifest.rules[code] && manifest.rules[code].severity !== sev);
@@ -483,11 +494,11 @@ async function browser() {
     p = await spot('\\begin{document}', 0);
     await mouse(...p);
     await send('Input.insertText', { text: '\\newcommand\\again{\\again}\n' });
-    const lowered = await until(`return [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].some((li) => li.querySelector('code').textContent === 'unguarded-recursion')`, 60000) &&
-      await js(`const li = [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].find((li) => li.querySelector('code').textContent === 'unguarded-recursion');
+    const lowered = await until(`return [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].some((li) => li.querySelector('.rn').textContent === 'unguarded-recursion')`, 60000) &&
+      await js(`const li = [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].find((li) => li.querySelector('.rn').textContent === 'unguarded-recursion');
         if (!li.querySelector('.explain')) li.querySelector('.why').click(); await new Promise((r) => setTimeout(r, 100));
-        const again = [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].find((li) => li.querySelector('code').textContent === 'unguarded-recursion');
-        return [again.querySelectorAll('.sev').length, again.querySelector('.sev').textContent, /\berror\b/.test(again.querySelector('.explain').textContent.split('.')[0])];`);
+        const again = [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].find((li) => li.querySelector('.rn').textContent === 'unguarded-recursion');
+        return [again.querySelectorAll('.shape, .sev').length, again.querySelector('.shape').title, /\berror\b/.test(again.querySelector('.explain').textContent.split('.')[0])];`);
     check('lowered severity shown once', lowered && lowered[0] === 1 && lowered[1] !== manifest.rules['unguarded-recursion'].severity && !lowered[2], JSON.stringify(lowered));
 
     // the editor's completion: the usage line colored like the hover's (\greet is \salute since the rename)
