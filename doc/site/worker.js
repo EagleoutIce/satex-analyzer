@@ -63,7 +63,7 @@ function SatexEngine(createSatex, progress = () => {}, store = null) {
       if (name === '.' || name === '..') continue;
       const path = `${dir}/${name}`, st = FS.stat(path);
       if (FS.isDir(st.mode)) walk(FS, path, into, booted);
-      else if (booted.get(path) !== stamp(st)) { into.set(path, FS.readFile(path)); booted.set(path, stamp(st)); }
+      else if (cached(path) && booted.get(path) !== stamp(st)) { into.set(path, FS.readFile(path)); booted.set(path, stamp(st)); }
     }
   }
   const stamp = (st) => `${+st.mtime}|${st.size}`;
@@ -163,9 +163,9 @@ function SatexEngine(createSatex, progress = () => {}, store = null) {
     const downloads = entries.map((entry, i) => given[i] ?? bytes(base + entry.bundle, entry.label, entry.size));
     const done = { lines: [], status: 0, ms: 0 };
     for (const [i, entry] of entries.entries()) {
-      const imported = await bundle(base, entry, null, downloads[i]);
-      done.lines.push(...imported.lines);
-      done.ms += imported.ms;
+      const one = await bundle(base, entry, null, downloads[i]);
+      done.lines.push(...one.lines);
+      done.ms += one.ms;
     }
     return done;
   }
@@ -215,11 +215,11 @@ function SatexEngine(createSatex, progress = () => {}, store = null) {
     const entry = manifest.kernels[0];
     const fetching = given.bundle ?? bytes(base + entry.bundle, entry.label, entry.size);
     wasm = await compile(given.wasm ?? base + manifest.wasm, manifest.wasmSize);
-    const imported = await bundle(base, entry, null, fetching);
+    const kernel = await bundle(base, entry, null, fetching);
     const decoder = new TextDecoder();
     const shown = [...new Set([...manifest.samples, ...Object.values(manifest.projects ?? {}).flat()])];
     const samples = Object.fromEntries(shown.map((name) => [name, decoder.decode(files.get(`/work/${name}`))]));
-    return { samples, imported };
+    return { samples, imported: kernel };
   }
 
   return { init, run, lsp, reset, bundle, bundles, project, read, caches, uncache };
