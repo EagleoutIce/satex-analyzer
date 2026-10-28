@@ -329,21 +329,33 @@
   function checking() { phase('checking…'); checkStart = performance.now(); }
 
   /** Completion order: the project's own commands, then the documented ones, internals
-   * (`@`, `_`, `:` in the name) last; within each, prefix matches, then shorter names. */
+   * (`@`, `_`, `:` in the name) last; within each, the closest matches first: a prefix of the
+   * label, a part of it, a part of what the item is found by (a citation's title), then the typed
+   * characters in order (`m/f` finds `mode/fast`); then the server's order and shorter names. */
   const tier = (i) => /\(document\)$/.test(i.detail ?? '') ? 0 : /[@_:]/.test(i.label) ? 2 : 1;
-  const rank = (items, typed) => items.filter((i) => i.label.toLowerCase().includes(typed.toLowerCase()))
-    .map((i) => [i, tier(i), i.label.startsWith(typed) ? 0 : 1])
-    .sort((a, b) => a[1] - b[1] || a[2] - b[2] || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
-  /** The language server's completion items at `position`, kept per buffer version. */
+  const subsequence = (text, typed) => { let k = 0; for (const c of text) if (c === typed[k]) k++; return k === typed.length; };
+  const closeness = (i, typed) => {
+    const label = i.label.toLowerCase(), found = (i.filterText ?? '').toLowerCase();
+    return label.startsWith(typed) ? 0 : label.includes(typed) ? 1 : found.includes(typed) ? 2
+      : subsequence(label, typed) || subsequence(found, typed) ? 3 : null;
+  };
+  const rank = (items, typed) => items
+    .map((i) => [i, tier(i), closeness(i, typed.toLowerCase())]).filter((x) => x[2] !== null)
+    .sort((a, b) => a[1] - b[1] || a[2] - b[2] || (a[0].sortText ?? '').localeCompare(b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
+  /** The language server's completion items at `position`, kept per buffer version. While a run
+   * keeps the server busy, the last items stand in only where they were asked for the same word. */
   const asked = new Map();
-  let lastItems = null;
-  function completions(position) {
-    const k = `${uri()}|${version}|${position.line}:${position.character}`;
+  let lastItems = null, lastWord = '';
+  function completions(position, start = position.character) {
+    const k = `${uri()}|${version}|${position.line}:${position.character}`, word = `${uri()}|${position.line}:${start}`;
     if (!asked.has(k)) {
       asked.clear();
-      asked.set(k, lsp('textDocument/completion', { textDocument: { uri: uri() }, position }).then((r) => (lastItems = (Array.isArray(r) ? r : r?.items) ?? [])).catch(() => []));
+      asked.set(k, lsp('textDocument/completion', { textDocument: { uri: uri() }, position }).then((r) => {
+        [lastItems, lastWord] = [(Array.isArray(r) ? r : r?.items) ?? [], word];
+        return lastItems;
+      }).catch(() => []));
     }
-    return running && lastItems ? lastItems : asked.get(k);
+    return running && lastItems && lastWord === word ? lastItems : asked.get(k);
   }
   /** The last hover of each command, by file: shown at once while a run goes on. */
   const keptHovers = new Map();
@@ -368,7 +380,8 @@
       const item = open && /[{[,=]\s*$/.test(line.text.slice(0, key.from - line.from));
       if (!ctx.explicit && before !== '\\' && before !== '{' && !item) return null;
       push();
-      const items = await completions(position(ctx.state.doc, ctx.pos));
+      const start = before === '\\' ? word.from : key.from;
+      const items = await completions(position(ctx.state.doc, ctx.pos), start - line.from);
       // an item that replaces a range (a key path) starts where that range does
       const edit = items.find((i) => i.textEdit)?.textEdit;
       const from = edit ? at(ctx.state.doc, edit.range.start) : before === '\\' ? word.from : key.from;
