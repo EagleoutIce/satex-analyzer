@@ -12,7 +12,7 @@ satex lsp --port 9257        # TCP instead, bound to 127.0.0.1
 satex lsp --port 9257 --host 0.0.0.0
 ```
 
-A document is re-analyzed `lsp.debounce_ms` after its last edit. The run keeps checkpoints of its whole state at line starts in the document's own files. The next run resumes from the last one whose input is unchanged, so an edit late in the document reruns only what follows it. The result is the same as a full run. While a run goes on, hover, completion and signature help are answered from the last analysis at once. Requests wait for the first analysis. `\input` and `\include` see the unsaved text of other open documents. A file without `\documentclass` is analyzed as part of the document that reads it: the one `-f` names, else the root the client's workspace folder holds. Every path is answered as the client named it, so a folder opened through a symlink keeps its name.
+A document is re-analyzed `lsp.debounce_ms` after its last edit. The run keeps checkpoints of its whole state at line starts in the document's own files. The next run resumes from the last one whose input is unchanged, so an edit late in the document reruns only what follows it. The result is the same as a full run. Each analysis is the build as latexmk runs it, and its files (`.aux`, the `.bbl` made from the cited entries) stay for the next one, so a later edit usually needs one run. Queries and the playground's panels read that one analysis, never a run of their own. While a run goes on, hover, completion and signature help are answered from the last analysis at once. Requests wait for the first analysis. `\input` and `\include` see the unsaved text of other open documents. A file without `\documentclass` is analyzed as part of the document that reads it: the one `-f` names, else the root the client's workspace folder holds. Every path is answered as the client named it, so a folder opened through a symlink keeps its name.
 
 ## Capabilities
 
@@ -20,10 +20,10 @@ A document is re-analyzed `lsp.debounce_ms` after its last edit. The run keeps c
 | --- | --- | --- |
 | Diagnostics | `textDocument/publishDiagnostics`, on open/change/save | `satex lint --format lsp` |
 | Quick fixes | `textDocument/codeAction` | the `fix`/`unsafe fix` edits [lint](lints.md#quick-fixes) attaches to a finding |
-| Hover | `textDocument/hover` | `satex explain` |
+| Hover | `textDocument/hover` | `satex explain`; on a citation key its database entry |
 | Definition | `textDocument/definition` | `satex explain` |
 | References | `textDocument/references` | `satex query expansions`/`occurrences` |
-| Completion | `textDocument/completion` | `satex scope`, plus label/citation/environment keys from `occurrences` |
+| Completion | `textDocument/completion` | `satex scope`, plus label/citation/environment keys from `occurrences` and stored pgfkeys/l3keys keys |
 | Document symbols | `textDocument/documentSymbol` | sections, labels and document-defined names |
 | Rename | `textDocument/prepareRename`, `textDocument/rename` | `satex query definitions`/`expansions`/`occurrences` |
 | Run any query | `workspace/executeCommand` (`satex/query`) | `satex query --request` |
@@ -33,8 +33,43 @@ A run can stop before a later file defines a name. Then go-to-definition scans t
 Rename moves every name one declaration made from one key. `\newcounter{step}` allocates `\c@step`, `\thestep`, `\p@step`, `\cl@step` and `\theHstep`, so renaming the counter rewrites the key inside all of them, in `\stepcounter{step}` and in `\thestep`. `\newenvironment{note}` defines `\note` and `\endnote`, so its key, `\begin{note}` and `\end{note}` move together. A name `\csname` builds is rewritten where the file spells it out character for character. The rename is refused, with the site named, when a name it would build is already defined, when a definition or use lies in a file satex may not edit, or when a name is built while the document runs and no site spells it.
 
 Completion looks at the text before the cursor: after `\` it offers the commands in scope there, with a snippet for their arguments. Inside `\begin{` environment names. Inside a reference or citation argument the document's labels or keys.
+Inside a file argument the files of its extension that start with the typed text: the project's, and for classes, packages, `.bib` and `.bst` the installation's too. A package option whose value the run loaded as a file completes those files (biblatex's `style=` the `.bbx` styles).
 A built-in list of common commands (`\ref`, `\cref`, the `cite` family, `\begin`, `\usepackage`, `\input`) says what their argument takes, so the first `\ref{` of a document already offers its labels.
-What the run saw a command do adds to that list, so a package's or your own wrapper gets the same completion once it is used.
+What each argument of a command is, its role, decides what is offered there (`roles` in [`explain`](queries.md#explain)): `#1 ref`, `#1 label`, `#1 input`, `#2 ref after sec:`. Roles come from three places, in this order:
+
+- what the run saw calls of the command do: each label, reference, citation or load, matched to the argument that held its key,
+- the command's own body in the project: an argument handed to an argument with a role has that role, behind a literal prefix or not, through any number of wrappers,
+- a seed of the kernel's and common packages' conventions, only for a command the project does not define anew. A `\ref` the document redefines is what its new body says.
+
+So `\newcommand\secref[1]{\ref{sec:#1}}` completes labels in its argument before it is ever used, and offers `intro` for the label `sec:intro`. An argument that defines a key is not also a use of it.
+
+A value the run writes into a build file another tool reads gets that tool's input type: an argument written as `\bibdata{…}` into the `.aux` or as a datasource into the `.bcf` is a `.bib` database, one written as `\bibstyle{…}` a `.bst` style. So `\bibliography`, `\addbibresource` and any wrapper of them complete those files, and show `file (.bib)` or `file (.bst)` in their usage. The file kind (`FileKind`) gives the extension and the installation tree that completion searches. A completed name in braces closes the brace unless one follows.
+
+A key has a kind too: `\ref{` is a `label`, `\cite{` a `citation key`, so the signature and hover say which, and completion offers the labels there and never the citations.
+
+Each argument also has a type: what TeX read it as (`types` in [`explain`](queries.md#explain), the [argument type lattice](domains.md#argument-types-the-ty-lattice)).
+The run notes the tokens of the user's files that a scanner read as a number, dimen or glue, that an assignment named as a register, that `\copy` or `\setbox` read as a box number, or whose characters `\csname` formed into a register's name.
+Each such token belongs to the braced argument of the command its text stands in, and flows through wrappers as a role does.
+Types of one argument join: `\setlength` shows `#1 skip register, #2 glue`, `\usebox` `#1 box`, `\setcounter` `#1 counter, #2 number`, and an argument read once as glue and once as a number is a `quantity`.
+The record numbers the types by the argument's place in the usage line, optional arguments counted: `\usepackage[⟨arg1⟩]{⟨arg2⟩}` has `#1 options, #2 file`. The options of a load are a key list, its name a file.
+A command that defines a control sequence reads one, so `\newif` has the signature `\if⟨name⟩`: a control sequence it makes a conditional (`#1 conditional`).
+The hover lists the type of each `⟨argN⟩` under the usage line, and the signature help puts it in front of the parameter's comment.
+The completion detail of a command shows them in its usage line: `\setlength{1: skip register}{2: glue}`.
+Under the hover of a command that reads a quantity, a short explanation from the knowledge base follows: what a glue, a dimen, a number, a muglue or a box is, with examples. The base is `src/lsp/knowledge.md`, one `## name, alias` entry each. A register or parameter is explained by the kind of value it holds.
+Inside an argument read as a quantity, completion lists the names that hold one that fits first: `\setlength{\` offers the lengths before other commands.
+A command no use typed takes the types its body gives its parameters: the kernel's `\setlength` (`#1#2\relax`) shows `#1 register, #2 quantity` before the document calls it.
+
+In a key list (`\pgfkeys{…}`, `\tikzset{…}`, a macro handing its argument to `\pgfkeys` or `\keys_set:nn`) completion offers the keys pgfkeys and l3keys stored in the run.
+A `/path` lists the keys under its directory. After `/demo/.cd` or a family's name (`.is family`), plain names resolve there, else in the families the command sets.
+A key that takes a value completes as `key=` with the cursor after it. A switch, a family, a key with a default and a style that reads no `#1` complete as the bare key.
+After `key=` it offers the key's choices (`mode/fast`, l3keys' `.choice:` and `.bool_set:N`), or `true` and `false` for an `.is if` key.
+
+A command with several definitions shows the one in force at the cursor. The others follow under a `More definitions` heading, which the playground folds.
+Hovering the style of `\bibliographystyle` shows its `.bst` file when BibTeX finds one, the databases it formats and what the standard styles do. The style is read from the `\bibstyle` line the run writes to the `.aux` file.
+A style given as the biblatex option `style=` is shown the same way, with its `.bbx` file.
+The typeset pass sets the bibliography from a `.bbl` satex writes itself from the `.bib` entries the document cites, in biber's format under biblatex and BibTeX's `thebibliography` otherwise. It lives in the build's virtual files and no `.bbl` of LaTeX's is read.
+
+Hovering a key in an argument that cites (the `cite` role, so wrappers too) shows its entry from the databases the document names: title, author, year, venue and every field, with its place in the `.bib` file.
 
 `workspace/executeCommand` runs `satex/query` with one argument, a [query request](queries.md#json-requests). Without `file` it applies to the open document.
 
@@ -94,3 +129,14 @@ vim.lsp.config.satex = {
 }
 vim.lsp.enable("satex")
 ```
+
+### TeXstudio
+
+TeXstudio has no LSP client. It reads the LaTeX log, so `satex lint --format texlog` writes findings in that form: errors as `! Package satex Error: …` with `l.⟨line⟩`, the rest as `Package satex Warning: … on input line ⟨line⟩.` Append them to the log after compiling, then let TeXstudio show the log. Under *Options → Configure TeXstudio → Build*, set *Build & View* to
+
+```
+txs:///compile | satex lint -f %.tex --format texlog >> %.log | txs:///view-log | txs:///view
+```
+
+The findings then appear in the log panel and as error and warning marks in the editor.
+
