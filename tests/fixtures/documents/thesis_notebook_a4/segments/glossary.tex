@@ -1,0 +1,94 @@
+% normal glossary
+\newglossaryentry{item:whole}{%
+  name={whole},plural={wholes},
+  description={%
+    Finite set of \glspl{item:part} \ldots
+  },%
+  shortdesc={Set of \glspl{item:part}.}
+}
+\newglossaryentry{item:part}{%
+  name={part},plural={parts},
+  description={%
+    Component of a \gls{item:whole} \ldots
+  },%
+  shortdesc={Uniquely marked part of a \gls{item:whole}.}
+}
+
+\newglossaryentry{item:outer-factor}{%
+  name={outer factor}, plural={outer factors},
+  description={%
+    A factor defined outside of the \gls{item:whole} and its expressions. Its change can yield completely different values inferred by the helper.
+  },%
+  shortdesc={Factors outside of a \gls{item:whole}[wholes] control}%
+}
+
+\newglossaryentry{def:same-look}{%
+  name={visual match},
+  first={visual match [first use!]},
+  description={%
+    Two \glspl{item:whole}~\(A\) and~\(B\) have the same observable shape for all \textit{labels} they do have in common\ldots
+  },%
+  shortdesc={%
+    All \textit{labels} in common evaluate to the same value for all outer factors.%
+  }%
+}
+
+
+% acronyms
+\newacronym{aaa}{AAA}{Alpha Alpha Alpha}
+\newacronym{bbb}{BBB}{Beta Beta Beta}
+\newacronym{ccc}{CCC}{Gamma Gamma Gamma}
+\newacronym[plural={Delta Delta items}]{net:ddd}{DDD item}{Delta Delta item}
+
+
+% notations
+\newglossaryentry{not:N}{%
+  name={Natural Number}, symbol={\ensuremath{\mathbb{N}}},
+  type={notation},
+  description={%
+    Describes the set of non negative integers: \(\{1, 2, \ldots\}\). If~\(0\) is to be included, it is indexed as \(\mathbb{N}_0\).
+  },%
+  shortdesc={%
+    Set of non-negative ints.
+  }%
+}
+
+\newglossaryentry{not:Z}{%
+  name={Integer}, symbol={\ensuremath{\mathbb{Z}}},
+  type={notation},
+  description={%
+    Describes the set of non negative as well as the negative integers: \(\{\ldots, -1, 0, 1, 2, \ldots\}\).
+  },%
+  shortdesc={%
+    Set of integers.
+  }%
+}
+
+
+\newglossaryentry{not:R}{%
+  name={real number}, symbol={\ensuremath{\mathbb{R}}},
+  type={notation},
+  description={%
+    Describes the set of real numbers.
+  },%
+  shortdesc={%
+    Set of real numbers.
+  }%
+}
+
+\newglossaryentry{not:C}{%
+  name={Complex}, symbol={\ensuremath{\mathbb{C}}}, type={notation},
+  description={Describes the set of complex numbers.},
+  shortdesc={Set of complex numbers.}%
+}
+
+\newglossaryentry{not:P}{%
+  name={powerset}, symbol={\ensuremath{\mathcal{P}}},
+  type={notation},
+  description={%
+    With \(\P(X)\) we denote the powerset of a set \(X\). That is, the set of all subsets of \(X\), including the empty set and \(X\) itself.
+  },%
+  shortdesc={%
+    Describes the powerset \(\P(X)\) of a set \(X\).
+  }%
+}

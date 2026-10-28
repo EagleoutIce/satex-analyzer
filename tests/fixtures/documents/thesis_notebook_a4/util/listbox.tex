@@ -1,0 +1,57 @@
+%
+% LISTBOXES
+%
+
+% #1 Box Name
+% #2 Entry Name
+% For use in sentence
+\newcommand{\toolaef}[2]{\hyperref[entry:#1-#2]{$#1_{\ref{entry:#1-#2}}$}}
+\newcommand{\itemref}[2]{entry \hyperref[entry:#1-#2]{$#1_{\ref{entry:#1-#2}}$}}
+% For use inside math
+\WithSuffix\newcommand\itemref*[2]{\hyperref[entry:#1-#2]{#1_{\ref{entry:#1-#2}}}}
+% For use at start of sentence
+\newcommand{\Itemref}[2]{Entry \hyperref[entry:#1-#2]{$#1_{\ref{entry:#1-#2}}$}}
+
+\newcommand{\rboxref}[1]{\hyperref[lb:#1]{#1}}
+
+
+% #1 - Box Name
+% #2 - Entry Name
+\newcommand{\entryLabel}[2]{entry:#1-#2}
+
+% #1 - Entry Name
+% #2 - Entry Code
+\newcommand{\entry}[2]{
+    \edef\lastentryid{\theentryid}
+    \refstepcounter{entryid}
+    \label{\entryLabel{\boxName}{#1}}
+
+    \node[below=1mm of \lastentryid, inner sep=2mm, text width=\boxWidth, rounded corners, thick, draw=blue!20, fill=blue!10] (\theentryid) {\small\begin{obeylines}#2\end{obeylines}};
+    \node[below left=0.5mm and 0mm of \theentryid.north east, @link] {\footnotesize $\boxName_\theentryid$};
+}
+
+\newcounter{boxId}
+\setcounter{boxId}{0}
+\newcounter{entryid}
+\counterwithin*{entryid}{boxId}
+
+% #1 - Width
+% #2- Box Name (used in entry label)
+\newenvironment{listbox}[2][4cm]{
+    \edef\boxName{#2}
+    \edef\boxWidth{#1}
+    \refstepcounter{boxId}\label{lb:\boxName}
+
+    \begin{center}
+    \begin{tikzpicture}
+    \node[color=blue!40] (0) {\small Listbox \boxName};
+}{
+    \begin{pgfonlayer}{background}
+        \draw[draw=blue!30, fill=blue!1, rounded corners, thick]
+        ($(current bounding box.south west) - (4pt, 4pt)$)
+        rectangle
+        ($(current bounding box.north east) + (4pt, 2pt)$);
+    \end{pgfonlayer}
+    \end{tikzpicture}
+    \end{center}
+}

@@ -1,6 +1,6 @@
 <!-- generated from doc/src/README.md.in by satex-doc; do not edit -->
 
-# SaTeX - Static Analysis for (La)TeX and Friends
+<p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
 
 An abstract interpreter for (La)TeX and related engines with the ability to expands macros, execute primitives, track dynamic catcode changes, recursion, and more. While SaTeX is context and path-sensitive, it does not typeset the document.
 Instead, SaTeX can lint your documents to find various issues (including quick-fixes and the identification of unused or missing macros), slice your document, analyze its performance, jump to definitions,  explore package options and their consequences.
@@ -24,11 +24,19 @@ Yet, please avoid AI-only contributions. Humans are still considered responsible
 
 ## Install
 
-Prebuilt binaries for Linux, macOS and Windows (x86-64 and ARM64) are attached to every [release](../../releases). With Rust installed, `cargo install satex-analyzer` installs the `satex` command. To build from source:
+Prebuilt binaries for Linux and macOS (x86-64 and ARM64) and Windows (x86-64) are attached to every [release](../../releases). With Rust installed, `cargo install satex-analyzer` installs the `satex` command. `cargo install --git https://github.com/EagleoutIce/satex-analyzer` installs the latest version from the repository. To build from source:
 
 ```sh
 cargo build --release
 ./target/release/satex --help
+```
+
+Shell completion: after installing, run `satex completions install` once. It adds the hook to the startup file of your shell (bash, zsh or fish). `satex completions <shell>` prints the script for bash, zsh, fish, elvish or powershell. Query names and `--set` keys complete from the program itself. See the [command line page](doc/wiki/cli.md).
+
+```sh
+source <(satex completions bash)                          # bash: add to ~/.bashrc
+source <(satex completions zsh)                           # zsh: add to ~/.zshrc
+satex completions fish > ~/.config/fish/completions/satex.fish
 ```
 
 Current version: 0.1.0. `satex --version` also lists the plugins included in this build and the configuration in effect:
@@ -38,7 +46,7 @@ $ satex --version
 satex 0.1.0
 https://github.com/EagleoutIce/satex-analyzer
 
-plugins: 46 in 11 kinds
+plugins: 47 in 11 kinds
   provider            3  texlive, miktex, tectonic
   platform            3  linux, macos, windows
   engine              4  tex, pdftex, luatex, xetex
@@ -47,7 +55,7 @@ plugins: 46 in 11 kinds
   build system        5  latexmk, make, tectonic, arara, l3build
   tools               7  biber, bibtex, makeindex, xindy, makeglossaries, dvips, ps2pdf
   magic comments      3  % !TeX, % !BIB, % arara:
-… 7 more lines omitted
+… 16 more lines omitted
 ```
 
 <details>
@@ -70,7 +78,10 @@ Commands:
   dependencies  The program dependence graph — data dependencies plus control dependencies — as DOT or JSON
   trace         The execution trace, step by step
   cache         The interpreted LaTeX2e kernel and the package caches.  Without a further command, prints their status
+  compile       Build the document with latexmk, or the engine where latexmk is missing, and explain each error and warning the log reports by what the analysis found there.  Never opens a viewer.  The build runs the project's own code, its latexmkrc and what it lets TeX run, so build only projects you trust
+  install       Install the packages the document loads that this machine does not have.  Asks first, never elevates, and is never run by `lint --fix`
   tokens        The token stream the mouth produces
+  completions   Print the shell completion script: bash, zsh, fish, elvish or powershell.  Values complete from the running binary.  `install [bash|zsh|fish]` registers it in that shell's startup file; without a shell, in every shell installed or in use
   lsp           A Language Server Protocol server: a thin facade over the queries and lints above, driven by `initialize`/`didOpen`/`didChange` instead of one-shot arguments.  Stdio by default; `--port` switches to TCP
   help          Print this message or the help of the given subcommand(s)
 
@@ -95,7 +106,7 @@ Input:
           Which defaults to apply (usually auto-detected): document, package, class, literate or plain
 
       --set <PATH=VALUE>
-          Overrides an option of `satex.yaml` by its dotted path, the value written as there: `--set limits.memory=8GiB --set load_inputs=false`. Repeatable; the flags below win over it
+          Overrides an option of `satex.yaml` by its dotted path, the value written as there: `--set limits.memory=8GiB --set load.inputs=false`. Repeatable; the flags below win over it
 
       --no-packages
           Do not load packages; analyze the document and the kernel only
@@ -122,6 +133,7 @@ Output:
 
           Possible values:
           - text:     Aligned table for a terminal, with color and links
+          - compact:  A short text view. For `satex trace`: what each call of the main file expands to and each conditional's outcome, at most 8 lines
           - json:     One JSON array of objects, one object per record
           - csv:      Comma-separated, one record per line
           - markdown: A Markdown table, for a report or a pull request
@@ -163,15 +175,31 @@ Provides context-sensitive diagnostics like undefined names, duplicates, dead co
 
 ```text
 $ satex lint -f samples/paper.tex
-errors (1)
-  paper.tex:24:1  error    already-defined  \repeat is already defined
-    [unsafe fix] use \renewcommand{\repeat} instead
+correctness (1)
 
-suggestions (7)
-  paper.tex:14:1  info     unused-definition  \WeirdMore is never used
-    [unsafe fix] delete \WeirdMore
-  paper.tex:16:1  info     unused-definition  \Weird is never used
-… 21 more lines omitted
+  ◆ already-defined (1)
+    paper.tex:24:1  \repeat is already defined
+      24 │ \newcommand{\repeat}[1]{#1\repeat{#1}}
+         │ ^^^^^^^^^^^
+         = unsafe fix: use \renewcommand{\repeat} instead
+
+style (8)
+
+  ● microtype-available (1)
+    paper.tex:26:1  microtype is not loaded; under pdftex it evens out spacing and line breaks
+      26 │ \begin{document}
+         │ ^^^^^^
+         = unsafe fix: load \usepackage{microtype}
+
+  ● primitive-tex-command (1)
+    paper.tex:22:1  \csname is plain TeX; here it uses a control sequence by name
+      22 │ \csname ifdraft\endcsname\else
+         │ ^^^^^^^
+         = unsafe fix: use \csuse (etoolbox)
+
+  ● table-rules (1)
+    paper.tex:68:3  the table is ruled with `\hline`
+… 42 more lines omitted
 ```
 
 <details>
@@ -185,45 +213,90 @@ error     correctness  build-bibliography-disabled      the document has a bibli
 error     correctness  build-command-placeholders       an engine command in the latexmkrc lacks %S or %O               
 error     correctness  build-engine-mismatch            the build runs another engine, or another output, than the do…  
 error     correctness  build-shell-escape-missing       the document runs programs through \write18, but the build do…  
-error     correctness  duplicate-label                  the same label is defined twice                                 
+error     correctness  caused-library-error             the document makes package code raise a TeX error               
+error     correctness  math-still-open                  the run is still in math mode where the text ends               
 error     correctness  missing-graphic                  an included image is not there for this output target           
 error     correctness  not-defined                      \renewcommand targets a name that does not exist                
 error     correctness  option-clash                     a package is loaded twice with different options                
 error     correctness  raised-error                     the document's code raises a TeX error                          
+error     correctness  undefined-color                  a color is used, or aliased from, before xcolor ever defines …  
 error     correctness  undefined-control-sequence       a control sequence is used that nothing defines                 
 error     correctness  undefined-environment            \begin names an environment that is not defined                 
 error     correctness  undefined-glossary-entry         a glossary or acronym entry is used but never declared          
 error     correctness  unguarded-recursion              a recursive macro has nothing that can stop it                  
 warning   correctness  build-missing-custom-dependency  the document writes glossary files, but latexmk has no rule t…  
 warning   correctness  catcode-escapes-group            a category code change is still in force at the end of the run  
+warning   correctness  conflicting-color-definition     the same color name is defined twice with different colors      
+warning   correctness  delimiter-not-followed           \left, \right or \middle is followed by a brace or a math shi…  
 warning   correctness  duplicate-bibliography-entry     the same key is declared by two bibliography entries            
+warning   correctness  duplicate-label                  the same label is defined twice                                 
 warning   correctness  environment-mismatch             \end names an environment other than the one that is open       
 warning   correctness  expl-syntax-left-on              \ExplSyntaxOn is never turned off                               
 warning   correctness  expl3-signature-mismatch         an expl3 function takes other arguments than its name says      
+warning   correctness  ignored-verbatim-tail            text stands on the line that closes a verbatim body and never…  
+warning   correctness  math-script-braces               `^` and `_` take one token, so what follows needs braces        
 warning   correctness  missing-dependency               a TeX Live package the run reads from is not in the dependenc…  
+warning   correctness  unbalanced-brackets              a file sets more of one bracket than of its partner             
+warning   correctness  unbalanced-color-stack           a `\pdfcolorstack` push is never popped, or a pop has nothing…  
 warning   correctness  unbalanced-pdf-content           a PDF literal opens marked content or a graphics state that i…  
 warning   correctness  undefined-citation               a citation names a key no bibliography entry declares           
 warning   correctness  undefined-optional-content       marked content refers to an optional content group no resourc…  
 warning   correctness  undefined-reference              \ref names a label that is never defined                        
+warning   correctness  uninstalled-package              the package is not installed, and the distribution could inst…  
 warning   correctness  unresolved-file                  a package, class or input file is not in the installation       
+info      correctness  expected-load                    the file was read after a package it expects loaded             
+info      correctness  math-mode-mismatch               \(, \), \[ or \] stands where the mode does not allow it        
+info      correctness  unintended-escape                a command is followed by an escaped punctuation mark, which i…  
 warning   security     build-shell-escape-unneeded      the build allows \write18, but the document never uses it       
 warning   security     shell-escape                     the document runs a program through \write18                    
+warning   style        accent-on-dotted-letter          an accent sits on top of the dot of an `i` or a `j`             
+warning   style        command-terminated-space         a control word ate the space after it and the next word is se…  
+warning   style        dimension-times                  the letter x stands between two numbers where a multiplicatio…  
+warning   style        double-space                     two interword spaces reached the page, one of them from a tie   
+warning   style        ellipsis-dots                    three periods set three periods, not an ellipsis                
 warning   style        group-local-definition           a definition is made inside a group and lost when it closes     
+warning   style        math-operator-name               an operator name is set in math italic instead of by its comm…  
+warning   style        missing-italic-correction        a slanted letter runs into upright text with no `\/` between …  
+warning   style        missing-nonbreaking-space        an ordinary space in front of a reference lets the line break…  
+warning   style        parenthesis-spacing              a parenthesis carries the space of the text inside it instead…  
+warning   style        quote-direction                  a quotation mark points the wrong way, or a run of them mixes…  
+warning   style        sentence-spacing                 a period set the wrong width of space for the sentence around…  
+warning   style        space-before-command             a space lets the line break between a word and the mark that …  
+warning   style        space-before-punctuation         a space stands between a word and the punctuation after it      
+warning   style        stray-italic-correction          a repeated italic correction, or one in front of a period or …  
 warning   style        unknown-suppress-code            a satex-disable comment names a code no rule has                
+warning   style        user-pattern                     the source matches a pattern the project asked to be warned a…  
+warning   style        wrong-dash                       a run of hyphens sets a dash of the wrong length for what sta…  
+warning   style        wrong-quote-character            a character that is not a quotation mark stands in for one      
+warning   style        zero-italic-correction           the italic correction is zero here, so `\/` changes nothing     
 info      style        build-bibliography-unneeded      the build configures BibTeX or biber for a document without a…  
 info      style        build-engine-options             the engine command could report errors as file:line and write…  
 info      style        build-unused-custom-dependency   a latexmk custom dependency that nothing in the document trig…  
+info      style        comment-marker                   a comment still carries a TODO-style marker                     
 info      style        computer-modern-in-t1            T1 text in Computer Modern relies on cm-super for scalable fo…  
+info      style        csquotes-available               the document sets quotation marks by hand instead of loading …  
 info      style        dead-definition                  a definition is replaced before anything uses it                
+info      style        duplicate-color-value            two color names store the exact same color                      
+info      style        duplicate-package                a package is loaded more than once                              
 info      style        hand-set-quantity                a number and its unit are set by hand where siunitx would set…  
+info      style        inconsistent-precision           the numbers of a table column give different numbers of decim…  
+info      style        math-punctuation                 punctuation sits on the wrong side of a formula                 
+info      style        math-shift-dollars               display math opened with `$$` where LaTeX spells it \[          
 info      style        microtype-available              the engine can protrude characters and expand fonts, but micr…  
+info      style        numbers-not-aligned              a table column of numbers does not line them up at their deci…  
 info      style        ot1-font-encoding                accented letters are built with \accent because the text is s…  
+info      style        prefer-cleveref                  a hand-written name in front of `\ref` is what cleveref sets …  
 info      style        primitive-tex-command            a plain TeX primitive is used where LaTeX has its own interfa…  
+info      style        quote-ligature                   three quotation marks in a row set a double and a single mark…  
+info      style        quote-punctuation                punctuation stands inside the closing quotation mark            
 info      style        stray-space                      a macro body picked up a space from an unescaped line end       
+info      style        table-rules                      a table is ruled with vertical rules or `\hline`                
+info      style        unit-in-cells                    every number of a table column carries the same unit            
+info      style        unreferenced-numbered-display    a display that stepped a counter is never referenced, so its …  
 info      style        unused-bibitem                   a \bibitem written in the document is never cited               
+info      style        unused-color                     a color the document defines is never used                      
 info      style        unused-definition                a macro defined in the document is never used                   
 info      style        unused-label                     a label is never referenced                                     
-warning   performance  duplicate-package                a package is loaded more than once                              
 warning   performance  package-after-preamble           a package is loaded after \begin{document}                      
 info      performance  preamble-cost                    what the preamble costs on every build                          
 info      performance  recursive-macro                  a macro calls itself, directly or through others                
@@ -241,12 +314,10 @@ $ satex lint --explain unguarded-recursion
 unguarded-recursion  correctness / error
 a recursive macro has nothing that can stop it
 
-The run saw the macro's expansion reach the macro again, from a call written
-in the replacement text of a macro of the cycle (a tail call included), the
-run could not see the recursion end, and its replacement text contains no
-conditional — no `\if…`, `\else` or
-`\fi` — so nothing can end the recursion.  A macro nothing expands is judged
-by the names its replacement text holds, and reported as a warning.  A real run expands until TeX runs out of memory:
+The run saw the macro's expansion reach the macro again, could not see the
+recursion end, and found no conditional — no `\if…`, `\else` or `\fi` — to
+end it.  A macro nothing expands is judged by the names its replacement text
+holds.  A real run expands until TeX runs out of memory:
 `TeX capacity exceeded, sorry [main memory size]`.
 
 Fix by adding the test that stops it, or by removing the self-reference.
@@ -294,15 +365,15 @@ $ satex explain -f samples/paper.tex '\usepackage'
   tag            alias
   when           preamble
   context        outside environments
-  effective      \usepackage[1]{2}[3]
-  signature      omo
-  takes          1-3
+  effective      \usepackage[1]{2}{3}
+  signature      omm
+  takes          2-3
   uses           4 times, in this run
   by             \let
-  documentation  The LaTeX2e sources, source2e
+  documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
   body           \@fileswithoptions \@pkgextension 
   reference      https://texdoc.org/serve/source2e/0
-  file           /usr/local/texlive/2026/texmf-dist/tex/latex/base/latex.ltx:18619
+  file           /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx:18619
 
 \usepackage @ latex.ltx:9521:22
   tag            alias
@@ -313,10 +384,10 @@ $ satex explain -f samples/paper.tex '\usepackage'
   takes          0
   uses           0 times, in this run
   by             \let
-  documentation  The LaTeX2e sources, source2e
+  documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
   body           \@latex@error {Can be used only in preamble}\@eha 
   reference      https://texdoc.org/serve/source2e/0
-  file           /usr/local/texlive/2026/texmf-dist/tex/latex/base/latex.ltx:9521
+  file           /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx:9521
 ```
 </details>
 
@@ -335,7 +406,7 @@ $ satex explain -f samples/paper.tex '\norm'
   by         \newcommand
   expands    \left, \hat, \hat , \mathaccentV, \right
   body       \left \lVert #1\right \rVert 
-  file       /home/ostwind/git/phd/satex/samples/paper.tex:12
+  file       samples/paper.tex:12
 ```
 
 </details>
@@ -372,11 +443,11 @@ The `controls` command shows the switches and options a package or class defines
 
 ```text
 $ satex controls -f samples/paper.tex
-tag     name       count  value                                   governs  file           
-option  article           11pt                                             paper.tex      @ paper.tex:1:1
-switch  \ifdraft          false                                   270      paper.tex      @ paper.tex:3:7
-offers  amsmath    15     alignedleftspaceno, alignedleftspacey…           amsmath.sty    @ amsmath.sty:45:16
-… 11 more lines omitted
+tag     name       count  value                                  governs  file           
+option  article           11pt                                            paper.tex      @ paper.tex:1:1
+switch  \ifdraft          false                                  263      paper.tex      @ paper.tex:3:7
+offers  amsmath    15     alignedleftspaceno, alignedleftspace…           amsmath.sty    @ amsmath.sty:45:16
+… 12 more lines omitted
 ```
 
 </details>
@@ -385,6 +456,13 @@ offers  amsmath    15     alignedleftspaceno, alignedleftspacey…           ams
 
 ```text
 $ satex query options -f samples/paper.tex --for itemize
+key           default  package         file                
+expand        true     gettitlestring  gettitlestring.sty  @ gettitlestring.sty:159:20
+append        @VOID@   epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:513:20
+disable       true     epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:242:22
+enable        true     epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:243:31
+outdir                 epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:238:24
+… 5 more lines omitted
 ```
 
 </details>
@@ -410,10 +488,10 @@ $ satex slice -f samples/paper.tex '\ifdraft'
 
 ```text
 $ satex scope -f samples/paper.tex --at 20:1
-tag          name                                      effecti…  file                
-macro        \Weird                                    \Weird …  paper.tex           @ paper.tex:16:1
-macro        \WeirdMore                                \WeirdM…  paper.tex           @ paper.tex:14:1
-… 7766 more lines omitted
+tag          name                                     effecti…  file                
+macro        \Weird                                   \Weird …  paper.tex           @ paper.tex:16:1
+macro        \WeirdMore                               \WeirdM…  paper.tex           @ paper.tex:14:1
+… 8278 more lines omitted
 ```
 
 </details>
@@ -424,17 +502,17 @@ Shows what a build costs: which packages and files dominate, and what to do abou
 
 ```text
 $ satex lint -f samples/paper.tex --filter 'category=performance'
-performance (2)
-  paper.tex:5:1  info     unused-package  graphicx defines 72 names, none of which are used
-    [unsafe fix] delete \usepackage{graphicx} if its side effects are not needed
-  paper.tex:26:1  info     preamble-cost  5 packages requested directly, 263 files read
-    fix: precompile the preamble into a format to skip this on every build
+performance (1)
 
-… 2 more lines omitted
+  ● preamble-cost (1)
+    paper.tex:26:1  5 packages requested directly, 274 files read
+      26 │ \begin{document}
+         │ ^^^^^^
+… 5 more lines omitted
 ```
 
 `--timings` breaks the time down per phase and file, `--stats` sums up counts and wall time. Both measure the run itself and change between runs.
-The kernel and the packages are interpreted once and cached. `satex cache build` prepares the packages in `cache_index` ahead of time.
+The kernel and the packages are interpreted once and cached. `satex cache build` prepares the packages in `cache.index` ahead of time.
 
 <details>
 <summary>The cached kernel with <code>cache</code></summary>
@@ -442,8 +520,8 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 ```text
 $ satex cache
 cache
-  source /usr/local/texlive/2026/texmf-dist/tex/latex/base/latex.ltx
-  holds 182295 definitions
+  source /usr/local/texlive/YYYY/texmf-dist/tex/latex/base/latex.ltx
+  holds 190762 definitions
   state cached
 … 2 more lines omitted
 ```
@@ -458,14 +536,14 @@ The commands a document defines itself, without packages and without internal `@
 
 ```text
 $ satex query definitions -f samples/paper.tex --filter 'origin=document and not package~. and not name~@'
-tag     name         parameters                       body                      file          
-switch  \ifdraft                                                                paper.tex     @ paper.tex:3:7
-switch  \drafttrue                                    \let \ifdraft \iftrue     paper.tex     @ paper.tex:3:7
-switch  \draftfalse                                   \let \ifdraft \iffalse    paper.tex     @ paper.tex:3:7
-macro   \hello                                        world                     preamble.tex  @ preamble.tex:1:1
-macro   \highlight   #1                               \textbf {#1}              paper.tex     @ paper.tex:11:13
-macro   \norm        #1                               \left \lVert #1\right \…  paper.tex     @ paper.tex:12:13
-macro   \WeirdMore   super #1\;                        #1                       paper.tex     @ paper.tex:14:1
+tag     name         parameters                       body                     file          
+switch  \ifdraft                                                               paper.tex     @ paper.tex:3:7
+switch  \drafttrue                                    \let \ifdraft \iftrue    paper.tex     @ paper.tex:3:7
+switch  \draftfalse                                   \let \ifdraft \iffalse   paper.tex     @ paper.tex:3:7
+macro   \hello                                        world                    preamble.tex  @ preamble.tex:1:1
+macro   \highlight   #1                               \textbf {#1}             paper.tex     @ paper.tex:11:13
+macro   \norm        #1                               \left \lVert #1\right …  paper.tex     @ paper.tex:12:13
+macro   \WeirdMore   super #1\;                        #1                      paper.tex     @ paper.tex:14:1
 … 2 more lines omitted
 ```
 
@@ -494,6 +572,7 @@ produces
 gaps              
 pgfkeys           
 options           
+typeset           
 ```
 
 </details>
@@ -520,12 +599,12 @@ options
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step       name            detail                                             file       
-0       expand     \documentclass                                                     paper.tex  @ paper.tex:1:1
-7734    open-file  \article        /usr/local/texlive/2026/texmf-dist/tex/latex/bas…  paper.tex  @ paper.tex:1:1
-16002   expand     \value                                                             paper.tex  @ paper.tex:0:0
-29937   expand     \par                                                               paper.tex  @ paper.tex:2:1
-… 12 more lines omitted
+index   step         name                        detail                    file           
+678     expand       \documentclass                                        paper.tex      @ paper.tex:1:1
+8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
+10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
+10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
+… 209 more lines omitted
 ```
 
 </details>
@@ -552,7 +631,7 @@ Every command prints text by default. You can use `--format json`, `csv` or `mar
 
 ## Configuration
 
-SaTeX merges its built-in defaults, your global `~/.config/satex/satex.yaml`, every `satex.yaml` from the filesystem root down to the document, `--config FILE`, and `--set PATH=VALUE`, each overriding the one before. `satex --version` lists what was used. Plugins detect the installation, engine, output and build system (latexmk, make, l3build, …). TeX, e-TeX, pdfTeX and LaTeX2e are modelled in full. XeTeX, LuaTeX and ConTeXt are experimental. See the [configuration wiki page](doc/wiki/configuration.md).
+SaTeX merges its built-in defaults, your global `~/.config/satex/satex.yaml`, every `satex.yaml` from the filesystem root down to the document, `--config FILE`, and `--set PATH=VALUE`, each overriding the one before. `satex --version` lists what was used. Plugins detect the installation, engine, output and build system (latexmk, make, l3build, …). TeX, e-TeX, pdfTeX and LaTeX2e are modeled in full. XeTeX, LuaTeX and ConTeXt are experimental. See the [configuration wiki page](doc/wiki/configuration.md).
 
 ## How it works
 
@@ -580,7 +659,7 @@ There are various preexisting analysis approaches for TeX, albeit none offer ful
 - [unravel](https://ctan.org/pkg/unravel) steps through TeX's expansion as a debugger, but runs one concrete execution for this.
 - [TexLab](https://github.com/latex-lsp/texlab) is a language server that gives editor features from a syntax tree, without expanding macros.
 - [unified-latex](https://github.com/siefkenj/unified-latex) parses LaTeX into a syntax tree for transformation, and does not expand macros in general.
-- [ChkTeX](https://www.nongnu.org/chktex/) is a token-level linter for typographic and style mistakes (it does not expand macros).
+- [ChkTeX](https://www.nongnu.org/chktex/) is a token-level linter for typographic and style mistakes (it does not expand macros). The [chktex coverage table](https://eagleoutice.github.io/satex-analyzer/chktex-coverage) lists its 49 warnings and the satex rule for each.
 
 
 [concrete semantics]: https://eagleoutice.github.io/satex-analyzer/SEMANTICS

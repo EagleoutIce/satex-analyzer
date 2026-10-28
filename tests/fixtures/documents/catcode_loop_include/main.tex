@@ -1,0 +1,11 @@
+\documentclass{article}
+\begin{document}
+% A loop sets \catcode of an unknown, growing counter to 11.
+\makeatletter
+\def\u{\u}
+\count@=\u\relax
+\def\z{\catcode\count@=11 \advance\count@\@ne\z}\z
+\makeatother
+\include{ch1}
+\gdef\SatexReachedEnd{}
+\end{document}

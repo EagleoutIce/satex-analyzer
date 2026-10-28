@@ -1,3 +1,9 @@
+# Every text file is checked out with LF line ends, Windows included:
+# `include_str!` data (luatex_fields.txt, describe.tsv, knowledge.md), the
+# Lua prelude and the test fixtures are parsed line by line and compared
+# byte for byte, and a CRLF checkout changed what they say.
+* text=auto eol=lf
+
 vendor/** linguist-vendored
 
 # Written by `satex-doc` from doc/src/wiki/*.in; edit the template, not these.

@@ -1,0 +1,202 @@
+# Why LaTeX is hard to analyze
+
+satex analyzes LaTeX by running it on abstract values.
+This page lists what makes that harder than for other languages. Under each problem: how satex answers it, and the research behind that.
+Every example is a complete document. Below each one, a table puts the text one pdflatex run ships (read from the boxes `\tracingoutput` logs, random seed 7) next to the text satex computes (`satex query typeset`), paragraph by paragraph. If a row is not equal, a short list says why: which conditional stayed undecided. Two collapsed blocks show the commands that ran, with the computed text and with a trace of what each call inserted, what each primitive set and how each conditional went.
+
+How to read a table. In the satex column the notation is **bold**, so a literal `{`, `|` or `…` in the text stays plain:
+
+| Notation | Meaning |
+|---|---|
+| `⟦x⟧` | text in a box satex cannot place: never shipped, or placed only on some paths. A box that is placed (`\box`, `\copy`, `\unhbox`, `\raise` and relatives) reads as plain text in order. A box that is never shipped does not count against equality, its row keeps the mark ⊇ |
+| `{a\|b}` | a choice: an undecided conditional, one arm each |
+| `⟨?⟩` | an unknown character |
+| `c…` | `c` repeated one or more times by a summarized loop |
+| `de·pen` | `·` is a hyphenation point where the line breaker may set a hyphen |
+| ✓ | equal |
+| ⊇ | covers: pdflatex's text is one of satex's choices, so the result is sound but less precise |
+| ✗ | differs: unsound, a bug |
+
+## A frame: an abstract machine with reflection
+
+λ-calculus is close in one respect: there are no real calls or return values, only rewriting, and loops are tail recursion through `\expandafter`.
+But TeX has no binding and no hygiene, and arguments are token streams.
+A better frame is an abstract machine:
+
+| TeX | machine |
+|---|---|
+| the input stack, the token stream | the continuation |
+| `eqtb`, registers, macros | the store |
+| the save stack, groups | dynamic extent |
+| `\def`, `\let` at run time | reflection, as in 3-Lisp or fexprs |
+
+λ-calculus tools still apply to control flow: k-CFA style contexts and pushdown precision for calls and returns.
+The machine frame tells how to make the analysis terminate: abstract the continuation and the store to finitely many addresses.
+
+## Relations to other formalisms
+
+- **[λ-calculus](https://en.wikipedia.org/wiki/Lambda_calculus).** Expansion substitutes arguments into a body, and loops are tail calls. But TeX has no binding, no scope and no values: an argument is whatever tokens the body reads next.
+- **[Term rewriting](https://en.wikipedia.org/wiki/Rewriting).** A macro is a rewrite rule on the head of the token stream. The rules change while rewriting, and which rule applies depends on catcodes and the store.
+- **Macro processors** such as [m4](https://en.wikipedia.org/wiki/M4_(computer_language)) and the [C preprocessor](https://en.wikipedia.org/wiki/C_preprocessor). They also rescan their output, but they do not typeset, and their syntax is fixed.
+- **Reflective Lisps.** [Fexprs](https://en.wikipedia.org/wiki/Fexpr) receive their arguments unevaluated, and [3-Lisp](https://doi.org/10.1145/800017.800513) lets a program inspect and change its own interpreter. `\meaning`, `\catcode` and `\def` at run time play these roles.
+- **[Abstract interpretation](https://doi.org/10.1145/512950.512973).** satex executes TeX on abstract values. Soundness comes from over-approximating every concrete run.
+- **[Partial evaluation](https://en.wikipedia.org/wiki/Partial_evaluation).** Known parts run, unknown parts stay residual, as in satex's typed unknowns.
+- **[Control-flow analysis](https://en.wikipedia.org/wiki/Control-flow_analysis) (k-CFA).** Contexts that keep calls apart. In TeX the call is the macro and its input position.
+
+## The problems
+
+### 1. The syntax is not fixed
+
+`\catcode` changes what a character means while the document runs.
+There is no AST before execution.
+A graph of tokens fits better than a tree.
+Each token is a node. An edge leads to the tokens that can come next: the next character in the file, the body a macro expands to, the arm a conditional takes.
+A `\catcode` change rewires the edges for every token read after it, and a loop is a cycle.
+satex analyzes this graph rather than a parse tree, and terminates because it keeps finitely many abstract input positions per site, so every cycle is finite (see [the frame](#a-frame-an-abstract-machine-with-reflection)).
+
+{{example: doc/src/wiki/challenges/01-catcode.tex}}
+
+
+### 2. Code is data
+
+Macros take token lists, build names with `\csname`, mutate (`\g@addto@macro`), redefine themselves, and read their own text (`\meaning`).
+
+{{example: doc/src/wiki/challenges/02-code-is-data.tex}}
+
+**How satex answers it.** Code is data in satex too: a definition is a store update, and the program continues from the new store. This follows [Dalla Preda, Giacobazzi and Debray](https://www2.cs.arizona.edu/~debray/Publications/metamorphism.html), who track the versions of self-modifying code as abstract values (phase semantics).
+
+
+{{example: doc/src/wiki/challenges/r4-self-modifying.tex}}
+
+### 3. Arguments are found at run time
+
+How many arguments a command takes depends on how it reads them: `\@ifnextchar`, xparse, delimited parameters.
+Many macros also push their own end markers into the stream, or use `\aftergroup`.
+
+{{example: doc/src/wiki/challenges/03-arguments.tex}}
+
+**How satex answers it.** An unknown token list is abstracted as a regular language over token classes, as [Christensen, Møller and Schwartzbach](https://www.brics.dk/JSA/) do for strings and [Unevalizer](https://www.cs.au.dk/~amoeller/papers/unevalizer/) for JavaScript's `eval`. So `\ifx` and argument reading still decide what they can, and a catcode write to an unknown character never touches a structural one.
+
+
+{{example: doc/src/wiki/challenges/r5-token-domain.tex}}
+
+### 4. Typesetting feeds back into control flow
+
+Conditionals branch on box sizes and page state.
+Whether a box has zero width can depend on fonts, kerning and hundreds of other things.
+Floats and breakable boxes read `\pagegoal` and `\pagetotal`, so the page builder's state is part of the control flow.
+Without a model of it, every float may land here or later, and every breakable box may split anywhere.
+
+{{example: doc/src/wiki/challenges/04-typesetting.tex}}
+
+**How satex answers it.** Typesetting is modelled only as far as a decision reads it. Relations between values matter here: [octagons](https://doi.org/10.1007/s10990-006-8609-1) and zonotopes keep that a dimension minus itself is zero, where intervals forget it, so impossible branches survive and paths multiply, as in pgf's math.
+
+
+{{example: doc/src/wiki/challenges/r6-relational.tex}}
+
+**Where the model stands.**
+The line breaker is tex.web's (§§ 813-890) for a paragraph whose items, metrics and parameters are known.
+Anything else keeps an interval of lines.
+A forced break mid-paragraph keeps one active node per fitness class (§ 836), so with `\adjdemerits` the lines after it may choose the lines before it.
+satex breaks such a segment only when one class ends it, as after `\\`, and keeps the interval otherwise.
+The page builder fires `\output` at forced breaks (`analysis.assume_forced_page_breaks`, an assumption, on by default).
+With the assumption off, a page that may have filled parts the run: one path fires `\output`, the other reads on.
+TeX's choice of the best break (§§ 1005-1010) is not modelled yet, so floats that TeX places on the next pages wait for `\clearpage` under the assumption.
+The float loops of LaTeX's output routine then run at the end, where unknown box sizes make them converge only by widening.
+
+### 5. Packages are interpreters
+
+pgf computes with macro loops, tcolorbox splits boxes, hyperref and biblatex run hooks per page.
+A small document executes hundreds of thousands of lines of library code.
+
+{{example: doc/src/wiki/challenges/05-packages.tex}}
+
+### 6. Unknown inputs everywhere
+
+The `.aux` file is missing on a first run, and the clock, `\pdfelapsedtime` and random numbers change every run.
+Without knowing what a macro holds, no token stream after it can be read.
+One unknown spreads: forks multiply, and arms with different code cannot be merged.
+
+{{example: doc/src/wiki/challenges/06-unknown.tex}}
+
+**How satex answers it.** Unknown conditions stay as choices, as in [TypeChef](https://doi.org/10.1145/2048066.2048128), [SuperC](https://doi.org/10.1145/2254064.2254103) and variational execution, which keep presence conditions and values as choices. One token stream with a choice node replaces two forked paths, and the rest is shared. After a bounded number of forks at one conditional, the arms are skipped to `\fi` and their effects over-approximated on one path.
+
+
+{{example: doc/src/wiki/challenges/r3-choice.tex}}
+
+**Unknown must stay cheap.** Soundness alone is not enough: an unknown value must not cost more than a known one.
+Library code walks text a token at a time. pgfmath reads a number digit by digit, expl3 wraps a message by counting its characters, and LaTeX's output routine reads every mark.
+Fed one unknown value, each such walk forks per step, and its loops meet limits instead of ending.
+satex keeps unknowns small instead: digits typed with an interval, a value that is one of a few texts, a mark that is one of the texts given to its class.
+A small interval is split into its values where a name is spelled from it, so each path builds the name TeX builds.
+Where a walk still forks per step, that is a bug to fix, not a price to pay.
+
+### 7. Termination is not structural
+
+Loops are tail recursion through `\expandafter`, error recovery, or expansion cuts.
+Their length can depend on an unknown value.
+
+{{example: doc/src/wiki/challenges/07-termination.tex}}
+
+**How satex answers it.** [Van Horn and Might](https://doi.org/10.1145/1863543.1863553) derive an analysis from the concrete machine and keep the continuation in the store under finitely many addresses, so the analysis ends by construction. Pushdown variants ([PDCFA](https://arxiv.org/abs/1007.4268)) keep calls and returns matched. For TeX the pending input of a recursion grows with its depth, so satex bounds it. How many passes a loop on an unknown gets before a summary replaces it is a cost question, as in state merging by [Kuznetsov et al.](https://doi.org/10.1145/2254064.2254088), who merge when an estimate says it pays.
+
+
+{{example: doc/src/wiki/challenges/r1-input-stack.tex}}
+
+{{example: doc/src/wiki/challenges/r7-merge-cost.tex}}
+
+### 8. Global, untyped state
+
+Registers, `\aftergroup`, and groups that one macro opens and another closes.
+Paragraph and page state change only when the output routine runs.
+
+{{example: doc/src/wiki/challenges/08-global-state.tex}}
+
+### 9. Progressive recursion
+
+Macros call each other in a cycle and define the macros that continue it. Names are built from a counter, so the cycle never meets the same macro twice.
+
+{{example: doc/src/wiki/challenges/09-progressive.tex}}
+
+**How satex answers it.** Supercompilers ([Sørensen and Glück](https://arxiv.org/abs/1005.5278), [Leuschel](https://doi.org/10.1007/3-540-36377-7_17)) stop when a new configuration embeds an earlier one (homeomorphic embedding) and replace both by their most specific generalization (anti-unification). This catches a loop whose key grows every pass, which an equality test misses. Together with the self-modifying view of problem 2, each new definition is a new version of the program, not a new program.
+
+
+{{example: doc/src/wiki/challenges/r2-growing-key.tex}}
+
+### 10. The engine is not fixed
+
+pdfTeX, XeTeX and LuaTeX differ in fonts, line breaking and Lua callbacks.
+
+{{example: doc/src/wiki/challenges/10-engine.tex}}
+
+### 11. A document is a fixpoint computation
+
+One run is not the program. A build runs pdflatex, bibtex or biber, makeindex, and pdflatex again, until the auxiliary files stop changing. latexmk compares the files after each run and stops at the fixpoint or after a fixed number of runs.
+Each run reads what the last one wrote: labels and page numbers from the `.aux`, the table of contents, the bibliography, longtable's column widths, tikz's `remember picture` positions.
+What a run writes depends on what it read. A `\ref` that turns `??` into `12` changes a line's width, which moves a page break, which changes a `\pageref`.
+The cycle need not converge. A `\pageref` whose own text pushes its target onto the next page oscillates between two values, and varioref reports such a loop.
+Inside one run the output routine is a cycle of its own: it fires when a page fills, and what it puts back decides the next break.
+
+In this example the label moves away from the page the last run recorded. The kept `.aux` says page 1, so this run breaks the page and writes page 2. The next run reads 2, does not break, and writes 1 again. latexmk gives up after its maximum number of runs.
+
+{{example: doc/src/wiki/challenges/11-fixpoint.tex}}
+
+**How satex answers it.** satex runs the build itself, as latexmk does, and never needs a file an engine wrote. The files a run writes live in a virtual file system, and the first run starts without any. When a run ends, a file it read back sends it round again only where a changed line names a key the run read (a reference, a citation, a key it used) or a macro it expanded or defined (`\@abspage@last` at each shipout, a note column's `\slnc@note`), up to `limits.build_runs` rounds. A line nobody refers to, or one that only changes what a table of contents sets, needs no other round: what such a round would refine is typesetting alone. A round resumes from the last checkpoint before the first read of a changed file, so the part of the document before it is not analyzed again. Past the last round, what still changes is unknown text: a [widening](https://doi.org/10.1145/512950.512973) of the [Kleene iteration](https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem) the build is. The files an earlier engine run left on disk are read only with `load.build_files`.
+
+## Where satex is still wrong or stuck
+
+These examples are red tests today.
+Each runs under a 60 second limit.
+If satex hits a limit, the table shows what it computes at that point and the limit's name.
+
+### A reference in math inside positioned nodes
+
+A `\ref` to an unknown label in math in a tikz node, with the nodes placed by `positioning`, is sound but far too imprecise: the text of each node becomes a large choice of unknown characters.
+
+{{example: doc/src/wiki/challenges/s1-tikz-ref.tex}}
+
+### A rounded node around a paragraph that breaks
+
+The height of a node with `text width` depends on the line breaker, and pgf's rounded corners read it. satex marks each possible hyphen (`·`) but does not choose the breaks, so the height stays unknown, and pgf's math leaves a long tail of unknown boxes.
+
+{{example: doc/src/wiki/challenges/s2-rounded-paragraph.tex}}

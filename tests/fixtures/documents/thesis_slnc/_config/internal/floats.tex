@@ -1,0 +1,129 @@
+\RequirePackage{caption}
+\RequirePackage{subcaption}
+
+\def\thesis@fig@style@nonbold#1{% \color{@primary}
+  {\hypersetup{allcolors=@primary}#1}%
+}
+\def\thesis@fig@style#1{\thesis@fig@style@nonbold{{\bfseries#1}}}
+
+\DeclareCaptionLabelFormat{thesis-caption}{\thesis@fig@style{\itshape#1~#2:\space\space}}
+\DeclareCaptionLabelFormat{thesis-caption-theorems}{\thesis@fig@style{\itshape#1~#2\space\space}}
+
+\captionsetup{
+   format=plain,
+   indention=0ex,
+   textfont={color=black,rm,sl,footnotesize},
+   labelformat=thesis-caption,
+   labelsep=none,
+   hypcapspace=.66\baselineskip,
+   aboveskip=.5\baselineskip,
+   justification=RaggedRight,
+   singlelinecheck=false,
+   font={footnotesize}
+}
+
+
+\renewcommand*\captionformat{~~}
+
+% we will use this to get unique number for each still #1@lb is placeholder for first run
+\def\InitPageCounter#1{\newcounter{c@@#1@@lb}\csdef{c@#1@lb}{0}}
+
+% we no longer do that but instead use a macro for each page
+\InitPageCounter{figure}\InitPageCounter{subfigure}\InitPageCounter{table}
+% #1 type like figure | table | ..., #2 counter
+\def\CountThisPageWrite#1#2{%
+\expandafter\providecommand\csname c@#1@#2\endcsname{0}% a default value
+\protected@write\@auxout{}{% {\csname ext@#1\endcsname}
+    \csxdef{c@#1@#2}{\thepage}%
+  }%
+}
+\def\curpgnum{0}
+\def\CountThisPage#1#2{%
+  % set counter for unique counting
+  \stepcounter{c@@#1@@lb}%
+  % write similar to label, but use the unique counter
+  \CountThisPageWrite{#1}{\arabic{c@@#1@@lb}}%
+  % now, count the number of occurrences on the given page
+  \xdef\curpgnum{\csname c@#1@\arabic{c@@#1@@lb}\endcsname}%
+  \ifcsname c@\curpgnum @#1@lb\endcsname\else\csxdef{c@\curpgnum @#1@lb}{0}\fi
+  % increment the counter for the given page
+  \csxdef{c@\curpgnum @#1@lb}{\the\numexpr\csname c@\curpgnum @#1@lb\endcsname+1}%
+  % store the counter to the uniquely identified macro
+  % \typeout{Counting c@\curpgnum @#1@lb to #2 with \csname c@\curpgnum @#1@lb\endcsname (\csuse{c@#1@\arabic{c@@#1@@lb}})}%
+  \csxdef{#2}{\csname c@\curpgnum @#1@lb\endcsname}%
+  % \typeout{Counting for \arabic{c@@#1@@lb} (\csname ext@#1\endcsname, pgnum: \curpgnum, tar: \csuse{#2})}%
+}
+\robustify\CountThisPage
+\def\thesissetfig{\CountThisPage{figure}{c@figure@lb}}
+\def\thesissettbl{\CountThisPage{table}{c@table@lb}}
+\def\thesissetsubfig{\CountThisPage{subfigure}{c@subfigure@lb}}
+% we must hook to scr@caption, as with @caption the labels have been already issued (meaning \thetable etc. would refer to the last one - but only in references)
+\def\HookCount#1#2{\pretocmd\scr@caption{#2}\relax\relax}%
+% hook against captions from newfloat environments
+\def\HookCustomEnvCount#1#2{\pretocmd\caption@iftype{#2}\relax\relax}
+\ifthesis@pageInFloatRef
+\AtBeginEnvironment{figure}   {\HookCount{lof}{\thesissetfig}}
+\AtBeginEnvironment{subfigure}{\HookCount{lof}{\thissetsubfig}}
+\AtBeginEnvironment{table}    {\HookCount{lot}{\thesissettbl}}
+\AtBeginEnvironment{longtable}{\HookCount{lot}{\thesissettbl}}
+\AtBeginEnvironment{tabularx} {\HookCount{lot}{\thesissettbl}}
+\fi
+
+\appto\captionsngerman{\def\figurename{Abbildung}\def\figureautorefname{\figurename}\def\tablename{Tabelle}\def\tableautorefname{\tablename}}
+\appto\captionsenglish{\def\figurename{Figure}\def\figureautorefname{\figurename}\def\tablename{Table}\def\tableautorefname{\tablename}}
+
+% \global\c@exa@lb0 \global\c@nts@lb0
+% \AddToHook{shipout/after}{\global\c@figure@lb0 \global\c@table@lb0}
+\long\def\thesis@sn@gd@#1{\parbox\linewidth{\insidenotetrue\let\label\creflbl\thesis@ragged#1\vskip2.25pt}}
+% patch faulty cref restoration in notecolumn
+
+\def\creflbl#1{\cref@old@label{#1}\@bsphack\edef\@tempa{{page}{\the\c@page}}\setcounter{page}{1}\edef\@tempb{\thepage}\expandafter\setcounter\@tempa\cref@constructprefix{page}{\cref@result}\protected@write\@auxout{}{\string\newlabel{#1@cref}{{\cref@currentlabel}{[\@tempb][\arabic{page}][\cref@result]\thepage}}}\@esphack}
+
+\RequirePackage{alphalph}
+% i do not like italic small caps, furthermore, most fonts do not support them
+\def\@@formatcounter#1#2{%
+  \smash{\textit{\LiningFigures% use lining figures for references
+    #1}%
+    %/
+    %\kern-.33pt i am no fan of modified small caps
+    \textup{\textsc{\alphalph#2}}%
+  }%
+}%
+\robustify{\@@formatcounter}%
+
+\def\@formatcounter#1#2{%
+  \@@formatcounter{\curpgnum}{#2}%
+}
+
+\ifthesis@pageInFloatRef
+\def\thefigure{\@formatcounter f{\c@figure@lb}}
+\def\thetable{\@formatcounter t{\c@table@lb}}
+\fi
+
+\def\makelongrefs{%
+\ifthesis@pageInFloatRef
+\def\thefigure{Figure~\@formatcounter f{\c@figure@lb}}%
+\def\thetable{Table~\@formatcounter t{\c@table@lb}}%
+\fi
+% \def\thesubfigure{Subfigure~\@formatcounter f{\c@figure@lb/\alph{subfigure}}}%
+% \def\theexa{Example~\@formatcounter e{\c@exa@lb}}%
+% \def\thents{Note~\@formatcounter n{\c@nts@lb}}%
+}
+\ifthesis@pageInFloatRef
+\DeclareCaptionLabelFormat{noprefix}{\thesis@fig@style{\itshape\makelongrefs#2:~~}}
+\captionsetup{labelformat=noprefix}
+\fi
+
+% just my likings
+\AtBeginDocument{%
+\def\fps@figure{tbp}\let\fps@table\fps@figure
+\c@topnumber\tw@
+\c@bottomnumber\@ne
+\c@totalnumber\thr@@
+\def\floatpagefraction{.7}% 0.2
+\def\topfraction{.7}% 0.7
+\g@addto@macro\end@float{%
+\ifnum\@floatpenalty<0 \ifnum\@floatpenalty<-\@Mii
+\else\ifhmode\if@ignore\penalty\@M \hskip\z@skip\fi\fi
+\fi\fi}%
+}

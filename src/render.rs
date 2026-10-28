@@ -11,7 +11,8 @@ use crate::machine::Step;
 use crate::query::Record;
 
 const BOLD: Style = Style::new().bold();
-const DIM: Style = Style::new().dimmed();
+// Gray, which every terminal shows; SGR 2 (dim) some ignore.
+const DIM: Style = fg(AnsiColor::BrightBlack);
 const NAME: Style = fg(AnsiColor::Cyan);
 const ERROR: Style = fg(AnsiColor::Red).bold();
 const WARNING: Style = fg(AnsiColor::Yellow);
@@ -65,6 +66,44 @@ pub(crate) fn hyperlink(text: &str, target: &str, links: Links) -> String {
     format!("\x1b]8;;{target}\x1b\\{text}\x1b]8;;\x1b\\")
 }
 
+/// Text for a terminal: the styles and file links satex writes (`ESC [ … m`,
+/// `ESC ] 8 ; ; … ESC \`) stay, and every other control character, which a
+/// document's text or a file name may carry, shows as `�`: nothing printed
+/// moves the cursor, clears the screen or retitles the terminal.
+pub fn terminal_safe(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        let kept = match c {
+            '\x1b' => {
+                let style = rest[1..].strip_prefix('[').and_then(|r| {
+                    let params = r.find(|c: char| !c.is_ascii_digit() && c != ';' && c != ':')?;
+                    r[params..].starts_with('m').then_some(2 + params + 1)
+                });
+                let link = rest[1..].strip_prefix("]8;").and_then(|r| {
+                    let end = r.find("\x1b\\")?;
+                    (!r[..end].contains(|c: char| c.is_control())).then_some(4 + end + 2)
+                });
+                style.or(link)
+            }
+            '\n' | '\t' => Some(1),
+            c if c.is_control() => None,
+            c => Some(c.len_utf8()),
+        };
+        match kept {
+            Some(n) => {
+                out.push_str(&rest[..n]);
+                rest = &rest[n..];
+            }
+            None => {
+                out.push('\u{FFFD}');
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+    }
+    out
+}
+
 pub fn plain(value: &Json) -> String {
     match value {
         Json::String(s) => s.clone(),
@@ -89,56 +128,20 @@ fn reference(record: &Record) -> &str {
     record.get("reference").and_then(Json::as_str).unwrap_or_default()
 }
 
+/// The link target of a record's place: the file, as a `file://` URL. A
+/// `file:` URL has no standard way to name a line, so the line stays in the
+/// link's text instead of a fragment.
 fn location(record: &Record) -> String {
     let Some(Json::String(path)) = record.get("path") else { return String::new() };
-    let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
-    // A record with no line names the file itself, not a place in it.
-    match record.get("line").and_then(Json::as_u64).filter(|line| *line > 0) {
-        Some(line) => format!("file://{}#L{line}", absolute.display()),
-        None => format!("file://{}", absolute.display()),
-    }
+    file_url(path)
 }
 
-const COLUMNS: [&str; 40] = [
-    "index",
-    "id",
-    "step",
-    "severity",
-    "category",
-    "code",
-    "kind",
-    "status",
-    "tag",
-    "name",
-    "callee",
-    "key",
-    "subject",
-    "for",
-    "when",
-    "context",
-    "redefined",
-    "effective",
-    "error",
-    "signature",
-    "parameters",
-    "arity",
-    "takes",
-    "uses",
-    "count",
-    "value",
-    "default",
-    "governs",
-    "package",
-    "class",
-    "by",
-    "detail",
-    "fix",
-    "message",
-    "documentation",
-    "expands",
-    "body",
-    "reference",
-    "root",
+#[rustfmt::skip]
+const COLUMNS: [&str; 47] = [
+    "index", "warning", "covered", "rules", "id", "step", "severity", "category", "code", "kind", "status",
+    "tag", "name", "callee", "key", "subject", "for", "when", "context", "redefined", "effective", "error",
+    "signature", "roles", "types", "parameters", "arity", "takes", "uses", "count", "value", "default", "governs", "package",
+    "class", "by", "detail", "fix", "message", "does", "documentation", "expands", "may_expand", "body", "reference", "root",
     "file",
 ];
 
@@ -175,8 +178,19 @@ fn terminal_width() -> usize {
         .unwrap_or(DEFAULT_WIDTH)
 }
 
-const SHRINK_FIRST: [&str; 9] =
-    ["body", "detail", "parameters", "signature", "effective", "documentation", "fix", "expands", "path"];
+const SHRINK_FIRST: [&str; 11] = [
+    "body",
+    "detail",
+    "parameters",
+    "signature",
+    "effective",
+    "does",
+    "documentation",
+    "fix",
+    "expands",
+    "may_expand",
+    "path",
+];
 
 /// Free text gives way before the columns that identify a row.
 fn shrink_rank(column: &str) -> usize {
@@ -282,8 +296,6 @@ pub fn markdown(records: &[Record]) -> String {
     out
 }
 
-/// One block per record instead of one row, with nothing cut to fit: the
-/// detail views, whose fields are too wide for a table.
 /// A record with the contexts it holds in, each with the error raised there.
 type Grouped = (Record, Vec<(String, Option<String>)>);
 
@@ -326,6 +338,8 @@ fn by_context(records: &[Record]) -> Vec<Grouped> {
         .collect()
 }
 
+/// One block per record instead of one row, with nothing cut to fit: the
+/// detail views, whose fields are too wide for a table.
 pub fn fields(records: &[Record], links: Links) -> String {
     let mut out = String::new();
     for (index, (record, contexts)) in by_context(records).iter().enumerate() {
@@ -368,9 +382,6 @@ pub fn fields(records: &[Record], links: Links) -> String {
             }
             let text = match column {
                 "file" => path_of(record),
-                // `effective` already shows the call shape; the raw
-                // parameter-text arity underneath it only confused things
-                // (`0-1 (arity 0)`), so `takes` shows just the min-max.
                 "uses" => match record.get(column).and_then(Json::as_u64) {
                     Some(1) => "1 time, in this run".to_string(),
                     Some(n) => format!("{n} times, in this run"),
@@ -570,75 +581,179 @@ fn plural(count: usize, word: &str) -> String {
 /// One finding, never cut: `place  severity  code  message`, wrapped at the
 /// terminal width rather than elided, with `fix: ...` indented below it when
 /// the rule suggests one.
-fn finding(out: &mut String, record: &Record, links: Links) {
-    let severity_text = record.get("severity").map(plain).unwrap_or_default();
-    let code = record.get("code").map(plain).unwrap_or_default();
-    let message = record.get("message").map(plain).unwrap_or_default();
-    let place = place_text(record);
-    let head = format!("  {place}  {severity_text:<7}  {code}  ");
-    let indent = width(&head);
-    let room = terminal_width().saturating_sub(indent).max(MIN_COLUMN);
-    let sev_style = severity_style(&severity_text);
-    let shown_place = hyperlink(&place, &location(record), links);
-    let mut lines = wrap(&message, room).into_iter();
-    let _ = writeln!(
-        out,
-        "  {DIM}{shown_place}{DIM:#}  {sev_style}{severity_text:<7}{sev_style:#}  {DIM}{code}{DIM:#}  {}",
-        lines.next().unwrap_or_default()
-    );
-    for line in lines {
-        let _ = writeln!(out, "{:indent$}{line}", "");
-    }
-    let Some(fix) = record.get("fix").and_then(Json::as_str).filter(|f| !f.is_empty()) else { return };
-    // `satex lint --fix` applies a `[fix]`, `--unsafe-fixes` an `[unsafe fix]`.
-    let (tag, style) = match record.get("applicability").and_then(Json::as_str) {
-        Some("safe") => ("[fix]", GOOD),
-        Some("unsafe") => ("[unsafe fix]", WARNING),
-        _ => ("fix:", DIM),
-    };
-    let indent = 5 + width(tag);
-    let fix_room = terminal_width().saturating_sub(indent).max(MIN_COLUMN);
-    let mut lines = wrap(fix, fix_room).into_iter();
-    let _ = writeln!(out, "    {style}{tag}{style:#} {}", lines.next().unwrap_or_default());
-    for line in lines {
-        let _ = writeln!(out, "{:indent$}{line}", "");
+/// The shape the documentation gives a severity: ◆ error, ▲ warning, ● info.
+fn severity_symbol(severity: &str) -> &'static str {
+    match severity {
+        "error" => "\u{25C6}",
+        "warning" => "\u{25B2}",
+        _ => "\u{25CF}",
     }
 }
 
-fn findings_section(out: &mut String, title: &str, records: &[&Record], links: Links) {
+/// The files findings point into, read once each: the line a finding
+/// stands on is shown under it.
+#[derive(Default)]
+struct Sources {
+    files: std::collections::HashMap<String, Option<Vec<String>>>,
+}
+
+impl Sources {
+    fn line(&mut self, path: &str, line: u64) -> Option<&str> {
+        let lines = self.files.entry(path.to_string()).or_insert_with(|| {
+            let text = std::fs::read(path).ok()?;
+            Some(String::from_utf8_lossy(&text).lines().map(|l| l.replace('\t', " ")).collect())
+        });
+        lines.as_ref()?.get(usize::try_from(line).ok()?.checked_sub(1)?).map(String::as_str)
+    }
+}
+
+/// How many characters from `col` (0-based) the finding marks: a control
+/// sequence, the finding's own name where it stands there, or one character.
+fn marked(line: &[char], col: usize, name: &str) -> usize {
+    let rest = &line[col.min(line.len())..];
+    let named: Vec<char> = name.chars().collect();
+    if !named.is_empty() && rest.starts_with(&named) {
+        return named.len();
+    }
+    match rest {
+        ['\\', c, ..] if c.is_ascii_alphabetic() => {
+            1 + rest[1..].iter().take_while(|c| c.is_ascii_alphabetic()).count()
+        }
+        ['\\', _, ..] => 2,
+        [] => 0,
+        _ => 1,
+    }
+}
+
+/// The source line under a finding, the marked part in the severity's
+/// color, with its number in a gutter: `  8 │ \foo`, then `    │ ^^^^`.
+/// A long line shows the part around the mark. The gutter's width, where
+/// the line could be read.
+fn snippet(out: &mut String, sources: &mut Sources, record: &Record, style: Style) -> Option<usize> {
+    let path = record.get("path").and_then(Json::as_str)?;
+    let number = record.get("line").and_then(Json::as_u64).filter(|n| *n > 0)?;
+    let text = sources.line(path, number)?;
+    let chars: Vec<char> = text.trim_end().chars().collect();
+    let col = record.get("col").and_then(Json::as_u64).map_or(0, |c| c.saturating_sub(1) as usize).min(chars.len());
+    let len = marked(&chars, col, &record.get("name").map(plain).unwrap_or_default());
+    let gutter = number.to_string().len();
+    let room = terminal_width().saturating_sub(SNIPPET + gutter + 3).max(MIN_COLUMN * 4);
+    // A window of `room` characters that holds the mark.
+    let from = if chars.len() <= room { 0 } else { col.saturating_sub(room / 3).min(chars.len() - room) };
+    let to = (from + room).min(chars.len());
+    let cut = |a: usize, b: usize| chars[a.clamp(from, to)..b.clamp(from, to)].iter().collect::<String>();
+    let (before, mark, after) = (cut(from, col), cut(col, col + len), cut(col + len, to));
+    let (open, close) = (if from > 0 { "\u{2026}" } else { "" }, if to < chars.len() { "\u{2026}" } else { "" });
+    let pad = " ".repeat(SNIPPET);
+    let _ = writeln!(
+        out,
+        "{pad}{DIM}{number} \u{2502}{DIM:#} {DIM}{open}{before}{DIM:#}{style}{mark}{style:#}{DIM}{after}{close}{DIM:#}"
+    );
+    let under = width(&format!("{open}{before}"));
+    let carets = "^".repeat(width(&mark).max(1));
+    let _ = writeln!(out, "{pad}{:gutter$} {DIM}\u{2502}{DIM:#} {:under$}{style}{carets}{style:#}", "", "");
+    Some(gutter)
+}
+
+/// Where a finding's source line starts.
+const SNIPPET: usize = 6;
+
+/// One finding under its rule: the place (dimmed) and the message, the
+/// source line it points at, and the fix (dimmed) with how
+/// `satex lint --fix` applies it.
+fn finding(out: &mut String, sources: &mut Sources, record: &Record, links: Links) {
+    let message = record.get("message").map(plain).unwrap_or_default();
+    let place = place_text(record);
+    let indent = 4 + width(&place) + 2;
+    let room = terminal_width().saturating_sub(indent).max(MIN_COLUMN);
+    let shown_place = hyperlink(&place, &location(record), links);
+    let mut lines = wrap(&message, room).into_iter();
+    let _ = writeln!(out, "    {DIM}{shown_place}{DIM:#}  {}", lines.next().unwrap_or_default());
+    for line in lines {
+        let _ = writeln!(out, "{:indent$}{line}", "");
+    }
+    let style = severity_style(&record.get("severity").map(plain).unwrap_or_default());
+    // The fix stands under the gutter's bar, or where the source line would.
+    let bar = match snippet(out, sources, record, style) {
+        Some(gutter) => SNIPPET + gutter + 1,
+        None => SNIPPET,
+    };
+    let Some(fix) = record.get("fix").and_then(Json::as_str).filter(|f| !f.is_empty()) else { return };
+    let tag = match record.get("applicability").and_then(Json::as_str) {
+        Some("safe") => "= fix",
+        Some("unsafe") => "= unsafe fix",
+        _ => "= hint",
+    };
+    let fix_room = terminal_width().saturating_sub(bar + width(tag) + 2).max(MIN_COLUMN);
+    for (i, line) in wrap(fix, fix_room).into_iter().enumerate() {
+        let head = if i == 0 { format!("{tag}: ") } else { " ".repeat(width(tag) + 2) };
+        let _ = writeln!(out, "{:bar$}{DIM}{head}{line}{DIM:#}", "");
+    }
+}
+
+/// How many findings one rule shows before the rest become a count.  A rule
+/// that fires on every quantity in a document says the same thing each time,
+/// and the places are what `--filter` is for.
+const SHOWN_PER_RULE: usize = 3;
+
+/// A section of findings, one heading per rule: its severity's shape, its
+/// code and count, then its findings.
+fn findings_section(
+    out: &mut String,
+    sources: &mut Sources,
+    title: &str,
+    records: &[&Record],
+    links: Links,
+    group: bool,
+) {
     if records.is_empty() {
         return;
     }
+    let code = |r: &&Record| r.get("code").map(plain).unwrap_or_default();
     let _ = writeln!(out, "{}", heading(&format!("{title} ({})", records.len())));
-    for record in records {
-        finding(out, record, links);
+    for rule in records.chunk_by(|a, b| code(a) == code(b)) {
+        let severity = rule[0].get("severity").map(plain).unwrap_or_default();
+        let style = severity_style(&severity);
+        let symbol = severity_symbol(&severity);
+        let _ =
+            writeln!(out, "\n  {style}{symbol}{style:#} {BOLD}{}{BOLD:#} {DIM}({}){DIM:#}", code(&rule[0]), rule.len());
+        let shown = if group { SHOWN_PER_RULE.min(rule.len()) } else { rule.len() };
+        for (i, record) in rule[..shown].iter().enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            finding(out, sources, record, links);
+        }
+        if shown < rule.len() {
+            let _ = writeln!(out, "\n    {}", label(&format!("{} more, shown by --no-group", rule.len() - shown)));
+        }
     }
     out.push('\n');
 }
 
-/// What the analysis could not fully resolve, collapsed to the count and the
-/// distinct causes rather than one line per site: the detail is a widened
-/// recursion or a reached budget, never a defect in the document, so it does
-/// not deserve a place among the findings above it.
+/// What the analysis could not fully resolve, collapsed to one count per
+/// rule rather than one line per site. It is a widened recursion, a reached
+/// budget, or a finding the analysis may cause (an error on an approximated
+/// path, an absence in a part it never read), never a defect in the document.
 fn precision_line(records: &[&Record]) -> String {
-    let mut causes: Vec<String> = records.iter().map(|r| r.get("name").map(plain).unwrap_or_default()).collect();
-    causes.sort();
-    causes.dedup();
+    let mut codes: Vec<String> = records.iter().map(|r| r.get("code").map(plain).unwrap_or_default()).collect();
+    codes.sort();
+    let rules: Vec<String> = codes.chunk_by(|a, b| a == b).map(|c| format!("{} {}", c[0], c.len())).collect();
     format!(
         "{} {}",
         heading("precision"),
         label(&format!(
-            "{} where the analysis had to widen ({}) \u{2014} `satex lint --filter category=precision` shows them, `satex query gaps` lists what it could not parse at all",
-            plural(records.len(), "note"),
-            causes.join(", ")
+            "{} withheld as the run approximated or left parts unread ({}) \u{2014} `satex lint --filter category=precision` shows them",
+            plural(records.len(), "finding"),
+            rules.join(", ")
         ))
     )
 }
 
-/// `satex lint`'s text output: findings grouped by severity, with build-cost
-/// observations and what the analysis could not follow kept apart from them
-/// rather than mixed into one flat, truncated table.
-pub fn lint(records: &[Record], links: Links) -> String {
+/// `satex lint`'s text output: findings grouped by category, with build-cost
+/// observations and unresolved cases kept apart rather than mixed into one
+/// flat, truncated table.
+pub fn lint(records: &[Record], links: Links, group: bool) -> String {
     let mut document: Vec<&Record> = Vec::new();
     let mut performance: Vec<&Record> = Vec::new();
     let mut precision: Vec<&Record> = Vec::new();
@@ -649,19 +764,35 @@ pub fn lint(records: &[Record], links: Links) -> String {
             _ => document.push(record),
         }
     }
-    document.sort_by_key(|r| place_key(r));
-    performance.sort_by_key(|r| place_key(r));
+    // One section per category, most important first; inside one, errors,
+    // then warnings, then the minor notes, each rule's findings in source
+    // order.
+    let severity = |r: &Record| r.get("severity").map(plain).unwrap_or_default();
+    let weight = |r: &Record| match severity(r).as_str() {
+        "error" => 0,
+        "warning" => 1,
+        _ => 2,
+    };
+    let key = |r: &&Record| (weight(r), r.get("code").map(plain).unwrap_or_default(), place_key(r));
+    document.sort_by_key(key);
+    performance.sort_by_key(key);
+    let count = |level: &str| document.iter().filter(|r| severity(r) == level).count();
+    let (errors, warnings) = (count("error"), count("warning"));
+    let suggestions = count("info");
 
-    let severity = |r: &&Record| r.get("severity").map(plain).unwrap_or_default();
-    let errors: Vec<&Record> = document.iter().copied().filter(|r| severity(r) == "error").collect();
-    let warnings: Vec<&Record> = document.iter().copied().filter(|r| severity(r) == "warning").collect();
-    let suggestions: Vec<&Record> = document.iter().copied().filter(|r| severity(r) == "info").collect();
-
-    let mut out = String::new();
-    findings_section(&mut out, "errors", &errors, links);
-    findings_section(&mut out, "warnings", &warnings, links);
-    findings_section(&mut out, "suggestions", &suggestions, links);
-    findings_section(&mut out, "performance", &performance, links);
+    let (mut out, mut sources) = (String::new(), Sources::default());
+    for category in ["correctness", "security", "style"] {
+        let these: Vec<&Record> =
+            document.iter().copied().filter(|r| r.get("category").map(plain).as_deref() == Some(category)).collect();
+        findings_section(&mut out, &mut sources, category, &these, links, group);
+    }
+    let other: Vec<&Record> = document
+        .iter()
+        .copied()
+        .filter(|r| !matches!(r.get("category").map(plain).as_deref(), Some("correctness" | "security" | "style")))
+        .collect();
+    findings_section(&mut out, &mut sources, "other", &other, links, group);
+    findings_section(&mut out, &mut sources, "performance", &performance, links, group);
     if !precision.is_empty() {
         let _ = writeln!(out, "{}", precision_line(&precision));
         out.push('\n');
@@ -671,9 +802,9 @@ pub fn lint(records: &[Record], links: Links) -> String {
         "{}",
         label(&format!(
             "{}, {}, {}, {}, {}",
-            plural(errors.len(), "error"),
-            plural(warnings.len(), "warning"),
-            plural(suggestions.len(), "suggestion"),
+            plural(errors, "error"),
+            plural(warnings, "warning"),
+            plural(suggestions, "suggestion"),
             plural(performance.len(), "performance note"),
             plural(precision.len(), "precision note"),
         ))
@@ -864,8 +995,8 @@ fn concept(tag: &str) -> &str {
 }
 
 /// "3 commands, 2 environments, 1 switch": what the document's own file
-/// defines, one clause per tag the facts recorded — generic, so a tag this
-/// does not already have a word for still reads, just pluralized plainly.
+/// defines, one clause per tag the facts recorded. Generic, so a tag with
+/// no word of its own still reads, pluralized plainly.
 fn defines_line(root: &crate::query::Node) -> Option<String> {
     let parts: Vec<String> = root
         .provides
@@ -895,8 +1026,8 @@ fn defines_line(root: &crate::query::Node) -> Option<String> {
 }
 
 /// How often the document's own environments (`root`'s `environment`
-/// provides) were actually opened in the main file — `\begin{name}`, from
-/// the run's own occurrences, not a count of the definitions themselves.
+/// provides) were actually opened in the main file, from the run's own
+/// `\begin{name}` occurrences, not a count of the definitions themselves.
 fn environment_uses_line(analysis: &crate::machine::Analysis, root: &crate::query::Node) -> Option<String> {
     let owned = root.provides.get("environment")?;
     if owned.is_empty() {
@@ -973,9 +1104,38 @@ pub fn timings(analysis: &crate::machine::Analysis, links: Links) -> String {
                 None => detail("no format"),
             },
             crate::timing::Phase::Document => detail(&format!("{} files read", analysis.files.len())),
-            crate::timing::Phase::Hooks => String::new(),
+            crate::timing::Phase::Lint => detail(&format!("{} rules", crate::lint::rules().len())),
+            crate::timing::Phase::Hooks | crate::timing::Phase::Fix => String::new(),
         };
         let _ = writeln!(out, "  {:<10} {:>8.1} ms{note}", phase.as_str(), elapsed.as_secs_f64() * 1000.0);
+    }
+
+    let calls = analysis.timings.top_calls(15);
+    if !calls.is_empty() {
+        let _ = writeln!(out, "{}", heading("most expanded"));
+        for (sym, count) in calls {
+            let _ = writeln!(out, "  {count:>12}  \\{}", analysis.interner.name(sym));
+        }
+    }
+
+    let sites = analysis.timings.top_sites(15);
+    if !sites.is_empty() {
+        let _ = writeln!(out, "{}", heading("costliest lines (tokens read until the next own line)"));
+        for ((file, line), tokens) in sites {
+            let path = analysis.files.get(usize::from(file)).map(|f| f.path.as_str()).unwrap_or_default();
+            let name = path.rsplit('/').next().unwrap_or(path);
+            let _ = writeln!(out, "  {tokens:>12}  {name}:{line}");
+        }
+    }
+
+    let written = analysis.timings.top_written(10);
+    if !written.is_empty() {
+        let _ = writeln!(out, "{}", heading("costliest written lines (tokens to run them where they are read back)"));
+        for ((file, line), (tokens, lines, text)) in written {
+            let path = analysis.files.get(usize::from(file)).map(|f| f.path.as_str()).unwrap_or_default();
+            let name = path.rsplit('/').next().unwrap_or(path);
+            let _ = writeln!(out, "  {tokens:>12}  {name}:{line} ×{lines}  {}", label(&terminal_safe(&text)));
+        }
     }
 
     let root = crate::query::summary(analysis);
@@ -984,15 +1144,9 @@ pub fn timings(analysis: &crate::machine::Analysis, links: Links) -> String {
     if rows.is_empty() {
         return out;
     }
-    // `flatten` already folds a file read twice under the same parent into
-    // one row; a file read again under a *different* one, or one whose
-    // reading was folded into an ancestor's package-cache segment rather
-    // than opened as its own frame, reads as its own zero-cost row per
-    // place it recurs — as uninformative repeated as the same-parent case,
-    // so it is pulled out the same way, into one line naming every one of
-    // them instead of a row each. A frame this run actually opened always
-    // counts at least the token that discovers its end, so zero tokens on
-    // a `read` status means no frame was opened for it here.
+    // `flatten` folds repeat reads of a file, even under a different parent,
+    // into one line. A frame this run opened counts at least the token that
+    // finds its end, so zero tokens on `read` means no frame.
     let mut again: Vec<&str> = Vec::new();
     rows.retain(|(_, node)| {
         let repeat = node.tokens == 0 && matches!(node.status, "already-loaded" | "read");
@@ -1063,8 +1217,8 @@ fn flatten<'a>(
     };
     rows.push((name, node));
     let inner = if root { String::new() } else { format!("{prefix}{}", if last { "   " } else { "│  " }) };
-    // A file read once is listed once: the repeats that follow, in any order,
-    // are gathered into the row of the first of them.
+    // A file read once is listed once. Repeats, in any order, are gathered
+    // into the row of the first of them.
     let mut shown: Vec<usize> = Vec::new();
     let mut repeats: Vec<&str> = Vec::new();
     for (i, child) in node.children.iter().enumerate() {
@@ -1118,15 +1272,18 @@ fn tail(text: &str, limit: usize) -> String {
 }
 
 /// A path shown by its name and linked to the file itself, when the terminal
-/// takes links; the whole path otherwise.
+/// takes links. The whole path otherwise.
 fn linked_file(path: &str, links: Links) -> String {
     let name = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(path);
     if links.0 { hyperlink(name, &file_url(path), links) } else { path.to_string() }
 }
 
 pub(crate) fn file_url(path: &str) -> String {
-    let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
-    format!("file://{}", absolute.display())
+    // Absolute, not canonical: resolving symlinks would name `/private/var`
+    // for the `/var` an editor opened on macOS. The URL must match what the
+    // client knows.
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| Path::new(path).to_path_buf());
+    crate::paths::file_url(&absolute)
 }
 
 pub fn github(records: &[Record]) -> String {
@@ -1147,6 +1304,25 @@ pub fn github(records: &[Record]) -> String {
             "::{level} file={file},line={line},col={column},title={title}::{}",
             message.replace('%', "%25").replace('\n', "%0A").replace('\r', "%0D")
         );
+    }
+    out
+}
+
+/// Findings as TeX's own log reports them: a file frame `(./f.tex … )`,
+/// `! Package satex Error: …` with `l.⟨line⟩`, and `Package satex Warning:
+/// … on input line ⟨line⟩.` for the rest, which TeXstudio's log view reads.
+pub fn texlog(records: &[Record]) -> String {
+    let mut out = String::new();
+    for record in records {
+        let text = |key: &str| plain(record.get(key).unwrap_or(&Json::Null)).replace('\n', " ");
+        let line = record.get("line").and_then(Json::as_u64).unwrap_or(1);
+        let (path, code, message) = (text("path"), text("code"), text("message"));
+        // TeX opens a file as `(./name.tex`.
+        let path = if path.starts_with(['/', '.']) { path } else { format!("./{path}") };
+        let _ = match record.get("severity").and_then(Json::as_str) {
+            Some("error") => writeln!(out, "({path}\n! Package satex Error: {code}: {message}.\nl.{line} \n)"),
+            _ => writeln!(out, "({path}\nPackage satex Warning: {code}: {message} on input line {line}.\n)"),
+        };
     }
     out
 }
@@ -1253,8 +1429,57 @@ fn lsp_severity(record: &Record) -> u8 {
 /// Findings as a language server publishes them: per file, the
 /// `Diagnostic`s and the `quickfix` `CodeAction`s that repair them, with
 /// positions 0-based and columns in UTF-16 code units, as the protocol
-/// counts them.  An editor integration hands these on unchanged.
+/// counts them. An editor integration hands these on unchanged.
 pub fn lsp(records: &[Record]) -> String {
+    lsp_with(records, file_url)
+}
+
+/// The column just past what a finding at `col` is about: a command with
+/// the `{…}`/`[…]` groups that follow it on its line (to the line's end
+/// when one stays open, as a runaway argument does), else the word there.
+fn call_end(line: &str, col: u32) -> u32 {
+    let start = crate::source::byte_of_col(line, col).min(line.len());
+    let rest = &line[start..];
+    let mut chars = rest.char_indices().peekable();
+    let word = |c: char| c.is_alphanumeric() || c == '@';
+    let mut end = match chars.next() {
+        Some((_, '\\')) => {
+            let first = chars.next().map_or(1, |(i, c)| i + c.len_utf8());
+            let mut end = first;
+            while let Some(&(i, c)) = chars.peek().filter(|(_, c)| word(*c) && rest[1..first].chars().all(word)) {
+                end = i + c.len_utf8();
+                chars.next();
+            }
+            end
+        }
+        Some((_, c)) if word(c) => rest.find(|c: char| !word(c)).unwrap_or(rest.len()),
+        Some((_, c)) => c.len_utf8(),
+        None => 0,
+    };
+    if rest.starts_with('\\') {
+        let base = end;
+        let (mut depth, mut closed) = (0u32, base);
+        for (i, c) in rest[base..].char_indices() {
+            match c {
+                '{' | '[' => depth += 1,
+                '}' | ']' if depth > 0 => {
+                    depth -= 1;
+                    if depth == 0 {
+                        closed = base + i + 1;
+                    }
+                }
+                '*' | ' ' if depth == 0 => {}
+                _ if depth == 0 => break,
+                _ => {}
+            }
+        }
+        end = if depth > 0 { rest.len() } else { closed };
+    }
+    crate::source::col_of_byte(line, start + end)
+}
+
+/// [`lsp`] with the URI each path is published under.
+pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
     let sources = crate::lint::fix::Sources::default();
     let position = |path: &str, line: u64, col: u64| -> Json {
         let pos = crate::lint::fix::Pos::new(line.max(1) as u32, col.max(1) as u32);
@@ -1262,20 +1487,20 @@ pub fn lsp(records: &[Record]) -> String {
             sources.get(path).and_then(|text| text.utf16(pos)).unwrap_or((pos.line - 1, pos.col - 1));
         serde_json::json!({ "line": line, "character": character })
     };
-    let uri = |path: &str| file_url(path);
     let mut files: Vec<(String, Vec<Json>, Vec<Json>)> = Vec::new();
     for record in records {
         let path = plain(record.get("path").unwrap_or(&Json::Null));
         let line = record.get("line").and_then(Json::as_u64).unwrap_or(1);
         let col = record.get("col").and_then(Json::as_u64).unwrap_or(1);
         let at = position(&path, line, col);
+        let end = sources.get(&path).map_or(col, |text| call_end(text.line(line.max(1) as u32), col as u32) as u64);
         let diagnostic = serde_json::json!({
-            "range": { "start": at, "end": at },
+            "range": { "start": at, "end": position(&path, line, end) },
             "severity": lsp_severity(record),
             "code": record.get("code"),
             "source": "satex",
             "message": plain(record.get("message").unwrap_or(&Json::Null)),
-            "data": { "fix": record.get("fix"), "applicability": record.get("applicability") },
+            "data": { "fix": record.get("fix"), "applicability": record.get("applicability"), "group": record.get("group") },
         });
         let changes: serde_json::Map<String, Json> = edits_by_file(record)
             .into_iter()
@@ -1324,8 +1549,7 @@ pub fn lsp(records: &[Record]) -> String {
 }
 
 /// What the run could not follow, in a few lines: every cause with how often
-/// it happened and where it first did.  A reader sees the analysis's limits
-/// without having to ask for them; `report_gaps: false` turns it off.
+/// it happened and where it first did. `gaps.report: false` turns it off.
 pub fn gaps(analysis: &crate::machine::Analysis) -> String {
     /// Enough to show the causes that matter without burying the answer.
     const SHOWN: usize = 5;
@@ -1366,6 +1590,65 @@ pub fn subject(text: &str) -> String {
 
 pub fn good(text: &str) -> String {
     format!("{GOOD}{text}{GOOD:#}")
+}
+
+fn paint(style: Style, text: &str) -> String {
+    format!("{style}{text}{style:#}")
+}
+
+/// Colors one `--stats`/`-v` status line (cache, stats, hotspot, limit),
+/// keeping its text. `anstream` drops the codes where color is off.
+pub fn status(line: &str) -> String {
+    let (lead, body) = line.split_at(line.len() - line.trim_start().len());
+    let colored = if let Some(rest) = body.strip_prefix("satex: ") {
+        format!("satex: {}", status(rest))
+    } else if let Some(rest) = body.strip_prefix("hot ") {
+        let (name, rows) = rest.split_once(' ').unwrap_or((rest, ""));
+        let label = match name {
+            "steps" => fg(AnsiColor::Blue).bold(),
+            "forks" => fg(AnsiColor::Magenta).bold(),
+            "joins" => fg(AnsiColor::Green).bold(),
+            _ => fg(AnsiColor::Yellow).bold(),
+        };
+        let rows = rows.split("  ").map(|r| match r.split_once(' ') {
+            Some((n, at)) => format!("{} {}", paint(BOLD, n), paint(NAME, at)),
+            None => r.to_string(),
+        });
+        format!("hot {} {}", paint(label, name), rows.collect::<Vec<_>>().join("  "))
+    } else if let Some(rest) = body.strip_prefix("limits.") {
+        let Some((key, rest)) = rest.split_once(" = ") else { return line.to_string() };
+        let (value, rest) = rest.split_once(" was reached ").unwrap_or((rest, ""));
+        let (count, rest) = rest.split_once(" (first at ").unwrap_or((rest, ""));
+        let (at, advice) = rest.split_once("); ").unwrap_or((rest, ""));
+        format!(
+            "limits.{} = {} was reached {} (first at {}); {}",
+            paint(WARNING, key),
+            paint(BOLD, value),
+            paint(BOLD, count),
+            paint(NAME, at),
+            paint(DIM, advice)
+        )
+    } else if body.starts_with("cache ") {
+        match body.split_once("rebuilt (") {
+            Some((head, why)) => format!("{head}{} {}", paint(WARNING, "rebuilt"), paint(DIM, &format!("({why}"))),
+            None => match body.rsplit_once("reused") {
+                Some((head, tail)) => format!("{head}{}{tail}", paint(GOOD, "reused")),
+                None => body.to_string(),
+            },
+        }
+    } else if body.starts_with(|c: char| c.is_ascii_digit()) && body.contains(" files") {
+        let mut parts = body.split("  |  ");
+        let first = parts.next().unwrap_or("");
+        let rest = parts.map(|p| match p {
+            "budget exhausted" => paint(ERROR, p),
+            _ => p.to_string(),
+        });
+        let all = std::iter::once(paint(BOLD, first)).chain(rest);
+        all.collect::<Vec<_>>().join("  |  ")
+    } else {
+        body.to_string()
+    };
+    format!("{lead}{colored}")
 }
 
 #[cfg(test)]
@@ -1448,7 +1731,7 @@ mod tests {
     }
 
     #[test]
-    fn lint_groups_by_severity_and_never_truncates() {
+    fn lint_groups_by_category_and_never_truncates() {
         let long_message = "x".repeat(200);
         let records = vec![
             finding_record("error", "correctness", "some-code", &long_message, Some("fix it")),
@@ -1457,16 +1740,69 @@ mod tests {
             finding_record("warning", "performance", "perf-code", "5 files read", Some("precompile")),
             finding_record("info", "precision", "analysis-imprecision", "widened", None),
         ];
-        let out = lint(&records, Links(false));
-        assert!(out.contains("errors (1)"));
-        assert!(out.contains("warnings (1)"));
-        assert!(out.contains("suggestions (1)"));
+        let out = lint(&records, Links(false), true);
+        assert!(out.contains("correctness (2)"));
+        assert!(out.contains("style (1)"));
         assert!(out.contains("performance (1)"));
+        // Errors before warnings, categories in their order.
+        let at = |code: &str| out.find(code).unwrap_or(usize::MAX);
+        assert!(at("some-code") < at("other-code") && at("other-code") < at("style-code"));
+        assert!(at("style-code") < at("perf-code"));
         assert!(out.contains("precision"));
         // wrapped, not cut: no ellipsis, and the tail of the long message
         // still shows up somewhere in the output.
         assert!(!out.contains('…'));
         assert!(out.contains(&long_message[long_message.len() - 10..]));
         assert!(out.contains("1 error, 1 warning, 1 suggestion, 1 performance note, 1 precision note"));
+    }
+
+    #[test]
+    fn texlog_reads_as_a_latex_log() {
+        let records = vec![
+            finding_record("error", "correctness", "e", "bad", None),
+            finding_record("info", "style", "s", "meh", None),
+        ];
+        assert_eq!(
+            texlog(&records),
+            "(./paper.tex\n! Package satex Error: e: bad.\nl.1 \n)\n(./paper.tex\nPackage satex Warning: s: meh on input line 1.\n)\n"
+        );
+    }
+
+    #[test]
+    fn text_for_a_terminal_keeps_only_satex_s_own_styles_and_links() {
+        let ours = format!("{BOLD}x{BOLD:#} \x1b]8;;file:///a.tex\x1b\\a.tex\x1b]8;;\x1b\\\n\tz");
+        assert_eq!(terminal_safe(&ours), ours);
+        assert_eq!(terminal_safe("a\x1b]0;title\x07b\x1b[2Jc\rd"), "a\u{FFFD}]0;title\u{FFFD}b\u{FFFD}[2Jc\u{FFFD}d");
+    }
+
+    /// Text without its terminal styles.
+    fn unstyled(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '\x1b' => {
+                    chars.by_ref().find(|c| c.is_ascii_alphabetic());
+                }
+                c => out.push(c),
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_finding_shows_the_line_it_stands_on_with_its_place_marked() {
+        let path = std::env::temp_dir().join(format!("satex-render-{}.tex", std::process::id()));
+        std::fs::write(&path, "x\n\tsee \\foo here\n").unwrap();
+        let mut record =
+            finding_record("error", "correctness", "undefined-control-sequence", "never defined", Some("define it"));
+        record.insert("path".into(), Json::from(path.display().to_string()));
+        record.insert("line".into(), Json::from(2));
+        record.insert("col".into(), Json::from(6));
+        record.insert("name".into(), Json::from("\\foo"));
+        let out = unstyled(&lint(&[record], Links(false), true));
+        std::fs::remove_file(&path).unwrap();
+        assert!(out.contains("      2 \u{2502}  see \\foo here\n        \u{2502}      ^^^^\n"), "{out}");
+        assert!(out.contains("        = hint: define it"), "{out}");
     }
 }

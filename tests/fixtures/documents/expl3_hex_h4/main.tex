@@ -1,0 +1,7 @@
+\documentclass{article}
+\ExplSyntaxOn
+\str_set:Ne \l_tmpb_str { a \int_to_Hex:n{\int_rand:n{255}} b }
+\exp_args:NNo \str_set_convert:Nnnn \l_tmpa_str \l_tmpb_str {utf8}{utf16/string}
+\ExplSyntaxOff
+\begin{document}x\gdef\SatexReachedEnd{}
+\end{document}

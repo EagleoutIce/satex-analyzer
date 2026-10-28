@@ -1,0 +1,11 @@
+% An arrow tip toward a point with an unknown coordinate: pgf's direction
+% math loops on a value satex cannot decide. It must end in bounded work.
+\documentclass{article}
+\usepackage{tikz}
+\newdimen\uw \uw=\pdfelapsedtime sp
+\begin{document}
+\begin{tikzpicture}
+\draw[->] (0,0) -- (\uw,1);
+\end{tikzpicture}
+\gdef\SatexReachedEnd{}
+\end{document}

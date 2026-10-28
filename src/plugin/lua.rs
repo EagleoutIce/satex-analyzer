@@ -9,20 +9,20 @@
 //! does not run to its end leaves unknown output, and the names its text
 //! defines through the token library unknown.
 
-use std::collections::HashSet;
+use crate::fixed::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use crate::builtins::{LoadKind, LuaOp, OccKind};
 use crate::facts::{Load, LoadStatus};
-use crate::machine::Machine;
+use crate::machine::{Machine, Unk};
 use crate::tex::{Catcode, CatcodeTable, Span, Sym, Tok, Token};
 use crate::value::Value;
 
 /// The Lua files a run has read and its Lua state.  The catcode tables
 /// themselves live in the save stack's table of meanings (`table_slot`),
 /// so the format and package caches carry them like any other assignment.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Lua {
     read: HashSet<PathBuf>,
     /// Made when a run first needs it (see [`super::lua_run`]).
@@ -71,12 +71,12 @@ pub fn primitive(m: &mut Machine, op: LuaOp, by: Sym, span: Span) {
                 return;
             }
             match super::lua_run::chunk(m, &code, span) {
-                Some(tokens) => m.push_tokens(Rc::from(tokens), None),
+                Some(tokens) => m.push_tokens(Rc::from(tokens)),
                 None => {
                     unfinished(m, &code, span, 0);
                     m.note_gap("lua-output", by, span);
-                    let unknown = m.unknown_token(span);
-                    m.push_tokens(Rc::from(vec![unknown]), None);
+                    let unknown = m.unknown_text(Unk::Any, span);
+                    m.push_tokens(Rc::from(vec![unknown]));
                 }
             }
         }
@@ -84,7 +84,7 @@ pub fn primitive(m: &mut Machine, op: LuaOp, by: Sym, span: Span) {
             let text = chunk_text(m);
             let escaped = escape(&text);
             let tokens = string_tokens(&escaped, span);
-            m.push_tokens(Rc::from(tokens), None);
+            m.push_tokens(Rc::from(tokens));
         }
         LuaOp::InitCatcodes => {
             if let Some(n) = m.scan_number() {
@@ -166,7 +166,7 @@ pub fn current_table(m: &mut Machine) -> i64 {
 /// `\luatexversion` of the installed engine, as `luatex --version` states
 /// it: version 1.24.0 is 124.
 pub fn engine_version(cfg: &crate::config::Config) -> Option<i64> {
-    let cache = cfg.cache.then(|| cfg.cache_dir.clone().or_else(crate::format::default_cache_dir)).flatten();
+    let cache = crate::format::enabled_cache_dir(cfg);
     let answer = crate::distribution::probed("luatex", "version", cache.as_deref(), || {
         let Ok(output) = std::process::Command::new("luatex").arg("--version").output() else {
             return Vec::new();
@@ -175,6 +175,16 @@ pub fn engine_version(cfg: &crate::config::Config) -> Option<i64> {
     });
     let line = answer.into_iter().next()?;
     let version = line.split("Version ").nth(1)?.split_whitespace().next()?;
+    let mut parts = version.split('.');
+    let major: i64 = parts.next()?.parse().ok()?;
+    let minor: i64 = parts.next()?.parse().ok()?;
+    Some(major * 100 + minor)
+}
+
+/// `\luatexversion` of the `luatex` on `PATH`, asked once per process.
+pub fn installed_version() -> Option<i64> {
+    let release = crate::distribution::engine_banner("luatex")?;
+    let version = release.split("Version ").nth(1)?.split_whitespace().next()?;
     let mut parts = version.split('.');
     let major: i64 = parts.next()?.parse().ok()?;
     let minor: i64 = parts.next()?.parse().ok()?;
@@ -192,7 +202,7 @@ fn initex() -> CatcodeTable {
 fn chunk_text(m: &mut Machine) -> String {
     let body = m.read_general_text();
     let expanded = m.expand_tokens(Rc::from(body));
-    crate::tex::detokenize(&expanded, &m.out.interner)
+    crate::tex::lua_string(&expanded, &m.out.interner)
 }
 
 /// `\luaescapestring`: a backslash, a quote and a newline are escaped so the
@@ -288,7 +298,7 @@ fn unfinished(m: &mut Machine, code: &str, span: Span, depth: usize) {
             continue;
         }
         let Some((path, file)) = load(m, module, span) else { continue };
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = crate::overlay::read_to_string(&path) else { continue };
         unfinished(m, &text, Span::new(file, 1, 1), depth + 1);
     }
 }
@@ -315,8 +325,8 @@ fn find(m: &mut Machine, module: &Module, span: Span) -> Option<PathBuf> {
             vec![format!("{name}.lua"), format!("{}.lua", name.replace('.', "/"))]
         }
     };
-    let here = Path::new(m.out.file_name(span.file)).parent().map(Path::to_path_buf);
-    let mut dirs: Vec<PathBuf> = here.into_iter().collect();
+    let here = crate::paths::dir_of(Path::new(m.out.file_name(span.file)));
+    let mut dirs: Vec<PathBuf> = vec![here];
     dirs.push(m.base().to_path_buf());
     dirs.extend(m.cfg.search_paths.iter().cloned());
     dirs.extend(m.out.project.search_paths());
@@ -414,7 +424,7 @@ fn defining_call(tokens: &[String], at: usize, definers: &HashSet<String>) -> Op
 /// and of functions that pass their first parameter on to one (expl3.lua's
 /// `luacmd`).
 fn defined_names(tokens: &[String]) -> Vec<String> {
-    let mut definers: HashSet<String> = HashSet::new();
+    let mut definers: HashSet<String> = HashSet::default();
     for at in 1..tokens.len() {
         if tokens[at] != "=" || !is_name(&tokens[at - 1]) {
             continue;
@@ -462,12 +472,12 @@ fn defined_names(tokens: &[String]) -> Vec<String> {
 /// it reads and what it puts back are unknown.
 pub fn call(m: &mut Machine, id: u32, by: Sym, span: Span) {
     match super::lua_run::function(m, id, span) {
-        Some(tokens) => m.push_tokens(Rc::from(tokens), None),
+        Some(tokens) => m.push_tokens(Rc::from(tokens)),
         None => {
             m.note_gap("lua-function", by, span);
             m.widen_mode();
-            let unknown = m.unknown_token(span);
-            m.push_tokens(Rc::from(vec![unknown]), None);
+            let unknown = m.unknown_text(Unk::Any, span);
+            m.push_tokens(Rc::from(vec![unknown]));
         }
     }
 }

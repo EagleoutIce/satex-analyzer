@@ -17,38 +17,29 @@ pub fn run(
     prefix: Option<&str>,
     for_: Option<&str>,
     list: bool,
-    _out: &mut impl Write,
+    out: &mut impl Write,
 ) -> Result<Output, String> {
     if list {
-        let names: Vec<Record> = Query::ALL
-            .iter()
-            .map(|(name, _)| {
-                let mut record = Record::new();
-                record.insert("name".into(), json!(*name));
-                record
-            })
-            .collect();
-        return Ok(Output::Records(names));
+        let names = Query::ALL.iter().map(|(name, _)| Record::from_iter([("name".to_string(), json!(*name))]));
+        return Ok(Output::Records(names.collect()));
     }
     let name = name.ok_or("expected a query name; try --list")?;
     let query = Query::parse(name).ok_or_else(|| format!("unknown query `{name}`"))?;
     let filter = parse_filter(filter)?;
+    let kept = |found: Vec<Record>| Ok(Output::Records(found.into_iter().filter(|r| filter.accepts(r)).collect()));
     if query == Query::Produces {
         let text = text.ok_or("the `produces` query needs the text to look for: --text TEXT")?;
-        let found = query::produces(context.analysis, context.source, text);
-        return Ok(Output::Records(found.into_iter().filter(|r| filter.accepts(r)).collect()));
+        return kept(query::produces(context.analysis, context.source, text));
     }
     if text.is_some() {
         return Err(format!("`--text` is what the `produces` query looks for, not `{name}`"));
     }
     if query == Query::Pgfkeys {
-        let found = query::pgfkeys(context.analysis, prefix);
-        return Ok(Output::Records(found.into_iter().filter(|r| filter.accepts(r)).collect()));
+        return kept(query::pgfkeys(context.analysis, prefix));
     }
     if query == Query::Options {
         let for_ = for_.ok_or("the `options` query needs a name: --for NAME")?;
-        let found = query::options(context.analysis, for_);
-        return Ok(Output::Records(found.into_iter().filter(|r| filter.accepts(r)).collect()));
+        return kept(query::options(context.analysis, for_));
     }
     if let Some(for_) = for_ {
         return Err(format!("`--for {for_}` is what the `options` query takes, not `{name}`"));
@@ -56,7 +47,35 @@ pub fn run(
     if prefix.is_some() {
         return Err(format!("`--prefix` narrows the `pgfkeys` query, not `{name}`"));
     }
-    Ok(Output::Records(query::run(context.analysis, query, &filter)))
+    let records = query::run(context.analysis, query, &filter);
+    if query == Query::Typeset && context.format.is_text() {
+        for r in &records {
+            let field = |k: &str| r.get(k).and_then(Json::as_str).unwrap_or("");
+            let (kind, detail) = (field("kind"), field("detail"));
+            // A library's own line says nothing about the document.
+            match (r.get("line"), r.get("col"), field("origin")) {
+                (Some(l), Some(c), origin) if origin != "library" => {
+                    let _ = writeln!(out, "{l}:{c}  {kind}  {detail}");
+                }
+                _ => {
+                    let _ = writeln!(out, "{kind}  {detail}");
+                }
+            }
+        }
+        return Ok(Output::Done);
+    }
+    Ok(Output::Records(records))
+}
+
+/// `trace --compact`: [`query::compact_trace`] of the whole run, as text.
+pub fn trace_compact(context: &Context, out: &mut impl Write) -> Result<Output, String> {
+    let analysis = context.analysis;
+    let rows = query::run(analysis, Query::Trace, &parse_filter(None)?);
+    let file = analysis.short_name(analysis.main_file);
+    for line in query::compact_trace(&rows, file, context.source) {
+        let _ = writeln!(out, "{line}");
+    }
+    Ok(Output::Done)
 }
 
 pub fn trace(
@@ -110,7 +129,7 @@ fn step_through(
     );
     let bold = anstyle::Style::new().bold();
     let mut stdin = std::io::stdin().lock();
-    let mut sources: std::collections::HashMap<String, Option<Vec<String>>> = Default::default();
+    let mut sources: crate::fixed::HashMap<String, Option<Vec<String>>> = Default::default();
     let mut run_on = false;
     // The events the default view hides since the last one shown.
     let mut hidden: Option<(u32, u32)> = None;
@@ -295,7 +314,7 @@ fn step_through(
 /// token at `col` (1-based, `width` characters), and the rest of the line.
 /// Long lines are cut around the token.
 fn window(
-    cache: &mut std::collections::HashMap<String, Option<Vec<String>>>,
+    cache: &mut crate::fixed::HashMap<String, Option<Vec<String>>>,
     path: &str,
     line: u32,
     col: u32,
@@ -303,10 +322,17 @@ fn window(
 ) -> Option<(String, String)> {
     let lines = cache
         .entry(path.to_string())
-        .or_insert_with(|| std::fs::read_to_string(path).ok().map(|t| t.lines().map(str::to_string).collect()))
+        .or_insert_with(|| {
+            crate::overlay::read_to_string(std::path::Path::new(path))
+                .ok()
+                .map(|t| t.lines().map(str::to_string).collect())
+        })
         .as_ref()?;
-    let text: Vec<char> = lines.get(line.checked_sub(1)? as usize)?.chars().collect();
-    let end = (col as usize).saturating_sub(1).saturating_add(width).min(text.len());
+    let raw = lines.get(line.checked_sub(1)? as usize)?;
+    // A column counts what the engine reads; the window counts characters.
+    let at = raw[..crate::source::byte_of_col(raw, col)].chars().count();
+    let text: Vec<char> = raw.chars().collect();
+    let end = at.saturating_add(width).min(text.len());
     let (from, to) = (end.saturating_sub(50), (end + 50).min(text.len()));
     let cut = |a: usize, b: usize| text[a..b].iter().collect::<String>();
     let head = format!("{}{}", if from > 0 { "…" } else { "" }, cut(from, end));
@@ -347,7 +373,7 @@ pub fn run_request_value(body: &Json, cfg: &Config, cli_file: Option<&Path>) -> 
         .map(std::path::PathBuf::from)
         .or_else(|| cli_file.map(Path::to_path_buf))
         .ok_or("the request names no `file`, and none was given with -f")?;
-    let source = std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let source = crate::overlay::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
     let queries = body.get("queries").and_then(Json::as_array).cloned().unwrap_or_default();
     if queries.is_empty() {
         return Err("the request has no `queries` to run".into());
@@ -360,6 +386,15 @@ pub fn run_request_value(body: &Json, cfg: &Config, cli_file: Option<&Path>) -> 
     }
     let analysis = Machine::analyze(&source, Some(&file), &cfg);
     Ok(queries.iter().map(|entry| answer(&analysis, &source, entry)).collect())
+}
+
+/// [`run_request_value`] from an analysis already made of `source` with
+/// arguments recorded, as the language server holds one. `None` only when
+/// the request asks for another configuration, which is another analysis.
+pub fn answer_request(body: &Json, analysis: &crate::machine::Analysis, source: &str) -> Option<Vec<Json>> {
+    let queries = body.get("queries").and_then(Json::as_array)?;
+    (body.get("config").is_none() && !queries.is_empty())
+        .then(|| queries.iter().map(|entry| answer(analysis, source, entry)).collect())
 }
 
 fn read_request(request: &str) -> Result<String, String> {
@@ -394,10 +429,9 @@ fn answer(analysis: &crate::machine::Analysis, source: &str, entry: &Json) -> Js
             _ => Vec::new(),
         }
     };
-    let filter = match entry.get("filter").and_then(Json::as_str).map(query::Filter::parse) {
-        Some(Ok(filter)) => filter,
-        Some(Err(message)) => return error(message),
-        None => query::Filter::Always,
+    let filter = match parse_filter(entry.get("filter").and_then(Json::as_str)) {
+        Ok(filter) => filter,
+        Err(message) => return error(message),
     };
     let flag = |key: &str| entry.get(key).and_then(Json::as_bool).unwrap_or(false);
     let records = match kind {
@@ -411,23 +445,7 @@ fn answer(analysis: &crate::machine::Analysis, source: &str, entry: &Json) -> Js
                 Err(message) => error(message),
             };
         }
-        "controls" => {
-            let names = strings("names");
-            let mut out = if names.is_empty() {
-                query::switches(analysis, flag("all"))
-            } else {
-                let mut out = Vec::new();
-                for name in &names {
-                    for mut record in query::controls(analysis, name) {
-                        record.insert("for".into(), json!(name.trim_start_matches('\\')));
-                        out.push(record);
-                    }
-                }
-                out
-            };
-            query::in_document_order(analysis, &mut out);
-            out
-        }
+        "controls" => query::controls_of(analysis, &strings("names"), flag("all")),
         "slice" => {
             let at = match entry.get("at").and_then(Json::as_str).map(super::parse_place) {
                 Some(Ok(at)) => Some(at),

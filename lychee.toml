@@ -1,0 +1,58 @@
+# Config for the "Check documentation links" CI job (.github/workflows/ci.yml)
+# and for `lychee` run by hand:
+#
+#   lychee --config lychee.toml \
+#     --remap "https://github\.com/EagleoutIce/satex-analyzer/blob/main/([^#]*)(#.*)? file://$PWD/\$1" \
+#     --remap '^https://mirrors\.ctan\.org/(.*)$ https://ctan.net/$1' \
+#     *.md doc/**/*.md
+#
+# The first remap checks links into this repository's `main` against the
+# checkout, so a file added on a branch is found before it is merged; it
+# needs the absolute path, which a config file cannot spell.
+# The second: `mirrors.ctan.org` redirects each request to a mirror picked
+# by location, and some serve a certificate lychee does not trust, so the
+# result would depend on which one answered. The path is the same on every
+# mirror; check it against one fixed mirror (DANTE's) instead. Both stay on
+# the command line, together.
+
+# GitHub line-anchored blobs (`#L1234`) and CTAN mirrors occasionally answer
+# slowly or rate-limit; retry a few times before failing the run.
+max_retries = 3
+retry_wait_time = 5
+timeout = 60
+
+# CTAN answers a burst from one CI runner with timeouts, never with a status,
+# so requests to it go one at a time. A timeout says nothing about the link
+# (a dead page answers 404), so it never fails the run.
+accept_timeouts = true
+
+
+# Anchors like `#L1234` are GitHub's client-side rendering, not part of the
+# HTML lychee fetches, so it cannot verify them; the page returning 200 is
+# checked instead (scripts/tex-web-links.py's own section map is how the
+# repository keeps `#L<line>` itself honest, see SEMANTICS.md's footer).
+include_fragments = "none"
+
+# Never touches anything outside the repository's own docs, so no reason to
+# skip localhost or private hosts here.
+exclude_all_private = false
+
+# The header banner links to this repository's own `main` branch, which
+# does not exist until this branch is merged there; checking it here would
+# fail on every branch and pull request that has not shipped yet.
+# The wiki pages (doc/wiki, README.md, SEMANTICS.md, doc/chktex-coverage.md)
+# link to each other by wiki page name (`Domains`, `Chktex-Coverage`), and
+# README.md to `../../releases`: they resolve once .github/workflows/wiki.yml
+# publishes them, never as files in the checkout.
+#
+# The ACM digital library answers lychee's requests with 403.
+exclude = [
+  "^https://raw\\.githubusercontent\\.com/EagleoutIce/satex-analyzer/main/",
+  "^file://.*/doc/(wiki/)?[A-Z][A-Za-z-]*(#.*)?$",
+  "^file://.*/releases$",
+  "^https://doi\\.org/10\\.1145/",
+]
+
+[hosts."ctan.org"]
+concurrency = 1
+request_interval = "1s"

@@ -1,0 +1,14 @@
+# The packages the playground fetches when a document asks for one: each is a
+# bundle of its own, every file it loads (found by running satex on it at
+# build time), loaded on its first "not in this installation" finding.
+# satex.yaml's cache.index.common joins them. A name is a package; `name.cls`
+# is a class. The first download stays the samples' files.
+
+# the most used LaTeX packages
+amsmath amssymb amsthm graphicx hyperref geometry xcolor babel fontenc inputenc
+booktabs tikz float caption subcaption natbib listings multirow siunitx fancyhdr
+
+# often next to them
+biblatex csquotes mathtools bm tabularx longtable makecell array url xspace
+setspace lipsum todonotes algorithm2e algpseudocode wrapfig titlesec parskip
+etoolbox pgfplots lmodern fontspec unicode-math polyglossia acronym pdflscape

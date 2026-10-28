@@ -1,4 +1,4 @@
-//! What the run observed; `query.rs` renders it.
+//! What the run observed. `query.rs` renders it.
 
 use std::rc::Rc;
 
@@ -36,6 +36,10 @@ pub struct Definition {
     /// environment built on it.  What `explain` derives "which environments
     /// reach this" from, generically, instead of the raw environment stack.
     pub via: Option<Sym>,
+    /// The name is a token the document's own files hold (tex.web § 1215,
+    /// `get_r_token`): written there, or built by a `\csname` written
+    /// there.  A name package code builds for the document is not.
+    pub spelled: bool,
 }
 
 impl Definition {
@@ -69,6 +73,9 @@ pub enum MeaningKind {
     Register,
     Char,
     Undefined,
+    /// Undefined, met on a path the analysis approximated since the paths
+    /// parted: TeX may never expand it there.
+    UndefinedApproximated,
     Unknown,
 }
 
@@ -80,6 +87,7 @@ impl MeaningKind {
             MeaningKind::Register => "register",
             MeaningKind::Char => "char",
             MeaningKind::Undefined => "undefined",
+            MeaningKind::UndefinedApproximated => "undefined-approximated",
             MeaningKind::Unknown => "unknown",
         }
     }
@@ -114,6 +122,7 @@ pub enum LoadStatus {
     TooDeep,
     NotFound,
     Unreadable,
+    CaseMismatch { on_disk: Sym },
 }
 
 impl LoadStatus {
@@ -126,6 +135,7 @@ impl LoadStatus {
             LoadStatus::TooDeep => "too-deep",
             LoadStatus::NotFound => "not-found",
             LoadStatus::Unreadable => "unreadable",
+            LoadStatus::CaseMismatch { .. } => "case-mismatch",
         }
     }
 }
@@ -152,15 +162,24 @@ pub struct Load {
 
 /// Anything named that is not itself a control sequence: labels, citations,
 /// environment delimiters, hook names, identification banners, messages.
-/// Tagged by [`OccKind`]; part of [`Facts::occurrences`].
+/// Tagged by [`OccKind`]. Part of [`Facts::occurrences`].
 #[derive(Clone)]
 pub struct Occurrence {
     pub kind: OccKind,
     pub key: String,
     pub detail: Option<String>,
+    /// Where it stands: the call the file made, or, for a key derived from
+    /// a written line, the key's own text.
     pub span: Span,
-    /// `span` is the call the file made, expanded the full target
+    /// Where `span` was reached from: the call that expanded the full
+    /// target, or the `\write` whose line declared the key.
     pub expanded: Option<Span>,
+    /// The call read straight from a file that was running: the site a
+    /// key built in a macro body belongs to.
+    pub call: Option<(Sym, Span)>,
+    /// The innermost command of `call`'s own text it came out of: a
+    /// `\begin` inside the call's braced argument.
+    pub site: Option<(Sym, Span)>,
     pub package: Option<Sym>,
     pub node: NodeId,
     /// The sectioning unit this stands in, or `None` before the first one.
@@ -186,9 +205,170 @@ pub struct Quantity {
     pub via: Option<Sym>,
     /// The files the macro bodies running at the number live in.
     pub within: Rc<[FileId]>,
+    /// Set on every run: no undecided conditional or split path around it.
+    pub certain: bool,
 }
 
-/// How sure the interpreter is about what it saw; [`Diagnostic::severity`]
+/// A color the run defined, read off the `\color@⟨name⟩` macro xcolor
+/// stores it in (xcolor § 2.5): `\definecolor`, `\providecolor`,
+/// `\colorlet` and `\definecolorset` all end in one of these, so the fact
+/// is what the interpreter did and not a list of names.
+#[derive(Clone)]
+pub struct ColorDef {
+    pub name: String,
+    /// The color as xcolor stored it, always in one of its core models
+    /// (`\XC@coremodel`).  `None` when satex could not read the macro.
+    pub value: Option<crate::value::Colors>,
+    /// The model and the spec the document's own call wrote, before xcolor
+    /// converted them.  `None` when no document call made the definition.
+    pub declared: Option<(crate::value::Model, String)>,
+    /// Where the declared spec stands, for a finding that names it.
+    pub spec_span: Option<Span>,
+    /// Where the document's call stands, or the definition itself when a
+    /// package made it.
+    pub span: Span,
+    /// The control sequence the file called: `\definecolor`, `\colorlet`.
+    pub via: Option<Sym>,
+    pub package: Option<Sym>,
+    /// Whether every run reaches the definition.
+    pub certain: bool,
+}
+
+/// A color named by a `\csname\color@⟨name⟩\endcsname` the run formed:
+/// xcolor reaches every color by that one control sequence, so a use, a
+/// test and a `\colorlet` source all arrive here (xcolor § 2.5).
+#[derive(Clone)]
+pub struct ColorUse {
+    pub name: String,
+    /// What the name was formed for ([`CsnameRole::Use`] for `\color`).
+    pub role: CsnameRole,
+    /// Whether the color was defined when the run reached the name.
+    pub defined: bool,
+    /// Where the document's call stands.
+    pub span: Span,
+    pub via: Option<Sym>,
+    pub package: Option<Sym>,
+    pub certain: bool,
+}
+
+named_enum! {
+    /// What a `\pdfcolorstack` does to its stack (pdfTeX manual, § 8.9.8).
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum StackOp {
+        Push => "push",
+        Pop => "pop",
+        Set => "set",
+        Current => "current",
+    }
+}
+
+/// One `\pdfcolorstack` the run executed: which stack, what it did to it,
+/// and where.  [`crate::lint::pdf`] balances the pushes against the pops
+/// the way it balances `q` against `Q`.
+#[derive(Clone, Copy)]
+pub struct ColorStack {
+    /// The stack number, `None` when the run could not decide it.
+    pub stack: Option<i64>,
+    pub op: StackOp,
+    pub span: Span,
+    pub certain: bool,
+}
+
+/// The font in force at a moment of the run, as LaTeX's font selection
+/// holds it (fntguide § 2): the five macros `\selectfont` reads, and the
+/// font the engine had actually loaded.  [`Facts`] keeps one row per
+/// distinct state and [`Spot`] points at it.
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+pub struct FontState {
+    /// `\cf@encoding`.
+    pub encoding: Rc<str>,
+    /// `\f@family`.
+    pub family: Rc<str>,
+    /// `\f@series`.
+    pub series: Rc<str>,
+    /// `\f@shape`.
+    pub shape: Rc<str>,
+    /// `\f@size`.
+    pub size: Rc<str>,
+    /// `\the\font`, 0 for none: what [`crate::machine::Analysis::fonts`]
+    /// names the metrics of.  NFSS says what the document asked for, this
+    /// says what the engine loaded, and a lint needs both.
+    pub font: u16,
+}
+
+impl FontState {
+    /// `OT1/cmr/m/it/10`, the shape as fntguide § 2 writes it.
+    pub fn nfss(&self) -> String {
+        format!("{}/{}/{}/{}/{}", self.encoding, self.family, self.series, self.shape, self.size)
+    }
+}
+
+/// One character the run typeset outside package code, with where the
+/// token that made it stood and the modes it was set in (tex.web § 211).
+/// Recorded before TeX's ligature program runs, so `--` is still two
+/// characters here.
+#[derive(Clone, Copy, Debug)]
+pub struct Spot {
+    pub span: Span,
+    /// The font it was set in, as an index into
+    /// [`crate::machine::Analysis::font_states`], 0 when the run did not
+    /// know.  A `u16` keeps the struct at the 16 bytes it had without it.
+    pub font_state: u16,
+    pub modes: crate::mode::Modes,
+    /// Whether something that is not a character came right before it, so
+    /// TeX starts a new word and no ligature joins it to the character
+    /// before (tex.web § 1034).
+    pub broken: bool,
+    /// Whether a box began or ended, or a box's list was placed, since the
+    /// character before it.  Characters are kept in the order TeX set them,
+    /// so the two may not stand side by side on the page.
+    pub apart: bool,
+    /// Whether every run sets it: not on one of several paths through an
+    /// undecided conditional, and not after the mode was widened.
+    pub certain: bool,
+}
+
+/// Every character the run typeset outside package code, in order: the
+/// document as the reader sees it, with each character's source position.
+/// [`Facts::text`] holds it, and the typographic lints read it.
+#[derive(Clone, Default)]
+pub struct Text {
+    pub chars: String,
+    /// One per character of `chars`, in the same order.
+    pub at: Vec<Spot>,
+    /// Where a character's overhang cannot reach the next one: after a
+    /// `\/` (tex.web § 1113) or at a paragraph's end, as the number of
+    /// characters set before it, ascending.
+    pub closed: Vec<u32>,
+    /// For a character set under an undecided conditional: its index, the
+    /// outermost conditional's node and the arm taken.
+    pub arms: Vec<(u32, crate::env::NodeId, bool)>,
+    /// Characters a loop set again, so any number of times, ascending.
+    pub repeats: Vec<u32>,
+    /// Characters a discretionary hyphen may precede (tex.web § 923), ascending.
+    pub hyphens: Vec<u32>,
+    /// How many characters [`crate::hyph`] has looked at.
+    pub hyphenated: u32,
+    /// One per character: the place in the user's own files whose reading
+    /// set it, the innermost such file being read (the call site, not the
+    /// macro body).
+    pub site: Vec<Span>,
+    /// Character ranges (start, end) of boxes placed on a list or shipped,
+    /// so their text reaches the page.
+    pub placed: Vec<(u32, u32)>,
+}
+
+impl Text {
+    pub fn is_empty(&self) -> bool {
+        self.at.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.at.len()
+    }
+}
+
+/// How sure the interpreter is about what it saw. [`Diagnostic::severity`]
 /// carries it, from a plain note up to an imprecision the analysis had to
 /// make.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -200,8 +380,13 @@ pub enum Severity {
     Imprecision,
     /// A construct satex cannot follow yet: an engine primitive it does not
     /// interpret, a scan that ran off its end, a budget it could not keep
-    /// within.  These are the analysis's real limits.
+    /// within.  These are the analysis's real limits: what follows may be
+    /// wrong.
     Unsupported,
+    /// A soundiness assumption the run made where it could not follow every
+    /// run (a loop is taken to end, a file to close the groups it opened):
+    /// the results are sound if it holds.
+    Assumption,
 }
 
 impl Severity {
@@ -211,6 +396,7 @@ impl Severity {
             Severity::Unsupported => "unsupported",
             Severity::Warning => "warning",
             Severity::Imprecision => "imprecision",
+            Severity::Assumption => "assumption",
         }
     }
 }
@@ -218,7 +404,7 @@ impl Severity {
 /// One thing the analysis wants the user to know: a message, a [`Severity`],
 /// and the [`Span`] it concerns. [`Facts::diagnostics`] is what `satex
 /// lint`'s correctness rules and `query diagnostics` read.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Diagnostic {
     pub severity: Severity,
     pub code: &'static str,
@@ -227,11 +413,17 @@ pub struct Diagnostic {
     /// How many times the run raised it: identical diagnostics at one place
     /// are one row.
     pub count: u32,
+    /// The innermost place in the user's own files that led here: `span`
+    /// itself when it is one, `None` when nothing on the input stack is.
+    pub origin: Option<Span>,
+    /// How many [`Occurrence`]s the run had recorded when it first raised
+    /// this: its place in run order among them.
+    pub after: usize,
 }
 
 /// What a run observed: [`Definition`]s, [`Expansion`]s, [`Occurrence`]s and
 /// [`Load`]s, which every query and lint reads.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Facts {
     pub defs: Vec<Definition>,
     /// The files `\write` handed lines to, as `\openout` named them.
@@ -239,28 +431,40 @@ pub struct Facts {
     /// What each command was seen to read, as `{}` for a mandatory argument,
     /// `[]` for an optional one and `*` for a star: observed while it ran,
     /// not declared anywhere.
-    pub shapes: std::collections::HashMap<Sym, String>,
+    pub shapes: crate::fixed::HashMap<Sym, String>,
+    /// What TeX read each token of the user's files as, joined over the
+    /// run ([`crate::roles::Ty`]): a scanner's quantity, a register an
+    /// assignment named, a register's name a `\csname` formed.
+    pub types: crate::fixed::HashMap<Span, crate::roles::Ty>,
     pub expansions: Vec<Expansion>,
     pub loads: Vec<Load>,
     pub occurrences: Vec<Occurrence>,
     pub diagnostics: Vec<Diagnostic>,
     /// What each `\csname` site formed its control sequence for, the first
     /// time it ran.
-    pub csnames: std::collections::HashMap<Span, CsnameRole>,
+    pub csnames: crate::fixed::HashMap<Span, CsnameRole>,
     /// `\begingroup … \endgroup` read straight from a file over several
     /// lines: where each opened and where it closed.
     pub groups: Vec<(Span, Span)>,
     /// Real `\errmessage`s the run reached, attributed to every name on the
     /// call stack at the time (`explain` filters by the one it was asked
-    /// about); deduplicated by name, text and context.
+    /// about). Deduplicated by name, text and context.
     pub raised: Vec<RaisedError>,
     /// The modes each space token was read in outside package code
     /// (tex.web § 1043: glue in horizontal mode, nothing otherwise).
-    pub spaces: std::collections::HashMap<Span, crate::mode::Modes>,
+    pub spaces: crate::fixed::HashMap<Span, crate::mode::Modes>,
     /// Every conditional the run evaluated outside package code.
     pub conditionals: Vec<Conditional>,
     /// Numbers with letters set right after them, outside package code.
     pub quantities: Vec<Quantity>,
+    /// The colors the run defined, in order.
+    pub colors: Vec<ColorDef>,
+    /// Every `\color@⟨name⟩` the run formed a control sequence for.
+    pub color_uses: Vec<ColorUse>,
+    /// Every `\pdfcolorstack` the run executed, in order.
+    pub color_stack: Vec<ColorStack>,
+    /// Every character set outside package code, in order.
+    pub text: Text,
 }
 
 /// A conditional the run evaluated (tex.web §§ 487-510), merged over every
@@ -278,6 +482,8 @@ pub struct Conditional {
     pub taken: Vec<Option<u32>>,
     /// Whether some test was undecided, so that every arm ran.
     pub undecided: bool,
+    /// Where the first undecided test ended: the first token after it.
+    pub test_end: Option<Span>,
 }
 
 /// What a `\csname…\endcsname` was formed for, read off the command an

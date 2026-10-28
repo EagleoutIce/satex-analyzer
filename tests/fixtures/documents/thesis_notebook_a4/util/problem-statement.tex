@@ -1,0 +1,7 @@
+\newcounter{tpCounter}
+\setcounter{tpCounter}{0}
+\newcommand{\tpitem}[3]{\refstepcounter{tpCounter}\label{tp:#1}\item[\texttt{Topic \thetpCounter}] -- #2 \\\\ #3}
+
+\newcommand{\tprefn}[2]{\hyperref[tp:#1]{Topic~\ref{tp:#1} (#2)}}
+\WithSuffix\newcommand\tprefn*[2]{Topic~\ref*{tp:#1} (#2)}
+\newcommand{\tpref}[1]{\hyperref[tp:#1]{Topic~\ref{tp:#1}}}

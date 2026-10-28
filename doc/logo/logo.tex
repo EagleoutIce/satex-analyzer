@@ -1,0 +1,101 @@
+\DocumentMetadata{lang=en}
+\RequirePackage{fix-cm}
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{palatino,graphicx,transparent,xcolor}
+\usepackage[active,tightpage]{preview}
+\setlength\PreviewBorder{2pt}
+
+% blue accent, soft slate neutrals, red kerns, blue stretch; ink/frame per glyph kind (n)ormal, (h)ighlight, (c)ode
+\definecolor{accent}{HTML}{0B3D91}
+\colorlet{inkn}{accent!12!black}
+\colorlet{inkh}{inkn}
+\colorlet{frameh}{accent!40!white}
+\definecolor{framen}{HTML}{D5DCE6}
+\colorlet{line}{accent!20!white}
+\colorlet{linebg}{accent!4!white}
+\definecolor{space}{HTML}{98A4B3}
+\definecolor{kernneg}{HTML}{BB6672}% rose, same saturation/lightness as the baseline once blended; tried: E8A192 coral, E39AAE pink
+\colorlet{kernpos}{kernneg!45!white}
+\colorlet{stretch}{accent!18!white}
+\colorlet{base}{accent}
+\colorlet{inkc}{space}\colorlet{framec}{framen}
+
+\makeatletter
+\newdimen\RT@kern \newdimen\RT@raise \newbox\RT@line
+\newsavebox\BoxWord \newsavebox\BoxTag \newsavebox\BoxLineA \newsavebox\BoxLineB
+\def\bt{\transparent{.65}}
+\newcommand\MBox[2][framen]{{\bt\color{#1}\fbox{\transparent{1}\color{inkn}#2}}}
+\newcommand\LBox[1]{{\bt\fcolorbox{line}{linebg}{\transparent{1}\color{inkn}#1}}}
+\def\bs{\textbackslash}
+% after the font size is set, rules scale with it; a space is its natural width (slate) plus \RT@s times its stretch (light blue)
+\def\RTInit{\fboxsep\z@\fboxrule.01em\def\ {{\bt\color{space}\rule{\fontdimen2\font}{.2em}}%
+    {\bt\color{stretch}\rule{\RT@s\fontdimen3\font}{.2em}}}}
+
+% #1 glyph | #2 kern after it | #3 raise
+\def\DrawGlyph#1#2#3{\RT@kern\dimexpr#2\relax\RT@raise\dimexpr#3\relax
+    \kern-\fboxrule\setbox\z@\hbox{#1}%
+    \def\RT@mark##1##2{\raisebox{\dimexpr\RT@raise-\dp\z@}{\bt\color{##1}\rule{##2}{\dimexpr\ht\z@+\dp\z@}}}%
+    % a negative kern sits behind both glyphs
+    \ifdim\RT@kern<\z@\rlap{\kern\dimexpr\wd\z@+\fboxrule+\RT@kern\relax\RT@mark{kernneg}{-\RT@kern}}\fi
+    % frame behind the glyph
+    \raisebox\RT@raise{\rlap{\MBox[frame\RT@k]{\vrule\@width\z@\@height\ht\z@\@depth\dp\z@\kern\wd\z@}}%
+        \kern\fboxrule{\color{ink\RT@k}\copy\z@}\kern\fboxrule}%
+    \ifdim\RT@kern<\z@\kern\dimexpr\RT@kern-\fboxrule\relax\else\RT@mark{kernpos}\RT@kern\kern-\fboxrule\fi}
+
+% token #1 gets drawer #3 (takes the follow-up), #2 is its first glyph
+\def\RT@on#1#2#3{\expandafter\let\csname RT@d\string#1\endcsname#3\expandafter\def\csname RT@l\string#1\endcsname{#2}}
+% #1 current | #2 follow-up, both token macros
+\def\DrawChar#1#2{\ifcsname RT@d\expandafter\string#1\endcsname\csname RT@d\expandafter\string#1\endcsname#2\else
+    \RT@pair#1#2\DrawGlyph{#1}\RT@kern\z@\fi}
+% \RT@kern := font kern between #1 and the first glyph \RT@n of #2
+\def\RT@pair#1#2{\ifcsname RT@l\expandafter\string#2\endcsname
+        \expandafter\let\expandafter\RT@n\csname RT@l\expandafter\string#2\endcsname\else\let\RT@n#2\fi
+    \settowidth\RT@kern{#1\RT@n}\settowidth\RT@raise{#1}\advance\RT@kern-\RT@raise
+    \settowidth\RT@raise{\RT@n}\advance\RT@kern-\RT@raise}
+% kernel \TeX and \LaTeX glyph by glyph; #1 then a small A raised to T height, kerns #2 and #3
+\def\RT@X{X}\def\RT@T{T}\def\RT@end{\relax}\def\RT@hl{\hl}\def\RT@A{\fontsize{\fpeval{.7*\f@size}}\z@\selectfont A}
+% #4 raise of the A, \RT@raise is the lift to T height
+\def\RT@raised#1#2#3#4{\DrawGlyph#1{#2}\z@
+    \settoheight\RT@raise{T}\settoheight\RT@kern{\RT@A}\advance\RT@raise-\RT@kern\DrawGlyph\RT@A{#3}{#4}}
+\def\DrawTeX#1{\DrawGlyph T{-.1667em}\z@\DrawGlyph E{-.125em}{-.5ex}\DrawChar\RT@X#1}
+\def\DrawLaTeX{\RT@raised L{-.36em}{-.15em}\RT@raise\DrawTeX}
+\def\DrawSaTeX{\RT@raised S{-.04em}{-.15em}\z@\DrawTeX}
+\def\DrawLa#1{\RT@raised L{-.28em}\z@\RT@raise}
+\def\DrawSpace#1{\ }
+% the joke backslash, kerned into a following T
+\def\DrawBs#1{\RT@pair\bs#1\ifx\RT@n\RT@T\advance\RT@kern-.1em\fi{\def\RT@k{c}\DrawGlyph\bs\RT@kern\z@}}
+\RT@on\TeX T\DrawTeX \RT@on\LaTeX L\DrawLaTeX \RT@on\SaTeX S\DrawSaTeX \RT@on\La L\DrawLa \RT@on\ { }\DrawSpace \RT@on\bs\bs\DrawBs
+
+% \hl before a token highlights it; the line gets a baseline; #1 box spec such as `to 5cm`: spaces take their full stretch, a rule fills the rest
+\newcommand\RenderText[2][]{\setbox\RT@line\hbox#1{\let\RT@last\relax\def\RT@nk{n}%
+    \if\relax\detokenize{#1}\relax\def\RT@s{0}\else\def\RT@s{1}\fi
+    \@tfor\cur:=#2\do{\ifx\cur\RT@hl\def\RT@nk{h}\else
+        \ifx\RT@last\relax\else\DrawChar\RT@last\cur\fi
+        \let\RT@k\RT@nk\def\RT@nk{n}\let\RT@last\cur\fi}%
+    \DrawChar\RT@last\RT@end{\bt\color{stretch}\leaders\hrule height.2em\hfil}}%
+    % baseline behind the line
+    \LBox{\rlap{\transparent{.4}\color{base}\rule[-.035em]{\wd\RT@line}{.07em}}\box\RT@line}}
+\makeatother
+
+% pages: 1 stacked, 2 wide, 3 wordmark, 4 and 5 the tagline lines (the site animates them), 6 the favicon text
+\begin{document}\pagecolor{white}
+\sbox\BoxWord{\fontsize{48}{48}\selectfont\RTInit\RenderText{\hl\SaTeX}}
+% tagline, first line stretched and filled to the second; it shows its own source
+\sbox\BoxTag{\RTInit\setbox1\hbox{\RenderText{(\La)\bs\hl\TeX\ and\ Friends}}%
+    \setbox0\hbox{\RenderText[to\dimexpr\wd1-2\fboxrule]{\hl Static\ \hl Analysis\ for}}%
+    \global\sbox\BoxLineA{\copy0}\global\sbox\BoxLineB{\copy1}\MBox{\vbox{\copy0\box1}}}
+
+\begin{preview}
+\MBox{\vbox{\offinterlineskip\copy\BoxWord\kern4.8pt\hbox{\resizebox{\wd\BoxWord}{!}{\usebox\BoxTag}}}}
+\end{preview}
+\begin{preview}
+\MBox{$\vcenter{\copy\BoxWord}\kern.8em
+    \vcenter{\hbox{\resizebox*{!}{\dimexpr\ht\BoxWord+\dp\BoxWord}{\usebox\BoxTag}}}$}
+\end{preview}
+\begin{preview}\usebox\BoxWord\end{preview}
+\begin{preview}\usebox\BoxLineA\end{preview}
+\begin{preview}\usebox\BoxLineB\end{preview}
+\begin{preview}\fontsize{48}{48}\bfseries\selectfont\sbox0{T}\sbox2{\fontsize{34}{34}\selectfont A}%
+S\kern-.04em\raisebox{\dimexpr\ht0-\ht2}{\usebox2}\kern-.12em T\kern-.17em\lower.5ex\hbox{E}\kern-.13em X\end{preview}
+\end{document}

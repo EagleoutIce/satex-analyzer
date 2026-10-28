@@ -86,10 +86,63 @@ fn workers(cfg: &Config) -> usize {
 /// `limits.memory`.
 const MEMORY_PER_WORKER: u64 = 1 << 30;
 
+/// A package is worth pre-warming once ordinary runs on this machine have
+/// left at least this much cache behind it: what a package's stored
+/// segments weigh tracks what it costs to hold and replay them, and on this
+/// project's own cache directory this cut falls cleanly between routine
+/// packages (graphicx, article: under half a megabyte) and the ones whose
+/// first load noticeably stalls an interactive run (amsmath, hyperref,
+/// xcolor's own load site: several megabytes). Below it, `cache.index.auto`
+/// catching a package on first use is good enough; `cache build` exists for
+/// the packages where that first use is itself the problem.
+pub(crate) const EXPENSIVE_BYTES: u64 = 1_000_000;
+
+/// The package name a package cache's file name was built from (see
+/// `package_cache::family`/`cache_file`): the sanitized name between
+/// `package-` and the first `-v<digits>-` marker.
+fn package_name_of(file_name: &str) -> Option<&str> {
+    let rest = file_name.strip_prefix("package-")?;
+    let rest = rest.strip_suffix(".postcard")?;
+    let mut at = 0;
+    while let Some(found) = rest[at..].find("-v") {
+        let start = at + found;
+        let digits = rest[start + 2..].bytes().take_while(u8::is_ascii_digit).count();
+        if digits > 0 && rest.as_bytes().get(start + 2 + digits) == Some(&b'-') {
+            return Some(&rest[..start]);
+        }
+        at = start + 2;
+    }
+    None
+}
+
+/// What `cache build` prepares when nothing is configured or named: the
+/// packages whose cache files in `dir` already total at least `threshold`
+/// bytes, most expensive first. A measurement of what ordinary runs
+/// (`cache.index.auto`) already found worth storing on this machine, not a
+/// list of names.
+/// How many of the packages installed packages load most `cache build`
+/// prepares when nothing is configured and nothing measured yet.
+const COMMON: usize = 24;
+
+pub(crate) fn discover_expensive(dir: &Path, threshold: u64) -> Vec<(String, u64)> {
+    let mut totals: crate::fixed::HashMap<String, u64> = crate::fixed::HashMap::default();
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(file_name) = file_name.to_str() else { continue };
+        let Some(package) = package_name_of(file_name) else { continue };
+        let Ok(meta) = entry.metadata() else { continue };
+        *totals.entry(package.to_string()).or_default() += meta.len();
+    }
+    let mut found: Vec<(String, u64)> = totals.into_iter().filter(|(_, bytes)| *bytes >= threshold).collect();
+    found.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    found
+}
+
 /// Analyze one package in its canonical preamble, on the calling thread.
 fn prepare_one(run: &Config, base: &Path, directory: &Path, package: &str) -> Prepared {
     let started = Instant::now();
-    let source = preamble_of(&run.cache_index.class, package);
+    let source = preamble_of(&run.cache.index.class, package);
     let safe: String = package.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
     let path = base.join(format!("cache-index-{safe}.tex"));
     if let Err(e) = std::fs::write(&path, &source) {
@@ -120,12 +173,36 @@ fn prepare_one(run: &Config, base: &Path, directory: &Path, package: &str) -> Pr
 }
 
 /// Interpret the kernel, replacing its cache, and the given packages — or
-/// `cache_index`'s configured ones when `packages` is empty — for every
+/// `cache.index`'s configured ones when `packages` is empty — for every
 /// given or configured engine.  A package cache is only rebuilt when it is
 /// missing or stale, unless `refresh` rebuilds all of them.  `preamble`
 /// builds a format cache from that file on top of the kernel instead of any
 /// packages, the way `mylatexformat` dumps one.  `progress` hears the plan
 /// and each item as it is done.
+/// The stack of a thread that interprets the kernel: the main thread's.
+const KERNEL_STACK: usize = 8 << 20;
+
+/// What building one engine's kernel came to.
+fn kernel_outcome(kernel: &crate::machine::Analysis, seconds: f64) -> Prepared {
+    let (outcome, reason) = match &kernel.format {
+        Some(f) if f.cached => ("fresh", None),
+        Some(f) if f.complete() && !kernel.facts.diagnostics.iter().any(|d| d.code == "format-truncated") => {
+            ("built", None)
+        }
+        Some(_) => ("failed", Some("latex.ltx was not read to the end".to_string())),
+        None => ("failed", Some("no latex.ltx was found".to_string())),
+    };
+    Prepared {
+        engine: kernel.plugins.engine.as_str(),
+        package: "kernel".into(),
+        outcome,
+        reason,
+        state: String::new(),
+        seconds,
+        bytes: 0,
+    }
+}
+
 pub fn prepare(
     cfg: &Config,
     refresh: bool,
@@ -134,15 +211,54 @@ pub fn prepare(
     preamble: Option<&Path>,
     progress: &mut dyn FnMut(&str),
 ) -> Result<Vec<Prepared>, String> {
-    let directory = cfg.cache_dir.clone().or_else(crate::format::default_cache_dir).ok_or("no cache directory")?;
+    let directory = cfg.cache.dir.clone().or_else(crate::format::default_cache_dir).ok_or("no cache directory")?;
     let base = directory.join("index");
     std::fs::create_dir_all(&base).map_err(|e| format!("{}: {e}", base.display()))?;
+    // Nothing configured or named: prepare what ordinary runs on this
+    // machine (`cache.index.auto`) already found expensive, discovered from
+    // their caches rather than a list of names. A fresh cache directory has
+    // nothing to discover yet: then the packages installed packages load
+    // most, read off the installation.
+    let discovered: Vec<String>;
     let packages: &[String] = match preamble {
         Some(_) => &[],
-        None if packages.is_empty() => &cfg.cache_index.packages[..],
+        None if packages.is_empty() && cfg.cache.index.packages.is_empty() => {
+            let trees = crate::distribution::discover(&cfg.distribution_request());
+            let found = discover_expensive(&directory, EXPENSIVE_BYTES);
+            let measured = if found.is_empty() {
+                // Nothing measured yet: what the packages on disk load most.
+                let common =
+                    crate::exports::Exports::of(&trees.distribution.roots, Some(&directory), &cfg.conventions.definers)
+                        .most_loaded(COMMON);
+                progress(&format!(
+                    "nothing configured and nothing measured yet: the {} packages installed packages load most: {}",
+                    common.len(),
+                    common.join(", ")
+                ));
+                common
+            } else {
+                progress(&format!(
+                    "discovered from what ran here already, at least {} each: {}",
+                    bytesize::ByteSize(EXPENSIVE_BYTES),
+                    found
+                        .iter()
+                        .map(|(name, bytes)| format!("{name} ({})", bytesize::ByteSize(*bytes)))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                found.into_iter().map(|(name, _)| name).collect()
+            };
+            // `cache.index.common`, as far as it is installed, comes first.
+            let common: Vec<String> =
+                cfg.cache.index.common.iter().filter(|n| trees.get(&format!("{n}.sty")).is_some()).cloned().collect();
+            progress(&format!("cache.index.common, installed: {}", common.join(", ")));
+            discovered = common.iter().cloned().chain(measured.into_iter().filter(|n| !common.contains(n))).collect();
+            &discovered[..]
+        }
+        None if packages.is_empty() => &cfg.cache.index.packages[..],
         None => packages,
     };
-    let engines: Vec<Option<Engine>> = match (engines, &cfg.cache_index.engines[..]) {
+    let engines: Vec<Option<Engine>> = match (engines, &cfg.cache.index.engines[..]) {
         ([], []) => vec![cfg.engine],
         ([], configured) => configured.iter().copied().map(Some).collect(),
         (given, _) => given.iter().copied().map(Some).collect(),
@@ -167,92 +283,100 @@ pub fn prepare(
             progress(&format!("  {package} ({}): {state}", name_of(*engine)));
         }
     }
+    let runs: Vec<Config> = engines
+        .iter()
+        .map(|engine| {
+            let mut run = cfg.clone();
+            run.engine = engine.or(cfg.engine);
+            run.cache.dir = Some(directory.clone());
+            run.cache.index.building = true;
+            run.cache.index.refresh = refresh;
+            if let Some(preamble) = preamble {
+                run.preload = Some(preamble.to_path_buf());
+            }
+            run
+        })
+        .collect();
     let mut prepared = Vec::new();
     let mut done = 0;
-    for engine in engines {
-        let mut run = cfg.clone();
-        run.engine = engine.or(cfg.engine);
-        run.cache_dir = Some(directory.clone());
-        run.cache_index.building = true;
-        run.cache_index.refresh = refresh;
-        if let Some(preamble) = preamble {
-            run.preload = Some(preamble.to_path_buf());
+    // The kernels first, one thread per engine: they share nothing. Each
+    // replaces its cache, since a run that interprets `latex.ltx` leaves a
+    // state that differs from one that installs its cache, so packages read
+    // in it would be keyed for no later run. Then the class every package
+    // is prepared after, so the workers find it cached.
+    let class = format!("\\documentclass{{{}}}\n\\begin{{document}}\n\\end{{document}}\n", cfg.cache.index.class);
+    let (send, receive) = std::sync::mpsc::channel::<Prepared>();
+    std::thread::scope(|scope| {
+        for run in &runs {
+            let (base, class, send) = (&base, &class, send.clone());
+            std::thread::Builder::new()
+                .stack_size(KERNEL_STACK)
+                .spawn_scoped(scope, move || {
+                    let mut rebuild = run.clone();
+                    rebuild.cache.rebuild = true;
+                    let started = Instant::now();
+                    let kernel = Machine::analyze("", Some(&base.join("kernel.tex")), &rebuild);
+                    if !packages.is_empty() {
+                        let _ = Machine::analyze(class, Some(&base.join("class.tex")), run);
+                    }
+                    let _ = send.send(kernel_outcome(&kernel, started.elapsed().as_secs_f64()));
+                })
+                .expect("a kernel thread");
         }
-        // The kernel first, always replacing its cache: a run that
-        // interprets `latex.ltx` leaves a state that differs from one that
-        // installs its cache, so packages read in it would be keyed for no
-        // later run.
-        run.rebuild_format = true;
-        let started = Instant::now();
-        let kernel = Machine::analyze("", Some(&base.join("kernel.tex")), &run);
-        run.rebuild_format = false;
-        done += 1;
-        let (outcome, reason) = match &kernel.format {
-            Some(f) if f.cached => ("fresh", None),
-            Some(f) if f.complete() && !kernel.facts.diagnostics.iter().any(|d| d.code == "format-truncated") => {
-                ("built", None)
-            }
-            Some(_) => ("failed", Some("latex.ltx was not read to the end".to_string())),
-            None => ("failed", Some("no latex.ltx was found".to_string())),
-        };
-        let engine_name = kernel.plugins.engine.as_str();
-        progress(&format!(
-            "[{done}/{total}] kernel ({engine_name}) … {outcome}{} in {:.1} s",
-            reason.as_ref().map(|r| format!(": {r}")).unwrap_or_default(),
-            started.elapsed().as_secs_f64()
-        ));
-        prepared.push(Prepared {
-            engine: engine_name,
-            package: "kernel".into(),
-            outcome,
-            reason,
-            state: String::new(),
-            seconds: started.elapsed().as_secs_f64(),
-            bytes: 0,
-        });
-        if packages.is_empty() {
-            continue;
+        drop(send);
+        // Each kernel is reported as it finishes.
+        for entry in receive {
+            done += 1;
+            progress(&format!(
+                "[{done}/{total}] kernel ({}) … {}{} in {:.1} s",
+                entry.engine,
+                entry.outcome,
+                entry.reason.as_ref().map(|r| format!(": {r}")).unwrap_or_default(),
+                entry.seconds
+            ));
+            prepared.push(entry);
         }
-        // The class every package is prepared after, once, so that the
-        // workers find it cached instead of each storing it.
-        let class = format!("\\documentclass{{{}}}\n\\begin{{document}}\n\\end{{document}}\n", cfg.cache_index.class);
-        let _ = Machine::analyze(&class, Some(&base.join("class.tex")), &run);
-        let workers = workers(cfg).min(packages.len()).max(1);
-        let next = std::sync::atomic::AtomicUsize::new(0);
-        let (send, receive) = std::sync::mpsc::channel::<Prepared>();
-        let run = &run;
-        let base = &base;
-        let directory = &directory;
-        std::thread::scope(|scope| {
-            for _ in 0..workers {
-                let send = send.clone();
-                let next = &next;
-                scope.spawn(move || {
-                    loop {
-                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(package) = packages.get(i) else { break };
+    });
+    if packages.is_empty() {
+        return Ok(prepared);
+    }
+    // Every package of every engine from one pool of workers.
+    let items: Vec<(&Config, &String)> = runs.iter().flat_map(|run| packages.iter().map(move |p| (run, p))).collect();
+    let workers = workers(cfg).min(items.len()).max(1);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let (send, receive) = std::sync::mpsc::channel::<Prepared>();
+    let (base, directory, items) = (&base, &directory, &items);
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let send = send.clone();
+            let next = &next;
+            std::thread::Builder::new()
+                .stack_size(KERNEL_STACK)
+                .spawn_scoped(scope, move || {
+                    while let Some((run, package)) = items.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                    {
                         let _ = send.send(prepare_one(run, base, directory, package));
                     }
-                });
-            }
-            drop(send);
-            for entry in receive {
-                done += 1;
-                let seconds = entry.seconds;
-                let detail = match (entry.outcome, &entry.reason) {
-                    ("fresh", _) => "fresh, skipped".to_string(),
-                    ("built", _) => format!("built in {seconds:.1} s, {}", bytesize::ByteSize(entry.bytes)),
-                    ("rebuilt", Some(r)) => {
-                        format!("rejected: {r}; rebuilt in {seconds:.1} s, {}", bytesize::ByteSize(entry.bytes))
-                    }
-                    (_, Some(r)) => format!("failed: {r}"),
-                    (outcome, None) => outcome.to_string(),
-                };
-                progress(&format!("[{done}/{total}] {} ({}) … {detail}", entry.package, entry.engine));
-                prepared.push(entry);
-            }
-        });
-    }
+                })
+                .expect("a package thread");
+        }
+        drop(send);
+        for entry in receive {
+            done += 1;
+            let seconds = entry.seconds;
+            let detail = match (entry.outcome, &entry.reason) {
+                ("fresh", _) => "fresh, skipped".to_string(),
+                ("built", _) => format!("built in {seconds:.1} s, {}", bytesize::ByteSize(entry.bytes)),
+                ("rebuilt", Some(r)) => {
+                    format!("rejected: {r}; rebuilt in {seconds:.1} s, {}", bytesize::ByteSize(entry.bytes))
+                }
+                (_, Some(r)) => format!("failed: {r}"),
+                (outcome, None) => outcome.to_string(),
+            };
+            progress(&format!("[{done}/{total}] {} ({}) … {detail}", entry.package, entry.engine));
+            prepared.push(entry);
+        }
+    });
     Ok(prepared)
 }
 
@@ -268,7 +392,7 @@ pub fn run(
     let started = Instant::now();
     let mut progress = |line: &str| {
         if !json {
-            anstream::eprintln!("{line}");
+            crate::progress::note!("{line}");
         }
     };
     let prepared = prepare(cfg, refresh, packages, engines, preamble, &mut progress)?;
@@ -310,4 +434,36 @@ pub fn run(
         started.elapsed().as_secs_f64()
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_package_name_is_read_back_out_of_its_cache_file_name() {
+        assert_eq!(package_name_of("package-xcolor-v1-a1b2c3d4e5f6a7b8-0123456789abcdef.postcard"), Some("xcolor"));
+        assert_eq!(package_name_of("package-koma-script-v1-abcd1234-1234abcd.postcard"), Some("koma-script"));
+        assert_eq!(package_name_of("format-pdftex-2026-v1-abcd.postcard"), None, "not a package cache");
+        assert_eq!(package_name_of("package-xcolor-v1-abcd.lock"), None, "a lock file, not a cache");
+    }
+
+    #[test]
+    fn discovery_finds_only_what_exceeds_the_threshold_and_sums_a_packages_files() {
+        let dir = std::env::temp_dir().join(format!("satex-cache-discover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        // Two cache files for the same package (different resolved paths or
+        // engines) add up.
+        std::fs::write(dir.join("package-big-v1-aaaa-1111.postcard"), vec![0u8; 600]).unwrap();
+        std::fs::write(dir.join("package-big-v1-aaaa-2222.postcard"), vec![0u8; 600]).unwrap();
+        std::fs::write(dir.join("package-small-v1-bbbb-3333.postcard"), vec![0u8; 100]).unwrap();
+        std::fs::write(dir.join("package-small-v1-bbbb-3333.lock"), vec![]).unwrap();
+
+        let found = discover_expensive(&dir, 1000);
+        assert_eq!(found, vec![("big".to_string(), 1200)], "only the package over the threshold, summed: {found:?}");
+
+        let none = discover_expensive(&dir, 10_000);
+        assert!(none.is_empty(), "nothing on a fresh or light machine: {none:?}");
+    }
 }

@@ -1,0 +1,8 @@
+\documentclass{article}
+\usepackage{tikz}
+% A box of unknown width: its \the is a typed number.
+\setbox2\hbox{\the\pdfrandomseed}
+\begin{document}
+\begin{tikzpicture}\draw (0,0) to[bend right=40] (\the\wd2,1);\end{tikzpicture}
+\gdef\SatexReachedEnd{}
+\end{document}

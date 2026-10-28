@@ -1,0 +1,3 @@
+# The command each example runs: on the landing page, and in the playground's command line.
+# An example not named here runs `lint`.
+macros.tex: explain \twice

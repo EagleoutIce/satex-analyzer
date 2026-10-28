@@ -1,0 +1,71 @@
+\def\thesis@footnote@symbol@#1{%
+   % $\langle$
+   #1% $\rangle$%
+}
+
+\thesis@info{Apply footnote patch}
+
+\DeclareCommandCopy\footnote\thesis@oldfootnote
+
+\newcounter{thesis@side@footnote}[chapter]
+
+\def\thesis@footnote@symbol{%
+   \label{thesis@side@footnote@tar:\thesection:\arabic{thesis@side@footnote}}%
+   \smash{\textsuperscript{%
+      \thesis@footnote@symbol@{%
+         \raisebox{-2pt}{\hyperref[thesis@side@footnote@side:\thesection:\arabic{thesis@side@footnote}]{\@arabic\c@thesis@side@footnote}}%
+      }%
+   }}%
+}
+
+\def\thesis@footnote@side#1{%
+   \sidenote{%
+      \protect\thesis@fnte{\thesection}{\arabic{thesis@side@footnote}}{#1}%
+   }%
+}
+
+\ifthesis@marginpar
+   % TODO: optional argument...
+   \long\def\footnote#1{%
+      \phantomsection
+      \stepcounter{thesis@side@footnote}%
+      \thesis@footnote@symbol
+      \thesis@footnote@side{#1}%
+   }
+\else
+   \thesis@info{No footnote patch for marginpar as marginpar is disabled. Only apply style.}
+   \AtEndPreamble{% load after hyperref
+      \def\thesis@footnoteref@footnote{fn@\arabic{footnote}}
+      \def\thesis@footnoteref@mpfootnote{fn@\alph{mpfootnote}}
+
+      \def\thefootnote{\thesis@footnote@symbol@{\@arabic\c@footnote}}
+      \def\thempfootnote{\thesis@footnote@symbol@{\@alph\c@mpfootnote}}
+      \preto\@footnotemark{\phantomsection\label{thesis@fn:\thesection:\csname thesis@footnoteref@\@mpfn\endcsname}}
+
+      \deffootnote{2em}{1em}{%\nohyper{
+      \makebox[2em][r]{\thesis@disablehyper{\hyperref[thesis@fn:\thesection:\csname thesis@footnoteref@\@mpfn\endcsname]{\thefootnotemark}}}~}
+   }
+   \endinput
+\fi
+
+
+% #1 section; #2 fn; #3 text
+\def\thesis@fnte#1#2#3{%
+   \strut\phantomsection
+   \label{thesis@side@footnote@side:#1:#2}%
+   \thesis@disablehyper{%
+      \hyperref[thesis@side@footnote@tar:#1:#2]{%
+         \thesis@footnote@symbol@{{\color{@link}#2}}.%
+      }\!~%
+   }
+   \hyphenpenalty1000\relax
+   \exhyphenpenalty1000\relax
+   \thesis@disablehyper{#3}\strut
+}
+
+\PassOptionsToPackage{calc, en-US}{datetime2}
+\RequirePackage{datetime2}
+\def\FootUrlDateFormat#1{\space\strut\mbox{(\DTMdate{#1})}}
+\newcommand*\footrawurl[3][]{\footnote{#1#2\protect\FootUrlDateFormat{#3}}}
+\newcommand*\footurl[3][]{\footrawurl[#1]{\url{#2}}{#3}}
+\newcommand*\foothref[4][]{\footrawurl[#1]{\href{#2}{#3}}{#4}}

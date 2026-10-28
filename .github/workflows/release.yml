@@ -23,6 +23,7 @@ jobs:
     name: Build ${{ matrix.target }}
     needs: check
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     strategy:
       matrix:
         include:

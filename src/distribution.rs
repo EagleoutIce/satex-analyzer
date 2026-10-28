@@ -1,6 +1,6 @@
 //! Which TeX installation to analyze against.
 
-use std::collections::HashMap;
+use crate::fixed::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -12,29 +12,20 @@ use crate::plugin::{Platform, Provider};
 const TEXMF_VARIABLES: [&str; 8] =
     ["TEXMFHOME", "TEXMFCONFIG", "TEXMFVAR", "TEXMFLOCAL", "TEXMFSYSCONFIG", "TEXMFSYSVAR", "TEXMFDIST", "TEXMFMAIN"];
 
-/// How the TeX installation's roots were found: configured in `satex.yaml`,
-/// reported by `kpsewhich`, guessed at a well-known path, or not found at
-/// all. Part of [`Distribution`].
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Discovery {
-    /// Roots named in `satex.yaml`.
-    Configured,
-    /// Reported by `kpsewhich`.
-    Kpsewhich,
-    /// Found at a well-known installation path.
-    Fallback,
-    /// Nothing found.
-    None,
-}
-
-impl Discovery {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Discovery::Configured => "configured",
-            Discovery::Kpsewhich => "kpsewhich",
-            Discovery::Fallback => "fallback",
-            Discovery::None => "none",
-        }
+named_enum! {
+    /// How the TeX installation's roots were found: configured in `satex.yaml`,
+    /// reported by `kpsewhich`, guessed at a well-known path, or not found at
+    /// all. Part of [`Distribution`].
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Discovery {
+        /// Roots named in `satex.yaml`.
+        Configured => "configured",
+        /// Reported by `kpsewhich`.
+        Kpsewhich => "kpsewhich",
+        /// Found at a well-known installation path.
+        Fallback => "fallback",
+        /// Nothing found.
+        None => "none",
     }
 }
 
@@ -51,6 +42,8 @@ pub struct Distribution {
     pub index_cached: bool,
     /// The file the index was read from or written to.
     pub index_cache: Option<PathBuf>,
+    /// The bundle root among `roots`, if one was configured.
+    pub bundle: Option<PathBuf>,
 }
 
 impl Distribution {
@@ -73,6 +66,9 @@ impl Distribution {
 #[derive(Clone, Debug, Default)]
 pub struct Request {
     pub roots: Vec<PathBuf>,
+    /// A directory laid out like `texmf-dist`: searched after `roots`, and
+    /// on its own it replaces `kpsewhich` and the fallback paths.
+    pub bundle: Option<PathBuf>,
     pub install_root: Option<PathBuf>,
     pub year: Option<u32>,
     pub use_kpsewhich: bool,
@@ -93,15 +89,49 @@ pub struct Request {
 
 /// A resolved TeX installation: its [`Distribution`] description plus the
 /// file-name index [`crate::loader::Resolver`] searches.
+#[derive(Clone)]
 pub struct Trees {
     pub distribution: Distribution,
-    index: Arc<HashMap<String, PathBuf>>,
+    index: Index,
 }
 
 impl Trees {
+    /// Where `file` is: the first tree, in search order, that has it. A
+    /// tree's `ls-R` may name a file since deleted; kpathsea passes over
+    /// it to the next tree, and so does this.
     pub fn get(&self, file: &str) -> Option<&PathBuf> {
-        self.index.get(file)
+        self.index.get(file)?.iter().find(|path| path.is_file())
     }
+}
+
+/// The installation's file names ending in `ext` (`.cls`) under `dir` of
+/// each root, sorted: for `tex` the index a run searched, read from memory
+/// once it has been built; another tree (`bibtex/bst`) walked.
+pub fn names_with(roots: &[PathBuf], dir: &str, ext: &str) -> Vec<String> {
+    let names: Vec<String> = match dir {
+        "tex" => index_for(roots, None).0.keys().cloned().collect(),
+        _ => {
+            let mut tree = HashMap::default();
+            roots.iter().for_each(|root| walk(&root.join(dir), &mut tree));
+            tree.into_keys().collect()
+        }
+    };
+    let mut names: Vec<String> = names.iter().filter_map(|n| n.strip_suffix(ext)).map(str::to_string).collect();
+    names.sort();
+    names
+}
+
+/// The installation's files ending in `ext` with where the first tree has
+/// each, sorted by name.
+pub fn files_with(roots: &[PathBuf], ext: &str) -> Vec<(String, PathBuf)> {
+    let (index, _) = index_for(roots, None);
+    let mut files: Vec<(String, PathBuf)> = index
+        .iter()
+        .filter(|(name, _)| name.ends_with(ext))
+        .filter_map(|(name, paths)| Some((name.clone(), paths.first()?.clone())))
+        .collect();
+    files.sort();
+    files
 }
 
 /// Where an installation would resolve from, without indexing its files:
@@ -124,6 +154,7 @@ pub fn discover(request: &Request) -> Trees {
         indexed: index.len(),
         index_cached,
         index_cache,
+        bundle: request.bundle.clone().filter(|b| roots.contains(b)),
         roots,
         discovery,
     };
@@ -133,6 +164,21 @@ pub fn discover(request: &Request) -> Trees {
 type Roots = (Vec<PathBuf>, Discovery);
 
 fn roots_for(request: &Request, cache: Option<&Path>) -> Roots {
+    let Some(bundle) = request.bundle.as_ref().filter(|b| b.is_dir()) else {
+        return roots_without_bundle(request, cache);
+    };
+    let (mut roots, discovery) = match request.roots.is_empty() {
+        true => (Vec::new(), Discovery::None),
+        false => roots_without_bundle(request, cache),
+    };
+    if !roots.contains(bundle) {
+        roots.push(bundle.clone());
+    }
+    let discovery = if discovery == Discovery::None { Discovery::Configured } else { discovery };
+    (roots, discovery)
+}
+
+fn roots_without_bundle(request: &Request, cache: Option<&Path>) -> Roots {
     if !request.roots.is_empty() {
         let roots: Vec<PathBuf> = request.roots.iter().filter(|r| r.is_dir()).cloned().collect();
         if !roots.is_empty() {
@@ -167,16 +213,12 @@ fn roots_for(request: &Request, cache: Option<&Path>) -> Roots {
 
 fn fallback_roots(year: Option<u32>, platform: Platform) -> Vec<PathBuf> {
     let mut roots = Vec::new();
-    if let Some(personal) = platform.home_tree()
-        && personal.is_dir()
-    {
-        roots.push(personal);
-    }
+    // More than one personal tree can exist per platform; probe each.
+    roots.extend(platform.home_trees().into_iter().filter(|tree| tree.is_dir()));
     for pattern in platform.roots() {
-        let Ok(matches) = glob::glob(pattern) else { continue };
         // A pattern matches one directory per installed version: the wanted
         // year wins, otherwise the newest.
-        let mut found: Vec<PathBuf> = matches.flatten().filter(|path| path.is_dir()).collect();
+        let mut found: Vec<PathBuf> = crate::paths::glob(pattern).into_iter().filter(|path| path.is_dir()).collect();
         found.sort();
         let chosen = match year {
             Some(year) => found.into_iter().find(|path| year_in(path) == Some(year)),
@@ -197,7 +239,8 @@ fn year_in(path: &Path) -> Option<u32> {
     })
 }
 
-type Index = Arc<HashMap<String, PathBuf>>;
+/// Each file name with where every tree has it, in search order.
+type Index = Arc<HashMap<String, Vec<PathBuf>>>;
 
 /// The stamp of what a tree was indexed from, so that a cached index is
 /// discarded once the installation changes.
@@ -209,12 +252,12 @@ fn tree_stamp(root: &Path) -> (u64, u64) {
 struct CachedIndex {
     version: u32,
     stamps: Vec<(String, u64, u64)>,
-    entries: Vec<(String, PathBuf)>,
+    entries: Vec<(String, Vec<PathBuf>)>,
 }
 
 /// Part of the cache file name, so an index written by an older encoding is
 /// simply a different file.
-const INDEX_VERSION: u32 = 1;
+const INDEX_VERSION: u32 = 2;
 
 fn index_cache_file(dir: &Path, roots: &[PathBuf]) -> PathBuf {
     let joined: Vec<u8> = roots.iter().flat_map(|r| r.as_os_str().as_encoded_bytes().to_vec()).collect();
@@ -222,7 +265,7 @@ fn index_cache_file(dir: &Path, roots: &[PathBuf]) -> PathBuf {
     dir.join(format!("index-{tree}-v{INDEX_VERSION}-{:08x}.postcard", digest(&joined)))
 }
 
-fn stamps_for(roots: &[PathBuf]) -> Vec<(String, u64, u64)> {
+pub(crate) fn stamps_for(roots: &[PathBuf]) -> Vec<(String, u64, u64)> {
     roots
         .iter()
         .map(|root| {
@@ -232,18 +275,25 @@ fn stamps_for(roots: &[PathBuf]) -> Vec<(String, u64, u64)> {
         .collect()
 }
 
-fn read_cached_index(dir: &Path, roots: &[PathBuf]) -> Option<HashMap<String, PathBuf>> {
+fn read_cached_index(dir: &Path, roots: &[PathBuf]) -> Option<HashMap<String, Vec<PathBuf>>> {
     let bytes = std::fs::read(index_cache_file(dir, roots)).ok()?;
     let cached: CachedIndex = postcard::from_bytes(&bytes).ok()?;
     (cached.version == INDEX_VERSION && cached.stamps == stamps_for(roots))
         .then(|| cached.entries.into_iter().collect())
 }
 
-fn write_cached_index(dir: &Path, roots: &[PathBuf], index: &HashMap<String, PathBuf>) {
+fn write_cached_index(dir: &Path, roots: &[PathBuf], index: &HashMap<String, Vec<PathBuf>>) {
     let cached = CachedIndex {
         version: INDEX_VERSION,
         stamps: stamps_for(roots),
-        entries: index.iter().map(|(name, path)| (name.clone(), path.clone())).collect(),
+        entries: {
+            // A map's order is the process's, so the file would differ
+            // between two runs that indexed the same installation.
+            let mut entries: Vec<(String, Vec<PathBuf>)> =
+                index.iter().map(|(name, paths)| (name.clone(), paths.clone())).collect();
+            entries.sort();
+            entries
+        },
     };
     let Ok(bytes) = postcard::to_allocvec(&cached) else { return };
     if std::fs::create_dir_all(dir).is_err() {
@@ -272,16 +322,16 @@ fn index_for(roots: &[PathBuf], cache: Option<&Path>) -> (Index, bool) {
         remember(cache_entries(), roots, &index);
         return (index, true);
     }
-    let mut index = HashMap::new();
+    let mut index = HashMap::default();
     // Later roots must not shadow earlier ones, so they are read in order and
-    // only fill in names that are still missing.
+    // each adds its path after the earlier ones'.
     for root in roots {
-        let mut tree: HashMap<String, (u8, PathBuf)> = HashMap::new();
+        let mut tree: HashMap<String, (u8, PathBuf)> = HashMap::default();
         if !read_ls_r(root, &mut tree) {
             walk(&root.join("tex"), &mut tree);
         }
         for (name, (_, path)) in tree {
-            index.entry(name).or_insert(path);
+            index.entry(name).or_insert_with(Vec::new).push(path);
         }
     }
     if let Some(dir) = cache {
@@ -364,8 +414,11 @@ const MAX_WALK_DEPTH: usize = 8;
 
 /// Index a tree that ships no `ls-R`.
 fn walk(directory: &Path, index: &mut HashMap<String, (u8, PathBuf)>) {
+    // `offer` keeps the first path of a rank, so an unsorted walk would let
+    // the directory order decide which `foo.sty` of two the run reads.
     for entry in walkdir::WalkDir::new(directory)
         .max_depth(MAX_WALK_DEPTH)
+        .sort_by_file_name()
         .into_iter()
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file())
@@ -386,8 +439,9 @@ fn walk(directory: &Path, index: &mut HashMap<String, (u8, PathBuf)>) {
 
 /// `latex.ltx` carries the format date, written as `\edef\fmtversion` with
 /// the value on the following line, plus a patch level.
-fn format_version(index: &HashMap<String, PathBuf>) -> Option<String> {
-    let text = std::fs::read_to_string(index.get("latex.ltx")?).ok()?;
+fn format_version(index: &HashMap<String, Vec<PathBuf>>) -> Option<String> {
+    let latex = index.get("latex.ltx")?.iter().find(|path| path.is_file())?;
+    let text = std::fs::read_to_string(latex).ok()?;
     let version = braced_after(&text, "\\fmtversion")?;
     Some(match braced_after(&text, "\\def\\patch@level") {
         Some(patch) if patch != "0" => format!("{version} patch level {patch}"),
@@ -396,7 +450,7 @@ fn format_version(index: &HashMap<String, PathBuf>) -> Option<String> {
 }
 
 /// The contents of the first `{…}` after `marker`.
-fn braced_after(text: &str, marker: &str) -> Option<String> {
+pub(crate) fn braced_after(text: &str, marker: &str) -> Option<String> {
     let at = text.find(marker)? + marker.len();
     let rest = &text[at..];
     let open = rest.find('{')?;
@@ -425,7 +479,7 @@ struct CachedProbe {
     answer: Vec<String>,
 }
 
-const PROBE_VERSION: u32 = 1;
+const PROBE_VERSION: u32 = 2;
 
 fn probe_cache_file(dir: &Path, program: &Path, topic: &str) -> PathBuf {
     let hash = digest(program.as_os_str().as_encoded_bytes());
@@ -441,7 +495,7 @@ pub(crate) fn probed(
     cache: Option<&Path>,
     ask: impl FnOnce() -> Vec<String>,
 ) -> Vec<String> {
-    let path = which::which(program).ok();
+    let path = crate::paths::which(program).ok();
     let stamped = path.as_deref().and_then(|path| stamp(path).map(|s| (path, s)));
     let file = match (cache, &stamped) {
         (Some(dir), Some((path, _))) => Some(probe_cache_file(dir, path, topic)),
@@ -488,7 +542,18 @@ fn kpse_roots(locator: &str, cache: Option<&Path>, env: &[(String, String)]) -> 
             return Vec::new();
         };
         let Ok(text) = String::from_utf8(output.stdout) else { return Vec::new() };
-        text.trim().split(KPSE_SEPARATOR).map(|field| field.trim().to_string()).collect()
+        let mut fields: Vec<String> = text.trim().split(KPSE_SEPARATOR).map(|field| field.trim().to_string()).collect();
+        // A distribution may add trees no variable above names (Debian's
+        // `/usr/share/texmf`), but its `$TEXMF` search list holds them all.
+        if let Ok(output) = std::process::Command::new(locator)
+            .arg("--expand-path=$TEXMF")
+            .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
+            .output()
+        {
+            let list = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            fields.extend(std::env::split_paths(&list).map(|tree| tree.display().to_string()));
+        }
+        fields
     });
     let mut roots: Vec<PathBuf> = Vec::new();
     for field in fields {
@@ -499,4 +564,59 @@ fn kpse_roots(locator: &str, cache: Option<&Path>, env: &[(String, String)]) -> 
         }
     }
     roots
+}
+
+/// The first line `program --version` prints, asked once per process: the
+/// release of the engine a document is run with, which decides the facts
+/// that change between releases (`\pdftexrevision`, `\XeTeXrevision`,
+/// LuaTeX's math modes). `None` without that engine on `PATH`.
+pub fn engine_banner(program: &'static str) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static BANNERS: OnceLock<Mutex<HashMap<&'static str, Option<String>>>> = OnceLock::new();
+    let banners = BANNERS.get_or_init(Default::default);
+    let mut banners = banners.lock().unwrap_or_else(|e| e.into_inner());
+    banners
+        .entry(program)
+        .or_insert_with(|| {
+            let output = std::process::Command::new(program)
+                .arg("--version")
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()?;
+            String::from_utf8_lossy(&output.stdout).lines().next().map(str::to_string)
+        })
+        .clone()
+}
+
+/// The last `-`-separated field of a banner's version, as `pdftex
+/// --version` prints `pdfTeX 3.141592653-2.6-1.40.28 (TeX Live 2025)`:
+/// `1.40.28`.
+pub fn engine_release(program: &'static str) -> Option<String> {
+    let banner = engine_banner(program)?;
+    let version = banner.split_whitespace().nth(1)?;
+    Some(version.rsplit('-').next()?.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A tree's `ls-R` that names a file since deleted does not hide the
+    /// file of a later tree: kpathsea passes over it, and so does the index.
+    #[test]
+    fn a_file_an_ls_r_names_but_that_is_gone_falls_through_to_the_next_tree() {
+        let dir = std::env::temp_dir().join(format!("satex-trees-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (stale, real) = (dir.join("local"), dir.join("dist"));
+        std::fs::create_dir_all(stale.join("tex/latex/gone")).unwrap();
+        std::fs::write(stale.join("ls-R"), "./tex/latex/gone:\nx.sty\n").unwrap();
+        std::fs::create_dir_all(real.join("tex/latex/x")).unwrap();
+        std::fs::write(real.join("tex/latex/x/x.sty"), "").unwrap();
+        std::fs::write(real.join("ls-R"), "./tex/latex/x:\nx.sty\n").unwrap();
+        let trees = discover(&Request { roots: vec![stale, real.clone()], ..Request::default() });
+        assert_eq!(trees.get("x.sty"), Some(&real.join("tex/latex/x/x.sty")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

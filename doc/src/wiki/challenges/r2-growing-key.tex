@@ -1,0 +1,5 @@
+\documentclass{article}
+\def\grow#1{\ifnum\numexpr#1<5 .\grow{\numexpr#1+1\relax}\fi}
+\begin{document}
+\grow{0}
+\end{document}

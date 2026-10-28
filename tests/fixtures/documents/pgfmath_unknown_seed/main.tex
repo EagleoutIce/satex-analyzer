@@ -1,0 +1,10 @@
+\documentclass{article}
+\usepackage{pgfmath}
+% pgfmath on an unknown integer.
+\pgfmathparse{\pdfrandomseed+1}
+\global\let\ParseResult\pgfmathresult
+\gdef\AfterParse{}
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

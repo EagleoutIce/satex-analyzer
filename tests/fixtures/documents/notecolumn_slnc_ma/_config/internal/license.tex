@@ -1,0 +1,59 @@
+\RequirePackage{ccicons}
+
+\def\thesis@license@CCBY{
+   \deftranslation[to=German]{license}{%
+      Dieses Werk ist lizenziert unter einer \textit{Creative Commons Attribution~4.0} Lizenz.
+      Um eine Kopie dieser Lizenz zu sehen, besuchen Sie \url{https://creativecommons.org/licenses/by/4.0/} oder schreiben Sie einen Brief an Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+   }
+   \deftranslation[to=English]{license}{%
+      This work is licenced under the \textit{Creative Commons Attribution~4.0} license.
+      To view a copy of this license, visit \url{https://creativecommons.org/licenses/by/4.0/} or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+   }
+   \def\thesis@license@symbols{\ccby}
+}
+
+\def\thesis@license@CCBYSA{
+   \deftranslation[to=German]{license}{%
+      Dieses Werk ist lizenziert unter einer \textit{Creative Commons Attribution Share-Alike~4.0} Lizenz.
+      Um eine Kopie dieser Lizenz zu sehen, besuchen Sie \url{https://creativecommons.org/licenses/by-sa/4.0/} oder schreiben Sie einen Brief an Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+   }
+   \deftranslation[to=English]{license}{%
+      This work is licenced under the \textit{Creative Commons Attribution Share-Alike~4.0} license.
+      To view a copy of this license, visit \url{https://creativecommons.org/licenses/by-sa/4.0/} or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+   }
+   \def\thesis@license@symbols{\ccbysa}
+}
+
+\def\thesis@license@CCBYNC{
+   \deftranslation[to=German]{license}{%
+      Dieses Werk ist lizenziert unter einer \textit{Creative Commons Attribution Non-Commercial~4.0} Lizenz.
+      Um eine Kopie dieser Lizenz zu sehen, besuchen Sie \url{https://creativecommons.org/licenses/by-nc/4.0/} oder schreiben Sie einen Brief an Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+   }
+   \deftranslation[to=English]{license}{%
+      This work is licenced under the \textit{Creative Commons Attribution Non-Commercial~4.0} license.
+      To view a copy of this license, visit \url{https://creativecommons.org/licenses/by-nc/4.0/} or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+   }
+   \def\thesis@license@symbols{\ccbync}
+}
+
+
+\def\thesis@license@CCBYNCSA{
+   \deftranslation[to=German]{license}{%
+      Dieses Werk ist lizenziert unter einer \textit{Creative Commons Attribution Non-Commercial Share-Alike~4.0} Lizenz.
+      Um eine Kopie dieser Lizenz zu sehen, besuchen Sie \url{https://creativecommons.org/licenses/by-nc-sa/4.0/} oder schreiben Sie einen Brief an Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+   }
+   \deftranslation[to=English]{license}{%
+      This work is licenced under the \textit{Creative Commons Attribution Non-Commercial Share-Alike~4.0} license.
+      To view a copy of this license, visit \url{https://creativecommons.org/licenses/by-nc-sa/4.0/} or send a letter to Creative Commons, PO Box 1866, Mountain View, CA 94042, USA.
+   }
+   \def\thesis@license@symbols{\ccbyncsa}
+}
+
+
+\ifcsname thesis@license@\thesis@license\endcsname
+   \csname thesis@license@\thesis@license\endcsname
+\else
+   \thesis@error{Unknown license '\thesis@license'}{%
+      Please specify a valid license with \texttt{license=CCBY} or similar.
+   }
+\fi

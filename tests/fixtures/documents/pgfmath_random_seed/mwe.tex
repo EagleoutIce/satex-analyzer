@@ -1,0 +1,11 @@
+\documentclass{article}
+\usepackage{tikz}
+% tikzducks seeds pgfmath from the engine's random seed: an unknown integer.
+\ExplSyntaxOn
+\pgfmathsetseed{\sys_rand_seed:}
+\ExplSyntaxOff
+\pgfmathparse{\number\pdfrandomseed}
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

@@ -1,0 +1,16 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{microtype}
+\usepackage{newtxmath}
+\usepackage{xcolor}
+\usepackage{accsupp}
+\usepackage{listings}
+% Inline listing with a two-character literate, through a macro argument.
+\def\LeftArrow{\text{\BeginAccSupp{method=escape,ActualText={<-}}\(\leftarrow\)\EndAccSupp{}}}
+\lstset{language=R,basicstyle=\ttfamily\footnotesize,prebreak=\rlap{\footnotesize$\hookleftarrow$},breaklines,literate={<-}{{{\!\LeftArrow\!}}}2}
+\newcommand*\code[2][]{\begingroup\fboxsep=0pt\fcolorbox{gray}{white}{\thinspace\strut\lstinline[#1,keepspaces=true,breakatwhitespace,]`#2`\thinspace}\endgroup}
+\begin{document}
+\code{ab <- mk.list(x = 1)}
+\gdef\AfterCode{}
+\gdef\SatexReachedEnd{}
+\end{document}

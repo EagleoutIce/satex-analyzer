@@ -1,0 +1,123 @@
+\ifthesis@marginpar
+
+\newsavebox\thesis@chapternum
+\ifthesis@sftitle
+\def\thesis@chapternumber@format#1{\centering{\color{@chapternumber}\itshape\firabook\fontsize{72pt}{72pt}\selectfont#1\autodot}}
+\else
+\def\thesis@chapternumber@format#1{\centering{\color{@chapternumber}\upshape\fontsize{72pt}{72pt}\thesis@liningnumbers#1\autodot}}
+\fi
+\renewcommand*{\chapterformat}{%
+   \IfChapterUsesPrefixLine{%
+      \setbox\thesis@chapternum=\hbox{\thesis@chapternumber@format{\thechapter}}%
+      \edef\shift{\the\dimexpr-.5\dp\thesis@chapternum-.5\ht\thesis@chapternum+.5\baselineskip+1.15pt}%
+      \sidenote[\shift]{\protect\thesis@chapternumber@format{\thechapter}}%
+   }{}%
+}
+\let\thesis@chapterformat\chapterformat
+\def\appendixmore{\let\chapterformat\thesis@chapterformat}
+\let\thesis@beforechapter\@empty
+\def\thesis@afterchapter{}%\rule[.5\baselineskip]{\linewidth}{1pt}\par\nobreak}
+\def\chapterlinesformat#1#2#3{\thesis@beforechapter\@hangfrom{#2}{#3}\thesis@afterchapter}
+\def\chapterlineswithprefixformat#1#2#3{\thesis@beforechapter#2#3\thesis@afterchapter}
+\fi
+
+% chapter toc without minitoc, based on https://tex.stackexchange.com/a/517754
+\def\@gobbleignore#1{\ignorespaces}
+\def\thesis@marginpar@chaptertoc@do#1{%
+\parbox\marginparwidth{%
+   \parskip\z@\relax
+   \parindent\z@\relax
+   \footnotesize
+   \let\scr@numberline\@gobbleignore
+   \let\addvspace\@gobbleignore
+   \vspace*{\dimexpr\bigskipamount+2.5pt}\noindent
+   \value{tocdepth}=\sectiontocdepth
+   \kern-1.233ex\relax
+   \listoftoc*{#1}%
+   \bigskip\endgraf
+}
+}
+\def\thesis@chaptertoc@install{%
+\setchapterpreamble{%
+   \ifthesis@marginpar
+      \sidenote{\protect\thesis@marginpar@chaptertoc@do{\thesis@ext@current@chaptoc}}%
+   \else
+      \begin{minipage}{\linewidth}
+      \value{tocdepth}=\sectiontocdepth% we want entries down to subsection
+      \listoftoc*{\thesis@ext@current@chaptoc}% show the toc without header
+      \end{minipage}%
+      \bigskip\noindent\ignorespaces% add some vertical space after the toc and do not indent the following text
+   \fi
+}%
+}
+
+
+\CloneTOCEntryStyle{tocline}{minitocline}
+\def\thesis@pagebox#1{\hbox{\footnotesize#1}}
+
+\def\thesis@minitoc@secondpart@numberline#1.#2\@nil{$#2\relax$}
+\def\thesis@minitoc@numberline#1{\thesis@minitoc@secondpart@numberline#1\@nil.\space}
+\newcommand*\thesis@minitoc@entry[1]{\bgroup\thesis@@disablehyper\let\numberline\thesis@minitoc@numberline #1\egroup}
+
+\DeclareTOCStyleEntry[
+  entrynumberformat=\@gobble,
+  breakafternumber=true,
+  entryformat=\thesis@minitoc@entry,
+  level=0,
+  indent=0pt,
+  beforeskip=4pt,
+  dynnumwidth=false,
+  dynindent=false,
+  numwidth=0pt,
+  numsep=0pt,
+  pagenumberformat=\thesis@toc@pagenumber,
+  pagenumberbox=\thesis@pagebox,
+  linefill={,\null\nobreak\hfill},
+  raggedpagenumber=false,
+  raggedentrytext=true
+]{minitocline}{minitocelement}
+
+\def\thesis@chaptertoc@style{%
+      \DeclareNewTOC[%
+         tocentrystyle=minitocline,
+         % type=minitocelement,
+         setup={%
+            noprotrusion,
+            noindent
+         }%
+      ]{\thesis@ext@current@chaptoc}%
+}
+
+\newif\ifusechaptertoc
+\newcommand*{\chaptertoc}[2][\thechapter]{%
+   \usechaptertoctrue
+   \edef\thesis@ext@current@chaptoc{tcc#1}%
+   \thesis@chaptertoc@style
+   \thesis@chaptertoc@install
+}
+\RequirePackage{xpatch}
+\xapptocmd\addtocentrydefault{%
+\ifusechaptertoc%
+    \Ifstr{#1}{section}% only do for sections
+    {\expandafter\tocbasic@addxcontentsline\expandafter{\thesis@ext@current@chaptoc}{minitocelement}{#2}{#3}}{}%
+\fi
+}{}{}
+\xpretocmd\chapter{\usechaptertocfalse}{}{}%
+
+% TODO: optimize the minitoc and make for all, maybe something like
+\newcommand\setchaptertoc[1][]{%
+  \Ifstr{#1}{}
+    {\AddtoOneTimeDoHook{heading/preinit/chapter}{\chaptertoc}}
+    {\AddtoOneTimeDoHook{heading/preinit/chapter}{\chaptertoc[#1]}}%
+}
+
+\def\csumnext{\\[.4ex]}
+\def\csummary#1{\addtocontents{toc}{\protect\sidenote{\itshape\chapapp~\thechapter:\\[.5ex]#1}}}
+\newenvironment{summary}{\vspace*{-.65\medskipamount}\begingroup
+\LetLtxMacro\Cref\basicCref % just avoid side markers in the summary
+\LetLtxMacro\cref\basiccref
+\hypersetup{allcolors=.,citecolor=@cite}\thesisglsinsidefalse
+}%
+{\thesis@voidpar\endgroup\smallskip\thesis@voidpar}
+
+\setcounter{tocdepth}{\sectiontocdepth}

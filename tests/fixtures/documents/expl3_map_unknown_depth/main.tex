@@ -1,0 +1,9 @@
+\documentclass{article}
+\begin{document}
+\ExplSyntaxOn
+\int_gset:Nn \g__kernel_prg_map_int { \pdfuniformdeviate 2 }
+\clist_map_inline:nn {lf}{\tl_gset:Nn \g_x_tl {#1}}
+\cs_gset_eq:NN \X \g_x_tl
+\ExplSyntaxOff
+\gdef\SatexReachedEnd{}
+\end{document}

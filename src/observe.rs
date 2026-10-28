@@ -1,22 +1,171 @@
-//! Facts the interpreter notes while a construct runs, rather than by
-//! modeling the command that caused it: the lines a `\write` hands a file
-//! and the keys they declare, what a `\csname` was formed for, the payloads
-//! handed to the PDF writer.
+//! Facts the interpreter notes as a construct runs, rather than by
+//! modeling the command that caused it: `\write` lines and their keys,
+//! what a `\csname` was formed for, payloads handed to the PDF writer.
 
 use crate::builtins::{Cond, OccKind, PdfOp, Primitive};
 use crate::facts::CsnameRole;
 use crate::machine::Machine;
 use crate::tex::{Catcode, Span, Tok, Token};
 
+/// TeX read the token at `span` as `ty`: a fact of the user's own files.
+pub fn arg_type(m: &mut Machine, span: Span, ty: crate::roles::Ty) {
+    if !m.own_file(span.file) || m.out.facts.types.len() >= m.cfg.limits.facts {
+        return;
+    }
+    let slot = m.out.facts.types.entry(span).or_insert(crate::roles::Ty::Bottom);
+    // The token a `\csname` formed stands at the name's first character:
+    // what reads that token reads the register, not this text.
+    if matches!(*slot, crate::roles::Ty::Named(_)) && !matches!(ty, crate::roles::Ty::Named(_)) {
+        return;
+    }
+    *slot = slot.join(ty);
+}
+
 /// A `\csname…\endcsname` just formed `name`.
 pub fn csname(m: &mut Machine, name: &str, span: Span) {
     let role = role(m, span);
     m.note_csname(span, role);
-    // `\let\x=\csname…\endcsname` reads the name as surely as a use
-    // does: cleveref's `\cref@getref` takes `\r@⟨label⟩@cref` so.
+    // `\let\x=\csname…\endcsname` reads the name like a use: cleveref's
+    // `\cref@getref` takes `\r@⟨label⟩@cref` this way.
     if matches!(role, CsnameRole::Use | CsnameRole::Test | CsnameRole::LetTo) {
         read_name(m, name);
     }
+    // A document color's control sequence carries an extra literal
+    // backslash before `color@` (`\@backslashchar`), unlike xcolor's own
+    // dispatch macros like "color@rgb" — COLOR_NAME_PREFIX tells them apart.
+    if let Some(color_name) = name.strip_prefix(COLOR_NAME_PREFIX)
+        && !color_name.is_empty()
+        && matches!(role, CsnameRole::Use | CsnameRole::Test | CsnameRole::LetTo)
+    {
+        color_use(m, name, color_name, role, span);
+    }
+}
+
+/// A color control sequence's name prefix: `\@backslashchar` then `color@`.
+const COLOR_NAME_PREFIX: &str = "\\color@";
+
+/// A use, test, or `\colorlet` source of `\color@⟨name⟩`. `full` is the
+/// control sequence's own name text, for looking its meaning up.
+fn color_use(m: &mut Machine, full: &str, color_name: &str, role: CsnameRole, span: Span) {
+    // A package's own use is recorded too: the cache carries the fact and
+    // a replay pushes it again, so cache hit and miss report the same.
+    if m.out.facts.color_uses.len() >= m.cfg.limits.facts {
+        return;
+    }
+    let defined =
+        m.out.interner.lookup(full).is_some_and(|sym| !matches!(m.env.meaning(sym), crate::tex::Meaning::Undefined));
+    m.out.facts.color_uses.push(crate::facts::ColorUse {
+        name: color_name.to_string(),
+        role,
+        defined,
+        span,
+        via: m.file_call.map(|(sym, _)| sym),
+        package: m.package(),
+        certain: m.exact(),
+    });
+}
+
+/// `\color@⟨name⟩` was just (re)defined or `\let`-aliased: xcolor stores
+/// every color as `\xcolor@{cls}{drv}{model}{spec}` in one of its core
+/// models (xcolor § 2.5, `\XC@definec@lor`). Fired from
+/// [`crate::machine::Machine::define`], so `\definecolor`, `\providecolor`,
+/// `\colorlet` and `\definecolorset` all arrive here alike.
+pub fn color_def(m: &mut Machine, name: &str, meaning: &crate::tex::Meaning, span: Span) {
+    let Some(color_name) = name.strip_prefix(COLOR_NAME_PREFIX) else { return };
+    // A package-defined color is recorded too (see `color_use`).
+    if color_name.is_empty() || m.out.facts.colors.len() >= m.cfg.limits.facts {
+        return;
+    }
+    let value = meaning.as_macro().and_then(|mac| parse_stored_color(m, &mac.replacement_text));
+    let via = m.file_call.map(|(sym, _)| sym);
+    // A package's own call declares nothing the document wrote.
+    let from_document = m.file_call.is_some_and(|(_, at)| m.project_file(at.file));
+    let declared = from_document.then(|| declared_spec(m, color_name)).flatten();
+    m.out.facts.colors.push(crate::facts::ColorDef {
+        name: color_name.to_string(),
+        value,
+        declared: declared.as_ref().map(|(model, spec, _)| (*model, spec.clone())),
+        spec_span: declared.as_ref().map(|(.., span)| *span),
+        span,
+        via,
+        package: m.package(),
+        certain: m.exact(),
+    });
+}
+
+/// `\xcolor@{cls}{drv}{model}{spec}`, as `\XC@definec@lor` stores every
+/// color (xcolor.sty): read the last two groups back as a [`Colors`].
+fn parse_stored_color(m: &Machine, body: &[Token]) -> Option<crate::value::Colors> {
+    let xcolor_at = m.out.interner.lookup("xcolor@")?;
+    let start = body.iter().position(|t| matches!(t.tok, Tok::Cs(sym) if sym == xcolor_at))?;
+    let groups = brace_groups(&body[start + 1..], 4)?;
+    let model = crate::tex::text_of(groups[2], &m.out.interner);
+    let spec = crate::tex::text_of(groups[3], &m.out.interner);
+    let model = crate::value::Model::parse(model.trim())?;
+    let color = crate::value::parse_color(model, &spec)?;
+    Some(crate::value::Colors::exact(color))
+}
+
+/// The model and spec text `\XC@definec@lor` read for `color_name`, from the
+/// kept argument capture. `None` when arguments aren't kept, so `declared`
+/// stays unclaimed rather than guessed.
+fn declared_spec(m: &Machine, color_name: &str) -> Option<(crate::value::Model, String, Span)> {
+    let target = m.out.interner.lookup("XC@definec@lor")?;
+    m.out.facts.expansions.iter().rev().find_map(|e| {
+        if e.name != target || e.arguments.len() < 5 {
+            return None;
+        }
+        let read_name = crate::tex::text_of(&e.arguments[1], &m.out.interner);
+        if read_name != color_name {
+            return None;
+        }
+        let model_text = crate::tex::text_of(&e.arguments[3], &m.out.interner);
+        let spec = crate::tex::text_of(&e.arguments[4], &m.out.interner);
+        let model = crate::value::Model::parse(model_text.trim())?;
+        let span = e.arguments[4].first().map(|t| t.span).unwrap_or(span_of(e));
+        Some((model, spec, span))
+    })
+}
+
+fn span_of(e: &crate::facts::Expansion) -> Span {
+    e.span
+}
+
+/// Split `toks` into `n` balanced brace groups written back to back
+/// (`{a}{b}{c}{d}`), as xcolor always writes them.
+fn brace_groups(toks: &[Token], n: usize) -> Option<Vec<&[Token]>> {
+    let mut out = Vec::with_capacity(n);
+    let mut i = 0;
+    for _ in 0..n {
+        if !matches!(toks.get(i)?.tok, Tok::Chr(_, Catcode::Begin)) {
+            return None;
+        }
+        let start = i + 1;
+        let mut depth = 1;
+        i = start;
+        while depth > 0 {
+            match toks.get(i)?.tok {
+                Tok::Chr(_, Catcode::Begin) => depth += 1,
+                Tok::Chr(_, Catcode::End) => depth -= 1,
+                _ => {}
+            }
+            i += 1;
+        }
+        out.push(&toks[start..i - 1]);
+    }
+    Some(out)
+}
+
+/// A `\pdfcolorstack` the run executed (pdfTeX manual § 8.9.8): `stack` is
+/// `None` when [`Machine::scan_int`] could not decide it.
+pub fn color_stack(m: &mut Machine, stack: Option<i64>, op: crate::facts::StackOp, span: Span) {
+    // A driver's own `\pdfcolorstack` (pdftex.def sets the page's starting
+    // color this way) is recorded too, so an unbalanced push inside a
+    // package is still reported.
+    if m.out.facts.color_stack.len() >= m.cfg.limits.facts {
+        return;
+    }
+    m.out.facts.color_stack.push(crate::facts::ColorStack { stack, op, span, certain: m.exact() });
 }
 
 /// Where an occurrence recorded once the run has ended belongs.
@@ -24,20 +173,29 @@ pub fn csname(m: &mut Machine, name: &str, span: Span) {
 pub struct OccContext {
     pub package: Option<crate::tex::Sym>,
     pub expanded: Option<Span>,
+    pub call: Option<(crate::tex::Sym, Span)>,
+    pub site: Option<(crate::tex::Sym, Span)>,
     pub within: Option<crate::env::NodeId>,
     pub cds: Vec<crate::graph::ControlDep>,
     pub section: Option<std::rc::Rc<str>>,
     pub certain: bool,
 }
 
+/// The element biber reads a database from in the `.bcf`.
+const DATASOURCE: &str = "bcf:datasource";
+
 /// A line a `\write` handed a file: the command it starts with (empty for
 /// text such as a `.bcf`'s XML), the text of its arguments, and the names
 /// running it where the file is read back defined.
+#[derive(Clone)]
 pub struct WrittenLine {
     head: String,
+    /// The XML element each of `args` is the content of.
+    elements: Vec<String>,
     args: Vec<String>,
-    /// The arguments that are text the document gave the writing call.
-    keys: Vec<String>,
+    /// The arguments that are text the document gave the writing call,
+    /// each where its own text stands.
+    keys: Vec<(String, Span)>,
     /// The contents of the writing call's own braced arguments.
     parts: std::rc::Rc<[String]>,
     defined: Vec<String>,
@@ -45,7 +203,27 @@ pub struct WrittenLine {
     context: OccContext,
 }
 
+impl WrittenLine {
+    /// The key texts alone, for matching against the names the line defined.
+    fn keys(&self) -> Vec<String> {
+        self.keys.iter().map(|(key, _)| key.clone()).collect()
+    }
+
+    /// Where an occurrence of `key` belongs: at the key's own text, with the
+    /// writing call kept as what expanded it. amsmath defers a display's
+    /// `\label` to the `\end`, so the write is not where the key stands.
+    fn at(&self, key: &str) -> (Span, OccContext) {
+        let Some(span) = self.keys.iter().find(|(k, _)| k == key).map(|(_, s)| *s) else {
+            return (self.span, self.context.clone());
+        };
+        let mut context = self.context.clone();
+        context.expanded = Some(self.span);
+        (span, context)
+    }
+}
+
 /// A name a call in the document body read.
+#[derive(Clone)]
 pub struct NameRead {
     name: crate::tex::Sym,
     /// The contents of the call's braced arguments.
@@ -61,8 +239,10 @@ pub fn defined_name(m: &mut Machine, sym: crate::tex::Sym) {
         defined.push(sym);
         return;
     }
-    // Otherwise a name a document call defines from its own arguments.
-    if m.package().is_some() || m.reading_format() {
+    // Otherwise a name a document call defines from its own arguments: one
+    // `\csname` built from text, not a token of the code (`\reserved@a`
+    // holds no key `a`).
+    if m.package().is_some() || m.reading_format() || m.last_named_cs != Some(sym) {
         return;
     }
     let Some((call, span)) = m.file_call else { return };
@@ -82,13 +262,14 @@ fn call_parts(m: &mut Machine, span: Span) -> std::rc::Rc<[String]> {
     if !m.project_file(span.file) {
         return std::rc::Rc::from([]);
     }
-    let Some((here, text)) = m.call_extent(span) else { return std::rc::Rc::from([]) };
+    let Some(mouth) = m.reading(span.file) else { return std::rc::Rc::from([]) };
+    let here = mouth.here();
     if let Some((at, until, parts)) = &m.call_parts
         && (*at, *until) == (span, here)
     {
         return parts.clone();
     }
-    let parts: std::rc::Rc<[String]> = argument_parts(&text).into();
+    let parts: std::rc::Rc<[String]> = argument_parts(&mouth.since(span.line, span.col)).into();
     m.call_parts = Some((span, here, parts.clone()));
     parts
 }
@@ -138,7 +319,7 @@ fn within(name: &str, args: &[String]) -> Option<(String, String, String)> {
         .min_by_key(|(_, p, s)| p.len() + s.len())
 }
 
-/// A name a body call read — used, tested, or taken by `\let`: matched
+/// A name a body call read, used, tested, or taken by `\let`: matched
 /// against what written lines define once the run has ended.
 pub fn read_name(m: &mut Machine, name: &str) {
     if m.line_defined.is_some() || m.package().is_some() || m.reading_format() {
@@ -156,7 +337,7 @@ pub fn read_name(m: &mut Machine, name: &str) {
 
 /// The kernel's warning for a reference to a label no `.aux` line defined
 /// (latex.ltx `\@setref`, and cleveref's own): `Reference `⟨key⟩' on page
-/// ⟨n⟩ undefined`.  On a first run it is the only trace a reference leaves.
+/// ⟨n⟩ undefined`. On a first run it is the only trace a reference leaves.
 pub fn warned(m: &mut Machine, text: &str, span: Span) {
     // latex.ltx's `\@latex@warning` and cleveref's `\PackageWarning`
     // prefix the text with who says it.
@@ -179,7 +360,7 @@ pub fn current_environment(m: &mut Machine) -> Option<String> {
 }
 
 /// `\begin{x}` sets `\@currenvir` to `x` in the group it opens (latex.ltx):
-/// a new value there is an environment beginning.  `\begin{document}`
+/// a new value there is an environment beginning. `\begin{document}`
 /// starts the document.
 pub fn environment_opened(m: &mut Machine, outer: Option<String>, span: Span) {
     let Some(name) = current_environment(m).filter(|n| !n.is_empty()) else { return };
@@ -197,14 +378,14 @@ pub fn environment_opened(m: &mut Machine, outer: Option<String>, span: Span) {
         // `\@execute@begin@hook` closes the group `\begin` opened, so the
         // body is read one level out.
         m.out.document_depth = Some(m.env.group_level().saturating_sub(1) as u16);
-        m.out.preamble_files = Some(m.out.files.len());
+        m.out.preamble_cost = Some((m.out.files.len(), m.out.steps));
         m.out.preamble = Some(Box::new((m.env.snapshot(), m.catcodes.clone())));
     } else {
         // `document` itself is not on the stack: `document_depth` already
-        // answers the preamble/document axis, so this is only the user
+        // answers the preamble/document axis. This is only user
         // environments nested inside it.
         let sym = m.intern(&name);
-        m.out.env_stack.push(sym);
+        crate::push_shared(&mut m.env_stack, sym);
     }
     if let Some(node) = m.occurrence(OccKind::BeginEnvironment, name.clone(), None, at) {
         let sym = m.intern(&name);
@@ -221,32 +402,33 @@ pub fn environment_closed(m: &mut Machine, inner: Option<String>, span: Span) {
     }
     if inner != "document" {
         let sym = m.intern(&inner);
-        if let Some(pos) = m.out.env_stack.iter().rposition(|s| *s == sym) {
-            m.out.env_stack.remove(pos);
+        if let Some(pos) = m.env_stack.iter().rposition(|s| *s == sym) {
+            std::rc::Rc::make_mut(&mut m.env_stack).remove(pos);
         }
     }
-    let at = m.file_call.map_or(span, |(_, at)| at);
+    // amsmath reads a display's body as one argument (`\collect@@body#1\end#2`):
+    // the `\end` was matched as a delimiter, so the call is still the `\begin`.
+    let call = m.file_call.map(|(_, at)| at);
+    let begun = m
+        .out
+        .facts
+        .occurrences
+        .iter()
+        .rev()
+        .find(|o| o.kind == OccKind::BeginEnvironment && o.key == inner)
+        .map(|o| o.span);
+    let at = match (call, m.carried.absorbed) {
+        (Some(call), Some(end))
+            if begun == Some(call) && end.file == call.file && (end.line, end.col) > (call.line, call.col) =>
+        {
+            end
+        }
+        _ => call.unwrap_or(span),
+    };
     if let Some(node) = m.occurrence(OccKind::EndEnvironment, inner.clone(), None, at) {
         let end = m.intern(&format!("end{inner}"));
         m.reads_definition_of(node, end);
     }
-}
-
-/// `\@ifundefined{⟨name⟩}` tests the name `\csname` would build from its
-/// argument: the characters up to the first control sequence that is left.
-/// The kernel's empty macros, `\@empty` among them, are no-ops in this
-/// interpreter, so they are passed over as their expansion would be.
-pub fn tested_tokens(m: &mut Machine, tokens: &[Token]) {
-    let mut name = String::new();
-    for token in tokens {
-        match token.tok {
-            Tok::Chr(c, cat) if cat != Catcode::Active => name.push(c),
-            Tok::Param(_) => {}
-            Tok::Cs(sym) if m.env.meaning(sym).prim() == Some(Primitive::Relax) => {}
-            _ => break,
-        }
-    }
-    read_name(m, &name);
 }
 
 /// What the command an `\expandafter` held back does with the name: only a
@@ -284,15 +466,15 @@ fn role(m: &mut Machine, span: Span) -> CsnameRole {
 /// A `\write` to a file (stream 18 is the shell, and a stream never opened
 /// writes to the terminal, tex.web § 1370): `tokens` as expanded when
 /// `immediate`, otherwise as shipout expands them.
-pub fn write(m: &mut Machine, tokens: &[Token], stream: i64, immediate: bool) {
+pub fn write(m: &mut Machine, tokens: &[Token], stream: i64) {
     if m.line_defined.is_some() || stream == 18 {
         return;
     }
     let Some((_, span)) = m.file_call else { return };
-    // A stream never opened writes to the log (tex.web § 1370), but a
-    // fragment run without `\begin{document}` never opens `\@auxout`: what
-    // the fragment itself writes there stands for a line of it.  A package
-    // writing to a closed stream (`\typeout` to `\@unused`) only logs.
+    // A stream never opened writes to the log (tex.web § 1370). A fragment
+    // run without `\begin{document}` never opens `\@auxout`, so what it
+    // writes there stands in for a line of it. A package writing to a
+    // closed stream (`\typeout` to `\@unused`) only logs.
     match m.stream_files.get(&stream).cloned() {
         Some(file) => {
             m.out.facts.written_files.insert(file);
@@ -300,34 +482,49 @@ pub fn write(m: &mut Machine, tokens: &[Token], stream: i64, immediate: bool) {
         None if (0..16).contains(&stream) && m.out.document_depth.is_none() && m.package().is_none() => {}
         None => return,
     }
-    let expanded = if immediate { tokens.to_vec() } else { shipped(m, tokens) };
-    line(m, &expanded, span);
+    line(m, tokens, span);
 }
 
 /// A deferred `\write` is expanded at shipout, where the output routine
-/// has `\protect` act as `\noexpand` (latex.ltx, `\@outputpage`).
-fn shipped(m: &mut Machine, tokens: &[Token]) -> Vec<Token> {
+/// has `\protect` act as `\noexpand` (latex.ltx, `\@outputpage`). The
+/// page it ships with is the current one under the named assumption that
+/// pages break only where forced (`analysis.assume_forced_page_breaks`);
+/// without it its number (`\count0`, LaTeX's `\c@page`) is not known.
+pub(crate) fn shipped(m: &mut Machine, tokens: &[Token]) -> Vec<Token> {
+    m.env.push_group(crate::env::GroupKind::SemiSimple, Span::default());
+    if !m.cfg.analysis.assume_forced_page_breaks {
+        let page = m.register_sym(crate::tex::RegKind::Count, 0);
+        m.env.set_value(page, crate::value::Value::Unknown, false);
+    }
     let protect = m.out.interner.lookup("protect");
     let noexpand = m.out.interner.lookup("noexpand").and_then(|s| m.env.get(s).cloned());
-    let (Some(protect), Some(noexpand)) = (protect, noexpand) else { return m.expand_tokens(tokens.into()) };
-    m.env.push_group(crate::env::GroupKind::SemiSimple, Span::default());
-    m.env.set(protect, noexpand, false);
+    if let (Some(protect), Some(noexpand)) = (protect, noexpand) {
+        m.env.set(protect, noexpand, false);
+    }
     let out = m.expand_tokens(tokens.into());
     m.env.pop_group(&mut m.catcodes);
     out
 }
 
 /// A written line, run where its file is read back: the kernel's state at
-/// `\begin{document}`, where the `.aux` file is read.  A line an argument
+/// `\begin{document}`, where the `.aux` file is read. A line an argument
 /// carries (`\@writefile{toc}{\contentsline…}`) is written onward.
 fn line(m: &mut Machine, tokens: &[Token], span: Span) {
     let context = m.occurrence_context();
     let Some((head, mut at)) = head(m, tokens) else {
         // Text, not a command: the element contents of an XML file.
         let text = m.text_of(tokens);
-        let args = text.split(['<', '>']).skip(2).step_by(2).map(|t| t.trim().to_string()).collect();
+        let (elements, args) = text
+            .split('<')
+            .skip(1)
+            .filter_map(|t| t.split_once('>'))
+            .map(|(tag, content)| {
+                (tag.split_whitespace().next().unwrap_or_default().to_string(), content.trim().to_string())
+            })
+            .unzip();
         m.written_lines.push(WrittenLine {
             head: String::new(),
+            elements,
             args,
             keys: Vec::new(),
             parts: std::rc::Rc::from([]),
@@ -338,8 +535,10 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
         return;
     };
     let mut args = Vec::new();
-    let mut keys = Vec::new();
-    let here = m.call_extent(span).map(|(here, _)| here);
+    let mut keys: Vec<(String, Span)> = Vec::new();
+    let extent = m.call_extent(span);
+    let here = extent.as_ref().map(|(here, _)| *here);
+    let own = extent.as_ref().map(|(_, text)| own_text(span, text));
     while let Some((group, end)) = group_span(tokens, at) {
         onward(m, &group, span);
         let text = characters(&group).trim().to_string();
@@ -350,32 +549,78 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
         args.push(text);
         at = end;
     }
-    let text = crate::tex::text_with_groups(tokens, &m.out.interner);
-    let defined = sandbox_run(m, &text);
-    let parts = call_parts(m, span);
-    m.written_lines.push(WrittenLine { head, args, keys, parts, defined, span, context });
-}
-
-/// The keys the document gave a written argument: runs of characters
-/// whose tokens stand in the calling file no later than it has been read,
-/// split at commas (`\citation{a,b}`, cite.sty).  What a package adds to
-/// them (cleveref's `@cref`) ends a run.
-fn given(group: &[Token], call: Span, here: Option<Span>) -> Vec<String> {
-    let Some(here) = here else { return Vec::new() };
-    let mut keys = Vec::new();
-    let mut run = String::new();
-    let mut flush = |run: &mut String| {
-        keys.extend(run.split(',').map(str::trim).filter(|k| !k.is_empty()).map(str::to_string));
-        run.clear();
-    };
-    for token in group {
-        let ours = token.span.file == call.file && (token.span.line, token.span.col) <= (here.line, here.col);
-        match token.tok {
-            Tok::Chr(c, cat) if ours && !matches!(cat, Catcode::Begin | Catcode::End) => run.push(c),
-            _ => flush(&mut run),
+    // A key the writing call itself carries stands at that call: the call is
+    // the command to point at, and the key text is only its argument.
+    for (_, at) in &mut keys {
+        let inside = |own: Span| {
+            at.file == span.file
+                && (at.line, at.col) >= (span.line, span.col)
+                && (at.line, at.col) < (own.line, own.col)
+        };
+        if own.is_some_and(inside) {
+            *at = span;
         }
     }
-    flush(&mut run);
+    let text = crate::tex::text_with_groups(tokens, &m.out.interner);
+    let defined = sandbox_run(m, &text);
+    if m.out.timings.is_enabled()
+        && let Some(Some(sandbox)) = &m.line_sandbox
+    {
+        let steps = sandbox.out.steps;
+        m.out.timings.written_line((span.file, span.line), steps, &text);
+    }
+    let parts = call_parts(m, span);
+    m.written_lines.push(WrittenLine { head, elements: Vec::new(), args, keys, parts, defined, span, context });
+}
+
+/// Where the writing call's own text ends: at the next control sequence
+/// after its name, which is a command of its own and reads what follows.
+fn own_text(call: Span, text: &str) -> Span {
+    let (mut line, mut col) = (call.line, call.col);
+    for (i, c) in text.char_indices() {
+        if c == '\\' && i > 0 {
+            break;
+        }
+        match c {
+            '\n' => (line, col) = (line + 1, 1),
+            _ => col += 1,
+        }
+    }
+    Span::new(call.file, line, col)
+}
+
+/// The keys the document gave a written argument: what the write leaves
+/// after full expansion, split at commas (`\citation{a,b}`, cite.sty). A
+/// run with a character from the calling file, no later than it has been
+/// read, is kept whole, so a counter or macro lands in the key it names
+/// (`\label{sec:\thechapter}`). A run only a package wrote is no key.
+fn given(group: &[Token], call: Span, here: Option<Span>) -> Vec<(String, Span)> {
+    let Some(here) = here else { return Vec::new() };
+    let mut keys = Vec::new();
+    let mut run: Vec<(char, Span)> = Vec::new();
+    let mut ours = false;
+    let mut flush = |run: &mut Vec<(char, Span)>, ours: &mut bool| {
+        for part in run.split(|(c, _)| *c == ',').filter(|_| *ours) {
+            let key = part.iter().map(|(c, _)| *c).collect::<String>().trim().to_string();
+            let at = part.iter().find(|(c, _)| !c.is_whitespace()).map(|(_, s)| *s);
+            match at {
+                Some(at) if !key.is_empty() => keys.push((key, at)),
+                _ => {}
+            }
+        }
+        run.clear();
+        *ours = false;
+    };
+    for token in group {
+        match token.tok {
+            Tok::Chr(c, cat) if !matches!(cat, Catcode::Begin | Catcode::End) => {
+                run.push((c, token.span));
+                ours |= token.span.file == call.file && (token.span.line, token.span.col) <= (here.line, here.col);
+            }
+            _ => flush(&mut run, &mut ours),
+        }
+    }
+    flush(&mut run, &mut ours);
     keys
 }
 
@@ -392,7 +637,7 @@ fn onward(m: &mut Machine, tokens: &[Token], span: Span) {
         return;
     }
     // The title follows the number, which a command sets as its argument
-    // (`\numberline{1}`); `\protect` is gone once shipped.
+    // (`\numberline{1}`). `\protect` is gone once shipped.
     let mut start = 0;
     while title.get(start).is_some_and(|t| t.cs().is_some()) {
         let numbered = group_span(&title, start + 1)
@@ -424,7 +669,7 @@ fn sandbox_run(m: &mut Machine, text: &str) -> Vec<String> {
         if fragment {
             m.out.preamble = Some(Box::new((m.env.snapshot(), m.catcodes.clone())));
         }
-        let sandbox = Machine::sandbox(m.cfg, &m.out, true).map(Box::new);
+        let sandbox = Machine::sandbox(m.cfg, &m.out, crate::probe::State::Preamble).map(Box::new);
         if fragment {
             m.out.preamble = None;
         }
@@ -450,25 +695,23 @@ fn shape(shapes: &mut Vec<Shape>, prefix: &str, suffix: &str) -> usize {
     }
 }
 
-/// Relates what was written to what was read, once the run has ended.  A
+/// Relates what was written to what was read, once the run has ended. A
 /// name a written line defined (`\newlabel{k}` defines `\r@k`) is a key the
-/// writing call declares, and a name of the same shape (`r@⟨key⟩`) a body
-/// call reads is a use of that key, declared or not.  A line that defines
-/// nothing but whose argument its own call reads in such a name (`\cite{k}`
-/// writes `\citation{k}` and reads `\b@k`) names the key for the program
-/// that reads the file: a citation, and the declarations of that shape are
-/// bibliography entries.  What is left names files: the databases.
+/// writing call declares. A name of the same shape (`r@⟨key⟩`) a body call
+/// reads is a use of that key, declared or not. A line that defines nothing
+/// but whose argument its own call reads in such a name (`\cite{k}` writes
+/// `\citation{k}` and reads `\b@k`) is a citation, and declarations of that
+/// shape are bibliography entries. What is left names files: the databases.
 pub fn relate(m: &mut Machine) {
     let lines = std::mem::take(&mut m.written_lines);
     let reads = std::mem::take(&mut m.name_reads);
-    // A shape `prefix⟨key⟩suffix`, the command whose line declares names of
-    // it and the one whose line names keys of it.
     let mut shapes: Vec<Shape> = Vec::new();
     let mut declared: Vec<(usize, String, usize)> = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         let mut found: Vec<(String, String, String)> = Vec::new();
+        let keys = line.keys();
         for name in &line.defined {
-            if let Some(hit) = within(name, &line.keys) {
+            if let Some(hit) = within(name, &keys) {
                 match found.iter_mut().find(|f| f.0 == hit.0) {
                     Some(f) if f.1.len() + f.2.len() <= hit.1.len() + hit.2.len() => {}
                     Some(f) => *f = hit,
@@ -481,20 +724,62 @@ pub fn relate(m: &mut Machine) {
             declared.push((at, key, i));
         }
     }
+    // Two lines from one call (`\label` and cleveref's `\newlabel{⟨key⟩@cref}`)
+    // each give a key: one inside the other is the key the document gave,
+    // and the rest a package's addition around it.
+    let spans: Vec<Span> = declared.iter().map(|d| lines[d.2].span).collect();
+    let mut at_span: crate::fixed::HashMap<Span, Vec<usize>> = crate::fixed::HashMap::default();
+    for (k, span) in spans.iter().enumerate() {
+        at_span.entry(*span).or_default().push(k);
+    }
+    let canon: Vec<String> = (0..declared.len())
+        .map(|j| {
+            at_span[&spans[j]]
+                .iter()
+                .copied()
+                .filter(|&k| declared[j].1.len() > declared[k].1.len())
+                .map(|k| &declared[k].1)
+                .filter(|shorter| declared[j].1.contains(shorter.as_str()))
+                .min_by_key(|shorter| shorter.len())
+                .cloned()
+                .unwrap_or_else(|| declared[j].1.clone())
+        })
+        .collect();
+    for (d, key) in declared.iter_mut().zip(canon) {
+        d.1 = key;
+    }
     for &(at, _, i) in &declared {
         shapes[at].2.get_or_insert_with(|| lines[i].head.clone());
     }
-    let declaring: std::collections::HashSet<usize> = declared.iter().map(|d| d.2).collect();
+    let declaring: crate::fixed::HashSet<usize> = declared.iter().map(|d| d.2).collect();
+    // Text a `\documentclass` or `\usepackage` call was given as an option
+    // is that option wherever it is written again (babel writes its
+    // languages to the `.aux`), never a key a read name was made from. The
+    // option is recorded at its call, which may begin lines above it.
+    let options: crate::fixed::HashSet<(crate::tex::FileId, &str)> = m
+        .out
+        .facts
+        .occurrences
+        .iter()
+        .filter(|o| o.kind == OccKind::PassedOption)
+        .map(|o| (o.span.file, o.key.as_str()))
+        .collect();
+    let mut reads_at: crate::fixed::HashMap<Span, Vec<&NameRead>> = crate::fixed::HashMap::default();
+    for read in &reads {
+        reads_at.entry(read.span).or_default().push(read);
+    }
     let mut named: Vec<(usize, String, usize)> = Vec::new();
     for (i, line) in lines.iter().enumerate().filter(|(i, l)| !declaring.contains(i) && !l.head.is_empty()) {
-        for read in reads.iter().filter(|r| r.span == line.span) {
+        let keys = line.keys();
+        for read in reads_at.get(&line.span).into_iter().flatten() {
             let name = m.name(read.name).to_string();
-            if let Some((key, prefix, suffix)) =
-                within(&name, &line.keys).filter(|(_, p, s)| !p.is_empty() || !s.is_empty())
+            if let Some((key, prefix, suffix)) = within(&name, &keys).filter(|(_, p, s)| !p.is_empty() || !s.is_empty())
             {
                 let at = shape(&mut shapes, &prefix, &suffix);
                 shapes[at].3.get_or_insert_with(|| line.head.clone());
-                if !named.iter().any(|n| n.1 == key && n.2 == i) {
+                let written = line.at(&key).0;
+                let option = options.contains(&(written.file, key.as_str()));
+                if !option && !named.iter().any(|n| n.1 == key && n.2 == i) {
                     named.push((at, key, i));
                 }
             }
@@ -503,10 +788,14 @@ pub fn relate(m: &mut Machine) {
     // Keys document calls declared while they ran: not a name the call
     // read as its own (`\begin{document}` reads `\document`), nor a file
     // it loaded (`\usepackage{x}` defines `\ver@x.sty`).
+    let mut loads_at: crate::fixed::HashMap<Span, Vec<&String>> = crate::fixed::HashMap::default();
+    for load in &m.out.facts.loads {
+        loads_at.entry(load.span).or_default().push(&load.name);
+    }
     let names: Vec<_> = std::mem::take(&mut m.key_names)
         .into_iter()
-        .filter(|n| !reads.iter().any(|r| r.span == n.3 && m.name(r.name) == n.1))
-        .filter(|n| !m.out.facts.loads.iter().any(|l| l.span == n.3 && l.name == n.1))
+        .filter(|n| !reads_at.get(&n.3).into_iter().flatten().any(|r| m.name(r.name) == n.1))
+        .filter(|n| !loads_at.get(&n.3).into_iter().flatten().any(|l| **l == n.1))
         .map(|(name, key, call, span, context)| {
             let at = name.find(key.as_str()).unwrap_or(0);
             let shape = (name[..at].to_string(), name[at + key.len()..].to_string());
@@ -514,10 +803,10 @@ pub fn relate(m: &mut Machine) {
         })
         .collect();
     // The first call to declare a key, written or while running, declares
-    // it; a later one in another shape (`\ac{k}` marking `k` used) uses it,
-    // one in the same shape declares it again.
+    // it. A later one in another shape (`\ac{k}` marking `k` used) uses it,
+    // and one in the same shape declares it again.
     let order = |s: &Span| (s.file != m.out.main_file, s.file, s.line, s.col);
-    let mut first: std::collections::HashMap<String, (Span, bool)> = std::collections::HashMap::new();
+    let mut first: crate::fixed::HashMap<String, (Span, bool)> = crate::fixed::HashMap::default();
     let written = declared.iter().map(|(_, k, i)| (k.clone(), lines[*i].span, false));
     for (key, span, running) in written.chain(names.iter().map(|n| (n.1.clone(), n.3, true))) {
         let at = first.entry(key).or_insert((span, running));
@@ -527,7 +816,7 @@ pub fn relate(m: &mut Machine) {
             at.1 &= running;
         }
     }
-    let mut first_shapes: std::collections::HashSet<(String, (String, String))> = std::collections::HashSet::new();
+    let mut first_shapes: crate::fixed::HashSet<(String, (String, String))> = crate::fixed::HashSet::default();
     for (at, key, i) in &declared {
         if first.get(key).is_some_and(|f| f.0 == lines[*i].span) {
             first_shapes.insert((key.clone(), (shapes[*at].0.clone(), shapes[*at].1.clone())));
@@ -544,15 +833,15 @@ pub fn relate(m: &mut Machine) {
     named.retain(|n| !running(&n.1));
     let use_kind = |key: &str| if running(key) { OccKind::KeyUse } else { OccKind::Ref };
     // A reference the kernel warned about is recorded already.
-    let mut seen: std::collections::HashSet<(OccKind, String, Span)> = m
+    let mut seen: crate::fixed::HashSet<(OccKind, String, Span, Option<Span>)> = m
         .out
         .facts
         .occurrences
         .iter()
         .filter(|o| o.kind == OccKind::Ref)
-        .map(|o| (o.kind, o.key.clone(), o.span))
+        .map(|o| (o.kind, o.key.clone(), o.span, o.call.map(|c| c.1)))
         .collect();
-    let written_at: std::collections::HashSet<(String, Span)> =
+    let written_at: crate::fixed::HashSet<(String, Span)> =
         declared.iter().map(|(_, k, i)| (k.clone(), lines[*i].span)).collect();
     for (at, key, i) in declared {
         let line = &lines[i];
@@ -565,20 +854,22 @@ pub fn relate(m: &mut Machine) {
         } else {
             continue;
         };
-        if seen.insert((kind, key.clone(), line.span)) {
-            m.occurrence_in(kind, key, Some(line.head.clone()), line.span, &line.context);
+        if seen.insert((kind, key.clone(), line.span, line.context.call.map(|c| c.1))) {
+            let (at, context) = line.at(&key);
+            m.occurrence_in(kind, key, Some(line.head.clone()), at, &context);
         }
     }
     for (_, key, i) in &named {
         let line = &lines[*i];
-        if seen.insert((OccKind::Cite, key.clone(), line.span)) {
-            m.occurrence_in(OccKind::Cite, key.clone(), Some(line.head.clone()), line.span, &line.context);
+        if seen.insert((OccKind::Cite, key.clone(), line.span, line.context.call.map(|c| c.1))) {
+            let (at, context) = line.at(key);
+            m.occurrence_in(OccKind::Cite, key.clone(), Some(line.head.clone()), at, &context);
         }
     }
     // The uses: a read of a name of a declared shape by a call given the
     // key, not by the line of the file being read back, nor by the call
     // that declares the key.
-    let heads: std::collections::HashSet<&str> =
+    let heads: crate::fixed::HashSet<&str> =
         shapes.iter().flat_map(|s| [s.2.as_deref(), s.3.as_deref()]).flatten().collect();
     let mut every: Vec<(String, String, bool)> =
         shapes.iter().filter(|s| s.2.is_some() && s.3.is_none()).map(|s| (s.0.clone(), s.1.clone(), false)).collect();
@@ -606,8 +897,8 @@ pub fn relate(m: &mut Machine) {
         };
         let related = [OccKind::Ref, OccKind::KeyUse, OccKind::Label, OccKind::BibItem, OccKind::Key]
             .iter()
-            .any(|k| seen.contains(&(*k, key.clone(), read.span)));
-        if !related && seen.insert((kind, key.clone(), read.span)) {
+            .any(|k| seen.contains(&(*k, key.clone(), read.span, read.context.call.map(|c| c.1))));
+        if !related && seen.insert((kind, key.clone(), read.span, read.context.call.map(|c| c.1))) {
             uses.push((kind, key, read));
         }
     }
@@ -618,7 +909,7 @@ pub fn relate(m: &mut Machine) {
     for (shape, key, call, span, context) in &names {
         let related = [OccKind::Ref, OccKind::KeyUse, OccKind::Label, OccKind::BibItem]
             .iter()
-            .any(|k| seen.contains(&(*k, key.clone(), *span)));
+            .any(|k| seen.contains(&(*k, key.clone(), *span, context.call.map(|c| c.1))));
         if written_at.contains(&(key.clone(), *span)) || related {
             continue;
         }
@@ -628,31 +919,49 @@ pub fn relate(m: &mut Machine) {
             } else {
                 OccKind::KeyUse
             };
-        if seen.insert((kind, key.clone(), *span)) {
+        if seen.insert((kind, key.clone(), *span, context.call.map(|c| c.1))) {
             let head = m.name(*call).to_string();
             m.occurrence_in(kind, key.clone(), Some(head), *span, context);
         }
     }
     // The keys the other lines carry are entries for the program that
-    // reads their file; the rest names files, the bibliography databases.
-    let mut tried = std::collections::HashSet::new();
+    // reads their file. The rest names files, the bibliography databases.
+    let mut tried = crate::fixed::HashSet::default();
     for (i, line) in lines.iter().enumerate() {
         if declaring.contains(&i) || named.iter().any(|n| n.2 == i) {
             continue;
         }
-        for key in &line.keys {
-            if seen.insert((OccKind::Entry, key.clone(), line.span)) {
-                m.occurrence_in(OccKind::Entry, key.clone(), Some(line.head.clone()), line.span, &line.context);
+        for (key, at) in &line.keys {
+            if seen.insert((OccKind::Entry, key.clone(), line.span, line.context.call.map(|c| c.1))) {
+                let context = line.at(key).1;
+                m.occurrence_in(OccKind::Entry, key.clone(), Some(line.head.clone()), *at, &context);
             }
         }
-        for arg in &line.args {
+        for (n, arg) in line.args.iter().enumerate() {
             for name in crate::tex::comma_split(arg) {
                 let name = name.trim().to_string();
                 if name.is_empty() || name.contains(char::is_whitespace) || !tried.insert(name.clone()) {
                     continue;
                 }
-                if name.ends_with(".bib") || crate::plugin::bib::resolve(&m.out, &name).is_some() {
-                    m.occurrence_in(OccKind::Bibliography, name, None, line.span, &line.context);
+                if line.head == "bibstyle" {
+                    m.occurrence_in(OccKind::BibStyle, name, None, line.span, &line.context);
+                    continue;
+                }
+                // What BibTeX (`\bibdata`) or biber (`bcf:datasource`) reads names databases, found or not.
+                let found = crate::plugin::bib::resolve(&m.out, &name);
+                if name.ends_with(".bib")
+                    || line.head == "bibdata"
+                    || line.elements.get(n).is_some_and(|e| e == DATASOURCE)
+                    || found.is_some()
+                {
+                    // The build reads it: the bibliography tool's input.
+                    if let Some(path) = &found {
+                        m.note_read_file(path);
+                    }
+                    // Written later, it stands where the document's call gave the name.
+                    let given = m.out.facts.occurrences.iter().find(|o| o.kind == OccKind::Key && o.key == name);
+                    let at = given.map_or(line.span, |o| o.span);
+                    m.occurrence_in(OccKind::Bibliography, name, None, at, &line.context);
                 }
             }
         }
@@ -705,30 +1014,33 @@ fn group_span(tokens: &[Token], start: usize) -> Option<(Vec<Token>, usize)> {
 }
 
 /// An image primitive (`\pdfximage`, pdfTeX manual § "Graphics") opens a
-/// file: the image the call it stands in includes, under the name the
-/// driver handed the engine and where that name resolves.  Which names the
-/// driver tried first, and in which directories, is the package's business
-/// (`\Ginput@path`, `\Gin@extensions`); only the file the engine opens is
-/// recorded.
-pub fn image(m: &mut Machine, name: &str, span: Span) {
+/// file: the image the call includes, under the name the driver handed the
+/// engine and where that name resolves. Names the driver tried first
+/// (`\Ginput@path`, `\Gin@extensions`) are the package's business. Only the
+/// file the engine opens is recorded.
+pub fn image(m: &mut Machine, name: &str, span: Span) -> Option<std::path::PathBuf> {
     let name = name.trim();
     if name.is_empty() {
-        return;
+        return None;
     }
     let at = m.file_call.map_or(span, |(_, at)| at);
     let base = m.base().to_path_buf();
-    let found =
-        m.resolver_mut().resolve(name, crate::builtins::LoadKind::Input, &base).map(|p| p.display().to_string());
-    m.occurrence(OccKind::Graphics, name.to_string(), found, at);
+    let path = m.resolver_mut().resolve(name, crate::builtins::LoadKind::Input, &base);
+    m.occurrence(OccKind::Graphics, name.to_string(), path.as_ref().map(|p| p.display().to_string()), at);
+    if let Some(path) = &path {
+        m.note_read_file(path);
+    }
+    path
 }
 
 /// `\accent⟨8-bit number⟩⟨character⟩` (tex.web § 1123): the accent is
 /// placed over the character by the typesetter, so the word it stands in
 /// is no longer one TeX can hyphenate (The TeXbook, appendix H).
-pub fn accent(m: &mut Machine, span: Span) {
-    let code = m.scan_number().unwrap_or(0);
+pub fn accent(m: &mut Machine, span: Span) -> Option<i64> {
+    let code = m.scan_number();
     let at = m.file_call.map_or(span, |(_, at)| at);
-    m.occurrence(OccKind::Accent, code.to_string(), None, at);
+    m.occurrence(OccKind::Accent, code.unwrap_or(0).to_string(), None, at);
+    code
 }
 
 /// The payload of a PDF primitive, in the syntax the pdfTeX manual gives
@@ -739,9 +1051,48 @@ pub fn pdf(m: &mut Machine, op: PdfOp, span: Span) {
     let op = match op {
         PdfOp::Extension if m.scan_keyword("literal") => PdfOp::Literal,
         PdfOp::Extension if m.scan_keyword("obj") => PdfOp::Object,
-        // Another extension reads what follows by its own syntax, which the
-        // run leaves in the input as before.
-        PdfOp::Extension => return,
+        // Extensions that take general texts (LuaTeX manual, "PDF
+        // extensions"): read, so they are no text. Others read what follows
+        // by their own syntax, which the run leaves in the input as before.
+        // LuaTeX manual, "PDF variables": a name, then the value its kind
+        // takes; the value is the backend's, not the run's.
+        PdfOp::Variable => {
+            const DIMENS: [&str; 6] = ["horigin", "vorigin", "linkmargin", "destmargin", "threadmargin", "xformmargin"];
+            const TEXTS: [&str; 6] =
+                ["pageattr", "pageresources", "pagesattr", "xformattr", "xformresources", "trailerid"];
+            if DIMENS.iter().any(|k| m.scan_keyword(k)) {
+                m.read_equals();
+                m.scan_dimen();
+            } else if TEXTS.iter().any(|k| m.scan_keyword(k)) {
+                m.read_equals();
+                drop(m.read_general_text());
+            } else {
+                while let Some(t) = m.next_token() {
+                    if !matches!(t.tok, Tok::Chr(_, Catcode::Letter)) {
+                        m.unread(t);
+                        break;
+                    }
+                }
+                m.read_equals();
+                m.scan_number();
+            }
+            return;
+        }
+        PdfOp::Extension => {
+            const TEXTS: [(&str, usize); 7] = [
+                ("glyphtounicode", 2),
+                ("catalog", 1),
+                ("names", 1),
+                ("info", 1),
+                ("trailer", 1),
+                ("mapfile", 1),
+                ("mapline", 1),
+            ];
+            if let Some(&(_, n)) = TEXTS.iter().find(|(k, _)| m.scan_keyword(k)) {
+                (0..n).for_each(|_| drop(m.read_general_text()));
+            }
+            return;
+        }
         op => op,
     };
     let detail = match op {
@@ -772,7 +1123,7 @@ pub fn pdf(m: &mut Machine, op: PdfOp, span: Span) {
             m.scan_keyword("=");
             "resources"
         }
-        PdfOp::Special | PdfOp::Extension => "special",
+        PdfOp::Special | PdfOp::Extension | PdfOp::Variable => "special",
     };
     let payload = m.read_general_text();
     record_pdf(m, &payload, detail, span);
@@ -801,14 +1152,14 @@ fn characters(tokens: &[Token]) -> String {
 
 /// `\ver@⟨file⟩` was defined: the kernel's record of what a file says it is
 /// (clsguide, "Identification"; `\ProvidesPackage`, `\ProvidesClass` and
-/// `\ProvidesFile` write it, `\@ifpackagelater` reads it).  Made by the call
+/// `\ProvidesFile` write it, `\@ifpackagelater` reads it). Made by the call
 /// the file itself read, it identifies that file.
 pub fn version_record(m: &mut Machine, name: &str, meaning: &crate::tex::Meaning) {
     let Some(file) = name.strip_prefix("ver@") else { return };
     let Some(mac) = meaning.as_macro() else { return };
     let Some((_, span)) = m.file_call else { return };
-    let path = m.out.file_name(span.file).to_string();
-    let base = path.rsplit('/').next().unwrap_or(&path);
+    // A recorded path is a `PathBuf`'s text, whose separator is not `/` on every host.
+    let base = m.out.short_name(span.file).to_string();
     if base != file {
         return;
     }
@@ -829,7 +1180,7 @@ pub fn version_record(m: &mut Machine, name: &str, meaning: &crate::tex::Meaning
 }
 
 /// A number typeset, while letters may still follow it.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Run {
     number: String,
     unit: String,
@@ -838,10 +1189,12 @@ struct Run {
     unit_span: Span,
     via: Option<crate::tex::Sym>,
     within: std::rc::Rc<[crate::tex::FileId]>,
+    /// Every character of it was set on every run.
+    certain: bool,
 }
 
 /// The number and unit tracker's state, held by the [`Machine`].
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Quantities {
     run: Option<Run>,
     /// `H2O` is a word, not a quantity.
@@ -849,11 +1202,26 @@ pub struct Quantities {
 }
 
 /// A character typeset outside package code: a digit run and the letters set
-/// right after it become a [`crate::facts::Quantity`].  A space token ends
+/// right after it become a [`crate::facts::Quantity`]. A space token ends
 /// the run, so `2 ms` is not one.
 pub fn typeset(m: &mut Machine, c: char, span: Span) {
     if m.package().is_some() || m.reading_format() {
         m.quantity = Quantities::default();
+        m.text_broken = true;
+        return;
+    }
+    if m.in_nullfont() {
+        m.text_broken = true;
+        return;
+    }
+    set(m, c, span);
+    // A space after `\nobreak` (a tie, `~`) is no breakpoint (tex.web
+    // § 831): the number and the unit stay together on the line, spaced
+    // by hand, and the run goes on.
+    let tied = c == ' '
+        && m.quantity.run.as_ref().is_some_and(|q| q.unit.is_empty())
+        && m.natural.is_some_and(|n| matches!(n.tail[0], crate::mode::Last::Penalty(p) if p >= 10_000));
+    if tied {
         return;
     }
     let after_letter = std::mem::replace(&mut m.quantity.after_letter, c.is_alphabetic());
@@ -872,6 +1240,7 @@ pub fn typeset(m: &mut Machine, c: char, span: Span) {
                     number_end: span,
                     unit_span: span,
                     within: m.within_files(),
+                    certain: m.exact(),
                     ..Run::default()
                 });
             }
@@ -884,8 +1253,16 @@ pub fn typeset(m: &mut Machine, c: char, span: Span) {
             }
         }
     } else if (c.is_alphabetic() || c == '%' || c == '\u{b0}') && run.is_some() {
+        // A separator with no digit after it ends the number: `$N_1,N_2$`
+        // lists, it sets no `1,` newton.
+        if run.as_ref().is_some_and(|q| q.unit.is_empty() && q.number.ends_with(['.', ','])) {
+            m.quantity.run = None;
+            return;
+        }
         let via = m.file_call.map(|(sym, _)| sym);
+        let exact = m.exact();
         if let Some(q) = run.as_mut() {
+            q.certain &= exact;
             if q.unit.is_empty() {
                 q.unit_span = span;
                 q.via = via;
@@ -898,8 +1275,33 @@ pub fn typeset(m: &mut Machine, c: char, span: Span) {
     m.quantity.run = run;
 }
 
-/// `\sum_{i=1}^{N}` sets a `1` and an `N`, not one newton.
+/// A `\/` or a paragraph's end: the last character's overhang is taken
+/// back or has nothing after it on its line.
+pub fn close_overhang(m: &mut Machine) {
+    let text = &mut m.out.facts.text;
+    let at = text.at.len() as u32;
+    if text.closed.last() != Some(&at) {
+        text.closed.push(at);
+    }
+}
+
+/// A group boundary breaks TeX's word, so no ligature joins across it
+/// (tex.web § 1034), but `12{,}5 km` is still one quantity.
+pub fn word_break(m: &mut Machine) {
+    m.text_broken = true;
+}
+
+/// A box began or ended, or a box's list was placed: the next character
+/// set may stand anywhere on the page relative to the last one.
+pub fn box_break(m: &mut Machine) {
+    m.text_apart = true;
+    text_break(m);
+}
+
+/// The same, and the number-and-unit run ends too: `\sum_{i=1}^{N}` sets a
+/// `1` and an `N`, not one newton.
 pub fn text_break(m: &mut Machine) {
+    word_break(m);
     let run = m.quantity.run.take();
     m.quantity.after_letter = false;
     flush(m, run);
@@ -918,5 +1320,46 @@ fn flush(m: &mut Machine, run: Option<Run>) {
         unit_span: q.unit_span,
         via: q.via,
         within: q.within,
+        certain: q.certain,
     });
+}
+
+/// Add `c` to [`crate::facts::Text`], the characters the document set in
+/// order. A character is `broken` from the one before it when something
+/// that is not a character came between them, or the two don't stand side
+/// by side in one line of one file: TeX's ligature program joins neither
+/// (tex.web § 1034).
+fn set(m: &mut Machine, c: char, span: Span) {
+    if m.out.facts.text.at.len() >= m.cfg.limits.facts {
+        return;
+    }
+    let font_state = m.observed_font_state();
+    let certain = m.exact();
+    let first = m.cds.first().copied();
+    let site = m.call_site(span);
+    let text = &mut m.out.facts.text;
+    // Both paths through an undecided conditional digest what follows it,
+    // so the one character on the page arrives here once per path.
+    if !certain && text.at.last().is_some_and(|last| last.span == span) && text.chars.ends_with(c) {
+        // The same arm setting it again is a loop pass.
+        let last = text.at.len() as u32 - 1;
+        if first.is_some_and(|cd| text.arms.last() == Some(&(last, cd.on, cd.taken)))
+            && text.repeats.last() != Some(&last)
+        {
+            text.repeats.push(last);
+        }
+        return;
+    }
+    let side_by_side = text
+        .at
+        .last()
+        .is_some_and(|last| (last.span.file, last.span.line, last.span.col + 1) == (span.file, span.line, span.col));
+    let broken = std::mem::take(&mut m.text_broken) || !side_by_side;
+    if let Some(cd) = first.filter(|_| !certain) {
+        text.arms.push((text.at.len() as u32, cd.on, cd.taken));
+    }
+    let apart = std::mem::take(&mut m.text_apart);
+    text.chars.push(c);
+    text.at.push(crate::facts::Spot { span, font_state, modes: m.mode, broken, apart, certain });
+    text.site.push(site);
 }

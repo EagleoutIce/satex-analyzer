@@ -1,21 +1,14 @@
 <!-- generated from doc/src/wiki/lints.md.in by satex-doc; do not edit -->
 
+<p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
+
 # Lint rules
 
-`satex lint` checks the input file with every rule below. `--all` also checks the packages and classes it loads. `--rules` lists the codes, `--explain CODE` prints one rule's explanation.
+`satex lint` checks the input file with every rule below. `--all` also checks the packages and classes it loads. `--rules` lists the codes, `--explain CODE` prints one rule's explanation. See [Chktex-Coverage](Chktex-Coverage) for the chktex warning each rule follows, and [Primitive-coverage](Primitive-coverage) and [Domains](Domains) for how satex gets the facts a rule reads.
 
-## Quick-fixes
+## Errors caused in package code
 
-A finding's `fix` says what to do. Where that is mechanical it carries the edits, e.g. removing a `\usepackage` line or one name in `\usepackage{a,b,c}`, a `\label{…}`, or turning `\newcommand` into `\renewcommand`. The text output marks them `[fix]` or `[unsafe fix]`:
-
-* **safe** fixes keep the document's meaning: a duplicate `\usepackage`, a definition replaced before it is read, `\renewcommand` of an undefined name;
-* **unsafe** fixes change it and deserve a look: removing a package that may have side effects, an unused label, `\newcommand` turned into `\renewcommand`.
-
-`--fix` applies the safe fixes, `--unsafe-fixes` adds the unsafe ones, `--diff` prints the edits instead of writing them. Only project files change. Overlapping fixes wait for the next round. The document is re-analyzed after each round, up to eight.
-
-{{run: satex lint --diff --unsafe-fixes -f samples/paper.tex}}
-
-`--format json` gives each fix as `applicability` and `edits` (`path`, 1-based `start`/`end`, `replacement`), `--format sarif` as `fixes`, `--format lsp` as diagnostics with `quickfix` code actions.
+An engine error can arise inside a package while the document's own call caused it. `satex lint` then shows it at that call, as `caused-library-error`. The message names the package line, e.g. `error in expl3-code.tex:24703: Argument has an extra }, caused here`. The call is the innermost place in the user's own files on the input stack. These are the main file, the files it reads, and other files below its directory. One row stands for each call line and error code, with a count when it repeats. An error on a path satex approximated may not be TeX's. It is a precision note, which the text output folds into a count and an editor does not show. An exact error after such a one may be its echo, so it is a warning that names the earlier one. A finding that something is absent from the whole document, such as an undefined reference or an unused label, is a precision note too when the run left a project file unread. `query diagnostics` gives the call as `origin`. A runaway over an argument the document itself leaves open is the document's error. It is a `raised-error` at the call, e.g. `File ended while scanning use of \pgfkeys@@set: the argument of \pgfkeys opened here never closes, the file ends inside it`.
 
 ## Suppressing findings
 
@@ -28,208 +21,29 @@ A comment in the document silences findings. Without codes it silences every rul
 
 They apply to every output format and to `--fix`. An unknown code is reported as `unknown-suppress-code`.
 
+## Rules
+
+Every rule, with a link to its explanation below. The shape gives the severity: ◆ error, ▲ warning, ● info. The badge gives the category. The origin names the [chktex](Chktex-Coverage) warnings a rule follows.
+
 {{rules}}
 
-## correctness
+## Quick-fixes
 
-### `undefined-glossary-entry`
+A finding's `fix` says what to do. Where that is mechanical it carries the edits, e.g. removing a `\usepackage` line or one name in `\usepackage{a,b,c}`, a `\label{…}`, or turning `\newcommand` into `\renewcommand`. The text output marks them `[fix]` or `[unsafe fix]`:
 
-{{run: satex lint --explain undefined-glossary-entry}}
+* **safe** fixes keep the document's meaning: a duplicate `\usepackage`, a definition replaced before it is read, `\renewcommand` of an undefined name;
+* **unsafe** fixes change it and deserve a look: removing a package that may have side effects, an unused label, `\newcommand` turned into `\renewcommand`.
 
-### `shell-escape`
+`--fix` applies the safe fixes, `--unsafe-fixes` adds the unsafe ones, `--diff` prints the edits instead of writing them. Only project files change. Overlapping fixes wait for the next round. The document is re-analyzed after each round, up to eight.
 
-{{run: satex lint --explain shell-escape}}
+`--format json` gives each fix as `applicability` and `edits` (`path`, 1-based `start`/`end`, `replacement`), `--format sarif` as `fixes`, `--format lsp` as diagnostics with `quickfix` code actions.
 
-### `missing-graphic`
+These rules have quick fixes:
 
-{{run: satex lint --explain missing-graphic}}
+{{fixes}}
 
-### `expl3-signature-mismatch`
+## Explanations
 
-{{run: satex lint --explain expl3-signature-mismatch}}
+One group per category. Open a group to read its rules.
 
-### `unguarded-recursion`
-
-{{run: satex lint --explain unguarded-recursion}}
-
-### `undefined-control-sequence`
-
-{{run: satex lint --explain undefined-control-sequence}}
-
-### `undefined-environment`
-
-{{run: satex lint --explain undefined-environment}}
-
-### `unresolved-file`
-
-{{run: satex lint --explain unresolved-file}}
-
-### `option-clash`
-
-{{run: satex lint --explain option-clash}}
-
-### `already-defined`
-
-{{run: satex lint --explain already-defined}}
-
-### `not-defined`
-
-{{run: satex lint --explain not-defined}}
-
-### `undefined-reference`
-
-{{run: satex lint --explain undefined-reference}}
-
-### `duplicate-label`
-
-{{run: satex lint --explain duplicate-label}}
-
-### `catcode-escapes-group`
-
-{{run: satex lint --explain catcode-escapes-group}}
-
-### `expl-syntax-left-on`
-
-{{run: satex lint --explain expl-syntax-left-on}}
-
-### `missing-dependency`
-
-{{run: satex lint --explain missing-dependency}}
-
-### `undefined-citation`
-
-{{run: satex lint --explain undefined-citation}}
-
-### `duplicate-bibliography-entry`
-
-{{run: satex lint --explain duplicate-bibliography-entry}}
-
-### `unbalanced-pdf-content`
-
-{{run: satex lint --explain unbalanced-pdf-content}}
-
-### `undefined-optional-content`
-
-{{run: satex lint --explain undefined-optional-content}}
-
-## style
-
-### `dead-definition`
-
-{{run: satex lint --explain dead-definition}}
-
-### `unused-label`
-
-{{run: satex lint --explain unused-label}}
-
-### `group-local-definition`
-
-{{run: satex lint --explain group-local-definition}}
-
-### `primitive-tex-command`
-
-{{run: satex lint --explain primitive-tex-command}}
-
-### `unused-definition`
-
-{{run: satex lint --explain unused-definition}}
-
-### `stray-space`
-
-{{run: satex lint --explain stray-space}}
-
-### `unknown-suppress-code`
-
-{{run: satex lint --explain unknown-suppress-code}}
-
-### `unused-bibitem`
-
-{{run: satex lint --explain unused-bibitem}}
-
-### `ot1-font-encoding`
-
-{{run: satex lint --explain ot1-font-encoding}}
-
-### `computer-modern-in-t1`
-
-{{run: satex lint --explain computer-modern-in-t1}}
-
-### `microtype-available`
-
-{{run: satex lint --explain microtype-available}}
-
-### `hand-set-quantity`
-
-{{run: satex lint --explain hand-set-quantity}}
-
-## performance
-
-### `duplicate-package`
-
-{{run: satex lint --explain duplicate-package}}
-
-### `unused-package`
-
-{{run: satex lint --explain unused-package}}
-
-### `recursive-macro`
-
-{{run: satex lint --explain recursive-macro}}
-
-### `package-after-preamble`
-
-{{run: satex lint --explain package-after-preamble}}
-
-### `unused-dependency`
-
-{{run: satex lint --explain unused-dependency}}
-
-### `preamble-cost`
-
-{{run: satex lint --explain preamble-cost}}
-
-## precision
-
-### `analysis-imprecision`
-
-{{run: satex lint --explain analysis-imprecision}}
-
-## build
-
-These rules compare the build configuration (`latexmkrc`, `% arara:` lines) with what the document needs: shell escape for a `\write18`, the engine its primitives require, PDF output, a bibliography, a glossary. SaTeX reads latexmkrc's plain `$name = value;` assignments, `set_tex_cmds(…)` and `add_cus_dep(…)` without running Perl. Option meanings follow latexmk(1).
-
-### `build-shell-escape-missing`
-
-{{run: satex lint --explain build-shell-escape-missing}}
-
-### `build-shell-escape-unneeded`
-
-{{run: satex lint --explain build-shell-escape-unneeded}}
-
-### `build-engine-mismatch`
-
-{{run: satex lint --explain build-engine-mismatch}}
-
-### `build-bibliography-disabled`
-
-{{run: satex lint --explain build-bibliography-disabled}}
-
-### `build-bibliography-unneeded`
-
-{{run: satex lint --explain build-bibliography-unneeded}}
-
-### `build-missing-custom-dependency`
-
-{{run: satex lint --explain build-missing-custom-dependency}}
-
-### `build-unused-custom-dependency`
-
-{{run: satex lint --explain build-unused-custom-dependency}}
-
-### `build-command-placeholders`
-
-{{run: satex lint --explain build-command-placeholders}}
-
-### `build-engine-options`
-
-{{run: satex lint --explain build-engine-options}}
+{{explanations}}

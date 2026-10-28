@@ -1,0 +1,21 @@
+\documentclass{article}
+\usepackage{verbatim}
+\usepackage{comment}
+\newenvironment{va}{\verbatim}{\endverbatim}
+\ifodd\pdfuniformdeviate9 \excludecomment{maybe}\else\includecomment{maybe}\fi
+\begin{document}
+\begin{va}
+% { \end{verbatim} \undefinedmacro
+\end{va}
+\gdef\AfterA{}
+\begin{maybe}
+maybe text \end{document}
+\end{maybe}
+\gdef\AfterB{}
+\catcode`\|=\ifodd\pdfuniformdeviate9 14\else 12\fi
+a | b \gdef\Maybe{}
+\gdef\AfterC{}
+\catcode`\|=12
+\section{After}\label{after}
+\gdef\SatexReachedEnd{}
+\end{document}

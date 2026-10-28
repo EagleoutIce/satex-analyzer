@@ -1,0 +1,11 @@
+\documentclass{article}
+% A map over a token list whose content is unknown.
+\ExplSyntaxOn
+\tl_set:Nx \l_tmpa_tl { \pdffilemoddate{x.tex} }
+\tl_map_inline:Nn \l_tmpa_tl { x }
+\ExplSyntaxOff
+\gdef\AfterMap{}
+\begin{document}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

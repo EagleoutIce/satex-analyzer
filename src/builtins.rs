@@ -1,28 +1,20 @@
 //! Primitives the interpreter models (behavior in exec.rs).
 
-use std::collections::HashMap;
+use crate::fixed::HashMap;
 
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
 
 use crate::config::Engine;
 use crate::tex::{Interner, Meaning, RegKind, Sym};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
-pub enum DefMode {
-    New,
-    Renew,
-    Provide,
-    Declare,
-}
-
-impl DefMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            DefMode::New => "new",
-            DefMode::Renew => "renew",
-            DefMode::Provide => "provide",
-            DefMode::Declare => "declare",
-        }
+named_enum! {
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+    pub enum DefMode {
+        New => "new",
+        Renew => "renew",
+        Provide => "provide",
+        Declare => "declare",
     }
 }
 
@@ -116,6 +108,9 @@ pub enum LastItem {
     LastYPos,
     /// `\XeTeXversion`.
     XetexVersion,
+    /// `\luatexversion`: read-only, its value the real `luatex --version`
+    /// probed for the run rather than a constant table.
+    LuatexVersion,
     /// XeTeX's font and glyph queries.
     Xetex(XeQuery),
     /// `\XeTeXpdfpagecount⟨file name⟩`.
@@ -255,8 +250,14 @@ pub enum FontParam {
     HyphenChar,
     SkewChar,
     /// With the value a character has until one is assigned: 1000 for
-    /// `\efcode`, 1 for `\tagcode`, 0 for the rest (probed, pdfTeX 1.40).
+    /// `\efcode`, 0 for the rest (probed, pdfTeX 1.40).
     CharCode(i16),
+    /// `\tagcode⟨font⟩⟨char⟩` reads the character's TFM tag.  An assignment
+    /// only clears it, and LuaTeX never clears a ligature/kerning tag
+    /// (`lig`; pdftex.web and LuaTeX's `set_tag_code`, probed).
+    TagCode {
+        lig: bool,
+    },
 }
 
 /// What a command the stomach obeys reads before it is done, when its
@@ -265,11 +266,22 @@ pub enum FontParam {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
 pub enum Syntax {
     Nothing,
+    /// `\mathord` … `\mathinner`: the next atom's type, tex.web § 1156
+    /// (0 ord, 1 op, 2 bin, 3 rel, 4 open, 5 close, 6 punct, 7 inner).
+    MathComp(u8),
+    /// `\limits`, `\nolimits`, `\displaylimits` (tex.web § 1159).
+    Limits,
     Number,
+    /// `\attributedef`, `\luadef`: a name, an optional `=`, a ⟨number⟩.
+    /// The name means what SaTeX does not model, so it is unknown.
+    NamesNumber,
+    /// `\attribute⟨number⟩=⟨number⟩`.
+    NumberIsNumber,
     Dimen,
-    /// `\abovewithdelims` and relatives: two delimiters, then for
-    /// `\abovewithdelims` a dimension (tex.web § 1178).
-    Delimiters {
+    /// `\over`, `\atop`, `\above` and their `withdelims` forms (tex.web
+    /// § 1181): two delimiters for these, then for `\above…` a dimension.
+    Fraction {
+        delims: bool,
         dimen: bool,
     },
     /// `\batchmode` … `\errorstopmode`: they set `\interactionmode`
@@ -335,6 +347,15 @@ pub enum Syntax {
     /// `\XeTeXpicfile⟨file name⟩` and `\XeTeXpdffile`, with the page, box
     /// and scaling keywords of the XeTeX reference.
     PicFile,
+    /// No operands, a whatsit node on the list: pdfTeX's `\pdfendlink`,
+    /// `\pdfsave`, `\pdfrestore`, `\pdfendthread` (none can be
+    /// `\immediate`).
+    Whatsit,
+    /// `\nonscript`: glue in math that cancels the next in script styles.
+    NonScript,
+    /// `\setlanguage⟨number⟩`: a whatsit in horizontal mode, elsewhere an
+    /// illegal case that scans nothing (tex.web § 1377).
+    SetLanguage,
 }
 
 /// An expandable primitive that yields text (tex.web § 468, `convert`; the
@@ -366,13 +387,16 @@ pub enum Convert {
     XFormName,
     InsertHt,
     MarginKern,
+    /// `\leftmarginkern⟨n⟩`.
+    LeftMarginKern,
     ColorStackInit,
     /// `\pdfximagebbox⟨image⟩⟨corner⟩`.
     ImageBBox,
-    /// `\topmark` and the other marks of the page builder.
-    Mark,
-    /// e-TeX's `\topmarks⟨number⟩` and relatives.
-    Marks,
+    /// `\topmark` and the other marks of the page builder, by their code
+    /// (tex.web § 382: top, first, bot, split first, split bot).
+    Mark(u8),
+    /// e-TeX's `\topmarks⟨number⟩` and relatives, by the same code.
+    Marks(u8),
     /// `\pdfprimitive⟨cs⟩`: the primitive of that name, whatever the name
     /// means now.
     Primitive,
@@ -396,16 +420,21 @@ pub enum Arith {
     Divide,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
-pub enum LoadKind {
-    Package,
-    Class,
-    Input,
-    Include,
-    Conditional,
-    Inherited,
-    /// A Lua module a `require` or `dofile` in `\directlua` reads.
-    Lua,
+named_enum! {
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+    pub enum LoadKind {
+        Package => "package",
+        Class => "class",
+        Input => "input",
+        Include => "include",
+        Conditional => "conditional",
+        Inherited => "inherited",
+        /// A Lua module a `require` or `dofile` in `\directlua` reads.
+        Lua => "lua",
+        /// A font's metrics (`.tfm`) or a native font (`.otf`, `.ttf`) a
+        /// `\font` loads: read, though never as TeX.
+        Font => "font",
+    }
 }
 
 /// What a LuaTeX primitive of the Lua interface does.
@@ -427,17 +456,6 @@ pub enum LuaOp {
 }
 
 impl LoadKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            LoadKind::Package => "package",
-            LoadKind::Class => "class",
-            LoadKind::Input => "input",
-            LoadKind::Include => "include",
-            LoadKind::Conditional => "conditional",
-            LoadKind::Inherited => "inherited",
-            LoadKind::Lua => "lua",
-        }
-    }
     pub fn is_package(self) -> bool {
         matches!(self, LoadKind::Package | LoadKind::Class | LoadKind::Inherited)
     }
@@ -479,6 +497,8 @@ pub enum OccKind {
     /// What the document hands the PDF writer: a `\pdfliteral`, a `\pdfobj`
     /// or a `\special`, with the payload as its key.
     Pdf,
+    /// The BibTeX style a `\bibstyle` line of the `.aux` file names.
+    BibStyle,
 }
 
 impl OccKind {
@@ -529,6 +549,7 @@ impl OccKind {
             OccKind::Entry => "entry",
             OccKind::Accent => "accent",
             OccKind::Pdf => "pdf",
+            OccKind::BibStyle => "bib-style",
         }
     }
 }
@@ -580,22 +601,6 @@ pub enum TextOf {
     Roman,
     Detokenize,
     JobName,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
-pub enum HookOp {
-    Add,
-    AddNext,
-    AddLegacy,
-    AddEnvironment,
-    New,
-    NewPair,
-    Use,
-    UseOnce,
-    Remove,
-    Rule,
-    IfEmpty,
-    Show,
 }
 
 /// One of TeX's per-character code tables (tex.web § 230).
@@ -651,6 +656,8 @@ pub enum PdfOp {
     Object,
     Special,
     Extension,
+    /// LuaTeX's `\pdfvariable ⟨name⟩ ⟨equals⟩ ⟨value⟩`.
+    Variable,
     /// `\pdfpageresources`, where a page's `/Properties` name what its
     /// marked content refers to.
     Resources,
@@ -673,6 +680,17 @@ pub enum Typeset {
     /// `\left`, `\right`, `\middle`: a delimiter, which is one character or
     /// one control sequence (tex.web § 1161).
     Delimiter,
+}
+
+/// What a token held back waits for.  tex.web § 265 makes `\aftergroup` and
+/// `\afterassignment` two commands, so a copy such as `\tex_aftergroup:D`
+/// carries which one it is and not the name it was reached through.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
+pub enum Deferred {
+    /// `\aftergroup`: the end of the current group (tex.web § 326).
+    Group,
+    /// `\afterassignment`: the next assignment (tex.web § 1269).
+    Assignment,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, Serialize, Deserialize)]
@@ -735,17 +753,15 @@ pub enum Primitive {
     BeginGroup,
     EndGroup,
     /// `\aftergroup`, `\afterassignment`.
-    Defer,
+    Defer(Deferred),
 
     Allocate(RegKind),
     Register(RegKind),
     RegisterDef(RegKind),
-    /// `\openin`, `\closein` and `\read`: the input streams `\ifeof` asks about.
-    /// A variant `\prg_new_conditional:Npnn` generates: the arguments of the
-    /// test, then its branches, of which satex analyzes every one.
     /// `\font\name=file at size`: defines the control sequence as a font
     /// identifier (tex.web § 1256).
     FontDef,
+    /// `\openin`, `\closein`, `\read`: the input streams `\ifeof` asks about.
     OpenIn,
     CloseIn,
     Read,
@@ -772,10 +788,10 @@ pub enum Primitive {
     /// `\numexpr`, `\dimexpr`, `\glueexpr`, `\muexpr` (eTeX manual § 3.5).
     Expr(RegKind),
     Relax,
-    /// A primitive that only sets material on the page: a box, a rule, glue,
-    /// a kern, a penalty (The TeXbook, chs. 11-14).  satex does not build
-    /// pages, so it runs none of them; the distinction is what tells a
-    /// command that contributes no text from one that does.
+    /// A primitive that only sets page material: a box, rule, glue, kern,
+    /// penalty (The TeXbook, chs. 11-14). satex does not build pages, so it
+    /// runs none of these; the distinction marks commands that contribute no
+    /// text.
     Typeset(Typeset),
     /// LuaTeX's Lua interface and the catcode tables that come with it
     /// (LuaTeX manual, "Lua related primitives", "Catcode tables");
@@ -789,17 +805,14 @@ pub enum Primitive {
     Accent,
     /// A primitive whose text goes to the PDF writer.
     Pdf(PdfOp),
-    /// A primitive of the engine this run models whose effect is not
-    /// interpreted.  It does nothing, but it is a meaning of its own: a
-    /// package asks `\ifx\csname expanded\endcsname\relax` to find out
-    /// whether the primitive exists, and `\ifx` compares meanings (The
-    /// TeXbook, ch. 20), so answering `\relax` would deny every engine
-    /// primitive this interpreter leaves alone.
+    /// An engine primitive this run doesn't interpret. It does nothing but
+    /// has a meaning of its own: `\ifx\csname expanded\endcsname\relax`
+    /// tests existence by comparing meanings (The TeXbook, ch. 20), so
+    /// answering `\relax` would deny every unmodeled primitive.
     Unmodeled,
-    /// LuaTeX's `\alignmark` and `\aligntab`, which stand for `#` and `&`
-    /// where a definition or an alignment is scanned (LuaTeX manual,
-    /// "Macros"): meanings of their own, so `\ifx` tells them apart, and
-    /// unmodeled otherwise.
+    /// LuaTeX's `\alignmark`/`\aligntab`, standing for `#`/`&` where a
+    /// definition or alignment is scanned (LuaTeX manual, "Macros"):
+    /// meanings of their own, so `\ifx` tells them apart.
     AlignMark,
     AlignTab,
     /// TeX's glue, muglue and token-list parameters (tex.web §§ 224, 230).
@@ -828,6 +841,20 @@ pub enum Primitive {
     /// `\ignorespaces` (tex.web § 1045): the next non-blank token after
     /// expansion is read as a command.
     IgnoreSpaces,
+}
+
+impl Primitive {
+    /// A parameter TeX itself reads while it typesets (`\parskip`,
+    /// `\tolerance`, `\everypar`), tex.web §§ 224, 236, 247, 230.
+    pub fn is_parameter(self) -> bool {
+        matches!(
+            self,
+            Primitive::IntegerParameter
+                | Primitive::DimenParameter
+                | Primitive::GlueParameter { .. }
+                | Primitive::TokensParameter
+        )
+    }
 }
 
 /// A command of TeX's stomach that the mode governs (tex.web § 1045 cases
@@ -863,10 +890,14 @@ pub enum ModeCmd {
     NoAlign,
     /// `\mathchoice{…}{…}{…}{…}` (tex.web § 1172).
     MathChoice,
+    /// `\displaystyle` (0), `\textstyle` (2), `\scriptstyle` (4),
+    /// `\scriptscriptstyle` (6) (tex.web § 1169).
+    MathStyle(u8),
     /// `\eqno`, `\leqno` (tex.web § 1140).
     EqNo,
-    /// `\left` (tex.web § 1191).
-    Left,
+    /// `\left`, `\middle`, `\right` (tex.web § 1191, etex.ch): a delimiter,
+    /// then the math left group closes, or opens, or both.
+    LeftRight { opens: bool, closes: bool },
 }
 
 /// What a [`ModeCmd::Horizontal`] or [`ModeCmd::Vertical`] command scans.
@@ -877,14 +908,14 @@ pub enum Material {
     /// `\unhbox`, `\unhcopy`, `\unvbox`, `\unvcopy`: a register number;
     /// `take` for the forms that leave it void.
     Unpackage { take: bool },
-    /// `\pagediscards`, `\splitdiscards`.
-    Discards,
+    /// `\pagediscards`, `\splitdiscards` (`true`).
+    Discards(bool),
     /// `\vrule`, `\hrule`: a rule specification.
     Rule,
     /// `\hskip`, `\vskip`: glue.
     Glue,
-    /// `\hfil`, `\hfill`, `\hss`, `\hfilneg` and the vertical ones.
-    Fil,
+    /// `\hfil`, `\hfill`, `\hss`, `\hfilneg` and the vertical ones, by `fil_code` and relatives.
+    Fil(u8),
     /// `\discretionary{…}{…}{…}` (tex.web § 1117).
     Discretionary,
     /// `\-`.
@@ -895,6 +926,9 @@ pub enum Material {
     NoBoundary,
     /// `\valign`, `\halign`.
     Align,
+    /// `\beginL`, `\endL`, `\beginR`, `\endR`: etex.ch's `valign` with a
+    /// positive code, a math node where TeX--XeT is on.
+    LR,
 }
 
 /// The `make_box` commands (tex.web § 1071).
@@ -916,17 +950,10 @@ impl ModeCmd {
         match self {
             ModeCmd::Horizontal(Material::Glue) | ModeCmd::Vertical(Material::Glue) => Typeset::Glue,
             ModeCmd::Shift { .. } => Typeset::Dimen,
-            ModeCmd::Left => Typeset::Delimiter,
+            ModeCmd::LeftRight { .. } => Typeset::Delimiter,
             _ => Typeset::Plain,
         }
     }
-}
-
-/// The tags a definition can carry, as `category` gives them.
-pub fn definition_tag(tag: &str) -> Option<&'static str> {
-    ["macro", "alias", "environment", "register", "counter", "length", "switch", "option", "key", "variable"]
-        .into_iter()
-        .find(|known| *known == tag)
 }
 
 pub fn category(p: Primitive) -> &'static str {
@@ -980,11 +1007,10 @@ pub fn takes(p: Primitive) -> (u8, Option<u8>) {
     }
 }
 
-/// Whether the gullet expands this primitive (tex.web § 366).
-/// The commands the gullet expands (tex.web § 366): conditionals, `\csname`,
-/// the convert commands, `\expandafter`, `\noexpand` and the eTeX
-/// re-injections.  Everything else is a command the stomach obeys, which an
-/// `\edef` body keeps as it stands rather than running.
+/// Whether the gullet expands this primitive (tex.web § 366): conditionals,
+/// `\csname`, the convert commands, `\expandafter`, `\noexpand`, eTeX
+/// re-injections. Everything else is stomach material an `\edef` body keeps
+/// unrun.
 pub fn gullet(p: Primitive) -> bool {
     use Primitive as P;
     matches!(
@@ -1028,7 +1054,7 @@ pub fn expandable(p: Primitive) -> bool {
             | P::Endcsname
             | P::BeginGroup
             | P::EndGroup
-            | P::Defer
+            | P::Defer(_)
             | P::Register(_)
             | P::RegisterDef(_)
             | P::Arith(_)
@@ -1073,12 +1099,10 @@ pub fn expandable(p: Primitive) -> bool {
 }
 
 /// What `\pdfstringdef` makes of a primitive the gullet left standing:
-/// `None` when it contributes text, otherwise the value it scans, which is
-/// dropped with it.  hyperref removes every unexpandable token from the
-/// string it builds and warns about it, scanning past the number, dimension
-/// or glue of `\penalty`, `\kern` and `\hskip` (hyperref.sty,
-/// `\HyPsd@CheckCatcodes`).  A box's contents are tokens of their own and
-/// stay.
+/// `None` when it contributes text, otherwise the value it scans (dropped
+/// with it). hyperref strips every unexpandable token from the string it
+/// builds, scanning past `\penalty`/`\kern`/`\hskip`'s operand (hyperref.sty,
+/// `\HyPsd@CheckCatcodes`). A box's contents are tokens of their own and stay.
 pub fn pdf_string_skip(p: Primitive) -> Option<Typeset> {
     match p {
         Primitive::Typeset(scan) => Some(scan),
@@ -1090,10 +1114,9 @@ pub fn pdf_string_skip(p: Primitive) -> Option<Typeset> {
 }
 
 /// Whether a primitive is one of TeX's assignments — a case of
-/// `prefixed_command` (tex.web § 1211) rather than of `main_control`.  Those
-/// are the commands `\afterassignment` waits for; `\afterassignment` itself
-/// is not one, which is why a second one overwrites the first token instead
-/// of releasing it.
+/// `prefixed_command` (tex.web § 1211) rather than of `main_control`. These
+/// are what `\afterassignment` waits for. `\afterassignment` itself is not
+/// one, so a second one overwrites the first token instead of releasing it.
 pub fn assignment(p: Primitive) -> bool {
     use Primitive as P;
     matches!(
@@ -1118,10 +1141,93 @@ pub fn assignment(p: Primitive) -> bool {
     )
 }
 
+/// The ε-TeX primitives (etex_man § 3), and `\tracingstacklevels`, which
+/// TeX Live gave every engine but Knuth's TeX: what `tex` lacks of the
+/// names registered below for every engine (doc/primitive-facts.md).
+pub const ETEX_PRIMITIVES: &[&str] = &[
+    "TeXXeTstate",
+    "beginL",
+    "beginR",
+    "botmarks",
+    "clubpenalties",
+    "currentgrouplevel",
+    "currentgrouptype",
+    "currentifbranch",
+    "currentiflevel",
+    "currentiftype",
+    "detokenize",
+    "dimexpr",
+    "displaywidowpenalties",
+    "eTeXrevision",
+    "eTeXversion",
+    "endL",
+    "endR",
+    "everyeof",
+    "firstmarks",
+    "fontchardp",
+    "fontcharht",
+    "fontcharic",
+    "fontcharwd",
+    "glueexpr",
+    "glueshrink",
+    "glueshrinkorder",
+    "gluestretch",
+    "gluestretchorder",
+    "gluetomu",
+    "ifcsname",
+    "ifdefined",
+    "iffontchar",
+    "interactionmode",
+    "interlinepenalties",
+    "lastlinefit",
+    "lastnodetype",
+    "marks",
+    "middle",
+    "muexpr",
+    "mutoglue",
+    "numexpr",
+    "pagediscards",
+    "parshapedimen",
+    "parshapeindent",
+    "parshapelength",
+    "predisplaydirection",
+    "protected",
+    "readline",
+    "savinghyphcodes",
+    "savingvdiscards",
+    "scantokens",
+    "showgroups",
+    "showifs",
+    "showtokens",
+    "splitbotmarks",
+    "splitdiscards",
+    "splitfirstmarks",
+    "topmarks",
+    "tracingassigns",
+    "tracinggroups",
+    "tracingifs",
+    "tracingnesting",
+    "tracingscantokens",
+    "tracingstacklevels",
+    "unexpanded",
+    "unless",
+    "widowpenalties",
+];
+
+/// ε-TeX's TeX--XeT and `\tracingstacklevels`, registered below for every
+/// eTeX engine, which LuaTeX does not have: its directions are
+/// `\textdirection` and the rest (LuaTeX manual, "Directions"), and
+/// LuaTeX 1.17 has no `\tracingstacklevels` (doc/primitive-facts.md).
+const NOT_IN_LUATEX: &[&str] = &["TeXXeTstate", "beginL", "beginR", "endL", "endR", "tracingstacklevels"];
+
 pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meaning> {
     use Primitive as P;
-    let mut table: HashMap<Sym, Meaning> = HashMap::with_capacity(512);
+    let mut table: HashMap<Sym, Meaning> = HashMap::with_capacity_and_hasher(512, Default::default());
     let mut put = |it: &mut Interner, name: &str, p: Primitive| {
+        if !engine.has_etex() && ETEX_PRIMITIVES.contains(&name) || engine.has_luatex() && NOT_IN_LUATEX.contains(&name)
+        {
+            return;
+        }
         let s = it.intern(name);
         let previous = table.insert(s, Meaning::Primitive(p));
         debug_assert!(previous.is_none(), "{name} is registered twice, the later entry wins");
@@ -1140,8 +1246,8 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "immediate", P::Prefix(Prefix::Immediate));
     put(it, "begingroup", P::BeginGroup);
     put(it, "endgroup", P::EndGroup);
-    put(it, "aftergroup", P::Defer);
-    put(it, "afterassignment", P::Defer);
+    put(it, "aftergroup", P::Defer(Deferred::Group));
+    put(it, "afterassignment", P::Defer(Deferred::Assignment));
 
     put(it, "expandafter", P::ExpandAfter);
     put(it, "noexpand", P::NoExpand);
@@ -1224,93 +1330,29 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, n, P::CharCode(table));
     }
     // Integer parameters of TeX82 (TeXbook, appendix B).
-    for n in [
-        "adjdemerits",
-        "binoppenalty",
-        "brokenpenalty",
-        "deadcycles",
-        "defaulthyphenchar",
-        "defaultskewchar",
-        "delimiterfactor",
-        "displaywidowpenalty",
-        "doublehyphendemerits",
-        "exhyphenpenalty",
-        "fam",
-        "finalhyphendemerits",
-        "floatingpenalty",
-        "globaldefs",
-        "hangafter",
-        "holdinginserts",
-        "insertpenalties",
-        "lefthyphenmin",
-        "righthyphenmin",
-        "linepenalty",
-        "looseness",
-        "mag",
-        "maxdeadcycles",
-        "outputpenalty",
-        "pausing",
-        "postdisplaypenalty",
-        "predisplaypenalty",
-        "pretolerance",
-        "prevgraf",
-        "relpenalty",
-        "showboxbreadth",
-        "showboxdepth",
-        "spacefactor",
-        "tracingstacklevels",
-        "uchyph",
-    ] {
+    for n in "adjdemerits binoppenalty brokenpenalty deadcycles defaulthyphenchar
+        defaultskewchar delimiterfactor displaywidowpenalty doublehyphendemerits
+        exhyphenpenalty fam finalhyphendemerits floatingpenalty globaldefs hangafter
+        holdinginserts insertpenalties lefthyphenmin righthyphenmin linepenalty looseness mag
+        maxdeadcycles outputpenalty pausing postdisplaypenalty predisplaypenalty pretolerance
+        prevgraf relpenalty showboxbreadth showboxdepth spacefactor tracingstacklevels uchyph"
+        .split_whitespace()
+    {
         put(it, n, P::IntegerParameter);
     }
-    for n in [
-        "boxmaxdepth",
-        "delimitershortfall",
-        "displayindent",
-        "displaywidth",
-        "emergencystretch",
-        "hangindent",
-        "hfuzz",
-        "vfuzz",
-        "hoffset",
-        "voffset",
-        "lineskiplimit",
-        "mathsurround",
-        "maxdepth",
-        "nulldelimiterspace",
-        "overfullrule",
-        "pagegoal",
-        "pagetotal",
-        "pagestretch",
-        "pagefilstretch",
-        "pagefillstretch",
-        "pagefilllstretch",
-        "pageshrink",
-        "pagedepth",
-        "predisplaysize",
-        "prevdepth",
-        "scriptspace",
-        "splitmaxdepth",
-    ] {
+    for n in "boxmaxdepth delimitershortfall displayindent displaywidth emergencystretch
+        hangindent hfuzz vfuzz hoffset voffset lineskiplimit mathsurround maxdepth
+        nulldelimiterspace overfullrule pagegoal pagetotal pagestretch pagefilstretch
+        pagefillstretch pagefilllstretch pageshrink pagedepth predisplaysize prevdepth
+        scriptspace splitmaxdepth"
+        .split_whitespace()
+    {
         put(it, n, P::DimenParameter);
     }
-    for n in [
-        "escapechar",
-        "endlinechar",
-        "newlinechar",
-        "tolerance",
-        "hbadness",
-        "vbadness",
-        "time",
-        "day",
-        "month",
-        "year",
-        "language",
-        "hyphenpenalty",
-        "clubpenalty",
-        "widowpenalty",
-        "interlinepenalty",
-    ] {
+    for n in "escapechar endlinechar newlinechar tolerance hbadness vbadness time day month
+        year language hyphenpenalty clubpenalty widowpenalty interlinepenalty"
+        .split_whitespace()
+    {
         put(it, n, P::IntegerParameter);
     }
     for n in ["parindent", "hsize", "vsize"] {
@@ -1322,7 +1364,9 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "input", P::Load(LoadKind::Input));
     put(it, "endinput", P::Endinput);
 
+    // tex.web § 1052: `\dump` is `stop` too, and ends the job (§ 1335).
     put(it, "end", P::End);
+    put(it, "dump", P::End);
     // tex.web § 1279; the kernel's `\PackageWarning`, `\GenericError` and
     // `\typeout` are its own code, which ends in these or in an
     // `\immediate\write` to a stream that is not open.
@@ -1331,14 +1375,9 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
 
     // Boxes, glue and penalties (The TeXbook, chs. 11-14), by what each one
     // scans before the material it sets.
-    for (n, scan) in [
-        ("kern", Typeset::Dimen),
-        ("mkern", Typeset::Dimen),
-        ("mskip", Typeset::Glue),
-        ("penalty", Typeset::Number),
-        ("right", Typeset::Delimiter),
-        ("middle", Typeset::Delimiter),
-    ] {
+    for (n, scan) in
+        [("kern", Typeset::Dimen), ("mkern", Typeset::Dimen), ("mskip", Typeset::Glue), ("penalty", Typeset::Number)]
+    {
         put(it, n, P::Typeset(scan));
     }
     for n in ["unpenalty", "unkern", "unskip"] {
@@ -1347,7 +1386,9 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
 
     // What follows was probed against the TeX Live 2026 binaries: a name is
     // registered for an engine only where `\meaning` there reports the
-    // primitive itself.
+    // primitive itself.  doc/primitive-facts/*.tsv holds the TeX Live 2023
+    // engines; the few names newer than those are marked where they are
+    // registered.
     if engine.has_pdftex_extensions() {
         // pdftex manual, "Primitives" — the unprefixed extensions XeTeX and
         // LuaTeX inherited with the rest of pdfTeX's front end.
@@ -1367,55 +1408,47 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "pdfoutput", P::IntegerParameter);
         // pdfTeX's own integer and dimension parameters, and the kerning
         // codes only it has (pdftex manual, "Primitives").
-        for n in [
-            "pdfmajorversion",
-            "pdfimageresolution",
-            "pdfpkresolution",
-            "pdfimagehicolor",
-            "pdfimageapplygamma",
-            "pdfgamma",
-            "pdfimagegamma",
-            "pdfinfoomitdate",
-            "pdfomitcharset",
-            "pdfsuppressptexinfo",
-            "pdfnobuiltintounicode",
-            "pdfptexuseunderscore",
-            "pdfappendkern",
-            "pdfprependkern",
-            "pdfpagebox",
-            "pdftracingfonts",
-            "pdfinclusioncopyfonts",
-            "pdfretval",
-            "pdflastannot",
-            "pdflastobj",
-            "pdflastxform",
-            "pdflastximage",
-            "pdflastximagepages",
-            "pdflastlink",
-        ] {
+        for n in "pdfmajorversion pdfimageresolution pdfpkresolution pdfimagehicolor
+            pdfimageapplygamma pdfgamma pdfimagegamma pdfinfoomitdate pdfomitcharset
+            pdfsuppressptexinfo pdfptexuseunderscore pdfappendkern pdfprependkern pdfpagebox
+            pdftracingfonts pdfinclusioncopyfonts pdfadjustinterwordglue pdfforcepagebox
+            pdfinclusionerrorlevel pdfmovechars pdfomitinfodict pdfomitprocset
+            pdfoptionalwaysusepdfpagebox pdfoptionpdfinclusionerrorlevel pdfsuppresswarningdupdest
+            pdfsuppresswarningdupmap pdfsuppresswarningpagegroup"
+            .split_whitespace()
+        {
             put(it, n, P::IntegerParameter);
         }
-        for n in [
-            "pdfdestmargin",
-            "pdflinkmargin",
-            "pdfthreadmargin",
-            "pdfpxdimen",
-            "pdfignoreddimen",
-            "pdfeachlineheight",
-            "pdfeachlinedepth",
-            "pdffirstlineheight",
-            "pdflastlinedepth",
-        ] {
+        // `\pdfoptionpdfminorversion` is `\pdfminorversion` under an older
+        // name: one parameter ([`primitive_aliases`]).
+        put(it, "pdfoptionpdfminorversion", P::IntegerParameter);
+        // pdfTeX manual: `\pdfnobuiltintounicode` takes a font, not a
+        // number, so it belongs with `\pdfnoligatures` and the other
+        // per-font switches, not with the integer parameters above.
+        put(it, "pdfnobuiltintounicode", P::Command(Syntax::Font));
+        // pdfTeX manual: read-only "last" integers, not parameters; an
+        // assignment is an engine error, as with satex's own `LastItem`s.
+        // The value (0 until the run makes annotations/objects/forms/links)
+        // needs the PDF writer satex doesn't run, so it widens instead.
+        for n in "pdfretval pdflastannot pdflastobj pdflastxform pdflastximage
+            pdflastximagepages pdflastximagecolordepth pdflastlink"
+            .split_whitespace()
+        {
+            put(it, n, P::LastItem(LastItem::LastXPos));
+        }
+        for n in "pdfdestmargin pdflinkmargin pdfthreadmargin pdfpxdimen pdfignoreddimen
+            pdfeachlineheight pdfeachlinedepth pdffirstlineheight pdflastlinedepth"
+            .split_whitespace()
+        {
             put(it, n, P::DimenParameter);
         }
         put(it, "pdfximagebbox", P::Convert(Convert::ImageBBox));
     }
     matches!(engine, Engine::PdfTeX | Engine::XeTeX);
     if engine.has_unicode_math() {
-        // The Unicode-math, randomness and `\primitive` extensions XeTeX and
-        // LuaTeX share (XeTeX reference; LuaTeX manual, "Math").
-        // XeTeX reference and LuaTeX manual, "Math": 21-bit math codes,
-        // class, family and slot given apart or packed in one number.
+        // Unicode-math, randomness and `\primitive` extensions XeTeX and
+        // LuaTeX share (XeTeX reference; LuaTeX manual, "Math"): 21-bit math
+        // codes, class/family/slot given apart or packed in one number.
         put(it, "Umathcode", P::Special(Special::UCode { math: true, num: false }));
         put(it, "Umathcodenum", P::Special(Special::UCode { math: true, num: true }));
         put(it, "Udelcode", P::Special(Special::UCode { math: false, num: false }));
@@ -1451,20 +1484,26 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "shellescape", P::LastItem(LastItem::ShellEscape));
         put(it, "resettimer", P::Command(Syntax::Nothing));
         put(it, "XeTeXversion", P::LastItem(LastItem::XetexVersion));
+        // XeTeX's older spellings of the `\U…` math primitives: the same
+        // primitive, `\meaning\XeTeXmathcode` is `\Umathcode`.
+        put(it, "XeTeXmathcode", P::Special(Special::UCode { math: true, num: false }));
+        put(it, "XeTeXmathcodenum", P::Special(Special::UCode { math: true, num: true }));
+        put(it, "XeTeXdelcode", P::Special(Special::UCode { math: false, num: false }));
+        put(it, "XeTeXdelcodenum", P::Special(Special::UCode { math: false, num: true }));
+        put(it, "XeTeXmathchardef", P::Command(Syntax::UMathCharDef { num: false }));
+        put(it, "XeTeXmathcharnumdef", P::Command(Syntax::UMathCharDef { num: true }));
+        put(it, "XeTeXmathchar", P::Command(Syntax::Numbers(3)));
+        put(it, "XeTeXmathcharnum", P::Command(Syntax::Numbers(1)));
+        put(it, "XeTeXdelimiter", P::Command(Syntax::Numbers(3)));
+        put(it, "XeTeXradical", P::Command(Syntax::Numbers(2)));
+        put(it, "XeTeXmathaccent", P::Command(Syntax::MathAccent));
         put(it, "XeTeXrevision", P::Convert(Convert::XetexRevision));
-        for n in [
-            "XeTeXdashbreakstate",
-            "XeTeXgenerateactualtext",
-            "XeTeXhyphenatablelength",
-            "XeTeXinputnormalization",
-            "XeTeXinterchartokenstate",
-            "XeTeXinterwordspaceshaping",
-            "XeTeXlinebreakpenalty",
-            "XeTeXprotrudechars",
-            "XeTeXtracingfonts",
-            "XeTeXupwardsmode",
-            "XeTeXuseglyphmetrics",
-        ] {
+        for n in "XeTeXdashbreakstate XeTeXgenerateactualtext XeTeXhyphenatablelength
+            XeTeXinputnormalization XeTeXinterchartokenstate XeTeXinterwordspaceshaping
+            XeTeXlinebreakpenalty XeTeXprotrudechars XeTeXtracingfonts XeTeXupwardsmode
+            XeTeXuseglyphmetrics"
+            .split_whitespace()
+        {
             put(it, n, P::IntegerParameter);
         }
         put(it, "XeTeXlinebreakskip", P::GlueParameter { mu: false });
@@ -1524,7 +1563,10 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "outputmode", P::IntegerParameter);
         // `\luatexversion` is the version times one hundred, which is what
         // `ltluatex` and `iftex` test (LuaTeX manual, "Version information").
-        put(it, "luatexversion", P::IntegerParameter);
+        // It is read-only, like `\pdftexversion`, but its value varies across
+        // installs, so it is not a constant: `last_item` answers it from the
+        // real `luatex --version` probed for this run.
+        put(it, "luatexversion", P::LastItem(LastItem::LuatexVersion));
         // `\directlua{…}` and `\latelua{…}` take a general text holding Lua,
         // not TeX (LuaTeX manual, "Lua related primitives"), and catcode
         // tables are how Lua and TeX code agree on a regime ("Catcode tables").
@@ -1538,316 +1580,115 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         ] {
             put(it, n, P::Lua(op));
         }
-        // Each of these takes a ⟨number⟩ naming a Lua function or a bytecode
-        // register (LuaTeX manual, "Lua related primitives").
+        // Each takes a ⟨number⟩ naming a Lua function or bytecode register
+        // and runs it at once (LuaTeX manual, "Lua related primitives"): a
+        // command, not a stored parameter, so `\luafunction=3` is not valid
+        // engine syntax.
         for n in ["luafunction", "lateluafunction", "luafunctioncall", "luabytecode", "luabytecodecall"] {
-            put(it, n, P::IntegerParameter);
+            put(it, n, P::Command(Syntax::Number));
         }
-        // `\attribute` is a numbered register and `\attributedef` names one,
-        // as `\count` and `\countdef` do (LuaTeX manual, "Attributes");
-        // `\luadef` names a Lua function the same way `\chardef` names a
-        // character.
-        put(it, "attribute", P::Register(RegKind::Count));
-        put(it, "attributedef", P::RegisterDef(RegKind::Count));
-        put(it, "luadef", P::RegisterDef(RegKind::Count));
+        // `\attribute` is LuaTeX's own register file (LuaTeX manual,
+        // "Attributes"), disjoint from `\count`. `\attributedef` names one
+        // like `\countdef`; `\luadef` names a Lua function like `\chardef`.
+        // satex has no `RegKind` for any of the three, and modeling them as
+        // `\count`-alike would misclassify `\attribute255` as `\count255`.
+        // Their syntax is read, and what they name is unknown.
+        put(it, "attribute", P::Command(Syntax::NumberIsNumber));
+        put(it, "attributedef", P::Command(Syntax::NamesNumber));
+        put(it, "luadef", P::Command(Syntax::NamesNumber));
         // `\csstring` is `\string` without the escape character, and
         // `\scantextokens` is `\scantokens` without the file wrapper.
         put(it, "csstring", P::Text(TextOf::String));
         put(it, "scantextokens", P::ScanTokens { text: true });
         // LuaTeX manual, "TeX and LuaTeX primitives" — node attributes,
         // directions, Unicode math, hyphenation control and the rest.
-        for n in [
-            "Udelimiterover",
-            "Udelimiterunder",
-            "Uhextensible",
-            "Uleft",
-            "Umathaxis",
-            "Umathbinbinspacing",
-            "Umathbinclosespacing",
-            "Umathbininnerspacing",
-            "Umathbinopenspacing",
-            "Umathbinopspacing",
-            "Umathbinordspacing",
-            "Umathbinpunctspacing",
-            "Umathbinrelspacing",
-            "Umathcharclass",
-            "Umathcharfam",
-            "Umathcharslot",
-            "Umathclosebinspacing",
-            "Umathcloseclosespacing",
-            "Umathcloseinnerspacing",
-            "Umathcloseopenspacing",
-            "Umathcloseopspacing",
-            "Umathcloseordspacing",
-            "Umathclosepunctspacing",
-            "Umathcloserelspacing",
-            "Umathconnectoroverlapmin",
-            "Umathfractiondelsize",
-            "Umathfractiondenomdown",
-            "Umathfractiondenomvgap",
-            "Umathfractionnumup",
-            "Umathfractionnumvgap",
-            "Umathfractionrule",
-            "Umathinnerbinspacing",
-            "Umathinnerclosespacing",
-            "Umathinnerinnerspacing",
-            "Umathinneropenspacing",
-            "Umathinneropspacing",
-            "Umathinnerordspacing",
-            "Umathinnerpunctspacing",
-            "Umathinnerrelspacing",
-            "Umathlimitabovebgap",
-            "Umathlimitabovekern",
-            "Umathlimitabovevgap",
-            "Umathlimitbelowbgap",
-            "Umathlimitbelowkern",
-            "Umathlimitbelowvgap",
-            "Umathnolimitsubfactor",
-            "Umathnolimitsupfactor",
-            "Umathopbinspacing",
-            "Umathopclosespacing",
-            "Umathopenbinspacing",
-            "Umathopenclosespacing",
-            "Umathopeninnerspacing",
-            "Umathopenopenspacing",
-            "Umathopenopspacing",
-            "Umathopenordspacing",
-            "Umathopenpunctspacing",
-            "Umathopenrelspacing",
-            "Umathoperatorsize",
-            "Umathopinnerspacing",
-            "Umathopopenspacing",
-            "Umathopopspacing",
-            "Umathopordspacing",
-            "Umathoppunctspacing",
-            "Umathoprelspacing",
-            "Umathordbinspacing",
-            "Umathordclosespacing",
-            "Umathordinnerspacing",
-            "Umathordopenspacing",
-            "Umathordopspacing",
-            "Umathordordspacing",
-            "Umathordpunctspacing",
-            "Umathordrelspacing",
-            "Umathoverbarkern",
-            "Umathoverbarrule",
-            "Umathoverbarvgap",
-            "Umathoverdelimiterbgap",
-            "Umathoverdelimitervgap",
-            "Umathpunctbinspacing",
-            "Umathpunctclosespacing",
-            "Umathpunctinnerspacing",
-            "Umathpunctopenspacing",
-            "Umathpunctopspacing",
-            "Umathpunctordspacing",
-            "Umathpunctpunctspacing",
-            "Umathpunctrelspacing",
-            "Umathquad",
-            "Umathradicaldegreeafter",
-            "Umathradicaldegreebefore",
-            "Umathradicaldegreeraise",
-            "Umathradicalkern",
-            "Umathradicalrule",
-            "Umathradicalvgap",
-            "Umathrelbinspacing",
-            "Umathrelclosespacing",
-            "Umathrelinnerspacing",
-            "Umathrelopenspacing",
-            "Umathrelopspacing",
-            "Umathrelordspacing",
-            "Umathrelpunctspacing",
-            "Umathrelrelspacing",
-            "Umathskewedfractionhgap",
-            "Umathskewedfractionvgap",
-            "Umathspaceafterscript",
-            "Umathstackdenomdown",
-            "Umathstacknumup",
-            "Umathstackvgap",
-            "Umathsubshiftdown",
-            "Umathsubshiftdrop",
-            "Umathsubsupshiftdown",
-            "Umathsubsupvgap",
-            "Umathsubtopmax",
-            "Umathsupbottommin",
-            "Umathsupshiftdrop",
-            "Umathsupshiftup",
-            "Umathsupsubbottommax",
-            "Umathunderbarkern",
-            "Umathunderbarrule",
-            "Umathunderbarvgap",
-            "Umathunderdelimiterbgap",
-            "Umathunderdelimitervgap",
-            "Umiddle",
-            "Unosubscript",
-            "Unosuperscript",
-            "Uoverdelimiter",
-            "Uright",
-            "Uroot",
-            "Uskewed",
-            "Uskewedwithdelims",
-            "Ustack",
-            "Ustartdisplaymath",
-            "Ustartmath",
-            "Ustopdisplaymath",
-            "Ustopmath",
-            "Usubscript",
-            "Usuperscript",
-            "Uunderdelimiter",
-            "Uvextensible",
-            "automaticdiscretionary",
-            "bodydir",
-            "bodydirection",
-            "boundary",
-            "boxdir",
-            "boxdirection",
-            "clearmarks",
-            "crampeddisplaystyle",
-            "crampedscriptscriptstyle",
-            "crampedscriptstyle",
-            "crampedtextstyle",
-            "deferred",
-            "dviextension",
-            "dvifeedback",
-            "dvivariable",
-            "eTeXVersion",
-            "eTeXglueshrinkorder",
-            "eTeXgluestretchorder",
-            "eTeXminorversion",
-            "endlocalcontrol",
-            "etoksapp",
-            "etokspre",
-            "explicitdiscretionary",
-            "formatname",
-            "gleaders",
-            "gtoksapp",
-            "gtokspre",
-            "hjcode",
-            "hpack",
-            "hyphenationmin",
-            "ifcondition",
-            "immediateassigned",
-            "immediateassignment",
-            "insertht",
-            "lastsavedboxresourceindex",
-            "lastsavedimageresourceindex",
-            "lastsavedimageresourcepages",
-            "lastxpos",
-            "lastypos",
-            "leftghost",
-            "letcharcode",
-            "linedir",
-            "linedirection",
-            "localleftbox",
-            "localrightbox",
-            "luatexbanner",
-            "luatexrevision",
-            "mathdir",
-            "mathdirection",
-            "mathoption",
-            "mathstyle",
-            "nohrule",
-            "novrule",
-            "pagedir",
-            "pagedirection",
-            "pardir",
-            "pardirection",
-            "pdffeedback",
-            "pdfvariable",
-            "protrusionboundary",
-            "rightghost",
-            "saveboxresource",
-            "savepos",
-            "textdir",
-            "textdirection",
-            "toksapp",
-            "tokspre",
-            "tpack",
-            "useboxresource",
-            "useimageresource",
-            "vpack",
-            "wordboundary",
-            "xtoksapp",
-            "xtokspre",
-        ] {
+        for n in "Udelimiterover Udelimiterunder Uhextensible Uleft Umathaxis
+            Umathbinbinspacing Umathbinclosespacing Umathbininnerspacing Umathbinopenspacing
+            Umathbinopspacing Umathbinordspacing Umathbinpunctspacing Umathbinrelspacing
+            Umathcharclass Umathcharfam Umathcharslot Umathclosebinspacing
+            Umathcloseclosespacing Umathcloseinnerspacing Umathcloseopenspacing
+            Umathcloseopspacing Umathcloseordspacing Umathclosepunctspacing
+            Umathcloserelspacing Umathconnectoroverlapmin Umathfractiondelsize
+            Umathfractiondenomdown Umathfractiondenomvgap Umathfractionnumup
+            Umathfractionnumvgap Umathfractionrule Umathinnerbinspacing Umathinnerclosespacing
+            Umathinnerinnerspacing Umathinneropenspacing Umathinneropspacing
+            Umathinnerordspacing Umathinnerpunctspacing Umathinnerrelspacing
+            Umathlimitabovebgap Umathlimitabovekern Umathlimitabovevgap Umathlimitbelowbgap
+            Umathlimitbelowkern Umathlimitbelowvgap Umathnolimitsubfactor
+            Umathnolimitsupfactor Umathopbinspacing Umathopclosespacing Umathopenbinspacing
+            Umathopenclosespacing Umathopeninnerspacing Umathopenopenspacing
+            Umathopenopspacing Umathopenordspacing Umathopenpunctspacing Umathopenrelspacing
+            Umathoperatorsize Umathopinnerspacing Umathopopenspacing Umathopopspacing
+            Umathopordspacing Umathoppunctspacing Umathoprelspacing Umathordbinspacing
+            Umathordclosespacing Umathordinnerspacing Umathordopenspacing Umathordopspacing
+            Umathordordspacing Umathordpunctspacing Umathordrelspacing Umathoverbarkern
+            Umathoverbarrule Umathoverbarvgap Umathoverdelimiterbgap Umathoverdelimitervgap
+            Umathpunctbinspacing Umathpunctclosespacing Umathpunctinnerspacing
+            Umathpunctopenspacing Umathpunctopspacing Umathpunctordspacing
+            Umathpunctpunctspacing Umathpunctrelspacing Umathquad Umathradicaldegreeafter
+            Umathradicaldegreebefore Umathradicaldegreeraise Umathradicalkern Umathradicalrule
+            Umathradicalvgap Umathrelbinspacing Umathrelclosespacing Umathrelinnerspacing
+            Umathrelopenspacing Umathrelopspacing Umathrelordspacing Umathrelpunctspacing
+            Umathrelrelspacing Umathskewedfractionhgap Umathskewedfractionvgap
+            Umathspaceafterscript Umathstackdenomdown Umathstacknumup Umathstackvgap
+            Umathsubshiftdown Umathsubshiftdrop Umathsubsupshiftdown Umathsubsupvgap
+            Umathsubtopmax Umathsupbottommin Umathsupshiftdrop Umathsupshiftup
+            Umathsupsubbottommax Umathunderbarkern Umathunderbarrule Umathunderbarvgap
+            Umathunderdelimiterbgap Umathunderdelimitervgap Umiddle Unosubscript
+            Unosuperscript Uoverdelimiter Uright Uroot Uskewed Uskewedwithdelims Ustack
+            Ustartdisplaymath Ustartmath Ustopdisplaymath Ustopmath Usubscript Usuperscript
+            Uunderdelimiter Uvextensible automaticdiscretionary bodydir  boundary
+            boxdir boxdirection clearmarks crampeddisplaystyle crampedscriptscriptstyle
+            crampedscriptstyle crampedtextstyle deferred dviextension dvifeedback dvivariable
+            eTeXVersion eTeXglueshrinkorder eTeXgluestretchorder eTeXminorversion
+            endlocalcontrol etoksapp etokspre explicitdiscretionary formatname gleaders
+            gtoksapp gtokspre hjcode hpack hyphenationmin ifcondition immediateassigned
+            immediateassignment insertht lastsavedboxresourceindex lastsavedimageresourceindex
+            lastsavedimageresourcepages lastxpos lastypos leftghost letcharcode linedir
+             localleftbox localrightbox luatexbanner luatexrevision mathdir
+             mathoption mathstyle nohrule novrule pagedir  pardir
+             pdffeedback protrusionboundary rightghost saveboxresource
+            savepos textdir  toksapp tokspre tpack useboxresource
+            useimageresource vpack wordboundary xtoksapp xtokspre"
+            .split_whitespace()
+        {
             put(it, n, P::Unmodeled);
         }
+        // LuaTeX manual, "Directions": the numeric forms are integers
+        // (`assign_direction`), read with `\the` and assigned with `=`.
+        for n in ["bodydirection", "linedirection", "mathdirection", "pagedirection", "pardirection", "textdirection"] {
+            put(it, n, P::IntegerParameter);
+        }
+        // LuaTeX manual, "TeX and LuaTeX primitives": `\global\let`.
+        put(it, "glet", P::Let { global: true, future: false });
         put(it, "alignmark", P::AlignMark);
         put(it, "aligntab", P::AlignTab);
-        // LuaTeX manual, "Images": `\saveimageresource` is pdfTeX's
-        // `\pdfximage` under its engine-neutral name, with the same syntax.
-        // LuaTeX manual, "Fonts": fonts by their number, and pdfTeX's
-        // `\pdfcopyfont`, `\pdffontexpand`, `\pdfnoligatures` renamed.
         // pdfTeX's `\ifpdfabsnum` and `\ifpdfabsdim` renamed.
         put(it, "ifabsnum", P::If(Cond::AbsNum));
         put(it, "ifabsdim", P::If(Cond::AbsDim));
         // LuaTeX manual, "TeX and LuaTeX primitives": its own integer,
-        // dimension and glue parameters.
-        for n in [
-            "automatichyphenpenalty",
-            "explicithyphenpenalty",
-            "exceptionpenalty",
-            "hyphenpenaltymode",
-            "automatichyphenmode",
-            "compoundhyphenmode",
-            "breakafterdirmode",
-            "discretionaryligaturemode",
-            "draftmode",
-            "firstvalidlanguage",
-            "fixupboxesmode",
-            "glyphdimensionsmode",
-            "hyphenationbounds",
-            "localbrokenpenalty",
-            "localinterlinepenalty",
-            "mathdefaultsmode",
-            "mathdelimitersmode",
-            "mathdisplayskipmode",
-            "mathemptydisplaymode",
-            "matheqnogapstep",
-            "mathflattenmode",
-            "mathitalicsmode",
-            "mathnolimitsmode",
-            "mathpenaltiesmode",
-            "mathrulesfam",
-            "mathrulesmode",
-            "mathrulethicknessmode",
-            "mathscriptboxmode",
-            "mathscriptcharmode",
-            "mathscriptsmode",
-            "mathsurroundmode",
-            "matheqdirmode",
-            "nokerns",
-            "noligs",
-            "nospaces",
-            "outputbox",
-            "predisplaygapfactor",
-            "prebinoppenalty",
-            "prerelpenalty",
-            "prehyphenchar",
-            "posthyphenchar",
-            "preexhyphenchar",
-            "postexhyphenchar",
-            "exhyphenchar",
-            "shapemode",
-            "suppressifcsnameerror",
-            "suppresslongerror",
-            "suppressmathparerror",
-            "suppressoutererror",
-            "suppressprimitiveerror",
-            "variablefam",
-            "tracingfonts",
-            "luacopyinputnodes",
-        ] {
+        // dimension and glue parameters.  The range-checked and read-only
+        // ones among them are in [`limit`], which decides what a write does.
+        for n in "automatichyphenpenalty explicithyphenpenalty exceptionpenalty
+            hyphenpenaltymode automatichyphenmode compoundhyphenmode breakafterdirmode
+            discretionaryligaturemode draftmode firstvalidlanguage fixupboxesmode
+            glyphdimensionsmode hyphenationbounds localbrokenpenalty localinterlinepenalty
+            mathdefaultsmode mathdelimitersmode mathdisplayskipmode mathemptydisplaymode
+            matheqnogapstep mathflattenmode mathitalicsmode mathnolimitsmode mathpenaltiesmode
+            mathrulesfam mathrulesmode mathrulethicknessmode mathscriptboxmode
+            mathscriptcharmode mathscriptsmode mathsurroundmode matheqdirmode nokerns noligs
+            nospaces outputbox predisplaygapfactor prebinoppenalty prerelpenalty prehyphenchar
+            posthyphenchar preexhyphenchar postexhyphenchar exhyphenchar shapemode
+            suppressifcsnameerror suppresslongerror suppressmathparerror suppressoutererror
+            suppressprimitiveerror variablefam tracingfonts luacopyinputnodes"
+            .split_whitespace()
+        {
             put(it, n, P::IntegerParameter);
         }
-        for n in [
-            "pageheight",
-            "pagewidth",
-            "pxdimen",
-            "pagebottomoffset",
-            "pagetopoffset",
-            "pageleftoffset",
-            "pagerightoffset",
-        ] {
+        for n in "pageheight pagewidth pxdimen pagebottomoffset pagetopoffset pageleftoffset
+            pagerightoffset"
+            .split_whitespace()
+        {
             put(it, n, P::DimenParameter);
         }
         put(it, "mathsurroundskip", P::GlueParameter { mu: false });
@@ -1868,63 +1709,38 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     // The engine primitives in full: each one's own kind, which says what it
     // reads and what it does (tex.web parts 49 and 30; etex_man § 3; the
     // pdfTeX manual).
-    put(it, "abovedisplayshortskip", P::GlueParameter { mu: false });
-    put(it, "abovedisplayskip", P::GlueParameter { mu: false });
-    put(it, "baselineskip", P::GlueParameter { mu: false });
-    put(it, "belowdisplayshortskip", P::GlueParameter { mu: false });
-    put(it, "belowdisplayskip", P::GlueParameter { mu: false });
-    put(it, "leftskip", P::GlueParameter { mu: false });
-    put(it, "lineskip", P::GlueParameter { mu: false });
-    put(it, "parfillskip", P::GlueParameter { mu: false });
-    put(it, "parskip", P::GlueParameter { mu: false });
-    put(it, "rightskip", P::GlueParameter { mu: false });
-    put(it, "spaceskip", P::GlueParameter { mu: false });
-    put(it, "splittopskip", P::GlueParameter { mu: false });
-    put(it, "tabskip", P::GlueParameter { mu: false });
-    put(it, "topskip", P::GlueParameter { mu: false });
-    put(it, "xspaceskip", P::GlueParameter { mu: false });
+    for n in "abovedisplayshortskip abovedisplayskip baselineskip belowdisplayshortskip
+        belowdisplayskip leftskip lineskip parfillskip parskip rightskip spaceskip
+        splittopskip tabskip topskip xspaceskip"
+        .split_whitespace()
+    {
+        put(it, n, P::GlueParameter { mu: false });
+    }
     put(it, "thinmuskip", P::GlueParameter { mu: true });
     put(it, "medmuskip", P::GlueParameter { mu: true });
     put(it, "thickmuskip", P::GlueParameter { mu: true });
-    put(it, "everypar", P::TokensParameter);
-    put(it, "everymath", P::TokensParameter);
-    put(it, "everydisplay", P::TokensParameter);
-    put(it, "everyhbox", P::TokensParameter);
-    put(it, "everyvbox", P::TokensParameter);
-    put(it, "everyjob", P::TokensParameter);
-    put(it, "everycr", P::TokensParameter);
-    put(it, "everyeof", P::TokensParameter);
-    put(it, "output", P::TokensParameter);
-    put(it, "errhelp", P::TokensParameter);
-    put(it, "tracingmacros", P::IntegerParameter);
-    put(it, "tracingcommands", P::IntegerParameter);
-    put(it, "tracingonline", P::IntegerParameter);
-    put(it, "tracingassigns", P::IntegerParameter);
-    put(it, "tracinggroups", P::IntegerParameter);
-    put(it, "errorcontextlines", P::IntegerParameter);
-    put(it, "lastlinefit", P::IntegerParameter);
-    put(it, "savinghyphcodes", P::IntegerParameter);
-    put(it, "savingvdiscards", P::IntegerParameter);
-    put(it, "tracingstats", P::IntegerParameter);
-    put(it, "tracingparagraphs", P::IntegerParameter);
-    put(it, "tracingpages", P::IntegerParameter);
-    put(it, "tracingoutput", P::IntegerParameter);
-    put(it, "tracinglostchars", P::IntegerParameter);
-    put(it, "tracingrestores", P::IntegerParameter);
-    put(it, "predisplaydirection", P::IntegerParameter);
-    put(it, "tracingifs", P::IntegerParameter);
-    put(it, "tracingscantokens", P::IntegerParameter);
-    put(it, "tracingnesting", P::IntegerParameter);
-    put(it, "TeXXeTstate", P::IntegerParameter);
-    put(it, "interactionmode", P::IntegerParameter);
+    for n in "everypar everymath everydisplay everyhbox everyvbox everyjob everycr everyeof
+        output errhelp"
+        .split_whitespace()
+    {
+        put(it, n, P::TokensParameter);
+    }
+    for n in "tracingmacros tracingcommands tracingonline tracingassigns tracinggroups
+        errorcontextlines lastlinefit savinghyphcodes savingvdiscards tracingstats
+        tracingparagraphs tracingpages tracingoutput tracinglostchars tracingrestores
+        predisplaydirection tracingifs tracingscantokens tracingnesting TeXXeTstate
+        interactionmode"
+        .split_whitespace()
+    {
+        put(it, n, P::IntegerParameter);
+    }
     put(it, "wd", P::Special(Special::BoxDimen));
     put(it, "ht", P::Special(Special::BoxDimen));
     put(it, "dp", P::Special(Special::BoxDimen));
     put(it, "parshape", P::Special(Special::ParShape));
-    put(it, "interlinepenalties", P::Special(Special::Penalties));
-    put(it, "clubpenalties", P::Special(Special::Penalties));
-    put(it, "widowpenalties", P::Special(Special::Penalties));
-    put(it, "displaywidowpenalties", P::Special(Special::Penalties));
+    for n in "interlinepenalties clubpenalties widowpenalties displaywidowpenalties".split_whitespace() {
+        put(it, n, P::Special(Special::Penalties));
+    }
     put(it, "lastpenalty", P::LastItem(LastItem::Penalty));
     put(it, "lastkern", P::LastItem(LastItem::Kern));
     put(it, "lastskip", P::LastItem(LastItem::Skip));
@@ -1955,55 +1771,51 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "skewchar", P::FontParam(FontParam::SkewChar));
     put(it, "nullfont", P::FontIdent(0));
     put(it, "muskipdef", P::RegisterDef(RegKind::MuSkip));
-    put(it, "showlists", P::Command(Syntax::Nothing));
-    put(it, "showgroups", P::Command(Syntax::Nothing));
-    put(it, "showifs", P::Command(Syntax::Nothing));
-    put(it, "dump", P::Command(Syntax::Nothing));
+    for n in "showlists showgroups showifs".split_whitespace() {
+        put(it, n, P::Command(Syntax::Nothing));
+    }
     put(it, "noboundary", P::Mode(ModeCmd::Horizontal(Material::NoBoundary)));
     put(it, "indent", P::Mode(ModeCmd::StartPar { indent: true }));
     put(it, "-", P::Mode(ModeCmd::Horizontal(Material::Hyphen)));
-    put(it, "/", P::Command(Syntax::Nothing));
-    put(it, "cr", P::Command(Syntax::Nothing));
-    put(it, "crcr", P::Command(Syntax::Nothing));
-    put(it, "span", P::Command(Syntax::Nothing));
-    put(it, "omit", P::Command(Syntax::Nothing));
+    for n in "/ cr crcr span omit".split_whitespace() {
+        put(it, n, P::Command(Syntax::Nothing));
+    }
     put(it, "noalign", P::Mode(ModeCmd::NoAlign));
-    put(it, "displaylimits", P::Command(Syntax::Nothing));
-    put(it, "limits", P::Command(Syntax::Nothing));
-    put(it, "nolimits", P::Command(Syntax::Nothing));
-    put(it, "displaystyle", P::Command(Syntax::Nothing));
-    put(it, "textstyle", P::Command(Syntax::Nothing));
-    put(it, "scriptstyle", P::Command(Syntax::Nothing));
-    put(it, "scriptscriptstyle", P::Command(Syntax::Nothing));
-    put(it, "mathord", P::Command(Syntax::Nothing));
-    put(it, "mathop", P::Command(Syntax::Nothing));
-    put(it, "mathbin", P::Command(Syntax::Nothing));
-    put(it, "mathrel", P::Command(Syntax::Nothing));
-    put(it, "mathopen", P::Command(Syntax::Nothing));
-    put(it, "mathclose", P::Command(Syntax::Nothing));
-    put(it, "mathpunct", P::Command(Syntax::Nothing));
-    put(it, "mathinner", P::Command(Syntax::Nothing));
-    put(it, "underline", P::Command(Syntax::Nothing));
-    put(it, "overline", P::Command(Syntax::Nothing));
-    put(it, "over", P::Command(Syntax::Nothing));
-    put(it, "atop", P::Command(Syntax::Nothing));
+    put(it, "displaylimits", P::Command(Syntax::Limits));
+    put(it, "limits", P::Command(Syntax::Limits));
+    put(it, "nolimits", P::Command(Syntax::Limits));
+    for (k, n) in "displaystyle textstyle scriptstyle scriptscriptstyle".split_whitespace().enumerate() {
+        put(it, n, P::Mode(ModeCmd::MathStyle(2 * k as u8)));
+    }
+    put(it, "mathord", P::Command(Syntax::MathComp(0)));
+    put(it, "mathop", P::Command(Syntax::MathComp(1)));
+    put(it, "mathbin", P::Command(Syntax::MathComp(2)));
+    put(it, "mathrel", P::Command(Syntax::MathComp(3)));
+    put(it, "mathopen", P::Command(Syntax::MathComp(4)));
+    put(it, "mathclose", P::Command(Syntax::MathComp(5)));
+    put(it, "mathpunct", P::Command(Syntax::MathComp(6)));
+    put(it, "mathinner", P::Command(Syntax::MathComp(7)));
+    for n in "underline overline".split_whitespace() {
+        put(it, n, P::Command(Syntax::Nothing));
+    }
     put(it, "eqno", P::Mode(ModeCmd::EqNo));
     put(it, "leqno", P::Mode(ModeCmd::EqNo));
-    put(it, "nonscript", P::Command(Syntax::Nothing));
-    put(it, "beginL", P::Command(Syntax::Nothing));
-    put(it, "endL", P::Command(Syntax::Nothing));
-    put(it, "beginR", P::Command(Syntax::Nothing));
-    put(it, "endR", P::Command(Syntax::Nothing));
-    put(it, "pagediscards", P::Mode(ModeCmd::Vertical(Material::Discards)));
-    put(it, "splitdiscards", P::Mode(ModeCmd::Vertical(Material::Discards)));
+    for n in ["beginL", "endL", "beginR", "endR"] {
+        put(it, n, P::Mode(ModeCmd::Horizontal(Material::LR)));
+    }
+    // tex.web § 1171: glue that cancels the next in script styles.
+    put(it, "nonscript", P::Command(Syntax::NonScript));
+    put(it, "pagediscards", P::Mode(ModeCmd::Vertical(Material::Discards(false))));
+    put(it, "splitdiscards", P::Mode(ModeCmd::Vertical(Material::Discards(true))));
     put(it, "shipout", P::Mode(ModeCmd::ShipOut));
     put(it, "discretionary", P::Mode(ModeCmd::Horizontal(Material::Discretionary)));
     put(it, "mathchoice", P::Mode(ModeCmd::MathChoice));
-    for n in ["hfil", "hfill", "hss", "hfilneg"] {
-        put(it, n, P::Mode(ModeCmd::Horizontal(Material::Fil)));
+    // tex.web § 1058: `fil_code` to `fil_neg_code`.
+    for (code, n) in ["hfil", "hfill", "hss", "hfilneg"].into_iter().enumerate() {
+        put(it, n, P::Mode(ModeCmd::Horizontal(Material::Fil(code as u8))));
     }
-    for n in ["vfil", "vfill", "vss", "vfilneg"] {
-        put(it, n, P::Mode(ModeCmd::Vertical(Material::Fil)));
+    for (code, n) in ["vfil", "vfill", "vss", "vfilneg"].into_iter().enumerate() {
+        put(it, n, P::Mode(ModeCmd::Vertical(Material::Fil(code as u8))));
     }
     put(it, "hskip", P::Mode(ModeCmd::Horizontal(Material::Glue)));
     put(it, "vskip", P::Mode(ModeCmd::Vertical(Material::Glue)));
@@ -2016,22 +1828,26 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, n, P::Mode(ModeCmd::Leaders));
     }
     put(it, "vadjust", P::Mode(ModeCmd::Insert { vadjust: true }));
-    put(it, "left", P::Mode(ModeCmd::Left));
+    put(it, "left", P::Mode(ModeCmd::LeftRight { opens: true, closes: false }));
+    put(it, "middle", P::Mode(ModeCmd::LeftRight { opens: true, closes: true }));
+    put(it, "right", P::Mode(ModeCmd::LeftRight { opens: false, closes: true }));
     put(it, "lastbox", P::Mode(ModeCmd::Box(BoxCmd::LastBox)));
     put(it, "batchmode", P::Command(Syntax::Interaction(0)));
     put(it, "nonstopmode", P::Command(Syntax::Interaction(1)));
     put(it, "scrollmode", P::Command(Syntax::Interaction(2)));
     put(it, "errorstopmode", P::Command(Syntax::Interaction(3)));
-    put(it, "above", P::Command(Syntax::Dimen));
-    put(it, "abovewithdelims", P::Command(Syntax::Delimiters { dimen: true }));
-    put(it, "atopwithdelims", P::Command(Syntax::Delimiters { dimen: false }));
-    put(it, "overwithdelims", P::Command(Syntax::Delimiters { dimen: false }));
+    // tex.web § 1178: `above_code`, `over_code`, `atop_code`, then `delimited_code` plus each.
+    for (n, delims, dimen) in [("above", false, true), ("over", false, false), ("atop", false, false)] {
+        put(it, n, P::Command(Syntax::Fraction { delims, dimen }));
+        put(it, &format!("{n}withdelims"), P::Command(Syntax::Fraction { delims: true, dimen }));
+    }
     put(it, "char", P::Mode(ModeCmd::Horizontal(Material::Char)));
-    put(it, "mathchar", P::Command(Syntax::Number));
-    put(it, "delimiter", P::Command(Syntax::Number));
-    put(it, "radical", P::Command(Syntax::Number));
-    put(it, "mathaccent", P::Command(Syntax::Number));
-    put(it, "setlanguage", P::Command(Syntax::Number));
+    for n in "mathchar delimiter radical mathaccent".split_whitespace() {
+        put(it, n, P::Command(Syntax::Number));
+    }
+    // An extension that inserts a whatsit (tex.web part 53), except in
+    // LuaTeX, where it is an integer parameter (`assign_int`).
+    put(it, "setlanguage", if engine.has_luatex() { P::IntegerParameter } else { P::Command(Syntax::SetLanguage) });
     put(it, "closeout", P::Command(Syntax::CloseOut));
     put(it, "showbox", P::Command(Syntax::Number));
     put(it, "copy", P::Mode(ModeCmd::Box(BoxCmd::Copy)));
@@ -2040,10 +1856,9 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "unhcopy", P::Mode(ModeCmd::Horizontal(Material::Unpackage { take: false })));
     put(it, "unvcopy", P::Mode(ModeCmd::Vertical(Material::Unpackage { take: false })));
     put(it, "insert", P::Mode(ModeCmd::Insert { vadjust: false }));
-    put(it, "mark", P::Command(Syntax::GeneralText));
-    put(it, "hyphenation", P::Command(Syntax::GeneralText));
-    put(it, "patterns", P::Command(Syntax::GeneralText));
-    put(it, "showtokens", P::Command(Syntax::GeneralText));
+    for n in "mark hyphenation patterns showtokens".split_whitespace() {
+        put(it, n, P::Command(Syntax::GeneralText));
+    }
     put(it, "marks", P::Command(Syntax::NumberText));
     put(it, "show", P::Command(Syntax::Token));
     put(it, "showthe", P::Command(Syntax::Internal));
@@ -2064,62 +1879,47 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "readline", P::Command(Syntax::ReadLine));
     put(it, "eTeXrevision", P::Convert(Convert::EtexRevision));
     put(it, "fontname", P::Convert(Convert::FontName));
-    put(it, "topmark", P::Convert(Convert::Mark));
-    put(it, "firstmark", P::Convert(Convert::Mark));
-    put(it, "botmark", P::Convert(Convert::Mark));
-    put(it, "splitfirstmark", P::Convert(Convert::Mark));
-    put(it, "splitbotmark", P::Convert(Convert::Mark));
-    put(it, "topmarks", P::Convert(Convert::Marks));
-    put(it, "firstmarks", P::Convert(Convert::Marks));
-    put(it, "botmarks", P::Convert(Convert::Marks));
-    put(it, "splitfirstmarks", P::Convert(Convert::Marks));
-    put(it, "splitbotmarks", P::Convert(Convert::Marks));
+    for (code, n) in (0..).zip("topmark firstmark botmark splitfirstmark splitbotmark".split_whitespace()) {
+        put(it, n, P::Convert(Convert::Mark(code)));
+        put(it, &format!("{n}s"), P::Convert(Convert::Marks(code)));
+    }
     put(it, "iffontchar", P::If(Cond::FontChar));
     if engine.has_pdftex() {
         put(it, "pdfpageattr", P::TokensParameter);
         put(it, "pdfpagesattr", P::TokensParameter);
         put(it, "pdfpkmode", P::TokensParameter);
-        put(it, "pdfadjustspacing", P::IntegerParameter);
-        put(it, "pdfcompresslevel", P::IntegerParameter);
-        put(it, "pdfdecimaldigits", P::IntegerParameter);
-        put(it, "pdfdraftmode", P::IntegerParameter);
-        put(it, "pdfgentounicode", P::IntegerParameter);
-        put(it, "pdfminorversion", P::IntegerParameter);
-        put(it, "pdfobjcompresslevel", P::IntegerParameter);
-        put(it, "pdfprotrudechars", P::IntegerParameter);
-        put(it, "pdfuniqueresname", P::IntegerParameter);
+        for n in "pdfadjustspacing pdfcompresslevel pdfdecimaldigits pdfdraftmode
+            pdfgentounicode pdfminorversion pdfobjcompresslevel pdfprotrudechars
+            pdfuniqueresname"
+            .split_whitespace()
+        {
+            put(it, n, P::IntegerParameter);
+        }
         put(it, "pdfhorigin", P::DimenParameter);
         put(it, "pdfvorigin", P::DimenParameter);
         put(it, "pdftexversion", P::LastItem(LastItem::PdftexVersion));
         put(it, "pdfelapsedtime", P::LastItem(LastItem::ElapsedTime));
         put(it, "pdfrandomseed", P::LastItem(LastItem::RandomSeed));
         put(it, "pdfshellescape", P::LastItem(LastItem::ShellEscape));
-        put(it, "knaccode", P::FontParam(FontParam::CharCode(0)));
-        put(it, "knbccode", P::FontParam(FontParam::CharCode(0)));
-        put(it, "knbscode", P::FontParam(FontParam::CharCode(0)));
-        put(it, "shbscode", P::FontParam(FontParam::CharCode(0)));
-        put(it, "stbscode", P::FontParam(FontParam::CharCode(0)));
-        put(it, "pdfsave", P::Command(Syntax::Nothing));
-        put(it, "pdfrestore", P::Command(Syntax::Nothing));
-        put(it, "pdfresettimer", P::Command(Syntax::Nothing));
-        put(it, "pdfrunninglinkoff", P::Command(Syntax::Nothing));
-        put(it, "pdfrunninglinkon", P::Command(Syntax::Nothing));
-        put(it, "pdfinterwordspaceoff", P::Command(Syntax::Nothing));
-        put(it, "pdfinterwordspaceon", P::Command(Syntax::Nothing));
-        put(it, "pdffakespace", P::Command(Syntax::Nothing));
-        put(it, "pdfendlink", P::Command(Syntax::Nothing));
-        put(it, "pdfendthread", P::Command(Syntax::Nothing));
-        put(it, "pdfrefobj", P::Command(Syntax::Number));
-        put(it, "pdfrefxform", P::Command(Syntax::Number));
-        put(it, "pdfrefximage", P::Command(Syntax::Number));
-        put(it, "pdfsetrandomseed", P::Command(Syntax::Number));
-        put(it, "pdfmapfile", P::Command(Syntax::GeneralText));
-        put(it, "pdfmapline", P::Command(Syntax::GeneralText));
-        put(it, "pdftrailer", P::Command(Syntax::GeneralText));
-        put(it, "pdftrailerid", P::Command(Syntax::GeneralText));
-        put(it, "pdfinfo", P::Command(Syntax::GeneralText));
-        put(it, "pdfnames", P::Command(Syntax::GeneralText));
-        put(it, "pdfsetmatrix", P::Command(Syntax::GeneralText));
+        for n in "knaccode knbccode knbscode shbscode stbscode".split_whitespace() {
+            put(it, n, P::FontParam(FontParam::CharCode(0)));
+        }
+        put(it, "pdfsave", P::Command(Syntax::Whatsit));
+        put(it, "pdfrestore", P::Command(Syntax::Whatsit));
+        for n in "pdfresettimer pdfrunninglinkoff pdfrunninglinkon pdfinterwordspaceoff
+            pdfinterwordspaceon pdffakespace"
+            .split_whitespace()
+        {
+            put(it, n, P::Command(Syntax::Nothing));
+        }
+        put(it, "pdfendlink", P::Command(Syntax::Whatsit));
+        put(it, "pdfendthread", P::Command(Syntax::Whatsit));
+        for n in "pdfrefobj pdfrefxform pdfrefximage pdfsetrandomseed".split_whitespace() {
+            put(it, n, P::Command(Syntax::Number));
+        }
+        for n in "pdfmapfile pdfmapline pdftrailer pdftrailerid pdfinfo pdfnames pdfsetmatrix".split_whitespace() {
+            put(it, n, P::Command(Syntax::GeneralText));
+        }
         put(it, "pdfglyphtounicode", P::Command(Syntax::TwoTexts));
         put(it, "pdffontattr", P::Command(Syntax::FontText));
         put(it, "pdfincludechars", P::Command(Syntax::FontText));
@@ -2165,11 +1965,13 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "ifpdfprimitive", P::If(Cond::Primitive));
     }
     if engine.has_pdftex_extensions() {
+        // New in TeX Live 2025 for all three; none of the TeX Live 2023
+        // engines has it.
         put(it, "ignoreprimitiveerror", P::IntegerParameter);
         put(it, "partokencontext", P::IntegerParameter);
         put(it, "lpcode", P::FontParam(FontParam::CharCode(0)));
         put(it, "rpcode", P::FontParam(FontParam::CharCode(0)));
-        put(it, "leftmarginkern", P::Convert(Convert::MarginKern));
+        put(it, "leftmarginkern", P::Convert(Convert::LeftMarginKern));
         put(it, "rightmarginkern", P::Convert(Convert::MarginKern));
         put(it, "ifincsname", P::If(Cond::InCsname));
     }
@@ -2178,11 +1980,11 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
         put(it, "pdfpagewidth", P::DimenParameter);
         put(it, "pdflastxpos", P::LastItem(LastItem::LastXPos));
         put(it, "pdflastypos", P::LastItem(LastItem::LastYPos));
-        put(it, "pdfsavepos", P::Command(Syntax::Nothing));
+        put(it, "pdfsavepos", P::Command(Syntax::Whatsit));
     }
     if matches!(engine, Engine::PdfTeX | Engine::LuaTeX) {
         put(it, "efcode", P::FontParam(FontParam::CharCode(1000)));
-        put(it, "tagcode", P::FontParam(FontParam::CharCode(1)));
+        put(it, "tagcode", P::FontParam(FontParam::TagCode { lig: engine == Engine::PdfTeX }));
         put(it, "quitvmode", P::Mode(ModeCmd::QuitVMode));
         put(it, "letterspacefont", P::Command(Syntax::CopyFont { amount: true }));
     }
@@ -2204,6 +2006,7 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     }
     if matches!(engine, Engine::LuaTeX) {
         put(it, "pdfextension", P::Pdf(PdfOp::Extension));
+        put(it, "pdfvariable", P::Pdf(PdfOp::Variable));
     }
 
     put(it, "relax", P::Relax);
@@ -2212,6 +2015,21 @@ pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meani
     put(it, "ignorespaces", P::IgnoreSpaces);
 
     table
+}
+
+/// The primitive each name starts as in `engine`, computed once per engine.
+pub fn primitive_names(engine: Engine) -> &'static HashMap<String, Primitive> {
+    static TABLES: Mutex<Vec<(Engine, &'static HashMap<String, Primitive>)>> = Mutex::new(Vec::new());
+    let mut tables = TABLES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, t)) = tables.iter().find(|(e, _)| *e == engine) {
+        return t;
+    }
+    let mut it = Interner::from_names(Vec::new());
+    let table = initial_meanings(&mut it, engine);
+    let names = table.into_iter().filter_map(|(s, m)| Some((it.name(s).to_string(), m.prim()?))).collect();
+    let names: &'static _ = Box::leak(Box::new(names));
+    tables.push((engine, names));
+    names
 }
 
 /// What `\input docstrip` makes available to a batch file: satex models the
@@ -2235,24 +2053,346 @@ pub fn docstrip_meanings(it: &mut Interner) -> Vec<(Sym, Meaning)> {
     for n in ["usepreamble", "usepostamble"] {
         put(it, n, D::Setting { arguments: 1 });
     }
-    for n in [
-        "keepsilent",
-        "showprogress",
-        "askforoverwritetrue",
-        "askforoverwritefalse",
-        "askonceonly",
-        "nopreamble",
-        "nopostamble",
-        "defaultpreamble",
-        "defaultpostamble",
-        "ifToplevel",
-    ] {
+    for n in "keepsilent showprogress askforoverwritetrue askforoverwritefalse askonceonly
+        nopreamble nopostamble defaultpreamble defaultpostamble ifToplevel"
+        .split_whitespace()
+    {
         put(it, n, D::Setting { arguments: 0 });
     }
     table.push((it.intern("endbatchfile"), Meaning::Primitive(P::Endinput)));
     table.push((it.intern("Msg"), Meaning::Primitive(P::Message { error: false })));
     table
 }
+
+/// The character a packed math code carries, in its low 21 bits (XeTeX
+/// reference, "Math"; LuaTeX manual, "Math").
+const MATH_SLOT_MASK: i64 = 0x1f_ffff;
+/// The highest character a packed math code may carry.
+const MATH_SLOT_MAX: i64 = 0x10_ffff;
+/// XeTeX's active marker, which is a math code of its own.
+const MATH_ACTIVE: i64 = 0x1f_ffff;
+/// tex.web § 1232: `"8000` is TeX82's active math code.
+const MATH_CLASSIC_ACTIVE: i64 = 0x8000;
+/// The place a packed math code's class sits at, just above the character.
+const MATH_CLASS_UNIT: i64 = MATH_SLOT_MASK + 1;
+/// The place its family sits at, just above the three class bits.
+const MATH_FAMILY_UNIT: i64 = MATH_CLASS_UNIT * 8;
+
+/// What an engine stores for an assigned math code. XeTeX keeps whatever was
+/// written. LuaTeX splits it into family, class and character and stores it
+/// recomposed (LuaTeX manual, "Math"), with family/class from a division that
+/// truncates towards zero, so a negative code comes back changed:
+/// `-2147483647` is stored as `-2145386495`. Non-negative codes are unchanged
+/// under either engine.
+fn recompose_math_code(code: i64, engine: Engine) -> i64 {
+    if engine != Engine::LuaTeX {
+        return code;
+    }
+    let (family, class) = (code / MATH_FAMILY_UNIT, code / MATH_CLASS_UNIT % 8);
+    family * MATH_FAMILY_UNIT + class * MATH_CLASS_UNIT + (code & MATH_SLOT_MASK)
+}
+
+/// XeTeX and LuaTeX keep one math code per character, packed as a family, a
+/// class and a character (XeTeX reference; LuaTeX manual, "Math").  TeX82's
+/// fifteen-bit code goes into the same table, so it is packed on the way in.
+pub fn pack_math_code(code: i64, engine: Engine) -> i64 {
+    if !engine.has_unicode_math() {
+        return code;
+    }
+    // XeTeX keeps the active math code as a marker of its own, while LuaTeX
+    // packs it like any other, as class 8.
+    if engine == Engine::XeTeX && code == MATH_CLASSIC_ACTIVE {
+        return MATH_ACTIVE;
+    }
+    ((code >> 8) & 0xf) << 24 | (code >> 12) << 21 | (code & 0xff)
+}
+
+/// The class, family and character `\meaning` shows for a packed math code;
+/// the two engines split it apart differently. XeTeX takes the three as
+/// bits. LuaTeX divides truncating towards zero, so a negative code loses
+/// the borrow and shows a class one above its bits: `-14680063` is
+/// `"2"FF"000001`, not `"1"FF"000001` (measured on TeX Live 2026).
+pub fn split_math_code(code: i64, engine: Engine) -> (i64, i64, i64) {
+    let slot = code & MATH_SLOT_MASK;
+    if engine != Engine::LuaTeX {
+        return (code >> 21 & 7, code >> 24 & 0xff, slot);
+    }
+    let rest = code / MATH_CLASS_UNIT;
+    (rest & 7, rest >> 3 & 0xff, slot)
+}
+
+/// What `\the\mathcode` gives for a packed code.  XeTeX reads it back as
+/// TeX82's, and gives 0 where it does not fit ("Extended mathchar used as
+/// mathchar"); LuaTeX hands the packed code over as it stands.
+pub fn read_math_code(code: i64, engine: Engine) -> i64 {
+    if engine != Engine::XeTeX {
+        return code;
+    }
+    if code == MATH_ACTIVE {
+        return MATH_CLASSIC_ACTIVE;
+    }
+    let (family, class, slot) = ((code >> 24) & 0xff, (code >> 21) & 7, code & MATH_SLOT_MASK);
+    if family > 0xf || slot > 0xff { 0 } else { class << 12 | family << 8 | slot }
+}
+
+/// What an engine does with a value a parameter will not take, and what a
+/// read gives before anything is assigned.  Every entry of [`limit`] was
+/// measured with `\showthe` on a real engine, not read off a manual.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Limit {
+    /// The parameter takes `lo..=hi` and starts at `start`.  Anything else
+    /// is an error, after which `bad` is stored, or the old value stays
+    /// where there is none (tex.web §§ 1243, 1244).
+    Range { start: i64, lo: i64, hi: i64, bad: Option<i64> },
+    /// The parameter is read-only: a write is accepted and ignored, and a
+    /// read always gives this value (LuaTeX manual, "Math").
+    Fixed(i64),
+    /// A packed math code, whose engine decides both what it refuses and
+    /// what it stores.  An invalid one is an error and a recovery value is
+    /// stored: XeTeX's active marker where the low bits ask for it, zero
+    /// otherwise.
+    MathCode { engine: Engine },
+    /// The parameter takes `lo..=hi`, starts at `other` and silently
+    /// stores `other` for anything else: LuaTeX's directions.
+    Quiet { lo: i64, hi: i64, other: i64 },
+}
+
+/// What an engine does with one assigned value.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Taken {
+    /// Stored as it is.
+    Yes,
+    /// Taken without an error, but stored as this: the engine split the
+    /// value into fields and put them back together, or replaced a value
+    /// it does not take.
+    Recomposed(i64),
+    /// Refused, and the old value stays.
+    Old,
+    /// Refused, and this value is stored instead.
+    Instead(i64),
+}
+
+impl Limit {
+    /// What a read gives before anything is assigned, where a parameter has
+    /// one of its own.  A code table has none: its default is per character.
+    pub fn start(self) -> Option<i64> {
+        match self {
+            Limit::Range { start, .. } => Some(start),
+            Limit::Fixed(value) => Some(value),
+            Limit::MathCode { .. } => None,
+            Limit::Quiet { other, .. } => Some(other),
+        }
+    }
+
+    /// What the engine does with `value`.
+    pub fn take(self, value: i64) -> Taken {
+        match self {
+            Limit::Range { lo, hi, bad, .. } => match bad {
+                _ if (lo..=hi).contains(&value) => Taken::Yes,
+                Some(bad) => Taken::Instead(bad),
+                None => Taken::Old,
+            },
+            Limit::Fixed(_) => Taken::Old,
+            Limit::Quiet { lo, hi, other } => match (lo..=hi).contains(&value) {
+                true => Taken::Yes,
+                false => Taken::Recomposed(other),
+            },
+            // Both engines check the low 21 bits alone, so a negative value
+            // whose character fits is taken.  XeTeX takes `0x1FFFFF` as the
+            // active marker and falls back to it for any other value that
+            // asks for it.  LuaTeX has no marker and falls back to zero.
+            Limit::MathCode { engine } => {
+                let active = engine == Engine::XeTeX;
+                let slot = value & MATH_SLOT_MASK;
+                if slot <= MATH_SLOT_MAX || (active && value == MATH_ACTIVE) {
+                    let stored = recompose_math_code(value, engine);
+                    if stored == value { Taken::Yes } else { Taken::Recomposed(stored) }
+                } else if active && slot == MATH_ACTIVE {
+                    Taken::Instead(MATH_ACTIVE)
+                } else {
+                    Taken::Instead(0)
+                }
+            }
+        }
+    }
+
+    /// Every value the parameter can end up holding, which an assignment
+    /// satex could not pin down joins the old value with.
+    pub fn reach(self) -> (i64, i64) {
+        match self {
+            Limit::Range { lo, hi, .. } | Limit::Quiet { lo, hi, .. } => (lo, hi),
+            Limit::Fixed(value) => (value, value),
+            Limit::MathCode { .. } => (crate::value::WORD_MIN, crate::value::WORD_MAX),
+        }
+    }
+
+    /// Why the engine refused `value`, in the words `assign_char_code` uses
+    /// for the same shape.
+    pub fn refusal(self, name: &str, value: i64) -> String {
+        match self {
+            Limit::Range { lo, hi, bad, .. } => {
+                let after = match bad {
+                    Some(bad) => format!("{bad} is used"),
+                    None => "the old value is kept".into(),
+                };
+                format!("invalid value ({value}) for \\{name}, which takes {lo}..{hi}; {after}")
+            }
+            Limit::Quiet { lo, hi, other } => {
+                format!("\\{name} takes {lo}..{hi}; {value} becomes {other} without an error")
+            }
+            Limit::Fixed(reads) => format!("\\{name} is read-only and reads {reads}; this assignment does nothing"),
+            Limit::MathCode { .. } => {
+                let stored = match self.take(value) {
+                    Taken::Instead(stored) => stored,
+                    _ => 0,
+                };
+                format!("invalid math code ({value}) for \\{name}; {stored} is used")
+            }
+        }
+    }
+}
+
+/// Whether the installed LuaTeX takes LuaTeX's math mode parameters as
+/// ordinary integer parameters: LuaTeX 1.22 and before do (probed). Where
+/// the release is not known, or newer, they read as fixed.
+fn lua_math_modes_assignable() -> bool {
+    crate::plugin::lua::installed_version().is_some_and(|v| v <= 122)
+}
+
+/// The parameters an engine range-checks, refuses to change, or starts away
+/// from zero, and what it does with a value it will not take.  The ranges
+/// and the recovery values differ by engine, so the engine decides.
+pub fn limit(name: &str, engine: Engine) -> Option<Limit> {
+    Some(match name {
+        // tex.web § 1244: `\prevgraf` may not be negative.
+        "prevgraf" => Limit::Range { start: 0, lo: 0, hi: crate::value::WORD_MAX, bad: None },
+        // tex.web § 1265 (`new_interaction`): batch, nonstop, scroll and
+        // error-stop mode, and § 74 starts a run in the last of them.
+        "interactionmode" => Limit::Range { start: crate::commands::ERROR_STOP_MODE, lo: 0, hi: 3, bad: None },
+        // LuaTeX manual, "The output routine": `\outputbox` names the box
+        // the output routine finds the page in, and starts at 255.
+        "outputbox" if engine == Engine::LuaTeX => Limit::Range { start: 255, lo: 0, hi: 65535, bad: None },
+        // LuaTeX manual, "Math": these report how the math machinery is
+        // built, so a write is accepted and ignored; LuaTeX 1.22 (TeX Live
+        // 2025, probed) still takes them as integer parameters.
+        "mathnolimitsmode" | "mathitalicsmode" | "mathdelimitersmode"
+            if engine == Engine::LuaTeX && !lua_math_modes_assignable() =>
+        {
+            Limit::Fixed(0)
+        }
+        "mathdefaultsmode" | "mathscriptboxmode" | "mathscriptcharmode"
+            if engine == Engine::LuaTeX && !lua_math_modes_assignable() =>
+        {
+            Limit::Fixed(1)
+        }
+        // tex.web § 1243 (`alter_aux`): "Bad space factor", after which the
+        // engine goes on with 1000, which is also a fresh list's.
+        // LuaTeX manual, "Directions": 0 to 3, and anything else is
+        // silently 0 (probed with LuaTeX).
+        "bodydirection" | "linedirection" | "mathdirection" | "pagedirection" | "pardirection" | "textdirection"
+            if engine == Engine::LuaTeX =>
+        {
+            Limit::Quiet { lo: 0, hi: 3, other: 0 }
+        }
+        "spacefactor" => Limit::Range { start: 1000, lo: 1, hi: 32767, bad: Some(1000) },
+        // XeTeX reference and LuaTeX manual, "Math": the packed form of a
+        // math code, which only XeTeX gives an active marker.  A
+        // `\Umathcharnumdef` takes the same packed code and recovers the
+        // same way.
+        "Umathcodenum" | "Umathcharnumdef" | "XeTeXmathcodenum" | "XeTeXmathcharnumdef"
+            if engine.has_unicode_math() =>
+        {
+            Limit::MathCode { engine }
+        }
+        _ => return None,
+    })
+}
+
+/// Where an engine's INITEX starts an integer or dimension parameter that
+/// is not zero, beyond the TeX82 ones `Machine` sets (tex.web § 240) and the
+/// starts in [`limit`]; dimensions in sp.  Measured with `\showthe`
+/// (doc/primitive-facts/*.tsv, `initial_ini`).  LuaTeX's
+/// `\mathdefaultsmode` reads 0 in LuaTeX 1.17 and is a fixed 1 in the
+/// newer engines [`limit`] was measured on, so it stays there.
+pub fn initial(name: &str, engine: Engine) -> Option<i64> {
+    const INCH: i64 = 4_736_287;
+    Some(match name {
+        // LuaTeX 1.22's INITEX (probed): these start at 1.
+        "mathdefaultsmode" | "mathscriptboxmode" | "mathscriptcharmode" if engine == Engine::LuaTeX => 1,
+        // -1: `\show` and its kin write to the terminal and log.
+        "showstream" if engine.has_pdftex_extensions() => -1,
+        // pdfTeX's INITEX: PDF 1.4, compressed, and the DVI origin of one
+        // inch from the page corner.
+        "pdfcompresslevel" if engine.has_pdftex() => 9,
+        "pdfdecimaldigits" if engine.has_pdftex() => 3,
+        "pdfgamma" if engine.has_pdftex() => 1000,
+        "pdfimagegamma" if engine.has_pdftex() => 2200,
+        "pdfimagehicolor" if engine.has_pdftex() => 1,
+        "pdfimageresolution" if engine.has_pdftex() => 72,
+        "pdfmajorversion" if engine.has_pdftex() => 1,
+        "pdfminorversion" if engine.has_pdftex() => 4,
+        "pdfhorigin" | "pdfvorigin" if engine.has_pdftex() => INCH,
+        "pdfpxdimen" if engine.has_pdftex() => 65_782,
+        "pdfeachlineheight" | "pdfeachlinedepth" | "pdffirstlineheight" | "pdflastlinedepth" | "pdfignoreddimen"
+            if engine.has_pdftex() =>
+        {
+            IGNORE_DEPTH
+        }
+        "XeTeXhyphenatablelength" if engine.has_xetex() => 63,
+        "pagetopoffset" | "pagebottomoffset" | "pageleftoffset" | "pagerightoffset" if engine.has_luatex() => INCH,
+        "pxdimen" if engine.has_luatex() => 65_781,
+        "compoundhyphenmode" | "mathflattenmode" if engine.has_luatex() => 1,
+        "exhyphenchar" | "prehyphenchar" if engine.has_luatex() => i64::from(b'-'),
+        "matheqnogapstep" if engine.has_luatex() => 1000,
+        "predisplaygapfactor" if engine.has_luatex() => 2000,
+        "prebinoppenalty" | "prerelpenalty" if engine.has_luatex() => 10_000,
+        "variablefam" if engine.has_luatex() => -1,
+        _ => return None,
+    })
+}
+
+/// tex.web § 212 (`ignore_depth`): what `\prevdepth` is on a vertical list
+/// that has nothing on it yet, which is below any real depth, so the first
+/// box takes no interline glue.
+pub const IGNORE_DEPTH: i64 = -1000 * 65536;
+
+/// A quantity the engine keeps outside the parameter table: the current
+/// list's own, or the page builder's.  Reading or writing one where its
+/// owner is not there is an error, so the answer is not what was assigned.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Owned {
+    /// The current list's, readable and writable only while the mode is one
+    /// of `modes` (tex.web §§ 418, 1243). Elsewhere a read is "Improper" and
+    /// gives zero, and a write is `report_illegal_case`, which scans
+    /// nothing, so `=⟨value⟩` is left in the input. A list starts at
+    /// `fresh` (tex.web § 1083).
+    List { modes: crate::mode::Modes, fresh: i64 },
+    /// The page builder's (tex.web §§ 982, 986).  The write is an ordinary
+    /// assignment, but while the page is empty the read gives this instead
+    /// of what was assigned.
+    PageSoFar { empty: i64 },
+}
+
+/// The quantities [`Owned`] covers.  Every engine has all of them: they are
+/// TeX82's (tex.web §§ 982, 1243).
+pub fn owned(name: &str) -> Option<Owned> {
+    use crate::mode::Modes;
+    Some(match name {
+        // tex.web § 418: `\spacefactor` is the horizontal list's and
+        // `\prevdepth` the vertical list's.
+        "spacefactor" => Owned::List { modes: Modes::ANY_HORIZONTAL, fresh: 1000 },
+        "prevdepth" => Owned::List { modes: Modes::ANY_VERTICAL, fresh: IGNORE_DEPTH },
+        // tex.web § 986 (`set_page_dimen`): while the page is empty
+        // `\pagegoal` reads `\maxdimen` and the other seven read zero.
+        "pagegoal" => Owned::PageSoFar { empty: crate::value::MAX_DIMEN },
+        _ if PAGE_SO_FAR.split_whitespace().any(|n| n == name) => Owned::PageSoFar { empty: 0 },
+        _ => return None,
+    })
+}
+
+/// tex.web § 982: the page builder's `page_so_far` array.
+pub const PAGE_SO_FAR: &str =
+    "pagegoal pagetotal pagestretch pagefilstretch pagefillstretch pagefilllstretch pageshrink pagedepth";
 
 /// A name of the expl3 programming layer: a function (`\tl_set:Nn`) or one
 /// of the quarks and scan marks (`\q_nil`, `\s__tl_stop`) that
@@ -2261,9 +2401,521 @@ pub fn is_expl3_name(name: &str) -> bool {
     name.contains(':') || name.starts_with("q_") || name.starts_with("s__")
 }
 
+/// Second spellings of a primitive, as (alias, primitive): `\meaning`
+/// shows the primitive's own name, as it does for a `\let` copy
+/// ([`crate::env::Env::aliases`]).  XeTeX reference: `\XeTeXmathcode` is
+/// `\Umathcode`; pdfTeX manual: `\pdfoptionpdfminorversion` is
+/// `\pdfminorversion` (doc/primitive-facts.md).
+pub fn primitive_aliases(engine: Engine) -> &'static [(&'static str, &'static str)] {
+    const XETEX: &[(&str, &str)] = &[
+        ("XeTeXmathcode", "Umathcode"),
+        ("XeTeXmathcodenum", "Umathcodenum"),
+        ("XeTeXdelcode", "Udelcode"),
+        ("XeTeXdelcodenum", "Udelcodenum"),
+        ("XeTeXmathchardef", "Umathchardef"),
+        ("XeTeXmathcharnumdef", "Umathcharnumdef"),
+        ("XeTeXmathchar", "Umathchar"),
+        ("XeTeXmathcharnum", "Umathcharnum"),
+        ("XeTeXdelimiter", "Udelimiter"),
+        ("XeTeXradical", "Uradical"),
+        ("XeTeXmathaccent", "Umathaccent"),
+    ];
+    match engine {
+        Engine::XeTeX => XETEX,
+        Engine::PdfTeX => &[("pdfoptionpdfminorversion", "pdfminorversion")],
+        _ => &[],
+    }
+}
+
 pub fn kernel_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meaning> {
     let mut table = initial_meanings(it, engine);
     // The expl3 layer comes from `expl3-code.tex` itself.
     table.retain(|sym, _| !is_expl3_name(it.name(*sym)));
     table
+}
+
+/// Primitives whose current arm is a known bug, not a sound verdict: the
+/// control sequence name and where the bug is. `doc/wiki/primitive-coverage.md`
+/// flags these instead of counting them as modeled. Empty once fixed.
+pub fn known_bugs() -> &'static [(&'static str, &'static str)] {
+    &[]
+}
+
+/// How faithfully satex models a primitive: generates
+/// `doc/wiki/primitive-coverage.md`. A primitive that scans its operands and
+/// drops their effect, with neither a widening marker nor a diagnostic, is a
+/// bug to fix, not a fourth verdict — [`verdict`] never returns one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Verdict {
+    /// satex reproduces the engine's own behavior.
+    Exact,
+    /// A sound over-approximation. The detail says how.
+    Approximated,
+    /// Not modeled, but every effect it could have is widened and the run
+    /// says so (a diagnostic, e.g. `unmodeled-primitive`, `unknown-catcode`).
+    Unsupported,
+}
+
+/// Where a verdict is decided: the source file and the line of the arm
+/// that returns it. Filled by the `at!` macro, so a link cannot drift.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Site {
+    /// Path from the crate root, as `file!()` gives it.
+    pub file: &'static str,
+    /// Line of the arm.
+    pub line: u32,
+}
+
+/// A verdict, why, and the arm that decided it.
+pub type Judgment = (Verdict, &'static str, Site);
+
+/// Tags a verdict with the [`Site`] of the arm it is written on.
+macro_rules! at {
+    ($verdict:expr, $detail:expr $(,)?) => {
+        ($verdict, $detail, Site { file: file!(), line: line!() })
+    };
+}
+
+/// The verdict for a [`Primitive`] and why, from what `src/exec.rs`,
+/// `src/mode.rs` and `src/commands.rs` actually do with it. Grouped by
+/// sub-enum so a new case cannot be forgotten (exhaustive matches).
+/// tex.web § 1046: `Some(true)` for a primitive only math mode takes
+/// (`non_math`), `Some(false)` for one math mode refuses, by the name the
+/// engine gave it.
+pub fn math_material(name: &str) -> Option<bool> {
+    const MATH: &str = "mathchar delimiter radical mathaccent mathord mathop mathbin mathrel mathopen mathclose \
+        mathpunct mathinner underline overline over atop above overwithdelims atopwithdelims abovewithdelims \
+        displaystyle textstyle scriptstyle scriptscriptstyle mathchoice vcenter nonscript mkern mskip limits \
+        nolimits displaylimits left right middle Umathchar Umathcharnum Udelimiter Uradical Umathaccent";
+    const VERTICAL: &str =
+        "par end dump vskip vfil vfill vss vfilneg unvbox unvcopy pagediscards splitdiscards valign hrule";
+    let has = |list: &str| list.split_whitespace().any(|n| n == name);
+    if has(MATH) {
+        Some(true)
+    } else if has(VERTICAL) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+pub fn verdict(p: Primitive) -> Judgment {
+    use Primitive as P;
+    use Verdict as V;
+    match p {
+        P::Text(t) => text_verdict(t),
+        P::If(c) => cond_verdict(c),
+        P::LastItem(item) => last_item_verdict(item),
+        P::Special(s) => special_verdict(s),
+        P::Command(syntax) => syntax_verdict(syntax),
+        P::Convert(c) => convert_verdict(c),
+        P::Mode(m) => mode_verdict(m),
+        P::Typeset(t) => typeset_verdict(t),
+        P::Lua(op) => lua_verdict(op),
+
+        // Definitions, grouping and expansion: tex.web parts 24-27 and the
+        // eTeX manual §§ 3.1-3.4, matched by `src/exec.rs`.
+        P::Def { .. } => {
+            at!(V::Exact, "tex.web § 476. An unterminated definition is diagnosed, not read past the file's end")
+        }
+        P::Let { .. } => at!(V::Exact, "tex.web § 1221, including the two-token `\\futurelet` lookahead"),
+        P::Prefix(_) => at!(V::Exact, "tex.web § 1211"),
+        P::ExpandAfter => at!(V::Exact, "tex.web § 367"),
+        P::NoExpand | P::DontExpand => at!(V::Exact, "tex.web §§ 367, 358"),
+        P::SkipCrossing { .. } => {
+            at!(V::Exact, "satex's own marker for a conditional a file boundary interrupted, not an engine primitive")
+        }
+        P::Csname => at!(
+            V::Approximated,
+            "exact once the name is resolved. A bounded join of candidate meanings when it is built from unknown digits (`one_of_names`)",
+        ),
+        P::BeginCsname | P::LastNamedCs | P::Endcsname => at!(V::Exact, "LuaTeX manual, \"Macros\""),
+        P::Reinject => at!(V::Exact, "eTeX manual § 3.4"),
+        P::ScanTokens { .. } => {
+            at!(V::Exact, "eTeX manual § 3.9. A capacity overflow (`MAX_IN_OPEN`) is diagnosed, not assumed away")
+        }
+        P::Use(_) | P::Expanded => at!(V::Exact, "interface3, \"Selecting tokens\"; pdfTeX manual, \"\\expanded\""),
+        P::Else | P::Or | P::Fi => {
+            at!(V::Exact, "tex.web § 510, including `insert_relax` for an else or fi met mid-test")
+        }
+        P::Unless => at!(
+            V::Approximated,
+            "etex.ch. Exact before a conditional; before a name of unknown meaning the conditional it may open is left undecided",
+        ),
+        P::BeginGroup | P::EndGroup | P::Defer(_) => {
+            at!(V::Exact, "tex.web §§ 1211, 1 (semi-simple groups, `\\aftergroup`/`\\afterassignment`)")
+        }
+
+        // Registers, arithmetic and per-character tables: tex.web part 25.
+        P::Allocate(_) => at!(V::Exact, "hands out a fresh register, tracked exactly"),
+        P::Register(_) | P::RegisterDef(_) => at!(
+            V::Approximated,
+            "exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`)",
+        ),
+        P::FontDef => at!(V::Exact, "tex.web § 1257 (`\\font`)"),
+        P::OpenIn | P::CloseIn | P::Read => at!(
+            V::Approximated,
+            "tex.web § 1351. Exact for a known stream number; one satex cannot pin down leaves every stream's state unknown",
+        ),
+        P::Arith(_) => at!(
+            V::Approximated,
+            "exact for known operands. Interval arithmetic and tex.web § 222's zero default otherwise",
+        ),
+        P::IntegerParameter | P::DimenParameter | P::GlueParameter { .. } => {
+            at!(V::Exact, "the stored parameter table")
+        }
+        P::TokensParameter => at!(
+            V::Approximated,
+            "the stored parameter table, but setting any `\\every…` list widens the dimensions of boxes that were already packed before it was read",
+        ),
+        P::CatcodeAssign => at!(
+            V::Approximated,
+            "exact for one known character and category. Through an unknown character or value (`unknown-catcode`) each character it may name keeps its category or takes one it may be given, structural ones included; the reader splits the path on such a character",
+        ),
+        P::CharCode(_) => at!(
+            V::Approximated,
+            "exact for one known character and code. Through an unknown character or value (`unknown-char-code`) each entry it may name holds its old code or the new, read back as that set",
+        ),
+        P::CaseShift(_) => at!(V::Exact, "tex.web § 1288. Widens a code an unknown token was assigned"),
+        P::FontParam(_) => at!(
+            V::Approximated,
+            "reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching tex.web § 580's own recovery. An entry satex cannot pin down widens every one it may name",
+        ),
+        P::FontIdent(_) => at!(V::Exact, "tex.web § 1217: selecting a font is a local assignment"),
+
+        // File and job control.
+        P::Load(_) => at!(V::Exact, "tex.web § 537 (`\\input`)"),
+        P::Endinput => at!(V::Exact, "tex.web § 362: under an undecided conditional each path ends its own file"),
+        P::End => at!(V::Exact, "tex.web § 1054 (`end_job`)"),
+        P::Message { .. } => at!(V::Exact, "tex.web § 1279"),
+        P::Write => at!(
+            V::Approximated,
+            "`\\immediate\\write` is exact. A deferred `\\write`'s text is recorded unexpanded, since satex never reaches shipout to expand it",
+        ),
+        P::Expr(_) => at!(V::Exact, "eTeX manual § 3.5"),
+        P::Relax => at!(V::Exact, "tex.web § 1211"),
+        P::IgnoreSpaces => at!(V::Exact, "tex.web § 1045"),
+
+        // Output, PDF, Lua and docstrip, and the primitives satex leaves
+        // alone on purpose.
+        P::Accent => at!(
+            V::Exact,
+            "tex.web §§ 1123-1125 for TFM fonts: the accent box, its shift by the x-height, the kerns and the character after the assignments. Widens where the font, either character or what follows is not known",
+        ),
+        P::Pdf(_) => at!(
+            V::Approximated,
+            "the manual's keywords are scanned exactly. No PDF is built, so the payload is recorded as an occurrence, not replayed",
+        ),
+        P::LuaCall { .. } => {
+            at!(V::Approximated, "runs the named Lua function where a host is available. Widens where it is not")
+        }
+        P::AlignTab => at!(V::Exact, "an `&`: ends the cell, or begins one between rows (tex.web § 785)"),
+        P::Unmodeled | P::AlignMark => at!(V::Unsupported, "widens the mode"),
+        P::Docstrip(_) => {
+            at!(V::Exact, "recorded as generate/preamble facts, not run as TeX (docstrip.dtx, \"The user interface\")")
+        }
+    }
+}
+
+fn text_verdict(t: TextOf) -> Judgment {
+    use Verdict as V;
+    match t {
+        TextOf::JobName => at!(V::Exact, "the run's real main file name"),
+        _ => at!(
+            V::Approximated,
+            "exact for a known operand. Widens when the token's meaning or a register's digits are unresolved",
+        ),
+    }
+}
+
+fn cond_verdict(c: Cond) -> Judgment {
+    use Cond as C;
+    use Verdict as V;
+    match c {
+        C::True | C::False => at!(V::Exact, "a constant"),
+        C::IfX => at!(
+            V::Approximated,
+            "exact for known meanings (tex.web § 507's `original` handles a redefined primitive). Member-by-member across a set of possible meanings otherwise, decided only when they agree",
+        ),
+        C::Defined => {
+            at!(V::Approximated, "exact for a known name. Narrowed by which names could still be undefined otherwise")
+        }
+        C::Csname => at!(V::Exact, "builds the name and looks it up"),
+        C::Num | C::Dim | C::Odd => {
+            at!(V::Approximated, "exact for known operands. Narrows the interval on each branch otherwise")
+        }
+        C::Chars | C::Catcodes => {
+            at!(V::Approximated, "exact for known characters. Undecided when either operand is an unresolved character")
+        }
+        C::Case => {
+            at!(V::Approximated, "tex.web § 509. Every arm is analyzed as its own path when the selector is unknown")
+        }
+        C::Eof => at!(
+            V::Approximated,
+            "satex resolves the real file, so end-of-file is known for a known stream number; one it cannot pin down leaves the test undecided",
+        ),
+        C::Opaque => at!(V::Approximated, "both branches are analyzed and their state joined, by configuration"),
+        C::VMode | C::HMode | C::InnerMode | C::MathMode => at!(
+            V::Approximated,
+            "decided from the mode satex tracks through the run. Open groups the run couldn't follow leave it undecided",
+        ),
+        C::Box => at!(
+            V::Approximated,
+            "exact for a known box state (void, `\\hbox`, `\\vbox`). Undecided once the register is Unknown",
+        ),
+        C::AbsNum | C::AbsDim | C::InCsname | C::Primitive => {
+            at!(V::Exact, "computed from state satex already tracks (`eval_extra_condition`)")
+        }
+        C::FontChar => at!(V::Exact, "eTeX manual § 3.10: read from the font's real character table"),
+    }
+}
+
+fn last_item_verdict(item: LastItem) -> Judgment {
+    use LastItem as L;
+    use Verdict as V;
+    match item {
+        L::Penalty | L::Kern | L::Skip => {
+            at!(V::Approximated, "reads the tail of the list satex tracks. Unknown once the tail itself is")
+        }
+        L::NodeType => at!(
+            V::Approximated,
+            "reads the tail of the list: a character, a ligature, glue, a kern or a penalty, and -1 for the empty main list (etex.ch). Unknown otherwise"
+        ),
+        L::Badness => at!(V::Approximated, "always Unknown. Badness needs the line-breaking satex does not run"),
+        L::InputLineNo | L::EtexVersion | L::PdftexVersion | L::GroupLevel | L::GroupType => {
+            at!(V::Exact, "read from state satex already tracks")
+        }
+        L::IfLevel | L::IfType | L::IfBranch => {
+            at!(V::Approximated, "exact once the conditional stack has settled. Unknown while a branch is undecided")
+        }
+        L::GlueStretch | L::GlueShrink | L::GlueStretchOrder | L::GlueShrinkOrder | L::GlueToMu | L::MuToGlue => {
+            at!(V::Exact, "computed from a known glue spec")
+        }
+        L::FontCharWd => at!(V::Exact, "a TFM's or a native font's real glyph advance"),
+        L::FontCharHt | L::FontCharDp | L::FontCharIc => at!(
+            V::Approximated,
+            "exact for a TFM font (etex_man § 3.10). A native font's height, depth and italic correction are not read, so it widens to Unknown",
+        ),
+        L::ParShapeLength | L::ParShapeIndent | L::ParShapeDimen => at!(V::Exact, "read from the stored `\\parshape`"),
+        L::ShellEscape => at!(V::Exact, "the configuration's own setting"),
+        L::ElapsedTime | L::RandomSeed | L::LastXPos | L::LastYPos => at!(
+            V::Approximated,
+            "genuinely unknowable without the real engine's clock, RNG or page builder. Widens to Unknown",
+        ),
+        L::XetexVersion => at!(V::Exact, "a constant"),
+        L::LuatexVersion => at!(V::Exact, "probed from the real `luatex --version` for this run"),
+        L::PdfPageCount => {
+            at!(V::Approximated, "widens to Unknown. The file's page count needs parsing a PDF satex does not read")
+        }
+        L::Xetex(_) => at!(V::Approximated, "the font's real tables"),
+    }
+}
+
+fn special_verdict(s: Special) -> Judgment {
+    use Special as S;
+    use Verdict as V;
+    match s {
+        S::BoxDimen => {
+            at!(V::Approximated, "round-trips through the register consistently. The box behind it is never built")
+        }
+        S::ParShape | S::Penalties | S::CharClass | S::InterCharToks | S::UCode { .. } => at!(
+            V::Approximated,
+            "a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached",
+        ),
+    }
+}
+
+fn syntax_verdict(s: Syntax) -> Judgment {
+    use Syntax as S;
+    use Verdict as V;
+    match s {
+        S::Nothing => at!(
+            V::Approximated,
+            "no operand. The size of what `\\span`, a fraction or `\\overline`/`\\underline` builds is widened, not computed",
+        ),
+        S::MathComp(_) => at!(
+            V::Approximated,
+            "sets the class of the next atom, whose size and spacing are followed. An operator whose nucleus is a list widens (tex.web § 749 centres a one-character list)",
+        ),
+        S::Limits => {
+            at!(V::Approximated, "no operand. Where the scripts go is not followed, so the formula's size widens")
+        }
+        S::Whatsit => at!(V::Exact, "no operand, a whatsit on the current list"),
+        S::NonScript => at!(
+            V::Approximated,
+            "glue of no size in math (tex.web § 1171). Script styles, which cancel the next glue, widen"
+        ),
+        S::SetLanguage => at!(V::Exact, "a whatsit in horizontal mode, an illegal case elsewhere (tex.web § 1377)"),
+        S::Fraction { .. } => at!(
+            V::Approximated,
+            "the list so far becomes the numerator and the list starts afresh (tex.web § 1181). The fraction's size widens",
+        ),
+        S::Interaction(_) => at!(V::Exact, "sets `\\interactionmode`"),
+        S::Token => at!(V::Exact, "`\\show`"),
+        S::Internal => at!(V::Exact, "`\\showthe`"),
+        S::BoxSpec | S::RuleSpec | S::SetBox => at!(V::Exact, "forwarded to the real box-scanning path"),
+        S::OpenOut | S::CloseOut => at!(
+            V::Approximated,
+            "tracks the stream state a later `\\input` of the written file reads back; a stream number satex cannot pin down widens every stream",
+        ),
+        S::FamilyFont | S::CopyFont { .. } | S::UMathCharDef { .. } | S::SetFontId => at!(
+            V::Approximated,
+            "stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown",
+        ),
+        S::ReadLine => at!(
+            V::Approximated,
+            "eTeX manual § 3.2, including the terminal-fatal case; a stream number satex cannot pin down gives an unknown line and does not end the job",
+        ),
+        S::PdfXImage => at!(V::Exact, "the file name reaches `observe::image`"),
+        S::PdfColorStack => at!(
+            V::Approximated,
+            "the operation and stack id are tracked. The color text itself is a recorded occurrence, not replayed",
+        ),
+        S::VSplit => {
+            at!(V::Exact, "unreachable in practice. `\\vsplit` is `ModeCmd::Box(BoxCmd::VSplit)`, not this arm")
+        }
+        _ => at!(V::Approximated, "scanned, not built"),
+    }
+}
+
+fn convert_verdict(c: Convert) -> Judgment {
+    use Convert as C;
+    use Verdict as V;
+    match c {
+        C::EtexRevision | C::PdftexRevision | C::XetexRevision | C::FontId | C::FontName => {
+            at!(V::Exact, "a real constant or stored name")
+        }
+        C::StrCmp | C::EscapeHex | C::UnescapeHex | C::EscapeString | C::EscapeName => {
+            at!(V::Exact, "the manual's own algorithm, run for real")
+        }
+        C::FileSize | C::FileDump | C::MdFiveSum => at!(V::Exact, "reads the real file"),
+        C::FileModDate => {
+            at!(V::Approximated, "the form of a date, its digits unknown: satex does not read file modification times")
+        }
+        C::Uchar { .. } => at!(V::Exact, "tex.web, eTeX and XeTeX's character and category-code construction rules"),
+        C::PdfFontSize => at!(V::Exact, "the font's real design size"),
+        C::PdfFontName | C::PdfFontObjNum => at!(V::Approximated, "widens to Unknown. No PDF font object is built"),
+        C::ColorStackInit => at!(
+            V::Approximated,
+            "`\\pdfcolorstackinit` hands out the next color stack number, widened rather than counted exactly. The color text is a recorded occurrence, not replayed",
+        ),
+        C::Primitive => {
+            at!(V::Exact, "re-injects the frozen meaning for normal expansion to re-process, as `\\pdfprimitive` does")
+        }
+        C::Xetex(_) => {
+            at!(V::Approximated, "exact from a loaded font's real tables. Unknown once they aren't resolved")
+        }
+        _ => at!(V::Approximated, "scanned, answer unknown"),
+    }
+}
+
+fn mode_verdict(m: ModeCmd) -> Judgment {
+    use ModeCmd as M;
+    use Verdict as V;
+    match m {
+        M::EqNo => {
+            at!(V::Approximated, "opens the equation number. The display's placement (tex.web § 1199) is widened")
+        }
+        M::Par | M::StartPar { .. } | M::QuitVMode | M::Shift { .. } => {
+            at!(V::Exact, "tex.web's own mode-transition rules")
+        }
+        M::Horizontal(Material::Rule) => at!(
+            V::Approximated,
+            "a real rule item in a horizontal list, but a `\\vrule` met in a vertical list starts a paragraph and widens the enclosing box's dimensions rather than answering them exactly",
+        ),
+        M::Horizontal(mat) | M::Vertical(mat) => material_verdict(mat),
+        M::Box(b) => box_verdict(b),
+        M::Leaders => at!(
+            V::Approximated,
+            "the box or rule is scanned exactly. tex.web § 1078's repeated copies are not laid out, since satex tracks natural size, not a page",
+        ),
+        M::ShipOut => at!(V::Exact, "removes the box from the list, tex.web § 1073's own effect on it"),
+        M::Insert { .. } => {
+            at!(V::Approximated, "opens the insert's own list. Not told apart from the vertical list around it")
+        }
+        M::NoAlign => {
+            at!(V::Approximated, "cells run in the alignment's own list, not distinguished from the preamble")
+        }
+        M::MathChoice => at!(V::Exact, "tex.web § 1172: opens all four styles in sequence"),
+        M::MathStyle(_) => at!(
+            V::Approximated,
+            "tex.web § 1171: the style of the atoms after it in inline math. Scripts in display style widen",
+        ),
+        M::LeftRight { .. } => at!(
+            V::Approximated,
+            "the math left group is kept (tex.web § 1191). The size of the list it delimits widens",
+        ),
+    }
+}
+
+fn material_verdict(m: Material) -> Judgment {
+    use Material as M;
+    use Verdict as V;
+    match m {
+        M::Char | M::Rule | M::Glue | M::Fil(_) | M::Discretionary | M::Space | M::NoBoundary | M::LR => {
+            at!(V::Exact, "a real item, appended to the list satex tracks")
+        }
+        M::Unpackage { .. } => at!(
+            V::Approximated,
+            "a void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed",
+        ),
+        M::Discards(_) | M::Hyphen => {
+            at!(
+                V::Approximated,
+                "widens to Unknown. A rarely-taken tex.web path this pass does not distinguish further"
+            )
+        }
+        M::Align => at!(V::Approximated, "cells run in the alignment's own list, not distinguished from the preamble"),
+    }
+}
+
+fn box_verdict(b: BoxCmd) -> Judgment {
+    use BoxCmd as B;
+    use Verdict as V;
+    match b {
+        B::HBox | B::VBox | B::VTop | B::VCenter | B::Copy => at!(V::Exact, "the real box machinery"),
+        B::LastBox => at!(
+            V::Approximated,
+            "the real box machinery for the one box of a vertical list. A box taken from a horizontal list widens",
+        ),
+        B::VSplit => at!(
+            V::Approximated,
+            "the result always widens to Unknown, even from a void register. A real split's remainder is not tracked",
+        ),
+    }
+}
+
+fn typeset_verdict(t: Typeset) -> Judgment {
+    use Typeset as T;
+    use Verdict as V;
+    match t {
+        T::Plain => at!(V::Exact, "`\\unskip`, `\\unkern` and `\\unpenalty` remove the real tail item"),
+        T::Number => at!(V::Exact, "the penalty is appended as scanned"),
+        T::Dimen => at!(
+            V::Approximated,
+            "`\\kern` is exact. `\\mkern`'s math-unit dimension always widens to Unknown, since it needs math-font setup satex does not run",
+        ),
+        T::Delimiter => at!(
+            V::Approximated,
+            "tex.web § 1161: the delimiter is the one token the primitive itself consumes. The size of the delimited formula widens",
+        ),
+        T::Glue => at!(
+            V::Approximated,
+            "`\\mskip` appends an item of unknown size: its glue is in math units, which need math-font setup satex does not run",
+        ),
+    }
+}
+
+fn lua_verdict(op: LuaOp) -> Judgment {
+    use LuaOp as L;
+    use Verdict as V;
+    match op {
+        L::Direct | L::Late => at!(
+            V::Approximated,
+            "the chunk runs for real where a Lua host is available. A failed or unavailable run is diagnosed and widened",
+        ),
+        L::Escape | L::InitCatcodes | L::SaveCatcodes | L::SelectCatcodes => {
+            at!(V::Exact, "a real string escape or catcode-table operation")
+        }
+    }
 }

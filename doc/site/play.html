@@ -1,0 +1,63 @@
+<div class="play-split">
+  <section class="pane code-pane">
+    <div class="filebar">
+      <div class="tablist">
+        <button id="play-treetoggle" class="treetoggle" type="button" aria-expanded="true" aria-controls="play-tree" aria-label="files of the project" title="show or hide the project's files">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M6 2.5v11"/><rect class="fill" x="2" y="3" width="3.5" height="10"/></svg></button>
+        <div class="tabs" role="tablist" id="play-tabs" aria-label="open files"></div>
+      </div>
+      <span class="actions">
+        <select id="play-kernel" aria-label="kernel" title="the TeX engine and format"></select>
+        <button id="play-link" class="pill" type="button" title="a link that restores the project's files, the open file, the command and the kernel">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 9a3 3 0 0 0 4.2.2l2-2a3 3 0 0 0-4.2-4.2l-.8.8"/><path d="M9 7a3 3 0 0 0-4.2-.2l-2 2a3 3 0 0 0 4.2 4.2l.8-.8"/></svg><span class="label">Copy link</span></button>
+      </span>
+    </div>
+    <div class="work">
+      <nav id="play-tree" class="tree" aria-label="project files">
+        <div class="treehead"><span>Project</span>
+          <span class="menu-wrap"><button id="play-upload" class="add" type="button" aria-haspopup="menu" title="a new file, or files, a folder or a .zip from your computer; you can also drop them on the page" aria-label="add files">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button>
+            <span id="play-upmenu" class="ctx" role="menu" hidden><button role="menuitem" data-pick="new">New file…</button><button role="menuitem" data-pick="files">Upload files or .zip…</button><button role="menuitem" data-pick="folder">Upload folder…</button></span></span></div>
+        <div id="play-files-tree" role="tree" aria-label="the project's files"></div>
+        <div class="treehead examples"><span>Examples</span></div>
+        <div id="play-examples" role="list"></div>
+      </nav>
+      <div class="treegrip" id="play-treegrip" role="separator" aria-orientation="vertical" aria-label="resize the files" title="drag to resize"></div>
+      <div id="play-editor" class="editor"><textarea id="play-source" spellcheck="false" aria-label="LaTeX source"></textarea></div>
+    </div>
+    <div class="term" id="play-term">
+      <button id="play-termtoggle" class="term-bar" type="button" aria-expanded="true" aria-controls="play-termbody" title="show or hide the satex console">
+        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg><span class="term-title">satex</span><span class="term-sub muted">console: runs the satex command on the project</span></button>
+      <div id="play-termbody">
+      <div id="play-out" class="term-out" hidden>
+        <div class="grip term-grip" id="play-termgrip" role="separator" aria-orientation="horizontal" aria-label="resize the output" title="drag to resize"></div>
+        <div class="term-head"><span>Output</span> <code id="play-cmd">satex lint</code><button id="play-outclose" class="small ghost close" type="button" title="close the output">×</button></div>
+        <div id="play-output" class="output"></div>
+      </div>
+      <label class="ask cmd"><span>$ satex</span><input id="play-args" value="lint" spellcheck="false" autocomplete="off" aria-label="satex command" aria-controls="play-complete"
+        title="lint, explain \cmd, query …, rename NAME, fix [rule]. Tab completes, Enter runs, Up and Down go through earlier commands."><span class="hint">Tab completes · Enter runs · ↑ history</span><button id="play-run" class="runbtn" type="button" disabled title="run the satex command in the console below (Enter there, Ctrl+Enter in the editor). It checks the project, it does not run your document">Loading…</button><ul id="play-complete" class="complete" role="listbox" hidden></ul></label>
+      </div>
+    </div>
+    <input id="play-files" type="file" multiple hidden><input id="play-folder" type="file" webkitdirectory multiple hidden>
+  </section>
+  <div class="divider" id="play-divider" role="separator" aria-orientation="vertical" aria-label="resize panes: drag to the edge to fold a pane, click to bring it back" aria-valuemin="0" aria-valuemax="100" tabindex="0" title="drag to resize, to an edge to fold; click a folded one to unfold; double-click: half"></div>
+  <section class="pane side-pane">
+    <details open class="sect" id="play-findings"><summary>Findings <b id="lsp-count"></b> <span class="muted" id="lsp-status">language server: starting…</span></summary>
+      <div id="lsp-check" class="check" role="status" hidden><span class="ibar" aria-hidden="true"></span><span></span></div>
+      <div id="play-refs" class="refs" hidden></div>
+      <ul id="lsp-diagnostics" class="diagnostics grow" aria-live="polite"></ul></details>
+    <details open class="sect" id="play-explain"><summary>Explain macro <code id="explain-name"></code></summary>
+      <div id="explain-body" class="hover grow"><p class="muted">Put the cursor on a command.</p></div></details>
+    <details class="sect" id="play-typeset"><summary>Typeset</summary>
+      <div id="typeset-body" class="typeset grow"><p class="muted">What the paragraphs of the open file set, once it is checked.</p></div></details>
+    <div class="statusbar" aria-live="polite"><progress id="play-progress" max="1" value="0" aria-label="loading"></progress><span id="play-status">Fetching satex and the TeX bundle…</span>
+      <span id="play-pills" class="pills"></span>
+      <span class="statdetail"><button id="t-time" class="stat-time" type="button" aria-expanded="false" aria-controls="t-detail" title="timings and size of the last run" hidden><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.2 1.5"/></svg><span id="t-time-text"></span></button>
+        <dl id="t-detail" class="stat-pop" hidden><dt>init</dt><dd id="t-init"></dd><dt>fetched</dt><dd id="t-load"></dd><dt>caches</dt><dd id="t-cache"></dd><dt>check</dt><dd id="t-check"></dd><dt>last run</dt><dd id="t-stats"></dd></dl></span></div>
+  </section>
+</div>
+<ul id="play-ctx" class="ctx" role="menu" hidden></ul>
+<div id="play-toast" class="toast" role="status"></div>
+<div id="play-drop" class="drop" hidden>Drop files, a folder or a .zip</div>
+<script id="satex-play" type="application/json">{{manifest}}</script>
+<script src="{{root}}{{playjs}}" defer></script>

@@ -1,0 +1,28 @@
+% TODO: configure
+\newdimen\thesis@page@margin     \thesis@page@margin=2cm
+\newdimen\thesis@marginpar@width \thesis@marginpar@width=9.5em
+\newdimen\thesis@marginpar@sep   \thesis@marginpar@sep=2em
+\newdimen\thesis@bcor            \thesis@bcor=1.5cm
+
+% always include bcor to avoid problems with layout when switching
+\PassOptionsToPackage{
+    includeheadfoot,
+    margin=\thesis@page@margin,
+    a4paper,
+    bindingoffset=\thesis@bcor
+}{geometry}
+\ifthesis@marginpar
+\PassOptionsToPackage{
+    includemp,
+    marginparwidth=\thesis@marginpar@width,
+    marginparsep=\thesis@marginpar@sep
+}{geometry}
+\else
+\PassOptionsToPackage{
+    nomarginpar
+}{geometry}
+\fi
+
+\RequirePackage{geometry}
+
+\flushbottom

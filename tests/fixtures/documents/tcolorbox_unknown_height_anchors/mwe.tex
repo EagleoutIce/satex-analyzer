@@ -1,0 +1,16 @@
+% A breakable tcolorbox around content of unknown height, with a tikz
+% underlay at a node anchor: every group the box opens closes again, so
+% the node's saved anchors (\southwest) stay local. A real document hit
+% 300 s when they leaked: later pictures read them as unknown operands.
+\documentclass{article}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\newtcolorbox{sbx}{blanker,breakable,underlay={\fill ([xshift=1pt]frame.south west) -- (frame.north east);}}
+\newdimen\uh \uh=\pdfelapsedtime sp
+\begin{document}
+\begin{sbx}A \rule{1pt}{\uh} b.\end{sbx}
+\makeatletter
+\ifnum\currentgrouplevel=0 \ifx\southwest\undefined\gdef\AfterBoxGroupsClosed{}\fi\fi
+\makeatother
+\gdef\SatexReachedEnd{}
+\end{document}

@@ -1,0 +1,12 @@
+\documentclass{article}
+% A map whose nesting counter holds an unknown number: the name it
+% defines for its body is the one it then calls.
+\begin{document}
+\ExplSyntaxOn
+\int_gset:Nn \g__kernel_prg_map_int { \pdfuniformdeviate 100000 }
+\tl_map_inline:nn {ab} { \cs_new:cpn {foo#1} {} }
+\ExplSyntaxOff
+\gdef\AfterMap{}
+x
+\gdef\SatexReachedEnd{}
+\end{document}

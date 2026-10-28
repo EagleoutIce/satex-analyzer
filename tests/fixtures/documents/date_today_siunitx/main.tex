@@ -1,0 +1,11 @@
+% \date{\today} with hyperref, then siunitx: in a PDF string siunitx's
+% \day is a unit, but no TeX run makes one of \date here.
+\documentclass{article}
+\usepackage{hyperref}
+\usepackage{siunitx}
+\title{Lorem}
+\begin{document}
+\date{Received: \today{} / Accepted: date}
+\maketitle
+\gdef\SatexReachedEnd{}
+\end{document}

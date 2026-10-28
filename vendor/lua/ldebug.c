@@ -650,7 +650,12 @@ l_noret luaG_errormsg (lua_State *L) {
 }
 
 
-char satex_unknown_tag;
+char satex_unknown_tag = 0;
+
+/* Its address for the host: a data symbol may link to another copy. */
+void *satex_unknown_address (void) {
+  return &satex_unknown_tag;
+}
 
 l_noret satex_unknown (lua_State *L) {
   luaG_runerror(L, "satex: unknown");

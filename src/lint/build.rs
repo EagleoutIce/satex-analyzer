@@ -10,7 +10,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{Category, Report, Rule, Severity};
+use super::{Category, Ref, Report, Rule, Severity, Source};
 use crate::builtins::OccKind;
 use crate::config::Engine;
 use crate::machine::Analysis;
@@ -21,25 +21,30 @@ pub static RULES: &[Rule] = &[
         code: "build-shell-escape-missing",
         category: Category::Correctness,
         severity: Severity::Error,
-        summary: "the document runs programs through \\write18, but the build does not allow it",
+        summary: "the document runs programs through `\\write18`, but the build does not allow it",
         explanation: "\
 The run reached `\\write18`, which only hands its text to the shell when the
 engine is started with `-shell-escape` (or `-shell-restricted` and a program
 TeX Live allows).  latexmk starts the engine with the command in `$pdflatex`,
 `$lualatex`, `$xelatex` or `$latex`, whichever `$pdf_mode` selects (latexmk(1),
-`$pdf_mode`); arara's `pdflatex`, `lualatex` and `xelatex` rules take
+`$pdf_mode`).  arara's `pdflatex`, `lualatex` and `xelatex` rules take
 `shell: yes` (arara manual, \"The official rules\").
 
 Fix by adding `-shell-escape` to the command, e.g.
 `$pdflatex = 'pdflatex -shell-escape %O %S';`, or
 `set_tex_cmds('-shell-escape %O %S');` for every engine at once.",
+        references: &[
+            Ref { source: Source::Latexmk, at: "$pdf_mode" },
+            Ref { source: Source::Arara, at: "The official rules" },
+        ],
+        fixes: &[],
         run: shell_escape_missing,
     },
     Rule {
         code: "build-shell-escape-unneeded",
         category: Category::Security,
         severity: Severity::Warning,
-        summary: "the build allows \\write18, but the document never uses it",
+        summary: "the build allows `\\write18`, but the document never uses it",
         explanation: "\
 `-shell-escape` lets every package and every `.aux` or `.bbl` line the
 document reads run any program as you.  The run reached no `\\write18`, so the
@@ -47,6 +52,8 @@ permission buys nothing and only widens what a hostile input file can do.
 
 Fix by removing `-shell-escape` from the engine command (or `shell: yes` from
 the arara directive).",
+        references: &[Ref { source: Source::Pdftex, at: "-shell-escape" }],
+        fixes: &[],
         run: shell_escape_unneeded,
     },
     Rule {
@@ -63,6 +70,8 @@ when it uses a primitive only another engine has (`\\directlua` is LuaTeX's,
 than latexmk waits for.
 
 Fix by setting `$pdf_mode` to the engine the document is written for.",
+        references: &[Ref { source: Source::Latexmk, at: "$pdf_mode" }],
+        fixes: &[],
         run: engine_mismatch,
     },
     Rule {
@@ -75,8 +84,10 @@ Fix by setting `$pdf_mode` to the engine the document is written for.",
 `$bibtex_use`), so the `.bbl` file the bibliography is read from is never made
 and every citation stays undefined.
 
-Fix by removing the setting; latexmk's default, 1, runs them whenever the
+Fix by removing the setting.  latexmk's default, 1, runs them whenever the
 `.bib` files exist.",
+        references: &[Ref { source: Source::Latexmk, at: "$bibtex_use" }],
+        fixes: &[],
         run: bibliography_disabled,
     },
     Rule {
@@ -90,6 +101,8 @@ no bibliography database (`\\bibliography`, `\\addbibresource`), so the setting
 never takes effect (latexmk(1), `$bibtex_use`).
 
 Fix by removing the setting.",
+        references: &[Ref { source: Source::Latexmk, at: "$bibtex_use" }],
+        fixes: &[],
         run: bibliography_unneeded,
     },
     Rule {
@@ -106,6 +119,11 @@ The glossaries manual gives the rule, e.g.
 
     add_cus_dep('glo', 'gls', 0, 'makeglossaries');
     sub makeglossaries { system(\"makeglossaries '$_[0]'\"); }",
+        references: &[
+            Ref { source: Source::Latexmk, at: "CUSTOM DEPENDENCIES" },
+            Ref { source: Source::Glossaries, at: "bib2gls" },
+        ],
+        fixes: &[],
         run: missing_custom_dependency,
     },
     Rule {
@@ -120,6 +138,8 @@ DEPENDENCIES\").  The document writes no glossary or index, and no file with the
 `from` extension is in the project, so the rule never runs.
 
 Fix by removing the rule, or keep it if another document of the project needs it.",
+        references: &[Ref { source: Source::Latexmk, at: "CUSTOM DEPENDENCIES" }],
+        fixes: &[],
         run: unused_custom_dependency,
     },
     Rule {
@@ -134,6 +154,8 @@ without `%S` compiles nothing, and one without `%O` loses `-jobname`,
 `-output-directory` and the options given on latexmk's own command line.
 
 Fix by ending the command with `%O %S`.",
+        references: &[Ref { source: Source::Latexmk, at: "FORMAT OF COMMAND SPECIFICATIONS" }],
+        fixes: &[],
         run: command_placeholders,
     },
     Rule {
@@ -143,12 +165,16 @@ Fix by ending the command with `%O %S`.",
         summary: "the engine command could report errors as file:line and write SyncTeX data",
         explanation: "\
 `-file-line-error` makes the engine report `file:line: message` instead of
-`! message`, which editors and satex's log reading can jump to; `-synctex=1`
-writes the data that links the PDF back to the source (pdftex(1), luatex(1)).
-Both cost nothing measurable.
+`! message`, which editors and satex's log reading can jump to.  `-synctex=1`
+writes the data that links the PDF back to the source.
 
 Fix by adding them to the command, e.g.
 `$pdflatex = 'pdflatex -file-line-error -synctex=1 %O %S';`.",
+        references: &[
+            Ref { source: Source::Pdftex, at: "-file-line-error" },
+            Ref { source: Source::Luatex, at: "-synctex" },
+        ],
+        fixes: &[],
         run: engine_options,
     },
 ];
@@ -217,7 +243,7 @@ impl Latexmkrc {
     }
 
     /// The engine command variable `$pdf_mode` selects, and the engine it
-    /// runs; `None` when `$pdf_mode` is not set here, which leaves the
+    /// runs.  `None` when `$pdf_mode` is not set here, which leaves the
     /// choice to latexmk's command line.
     fn selected(&self) -> Option<(&'static str, Engine)> {
         let mode = self.setting("pdf_mode")?;
@@ -300,9 +326,11 @@ struct Directive {
 }
 
 fn directives(analysis: &Analysis) -> Vec<Directive> {
-    analysis
-        .plugins
-        .magic
+    directives_of(&analysis.plugins.magic)
+}
+
+fn directives_of(magic: &[crate::plugin::magic::Magic]) -> Vec<Directive> {
+    magic
         .iter()
         .filter(|m| m.key == "arara")
         .map(|m| {
@@ -329,6 +357,19 @@ impl Directive {
         let options = self.options.replace(' ', "");
         ["shell:yes", "shell:true", "shell:on"].iter().any(|o| options.contains(o))
     }
+}
+
+/// The `\write18` access the build asks for: a latexmkrc engine command
+/// with `-shell-escape`, or an arara engine directive with `shell: yes`.
+/// `None` when neither says, which leaves the installation's default.
+pub(crate) fn requested_shell_escape(
+    project: &crate::project::Project,
+    magic: &[crate::plugin::magic::Magic],
+) -> Option<crate::config::ShellEscape> {
+    let rcs = project.files.iter().filter(|file| file.tool == "latexmk").filter_map(|file| Latexmkrc::read(&file.path));
+    let latexmk = rcs.into_iter().any(|rc| rc.commands().iter().any(|(name, _)| rc.shell_escape(name).is_some()));
+    let arara = directives_of(magic).iter().any(|d| d.engine().is_some() && d.shell_escape());
+    (latexmk || arara).then_some(crate::config::ShellEscape::Full)
 }
 
 fn used(analysis: &Analysis, kinds: &[OccKind]) -> bool {
@@ -364,7 +405,7 @@ fn shell_escape_missing(report: &mut Report) {
                 &rc.path,
                 line,
                 &format!("${name}"),
-                format!("the document runs programs through \\write18, but `${name}` is `{current}`"),
+                format!("the document runs programs through `\\write18`, but `${name}` is `{current}`"),
                 Some(format!("${name} = '{}';", with_option(&current, "-shell-escape"))),
             );
         }
@@ -377,7 +418,7 @@ fn shell_escape_missing(report: &mut Report) {
                 directive.line,
                 &directive.rule,
                 format!(
-                    "the document runs programs through \\write18, but `% arara: {}` has no `shell: yes`",
+                    "the document runs programs through `\\write18`, but `% arara: {}` has no `shell: yes`",
                     directive.rule
                 ),
                 Some(format!("% arara: {}: {{ shell: yes }}", directive.rule)),
@@ -398,7 +439,7 @@ fn shell_escape_unneeded(report: &mut Report) {
     let analysis = report.analysis();
     // A run that did not read the packages cannot say that none of them
     // calls the shell.
-    if used(analysis, &[OccKind::ShellEscape]) || !analysis.settings.load_packages {
+    if used(analysis, &[OccKind::ShellEscape]) || !analysis.settings.load.packages {
         return;
     }
     for rc in latexmkrcs(analysis) {
@@ -437,14 +478,17 @@ fn shell_escape_unneeded(report: &mut Report) {
 /// calls `\directlua` needs LuaTeX whatever it was compiled with.
 fn engines_needed(analysis: &Analysis) -> Vec<(Engine, String)> {
     let mut it = Interner::default();
-    let tables: Vec<(Engine, std::collections::HashMap<crate::tex::Sym, crate::tex::Meaning>)> =
+    let tables: Vec<(Engine, crate::fixed::HashMap<crate::tex::Sym, crate::tex::Meaning>)> =
         [Engine::PdfTeX, Engine::LuaTeX, Engine::XeTeX]
             .into_iter()
             .map(|engine| (engine, crate::builtins::initial_meanings(&mut it, engine)))
             .collect();
     let mut out: Vec<(Engine, String)> = Vec::new();
     for expansion in &analysis.facts.expansions {
-        if expansion.meaning != crate::facts::MeaningKind::Undefined {
+        if !matches!(
+            expansion.meaning,
+            crate::facts::MeaningKind::Undefined | crate::facts::MeaningKind::UndefinedApproximated
+        ) {
             continue;
         }
         let name = analysis.interner.name(expansion.name);
@@ -538,7 +582,7 @@ fn engine_mismatch(report: &mut Report) {
                 line,
                 what.as_str(),
                 format!(
-                    "`{what}` waits for a {}, but line {at} of the document sets \\pdfoutput={value}",
+                    "`{what}` waits for a {}, but line {at} of the document sets `\\pdfoutput`={value}",
                     if pdf { "PDF" } else { "DVI file" }
                 ),
                 None,
@@ -571,7 +615,7 @@ fn bibliography_disabled(report: &mut Report) {
 
 fn bibliography_unneeded(report: &mut Report) {
     let analysis = report.analysis();
-    if has_bibliography(analysis) || !analysis.settings.load_packages {
+    if has_bibliography(analysis) || !analysis.settings.load.packages {
         return;
     }
     for rc in latexmkrcs(analysis) {
@@ -613,11 +657,11 @@ fn missing_custom_dependency(report: &mut Report) {
 
 fn unused_custom_dependency(report: &mut Report) {
     let analysis = report.analysis();
-    if !analysis.settings.load_packages {
+    if !analysis.settings.load.packages {
         return;
     }
     for rc in latexmkrcs(analysis) {
-        let directory = rc.path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let directory = crate::paths::dir_of(&rc.path);
         for dependency in &rc.dependencies {
             if writes(analysis, &[dependency.from.trim_start_matches('.')])
                 || has_extension(&directory, &dependency.from)

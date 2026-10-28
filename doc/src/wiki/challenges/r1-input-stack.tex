@@ -1,0 +1,6 @@
+\documentclass{article}
+\def\nest#1{\ifnum#1>0 (\nest{\numexpr#1-1\relax})\fi}
+\begin{document}
+\nest{3}
+\nest{\pdfuniformdeviate 4}
+\end{document}

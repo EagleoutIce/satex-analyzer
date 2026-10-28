@@ -1,0 +1,21 @@
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{positioning,calc,backgrounds}
+\newcounter{entryid}
+\newcommand{\entry}[2]{
+    \edef\lastentryid{\theentryid}
+    \refstepcounter{entryid}
+    \node[below=1mm of \lastentryid, inner sep=2mm, text width=4cm, rounded corners, draw] (\theentryid) {\small\begin{obeylines}#2\end{obeylines}};
+    \node[below left=0.5mm and 0mm of \theentryid.north east] {\footnotesize $A_\theentryid$};
+}
+\begin{document}
+\begin{tikzpicture}
+\node (0) {N};
+\entry{c}{f(x)\\g(x)}
+\entry{a}{x <- x + 1}
+\begin{pgfonlayer}{background}
+    \draw[rounded corners] ($(current bounding box.south west) - (4pt, 4pt)$) rectangle ($(current bounding box.north east) + (4pt, 2pt)$);
+\end{pgfonlayer}
+\end{tikzpicture}
+\gdef\SatexReachedEnd{}
+\end{document}

@@ -1,0 +1,15 @@
+\documentclass{article}
+\usepackage{tikz}
+\usetikzlibrary{positioning,calc,backgrounds}
+\usepackage{suffix}
+\usepackage{hyperref}
+\tikzset{@link/.style={}}
+\input{listbox.tex}
+\begin{document}
+\begin{listbox}{A}
+    \entry{c}{f(x)\\g(x)}
+    \entry{a}{x <- x + 1}
+    \entry{b}{x <- 2}
+\end{listbox}
+\gdef\SatexReachedEnd{}
+\end{document}

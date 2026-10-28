@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{xcolor,tikz}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\tcbset{sb/.style={blanker,breakable,
+  overlay unbroken={\fill[tcbcolframe,rounded corners=2pt] (frame.north west) -- (frame.south west) -- (frame.south east) -- cycle;}}}
+\newtcolorbox{statement}{sb}
+\begin{document}
+\begin{statement}
+Lorem ipsum dolor sit amet. Cell a.
+\end{statement}
+\gdef\SatexReachedEnd{}
+\end{document}

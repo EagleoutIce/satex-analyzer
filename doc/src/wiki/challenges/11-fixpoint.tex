@@ -1,0 +1,7 @@
+\documentclass{article}
+\usepackage{refcount}
+\begin{document}
+The label was on page \pageref{x}.
+\ifnum\getpagerefnumber{x}=1 \newpage\fi
+\label{x}Here.
+\end{document}

@@ -15,8 +15,8 @@ use crate::query::Record;
 
 /// How often the document is fixed and linted again at most.  Fixes settle
 /// in two or three rounds (a clashing option moved to the first load leaves
-/// a duplicate load, which the next round deletes); a fix that keeps coming
-/// back stops here.
+/// a duplicate load, which the next round deletes).  A fix that keeps
+/// coming back stops here.
 pub const MAX_ROUNDS: usize = 8;
 
 /// One finding's fix, as its record carries it.
@@ -73,7 +73,7 @@ pub struct Skipped {
 }
 
 fn overlaps(a: &Edit, b: &Edit) -> bool {
-    // Two different insertions at one place both go in, in fix order; the
+    // Two different insertions at one place both go in, in fix order. The
     // same one twice is one too many.
     let same_insertion = a.start == a.end && a == b;
     a.path == b.path && ((a.start < b.end && b.start < a.end) || same_insertion)
@@ -122,7 +122,7 @@ fn apply_round(texts: &mut BTreeMap<String, String>, fixes: Vec<Planned>, skippe
     for (path, mut edits) in by_file {
         let Some(body) = texts.get_mut(&path) else { continue };
         let text = Text::new(std::mem::take(body));
-        // From the end backwards, so that every offset still holds; at one
+        // From the end backwards, so that every offset still holds. At one
         // place the replaced range goes first and the insertions land before
         // it, the first fix's first.
         edits.sort_by(|(i, a), (j, b)| (b.start, b.end, j).cmp(&(a.start, a.end, i)));
@@ -149,7 +149,7 @@ pub struct Outcome {
 
 /// Fix, analyze again, and repeat until no applicable fix is left, no fix
 /// changes anything, or [`MAX_ROUNDS`] is reached.  `main` is the document
-/// as the analysis names it; `select` keeps the findings the run is about.
+/// as the analysis names it.  `select` keeps the findings the run is about.
 pub fn fixpoint(
     main: &str,
     cfg: &Config,
@@ -204,7 +204,7 @@ pub fn fixpoint(
 /// project's, never the installation's (see [`crate::lint::fix::editable`]).
 pub fn write(outcome: &Outcome) -> Result<(), String> {
     for (path, (_, text)) in &outcome.changed {
-        std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))?;
+        crate::overlay::write(std::path::Path::new(path), text).map_err(|e| format!("{path}: {e}"))?;
     }
     Ok(())
 }

@@ -1,5 +1,5 @@
-//! Records when and from what this binary was built, for `satex --version`
-//! and for the format cache, which is keyed on the interpreter's source.
+//! Records when and from what this binary was built, for `satex --version`,
+//! and the cache key's development guard.
 
 use std::process::Command;
 
@@ -28,17 +28,40 @@ fn main() {
         .filter(|out| out.status.success())
         .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
         .unwrap_or_default();
+    // A working tree with changes is not that commit: say so.
+    let dirty = Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=no"])
+        .output()
+        .ok()
+        .is_some_and(|out| out.status.success() && !out.stdout.is_empty());
+    let commit = if dirty && !commit.is_empty() { format!("{commit}+changes") } else { commit };
     println!("cargo:rustc-env=SATEX_COMMIT={commit}");
-    println!("cargo:rustc-env=SATEX_SOURCE_DIGEST={:016x}", source_digest());
+    // Caches are keyed on `format::SEMANTIC_VERSION` and the source digest:
+    // two builds of one version (a release and a later `cargo install` of a
+    // working tree) may differ in what a cache holds, and must not read or
+    // overwrite each other's.
+    let guard = format!("d{:016x}", source_digest());
+    println!("cargo:rustc-env=SATEX_CACHE_GUARD={guard}");
     println!("cargo:rerun-if-changed=src");
 }
 
 /// Code that only reports on an analysis — lints, subcommands, rendering —
 /// does not change what a cache holds, so editing it keeps the caches.
-const REPORTING: &[&str] = &["src/lint", "src/cmd", "src/bin", "src/render.rs", "src/main.rs"];
+const REPORTING: &[&str] = &[
+    "src/lint",
+    "src/cmd",
+    "src/bin",
+    "src/lsp",
+    "src/render.rs",
+    "src/main.rs",
+    "src/progress.rs",
+    "src/query.rs",
+    "src/rename.rs",
+    "src/timing.rs",
+];
 
 /// FNV-1a over the interpreter's source files, in path order: the binary and
-/// every test binary built from the same source share one format cache.
+/// every test binary built from the same source share one cache.
 fn source_digest() -> u64 {
     fn walk(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else { return };
@@ -58,11 +81,42 @@ fn source_digest() -> u64 {
     walk(std::path::Path::new("src"), &mut files);
     files.sort();
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in files.iter().filter_map(|f| std::fs::read(f).ok()).flatten() {
+    for byte in files.iter().filter_map(|f| std::fs::read(f).ok()).flat_map(|text| code_only(&text)) {
         hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
     hash
+}
+
+/// The bytes that make up the code: `//` comments and whitespace outside
+/// string literals dropped, so a comment or a reformat keeps the caches.
+fn code_only(text: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    let (mut i, mut string) = (0, false);
+    while i < text.len() {
+        let c = text[i];
+        if string {
+            out.push(c);
+            if c == b'\\' && i + 1 < text.len() {
+                out.push(text[i + 1]);
+                i += 1;
+            } else if c == b'"' {
+                string = false;
+            }
+        } else if c == b'/' && text.get(i + 1) == Some(&b'/') {
+            while i < text.len() && text[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        } else if c == b'"' && !(i > 0 && text[i - 1] == b'\'' && text.get(i + 1) == Some(&b'\'')) {
+            string = true;
+            out.push(c);
+        } else if !c.is_ascii_whitespace() {
+            out.push(c);
+        }
+        i += 1;
+    }
+    out
 }
 
 /// Lua 5.3 with satex's unknown value made untestable (vendor/lua/SATEX.patch).
@@ -76,12 +130,13 @@ fn lua() {
     let target = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     match target.as_str() {
         "macos" | "ios" => build.define("LUA_USE_MACOSX", None),
-        "windows" => {
-            if std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|e| e == "msvc") {
-                println!("cargo:rustc-link-arg-bins=/FORCE:MULTIPLE");
-            }
-            &mut build
-        }
+        // `mlua`'s `module` mode would declare Lua as a raw-dylib import and
+        // duplicate these symbols; `.cargo/config.toml` names this library
+        // instead, so nothing here has to force the link through.
+        "windows" => &mut build,
+        // Lua's errors are setjmp/longjmp; in the browser build they become
+        // wasm exceptions, as Rust's panics already are.
+        "emscripten" => build.flag("-sSUPPORT_LONGJMP=wasm"),
         _ => build.define("LUA_USE_LINUX", None),
     };
     let mut files: Vec<_> = std::fs::read_dir(dir)

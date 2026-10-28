@@ -1,0 +1,15 @@
+\documentclass{article}
+\usepackage{verbatim}
+\newenvironment{va}{\verbatim}{\endverbatim}
+\makeatletter
+\newenvironment{vb}{\def\@currenvir{va}\verbatim}{\endverbatim}
+\makeatother
+\edef\which{\ifodd\pdfuniformdeviate9 va\else vb\fi}
+\begin{document}
+\expandafter\begin\expandafter{\which}
+% { \end{verbatim} \end{vb x}
+\end{va}
+\gdef\AfterA{}
+\section{After}\label{after}
+\gdef\SatexReachedEnd{}
+\end{document}

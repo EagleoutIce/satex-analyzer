@@ -1,0 +1,31 @@
+\makeatletter
+\ifluatex \PassOptionsToPackage{nodefaultfont}{xlistings} \fi
+\RequirePackage[fakeminted=true,extendednums,style={plain number}]{_config/xlistings}
+\appto\xlstLanguageSearchPath{,_config/,_config/internal,_config/langs}
+
+\ifluatex\else\RequirePackage{mdsymbol}\fi
+\def\LeftArrow{\text{\BeginAccSupp{method=escape,ActualText={<-}}\(\leftarrow\)\EndAccSupp{}}}
+\def\RightArrow{\text{\BeginAccSupp{method=escape,ActualText={->}}\(\rightarrow\)\EndAccSupp{}}}
+\def\DoubleLeftArrow{\text{\BeginAccSupp{method=escape,ActualText={<<-}}\(\twoheadleftarrow\)\EndAccSupp{}}}
+\def\DoubleRightArrow{\text{\BeginAccSupp{method=escape,ActualText={->>}}\(\twoheadrightarrow\)\EndAccSupp{}}}
+\lstset{add to literate={<-}{{{\!\LeftArrow\!}}}2
+   {<<-}{{{\!\DoubleLeftArrow\!}}}2
+   {->}{{{\!\RightArrow\!}}}2
+   {->>}{{{\!\DoubleRightArrow\!}}}2
+}
+
+\definecolor{@numcolor@base}{RGB}{0,57,97}
+\colorlet{@numcolor}{gray!80!@numcolor@base!96!black}
+\xlstDefineStyles{%
+ {keywordA: \@declaredcolor{black}\bfseries},% % sb for code not present and this calls so many font errors
+ {keywordB: \@declaredcolor{black}},%
+ {keywordC: \@declaredcolor{black}},%
+ {keywordD: \@declaredcolor{black}\bfseries},%
+ {literals: \itshape},%
+ {numbers: \@declaredcolor{@numcolor}}%
+}
+\lstset{
+   aboveskip=\z@,belowskip=\z@
+}
+
+\makeatother
