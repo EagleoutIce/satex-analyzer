@@ -596,6 +596,20 @@ impl StoreLock {
     }
 }
 
+/// Held while this process builds `target`: another instance missing it too
+/// waits here, then reads what this one stored. `None` where the file
+/// system has no locks.
+pub(crate) fn build_lock(target: &Path) -> Option<std::fs::File> {
+    let file = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(target.with_extension("building.lock"))
+        .ok()?;
+    file.lock().ok().map(|()| file)
+}
+
 fn lock_for(target: &Path) -> PathBuf {
     target.with_extension("lock")
 }

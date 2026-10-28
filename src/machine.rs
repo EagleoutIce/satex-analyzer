@@ -616,10 +616,12 @@ impl Analysis {
                     None => s.replace(", rest stored", ""),
                 }),
             };
+            // Replayed as far as any run can: the rest has no line at rest to record from.
+            let word = if package_cache::served(state) { "reused" } else { "rebuilt" };
             match verdict {
                 None if kind == "package" => reused += 1,
                 None => lines.push(format!("cache {kind} {name}: reused")),
-                Some(why) => lines.push(format!("cache {kind} {name}: rebuilt ({why})")),
+                Some(why) => lines.push(format!("cache {kind} {name}: {word} ({why})")),
             }
         }
         if reused > 0 {
@@ -1476,6 +1478,9 @@ pub struct Machine<'a> {
     /// The cacheable package or class being loaded: its end forgets what a
     /// replay of it would not bring ([`Machine::end_cacheable_load`]).
     cacheable_load: Option<FileId>,
+    /// The outermost cacheable load and the lock other processes building
+    /// its cache wait on, until its file closes ([`crate::format::build_lock`]).
+    building: Option<(FileId, Rc<std::fs::File>)>,
     /// Digits satex does not know, such as `\the\count0` of an unknown
     /// count: unknown text to a scan, but character tokens of category 12
     /// to `\ifx`, `\if`, `\ifcat`, `\let` and `\futurelet` (their
@@ -2241,6 +2246,7 @@ impl<'a> Machine<'a> {
             scanning: 0,
             scan_undecided: false,
             cacheable_load: None,
+            building: None,
             gaps: HashSet::default(),
             pdf_string: false,
             last_file: None,
@@ -3169,9 +3175,9 @@ impl<'a> Machine<'a> {
 
         // A missing or stale cache is rebuilt below. It says nothing about
         // the document, so it is no finding, only a notice on stderr.
-        // One build per process: runs that miss together wait for it and
-        // read what it stored.
-        let mut _building = None;
+        // One build at a time, in this process and across processes: runs
+        // that miss together wait for it and read what it stored.
+        let (mut _building, mut _across) = (None, None);
         let mut rebuilt: Option<String> = if cache_dir.is_none() {
             Some("cache disabled".into())
         } else {
@@ -3191,6 +3197,14 @@ impl<'a> Machine<'a> {
             let mut cached = load();
             if cached.is_err() {
                 _building = Some(crate::format::BUILDING.lock().unwrap_or_else(|e| e.into_inner()));
+                let target = crate::format::cache_file(
+                    directory,
+                    &source,
+                    self.out.plugins.engine.as_str(),
+                    self.preload_key(),
+                    &roots,
+                );
+                _across = crate::format::build_lock(&target);
                 cached = load();
             }
             match cached {
@@ -4280,6 +4294,9 @@ will look undefined",
                 }
                 if self.cacheable_load == Some(mouth.file) {
                     self.end_cacheable_load();
+                }
+                if self.building.as_ref().is_some_and(|(file, _)| *file == mouth.file) {
+                    self.building = None;
                 }
             }
             _ => {}
