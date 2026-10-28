@@ -1445,6 +1445,20 @@ fn typeset_of_a_root_lists_an_input_file() {
     assert!(rows.iter().any(|r| r["path"].as_str().is_some_and(|p| p.ends_with("chapter.tex"))), "{rows:?}");
 }
 
+/// A bibliography's heading and each entry are paragraphs of their own: the
+/// `\par` of an empty paragraph (LaTeX's `\everypar` runs one) ends none.
+#[test]
+fn typeset_of_a_root_splits_the_bibliography() {
+    if satex::paths::which("kpsewhich").is_err() {
+        return;
+    }
+    let rows = typeset_of_a_root("bibliography");
+    let details: Vec<&str> = rows.iter().filter_map(|r| r["detail"].as_str()).collect();
+    assert!(details.iter().any(|d| d.trim() == "References"), "{details:?}");
+    assert!(details.iter().any(|d| d.contains("A Title") && !d.contains("References")), "{details:?}");
+    assert!(details.iter().any(|d| d.trim() == "1 Intro"), "{details:?}");
+}
+
 /// A paragraph set by a sectioning command says which.
 #[test]
 fn typeset_of_a_root_marks_headings() {

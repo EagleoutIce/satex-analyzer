@@ -1614,15 +1614,21 @@ impl Machine<'_> {
         let before = n;
         if n.tail[0] != Last::Empty {
             self.set_line(&mut n, true);
+            let text = &mut self.out.facts.text;
+            let at = text.at.len() as u32;
+            if text.pars.last() != Some(&at) {
+                text.pars.push(at);
+            }
         }
         let rigid = |g: Option<crate::value::Glue>| g.is_some_and(|g| g.stretch.amount == 0);
         if self.out.document_depth.is_some()
+            && before.tail[0] != Last::Empty
             && rigid(self.glue_parameter("leftskip"))
             && rigid(self.glue_parameter("rightskip"))
         {
-            // `\par` closed the text at its end; the close before is where it began.
+            // `pars` ends with this paragraph; the end before is where it began.
             let text = &self.out.facts.text;
-            let start = text.closed.iter().rev().nth(1).map_or(0, |&c| c as usize);
+            let start = text.pars.iter().rev().nth(1).map_or(0, |&c| c as usize);
             let set = text.at.get(start..).unwrap_or_default().iter().filter(|s| s.modes == Modes::HORIZONTAL).count();
             self.out.justified_text += set as u64;
         }

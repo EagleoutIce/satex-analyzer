@@ -340,6 +340,9 @@ pub struct Text {
     /// `\/` (tex.web § 1113) or at a paragraph's end, as the number of
     /// characters set before it, ascending.
     pub closed: Vec<u32>,
+    /// Where `\par` ended a paragraph, as the number of characters set
+    /// before it, ascending.
+    pub pars: Vec<u32>,
     /// For a character set under an undecided conditional: its index, the
     /// outermost conditional's node and the arm taken.
     pub arms: Vec<(u32, crate::env::NodeId, bool)>,

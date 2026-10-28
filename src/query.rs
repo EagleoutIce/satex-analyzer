@@ -434,7 +434,6 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 fn typeset(analysis: &Analysis) -> Vec<Record> {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
-    let (mut was_boxed, mut prev_line) = (false, None);
     let mut out = Vec::new();
     let (mut line, mut first, mut choice) = (String::new(), None, None::<(crate::env::NodeId, [String; 2])>);
     let mut causes: Vec<Cause> = Vec::new();
@@ -471,12 +470,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             c = format!("{}{c}", note("·"));
         }
         let piece = if boxed { format!("{}{c}{}", note("⟦"), note("⟧")) } else { c };
-        let new_line = if piece.trim().is_empty() { false } else { prev_line.replace(site.line) != Some(site.line) };
-        if !std::mem::replace(&mut was_boxed, boxed)
-            && new_line
-            && text.closed.binary_search(&(i as u32)).is_ok()
-            && !line.trim().is_empty()
-        {
+        if text.pars.binary_search(&(i as u32)).is_ok() && !line.trim().is_empty() {
             close(&mut line, &mut choice, &mut causes);
             out.push(paragraph(
                 analysis,
