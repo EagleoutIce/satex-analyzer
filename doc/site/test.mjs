@@ -25,7 +25,15 @@ const check = (name, ok, detail = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} 
 
 const page = await text('play/index.html');
 const manifest = JSON.parse(page.match(/<script id="satex-play" type="application\/json">(.*?)<\/script>/s)[1]);
-const engine = (await load(null, manifest.worker))(await load(manifest.js));
+const SatexEngine = await load(null, manifest.worker), createSatex = await load(manifest.js);
+// The page keeps the cache directory in IndexedDB (worker.js); here a map stands in for it.
+const memory = new Map();
+const store = {
+  load: async (space) => [...memory].filter(([k]) => k.startsWith(`${space}|`)).map(([k, v]) => [k.slice(space.length + 1), v]),
+  put: async (space, entries) => { for (const [path, data] of entries) memory.set(`${space}|${path}`, data); },
+  remove: async (space, paths) => { for (const path of paths) memory.delete(`${space}|${path}`); },
+};
+const engine = SatexEngine(createSatex, () => {}, store);
 let t = performance.now();
 const given = base.startsWith('file:') ? { js: undefined, wasm: await bytes(manifest.wasm), bundle: await bytes(manifest.kernels[0].bundle) } : {};
 const { samples, imported } = await engine.init(base, manifest, given);
@@ -56,6 +64,18 @@ for (const name of manifest.samples) {
   check(`${name} lints`, run.status === 0 && summary && !rebuilt.length,
     `exit ${run.status}, ${run.ms} ms, ${summary ?? 'no summary'}${rebuilt.length ? `; not served from the bundle's caches: ${rebuilt.join('; ')}` : ''}`);
   check(`${name} carries no command line`, !/^% satex /.test(samples[name]));
+}
+
+// A second visit reads the caches the first kept, without importing the kernel's again.
+{
+  const again = SatexEngine(createSatex, () => {}, store);
+  const t = performance.now();
+  const { imported: second } = await again.init(base, manifest, given);
+  const kept = again.caches();
+  check('a second visit reuses the kept caches', !second.lines.length && kept.length === engine.caches().length && kept.some((e) => /format-/.test(e.path)),
+    `${Math.round(performance.now() - t)} ms, ${kept.length} entries`);
+  await again.uncache(kept.map((e) => e.path));
+  check('dropped caches are gone', !again.caches().length && !(await store.load(manifest.wasm)).length);
 }
 
 // The other kernels: each bundle loads, and the default sample lints with it.

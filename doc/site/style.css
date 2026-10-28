@@ -565,3 +565,10 @@ details.more[open] > summary { margin-bottom: .3rem; }
 /* the console's run: a secondary action */
 .runbtn { background: transparent; color: var(--fg); border-color: var(--border); font-weight: 500; }
 .runbtn:hover:not(:disabled) { background: var(--sunk); color: var(--accent); border-color: var(--accent); box-shadow: none; transform: none; }
+/* the playground's caches: one row per entry, its size at the right */
+.cache-note { font-size: .8rem; margin: 0 0 .4rem; }
+.cache-list { list-style: none; margin: 0 0 .5rem; padding: 0; font-size: .85rem; }
+.cache-list li { display: flex; align-items: baseline; gap: .4rem; padding: .2rem 0; border-bottom: 1px solid var(--border); }
+.cache-list .cache-kind { color: var(--muted); font-size: .78rem; }
+.cache-list .cache-size { margin-left: auto; font: .78rem ui-monospace, Menlo, monospace; color: var(--muted); }
+.cache-list .cache-total { border-bottom: 0; font-weight: 600; }

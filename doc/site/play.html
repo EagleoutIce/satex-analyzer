@@ -51,6 +51,10 @@
     <details class="sect" id="play-typeset"><summary>Typeset</summary>
       <label class="ts-toggle"><input type="checkbox" id="typeset-boxes"> show text set in boxes that are not output</label>
       <div id="typeset-body" class="typeset grow"><p class="muted">What the paragraphs of the open file set, once it is checked.</p></div></details>
+    <details class="sect" id="play-cache"><summary>Caches <b id="cache-count"></b></summary>
+      <p class="muted cache-note">What satex keeps between checks and visits: the kernels, classes and packages it analysed. A dropped entry is analysed again when needed.</p>
+      <ul id="cache-list" class="cache-list"></ul>
+      <button type="button" class="small ghost" id="cache-clear">Clear all</button></details>
     <div class="statusbar" aria-live="polite"><progress id="play-progress" max="1" value="0" aria-label="loading"></progress><span id="play-status">Fetching satex and the TeX bundle…</span>
       <span id="play-pills" class="pills"></span>
       <span class="statdetail"><button id="t-time" class="stat-time" type="button" aria-expanded="false" aria-controls="t-detail" title="timings and size of the last run" hidden><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.2 1.5"/></svg><span id="t-time-text"></span></button>

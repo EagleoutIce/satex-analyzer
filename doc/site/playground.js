@@ -221,7 +221,7 @@
   // ---------------------------------------------------------------- worker requests
 
   const waiting = {}; // reply type -> resolver; runs, reads and kernel loads go one at a time, in order
-  const REPLY = { run: 'result', bundle: 'bundle', bundles: 'bundle', init: 'ready', read: 'file' };
+  const REPLY = { run: 'result', bundle: 'bundle', bundles: 'bundle', init: 'ready', read: 'file', caches: 'caches', uncache: 'caches' };
   let line_ = Promise.resolve();
   const ask = (msg, transfer = []) => {
     const asked = line_.then(() => new Promise((resolve, reject) => {
@@ -1483,6 +1483,35 @@
     timing('t-cache', detail, 'what the last run reused from the caches and what it analysed again');
     return `${reused.length + segments} cached${fresh.length ? ` · fresh: ${fresh.map((f) => f.split(' ')[0]).join(', ')}` : ''}`;
   }
+  /** The cache entries the worker keeps (worker.js), each with what it stands for; dropping one
+   * restarts the language server, so the next check analyses that part again. */
+  const cacheBox = $('play-cache'), cacheList = $('cache-list');
+  const CACHE_KINDS = { format: 'kernel', package: 'class or package', index: 'file index', probe: 'installation facts', 'content-hashes': 'file hashes' };
+  function cacheLabel(path) {
+    const file = path.split('/').pop(), [kind, ...rest] = file.replace(/\.postcard$/, '').split('-');
+    const name = kind === 'content' ? 'content-hashes' : kind;
+    const what = rest.filter((p) => !/^(v\d+|s?[0-9a-f]{8,})$/.test(p) && p !== 'hashes').join(' ');
+    return [CACHE_KINDS[name] ?? name, what];
+  }
+  async function drawCaches(entries) {
+    entries ??= (await ask({ type: 'caches' })).entries;
+    $('cache-count').textContent = entries.length || '';
+    const total = entries.reduce((n, e) => n + e.size, 0);
+    cacheList.innerHTML = entries.sort((a, b) => b.size - a.size).map((e) => {
+      const [kind, what] = cacheLabel(e.path);
+      return `<li title="${escape(e.path)}"><span class="cache-kind">${escape(kind)}</span> <b>${escape(what)}</b><span class="cache-size">${size(e.size)}</span>` +
+        `<button type="button" class="small ghost" data-path="${escape(e.path)}" aria-label="drop ${escape(what || kind)}">Drop</button></li>`;
+    }).join('') + (entries.length ? `<li class="cache-total"><span>in all</span><span class="cache-size">${size(total)}</span></li>` : '<li class="muted">Nothing cached yet.</li>');
+  }
+  async function uncache(paths) {
+    if (!paths.length) return;
+    await drawCaches((await ask({ type: 'uncache', paths })).entries);
+    await restart();
+  }
+  cacheBox.addEventListener('toggle', () => { if (cacheBox.open) drawCaches(); });
+  cacheList.onclick = (e) => { const b = e.target.closest('button[data-path]'); if (b) uncache([b.dataset.path]); };
+  $('cache-clear').onclick = async () => uncache((await ask({ type: 'caches' })).entries.map((e) => e.path));
+
   /** After findings or a run name missing packages: fetch them, start over. */
   async function fetchMissing(texts) {
     if (!await fetchPackages(missing(texts))) return false;
@@ -1690,6 +1719,7 @@
           }
           show(m.params.uri, m.params.diagnostics);
           typeset(m.params.uri);
+          if (cacheBox.open) drawCaches();
           if (m.params.uri === uri()) lsp('satex/caches', { textDocument: { uri: m.params.uri } }).then((r) => cacheReport((r ?? []).map((l) => ['err', l]))).catch(() => {});
           fetchMissing(unresolved);
         }
