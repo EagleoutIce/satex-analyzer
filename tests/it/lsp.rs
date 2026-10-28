@@ -1403,7 +1403,7 @@ fn typeset_of_a_root(tag: &str) -> Vec<Value> {
     let text = "\\documentclass{article}\n\\begin{document}\n\\input{chapter}\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
     let main = dir.join("main.tex");
     std::fs::write(&main, text).unwrap();
-    std::fs::write(dir.join("chapter.tex"), "Chapter text \\cite{a}.\n").unwrap();
+    std::fs::write(dir.join("chapter.tex"), "\\section{Intro}\nChapter text \\cite{a}.\n").unwrap();
     std::fs::write(dir.join("refs.bib"), "@book{a, author={Doe, J.}, title={A Title}, year={2020}, publisher={P}}\n")
         .unwrap();
     let uri = fixture_uri(&main);
@@ -1438,6 +1438,19 @@ fn typeset_of_a_root_lists_an_input_file() {
     }
     let rows = typeset_of_a_root("input");
     assert!(rows.iter().any(|r| r["path"].as_str().is_some_and(|p| p.ends_with("chapter.tex"))), "{rows:?}");
+}
+
+/// A paragraph set by a sectioning command says which.
+#[test]
+fn typeset_of_a_root_marks_headings() {
+    if satex::paths::which("kpsewhich").is_err() {
+        return;
+    }
+    let rows = typeset_of_a_root("heading");
+    assert!(
+        rows.iter().any(|r| r["heading"] == "section" && r["detail"].as_str().is_some_and(|d| d.contains("Intro"))),
+        "{rows:?}"
+    );
 }
 
 /// The server runs the build (`Machine::build`), so the .bbl the bibliography
