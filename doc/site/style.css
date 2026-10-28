@@ -401,6 +401,13 @@ main td .badges, main td .cat { white-space: nowrap; }
 .typeset { max-height: 16rem; overflow: auto; font-family: var(--serif, Georgia, serif); font-size: 14px; }
 .typeset .ts { margin: .15rem 0; cursor: pointer; display: flex; gap: .6rem; }
 .typeset .ts:hover { background: var(--hover, rgba(127,127,127,.12)); }
+.typeset .ts-text { min-width: 0; overflow-wrap: anywhere; }
+.typeset .ts-h { margin: .5rem 0 .2rem; font-weight: 700; }
+.typeset .ts-part, .typeset .ts-chapter { font-size: 1.35em; } .typeset .ts-section { font-size: 1.18em; } .typeset .ts-subsection { font-size: 1.06em; }
+.typeset .ts-note { color: var(--muted); font-family: var(--mono, monospace); font-size: .85em; }
+.typeset .ts-box { display: none; }
+.typeset.show-boxes .ts-box { display: inline; color: var(--muted); border: 1px dashed var(--border); border-radius: 3px; padding: 0 .15rem; }
+.ts-toggle { display: flex; align-items: center; gap: .35rem; font-size: .8rem; color: var(--muted); margin: 0 0 .3rem; }
 .typeset .ts-at { color: var(--muted); font-family: var(--mono, monospace); font-size: 12px; min-width: 2.5ch; text-align: right; }
 /* Loading the playground: a thin bar before the status text. */
 #play-progress { width: 8rem; height: .45rem; margin-right: .6rem; vertical-align: middle; accent-color: var(--c4, #4a7bd0); }

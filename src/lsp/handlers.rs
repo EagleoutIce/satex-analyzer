@@ -1604,15 +1604,29 @@ fn typed_usage(usage: &str, roles: &[crate::roles::Role]) -> String {
 }
 
 /// The paragraphs the document's own files set, in reading order: `satex
-/// query typeset` of the run, without what libraries set.
+/// query typeset` of the run, without what libraries set. A paragraph that
+/// starts on the line of a sectioning command carries it as `heading`.
 pub fn typeset(analysis: &Analysis) -> Vec<Json> {
+    let at = |r: &query::Record| {
+        (r.get("path").and_then(Json::as_str).map(str::to_owned), r.get("line").and_then(Json::as_u64))
+    };
+    let headings: std::collections::HashMap<_, _> = query::run(analysis, Query::Occurrences, &Filter::Always)
+        .into_iter()
+        .filter(|r| r.get("kind").and_then(Json::as_str) == Some("section"))
+        .filter_map(|r| Some((at(&r), r.get("detail")?.clone())))
+        .collect();
     query::run(analysis, Query::Typeset, &Filter::Always)
         .into_iter()
         .filter(|r| {
             r.get("origin").is_none_or(|o| o == "document")
                 && r.get("kind").and_then(Json::as_str) != Some("assumption")
         })
-        .map(Json::Object)
+        .map(|mut r| {
+            if let Some(heading) = headings.get(&at(&r)) {
+                r.insert("heading".into(), heading.clone());
+            }
+            Json::Object(r)
+        })
         .collect()
 }
 

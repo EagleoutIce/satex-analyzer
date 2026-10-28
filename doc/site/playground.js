@@ -519,12 +519,30 @@
   /** What the open file's paragraphs set, from the language server's last
    * analysis (`satex query typeset`); a click goes to the paragraph. */
   const typesetBody = $('typeset-body');
+  /** satex's notation in typeset text (`\uE000…\uE001`): `⟦…⟧` is text set in a box, on the page
+   * only if the box is used; `·` a place the line breaker may hyphenate, not shown. */
+  function notation(marked) {
+    let open = 0;
+    const html = marked.split(/(\uE000[^\uE001]*\uE001)/).map((part) => {
+      const note = /^\uE000([^\uE001]*)\uE001$/.exec(part)?.[1];
+      if (note === undefined) return escape(part);
+      if (note === '⟦') { open++; return '<span class="ts-box" title="set in a box: on the page only if the box is used">'; }
+      if (note === '⟧') { if (!open) return ''; open--; return '</span>'; }
+      return note === '·' ? '' : `<span class="ts-note">${escape(note)}</span>`;
+    }).join('');
+    return html + '</span>'.repeat(open);
+  }
+  const boxesToggle = $('typeset-boxes');
+  try { boxesToggle.checked = localStorage.getItem('satex-typeset-boxes') === '1'; } catch {}
+  const showBoxes = () => typesetBody.classList.toggle('show-boxes', boxesToggle.checked);
+  boxesToggle.onchange = () => { showBoxes(); try { localStorage.setItem('satex-typeset-boxes', boxesToggle.checked ? '1' : '0'); } catch {} };
+  showBoxes();
   async function typeset(target) {
     if (target !== uri()) return;
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
     if (!rows || target !== uri()) return;
     const paragraphs = rows.filter((r) => r.kind === 'paragraph');
-    const row = (r) => `<p class="ts" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span>${escape(r.detail ?? '')}</p>`;
+    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(r.marked ?? r.detail ?? '')}</span></p>`;
     // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
     const html = [];
     for (let i = 0; i < paragraphs.length;) {
