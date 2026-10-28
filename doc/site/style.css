@@ -332,6 +332,9 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .badge .as-badge { position: absolute; left: 0; top: 50%; translate: 0 -50%; z-index: 1; white-space: nowrap; opacity: 0; transform: scale(.94); pointer-events: none; }
 .fixable:is(:hover, :focus-within) .badge .sev { opacity: 0; transform: scale(.94); }
 .fixable:is(:hover, :focus-within) .badge .as-badge { opacity: 1; transform: none; pointer-events: auto; }
+/* a fix is a secondary action: the accent on the panel, in either theme */
+button.apply { background: var(--panel); color: var(--accent); border-color: var(--border); }
+button.apply:hover:not(:disabled) { background: var(--sunk); border-color: var(--accent); box-shadow: none; }
 .apply .fix { font-size: .68rem; margin-left: .15rem; background: var(--panel); }
 .acts button:hover:not(:disabled) { transform: none; }
 .refs { margin: 0 0 .6rem; font-size: .85rem; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
@@ -529,7 +532,7 @@ details.more[open] > summary { margin-bottom: .3rem; }
 .f-head .badge, .f-head .loc { flex: none; }
 .f-head .sev { border: 0; padding: 0; font-size: 0; }
 .f-head .sev::before { content: var(--glyph); font-size: .78rem; }
-.f-head .badge .as-badge { left: auto; right: 0; background: var(--sunk); }
+.f-head .badge .as-badge { left: auto; right: 0; }
 .f-head .loc { font: 500 .78rem ui-monospace, Menlo, monospace; color: var(--muted); }
 .diagnostics li.obj-group { padding: 0; border: 0; background: none; box-shadow: none; cursor: default; margin: 0 0 .4rem; }
 .obj-group > details > .cat-head { text-transform: none; letter-spacing: 0; font-size: 12px; }
