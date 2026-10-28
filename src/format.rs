@@ -585,7 +585,13 @@ impl StoreLock {
         // Read and write, not append: Windows locks only a handle opened so.
         let file =
             std::fs::File::options().read(true).write(true).create(true).truncate(false).open(lock_for(target)).ok()?;
-        file.try_lock().ok()?;
+        match file.try_lock() {
+            Ok(()) => {}
+            // The browser's file system has no locks, and no other instance writes to it.
+            Err(std::fs::TryLockError::Error(e))
+                if cfg!(target_os = "emscripten") && e.kind() == std::io::ErrorKind::Unsupported => {}
+            Err(_) => return None,
+        }
         Some(StoreLock(file))
     }
 }
