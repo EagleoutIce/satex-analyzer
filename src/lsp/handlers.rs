@@ -1237,11 +1237,20 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
         None => query::options(analysis, arg.cmd).iter().map(|r| field(r, "family")).collect(),
     };
     dirs.dedup();
-    // The direct children of `dir`, not its handlers (`.cd`, `.unknown`).
-    let children = |dir: &str| -> Vec<(String, Record)> {
+    // The keys under `dir` down to `depth` levels, as paths relative to it,
+    // not its handlers (`.cd`, `.unknown`): shallower ones first.
+    let below = |dir: &str, depth: usize| -> Vec<(String, Record)> {
         let named = stored(dir).into_iter().map(|r| (field(&r, "key")[dir.len()..].to_string(), r));
-        named.filter(|(n, _)| !(n.is_empty() || n.contains('/') || n.starts_with('.') || n == "unknown")).collect()
+        let mut out: Vec<_> = named
+            .filter(|(n, _)| {
+                n.split('/').count() <= depth
+                    && n.split('/').all(|p| !(p.is_empty() || p.starts_with('.') || p == "unknown"))
+            })
+            .collect();
+        out.sort_by_key(|(n, _)| n.matches('/').count());
+        out
     };
+    let children = |dir: &str| below(dir, 1);
     let detail = |r: &Record| {
         ["kind", "default"].iter().map(|f| field(r, f)).filter(|d| !d.is_empty()).collect::<Vec<_>>().join("  ")
     };
@@ -1269,11 +1278,13 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
         let dir = &typed[..typed.rfind('/').map_or(0, |i| i + 1)];
         let start = to_lsp(doc, Pos::new(pos.line, pos.col - typed.chars().count() as u32));
         let range = Range { start, end: to_lsp(doc, pos) };
-        return children(dir)
+        return below(dir, KEY_DEPTH)
             .into_iter()
             .map(|(name, r)| {
                 let key = format!("{dir}{name}");
-                let mut it = key_item(item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 0), &key, &r);
+                let rank = name.matches('/').count();
+                let mut it =
+                    key_item(item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank), &key, &r);
                 let new_text = it.insert_text.take().unwrap_or(key);
                 it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
                 it
@@ -1281,15 +1292,31 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
             .collect();
     }
     if switched.is_none() {
-        let keys = option_items(analysis, arg.cmd);
-        let positional = keys.iter().all(|k| k.detail.as_deref().is_some_and(|d| d.contains("positional")));
-        return if positional { Vec::new() } else { keys };
+        let mut keys = option_items(analysis, arg.cmd);
+        if keys.iter().all(|k| k.detail.as_deref().is_some_and(|d| d.contains("positional"))) {
+            return Vec::new();
+        }
+        // The subkeys of a pgfkeys family, after its own keys.
+        let deeper = dirs.iter().filter(|d| d.starts_with('/')).flat_map(|d| {
+            below(&format!("{}/", d.trim_end_matches('/')), KEY_DEPTH).into_iter().filter(|(n, _)| n.contains('/'))
+        });
+        keys.extend(deeper.map(|(name, r)| {
+            key_item(item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 99_999), &name, &r)
+        }));
+        return keys;
     }
     dirs.iter()
-        .flat_map(|d| children(&format!("{}/", d.trim_end_matches('/'))))
-        .map(|(name, r)| key_item(item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 0), &name, &r))
+        .flat_map(|d| below(&format!("{}/", d.trim_end_matches('/')), KEY_DEPTH))
+        .map(|(name, r)| {
+            let rank = name.matches('/').count();
+            key_item(item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank), &name, &r)
+        })
         .collect()
 }
+
+/// How many levels below a directory key completion lists, so a family's
+/// subkeys are found by typing any part of their path.
+const KEY_DEPTH: usize = 3;
 
 /// The keys `name`'s optional argument feeds, from [`query::options`].
 fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {

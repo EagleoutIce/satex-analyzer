@@ -1004,6 +1004,9 @@ fn completion_offers_keys_in_key_lists() {
     assert!(labels(&paths).contains(&"/demo/mode"), "{:?}", labels(&paths));
     let family = complete(&mut server, &uri, 9, 6);
     assert!(labels(&family).contains(&"width"), "{:?}", labels(&family));
+    // Subkeys come a few levels deep, to be found by any part of their path.
+    assert!(labels(&paths).contains(&"/demo/mode/fast"), "{:?}", labels(&paths));
+    assert!(labels(&family).contains(&"mode/safe"), "{:?}", labels(&family));
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -1312,7 +1315,9 @@ fn key_lists_complete_paths_choices_and_family_keys() {
     for key in ["/demo/width", "/demo/color", "/demo/draft", "/demo/mode", "/demo/label"] {
         assert!(labels(&paths).contains(&key), "{key}: {:?}", labels(&paths));
     }
-    assert!(!labels(&paths).contains(&"/demo/mode/fast"), "{:?}", labels(&paths));
+    // Subkeys follow, after the keys of the directory itself.
+    let order = |key: &str| paths.iter().find(|i| i["label"] == key).map(|i| i["sortText"].to_string());
+    assert!(order("/demo/mode/fast") > order("/demo/width"), "{paths:?}");
     assert_eq!(paths[0]["textEdit"]["range"]["start"]["character"], 26, "{}", paths[0]);
     // A key that takes a value ends in `=` with the cursor after it; a switch does not.
     let inserted = |key: &str| paths.iter().find(|i| i["label"] == key).map(|i| i["textEdit"]["newText"].clone());
