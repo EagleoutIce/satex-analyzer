@@ -6,6 +6,11 @@ use std::process::Command;
 fn main() {
     lua();
     lpeg();
+    // The playground's status callback (src/lsp/wasm.rs).
+    if std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "emscripten") {
+        let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lsp/wasm-status.js");
+        println!("cargo:rustc-link-arg-bins=--js-library={}", lib.display());
+    }
     // `date` is the one clock available without pulling a crate into the
     // build script; the epoch is the fallback where it is not.
     let stamp = Command::new("date")

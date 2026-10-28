@@ -317,7 +317,15 @@
   function analyze() { checking(); lsp('satex/analyze', {}, true); }
   const checkBox = $('lsp-check');
   /** The indeterminate bar of a running check, with the phase it is in; the worker reports none, the waits for packages are the phases. */
-  const phase = (text) => { checkBox.hidden = !text; checkBox.lastElementChild.textContent = text ?? ''; lspStatus.textContent = text ?? ''; };
+  const phase = (text, done = null) => {
+    checkBox.hidden = !text;
+    checkBox.lastElementChild.textContent = text ?? '';
+    lspStatus.textContent = text ?? '';
+    // how much of the file is read, once the engine says; until then the bar sweeps
+    const bar = checkBox.firstElementChild;
+    bar.classList.toggle('known', done !== null);
+    bar.style.setProperty('--done', done ?? 0);
+  };
   function checking() { phase('checking…'); checkStart = performance.now(); }
 
   /** Completion order: the project's own commands, then the documented ones, internals
@@ -1655,6 +1663,8 @@
           fetchMissing(unresolved);
         }
       }
+    } else if (data.type === 'status') {
+      if (data.text && !checkBox.hidden) phase(data.text, data.total ? Math.min(data.reached / data.total, 1) : null);
     } else if (data.type === 'progress') {
       progressed(data);
     } else if (data.type === 'error' && data.of === 'lsp') {

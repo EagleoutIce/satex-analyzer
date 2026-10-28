@@ -55,8 +55,9 @@ function SatexEngine(createSatex, progress = () => {}) {
   }
 
   /** A fresh instance over the bundle, `edits` laid over it, in `cwd`. */
-  async function boot(lines, edits = {}, cwd = '/work') {
+  async function boot(lines, edits = {}, cwd = '/work', onStatus = undefined) {
     const module = await createSatex({
+      onStatus,
       instantiateWasm(imports, done) {
         WebAssembly.instantiate(wasm, imports).then((instance) => done(instance, wasm));
         return {};
@@ -97,7 +98,9 @@ function SatexEngine(createSatex, progress = () => {}) {
   function reset(args = [], cwd = '/work') { server = null; serverArgs = args; serverCwd = cwd; }
   async function lsp(message) {
     if (!server) {
-      server = await boot([], {}, serverCwd);
+      // What the engine is doing while a message runs (src/lsp/wasm.rs).
+      const onStatus = (json) => self.postMessage({ type: 'status', ...JSON.parse(json) });
+      server = await boot([], {}, serverCwd, onStatus);
       server.callMain([...serverArgs, 'lsp']); // returns with the runtime alive, see src/lsp/wasm.rs
     }
     const text = server.stringToNewUTF8(JSON.stringify(message));

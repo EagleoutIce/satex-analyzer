@@ -248,6 +248,11 @@ pub struct Status {
     /// Lines the kernel and package caches stood for.
     #[serde(skip_serializing_if = "is_zero")]
     pub cached: u64,
+    /// Characters of the job's file read, of all of them.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub reached: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub total: u64,
     #[serde(skip_serializing_if = "is_zero")]
     pub ms: u64,
     #[serde(skip_serializing_if = "is_zero")]

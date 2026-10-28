@@ -543,6 +543,7 @@ details.more[open] > summary { margin-bottom: .3rem; }
 .check[hidden] { display: none; }
 .ibar { flex: none; position: relative; width: 7rem; height: .4rem; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .ibar::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 40%; border-radius: inherit; background: var(--accent); animation: ibar 1.1s var(--ease) infinite; }
+.ibar.known::after { width: calc(var(--done) * 100%); animation: none; transition: width .3s var(--ease); }
 @keyframes ibar { from { transform: translateX(-100%); } to { transform: translateX(260%); } }
 @media (prefers-reduced-motion: reduce) { .ibar::after { animation-duration: 3s; } }
 .og-error { --sev: var(--error); } .og-warning { --sev: var(--warning); } .og-info { --sev: var(--info); }
