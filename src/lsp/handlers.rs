@@ -1393,25 +1393,83 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
     let mut out = Vec::new();
     for (exts, tree) in kinds {
         let exts: Vec<&str> = exts.iter().map(String::as_str).collect();
-        let mut names: Vec<(String, usize)> = project_files(analysis, &exts).into_iter().map(|n| (n, 0)).collect();
+        let mut names: Vec<(String, usize, Option<PathBuf>)> =
+            project_files(analysis, &exts).into_iter().map(|n| (n, 0, None)).collect();
+        let roots = &analysis.distribution.roots;
         for (ext, dir) in exts.iter().filter_map(|e| Some((e, tree?))) {
-            let found = crate::distribution::names_with(&analysis.distribution.roots, dir, &format!(".{ext}"));
-            names.extend(found.into_iter().map(|n| (n, 1)));
+            let ext = format!(".{ext}");
+            match dir {
+                "tex" => names.extend(
+                    crate::distribution::files_with(roots, &ext)
+                        .into_iter()
+                        .filter_map(|(n, p)| Some((n.strip_suffix(&ext)?.to_string(), 1, Some(p)))),
+                ),
+                _ => names.extend(crate::distribution::names_with(roots, dir, &ext).into_iter().map(|n| (n, 1, None))),
+            }
         }
         let listed: Vec<String> = exts.iter().filter(|e| !e.is_empty()).map(|e| format!(".{e}")).collect();
         let detail = |n: &str| match n.rsplit_once('.').filter(|(_, e)| !e.contains('/')) {
             Some((stem, ext)) => loader(analysis, ext, stem),
             None => Some(listed.join(", ")),
         };
-        let names = names.into_iter().filter(|(n, _)| n.starts_with(typed));
-        out.extend(names.map(|(n, rank)| {
-            let detail = detail(&n);
-            item(n, CompletionItemKind::FILE, detail, rank)
+        let names: Vec<_> = names.into_iter().filter(|(n, ..)| n.starts_with(typed)).collect();
+        // Reading each file's identification is for a list one can read.
+        let identify = names.len() <= IDENTIFIED;
+        out.extend(names.into_iter().map(|(n, rank, path)| {
+            let mut detail = detail(&n);
+            let mut it = item(n.clone(), CompletionItemKind::FILE, None, rank);
+            if let Some(path) = path {
+                let (stem, ext) = (n.as_str(), path.extension().and_then(|e| e.to_str()).unwrap_or_default());
+                let tree = roots.iter().find(|r| path.starts_with(r)).filter(|r| local(analysis, r));
+                let tree = tree.and_then(|r| r.file_name()).map(|t| format!("local: {}", t.to_string_lossy()));
+                let version = identify.then(|| provided(&path)).flatten();
+                let parts: Vec<String> = [detail.take(), version, tree].into_iter().flatten().collect();
+                detail = Some(parts.join(" · "));
+                if matches!(ext, "sty" | "cls") {
+                    it.documentation = Some(lsp_types::Documentation::MarkupContent(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: format!("[documentation](https://texdoc.org/pkg/{stem})"),
+                    }));
+                }
+            }
+            it.detail = detail;
+            it
         }));
     }
     out.sort_by(|a, b| (&a.label, &a.sort_text).cmp(&(&b.label, &b.sort_text)));
     out.dedup_by(|a, b| a.label == b.label);
     out
+}
+
+/// Up to how many installed files a completion reads the identification of.
+const IDENTIFIED: usize = 400;
+
+/// Whether `root` is a tree of the user's or the site's own rather than of
+/// the distribution: TeX Live's `texmf-dist` and a configured bundle are not.
+fn local(analysis: &Analysis, root: &std::path::Path) -> bool {
+    root.file_name().is_none_or(|n| n != "texmf-dist") && analysis.distribution.bundle.as_deref() != Some(root)
+}
+
+/// What a file says it is (`\ProvidesPackage{x}[2024/01/01 v1.2 …]`, or
+/// expl3's `\ProvidesExplPackage{x}{date}{version}{…}`): date and version.
+fn provided(path: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+    let mut head = Vec::new();
+    std::fs::File::open(path).ok()?.take(16 * 1024).read_to_end(&mut head).ok()?;
+    let head = String::from_utf8_lossy(&head);
+    let (at, expl) =
+        ["\\ProvidesExpl", "\\Provides"].iter().find_map(|m| Some((head.find(m)?, m.ends_with("Expl"))))?;
+    let rest = &head[at..];
+    let after_name = rest.find('}')? + 1;
+    let rest = &rest[after_name..];
+    let text = if expl {
+        let groups: Vec<&str> = rest.split('}').take(2).filter_map(|g| Some(g.split_once('{')?.1.trim())).collect();
+        groups.join(" ")
+    } else {
+        let rest = rest.trim_start().strip_prefix('[')?;
+        rest[..rest.find(']')?].split_whitespace().take(2).collect::<Vec<_>>().join(" ")
+    };
+    (!text.is_empty()).then_some(text)
 }
 
 /// What a file of extension `ext` is, and the command this run loaded such

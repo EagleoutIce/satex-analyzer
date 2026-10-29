@@ -1191,6 +1191,30 @@ fn file_arguments_complete_their_files_by_extension() {
     let _ = std::fs::remove_dir_all(&dir2);
 }
 
+/// An installed package completes with its date and version, as its
+/// identification line says, and a link to its documentation.
+#[test]
+fn packages_complete_with_their_version_and_documentation() {
+    let Ok(path) = satex::paths::which("kpsewhich").map_err(|_| ()).and_then(|k| {
+        let out = std::process::Command::new(k).arg("amsmath.sty").output().map_err(|_| ())?;
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }) else {
+        return;
+    };
+    let text = "\\documentclass{article}\n\\usepackage{amsm}\n\\begin{document}\nx\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("pkgversions", text);
+    let items = complete(&mut server, &uri, 1, "\\usepackage{amsm".len() as u32);
+    let amsmath = items.iter().find(|i| i["label"] == "amsmath").cloned().unwrap_or_default();
+    // the date the file names in `\ProvidesPackage{amsmath}[…]`
+    let source = std::fs::read_to_string(&path).unwrap_or_default();
+    let date =
+        source.split("\\ProvidesPackage{amsmath}[").nth(1).and_then(|r| r.split_whitespace().next()).unwrap_or("?");
+    assert!(amsmath["detail"].as_str().is_some_and(|d| d.contains(date)), "{amsmath}");
+    assert!(amsmath["documentation"].to_string().contains("texdoc.org/pkg/amsmath"), "{amsmath}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A value the run writes into a build file another tool reads takes that
 /// tool's input type: biblatex's `\addbibresource` and a user wrapper of
 /// `\bibliography` complete databases, with no command named.
