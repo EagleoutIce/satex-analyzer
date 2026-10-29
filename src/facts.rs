@@ -158,6 +158,8 @@ pub struct Load {
     pub provided: Option<String>,
     /// Nesting depth of the load, for the dependency tree.
     pub depth: u16,
+    /// Made on every path: no undecided conditional encloses it.
+    pub certain: bool,
 }
 
 /// Anything named that is not itself a control sequence: labels, citations,

@@ -1076,6 +1076,26 @@ fn hover_and_signature_help_show_argument_types() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A call's hover says what that call typesets.
+#[test]
+fn hover_shows_what_the_call_typesets() {
+    let text = "\\documentclass{article}\n\\newcommand\\hi[1]{Hello #1}\n\\begin{document}\nGar\\c{c}on \\hi{you}.\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("typesets", text);
+    let hover = |server: &mut Server, character: u32| {
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": character } }),
+        );
+        server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
+    };
+    let hi = hover(&mut server, 12);
+    assert!(hi.contains("Typesets here: `Hello you`"), "{hi}");
+    let c = hover(&mut server, 4);
+    assert!(c.contains("Typesets here: `") && c.contains('c'), "{c}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A command with several definitions shows the one in force at the cursor,
 /// the others folded under a heading; each usage line carries its own types.
 #[test]

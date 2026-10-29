@@ -534,6 +534,39 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     out
 }
 
+/// What the call at `at` typesets: the characters set while the user's file
+/// was read at the one place past the call, `⟦…⟧` for those in an unused box.
+pub fn typeset_by(analysis: &Analysis, at: Span) -> Option<String> {
+    let text = &analysis.facts.text;
+    let after = |s: &Span| s.file == at.file && (s.line, s.col) > (at.line, at.col);
+    // The next call the file makes: the reader stands at most there.
+    let next = analysis.facts.expansions.iter().map(|e| e.span).filter(after).map(|s| (s.line, s.col)).min();
+    let first = text.site.iter().position(after)?;
+    let site = text.site[first];
+    if next.is_some_and(|n| (site.line, site.col) > n) {
+        return None;
+    }
+    let mut on_page = vec![false; text.at.len()];
+    for &(from, to) in &text.placed {
+        let end = on_page.len();
+        on_page[(from as usize).min(end)..(to as usize).min(end)].fill(true);
+    }
+    let boxes = crate::mode::Modes::INTERNAL_VERTICAL.union(crate::mode::Modes::RESTRICTED_HORIZONTAL);
+    let out: String = text
+        .chars
+        .chars()
+        .zip(&text.at)
+        .enumerate()
+        .skip(first)
+        .take_while(|(i, _)| text.site.get(*i) == Some(&site))
+        .map(|(i, (c, spot))| {
+            let c = if crate::tex::is_unknown_char(c) { "⟨?⟩".to_string() } else { public(c) };
+            if !on_page[i] && spot.modes.within(boxes) { format!("⟦{c}⟧") } else { c }
+        })
+        .collect();
+    (!out.trim().is_empty()).then_some(out)
+}
+
 /// What made a character of the typeset text uncertain.
 enum Cause {
     /// A `{a|b}` choice set under the undecided conditional at this node.
@@ -795,6 +828,7 @@ fn dependencies(analysis: &Analysis) -> Vec<Record> {
             record.insert("by".into(), symbol(analysis, load.by));
             record.insert("status".into(), json!(load.status.as_str()));
             record.insert("depth".into(), json!(load.depth));
+            record.insert("certain".into(), json!(load.certain));
             record.insert("resolved".into(), json!(load.path.is_some()));
             record.insert("path".into(), json!(load.path));
             // The TeX Live package depp would name for the file.
@@ -996,6 +1030,21 @@ fn distribution(analysis: &Analysis) -> Vec<Record> {
         let mut record = Map::new();
         record.insert("kind".into(), json!("texmf-tree"));
         record.insert("root".into(), json!(root.display().to_string()));
+        out.push(record);
+    }
+    // What the index holds: each directory of a tree with how many files.
+    let mut dirs: std::collections::BTreeMap<(String, String), usize> = Default::default();
+    for (_, path) in crate::distribution::files_with(&found.roots, "") {
+        let Some(root) = found.roots.iter().find(|r| path.starts_with(r)) else { continue };
+        let dir = path.parent().and_then(|d| d.strip_prefix(root).ok()).map(|d| d.display().to_string());
+        *dirs.entry((root.display().to_string(), dir.unwrap_or_default())).or_default() += 1;
+    }
+    for ((root, dir), count) in dirs {
+        let mut record = Map::new();
+        record.insert("kind".into(), json!("directory"));
+        record.insert("root".into(), json!(root));
+        record.insert("name".into(), json!(dir));
+        record.insert("count".into(), json!(count));
         out.push(record);
     }
     out

@@ -290,6 +290,7 @@ struct CachedLoad {
     required: Option<String>,
     provided: Option<String>,
     depth: u16,
+    certain: bool,
     case_mismatch_on_disk: Option<Sym>,
 }
 
@@ -2179,6 +2180,7 @@ impl Machine<'_> {
                 required: l.required.clone(),
                 provided: l.provided.clone(),
                 depth: l.depth,
+                certain: l.certain,
             });
         }
         for (load, provided) in &st.identifications {
@@ -3118,6 +3120,7 @@ impl Machine<'_> {
                     required: l.required.clone(),
                     provided: l.provided.clone(),
                     depth: l.depth,
+                    certain: l.certain,
                     case_mismatch_on_disk,
                 }
             })

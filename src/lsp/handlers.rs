@@ -145,6 +145,19 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
     Some(markdown_hover(markdown))
 }
 
+/// Where the call of `name` under the cursor starts.
+fn call_at(analysis: &Analysis, name: &str, path: &str, pos: Pos) -> Option<crate::tex::Span> {
+    let sym = analysis.interner.lookup(name)?;
+    let file = query::At { file: Some(path.to_string()), line: pos.line, col: pos.col, end: None }.file(analysis)?;
+    analysis
+        .facts
+        .expansions
+        .iter()
+        .filter(|e| e.name == sym && e.span.file == file && e.span.line == pos.line && e.span.col <= pos.col)
+        .map(|e| e.span)
+        .max_by_key(|s| s.col)
+}
+
 /// The database entry of the key under column `col` of `line`, in an
 /// argument [`crate::roles`] says cites: what it names and every field.
 fn cite_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
@@ -190,11 +203,14 @@ fn active_at(analysis: &Analysis, name: &str, path: &str, pos: Pos) -> Option<Re
 /// The heading above the definitions that do not hold where the cursor is.
 pub const MORE_DEFINITIONS: &str = "#### More definitions";
 
-/// `markdown` with the primitive's syntax under its first heading, where
-/// `name` still means the primitive at `at`.
+/// `markdown` with what the call at `at` typesets and, where `name` still
+/// means the primitive at `at`, the primitive's syntax under its first heading.
 pub fn placed(analysis: &Analysis, mut markdown: String, name: &str, path: &str, at: Pos) -> String {
+    let first = markdown.find("\n\n").map_or(0, |i| i + 2);
+    if let Some(set) = call_at(analysis, name, path, at).and_then(|span| query::typeset_by(analysis, span)) {
+        markdown.insert_str(first, &format!("Typesets here: `{set}`\n\n"));
+    }
     if let Some(syntax) = super::primitives::syntax(analysis, name, path, at.line, at.col) {
-        let first = markdown.find("\n\n").map_or(0, |i| i + 2);
         markdown.insert_str(first, &syntax);
     }
     markdown

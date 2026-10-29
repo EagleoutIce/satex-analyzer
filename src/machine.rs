@@ -11160,6 +11160,7 @@ will look undefined",
             required,
             provided: None,
             depth: self.file_depth,
+            certain: self.exact(),
         });
         let load = self.out.facts.loads.len() - 1;
         let (Some(source), Some(id)) = (source, file) else { return };
@@ -11367,6 +11368,7 @@ will look undefined",
                     required: None,
                     provided: None,
                     depth: self.file_depth,
+                    certain: self.exact(),
                 });
             }
             "@onefilewithoptions@clashchk" if arguments.len() == 1 => {

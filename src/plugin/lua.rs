@@ -278,6 +278,7 @@ pub(super) fn load(m: &mut Machine, module: &Module, span: Span) -> Option<(Path
         required: None,
         provided: None,
         depth: load_depth,
+        certain: m.exact(),
     });
     let path = path?;
     m.lua.read.insert(path.clone());
