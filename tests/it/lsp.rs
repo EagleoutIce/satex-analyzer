@@ -1561,3 +1561,34 @@ fn typeset_of_a_root_lists_the_bibliography() {
         "{rows:?}"
     );
 }
+
+/// A `\begin` name and its `\end` name are edited together. They pair by
+/// nesting, so the link holds while a name is retyped, and a commented
+/// `\end` is no partner.
+#[test]
+fn environment_names_are_linked_by_nesting() {
+    let (mut server, uri, _, dir) = open_unsaved("linked", "\\begin{a}\n");
+    let text = "\\begin{ite}\n\\begin{b}\n% \\end{x}\n\\end{b}\n\\end{itemize}\n";
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+    );
+    let lines: Vec<&str> = text.lines().collect();
+    let name = |line: usize, name: &str| {
+        let start = lines[line].find(&format!("{{{name}}}")).unwrap() + 1;
+        json!({ "start": { "line": line, "character": start }, "end": { "line": line, "character": start + name.len() } })
+    };
+    let id = server.request(
+        "textDocument/linkedEditingRange",
+        json!({ "textDocument": { "uri": uri }, "position": name(0, "ite")["end"] }),
+    );
+    let linked = server.response(id);
+    assert_eq!(linked["result"]["ranges"], json!([name(0, "ite"), name(4, "itemize")]), "{linked:?}");
+    let id = server.request(
+        "textDocument/linkedEditingRange",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": 0 } }),
+    );
+    assert_eq!(server.response(id)["result"], Value::Null);
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}

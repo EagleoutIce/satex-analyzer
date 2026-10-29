@@ -129,6 +129,7 @@ fn server_capabilities() -> ServerCapabilities {
         references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
+        linked_editing_range_provider: Some(lsp_types::LinkedEditingRangeServerCapabilities::Simple(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
@@ -170,7 +171,7 @@ fn main_loop(
                         if connection.handle_shutdown(&req).map_err(|e| e.to_string())? {
                             return Ok(());
                         }
-                        match kept_hover(&req, &texts, hovers) {
+                        match kept_hover(&req, &texts, hovers).or_else(|| linked(&req, |uri| texts.get(uri))) {
                             Some(hover) => {
                                 let _ = connection.sender.send(Message::Response(Response::new_ok(req.id, hover)));
                             }
@@ -239,6 +240,17 @@ fn kept_hover(req: &Request, texts: &HashMap<Uri, String>, hovers: &Hovers) -> O
     }
     let kept = hovers.lock().ok()?.get(&(uri, name))?.clone();
     Some(serde_json::to_value(kept.map(handlers::markdown_hover)).unwrap_or(Json::Null))
+}
+
+/// Linked editing, answered from the text alone: it follows the typing.
+fn linked<'a>(req: &Request, text: impl FnOnce(&Uri) -> Option<&'a String>) -> Option<Json> {
+    if req.method != "textDocument/linkedEditingRange" {
+        return None;
+    }
+    let p: lsp_types::LinkedEditingRangeParams = serde_json::from_value(req.params.clone()).ok()?;
+    let at = p.text_document_position_params;
+    let ranges = text(&at.text_document.uri).and_then(|text| handlers::linked_environment(text, at.position));
+    Some(serde_json::to_value(ranges).unwrap_or(Json::Null))
 }
 
 fn handle_request(connection: &Connection, engine_tx: &Sender<EngineMsg>, req: Request) {

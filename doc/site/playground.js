@@ -420,6 +420,61 @@
       update: (deco, tr) => tr.effects.reduce((d, e) => e.is(marks) ? view.Decoration.set(e.value.map(([f, t]) => view.Decoration.mark({ class: 'cm-refmark' }).range(f, t)), true) : d, deco.map(tr.changes)),
       provide: (f) => view.EditorView.decorations.from(f),
     });
+    // A `\begin` name and its `\end` name, from the server's linked editing:
+    // while the cursor is in one, what is typed there is typed in both.
+    const linkedSet = st.StateEffect.define();
+    const linkedField = st.StateField.define({
+      create: () => null,
+      update: (r, tr) => tr.effects.reduce((v, e) => e.is(linkedSet) ? e.value : v,
+        r && tr.docChanged ? r.map(([f, t]) => [tr.changes.mapPos(f, -1), tr.changes.mapPos(t, 1)]) : r),
+      provide: (f) => view.EditorView.decorations.from(f, (r) => view.Decoration.set((r ?? []).filter(([a, b]) => a < b)
+        .map(([a, b]) => view.Decoration.mark({ class: 'cm-linked' }).range(a, b)), true)),
+    });
+    const mirror = st.EditorState.transactionFilter.of((tr) => {
+      const r = tr.startState.field(linkedField);
+      if (!r || !tr.docChanged || !(tr.isUserEvent('input') || tr.isUserEvent('delete'))
+        || tr.startState.sliceDoc(...r[0]) !== tr.startState.sliceDoc(...r[1])) return tr;
+      const twin = [];
+      let inside = true;
+      tr.changes.iterChanges((fromA, toA, _fromB, _toB, text) => {
+        const i = r.findIndex(([f, t]) => fromA >= f && toA <= t);
+        if (i < 0) { inside = false; return; }
+        const shift = r[1 - i][0] - r[i][0];
+        twin.push({ from: fromA + shift, to: toA + shift, insert: text });
+      });
+      return inside && twin.length ? [tr, { changes: twin, sequential: false }] : tr;
+    });
+    function linkAround(v) {
+      const s = v.state, pos = s.selection.main.head, r = s.field(linkedField);
+      if (r && r.some(([f, t]) => pos >= f && pos <= t)) return;
+      const line = s.doc.lineAt(pos), col = pos - line.from;
+      const inName = /\\(?:begin|end)\s*\{[^{}%]*$/.test(line.text.slice(0, col)) && /^[^{}%]*\}/.test(line.text.slice(col));
+      if (!inName || state.file in state.ro) { if (r) queueMicrotask(() => v.dispatch({ effects: linkedSet.of(null) })); return; }
+      const doc = s.doc;
+      push();
+      lsp('textDocument/linkedEditingRange', { textDocument: { uri: uri() }, position: position(doc, pos) }).catch(() => null).then((found) => {
+        if (v.state.doc !== doc) return;
+        const ranges = found?.ranges?.map((x) => [at(doc, x.start), at(doc, x.end)]);
+        v.dispatch({ effects: linkedSet.of(ranges?.length === 2 ? ranges : null) });
+      });
+    }
+    // The `}` of a `\begin{name}` the document does not close yet adds its
+    // `\end{name}` on the next line; the cursor stays for the arguments.
+    const closeEnvironment = view.EditorView.inputHandler.of((v, from, to, text) => {
+      if (text !== '}' || from !== to || state.file in state.ro) return false;
+      const s = v.state, line = s.doc.lineAt(from);
+      const name = line.text.slice(0, from - line.from).match(/\\begin\s*\{([^{}%]*)$/)?.[1].trim();
+      if (!name) return false;
+      const code = s.doc.toString().replace(/(^|[^\\])%.*$/gm, '$1'), quoted = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const count = (kind) => code.match(new RegExp(`\\\\${kind}\\s*\\{\\s*${quoted}\\s*\\}`, 'g'))?.length ?? 0;
+      // an editor-closed `}` already completes this `\begin`
+      const closed = s.sliceDoc(from, from + 1) === '}';
+      if (count('begin') + !closed <= count('end')) return false;
+      const indent = line.text.match(/^\s*/)[0];
+      v.dispatch({ changes: [{ from, to: from + closed, insert: '}' }, { from: line.to, insert: `\n${indent}\\end{${name}}` }],
+        selection: { anchor: from + 1 }, userEvent: 'input.type' });
+      return true;
+    });
     const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment();
     const ev = new EditorView({
       parent, doc: text,
@@ -430,8 +485,8 @@
         span.innerHTML = (use ? cards.usage(use).html : '') + (from ? ` <span class="muted">${escape(from)}</span>` : '');
         return span;
       } }] }), hover,
-        linkField, markField, view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
-        EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); }), theme.of([]), lock.of([])],
+        linkField, markField, linkedField, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
+        EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([])],
     });
     // the site's light/dark choice (site.js) picks the editor's theme
     const scheme = () => ev.dispatch({ effects: theme.reconfigure(self.siteDark?.() ? oneDark : []) });

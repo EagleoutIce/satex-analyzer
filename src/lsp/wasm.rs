@@ -48,6 +48,10 @@ impl Local {
             Ok(Message::Request(req)) => vec![Message::Response(match req.method.as_str() {
                 "initialize" => Response::new_ok(req.id, serde_json::json!({"capabilities": server_capabilities()})),
                 "shutdown" => Response::new_ok(req.id, ()),
+                "textDocument/linkedEditingRange" => {
+                    let found = super::linked(&req, |uri| engine.docs.get(uri).map(|d| &d.text));
+                    Response::new_ok(req.id, found.unwrap_or(serde_json::Value::Null))
+                }
                 _ => respond(
                     &mut |m| {
                         engine.step(m);

@@ -1586,6 +1586,45 @@ fn open_environments(analysis: &Analysis, at: (u32, u32)) -> Vec<String> {
     stack
 }
 
+/// The names of a `\begin{…}` and its `\end{…}`, when `position` is in
+/// one, to edit together (LSP linked editing). They pair by nesting, not
+/// by name, so the link holds while a name is retyped. Read from the text
+/// as it is now: a run would lag behind the typing.
+pub fn linked_environment(text: &str, position: Position) -> Option<lsp_types::LinkedEditingRanges> {
+    static ENV: OnceLock<Regex> = OnceLock::new();
+    let env = ENV.get_or_init(|| Regex::new(r"\\(begin|end)\s*\{([^{}%]*)\}").unwrap());
+    let mut open: Vec<Range> = Vec::new();
+    for (line, body) in text.lines().enumerate() {
+        let code = uncommented(body);
+        for c in env.captures_iter(code) {
+            let name = c.get(2)?;
+            let at = |b: usize| Position { line: line as u32, character: code[..b].encode_utf16().count() as u32 };
+            let range = Range { start: at(name.start()), end: at(name.end()) };
+            if &c[1] == "begin" {
+                open.push(range);
+            } else if let Some(begin) = open.pop()
+                && [begin, range].iter().any(|r| r.start <= position && position <= r.end)
+            {
+                return Some(lsp_types::LinkedEditingRanges { ranges: vec![begin, range], word_pattern: None });
+            }
+        }
+    }
+    None
+}
+
+/// `line` up to its first `%` that starts a comment (not `\%`).
+fn uncommented(line: &str) -> &str {
+    let mut escaped = false;
+    for (at, c) in line.char_indices() {
+        match c {
+            '%' if !escaped => return &line[..at],
+            '\\' => escaped = !escaped,
+            _ => escaped = false,
+        }
+    }
+    line
+}
+
 /// Environments defined at `pos`: the run's `\X`/`\endX` pairs (what
 /// `\begin` looks up), less the ones the document defines only later, each
 /// with whether its code reaches what `\item` reads (a list).

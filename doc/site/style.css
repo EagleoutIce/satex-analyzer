@@ -347,6 +347,7 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .ctx li:hover, .ctx button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, transparent); transform: none; box-shadow: none; }
 .ctx[hidden], .menu-wrap .ctx[hidden] { display: none; }
 .renamebox { position: fixed; z-index: 36; font: 13px ui-monospace, Menlo, monospace; padding: .2rem .5rem; border: 1px solid var(--accent); border-radius: 6px; background: var(--panel); color: var(--fg); box-shadow: var(--shadow); outline: none; }
+.cm-linked { outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 2px; }
 .cm-deflink { text-decoration: underline; color: var(--accent); cursor: pointer; }
 .tabs .ro { font-style: italic; }
 .hover .foot { margin-top: .4rem; padding-top: .3rem; border-top: 1px solid var(--border); font-size: .82rem; color: var(--muted); }

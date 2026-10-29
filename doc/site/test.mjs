@@ -4,6 +4,7 @@
 // headless browser over the DevTools protocol.
 //   python3 -m http.server -d site-out 8000 & node doc/site/test.mjs http://localhost:8000/
 //   node doc/site/test.mjs file:///path/to/site-out/
+// QUICK=1 checks a sample of the packages offered on demand, for the edit loop.
 import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -103,13 +104,15 @@ if (micro) check('microtype is missing before its bundle', unresolved(await pack
 t = performance.now();
 for (const entry of offered) await engine.bundle(base, entry, base.startsWith('file:') ? await bytes(entry.bundle) : undefined);
 const stillMissing = [];
-for (const entry of offered.filter((p) => !p.label.endsWith('.cls'))) {
+// QUICK=1 (the edit loop): every 8th package; the full run, before a push, all of them
+const sampled = offered.filter((p) => !p.label.endsWith('.cls')).filter((_, i) => !process.env.QUICK || i % 8 === 0);
+for (const entry of sampled) {
   const kernel = manifest.kernels.find((k) => k.id === entry.kernel);
   let run;
   try { run = await packageRun(entry.name, kernel); } catch (e) { console.log(`FAIL ${entry.id} aborted the engine: ${e.message}`); throw e; }
   if (!(typeof run.status === 'number' && run.status <= 1 && !unresolved(run, entry.name))) stillMissing.push(entry.id);
 }
-check(`${offered.length} packages on demand resolve`, offered.length >= 20 && !stillMissing.length, `${Math.round(performance.now() - t)} ms; missing ${stillMissing.join(' ')}`);
+check(`${sampled.length} of ${offered.length} packages on demand resolve`, offered.length >= 20 && !stillMissing.length, `${Math.round(performance.now() - t)} ms; missing ${stillMissing.join(' ')}`);
 
 // An example opened as the page opens it: only the bundles its files name, and the ones those need.
 // Its findings are the ones the build found against the whole installation.
@@ -246,7 +249,7 @@ async function browser() {
     };
     const until = async (expr, ms = 120000) => { for (const end = Date.now() + ms; Date.now() < end; await sleep(150)) if (await js(expr).catch(() => false)) return true; return false; };
     const key = async (key, modifiers = 0, code = key) => {
-      for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key, code, modifiers, windowsVirtualKeyCode: { Enter: 13, Escape: 27, F2: 113, Tab: 9, Backspace: 8 }[key] ?? 0, ...(key === 'Enter' ? { text: '\r' } : {}) });
+      for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key, code, modifiers, windowsVirtualKeyCode: { Enter: 13, Escape: 27, F2: 113, Tab: 9, Backspace: 8, ArrowLeft: 37, z: 90 }[key] ?? 0, ...(key === 'Enter' ? { text: '\r' } : {}) });
     };
     const mouse = async (x, y, opts = {}) => { for (const t of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type: t, x, y, button: 'left', clickCount: 1, ...opts }); };
     /** The screen point of `needle` (its `at`-th character) in the editor's text. */
@@ -510,6 +513,18 @@ async function browser() {
     await key('Escape');
     for (let i = 0; i < 6; i++) await key('Backspace');
 
+    // typing a `\begin{…}`'s `}` closes it, and its name is edited together with the `\end`'s
+    const content = `document.querySelector('.cm-content').textContent`;
+    await send('Input.insertText', { text: '\n\\begin{quote' });
+    await key('Escape');
+    await send('Input.insertText', { text: '}' });
+    check('a typed \\begin gets its \\end', await until(`return /\\\\begin\\{quote\\}\\\\end\\{quote\\}/.test(${content})`, 5000), await js(`return ${content}.slice(-80)`));
+    await key('ArrowLeft');
+    const linked = await until(`return document.querySelectorAll('.cm-linked').length === 2`, 20000);
+    await send('Input.insertText', { text: 'x' });
+    check('\\begin and \\end names are edited together', linked && await until(`return /\\\\begin\\{quotex\\}\\\\end\\{quotex\\}/.test(${content})`, 5000), await js(`return ${content}.slice(-80)`));
+    for (let i = 0; i < 6 && await js(`return /quote/.test(${content})`); i++) await key('z', 2, 'KeyZ');
+
     // Ctrl+click: the kernel's \section opens read-only
     p = await spot('\\section', 3);
     await mouse(...p, { modifiers: 2 });
@@ -524,13 +539,16 @@ async function browser() {
     check('an input file is analyzed with its root', await until(`return !!document.querySelector('#play-files-tree [data-name="chapter.tex"] .tcount')`, 60000));
     await shot('play-project');
     // renaming a file renames the root's \input of it
+    await until(`return !!document.querySelector('#play-files-tree [data-name="chapter.tex"] [data-act=rename]')`, 10000);
     await js(`document.querySelector('#play-files-tree [data-name="chapter.tex"] [data-act=rename]').click()`);
+    await until(`return !!document.querySelector('.tnamebox')`, 5000);
     await js(`document.querySelector('.tnamebox').value = 'background.tex'`);
     await key('Enter');
     check('rename follows into \\input', await until(`return /1 reference updated/.test(document.getElementById('play-toast').textContent)
       && !!document.querySelector('#play-tabs [data-name="background.tex"]')`, 5000), await js(`return document.getElementById('play-toast').textContent`));
     // a new file opens as a tab; delete asks once more
     await js(`document.getElementById('play-upload').click(); document.querySelector('#play-upmenu [data-pick=new]').click()`);
+    await until(`return !!document.querySelector('.tnamebox')`, 5000);
     await js(`document.querySelector('.tnamebox').value = 'notes.tex'`);
     await key('Enter');
     check('new file', await until(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent === 'notes.tex' && !!document.querySelector('#play-files-tree [data-name="notes.tex"]')`, 5000));
