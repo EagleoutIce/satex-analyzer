@@ -726,6 +726,9 @@ def main():
     ap.add_argument("--precompress", action="store_true",
                     help="write a .gz beside each compressible file, for a server that serves those as GitHub Pages compresses")
     ap.add_argument("--fresh", action="store_true", help="redo every satex run instead of reusing WORK/listings.json and WORK/memo")
+    ap.add_argument("--keep-listings", action="store_true",
+                    help="reuse the files each package was listed to read across satex builds (a development loop: "
+                         "a file a changed interpreter reads besides is missing from the bundle until --fresh)")
     args = ap.parse_args()
     # Ctrl+C stops the build: the terminal signals the satex runs too, and worker threads must not
     # start more of them, so the process ends at once instead of unwinding the main thread only.
@@ -746,7 +749,7 @@ def main():
     shutil.copytree(SITE, snapshot, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     SITE, EXAMPLES = snapshot, snapshot / "examples"
     listings = work / "listings.json"
-    stamp = installation_stamp() + ";" + KEY
+    stamp = installation_stamp() + ("" if args.keep_listings else ";" + KEY)
     if listings.exists() and not args.fresh:
         LISTINGS.update(json.loads(listings.read_text()))
     if LISTINGS.get("@stamp") != stamp:

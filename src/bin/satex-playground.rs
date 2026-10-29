@@ -116,7 +116,8 @@ fn build(root: &Path, site: &Path, profile: &str) -> Result<(), String> {
         .arg(target.join(profile).join("satex"))
         .arg("--wasm")
         .arg(&wasm_dir)
-        .args(["--precompress", "--out"])
+        // The edit loop: package listings outlive an interpreter change.
+        .args(["--precompress", "--keep-listings", "--out"])
         .arg(&next)
         .arg("--work")
         .arg(site.with_file_name("site-work"))
