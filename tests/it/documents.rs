@@ -202,6 +202,7 @@ fixtures! {
 fixtures! {
     gobble_listings_stop_at_their_delimiter("gobble_listings", "main.tex", "code.c");
     gobble_comment_environments_stop_at_their_end("gobble_comment", "main.tex");
+    tikz_styles_forest_and_dataflow_savebox("forest_savebox", "mwe.tex");
     gobble_environ_body_stops_at_its_end("gobble_environ", "main.tex");
     gobble_verbatim_stops_at_its_delimiter("gobble_verbatim", "main.tex");
     gobble_with_unknown_catcodes_and_comments_never_reads_past_the_end("gobble_unknown", "main.tex");
@@ -482,4 +483,21 @@ fn reparsing_a_pgfmath_result_of_unknown_width_raises_nothing() {
 fn a_map_at_an_unknown_depth_keeps_its_items() {
     let Some(a) = check("expl3_map_unknown_depth", "main.tex", &[]) else { return };
     assert!(crate::support::defined(&a, "X"), "the map body never ran");
+}
+
+/// xinttrig's `\xintdeffloatfunc @Arg` nests expansion about 80 levels
+/// deep, far inside TeX's limits: no nesting may be given up.
+#[test]
+fn xintexpr_loads_without_giving_up_nesting() {
+    check("xintexpr_deep_nesting", "main.tex", &[]);
+    if !installed() {
+        return;
+    }
+    let root = dir("xintexpr_deep_nesting");
+    let path = root.join("main.tex");
+    let source = std::fs::read_to_string(&path).expect("fixture source");
+    let cfg = crate::support::discover(&root);
+    let analysis = Machine::analyze(&source, Some(&path), &cfg);
+    let widened: Vec<_> = analysis.facts.diagnostics.iter().filter(|d| d.code == "nesting-widened").collect();
+    assert!(widened.is_empty(), "{}", widened.iter().map(|d| d.message.as_str()).collect::<Vec<_>>().join("\n"));
 }

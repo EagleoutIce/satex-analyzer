@@ -105,3 +105,6 @@ slice_build::document_slices_run_like_the_original
 stubs::a_document_redefinition_disables_the_stub
 stubs::a_ranged_number_decides_a_following_test
 termination::convergence::beamer_frame_with_microtype_at_an_unknown_size
+documents::tikz_styles_forest_and_dataflow_savebox
+documents::xintexpr_loads_without_giving_up_nesting
+latex::resized_picture_with_styles_keeps_file_name_scans

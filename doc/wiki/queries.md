@@ -59,7 +59,7 @@ name         count  package         file
 
 ## dependencies
 
-The files, packages and classes the document reads, and what loaded each. Lua modules loaded by `\directlua` chunks appear with kind `lua`. `texlive` names each file's TeX Live package (see [configuration](configuration.md#tex-live-packages-depp)).
+The files, packages and classes the document reads, and what loaded each. Lua modules loaded by `\directlua` chunks appear with kind `lua`. `texlive` names each file's TeX Live package (see [configuration](configuration.md#what-plugins-decide)).
 
 ```text
 $ satex query dependencies -f samples/paper.tex --filter 'kind=package'

@@ -365,6 +365,8 @@ pub struct Analysis {
     /// Source lines read from files, each counted to where it stopped.
     pub lines: u64,
     pub exhausted: bool,
+    /// When the run's time budget began (`limits.seconds`).
+    pub started: Option<std::time::Instant>,
     /// Final sizes of the interpreter's working sets.
     pub journal_size: usize,
     pub held_tokens_left: usize,
@@ -2162,6 +2164,7 @@ impl<'a> Machine<'a> {
                 limits: Vec::new(),
                 lines: 0,
                 exhausted: false,
+                started: None,
                 journal_size: 0,
                 held_tokens_left: 0,
                 loop_heads: 0,
@@ -2790,6 +2793,7 @@ impl<'a> Machine<'a> {
     /// and the facts drawn from all it recorded.
     fn conclude(self, id: FileId) -> Analysis {
         let mut m = self;
+        m.out.started = Some(m.started);
         // tex.web § 1054: `\end` ships out what is left, deferred writes too.
         m.ship_pending();
         let mut written: Vec<(String, Option<String>)> =
@@ -5802,6 +5806,9 @@ will look undefined",
             (State::End, ..) => (analysis.env.snapshot(), analysis.catcodes.clone()),
         };
         let mut m = Machine::new(cfg, PathBuf::new());
+        if let Some(started) = crate::probe::run_started() {
+            m.started = started;
+        }
         m.out.interner = analysis.interner.clone();
         m.out.files = analysis.files.clone();
         m.out.entry = analysis.entry.clone();

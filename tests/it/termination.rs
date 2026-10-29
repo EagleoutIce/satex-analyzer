@@ -973,3 +973,18 @@ fn cut_after_a_look_ahead_keeps_earlier_definitions() {
         .collect();
     assert!(never.is_empty(), "undefined on an exact path: {never:?}");
 }
+
+/// Lint probes share the run's clock: past `limits.seconds` they stop at
+/// once instead of each starting afresh, and what they found is not kept
+/// for a later hover.
+#[test]
+fn lint_probes_stop_at_the_run_deadline() {
+    let mut cfg = crate::support::config();
+    cfg.limits.seconds = 60;
+    let a = satex::machine::Machine::analyze("\\def\\foo#1#2{#1}\n\\foo ab\n", None, &cfg);
+    let foo = a.interner.lookup("foo").expect("defined");
+    let past = Instant::now() - Duration::from_secs(cfg.limits.seconds + 1);
+    let cut = satex::probe::within_run(Some(past), || satex::probe::probe(&a, foo, satex::probe::State::End));
+    assert!(cut.as_ref().is_none_or(|p| !p.complete), "{cut:?}");
+    assert!(satex::probe::probe(&a, foo, satex::probe::State::End).is_some_and(|p| p.complete));
+}

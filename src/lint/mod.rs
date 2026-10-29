@@ -482,6 +482,10 @@ impl<'a> Report<'a> {
 }
 
 pub fn lint(analysis: &Analysis) -> Vec<Record> {
+    crate::probe::within_run(analysis.started, || lint_run(analysis))
+}
+
+fn lint_run(analysis: &Analysis) -> Vec<Record> {
     let mut out = Vec::new();
     let sources = fix::Sources::default();
     crate::progress::bar("lint: the text as set", 0, 2, (0, 0), (0, 0), None, &[]);
