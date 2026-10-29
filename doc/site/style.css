@@ -676,3 +676,16 @@ a.ty { color: inherit; border-bottom: 1px dotted var(--muted); } a.ty:hover { co
 .ts-other > summary { font-size: .8rem; }
 /* file names and code keep their case under any uppercase heading */
 code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transform: none; }
+.actbox { position: relative; display: flex; align-items: center; min-width: 0; flex: 0 1 auto; } .actbox .stat-pop { left: 0; right: auto; }
+/* the outline: one line per part, the rest unfolds under it */
+.o-row > summary, .o-flat { display: flex; align-items: baseline; gap: .4rem; cursor: pointer; list-style: none; line-height: 1.5; } .o-row > summary::-webkit-details-marker { display: none; }
+.o-flat { padding-left: .85rem; cursor: default; }
+.o-row > summary::before { content: ""; flex: none; align-self: center; border: solid transparent; border-width: .22rem 0 .22rem .36rem; border-left-color: var(--muted); transition: transform var(--quick); }
+.o-row[open] > summary::before { transform: rotate(90deg); }
+.o-row .o-labels { padding: .15rem 0 .2rem 1.1rem; } .o-sec { padding-top: .05rem; padding-bottom: .05rem; }
+.o-sec .o-go { min-width: 0; } .o-row > summary .o-kind { min-width: 0; }
+.o-row > summary { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: .86rem; color: var(--fg); gap: .4rem; }
+.o-row > summary .o-kind { font-size: .68rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.o-row > summary .o-kind::after { content: ""; } .tree .o-row > summary .o-kind { display: inline; }
+@media (max-width: 1100px) { .ask .hint { display: none; } }
+.x-more { display: inline-block; margin-left: .3rem; font-size: .8em; color: var(--muted); } .x-more > summary { cursor: pointer; } .x-more[open] { display: block; margin: .25rem 0 0; }

@@ -45,8 +45,7 @@
   </section>
   <div class="divider" id="play-divider" role="separator" aria-orientation="vertical" aria-label="resize panes: drag to the edge to fold a pane, click to bring it back" aria-valuemin="0" aria-valuemax="100" tabindex="0" title="drag to resize, to an edge to fold; click a folded one to unfold; double-click: half"></div>
   <section class="pane side-pane">
-    <details open class="sect" id="play-findings"><summary>Findings <b id="lsp-count"></b> <span class="muted" id="lsp-status">language server: starting…</span></summary>
-      <div id="lsp-check" class="check" role="status" hidden><span class="ibar" aria-hidden="true"></span><span></span></div>
+    <details open class="sect" id="play-findings"><summary>Findings <b id="lsp-count"></b> <span class="muted" id="lsp-status"></span></summary>
       <div id="play-refs" class="refs" hidden></div>
       <ul id="lsp-diagnostics" class="diagnostics grow" aria-live="polite"></ul></details>
     <details open class="sect" id="play-explain"><summary>Explain macro <code id="explain-name"></code></summary>
@@ -71,7 +70,7 @@
       <div class="cache-scroll" id="trace-body"></div>
       <footer><span id="trace-total" class="muted"></span><span class="muted">Click a step to open its place.</span></footer>
     </dialog>
-    <div class="statusbar" aria-live="polite"><progress id="play-progress" max="1" value="0" aria-label="loading"></progress><span id="play-status">Fetching satex and the TeX bundle…</span>
+    <div class="statusbar" aria-live="polite"><span class="actbox" tabindex="0" title=""><progress id="play-progress" max="1" value="0" aria-label="loading"></progress><span id="play-status">Fetching satex and the TeX bundle…</span><dl id="act-detail" class="stat-pop" hidden></dl></span>
       <span id="play-pills" class="pills"></span>
       <button type="button" class="stat-btn" id="cache-open" aria-haspopup="dialog" title="what satex keeps between checks and visits"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/></svg>caches <b id="cache-count"></b></button>
       <span class="statdetail"><button id="t-time" class="stat-time" type="button" aria-expanded="false" aria-controls="t-detail" title="timings and size of the last run" hidden><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.2 1.5"/></svg><span id="t-time-text"></span></button>

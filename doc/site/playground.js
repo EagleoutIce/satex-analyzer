@@ -319,18 +319,9 @@
     }
   }
   function analyze() { checking(); lsp('satex/analyze', {}, true); }
-  const checkBox = $('lsp-check');
-  /** The indeterminate bar of a running check, with the phase it is in; the worker reports none, the waits for packages are the phases. */
-  const phase = (text, done = null) => {
-    checkBox.hidden = !text;
-    checkBox.lastElementChild.textContent = text ?? '';
-    lspStatus.textContent = text ?? '';
-    // how much of the file is read, once the engine says; until then the bar sweeps
-    const bar = checkBox.firstElementChild;
-    bar.classList.toggle('known', done !== null);
-    bar.style.setProperty('--done', done ?? 0);
-  };
-  function checking() { phase('checking…'); checkStart = performance.now(); }
+  /** A running check shows in the status bar like any other work (`busy`); the worker reports how much of the file is read once the engine says. */
+  const phase = (text, done = null) => text ? busy('Analyzing', text[0].toUpperCase() + text.slice(1), { done }) : idle();
+  function checking() { phase(`Analyzing ${state.file}…`); checkStart = performance.now(); }
 
   /** Completion order: the project's own commands, then the documented ones, internals
    * (`@`, `_`, `:` in the name) last; within each, the closest matches first: a prefix of the
@@ -563,7 +554,7 @@
    * sectioning units indented by level, each with its labels, then the bibliography and its entries. */
   // the examples fold away; kept across visits
   const exSect = $('play-exsect');
-  try { exSect.open = localStorage.getItem('satex-examples') !== '0'; } catch {}
+  try { exSect.open = localStorage.getItem('satex-examples') === '1'; } catch {}
   exSect.addEventListener('toggle', () => { try { localStorage.setItem('satex-examples', exSect.open ? '1' : '0'); } catch {} });
   const outlineBody = $('outline-body'), outlineOpen = new Set();
   outlineBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) outlineOpen.add(id); else outlineOpen.delete(id); } }, true);
@@ -593,20 +584,24 @@
     const base = (p) => String(p ?? '').split('/').pop();
     const html = [];
     let open = null;
+    // one line per part; labels, files and citations unfold under it
+    const row = (id, depth, head, body) => `<li class="o-sec" style="--d:${depth}">` + (body
+      ? `<details class="o-row" data-id="${escape(id)}"${outlineOpen.has(id) ? ' open' : ''}><summary>${head}</summary>${body}</details>` : `<div class="o-row o-flat">${head}</div>`) + '</li>';
+    const chips = (list) => list.length ? `<span class="o-labels">${list.join('')}</span>` : '';
     const close = () => {
       if (!open) return;
-      const files = [...open.files].filter((f) => /\.(tex|ltx)$/.test(f) && state.files.some((n) => String(f).endsWith(n))), cites = [...open.cites.entries()];
-      html.push(open.labels.length ? `<span class="o-labels">${open.labels.join('')}</span>` : '',
-        files.length > 1 || (files.length && !String(files[0]).endsWith(state.root)) ? `<span class="o-labels o-files" title="the files this part is set from">${files.map((f) => `<span class="o-file">${escape(base(f))}</span>`).join('')}</span>` : '',
-        cites.length ? `<details class="o-cites" data-id="${escape(open.id)}"${outlineOpen.has(open.id) ? ' open' : ''}><summary>${plural(cites.length, 'citation')}</summary><span class="o-labels">${cites.map(([k, c]) => `<a href="#" class="o-go o-label o-bib" ${at(c[0])} title="cited ${c.length}× in this part">${escape(k)}</a>`).join('')}</span></details>` : '', '</li>');
+      const files = [...open.files].filter((f) => /\.(tex|ltx)$/.test(f) && state.files.some((n) => String(f).endsWith(n)));
+      const cites = [...open.cites.entries()].map(([k, c]) => `<a href="#" class="o-go o-label o-bib" ${at(c[0])} title="cited ${c.length}× in this part">${escape(k)}</a>`);
+      const fileChips = files.length > 1 || (files.length && !String(files[0]).endsWith(state.root)) ? files.map((f) => `<span class="o-file" title="a file this part is set from">${escape(base(f))}</span>`) : [];
+      html.push(row(open.id, open.depth, open.head, chips(open.labels) + chips(fileChips) + chips(cites)));
       open = null;
     };
     for (const r of own) {
       if (r.kind === 'section') {
         close();
         const depth = Math.max(0, present.indexOf(LEVELS.indexOf(r.detail))), num = numberOf(r);
-        html.push(`<li class="o-sec" style="--d:${depth}"><a href="#" class="o-go" ${at(r)} title="${escape(r.detail)} at ${escape((r.file ?? '') + ':' + r.line)}"><span class="o-kind o-sk">${escape(r.detail)}</span>${num ? `<span class="o-num">${num}</span>` : ''}${escape(r.key)}</a>`);
-        open = { labels: [], cites: new Map(), files: new Set([r.path ?? r.file]), id: `${r.path ?? r.file}:${r.line}` };
+        open = { labels: [], cites: new Map(), files: new Set([r.path ?? r.file]), id: `${r.path ?? r.file}:${r.line}`, depth,
+          head: `<a href="#" class="o-go" ${at(r)} title="${escape(r.detail)} at ${escape((r.file ?? '') + ':' + r.line)}">${num ? `<span class="o-num">${num}</span>` : ''}${escape(r.key)}</a>` };
       } else if (open && r.kind !== 'bibitem') {
         open.files.add(r.path ?? r.file);
         if (r.kind === 'cite') open.cites.set(r.key, [...(open.cites.get(r.key) ?? []), r]);
@@ -618,8 +613,8 @@
     }
     close();
     const bib = own.filter((r) => r.kind === 'bibitem'), where = own.find((r) => r.kind === 'bibliography');
-    if (bib.length || where) html.push(`<li class="o-sec" style="--d:0"><a href="#" class="o-go" ${where ? at(where) : at(bib[0])}><span class="o-kind">bibliography</span>${bib.length} entr${bib.length === 1 ? 'y' : 'ies'}</a>` +
-      (bib.length ? `<span class="o-labels">${bib.map((r) => `<span class="o-label o-bib" title="${escape((r.file ?? '') + ':' + r.line)}">${escape(r.key)}</span>`).join('')}</span>` : '') + '</li>');
+    if (bib.length || where) html.push(row('bibliography', 0, `<a href="#" class="o-go" ${at(where ?? bib[0])}><span class="o-kind">bibliography</span>${bib.length} entr${bib.length === 1 ? 'y' : 'ies'}</a>`,
+      chips(bib.map((r) => `<span class="o-label o-bib" title="${escape((r.file ?? '') + ':' + r.line)}">${escape(r.key)}</span>`))));
     $('outline-count').textContent = sections.length || '';
     outlineBody.innerHTML = html.length ? `<ul class="outline-list">${html.join('')}</ul>` : '<p class="muted">No sections, labels or bibliography yet.</p>';
   }
@@ -1365,7 +1360,7 @@
     for (const p of pending.values()) p.resolve(null);
     pending.clear();
     worker.postMessage({ type: 'reset', args: [...flags(), '-f', state.root], cwd: state.dir });
-    lspStatus.textContent = 'language server: starting…';
+    busy('Starting', 'Starting the language server…');
     await lsp('initialize', { processId: null, rootUri: `file://${state.dir}`, capabilities: {} });
     lsp('initialized', {}, true);
     open(state.root);
@@ -1621,15 +1616,14 @@
   async function fetchKernel(i) {
     const entry = manifest.kernels[i];
     if (!state.loaded.has(i)) {
-      status.textContent = `loading the ${entry.label} kernel (${size(entry.size)})…`;
+      busy('Fetching', `Fetching the ${entry.label} kernel (${size(entry.size)})…`);
       const t = performance.now();
       const given = location.protocol === 'file:' ? await local(entry.bundle) : undefined;
       await ask({ type: 'bundle', base, entry, given }, given ? [given.buffer] : []);
       state.loaded.add(i);
       timing('t-init', `${$('t-init').textContent} · ${entry.label} ${secs(performance.now() - t)}`, 'time to fetch and set up each kernel');
-      bar.hidden = true;
       loads.clear();
-      status.textContent = `${entry.label} ready`;
+      idle(`${entry.label} ready`);
     }
   }
 
@@ -1661,14 +1655,14 @@
     if (!ids.length) return false;
     const entries = ids.map((id) => PACKAGES.get(id));
     const label = entries.map((e) => e.label).join(', ');
-    status.textContent = `fetching ${entries.map((e) => `${e.label} ${size(e.size)}`).join(', ')} …`;
+    busy('Fetching', `Fetching ${entries.map((e) => `${e.label} ${size(e.size)}`).join(', ')}…`);
     const t = performance.now();
     const given = location.protocol === 'file:' ? await Promise.all(entries.map((e) => local(e.bundle))) : undefined;
     const load = ask({ type: 'bundles', base, entries, given }, given ? given.map((g) => g.buffer) : []);
     ids.forEach((id) => { fetchedPackages.set(id, load); inFlight.add(id); });
     try { await load; } catch (e) { ids.forEach((id) => fetchedPackages.delete(id)); toast(`${label} did not load: ${e.message}`); return false; } finally { ids.forEach((id) => inFlight.delete(id)); }
-    bar.hidden = true;
     loads.clear();
+    idle();
     status.textContent = `${label} fetched in ${secs(performance.now() - t)}`;
     status.dataset.packages = [...fetchedPackages.keys()].join(' ');
     loadedList.push(...entries.map((e) => `${e.label} ${size(e.size)}`));
@@ -2009,21 +2003,48 @@
 
   // ---------------------------------------------------------------- start
 
-  /** What loading has come to: per download its bytes, else the phase it is in. */
-  const bar = $('play-progress'), loads = new Map();
-  const PHASE = { unpacking: 'Unpacking the TeX files…', importing: 'Importing the kernel caches…' };
-  function progressed({ label, loaded, total }) {
+  /** What the page is doing, in one place: the status bar's text and bar, and a card with the details on hover. */
+  const bar = $('play-progress'), loads = new Map(), actBox = $('act-detail');
+  const act = { phase: '', text: '', since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '' };
+  const PHASE = { unpacking: ['Unpacking', 'Unpacking the TeX files…'], importing: ['Importing', 'Importing the kernel caches…'] };
+  function busy(name, text, { done = null, got = 0, all = 0 } = {}) {
+    const now = performance.now();
+    if (!act.phase) { act.started = now; act.rest = status.dataset.done ? status.textContent : 'Ready. Findings update as you type; Enter runs the command.'; }
+    if (act.phase !== name) act.since = now;
+    if (text !== act.text || got !== act.got) act.changed = now;
+    Object.assign(act, { phase: name, text, got, all });
     bar.hidden = false;
-    if (PHASE[label]) {
-      bar.removeAttribute('value');
-      status.textContent = PHASE[label];
-      return;
-    }
+    if (done === null) bar.removeAttribute('value'); else bar.value = done;
+    status.textContent = text;
+    status.title = '';
+    drawAct();
+  }
+  /** Work is over: the bar goes, the last result stays or comes back. */
+  function idle(text = null) {
+    bar.hidden = true;
+    if (act.phase && text === null && status.textContent === act.text && act.rest) status.textContent = act.rest;
+    if (text !== null) status.textContent = text;
+    act.phase = ''; act.text = '';
+    drawAct();
+  }
+  const mib = (n) => (n / 2 ** 20).toFixed(1);
+  function drawAct() {
+    if (actBox.hidden) return;
+    const now = performance.now(), s = (t) => `${((now - t) / 1000).toFixed(0)} s`;
+    const rows = act.phase ? [['phase', act.phase], ['doing', act.text.replace(/…$/, '')], ...(act.all ? [['bytes', `${mib(act.got)} of ${mib(act.all)} MiB`]] : []),
+      ['in this phase', s(act.since)], ['since start', s(act.started)], ['last change', `${s(act.changed)} ago`]] : [['phase', 'idle'], ['status', status.textContent]];
+    actBox.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${escape(v)}</dd>`).join('');
+  }
+  let actTick = 0;
+  const showAct = (on) => { actBox.hidden = !on; clearInterval(actTick); if (on) { drawAct(); actTick = setInterval(drawAct, 1000); } };
+  const actHost = actBox.parentElement;
+  actHost.addEventListener('mouseenter', () => showAct(true)); actHost.addEventListener('mouseleave', () => showAct(false));
+  actHost.addEventListener('focusin', () => showAct(true)); actHost.addEventListener('focusout', () => showAct(false));
+  function progressed({ label, loaded, total }) {
+    if (PHASE[label]) { bar.removeAttribute('value'); busy(PHASE[label][0], PHASE[label][1]); return; }
     loads.set(label, [loaded, total]);
     const [got, all] = [...loads.values()].reduce(([g, a], [l, t]) => [g + l, a + t], [0, 0]);
-    if (all) bar.value = Math.min(got / all, 1);
-    const mb = (n) => (n / 2 ** 20).toFixed(1);
-    status.textContent = `Fetching ${[...loads.keys()].join(' and ')}: ${mb(got)} of ${mb(all)} MiB`;
+    busy('Fetching', `Fetching ${[...loads.keys()].join(' and ')}: ${mib(got)} of ${mib(all)} MiB`, { done: all ? Math.min(got / all, 1) : null, got, all });
   }
 
   worker.onmessage = async ({ data }) => {
@@ -2040,8 +2061,7 @@
           const waiting = missing(unresolved);
           if ((waiting.length || inFlight.size) && m.params.uri === uri()) {
             const names = [...new Set([...waiting, ...inFlight])].map((id) => PACKAGES.get(id).label).join(', ');
-            status.textContent = `loading ${names}…`;
-            phase(`loading ${names}…`);
+                        busy('Loading', `Loading ${names}…`);
             if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok) { show(m.params.uri, m.params.diagnostics); typeset(m.params.uri); } });
             continue;
           }
@@ -2054,7 +2074,7 @@
         }
       }
     } else if (data.type === 'status') {
-      if (data.text && !checkBox.hidden) phase(data.text, data.total ? Math.min(data.reached / data.total, 1) : null);
+      if (data.text && act.phase === 'Analyzing') phase(data.text, data.total ? Math.min(data.reached / data.total, 1) : null);
     } else if (data.type === 'progress') {
       progressed(data);
     } else if (data.type === 'error' && data.of === 'lsp') {
@@ -2087,7 +2107,7 @@
     }
     const ready = await ask({ type: 'init', base, manifest, given }, given ? Object.values(given).map((b) => b.buffer) : []);
     timing('t-init', secs(performance.now() - started), 'time to fetch satex and the pdfTeX kernel and set them up');
-    bar.hidden = true;
+    idle();
     sampleTexts = ready.samples;
     const hash = decodeURIComponent(location.hash.slice(1));
     let link = hash.startsWith('s=') ? await restore(hash.slice(2)) : null;

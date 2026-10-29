@@ -205,6 +205,10 @@
     if (r.context) rows.push(['context', esc(r.context)]);
     if (r.uses != null) rows.push(['uses', r.uses ? `${r.uses} in this run` : 'none in this run']);
     for (const [key, label] of [['expands', 'always expands'], ['may_expand', 'may expand']]) if (r[key]?.length) rows.push([label, `<span class="chips">${r[key].map(csChip).join('')}</span>`]);
+    // what the document's calls leave defined: the public names, the internal ones folded
+    const made = r.creates ?? [], inner = r.creates_internal ?? [];
+    if (made.length || inner.length) rows.push(['creates', `<span class="chips">${made.map(csChip).join('')}</span>` +
+      (inner.length ? `<details class="x-more"><summary>${inner.length} internal</summary><span class="chips">${inner.map(csChip).join('')}</span></details>` : '')]);
     if (r.error) rows.push(['error', `<span class="x-err">${esc(r.error)}</span>`]);
     if (r.reference) rows.push(['docs', `<a href="${esc(r.reference)}" target="_blank" rel="noopener">${esc(r.documentation ?? 'documentation')} ↗</a>`]);
     const tags = [primitive ? 'primitive' : r.tag, r.when && `in the ${r.when}`, r.certain === false && 'uncertain'].filter(Boolean);
