@@ -8,9 +8,9 @@
       </div>
       <span class="actions">
         <select id="play-kernel" aria-label="kernel" title="the TeX engine and format"></select>
-        <button id="play-link" class="pill" type="button" title="a link that restores the project's files, the open file, the command and the kernel">
+        <button id="play-link" class="pill" type="button" aria-label="Copy link" title="a link that restores the project's files, the open file, the command and the kernel">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 9a3 3 0 0 0 4.2.2l2-2a3 3 0 0 0-4.2-4.2l-.8.8"/><path d="M9 7a3 3 0 0 0-4.2-.2l-2 2a3 3 0 0 0 4.2 4.2l.8-.8"/></svg><span class="label">Copy link</span></button>
-        <button id="play-issue" class="pill" type="button" title="open a GitHub issue form in a new tab, filled with the satex version, the kernel and this file. Nothing is sent until you submit it there">
+        <button id="play-issue" class="pill" type="button" aria-label="Report an issue" title="open a GitHub issue form in a new tab, filled with the satex version, the kernel and this file. Nothing is sent until you submit it there">
           <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.8v3.9M8 11v.1"/></svg><span class="label">Report an issue</span></button>
       </span>
     </div>
@@ -51,8 +51,8 @@
     <details open class="sect" id="play-explain"><summary>Explain macro <code id="explain-name"></code></summary>
       <div id="explain-body" class="hover grow"><p class="muted">Put the cursor on a command.</p></div></details>
     <details class="sect" id="play-typeset"><summary>Typeset
-      <span class="ts-switches"><label class="ts-toggle" title="Show the text set in boxes that never reach the page"><span>show boxed text</span><input type="checkbox" id="typeset-boxes" role="switch"></label>
-      <label class="ts-toggle" title="Show the keys of labels, references and citations where they stand"><span>show keys</span><input type="checkbox" id="typeset-keys" role="switch"></label></span></summary>
+      <span class="ts-switches"><label class="ts-toggle" title="Show the text set in boxes that never reach the page"><span data-short="boxed">show boxed text</span><input type="checkbox" id="typeset-boxes" role="switch" aria-label="show boxed text"></label>
+      <label class="ts-toggle" title="Show the keys of labels, references and citations where they stand"><span data-short="keys">show keys</span><input type="checkbox" id="typeset-keys" role="switch" aria-label="show keys"></label></span></summary>
       <div id="typeset-body" class="typeset grow"><p class="muted">What the paragraphs of the open file set, once it is checked.</p></div></details>
     <dialog id="play-cache" class="cache-dialog" aria-labelledby="cache-title">
       <header><h3 id="cache-title">Caches</h3><button type="button" class="ghost small" id="cache-close" aria-label="close">✕</button></header>

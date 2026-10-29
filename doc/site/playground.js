@@ -9,6 +9,35 @@
   const [tabs, args, button, status, output, lspStatus, list, count, cmd, kernelBox, toastBox, ctxMenu, treeBox, examplesBox] =
     ['play-tabs', 'play-args', 'play-run', 'play-status', 'play-output', 'lsp-status', 'lsp-diagnostics', 'lsp-count',
       'play-cmd', 'play-kernel', 'play-toast', 'play-ctx', 'play-files-tree', 'play-examples'].map($);
+  // Buttons give up their labels when their bar runs out of room, as in flowR's playground, and get
+  // them back once the bar is as wide again as when they lost them: `.tight` on the bar.
+  function collapsing(bar, overflows) {
+    let lost = 0;
+    const check = () => {
+      const width = bar.clientWidth;
+      if (bar.classList.contains('tight') && width <= lost) return;
+      bar.classList.remove('tight');
+      if (overflows()) { lost = width; bar.classList.add('tight'); }
+    };
+    new ResizeObserver(check).observe(bar);
+    return check;
+  }
+  {
+    const filebar = tabs.closest('.filebar'), actions = filebar.querySelector('.actions'), tablist = filebar.querySelector('.tablist');
+    // the tabs scroll, or the actions wrapped under them
+    const check = collapsing(filebar, () => tabs.scrollWidth > tabs.clientWidth + 1 || actions.offsetTop > tablist.offsetTop + tablist.offsetHeight / 2);
+    new MutationObserver(check).observe(tabs, { childList: true });
+    const ask = args.closest('.ask');
+    collapsing(ask, () => args.clientWidth < 12 * parseFloat(getComputedStyle(args).fontSize));
+    // the typeset switches, wrapped under their heading, say less
+    const head = $('play-typeset').querySelector('summary'), switches = head.querySelector('.ts-switches');
+    const title = document.createRange();
+    title.selectNodeContents(head.firstChild);
+    collapsing(head, () => {
+      const t = title.getBoundingClientRect(), w = switches.getBoundingClientRect();
+      return w.top >= t.bottom - 2 || w.height > 1.5 * switches.firstElementChild.offsetHeight;
+    });
+  }
   // Panes snap, as in flowR's playground: a splitter dragged into a pane's last half
   // minimum folds that pane away, a click on the folded splitter brings it back; near a
   // third, half or two thirds it rests there. A section's grip sets its height, dragged

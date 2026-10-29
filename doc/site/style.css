@@ -467,6 +467,8 @@ details.more[open] > summary { margin-bottom: .3rem; }
 .filebar select { font: inherit; font-size: .76rem; max-width: 9.5rem; padding: .1rem .3rem; border-radius: 1rem; border: 1px solid var(--border); background: var(--panel); color: var(--fg); }
 .pill { display: inline-flex; align-items: center; gap: .3rem; font-size: .76rem; font-weight: 400; padding: .12rem .6rem; border-radius: 1rem; border: 1px solid var(--border); background: var(--panel); color: var(--fg); }
 .pill svg { width: .85rem; height: .85rem; }
+.tight .pill .label, .ask.tight .hint { display: none; }
+.tight .pill { padding: .12rem .4rem; }
 .pill:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--panel); }
 .runbtn { display: inline-flex; align-items: center; gap: .35rem; padding: .15rem .9rem; font-size: .78rem; border-radius: 1rem; }
 .runbtn::before { content: ""; width: 0; height: 0; border: .3rem solid transparent; border-left: .45rem solid currentColor; border-right: 0; }
@@ -529,7 +531,7 @@ details.more[open] > summary { margin-bottom: .3rem; }
 .ask:focus-within .hint { opacity: .6; }
 @media (max-width: 52rem) {
   .work { flex-direction: column; } .work > .editor { flex: none; height: 55vh; } .tree { width: auto; max-width: none; max-height: 14rem; } .treegrip { display: none; }
-  .pill .label, .ask .hint { display: none; } .filebar { flex-wrap: wrap-reverse; }
+  .filebar { flex-wrap: wrap-reverse; }
 }
 
 .ask .runbtn { flex: none; margin-left: .4rem; }
@@ -663,6 +665,8 @@ a.ty { color: inherit; border-bottom: 1px dotted var(--muted); } a.ty:hover { co
 .sect summary:has(.ts-switches) { flex-wrap: wrap; row-gap: .25rem; }
 .ts-switches { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .2rem .9rem; margin-left: auto; min-width: 0; }
 .ts-switches .ts-toggle { margin-left: 0; white-space: nowrap; }
+.tight .ts-toggle span[data-short] { font-size: 0; }
+.tight .ts-toggle span[data-short]::before { content: attr(data-short); font-size: .72rem; }
 .ts-file { color: var(--fg); font-weight: 600; }
 .typeset .ts-key { display: none; }
 .typeset.show-keys .ts-key { --k: var(--c6); display: inline; margin: 0 .15rem; padding: 0 .4rem; border-radius: 999px; font: .72rem ui-monospace, Menlo, monospace; white-space: nowrap; color: var(--k); background: color-mix(in srgb, var(--k) 12%, transparent); }
@@ -694,6 +698,7 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 /* the file bar wraps: the tabs keep a row of their own and scroll, the controls drop below, never over them */
 .filebar { flex-wrap: wrap; row-gap: .25rem; }
 .filebar .tablist { flex: 1 1 14rem; } .filebar .tabs { overflow-x: auto; }
+.filebar.tight .tablist { flex-basis: 6rem; }
 .filebar .actions { margin-bottom: .3rem; }
 .o-file { border: 0; padding: 0; border-radius: 0; font: .72rem ui-monospace, Menlo, monospace; color: var(--muted); } .o-file + .o-file::before { content: ", "; }
 .o-labels:has(> .o-file) { gap: 0; }

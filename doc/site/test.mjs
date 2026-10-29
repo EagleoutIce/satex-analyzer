@@ -587,6 +587,18 @@ async function browser() {
     await key('Escape');
     check('drop zone closes on Escape', await js(`return document.getElementById('play-drop').hidden`));
 
+    // buttons lose their labels when their bar runs out of room, and get them back
+    const label = `getComputedStyle(document.querySelector('#play-link .label')).display`;
+    const barWidth = (w) => js(`document.querySelector('.filebar').style.width = '${w}'`);
+    await barWidth('200rem');
+    const wide = await until(`return ${label} !== 'none'`, 5000);
+    await barWidth('18rem');
+    const narrow = await until(`return ${label} === 'none'`, 5000);
+    await shot('play-tight');
+    await barWidth('200rem');
+    const restored = await until(`return ${label} !== 'none'`, 5000);
+    await barWidth('');
+    check('buttons collapse when their bar is short', wide && narrow && restored, JSON.stringify([wide, narrow, restored]));
     // the cache dialog finds a cache by a command it defined in the run
     await js(`document.getElementById('cache-open').click()`);
     await until(`return document.querySelectorAll('#cache-list tr').length > 1`, 20000);
