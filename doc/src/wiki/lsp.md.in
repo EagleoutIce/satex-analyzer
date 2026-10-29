@@ -26,7 +26,10 @@ A document is re-analyzed `lsp.debounce_ms` after its last edit. The run keeps c
 | Completion | `textDocument/completion` | `satex scope`, plus label/citation/environment keys from `occurrences` and stored pgfkeys/l3keys keys |
 | Document symbols | `textDocument/documentSymbol` | sections, labels and document-defined names |
 | Rename | `textDocument/prepareRename`, `textDocument/rename` | `satex query definitions`/`expansions`/`occurrences` |
+| Linked editing | `textDocument/linkedEditingRange` | the open text: a `\begin` name and its `\end` name, paired by nesting |
 | Run any query | `workspace/executeCommand` (`satex/query`) | `satex query --request` |
+
+Linked editing reads the text as it is typed, not a run. The two names pair by nesting, so the link holds while a name is half retyped, and a commented `\end` is no partner. Completion of a package name says when the package needs another engine than the run's ("needs XeTeX or LuaTeX") and lists it last. Completion of package options follows the package's `\DeclareOption*` handler to the key families and packages it hands an option to.
 
 A run can stop before a later file defines a name. Then go-to-definition scans the source instead. It follows the `\input`, `\include`, `\subfile`, `\usepackage`, `\RequirePackage`, `\documentclass` and `\LoadClass` the files spell out. Each name resolves beside the document first, then through the same search as a run. The scan reads at most 200 files, breadth first. In each file it looks for definition commands: `\def` and its relatives, `\let`, `\newcommand` and its relatives, the `\NewDocumentCommand` family, `\cs_new:Npn` style and `\csdef`. Hover marks such a site as not reached by the analysis, and the server log names it. A name the analysis knows never takes this path.
 

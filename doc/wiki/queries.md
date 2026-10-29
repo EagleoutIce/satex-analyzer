@@ -37,9 +37,9 @@ tag    name                             paramet…  body      file
 macro  \__sys_tmp:w                     #1        \str_if…  expl3-code.tex        @ expl3-code.tex:1539:17
 macro  \sys_gset_rand_seed:n            #1        \tex_se…  expl3-code.tex        @ expl3-code.tex:1531:34
 macro  \reserved@c                      #1.sty\…  \def \r…  latex.ltx             @ latex.ltx:18742:20
-macro  \reserved@a                      #12#2#{   \expand…  latex.ltx             @ latex.ltx:1277:3
+macro  \reserved@a                      #10#2#{   \expand…  latex.ltx             @ latex.ltx:1277:3
 macro  \reserved@a                      #1\@nil   \@for \…  latex.ltx             @ latex.ltx:18611:3
-… 2491 more lines omitted
+… 2591 more lines omitted
 ```
 
 ## expansions
