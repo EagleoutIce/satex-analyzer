@@ -315,7 +315,7 @@
   // ---------------------------------------------------------------- editor
 
   let editor; // { text(), set(text), diagnostics(list), apply(edits), cursor(), select(c), word() }
-  let version = 0, synced = 0, timer = null, checkStart = 0, retryCompletion = false;
+  let version = 0, synced = 0, analyzedVersion = 0, timer = null, checkStart = 0, retryCompletion = false;
   function changed() {
     version++;
     if (refs && refs.file === state.file) clearRefs();
@@ -340,7 +340,9 @@
   /** Once typing pauses: the buffer, and an analysis of it. */
   function sync() {
     clearTimeout(timer);
-    if (push()) {
+    // a completion may have sent the text already: what counts is whether this version was analyzed
+    if (push() | (analyzedVersion !== version && !!state.file && !(state.file in state.ro))) {
+      analyzedVersion = version;
       prefetch();
       // the root's text may now ask for another engine
       if (state.file === state.root && wanted() !== state.kernel && !manualKernel && !following) { following = true; restart().finally(() => { following = false; }); return; }
