@@ -2643,7 +2643,8 @@ fn effective_of(
 /// capped so the record stays a summary rather than a full trace.  Empty for
 /// a macro this run never invoked, even one with calls in its body.  Split by
 /// the body's conditional nesting, read from meanings: a name outside every
-/// `\if…` arm always runs (`expands`), one inside an arm may (`may_expand`).
+/// `\if…` arm always runs (`expands`), the outermost tests too, one inside
+/// an arm may (`may_expand`).
 fn insert_expands(record: &mut Record, analysis: &Analysis, sym: Sym, mac: &crate::tex::MacroDef) {
     use crate::builtins::Primitive as P;
     let mut always = BTreeSet::new();
@@ -2651,7 +2652,12 @@ fn insert_expands(record: &mut Record, analysis: &Analysis, sym: Sym, mac: &crat
     for token in mac.replacement_text.iter() {
         let crate::tex::Tok::Cs(name) = token.tok else { continue };
         match analysis.env.meaning(name) {
-            Meaning::Primitive(P::If(_)) => depth += 1,
+            Meaning::Primitive(P::If(_)) => {
+                if depth == 0 {
+                    always.insert(name);
+                }
+                depth += 1;
+            }
             Meaning::Primitive(P::Fi) => depth = depth.saturating_sub(1),
             Meaning::Primitive(P::Else | P::Or) => {}
             _ if depth == 0 => {
@@ -2663,9 +2669,8 @@ fn insert_expands(record: &mut Record, analysis: &Analysis, sym: Sym, mac: &crat
     let mut seen = BTreeSet::new();
     let (mut definite, mut potential) = (Vec::new(), Vec::new());
     for expansion in &analysis.facts.expansions {
-        // The conditionals themselves are the split, not a callee.
-        let test =
-            matches!(analysis.env.meaning(expansion.name), Meaning::Primitive(P::If(_) | P::Else | P::Or | P::Fi));
+        // A test is a callee; the arms' ends are not.
+        let test = matches!(analysis.env.meaning(expansion.name), Meaning::Primitive(P::Else | P::Or | P::Fi));
         if expansion.within != Some(sym) || test || !seen.insert(expansion.name) || seen.len() > 12 {
             continue;
         }
