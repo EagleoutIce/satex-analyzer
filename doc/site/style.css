@@ -628,6 +628,7 @@ button.apply:hover:not(:disabled) { border-color: currentColor; }
   padding: 0 .45rem; cursor: pointer; white-space: nowrap; }
 .cache-table td.loads { width: 1%; text-align: right; }
 .cache-table td.used { white-space: nowrap; font-size: .76rem; } .use-yes { color: var(--accent); font-weight: 600; } .use-yes::before { content: ""; display: inline-block; width: .45rem; height: .45rem; margin-right: .35rem; border-radius: 50%; background: currentColor; } .use-no { color: var(--muted); opacity: .6; } .use-maybe { font-size: .68rem; padding: 0 .35em; border: 1px dashed var(--muted); border-radius: 3px; color: var(--muted); } .cache-table td:nth-child(2) { width: 100%; }
+.cache-hit { font-size: .76rem; margin-left: .4rem; }
 .cache-name { padding: 0; border: 0; background: none; color: var(--fg); font-weight: 600; cursor: pointer; text-align: left; }
 .cache-name::before, .tr-node > summary::before { content: ""; display: inline-block; width: 0; height: 0; margin-right: .5rem; vertical-align: .05em; border: solid transparent; border-width: .27rem 0 .27rem .44rem; border-left-color: var(--muted); transition: transform var(--quick); }
 .cache-name[aria-expanded="true"]::before, .tr-node[open] > summary::before { transform: rotate(90deg); }

@@ -587,6 +587,13 @@ async function browser() {
     await key('Escape');
     check('drop zone closes on Escape', await js(`return document.getElementById('play-drop').hidden`));
 
+    // the cache dialog finds a cache by a command it defined in the run
+    await js(`document.getElementById('cache-open').click()`);
+    await until(`return document.querySelectorAll('#cache-list tr').length > 1`, 20000);
+    const found = await until(`const f = document.getElementById('cache-filter'); f.value = '\\\\microtypesetup'; f.dispatchEvent(new Event('input'));
+      return [...document.querySelectorAll('#cache-list .cache-hit')].some((h) => /\\\\microtypesetup\\b/.test(h.textContent))`, 20000);
+    check('caches are found by a command they define', found, await js(`return document.getElementById('cache-list').textContent.slice(0, 160)`));
+    await js(`document.getElementById('cache-close').click()`);
     check('no page errors', !errors.length, errors.join(' | ').slice(0, 300));
     ws.close();
   } catch (e) {

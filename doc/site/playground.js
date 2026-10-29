@@ -1818,15 +1818,18 @@
   function drawCaches(entries) {
     if (entries) { cacheEntries = entries; $('cache-count').textContent = entries.length || ''; }
     const q = cacheFilter.value.trim().toLowerCase();
-    const rows = cacheEntries.map((e) => { const l = cacheLabel(e.path); return { e, l, u: usedOf(l[1], l[2]) }; }).filter(({ l }) => !q || `${l[0]} ${l[2]}`.toLowerCase().includes(q));
+    // a row matches by its kind and name, or by a command it defined in the run (`\textcolor`)
+    const rows = cacheEntries.map((e) => { const l = cacheLabel(e.path); return { e, l, u: usedOf(l[1], l[2]), hit: [] }; })
+      .filter((r) => !q || (!q.startsWith('\\') && `${r.l[0]} ${r.l[2]}`.toLowerCase().includes(q)) || (r.hit = namesLike(r.l[1], r.l[2], q)).length);
     const by = { size: (r) => r.e.size, name: (r) => (r.l[2] || r.l[0]).toLowerCase(), kind: (r) => r.l[0] }[cacheOrder.key];
     rows.sort((a, b) => (cacheOrder.used ? b.u[0] - a.u[0] : 0) || (by(a) < by(b) ? -1 : by(a) > by(b) ? 1 : 0) * (cacheOrder.down ? -1 : 1));
     for (const th of cacheBox.querySelectorAll('th[data-sort]')) {
       if (th.dataset.sort === cacheOrder.key) th.setAttribute('aria-sort', cacheOrder.down ? 'descending' : 'ascending'); else th.removeAttribute('aria-sort');
     }
-    cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u }, i) =>
+    const hits = (hit) => hit.length ? ` <span class="muted cache-hit">defines ${hit.slice(0, 3).map((n) => `<code>${escape(n)}</code>`).join(', ')}${hit.length > 3 ? ` +${hit.length - 3}` : ''}</span>` : '';
+    cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u, hit }, i) =>
       `<tr title="${escape(e.path)}"><td>${cacheBadge(cls, kind)}</td>` +
-      `<td><button type="button" class="cache-name" aria-expanded="false" aria-controls="cache-sub-${i}">${escape(what || kind)}</button></td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
+      `<td><button type="button" class="cache-name" aria-expanded="false" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>${hits(hit)}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
       `<td class="num">${size(e.size)}</td><td><button type="button" class="small ghost" data-path="${escape(e.path)}" aria-label="drop ${escape(what || kind)}">Drop</button></td></tr>` +
       `<tr class="cache-sub" id="cache-sub-${i}" hidden><td></td><td colspan="5">${details(cls, what, needs)}</td></tr>`).join('') ||
       `<tr><td colspan="6" class="muted">${cacheEntries.length ? 'No match.' : 'Nothing cached yet.'}</td></tr>`;
@@ -1867,14 +1870,23 @@
     defined = new Map();
     for (const r of defs?.records ?? []) {
       const d = defined.get(r.package ?? null) ?? {};
-      const k = r.tag === 'macro' ? (/[@_:]/.test(r.name) ? 'internal macro' : 'public command') : r.tag;
+      const internal = /[@_:]/.test(r.name);
+      const k = r.tag === 'macro' ? (internal ? 'internal macro' : 'public command') : r.tag === 'alias' ? (internal ? 'internal alias' : 'public alias') : r.tag;
       d[k] = (d[k] ?? 0) + 1;
+      (d.names ??= new Set()).add(r.name);
       defined.set(r.package ?? null, d);
     }
     indexed = (dist?.records ?? []).find((r) => r.indexed != null) ?? null;
     folders = (dist?.records ?? []).filter((r) => r.kind === 'directory');
   }
-  const DEFINED = ['public command', 'internal macro', 'environment', 'option', 'register', 'counter', 'length', 'switch', 'alias'];
+  const DEFINED = ['public command', 'internal macro', 'environment', 'option', 'register', 'counter', 'length', 'switch', 'public alias', 'internal alias'];
+  /** The names a row's class or package (or the kernel) defined in the run that match `q`: containing
+   * what follows a `\`, or else equal to it (`color` finds xcolor by name, not every name with `color` in it). */
+  const definedOf = (cls, what) => cls === 'kernel' ? defined.get(null) : (cls === 'package' || cls === 'class') ? defined.get(what) : null;
+  const namesLike = (cls, what, q) => {
+    const part = q.startsWith('\\'), w = q.replace(/^\\/, '');
+    return w ? [...definedOf(cls, what)?.names ?? []].filter((n) => part ? n.toLowerCase().includes(w) : n.replace(/^\\/, '').toLowerCase() === w) : [];
+  };
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : /(s|ch)$/.test(w) ? 'es' : 's'}`;
   /** One row's details: what it defines and loads, and where its documentation is. */
   function details(cls, what, needs) {
@@ -1883,7 +1895,7 @@
       parts.push(`${indexed.indexed} files indexed${indexed.message ? ` · ${escape(indexed.message)}` : ''}`);
       if (folders.length) parts.push(`<ul class="cache-dirs">${folders.map((r) => `<li title="${escape(r.root)}/${escape(r.name)}"><span>${escape(r.name || '.')}</span><b>${r.count}</b></li>`).join('')}</ul>`);
     }
-    const d = cls === 'kernel' ? defined.get(null) : (cls === 'package' || cls === 'class') ? defined.get(what) : null;
+    const d = definedOf(cls, what);
     if (d) parts.push('defines ' + DEFINED.filter((k) => d[k]).map((k) => plural(d[k], k)).join(', '));
     else if (cls === 'package' || cls === 'class') parts.push('<span class="muted">not used by this document</span>');
     if (needs.length) parts.push(`loads ${needs.map((n) => cacheBadge(n.endsWith('.cls') ? 'class' : 'package', n.replace(/\.cls$/, ''))).join(' ')}`);
@@ -2122,7 +2134,8 @@
     if (text !== act.text || got !== act.got) act.changed = now;
     Object.assign(act, { phase: name, text, got, all });
     bar.hidden = false;
-    if (done === null) bar.removeAttribute('value'); else bar.value = done;
+    // a status without both counts shows work going on, not a share of it
+    if (!Number.isFinite(done)) bar.removeAttribute('value'); else bar.value = done;
     status.textContent = text;
     status.title = '';
     drawAct();
