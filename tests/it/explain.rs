@@ -892,3 +892,16 @@ fn expands_splits_always_from_conditional_arms() {
     assert_eq!(names("expands"), vec![r"\p", r"\ifx"]);
     assert_eq!(names("may_expand"), vec![r"\q"]);
 }
+
+/// What a command's calls leave defined: the public name after the call's
+/// group, the internal one folded apart, the local one inside it not at all.
+#[test]
+fn creates_lists_what_the_calls_leave_defined() {
+    let analysis = analyze(r"\catcode`\@=11 \def\mk{\gdef\made{x}\gdef\in@ner{y}{\def\gone{z}}}\mk");
+    let record = explain_one(&analysis, "mk");
+    let names = |field| -> Vec<&str> {
+        record.get(field).and_then(Json::as_array).map_or(vec![], |a| a.iter().map(|v| v.as_str().unwrap()).collect())
+    };
+    assert_eq!(names("creates"), vec![r"\made"]);
+    assert_eq!(names("creates_internal"), vec![r"\in@ner"]);
+}

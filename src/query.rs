@@ -2702,13 +2702,21 @@ fn insert_expands(record: &mut Record, analysis: &Analysis, sym: Sym, mac: &crat
 /// the call: made globally or at the call's own group level (`\pgfmathparse`
 /// leaves `\pgfmathresult`). `creates` lists the public ones, `creates_internal`
 /// the internal ones by the naming conventions.
+/// Up to how many created names a record lists, per kind.
+const CREATED: usize = 24;
+
 fn insert_creates(record: &mut Record, analysis: &Analysis, sym: Sym) {
+    // A call that loads files is left out: what they define is theirs.
+    let loading: BTreeSet<(FileId, u32, u32)> =
+        analysis.facts.loads.iter().filter_map(|l| l.call).map(|c| (c.file, c.line, c.col)).collect();
     let mut calls: Vec<(crate::env::NodeId, Sym, u16)> = analysis
         .facts
         .expansions
         .iter()
         .filter(|e| origin(analysis, e.span.file) == "document")
-        .filter_map(|e| Some((e.node?, e.name, e.depth)))
+        .filter_map(|e| Some((e.node?, e.name, e.depth, (e.span.file, e.span.line, e.span.col))))
+        .filter(|(.., at)| !loading.contains(at))
+        .map(|(node, name, depth, _)| (node, name, depth))
         .collect();
     calls.sort_by_key(|c| c.0);
     let (mut public, mut internal) = (BTreeSet::new(), BTreeSet::new());
@@ -2727,7 +2735,7 @@ fn insert_creates(record: &mut Record, analysis: &Analysis, sym: Sym) {
     }
     for (key, names) in [("creates", public), ("creates_internal", internal)] {
         if !names.is_empty() {
-            record.insert(key.into(), json!(names));
+            record.insert(key.into(), json!(names.into_iter().take(CREATED).collect::<Vec<_>>()));
         }
     }
 }
