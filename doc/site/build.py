@@ -373,6 +373,8 @@ def bundle(satex, work):
         target = tree / path.relative_to(dist)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
+    if (dist.parent / "release-texlive.txt").is_file():  # names the TeX Live year
+        shutil.copy2(dist.parent / "release-texlive.txt", tree / "release-texlive.txt")
     config = (SITE / "playground.yaml").read_text().replace("/texmf.bundle", str(tree))
     shutil.copytree(ROOT / "samples", project, ignore=shutil.ignore_patterns("satex.yaml"))
     for doc in docs[:len(roots(EXAMPLES))]:
@@ -469,6 +471,8 @@ def bundle(satex, work):
     for path in sorted(project.iterdir()):
         if path.is_file() and path.name != "satex.yaml":
             tables[0][f"/work/{path.name}"] = path.read_bytes()
+    if (tree / "release-texlive.txt").is_file():
+        tables[0]["/texmf.bundle/release-texlive.txt"] = (tree / "release-texlive.txt").read_bytes()
     tables[0]["/work/satex.yaml"] = config.replace(str(tree), "/texmf.bundle").encode()
     return tables, packages, [p.name for p in docs], project
 
