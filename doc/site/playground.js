@@ -315,7 +315,7 @@
   // ---------------------------------------------------------------- editor
 
   let editor; // { text(), set(text), diagnostics(list), apply(edits), cursor(), select(c), word() }
-  let version = 0, synced = 0, timer = null, checkStart = 0;
+  let version = 0, synced = 0, timer = null, checkStart = 0, retryCompletion = false;
   function changed() {
     version++;
     if (refs && refs.file === state.file) clearRefs();
@@ -406,6 +406,8 @@
       push();
       const start = before === '\\' ? word.from : key.from;
       const items = await completions(position(ctx.state.doc, ctx.pos), start - line.from);
+      // typed before the server read it: analyze now, ask again when that run ends
+      if (!items.length && !ctx.explicit) { retryCompletion = true; sync(); }
       // an item that replaces a range (a key path) starts where that range does
       const edit = items.find((i) => i.textEdit)?.textEdit;
       const from = edit ? at(ctx.state.doc, edit.range.start) : before === '\\' ? word.from : key.from;
@@ -418,6 +420,8 @@
         })),
       };
     }
+    // a brace typed before a command closes too (`\\cite{` before `\\end`); TeX has no quote pairs
+    const closing = st.EditorState.languageData.of(() => [{ closeBrackets: { brackets: ['(', '[', '{'], before: ')]}:;>\\' } }]);
     const hover = view.hoverTooltip(async (v, pos) => {
       // The server has the text; it answers from its last analysis at once.
       push();
@@ -507,7 +511,7 @@
     const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment();
     const ev = new EditorView({
       parent, doc: text,
-      extensions: [basicSetup, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete], addToOptions: [{ position: 80, render: (c) => {
+      extensions: [basicSetup, closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete], addToOptions: [{ position: 80, render: (c) => {
         // the detail: a usage line colored like the hover's, then where it comes from
         const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
@@ -582,6 +586,7 @@
           actions: [...d.fixes.map((f) => ({ name: `Fix (${f.safety})`, apply: () => fix(f) })), { name: 'Explain rule', apply: () => unfold(i, false) }],
         };
       }))),
+      complete: () => ac.startCompletion(ev),
       cursor: () => [ev.state.selection.main.anchor, ev.state.selection.main.head],
       select: ([anchor, head] = [0, 0]) => { const n = doc().length; ev.dispatch({ selection: { anchor: Math.min(anchor, n), head: Math.min(head, n) }, scrollIntoView: true }); },
       position: () => position(doc(), ev.state.selection.main.head),
@@ -614,7 +619,9 @@
    * analysis (`satex query typeset`); a click goes to the paragraph. */
   const typesetBody = $('typeset-body');
   /** satex's notation in typeset text (`\uE000…\uE001`): `⟦…⟧` is text set in a box, on the page
-   * only if the box is used; `·` a place the line breaker may hyphenate, not shown. */
+   * only if the box is used; `·` a place the line breaker may hyphenate, not shown; `│`, `―`, `▬`
+   * a table's `|`, an `\hline` and a `\rule`, drawn. */
+  const RULES = { '│': ['ts-vrule', 'a \\vrule: a table\'s |'], '―': ['ts-hrule', 'an \\hrule: \\hline'], '▬': ['ts-bar', 'a \\rule'] };
   function notation(marked) {
     let open = 0;
     const html = marked.split(/(\uE000[^\uE001]*\uE001)/).map((part) => {
@@ -623,6 +630,7 @@
       if (note === '⟦') { open++; return '<span class="ts-box" title="set in a box: on the page only if the box is used">'; }
       if (note === '⟧') { if (!open) return ''; open--; return '</span>'; }
       if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `<span class="ts-key ts-key-${escape(kind)}" title="${escape(kind)}">${escape(key)}</span>`; }
+      if (RULES[note]) return `<span class="${RULES[note][0]}" title="${RULES[note][1]}"></span>`;
       return note === '·' ? '' : `<span class="ts-note">${escape(note)}</span>`;
     }).join('');
     return html + '</span>'.repeat(open);
@@ -779,6 +787,7 @@
   function render() {
     const ds = diagnostics[uri()] ?? [];
     editor.diagnostics(ds);
+    if (retryCompletion && !running) { retryCompletion = false; asked.clear(); editor.complete?.(); }
     count.textContent = ds.length;
     pills(ds);
     if (checkStart) { timing('t-check', secs(performance.now() - checkStart), 'the language server analyzed the open file'); shownTime(secs(performance.now() - checkStart)); }

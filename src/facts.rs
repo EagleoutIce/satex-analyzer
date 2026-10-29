@@ -370,6 +370,31 @@ pub struct Text {
     /// Character ranges (start, end) of boxes placed on a list or shipped,
     /// so their text reaches the page.
     pub placed: Vec<(u32, u32)>,
+    /// Rules set between characters (tex.web § 463): the number of
+    /// characters set before each, and its kind.
+    pub rules: Vec<(u32, Rule)>,
+}
+
+/// A rule [`Text::rules`] keeps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rule {
+    /// A thin `\vrule`: a table's `|`.
+    Vertical,
+    /// An `\hrule`: `\hline`, a line across.
+    Horizontal,
+    /// A `\vrule` wider than 1pt: a bar in the line (`\rule{1cm}{2pt}`).
+    Bar,
+}
+
+impl Rule {
+    /// How the typeset text shows it.
+    pub fn glyph(self) -> &'static str {
+        match self {
+            Rule::Vertical => "│",
+            Rule::Horizontal => "―",
+            Rule::Bar => "▬",
+        }
+    }
 }
 
 impl Text {

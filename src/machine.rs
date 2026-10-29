@@ -868,6 +868,10 @@ pub(crate) struct NameAccum {
     /// unknown part (once it has one) and the text after its last. The
     /// name is one of them, split again once it is complete.
     pub(crate) names: Vec<(Option<String>, String)>,
+    /// Per name, the texts the one-of tokens it read were narrowed to on
+    /// the paths that built it ([`Machine::split_one_of_groups`]): the
+    /// split per name narrows them again.
+    pub(crate) took: Vec<Took>,
     pub(crate) at: Option<Span>,
     pub(crate) at_written: bool,
     pub(crate) files: Vec<FileId>,
@@ -886,6 +890,7 @@ impl Default for NameAccum {
     fn default() -> NameAccum {
         NameAccum {
             names: vec![(None, String::new())],
+            took: vec![Took::new()],
             at: None,
             at_written: false,
             files: Vec::new(),
@@ -942,7 +947,33 @@ impl NameAccum {
             }
         }
         self.names = vec![one];
+        self.took = vec![Took::new()];
     }
+
+    /// Only the name at `i`, with what its paths took.
+    pub(crate) fn keep(&mut self, i: usize) -> Option<Took> {
+        let one = self.names.get(i)?.clone();
+        let took = self.took.get(i).cloned().unwrap_or_default();
+        (self.names, self.took) = (vec![one], vec![took.clone()]);
+        Some(took)
+    }
+}
+
+/// One-of tokens a path narrowed, with the texts each still stands for.
+pub(crate) type Took = Vec<(Sym, Rc<[Meaning]>)>;
+
+/// What two paths that built one name took: the tokens both narrowed,
+/// each to the texts of either.
+pub(crate) fn join_took(a: &Took, b: &Took) -> Took {
+    let mut out = Took::new();
+    for (sym, x) in a {
+        if let Some((_, y)) = b.iter().find(|(s, _)| s == sym) {
+            let mut all = x.to_vec();
+            all.extend(y.iter().filter(|m| !x.contains(m)).cloned());
+            out.push((*sym, all.into()));
+        }
+    }
+    out
 }
 
 /// A name built around unknown text: its prefix, its suffix, whether the
@@ -1170,6 +1201,13 @@ carried! {
     pub(crate) own_switches: HashSet<Sym>,
     /// Names `\csname` built where the document wrote only part of them.
     pub(crate) foreign_names: HashSet<(Sym, Span)>,
+    /// The one-of tokens made ([`Machine::one_of`]): `passes_joined` then,
+    /// and whether a path made one again. Its copies may then stand for
+    /// different choices, and a split narrows none
+    /// ([`Machine::split_one_of_groups`]).
+    pub(crate) made: HashMap<Sym, (u32, bool)>,
+    /// How often passes of a loop or recursion were joined.
+    pub(crate) passes_joined: u32,
     /// The files the `\read` streams are open on, by stream number.
     pub(crate) stream_paths: HashMap<i64, String>,
     /// The furthest line the progress bar saw read by `\read` in each file.
@@ -7903,6 +7941,10 @@ will look undefined",
     /// follows surely.
     fn insert_dollar(&mut self, token: Token) -> bool {
         use crate::mode::Modes;
+        // Neither arm can insert in no known mode: skip the name lookup.
+        if self.mode.is_empty() {
+            return false;
+        }
         let math = match (token.tok, token.cs().map(|sym| self.env.meaning(sym))) {
             (Tok::Chr(_, Catcode::Sup | Catcode::Sub), _) => true,
             (_, Some(Meaning::Register(crate::tex::RegKind::MathChar | crate::tex::RegKind::UMathChar, _))) => true,
@@ -9547,9 +9589,9 @@ will look undefined",
             // Some do: two paths, each with the token for one group of
             // texts. Read as unknown text instead, the scan would end in
             // it on every pass of a loop over it and never get past.
-            let Some(sym) = t.cs() else { return OneOfScan::Unknown };
-            let groups: [Vec<Rc<[Token]>>; 2] = [far, inside].map(|g| g.iter().map(|&i| texts[i].clone()).collect());
-            let parted = self.split(sym, t.span, 2, |m, arm| {
+            let parts = [far, inside];
+            let groups: [Vec<Rc<[Token]>>; 2] = parts.clone().map(|g| g.iter().map(|&i| texts[i].clone()).collect());
+            let parted = self.split_one_of_groups(t, t.span, &parts, |m, arm| {
                 match &groups[arm][..] {
                     [one] => m.unread_all(one),
                     texts => {
@@ -10399,7 +10441,8 @@ will look undefined",
                 .collect::<Option<Vec<Token>>>()
         {
             let mut arm = None;
-            if self.split(t.cs().expect("one-of"), t.span, names.len(), |_, i| {
+            let groups: Vec<Vec<usize>> = (0..names.len()).map(|i| vec![i]).collect();
+            if self.split_one_of_groups(t, t.span, &groups, |_, i| {
                 arm = Some(i);
                 i < names.len()
             }) {
@@ -10940,12 +10983,43 @@ will look undefined",
     /// reads the token, not where its texts were joined, so reads of one
     /// value at several places are no passes of one loop.
     pub(crate) fn split_one_of_at(&mut self, t: Token, site: Span) -> bool {
-        let Some(sym) = t.cs() else { return false };
         let Some(texts) = self.one_of_members(t) else { return false };
-        self.split(sym, site, texts.len(), |m, arm| {
+        let groups: Vec<Vec<usize>> = (0..texts.len()).map(|i| vec![i]).collect();
+        self.split_one_of_groups(t, site, &groups, |m, arm| {
             m.joined_arm();
             m.unread_all(&texts[arm]);
             true
+        })
+    }
+
+    /// A path per group of the texts `t` stands for ([`Machine::one_of`]),
+    /// on which `t` holds that group alone: every later read of it on the
+    /// path, wherever its copies went, agrees. One group parts nothing.
+    pub(crate) fn split_one_of_groups(
+        &mut self,
+        t: Token,
+        site: Span,
+        groups: &[Vec<usize>],
+        enter: impl FnOnce(&mut Self, usize) -> bool,
+    ) -> bool {
+        let (Some(sym), Some(texts)) = (t.cs(), self.one_of_members(t)) else { return false };
+        if self.carried.made.get(&sym) != Some(&(self.carried.passes_joined, false)) {
+            return self.split(sym, site, groups.len(), enter);
+        }
+        self.split(sym, site, groups.len(), |m, arm| {
+            if groups[arm].is_empty() {
+                return enter(m, arm);
+            }
+            let kept: Vec<Meaning> = groups[arm].iter().map(|&i| explore::text_meaning(texts[i].clone())).collect();
+            m.refine_may(sym, &kept);
+            let kept: Rc<[Meaning]> = kept.into();
+            for n in m.scans.iter_mut().filter_map(|a| a.name.as_deref_mut()) {
+                for took in &mut n.took {
+                    took.retain(|(s, _)| *s != sym);
+                    took.push((sym, kept.clone()));
+                }
+            }
+            enter(m, arm)
         })
     }
 
@@ -10972,9 +11046,10 @@ will look undefined",
             }
             _ => None,
         });
-        let (Some((owner, def)), Some(sym)) = (owned, t.cs()) else { return self.split_one_of(t) };
+        let Some((owner, def)) = owned else { return self.split_one_of(t) };
         let Some(texts) = self.one_of_members(t) else { return false };
-        self.split(sym, t.span, texts.len(), |m, arm| {
+        let groups: Vec<Vec<usize>> = (0..texts.len()).map(|i| vec![i]).collect();
+        self.split_one_of_groups(t, t.span, &groups, |m, arm| {
             let text = MacroDef { replacement_text: texts[arm].clone(), ..(*def).clone() };
             m.refine(owner, Meaning::Macro(Rc::new(text)));
             m.unread_all(&texts[arm]);

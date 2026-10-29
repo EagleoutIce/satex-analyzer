@@ -1536,17 +1536,21 @@ impl Env {
     pub fn refine_to(&mut self, sym: Sym, members: &[Meaning], keep: &[bool]) {
         match members {
             [one] => self.refine(sym, one.clone(), keep),
-            _ => {
-                self.effective += 1;
-                let i = sym.0 as usize;
-                let Some(Some(binding)) = self.slots.get(i) else { return };
-                let binding = Binding { meaning: Meaning::Unknown, may: Some(members.into()), ..binding.clone() };
-                self.correlate(i, keep);
-                self.log(i);
-                self.slots[i] = Some(binding);
-                self.changed(i);
-            }
+            _ => self.refine_may(sym, members, keep),
         }
+    }
+
+    /// [`Env::refine_to`], `members` kept as a set even when one: the
+    /// texts a one-of token still stands for.
+    pub fn refine_may(&mut self, sym: Sym, members: &[Meaning], keep: &[bool]) {
+        self.effective += 1;
+        let i = sym.0 as usize;
+        let Some(Some(binding)) = self.slots.get(i) else { return };
+        let binding = Binding { meaning: Meaning::Unknown, may: Some(members.into()), ..binding.clone() };
+        self.correlate(i, keep);
+        self.log(i);
+        self.slots[i] = Some(binding);
+        self.changed(i);
     }
 
     /// The groups the running path stands in, outermost first: each one's
@@ -1600,6 +1604,10 @@ impl Env {
                 |p: &PathEnv| p.slots.get(&sym).map_or_else(|| (self.slots[i].clone(), self.level[i]), Clone::clone);
             let ((old, x), (new, y)) = (side(a), side(b));
             let differ = !identical(&old, &new);
+            let (old, new) = match differ {
+                true => (self.settle(a, old, typed), self.settle(b, new, typed)),
+                false => (old, new),
+            };
             // A group end puts back what either path saved (tex.web § 283
             // keeps only what both made global).
             let level = x.max(y);
@@ -1644,6 +1652,43 @@ impl Env {
         let journal = self.join_journals(fork, a, b, low, &mut marks);
         let corr = paired.then(|| self.correlated(apart, a, b, &lost)).flatten();
         (PathEnv { slots, journal, marks: Rc::new(marks), low, corr }, grown, waiting)
+    }
+
+    /// `binding` as path `p` holds it: a one-of token `p` narrowed to one
+    /// text ([`Env::refine_may`]) is that text, so arms that took
+    /// different texts join as texts, not as the token both still hold.
+    fn settle(&self, p: &PathEnv, binding: Option<Binding>, typed: &Typed) -> Option<Binding> {
+        let text = |t: &Token| -> Option<Rc<[Token]>> {
+            let sym = t.cs()?;
+            let name = typed.interner.name(sym);
+            name.strip_prefix(crate::machine::UNKNOWN_NAME)?.strip_prefix(crate::machine::explore::ONE_OF)?;
+            let held = p
+                .slots
+                .get(&sym.0)
+                .map_or_else(|| self.slots.get(sym.0 as usize).cloned().flatten(), |(b, _)| b.clone());
+            match held?.may.as_deref() {
+                Some([Meaning::Macro(d)]) => Some(d.replacement_text.clone()),
+                _ => None,
+            }
+        };
+        let spell = |m: &Meaning| match m {
+            Meaning::Macro(d) if d.replacement_text.iter().any(|t| text(t).is_some()) => {
+                let body: Vec<Token> =
+                    d.replacement_text.iter().flat_map(|t| text(t).map_or_else(|| vec![*t], |x| x.to_vec())).collect();
+                Some(Meaning::Macro(Rc::new(crate::tex::MacroDef { replacement_text: body.into(), ..(**d).clone() })))
+            }
+            _ => None,
+        };
+        let mut b = binding?;
+        if let Some(m) = spell(&b.meaning) {
+            b.meaning = m;
+        }
+        if let Some(may) = &b.may
+            && may.iter().any(|m| spell(m).is_some())
+        {
+            b.may = Some(may.iter().map(|m| spell(m).unwrap_or_else(|| m.clone())).collect());
+        }
+        Some(b)
     }
 
     /// The arms of a join of `a` and `b` that differ in `apart`, each

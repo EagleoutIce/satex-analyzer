@@ -418,6 +418,33 @@ fn a_kernel_cut_short_typesets_unknown_text() {
     assert_eq!(cut, ["kernel"]);
 }
 
+/// Capability: typesetting feedback. A table's `|` and `\\hline` and a
+/// `\\rule` bar are drawn between the text (tex.web § 463). Struts, rules
+/// of no width (`\\strut`, array's `\\@arstrut`), are not.
+#[test]
+fn rules_are_typeset_between_the_text() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-rules");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("r.tex"),
+        "\\documentclass{article}\n\\begin{document}\nA\\strut B\n\n\\begin{tabular}{|l|c|}\\hline a & b \\\\ \\hline\\end{tabular}\n\nRule \\rule{1cm}{2pt} here.\n\\end{document}\n",
+    )
+    .unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_satex"))
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "r.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let text: Vec<String> = rows
+        .iter()
+        .filter(|r| r["kind"] == "paragraph")
+        .filter_map(|r| r["detail"].as_str())
+        .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    assert_eq!(text, ["AB", "―│ a │ b │―", "Rule ▬ here."]);
+}
+
 /// Capability: typesetting feedback. The hyphenation points satex marks
 /// are the ones pdflatex's `\showhyphens` shows (tex.web § 923), from the
 /// format's own `\patterns` and `\hyphenation`.

@@ -205,6 +205,7 @@ fixtures! {
     gobble_environ_body_stops_at_its_end("gobble_environ", "main.tex");
     gobble_verbatim_stops_at_its_delimiter("gobble_verbatim", "main.tex");
     gobble_with_unknown_catcodes_and_comments_never_reads_past_the_end("gobble_unknown", "main.tex");
+    gobble_verbatim_of_unknown_environment_name_stops_at_its_end("gobble_unknown_name", "main.tex");
     gobble_lstinline_with_unknown_delimiter_stops_at_its_end("gobble_unknown_delim", "main.tex");
 }
 

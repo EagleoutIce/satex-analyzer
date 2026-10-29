@@ -126,7 +126,7 @@ This needs call arguments recorded (`record_arguments`). `query options` and `--
 
 ## typeset
 
-The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. The [challenges](Challenges) compare it with what pdflatex sets.
+The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar; rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
 
 {{run(6): satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex}}
 

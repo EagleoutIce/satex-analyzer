@@ -1218,6 +1218,29 @@ pub struct Quantities {
 /// A character typeset outside package code: a digit run and the letters set
 /// right after it become a [`crate::facts::Quantity`]. A space token ends
 /// the run, so `2 ms` is not one.
+/// A rule the document set, between the characters around it: a table's
+/// `|` (`\vrule`), `\hline` (`\hrule`) or a `\rule` bar, by its
+/// `scan_rule_spec` sizes (tex.web § 463). A strut, no wider or taller than
+/// nothing, is not drawn. Paths setting it again add none.
+pub fn rule(m: &mut Machine, vertical: bool, [width, height, depth]: [Option<Option<i64>>; 3]) {
+    if m.package().is_some() || m.reading_format() || m.output_active() {
+        return;
+    }
+    let zero = |d: Option<Option<i64>>| d == Some(Some(0));
+    let kind = match vertical {
+        true if zero(width) => return,
+        true if width.flatten().is_some_and(|w| w > 65536) => crate::facts::Rule::Bar,
+        true => crate::facts::Rule::Vertical,
+        false if zero(height) && (depth.is_none() || zero(depth)) => return,
+        false => crate::facts::Rule::Horizontal,
+    };
+    let text = &mut m.out.facts.text;
+    let at = text.at.len() as u32;
+    if text.rules.len() < m.cfg.limits.facts && !text.rules.ends_with(&[(at, kind)]) {
+        text.rules.push((at, kind));
+    }
+}
+
 pub fn typeset(m: &mut Machine, c: char, span: Span) {
     if m.package().is_some() || m.reading_format() {
         m.quantity = Quantities::default();

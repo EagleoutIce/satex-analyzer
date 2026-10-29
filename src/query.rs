@@ -432,11 +432,14 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// `⟨?⟩` paragraph with `cut` set: `kernel` when the kernel was read only
 /// partly (it is then the only paragraph), `run` when the document was. A
 /// paragraph no page break may part from what follows (a heading) has `kept`.
+/// `│` is a thin `\vrule` (a table's `|`), `―` an `\hrule` (`\hline`),
+/// `▬` a wider `\vrule` (`\rule`).
 /// `keys` lists the labels, references and citations of the user's files
 /// with the place in `detail` where each stands.
 fn typeset(analysis: &Analysis) -> Vec<Record> {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
+    let mut rules = text.rules.iter().peekable();
     let mut out = Vec::new();
     let (mut line, mut first, mut choice) = (String::new(), None, None::<(crate::env::NodeId, [String; 2])>);
     let mut causes: Vec<Cause> = Vec::new();
@@ -517,6 +520,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         if !piece.trim().is_empty() {
             first.get_or_insert(site);
         }
+        while let Some(&(_, rule)) = rules.next_if(|r| r.0 as usize <= i) {
+            line.push_str(&note(rule.glyph()));
+        }
         match arm {
             Some(&(_, on, taken)) => {
                 if choice.as_ref().is_some_and(|(n, _)| *n != on) {
@@ -531,6 +537,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         }
     }
     close(&mut line, &mut choice, &mut causes);
+    for &(_, rule) in rules {
+        line.push_str(&note(rule.glyph()));
+    }
     if !line.trim().is_empty() {
         out.push(paragraph(analysis, first.unwrap_or_default(), &line, causes, &mut keys));
     }
@@ -728,7 +737,13 @@ fn tidy(line: &str) -> String {
 /// whitespace aside: `equal`, `covers` (the engine's text is one of the
 /// choices, so sound), or `DIFFERS` (unsound).
 pub fn typeset_verdict(computed: &str, typeset: &str) -> &'static str {
-    let squeeze = |s: &str| s.replace("⟨?⟩", "\u{10FFFF}").chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    // Rules are drawn, not characters an engine's log lists.
+    let squeeze = |s: &str| {
+        s.replace("⟨?⟩", "\u{10FFFF}")
+            .chars()
+            .filter(|c| !c.is_whitespace() && !matches!(c, '│' | '―' | '▬'))
+            .collect::<String>()
+    };
     let (computed, typeset) = (squeeze(computed), squeeze(typeset));
     if computed == typeset {
         return "equal";

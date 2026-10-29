@@ -2583,6 +2583,7 @@ impl Machine<'_> {
                     },
                     _ => Item::Unknown,
                 };
+                crate::observe::rule(self, self.mode.meets(Modes::ANY_HORIZONTAL), [width, height, depth]);
                 self.append_item(item);
             }
             Material::Glue => {

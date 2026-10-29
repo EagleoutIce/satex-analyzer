@@ -1592,11 +1592,11 @@ impl Machine<'_> {
         if names > 1 && self.site_forked(span) >= u32::from(self.limits.meaning_set) {
             acc.name.as_deref_mut().expect("the name scan").collapse();
         } else if names > 1 {
-            let chosen = self.split(self.unknown, span, names, |_, arm| {
+            let chosen = self.split(self.unknown, span, names, |m, arm| {
                 let n = acc.name.as_deref_mut().expect("the name scan");
                 // A replayed choice may count other arms: then any name.
-                match n.names.get(arm).cloned() {
-                    Some(one) => n.names = vec![one],
+                match n.keep(arm) {
+                    Some(took) => took.iter().for_each(|(sym, kept)| m.refine_may(*sym, kept)),
                     None => n.collapse(),
                 }
                 true
@@ -1676,7 +1676,8 @@ impl Machine<'_> {
         // per one where the run may part. Read past `LOOP_ENTRIES` times at
         // this `\csname` here, the token is an unknown part of the name: a
         // summary would join the arms into the token again.
-        if !self.loop_capped(site, sym) && self.split_one_of_at(t, site) {
+        let one = self.one_of_members(t).is_some_and(|texts| texts.len() == 1);
+        if (one || !self.loop_capped(site, sym)) && self.split_one_of_at(t, site) {
             return false;
         }
         // A path per meaning, each reading the name on with its own: read
@@ -1873,19 +1874,19 @@ impl Machine<'_> {
     /// `tokens` with typed digits a test narrowed to one number spelled
     /// out: that is the text TeX holds there.
     fn settled<'a>(&self, tokens: &'a [Token]) -> std::borrow::Cow<'a, [Token]> {
-        let one = |t: &Token| {
+        let one = |t: &Token| -> Option<Vec<Token>> {
+            if let Some([text]) = self.one_of_members(*t).as_deref() {
+                return Some(self.settled(text).into_owned());
+            }
             let sym = t.cs()?;
             let place = self.typed_slice(sym).is_none_or(|(_, _, i, j)| j == i + 1);
-            self.typed_digits_of(sym).filter(|n| place && n.lo == n.hi).map(|n| n.lo)
+            let n = self.typed_digits_of(sym).filter(|n| place && n.lo == n.hi)?.lo;
+            Some(n.to_string().chars().map(|c| Token::new(Tok::Chr(c, Catcode::Other), t.span)).collect())
         };
         if !tokens.iter().any(|t| one(t).is_some()) {
             return std::borrow::Cow::Borrowed(tokens);
         }
-        let spell = |t: &Token| match one(t) {
-            Some(n) => n.to_string().chars().map(|c| Token::new(Tok::Chr(c, Catcode::Other), t.span)).collect(),
-            None => vec![*t],
-        };
-        std::borrow::Cow::Owned(tokens.iter().flat_map(spell).collect())
+        std::borrow::Cow::Owned(tokens.iter().flat_map(|t| one(t).unwrap_or_else(|| vec![*t])).collect())
     }
 
     /// Whether two texts may be one: unknown parts stand for any text
@@ -1907,9 +1908,19 @@ impl Machine<'_> {
 
     /// [`Machine::refine`] to one of `members`.
     pub(crate) fn refine_to(&mut self, sym: Sym, members: &[Meaning]) {
-        let keep: Vec<bool> =
-            self.env.arms(sym).iter().map(|arm| members.iter().any(|m| self.may_mean(arm, m))).collect();
+        let keep = self.keep_arms(sym, members);
         self.env.refine_to(sym, members, &keep);
+    }
+
+    /// [`Machine::refine_to`], `members` kept as a set even when one
+    /// ([`crate::env::Env::refine_may`]).
+    pub(crate) fn refine_may(&mut self, sym: Sym, members: &[Meaning]) {
+        let keep = self.keep_arms(sym, members);
+        self.env.refine_may(sym, members, &keep);
+    }
+
+    fn keep_arms(&self, sym: Sym, members: &[Meaning]) -> Vec<bool> {
+        self.env.arms(sym).iter().map(|arm| members.iter().any(|m| self.may_mean(arm, m))).collect()
     }
 
     /// [`Machine::refine`] for a register's value.
@@ -2594,9 +2605,10 @@ impl Machine<'_> {
         if !texts.iter().any(|x| x.is_empty()) {
             return false;
         }
+        let groups: Vec<Vec<usize>> =
+            [true, false].map(|empty| (0..texts.len()).filter(|&i| texts[i].is_empty() == empty).collect()).into();
         let full: Vec<Rc<[Token]>> = texts.into_iter().filter(|x| !x.is_empty()).collect();
-        let Some(sym) = t.cs() else { return false };
-        self.split(sym, t.span, 2, |m, arm| {
+        self.split_one_of_groups(t, t.span, &groups, |m, arm| {
             match (arm, &full[..]) {
                 (0, _) | (_, []) => {}
                 (_, [one]) => m.unread_all(one),

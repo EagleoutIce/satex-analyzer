@@ -1034,7 +1034,7 @@ impl Machine<'_> {
         let entry = paths.loops.iter().find(|l| l.id == id).map(|l| (l.depth.0, l.depth.1, l.passes));
         let forced = match paths.loops.iter().position(|l| l.id == id) {
             Some(l) => {
-                let (joined, _) = self.join_configs(&fork, &paths.loops[l].joined, &here, false, true);
+                let (joined, _) = self.join_passes(&fork, &paths.loops[l].joined, &here, false, true);
                 // A pass on strictly less bounded text is not counted:
                 // such passes end by construction, each state exact.
                 let before = here.state.loop_bounds.iter().find(|(l, _)| *l == id).and_then(|(_, b)| *b);
@@ -1220,7 +1220,7 @@ impl Machine<'_> {
                     crate::progress::note!("satex: recursion widened at {span:?}, input: {places:#?}");
                 }
                 let depth = paths.heads[level].config.key.places.len();
-                let (joined, _) = self.join_configs(&fork, &paths.heads[level].config, &here, true, false);
+                let (joined, _) = self.join_passes(&fork, &paths.heads[level].config, &here, true, false);
                 self.resume_config(&fork, Config::new(here.state, joined.env, false));
                 while self.input.iter().filter_map(place).count() > depth {
                     self.pop_frame();
@@ -1253,7 +1253,7 @@ impl Machine<'_> {
                     paths.cut[i].1 = summary;
                     cut = Config::new(PathState { input, ..cut.state }, cut.env, false);
                 }
-                let (joined, growth) = self.join_configs(&fork, &paths.cut[i].1, &cut, true, false);
+                let (joined, growth) = self.join_passes(&fork, &paths.cut[i].1, &cut, true, false);
                 let growth =
                     Growth { parts: [growth.parts, if grew { vec!["input"] } else { vec![] }].concat(), ..growth };
                 if !growth.any() {
@@ -1281,7 +1281,7 @@ impl Machine<'_> {
         // that adds nothing the loop is at its fixpoint, and one widened
         // pass more may reach it; only one still growing is summarized.
         let widen = paths.heads[h].passes >= widen_after || forced_join;
-        let (joined, mut growth) = self.join_configs(&fork, &paths.heads[h].config, &here, widen, !widen);
+        let (joined, mut growth) = self.join_passes(&fork, &paths.heads[h].config, &here, widen, !widen);
         if input_grew {
             growth.parts.push("input");
         }
@@ -1408,7 +1408,7 @@ impl Machine<'_> {
         // What the passes began in, joined and widened: a name the passes
         // agree on keeps its value, one they differ in may hold any of them
         // or more.
-        let (joined, _) = self.join_configs(fork, &summarized.joined, &here, true, true);
+        let (joined, _) = self.join_passes(fork, &summarized.joined, &here, true, true);
         // What a name the passes began with and this one disagree on would
         // hold after the passes not run is not known: the passes need not
         // have met a head to widen at (each deeper in conditionals or
@@ -2220,22 +2220,19 @@ impl Machine<'_> {
         named.sort_by_key(|n| n.0);
         let class = self.class_name(named.iter().map(|n| &n.1[..]));
         let sym = self.intern(&format!("{prefix}{:x?}{class}", named.iter().map(|n| n.0).collect::<Vec<_>>()));
-        let may: Vec<Meaning> = named
-            .into_iter()
-            .map(|(_, text)| {
-                Meaning::Macro(Rc::new(MacroDef {
-                    parameter_text: Default::default(),
-                    arg_spec: None,
-                    replacement_text: text,
-                    long: false,
-                    outer: false,
-                    protected: false,
-                }))
-            })
-            .collect();
-        let mut binding = Binding::builtin(Meaning::Unknown);
-        binding.may = Some(may.into());
-        self.env.constant(sym, binding);
+        let may: Vec<Meaning> = named.into_iter().map(|(_, text)| text_meaning(text)).collect();
+        let now = self.carried.passes_joined;
+        self.carried.made.entry(sym).and_modify(|m| m.1 = true).or_insert((now, false));
+        match self.env.slot(sym).and_then(|b| b.may.clone()) {
+            // Made again on a path that narrowed it, it holds every text anew.
+            Some(had) if had.len() != may.len() => self.env.refine_may(sym, &may, &[]),
+            Some(_) => {}
+            None => {
+                let mut binding = Binding::builtin(Meaning::Unknown);
+                binding.may = Some(may.into());
+                self.env.constant(sym, binding);
+            }
+        }
         Token::new(Tok::Cs(sym), span)
     }
 
@@ -2597,6 +2594,15 @@ impl Machine<'_> {
         self.env.resume(fork, &config.env);
     }
 
+    /// [`Machine::join_configs`] of passes of one loop or recursion: a
+    /// one-of token made before holds, in the join, copies of several
+    /// passes' choices, so no split narrows it from now on
+    /// ([`Machine::split_one_of_groups`]).
+    fn join_passes(&mut self, fork: &Fork, a: &Config, b: &Config, widen: bool, paired: bool) -> (Config, Growth) {
+        self.carried.passes_joined = self.carried.passes_joined.wrapping_add(1);
+        self.join_configs(fork, a, b, widen, paired)
+    }
+
     /// The least upper bound of two paths at one place, and what it holds
     /// more of than `a`.  The bindings are left as `fork` saw them.
     fn join_configs(&mut self, fork: &Fork, a: &Config, b: &Config, widen: bool, paired: bool) -> (Config, Growth) {
@@ -2842,10 +2848,18 @@ fn join_names(a: &Accum, b: &Accum, limit: usize) -> Option<Accum> {
     let other = b.name.as_deref().cloned().unwrap_or_default();
     let mut all = n.names.clone();
     let mut grew = false;
-    for name in other.names {
-        if !all.contains(&name) {
-            all.push(name);
-            grew = true;
+    for (name, took) in other.names.into_iter().zip(other.took) {
+        match all.iter().position(|x| *x == name) {
+            Some(i) => {
+                let joined = super::join_took(&n.took[i], &took);
+                grew |= joined.len() != n.took[i].len();
+                n.took[i] = joined;
+            }
+            None => {
+                all.push(name);
+                n.took.push(took);
+                grew = true;
+            }
         }
     }
     if !grew && n.files == other.files && n.closed == other.closed {
@@ -3106,6 +3120,19 @@ fn same_text(a: &[Token], b: &[Token]) -> bool {
 
 /// The prefix of the names [`Machine::one_of`] makes.
 pub(crate) const ONE_OF: &str = "one of:";
+
+/// The meaning a one-of token holds for one of its texts: a macro
+/// without parameters ([`Machine::one_of`]).
+pub(crate) fn text_meaning(text: Rc<[Token]>) -> Meaning {
+    Meaning::Macro(Rc::new(MacroDef {
+        parameter_text: Default::default(),
+        arg_spec: None,
+        replacement_text: text,
+        long: false,
+        outer: false,
+        protected: false,
+    }))
+}
 
 /// Whether two paths wait to run the same code at their groups' ends and
 /// after the next assignment: else they stand at different points.

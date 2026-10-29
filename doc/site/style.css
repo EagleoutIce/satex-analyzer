@@ -401,6 +401,10 @@ main td .badges, main td .cat { white-space: nowrap; }
 .typeset .ts-h { margin: .7rem 0 .25rem; font-weight: 700; padding-bottom: .1rem; border-bottom: 1px solid var(--border); color: var(--accent); line-height: 1.25; }
 .typeset .ts-part, .typeset .ts-chapter { font-size: 1.35em; } .typeset .ts-section, .typeset .ts-heading { font-size: 1.18em; } .typeset .ts-subsection { font-size: 1.06em; }
 .typeset .ts-note { color: var(--muted); font-family: var(--mono, monospace); font-size: .85em; }
+.typeset .ts-vrule { display: inline-block; width: 0; height: 1.2em; margin: 0 .35em; vertical-align: -.25em; border-left: 1px solid currentColor; }
+.typeset .ts-hrule { display: block; height: 0; margin: .15em 0; border-top: 1px solid currentColor; }
+.typeset .ts-text:has(.ts-hrule) { flex: none; width: fit-content; }
+.typeset .ts-bar { display: inline-block; width: 1.6em; height: .2em; vertical-align: .25em; background: currentColor; }
 .typeset .ts-box { display: none; }
 .typeset.show-boxes .ts-box { --b: var(--c3); display: inline; color: color-mix(in srgb, var(--fg) 70%, var(--b)); border: 1px dashed color-mix(in srgb, var(--b) 70%, transparent);
   border-radius: 3px; padding: 0 .2rem; background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--b) 13%, transparent) 0 4px, transparent 4px 8px); }
