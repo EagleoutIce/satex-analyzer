@@ -129,7 +129,7 @@ macro-call           \fmtname  latex.ltx                      @ latex.ltx:731:26
 macro-call           \space    latex.ltx                      @ latex.ltx:731:34
 macro-call           \fmtver…  latex.ltx                      @ latex.ltx:731:42
 use                  LaTeX2e…  latex.ltx                      @ latex.ltx:129:24
-… 40113 more lines omitted
+… 40105 more lines omitted
 ```
 
 ## trace
@@ -177,13 +177,13 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
-severity     code                        count  message                file            
-imprecision  argument-ends-in-unknown    1      a delimited argument…  latex.ltx       @ latex.ltx:20534:3
-imprecision  unknown-name                7      a name built from un…  latex.ltx       @ latex.ltx:20322:31
-imprecision  unknown-name                7      a name built from un…  latex.ltx       @ latex.ltx:20322:41
-imprecision  mismatched-group            2      extra }, or forgotte…  latex.ltx       @ latex.ltx:20534:3
-imprecision  paths-joined-at             1      2 paths arrived at a…  paper.tex       @ paper.tex:82:15
-… 15 more lines omitted
+severity     code                      count  message                  file            
+imprecision  argument-ends-in-unknown  1      a delimited argument r…  latex.ltx       @ latex.ltx:20534:3
+imprecision  unknown-name              4      a name built from unkn…  latex.ltx       @ latex.ltx:20322:31
+imprecision  unknown-name              4      a name built from unkn…  latex.ltx       @ latex.ltx:20322:41
+imprecision  mismatched-group          1      extra }, or forgotten …  latex.ltx       @ latex.ltx:20534:3
+imprecision  paths-joined-at           1      2 paths arrived at a j…  paper.tex       @ paper.tex:82:15
+… 12 more lines omitted
 ```
 
 ## distribution
@@ -221,7 +221,7 @@ variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.t
 variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
 variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
 variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
-… 1833 more lines omitted
+… 1831 more lines omitted
 ```
 
 ## project
@@ -298,7 +298,7 @@ code  xcolor/hsb          mypackage.sty  @ mypackage.sty:4:1
 
 ## typeset
 
-The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. The [challenges](Challenges) compare it with what pdflatex sets.
+The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar; rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
 
 ```text
 $ satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex
