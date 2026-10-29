@@ -342,6 +342,28 @@ fn hover_shows_primitive_syntax_only_while_it_is_the_primitive() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `\\` is the control symbol LaTeX defines as a line break, never the
+/// null control sequence; its hover explains it, and a glue parameter's
+/// hover explains glue.
+#[test]
+fn hover_explains_the_line_break_and_glue() {
+    let text = "\\documentclass{article}\n\\begin{document}\nA\\\\ B \\setlength{\\parskip}{1pt}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_unsaved("linebreak", text);
+    let mut hover = |character: u32| {
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": character } }),
+        );
+        server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
+    };
+    let newline = hover(2);
+    assert!(newline.contains("#### About \\\\") && !newline.contains("null control sequence"), "{newline}");
+    let glue = hover(18);
+    assert!(glue.contains("#### About glue"), "{glue}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A hover is kept, and the one of a name the document defines is asked
 /// again once an edit redefined it: the diagnostics of the edit come after.
 #[test]

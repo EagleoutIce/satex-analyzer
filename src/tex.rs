@@ -2014,3 +2014,10 @@ impl Meaning {
         }
     }
 }
+
+/// A control sequence's name as written (`\foo`, `foo`) without its escape:
+/// at most one backslash goes, so `\\` names the control symbol `\\`, never
+/// the null control sequence.
+pub fn bare_name(name: &str) -> &str {
+    name.strip_prefix('\\').filter(|rest| !rest.is_empty()).unwrap_or(name)
+}

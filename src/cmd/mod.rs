@@ -427,7 +427,7 @@ impl Command {
             Command::Controls { names, .. } if names.is_empty() => {
                 vec![crate::config::EVERY_SWITCH.to_string()]
             }
-            Command::Controls { names, .. } => names.iter().map(|n| n.trim_start_matches('\\').to_string()).collect(),
+            Command::Controls { names, .. } => names.iter().map(|n| crate::tex::bare_name(n).to_string()).collect(),
             _ => Vec::new(),
         }
     }

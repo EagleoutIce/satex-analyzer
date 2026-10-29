@@ -404,7 +404,7 @@ pub fn plan(
 
 /// The edits the plan carries out, once `new_name` is known to be free.
 pub fn edits(plan: &Plan, analysis: &Analysis, new_name: &str) -> Result<Vec<Edit>, String> {
-    let new_key = new_name.trim_start_matches('\\');
+    let new_key = crate::tex::bare_name(new_name);
     let valid = if plan.keyed {
         !new_key.is_empty()
             && !new_key.chars().any(|c| c.is_whitespace() || matches!(c, '{' | '}' | ',' | '%' | '\\' | '#'))

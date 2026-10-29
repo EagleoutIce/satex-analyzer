@@ -56,7 +56,7 @@ pub fn word_span(line: &str, col: u32) -> Option<(String, bool, u32)> {
     let target = crate::source::byte_of_col(line, col);
     word_re().find_iter(line).find(|m| m.start() <= target && target <= m.end()).map(|m| {
         let text = m.as_str();
-        (text.trim_start_matches('\\').to_string(), text.starts_with('\\'), crate::source::col_of_byte(line, m.start()))
+        (crate::tex::bare_name(text).to_string(), text.starts_with('\\'), crate::source::col_of_byte(line, m.start()))
     })
 }
 
@@ -229,6 +229,7 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
         for site in &sites {
             markdown.push_str(&format!("`{}:{}` (source scan)\n\n", site.path, site.pos.line));
         }
+        markdown.push_str(&super::knowledge::about(&topics(analysis, name, &records)));
     }
     for (n, record) in records.iter().enumerate() {
         if n == 1 {
@@ -306,10 +307,14 @@ fn typesets(analysis: &Analysis, name: &str) -> Option<(crate::tex::Span, String
 /// The knowledge-base topics a command's hover touches: the types of its
 /// arguments, and the kind of quantity a register or parameter holds.
 fn topics(analysis: &Analysis, name: &str, records: &[Record]) -> Vec<String> {
-    let mut out: Vec<String> = records
-        .iter()
-        .flat_map(|r| r.get("types").and_then(Json::as_array).into_iter().flatten().filter_map(Json::as_str))
-        .filter_map(|t| Some(t.split_once(' ')?.1.to_string()))
+    // The command itself first (`\\`: a line break), then what it reads.
+    let mut out: Vec<String> = std::iter::once(format!("\\{name}"))
+        .chain(
+            records
+                .iter()
+                .flat_map(|r| r.get("types").and_then(Json::as_array).into_iter().flatten().filter_map(Json::as_str))
+                .filter_map(|t| Some(t.split_once(' ')?.1.to_string())),
+        )
         .collect();
     if let Some(meaning) = analysis.interner.lookup(name).map(|s| analysis.env.meaning(s)) {
         out.extend(crate::roles::Ty::of_meaning(&meaning).map(|t| t.to_string()));
@@ -1775,12 +1780,12 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
         .into_iter()
         .filter_map(|record| {
             let name = record.get("name")?.as_str()?.to_string();
-            let label = name.trim_start_matches('\\').to_string();
+            let label = crate::tex::bare_name(&name).to_string();
             if !label.to_lowercase().contains(&typed) {
                 return None;
             }
             let tag = record.get("tag").and_then(Json::as_str).unwrap_or("");
-            let internal = analysis.settings.conventions.is_internal(label.trim_start_matches('\\'));
+            let internal = analysis.settings.conventions.is_internal(crate::tex::bare_name(&label));
             if label.is_empty() || (internal && !matches!(tag, "macro" | "primitive" | "environment" | "alias")) {
                 return None;
             }

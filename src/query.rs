@@ -2070,7 +2070,7 @@ pub fn controls_of(analysis: &Analysis, names: &[String], all: bool) -> Vec<Reco
         let mut out = Vec::new();
         for name in names {
             for mut record in controls(analysis, name) {
-                record.insert("for".into(), json!(name.trim_start_matches('\\')));
+                record.insert("for".into(), json!(crate::tex::bare_name(name)));
                 out.push(record);
             }
         }
@@ -2081,7 +2081,7 @@ pub fn controls_of(analysis: &Analysis, names: &[String], all: bool) -> Vec<Reco
 }
 
 pub fn controls(analysis: &Analysis, name: &str) -> Vec<Record> {
-    let wanted = name.trim_start_matches('\\');
+    let wanted = crate::tex::bare_name(name);
     let governed = |cds: &[crate::graph::ControlDep]| -> Option<String> {
         cds.iter().find_map(|cd| {
             let vertex = analysis.graph.vertex(cd.on)?;
@@ -2684,7 +2684,7 @@ fn effective_of(
                     // A control word's name ends before the text, which
                     // the call writes after a space.
                     A::Literal(text) => {
-                        let word = cs.trim_start_matches('\\').chars().count() > 1
+                        let word = crate::tex::bare_name(&cs).chars().count() > 1
                             || cs.chars().last().is_some_and(char::is_alphabetic);
                         if body.is_empty() && word && text.starts_with(char::is_alphabetic) {
                             body.push(' ');
@@ -3632,7 +3632,7 @@ pub fn explain_at(
     let mut out = Vec::new();
     let mut hints = Vec::new();
     for raw in names {
-        let name = raw.trim_start_matches('\\');
+        let name = crate::tex::bare_name(raw);
         let Some(sym) = analysis.interner.lookup(name) else { continue };
         let total = analysis.facts.defs.iter().filter(|d| d.name == sym).count();
         if let Some(at) = at {
@@ -4196,7 +4196,7 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<Stri
 /// show when the name takes an optional argument but not through a
 /// recognized key dispatcher (`enumerate`'s label template, for one).
 pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
-    let wanted = name.trim_start_matches('\\');
+    let wanted = crate::tex::bare_name(name);
     let Some(sym) = analysis.interner.lookup(wanted) else { return Vec::new() };
     let Some((dialect, families)) = key_family(analysis, sym) else {
         let mac = analysis.env.meaning(sym).as_macro().map(|m| (**m).clone());

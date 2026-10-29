@@ -8816,7 +8816,7 @@ will look undefined",
         if self.stubs.is_none() {
             let stubs = self.cfg.stubs.clone();
             let table =
-                stubs.into_iter().map(|(name, stub)| (self.intern(name.trim_start_matches('\\')), stub)).collect();
+                stubs.into_iter().map(|(name, stub)| (self.intern(crate::tex::bare_name(&name)), stub)).collect();
             self.stubs = Some(Rc::new(table));
         }
         if !self.stubs.as_ref().is_some_and(|t| t.contains_key(&sym)) {
@@ -8897,7 +8897,7 @@ will look undefined",
             crate::config::StubSets::Typed(map) => map.iter().map(|(n, r)| (n.clone(), r.clone())).collect(),
         };
         for (name, typed) in sets {
-            let target = self.intern(name.trim_start_matches('\\'));
+            let target = self.intern(crate::tex::bare_name(&name));
             let text = typed.as_ref().and_then(|r| self.stub_text(r, span));
             match (self.env.meaning(target), text) {
                 // A register keeps its meaning, only what it holds is lost.

@@ -151,3 +151,85 @@ biblatex style: author-title citations, entries sorted by author and title.
 
 ## biblatex style verbose
 biblatex style: the first citation of a work prints its full entry in a footnote.
+
+## \\, \newline
+Ends the line here, inside a paragraph: the line is not justified, and the paragraph goes on (`\newline` is the same without the options).
+`\\*` forbids a page break after the line. `\\[⟨dimen⟩]` adds that much space below it.
+In `tabular`, `array` and `align` it ends the row instead. Outside a paragraph it raises "There's no line here to end".
+
+```tex
+Name\\ Street 1\\[2pt] City
+a & b \\ \hline
+```
+
+## \linebreak, \nolinebreak
+`\linebreak` asks for a line break here and justifies the line, unlike `\\`. `\linebreak[⟨0–4⟩]` only suggests it, 4 forcing it. `\nolinebreak` forbids one.
+
+```tex
+a long word\linebreak[2] continues
+```
+
+## \par
+Ends the paragraph: the text so far is broken into lines (tex.web § 1096). An empty line in the source is a `\par`.
+
+## \hspace, \hspace*
+Horizontal space of a given glue (`\hspace{1em plus 1fil}`). It disappears at a line break unless starred.
+
+```tex
+a\hspace{1cm}b
+\hspace*{\fill}right
+```
+
+## \vspace, \vspace*
+Vertical space of a given glue between paragraphs. It disappears at a page break unless starred.
+
+```tex
+\vspace{2\baselineskip}
+\vspace*{\fill}
+```
+
+## \hfill, \hfil, \hss
+Infinitely stretchable horizontal glue: `\hfill` (order `fill`) beats `\hfil` (order `fil`). `\hss` stretches and shrinks.
+
+```tex
+left\hfill right
+```
+
+## \vfill, \vfil, \vss
+Infinitely stretchable vertical glue, pushing material to the bottom or centring it.
+
+## \quad, \qquad, \enspace, \thinspace, \;, \:, \!
+Fixed spaces: `\quad` is 1em, `\qquad` 2em, `\enspace` 0.5em, `\,` a thin space (3mu in math), `\!` a negative thin space.
+
+## \smallskip, \medskip, \bigskip
+Vertical glue between paragraphs: `\smallskipamount` (3pt plus 1pt minus 1pt), `\medskipamount` (twice that), `\bigskipamount` (four times).
+
+## \noindent, \indent
+Starts the paragraph without (or with) the `\parindent` indentation.
+
+## \newpage, \clearpage, \cleardoublepage
+`\newpage` ends the page. `\clearpage` also places every pending float first. `\cleardoublepage` continues on the next odd page in two-sided documents.
+
+## \pagebreak, \nopagebreak
+Asks for (or forbids) a page break here. `\pagebreak[⟨0–4⟩]` only suggests it.
+
+## \hline, \cline
+A horizontal rule across a table (`\hline`) or over columns i to j (`\cline{i-j}`). It goes right after a row's `\\`.
+
+## \rule
+A filled box: `\rule[⟨raise⟩]{⟨width⟩}{⟨height⟩}`. With width 0 it is a strut that holds the line open.
+
+```tex
+\rule{1cm}{0.4pt}
+\rule{0pt}{3ex}
+```
+
+## \strut
+An invisible rule of the line's height and depth (70% and 30% of `\baselineskip`), so a box keeps the line's size.
+
+## \mbox, \makebox
+A horizontal box: its text is never broken across lines. `\makebox[⟨width⟩][⟨l|c|r|s⟩]{…}` gives it a width.
+
+## \phantom, \hphantom, \vphantom
+Space the size of its argument, which is not shown. `\hphantom` keeps only the width, `\vphantom` the height and depth.
+

@@ -47,7 +47,7 @@ satex lsp --port 9257 --host 0.0.0.0
 
 What an argument is for, its **role**, decides the offer. Roles come from, in order: what the run saw calls do, the command's own body (through any number of wrappers, with literal prefixes), and a seed table for kernel and common package commands the project does not redefine. So `\newcommand\secref[1]{\ref{sec:#1}}` completes `intro` for the label `sec:intro` before it is ever used.
 
-Each argument also has a **type** ([`Ty`](domains.md#argument-types-the-ty-lattice)), shown in hover, signature help and the completion's usage line: `\setlength{1: skip register}{2: glue}`. A hover over a command reading a quantity adds a short explanation from `src/lsp/knowledge.md`.
+Each argument also has a **type** ([`Ty`](domains.md#argument-types-the-ty-lattice)), shown in hover, signature help and the completion's usage line: `\setlength{1: skip register}{2: glue}`. A hover adds a short explanation from `src/lsp/knowledge.md`: of the command itself (`\\` as a line break, `\hfill`, `\vspace`, `\rule`, …) and of the quantities it reads (glue, dimen, number, box).
 
 ### Hover extras
 
