@@ -14,7 +14,7 @@ use crate::value::Value;
 /// Cache version: different encodings get different files.
 const ENCODING_VERSION: u32 = 5;
 /// The encoding of the package caches, versioned apart from the kernel's.
-pub(crate) const PACKAGE_ENCODING_VERSION: u32 = 5;
+pub(crate) const PACKAGE_ENCODING_VERSION: u32 = 6;
 
 /// What a cache means, bumped by hand whenever the interpreter would
 /// analyse a cached file differently. Caches are keyed on it, not on the
@@ -585,9 +585,29 @@ impl StoreLock {
         // Read and write, not append: Windows locks only a handle opened so.
         let file =
             std::fs::File::options().read(true).write(true).create(true).truncate(false).open(lock_for(target)).ok()?;
-        file.try_lock().ok()?;
+        match file.try_lock() {
+            Ok(()) => {}
+            // The browser's file system has no locks, and no other instance writes to it.
+            Err(std::fs::TryLockError::Error(e))
+                if cfg!(target_os = "emscripten") && e.kind() == std::io::ErrorKind::Unsupported => {}
+            Err(_) => return None,
+        }
         Some(StoreLock(file))
     }
+}
+
+/// Held while this process builds `target`: another instance missing it too
+/// waits here, then reads what this one stored. `None` where the file
+/// system has no locks.
+pub(crate) fn build_lock(target: &Path) -> Option<std::fs::File> {
+    let file = std::fs::File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(target.with_extension("building.lock"))
+        .ok()?;
+    file.lock().ok().map(|()| file)
 }
 
 fn lock_for(target: &Path) -> PathBuf {

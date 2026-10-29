@@ -290,6 +290,7 @@ struct CachedLoad {
     required: Option<String>,
     provided: Option<String>,
     depth: u16,
+    certain: bool,
     case_mismatch_on_disk: Option<Sym>,
 }
 
@@ -840,8 +841,15 @@ pub(super) struct Suspended {
     parent_id: Option<u64>,
 }
 
+/// What a cache holds: a class by its file name (`article.cls`), so a listing
+/// tells it from a package.
+fn held(name: &str, kind: LoadKind) -> String {
+    if kind == LoadKind::Class { format!("{name}.cls") } else { name.to_string() }
+}
+
 fn family(name: &str) -> String {
-    let safe: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
+    let safe: String =
+        name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '.' { c } else { '_' }).collect();
     format!("package-{safe}-v{ENCODING_VERSION}-")
 }
 
@@ -1428,6 +1436,8 @@ impl Machine<'_> {
             probe: _,
             // Used at next step, never across load.
             cacheable_load: _,
+            building: _,
+            par_kept: _,
             par_inserted: _,
             // Output bookkeeping, not runtime state.
             diag_seen: _,
@@ -1491,6 +1501,9 @@ impl Machine<'_> {
         if !self.cacheable_at_push(kind) {
             return Mouth::file(source, id);
         }
+        // Only an outermost load waits for another process building its cache: it holds no lock
+        // then, so no two processes wait on each other.
+        let outermost = self.package_capture.is_none() && self.suspended.is_empty() && self.building.is_none();
         self.suspend_recording();
         self.cacheable_load = Some(id);
         self.guard.held = (std::mem::take(&mut self.guard.lines), std::mem::take(&mut self.guard.forks));
@@ -1511,7 +1524,13 @@ impl Machine<'_> {
             frame: self.input.len(),
             name: name.to_string(),
             kind,
-            cache: cache_file(&dir, name, key.0),
+            cache: {
+                let cache = cache_file(&dir, &held(name, kind), key.0);
+                if outermost && let Some(lock) = crate::format::build_lock(&cache) {
+                    self.building = Some((id, std::rc::Rc::new(lock)));
+                }
+                cache
+            },
             site: span,
             root: self.root_state(span, &path),
             rest: self.rest_state(self.input.len() + 1),
@@ -2046,14 +2065,14 @@ impl Machine<'_> {
                 continue;
             };
             let span = span_in(d.span, site);
-            if let Some(&i) = self.definition_sites.get(&(span, d.name)) {
+            if let Some(&i) = self.definition_sites.get(&(span, d.name, d.package)) {
                 let previous = &mut self.out.facts.defs[i];
                 previous.certain &= d.certain;
                 previous.mac = mac;
                 continue;
             }
             let cds = self.resolve_cds(&st, &mut ids, &reached, before, site, &d.cds);
-            self.definition_sites.insert((span, d.name), self.out.facts.defs.len());
+            self.definition_sites.insert((span, d.name, d.package), self.out.facts.defs.len());
             self.out.facts.defs.push(Definition {
                 name: d.name,
                 by: d.by,
@@ -2123,6 +2142,7 @@ impl Machine<'_> {
                 cds,
                 count: e.count,
                 mode: e.mode,
+                depth: 0,
             });
             self.expansion_sites.insert(
                 key,
@@ -2161,6 +2181,8 @@ impl Machine<'_> {
                 required: l.required.clone(),
                 provided: l.provided.clone(),
                 depth: l.depth,
+                certain: l.certain,
+                call: None,
             });
         }
         for (load, provided) in &st.identifications {
@@ -2774,7 +2796,7 @@ impl Machine<'_> {
         crate::format::save_hashes(dir, self.cfg.limits.cache_size.as_u64());
         crate::format::prune_family(
             dir,
-            &family(&rec.name),
+            &family(&held(&rec.name, rec.kind)),
             crate::format::cache_key(),
             self.cfg.limits.cache_size.as_u64(),
         );
@@ -3100,6 +3122,7 @@ impl Machine<'_> {
                     required: l.required.clone(),
                     provided: l.provided.clone(),
                     depth: l.depth,
+                    certain: l.certain,
                     case_mismatch_on_disk,
                 }
             })

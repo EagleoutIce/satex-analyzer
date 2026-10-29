@@ -4,6 +4,7 @@
 // headless browser over the DevTools protocol.
 //   python3 -m http.server -d site-out 8000 & node doc/site/test.mjs http://localhost:8000/
 //   node doc/site/test.mjs file:///path/to/site-out/
+// QUICK=1 checks a sample of the packages offered on demand, for the edit loop.
 import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -25,7 +26,17 @@ const check = (name, ok, detail = '') => { console.log(`${ok ? 'ok  ' : 'FAIL'} 
 
 const page = await text('play/index.html');
 const manifest = JSON.parse(page.match(/<script id="satex-play" type="application\/json">(.*?)<\/script>/s)[1]);
-const engine = (await load(null, manifest.worker))(await load(manifest.js));
+const SatexEngine = await load(null, manifest.worker), createSatex = await load(manifest.js);
+// BROWSER_ONLY=1: the page in a browser alone, to iterate on its checks
+if (process.env.BROWSER_ONLY) { await browser(); process.exit(failed ? 1 : 0); }
+// The page keeps the cache directory in IndexedDB (worker.js); here a map stands in for it.
+const memory = new Map();
+const store = {
+  load: async (space) => [...memory].filter(([k]) => k.startsWith(`${space}|`)).map(([k, v]) => [k.slice(space.length + 1), v]),
+  put: async (space, entries) => { for (const [path, data] of entries) memory.set(`${space}|${path}`, data); },
+  remove: async (space, paths) => { for (const path of paths) memory.delete(`${space}|${path}`); },
+};
+const engine = SatexEngine(createSatex, () => {}, store);
 let t = performance.now();
 const given = base.startsWith('file:') ? { js: undefined, wasm: await bytes(manifest.wasm), bundle: await bytes(manifest.kernels[0].bundle) } : {};
 const { samples, imported } = await engine.init(base, manifest, given);
@@ -52,10 +63,24 @@ for (const name of manifest.samples) {
   const run = await engine.run(['-v', 'lint', '-f', name], { [`/work/${name}`]: new TextEncoder().encode(samples[name]) });
   const out = run.lines.filter((l) => l[0] === 'out').map((l) => l[1]);
   const summary = out.find((l) => /\d+ errors?, \d+ warnings?/.test(l));
-  const rebuilt = run.lines.filter((l) => /building kernel cache|: rebuilt \(/.test(l[1])).map((l) => l[1].trim());
+  // what the bundles hold must come from them; the project's own packages are analysed here
+  const bundled = (l) => !/cache package /.test(l) || offered.some((p) => p.name === /cache package (\S+):/.exec(l)?.[1]);
+  const rebuilt = run.lines.filter((l) => /building kernel cache|: rebuilt \(/.test(l[1]) && bundled(l[1])).map((l) => l[1].trim());
   check(`${name} lints`, run.status === 0 && summary && !rebuilt.length,
     `exit ${run.status}, ${run.ms} ms, ${summary ?? 'no summary'}${rebuilt.length ? `; not served from the bundle's caches: ${rebuilt.join('; ')}` : ''}`);
   check(`${name} carries no command line`, !/^% satex /.test(samples[name]));
+}
+
+// A second visit reads the caches the first kept, without importing the kernel's again.
+{
+  const again = SatexEngine(createSatex, () => {}, store);
+  const t = performance.now();
+  const { imported: second } = await again.init(base, manifest, given);
+  const kept = again.caches();
+  check('a second visit reuses the kept caches', !second.lines.length && kept.length === engine.caches().length && kept.some((e) => /format-/.test(e.path)),
+    `${Math.round(performance.now() - t)} ms, ${kept.length} entries`);
+  await again.uncache(kept.map((e) => e.path));
+  check('dropped caches are gone', !again.caches().length && !(await store.load(manifest.wasm)).length);
 }
 
 // The other kernels: each bundle loads, and the default sample lints with it.
@@ -79,12 +104,15 @@ if (micro) check('microtype is missing before its bundle', unresolved(await pack
 t = performance.now();
 for (const entry of offered) await engine.bundle(base, entry, base.startsWith('file:') ? await bytes(entry.bundle) : undefined);
 const stillMissing = [];
-for (const entry of offered.filter((p) => !p.label.endsWith('.cls'))) {
+// QUICK=1 (the edit loop): every 8th package; the full run, before a push, all of them
+const sampled = offered.filter((p) => !p.label.endsWith('.cls')).filter((_, i) => !process.env.QUICK || i % 8 === 0);
+for (const entry of sampled) {
   const kernel = manifest.kernels.find((k) => k.id === entry.kernel);
-  const run = await packageRun(entry.name, kernel);
+  let run;
+  try { run = await packageRun(entry.name, kernel); } catch (e) { console.log(`FAIL ${entry.id} aborted the engine: ${e.message}`); throw e; }
   if (!(typeof run.status === 'number' && run.status <= 1 && !unresolved(run, entry.name))) stillMissing.push(entry.id);
 }
-check(`${offered.length} packages on demand resolve`, offered.length >= 20 && !stillMissing.length, `${Math.round(performance.now() - t)} ms; missing ${stillMissing.join(' ')}`);
+check(`${sampled.length} of ${offered.length} packages on demand resolve`, offered.length >= 20 && !stillMissing.length, `${Math.round(performance.now() - t)} ms; missing ${stillMissing.join(' ')}`);
 
 // An example opened as the page opens it: only the bundles its files name, and the ones those need.
 // Its findings are the ones the build found against the whole installation.
@@ -221,11 +249,14 @@ async function browser() {
     };
     const until = async (expr, ms = 120000) => { for (const end = Date.now() + ms; Date.now() < end; await sleep(150)) if (await js(expr).catch(() => false)) return true; return false; };
     const key = async (key, modifiers = 0, code = key) => {
-      for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key, code, modifiers, windowsVirtualKeyCode: { Enter: 13, Escape: 27, F2: 113, Tab: 9, Backspace: 8 }[key] ?? 0, ...(key === 'Enter' ? { text: '\r' } : {}) });
+      for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key, code, modifiers, windowsVirtualKeyCode: { Enter: 13, Escape: 27, F2: 113, Tab: 9, Backspace: 8, ArrowLeft: 37, z: 90 }[key] ?? 0, ...(key === 'Enter' ? { text: '\r' } : {}) });
     };
     const mouse = async (x, y, opts = {}) => { for (const t of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type: t, x, y, button: 'left', clickCount: 1, ...opts }); };
     /** The screen point of `needle` (its `at`-th character) in the editor's text. */
-    const spot = (needle, at = 1) => js(`for (const l of document.querySelectorAll('.cm-line')) { const i = l.textContent.indexOf(${JSON.stringify(needle)}); if (i < 0) continue;
+    const spot = async (needle, at = 1) => (await settled(needle, at)) ?? (await shot('spot-miss'), Promise.reject(new Error(`no ${needle} in the editor of ${await js(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent`)}: ${await js(`return [...document.querySelectorAll('.cm-line')].map((l) => l.textContent).join(' | ').slice(0, 200)`)}`)));
+    // the editor renders a file's lines a moment after its tab is chosen
+    const settled = async (needle, at) => { for (let i = 0; i < 25; i++, await sleep(200)) { const p = await place(needle, at); if (p) return p; } return null; };
+    const place = (needle, at = 1) => js(`for (const l of document.querySelectorAll('.cm-line')) { const i = l.textContent.indexOf(${JSON.stringify(needle)}); if (i < 0) continue;
       const w = document.createTreeWalker(l, NodeFilter.SHOW_TEXT); let n, off = i + ${at};
       while ((n = w.nextNode())) { if (off <= n.length) { const r = document.createRange(); r.setStart(n, off); r.setEnd(n, off); const b = r.getBoundingClientRect(); return [b.left + 1, b.top + b.height / 2]; } off -= n.length; } } return null;`);
     /** A screenshot into $SHOTS, when set: what the checks saw. */
@@ -250,8 +281,10 @@ async function browser() {
     const center = (sel) => js(`const e = document.querySelector(${JSON.stringify(sel)}); e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return [b.left + Math.min(4, b.width / 2), b.top + b.height / 2]`);
     // sizes and places within the example, so a scroll by a subpixel does not count
     const layout = `const f = document.querySelector('.example:not([hidden])').getBoundingClientRect(); return [...document.querySelectorAll('.example:not([hidden]) :is(pre.src, .ex-side, .ln, .lint, .src-cs)')].map((e) => { const r = e.getBoundingClientRect(); return [r.x - f.x, r.y - f.y, r.width, r.height].map(Math.round).join(); }).join(' ')`;
+    // the hello example's tab, wherever it stands: its \\greet and its redefined \\section
+    const hello = '#' + await js(`const t = [...document.querySelectorAll('.examples [role=tab]')].find((t) => /hello/.test(t.textContent)); t.click(); return t.getAttribute('aria-controls');`);
     // a command explains itself on hover: a card with its signature as chips
-    let at = await center('#ex-0 [data-cs="\\\\greet"]');
+    let at = await center(`${hello} [data-cs="\\\\greet"]`);
     const before = await js(layout);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
     check('landing command hover card', await until(`const t = document.querySelector('.tip:not([hidden])'); return t && /greet/.test(t.querySelector('.x-name')?.textContent) && t.querySelector('.sig .arg[title]')`, 5000),
@@ -260,10 +293,10 @@ async function browser() {
     const after = await js(layout);
     check('landing hover moves nothing', before === after, before === after ? '' : `${before} -> ${after}`);
     // findings are wavy underlines over the whole call, with the message on hover
-    check('wavy underlines', await js(`const l = [...document.querySelectorAll('#ex-0 .lint')]; return l.length > 0 && l.every((e) => getComputedStyle(e).textDecorationStyle === 'wavy')`));
-    check('underline spans the whole call', await js(`const k = [...document.querySelectorAll('#ex-0 [data-lint]')].find((e) => e.closest('.ln').textContent.startsWith('\\\\newcommand{\\\\section}')).dataset.lint.split(' ')[0];
-      const line = document.querySelector('#ex-0 [data-lint~="' + k + '"]').closest('.ln'); return [...line.querySelectorAll('[data-lint~="' + k + '"]')].map((e) => e.textContent).join('') === line.textContent`));
-    at = await center('#ex-0 [data-lint].f-error');
+    check('wavy underlines', await js(`const l = [...document.querySelectorAll('${hello} .lint')]; return l.length > 0 && l.every((e) => getComputedStyle(e).textDecorationStyle === 'wavy')`));
+    check('underline spans the whole call', await js(`const k = [...document.querySelectorAll('${hello} [data-lint]')].find((e) => e.closest('.ln').textContent.startsWith('\\\\newcommand{\\\\section}')).dataset.lint.split(' ')[0];
+      const line = document.querySelector('${hello} [data-lint~="' + k + '"]').closest('.ln'); return [...line.querySelectorAll('[data-lint~="' + k + '"]')].map((e) => e.textContent).join('') === line.textContent`));
+    at = await center(`${hello} [data-lint].f-error`);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
     check('landing finding hover', await until(`return /already defined/.test(document.querySelector('.tip:not([hidden]) .tip-lint')?.textContent ?? '')`, 5000));
     await shot('landing-finding-hover');
@@ -327,7 +360,8 @@ async function browser() {
     check('panes snap and fold', folded[0] === 'editor' && back === '' && half[0] === '' && half[1] === '50.0%', JSON.stringify([folded, back, half]));
     check('header: kernel, command line, run, upload, link', await js(`return !document.querySelector('.act, #play-query, #play-reset') && !!document.querySelector('#play-kernel') && !!document.querySelector('#play-args')`));
     check('findings', await until(`return document.querySelectorAll('#lsp-diagnostics li[data-i]').length > 0`));
-    const kernels = await js(`return [...document.querySelectorAll('#play-kernel option')].map((o) => [o.textContent, o.disabled, o.title])`);
+    // closed, the selector names the engine; open, each option adds its size
+    const kernels = await js(`return [...document.querySelectorAll('#play-kernel option')].map((o) => [o.dataset.name + ' · ' + o.dataset.more, o.disabled, o.title])`);
     check('kernel labels carry their own size', kernels.some(([t]) => /^pdfTeX · [\d.]+ MiB$/.test(t)) && kernels.some(([t]) => /^plain TeX · \d+ KiB$/.test(t)) && !kernels.some(([t]) => /\+/.test(t)),
       kernels.map((k) => k[0]).join(' | '));
     check('LuaTeX listed as not available', kernels.some(([t, off, why]) => /^LuaTeX/.test(t) && off && /format budget/.test(why)));
@@ -336,7 +370,7 @@ async function browser() {
     // every finding, unfolded, shows one severity: its own
     const sevs = await js(`const out = []; for (const li of document.querySelectorAll('#lsp-diagnostics li[data-i]')) { li.querySelector('.why').click(); }
       await new Promise((r) => setTimeout(r, 100));
-      for (const li of document.querySelectorAll('#lsp-diagnostics li[data-i]')) out.push([li.querySelectorAll('.sev').length, !!li.querySelector('.explain'), li.querySelector('code').textContent, li.querySelector('.sev').textContent]);
+      for (const li of document.querySelectorAll('#lsp-diagnostics li[data-i]')) out.push([li.querySelectorAll('.shape, .sev').length, !!li.querySelector('.explain'), li.querySelector('.rn').textContent, li.querySelector('.shape').title]);
       return out;`);
     check('one severity per finding', sevs.length && sevs.every(([n, open]) => n === 1 && open), JSON.stringify(sevs));
     const differs = sevs.filter(([, , code, sev]) => manifest.rules[code] && manifest.rules[code].severity !== sev);
@@ -463,11 +497,11 @@ async function browser() {
     p = await spot('\\begin{document}', 0);
     await mouse(...p);
     await send('Input.insertText', { text: '\\newcommand\\again{\\again}\n' });
-    const lowered = await until(`return [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].some((li) => li.querySelector('code').textContent === 'unguarded-recursion')`, 60000) &&
-      await js(`const li = [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].find((li) => li.querySelector('code').textContent === 'unguarded-recursion');
+    const lowered = await until(`return [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].some((li) => li.querySelector('.rn').textContent === 'unguarded-recursion')`, 60000) &&
+      await js(`const li = [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].find((li) => li.querySelector('.rn').textContent === 'unguarded-recursion');
         if (!li.querySelector('.explain')) li.querySelector('.why').click(); await new Promise((r) => setTimeout(r, 100));
-        const again = [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].find((li) => li.querySelector('code').textContent === 'unguarded-recursion');
-        return [again.querySelectorAll('.sev').length, again.querySelector('.sev').textContent, /\berror\b/.test(again.querySelector('.explain').textContent.split('.')[0])];`);
+        const again = [...document.querySelectorAll('#lsp-diagnostics li[data-i]')].find((li) => li.querySelector('.rn').textContent === 'unguarded-recursion');
+        return [again.querySelectorAll('.shape, .sev').length, again.querySelector('.shape').title, /\berror\b/.test(again.querySelector('.explain').textContent.split('.')[0])];`);
     check('lowered severity shown once', lowered && lowered[0] === 1 && lowered[1] !== manifest.rules['unguarded-recursion'].severity && !lowered[2], JSON.stringify(lowered));
 
     // the editor's completion: the usage line colored like the hover's (\greet is \salute since the rename)
@@ -478,6 +512,18 @@ async function browser() {
     check('completion usage colored by argument kind', detail, await js(`return document.querySelector('.cm-tooltip-autocomplete')?.textContent.slice(0, 120) ?? 'no completion'`));
     await key('Escape');
     for (let i = 0; i < 6; i++) await key('Backspace');
+
+    // typing a `\begin{…}`'s `}` closes it, and its name is edited together with the `\end`'s
+    const content = `document.querySelector('.cm-content').textContent`;
+    await send('Input.insertText', { text: '\n\\begin{quote' });
+    await key('Escape');
+    await send('Input.insertText', { text: '}' });
+    check('a typed \\begin gets its \\end', await until(`return /\\\\begin\\{quote\\}\\\\end\\{quote\\}/.test(${content})`, 5000), await js(`return ${content}.slice(-80)`));
+    await key('ArrowLeft');
+    const linked = await until(`return document.querySelectorAll('.cm-linked').length === 2`, 20000);
+    await send('Input.insertText', { text: 'x' });
+    check('\\begin and \\end names are edited together', linked && await until(`return /\\\\begin\\{quotex\\}\\\\end\\{quotex\\}/.test(${content})`, 5000), await js(`return ${content}.slice(-80)`));
+    for (let i = 0; i < 6 && await js(`return /quote/.test(${content})`); i++) await key('z', 2, 'KeyZ');
 
     // Ctrl+click: the kernel's \section opens read-only
     p = await spot('\\section', 3);
@@ -493,13 +539,16 @@ async function browser() {
     check('an input file is analyzed with its root', await until(`return !!document.querySelector('#play-files-tree [data-name="chapter.tex"] .tcount')`, 60000));
     await shot('play-project');
     // renaming a file renames the root's \input of it
+    await until(`return !!document.querySelector('#play-files-tree [data-name="chapter.tex"] [data-act=rename]')`, 10000);
     await js(`document.querySelector('#play-files-tree [data-name="chapter.tex"] [data-act=rename]').click()`);
+    await until(`return !!document.querySelector('.tnamebox')`, 5000);
     await js(`document.querySelector('.tnamebox').value = 'background.tex'`);
     await key('Enter');
     check('rename follows into \\input', await until(`return /1 reference updated/.test(document.getElementById('play-toast').textContent)
       && !!document.querySelector('#play-tabs [data-name="background.tex"]')`, 5000), await js(`return document.getElementById('play-toast').textContent`));
     // a new file opens as a tab; delete asks once more
     await js(`document.getElementById('play-upload').click(); document.querySelector('#play-upmenu [data-pick=new]').click()`);
+    await until(`return !!document.querySelector('.tnamebox')`, 5000);
     await js(`document.querySelector('.tnamebox').value = 'notes.tex'`);
     await key('Enter');
     check('new file', await until(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent === 'notes.tex' && !!document.querySelector('#play-files-tree [data-name="notes.tex"]')`, 5000));
@@ -538,6 +587,25 @@ async function browser() {
     await key('Escape');
     check('drop zone closes on Escape', await js(`return document.getElementById('play-drop').hidden`));
 
+    // buttons lose their labels when their bar runs out of room, and get them back
+    const label = `getComputedStyle(document.querySelector('#play-link .label')).display`;
+    const barWidth = (w) => js(`document.querySelector('.filebar').style.width = '${w}'`);
+    await barWidth('200rem');
+    const wide = await until(`return ${label} !== 'none'`, 5000);
+    await barWidth('18rem');
+    const narrow = await until(`return ${label} === 'none'`, 5000);
+    await shot('play-tight');
+    await barWidth('200rem');
+    const restored = await until(`return ${label} !== 'none'`, 5000);
+    await barWidth('');
+    check('buttons collapse when their bar is short', wide && narrow && restored, JSON.stringify([wide, narrow, restored]));
+    // the cache dialog finds a cache by a command it defined in the run
+    await js(`document.getElementById('cache-open').click()`);
+    await until(`return document.querySelectorAll('#cache-list tr').length > 1`, 20000);
+    const found = await until(`const f = document.getElementById('cache-filter'); f.value = '\\\\microtypesetup'; f.dispatchEvent(new Event('input'));
+      return [...document.querySelectorAll('#cache-list .cache-hit')].some((h) => /\\\\microtypesetup\\b/.test(h.textContent))`, 20000);
+    check('caches are found by a command they define', found, await js(`return document.getElementById('cache-list').textContent.slice(0, 160)`));
+    await js(`document.getElementById('cache-close').click()`);
     check('no page errors', !errors.length, errors.join(' | ').slice(0, 300));
     ws.close();
   } catch (e) {

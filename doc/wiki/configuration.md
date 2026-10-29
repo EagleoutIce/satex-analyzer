@@ -10,7 +10,7 @@ A mapping key merges recursively, so a layer only needs to name the keys it chan
 
 Any key can be overridden for one run with `--set PATH=VALUE`, where `PATH` is the key's dotted path in the file and `VALUE` is written as it would be there: `satex lint --set limits.memory=8GiB --set cache.index.auto=false`. The option can be repeated. `--set` is applied after every file, so it always wins.
 
-`--no-config` ignores every `satex.yaml` file, discovered or named with `--config`, so a run starts from the built-in defaults below. `--set` still applies on top of it, so `satex lint --no-config --set limits.memory=8GiB` runs with every other default untouched. Useful for reproducing a result without a project's own configuration in the way, or in a script that should not be affected by whichever directory it runs in.
+`--no-config` ignores every `satex.yaml` file, discovered or named with `--config`, so a run starts from the built-in defaults below. `--set` still applies on top of it, so `satex lint --no-config --set limits.memory=8GiB` runs with every other default untouched. It reproduces a result without a project's own configuration, or in a script that must not be affected by whichever directory it runs in.
 
 ```yaml
 # yaml-language-server: $schema=https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/satex.schema.json
@@ -26,6 +26,8 @@ load:  # what to follow from the document
   skip: []  # packages to leave unread
   expect: []  # classes and packages a package or class file expects loaded before it (a beamer theme: [beamer])
   expect_detect: true  # find them from what the packages on disk define, and say so
+  build_files: false  # read the .aux, .toc, .bbl, ... an earlier build left; off: absent, the run over-approximates them
+  build_extensions: [aux, toc, lof, lot, loa, lol, out, bbl, bcf, run.xml, blg, glo, gls, glg, acn, acr, alg, ist, idx, ind, ilg, nlo, nls, slnc, brf, nav, snm, vrb, fls, fdb_latexmk, xdy, log]  # what counts as such a file
 search_paths: []  # searched before the installation
 paths:  # kpathsea variables' fallback list: tried after the
                           # environment and the project's latexmkrc/Makefile
@@ -43,7 +45,7 @@ project:
   ignore_other_configs: false  # true: satex.yaml files above this one and the global one are not read
 conventions:  # how TeX is usually written, where the text alone does not say
   internal: ['@', '^__', '_.*:']  # regexes marking internal names (hidden from listings and completion, private to lints)
-  definers: [def, gdef, edef, xdef, let, chardef, mathchardef, countdef, dimendef, skipdef, toksdef, newif, newcount, newdimen, newskip, newtoks, newbox, newlength, newcommand, renewcommand, providecommand, DeclareRobustCommand, newrobustcmd, renewrobustcmd, providerobustcmd, NewDocumentCommand, RenewDocumentCommand, ProvideDocumentCommand, DeclareDocumentCommand, NewExpandableDocumentCommand]  # commands whose next name is the one they define, for reading what packages on disk define
+  definers: []  # more commands whose next name is the one they define; satex finds those the kernel defines with itself
 lints:
   unused-definition:
     report_public: true  # also flag a public name
@@ -59,6 +61,16 @@ lints:
     regexes: []  # regular expressions to report
   comment-marker:
     markers: [TODO, FIXME, XXX, HACK]  # markers in a comment worth a finding
+  build-cost:  # when preamble-cost and includeonly-available suggest saving a part of the build
+    tokens: 2000000  # a part below this reads in well under a second
+    share: 0.5  # the share of the run's tokens the part must take
+    characters: 500000  # includeonly-available: paragraph text the body sets, about 200 pages
+  microtype-available:
+    characters: 2500  # justified paragraph text the body must set, about a page
+  ellipsis-dots:
+    center: '=+-<>'  # chktex CenterDots: an ellipsis between these wants \cdots
+  table-rules:
+    rows: 3  # rows with text, header included, before booktabs rules are asked for
 # profile: package          # forces one instead of detecting it from the input
 
 # Sensible defaults per kind of input, chosen automatically by the input's
@@ -101,6 +113,7 @@ texmf:
 cache:
   enabled: true  # keep the interpreted kernel and packages between runs
   # dir: ~/.cache/satex     # else $SATEX_CACHE, else the platform default
+  tail: 256  # characters before a package's end where every line start is a checkpoint
   index:  # packages `satex cache build` prepares, or, when
                             # empty, whatever ordinary runs already found
                             # expensive to interpret (measured, not a hand-picked list)
@@ -114,6 +127,7 @@ cache:
 # preload: preamble.tex     # a preamble to read as this project's format, the
                             # way mylatexformat dumps one; a %& line or -fmt=
                             # in the build configuration names it otherwise
+# pretex: '\def\draft{}'   # TeX code read before the document (latexmk -usepretex)
 
 opaque_conditionals: []  # conditionals to leave undecided, both arms analyzed
 expand_in_reports: []  # macros to expand when reporting a value, e.g. today
@@ -134,6 +148,7 @@ analysis:
   assume_compiles: true  # assumption: drop a path that raises a certain TeX error in library code; the document's own errors are kept
   assume_packages_close_groups: true  # assumption: a package closes the groups it opens
   assume_environment: true  # assumption: the build runs in this environment (Lua's os.getenv reads it)
+  assume_forced_page_breaks: true  # assumption: pages break only where a penalty forces it; false also follows breaks where the page may have filled
 
 # shell_escape: restricted # none | restricted | full; unset, what the build files ask for
 # TEMPORARY effect summaries: satex does not follow these macros' internals.
@@ -169,6 +184,7 @@ limits:
   file_depth: 64  # how deep \input and \usepackage may nest
   expansion_depth: 512  # how often one macro may be nested in itself before its recursion is widened
   site_expansions: 16384  # how often one call site may expand without reading on
+  replay_steps: 1000000  # steps a line the run wrote may take where satex replays it for what it names
   seconds: 300  # wall-clock limit per run, 0 for none
   repeat_failures: 8  # times one gap may be met at one place before the expansion is dropped
   choices: 8  # undecided choices one command may make on one path
@@ -178,12 +194,14 @@ limits:
   heads_apart: 32  # loop heads at one place kept apart for differing in code still to run, before they are joined
   meaning_splits: 4  # choices a command may have made for a name joined to several meanings to split per meaning
   widen_after: 3  # rounds a loop head reanalyzes a grown state before widening it
+  build_runs: 5  # runs of the build (latexmk rounds) to reach the fixpoint of .aux/.toc/...; past them unknown; 1 = one run, no earlier files
   recursion_depth: 100  # levels an undecided recursion is followed before it is assumed to end
   loop_heads: 512  # loop heads and entries one drive keeps with their joined states; the oldest goes first
   call_summary_after: 2  # runs of one call recorded before an unknown-operand call applies their join; 0 = never
   cycle_after: 2  # repeats of one call in the same state before its path ends (the only path is summarized); 0 = never
   meaning_set: 8  # meanings a join keeps as a set before the meaning is unknown
   join_arms: 32  # paths a join keeps paired (which binding goes with which), 0 pairs none
+  join_names: 64  # names a join pairs at most; the rest are joined apart
   value_set: 8  # values a join keeps for a count or dimension before only the interval
   interval_set: 4  # members a join keeps for a number once intervals are among them, before only their hull
   degrade_at_percent: 100  # of limits.steps past which the precision limits are halved, step by step; 100 = never
@@ -192,7 +210,7 @@ limits:
   held_tokens: 4000000  # tokens waiting to be read
   expansion_stack: 4000  # token lists open at once: expansions, arguments, files
   save_stack: 2000000  # assignments a group may have to undo (~200 MB)
-  vertices: 400000  # graph nodes recorded
+  vertices: 400000  # graph nodes recorded; past it the graph stops growing and the analysis goes on
   facts: 2000000  # definitions, uses and occurrences recorded
   trace: 200000  # trace events recorded
 ```
@@ -272,6 +290,8 @@ TeXworks/TeXShop `% !TeX` comments (`program`, `root`, `encoding`, `spellcheck`)
 
 The `.fmt` a build starts from instead of the stock `latex`, such as the ones `mylatexformat` dumps from a document's own preamble. SaTeX finds it in the `%&⟨format⟩` line TeX reads before anything else, in a `-fmt=` the build configuration passes to the engine, or in `preload:` in `satex.yaml`. Since a `.fmt` is a memory dump SaTeX cannot read, it interprets the preamble that was dumped instead: the file of the project named after the format, up to `\endofdump`, `\dump` or `\begin{document}`. The result is cached with the kernel, so a document that starts from its own format gets its own cache entry.
 
+`pretex:` in `satex.yaml` is TeX code read before the document's first line, the code latexmk's `-usepretex` hands the engine, such as `\def\draft{}` for a document that tests it.
+
 `satex cache build --preamble preamble.tex` builds that cache from a preamble directly. Controlled with `plugins.preload` in `satex.yaml`.
 
 ### discovery
@@ -289,6 +309,8 @@ A package is a function of what it reads, so SaTeX caches what a `\usepackage` o
 Register allocation is an effect, not a read: `\newcount` and its relatives advance `\count10`–`\count19`, and a replay allocates from the counters of the run it is replayed in, renumbering every register the package allocated — the meanings, the register slots, `\allocationnumber` and the `\count24` the log messages print. A register number a package keeps as plain text elsewhere is not renumbered.
 
 A cache entry is rejected, and the package read again, when a file the run had read by then changed size or modification time, when a name looked up then now resolves to a different file, or when the run disagrees with the read set. With `-v` SaTeX logs why, and `satex summary` shows each package as `cached`, `stored`, `stale: …` or `not stored: …`. Loads under a conditional, inside a group or an expansion that is still reading its arguments, and loads that ran out of budget or left a group or conditional open, are not cached.
+
+A package or class that a cached package or class loads has an entry of its own. The outer entry ends at its last checkpoint before the nested load and goes on at the next line of its file that is at rest after it. Every run reads the lines between, so the nested load is read or replayed from its own entry there, and what follows checks its read set against the state the nested load left.
 
 `satex cache build` prepares these caches up front: it interprets the kernel, replacing its cache, then interprets `\documentclass{⟨class⟩}\usepackage{⟨package⟩}` for every package named on the command line — or, when none are named, every package in `cache.index.packages` — and every engine in `cache.index.engines` (the one in effect when empty). It prints its plan first — each package and whether a cache is missing or will be checked — then one line per item as it goes (`[3/17] tikz (pdftex) … built in 2.1 s, 4.2 MiB`, `fresh, skipped`, `rejected: pgfkeys.code.tex changed; rebuilt …`, `failed: …`), all on standard error, and a summary of what was built, fresh and failed, the total size and the time on standard output. `--format json` prints only the result, as JSON. Packages are built only when missing or stale; `--refresh` rebuilds them too. `--engine NAME` overrides the configured engine list. `satex cache` shows how many package caches are stored and their size, and what it pruned: every store and `satex cache` delete the caches no build can read any more — another encoding, or package caches of a satex build that has no kernel cache left (a kernel family keeps this build's and the four most recent others) — and then the least recently used caches beyond `limits.cache_size` over the whole directory (never this build's kernel cache), and lock files nothing holds (2 GiB by default, `0` for no bound. `--set limits.cache_size=2GiB`); `satex cache prune` applies that pruning on its own. The kernel and the configured class are built first. The packages are then analyzed in parallel, on `limits.threads` workers (every processor when 0), each with its own interpreter. The memory budget counts the whole process, so the worker count is also capped at one per GiB of `limits.memory`. Cache files are written to a temporary file and renamed, so concurrent writers and readers never see half a file.
 
@@ -357,7 +379,7 @@ A value follows kpathsea's own path syntax (kpathsea manual, "Path searching"): 
 
 ## The clock
 
-`clock` is what `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` hold when the run starts ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L5240)), and so what `\today` and the date packages print. The default `now` is the time the analysis runs, said once as the `clock-assumed` assumption the first time the document reads it. An ISO date-time (`2026-09-29`, `2026-09-29T14:30`, `2026-09-29T14:30:00+02:00`; without a zone, the machine's) pins the date, for a run that must agree with another. `unknown` leaves the date unknown: every digit of it is an unknown digit, so what a document decides by the date is analyzed for every outcome. A package cache that read the clock replays the clock of the run that made it, and the `clock-assumed` assumption names it; the caches are kept per `clock` setting.
+`clock` is what `\year`, `\month`, `\day`, `\time` and `\pdfcreationdate` hold when the run starts ([tex.web § 241](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L5240)), and so what `\today` and the date packages print. The default `now` is the time the analysis runs, said once as the `clock-assumed` assumption the first time the document reads it. An ISO date-time (`2026-09-29`, `2026-09-29T14:30`, `2026-09-29T14:30:00+02:00`; without a zone, the machine's) pins the date, for a run that must agree with another. `unknown` leaves the date unknown: every digit of it is an unknown digit, so what a document decides by the date is analyzed for every outcome. A package cache that read the clock replays the clock of the run that made it, and the `clock-assumed` assumption names it; the caches are kept per `clock` setting.
 
 ### Output directory
 
@@ -376,11 +398,13 @@ analysis:
 
 `analysis.join_paths_at` (default `[{command: \document}]`): Points where every path still apart is joined, whatever else differs. A `command` is matched by its meaning: `\document` joins wherever the run starts that meaning, from `\begin{document}`, an alias or an `\expandafter`. A `hook` is an lthooks name and joins when the hook is used. A slot the paths disagree on becomes the join of their values, widened when needed, and no path is dropped. Each join is reported once as the `imprecision` diagnostic `paths-joined-at`, with how many paths arrived and what kept them apart.
 
-`analysis.assume_compiles` (default `true`): A soundiness assumption: the document compiles without errors. A path that raises a certain TeX error in library code (a package, the kernel) is then no run of the document, and is dropped. An error is certain when it arises on state the run knows exactly, before any approximation. An error in the document's own text is always kept, to be reported and fixed. Each drop is reported once as an `assumption` diagnostic, and the last path is never dropped. An error library code raises only past an approximation, with no exact path beside it, is not dropped. Where TeX's recovery from it breaks the code's brackets (a runaway, an extra `}` or `\fi`, a number misread), the path would read on into its caller's text. The call is summarized instead: its pending code is dropped down to the file or to a list holding the document's text, what it assigned becomes unknown, and the run goes on after it. Each such summary is the `imprecision` diagnostic `fault-contained`. A conditional begun in library code is never skipped on into the document's text. `false` keeps every path.
+`analysis.assume_compiles` (default `true`): A soundiness assumption: the document compiles without errors. A path that raises a certain TeX error in library code (a package, the kernel) is then no run of the document, and is dropped. An error is certain when it arises on state the run knows exactly, before any approximation. An error in the document's own text is always kept, to be reported and fixed. Each drop is reported once as an `assumption` diagnostic, and the last path is never dropped. `false` keeps every path.
 
 `analysis.assume_packages_close_groups` (default `true`): A soundiness assumption: a package closes the groups it opens, so two paths at the same line of a file, one in more groups, join with those closed. `false` keeps such paths apart.
 
 `analysis.assume_environment` (default `true`): A soundiness assumption: the build runs in the environment SaTeX runs in, which Lua's `os.getenv` reads. `false` makes every variable unknown.
+
+`analysis.assume_forced_page_breaks` (default `true`): A soundiness assumption: a page breaks only where a penalty forces it (`\clearpage`, `\newpage`, `\end`). `false` also fires the output routine wherever the page may have filled, one path each way.
 
 ## Stubs
 

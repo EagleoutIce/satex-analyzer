@@ -9,6 +9,35 @@
   const [tabs, args, button, status, output, lspStatus, list, count, cmd, kernelBox, toastBox, ctxMenu, treeBox, examplesBox] =
     ['play-tabs', 'play-args', 'play-run', 'play-status', 'play-output', 'lsp-status', 'lsp-diagnostics', 'lsp-count',
       'play-cmd', 'play-kernel', 'play-toast', 'play-ctx', 'play-files-tree', 'play-examples'].map($);
+  // Buttons give up their labels when their bar runs out of room, as in flowR's playground, and get
+  // them back once the bar is as wide again as when they lost them: `.tight` on the bar.
+  function collapsing(bar, overflows) {
+    let lost = 0;
+    const check = () => {
+      const width = bar.clientWidth;
+      if (bar.classList.contains('tight') && width <= lost) return;
+      bar.classList.remove('tight');
+      if (overflows()) { lost = width; bar.classList.add('tight'); }
+    };
+    new ResizeObserver(check).observe(bar);
+    return check;
+  }
+  {
+    const filebar = tabs.closest('.filebar'), actions = filebar.querySelector('.actions'), tablist = filebar.querySelector('.tablist');
+    // the tabs scroll, or the actions wrapped under them
+    const check = collapsing(filebar, () => tabs.scrollWidth > tabs.clientWidth + 1 || actions.offsetTop > tablist.offsetTop + tablist.offsetHeight / 2);
+    new MutationObserver(check).observe(tabs, { childList: true });
+    const ask = args.closest('.ask');
+    collapsing(ask, () => args.clientWidth < 12 * parseFloat(getComputedStyle(args).fontSize));
+    // the typeset switches, wrapped under their heading, say less
+    const head = $('play-typeset').querySelector('summary'), switches = head.querySelector('.ts-switches');
+    const title = document.createRange();
+    title.selectNodeContents(head.firstChild);
+    collapsing(head, () => {
+      const t = title.getBoundingClientRect(), w = switches.getBoundingClientRect();
+      return w.top >= t.bottom - 2 || w.height > 1.5 * switches.firstElementChild.offsetHeight;
+    });
+  }
   // Panes snap, as in flowR's playground: a splitter dragged into a pane's last half
   // minimum folds that pane away, a click on the folded splitter brings it back; near a
   // third, half or two thirds it rests there. A section's grip sets its height, dragged
@@ -182,6 +211,9 @@
    * code, links, emphasis. A `file:line` in code is a place that opens (site.js). */
   const cards = self.satexCards;
   const inline = (t) => cards.inline(t).replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>');
+  /** A command in text, or alone in a code span, explains itself on hover (`csTip`), as the editor's hover does. */
+  const commandRefs = (html) => html.replace(/(<code>(\\[A-Za-z@_]+(?::[A-Za-z]*)?\*?)<\/code>)|(<code[^>]*>[\s\S]*?<\/code>|<a [^>]*>[\s\S]*?<\/a>|<[^>]+>)|(\\[A-Za-z@_]+(?::[A-Za-z]*)?\*?)/g,
+    (m, span, c1, skip, c2) => skip ? m : `<code class="cs-ref" data-cs="${c1 ?? c2}" tabindex="0">${c1 ?? c2}</code>`);
   const markdown = (text) => text.split(/^```\w*\n([\s\S]*?)^```\s*$/m).map((part, i) => i % 2 ? `<pre><code>${escape(part)}</code></pre>`
     : part.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean).map((b) => /^#+ /.test(b) ? `<h4>${inline(b.replace(/^#+ /, ''))}</h4>`
       : /^[-*] /.test(b) ? `<ul>${b.split(/\n(?=[-*] )/).map((li) => `<li>${inline(li.slice(2))}</li>`).join('')}</ul>` : `<p>${inline(b)}</p>`).join('')).join('');
@@ -192,8 +224,8 @@
     if (!r) return '';
     const title = r.summary ?? r.message;
     const refs = (r.references ?? []).map((x) => x.url ? `<a href="${escape(x.url)}" target="_blank" rel="noopener">${escape(x.cite)}</a>` : escape(x.cite));
-    return `<div class="explain"><p><span class="cat">${escape(r.category)}</span>${title && title !== d.message ? ` <b>${inline(title)}</b>` : ''}</p>` +
-      `${markdown(r.explanation ?? '')}<p class="refs">${[...refs, `<a href="${base}wiki/lints.html#${encodeURIComponent(d.code)}">the rule's entry</a>`].join(' · ')}</p></div>`;
+    return `<div class="explain"><p><span class="cat">${escape(r.category)}</span>${title && title !== d.message ? ` <b>${commandRefs(inline(title))}</b>` : ''}</p>` +
+      `${commandRefs(markdown(r.explanation ?? ''))}<p class="refs">${[...refs, `<a href="${base}wiki/lints.html#${encodeURIComponent(d.code)}">SaTeX rule documentation</a>`].join(' · ')}</p></div>`;
   }
   /** A hover's Markdown; its last paragraph, the places and links, is a muted footer. */
   const unescape = (s) => s.replace(/&(lt|gt|quot|amp);/g, (m, e) => ({ lt: '<', gt: '>', quot: '"', amp: '&' })[e]);
@@ -203,14 +235,14 @@
     const section = (md) => {
       const kinds = {};
       // the argument types the section lists (`- `⟨arg1⟩` glue`, roles::Ty), shown in the usage line too
-      const types = Object.fromEntries([...md.matchAll(/^- `⟨(arg\d+)⟩` ((?:\w+ )?(?:register|name)|number|dimen|glue|muglue|quantity|box|key|file|counter|control sequence|options|any)$/gm)].map((m) => [m[1], m[2]]));
+      const types = Object.fromEntries([...md.matchAll(/^- `⟨(arg\d+)⟩` ([^\n`]+)$/gm)].map((m) => [m[1], m[2]]));
       const html = markdown(md).replace(/<code>([^<]*⟨arg\d+⟩[^<]*)<\/code>/g, (m, code) => {
         if (/^⟨arg\d+⟩$/.test(code)) return m;
         const u = cards.usage(unescape(code), types);
         Object.assign(kinds, u.kinds);
         return `<code class="usage">${u.html}</code>`;
       });
-      return cards.slots(html, kinds).replace(/<p>((?:\s|·|<a [^>]*>[^<]*<\/a>)+)<\/p>$/, '<p class="foot">$1</p>');
+      return cards.slots(html, kinds).replace(/<p>((?:\s|·|<a [^>]*>[^<]*<\/a>)+)<\/p>/g, '<p class="foot">$1</p>');
     };
     const sections = (md) => md.split(/^(?=### )/m).map(section).join('');
     // the definitions that do not hold at the cursor fold away (lsp::handlers::MORE_DEFINITIONS)
@@ -221,7 +253,7 @@
   // ---------------------------------------------------------------- worker requests
 
   const waiting = {}; // reply type -> resolver; runs, reads and kernel loads go one at a time, in order
-  const REPLY = { run: 'result', bundle: 'bundle', bundles: 'bundle', init: 'ready', read: 'file' };
+  const REPLY = { run: 'result', bundle: 'bundle', bundles: 'bundle', init: 'ready', read: 'file', caches: 'caches', uncache: 'caches' };
   let line_ = Promise.resolve();
   const ask = (msg, transfer = []) => {
     const asked = line_.then(() => new Promise((resolve, reject) => {
@@ -309,33 +341,45 @@
   function sync() {
     clearTimeout(timer);
     if (push()) {
+      prefetch();
       // the root's text may now ask for another engine
       if (state.file === state.root && wanted() !== state.kernel && !manualKernel && !following) { following = true; restart().finally(() => { following = false; }); return; }
       analyze(); explainSoon();
     }
   }
   function analyze() { checking(); lsp('satex/analyze', {}, true); }
-  const checkBox = $('lsp-check');
-  /** The indeterminate bar of a running check, with the phase it is in; the worker reports none, the waits for packages are the phases. */
-  const phase = (text) => { checkBox.hidden = !text; checkBox.lastElementChild.textContent = text ?? ''; lspStatus.textContent = text ?? ''; };
-  function checking() { phase('checking…'); checkStart = performance.now(); }
+  /** A running check shows in the status bar like any other work (`busy`); the worker reports how much of the file is read once the engine says. */
+  const phase = (text, done = null) => text ? busy('Analyzing', text[0].toUpperCase() + text.slice(1), { done }) : idle();
+  function checking() { phase(`Analyzing ${state.file}…`); checkStart = performance.now(); }
 
   /** Completion order: the project's own commands, then the documented ones, internals
-   * (`@`, `_`, `:` in the name) last; within each, prefix matches, then shorter names. */
+   * (`@`, `_`, `:` in the name) last; within each, the closest matches first: a prefix of the
+   * label, a part of it, a part of what the item is found by (a citation's title), then the typed
+   * characters in order (`m/f` finds `mode/fast`); then the server's order and shorter names. */
   const tier = (i) => /\(document\)$/.test(i.detail ?? '') ? 0 : /[@_:]/.test(i.label) ? 2 : 1;
-  const rank = (items, typed) => items.filter((i) => i.label.toLowerCase().includes(typed.toLowerCase()))
-    .map((i) => [i, tier(i), i.label.startsWith(typed) ? 0 : 1])
-    .sort((a, b) => a[1] - b[1] || a[2] - b[2] || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
-  /** The language server's completion items at `position`, kept per buffer version. */
+  const subsequence = (text, typed) => { let k = 0; for (const c of text) if (c === typed[k]) k++; return k === typed.length; };
+  const closeness = (i, typed) => {
+    const label = i.label.toLowerCase(), found = (i.filterText ?? '').toLowerCase();
+    return label.startsWith(typed) ? 0 : label.includes(typed) ? 1 : found.includes(typed) ? 2
+      : subsequence(label, typed) || subsequence(found, typed) ? 3 : null;
+  };
+  const rank = (items, typed) => items
+    .map((i) => [i, tier(i), closeness(i, typed.toLowerCase())]).filter((x) => x[2] !== null)
+    .sort((a, b) => a[1] - b[1] || a[2] - b[2] || (a[0].sortText ?? '').localeCompare(b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
+  /** The language server's completion items at `position`, kept per buffer version. While a run
+   * keeps the server busy, the last items stand in only where they were asked for the same word. */
   const asked = new Map();
-  let lastItems = null;
-  function completions(position) {
-    const k = `${uri()}|${version}|${position.line}:${position.character}`;
+  let lastItems = null, lastWord = '';
+  function completions(position, start = position.character) {
+    const k = `${uri()}|${version}|${position.line}:${position.character}`, word = `${uri()}|${position.line}:${start}`;
     if (!asked.has(k)) {
       asked.clear();
-      asked.set(k, lsp('textDocument/completion', { textDocument: { uri: uri() }, position }).then((r) => (lastItems = (Array.isArray(r) ? r : r?.items) ?? [])).catch(() => []));
+      asked.set(k, lsp('textDocument/completion', { textDocument: { uri: uri() }, position }).then((r) => {
+        [lastItems, lastWord] = [(Array.isArray(r) ? r : r?.items) ?? [], word];
+        return lastItems;
+      }).catch(() => []));
     }
-    return running && lastItems ? lastItems : asked.get(k);
+    return running && lastItems && lastWord === word ? lastItems : asked.get(k);
   }
   /** The last hover of each command, by file: shown at once while a run goes on. */
   const keptHovers = new Map();
@@ -360,7 +404,8 @@
       const item = open && /[{[,=]\s*$/.test(line.text.slice(0, key.from - line.from));
       if (!ctx.explicit && before !== '\\' && before !== '{' && !item) return null;
       push();
-      const items = await completions(position(ctx.state.doc, ctx.pos));
+      const start = before === '\\' ? word.from : key.from;
+      const items = await completions(position(ctx.state.doc, ctx.pos), start - line.from);
       // an item that replaces a range (a key path) starts where that range does
       const edit = items.find((i) => i.textEdit)?.textEdit;
       const from = edit ? at(ctx.state.doc, edit.range.start) : before === '\\' ? word.from : key.from;
@@ -404,18 +449,73 @@
       update: (deco, tr) => tr.effects.reduce((d, e) => e.is(marks) ? view.Decoration.set(e.value.map(([f, t]) => view.Decoration.mark({ class: 'cm-refmark' }).range(f, t)), true) : d, deco.map(tr.changes)),
       provide: (f) => view.EditorView.decorations.from(f),
     });
-    const theme = new st.Compartment(), lock = new st.Compartment();
+    // A `\begin` name and its `\end` name, from the server's linked editing:
+    // while the cursor is in one, what is typed there is typed in both.
+    const linkedSet = st.StateEffect.define();
+    const linkedField = st.StateField.define({
+      create: () => null,
+      update: (r, tr) => tr.effects.reduce((v, e) => e.is(linkedSet) ? e.value : v,
+        r && tr.docChanged ? r.map(([f, t]) => [tr.changes.mapPos(f, -1), tr.changes.mapPos(t, 1)]) : r),
+      provide: (f) => view.EditorView.decorations.from(f, (r) => view.Decoration.set((r ?? []).filter(([a, b]) => a < b)
+        .map(([a, b]) => view.Decoration.mark({ class: 'cm-linked' }).range(a, b)), true)),
+    });
+    const mirror = st.EditorState.transactionFilter.of((tr) => {
+      const r = tr.startState.field(linkedField);
+      if (!r || !tr.docChanged || !(tr.isUserEvent('input') || tr.isUserEvent('delete'))
+        || tr.startState.sliceDoc(...r[0]) !== tr.startState.sliceDoc(...r[1])) return tr;
+      const twin = [];
+      let inside = true;
+      tr.changes.iterChanges((fromA, toA, _fromB, _toB, text) => {
+        const i = r.findIndex(([f, t]) => fromA >= f && toA <= t);
+        if (i < 0) { inside = false; return; }
+        const shift = r[1 - i][0] - r[i][0];
+        twin.push({ from: fromA + shift, to: toA + shift, insert: text });
+      });
+      return inside && twin.length ? [tr, { changes: twin, sequential: false }] : tr;
+    });
+    function linkAround(v) {
+      const s = v.state, pos = s.selection.main.head, r = s.field(linkedField);
+      if (r && r.some(([f, t]) => pos >= f && pos <= t)) return;
+      const line = s.doc.lineAt(pos), col = pos - line.from;
+      const inName = /\\(?:begin|end)\s*\{[^{}%]*$/.test(line.text.slice(0, col)) && /^[^{}%]*\}/.test(line.text.slice(col));
+      if (!inName || state.file in state.ro) { if (r) queueMicrotask(() => v.dispatch({ effects: linkedSet.of(null) })); return; }
+      const doc = s.doc;
+      push();
+      lsp('textDocument/linkedEditingRange', { textDocument: { uri: uri() }, position: position(doc, pos) }).catch(() => null).then((found) => {
+        if (v.state.doc !== doc) return;
+        const ranges = found?.ranges?.map((x) => [at(doc, x.start), at(doc, x.end)]);
+        v.dispatch({ effects: linkedSet.of(ranges?.length === 2 ? ranges : null) });
+      });
+    }
+    // The `}` of a `\begin{name}` the document does not close yet adds its
+    // `\end{name}` on the next line; the cursor stays for the arguments.
+    const closeEnvironment = view.EditorView.inputHandler.of((v, from, to, text) => {
+      if (text !== '}' || from !== to || state.file in state.ro) return false;
+      const s = v.state, line = s.doc.lineAt(from);
+      const name = line.text.slice(0, from - line.from).match(/\\begin\s*\{([^{}%]*)$/)?.[1].trim();
+      if (!name) return false;
+      const code = s.doc.toString().replace(/(^|[^\\])%.*$/gm, '$1'), quoted = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const count = (kind) => code.match(new RegExp(`\\\\${kind}\\s*\\{\\s*${quoted}\\s*\\}`, 'g'))?.length ?? 0;
+      // an editor-closed `}` already completes this `\begin`
+      const closed = s.sliceDoc(from, from + 1) === '}';
+      if (count('begin') + !closed <= count('end')) return false;
+      const indent = line.text.match(/^\s*/)[0];
+      v.dispatch({ changes: [{ from, to: from + closed, insert: '}' }, { from: line.to, insert: `\n${indent}\\end{${name}}` }],
+        selection: { anchor: from + 1 }, userEvent: 'input.type' });
+      return true;
+    });
+    const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment();
     const ev = new EditorView({
       parent, doc: text,
-      extensions: [basicSetup, tex.language, language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete], addToOptions: [{ position: 80, render: (c) => {
+      extensions: [basicSetup, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete], addToOptions: [{ position: 80, render: (c) => {
         // the detail: a usage line colored like the hover's, then where it comes from
         const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
         span.innerHTML = (use ? cards.usage(use).html : '') + (from ? ` <span class="muted">${escape(from)}</span>` : '');
         return span;
       } }] }), hover,
-        linkField, markField, view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
-        EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); }), theme.of([]), lock.of([])],
+        linkField, markField, linkedField, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
+        EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([])],
     });
     // the site's light/dark choice (site.js) picks the editor's theme
     const scheme = () => ev.dispatch({ effects: theme.reconfigure(self.siteDark?.() ? oneDark : []) });
@@ -458,7 +558,8 @@
       const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY });
       if (pos == null) return;
       if (ev.state.selection.main.empty || pos < ev.state.selection.main.from || pos > ev.state.selection.main.to) ev.dispatch({ selection: { anchor: pos } });
-      if (menuAt(e.clientX, e.clientY)) e.preventDefault();
+      e.preventDefault();
+      menuAt(e.clientX, e.clientY);
     });
     parent.addEventListener('click', (e) => {
       const marker = e.target.closest('.cm-lint-marker');
@@ -469,7 +570,8 @@
     const span = (r) => [at(doc(), r.start), Math.max(at(doc(), r.end), at(doc(), r.start))];
     return {
       text: () => doc().toString(),
-      set: (t, readOnly = false) => ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, effects: lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : []) }),
+      // another file's text starts at its top: the last file's scroll position may lie past its end
+      set: (t, readOnly = false) => { ev.dispatch({ effects: lang.reconfigure(/\.bib$/.test(state.file) ? tex.bib : tex.language) }); ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, selection: { anchor: 0 }, effects: lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : []) }); ev.scrollDOM.scrollTop = 0; },
       apply: (edits) => ev.dispatch({ changes: edits.map((e) => { const [from, to] = span(e.range); return { from, to, insert: e.newText }; }) }),
       diagnostics: (ds) => ev.dispatch(lint.setDiagnostics(ev.state, ds.map((d, i) => {
         const [from, to] = span(d.range);
@@ -511,12 +613,132 @@
   /** What the open file's paragraphs set, from the language server's last
    * analysis (`satex query typeset`); a click goes to the paragraph. */
   const typesetBody = $('typeset-body');
+  /** satex's notation in typeset text (`\uE000…\uE001`): `⟦…⟧` is text set in a box, on the page
+   * only if the box is used; `·` a place the line breaker may hyphenate, not shown. */
+  function notation(marked) {
+    let open = 0;
+    const html = marked.split(/(\uE000[^\uE001]*\uE001)/).map((part) => {
+      const note = /^\uE000([^\uE001]*)\uE001$/.exec(part)?.[1];
+      if (note === undefined) return escape(part);
+      if (note === '⟦') { open++; return '<span class="ts-box" title="set in a box: on the page only if the box is used">'; }
+      if (note === '⟧') { if (!open) return ''; open--; return '</span>'; }
+      if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `<span class="ts-key ts-key-${escape(kind)}" title="${escape(kind)}">${escape(key)}</span>`; }
+      return note === '·' ? '' : `<span class="ts-note">${escape(note)}</span>`;
+    }).join('');
+    return html + '</span>'.repeat(open);
+  }
+  // in the section's header: a click flips a switch, never the section's fold; kept across visits
+  for (const [id, cls, store] of [['typeset-boxes', 'show-boxes', 'satex-typeset-boxes'], ['typeset-keys', 'show-keys', 'satex-typeset-keys']]) {
+    const box = $(id), apply = () => typesetBody.classList.toggle(cls, box.checked);
+    box.closest('label').addEventListener('click', (e) => { e.preventDefault(); box.checked = !box.checked; box.onchange(); });
+    try { box.checked = localStorage.getItem(store) === '1'; } catch {}
+    box.onchange = () => { apply(); try { localStorage.setItem(store, box.checked ? '1' : '0'); } catch {} };
+    apply();
+  }
+  /** The document's outline from the root's run (`satex query occurrences`), in reading order: its
+   * sectioning units indented by level, each with its labels, then the bibliography and its entries. */
+  // the examples fold away; kept across visits
+  const exSect = $('play-exsect');
+  try { exSect.open = localStorage.getItem('satex-examples') === '1'; } catch {}
+  exSect.addEventListener('toggle', () => { try { localStorage.setItem('satex-examples', exSect.open ? '1' : '0'); } catch {} });
+  const outlineBody = $('outline-body'), outlineOpen = new Set();
+  outlineBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) outlineOpen.add(id); else outlineOpen.delete(id); } }, true);
+  const LEVELS = ['part', 'chapter', 'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph'];
+  async function outline() {
+    // an edit in an included file leaves the held analysis of the root stale: a config forces a fresh one
+    const request = { file: path(state.root), queries: [{ type: 'occurrences' }], ...(state.file !== state.root ? { config: { trace: 'false' } } : {}) };
+    const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records;
+    if (!rs) return;
+    // the run's order across files (an \input's contents where it stands); within one stretch of a file, by position
+    const chunks = [], file = (r) => r.path ?? r.file;
+    for (const r of rs.filter((r) => !r.origin || r.origin === 'document')) {
+      if (chunks.at(-1) && file(chunks.at(-1)[0]) === file(r)) chunks.at(-1).push(r); else chunks.push([r]);
+    }
+    chunks.forEach((c) => c.sort((a, b) => a.line - b.line || (a.col ?? 0) - (b.col ?? 0)));
+    const own = chunks.flat();
+    const sections = own.filter((r) => r.kind === 'section'), present = [...new Set(sections.map((r) => LEVELS.indexOf(r.detail)).filter((l) => l >= 0))].sort((x, y) => x - y);
+    const lowest = present.includes(1) ? 1 : 2; // chapters count as the top level when there are some, else sections
+    const at = (r) => `data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}"`;
+    // LaTeX's numbers: a counter per level from the top one, deeper ones reset, three levels deep; parts count in Roman
+    // numerals on their own; a starred command (read off its source) gets none
+    const count = [], roman = (n) => ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'][n] ?? String(n);
+    let parts = 0;
+    const numberOf = (r) => {
+      const l = LEVELS.indexOf(r.detail), text = state.texts[Object.keys(state.texts).find((n) => String(r.path ?? r.file).endsWith(n))]?.split('\n')[r.line - 1] ?? '';
+      if (l < 0 || l < lowest - 1 && l > 0 || l >= lowest + 3 || /^\\[a-z]+\*/.test(text.slice((r.col ?? 1) - 1))) return '';
+      if (l === 0) return roman(++parts);
+      count.length = l + 1;
+      for (let i = lowest; i <= l; i++) count[i] = (count[i] ?? 0) + (i === l ? 1 : 0);
+      return count.slice(lowest, l + 1).join('.');
+    };
+    const base = (p) => String(p ?? '').split('/').pop();
+    const html = [];
+    let open = null;
+    // one line per part; labels, files and citations unfold under it
+    const row = (id, depth, head, body) => `<li class="o-sec" style="--d:${depth}">` + (body
+      ? `<details class="o-row" data-id="${escape(id)}"${outlineOpen.has(id) ? ' open' : ''}><summary>${head}</summary>${body}</details>` : `<div class="o-row o-flat">${head}</div>`) + '</li>';
+    const chips = (list) => list.length ? `<span class="o-labels">${list.join('')}</span>` : '';
+    const close = () => {
+      if (!open) return;
+      const files = [...open.files].filter((f) => /\.(tex|ltx)$/.test(f) && state.files.some((n) => String(f).endsWith(n)));
+      const cites = [...open.cites.entries()].map(([k, c]) => `<a href="#" class="o-go o-label o-bib" ${at(c[0])} title="cited ${c.length}× in this part">${escape(k)}</a>`);
+      const fileChips = files.length > 1 || (files.length && !String(files[0]).endsWith(state.root)) ? files.map((f) => `<span class="o-file" title="a file this part is set from">${escape(base(f))}</span>`) : [];
+      html.push(row(open.id, open.depth, open.head + (open.first ? `<span class="o-first" title="label ${escape(open.first)}">${escape(open.first)}</span>` : ''), chips(open.labels) + chips(fileChips) + chips(cites)));
+      open = null;
+    };
+    for (const r of own) {
+      if (r.kind === 'section') {
+        close();
+        const depth = Math.max(0, present.indexOf(LEVELS.indexOf(r.detail))), num = numberOf(r);
+        open = { labels: [], cites: new Map(), files: new Set([r.path ?? r.file]), id: `${r.path ?? r.file}:${r.line}`, depth,
+          head: `<a href="#" class="o-go" ${at(r)} title="${escape(r.detail)} at ${escape((r.file ?? '') + ':' + r.line)}">${num ? `<span class="o-num">${num}</span>` : ''}${escape(r.key)}</a>` };
+      } else if (open && r.kind !== 'bibitem') {
+        open.files.add(r.path ?? r.file);
+        if (r.kind === 'cite') open.cites.set(r.key, [...(open.cites.get(r.key) ?? []), r]);
+      }
+      if (r.kind === 'label') {
+        const chip = `<a href="#" class="o-go o-label" ${at(r)} title="label at ${escape((r.file ?? '') + ':' + r.line)}">${escape(r.key)}</a>`;
+        if (open) { open.labels.push(chip); open.first ??= r.key; } else html.push(`<li class="o-sec" style="--d:0"><span class="o-labels">${chip}</span></li>`);
+      }
+    }
+    close();
+    const bib = own.filter((r) => r.kind === 'bibitem'), where = own.find((r) => r.kind === 'bibliography');
+    if (bib.length || where) html.push(row('bibliography', 0, `<a href="#" class="o-go" ${at(where ?? bib[0])}><span class="o-kind">bibliography</span>${bib.length} entr${bib.length === 1 ? 'y' : 'ies'}</a>`,
+      chips(bib.map((r) => `<span class="o-label o-bib" title="${escape((r.file ?? '') + ':' + r.line)}">${escape(r.key)}</span>`))));
+    $('outline-count').textContent = sections.length || '';
+    outlineBody.innerHTML = html.length ? `<ul class="outline-list">${html.join('')}</ul>` : '<p class="muted">No sections, labels or bibliography yet.</p>';
+  }
+  outlineBody.addEventListener('click', (e) => {
+    const a = e.target.closest('.o-go');
+    if (!a) return;
+    e.preventDefault();
+    const name = Object.keys(state.texts).find((n) => !(n in state.ro) && a.dataset.path.endsWith(n));
+    openPlace(name ?? a.dataset.path, { line: +a.dataset.line - 1, character: Math.max(+a.dataset.col - 1, 0) });
+  });
+  /** The groups of other files unfolded, kept across checks. */
+  const tsOpen = new Set();
+  typesetBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) tsOpen.add(id); else tsOpen.delete(id); } }, true);
+  /** `marked` with each key (`at`: its offset in the visible text) as a note of its own, where it stands. */
+  function withKeys(marked, keys) {
+    if (!Array.isArray(keys) || !keys.length) return marked;
+    const at = [...keys].filter((k) => k && k.key != null).sort((a, b) => a.at - b.at);
+    let out = '', seen = 0, i = 0, note = false;
+    const put = (n) => { while (i < at.length && at[i].at <= n) { out += `\uE000\u0001${at[i].kind ?? 'key'}\u0001${at[i].key}\uE001`; i++; } };
+    for (const c of marked) {
+      if (c === '\uE000') note = true;
+      if (!note) put(seen++);
+      out += c;
+      if (c === '\uE001') note = false;
+    }
+    put(Infinity);
+    return out;
+  }
   async function typeset(target) {
     if (target !== uri()) return;
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
     if (!rows || target !== uri()) return;
     const paragraphs = rows.filter((r) => r.kind === 'paragraph');
-    const row = (r) => `<p class="ts" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span>${escape(r.detail ?? '')}</p>`;
+    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys))}</span></p>`;
     // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
     const html = [];
     for (let i = 0; i < paragraphs.length;) {
@@ -525,7 +747,8 @@
       let j = i;
       while (j < paragraphs.length && paragraphs[j].path === r.path) j++;
       const run = paragraphs.slice(i, j), name = (r.path ?? '').split('/').pop();
-      html.push(`<details class="ts-other"><summary>⟨${escape(name)}⟩ · ${run.length} paragraph${run.length > 1 ? 's' : ''}</summary>${run.map(row).join('')}</details>`);
+      const id = `${r.path}|${r.line}`;
+      html.push(`<details class="ts-other" data-id="${escape(id)}"${tsOpen.has(id) ? ' open' : ''}><summary><span class="ts-file">${escape(name)}</span> <span class="muted">${plural(run.length, 'paragraph')}</span></summary>${run.map(row).join('')}</details>`);
       i = j;
     }
     typesetBody.innerHTML = html.length ? html.join('') : '<p class="muted">The document sets no paragraph.</p>';
@@ -562,12 +785,11 @@
     checkStart = 0;
     phase();
     lspStatus.textContent = state.file in state.ro ? 'read-only file' : ds.length ? '' : 'none';
-    const fixButton = (f, j, cls) => `<button class="small apply${cls}" data-j="${j}" title="${escape(f.title)}">Fix <span class="fix fix-${f.safety}">${f.safety}</span></button>`;
-    const item = (d, i) => `<li class="f-${sev(d)}${d.fixes.length ? ' fixable' : ''}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
-      `<div class="f-head"><span class="msg"><b class="rn">${escape(d.code ?? '')}</b>: ${inline(d.message)}</span><span class="badge"><span class="sev sev-${sev(d)}" title="${sev(d)}" aria-label="${sev(d)}"></span>${d.fixes.length ? fixButton(d.fixes[0], 0, ' as-badge') : ''}</span>` +
-      `<b class="loc">${d.range.start.line + 1}:${d.range.start.character + 1}</b></div><span class="acts">` +
-      d.fixes.slice(1).map((f, j) => fixButton(f, j + 1, '')).join('') +
-      `<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
+    const fixButton = (f, j) => `<button class="small apply fix-${f.safety}" data-j="${j}" title="${escape(f.title)}">Fix (${f.safety})</button>`;
+    const item = (d, i) => `<li class="f-${sev(d)}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
+      `<span class="msg"><b class="rn">${escape(d.code ?? '')}</b>: ${commandRefs(inline(d.message))}</span>` +
+      `<span class="where"><b class="loc">${d.range.start.line + 1}:${d.range.start.character + 1}</b><span class="shape" title="${sev(d)}" aria-label="${sev(d)}"></span></span>` +
+      `<span class="acts">${d.fixes.map(fixButton).join('')}<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
       (unfolded.has(key(d)) ? explanation(d) : '') + '</li>';
     /** Findings of one object (`group`, "table@12:1") fold together under a header; a lone one stays flat. */
     const fold = (id, cls, head, rows, inner) => `<li class="${cls}"><details${folded.has(id) ? '' : ' open'} data-fold="${escape(id)}"><summary class="cat-head" aria-label="${escape(head)}">${inner}</summary>` +
@@ -771,16 +993,18 @@
     return link;
   }
   /** The editor's context menu at the cursor: the symbol's actions, the fixes there, a link to the line. */
-  function menuAt(x, y) {
+  async function menuAt(x, y) {
     const w = editor.word(), p = editor.position();
+    sync(); // renaming is offered where the server says the name is the project's own
+    const renamable = w && !(state.file in state.ro) && !!(await lsp('textDocument/prepareRename', { textDocument: { uri: uri() }, position: p }).catch(() => null));
     const found = findingsAt(p.line, p.character).map(([d]) => d);
     const fixes = found.flatMap((d) => d.fixes);
     const rules = [...new Set(found.filter((d) => d.fixes.length).map((d) => d.code))];
     const editable = !(state.file in state.ro);
     const items = [
       ...(w?.[3] ? [['Go to definition', 'Ctrl+click', definition]] : []),
-      ...(w && editable ? [['Find references', '', references], ['Rename symbol', 'F2', renameBox]] : []),
-      ...(w?.[3] ? [['Explain', '', focusExplain], ['Show expansions', '', () => expansions(w)]] : []),
+      ...(w && editable ? [['Find references', '', references]] : []), ...(renamable ? [['Rename symbol', 'F2', renameBox]] : []),
+      ...(w?.[3] ? [['Explain', '', focusExplain], ['Show expansions', '', () => expansions(w)], ['Trace expansion', '', () => traceCall(`\\${w[2]}`, { file: state.file, line: p.line + 1, col: w[0] + 1 })]] : []),
       ...found.map((d) => [`Explain rule ${d.code}`, '', () => unfold(diagnostics[uri()].indexOf(d), false)]),
       ...(editable ? fixes.map((f) => [`Fix: ${f.title}`, f.safety, () => fix(f)]) : []),
       ...(editable ? rules.map((c) => [`Fix all ${c}`, `${(diagnostics[uri()] ?? []).filter((d) => d.code === c && d.fixes.length).length}×`, () => fixAll(c, true)]) : []),
@@ -831,6 +1055,18 @@
     }
     return explanations.get(k);
   }
+  /** The same for many names in one query, filling the same cache. */
+  async function explainMany(names) {
+    sync();
+    const target = state.root ?? (state.file in state.ro ? manifest.sample : state.file), key = (n) => `${n}|${target}|${version}|${state.kernel}`;
+    const todo = names.filter((n) => !explanations.has(key(n)));
+    if (todo.length) {
+      const request = { file: path(target), queries: [{ type: 'explain', names: todo }] };
+      const all = lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).then((r) => r?.[0]?.records ?? []).catch(() => []);
+      for (const n of todo) explanations.set(key(n), all.then((rs) => rs.filter((r) => r.name === n)));
+    }
+    return Promise.all(names.map((n) => explanations.get(key(n))));
+  }
   /** The Explain macro panel shows `name`: its full record, or the hover until that is back. */
   async function explainName(name, at = null, records = null) {
     const k = `${name}|${version}|${state.file}`;
@@ -858,6 +1094,131 @@
       (rest.length ? `<details class="more"><summary>More definitions</summary>${rest.map(cards.explain).join('')}</details>` : '');
     else if (!explainBody.querySelector('.hover')) explainBody.innerHTML = `<p class="muted">satex knows no ${escape(name)} here.</p>`;
   }
+  const csTip = Object.assign(document.createElement('div'), { className: 'cs-tip', hidden: true });
+  document.body.append(csTip);
+  document.addEventListener('mouseover', async (e) => {
+    const ref = e.target.closest?.('.cs-ref');
+    if (!ref) return;
+    const name = ref.dataset.cs, rs = (await explainRecords(name)).filter((r) => r.name === name);
+    if (!rs.length || !ref.matches(':hover')) return;
+    csTip.innerHTML = cards.explain(rs[0]);
+    csTip.hidden = false;
+    const b = ref.getBoundingClientRect(), h = csTip.offsetHeight;
+    csTip.style.left = `${Math.max(8, Math.min(b.left, innerWidth - csTip.offsetWidth - 8))}px`;
+    csTip.style.top = `${b.bottom + 6 + h > innerHeight ? Math.max(8, b.top - 6 - h) : b.bottom + 6}px`;
+  });
+  document.addEventListener('mouseout', (e) => { if (e.target.closest?.('.cs-ref')) setTimeout(() => { if (!csTip.matches(':hover')) csTip.hidden = true; }, 120); });
+  csTip.addEventListener('mouseleave', () => { csTip.hidden = true; });
+  document.addEventListener('click', (e) => { const ref = e.target.closest?.('.cs-ref'); if (ref) { csTip.hidden = true; explainName(ref.dataset.cs); } });
+  // ---------------------------------------------------------------- trace: how one call expands
+
+  const traceBox = $('play-trace'), traceBody = $('trace-body'), traceInternal = $('trace-internal');
+  const STEP_KIND = { expand: 'kernel', define: 'package', 'open-file': 'class' };
+  let traceFor = null, traceRun = 0;
+  /** Where to trace `name`: the caret's own call, else its first use in the open file, else in any file of the project. */
+  function callSite(name) {
+    const w = editor.word(), p = editor.position();
+    if (w?.[3] && `\\${w[2]}` === name) return { file: state.file, line: p.line + 1, col: w[0] + 1 };
+    const esc = name.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&'), re = new RegExp(`${esc}(?![A-Za-z@])`);
+    for (const file of [state.file, ...state.files.filter((f) => f !== state.file)]) {
+      const lines = (file === state.file ? editor.text() : state.texts[file] ?? '').split('\n');
+      for (let i = 0; i < lines.length; i++) { const m = re.exec(lines[i]); if (m && !new RegExp(`(?:\\\\(?:re)?(?:new|provide)command|\\\\[gex]?def|\\\\let)\\*?\\s*\\{?\\s*${esc}(?![A-Za-z@])`).test(lines[i])) return { file, line: i + 1, col: m.index + 1 }; }
+    }
+    return null;
+  }
+  /** The steps as a tree by depth: a step with deeper steps after it is a folding node. */
+  function traceTree(steps, name, does = new Map()) {
+    const root = { kids: [], depth: -1 }, stack = [root];
+    for (const r of steps) {
+      while (stack.at(-1).depth >= r.depth) stack.pop();
+      const node = { r, depth: r.depth, kids: [] };
+      stack.at(-1).kids.push(node);
+      stack.push(node);
+    }
+    const shown = root.kids.some((n) => n.r.name === name) ? root.kids.filter((n) => n.r.name === name) : root.kids;
+    const clip = (t) => (t.length > 160 ? `${t.slice(0, 160)}…` : t);
+    let count = 0;
+    const node = (n, first) => {
+      const { r } = n, open = first && n.kids.length ? ' open' : '';
+      count++;
+      const what = r.inserts != null ? `<span class="tr-arrow">→</span><code class="tr-out">${escape(clip(r.inserts)) || '<i>empty</i>'}</code>` : r.detail ? `<code class="tr-out">${escape(clip(r.detail))}</code>` : '';
+      const sets = r.sets ? `<span class="tr-sets" title="text this step set">sets <code>${escape(clip(r.sets))}</code></span>` : '';
+      const head = `${cacheBadge(STEP_KIND[r.step] ?? 'hashes', r.step)}<code class="${/^\\/.test(r.name) ? 'cs-ref' : ''}" ${/^\\/.test(r.name) ? `data-cs="${escape(r.name)}" tabindex="0"` : ''}>${escape(r.name)}</code>${what}${sets}` +
+        `<a href="#" class="tr-at o-go" data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}">${escape(r.file ?? '')}:${r.line}</a>`;
+      const why = does.get(r.name) ? `<span class="tr-does">${escape(does.get(r.name))}</span>` : '';
+      return n.kids.length ? `<li><details class="tr-node"${open}><summary>${head}${why}</summary><ul>${n.kids.map((k) => node(k, false)).join('')}</ul></details></li>` : `<li><div class="tr-leaf">${head}${why}</div></li>`;
+    };
+    const rest = root.kids.filter((n) => !shown.includes(n));
+    const html = shown.map((n, i) => node(n, i === 0)).join('') +
+      (rest.length ? `<li><details class="tr-node"><summary><span class="muted">${plural(rest.length, 'other step')} on this line</span></summary><ul>${rest.map((n) => node(n, false)).join('')}</ul></details></li>` : '');
+    return { html: `<ul class="tr-tree">${html}</ul>`, count };
+  }
+  async function traceCall(name, site = null) {
+    traceFor = { name, site: site ?? callSite(name) };
+    $('trace-title').innerHTML = `Trace <code class="cs-ref" data-cs="${escape(name)}" tabindex="0">${escape(name)}</code>`;
+    if (!traceBox.open) traceBox.showModal();
+    const at = traceFor.site, mine = ++traceRun;
+    $('trace-total').textContent = '';
+    if (!at) { $('trace-note').textContent = ''; traceBody.innerHTML = `<p class="muted">${escape(name)} is not used in the project, so there is no call to trace.</p>`; return; }
+    $('trace-note').textContent = `The call at ${at.file}:${at.line}:${at.col}, as the run expanded it.`;
+    traceBody.innerHTML = '<p class="muted">Tracing…</p>';
+    sync();
+    const config = { trace: 'true', trace_document_only: String(!traceInternal.checked), trace_lines: `[${at.line}, ${at.line}]`, trace_col: String(at.col), trace_file: at.file };
+    const request = { file: path(state.root ?? state.file), config, queries: [{ type: 'trace' }] };
+    const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch((e) => ({ error: String(e?.message ?? e) })))?.[0];
+    if (mine !== traceRun) return;
+    const inProject = (r) => state.files.some((n) => String(r.path ?? r.file ?? '').endsWith(n));
+    const steps = (rs?.records ?? []).filter((r) => traceInternal.checked || inProject(r));
+    if (!steps.length) {
+      traceBody.innerHTML = traceHead(at, name, '') + `<p class="muted">${rs?.error ? `The query failed: ${escape(rs.error)}.` : `The run recorded no step for this call${traceInternal.checked ? '' : ' in the project. It may expand only inside library code: switch on “include library code”'}.`}</p>`;
+      traceOutput(at, mine);
+      return;
+    }
+    const shown = steps.slice(0, 3000);
+    const names = [...new Set(shown.map((r) => r.name).filter((n) => /^\\/.test(n)))].slice(0, 200);
+    const does = new Map((await explainMany(names).catch(() => [])).flatMap((rs, i) => rs?.[0]?.does ? [[names[i], rs[0].does]] : []));
+    if (mine !== traceRun) return;
+    traceBody.innerHTML = traceHead(at, name, '') + traceTree(shown, name, does).html;
+    $('trace-total').textContent = `${plural(steps.length, 'step')}${steps.length > 3000 ? ', the first 3000 shown' : ''}`;
+    traceOutput(at, mine);
+  }
+  /** The call's source line, the call marked, and a place for the text set up to it. */
+  function traceHead(at, name) {
+    const text = (state.texts[Object.keys(state.texts).find((n) => at.file.endsWith(n) || n.endsWith(at.file))] ?? '').split('\n');
+    const lo = Math.max(1, at.line - 1), hi = Math.min(text.length, at.line + 1);
+    const lines = text.slice(lo - 1, hi).map((l, i) => {
+      const n = lo + i, mark = n === at.line;
+      const body = mark ? `${escape(l.slice(0, at.col - 1))}<mark class="tr-call">${escape(l.slice(at.col - 1, at.col - 1 + name.length))}</mark>${escape(l.slice(at.col - 1 + name.length))}` : escape(l);
+      return `<span class="tr-line${mark ? ' on' : ''}"><i>${n}</i>${body || ' '}</span>`;
+    });
+    return `<div class="tr-src"><pre><code>${lines.join('')}</code></pre><div id="trace-before" class="tr-before muted"></div></div>`;
+  }
+  /** The text set before the call, from the typeset rows. */
+  async function traceOutput(at, mine) {
+    const rows = await lsp('satex/typeset', { textDocument: { uri: uri(state.root ?? state.file) } }).catch(() => null);
+    const box = $('trace-before');
+    if (!box || mine !== traceRun) return;
+    const before = [];
+    for (const r of (rows ?? []).filter((r) => r.kind === 'paragraph')) {
+      if (String(r.path ?? "").endsWith(at.file) && (r.line > at.line || (r.line === at.line && (r.col ?? 1) >= at.col))) break;
+      before.push((r.marked ?? r.detail ?? '').replace(/\uE000[^\uE001]*\uE001/g, ''));
+    }
+    box.innerHTML = before.length ? `<b>set before</b> <span>${escape(before.slice(-3).join(' ¶ ').slice(-400))}</span>` : '<b>set before</b> <span>nothing yet</span>';
+  }
+  traceInternal.onchange = () => { if (traceFor) traceCall(traceFor.name, traceFor.site); };
+  $('trace-close').onclick = () => traceBox.close();
+  traceBox.onclick = (e) => {
+    if (e.target === traceBox) return traceBox.close();
+    const a = e.target.closest('.tr-at');
+    if (!a) return;
+    e.preventDefault();
+    const name = Object.keys(state.texts).find((n) => !(n in state.ro) && a.dataset.path.endsWith(n));
+    if (!name) return;
+    traceBox.close();
+    openPlace(name, { line: +a.dataset.line - 1, character: Math.max(+a.dataset.col - 1, 0) });
+  };
+  document.addEventListener('click', (e) => { const b = e.target.closest?.('.x-trace'); if (b) { csTip.hidden = true; traceCall(b.dataset.trace); } });
+
   function focusExplain() {
     explainBox.open = true;
     explained = '';
@@ -867,8 +1228,8 @@
 
   // ---------------------------------------------------------------- runs
 
-  /** The kernel's flags; an upload, outside /work, reads the playground's satex.yaml by name. */
-  const flags = () => [...manifest.kernels[state.kernel].args, ...(state.upload ? ['--config', '/work/satex.yaml'] : [])];
+  /** The kernel's flags; a project in its own directory under /work reads the playground's satex.yaml by name. */
+  const flags = () => [...manifest.kernels[state.kernel].args, ...(state.dir !== '/work' ? ['--config', '/work/satex.yaml'] : [])];
   const command = () => words(args.value).filter((x) => x !== 'satex' && !x.startsWith('-'))[0];
   /** Plain `lint` repeats what the language server shows: it runs only when asked to. */
   const plainLint = () => words(args.value).filter((x) => x !== 'satex').join(' ') === 'lint';
@@ -882,12 +1243,15 @@
   const filled = (v) => v != null && v !== '' && !(Array.isArray(v) && !v.length);
   function records(rows) {
     if (command() === 'explain' && rows.every((r) => r.name)) return rows.map(cards.explain).join('');
+    const dirs = rows.filter((r) => r.kind === 'directory' && r.count != null);
+    if (dirs.length) rows = rows.filter((r) => !dirs.includes(r));
     const shapes = new Map();
     for (const r of rows) {
       const k = Object.keys(r).filter((c) => !HIDDEN_COLS.has(c)).join('\0');
       shapes.set(k, [...(shapes.get(k) ?? []), r]);
     }
-    return [...shapes.values()].map((group) => {
+    const list = dirs.length ? `<div class="card"><p>${plural(dirs.length, 'directory')}</p><ul class="cache-dirs">${dirs.map((r) => `<li title="${escape(r.root)}/${escape(r.name)}"><span>${escape(r.name || '.')}</span><b>${r.count}</b></li>`).join('')}</ul></div>` : '';
+    return list + [...shapes.values()].map((group) => {
       const cols = [...new Set(group.flatMap(Object.keys))].filter((c) => !HIDDEN_COLS.has(c) && group.some((r) => filled(r[c]))), title = group[0].tag ?? group[0].kind;
       if (group.length === 1) {
         const r = group[0], head = r.name ?? r.key, rest = cols.filter((k) => k !== 'name' && !(k === 'key' && !r.name));
@@ -917,7 +1281,7 @@
   }
   const outBox = $('play-out');
   $('play-outclose').onclick = () => { outBox.hidden = true; };
-  const edits = () => Object.fromEntries(Object.entries(state.texts).filter(([name]) => !(name in state.ro)).map(([name, text]) => [path(name), text]));
+  const edits = () => Object.fromEntries(Object.entries(state.texts).filter(([name]) => state.files.includes(name) && !(name in state.ro)).map(([name, text]) => [path(name), text]));
   async function start() {
     sync();
     const a = argv();
@@ -1130,7 +1494,7 @@
     for (const p of pending.values()) p.resolve(null);
     pending.clear();
     worker.postMessage({ type: 'reset', args: [...flags(), '-f', state.root], cwd: state.dir });
-    lspStatus.textContent = 'language server: starting…';
+    busy('Starting', 'Starting the language server…');
     await lsp('initialize', { processId: null, rootUri: `file://${state.dir}`, capabilities: {} });
     lsp('initialized', {}, true);
     open(state.root);
@@ -1227,6 +1591,8 @@
     for (const n of Object.keys(state.ro)) delete state.texts[n];
     state.ro = {};
     state.files = state.lists[ex] ??= list ?? [ex, ...(projects[ex] ?? [])];
+    // each example in its own directory: its project sees its own files only
+    state.dir = `/work/ex/${ex.replace(/\.[^.]+$/, '')}`;
     manualKernel = false;
     Object.assign(state, { example: ex, root: state.files.includes(root) ? root : ex, open: [...state.files], file: state.files.includes(file) ? file : ex });
     editor.set(state.texts[state.file]);
@@ -1371,20 +1737,28 @@
 
   /** A kernel's bundle, fetched once, then the server and the run start over with it. */
   async function kernel(i) {
+    await loadKernel(i);
+    state.kernel = i;
+    kernelBox.value = i;
+  }
+  /** Fetches and sets up kernel `i`, once, without selecting it. */
+  const loadingKernels = new Map();
+  function loadKernel(i) {
+    if (!loadingKernels.has(i)) loadingKernels.set(i, fetchKernel(i).catch((e) => { loadingKernels.delete(i); throw e; }));
+    return loadingKernels.get(i);
+  }
+  async function fetchKernel(i) {
     const entry = manifest.kernels[i];
     if (!state.loaded.has(i)) {
-      status.textContent = `loading the ${entry.label} kernel (${size(entry.size)})…`;
+      busy('Fetching', `Fetching the ${entry.label} kernel (${size(entry.size)})…`);
       const t = performance.now();
       const given = location.protocol === 'file:' ? await local(entry.bundle) : undefined;
       await ask({ type: 'bundle', base, entry, given }, given ? [given.buffer] : []);
       state.loaded.add(i);
       timing('t-init', `${$('t-init').textContent} · ${entry.label} ${secs(performance.now() - t)}`, 'time to fetch and set up each kernel');
-      bar.hidden = true;
       loads.clear();
-      status.textContent = `${entry.label} ready`;
+      idle(`${entry.label} ready`);
     }
-    state.kernel = i;
-    kernelBox.value = i;
   }
 
   /** Packages beyond the first download: a bundle each per kernel (the files and cache entries a
@@ -1392,11 +1766,11 @@
    * what its files name, and again whenever a finding or a run says one is not in this installation. */
   const PACKAGES = new Map((manifest.packages ?? []).map((p) => [p.id, p]));
   const fetchedPackages = new Map(); // id -> its load
-  const MISSING = /`([^`\s]+)` is not in this installation/g;
+  const MISSING = /(?:`([^`\s]+)`|(\S+\.(?:sty|cls))) is not in this installation/g;
   const NAMED = /\\(?:documentclass|usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
   /** The bundles of the current kernel for `names` (a class too), and what those need, not yet asked for. */
-  function wanted_(names) {
-    const kernel = manifest.kernels[state.kernel].id;
+  function wanted_(names, k = state.kernel) {
+    const kernel = manifest.kernels[k].id;
     const todo = new Set();
     const add = (id) => {
       const entry = PACKAGES.get(id);
@@ -1409,27 +1783,29 @@
   }
   /** The packages and classes the project's own files name. */
   const named = (texts) => [...new Set(texts.flatMap((t) => [...String(t).matchAll(NAMED)].flatMap((m) => m[1].split(',').map((x) => x.trim()).filter(Boolean))))];
-  const missing = (texts) => wanted_([...new Set(texts.flatMap((t) => [...String(t).matchAll(MISSING)].map((m) => m[1].replace(/\.(sty|cls)$/, ''))))]);
+  const missing = (texts) => wanted_([...new Set(texts.flatMap((t) => [...String(t).matchAll(MISSING)].map((m) => (m[1] ?? m[2]).replace(/\.(sty|cls)$/, ''))))]);
   const loadedList = [], inFlight = new Set();
   async function fetchPackages(ids) {
     if (!ids.length) return false;
     const entries = ids.map((id) => PACKAGES.get(id));
     const label = entries.map((e) => e.label).join(', ');
-    status.textContent = `fetching ${entries.map((e) => `${e.label} ${size(e.size)}`).join(', ')} …`;
+    busy('Fetching', `Fetching ${entries.map((e) => `${e.label} ${size(e.size)}`).join(', ')}…`);
     const t = performance.now();
     const given = location.protocol === 'file:' ? await Promise.all(entries.map((e) => local(e.bundle))) : undefined;
     const load = ask({ type: 'bundles', base, entries, given }, given ? given.map((g) => g.buffer) : []);
     ids.forEach((id) => { fetchedPackages.set(id, load); inFlight.add(id); });
     try { await load; } catch (e) { ids.forEach((id) => fetchedPackages.delete(id)); toast(`${label} did not load: ${e.message}`); return false; } finally { ids.forEach((id) => inFlight.delete(id)); }
-    bar.hidden = true;
+    // the file index cached before this bundle was in the file system does not list its files: drop it, so the next start rebuilds it
+    try { const stale = ((await ask({ type: 'caches' })).entries ?? []).filter((e) => /\/index-/.test(e.path)).map((e) => e.path); if (stale.length) await ask({ type: 'uncache', paths: stale }); } catch {}
     loads.clear();
+    idle();
     status.textContent = `${label} fetched in ${secs(performance.now() - t)}`;
     status.dataset.packages = [...fetchedPackages.keys()].join(' ');
     loadedList.push(...entries.map((e) => `${e.label} ${size(e.size)}`));
     timing('t-load', `${loadedList.join(', ')} · last ${secs(performance.now() - t)}`, 'packages fetched after the first download');
     return true;
   }
-  /** What a run's cache report says: the packages and classes served from the caches, the ones analysed anew. */
+  /** What a run's cache report says: the packages and classes served from the caches, the ones analyzed anew. */
   function cacheReport(lines) {
     const reused = [], fresh = [];
     let segments = 0;
@@ -1440,10 +1816,166 @@
       if (s) segments = Number(s[1]);
     }
     if (!reused.length && !fresh.length && !segments) return '';
-    const detail = [reused.length && `cached: ${reused.join(', ')}`, segments && `${segments} package segment${segments > 1 ? 's' : ''} cached`, fresh.length && `analysed anew: ${fresh.join(', ')}`].filter(Boolean).join(' · ');
+    const detail = [reused.length && `cached: ${reused.join(', ')}`, segments && `${segments} package segment${segments > 1 ? 's' : ''} cached`, fresh.length && `analyzed anew: ${fresh.join(', ')}`].filter(Boolean).join(' · ');
     timing('t-cache', detail, 'what the last run reused from the caches and what it analysed again');
     return `${reused.length + segments} cached${fresh.length ? ` · fresh: ${fresh.map((f) => f.split(' ')[0]).join(', ')}` : ''}`;
   }
+  /** The cache entries the worker keeps (worker.js), each with what it stands for; dropping one
+   * restarts the language server, so the next check analyses that part again. */
+  const cacheBox = $('play-cache'), cacheList = $('cache-list');
+  const CACHE_KINDS = { format: ['kernel', 'kernel'], package: ['package', 'package'], index: ['file index', 'index'], probe: ['installation facts', 'facts'], 'content-hashes': ['file hashes', 'hashes'] };
+  const cacheFilter = $('cache-filter');
+  let cacheEntries = [];
+  /** [kind, css class, name, needs] of an entry; the manifest tells a class from a package. */
+  function cacheLabel(path) {
+    const file = path.split('/').pop(), [kind, ...rest] = file.replace(/\.postcard$/, '').split('-');
+    const name = kind === 'content' ? 'content-hashes' : kind;
+    const what = rest.filter((p) => !/^(v\d+|s?[0-9a-f]{8,})$/.test(p) && p !== 'hashes').join(' ');
+    let [label, cls] = CACHE_KINDS[name] ?? [name, 'hashes'], needs = [];
+    // a package cache names what it holds before `-v<version>`: a class by its file name
+    const held = name === 'package' && /^package-(.+?)-v\d+-/.exec(file)?.[1];
+    if (held) {
+      if (held.endsWith('.cls')) [label, cls] = ['class', 'class'];
+      needs = (manifest.packages ?? []).find((p) => p.label === held)?.needs ?? [];
+      return [label, cls, held.replace(/\.cls$/, ''), needs];
+    }
+    return [label, cls, what, needs];
+  }
+  /** The table: searched, sorted by a header, a class's or package's loads unfolded under it. */
+  let cacheOrder = { key: 'size', down: true, used: true };
+  const cacheBadge = (cls, text) => `<span class="cache-kind k-${cls}">${escape(text)}</span>`;
+  function drawCaches(entries) {
+    if (entries) { cacheEntries = entries; $('cache-count').textContent = entries.length || ''; }
+    const q = cacheFilter.value.trim().toLowerCase();
+    // a row matches by its kind and name, or by a command it defined in the run (`\textcolor`)
+    const rows = cacheEntries.map((e) => { const l = cacheLabel(e.path); return { e, l, u: usedOf(l[1], l[2]), hit: [] }; })
+      .filter((r) => !q || (!q.startsWith('\\') && `${r.l[0]} ${r.l[2]}`.toLowerCase().includes(q)) || (r.hit = namesLike(r.l[1], r.l[2], q)).length);
+    const by = { size: (r) => r.e.size, name: (r) => (r.l[2] || r.l[0]).toLowerCase(), kind: (r) => r.l[0] }[cacheOrder.key];
+    rows.sort((a, b) => (cacheOrder.used ? b.u[0] - a.u[0] : 0) || (by(a) < by(b) ? -1 : by(a) > by(b) ? 1 : 0) * (cacheOrder.down ? -1 : 1));
+    for (const th of cacheBox.querySelectorAll('th[data-sort]')) {
+      if (th.dataset.sort === cacheOrder.key) th.setAttribute('aria-sort', cacheOrder.down ? 'descending' : 'ascending'); else th.removeAttribute('aria-sort');
+    }
+    const hits = (hit) => hit.length ? ` <span class="muted cache-hit">defines ${hit.slice(0, 3).map((n) => `<code>${escape(n)}</code>`).join(', ')}${hit.length > 3 ? ` +${hit.length - 3}` : ''}</span>` : '';
+    cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u, hit }, i) =>
+      `<tr title="${escape(e.path)}"><td>${cacheBadge(cls, kind)}</td>` +
+      `<td><button type="button" class="cache-name" aria-expanded="false" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>${hits(hit)}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
+      `<td class="num">${size(e.size)}</td><td><button type="button" class="small ghost" data-path="${escape(e.path)}" aria-label="drop ${escape(what || kind)}">Drop</button></td></tr>` +
+      `<tr class="cache-sub" id="cache-sub-${i}" hidden><td></td><td colspan="5">${details(cls, what, needs)}</td></tr>`).join('') ||
+      `<tr><td colspan="6" class="muted">${cacheEntries.length ? 'No match.' : 'Nothing cached yet.'}</td></tr>`;
+    $('cache-total').textContent = rows.length ? `${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}, ${size(rows.reduce((n, { e }) => n + e.size, 0))} in total` : '';
+  }
+  /** How the open document uses each class and package (`satex query dependencies` of the root):
+   * loaded by the document itself, or by which packages. */
+  let used = new Map();
+  async function usage() {
+    const request = { file: path(state.root), queries: [{ type: 'dependencies' }] };
+    const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records ?? [];
+    used = new Map();
+    for (const r of rs.filter((r) => r.kind === 'package' || r.kind === 'class')) {
+      const k = `${r.kind}:${r.name}`, u = used.get(k) ?? { own: false, by: new Set(), always: false };
+      u.always ||= r.certain;
+      // the document's own: loaded by no package, from a file of the project (a hook of pdftex.def runs at depth 0 too)
+      if (state.files.includes(r.file) && !r.by) u.own = true; else u.by.add(r.by ?? r.file);
+      used.set(k, u);
+    }
+  }
+  /** One marker for every kind: [used, html] of an entry for the open document. */
+  const usedOf = (cls, what) => {
+    const mark = (text, title = '') => [true, `<span class="use use-yes" title="${escape(title)}">${text}</span>`];
+    if (cls === 'kernel') return what.startsWith(manifest.kernels[state.kernel]?.id ?? '\0') ? mark('the run\'s format') : [false, ''];
+    if (cls === 'index') return indexed ? mark('file lookups') : [false, ''];
+    if (cls === 'facts' || cls === 'hashes') return mark('every run');
+    const u = used.get(`${cls}:${what}`);
+    if (!u) return [false, ''];
+    const [yes, html] = u.own ? mark('by the document') : mark(`via ${escape([...u.by].slice(0, 2).join(', '))}${u.by.size > 2 ? ` +${u.by.size - 2}` : ''}`, `loaded by ${[...u.by].join(', ')}`);
+    return [yes, u.always ? html : `${html} <span class="use-maybe" title="every load of it depends on an undecided conditional">sometimes</span>`];
+  };
+  /** What each package (and the kernel, `null`) defines in the open document's run, and the installation's
+   * index: fetched when the dialog opens, from the root's `definitions` and `distribution` queries. */
+  let defined = new Map(), indexed = null, folders = [];
+  async function facts() {
+    const request = { file: path(state.root), queries: [{ type: 'definitions' }, { type: 'distribution' }] };
+    const [defs, dist] = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null)) ?? [];
+    defined = new Map();
+    for (const r of defs?.records ?? []) {
+      const d = defined.get(r.package ?? null) ?? {};
+      const internal = /[@_:]/.test(r.name);
+      const k = r.tag === 'macro' ? (internal ? 'internal macro' : 'public command') : r.tag === 'alias' ? (internal ? 'internal alias' : 'public alias') : r.tag;
+      d[k] = (d[k] ?? 0) + 1;
+      (d.names ??= new Set()).add(r.name);
+      defined.set(r.package ?? null, d);
+    }
+    indexed = (dist?.records ?? []).find((r) => r.indexed != null) ?? null;
+    folders = (dist?.records ?? []).filter((r) => r.kind === 'directory');
+  }
+  const DEFINED = ['public command', 'internal macro', 'environment', 'option', 'register', 'counter', 'length', 'switch', 'public alias', 'internal alias'];
+  /** The names a row's class or package (or the kernel) defined in the run that match `q`: containing
+   * what follows a `\`, or else equal to it (`color` finds xcolor by name, not every name with `color` in it). */
+  const definedOf = (cls, what) => cls === 'kernel' ? defined.get(null) : (cls === 'package' || cls === 'class') ? defined.get(what) : null;
+  const namesLike = (cls, what, q) => {
+    const part = q.startsWith('\\'), w = q.replace(/^\\/, '');
+    return w ? [...definedOf(cls, what)?.names ?? []].filter((n) => part ? n.toLowerCase().includes(w) : n.replace(/^\\/, '').toLowerCase() === w) : [];
+  };
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : /(s|ch)$/.test(w) ? 'es' : 's'}`;
+  /** One row's details: what it defines and loads, and where its documentation is. */
+  function details(cls, what, needs) {
+    const parts = [];
+    if (cls === 'index' && indexed) {
+      parts.push(`${indexed.indexed} files indexed${indexed.message ? ` · ${escape(indexed.message)}` : ''}`);
+      if (folders.length) parts.push(`<ul class="cache-dirs">${folders.map((r) => `<li title="${escape(r.root)}/${escape(r.name)}"><span>${escape(r.name || '.')}</span><b>${r.count}</b></li>`).join('')}</ul>`);
+    }
+    const d = definedOf(cls, what);
+    if (d) parts.push('defines ' + DEFINED.filter((k) => d[k]).map((k) => plural(d[k], k)).join(', '));
+    else if (cls === 'package' || cls === 'class') parts.push('<span class="muted">not used by this document</span>');
+    if (needs.length) parts.push(`loads ${needs.map((n) => cacheBadge(n.endsWith('.cls') ? 'class' : 'package', n.replace(/\.cls$/, ''))).join(' ')}`);
+    const docs = cls === 'kernel' ? 'https://texdoc.org/serve/source2e/0' : (cls === 'package' || cls === 'class') ? `https://texdoc.org/pkg/${encodeURIComponent(what)}` : null;
+    if (docs) parts.push(`<a href="${docs}" target="_blank" rel="noopener">documentation ↗</a>`);
+    return parts.map((p) => `<div>${p}</div>`).join('');
+  }
+  const loadCaches = async () => { await usage(); drawCaches((await ask({ type: 'caches' })).entries); };
+  cacheFilter.oninput = () => drawCaches();
+  cacheBox.querySelector('thead').onclick = (e) => {
+    const key = e.target.closest('th[data-sort]')?.dataset.sort;
+    if (!key) return;
+    cacheOrder = { key, down: cacheOrder.key === key ? !cacheOrder.down : key === 'size', used: false };
+    drawCaches();
+  };
+  async function uncache(paths) {
+    if (!paths.length) return;
+    drawCaches((await ask({ type: 'uncache', paths })).entries);
+    await restart();
+  }
+  $('cache-open').onclick = async () => { cacheBox.showModal(); await facts(); loadCaches(); };
+  $('cache-close').onclick = () => cacheBox.close();
+  cacheBox.onclick = (e) => { if (e.target === cacheBox) cacheBox.close(); }; // a click on the backdrop
+  cacheList.onclick = (e) => {
+    const fold = e.target.closest('.cache-name');
+    if (fold) {
+      const open = fold.getAttribute('aria-expanded') !== 'true';
+      fold.setAttribute('aria-expanded', open);
+      $(fold.getAttribute('aria-controls')).hidden = !open;
+      return;
+    }
+    const b = e.target.closest('button[data-path]');
+    if (b) uncache([b.dataset.path]);
+  };
+  $('cache-clear').onclick = async () => uncache((await ask({ type: 'caches' })).entries.map((e) => e.path));
+
+  /** What the project's files ask for, fetched in the background as soon as they name it: the
+   * kernel the root's text points to, then its bundles of the packages and classes named, so a
+   * check or a switch of kernel finds them loaded. */
+  let prefetched = Promise.resolve();
+  function prefetch() {
+    const k = manualKernel ? state.kernel : wanted();
+    const texts = Object.entries(state.texts).filter(([n]) => !(n in state.ro)).map(([, t]) => t);
+    prefetched = prefetched.then(async () => {
+      if (k !== state.kernel) await loadKernel(k);
+      const ids = wanted_(named(texts), k).filter((id) => !fetchedPackages.has(id));
+      // the check may have run before the files were there: start over, with the file index rebuilt
+      if (ids.length && await fetchPackages(ids)) { await restart(); if (!plainLint()) await start(); }
+    }).catch(() => {});
+  }
+
   /** After findings or a run name missing packages: fetch them, start over. */
   async function fetchMissing(texts) {
     if (!await fetchPackages(missing(texts))) return false;
@@ -1611,23 +2143,58 @@
     toast(state.upload ? 'Link copied. It holds the project\'s text files, not its images.' : 'Link copied');
   };
 
+  // A link that opens GitHub's new-issue form, prefilled and short; it posts nothing.
+  $('play-issue').onclick = () => {
+    const text = (state.texts[state.file] ?? '').slice(0, 1500), version = document.querySelector('a.version')?.textContent.trim() ?? '';
+    const body = `satex ${version}, kernel ${manifest.kernels[state.kernel]?.label ?? ''}\n\nWhat happened:\n\n\n${state.file}:\n\`\`\`latex\n${text}\n\`\`\`\n`;
+    window.open(`${manifest.repository ?? 'https://github.com/EagleoutIce/satex-analyzer'}/issues/new?title=${encodeURIComponent(`[playground] `)}&body=${encodeURIComponent(body)}`, '_blank', 'noopener');
+  };
+
   // ---------------------------------------------------------------- start
 
-  /** What loading has come to: per download its bytes, else the phase it is in. */
-  const bar = $('play-progress'), loads = new Map();
-  const PHASE = { unpacking: 'Unpacking the TeX files…', importing: 'Importing the kernel caches…' };
-  function progressed({ label, loaded, total }) {
+  /** What the page is doing, in one place: the status bar's text and bar, and a card with the details on hover. */
+  const bar = $('play-progress'), loads = new Map(), actBox = $('act-detail');
+  const act = { phase: '', text: '', since: 0, changed: 0, got: 0, all: 0, started: 0, rest: '' };
+  const PHASE = { unpacking: ['Unpacking', 'Unpacking the TeX files…'], importing: ['Importing', 'Importing the kernel caches…'] };
+  function busy(name, text, { done = null, got = 0, all = 0 } = {}) {
+    const now = performance.now();
+    if (!act.phase) { act.started = now; act.rest = status.dataset.done ? status.textContent : 'Ready. Findings update as you type; Enter runs the command.'; }
+    if (act.phase !== name) act.since = now;
+    if (text !== act.text || got !== act.got) act.changed = now;
+    Object.assign(act, { phase: name, text, got, all });
     bar.hidden = false;
-    if (PHASE[label]) {
-      bar.removeAttribute('value');
-      status.textContent = PHASE[label];
-      return;
-    }
+    // a status without both counts shows work going on, not a share of it
+    if (!Number.isFinite(done)) bar.removeAttribute('value'); else bar.value = done;
+    status.textContent = text;
+    status.title = '';
+    drawAct();
+  }
+  /** Work is over: the bar goes, the last result stays or comes back. */
+  function idle(text = null) {
+    bar.hidden = true;
+    if (act.phase && text === null && status.textContent === act.text && act.rest) status.textContent = act.rest;
+    if (text !== null) status.textContent = text;
+    act.phase = ''; act.text = '';
+    drawAct();
+  }
+  const mib = (n) => (n / 2 ** 20).toFixed(1);
+  function drawAct() {
+    if (actBox.hidden) return;
+    const now = performance.now(), s = (t) => `${((now - t) / 1000).toFixed(0)} s`;
+    const rows = act.phase ? [['phase', act.phase], ['doing', act.text.replace(/…$/, '')], ...(act.all ? [['bytes', `${mib(act.got)} of ${mib(act.all)} MiB`]] : []),
+      ['in this phase', s(act.since)], ['since start', s(act.started)], ['last change', `${s(act.changed)} ago`]] : [['phase', 'idle'], ['status', status.textContent]];
+    actBox.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${escape(v)}</dd>`).join('');
+  }
+  let actTick = 0;
+  const showAct = (on) => { actBox.hidden = !on; clearInterval(actTick); if (on) { drawAct(); actTick = setInterval(drawAct, 1000); } };
+  const actHost = actBox.parentElement;
+  actHost.addEventListener('mouseenter', () => showAct(true)); actHost.addEventListener('mouseleave', () => showAct(false));
+  actHost.addEventListener('focusin', () => showAct(true)); actHost.addEventListener('focusout', () => showAct(false));
+  function progressed({ label, loaded, total }) {
+    if (PHASE[label]) { bar.removeAttribute('value'); busy(PHASE[label][0], PHASE[label][1]); return; }
     loads.set(label, [loaded, total]);
     const [got, all] = [...loads.values()].reduce(([g, a], [l, t]) => [g + l, a + t], [0, 0]);
-    if (all) bar.value = Math.min(got / all, 1);
-    const mb = (n) => (n / 2 ** 20).toFixed(1);
-    status.textContent = `Fetching ${[...loads.keys()].join(' and ')}: ${mb(got)} of ${mb(all)} MiB`;
+    busy('Fetching', `Fetching ${[...loads.keys()].join(' and ')}: ${mib(got)} of ${mib(all)} MiB`, { done: all ? Math.min(got / all, 1) : null, got, all });
   }
 
   worker.onmessage = async ({ data }) => {
@@ -1644,17 +2211,20 @@
           const waiting = missing(unresolved);
           if ((waiting.length || inFlight.size) && m.params.uri === uri()) {
             const names = [...new Set([...waiting, ...inFlight])].map((id) => PACKAGES.get(id).label).join(', ');
-            status.textContent = `loading ${names}…`;
-            phase(`loading ${names}…`);
+                        busy('Loading', `Loading ${names}…`);
             if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok) { show(m.params.uri, m.params.diagnostics); typeset(m.params.uri); } });
             continue;
           }
           show(m.params.uri, m.params.diagnostics);
           typeset(m.params.uri);
+          outline();
+          loadCaches(); // the status bar's count, and the table if open
           if (m.params.uri === uri()) lsp('satex/caches', { textDocument: { uri: m.params.uri } }).then((r) => cacheReport((r ?? []).map((l) => ['err', l]))).catch(() => {});
           fetchMissing(unresolved);
         }
       }
+    } else if (data.type === 'status') {
+      if (data.text && act.phase === 'Analyzing') phase(data.text, data.total ? Math.min(data.reached / data.total, 1) : null);
     } else if (data.type === 'progress') {
       progressed(data);
     } else if (data.type === 'error' && data.of === 'lsp') {
@@ -1687,7 +2257,7 @@
     }
     const ready = await ask({ type: 'init', base, manifest, given }, given ? Object.values(given).map((b) => b.buffer) : []);
     timing('t-init', secs(performance.now() - started), 'time to fetch satex and the pdfTeX kernel and set them up');
-    bar.hidden = true;
+    idle();
     sampleTexts = ready.samples;
     const hash = decodeURIComponent(location.hash.slice(1));
     let link = hash.startsWith('s=') ? await restore(hash.slice(2)) : null;

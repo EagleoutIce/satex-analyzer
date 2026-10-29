@@ -258,6 +258,8 @@ l.4 \ifx\x\empty ⇒ undecided
 
 Conditionals branch on box sizes and page state.
 Whether a box has zero width can depend on fonts, kerning and hundreds of other things.
+Floats and breakable boxes read `\pagegoal` and `\pagetotal`, so the page builder's state is part of the control flow.
+Without a model of it, every float may land here or later, and every breakable box may split anywhere.
 
 ```tex
 \documentclass{article}
@@ -336,6 +338,16 @@ l.6 \ifdim\dimen2=0pt ⇒ undecided
 ```
 
 </details>
+
+**Where the model stands.**
+The line breaker is [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web)'s ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L17438)) for a paragraph whose items, metrics and parameters are known.
+Anything else keeps an interval of lines.
+A forced break mid-paragraph keeps one active node per fitness class ([§ 836](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16474)), so with `\adjdemerits` the lines after it may choose the lines before it.
+satex breaks such a segment only when one class ends it, as after `\\`, and keeps the interval otherwise.
+The page builder fires `\output` at forced breaks (`analysis.assume_forced_page_breaks`, an assumption, on by default).
+With the assumption off, a page that may have filled parts the run: one path fires `\output`, the other reads on.
+TeX's choice of the best break ([§§ 1005](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19552)–[1010](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L19654)) is not modelled yet, so floats that TeX places on the next pages wait for `\clearpage` under the assumption.
+The float loops of LaTeX's output routine then run at the end, where unknown box sizes make them converge only by widening.
 
 ### 5. Packages are interpreters
 
@@ -478,6 +490,13 @@ l.3 \ifdefined\unknownmacro ⇒ false
 
 </details>
 
+**Unknown must stay cheap.** Soundness alone is not enough: an unknown value must not cost more than a known one.
+Library code walks text a token at a time. pgfmath reads a number digit by digit, expl3 wraps a message by counting its characters, and LaTeX's output routine reads every mark.
+Fed one unknown value, each such walk forks per step, and its loops meet limits instead of ending.
+satex keeps unknowns small instead: digits typed with an interval, a value that is one of a few texts, a mark that is one of the texts given to its class.
+A small interval is split into its values where a name is spelled from it, so each path builds the name TeX builds.
+Where a walk still forks per step, that is a bug to fix, not a price to pay.
+
 ### 7. Termination is not structural
 
 Loops are tail recursion through `\expandafter`, error recovery, or expansion cuts.
@@ -495,6 +514,7 @@ Their length can depend on an unknown value.
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
 <tr><td><code>....</code></td><td><code><b>{</b>.<b>…</b><b>|</b><b>}</b></code></td><td>⊇</td></tr>
+<tr><td><code></code></td><td><code>assumes assumed-compiles</code></td><td></td></tr>
 </table>
 
 Why:
@@ -506,6 +526,7 @@ Why:
 ```sh
 $ satex query typeset -f 07-termination.tex --set limits.seconds=60
 6:6  paragraph  {.…|}
+7:15  assumption  assumed-compiles
 assumption  clock-assumed
 ```
 
@@ -766,16 +787,26 @@ The label was on page \pageref{x}.
 ```
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>The label was on page 1.</code></td><td><code>The label was on page 1.</code></td><td>✓</td></tr>
+<tr><td><code>The label was on page 1.</code></td><td><code>The la<b>·</b>bel was on page <b>⟨?⟩</b>. </code></td><td>⊇</td></tr>
 <tr><td><code>Here.</code></td><td><code>Here.</code></td><td>✓</td></tr>
+<tr><td><code></code></td><td><code>Here.</code></td><td>✗</td></tr>
+<tr><td><code></code></td><td><code>assumes assumed-compiles</code></td><td></td></tr>
 </table>
+
+Differs: pdflatex ships `` where satex computes `Here.`.
+
+Why:
+
+- `⟨?⟩`: l.4 sets a character the run could not compute.
 
 <details><summary>Computed text</summary>
 
 ```sh
 $ satex query typeset -f 11-fixpoint.tex --set limits.seconds=60
-4:2  paragraph  The label was on page 1.
+4:2  paragraph  The la·bel was on page ⟨?⟩. 
 6:11  paragraph  Here.
+6:11  paragraph  Here.
+7:15  assumption  assumed-compiles
 assumption  clock-assumed
 ```
 
@@ -787,14 +818,16 @@ assumption  clock-assumed
 $ satex trace --format compact -f 11-fixpoint.tex --set limits.seconds=60
 l.4 \pageref ⇒ \__cmd_start:nNNnnn {s}\pageref  \pagere… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 18 more)
 l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex…
-l.5 \ifnum\getpagerefnumber{x}=1 ⇒ true
-l.5 \newpage ⇒ \if@noskipsec \ifx \@nodocument \relax \…
+l.5 \ifnum\getpagerefnumber{x}=1 ⇒ undecided
+l.5 \getpagerefnumber ⇒ \romannumeral \ltx@ifundefined {r@x}{\ex…
+l.5 \ifnum\getpagerefnumber{x}=1 ⇒ undecided
+l.5 \newpage ⇒ \if@noskipsec \ifx \@nodocument \relax \… (defines \par \@outputbox@reinsertbskip \@elt … 147 more)
 l.6 \label ⇒ \@bsphack \begingroup \UseHookWithArgume… (defines \thepage \protect \reserved@a)
 ```
 
 </details>
 
-**How satex answers it.** satex analyzes one run. The auxiliary files on disk are its input, and a missing one is unknown. Each line the run writes is run as the next run reads it, in the kernel state at `\begin{document}`, so the keys the next run declares are known. satex does not iterate runs. In abstract interpretation terms the build is a [Kleene iteration](https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem) of one function from auxiliary files to auxiliary files. A sound analysis of the whole build needs that function's abstract fixpoint, with [widening](https://doi.org/10.1145/512950.512973) where the concrete runs oscillate or need more rounds than an analysis can afford.
+**How satex answers it.** satex runs the build itself, as latexmk does, and never needs a file an engine wrote. The files a run writes live in a virtual file system, and the first run starts without any. When a run ends, a file it read back sends it round again only where a changed line names a key the run read (a reference, a citation, a key it used) or a macro it expanded or defined (`\@abspage@last` at each shipout, a note column's `\slnc@note`), up to `limits.build_runs` rounds. A line nobody refers to, or one that only changes what a table of contents sets, needs no other round: what such a round would refine is typesetting alone. A round resumes from the last checkpoint before the first read of a changed file, so the part of the document before it is not analyzed again. Past the last round, what still changes is unknown text: a [widening](https://doi.org/10.1145/512950.512973) of the [Kleene iteration](https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem) the build is. The files an earlier engine run left on disk are read only with `load.build_files`.
 
 ## Where satex is still wrong or stuck
 
@@ -842,12 +875,12 @@ assumption  clock-assumed
 $ satex trace --format compact -f s1-tikz-ref.tex --set limits.seconds=60
 l.3 \usetikzlibrary ⇒ \pgfutil@ifnextchar [{\use@tikzlibrary }… (defines \pgfutil@reserved@d \pgfutil@reserved@a \pgfutil@reserved@b … 16 more)
 l.6 \tikzpicture ⇒ \begingroup \tikz@startup@env \tikz@coll… (defines ; : | … 327 more)
-l.7 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 240 more)
+l.7 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 487 more)
 l.7 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 71 more)
-l.8 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 472 more)
+l.8 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
 l.8 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 51 more)
-l.9 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 472 more)
-… 2 more
+l.9 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
+… 3 more
 ```
 
 </details>

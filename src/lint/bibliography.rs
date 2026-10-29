@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::builtins::OccKind;
+use crate::lint::fix::{Applicability, Fix};
 use crate::lint::{Category, Ref, Report, Rule, Severity, Source};
 use crate::machine::Analysis;
 use crate::tex::Span;
@@ -59,7 +60,74 @@ Fix by citing the entry, or by deleting it.",
         fixes: &[],
         run: unused_bibitem,
     },
+    Rule {
+        code: "bibtex-command-under-biblatex",
+        category: Category::Correctness,
+        severity: Severity::Error,
+        summary: "a BibTeX command biblatex replaces stops the run",
+        explanation: "\
+biblatex makes the commands of a BibTeX bibliography raise errors where it has
+its own: the style is its `style` option, not `\\bibliographystyle`, and the
+databases are named in the preamble with `\\addbibresource` and printed with
+`\\printbibliography`, not with `\\bibliography` (biblatex manual, §3.7.1 and
+§3.7.2).  Only a call the run reached and that raised the error is reported.
+
+Fix by deleting `\\bibliographystyle` (choose a style with
+`\\usepackage[style=…]{biblatex}`), and by writing `\\printbibliography` for
+`\\bibliography` with an `\\addbibresource` per database in the preamble.",
+        references: &[Ref { source: Source::Biblatex, at: "§3.7" }],
+        fixes: &[Applicability::Unsafe],
+        run: bibtex_command_under_biblatex,
+    },
 ];
+
+/// The document's own calls of `\bibliographystyle` and `\bibliography`
+/// that raised biblatex's error.
+fn bibtex_command_under_biblatex(report: &mut Report) {
+    let analysis = report.analysis();
+    if !crate::lint::shared::loaded(analysis, "biblatex") {
+        return;
+    }
+    let index = report.index();
+    let edits = report.edits();
+    let begin = crate::lint::shared::document_start(analysis);
+    let mut seen = BTreeSet::new();
+    for expansion in &analysis.facts.expansions {
+        let name = analysis.interner.name(expansion.name);
+        let span = expansion.span;
+        if !matches!(name, "bibliographystyle" | "bibliography")
+            || index.origin(span.file) != "document"
+            || !index.error_spans().contains(&span)
+            || !seen.insert(span)
+        {
+            continue;
+        }
+        let (message, fix) = match name {
+            "bibliographystyle" => (
+                "biblatex chooses the style by its `style` option".to_string(),
+                Fix::new("delete it", Applicability::Unsafe, edits.replace_call(span, |_| String::new())),
+            ),
+            _ => {
+                let mut changes = edits.replace_call(span, |_| "\\printbibliography".into());
+                let bases = edits.load_request(span).map(|(_, names)| names).unwrap_or_default();
+                for base in &bases {
+                    let line = format!("\\addbibresource{{{}.bib}}", base.trim_end_matches(".bib"));
+                    let added = begin.and_then(|b| edits.insert_before(b, &line));
+                    changes = changes.zip(added).map(|(mut c, a)| {
+                        c.extend(a);
+                        c
+                    });
+                }
+                (
+                    "biblatex reads its databases from `\\addbibresource` and prints them with `\\printbibliography`"
+                        .to_string(),
+                    Fix::new("write `\\printbibliography` and add the databases", Applicability::Unsafe, changes),
+                )
+            }
+        };
+        report.add_fix(span, name, message, fix);
+    }
+}
 
 /// What declares a key: a `\bibitem` at a span, or a line of a database.
 enum Declared {

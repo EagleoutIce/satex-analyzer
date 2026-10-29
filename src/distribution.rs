@@ -149,7 +149,7 @@ pub fn discover(request: &Request) -> Trees {
     let (index, index_cached) = index_for(&roots, cache.as_deref());
     let index_cache = cache.as_deref().map(|dir| index_cache_file(dir, &roots));
     let distribution = Distribution {
-        year: request.year.or_else(|| roots.iter().find_map(|r| year_in(r))),
+        year: request.year.or_else(|| roots.iter().find_map(|r| year_in(r).or_else(|| released(r)))),
         format_version: format_version(&index),
         indexed: index.len(),
         index_cached,
@@ -229,6 +229,14 @@ fn fallback_roots(year: Option<u32>, platform: Platform) -> Vec<PathBuf> {
         }
     }
     roots
+}
+
+/// The year TeX Live's `release-texlive.txt` beside or above a tree names
+/// ("… version 2026").
+fn released(root: &Path) -> Option<u32> {
+    let text = root.ancestors().take(2).find_map(|d| std::fs::read_to_string(d.join("release-texlive.txt")).ok())?;
+    let line = text.lines().next()?;
+    line.rsplit(' ').next()?.parse().ok().filter(|y| (1990..=2100).contains(y))
 }
 
 fn year_in(path: &Path) -> Option<u32> {
@@ -617,6 +625,17 @@ mod tests {
         std::fs::write(real.join("ls-R"), "./tex/latex/x:\nx.sty\n").unwrap();
         let trees = discover(&Request { roots: vec![stale, real.clone()], ..Request::default() });
         assert_eq!(trees.get("x.sty"), Some(&real.join("tex/latex/x/x.sty")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A tree whose path names no year takes it from TeX Live's release file.
+    #[test]
+    fn the_release_file_names_the_year() {
+        let dir = std::env::temp_dir().join(format!("satex-release-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("tex")).unwrap();
+        std::fs::write(dir.join("release-texlive.txt"), "TeX Live (https://tug.org/texlive) version 2026\n").unwrap();
+        let trees = discover(&Request { roots: vec![dir.clone()], ..Request::default() });
+        assert_eq!(trees.distribution.year, Some(2026));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

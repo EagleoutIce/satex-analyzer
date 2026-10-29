@@ -1,9 +1,19 @@
 name: Pages
 
-# The site builds a release binary and a wasm one: a release or a manual run.
+# The site (documentation and playground) follows `main`, like the wiki;
+# a change that touches neither satex nor the site leaves it as it is.
 on:
   push:
+    branches: [main]
     tags: ['v*']
+    paths-ignore:
+      - 'editors/**'
+      - '.github/workflows/ci.yml'
+      - '.github/workflows/codeql.yml'
+      - '.github/workflows/release.yml'
+      - '.github/workflows/vscode.yml'
+      - '.github/workflows/wiki.yml'
+      - '.github/dependabot.yml'
   workflow_dispatch:
 
 permissions:

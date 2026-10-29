@@ -446,6 +446,7 @@ else	Starts the alternative branch of a conditional.
 emergencystretch	Extra stretch allowed in the last line breaking pass.
 emph	Emphasizes text.
 end	Ends the job.
+latex:end	Ends an environment.
 endL	Ends left-to-right text.
 endR	Ends right-to-left text.
 endcsname	Ends the control sequence name begun by \csname.

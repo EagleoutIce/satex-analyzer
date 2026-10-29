@@ -109,6 +109,8 @@ pub struct Expansion {
     pub count: u32,
     /// The modes the run was in at the uses (tex.web § 211).
     pub mode: crate::mode::Modes,
+    /// The group level at the first use; 0 for one a package cache replays.
+    pub depth: u16,
 }
 
 /// How a `\usepackage`-family [`Load`] turned out: read, skipped by
@@ -158,6 +160,11 @@ pub struct Load {
     pub provided: Option<String>,
     /// Nesting depth of the load, for the dependency tree.
     pub depth: u16,
+    /// Made on every path: no undecided conditional encloses it.
+    pub certain: bool,
+    /// The call in the user's own files the load happened under
+    /// (`\usetikzlibrary{calc}` for `tikzlibrarycalc.code.tex`).
+    pub call: Option<Span>,
 }
 
 /// Anything named that is not itself a control sequence: labels, citations,
@@ -340,6 +347,13 @@ pub struct Text {
     /// `\/` (tex.web § 1113) or at a paragraph's end, as the number of
     /// characters set before it, ascending.
     pub closed: Vec<u32>,
+    /// Where `\par` ended a paragraph, as the number of characters set
+    /// before it, ascending.
+    pub pars: Vec<u32>,
+    /// The ends in `pars` a `\penalty` of at least 10000 follows before any
+    /// further text: no page break may part the paragraph from what comes
+    /// next, as after a heading (LaTeX's `\@xsect`, plain's `\beginsection`).
+    pub kept: Vec<u32>,
     /// For a character set under an undecided conditional: its index, the
     /// outermost conditional's node and the arm taken.
     pub arms: Vec<(u32, crate::env::NodeId, bool)>,

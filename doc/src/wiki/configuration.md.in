@@ -10,7 +10,7 @@ A mapping key merges recursively, so a layer only needs to name the keys it chan
 
 Any key can be overridden for one run with `--set PATH=VALUE`, where `PATH` is the key's dotted path in the file and `VALUE` is written as it would be there: `satex lint --set limits.memory=8GiB --set cache.index.auto=false`. The option can be repeated. `--set` is applied after every file, so it always wins.
 
-`--no-config` ignores every `satex.yaml` file, discovered or named with `--config`, so a run starts from the built-in defaults below. `--set` still applies on top of it, so `satex lint --no-config --set limits.memory=8GiB` runs with every other default untouched. Useful for reproducing a result without a project's own configuration in the way, or in a script that should not be affected by whichever directory it runs in.
+`--no-config` ignores every `satex.yaml` file, discovered or named with `--config`, so a run starts from the built-in defaults below. `--set` still applies on top of it, so `satex lint --no-config --set limits.memory=8GiB` runs with every other default untouched. It reproduces a result without a project's own configuration, or in a script that must not be affected by whichever directory it runs in.
 
 {{file: satex.yaml}}
 

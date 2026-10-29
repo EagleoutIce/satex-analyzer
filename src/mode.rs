@@ -1565,6 +1565,24 @@ impl Machine<'_> {
         true
     }
 
+    /// What was set so far ends a block of the page: a paragraph, or an
+    /// alignment's rows. One inside a box or alignment that goes into an
+    /// outer paragraph is part of that one; a `\setbox` box is set apart.
+    fn block_ended(&mut self) {
+        let inner = self
+            .env
+            .nests()
+            .rev()
+            .flatten()
+            .take_while(|n| n.target.is_none())
+            .any(|n| n.mode.meets(Modes::HORIZONTAL));
+        let text = &mut self.out.facts.text;
+        let at = text.at.len() as u32;
+        if !inner && text.pars.last() != Some(&at) {
+            text.pars.push(at);
+        }
+    }
+
     /// tex.web § 1096 `end_graf`: horizontal mode goes back to the vertical
     /// list the paragraph belongs to.
     pub(crate) fn end_graf(&mut self) {
@@ -1589,6 +1607,7 @@ impl Machine<'_> {
             return;
         }
         let Some(mut n) = self.natural else {
+            self.block_ended();
             self.mark_hyphens(false);
             self.set_prevgraf(Value::Unknown);
             return;
@@ -1614,15 +1633,18 @@ impl Machine<'_> {
         let before = n;
         if n.tail[0] != Last::Empty {
             self.set_line(&mut n, true);
+            self.block_ended();
+            self.par_kept = true;
         }
         let rigid = |g: Option<crate::value::Glue>| g.is_some_and(|g| g.stretch.amount == 0);
         if self.out.document_depth.is_some()
+            && before.tail[0] != Last::Empty
             && rigid(self.glue_parameter("leftskip"))
             && rigid(self.glue_parameter("rightskip"))
         {
-            // `\par` closed the text at its end; the close before is where it began.
+            // `pars` ends with this paragraph; the end before is where it began.
             let text = &self.out.facts.text;
-            let start = text.closed.iter().rev().nth(1).map_or(0, |&c| c as usize);
+            let start = text.pars.iter().rev().nth(1).map_or(0, |&c| c as usize);
             let set = text.at.get(start..).unwrap_or_default().iter().filter(|s| s.modes == Modes::HORIZONTAL).count();
             self.out.justified_text += set as u64;
         }
@@ -2141,6 +2163,14 @@ impl Machine<'_> {
                 n.pushed(Last::Other);
             }
         } else if nest.align.is_some() {
+            // §§ 800-812: the finished rows go onto the enclosing list, their
+            // text with them.
+            if nest.code == Some(group::ALIGN) {
+                self.place_chars(vec![(nest.from, now)], inside);
+                if nest.mode.meets(Modes::ANY_VERTICAL) {
+                    self.block_ended();
+                }
+            }
             // The rows, or the `\noalign` material, went onto the
             // alignment's vertical list.
             if nest.code == Some(group::NO_ALIGN)
@@ -3886,6 +3916,17 @@ impl Machine<'_> {
     /// (tex.web §§ 651-656 `hpack`, 669-670 `vpack`).
     pub(crate) fn append_item(&mut self, item: Item) {
         let fresh = self.page_empty();
+        // right after a paragraph on the page's list: marks and writes may come between, no space
+        if self.mode.meets(Modes::ANY_VERTICAL) && matches!(item, Item::Glue(..) | Item::Kern(_)) {
+            self.par_kept = false;
+        }
+        if matches!(item, Item::Penalty(Some(10000..))) && self.mode == Modes::VERTICAL && self.par_kept {
+            let text = &mut self.out.facts.text;
+            let at = text.at.len() as u32;
+            if text.pars.last() == Some(&at) && text.kept.last() != Some(&at) {
+                text.kept.push(at);
+            }
+        }
         if matches!(item, Item::Unknown | Item::Penalty(None)) | matches!(item, Item::Penalty(Some(p)) if p <= -10000) {
             self.material |= BREAKS;
         }

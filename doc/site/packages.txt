@@ -12,3 +12,9 @@ booktabs tikz float caption subcaption natbib listings multirow siunitx fancyhdr
 biblatex csquotes mathtools bm tabularx longtable makecell array url xspace
 setspace lipsum todonotes algorithm2e algpseudocode wrapfig titlesec parskip
 etoolbox pgfplots lmodern fontspec unicode-math polyglossia acronym pdflscape
+
+# asked for by name
+minted tikzducks microtype forest accsupp tcolorbox enumitem cleveref
+tikz-cd mhchem chemfig physics braket cancel ulem textcomp amsfonts
+threeparttable dcolumn colortbl hhline nicematrix tocloft appendix
+framed mdframed upquote footmisc placeins afterpage qrcode

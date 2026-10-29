@@ -2,23 +2,23 @@
 
 <p align="center"><a href="https://eagleoutice.github.io/satex-analyzer/"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/satex-wide.svg" alt="SaTeX: Static Analysis for (La)TeX and Friends" width="600"></a></p>
 
-An abstract interpreter for (La)TeX and related engines with the ability to expands macros, execute primitives, track dynamic catcode changes, recursion, and more. While SaTeX is context and path-sensitive, it does not typeset the document.
-Instead, SaTeX can lint your documents to find various issues (including quick-fixes and the identification of unused or missing macros), slice your document, analyze its performance, jump to definitions,  explore package options and their consequences.
+An abstract interpreter for (La)TeX and related engines. It expands macros, executes primitives and tracks catcode changes and recursion. It is context and path-sensitive and does not typeset the document.
+It lints documents (with quick-fixes, and finds unused or missing macros), slices them, analyzes their performance, jumps to definitions and lists package options with what they govern.
 
 <p align="center"><img src="doc/demo.gif" alt="SaTeX demo: version, summary, lint, explain, slice, query, kernel timings and the Vim language server" width="900"></p>
 
-Please consult the documentation published at
-<https://eagleoutice.github.io/satex-analyzer/> with details on the assumed [concrete TeX/eTeX semantics][concrete semantics], the [linting rules](https://eagleoutice.github.io/satex-analyzer/wiki/lints), all supported [queries](https://eagleoutice.github.io/satex-analyzer/wiki/queries) and the
+The documentation at
+<https://eagleoutice.github.io/satex-analyzer/> covers the assumed [concrete TeX/eTeX semantics][concrete semantics], the [linting rules](https://eagleoutice.github.io/satex-analyzer/wiki/lints), all supported [queries](https://eagleoutice.github.io/satex-analyzer/wiki/queries) and the
 [configuration][config].
 
-Please note that the first run(s) of `satex` may be slow because it reads, interprets, and caches the (La)TeX kernel and the packages it requires for the first time. Subsequent runs are faster because they use the cache.
+The first runs of `satex` are slow because it reads, interprets and caches the (La)TeX kernel and the packages it loads. Later runs use the cache.
 
 ----
 
-_SaTeX_ is actively developed by *Florian Sihler* (contact me at: <florian.sihler@uni-ulm.de>) under the [MIT License](LICENSE). I am very happy about every contribution (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+_SaTeX_ is actively developed by *Florian Sihler* (contact me at: <florian.sihler@uni-ulm.de>) under the [MIT License](LICENSE). Contributions are welcome (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
-The development and initial Rust codebase is strongly assisted by Claude Code (based on detailed architecture descriptions, TeX semantics, and [flowR](https://flowr-analysis.github.io/flowr/)). Please consider it to be still *work in progress*.
-Yet, please avoid AI-only contributions. Humans are still considered responsible for the code submitted.
+The development and initial Rust codebase is strongly assisted by Claude Code (from architecture descriptions, TeX semantics and [flowR](https://flowr-analysis.github.io/flowr/)). It is still *work in progress*.
+Please avoid AI-only contributions. The humans who submit code are responsible for it.
 
 ----
 
@@ -52,7 +52,7 @@ Current version: {{version}}. `satex --version` also lists the plugins included 
 
 ## Linting
 
-Provides context-sensitive diagnostics like undefined names, duplicates, dead code, and misused conditionals.
+Context-sensitive diagnostics: undefined names, duplicates, dead code and misused conditionals.
 
 {{run(24): satex lint -f samples/paper.tex}}
 
@@ -83,7 +83,7 @@ For CI, output formats include `--format github` (GitHub Actions annotations) an
 
 ## Comprehension
 
-SaTeX can support you in understanding existing documents and their macros.
+These commands explain existing documents and their macros.
 
 ### Explaining Macros
 
@@ -165,7 +165,7 @@ The kernel and the packages are interpreted once and cached. `satex cache build`
 
 ## Queries
 
-Obtain structured facts for further use. See the [queries wiki page](doc/wiki/queries.md) for more details.
+Structured facts for other tools. See the [queries wiki page](doc/wiki/queries.md) for more details.
 
 The commands a document defines itself, without packages and without internal `@` names:
 

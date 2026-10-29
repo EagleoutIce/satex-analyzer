@@ -935,7 +935,7 @@ fn a_class_assigning_register_values_is_reused_whole() {
         std::fs::read_dir(dir.join("cache"))
             .unwrap()
             .flatten()
-            .filter(|e| e.file_name().to_string_lossy().starts_with("package-scrbook-"))
+            .filter(|e| e.file_name().to_string_lossy().starts_with("package-scrbook.cls-"))
             .filter(|e| e.file_name().to_string_lossy().ends_with(".postcard"))
             .map(|e| (e.path(), e.metadata().unwrap().len()))
             .next()

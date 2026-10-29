@@ -193,8 +193,8 @@ pub const MORE_DEFINITIONS: &str = "#### More definitions";
 /// `markdown` with the primitive's syntax under its first heading, where
 /// `name` still means the primitive at `at`.
 pub fn placed(analysis: &Analysis, mut markdown: String, name: &str, path: &str, at: Pos) -> String {
+    let first = markdown.find("\n\n").map_or(0, |i| i + 2);
     if let Some(syntax) = super::primitives::syntax(analysis, name, path, at.line, at.col) {
-        let first = markdown.find("\n\n").map_or(0, |i| i + 2);
         markdown.insert_str(first, &syntax);
     }
     markdown
@@ -243,6 +243,11 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
         if let Some(does) = text("does") {
             markdown.push_str(&format!("{does}\n\n"));
         }
+        if n == 0
+            && let Some((at, set)) = typesets(analysis, name)
+        {
+            markdown.push_str(&format!("Typesets `{set}` at line {}\n\n", at.line));
+        }
         if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
             markdown.push_str(&format!("`\\{name}{}`\n\n", usage(sig)));
         }
@@ -281,6 +286,21 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
         markdown.push_str(&super::knowledge::about(&topics(analysis, name, &records)));
     }
     Some(markdown)
+}
+
+/// What the document's first call of `name` that sets text typesets, and
+/// where that call stands.
+fn typesets(analysis: &Analysis, name: &str) -> Option<(crate::tex::Span, String)> {
+    let sym = analysis.interner.lookup(name)?;
+    let mut calls: Vec<crate::tex::Span> = analysis
+        .facts
+        .expansions
+        .iter()
+        .filter(|e| e.name == sym && query::origin(analysis, e.span.file) == "document")
+        .map(|e| e.span)
+        .collect();
+    calls.sort_by_key(|s| (s.file, s.line, s.col));
+    calls.into_iter().take(16).find_map(|at| Some((at, query::typeset_by(analysis, at)?)))
 }
 
 /// The knowledge-base topics a command's hover touches: the types of its
@@ -1103,6 +1123,15 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
     }
     // A file argument: the files of the extension its role reads.
     let typed = arg.inside.rsplit(',').next().unwrap_or_default().trim();
+    // A library's name: the files between the fixed prefix and suffix the
+    // run's loads put around it.
+    let affixed: Vec<_> = roles
+        .iter()
+        .filter(|r| matches!(r.kind, R::Load(_)) && !(r.prefix.is_empty() && r.suffix.is_empty()))
+        .collect();
+    if !affixed.is_empty() {
+        return library_items(analysis, &affixed, typed);
+    }
     let mut out = files(analysis, roles.iter().filter_map(|r| file_exts(analysis, r.kind.ty())), typed);
     let keys = |kinds: &[OccKind]| -> BTreeSet<String> {
         let occ = analysis.facts.occurrences.iter().filter(|o| kinds.contains(&o.kind) && !o.key.is_empty());
@@ -1237,11 +1266,20 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
         None => query::options(analysis, arg.cmd).iter().map(|r| field(r, "family")).collect(),
     };
     dirs.dedup();
-    // The direct children of `dir`, not its handlers (`.cd`, `.unknown`).
-    let children = |dir: &str| -> Vec<(String, Record)> {
+    // The keys under `dir` down to `depth` levels, as paths relative to it,
+    // not its handlers (`.cd`, `.unknown`): shallower ones first.
+    let below = |dir: &str, depth: usize| -> Vec<(String, Record)> {
         let named = stored(dir).into_iter().map(|r| (field(&r, "key")[dir.len()..].to_string(), r));
-        named.filter(|(n, _)| !(n.is_empty() || n.contains('/') || n.starts_with('.') || n == "unknown")).collect()
+        let mut out: Vec<_> = named
+            .filter(|(n, _)| {
+                n.split('/').count() <= depth
+                    && n.split('/').all(|p| !(p.is_empty() || p.starts_with('.') || p == "unknown"))
+            })
+            .collect();
+        out.sort_by_key(|(n, _)| n.matches('/').count());
+        out
     };
+    let children = |dir: &str| below(dir, 1);
     let detail = |r: &Record| {
         ["kind", "default"].iter().map(|f| field(r, f)).filter(|d| !d.is_empty()).collect::<Vec<_>>().join("  ")
     };
@@ -1269,11 +1307,13 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
         let dir = &typed[..typed.rfind('/').map_or(0, |i| i + 1)];
         let start = to_lsp(doc, Pos::new(pos.line, pos.col - typed.chars().count() as u32));
         let range = Range { start, end: to_lsp(doc, pos) };
-        return children(dir)
+        return below(dir, KEY_DEPTH)
             .into_iter()
             .map(|(name, r)| {
                 let key = format!("{dir}{name}");
-                let mut it = key_item(item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 0), &key, &r);
+                let rank = name.matches('/').count();
+                let mut it =
+                    key_item(item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank), &key, &r);
                 let new_text = it.insert_text.take().unwrap_or(key);
                 it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
                 it
@@ -1281,15 +1321,31 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
             .collect();
     }
     if switched.is_none() {
-        let keys = option_items(analysis, arg.cmd);
-        let positional = keys.iter().all(|k| k.detail.as_deref().is_some_and(|d| d.contains("positional")));
-        return if positional { Vec::new() } else { keys };
+        let mut keys = option_items(analysis, arg.cmd);
+        if keys.iter().all(|k| k.detail.as_deref().is_some_and(|d| d.contains("positional"))) {
+            return Vec::new();
+        }
+        // The subkeys of a pgfkeys family, after its own keys.
+        let deeper = dirs.iter().filter(|d| d.starts_with('/')).flat_map(|d| {
+            below(&format!("{}/", d.trim_end_matches('/')), KEY_DEPTH).into_iter().filter(|(n, _)| n.contains('/'))
+        });
+        keys.extend(deeper.map(|(name, r)| {
+            key_item(item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 99_999), &name, &r)
+        }));
+        return keys;
     }
     dirs.iter()
-        .flat_map(|d| children(&format!("{}/", d.trim_end_matches('/'))))
-        .map(|(name, r)| key_item(item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 0), &name, &r))
+        .flat_map(|d| below(&format!("{}/", d.trim_end_matches('/')), KEY_DEPTH))
+        .map(|(name, r)| {
+            let rank = name.matches('/').count();
+            key_item(item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank), &name, &r)
+        })
         .collect()
 }
+
+/// How many levels below a directory key completion lists, so a family's
+/// subkeys are found by typing any part of their path.
+const KEY_DEPTH: usize = 3;
 
 /// The keys `name`'s optional argument feeds, from [`query::options`].
 fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
@@ -1324,6 +1380,8 @@ fn file_exts(analysis: &Analysis, ty: crate::roles::Ty) -> Option<Exts> {
             let exts: BTreeSet<String> = occ.filter_map(|o| Some(o.key.rsplit_once('.')?.1.to_string())).collect();
             Some((exts.into_iter().collect(), None))
         }
+        // `\input` adds `.tex` only to a name without an extension (tex.web § 537): any file goes.
+        FileKind::Tex => Some((vec!["tex".into(), String::new()], None)),
         k => Some((vec![k.ext()?.to_string()], k.tree())),
     }
 }
@@ -1348,22 +1406,175 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
     let mut out = Vec::new();
     for (exts, tree) in kinds {
         let exts: Vec<&str> = exts.iter().map(String::as_str).collect();
-        let mut names: Vec<(String, usize)> = project_files(analysis, &exts).into_iter().map(|n| (n, 0)).collect();
+        let mut names: Vec<(String, usize, Option<PathBuf>)> =
+            project_files(analysis, &exts).into_iter().map(|n| (n, 0, None)).collect();
+        let roots = &analysis.distribution.roots;
         for (ext, dir) in exts.iter().filter_map(|e| Some((e, tree?))) {
-            let found = crate::distribution::names_with(&analysis.distribution.roots, dir, &format!(".{ext}"));
-            names.extend(found.into_iter().map(|n| (n, 1)));
+            let ext = format!(".{ext}");
+            match dir {
+                "tex" => names.extend(
+                    crate::distribution::files_with(roots, &ext)
+                        .into_iter()
+                        .filter_map(|(n, p)| Some((n.strip_suffix(&ext)?.to_string(), 1, Some(p)))),
+                ),
+                _ => names.extend(crate::distribution::names_with(roots, dir, &ext).into_iter().map(|n| (n, 1, None))),
+            }
         }
-        let detail = Some(format!(".{}", exts.join(", .")));
-        let names = names.into_iter().filter(|(n, _)| n.starts_with(typed));
-        out.extend(names.map(|(n, rank)| item(n, CompletionItemKind::FILE, detail.clone(), rank)));
+        let listed: Vec<String> = exts.iter().filter(|e| !e.is_empty()).map(|e| format!(".{e}")).collect();
+        let detail = |n: &str| match n.rsplit_once('.').filter(|(_, e)| !e.contains('/')) {
+            Some((stem, ext)) => loader(analysis, ext, stem),
+            None => Some(listed.join(", ")),
+        };
+        let names: Vec<_> = names.into_iter().filter(|(n, ..)| n.starts_with(typed)).collect();
+        // Reading each file's identification is for a list one can read.
+        let identify = names.len() <= IDENTIFIED;
+        out.extend(names.into_iter().map(|(n, rank, path)| {
+            let mut detail = detail(&n);
+            let mut it = item(n.clone(), CompletionItemKind::FILE, None, rank);
+            if let Some(path) = path {
+                let (stem, ext) = (n.as_str(), path.extension().and_then(|e| e.to_str()).unwrap_or_default());
+                let tree = roots.iter().find(|r| path.starts_with(r)).filter(|r| local(analysis, r));
+                let tree = tree.and_then(|r| r.file_name()).map(|t| format!("local: {}", t.to_string_lossy()));
+                let head = identify.then(|| head(&path)).flatten().unwrap_or_default();
+                let needs = needs(&head);
+                // A package this run's engine cannot load says so, and comes last.
+                let other = (!needs.is_empty() && !needs.contains(&analysis.plugins.engine)).then(|| {
+                    it.sort_text = Some(format!("{}~", it.sort_text.as_deref().unwrap_or_default()));
+                    let names: Vec<&str> = needs
+                        .iter()
+                        .map(|e| if *e == crate::config::Engine::LuaTeX { "LuaTeX" } else { "XeTeX" })
+                        .collect();
+                    format!("needs {}", names.join(" or "))
+                });
+                let parts: Vec<String> = [detail.take(), provided(&head), tree, other].into_iter().flatten().collect();
+                detail = Some(parts.join(" · "));
+                if matches!(ext, "sty" | "cls") {
+                    it.documentation = Some(lsp_types::Documentation::MarkupContent(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: format!("[documentation](https://texdoc.org/pkg/{stem})"),
+                    }));
+                }
+            }
+            it.detail = detail;
+            it
+        }));
     }
     out.sort_by(|a, b| (&a.label, &a.sort_text).cmp(&(&b.label, &b.sort_text)));
     out.dedup_by(|a, b| a.label == b.label);
     out
 }
 
-/// Files under the project root with one of `exts`, relative and without
-/// the extension, as `\input` and `\includegraphics` take them.
+/// The installation's files a library argument names: for each role, the
+/// part of a file name between its prefix and suffix (and the extension
+/// its load kind adds), starting with `typed`.
+fn library_items(analysis: &Analysis, roles: &[&crate::roles::Role], typed: &str) -> Vec<CompletionItem> {
+    use crate::builtins::LoadKind;
+    let all = crate::distribution::files_with(&analysis.distribution.roots, "");
+    let mut out: Vec<CompletionItem> = Vec::new();
+    for role in roles {
+        let crate::roles::RoleKind::Load(kind) = role.kind else { continue };
+        let ext = match kind {
+            LoadKind::Package => ".sty",
+            LoadKind::Class => ".cls",
+            _ => "",
+        };
+        let detail = format!("{}…{}{ext}", role.prefix, role.suffix);
+        for (name, _) in &all {
+            let Some(middle) = name.strip_prefix(role.prefix.as_str()).and_then(|n| n.strip_suffix(ext)) else {
+                continue;
+            };
+            let Some(middle) = middle.strip_suffix(role.suffix.as_str()) else { continue };
+            if !middle.is_empty() && middle.starts_with(typed) && !out.iter().any(|i| i.label == middle) {
+                out.push(item(middle.to_string(), CompletionItemKind::MODULE, Some(detail.clone()), 0));
+            }
+        }
+    }
+    out
+}
+
+/// Up to how many installed files a completion reads the identification of.
+const IDENTIFIED: usize = 400;
+
+/// Whether `root` is a tree of the user's or the site's own rather than of
+/// the distribution: TeX Live's `texmf-dist` and a configured bundle are not.
+fn local(analysis: &Analysis, root: &std::path::Path) -> bool {
+    root.file_name().is_none_or(|n| n != "texmf-dist") && analysis.distribution.bundle.as_deref() != Some(root)
+}
+
+/// What a file says it is (`\ProvidesPackage{x}[2024/01/01 v1.2 …]`, or
+/// expl3's `\ProvidesExplPackage{x}{date}{version}{…}`): date and version.
+fn provided(head: &str) -> Option<String> {
+    let (at, expl) =
+        ["\\ProvidesExpl", "\\Provides"].iter().find_map(|m| Some((head.find(m)?, m.ends_with("Expl"))))?;
+    let rest = &head[at..];
+    let after_name = rest.find('}')? + 1;
+    let rest = &rest[after_name..];
+    let text = if expl {
+        let groups: Vec<&str> = rest.split('}').take(2).filter_map(|g| Some(g.split_once('{')?.1.trim())).collect();
+        groups.join(" ")
+    } else {
+        let rest = rest.trim_start().strip_prefix('[')?;
+        rest[..rest.find(']')?].split_whitespace().take(2).collect::<Vec<_>>().join(" ")
+    };
+    (!text.is_empty()).then_some(text)
+}
+
+/// A file's first lines, where it identifies itself.
+fn head(path: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+    let mut head = Vec::new();
+    std::fs::File::open(path).ok()?.take(16 * 1024).read_to_end(&mut head).ok()?;
+    Some(String::from_utf8_lossy(&head).into_owned())
+}
+
+/// The engines a file says, in its code, it needs: `\RequireLuaTeX`, or a
+/// message that it "requires either XeTeX or LuaTeX" (fontspec), "LuaTeX is
+/// required" (luacode), "Use XeLaTeX or LuaLaTeX instead" (unicode-math); "Don't use XeTeX" is
+/// no such message. A
+/// convention read off its first lines; none found means any engine.
+fn needs(head: &str) -> Vec<crate::config::Engine> {
+    use crate::config::Engine;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        let engine = r"(Lua|Xe)(?:La)?TeX";
+        Regex::new(&format!(
+            r"(?i)\\Require(Lua|Xe)TeX\b|requires?[\s~]+(?:either[\s~]+)?{engine}(?:[\s~]+or[\s~]+{engine})?|use[\s~]+{engine}(?:[\s~]+or[\s~]+{engine})?[\s~]+instead|{engine}[\s~]+(?:is[\s~]+)?required"
+        ))
+        .unwrap()
+    });
+    let mut out = Vec::new();
+    for line in head.lines().map(uncommented) {
+        // `\def\RequireLuaTeX` (iftex) defines the test, it does not ask for it.
+        let asked = |c: &regex::Captures| !line[..c.get(0).map_or(0, |m| m.start())].trim_end().ends_with("def");
+        for name in re.captures_iter(line).filter(asked).flat_map(|c| c.iter().skip(1).flatten().collect::<Vec<_>>()) {
+            let engine = if name.as_str().eq_ignore_ascii_case("lua") { Engine::LuaTeX } else { Engine::XeTeX };
+            if !out.contains(&engine) {
+                out.push(engine);
+            }
+        }
+    }
+    out
+}
+
+/// What a file of extension `ext` is, and the command this run loaded such
+/// files with (`\usepackage{stem}`), if it loaded any.
+fn loader(analysis: &Analysis, ext: &str, stem: &str) -> Option<String> {
+    let kind = crate::roles::FileKind::of_ext(ext)?;
+    let load = match kind {
+        crate::roles::FileKind::Sty => crate::builtins::LoadKind::Package,
+        crate::roles::FileKind::Cls => crate::builtins::LoadKind::Class,
+        _ => return Some(kind.label().to_string()),
+    };
+    let by = analysis.facts.loads.iter().filter(|l| l.kind == load && l.depth == 0).find_map(|l| l.by);
+    Some(match by {
+        Some(cs) => format!("{}: \\{}{{{stem}}} loads it", kind.label(), analysis.interner.name(cs)),
+        None => kind.label().to_string(),
+    })
+}
+
+/// Files under the project root with one of `exts` (`""`: any other),
+/// relative, without a listed extension, as `\input` and `\includegraphics`
+/// take them.
 fn project_files(analysis: &Analysis, exts: &[&str]) -> Vec<String> {
     let root = &analysis.project.root;
     let mut out = Vec::new();
@@ -1380,10 +1591,14 @@ fn project_files(analysis: &Analysis, exts: &[&str]) -> Vec<String> {
                 if stack.len() < 64 {
                     stack.push(path);
                 }
-            } else if path.extension().and_then(|e| e.to_str()).is_some_and(|e| exts.contains(&e))
-                && let Ok(rel) = path.with_extension("").strip_prefix(root)
-            {
-                out.push(rel.to_string_lossy().replace('\\', "/"));
+            } else if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                let listed = exts.contains(&ext);
+                let shown = if listed { path.with_extension("") } else { path.clone() };
+                if (listed || exts.contains(&""))
+                    && let Ok(rel) = shown.strip_prefix(root)
+                {
+                    out.push(rel.to_string_lossy().replace('\\', "/"));
+                }
             }
         }
     }
@@ -1412,6 +1627,45 @@ fn open_environments(analysis: &Analysis, at: (u32, u32)) -> Vec<String> {
         }
     }
     stack
+}
+
+/// The names of a `\begin{…}` and its `\end{…}`, when `position` is in
+/// one, to edit together (LSP linked editing). They pair by nesting, not
+/// by name, so the link holds while a name is retyped. Read from the text
+/// as it is now: a run would lag behind the typing.
+pub fn linked_environment(text: &str, position: Position) -> Option<lsp_types::LinkedEditingRanges> {
+    static ENV: OnceLock<Regex> = OnceLock::new();
+    let env = ENV.get_or_init(|| Regex::new(r"\\(begin|end)\s*\{([^{}%]*)\}").unwrap());
+    let mut open: Vec<Range> = Vec::new();
+    for (line, body) in text.lines().enumerate() {
+        let code = uncommented(body);
+        for c in env.captures_iter(code) {
+            let name = c.get(2)?;
+            let at = |b: usize| Position { line: line as u32, character: code[..b].encode_utf16().count() as u32 };
+            let range = Range { start: at(name.start()), end: at(name.end()) };
+            if &c[1] == "begin" {
+                open.push(range);
+            } else if let Some(begin) = open.pop()
+                && [begin, range].iter().any(|r| r.start <= position && position <= r.end)
+            {
+                return Some(lsp_types::LinkedEditingRanges { ranges: vec![begin, range], word_pattern: None });
+            }
+        }
+    }
+    None
+}
+
+/// `line` up to its first `%` that starts a comment (not `\%`).
+fn uncommented(line: &str) -> &str {
+    let mut escaped = false;
+    for (at, c) in line.char_indices() {
+        match c {
+            '%' if !escaped => return &line[..at],
+            '\\' => escaped = !escaped,
+            _ => escaped = false,
+        }
+    }
+    line
 }
 
 /// Environments defined at `pos`: the run's `\X`/`\endX` pairs (what
@@ -1604,15 +1858,30 @@ fn typed_usage(usage: &str, roles: &[crate::roles::Role]) -> String {
 }
 
 /// The paragraphs the document's own files set, in reading order: `satex
-/// query typeset` of the run, without what libraries set.
+/// query typeset` of the run, without what libraries set. A heading (a
+/// paragraph kept with what follows) carries the sectioning command of its
+/// line as `heading`, else `heading`.
 pub fn typeset(analysis: &Analysis) -> Vec<Json> {
+    let at = |r: &query::Record| {
+        (r.get("path").and_then(Json::as_str).map(str::to_owned), r.get("line").and_then(Json::as_u64))
+    };
+    let headings: std::collections::HashMap<_, _> = query::run(analysis, Query::Occurrences, &Filter::Always)
+        .into_iter()
+        .filter(|r| r.get("kind").and_then(Json::as_str) == Some("section"))
+        .filter_map(|r| Some((at(&r), r.get("detail")?.clone())))
+        .collect();
     query::run(analysis, Query::Typeset, &Filter::Always)
         .into_iter()
         .filter(|r| {
             r.get("origin").is_none_or(|o| o == "document")
                 && r.get("kind").and_then(Json::as_str) != Some("assumption")
         })
-        .map(Json::Object)
+        .map(|mut r| {
+            if r.remove("kept").is_some() {
+                r.insert("heading".into(), headings.get(&at(&r)).cloned().unwrap_or_else(|| Json::from("heading")));
+            }
+            Json::Object(r)
+        })
         .collect()
 }
 

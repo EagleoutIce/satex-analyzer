@@ -56,3 +56,34 @@ fn the_dependencies_query_names_the_texlive_package() {
     assert!(row.is_some_and(|(_, text, _)| text.contains("DEPENDS.txt lists 2")));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_load_under_an_undecided_conditional_is_not_certain() {
+    let dir = crate::support::tmp_root().join(format!("satex-depp-certain-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.tex"), "\\def\\a{}\n").unwrap();
+    std::fs::write(dir.join("b.tex"), "\\def\\b{}\n").unwrap();
+    let path = dir.join("doc.tex");
+    let source = "\\input a\n\\ifnum\\pdfuniformdeviate2=0 \\input b \\fi\n\\bye\n";
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    let records = satex::query::run(&analysis, satex::query::Query::Dependencies, &satex::query::Filter::Always);
+    let certain = |name: &str| records.iter().find(|r| r["name"] == name).map(|r| r["certain"].clone());
+    assert_eq!(certain("a"), Some(true.into()), "{records:?}");
+    assert_eq!(certain("b"), Some(false.into()), "{records:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_distribution_query_lists_the_indexed_directories() {
+    if !installed() {
+        return;
+    }
+    let (dir, analysis) = project("dirs", "");
+    let records = satex::query::run(&analysis, satex::query::Query::Distribution, &satex::query::Filter::Always);
+    let graphics =
+        records.iter().find(|r| r.get("kind").is_some_and(|k| k == "directory") && r["name"] == "tex/latex/graphics");
+    // graphics.sty and graphicx.sty at least
+    assert!(graphics.is_some_and(|r| r["count"].as_u64() >= Some(2)), "{graphics:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -1029,7 +1029,7 @@ impl Env {
     }
 
     /// The nests the open groups saved, innermost last.
-    pub fn nests(&self) -> impl Iterator<Item = Option<Nest>> + '_ {
+    pub fn nests(&self) -> impl DoubleEndedIterator<Item = Option<Nest>> + '_ {
         self.marks.iter().map(|m| m.nest)
     }
 

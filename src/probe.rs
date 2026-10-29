@@ -596,19 +596,21 @@ impl Prober<'_, '_> {
             // what follows it is wanted delimited, where nothing was.
             // A control sequence wanted here is no star or optional argument:
             // those read as the wrong token it is refused (`\newif`).
+            // Unless the command looks for a star there itself (`\@ifstar` before
+            // `\newcommand`'s control sequence).
+            let looked = plain.looked_for.contains(&(at, '*'));
             let cs_here = plain.demand.is_none() && wants_cs(&plain, at);
-            let star_same = !star_seen && !cs_here && adds("*").is_some();
+            let star_same = !star_seen && (!cs_here || looked) && adds("*").is_some();
             // Or it reads other arguments than the plain form (`\@ifstar\a\b`,
             // `\a` taking two): the star was looked for, and taken.
             let star_own = !star_seen
                 && !star_same
-                && !cs_here
-                && (plain.demand.is_none() || plain.looked_for.contains(&(at, '*')))
+                && (!cs_here || looked)
+                && (plain.demand.is_none() || looked)
                 && self.run(&prefix, "*").is_some_and(|(n, w)| {
                     n >= 1
                         && !w.delimited.contains(&at)
-                        && (plain.looked_for.contains(&(at, '*'))
-                            || w.demand.as_ref().is_some_and(|d| d.at == at + 1 && d.want == Want::Until))
+                        && (looked || w.demand.as_ref().is_some_and(|d| d.at == at + 1 && d.want == Want::Until))
                 });
             let star = star_same || star_own;
             let optional = if bare == Some(at) || cs_here { None } else { adds("[P]") };

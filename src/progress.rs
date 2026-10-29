@@ -35,7 +35,13 @@ pub fn disable() {
 }
 
 fn active() -> bool {
-    ENABLED.load(std::sync::atomic::Ordering::Relaxed) && std::io::stderr().is_terminal()
+    ENABLED.load(std::sync::atomic::Ordering::Relaxed) && terminal(std::io::stderr())
+}
+
+/// Whether `stream` is a terminal. Emscripten says every standard stream
+/// is, also where a page prints the lines one by one.
+pub fn terminal(stream: impl IsTerminal) -> bool {
+    stream.is_terminal() && !cfg!(target_os = "emscripten")
 }
 
 impl Bars {
@@ -248,6 +254,11 @@ pub struct Status {
     /// Lines the kernel and package caches stood for.
     #[serde(skip_serializing_if = "is_zero")]
     pub cached: u64,
+    /// Characters of the job's file read, of all of them.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub reached: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub total: u64,
     #[serde(skip_serializing_if = "is_zero")]
     pub ms: u64,
     #[serde(skip_serializing_if = "is_zero")]

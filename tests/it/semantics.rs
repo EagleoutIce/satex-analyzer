@@ -330,6 +330,17 @@ fn scope_respects_position() {
     assert!(!names.contains(&"\\late"));
 }
 
+/// What the kernel defines while the document runs (`\usepackage` made an
+/// error at `\begin{document}`) holds from where the run did it on.
+#[test]
+fn scope_orders_the_kernels_own_definitions_by_the_run() {
+    let analysis = analyze_kernel("\\documentclass{article}\n\\usepa\n\\begin{document}\nx\n\\end{document}\n");
+    let rows = |at| query::scope(&analysis, at, false);
+    let usepackage = |rows: Vec<satex::query::Record>| rows.into_iter().find(|r| r["name"] == "\\usepackage");
+    let preamble = usepackage(rows(Some((analysis.main_file, 2, 6)))).expect("\\usepackage in the preamble");
+    assert_ne!(usepackage(rows(None)).map(|r| r["line"].clone()), Some(preamble["line"].clone()));
+}
+
 #[test]
 fn scope_has_one_row_per_name_the_meaning_in_force() {
     // Redefined once: the meaning at the end of the run is in force, and it

@@ -208,6 +208,26 @@ Fix with `\\renewcommand` if the redefinition is intended, or pick another name.
         run: already_defined,
     },
     Rule {
+        code: "new-redefines",
+        category: Category::Correctness,
+        severity: Severity::Error,
+        summary: "a `\\new…` declaration silently redefines an existing command",
+        explanation: "\
+A LaTeX `\\new…` command declares a fresh name, and some do not check that it
+is: `\\newif\\begin` makes `\\begin` a conditional (and defines `\\gintrue`
+and `\\ginfalse` from what follows its first two letters), `\\newcount` and
+`\\newtoks` overwrite whatever the name meant.  Every later use of the name then
+does something else, and the error a run reports is somewhere after it, often
+far away.  Reported where the document's own `\\new…` call made the
+definition of a name its own files spell.
+
+Fix by giving the declaration the name it was meant to have (a conditional's
+name begins with `if`), or by declaring the argument it lacks.",
+        references: &[Ref { source: Source::Source2e, at: "ltdefns.dtx" }],
+        fixes: &[],
+        run: new_redefines,
+    },
+    Rule {
         code: "not-defined",
         category: Category::Correctness,
         severity: Severity::Error,
@@ -641,6 +661,33 @@ fn option_clash(report: &mut Report) {
 }
 
 /// The kernel's `\@notdefinable`: `Command \⟨name⟩ already defined`.
+/// Definitions made under a document call of a `\new…` command that
+/// replace a meaning the name had, of names the document spells.
+fn new_redefines(report: &mut Report) {
+    let analysis = report.analysis();
+    let index = report.index();
+    let mut calls: Vec<(crate::env::NodeId, Span, crate::tex::Sym)> = analysis
+        .facts
+        .expansions
+        .iter()
+        .filter(|e| index.origin(e.span.file) == "document")
+        .filter_map(|e| Some((e.node?, e.span, e.name)))
+        .collect();
+    calls.sort_by_key(|c| c.0);
+    let mut seen = std::collections::BTreeSet::new();
+    for def in analysis.facts.defs.iter().filter(|d| d.redefines && d.spelled && d.certain) {
+        let Some(&(_, span, call)) = calls.get(calls.partition_point(|c| c.0 <= def.node).wrapping_sub(1)) else {
+            continue;
+        };
+        let command = analysis.interner.name(call);
+        if !command.starts_with("new") || !seen.insert((span, def.name)) {
+            continue;
+        }
+        let name = analysis.interner.name(def.name);
+        report.add(span, name, format!("`\\{command}` redefines `\\{name}`, which already had a meaning"), None);
+    }
+}
+
 fn already_defined(report: &mut Report) {
     let refused = kernel_errors(report, |text| {
         let rest = &text[text.find("Command \\")? + "Command ".len()..];

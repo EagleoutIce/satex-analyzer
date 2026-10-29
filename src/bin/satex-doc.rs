@@ -147,6 +147,110 @@ fn installation(bin: &str) -> Result<String, String> {
     Ok(format!("{kernel}, files {hash:016x}\n"))
 }
 
+/// The picture of the type lattice the domains page shows.
+const TYPES_SVG: &str = "doc/wiki/img/types.svg";
+
+/// The type lattice drawn from [`Ty::parent`]: a tree from `any` down, a
+/// node whose children are all leaves listing them below it, each family
+/// in its own colour, `nothing` below everything.
+fn types_svg() -> String {
+    use satex::roles::Ty;
+    const ROW: f64 = 64.0;
+    const ITEM: f64 = 34.0;
+    const GAP: f64 = 14.0;
+    const HEIGHT: f64 = 26.0;
+    let all = Ty::all();
+    let label = |t: Ty| if t == Ty::Top { "any".to_string() } else { t.to_string() };
+    let width = |t: Ty| label(t).chars().count() as f64 * 7.4 + 22.0;
+    let children =
+        |t: Ty| -> Vec<Ty> { all.iter().copied().filter(|c| *c != t && *c != Ty::Bottom && c.parent() == t).collect() };
+    let listed = |t: Ty| {
+        let c = children(t);
+        c.len() >= 3 && c.iter().all(|c| children(*c).is_empty())
+    };
+    // The class each node is coloured by.
+    let family = |t: Ty| match t {
+        Ty::Top | Ty::Bottom => "top",
+        Ty::Number | Ty::Dimen | Ty::Glue | Ty::MuGlue | Ty::Quantity | Ty::Box => "quantity",
+        Ty::Reg(_) | Ty::Register | Ty::Named(_) => "register",
+        Ty::Key(_) => "key",
+        Ty::File(_) => "file",
+        Ty::Cs | Ty::Switch => "cs",
+        Ty::Options => "key",
+        _ => "text",
+    };
+    fn span(t: Ty, children: &dyn Fn(Ty) -> Vec<Ty>, listed: &dyn Fn(Ty) -> bool, width: &dyn Fn(Ty) -> f64) -> f64 {
+        let c = children(t);
+        if c.is_empty() {
+            return width(t);
+        }
+        if listed(t) {
+            return c.iter().map(|c| width(*c) + 18.0).fold(width(t), f64::max);
+        }
+        let below: f64 = c.iter().map(|c| span(*c, children, listed, width)).sum::<f64>() + GAP * (c.len() - 1) as f64;
+        below.max(width(t))
+    }
+    let (mut boxes, mut lines) = (Vec::new(), Vec::new());
+    let mut bottom = 0.0f64;
+    let mut stack = vec![(Ty::Top, 10.0, 10.0)];
+    while let Some((t, left, top)) = stack.pop() {
+        let total = span(t, &children, &listed, &width);
+        let (w, c) = (width(t), children(t));
+        let x = if listed(t) { left } else { left + (total - w) / 2.0 };
+        boxes.push((t, x, top, w));
+        bottom = bottom.max(top + HEIGHT);
+        if listed(t) {
+            for (i, child) in c.iter().enumerate() {
+                let y = top + HEIGHT + 8.0 + ITEM * i as f64;
+                lines.push(format!("M{:.0} {:.0} V{:.0} H{:.0}", x + 9.0, top + HEIGHT, y + HEIGHT / 2.0, x + 18.0));
+                stack.push((*child, x + 18.0, y));
+            }
+            continue;
+        }
+        let mut at = left
+            + (total
+                - (c.iter().map(|c| span(*c, &children, &listed, &width)).sum::<f64>()
+                    + GAP * c.len().saturating_sub(1) as f64))
+                / 2.0;
+        for child in c {
+            let s = span(child, &children, &listed, &width);
+            let cx = if listed(child) { at + width(child) / 2.0 } else { at + s / 2.0 };
+            let mid = top + HEIGHT + (ROW - HEIGHT) / 2.0;
+            lines.push(format!("M{:.0} {:.0} V{mid:.0} H{cx:.0} V{:.0}", x + w / 2.0, top + HEIGHT, top + ROW));
+            stack.push((child, at, top + ROW));
+            at += s + GAP;
+        }
+    }
+    let full = span(Ty::Top, &children, &listed, &width) + 20.0;
+    let nothing = width(Ty::Bottom);
+    boxes.push((Ty::Bottom, (full - nothing) / 2.0, bottom + 30.0, nothing));
+    let height = bottom + 30.0 + HEIGHT + 10.0;
+    let mut out = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 {full:.0} {height:.0}\" width=\"{full:.0}\" height=\"{height:.0}\" font-family=\"system-ui,Segoe UI,Helvetica,Arial,sans-serif\" font-size=\"13\">\n\
+<title>The Ty lattice</title><desc>Argument types of satex from any down to nothing, drawn from Ty::parent in src/roles.rs by satex-doc.</desc>\n\
+<style>path{{fill:none;stroke:#8a8f98;stroke-width:1.4}}text{{fill:#1f2328;text-anchor:middle;dominant-baseline:central}}\
+.top rect{{fill:#eef0f2;stroke:#8a8f98}}.quantity rect{{fill:#dbeafe;stroke:#3b82f6}}.register rect{{fill:#ffedd5;stroke:#f97316}}\
+.key rect{{fill:#ede9fe;stroke:#8b5cf6}}.file rect{{fill:#ccfbf1;stroke:#14b8a6}}.cs rect{{fill:#fee2e2;stroke:#ef4444}}.text rect{{fill:#dcfce7;stroke:#22c55e}}\
+@media (prefers-color-scheme: dark){{text{{fill:#e6edf3}}.top rect{{fill:#2d333b}}.quantity rect{{fill:#1e3a5f}}.register rect{{fill:#4a2d12}}\
+.key rect{{fill:#3b2a63}}.file rect{{fill:#134e48}}.cs rect{{fill:#5c1d1d}}.text rect{{fill:#1d4a2c}}}}</style>\n"
+    );
+    for d in &lines {
+        let _ = writeln!(out, "<path d=\"{d}\"/>");
+    }
+    for (t, x, y, w) in boxes {
+        let _ = writeln!(
+            out,
+            "<g class=\"{}\"><rect x=\"{x:.0}\" y=\"{y:.0}\" width=\"{w:.0}\" height=\"{HEIGHT:.0}\" rx=\"6\" stroke-width=\"1.2\"/><text x=\"{:.0}\" y=\"{:.0}\">{}</text></g>",
+            family(t),
+            x + w / 2.0,
+            y + HEIGHT / 2.0,
+            label(t).replace('&', "&amp;").replace('<', "&lt;")
+        );
+    }
+    out.push_str("</svg>\n");
+    out
+}
+
 fn run(check: bool) -> Result<(), String> {
     let bin = bin();
     if !Path::new(&bin).exists() {
@@ -181,6 +285,15 @@ fn run(check: bool) -> Result<(), String> {
         }
         fs::write(dst, &generated).map_err(|e| format!("{dst}: {e}"))?;
         written.push(*dst);
+    }
+    let lattice = types_svg();
+    if fs::read_to_string(TYPES_SVG).unwrap_or_default() != lattice {
+        if check {
+            stale.push(TYPES_SVG);
+        } else {
+            fs::write(TYPES_SVG, &lattice).map_err(|e| format!("{TYPES_SVG}: {e}"))?;
+            written.push(TYPES_SVG);
+        }
     }
     if check {
         return if stale.is_empty() {

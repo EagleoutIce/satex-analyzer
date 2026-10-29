@@ -9,7 +9,7 @@ files` says the samples and the offered packages read, and its caches from `sate
     build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site-out
 """
 
-import argparse, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, subprocess, sys, time, tomllib
+import argparse, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, threading, time, tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -24,8 +24,70 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()[:12]
 
 
-# How many satex runs go at once: each takes a core and up to a few GB.
-JOBS = max(1, (os.cpu_count() or 2) // 2)
+def available_memory():
+    """The memory free for new work (Linux's MemAvailable), else half of all of it."""
+    try:
+        return int(re.search(r"MemAvailable:\s+(\d+) kB", Path("/proc/meminfo").read_text())[1]) * 1024
+    except (OSError, TypeError):
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // 2 if hasattr(os, "sysconf") else 0
+
+
+# How many satex runs go at once: each takes a core and up to 2 GB of the memory free now;
+# SATEX_SITE_JOBS overrides.
+JOBS = int(os.environ.get("SATEX_SITE_JOBS") or max(1, min(os.cpu_count() or 2, available_memory() // 2**31)))
+
+
+def parallel(label, jobs, f):
+    """`f` of each job, in order, JOBS at a time. A terminal gets a bar naming the running jobs;
+    a log gets a line per tenth."""
+    jobs, out, done, running, lock = list(jobs), {}, 0, {}, threading.Lock()
+    tty, start = sys.stderr.isatty(), time.monotonic()
+    name = lambda job: " ".join(dict.fromkeys(getattr(x, "name", x) for x in job if isinstance(x, (str, Path)))) \
+        if isinstance(job, tuple) else str(job)
+
+    def show():
+        took = int(time.monotonic() - start)
+        bar = "#" * (20 * done // max(1, len(jobs)))
+        line = f"playground: {label} [{bar:·<20}] {done}/{len(jobs)} {took // 60}m{took % 60:02d}s"
+        if tty:
+            names = sorted(running.values())
+            if names and done < len(jobs):
+                line += " · " + ", ".join(names[:3]) + (f" +{len(names) - 3}" if len(names) > 3 else "")
+            print(f"\r\x1b[K{line[:shutil.get_terminal_size().columns - 1]}", end="\n" if done == len(jobs) else "",
+                  file=sys.stderr, flush=True)
+        elif done == len(jobs) or done % max(1, len(jobs) // 10) == 0:
+            print(line, file=sys.stderr, flush=True)
+
+    def tracked(i):
+        with lock:
+            running[i] = name(jobs[i])
+            if tty:
+                show()
+        try:
+            return f(jobs[i])
+        finally:
+            with lock:
+                del running[i]
+
+    stop = threading.Event()
+
+    def tick():  # the clock moves while long jobs run
+        while not stop.wait(1):
+            with lock:
+                if done < len(jobs):
+                    show()
+
+    if tty:
+        threading.Thread(target=tick, daemon=True).start()
+    with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
+        futures = {pool.submit(tracked, i): i for i in range(len(jobs))}
+        for finished in concurrent.futures.as_completed(futures):
+            out[futures[finished]] = finished.result()
+            with lock:
+                done += 1
+                show()
+    stop.set()
+    return [out[i] for i in range(len(jobs))]
 # What `satex query files` listed, by what it depends on: the document, the
 # flags, the project config and the installation (its ls-R files). A listing
 # does not depend on the satex build, so a rebuild reuses it; --fresh drops it.
@@ -87,6 +149,14 @@ def emit_local(out, name, data):
 
 
 # ---------------------------------------------------------------- pages
+
+def version(cargo):
+    """The crate's version, starred when the build is not that release: a later or changed tree."""
+    tag = subprocess.run(["git", "describe", "--tags", "--dirty"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+    if tag == f"v{cargo['version']}":
+        return cargo["version"], "this release"
+    return f"{cargo['version']}*", f"pre-release: built from {tag or 'an untagged tree'}, not the release itself"
+
 
 def pages():
     """Repository Markdown -> site path: the README is the guide, wiki pages live under wiki/."""
@@ -262,36 +332,49 @@ def bundle(satex, work):
     def listed(job):
         flags, doc, cwd = job
         read = {(cwd / e).resolve() for e in files_read(satex, flags, doc, cwd, env) if (cwd / e).resolve().is_relative_to(dist)}
-        # What another option would read instead (`[11pt]`: size11.clo for size10.clo): the TeX
-        # inputs of the same kind beside each one read. Classes, packages and documents load by
-        # name; fonts are no option's input.
-        option = lambda p: "tex" in p.relative_to(dist).parts[:1] and p.suffix not in (".sty", ".cls", ".tex", ".ltx")
+        # What another option would read instead (`[11pt]`: size11.clo for size10.clo, `\Large\bfseries`:
+        # cmbx12.tfm for cmr10.tfm): the files of the same kind beside each one read. Classes, packages
+        # and documents load by name.
+        option = lambda p: (p.relative_to(dist).parts[0] == "tex" and p.suffix not in (".sty", ".cls", ".tex", ".ltx")) or p.suffix in (".tfm", ".vf")
         return read | {q for p in read if option(p) for q in p.parent.glob(f"*{p.suffix}")}
 
     absent = {}
     reads = {}  # (kernel, document or package) -> the distribution files it reads
-    with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
-        jobs = [(kernel, flags, doc) for kernel, _, flags in KERNELS for doc in docs]
-        for (kernel, _, doc), paths in zip(jobs, pool.map(lambda j: listed((j[1], j[2], ROOT)), jobs)):
-            reads[(kernel, doc.name)] = paths
-        # The names: the list's, then every package or class an example reads.
-        every = list(dict.fromkeys(package_names() + sorted(
-            f"{p.stem}.cls" if p.suffix == ".cls" else p.stem for paths in reads.values() for p in paths if p.suffix in (".sty", ".cls"))))
-        # Names the installation has (test fixtures' names are not); plain TeX loads no LaTeX package.
-        have = set(Path(p).name for p in subprocess.run(["kpsewhich", *map(file_of, every)], capture_output=True, text=True).stdout.split())
-        every = [n for n in every if file_of(n) in have]
-        pjobs = [(kernel, flags, name) for kernel, _, flags in KERNELS if kernel != "plain" for name in every]
-        for (kernel, _, name), paths in zip(pjobs, pool.map(lambda j: listed((j[1], probe_doc(probes, j[2]), probes)), pjobs)):
-            if file_of(name) in {p.name for p in paths}:
-                reads[(kernel, name)] = paths
+    # Names the installation has (test fixtures' names are not); plain TeX loads no LaTeX package.
+    installed = lambda names: [n for n in names if file_of(n) in set(Path(p).name for p in subprocess.run(
+        ["kpsewhich", *map(file_of, names)], capture_output=True, text=True).stdout.split())] if names else []
+    probe = lambda names: [(kernel, flags, name) for kernel, _, flags in KERNELS if kernel != "plain" for name in names]
+
+    def listing(job):
+        kernel, flags, it = job
+        return listed((flags, it, ROOT) if isinstance(it, Path) else (flags, probe_doc(probes, it), probes))
+
+    def take(jobs, label):
+        for (kernel, _, it), paths in zip(jobs, parallel(label, jobs, listing)):
+            if isinstance(it, Path):
+                reads[(kernel, it.name)] = paths
+            elif file_of(it) in {p.name for p in paths}:
+                reads[(kernel, it)] = paths
             else:
-                absent.setdefault(kernel, []).append(name)
+                absent.setdefault(kernel, []).append(it)
+
+    # The listed packages go beside the examples; the packages an example reads besides go after.
+    listed_names = installed(package_names())
+    take([(kernel, flags, doc) for kernel, _, flags in KERNELS for doc in docs] + probe(listed_names), "the files the examples and packages read")
+    more = installed(list(dict.fromkeys(sorted(f"{p.stem}.cls" if p.suffix == ".cls" else p.stem
+                                               for (_, it), paths in list(reads.items()) if it in {d.name for d in docs}
+                                               for p in paths if p.suffix in (".sty", ".cls")))))
+    more = [n for n in more if n not in listed_names]
+    take(probe(more), "the files the packages the examples load read")
+    every = listed_names + more
     for kernel, names in absent.items():
         print(f"playground: {len(names)} packages not offered under {kernel} (they do not load there)", file=sys.stderr)
     for path in set().union(*reads.values()):  # the build tree: every file any of them reads
         target = tree / path.relative_to(dist)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
+    if (dist.parent / "release-texlive.txt").is_file():  # names the TeX Live year
+        shutil.copy2(dist.parent / "release-texlive.txt", tree / "release-texlive.txt")
     config = (SITE / "playground.yaml").read_text().replace("/texmf.bundle", str(tree))
     shutil.copytree(ROOT / "samples", project, ignore=shutil.ignore_patterns("satex.yaml"))
     for doc in docs[:len(roots(EXAMPLES))]:
@@ -302,19 +385,15 @@ def bundle(satex, work):
     (project / "satex.yaml").write_text(config)
     (probes / "satex.yaml").write_text(config)
 
-    # Kernels: the sample's files and the cache entries of running it.
-    tables, have = [], set()
-    for kernel, _, flags in KERNELS:
-        cache = work / f"cache-{kernel}"
-        shutil.rmtree(cache, ignore_errors=True)
-        kenv = dict(os.environ, SATEX_CACHE=str(cache))
+    # Kernels: the sample's files and the cache entries of running it. A kernel's
+    # cache directory stays from the last build: satex rebuilds what this binary cannot use, and
+    # `cache export` writes only the valid entries.
+    def kernel_caches(kernel, flags):
+        kenv = dict(os.environ, SATEX_CACHE=str(work / f"cache-{kernel}"))
         subprocess.run([str(satex), *flags, "lint", "-f", SAMPLE], cwd=project, env=kenv, capture_output=True, check=False)
         archive = work / f"satex-cache-{kernel}.bin"
         run(str(satex), "cache", "export", str(archive), env=kenv)
-        files = {bundled(p): p.read_bytes() for p in sorted(reads[(kernel, SAMPLE)]) if bundled(p) not in have}
-        have |= set(files)
-        tables.append({**files, f"/kernels/{kernel}/satex-cache.bin": archive.read_bytes()})
-    kernels = [k for k, _, _ in KERNELS]
+        return archive
 
     # Packages: the files a probe document reads. The cache entries are those the examples' runs, from a
     # copy of the kernel's caches, made for a package, whichever document loaded it: a package's entry
@@ -329,7 +408,8 @@ def bundle(satex, work):
         shutil.rmtree(cache, ignore_errors=True)
         shutil.copytree(work / f"cache-{kernel}", cache, copy_function=os.link, ignore=shutil.ignore_patterns("*.lock"))
         penv = dict(os.environ, SATEX_CACHE=str(cache))
-        with concurrent.futures.ThreadPoolExecutor(JOBS) as inner:
+        # the kernels' runs go at once (`ran`), so each takes its share of the jobs
+        with concurrent.futures.ThreadPoolExecutor(max(1, JOBS // len(KERNELS))) as inner:
             list(inner.map(lambda d: subprocess.run([str(satex), *flags, "lint", "-f", d.name], cwd=project, env=penv,
                                                     capture_output=True, check=False), docs))
         out = work / f"export-{kernel}.bin"
@@ -342,8 +422,21 @@ def bundle(satex, work):
         shutil.rmtree(cache, ignore_errors=True)
         return archives
 
+    # Per kernel, its caches and then the packages' from a copy of them: kernels need not wait for each other.
+    both = parallel("kernel and package caches", KERNELS, lambda k: (kernel_caches(k[0], k[2]), fresh(k[0], k[2])))
+    archives = [a for a, _ in both]
+    ran = {k: r for (k, _, _), (_, r) in zip(KERNELS, both)}
+    tables, have, names = [], set(), {d.name for d in docs}
+    for (kernel, _, _), archive in zip(KERNELS, archives):
+        # the sample's files, and what any example reads that no package's bundle holds (a heading's font)
+        packaged = set().union(*(paths for (k, n), paths in reads.items() if k == kernel and n not in names))
+        shown = set(reads[(kernel, SAMPLE)]).union(*(reads.get((kernel, d.name), set()) for d in docs)) - (packaged - set(reads[(kernel, SAMPLE)]))
+        files = {bundled(p): p.read_bytes() for p in sorted(shown) if bundled(p) not in have}
+        have |= set(files)
+        tables.append({**files, f"/kernels/{kernel}/satex-cache.bin": archive.read_bytes()})
+    kernels = [k for k, _, _ in KERNELS]
+
     parts = {}  # (kernel, name) -> [files, cache archive, direct needs]
-    ran = {kernel: fresh(kernel, flags) for kernel, _, flags in KERNELS}
     for (kernel, name) in reads:
         if name in {d.name for d in docs}:
             continue
@@ -352,8 +445,9 @@ def bundle(satex, work):
         seen = {p.name for p in reads[(kernel, name)]}
         parts[(kernel, name)] = [
             {bundled(p): p for p in reads[(kernel, name)] if bundled(p) not in held},
-            ran[kernel].get(name.removesuffix(".cls")),
-            {x for x in every if x != name and (kernel, x) in reads and file_of(x) in seen}]
+            ran[kernel].get(name),
+            # a package loads no class: the probe document's class is no need of it
+            {x for x in every if x != name and (kernel, x) in reads and file_of(x) in seen and (name.endswith(".cls") or not x.endswith(".cls"))}]
     # needs: the packages it loads, transitively. Their items are not repeated here, unless they need this one back.
     need = {}
     for (kernel, name), (_, _, direct) in parts.items():
@@ -377,6 +471,16 @@ def bundle(satex, work):
     for path in sorted(project.iterdir()):
         if path.is_file() and path.name != "satex.yaml":
             tables[0][f"/work/{path.name}"] = path.read_bytes()
+    # The tree's file list (kpathsea's ls-R) names every file a bundle holds, fetched or not: completion
+    # offers each package, and loading one the page has not fetched is a missing file it then fetches.
+    held = sorted({p for files in [*tables, *(f for _, _, f, _ in packages)] for p in files if p.startswith("/texmf.bundle/")})
+    listing = {}
+    for p in held:
+        d, _, f = p.removeprefix("/texmf.bundle/").rpartition("/")
+        listing.setdefault(d, []).append(f)
+    tables[0]["/texmf.bundle/ls-R"] = "".join(f"./{d}:\n" + "".join(f"{f}\n" for f in fs) + "\n" for d, fs in sorted(listing.items())).encode()
+    if (tree / "release-texlive.txt").is_file():
+        tables[0]["/texmf.bundle/release-texlive.txt"] = (tree / "release-texlive.txt").read_bytes()
     tables[0]["/work/satex.yaml"] = config.replace(str(tree), "/texmf.bundle").encode()
     return tables, packages, [p.name for p in docs], project
 
@@ -521,8 +625,9 @@ def examples(satex, work, project):
     hover. The panel starts with the command `commands()` names, else the example's own."""
     env = dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))
     dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
-    tabs, panels = [], []
-    for i, name in enumerate(roots(EXAMPLES)):
+
+    def one(job):
+        i, name = job
         source = (EXAMPLES / name).read_text()
         lints = findings(satex, project, env, name, source)
         used = {m.group() for line in source.splitlines() for m in TOKEN.finditer(line) if m.lastgroup == "cmd"}
@@ -540,8 +645,8 @@ def examples(satex, work, project):
                         for k, d in enumerate(lints))
         found = f'<h4>Findings <b>{len(lints)}</b></h4><ul class="diagnostics">{items}</ul>' if lints else '<h4>Findings</h4><p class="muted">none</p>'
         sel = "true" if i == 0 else "false"
-        tabs.append(f'<button role="tab" aria-selected="{sel}" aria-controls="ex-{i}" id="ex-tab-{i}">{html.escape(name)}</button>')
-        panels.append(
+        tab = (f'<button role="tab" aria-selected="{sel}" aria-controls="ex-{i}" id="ex-tab-{i}">{html.escape(name)}</button>')
+        return tab, (
             f'<figure class="example" role="tabpanel" id="ex-{i}" aria-labelledby="ex-tab-{i}"{"" if i == 0 else " hidden"}>\n'
             f'<figcaption><span class="muted">Hover a command to explain it, an underline to see its finding.</span>'
             f'<a class="button ghost small" href="play/index.html#{name}">open in the playground →</a></figcaption>\n'
@@ -549,6 +654,7 @@ def examples(satex, work, project):
             f'<div class="ex-side"><div class="ex-findings">{found}</div>'
             f'<div class="ex-explain"><h4>Explain <code class="xname"></code></h4><div class="xbody"><p class="muted">Hover a command.</p></div></div></div>\n'
             f'<script type="application/json" class="ex-data">{data}</script></figure>')
+    tabs, panels = zip(*parallel("the examples", list(enumerate(roots(EXAMPLES))), one))
     return f'<div class="tabs" role="tablist">{"".join(tabs)}</div>' + "\n".join(panels)
 
 
@@ -620,8 +726,15 @@ def main():
     ap.add_argument("--precompress", action="store_true",
                     help="write a .gz beside each compressible file, for a server that serves those as GitHub Pages compresses")
     ap.add_argument("--fresh", action="store_true", help="redo every satex run instead of reusing WORK/listings.json and WORK/memo")
+    ap.add_argument("--keep-listings", action="store_true",
+                    help="reuse the files each package was listed to read across satex builds (a development loop: "
+                         "a file a changed interpreter reads besides is missing from the bundle until --fresh)")
     args = ap.parse_args()
-    global BINARY, KEY, FRESH, SATEX
+    # Ctrl+C stops the build: the terminal signals the satex runs too, and worker threads must not
+    # start more of them, so the process ends at once instead of unwinding the main thread only.
+    for stop in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(stop, lambda number, _: os._exit(128 + number))
+    global BINARY, KEY, FRESH, SATEX, SITE, EXAMPLES
     SATEX = args.satex.resolve()
     BINARY, FRESH = digest(args.satex.resolve().read_bytes()), args.fresh
     KEY = json.loads(subprocess.run([str(args.satex), "cache", "--format", "json"], capture_output=True, text=True).stdout or "{}").get("key") or BINARY
@@ -629,8 +742,14 @@ def main():
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
     work.mkdir(parents=True, exist_ok=True)
+    # One state of the site's sources for the whole build: an edit made while it runs reaches the next one,
+    # never half of this one (a page from after the edit with a script from before it).
+    snapshot = work / "site-src"
+    shutil.rmtree(snapshot, ignore_errors=True)
+    shutil.copytree(SITE, snapshot, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    SITE, EXAMPLES = snapshot, snapshot / "examples"
     listings = work / "listings.json"
-    stamp = installation_stamp() + ";" + KEY
+    stamp = installation_stamp() + ("" if args.keep_listings else ";" + KEY)
     if listings.exists() and not args.fresh:
         LISTINGS.update(json.loads(listings.read_text()))
     if LISTINGS.get("@stamp") != stamp:
@@ -639,6 +758,7 @@ def main():
 
     cargo = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]
     homepage, repo = cargo["homepage"].rstrip("/") + "/", cargo["repository"].rstrip("/")
+    release, release_title = version(cargo)
     template = (SITE / "template.html").read_text()
     (out / "play").mkdir()
     svgs = logo(work)
@@ -660,25 +780,30 @@ def main():
         root = "../" * dst.count("/")
         side_html = markdown(nav).replace("@ROOT@", root) if side else ""
         values = {"title": html.escape(title), "root": root, "body": body, "sidebar": side_html,
-                  "version": cargo["version"], "repository": repo, "description": html.escape(cargo["description"]),
+                  "version": release, "versiontitle": release_title, "repository": repo, "description": html.escape(cargo["description"]),
                   "class": kind or ("doc" if side else "home"), "date": built, "crate": cargo["name"], **assets}
         text = fill(template, values)
         (out / dst).parent.mkdir(parents=True, exist_ok=True)
         (out / dst).write_text(text)
 
-    for src, dst in table.items():
-        text = strip_banner((ROOT / src).read_text())
-        body = rewrite(markdown(text), src, table, homepage, repo, out, "../" * dst.count("/"))
-        page(dst, title_of(text), body)
+    def docs():
+        for src, dst in table.items():
+            text = strip_banner((ROOT / src).read_text())
+            body = rewrite(markdown(text), src, table, homepage, repo, out, "../" * dst.count("/"))
+            page(dst, title_of(text), body)
 
-    manifest, shown = playground(args.satex.resolve(), args.wasm.resolve(), work, out)
+    # The pages beside the playground's satex runs: they need none of them.
+    with concurrent.futures.ThreadPoolExecutor(1) as side:
+        pages_done = side.submit(docs)
+        manifest, shown = playground(args.satex.resolve(), args.wasm.resolve(), work, out)
+        pages_done.result()
     listings.write_text(json.dumps(LISTINGS))
     manifest["worker"] = (SITE / "worker.js").read_text()
     readme = (ROOT / "README.md").read_text()
     md = lambda text: rewrite(markdown(text), "README.md", table, homepage, repo, out, "")
     parts = {"intro": md(intro(readme)), "install": md(install(readme)), "examples": shown,
              "manifest": json.dumps(manifest).replace("</", "<\\/"), "root": "../"}
-    home = fill((SITE / "home.html").read_text(), {**assets, **parts, "version": cargo["version"], "repository": repo,
+    home = fill((SITE / "home.html").read_text(), {**assets, **parts, "version": release, "versiontitle": release_title, "repository": repo,
                                                        "description": html.escape(cargo["description"])})
     page("index.html", "satex", home, side=False)
     page("play/index.html", "Playground", fill((SITE / "play.html").read_text(), {**assets, **parts}), side=False, kind="play")

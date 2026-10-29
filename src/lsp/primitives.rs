@@ -74,6 +74,11 @@ pub fn positional(name: &str) -> bool {
     SYNTAX.iter().any(|(n, ..)| *n == name)
 }
 
+/// The TeXbook syntax after the primitive `name`, wherever it stands.
+pub fn usage(name: &str) -> Option<&'static str> {
+    SYNTAX.iter().find(|(n, ..)| *n == name).map(|(_, rest, _)| *rest)
+}
+
 pub fn syntax(analysis: &Analysis, name: &str, path: &str, line: u32, col: u32) -> Option<String> {
     let (_, rest, etex) = SYNTAX.iter().find(|(n, ..)| *n == name)?;
     let want = *crate::builtins::primitive_names(analysis.plugins.engine).get(name)?;

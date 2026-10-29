@@ -616,10 +616,12 @@ impl Analysis {
                     None => s.replace(", rest stored", ""),
                 }),
             };
+            // Replayed as far as any run can: the rest has no line at rest to record from.
+            let word = if package_cache::served(state) { "reused" } else { "rebuilt" };
             match verdict {
                 None if kind == "package" => reused += 1,
                 None => lines.push(format!("cache {kind} {name}: reused")),
-                Some(why) => lines.push(format!("cache {kind} {name}: rebuilt ({why})")),
+                Some(why) => lines.push(format!("cache {kind} {name}: {word} ({why})")),
             }
         }
         if reused > 0 {
@@ -1476,6 +1478,12 @@ pub struct Machine<'a> {
     /// The cacheable package or class being loaded: its end forgets what a
     /// replay of it would not bring ([`Machine::end_cacheable_load`]).
     cacheable_load: Option<FileId>,
+    /// The outermost cacheable load and the lock other processes building
+    /// its cache wait on, until its file closes ([`crate::format::build_lock`]).
+    building: Option<(FileId, Rc<std::fs::File>)>,
+    /// A paragraph just ended and no space followed it yet: a `\penalty`
+    /// of 10000 now keeps it with what comes next ([`crate::facts::Text::kept`]).
+    pub(crate) par_kept: bool,
     /// Digits satex does not know, such as `\the\count0` of an unknown
     /// count: unknown text to a scan, but character tokens of category 12
     /// to `\ifx`, `\if`, `\ifcat`, `\let` and `\futurelet` (their
@@ -1492,9 +1500,10 @@ pub struct Machine<'a> {
     /// replacement text: what `\the` and `\unexpanded` give it is stored as
     /// it stands (tex.web § 478), so a `#` among it is no parameter.
     def_body_depth: Option<usize>,
-    /// Fact index by source site, so that re-analyzing a file does not
-    /// duplicate what it observed.
-    definition_sites: crate::fixed::LookupMap<(Span, Sym), usize>,
+    /// Fact index by source site and package, so that re-analyzing a file
+    /// does not duplicate what it observed. Packages running one kernel site
+    /// (`\DeclareOption*`'s `\edef\default@ds`) each keep their own fact.
+    definition_sites: crate::fixed::LookupMap<(Span, Sym, Option<Sym>), usize>,
     expansion_sites: crate::fixed::LookupMap<(Span, Sym), Site>,
     /// Per site, the names written in the round before its last expansion
     /// and what they held then, under [`Site::assigned`] of that one.
@@ -2241,6 +2250,8 @@ impl<'a> Machine<'a> {
             scanning: 0,
             scan_undecided: false,
             cacheable_load: None,
+            building: None,
+            par_kept: false,
             gaps: HashSet::default(),
             pdf_string: false,
             last_file: None,
@@ -3169,9 +3180,9 @@ impl<'a> Machine<'a> {
 
         // A missing or stale cache is rebuilt below. It says nothing about
         // the document, so it is no finding, only a notice on stderr.
-        // One build per process: runs that miss together wait for it and
-        // read what it stored.
-        let mut _building = None;
+        // One build at a time, in this process and across processes: runs
+        // that miss together wait for it and read what it stored.
+        let (mut _building, mut _across) = (None, None);
         let mut rebuilt: Option<String> = if cache_dir.is_none() {
             Some("cache disabled".into())
         } else {
@@ -3191,6 +3202,14 @@ impl<'a> Machine<'a> {
             let mut cached = load();
             if cached.is_err() {
                 _building = Some(crate::format::BUILDING.lock().unwrap_or_else(|e| e.into_inner()));
+                let target = crate::format::cache_file(
+                    directory,
+                    &source,
+                    self.out.plugins.engine.as_str(),
+                    self.preload_key(),
+                    &roots,
+                );
+                _across = crate::format::build_lock(&target);
                 cached = load();
             }
             match cached {
@@ -4280,6 +4299,9 @@ will look undefined",
                 }
                 if self.cacheable_load == Some(mouth.file) {
                     self.end_cacheable_load();
+                }
+                if self.building.as_ref().is_some_and(|(file, _)| *file == mouth.file) {
+                    self.building = None;
                 }
             }
             _ => {}
@@ -5550,7 +5572,7 @@ will look undefined",
         }
 
         self.record(Step::Define, name, span);
-        let existing = self.definition_sites.get(&(span, name)).copied();
+        let existing = self.definition_sites.get(&(span, name, self.package())).copied();
         // Kernel code re-run in a new environment (`\list`'s own `\def\@itemlabel{#1}`,
         // once per `\begin{itemize}`/`\begin{enumerate}`) hits the same site every time.
         // Without this, the first context seen there would be the only one `explain`
@@ -5558,14 +5580,12 @@ will look undefined",
         let current_context: Rc<[Sym]> = Rc::from(self.env_stack.as_slice());
         let context_is_new = existing.is_some_and(|i| {
             self.out.facts.defs[i].context.as_ref() != current_context.as_ref()
-                && !self
-                    .out
-                    .facts
-                    .defs
-                    .iter()
-                    .rev()
-                    .take(256)
-                    .any(|d| d.name == name && d.span == span && d.context.as_ref() == current_context.as_ref())
+                && !self.out.facts.defs.iter().rev().take(256).any(|d| {
+                    d.name == name
+                        && d.span == span
+                        && d.package == self.package()
+                        && d.context.as_ref() == current_context.as_ref()
+                })
         });
         // A package being cached records the fact it would have made even
         // where this run already has one for the site: a run that replays
@@ -5640,7 +5660,7 @@ will look undefined",
                     self.carried.own_switches.insert(name);
                 }
                 if existing.is_none() {
-                    self.definition_sites.insert((span, name), self.out.facts.defs.len());
+                    self.definition_sites.insert((span, name, fact.package), self.out.facts.defs.len());
                     self.out.facts.defs.push(fact);
                 } else if context_is_new {
                     self.out.facts.defs.push(fact);
@@ -6058,6 +6078,8 @@ will look undefined",
                 files: (self.carried.lines_seen.len() + self.carried.stream_lines.len()) as u64,
                 lines: lines.0,
                 cached: lines.1,
+                reached: read as u64,
+                total: all as u64,
                 ms: self.started.elapsed().as_millis() as u64,
                 paths: self.waiting as u64 + 1,
                 probe: probing.map(|sym| format!("\\{}", self.name(sym))).unwrap_or_default(),
@@ -8098,6 +8120,7 @@ will look undefined",
                 cds: self.cds.to_vec(),
                 count: 0,
                 mode: self.mode,
+                depth: self.env.group_level() as u16,
             };
             let count =
                 self.expansion_sites.get(&(span, name)).map_or(0, |site| self.out.facts.expansions[site.fact].count);
@@ -8150,6 +8173,7 @@ will look undefined",
             cds: self.cds.to_vec(),
             count: 1,
             mode: self.mode,
+            depth: self.env.group_level() as u16,
         });
         1
     }
@@ -11125,6 +11149,7 @@ will look undefined",
             let display = path.display().to_string();
             self.register_file(display, kind)
         });
+        let call = self.file_call.map(|(_, at)| at).filter(|at| self.own_file(at.file));
         self.out.facts.loads.push(Load {
             name: name.to_string(),
             kind,
@@ -11137,6 +11162,8 @@ will look undefined",
             required,
             provided: None,
             depth: self.file_depth,
+            certain: self.exact(),
+            call,
         });
         let load = self.out.facts.loads.len() - 1;
         let (Some(source), Some(id)) = (source, file) else { return };
@@ -11344,6 +11371,8 @@ will look undefined",
                     required: None,
                     provided: None,
                     depth: self.file_depth,
+                    certain: self.exact(),
+                    call: None,
                 });
             }
             "@onefilewithoptions@clashchk" if arguments.len() == 1 => {

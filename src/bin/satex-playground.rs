@@ -8,6 +8,9 @@
 //! reload). It reuses an existing build in `--out` and builds only when none
 //! exists. The other pages and the wasm still need a rebuild.
 //!
+//! Without `--dev`, a last build in `--out` serves at once while the new one
+//! builds beside it (`--out` with `.next`); the new one replaces it when done.
+//!
 //! It needs what the site's workflow has: Python 3, pandoc and pdftocairo,
 //! git, and `rustup`. The Rust target `wasm32-unknown-emscripten` is added
 //! when missing, and the Emscripten SDK the workflow pins is installed under
@@ -54,6 +57,27 @@ fn run() -> Result<(), String> {
         );
         return serve(&root.join(&out), port.parse().map_err(|_| "no port".to_string())?, dev);
     }
+    let site = root.join(&out);
+    let port = free_port(&port)?;
+    let url = format!("http://127.0.0.1:{port}/play/ (the site at http://127.0.0.1:{port}/)");
+    let port = port.parse().map_err(|_| "no port".to_string())?;
+    // A last build serves at once; this one replaces it when done.
+    if site.join("play/index.html").is_file() {
+        println!("satex-playground: serving the last build at {url} while this one builds; Ctrl+C stops");
+        let next = site.clone();
+        std::thread::spawn(move || match build(root, &next, profile) {
+            Ok(()) => say("built; reload the page to load this build"),
+            Err(message) => eprintln!("satex-playground: {message}; the last build stays"),
+        });
+        return serve(&site, port, dev);
+    }
+    build(root, &site, profile)?;
+    println!("satex-playground: serving {url}; Ctrl+C stops");
+    serve(&site, port, dev)
+}
+
+/// Builds the site into `site.next`, then swaps it in for `site`.
+fn build(root: &Path, site: &Path, profile: &str) -> Result<(), String> {
     say("1/4 the toolchain: Rust's wasm32-unknown-emscripten and the Emscripten SDK");
     let wasm = wasm_cargo()?;
     let cargo = || {
@@ -64,42 +88,62 @@ fn run() -> Result<(), String> {
     let path = emscripten_path(root)?;
     // Where cargo puts its builds: `$CARGO_TARGET_DIR`, else `target`.
     let target = std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
-    // Both builds from one source and profile: a cache is keyed on the build that wrote it.
+    // One build at a time: two would share the site's work directory and its caches.
+    std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    let lock = std::fs::File::create(target.join("playground.lock")).map_err(|e| e.to_string())?;
+    if lock.try_lock().is_err() {
+        say("another playground build is running; waiting for it to finish");
+        lock.lock().map_err(|e| e.to_string())?;
+    }
+    // Both builds from one source and profile: a cache is keyed on the source digest. The native
+    // one by the `cargo` running this, whose library build it reuses (rustup's `rustc` would redo it).
     say("2/4 satex for this machine");
-    step(cargo().args(["build", "--profile", profile, "--bin", "satex"]))?;
+    step(
+        Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+            .args(["build", "--profile", profile, "--bin", "satex"])
+            .current_dir(root),
+    )?;
     // The site's runs need only the native build; it reads the wasm last,
     // once `ready` names it built, so the two overlap.
     say("3/4 satex for the browser, beside 4/4 the site: the pages, the TeX files and caches the playground loads");
     let wasm_dir = target.join("wasm32-unknown-emscripten").join(profile);
     let ready = target.join("playground-wasm.ready");
     let _ = std::fs::remove_file(&ready);
-    let mut site = Command::new("python3")
+    let next = site.with_extension("next");
+    let mut python = Command::new("python3")
         .arg("doc/site/build.py")
         .arg("--satex")
         .arg(target.join(profile).join("satex"))
         .arg("--wasm")
         .arg(&wasm_dir)
-        .args(["--precompress", "--out"])
-        .arg(&out)
+        // The edit loop: package listings outlive an interpreter change.
+        .args(["--precompress", "--keep-listings", "--out"])
+        .arg(&next)
+        .arg("--work")
+        .arg(site.with_file_name("site-work"))
         .env("SATEX_WASM_READY", &ready)
         .current_dir(root)
         .spawn()
         .map_err(|e| format!("cannot run python3: {e}"))?;
+    // Quiet: its progress line would garble the site's; errors still show.
     let built = step(
         cargo()
-            .args(["build", "--profile", profile, "--target", "wasm32-unknown-emscripten", "--bin", "satex"])
+            .args(["build", "-q", "--profile", profile, "--target", "wasm32-unknown-emscripten", "--bin", "satex"])
             .env("PATH", &path),
     );
     let _ = std::fs::write(&ready, if built.is_ok() { "ok" } else { "failed" });
-    let status = site.wait().map_err(|e| e.to_string())?;
+    eprintln!("satex-playground: 3/4 satex for the browser: {}", if built.is_ok() { "built" } else { "failed" });
+    let status = python.wait().map_err(|e| e.to_string())?;
     built?;
     status.success().then_some(()).ok_or_else(|| format!("doc/site/build.py failed ({status})"))?;
-    let site = root.join(&out);
-    let port = free_port(&port)?;
-    println!(
-        "satex-playground: serving http://127.0.0.1:{port}/play/ (the site at http://127.0.0.1:{port}/); Ctrl+C stops"
-    );
-    serve(&site, port.parse().map_err(|_| "no port".to_string())?, dev)
+    let old = site.with_extension("old");
+    let _ = std::fs::remove_dir_all(&old);
+    if site.exists() {
+        std::fs::rename(site, &old).map_err(|e| e.to_string())?;
+    }
+    std::fs::rename(&next, site).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir_all(&old);
+    Ok(())
 }
 
 /// Serves `site` on 127.0.0.1 the way a static host such as GitHub Pages

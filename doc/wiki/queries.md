@@ -39,7 +39,7 @@ macro  \sys_gset_rand_seed:n            #1        \tex_se…  expl3-code.tex    
 macro  \reserved@c                      #1.sty\…  \def \r…  latex.ltx             @ latex.ltx:18742:20
 macro  \reserved@a                      #10#2#{   \expand…  latex.ltx             @ latex.ltx:1277:3
 macro  \reserved@a                      #1\@nil   \@for \…  latex.ltx             @ latex.ltx:18611:3
-… 2476 more lines omitted
+… 2591 more lines omitted
 ```
 
 ## expansions
@@ -129,7 +129,7 @@ macro-call           \fmtname  latex.ltx                      @ latex.ltx:731:26
 macro-call           \space    latex.ltx                      @ latex.ltx:731:34
 macro-call           \fmtver…  latex.ltx                      @ latex.ltx:731:42
 use                  LaTeX2e…  latex.ltx                      @ latex.ltx:129:24
-… 38879 more lines omitted
+… 40113 more lines omitted
 ```
 
 ## trace
@@ -144,7 +144,7 @@ index   step         name                        detail                    file
 10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
 10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
 10272   define       \ifdraft                                              paper.tex      @ paper.tex:3:7
-… 208 more lines omitted
+… 181 more lines omitted
 ```
 
 `--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile; `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown; `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
@@ -166,9 +166,9 @@ id   kind     file
 0    input    paper.tex                                 
 1    input    latex.ltx                                 
 2    input    texsys.cfg                                
-3    input    expl3.ltx                                 
-4    input    expl3-code.tex                            
-… 286 more lines omitted
+3    input    texsys.aux                                
+4    input    expl3.ltx                                 
+… 289 more lines omitted
 ```
 
 ## diagnostics
@@ -177,8 +177,13 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
-severity    code           count  message                              file            
-assumption  clock-assumed  1      the document is assumed to be comp…  expl3-code.tex  @ expl3-code.tex:8203:38
+severity     code                        count  message                file            
+imprecision  argument-ends-in-unknown    1      a delimited argument…  latex.ltx       @ latex.ltx:20534:3
+imprecision  unknown-name                7      a name built from un…  latex.ltx       @ latex.ltx:20322:31
+imprecision  unknown-name                7      a name built from un…  latex.ltx       @ latex.ltx:20322:41
+imprecision  mismatched-group            2      extra }, or forgotte…  latex.ltx       @ latex.ltx:20534:3
+imprecision  paths-joined-at             1      2 paths arrived at a…  paper.tex       @ paper.tex:82:15
+… 15 more lines omitted
 ```
 
 ## distribution
@@ -187,13 +192,13 @@ The detected TeX installation: provider, version, and the texmf trees searched.
 
 ```text
 $ satex query distribution -f samples/paper.tex
-kind        message                                                               root                                  
-            TeX Live 2026, LaTeX2e 2025-11-01, 6 trees via kpsewhich, 47457 fil…                                        
+kind        name                                                 count  message   root                                  
+                                                                        TeX Liv…                                        
 texmf-tree                                                                        ~/texmf                   
 texmf-tree                                                                        ~/.texliveYYYY/texmf-var  
 texmf-tree                                                                        /usr/local/texlive/texmf-local        
 texmf-tree                                                                        /usr/local/texlive/YYYY/texmf-config  
-… 2 more lines omitted
+… 5384 more lines omitted
 ```
 
 ## catcodes
@@ -216,7 +221,7 @@ variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.t
 variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
 variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
 variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
-… 1703 more lines omitted
+… 1833 more lines omitted
 ```
 
 ## project
@@ -282,6 +287,13 @@ This needs call arguments recorded (`record_arguments`). `query options` and `--
 
 ```text
 $ satex query options --for mybanner -f samples/mypackage.sty
+kind  key                 file           
+code  xcolor/natural      mypackage.sty  @ mypackage.sty:4:1
+code  xcolor/rgb          mypackage.sty  @ mypackage.sty:4:1
+code  xcolor/cmy          mypackage.sty  @ mypackage.sty:4:1
+code  xcolor/cmyk         mypackage.sty  @ mypackage.sty:4:1
+code  xcolor/hsb          mypackage.sty  @ mypackage.sty:4:1
+… 52 more lines omitted
 ```
 
 ## typeset
@@ -316,9 +328,10 @@ Only the places that stand behind an expansion, for a text the document never wr
 ```text
 $ satex query produces -f samples/paper.tex --text Introduction --filter 'kind!=source'
 kind        tag      name                                              detail    file       
+macro body  macro    \r@sec:intro                                      {1}{1}{…  paper.aux  @ paper.aux:6:11
 occurrence  section  Introduction                                      Introdu…  paper.tex  @ paper.tex:33:1
-occurrence  write    \@writefiletocprotectcontentslinesectionprotect…  \@write…  latex.ltx  @ latex.ltx:9552:34
-occurrence  write    \newlabelsec:intro1thepageIntroductionsection.1   \newlab…  latex.ltx  @ latex.ltx:9552:34
+occurrence  write    \@writefiletoccontentslinesectionnumberline1Int…  \@write…  latex.ltx  @ latex.ltx:9552:34
+occurrence  write    \newlabelsec:intro11Introductionsection.1         \newlab…  latex.ltx  @ latex.ltx:9552:34
 ```
 
 # Explain
@@ -334,10 +347,10 @@ $ satex explain '\itshape'
   takes          0
   uses           0 times, in this run
   by             \def
+  does           Switches to italic.
   documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
   body           \not@math@alphabet \itshape \mathit \fontshape \itdefault \selectfont 
-  reference      https://texdoc.org/serve/source2e/0
-… 1 more line omitted
+… 2 more lines omitted
 ```
 
 ## Several definitions
@@ -394,8 +407,8 @@ $ satex explain '\itshape' --at preamble
   effective      \itshape
   takes          0
   package        kernel
-  documentation  The LaTeX2e sources, [source2e](https://ctan.org/pkg/source2e)
-… 3 more lines omitted
+  does           Switches to italic.
+… 4 more lines omitted
 ```
 
 # Slice

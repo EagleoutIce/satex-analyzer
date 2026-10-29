@@ -1,7 +1,9 @@
 //! The server inside the browser playground (`doc/site/worker.js`): no
 //! threads, no stdio. `satex lsp` sets up the engine and returns with the
 //! runtime alive. The page then hands each JSON-RPC message to `satex_lsp`,
-//! which answers with the JSON array of messages to send back.
+//! which answers with the JSON array of messages to send back. While a
+//! message runs, `satex_status` (src/lsp/wasm-status.js) hands the page what
+//! the engine is doing, as `satex/status` does for an editor.
 
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char};
@@ -21,11 +23,17 @@ thread_local! { static LOCAL: RefCell<Option<Local>> = const { RefCell::new(None
 
 unsafe extern "C" {
     fn emscripten_exit_with_live_runtime() -> !;
+    fn satex_status(json: *const c_char);
 }
 
 pub fn serve(cfg: crate::config::Config, root: std::path::PathBuf, main: Option<std::path::PathBuf>) -> ! {
     let (tx, diagnostics) = crossbeam_channel::unbounded();
     let engine = Engine::new(cfg, root, main, tx);
+    crate::progress::listen(Some(Box::new(|now: &crate::progress::Status| {
+        if let Some(json) = serde_json::to_string(now).ok().and_then(|j| CString::new(j).ok()) {
+            unsafe { satex_status(json.as_ptr()) }
+        }
+    })));
     LOCAL.set(Some(Local { engine, diagnostics, reply: CString::default() }));
     unsafe { emscripten_exit_with_live_runtime() }
 }
@@ -40,6 +48,10 @@ impl Local {
             Ok(Message::Request(req)) => vec![Message::Response(match req.method.as_str() {
                 "initialize" => Response::new_ok(req.id, serde_json::json!({"capabilities": server_capabilities()})),
                 "shutdown" => Response::new_ok(req.id, ()),
+                "textDocument/linkedEditingRange" => {
+                    let found = super::linked(&req, |uri| engine.docs.get(uri).map(|d| &d.text));
+                    Response::new_ok(req.id, found.unwrap_or(serde_json::Value::Null))
+                }
                 _ => respond(
                     &mut |m| {
                         engine.step(m);

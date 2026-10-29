@@ -14,10 +14,9 @@ domains, and [Lints](Lints) and [Chktex-Coverage](Chktex-Coverage) for what a
 rule builds on top of them.
 
 Every domain here obeys one invariant: a construct is followed **exactly**,
-or its result is **over-approximated**. `satex` never guesses a single
-outcome and never treats "I can't follow this" as a resting state.
-Anything it cannot pin down goes up the lattice to a value that covers every
-real outcome, and it says so in a diagnostic.
+or its result is **over-approximated**. `satex` never guesses one
+outcome. Anything it cannot pin down goes up the lattice to a value that covers every
+real outcome, and a diagnostic says so.
 
 The domains on this page:
 
@@ -135,7 +134,7 @@ look at the set.
   meaning. `\ifx` against a name of one meaning splits into one path per
   answer, the name keeping the members that give it. Both go only `limits.meaning_splits`
   levels deep (below). Beyond that, or inside an `\edef`/scan, the
-  name is simply of unknown meaning. The default is deliberately shallow.
+  name is of unknown meaning. The default is shallow.
   Measured on a TikZ document, splitting further runs
   pgfmath's parser over more unknown text for one more error caught at
   seven times the run time.
@@ -426,30 +425,48 @@ A type stands for the texts an argument may hold, so a type is below another whe
 The order follows tex.web's scanners: `scan_int` (§ 440), `scan_dimen` (§ 448), `scan_glue` (§ 461), a register an assignment names (§ 1224), a box number (§ 1079), `get_r_token` (§ 1215).
 A register's name is text of its value's kind, because a scanner reads the register's value there (§ 413). A dimension is glue without stretch.
 
-```text
-any
-├── quantity
-│   ├── number
-│   │   ├── count register
-│   │   └── box                    a box register's number
-│   ├── glue
-│   │   ├── dimen
-│   │   │   └── dimen register
-│   │   └── skip register
-│   └── muglue                     muglue or mudimen
-│       └── muskip register
-├── name                           characters forming one
-│   ├── key                        a key of no known kind
-│   │   └── label, citation key, option key, environment name   what the key names (from a role)
-│   ├── file                       a file of no known kind
-│   │   └── file (.tex, .sty, .cls, .bib, .bst, .bbx, .cbx, graphic)   the kind the program reading it fixes (from a role)
-│   └── counter, ⟨kind⟩ name       a register's name `\csname` forms
-├── control sequence               what an assignment defines
-├── options                        the key list a load takes before its name (from a role)
-├── register                       of a kind the text does not fix
-└── toks register                  and any other register
-nothing                            below every type
-```
+![The Ty lattice: every type below any, coloured by family](https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/types.svg)
+
+The diagram follows `Ty::parent`, colored by family: quantities and registers (blue), names, keys and options (green), files (orange), text (purple), control sequences (pink). The dashed lines mean `nothing` is below every type. The labels are the ones signatures and hovers show. In each example the `⟨…⟩` part has the type.
+
+| Label | Meaning | Example | Parent |
+|---|---|---|---|
+| `any` | no information, the join of unrelated types | | none |
+| `quantity` | a number, dimen, glue or muglue | `\numexpr1+⟨\dimexpr 1pt\relax⟩` is read as a quantity | `any` |
+| `number` | ⟨number⟩, read by `scan_int` | `\penalty⟨100⟩` | `quantity` |
+| `dimen` | ⟨dimen⟩, read by `scan_dimen` | `\kern⟨2pt⟩` | `glue` |
+| `glue` | ⟨glue⟩, a dimen with optional stretch and shrink | `\hskip⟨1pt plus 1fil⟩` | `quantity` |
+| `muglue` | ⟨mudimen⟩ or ⟨muglue⟩ | `\mskip⟨3mu⟩` | `quantity` |
+| `count register` | a count register an assignment names | `\advance⟨\count@⟩ by 1` | `number` |
+| `box` | a box register's number | `\setbox⟨0⟩\hbox{}` | `number` |
+| `dimen register` | a dimen register an assignment names | `\advance⟨\parindent⟩ by 1pt` | `dimen` |
+| `skip register` | a skip register an assignment names | `\advance⟨\parskip⟩ by 1pt` | `glue` |
+| `muskip register` | a muskip register an assignment names | `\advance⟨\medmuskip⟩ by 1mu` | `muglue` |
+| `toks register`, `read register`, `write register` | the other registers an assignment names | `⟨\toks@⟩={a}` | `any` |
+| `register` | a register of a kind the text does not fix, what a body assigns `#1` to | `\def\x#1#2{\advance⟨#1⟩ by #2}` | `any` |
+| `text` | balanced text of any kind | `\textbf{⟨a name or code⟩}` | `any` |
+| `name` | characters forming a name | `\csname ⟨foo⟩\endcsname` | `text` |
+| `counter` | the name of a LaTeX counter, `c@⟨counter⟩` | `\setcounter{⟨section⟩}{1}` | `name` |
+| `⟨kind⟩ name` | the name of a register of that kind a `\csname` forms | `\csname dimen⟨foo⟩\endcsname` | `name` |
+| `key` | a key of no known kind | `\mykey{⟨x⟩}` of unknown role | `name` |
+| `label` | a label a command defines or references | `\ref{⟨sec:intro⟩}` | `key` |
+| `citation key` | a bibliography entry's key | `\cite{⟨knuth84⟩}` | `key` |
+| `option key` | an option or key a key list names | `\usepackage[⟨draft⟩]{x}` | `key` |
+| `environment name` | an environment's name | `\begin{⟨itemize⟩}` | `key` |
+| `file` | a file of no known kind | `\input{⟨a⟩}` read as `.bib` and `.tex` | `name` |
+| `TeX file (.tex)` | a file read as TeX source | `\input{⟨chapter1⟩}` | `file` |
+| `package (.sty)` | a package | `\usepackage{⟨amsmath⟩}` | `file` |
+| `class (.cls)` | a document class | `\documentclass{⟨article⟩}` | `file` |
+| `bibliography database (.bib)` | a BibTeX database | `\bibliography{⟨refs⟩}` | `file` |
+| `bibliography style (.bst)` | a BibTeX style | `\bibliographystyle{⟨plain⟩}` | `file` |
+| `biblatex bibliography style (.bbx)` | a biblatex bibliography style | `\usepackage[style=⟨authoryear⟩]{biblatex}` | `file` |
+| `biblatex citation style (.cbx)` | a biblatex citation style | `\usepackage[citestyle=⟨numeric⟩]{biblatex}` | `file` |
+| `graphic file` | a figure, its extension decided by the run | `\includegraphics{⟨fig⟩}` | `file` |
+| `control sequence` | a control sequence an assignment defines | `\def⟨\foo⟩{}` | `any` |
+| `conditional` | a conditional `\newif` defines, `\if⟨name⟩` | `\newif⟨\ifdraft⟩` | `control sequence` |
+| `options` | the key list a load takes in its optional argument | `\usepackage⟨[a,b]⟩{x}` | `any` |
+| `definition body` | a definition's replacement text, code | `\def\x{⟨\kern1pt⟩}` | `text` |
+| `nothing` | no text, below every type | | every type |
 
 `nothing` is below every type. The join is the nearest type above both (`Ty::join`): a dimen register and a skip register join to `glue`, a box number and a dimen to `quantity`, a counter and a key to `name`. Two key kinds join to `key` (a label and a citation key). Two file kinds join to `file`: a `.bib` and a `.tex` use of one argument give a file of no known kind.
 A key kind (`KeyKind`) is what conventions and lints match on: a label prefix, a citation's database entry, an option of a key list. The role or occurrence kind gives it, never the command's name. A file kind carries its extension and the installation tree its program searches (`FileKind`), the one table completion reads.

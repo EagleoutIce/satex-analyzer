@@ -1004,6 +1004,9 @@ fn completion_offers_keys_in_key_lists() {
     assert!(labels(&paths).contains(&"/demo/mode"), "{:?}", labels(&paths));
     let family = complete(&mut server, &uri, 9, 6);
     assert!(labels(&family).contains(&"width"), "{:?}", labels(&family));
+    // Subkeys come a few levels deep, to be found by any part of their path.
+    assert!(labels(&paths).contains(&"/demo/mode/fast"), "{:?}", labels(&paths));
+    assert!(labels(&family).contains(&"mode/safe"), "{:?}", labels(&family));
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -1069,6 +1072,26 @@ fn hover_and_signature_help_show_argument_types() {
     );
     let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
     assert!(hover.contains("- `⟨arg1⟩` glue"), "{hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A command's hover says what its first call in the document typesets.
+#[test]
+fn hover_shows_what_the_call_typesets() {
+    let text = "\\documentclass{article}\n\\newcommand\\hi[1]{Hello #1}\n\\begin{document}\nGar\\c{c}on \\hi{you}.\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("typesets", text);
+    let hover = |server: &mut Server, character: u32| {
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": character } }),
+        );
+        server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
+    };
+    let hi = hover(&mut server, 12);
+    assert!(hi.contains("Typesets `Hello you` at line 4"), "{hi}");
+    let c = hover(&mut server, 4);
+    assert!(c.contains("Typesets `") && c.contains("at line 4"), "{c}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1166,6 +1189,56 @@ fn file_arguments_complete_their_files_by_extension() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&dir2);
+}
+
+/// An installed package completes with its date and version, as its
+/// identification line says, and a link to its documentation.
+#[test]
+fn packages_complete_with_their_version_and_documentation() {
+    let Ok(path) = satex::paths::which("kpsewhich").map_err(|_| ()).and_then(|k| {
+        let out = std::process::Command::new(k).arg("amsmath.sty").output().map_err(|_| ())?;
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }) else {
+        return;
+    };
+    let text =
+        "\\documentclass{article}\n\\usepackage{amsm}\n\\usepackage{fonts}\n\\begin{document}\nx\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("pkgversions", text);
+    let items = complete(&mut server, &uri, 1, "\\usepackage{amsm".len() as u32);
+    let amsmath = items.iter().find(|i| i["label"] == "amsmath").cloned().unwrap_or_default();
+    // the date the file names in `\ProvidesPackage{amsmath}[…]`
+    let source = std::fs::read_to_string(&path).unwrap_or_default();
+    let date =
+        source.split("\\ProvidesPackage{amsmath}[").nth(1).and_then(|r| r.split_whitespace().next()).unwrap_or("?");
+    assert!(amsmath["detail"].as_str().is_some_and(|d| d.contains(date)), "{amsmath}");
+    assert!(amsmath["documentation"].to_string().contains("texdoc.org/pkg/amsmath"), "{amsmath}");
+    assert!(!amsmath["detail"].to_string().contains("needs"), "{amsmath}");
+    // fontspec says it "requires either XeTeX or LuaTeX": under pdfTeX it says so, and comes last
+    let items = complete(&mut server, &uri, 2, "\\usepackage{fonts".len() as u32);
+    let needs = |i: &Value| i["detail"].as_str().is_some_and(|d| d.contains("needs XeTeX or LuaTeX"));
+    if let Some(at) = items.iter().position(|i| i["label"] == "fontspec") {
+        assert!(needs(&items[at]), "{}", items[at]);
+        assert!(items[at..].iter().all(needs), "{:?}", labels(&items));
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A library argument completes the library names the installation has:
+/// the run saw `\\usetikzlibrary{calc}` load `tikzlibrarycalc.code.tex`, so
+/// its argument names what stands between that prefix and suffix.
+#[test]
+fn library_arguments_complete_their_libraries() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\usetikzlibrary{calc,posi}\n\\begin{document}\nx\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("libraries", text);
+    let items = complete(&mut server, &uri, 2, "\\usetikzlibrary{calc,posi".len() as u32);
+    assert!(labels(&items).contains(&"positioning"), "{:?}", labels(&items));
+    assert!(labels(&items).iter().all(|l| l.starts_with("posi")), "{:?}", labels(&items));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A value the run writes into a build file another tool reads takes that
@@ -1312,7 +1385,9 @@ fn key_lists_complete_paths_choices_and_family_keys() {
     for key in ["/demo/width", "/demo/color", "/demo/draft", "/demo/mode", "/demo/label"] {
         assert!(labels(&paths).contains(&key), "{key}: {:?}", labels(&paths));
     }
-    assert!(!labels(&paths).contains(&"/demo/mode/fast"), "{:?}", labels(&paths));
+    // Subkeys follow, after the keys of the directory itself.
+    let order = |key: &str| paths.iter().find(|i| i["label"] == key).map(|i| i["sortText"].to_string());
+    assert!(order("/demo/mode/fast") > order("/demo/width"), "{paths:?}");
     assert_eq!(paths[0]["textEdit"]["range"]["start"]["character"], 26, "{}", paths[0]);
     // A key that takes a value ends in `=` with the cursor after it; a switch does not.
     let inserted = |key: &str| paths.iter().find(|i| i["label"] == key).map(|i| i["textEdit"]["newText"].clone());
@@ -1403,7 +1478,7 @@ fn typeset_of_a_root(tag: &str) -> Vec<Value> {
     let text = "\\documentclass{article}\n\\begin{document}\n\\input{chapter}\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
     let main = dir.join("main.tex");
     std::fs::write(&main, text).unwrap();
-    std::fs::write(dir.join("chapter.tex"), "Chapter text \\cite{a}.\n").unwrap();
+    std::fs::write(dir.join("chapter.tex"), "\\section{Intro}\nChapter text \\cite{a}.\n").unwrap();
     std::fs::write(dir.join("refs.bib"), "@book{a, author={Doe, J.}, title={A Title}, year={2020}, publisher={P}}\n")
         .unwrap();
     let uri = fixture_uri(&main);
@@ -1440,6 +1515,48 @@ fn typeset_of_a_root_lists_an_input_file() {
     assert!(rows.iter().any(|r| r["path"].as_str().is_some_and(|p| p.ends_with("chapter.tex"))), "{rows:?}");
 }
 
+/// A bibliography's heading and each entry are paragraphs of their own: the
+/// `\par` of an empty paragraph (LaTeX's `\everypar` runs one) ends none.
+/// The starred `\section*` it sets is a heading.
+#[test]
+fn typeset_of_a_root_splits_the_bibliography() {
+    if satex::paths::which("kpsewhich").is_err() {
+        return;
+    }
+    let rows = typeset_of_a_root("bibliography");
+    let details: Vec<&str> = rows.iter().filter_map(|r| r["detail"].as_str()).collect();
+    // a heading: no page break may part it from what follows
+    assert!(
+        rows.iter().any(|r| r["detail"].as_str().is_some_and(|d| d.trim() == "References") && r["heading"].is_string()),
+        "{rows:?}"
+    );
+    assert!(details.iter().any(|d| d.contains("A Title") && !d.contains("References")), "{details:?}");
+    assert!(details.iter().any(|d| d.trim() == "1 Intro"), "{details:?}");
+    // a citation stands where it is set: before its `[1]`
+    let cited = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.starts_with("Chapter text")));
+    let detail = cited.and_then(|r| r["detail"].as_str()).unwrap_or_default();
+    let mark = detail.find("[1]").map(|i| detail[..i].chars().count() as u64);
+    let key = cited.and_then(|r| r["keys"].as_array()).and_then(|k| k.first()).cloned().unwrap_or_default();
+    assert_eq!(
+        (key["kind"].as_str(), key["key"].as_str(), key["at"].as_u64()),
+        (Some("cite"), Some("a"), mark),
+        "{cited:?}"
+    );
+}
+
+/// A paragraph set by a sectioning command says which.
+#[test]
+fn typeset_of_a_root_marks_headings() {
+    if satex::paths::which("kpsewhich").is_err() {
+        return;
+    }
+    let rows = typeset_of_a_root("heading");
+    assert!(
+        rows.iter().any(|r| r["heading"] == "section" && r["detail"].as_str().is_some_and(|d| d.contains("Intro"))),
+        "{rows:?}"
+    );
+}
+
 /// The server runs the build (`Machine::build`), so the .bbl the bibliography
 /// tool would make is typeset in the root, as `satex query typeset` has it.
 #[test]
@@ -1452,4 +1569,54 @@ fn typeset_of_a_root_lists_the_bibliography() {
         rows.iter().any(|r| r["file"] == "main.tex" && r["detail"].as_str().is_some_and(|d| d.contains("A Title"))),
         "{rows:?}"
     );
+}
+
+/// A `\begin` name and its `\end` name are edited together. They pair by
+/// nesting, so the link holds while a name is retyped, and a commented
+/// `\end` is no partner.
+#[test]
+fn environment_names_are_linked_by_nesting() {
+    let (mut server, uri, _, dir) = open_unsaved("linked", "\\begin{a}\n");
+    let text = "\\begin{ite}\n\\begin{b}\n% \\end{x}\n\\end{b}\n\\end{itemize}\n";
+    server.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+    );
+    let lines: Vec<&str> = text.lines().collect();
+    let name = |line: usize, name: &str| {
+        let start = lines[line].find(&format!("{{{name}}}")).unwrap() + 1;
+        json!({ "start": { "line": line, "character": start }, "end": { "line": line, "character": start + name.len() } })
+    };
+    let id = server.request(
+        "textDocument/linkedEditingRange",
+        json!({ "textDocument": { "uri": uri }, "position": name(0, "ite")["end"] }),
+    );
+    let linked = server.response(id);
+    assert_eq!(linked["result"]["ranges"], json!([name(0, "ite"), name(4, "itemize")]), "{linked:?}");
+    let id = server.request(
+        "textDocument/linkedEditingRange",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": 0 } }),
+    );
+    assert_eq!(server.response(id)["result"], Value::Null);
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `\documentclass[` offers the options of the class named after the
+/// cursor, not of every class or package.
+#[test]
+fn class_options_are_the_named_class_s() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text = "\\documentclass[]{article}\n\\usepackage[]{graphicx}\n\\begin{document}\nx\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("classopts", text);
+    let class = complete(&mut server, &uri, 0, "\\documentclass[".len() as u32);
+    let class = labels(&class);
+    assert!(class.contains(&"twocolumn") && !class.contains(&"hiresbb"), "{class:?}");
+    let package = complete(&mut server, &uri, 1, "\\usepackage[".len() as u32);
+    let package = labels(&package);
+    assert!(package.contains(&"hiresbb") && !package.contains(&"twocolumn"), "{package:?}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
 }

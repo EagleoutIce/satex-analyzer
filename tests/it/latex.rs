@@ -3412,3 +3412,108 @@ fn a_line_break_in_the_author_leaves_the_document_balanced() {
     assert!(broken_gaps(&analysis).is_empty(), "{:?}", broken_gaps(&analysis));
     assert_eq!(metadata(&analysis, "author"), "A B");
 }
+
+/// BibTeX's commands under biblatex raise its errors; the finding names the
+/// migration and its fix writes biblatex's commands instead.
+#[test]
+fn bibtex_commands_under_biblatex_migrate() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-biblatex-migrate-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = "\\documentclass{article}\n\\usepackage{biblatex}\n\\begin{document}\nx\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
+    let path = dir.join("main.tex");
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    let found = satex::lint::lint(&analysis);
+    let migrated: Vec<_> = found.iter().filter(|f| f["code"] == "bibtex-command-under-biblatex").collect();
+    let names: Vec<&str> = migrated.iter().filter_map(|f| f["name"].as_str()).collect();
+    assert_eq!(names, ["bibliographystyle", "bibliography"], "{found:?}");
+    let replacements: Vec<&str> = migrated
+        .iter()
+        .flat_map(|f| f["edits"].as_array().into_iter().flatten())
+        .filter_map(|e| e["replacement"].as_str())
+        .collect();
+    assert!(replacements.contains(&"\\printbibliography"), "{replacements:?}");
+    assert!(replacements.contains(&"\\addbibresource{refs.bib}\n"), "{replacements:?}");
+    // the errors they explain are theirs
+    assert!(
+        !found.iter().any(|f| f["code"] == "raised-error" && migrated.iter().any(|m| m["line"] == f["line"])),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `\newif` without its name takes the next token: `\newif` before
+/// `\begin{document}` makes `\begin` a conditional. The call says so, and a
+/// `\newif` of a fresh name says nothing.
+#[test]
+fn a_new_declaration_that_redefines_a_command_is_reported() {
+    let named = |source: &str| -> Vec<String> {
+        satex::lint::lint(&analyze(source))
+            .iter()
+            .filter(|f| f["code"] == "new-redefines")
+            .map(|f| f["name"].as_str().unwrap_or_default().to_string())
+            .collect()
+    };
+    let broken = "\\documentclass{article}\n\\newif\n\\begin{document}\nx\n\\end{document}\n";
+    assert_eq!(named(broken), ["begin"]);
+    assert!(named("\\documentclass{article}\n\\newif\\iffancy\n\\begin{document}\nx\n\\end{document}\n").is_empty());
+}
+
+/// A heading written to the table of contents is a sectioning unit, a part
+/// too, which has no running head of its own (`\partmark`).
+#[test]
+fn parts_are_sections_of_the_outline() {
+    if !installed() {
+        return;
+    }
+    let analysis =
+        analyze("\\documentclass{article}\n\\begin{document}\n\\part{Theory}\n\\section{Intro}\nx\n\\end{document}\n");
+    assert_eq!(keys(&analysis, OccKind::Section), ["Theory", "Intro"]);
+}
+
+/// An alignment's rows go onto the enclosing list, so its cells reach the
+/// page as placed text, not as box contents, and end a block of the page
+/// (tex.web §§ 800-812).
+#[test]
+fn alignment_cells_are_placed_text() {
+    if !installed() {
+        return;
+    }
+    let analysis = crate::support::analyze_plain("\\catcode`\\&=4 x\n\n\\halign{#&#\\cr a&b\\cr c&d\\cr}\ny\n\\end\n");
+    let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+    let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
+    assert_eq!(texts, ["x", "abcd", "y"]);
+}
+
+/// A paragraph inside a box or alignment that goes into an outer paragraph
+/// is part of that one: `\vbox` and `\valign` do not end it.
+#[test]
+fn nested_lists_do_not_end_the_outer_paragraph() {
+    for inner in ["\\vbox{a}", "\\valign{#\\cr a\\cr}"] {
+        let analysis = crate::support::analyze_plain(&format!("x {inner} y\n\nz\n\\end\n"));
+        let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+        let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
+        assert_eq!(texts, ["x a y", "z"], "{inner}");
+    }
+}
+
+/// biblatex's options are keys its `\DeclareOption*` handler hands on:
+/// load-time ones (`style`) at once, the others (`sorting`, `maxnames`)
+/// collected for a later `\setkeys`.
+#[test]
+fn package_options_follow_the_declare_option_handler() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze("\\documentclass{article}\n\\usepackage{biblatex}\n\\begin{document}\nx\n\\end{document}\n");
+    let options: Vec<String> =
+        satex::query::package_options(&analysis, "biblatex").into_iter().map(|(k, _)| k).collect();
+    for wanted in ["style", "backend", "sorting", "maxnames"] {
+        assert!(options.iter().any(|o| o == wanted), "{wanted} not in {options:?}");
+    }
+    // An entry's own options are no package options.
+    assert!(!options.iter().any(|o| o == "uniquepart"), "{options:?}");
+}

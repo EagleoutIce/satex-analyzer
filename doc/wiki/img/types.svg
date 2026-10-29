@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2942 566" width="2942" height="566" font-family="system-ui,Segoe UI,Helvetica,Arial,sans-serif" font-size="13">
+<title>The Ty lattice</title><desc>Argument types of satex from any down to nothing, drawn from Ty::parent in src/roles.rs by satex-doc.</desc>
+<style>path{fill:none;stroke:#8a8f98;stroke-width:1.4}text{fill:#1f2328;text-anchor:middle;dominant-baseline:central}.top rect{fill:#eef0f2;stroke:#8a8f98}.quantity rect{fill:#dbeafe;stroke:#3b82f6}.register rect{fill:#ffedd5;stroke:#f97316}.key rect{fill:#ede9fe;stroke:#8b5cf6}.file rect{fill:#ccfbf1;stroke:#14b8a6}.cs rect{fill:#fee2e2;stroke:#ef4444}.text rect{fill:#dcfce7;stroke:#22c55e}@media (prefers-color-scheme: dark){text{fill:#e6edf3}.top rect{fill:#2d333b}.quantity rect{fill:#1e3a5f}.register rect{fill:#4a2d12}.key rect{fill:#3b2a63}.file rect{fill:#134e48}.cs rect{fill:#5c1d1d}.text rect{fill:#1d4a2c}}</style>
+<path d="M1471 36 V55 H311 V74"/>
+<path d="M1471 36 V55 H667 V74"/>
+<path d="M1471 36 V55 H792 V74"/>
+<path d="M1471 36 V55 H913 V74"/>
+<path d="M1471 36 V55 H1684 V74"/>
+<path d="M1471 36 V55 H2476 V74"/>
+<path d="M1471 36 V55 H2605 V74"/>
+<path d="M1471 36 V55 H2733 V74"/>
+<path d="M1471 36 V55 H2869 V74"/>
+<path d="M1684 100 V119 H1610 V138"/>
+<path d="M1684 100 V119 H2337 V138"/>
+<path d="M1610 164 V183 H1001 V202"/>
+<path d="M1610 164 V183 H1100 V202"/>
+<path d="M1610 164 V183 H1206 V202"/>
+<path d="M1610 164 V183 H1316 V202"/>
+<path d="M1610 164 V183 H1426 V202"/>
+<path d="M1610 164 V183 H1525 V202"/>
+<path d="M1610 164 V183 H1624 V202"/>
+<path d="M1610 164 V183 H1730 V202"/>
+<path d="M1610 164 V183 H1814 V202"/>
+<path d="M1610 164 V183 H1990 V202"/>
+<path d="M1974 228 V249 H1983"/>
+<path d="M1974 228 V283 H1983"/>
+<path d="M1974 228 V317 H1983"/>
+<path d="M1974 228 V351 H1983"/>
+<path d="M1974 228 V385 H1983"/>
+<path d="M1974 228 V419 H1983"/>
+<path d="M1974 228 V453 H1983"/>
+<path d="M1974 228 V487 H1983"/>
+<path d="M1801 228 V249 H1810"/>
+<path d="M1801 228 V283 H1810"/>
+<path d="M1801 228 V317 H1810"/>
+<path d="M1801 228 V351 H1810"/>
+<path d="M792 100 V119 H792 V138"/>
+<path d="M311 100 V119 H102 V138"/>
+<path d="M311 100 V119 H337 V138"/>
+<path d="M311 100 V119 H546 V138"/>
+<path d="M546 164 V183 H546 V202"/>
+<path d="M337 164 V183 H271 V202"/>
+<path d="M337 164 V183 H407 V202"/>
+<path d="M271 228 V247 H271 V266"/>
+<path d="M102 164 V183 H32 V202"/>
+<path d="M102 164 V183 H131 V202"/>
+<g class="top"><rect x="1449" y="10" width="44" height="26" rx="6" stroke-width="1.2"/><text x="1471" y="23">any</text></g>
+<g class="register"><rect x="2806" y="74" width="126" height="26" rx="6" stroke-width="1.2"/><text x="2869" y="87">write register</text></g>
+<g class="register"><rect x="2674" y="74" width="118" height="26" rx="6" stroke-width="1.2"/><text x="2733" y="87">read register</text></g>
+<g class="register"><rect x="2549" y="74" width="111" height="26" rx="6" stroke-width="1.2"/><text x="2605" y="87">box register</text></g>
+<g class="register"><rect x="2417" y="74" width="118" height="26" rx="6" stroke-width="1.2"/><text x="2476" y="87">toks register</text></g>
+<g class="text"><rect x="1658" y="74" width="52" height="26" rx="6" stroke-width="1.2"/><text x="1684" y="87">text</text></g>
+<g class="text"><rect x="2270" y="138" width="133" height="26" rx="6" stroke-width="1.2"/><text x="2337" y="151">definition body</text></g>
+<g class="text"><rect x="1584" y="138" width="52" height="26" rx="6" stroke-width="1.2"/><text x="1610" y="151">name</text></g>
+<g class="file"><rect x="1965" y="202" width="52" height="26" rx="6" stroke-width="1.2"/><text x="1990" y="215">file</text></g>
+<g class="file"><rect x="1983" y="474" width="111" height="26" rx="6" stroke-width="1.2"/><text x="2038" y="487">graphic file</text></g>
+<g class="file"><rect x="1983" y="440" width="244" height="26" rx="6" stroke-width="1.2"/><text x="2105" y="453">biblatex citation style (.cbx)</text></g>
+<g class="file"><rect x="1983" y="406" width="274" height="26" rx="6" stroke-width="1.2"/><text x="2119" y="419">biblatex bibliography style (.bbx)</text></g>
+<g class="file"><rect x="1983" y="372" width="207" height="26" rx="6" stroke-width="1.2"/><text x="2086" y="385">bibliography style (.bst)</text></g>
+<g class="file"><rect x="1983" y="338" width="229" height="26" rx="6" stroke-width="1.2"/><text x="2097" y="351">bibliography database (.bib)</text></g>
+<g class="file"><rect x="1983" y="304" width="111" height="26" rx="6" stroke-width="1.2"/><text x="2038" y="317">class (.cls)</text></g>
+<g class="file"><rect x="1983" y="270" width="126" height="26" rx="6" stroke-width="1.2"/><text x="2045" y="283">package (.sty)</text></g>
+<g class="file"><rect x="1983" y="236" width="133" height="26" rx="6" stroke-width="1.2"/><text x="2049" y="249">TeX file (.tex)</text></g>
+<g class="key"><rect x="1792" y="202" width="44" height="26" rx="6" stroke-width="1.2"/><text x="1814" y="215">key</text></g>
+<g class="key"><rect x="1810" y="338" width="140" height="26" rx="6" stroke-width="1.2"/><text x="1880" y="351">environment name</text></g>
+<g class="key"><rect x="1810" y="304" width="96" height="26" rx="6" stroke-width="1.2"/><text x="1858" y="317">option key</text></g>
+<g class="key"><rect x="1810" y="270" width="111" height="26" rx="6" stroke-width="1.2"/><text x="1866" y="283">citation key</text></g>
+<g class="key"><rect x="1810" y="236" width="59" height="26" rx="6" stroke-width="1.2"/><text x="1840" y="249">label</text></g>
+<g class="register"><rect x="1682" y="202" width="96" height="26" rx="6" stroke-width="1.2"/><text x="1730" y="215">write name</text></g>
+<g class="register"><rect x="1580" y="202" width="89" height="26" rx="6" stroke-width="1.2"/><text x="1624" y="215">read name</text></g>
+<g class="register"><rect x="1484" y="202" width="81" height="26" rx="6" stroke-width="1.2"/><text x="1525" y="215">box name</text></g>
+<g class="register"><rect x="1382" y="202" width="89" height="26" rx="6" stroke-width="1.2"/><text x="1426" y="215">toks name</text></g>
+<g class="register"><rect x="1264" y="202" width="103" height="26" rx="6" stroke-width="1.2"/><text x="1316" y="215">muskip name</text></g>
+<g class="register"><rect x="1162" y="202" width="89" height="26" rx="6" stroke-width="1.2"/><text x="1206" y="215">skip name</text></g>
+<g class="register"><rect x="1052" y="202" width="96" height="26" rx="6" stroke-width="1.2"/><text x="1100" y="215">dimen name</text></g>
+<g class="register"><rect x="964" y="202" width="74" height="26" rx="6" stroke-width="1.2"/><text x="1001" y="215">counter</text></g>
+<g class="key"><rect x="876" y="74" width="74" height="26" rx="6" stroke-width="1.2"/><text x="913" y="87">options</text></g>
+<g class="cs"><rect x="722" y="74" width="140" height="26" rx="6" stroke-width="1.2"/><text x="792" y="87">control sequence</text></g>
+<g class="cs"><rect x="740" y="138" width="103" height="26" rx="6" stroke-width="1.2"/><text x="792" y="151">conditional</text></g>
+<g class="register"><rect x="627" y="74" width="81" height="26" rx="6" stroke-width="1.2"/><text x="667" y="87">register</text></g>
+<g class="quantity"><rect x="271" y="74" width="81" height="26" rx="6" stroke-width="1.2"/><text x="311" y="87">quantity</text></g>
+<g class="quantity"><rect x="513" y="138" width="66" height="26" rx="6" stroke-width="1.2"/><text x="546" y="151">muglue</text></g>
+<g class="register"><rect x="480" y="202" width="133" height="26" rx="6" stroke-width="1.2"/><text x="546" y="215">muskip register</text></g>
+<g class="quantity"><rect x="311" y="138" width="52" height="26" rx="6" stroke-width="1.2"/><text x="337" y="151">glue</text></g>
+<g class="register"><rect x="347" y="202" width="118" height="26" rx="6" stroke-width="1.2"/><text x="407" y="215">skip register</text></g>
+<g class="quantity"><rect x="241" y="202" width="59" height="26" rx="6" stroke-width="1.2"/><text x="271" y="215">dimen</text></g>
+<g class="register"><rect x="208" y="266" width="126" height="26" rx="6" stroke-width="1.2"/><text x="271" y="279">dimen register</text></g>
+<g class="quantity"><rect x="69" y="138" width="66" height="26" rx="6" stroke-width="1.2"/><text x="102" y="151">number</text></g>
+<g class="register"><rect x="68" y="202" width="126" height="26" rx="6" stroke-width="1.2"/><text x="131" y="215">count register</text></g>
+<g class="quantity"><rect x="10" y="202" width="44" height="26" rx="6" stroke-width="1.2"/><text x="32" y="215">box</text></g>
+<g class="top"><rect x="1434" y="530" width="74" height="26" rx="6" stroke-width="1.2"/><text x="1471" y="543">nothing</text></g>
+</svg>

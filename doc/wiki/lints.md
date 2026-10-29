@@ -8,7 +8,7 @@
 
 ## Errors caused in package code
 
-An engine error can arise inside a package while the document's own call caused it. `satex lint` then shows it at that call, as `caused-library-error`. The message names the package line, e.g. `error in expl3-code.tex:24703: Argument has an extra }, caused here`. The call is the innermost place in the user's own files on the input stack. These are the main file, the files it reads, and other files below its directory. One row stands for each call line and error code, with a count when it repeats. An error on a path satex approximated may not be TeX's, so it is a warning. `query diagnostics` gives the call as `origin`.
+An engine error can arise inside a package while the document's own call caused it. `satex lint` then shows it at that call, as `caused-library-error`. The message names the package line, e.g. `error in expl3-code.tex:24703: Argument has an extra }, caused here`. The call is the innermost place in the user's own files on the input stack. These are the main file, the files it reads, and other files below its directory. One row stands for each call line and error code, with a count when it repeats. An error on a path satex approximated may not be TeX's. It is a precision note, which the text output folds into a count and an editor does not show. An exact error after such a one may be its echo, so it is a warning that names the earlier one. A finding that something is absent from the whole document, such as an undefined reference or an unused label, is a precision note too when the run left a project file unread. `query diagnostics` gives the call as `origin`. A runaway over an argument the document itself leaves open is the document's error. It is a `raised-error` at the call, e.g. `File ended while scanning use of \pgfkeys@@set: the argument of \pgfkeys opened here never closes, the file ends inside it`.
 
 ## Suppressing findings
 
@@ -27,30 +27,32 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 
 | code | kind | quick fix | origin | summary |
 | --- | --- | --- | --- | --- |
-| [`already-defined`](#already-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | — | \newcommand redefines an existing name |
+| [`already-defined`](#already-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | — | `\newcommand` redefines an existing name |
+| [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | — | a BibTeX command biblatex replaces stops the run |
 | [`build-bibliography-disabled`](#build-bibliography-disabled) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document has a bibliography, but the build never runs BibTeX or biber |
 | [`build-command-placeholders`](#build-command-placeholders) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | an engine command in the latexmkrc lacks %S or %O |
 | [`build-engine-mismatch`](#build-engine-mismatch) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the build runs another engine, or another output, than the document needs |
-| [`build-shell-escape-missing`](#build-shell-escape-missing) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document runs programs through \write18, but the build does not allow it |
+| [`build-shell-escape-missing`](#build-shell-escape-missing) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document runs programs through `\write18`, but the build does not allow it |
 | [`caused-library-error`](#caused-library-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document makes package code raise a TeX error |
 | [`math-still-open`](#math-still-open) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 16">chktex 16</a> | the run is still in math mode where the text ends |
 | [`missing-graphic`](#missing-graphic) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | an included image is not there for this output target |
-| [`not-defined`](#not-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-safe">safe</span> | — | \renewcommand targets a name that does not exist |
+| [`new-redefines`](#new-redefines) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | a `\new…` declaration silently redefines an existing command |
+| [`not-defined`](#not-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-safe">safe</span> | — | `\renewcommand` targets a name that does not exist |
 | [`option-clash`](#option-clash) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | — | a package is loaded twice with different options |
 | [`raised-error`](#raised-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document's code raises a TeX error |
 | [`undefined-color`](#undefined-color) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | a color is used, or aliased from, before xcolor ever defines it |
 | [`undefined-control-sequence`](#undefined-control-sequence) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | a control sequence is used that nothing defines |
-| [`undefined-environment`](#undefined-environment) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | \begin names an environment that is not defined |
+| [`undefined-environment`](#undefined-environment) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | `\begin` names an environment that is not defined |
 | [`undefined-glossary-entry`](#undefined-glossary-entry) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | a glossary or acronym entry is used but never declared |
 | [`unguarded-recursion`](#unguarded-recursion) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | a recursive macro has nothing that can stop it |
 | [`build-missing-custom-dependency`](#build-missing-custom-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the document writes glossary files, but latexmk has no rule to process them |
 | [`catcode-escapes-group`](#catcode-escapes-group) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | a category code change is still in force at the end of the run |
 | [`conflicting-color-definition`](#conflicting-color-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the same color name is defined twice with different colors |
-| [`delimiter-not-followed`](#delimiter-not-followed) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a> | \left, \right or \middle is followed by a brace or a math shift |
+| [`delimiter-not-followed`](#delimiter-not-followed) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a> | `\left`, `\right` or `\middle` is followed by a brace or a math shift |
 | [`duplicate-bibliography-entry`](#duplicate-bibliography-entry) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the same key is declared by two bibliography entries |
 | [`duplicate-label`](#duplicate-label) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the same label is defined twice |
-| [`environment-mismatch`](#environment-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a> | \end names an environment other than the one that is open |
-| [`expl-syntax-left-on`](#expl-syntax-left-on) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | \ExplSyntaxOn is never turned off |
+| [`environment-mismatch`](#environment-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a> | `\end` names an environment other than the one that is open |
+| [`expl-syntax-left-on`](#expl-syntax-left-on) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | `\ExplSyntaxOn` is never turned off |
 | [`expl3-signature-mismatch`](#expl3-signature-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | an expl3 function takes other arguments than its name says |
 | [`ignored-verbatim-tail`](#ignored-verbatim-tail) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a> | text stands on the line that closes a verbatim body and never reaches the page |
 | [`math-script-braces`](#math-script-braces) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-safe">safe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 3, 25">chktex 3, 25</a> | `^` and `_` take one token, so what follows needs braces |
@@ -60,14 +62,14 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | [`unbalanced-pdf-content`](#unbalanced-pdf-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | a PDF literal opens marked content or a graphics state that is never closed |
 | [`undefined-citation`](#undefined-citation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | a citation names a key no bibliography entry declares |
 | [`undefined-optional-content`](#undefined-optional-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | marked content refers to an optional content group no resource names |
-| [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | \ref names a label that is never defined |
+| [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | `\ref` names a label that is never defined |
 | [`uninstalled-package`](#uninstalled-package) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the package is not installed, and the distribution could install it |
 | [`unresolved-file`](#unresolved-file) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> | a package, class or input file is not in the installation |
 | [`expected-load`](#expected-load) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">correctness</span> | — | — | the file was read after a package it expects loaded |
 | [`math-mode-mismatch`](#math-mode-mismatch) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">correctness</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 49">chktex 49</a> | \(, \), \[ or \] stands where the mode does not allow it |
 | [`unintended-escape`](#unintended-escape) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 21">chktex 21</a> | a command is followed by an escaped punctuation mark, which is another command |
-| [`build-shell-escape-unneeded`](#build-shell-escape-unneeded) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">security</span> | — | — | the build allows \write18, but the document never uses it |
-| [`shell-escape`](#shell-escape) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">security</span> | — | — | the document runs a program through \write18 |
+| [`build-shell-escape-unneeded`](#build-shell-escape-unneeded) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">security</span> | — | — | the build allows `\write18`, but the document never uses it |
+| [`shell-escape`](#shell-escape) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">security</span> | — | — | the document runs a program through `\write18` |
 | [`accent-on-dotted-letter`](#accent-on-dotted-letter) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 7">chktex 7</a> | an accent sits on top of the dot of an `i` or a `j` |
 | [`command-terminated-space`](#command-terminated-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 1">chktex 1</a> | a control word ate the space after it and the next word is set against what it produced |
 | [`dimension-times`](#dimension-times) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 29">chktex 29</a> | the letter x stands between two numbers where a multiplication sign belongs |
@@ -103,7 +105,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | [`math-shift-dollars`](#math-shift-dollars) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 45, 46">chktex 45, 46</a> | display math opened with `$$` where LaTeX spells it \[ |
 | [`microtype-available`](#microtype-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | the engine can protrude characters and expand fonts, but microtype is not loaded |
 | [`numbers-not-aligned`](#numbers-not-aligned) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a table column of numbers does not line them up at their decimal mark |
-| [`ot1-font-encoding`](#ot1-font-encoding) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | accented letters are built with \accent because the text is set in OT1 |
+| [`ot1-font-encoding`](#ot1-font-encoding) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | accented letters are built with `\accent` because the text is set in OT1 |
 | [`prefer-cleveref`](#prefer-cleveref) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a hand-written name in front of `\ref` is what cleveref sets from the label itself |
 | [`primitive-tex-command`](#primitive-tex-command) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 41">chktex 41</a> | a plain TeX primitive is used where LaTeX has its own interface |
 | [`quote-ligature`](#quote-ligature) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 23">chktex 23</a> | three quotation marks in a row set a double and a single mark with nothing between them |
@@ -112,11 +114,11 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | [`table-rules`](#table-rules) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a table is ruled with vertical rules or `\hline` |
 | [`unit-in-cells`](#unit-in-cells) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | every number of a table column carries the same unit |
 | [`unreferenced-numbered-display`](#unreferenced-numbered-display) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a display that stepped a counter is never referenced, so its number is spent for nothing |
-| [`unused-bibitem`](#unused-bibitem) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a \bibitem written in the document is never cited |
+| [`unused-bibitem`](#unused-bibitem) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a `\bibitem` written in the document is never cited |
 | [`unused-color`](#unused-color) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a color the document defines is never used |
 | [`unused-definition`](#unused-definition) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a macro defined in the document is never used |
 | [`unused-label`](#unused-label) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a label is never referenced |
-| [`package-after-preamble`](#package-after-preamble) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">performance</span> | <span class="fix fix-unsafe">unsafe</span> | — | a package is loaded after \begin{document} |
+| [`package-after-preamble`](#package-after-preamble) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">performance</span> | <span class="fix fix-unsafe">unsafe</span> | — | a package is loaded after `\begin{document}` |
 | [`includeonly-available`](#includeonly-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">performance</span> | <span class="fix fix-unsafe">unsafe</span> | — | a document of several `\include`d parts is built whole |
 | [`preamble-cost`](#preamble-cost) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">performance</span> | <span class="fix fix-unsafe">unsafe</span> | — | what the preamble costs on every build |
 | [`recursive-macro`](#recursive-macro) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">performance</span> | — | — | a macro calls itself, directly or through others |
@@ -137,11 +139,12 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 
 These rules have quick fixes:
 
-* [`already-defined`](#already-defined) <span class="fix fix-unsafe">unsafe</span> — \newcommand redefines an existing name
-* [`not-defined`](#not-defined) <span class="fix fix-safe">safe</span> — \renewcommand targets a name that does not exist
+* [`already-defined`](#already-defined) <span class="fix fix-unsafe">unsafe</span> — `\newcommand` redefines an existing name
+* [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) <span class="fix fix-unsafe">unsafe</span> — a BibTeX command biblatex replaces stops the run
+* [`not-defined`](#not-defined) <span class="fix fix-safe">safe</span> — `\renewcommand` targets a name that does not exist
 * [`option-clash`](#option-clash) <span class="fix fix-unsafe">unsafe</span> — a package is loaded twice with different options
-* [`delimiter-not-followed`](#delimiter-not-followed) <span class="fix fix-unsafe">unsafe</span> — \left, \right or \middle is followed by a brace or a math shift
-* [`environment-mismatch`](#environment-mismatch) <span class="fix fix-unsafe">unsafe</span> — \end names an environment other than the one that is open
+* [`delimiter-not-followed`](#delimiter-not-followed) <span class="fix fix-unsafe">unsafe</span> — `\left`, `\right` or `\middle` is followed by a brace or a math shift
+* [`environment-mismatch`](#environment-mismatch) <span class="fix fix-unsafe">unsafe</span> — `\end` names an environment other than the one that is open
 * [`ignored-verbatim-tail`](#ignored-verbatim-tail) <span class="fix fix-unsafe">unsafe</span> — text stands on the line that closes a verbatim body and never reaches the page
 * [`math-script-braces`](#math-script-braces) <span class="fix fix-safe">safe</span> — `^` and `_` take one token, so what follows needs braces
 * [`missing-dependency`](#missing-dependency) <span class="fix fix-safe">safe</span> — a TeX Live package the run reads from is not in the dependency file
@@ -170,7 +173,7 @@ These rules have quick fixes:
 * [`hand-set-quantity`](#hand-set-quantity) <span class="fix fix-unsafe">unsafe</span> — a number and its unit are set by hand where siunitx would set them
 * [`math-shift-dollars`](#math-shift-dollars) <span class="fix fix-safe">safe</span> — display math opened with `$$` where LaTeX spells it \[
 * [`microtype-available`](#microtype-available) <span class="fix fix-unsafe">unsafe</span> — the engine can protrude characters and expand fonts, but microtype is not loaded
-* [`ot1-font-encoding`](#ot1-font-encoding) <span class="fix fix-unsafe">unsafe</span> — accented letters are built with \accent because the text is set in OT1
+* [`ot1-font-encoding`](#ot1-font-encoding) <span class="fix fix-unsafe">unsafe</span> — accented letters are built with `\accent` because the text is set in OT1
 * [`prefer-cleveref`](#prefer-cleveref) <span class="fix fix-unsafe">unsafe</span> — a hand-written name in front of `\ref` is what cleveref sets from the label itself
 * [`primitive-tex-command`](#primitive-tex-command) <span class="fix fix-unsafe">unsafe</span> — a plain TeX primitive is used where LaTeX has its own interface
 * [`quote-ligature`](#quote-ligature) <span class="fix fix-unsafe">unsafe</span> — three quotation marks in a row set a double and a single mark with nothing between them
@@ -179,7 +182,7 @@ These rules have quick fixes:
 * [`unreferenced-numbered-display`](#unreferenced-numbered-display) <span class="fix fix-unsafe">unsafe</span> — a display that stepped a counter is never referenced, so its number is spent for nothing
 * [`unused-definition`](#unused-definition) <span class="fix fix-unsafe">unsafe</span> — a macro defined in the document is never used
 * [`unused-label`](#unused-label) <span class="fix fix-unsafe">unsafe</span> — a label is never referenced
-* [`package-after-preamble`](#package-after-preamble) <span class="fix fix-unsafe">unsafe</span> — a package is loaded after \begin{document}
+* [`package-after-preamble`](#package-after-preamble) <span class="fix fix-unsafe">unsafe</span> — a package is loaded after `\begin{document}`
 * [`includeonly-available`](#includeonly-available) <span class="fix fix-unsafe">unsafe</span> — a document of several `\include`d parts is built whole
 * [`preamble-cost`](#preamble-cost) <span class="fix fix-unsafe">unsafe</span> — what the preamble costs on every build
 * [`unused-dependency`](#unused-dependency) <span class="fix fix-unsafe">unsafe</span> — the dependency file lists a TeX Live package no file of the run comes from
@@ -190,19 +193,31 @@ These rules have quick fixes:
 One group per category. Open a group to read its rules.
 
 <details>
-<summary><b>correctness</b> — 39 rules</summary>
+<summary><b>correctness</b> — 41 rules</summary>
 
 ### already-defined
 
 <p class="badges"><span class="sev sev-error" title="default: error">◆ default: error</span> <span class="cat">correctness</span> <span class="fix fix-unsafe">unsafe</span></p>
 
-**\newcommand redefines an existing name**
+**`\newcommand` redefines an existing name**
 
 `\newcommand` refuses to redefine and raises `Command … already defined`.
 
 Fix with `\renewcommand` if the redefinition is intended, or pick another name.
 
 See [source2e § ltdefns.dtx](https://ctan.org/pkg/source2e).
+
+### bibtex-command-under-biblatex
+
+<p class="badges"><span class="sev sev-error" title="default: error">◆ default: error</span> <span class="cat">correctness</span> <span class="fix fix-unsafe">unsafe</span></p>
+
+**a BibTeX command biblatex replaces stops the run**
+
+biblatex makes the commands of a BibTeX bibliography raise errors where it has its own: the style is its `style` option, not `\bibliographystyle`, and the databases are named in the preamble with `\addbibresource` and printed with `\printbibliography`, not with `\bibliography` ([biblatex manual, §3.7.1](https://ctan.org/pkg/biblatex) and [§3.7.2](https://ctan.org/pkg/biblatex)). Only a call the run reached and that raised the error is reported.
+
+Fix by deleting `\bibliographystyle` (choose a style with `\usepackage[style=…]{biblatex}`), and by writing `\printbibliography` for `\bibliography` with an `\addbibresource` per database in the preamble.
+
+See [biblatex § §3.7](https://ctan.org/pkg/biblatex).
 
 ### build-bibliography-disabled
 
@@ -244,7 +259,7 @@ See [latexmk § $pdf_mode](https://ctan.org/pkg/latexmk).
 
 <p class="badges"><span class="sev sev-error" title="default: error">◆ default: error</span> <span class="cat">correctness</span></p>
 
-**the document runs programs through \write18, but the build does not allow it**
+**the document runs programs through `\write18`, but the build does not allow it**
 
 The run reached `\write18`, which only hands its text to the shell when the engine is started with `-shell-escape` (or `-shell-restricted` and a program TeX Live allows). latexmk starts the engine with the command in `$pdflatex`, `$lualatex`, `$xelatex` or `$latex`, whichever `$pdf_mode` selects (latexmk(1), `$pdf_mode`). arara's `pdflatex`, `lualatex` and `xelatex` rules take `shell: yes` ([arara manual, "The official rules"](https://ctan.org/pkg/arara)).
 
@@ -258,9 +273,9 @@ See [latexmk § $pdf_mode](https://ctan.org/pkg/latexmk), [arara § The official
 
 **the document makes package code raise a TeX error**
 
-An engine error such as `Argument has an extra }` arises inside package code. The cause is the document's own call into that code. The finding sits at that call and names the package line where the error arose. Each call and error code is one finding, with a count when it repeats.
+An engine error such as `Argument has an extra }` arises inside package code. The cause is the document's own call into that code. The finding sits at that call and names the package line where the error arose. A runaway over the document's own unclosed argument is not one: `raised-error` reports it. Each call and error code is one finding, with a count when it repeats.
 
-When satex had to approximate on the way, the error may not be TeX's. Nor may any error after such a one: TeX's recovery left a state that may not be TeX's. The finding is then a warning that names the earlier error.
+When satex had to approximate on the way, the error may not be TeX's: it is a precision note, not a finding. An exact error after such a one may be its echo, as TeX's recovery left a state that may not be TeX's. The finding is then a warning that names the earlier error.
 
 See [The TeXbook, chapter 27](https://ctan.org/pkg/texbook#chapter-27).
 
@@ -270,13 +285,13 @@ See [The TeXbook, chapter 27](https://ctan.org/pkg/texbook#chapter-27).
 
 **the run is still in math mode where the text ends**
 
-A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20410) `insert_dollar_sign`), and everything up to there is set as mathematics.
+A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20410) `insert_dollar_sign`), and everything up to there is set as mathematics.
 
 The rule reports what the interpreter already saw: the `missing-dollar` diagnostic it raised, or, where no `\par` followed, a last character still carrying a math mode (unless a limit stopped the run before the text's end). It reports one finding, never both.
 
 Fix by closing the formula.
 
-See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20410).
+See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20410).
 
 ### missing-graphic
 
@@ -290,11 +305,23 @@ Fix by adding the file, or by producing the format the driver reads.
 
 See [graphics § pdftex.def](https://ctan.org/pkg/graphics).
 
+### new-redefines
+
+<p class="badges"><span class="sev sev-error" title="default: error">◆ default: error</span> <span class="cat">correctness</span></p>
+
+**a `\new…` declaration silently redefines an existing command**
+
+A LaTeX `\new…` command declares a fresh name, and some do not check that it is: `\newif\begin` makes `\begin` a conditional (and defines `\gintrue` and `\ginfalse` from what follows its first two letters), `\newcount` and `\newtoks` overwrite whatever the name meant. Every later use of the name then does something else, and the error a run reports is somewhere after it, often far away. Reported where the document's own `\new…` call made the definition of a name its own files spell.
+
+Fix by giving the declaration the name it was meant to have (a conditional's name begins with `if`), or by declaring the argument it lacks.
+
+See [source2e § ltdefns.dtx](https://ctan.org/pkg/source2e).
+
 ### not-defined
 
 <p class="badges"><span class="sev sev-error" title="default: error">◆ default: error</span> <span class="cat">correctness</span> <span class="fix fix-safe">safe</span></p>
 
-**\renewcommand targets a name that does not exist**
+**`\renewcommand` targets a name that does not exist**
 
 `\renewcommand` requires an existing definition and raises `Undefined control sequence`.
 
@@ -320,7 +347,7 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 **the document's code raises a TeX error**
 
-Running the document reaches `\errmessage`, which every LaTeX error (`\PackageError`, `\msg_error:nn`, the kernel's own) ends in: a real run stops there. A more specific rule that explains the same error reports it instead. An error reached only on a path satex could not decide, or after it lost track of the mode, is not one a real run need reach, and is not reported.
+Running the document reaches `\errmessage`, which every LaTeX error (`\PackageError`, `\msg_error:nn`, the kernel's own) ends in: a real run stops there. A more specific rule that explains the same error reports it instead. An error reached only on a path satex could not decide, or after it lost track of the mode, is not one a real run need reach, and is not reported. A runaway in package code over an argument the document leaves open is the document's error too: it is shown at the call that opens it.
 
 ### undefined-color
 
@@ -350,7 +377,7 @@ See [The TeXbook, chapter 27](https://ctan.org/pkg/texbook#chapter-27).
 
 <p class="badges"><span class="sev sev-error" title="default: error">◆ default: error</span> <span class="cat">correctness</span></p>
 
-**\begin names an environment that is not defined**
+**`\begin` names an environment that is not defined**
 
 `\begin{name}` expands `\name`, and nothing defines it. A real run reports `Environment name undefined`.
 
@@ -423,15 +450,15 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 <p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">correctness</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a></p>
 
-**\left, \right or \middle is followed by a brace or a math shift**
+**`\left`, `\right` or `\middle` is followed by a brace or a math shift**
 
-`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L22057)). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
+`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22057)). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
 
 The rule asks what each command means rather than matching its name, so it covers `\middle` and any `\let` alias, which chktex's name list does not.
 
 Fix by writing `\{` and `\}` for brace delimiters, or `\left.` where no delimiter is wanted.
 
-See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L22057).
+See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22057).
 
 ### duplicate-bibliography-entry
 
@@ -451,7 +478,7 @@ See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
 
 **the same label is defined twice**
 
-LaTeX warns `Label … multiply defined` and every reference resolves to the later one. Only the kernel's `\newlabel` (and zref's) warn: a name another package writes to the `.aux` file twice, such as a tikzmark, is not checked.
+LaTeX warns `Label … multiply defined` and every reference resolves to the later one. The finding stands at the innermost command of the document's text that writes the label: the `\begin` inside a `\sbox` argument, not the `\sbox`. Only the kernel's `\newlabel` (and zref's) warn: a name another package writes to the `.aux` file twice, such as a tikzmark, is not checked.
 
 Fix by renaming one of them.
 
@@ -461,7 +488,7 @@ See [source2e § ltxref.dtx](https://ctan.org/pkg/source2e).
 
 <p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">correctness</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a></p>
 
-**\end names an environment other than the one that is open**
+**`\end` names an environment other than the one that is open**
 
 Environments nest like brackets: the name `\end` gives has to match the one `\begin` most recently opened. chktex tracks this as warnings 9 (`'%s' expected, found '%s'`), 10 (`Solo '%s' found`) and 15 (`No match found for '%s'`) for brackets and environments alike. satex only records `\begin`/`\end` occurrences, so this rule covers environments and not generic `{}`, `[]` or `()` nesting.
 
@@ -475,7 +502,7 @@ See [chktex 9](https://www.nongnu.org/chktex/), [chktex 10](https://www.nongnu.o
 
 <p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">correctness</span></p>
 
-**\ExplSyntaxOn is never turned off**
+**`\ExplSyntaxOn` is never turned off**
 
 With expl3 syntax on, spaces are ignored and `_` and `:` are letters, so ordinary text stops working.
 
@@ -603,9 +630,9 @@ See [PDF 32000 § 8.11.3.2](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdf
 
 <p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">correctness</span></p>
 
-**\ref names a label that is never defined**
+**`\ref` names a label that is never defined**
 
-No `\label` in the document or its inputs declares this key, so the reference prints `??`.
+No `\label` in the document or its inputs declares this key, so the reference prints `??`. When the run left a project file unread, the label may stand there: the finding is then a precision note.
 
 Fix by adding the `\label`, or by correcting the key.
 
@@ -682,7 +709,7 @@ See [chktex 21](https://www.nongnu.org/chktex/), [The TeXbook, chapter 9](https:
 
 <p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">security</span></p>
 
-**the build allows \write18, but the document never uses it**
+**the build allows `\write18`, but the document never uses it**
 
 `-shell-escape` lets every package and every `.aux` or `.bbl` line the document reads run any program as you. The run reached no `\write18`, so the permission buys nothing and only widens what a hostile input file can do.
 
@@ -694,7 +721,7 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 
 <p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">security</span></p>
 
-**the document runs a program through \write18**
+**the document runs a program through `\write18`**
 
 `\write18` hands its text to the shell. A run only does that when the engine was started with `--shell-escape`, or with `--shell-restricted` and the program is one TeX Live allows. `shell_escape` in `satex.yaml` says which of the three this build is.
 
@@ -815,7 +842,7 @@ satex compares each character's `\f@shape` against the kernel's `\itdefault` and
 
 Fix by writing `\/` after the last slanted character.
 
-See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21365).
+See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21365).
 
 ### missing-nonbreaking-space
 
@@ -825,11 +852,11 @@ See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https:/
 
 A reference should not begin a line on its own, so a tie belongs in front of it. `~` is an interword space TeX may not break at ([The TeXbook, chapter 14](https://ctan.org/pkg/texbook#chapter-14)).
 
-The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20358)).
+The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20358)).
 
 Fix by writing `Figure~\ref{fig:one}`.
 
-See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook#chapter-14), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20358).
+See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook#chapter-14), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20358).
 
 ### parenthesis-spacing
 
@@ -840,6 +867,8 @@ See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https:
 A parenthesis takes the space of the text around it, never of the text inside it: `text (inside) text`, not `text( inside )text`.
 
 The rule reads the characters the run set, skips math, where `f(x)` is right, and reports a space inside the parentheses only where a real space token became glue. A missing space is the noisier half, because `word(s)` is ordinary English, so those findings come as notes.
+
+Code shown as text is not prose. The rule skips text in the typewriter family (`\ttdefault`) and a call: a `(` right after a name, around a list of single words or nothing, as in `plot(x, y)` or `c(1, 2, 3)`.
 
 Fix by moving the space to the other side of the parenthesis.
 
@@ -865,13 +894,13 @@ See [chktex 32](https://www.nongnu.org/chktex/), [chktex 33](https://www.nongnu.
 
 **a period set the wrong width of space for the sentence around it**
 
-How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000.
+How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000.
 
 So `etc. and` gets a sentence space and `the ABC. Next` a word space, both the wrong way round. The rule reads the characters the run set and reports only where a real space token became glue.
 
 Fix by writing `etc.\ and`, or `the ABC\@. Next`.
 
-See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20114).
+See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20114).
 
 ### space-before-command
 
@@ -895,11 +924,11 @@ See [chktex 24](https://www.nongnu.org/chktex/), [chktex 42](https://www.nongnu.
 
 Punctuation belongs against the word it follows. A space in front of a comma or a period is glue, and the reader sees it on the page.
 
-The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20358)). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
+The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20358)). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
 
 Fix by deleting the space.
 
-See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20358).
+See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20358).
 
 ### stray-italic-correction
 
@@ -907,13 +936,13 @@ See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://githu
 
 **a repeated italic correction, or one in front of a period or comma**
 
-`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
+`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
 
 satex reads the characters the document set, so it sees through a closing brace: in `\textit{word\/}.` the next character set is the period.
 
 Fix by deleting the `\/`.
 
-See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21365).
+See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21365).
 
 ### unknown-suppress-code
 
@@ -973,13 +1002,13 @@ See [chktex 18](https://www.nongnu.org/chktex/), [chktex 19](https://www.nongnu.
 
 **the italic correction is zero here, so `\/` changes nothing**
 
-`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21365)). Where that correction is zero the `\/` does nothing.
+`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21365)). Where that correction is zero the `\/` does nothing.
 
 Every character carries the font it was set in ([fntguide § 2](https://ctan.org/pkg/fntguide)), and satex reads the correction out of that font's TFM. That is a measurement, where chktex decides from a list of command names. In math, and after a space, the kern is zero whatever the font.
 
 Fix by deleting the `\/`.
 
-See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4).
+See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook#chapter-4).
 
 ### build-bibliography-unneeded
 
@@ -1113,7 +1142,7 @@ See [SI brochure § 5.4.3](https://www.bipm.org/en/publications/si-brochure), [s
 
 **the numbers of a table column give different numbers of decimals**
 
-`1.5`, `2.25` and `3` in one column claim three different precisions, and do not line up even at their decimal mark. Give them one precision; an `S` column of [siunitx](https://ctan.org/pkg/siunitx) rounds them with `round-mode = places, round-precision = …`.
+`1.5`, `2.25` and `3` in one column claim three different precisions, and do not line up even at their decimal mark. Give them one precision. An `S` column of [siunitx](https://ctan.org/pkg/siunitx) rounds them with `round-mode = places, round-precision = …`.
 
 See [siunitx § 4.6](https://ctan.org/pkg/siunitx).
 
@@ -1173,7 +1202,7 @@ See [siunitx § 7.12](https://ctan.org/pkg/siunitx).
 
 <p class="badges"><span class="sev sev-info" title="default: info">● default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span></p>
 
-**accented letters are built with \accent because the text is set in OT1**
+**accented letters are built with `\accent` because the text is set in OT1**
 
 OT1, LaTeX's default text encoding, has no accented letters: it builds each one with the `\accent` primitive (ot1enc.def, [fntguide § 5](https://ctan.org/pkg/fntguide)). TeX does not hyphenate a word holding an `\accent` ([The TeXbook, appendix H](https://ctan.org/pkg/texbook#appendix-h)), and the PDF's text layer holds an accent and a letter instead of the character.
 
@@ -1193,7 +1222,7 @@ See [source2e § ot1enc.def](https://ctan.org/pkg/source2e), [fntguide § 5](htt
 
 The rule reads the `\ref` sites the run recorded and takes a word, or abbreviation with a period, tied or spaced directly in front of one. The word must name the label's kind, read from the counter the label was set after: the counter's name, its `\<counter>name` macro or a `\crefname` text, in singular, plural or as a prefix. `see~\ref{x}` stays silent, and so does a label the run never found. `\eqref`, `\pageref` and `(\ref{x})` have no word in front and stay silent. `Sections~\ref{a} and~\ref{b}` is one finding.
 
-Whether the document loaded cleveref is read from the run. If it did, the fix writes `\Cref{sec:x}`, or `\cref` after a lowercase word, and the rule speaks only where cleveref would set the very word written (`Sec.` stays where it sets `Section`). If it did not, the finding asks to load it after hyperref and has no fix.
+Whether the document loaded cleveref is read from the run. If it did, the fix writes `\Cref{sec:x}`, or `\cref` after a lowercase word, and the rule speaks only where cleveref would set the very word written (`Sec.` stays where it sets `Section`). If it did not, the fix also loads it, after the last `\usepackage` of the preamble.
 
 Fix by writing `\Cref{sec:x}` and loading cleveref.
 
@@ -1245,13 +1274,13 @@ See [chktex 38](https://www.nongnu.org/chktex/).
 
 **a macro body picked up a space from an unescaped line end**
 
-Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7326)).
+Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7326)).
 
-The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been.
+The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been.
 
 Fix by writing `%` at the end of that line.
 
-See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L7326), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/c36752cc177adb3b9d3593cbdc20ece3aeaf38c2/texk/web2c/tex.web#L20358).
+See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7326), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20358).
 
 ### table-rules
 
@@ -1259,7 +1288,7 @@ See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/c36752cc177
 
 **a table is ruled with vertical rules or `\hline`**
 
-[booktabs](https://ctan.org/pkg/booktabs) gives a table three rules of different weights, `\toprule`, `\midrule` and `\bottomrule`, with space around them, and asks for no vertical rules at all ([§ 2](https://ctan.org/pkg/booktabs) of its manual): the columns are separated by their space, and `\hline` sets every rule alike and too close to the text.
+[booktabs](https://ctan.org/pkg/booktabs) gives a table three rules of different weights, `\toprule`, `\midrule` and `\bottomrule`, with space around them, and asks for no vertical rules at all ([§ 2](https://ctan.org/pkg/booktabs) of its manual): the columns are separated by their space, and `\hline` sets every rule alike and too close to the text. A table of fewer rows than `lints.table-rules.rows` (3) is left alone.
 
 See [booktabs § 2](https://ctan.org/pkg/booktabs).
 
@@ -1291,7 +1320,7 @@ See [amsmath § 3.1](https://ctan.org/pkg/amsmath), [clsguide § counters](https
 
 <p class="badges"><span class="sev sev-info" title="default: info">● default: info</span> <span class="cat">style</span></p>
 
-**a \bibitem written in the document is never cited**
+**a `\bibitem` written in the document is never cited**
 
 A `thebibliography` written by hand lists what it lists, cited or not. A database only contributes what is cited, so its entries are not reported. `\nocite{*}` cites everything.
 
@@ -1338,7 +1367,7 @@ Fix by deleting the `\label`, or by checking the `\ref` that was meant to use it
 
 <p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
 
-**a package is loaded after \begin{document}**
+**a package is loaded after `\begin{document}`**
 
 `\usepackage` belongs in the preamble. After `\begin{document}` LaTeX raises `\usepackage before \begin{document}` and the package cannot set anything up.
 
@@ -1352,7 +1381,7 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 **a document of several `\include`d parts is built whole**
 
-`\includeonly` names the parts a build reads. The others keep their page numbers and labels from their `.aux` files ([source2e](https://ctan.org/pkg/source2e), ltfiles.dtx). A draft build of one chapter then skips the rest. The rule fires when the document `\include`s at least two parts, no `\includeonly` is in force, and the body is most of what the build interprets and no small one.
+`\includeonly` names the parts a build reads. The others keep their page numbers and labels from their `.aux` files ([source2e](https://ctan.org/pkg/source2e), ltfiles.dtx). A draft build of one chapter then skips the rest. The rule fires when the document `\include`s at least two parts, no `\includeonly` is in force, and the body is most of what the build interprets. It also has to set a book's worth of paragraph text, `lints.build-cost.characters` in `satex.yaml`: a shorter document builds whole in seconds.
 
 Fix by listing the parts being written in `\includeonly` while drafting.
 
@@ -1398,7 +1427,7 @@ Fix, if the package really is unused, by deleting its line.
 
 **a loaded package defines nothing the document uses**
 
-Every name the package defines is unused. The package may still be needed for its side effects — page layout, hooks, fonts, `\AtBeginDocument` code — so this is a hint, not a verdict.
+Every name the package defines is unused, and no code outside it reads a setting it made (a class's `\textheight` is read for every page). It may still act through hooks or fonts, so this is a hint, not a verdict.
 
 Fix, if the package really is unused, by deleting the `\usepackage`: it is read on every build.
 

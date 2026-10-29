@@ -172,6 +172,26 @@ pub enum Ty {
 }
 
 impl Ty {
+    /// Every type, from `Top` down, children after their parents.
+    pub fn all() -> Vec<Ty> {
+        use Ty::*;
+        let regs = RegKind::ALL
+            .iter()
+            .copied()
+            .filter(|k| !matches!(k, RegKind::Char | RegKind::MathChar | RegKind::UMathChar));
+        let keys = [KeyKind::Any, KeyKind::Label, KeyKind::Cite, KeyKind::Option, KeyKind::Environment];
+        let files = FILE_KINDS.iter().map(|r| r.0).filter(|k| *k != FileKind::Any);
+        let mut out =
+            vec![Top, Quantity, Number, Dimen, Glue, MuGlue, Box, Register, Cs, Switch, Options, Text, Name, Body];
+        out.extend(regs.clone().map(Reg));
+        out.extend(regs.map(Named));
+        out.extend(keys.map(Key));
+        out.push(File(FileKind::Any));
+        out.extend(files.map(File));
+        out.push(Bottom);
+        out
+    }
+
     /// The next type up.
     pub fn parent(self) -> Ty {
         use Ty::*;
@@ -276,17 +296,23 @@ impl std::fmt::Display for Role {
         if !self.prefix.is_empty() {
             write!(f, " after {}", self.prefix)?;
         }
+        if !self.suffix.is_empty() {
+            write!(f, " before {}", self.suffix)?;
+        }
         Ok(())
     }
 }
 
 /// Argument `arg` (counting braced arguments from 0) of a command is a
-/// `kind`; its key is `prefix` followed by what the argument holds.
+/// `kind`; its key is `prefix`, then what the argument holds (an item of
+/// it, for a list), then `suffix`: `\usetikzlibrary{calc}` loads
+/// `tikzlibrarycalc.code.tex`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Role {
     pub arg: usize,
     pub kind: RoleKind,
     pub prefix: String,
+    pub suffix: String,
 }
 
 /// How deep the flow follows macros calling macros.
@@ -345,12 +371,17 @@ fn roles_typed(analysis: &Analysis, typed: &Typed, cmd: &str) -> Vec<Role> {
             && !joined.iter().any(|j| j.arg == value)
             && Ty::Reg(kind).parent().leq(Ty::Quantity)
         {
-            joined.push(Role { arg: value, kind: RoleKind::Type(Ty::Reg(kind).parent()), prefix: String::new() });
+            joined.push(Role {
+                arg: value,
+                kind: RoleKind::Type(Ty::Reg(kind).parent()),
+                prefix: String::new(),
+                suffix: String::new(),
+            });
         }
     }
     for (arg, ty) in statics {
         if !joined.iter().any(|j| j.arg == arg) {
-            joined.push(Role { arg, kind: RoleKind::Type(ty), prefix: String::new() });
+            joined.push(Role { arg, kind: RoleKind::Type(ty), prefix: String::new(), suffix: String::new() });
         }
     }
     out.extend(joined);
@@ -501,6 +532,7 @@ fn roles_at(analysis: &Analysis, typed: &Typed, cmd: &str, depth: usize) -> Vec<
         arg: *arg,
         kind: RoleKind::Type(*ty),
         prefix: String::new(),
+        suffix: String::new(),
     }));
     let body = project_body(analysis, cmd);
     if let Some(body) = &body
@@ -508,8 +540,9 @@ fn roles_at(analysis: &Analysis, typed: &Typed, cmd: &str, depth: usize) -> Vec<
     {
         out.extend(flow(analysis, typed, body, depth));
     }
-    // A command the project defines anew is what its body says.
-    if body.is_none() {
+    // A command the project defines anew is what its body says; the
+    // conventions stand in only where the run saw nothing of it.
+    if body.is_none() && !out.iter().any(|r| matches!(r.kind, RoleKind::Occ(_) | RoleKind::Load(_))) {
         out.extend(seed(cmd));
     }
     out
@@ -523,7 +556,8 @@ fn evidence(analysis: &Analysis, cmd: &str) -> Vec<Role> {
         .occurrences
         .iter()
         .map(|o| (o.call.map_or(o.span, |c| c.1), Some(o.span), o.key.as_str(), RoleKind::Occ(o.kind)));
-    let loads = analysis.facts.loads.iter().map(|l| (l.span, None, l.name.as_str(), RoleKind::Load(l.kind)));
+    let loads =
+        analysis.facts.loads.iter().map(|l| (l.call.unwrap_or(l.span), None, l.name.as_str(), RoleKind::Load(l.kind)));
     let mut texts: crate::fixed::HashMap<crate::tex::FileId, Option<String>> = Default::default();
     occurrences
         .chain(loads)
@@ -537,12 +571,19 @@ fn evidence(analysis: &Analysis, cmd: &str) -> Vec<Role> {
             // document) stands where the document's call gave it.
             let held = [Some(at), own.filter(|o| o.file == at.file)].into_iter().flatten().find_map(|at| {
                 call_arguments(text, at, cmd)?.iter().enumerate().find_map(|(i, held)| {
-                    let prefix = key.strip_suffix(held.as_str()).filter(|_| !held.is_empty())?;
-                    Some((i, prefix.to_string()))
+                    if let Some(prefix) = key.strip_suffix(held.as_str()).filter(|_| !held.is_empty()) {
+                        return Some((i, prefix.to_string(), String::new()));
+                    }
+                    // A load per item of a list (`\usetikzlibrary{calc,arrows}`), its
+                    // name the item between a fixed prefix and suffix.
+                    let item = held.split(',').map(str::trim).filter(|t| !t.is_empty()).find(|t| key.contains(*t))?;
+                    let (prefix, suffix) = key.rsplit_once(item)?;
+                    (matches!(kind, RoleKind::Load(_)) && !(prefix.is_empty() && suffix.is_empty()))
+                        .then(|| (i, prefix.to_string(), suffix.to_string()))
                 })
             });
-            let (arg, prefix) = held?;
-            Some(Role { arg, kind, prefix })
+            let (arg, prefix, suffix) = held?;
+            Some(Role { arg, kind, prefix, suffix })
         })
         .collect()
 }
@@ -606,7 +647,12 @@ fn flow(analysis: &Analysis, typed: &Typed, body: &[Token], depth: usize) -> Vec
             // A type is the whole argument's, not of what follows a prefix.
             let whole = |r: &&Role| !matches!(r.kind, RoleKind::Type(_)) || prefix.is_empty() && r.prefix.is_empty();
             for r in known.iter().filter(|r| r.arg == j).filter(whole) {
-                out.push(Role { arg: i, kind: r.kind, prefix: format!("{}{prefix}", r.prefix) });
+                out.push(Role {
+                    arg: i,
+                    kind: r.kind,
+                    prefix: format!("{}{prefix}", r.prefix),
+                    suffix: r.suffix.clone(),
+                });
             }
         }
     }
@@ -742,7 +788,7 @@ fn param_after(analysis: &Analysis, group: &[Token]) -> Option<(usize, String)> 
 fn seed(cmd: &str) -> Vec<Role> {
     use LoadKind as L;
     use OccKind as O;
-    let first = |kind| vec![Role { arg: 0, kind, prefix: String::new() }];
+    let first = |kind| vec![Role { arg: 0, kind, prefix: String::new(), suffix: String::new() }];
     match cmd {
         "documentclass" | "LoadClass" => first(RoleKind::Load(L::Class)),
         "usepackage" | "RequirePackage" => first(RoleKind::Load(L::Package)),
@@ -752,9 +798,9 @@ fn seed(cmd: &str) -> Vec<Role> {
         "end" => first(RoleKind::Occ(O::EndEnvironment)),
         "includegraphics" => first(RoleKind::Occ(O::Graphics)),
         "label" => first(RoleKind::Occ(O::Label)),
-        "crefrange" | "Crefrange" => {
-            (0..2).map(|arg| Role { arg, kind: RoleKind::Occ(O::Ref), prefix: String::new() }).collect()
-        }
+        "crefrange" | "Crefrange" => (0..2)
+            .map(|arg| Role { arg, kind: RoleKind::Occ(O::Ref), prefix: String::new(), suffix: String::new() })
+            .collect(),
         "ref" | "eqref" | "pageref" | "autoref" | "nameref" | "cref" | "Cref" | "cpageref" | "Cpageref" | "vref"
         | "Vref" | "labelcref" | "subref" => first(RoleKind::Occ(O::Ref)),
         c if c.contains("cite") => first(RoleKind::Occ(O::Cite)),
