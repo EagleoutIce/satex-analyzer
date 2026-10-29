@@ -1500,9 +1500,10 @@ pub struct Machine<'a> {
     /// replacement text: what `\the` and `\unexpanded` give it is stored as
     /// it stands (tex.web § 478), so a `#` among it is no parameter.
     def_body_depth: Option<usize>,
-    /// Fact index by source site, so that re-analyzing a file does not
-    /// duplicate what it observed.
-    definition_sites: crate::fixed::LookupMap<(Span, Sym), usize>,
+    /// Fact index by source site and package, so that re-analyzing a file
+    /// does not duplicate what it observed. Packages running one kernel site
+    /// (`\DeclareOption*`'s `\edef\default@ds`) each keep their own fact.
+    definition_sites: crate::fixed::LookupMap<(Span, Sym, Option<Sym>), usize>,
     expansion_sites: crate::fixed::LookupMap<(Span, Sym), Site>,
     /// Per site, the names written in the round before its last expansion
     /// and what they held then, under [`Site::assigned`] of that one.
@@ -5571,7 +5572,7 @@ will look undefined",
         }
 
         self.record(Step::Define, name, span);
-        let existing = self.definition_sites.get(&(span, name)).copied();
+        let existing = self.definition_sites.get(&(span, name, self.package())).copied();
         // Kernel code re-run in a new environment (`\list`'s own `\def\@itemlabel{#1}`,
         // once per `\begin{itemize}`/`\begin{enumerate}`) hits the same site every time.
         // Without this, the first context seen there would be the only one `explain`
@@ -5579,14 +5580,12 @@ will look undefined",
         let current_context: Rc<[Sym]> = Rc::from(self.env_stack.as_slice());
         let context_is_new = existing.is_some_and(|i| {
             self.out.facts.defs[i].context.as_ref() != current_context.as_ref()
-                && !self
-                    .out
-                    .facts
-                    .defs
-                    .iter()
-                    .rev()
-                    .take(256)
-                    .any(|d| d.name == name && d.span == span && d.context.as_ref() == current_context.as_ref())
+                && !self.out.facts.defs.iter().rev().take(256).any(|d| {
+                    d.name == name
+                        && d.span == span
+                        && d.package == self.package()
+                        && d.context.as_ref() == current_context.as_ref()
+                })
         });
         // A package being cached records the fact it would have made even
         // where this run already has one for the site: a run that replays
@@ -5661,7 +5660,7 @@ will look undefined",
                     self.carried.own_switches.insert(name);
                 }
                 if existing.is_none() {
-                    self.definition_sites.insert((span, name), self.out.facts.defs.len());
+                    self.definition_sites.insert((span, name, fact.package), self.out.facts.defs.len());
                     self.out.facts.defs.push(fact);
                 } else if context_is_new {
                     self.out.facts.defs.push(fact);

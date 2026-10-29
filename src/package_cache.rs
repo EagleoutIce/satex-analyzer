@@ -2065,14 +2065,14 @@ impl Machine<'_> {
                 continue;
             };
             let span = span_in(d.span, site);
-            if let Some(&i) = self.definition_sites.get(&(span, d.name)) {
+            if let Some(&i) = self.definition_sites.get(&(span, d.name, d.package)) {
                 let previous = &mut self.out.facts.defs[i];
                 previous.certain &= d.certain;
                 previous.mac = mac;
                 continue;
             }
             let cds = self.resolve_cds(&st, &mut ids, &reached, before, site, &d.cds);
-            self.definition_sites.insert((span, d.name), self.out.facts.defs.len());
+            self.definition_sites.insert((span, d.name, d.package), self.out.facts.defs.len());
             self.out.facts.defs.push(Definition {
                 name: d.name,
                 by: d.by,
