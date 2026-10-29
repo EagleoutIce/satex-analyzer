@@ -560,7 +560,8 @@
   outlineBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) outlineOpen.add(id); else outlineOpen.delete(id); } }, true);
   const LEVELS = ['part', 'chapter', 'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph'];
   async function outline() {
-    const request = { file: path(state.root), queries: [{ type: 'occurrences' }] };
+    // an edit in an included file leaves the held analysis of the root stale: a config forces a fresh one
+    const request = { file: path(state.root), queries: [{ type: 'occurrences' }], ...(state.file !== state.root ? { config: { trace: 'false' } } : {}) };
     const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records;
     if (!rs) return;
     // in source order: a sectioning unit is recorded when its contents line is written, after its labels
@@ -593,7 +594,7 @@
       const files = [...open.files].filter((f) => /\.(tex|ltx)$/.test(f) && state.files.some((n) => String(f).endsWith(n)));
       const cites = [...open.cites.entries()].map(([k, c]) => `<a href="#" class="o-go o-label o-bib" ${at(c[0])} title="cited ${c.length}× in this part">${escape(k)}</a>`);
       const fileChips = files.length > 1 || (files.length && !String(files[0]).endsWith(state.root)) ? files.map((f) => `<span class="o-file" title="a file this part is set from">${escape(base(f))}</span>`) : [];
-      html.push(row(open.id, open.depth, open.head, chips(open.labels) + chips(fileChips) + chips(cites)));
+      html.push(row(open.id, open.depth, open.head + (open.first ? `<span class="o-first" title="label ${escape(open.first)}">${escape(open.first)}</span>` : ''), chips(open.labels) + chips(fileChips) + chips(cites)));
       open = null;
     };
     for (const r of own) {
@@ -608,7 +609,7 @@
       }
       if (r.kind === 'label') {
         const chip = `<a href="#" class="o-go o-label" ${at(r)} title="label at ${escape((r.file ?? '') + ':' + r.line)}">${escape(r.key)}</a>`;
-        if (open) open.labels.push(chip); else html.push(`<li class="o-sec" style="--d:0"><span class="o-labels">${chip}</span></li>`);
+        if (open) { open.labels.push(chip); open.first ??= r.key; } else html.push(`<li class="o-sec" style="--d:0"><span class="o-labels">${chip}</span></li>`);
       }
     }
     close();

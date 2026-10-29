@@ -693,3 +693,7 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .filebar { flex-wrap: wrap; row-gap: .25rem; }
 .filebar .tablist { flex: 1 1 14rem; } .filebar .tabs { overflow-x: auto; }
 .filebar .actions { margin-bottom: .3rem; }
+.o-file { border: 0; padding: 0; border-radius: 0; font: .72rem ui-monospace, Menlo, monospace; color: var(--muted); } .o-file + .o-file::before { content: ", "; }
+.o-labels:has(> .o-file) { gap: 0; }
+.o-first { display: none; margin-left: auto; min-width: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: .72rem ui-monospace, Menlo, monospace; color: var(--muted); }
+.tree { container-type: inline-size; } @container (min-width: 15rem) { .o-first { display: block; } }
