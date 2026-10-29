@@ -425,9 +425,9 @@ A type stands for the texts an argument may hold, so a type is below another whe
 The order follows tex.web's scanners: `scan_int` (§ 440), `scan_dimen` (§ 448), `scan_glue` (§ 461), a register an assignment names (§ 1224), a box number (§ 1079), `get_r_token` (§ 1215).
 A register's name is text of its value's kind, because a scanner reads the register's value there (§ 413). A dimension is glue without stretch.
 
-![The Ty lattice: every type below any, coloured by family](https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/types.svg)
+{{types}}
 
-The diagram follows `Ty::parent`, colored by family: quantities and registers (blue), names, keys and options (green), files (orange), text (purple), control sequences (pink). The dashed lines mean `nothing` is below every type. The labels are the ones signatures and hovers show. In each example the `⟨…⟩` part has the type.
+The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), quantities (blue), registers (orange), keys and options (purple), files (teal), control sequences (red) and text (green). `nothing` is below every type and left out. The labels are the ones signatures and hovers show. In each example the `⟨…⟩` part has the type.
 
 | Label | Meaning | Example | Parent |
 |---|---|---|---|
@@ -516,7 +516,7 @@ A control word cut into, or braces that do not balance, widen the place to the w
 Any other difference is one line of unknown text, and an unknown line absorbs the unknown line before it, so joins settle.
 A file only one path wrote joins with an empty one. Deferred lines still waiting join the same way.
 
-The build's files (`.aux`, `.toc`, `.bbl`, ..., `load.build_extensions`) of an earlier run are the run's own: the analysis runs the build until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`), and keeps them in the overlay, never on disk. Every file the run writes and reads back goes through the overlay, whatever its extension. A changed file sends the build round again only when the run read or looked for it. The ones an engine left on disk are read only with `load.build_files`.
+The build's files (`.aux`, `.toc`, `.bbl`, ..., `load.build_extensions`) of an earlier run are the run's own: the analysis runs the build until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`), and keeps them in the overlay, never on disk. Every file the run writes and reads back goes through the overlay, whatever its extension. A changed file sends the build round again only when the run read or looked for it. A file in which a round changed an existing line is widened: later rounds read the join of everything written to it. The ones an engine left on disk are read only with `load.build_files`.
 Any other file the run did not write is what is on disk, or absent.
 
 Reads look at the run's own files first (tex.web § 537):

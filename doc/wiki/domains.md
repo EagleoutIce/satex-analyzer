@@ -424,9 +424,105 @@ A type stands for the texts an argument may hold, so a type is below another whe
 The order follows [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web)'s scanners: `scan_int` ([§ 440](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8701)), `scan_dimen` ([§ 448](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8829)), `scan_glue` ([§ 461](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9064)), a register an assignment names ([§ 1224](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22902)), a box number ([§ 1079](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20936)), `get_r_token` ([§ 1215](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22784)).
 A register's name is text of its value's kind, because a scanner reads the register's value there ([§ 413](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L8345)). A dimension is glue without stretch.
 
-![The Ty lattice: every type below any, coloured by family](https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/wiki/img/types.svg)
+```mermaid
+flowchart LR
+  t0["any"]:::top
+  t1["quantity"]:::quantity
+  t2["number"]:::quantity
+  t3["dimen"]:::quantity
+  t4["glue"]:::quantity
+  t5["muglue"]:::quantity
+  t6["box"]:::quantity
+  t7["register"]:::register
+  t8["control sequence"]:::cs
+  t9["conditional"]:::cs
+  t10["options"]:::key
+  t11["text"]:::text
+  t12["name"]:::text
+  t13["definition body"]:::text
+  t14["count register"]:::register
+  t15["dimen register"]:::register
+  t16["skip register"]:::register
+  t17["muskip register"]:::register
+  t18["toks register"]:::register
+  t19["box register"]:::register
+  t20["read register"]:::register
+  t21["write register"]:::register
+  t22["counter"]:::register
+  t23["dimen name"]:::register
+  t24["skip name"]:::register
+  t25["muskip name"]:::register
+  t26["toks name"]:::register
+  t27["box name"]:::register
+  t28["read name"]:::register
+  t29["write name"]:::register
+  t30["key"]:::key
+  t31["label"]:::key
+  t32["citation key"]:::key
+  t33["option key"]:::key
+  t34["environment name"]:::key
+  t35["file"]:::file
+  t36["TeX file (.tex)"]:::file
+  t37["package (.sty)"]:::file
+  t38["class (.cls)"]:::file
+  t39["bibliography database (.bib)"]:::file
+  t40["bibliography style (.bst)"]:::file
+  t41["biblatex bibliography style (.bbx)"]:::file
+  t42["biblatex citation style (.cbx)"]:::file
+  t43["graphic file"]:::file
+  t0 --> t1
+  t1 --> t2
+  t4 --> t3
+  t1 --> t4
+  t1 --> t5
+  t2 --> t6
+  t0 --> t7
+  t0 --> t8
+  t8 --> t9
+  t0 --> t10
+  t0 --> t11
+  t11 --> t12
+  t11 --> t13
+  t2 --> t14
+  t3 --> t15
+  t4 --> t16
+  t5 --> t17
+  t0 --> t18
+  t0 --> t19
+  t0 --> t20
+  t0 --> t21
+  t12 --> t22
+  t12 --> t23
+  t12 --> t24
+  t12 --> t25
+  t12 --> t26
+  t12 --> t27
+  t12 --> t28
+  t12 --> t29
+  t12 --> t30
+  t30 --> t31
+  t30 --> t32
+  t30 --> t33
+  t30 --> t34
+  t12 --> t35
+  t35 --> t36
+  t35 --> t37
+  t35 --> t38
+  t35 --> t39
+  t35 --> t40
+  t35 --> t41
+  t35 --> t42
+  t35 --> t43
+  classDef top fill:#eef0f2,stroke:#8a8f98,color:#1f2328
+  classDef quantity fill:#dbeafe,stroke:#3b82f6,color:#1f2328
+  classDef register fill:#ffedd5,stroke:#f97316,color:#1f2328
+  classDef key fill:#ede9fe,stroke:#8b5cf6,color:#1f2328
+  classDef file fill:#ccfbf1,stroke:#14b8a6,color:#1f2328
+  classDef cs fill:#fee2e2,stroke:#ef4444,color:#1f2328
+  classDef text fill:#dcfce7,stroke:#22c55e,color:#1f2328
+```
 
-The diagram follows `Ty::parent`, colored by family: quantities and registers (blue), names, keys and options (green), files (orange), text (purple), control sequences (pink). The dashed lines mean `nothing` is below every type. The labels are the ones signatures and hovers show. In each example the `⟨…⟩` part has the type.
+The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), quantities (blue), registers (orange), keys and options (purple), files (teal), control sequences (red) and text (green). `nothing` is below every type and left out. The labels are the ones signatures and hovers show. In each example the `⟨…⟩` part has the type.
 
 | Label | Meaning | Example | Parent |
 |---|---|---|---|
@@ -515,7 +611,7 @@ A control word cut into, or braces that do not balance, widen the place to the w
 Any other difference is one line of unknown text, and an unknown line absorbs the unknown line before it, so joins settle.
 A file only one path wrote joins with an empty one. Deferred lines still waiting join the same way.
 
-The build's files (`.aux`, `.toc`, `.bbl`, ..., `load.build_extensions`) of an earlier run are the run's own: the analysis runs the build until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`), and keeps them in the overlay, never on disk. Every file the run writes and reads back goes through the overlay, whatever its extension. A changed file sends the build round again only when the run read or looked for it. The ones an engine left on disk are read only with `load.build_files`.
+The build's files (`.aux`, `.toc`, `.bbl`, ..., `load.build_extensions`) of an earlier run are the run's own: the analysis runs the build until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`), and keeps them in the overlay, never on disk. Every file the run writes and reads back goes through the overlay, whatever its extension. A changed file sends the build round again only when the run read or looked for it. A file in which a round changed an existing line is widened: later rounds read the join of everything written to it. The ones an engine left on disk are read only with `load.build_files`.
 Any other file the run did not write is what is on disk, or absent.
 
 Reads look at the run's own files first ([tex.web § 537](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L10365)):

@@ -2449,6 +2449,7 @@ impl<'a> Machine<'a> {
         let runs = u32::from(cfg.limits.build_runs).max(1);
         let base = Machine::base_of(Some(path));
         let mut placed: Vec<PathBuf> = Vec::new();
+        let mut widened: HashSet<PathBuf> = HashSet::default();
         let mut run = 1;
         // `limits.seconds` bounds the build, not each run: a run starts only
         // while the time left would let one more as long as the last finish.
@@ -2522,10 +2523,19 @@ impl<'a> Machine<'a> {
                     {
                         return None;
                     }
-                    // The next run is the last when `run + 1 == runs`: it
-                    // reads what still changed as unknown text, a widening.
+                    // A line a rerun changed (a label's page), or anything before
+                    // the last run, is read as the join of both texts: a widening,
+                    // so the build settles. Lines only added (`\bibcite`) stay exact.
+                    // Once widened, a file is only joined, so its text only grows.
+                    let widen = widened.contains(&at)
+                        || text
+                            .as_ref()
+                            .is_some_and(|t| !line_changes(now.as_deref().unwrap_or_default(), t).is_empty());
+                    if widen {
+                        widened.insert(at.clone());
+                    }
                     let text = match text {
-                        Some(t) if run + 1 < runs => t.clone(),
+                        Some(t) if run + 1 < runs && !widen => t.clone(),
                         Some(t) => either_text(now.as_deref().unwrap_or_default(), t, 1),
                         None => crate::tex::UNKNOWN_ANY.to_string(),
                     };
@@ -12676,6 +12686,24 @@ fn each_text(file: &mut String, mut f: impl FnMut(&mut String)) {
 /// The texts either file may hold. Texts of as many lines join line by
 /// line ([`join_written`]): they differ in values, not in what they hold.
 /// Past `bound` texts, all join.
+/// The keys of the lines whose text changed between two texts a build
+/// wrote, not those only added or dropped: a line's command with its first
+/// braced argument (`\newlabel{x}`), or its text before the first brace
+/// (`\gdef\@abspage@last`).
+fn line_changes(old: &str, new: &str) -> HashSet<String> {
+    let key = |l: &str| -> String {
+        let Some(open) = l.find('{') else { return l.to_string() };
+        let head = l[..open].trim();
+        if !(head.starts_with('\\') && head.matches('\\').count() == 1 && !head.contains(' ')) {
+            return head.to_string();
+        }
+        l[open..].find('}').map_or(l.to_string(), |close| l[..open + close + 1].to_string())
+    };
+    let (a, b): (HashSet<&str>, HashSet<&str>) = (old.lines().collect(), new.lines().collect());
+    let added: HashSet<String> = b.difference(&a).map(|l| key(l)).collect();
+    a.difference(&b).map(|l| key(l)).filter(|k| added.contains(k)).collect()
+}
+
 fn either_text(a: &str, b: &str, bound: usize) -> String {
     let mut texts: Vec<String> = Vec::new();
     for t in texts_of(a).into_iter().chain(texts_of(b)) {

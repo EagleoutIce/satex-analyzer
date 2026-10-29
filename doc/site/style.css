@@ -92,6 +92,7 @@ body.home .side, body.home .toc { display: none; }
 .sev { color: var(--sev); }
 .sev::before, .cm-diagnostic::before { content: var(--glyph) " "; color: var(--sev); }
 td .sev { font-size: 0; } td .sev::before { font-size: 1rem; content: var(--glyph); }
+pre.mermaid { background: none; border: 0; box-shadow: none; text-align: center; overflow-x: auto; }
 .fix-safe { color: var(--safe); } .fix-unsafe { color: var(--unsafe); border-style: dashed; }
 
 /* motion: one easing, short durations, only transform and opacity animate */
@@ -566,10 +567,10 @@ details.more[open] > summary { margin-bottom: .3rem; }
 #lsp-diagnostics .where { display: flex; align-items: center; gap: .4rem; height: 1.35em; }
 #lsp-diagnostics .loc { font: 500 .76rem ui-monospace, Menlo, monospace; color: var(--muted); }
 #lsp-diagnostics .explain { grid-column: 1 / -1; }
-.acts { position: absolute; top: .25rem; right: .45rem; height: 1.35em; display: flex; align-items: center; gap: .3rem; padding-left: 1.6rem; opacity: 0; pointer-events: none;
+.acts { position: absolute; top: .25rem; right: .45rem; min-height: 1.35em; max-width: calc(100% - .9rem); display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: .3rem; padding-left: 1.6rem; opacity: 0; pointer-events: none;
   background: linear-gradient(to right, transparent, var(--row) 1.4rem); transition: opacity var(--quick); }
 #lsp-diagnostics li:is(:hover, :focus-within) > .acts { opacity: 1; pointer-events: auto; }
-.acts button { background: var(--row); }
+.acts button { background: var(--row); flex: none; white-space: nowrap; }
 button.apply { color: var(--safe); border-color: color-mix(in srgb, var(--safe) 45%, var(--border)); }
 button.apply.fix-unsafe { color: var(--unsafe); border-style: dashed; border-color: color-mix(in srgb, var(--unsafe) 45%, var(--border)); }
 button.apply:hover:not(:disabled) { border-color: currentColor; }

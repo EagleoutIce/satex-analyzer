@@ -581,6 +581,17 @@ async function browser() {
       await js(`return document.getElementById('play-status').textContent + ' | ' + document.getElementById('lsp-diagnostics').textContent.slice(0, 200)`));
     await shot('play-package');
 
+    // several at once, with what they need, in one batch; a package nobody offers stays a finding
+    const many = join(dir, 'many');
+    mkdirSync(many);
+    writeFileSync(join(many, 'main.tex'), '\\documentclass{article}\n\\usepackage{siunitx,booktabs}\n\\usepackage{tcolorbox}\n\\usepackage{nosuchpackage}\n\\begin{document}\n\\SI{1}{m}\n\\end{document}\n');
+    await upload('play-folder', [many]);
+    const unresolvedNames = `[...document.querySelectorAll('#lsp-diagnostics li')].filter((li) => /unresolved-file/.test(li.textContent)).map((li) => li.textContent)`;
+    check('packages load on demand in one batch', await until(`const p = document.getElementById('play-status').dataset.packages ?? '';
+      return ['siunitx', 'booktabs', 'tcolorbox', 'tikz'].every((n) => new RegExp('/' + n + '\\\\b').test(p)) && document.getElementById('lsp-status').textContent !== 'checking…'
+      && ${unresolvedNames}.length > 0 && ${unresolvedNames}.every((t) => t.includes('nosuchpackage'))`, 180000),
+      await js(`return document.getElementById('play-status').dataset.packages + ' | ' + ${unresolvedNames}.join(' / ').slice(0, 300)`));
+
     // the drop zone: shown while files are dragged, gone on Escape
     await js(`const dt = new DataTransfer(); dt.items.add(new File(['x'], 'a.tex')); window.dispatchEvent(new DragEvent('dragover', { dataTransfer: dt, bubbles: true, cancelable: true }))`);
     check('drop zone', await js(`const d = document.getElementById('play-drop'); return !d.hidden && /files, a folder or a \\.zip/i.test(d.textContent)`));

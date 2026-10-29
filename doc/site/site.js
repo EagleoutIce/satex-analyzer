@@ -111,8 +111,11 @@
   const slot = (name, kind, ty) => {
     const tip = SLOT[name.toLowerCase()] ?? (/^arg\d+$/.test(name) ? `the ${name.slice(3)}. argument${kind ? `, ${KIND[kind]}` : ''}${ty ? `, read as ${ty}` : ''}` : `${name}, read by the command`);
     // the brackets as entities: a chip is never wrapped again
-    return `<span class="arg arg-${kind ?? 'slot'}" title="${esc(tip)}">&#x27E8;${esc(name)}${ty ? `<small>: ${tyLink(ty)}</small>` : ''}&#x27E9;</span>`;
+    const named = TY.has(name) ? tyLink(name) : esc(name);
+    return `<span class="arg arg-${kind ?? 'slot'}" title="${esc(tip)}">&#x27E8;${named}${ty ? `<small>: ${tyLink(ty)}</small>` : ''}&#x27E9;</span>`;
   };
+  /** The placeholders of primitive syntax that are types of the Ty lattice. */
+  const TY = new Set(['number', 'dimen', 'glue', 'muglue', 'control sequence']);
   /** A type's name linking to the wiki's Ty lattice. */
   const tyLink = (t) => `<a class="ty" target="_blank" rel="noopener" href="${document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? ''}wiki/domains.html#argument-types-the-ty-lattice" title="the type ${esc(t)} in the Ty lattice">${esc(t)}</a>`;
   /** explain's `types` (`#1 skip register`) by argument name: `{ arg1: 'skip register' }`. */
