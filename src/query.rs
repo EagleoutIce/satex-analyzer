@@ -2698,6 +2698,40 @@ fn insert_expands(record: &mut Record, analysis: &Analysis, sym: Sym, mac: &crat
     }
 }
 
+/// The names the document's calls of `sym` define and leave defined after
+/// the call: made globally or at the call's own group level (`\pgfmathparse`
+/// leaves `\pgfmathresult`). `creates` lists the public ones, `creates_internal`
+/// the internal ones by the naming conventions.
+fn insert_creates(record: &mut Record, analysis: &Analysis, sym: Sym) {
+    let mut calls: Vec<(crate::env::NodeId, Sym, u16)> = analysis
+        .facts
+        .expansions
+        .iter()
+        .filter(|e| origin(analysis, e.span.file) == "document")
+        .filter_map(|e| Some((e.node?, e.name, e.depth)))
+        .collect();
+    calls.sort_by_key(|c| c.0);
+    let (mut public, mut internal) = (BTreeSet::new(), BTreeSet::new());
+    for def in &analysis.facts.defs {
+        let Some(&(_, call, depth)) = calls.get(calls.partition_point(|c| c.0 <= def.node).wrapping_sub(1)) else {
+            continue;
+        };
+        if call != sym || def.name == sym || !(def.global || def.depth <= depth) {
+            continue;
+        }
+        let name = analysis.interner.name(def.name);
+        match analysis.settings.conventions.is_internal(name) {
+            true => internal.insert(analysis.interner.cs(def.name)),
+            false => public.insert(analysis.interner.cs(def.name)),
+        };
+    }
+    for (key, names) in [("creates", public), ("creates_internal", internal)] {
+        if !names.is_empty() {
+            record.insert(key.into(), json!(names));
+        }
+    }
+}
+
 /// `body` and, when the meaning is a primitive rather than a macro, the
 /// `kind: "primitive"` marker: a primitive has no replacement text, so its
 /// body is its own name, the way `\show` would report it (tex.web § 1294).
@@ -2896,6 +2930,7 @@ fn record_for_def(analysis: &Analysis, def: &crate::facts::Definition, window: W
     // query is for).
     if let Some(mac) = def.mac.as_deref() {
         insert_expands(&mut record, analysis, def.name, mac);
+        insert_creates(&mut record, analysis, def.name);
     }
     let package_name = def.package.map(|p| analysis.interner.name(p));
     let kernel = is_kernel_file(analysis, def.span.file);
@@ -3085,6 +3120,7 @@ fn record_for_meaning(analysis: &Analysis, sym: Sym, window: Window, meaning: Me
     }
     if let Some(mac) = meaning.as_macro() {
         insert_expands(&mut record, analysis, sym, mac);
+        insert_creates(&mut record, analysis, sym);
     }
     document(&mut record, analysis, sym, None, false, &meaning, true);
     Some(record)

@@ -401,6 +401,7 @@ fn refused_loads(report: &Report, begin: crate::tex::Span) -> Vec<crate::facts::
                 provided: None,
                 depth: 0,
                 certain: false,
+                call: None,
             });
         }
     }

@@ -1076,7 +1076,7 @@ fn hover_and_signature_help_show_argument_types() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A call's hover says what that call typesets.
+/// A command's hover says what its first call in the document typesets.
 #[test]
 fn hover_shows_what_the_call_typesets() {
     let text = "\\documentclass{article}\n\\newcommand\\hi[1]{Hello #1}\n\\begin{document}\nGar\\c{c}on \\hi{you}.\n\\end{document}\n";
@@ -1089,9 +1089,9 @@ fn hover_shows_what_the_call_typesets() {
         server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
     };
     let hi = hover(&mut server, 12);
-    assert!(hi.contains("Typesets here: `Hello you`"), "{hi}");
+    assert!(hi.contains("Typesets `Hello you` at line 4"), "{hi}");
     let c = hover(&mut server, 4);
-    assert!(c.contains("Typesets here: `") && c.contains('c'), "{c}");
+    assert!(c.contains("Typesets `") && c.contains("at line 4"), "{c}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1211,6 +1211,23 @@ fn packages_complete_with_their_version_and_documentation() {
         source.split("\\ProvidesPackage{amsmath}[").nth(1).and_then(|r| r.split_whitespace().next()).unwrap_or("?");
     assert!(amsmath["detail"].as_str().is_some_and(|d| d.contains(date)), "{amsmath}");
     assert!(amsmath["documentation"].to_string().contains("texdoc.org/pkg/amsmath"), "{amsmath}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A library argument completes the library names the installation has:
+/// the run saw `\\usetikzlibrary{calc}` load `tikzlibrarycalc.code.tex`, so
+/// its argument names what stands between that prefix and suffix.
+#[test]
+fn library_arguments_complete_their_libraries() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\usetikzlibrary{calc,posi}\n\\begin{document}\nx\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("libraries", text);
+    let items = complete(&mut server, &uri, 2, "\\usetikzlibrary{calc,posi".len() as u32);
+    assert!(labels(&items).contains(&"positioning"), "{:?}", labels(&items));
+    assert!(labels(&items).iter().all(|l| l.starts_with("posi")), "{:?}", labels(&items));
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }

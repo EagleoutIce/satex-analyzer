@@ -145,19 +145,6 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
     Some(markdown_hover(markdown))
 }
 
-/// Where the call of `name` under the cursor starts.
-fn call_at(analysis: &Analysis, name: &str, path: &str, pos: Pos) -> Option<crate::tex::Span> {
-    let sym = analysis.interner.lookup(name)?;
-    let file = query::At { file: Some(path.to_string()), line: pos.line, col: pos.col, end: None }.file(analysis)?;
-    analysis
-        .facts
-        .expansions
-        .iter()
-        .filter(|e| e.name == sym && e.span.file == file && e.span.line == pos.line && e.span.col <= pos.col)
-        .map(|e| e.span)
-        .max_by_key(|s| s.col)
-}
-
 /// The database entry of the key under column `col` of `line`, in an
 /// argument [`crate::roles`] says cites: what it names and every field.
 fn cite_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
@@ -203,13 +190,10 @@ fn active_at(analysis: &Analysis, name: &str, path: &str, pos: Pos) -> Option<Re
 /// The heading above the definitions that do not hold where the cursor is.
 pub const MORE_DEFINITIONS: &str = "#### More definitions";
 
-/// `markdown` with what the call at `at` typesets and, where `name` still
-/// means the primitive at `at`, the primitive's syntax under its first heading.
+/// `markdown` with the primitive's syntax under its first heading, where
+/// `name` still means the primitive at `at`.
 pub fn placed(analysis: &Analysis, mut markdown: String, name: &str, path: &str, at: Pos) -> String {
     let first = markdown.find("\n\n").map_or(0, |i| i + 2);
-    if let Some(set) = call_at(analysis, name, path, at).and_then(|span| query::typeset_by(analysis, span)) {
-        markdown.insert_str(first, &format!("Typesets here: `{set}`\n\n"));
-    }
     if let Some(syntax) = super::primitives::syntax(analysis, name, path, at.line, at.col) {
         markdown.insert_str(first, &syntax);
     }
@@ -259,6 +243,11 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
         if let Some(does) = text("does") {
             markdown.push_str(&format!("{does}\n\n"));
         }
+        if n == 0
+            && let Some((at, set)) = typesets(analysis, name)
+        {
+            markdown.push_str(&format!("Typesets `{set}` at line {}\n\n", at.line));
+        }
         if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
             markdown.push_str(&format!("`\\{name}{}`\n\n", usage(sig)));
         }
@@ -297,6 +286,21 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
         markdown.push_str(&super::knowledge::about(&topics(analysis, name, &records)));
     }
     Some(markdown)
+}
+
+/// What the document's first call of `name` that sets text typesets, and
+/// where that call stands.
+fn typesets(analysis: &Analysis, name: &str) -> Option<(crate::tex::Span, String)> {
+    let sym = analysis.interner.lookup(name)?;
+    let mut calls: Vec<crate::tex::Span> = analysis
+        .facts
+        .expansions
+        .iter()
+        .filter(|e| e.name == sym && query::origin(analysis, e.span.file) == "document")
+        .map(|e| e.span)
+        .collect();
+    calls.sort_by_key(|s| (s.file, s.line, s.col));
+    calls.into_iter().take(16).find_map(|at| Some((at, query::typeset_by(analysis, at)?)))
 }
 
 /// The knowledge-base topics a command's hover touches: the types of its
@@ -1119,6 +1123,15 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
     }
     // A file argument: the files of the extension its role reads.
     let typed = arg.inside.rsplit(',').next().unwrap_or_default().trim();
+    // A library's name: the files between the fixed prefix and suffix the
+    // run's loads put around it.
+    let affixed: Vec<_> = roles
+        .iter()
+        .filter(|r| matches!(r.kind, R::Load(_)) && !(r.prefix.is_empty() && r.suffix.is_empty()))
+        .collect();
+    if !affixed.is_empty() {
+        return library_items(analysis, &affixed, typed);
+    }
     let mut out = files(analysis, roles.iter().filter_map(|r| file_exts(analysis, r.kind.ty())), typed);
     let keys = |kinds: &[OccKind]| -> BTreeSet<String> {
         let occ = analysis.facts.occurrences.iter().filter(|o| kinds.contains(&o.kind) && !o.key.is_empty());
@@ -1438,6 +1451,34 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
     }
     out.sort_by(|a, b| (&a.label, &a.sort_text).cmp(&(&b.label, &b.sort_text)));
     out.dedup_by(|a, b| a.label == b.label);
+    out
+}
+
+/// The installation's files a library argument names: for each role, the
+/// part of a file name between its prefix and suffix (and the extension
+/// its load kind adds), starting with `typed`.
+fn library_items(analysis: &Analysis, roles: &[&crate::roles::Role], typed: &str) -> Vec<CompletionItem> {
+    use crate::builtins::LoadKind;
+    let all = crate::distribution::files_with(&analysis.distribution.roots, "");
+    let mut out: Vec<CompletionItem> = Vec::new();
+    for role in roles {
+        let crate::roles::RoleKind::Load(kind) = role.kind else { continue };
+        let ext = match kind {
+            LoadKind::Package => ".sty",
+            LoadKind::Class => ".cls",
+            _ => "",
+        };
+        let detail = format!("{}…{}{ext}", role.prefix, role.suffix);
+        for (name, _) in &all {
+            let Some(middle) = name.strip_prefix(role.prefix.as_str()).and_then(|n| n.strip_suffix(ext)) else {
+                continue;
+            };
+            let Some(middle) = middle.strip_suffix(role.suffix.as_str()) else { continue };
+            if !middle.is_empty() && middle.starts_with(typed) && !out.iter().any(|i| i.label == middle) {
+                out.push(item(middle.to_string(), CompletionItemKind::MODULE, Some(detail.clone()), 0));
+            }
+        }
+    }
     out
 }
 

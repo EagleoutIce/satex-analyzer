@@ -3444,3 +3444,20 @@ fn bibtex_commands_under_biblatex_migrate() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `\newif` without its name takes the next token: `\newif` before
+/// `\begin{document}` makes `\begin` a conditional. The call says so, and a
+/// `\newif` of a fresh name says nothing.
+#[test]
+fn a_new_declaration_that_redefines_a_command_is_reported() {
+    let named = |source: &str| -> Vec<String> {
+        satex::lint::lint(&analyze(source))
+            .iter()
+            .filter(|f| f["code"] == "new-redefines")
+            .map(|f| f["name"].as_str().unwrap_or_default().to_string())
+            .collect()
+    };
+    let broken = "\\documentclass{article}\n\\newif\n\\begin{document}\nx\n\\end{document}\n";
+    assert_eq!(named(broken), ["begin"]);
+    assert!(named("\\documentclass{article}\n\\newif\\iffancy\n\\begin{document}\nx\n\\end{document}\n").is_empty());
+}

@@ -2142,6 +2142,7 @@ impl Machine<'_> {
                 cds,
                 count: e.count,
                 mode: e.mode,
+                depth: 0,
             });
             self.expansion_sites.insert(
                 key,
@@ -2181,6 +2182,7 @@ impl Machine<'_> {
                 provided: l.provided.clone(),
                 depth: l.depth,
                 certain: l.certain,
+                call: None,
             });
         }
         for (load, provided) in &st.identifications {

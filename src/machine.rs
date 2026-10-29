@@ -8121,6 +8121,7 @@ will look undefined",
                 cds: self.cds.to_vec(),
                 count: 0,
                 mode: self.mode,
+                depth: self.env.group_level() as u16,
             };
             let count =
                 self.expansion_sites.get(&(span, name)).map_or(0, |site| self.out.facts.expansions[site.fact].count);
@@ -8173,6 +8174,7 @@ will look undefined",
             cds: self.cds.to_vec(),
             count: 1,
             mode: self.mode,
+            depth: self.env.group_level() as u16,
         });
         1
     }
@@ -11148,6 +11150,7 @@ will look undefined",
             let display = path.display().to_string();
             self.register_file(display, kind)
         });
+        let call = self.file_call.map(|(_, at)| at).filter(|at| self.own_file(at.file));
         self.out.facts.loads.push(Load {
             name: name.to_string(),
             kind,
@@ -11161,6 +11164,7 @@ will look undefined",
             provided: None,
             depth: self.file_depth,
             certain: self.exact(),
+            call,
         });
         let load = self.out.facts.loads.len() - 1;
         let (Some(source), Some(id)) = (source, file) else { return };
@@ -11369,6 +11373,7 @@ will look undefined",
                     provided: None,
                     depth: self.file_depth,
                     certain: self.exact(),
+                    call: None,
                 });
             }
             "@onefilewithoptions@clashchk" if arguments.len() == 1 => {

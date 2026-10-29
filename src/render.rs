@@ -137,11 +137,11 @@ fn location(record: &Record) -> String {
 }
 
 #[rustfmt::skip]
-const COLUMNS: [&str; 47] = [
+const COLUMNS: [&str; 49] = [
     "index", "warning", "covered", "rules", "id", "step", "severity", "category", "code", "kind", "status",
     "tag", "name", "callee", "key", "subject", "for", "when", "context", "redefined", "effective", "error",
     "signature", "roles", "types", "parameters", "arity", "takes", "uses", "count", "value", "default", "governs", "package",
-    "class", "by", "detail", "fix", "message", "does", "documentation", "expands", "may_expand", "body", "reference", "root",
+    "class", "by", "detail", "fix", "message", "does", "documentation", "expands", "may_expand", "creates", "creates_internal", "body", "reference", "root",
     "file",
 ];
 
@@ -178,7 +178,7 @@ fn terminal_width() -> usize {
         .unwrap_or(DEFAULT_WIDTH)
 }
 
-const SHRINK_FIRST: [&str; 11] = [
+const SHRINK_FIRST: [&str; 13] = [
     "body",
     "detail",
     "parameters",
@@ -189,6 +189,8 @@ const SHRINK_FIRST: [&str; 11] = [
     "fix",
     "expands",
     "may_expand",
+    "creates",
+    "creates_internal",
     "path",
 ];
 

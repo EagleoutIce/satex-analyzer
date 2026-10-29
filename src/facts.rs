@@ -109,6 +109,8 @@ pub struct Expansion {
     pub count: u32,
     /// The modes the run was in at the uses (tex.web § 211).
     pub mode: crate::mode::Modes,
+    /// The group level at the first use; 0 for one a package cache replays.
+    pub depth: u16,
 }
 
 /// How a `\usepackage`-family [`Load`] turned out: read, skipped by
@@ -160,6 +162,9 @@ pub struct Load {
     pub depth: u16,
     /// Made on every path: no undecided conditional encloses it.
     pub certain: bool,
+    /// The call in the user's own files the load happened under
+    /// (`\usetikzlibrary{calc}` for `tikzlibrarycalc.code.tex`).
+    pub call: Option<Span>,
 }
 
 /// Anything named that is not itself a control sequence: labels, citations,
