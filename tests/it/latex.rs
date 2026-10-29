@@ -3473,3 +3473,29 @@ fn parts_are_sections_of_the_outline() {
         analyze("\\documentclass{article}\n\\begin{document}\n\\part{Theory}\n\\section{Intro}\nx\n\\end{document}\n");
     assert_eq!(keys(&analysis, OccKind::Section), ["Theory", "Intro"]);
 }
+
+/// An alignment's rows go onto the enclosing list, so its cells reach the
+/// page as placed text, not as box contents, and end a block of the page
+/// (tex.web §§ 800-812).
+#[test]
+fn alignment_cells_are_placed_text() {
+    if !installed() {
+        return;
+    }
+    let analysis = crate::support::analyze_plain("\\catcode`\\&=4 x\n\n\\halign{#&#\\cr a&b\\cr c&d\\cr}\ny\n\\end\n");
+    let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+    let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
+    assert_eq!(texts, ["x", "abcd", "y"]);
+}
+
+/// A paragraph inside a box or alignment that goes into an outer paragraph
+/// is part of that one: `\vbox` and `\valign` do not end it.
+#[test]
+fn nested_lists_do_not_end_the_outer_paragraph() {
+    for inner in ["\\vbox{a}", "\\valign{#\\cr a\\cr}"] {
+        let analysis = crate::support::analyze_plain(&format!("x {inner} y\n\nz\n\\end\n"));
+        let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+        let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
+        assert_eq!(texts, ["x a y", "z"], "{inner}");
+    }
+}
