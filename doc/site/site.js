@@ -32,7 +32,33 @@
     const t = hl.tags;
     const highlighter = hl.tagHighlighter([[t.tagName, 'cmd'], [t.bracket, 'br'], [t.keyword, 'kw'], [t.comment, 'com'], [t.atom, 'atom'],
       [t.number, 'num'], [t.string, 'str'], [t.special(t.variableName), 'arg'], [t.variableName, 'arg']].map(([tag, c]) => ({ tag, class: `tok-${c}` })));
-    return { language: StreamLanguage.define(stex), highlighter };
+    // BibTeX: @type, key, field names, braces and values, in the TeX mode's classes
+    const bib = StreamLanguage.define({
+      startState: () => ({ depth: 0, key: false }),
+      token(s, st) {
+        if (st.depth === 0) {
+          if (s.match(/@[A-Za-z]+/)) { st.key = true; return 'tag'; }
+          if (st.key && s.match(/[{(]/)) { st.depth = 1; return 'bracket'; }
+          if (s.eatSpace()) return null;
+          s.skipTo('@') || s.skipToEnd(); return 'comment';
+        }
+        if (st.depth > 1) { // inside a braced value
+          if (s.match(/[{]/)) { st.depth++; return 'bracket'; }
+          if (s.match(/[}]/)) { st.depth--; return 'bracket'; }
+          s.match(/[^{}]+/); return 'string';
+        }
+        if (s.eatSpace()) return null;
+        if (st.key) { st.key = false; if (s.match(/[^,\s{}]+/)) return 'atom'; }
+        if (s.match(/[{]/)) { st.depth = 2; return 'bracket'; }
+        if (s.match(/[})]/)) { st.depth = 0; st.key = false; return 'bracket'; }
+        if (s.match(/"[^"]*"?/)) return 'string';
+        if (s.match(/\d+/)) return 'number';
+        if (s.match(/[A-Za-z_-][\w:.-]*(?=\s*=)/)) return 'keyword';
+        if (s.match(/[=#,]/)) return 'punctuation';
+        s.next(); return 'variableName';
+      },
+    });
+    return { language: StreamLanguage.define(stex), bib, highlighter };
   })());
 
   // ------------------------------------------------------------ explain cards
@@ -195,7 +221,8 @@
       rows.push(['signature', signature(r.signature) + (more ? ` <span class="muted">reads ${argumentCount(r.takes)} with what it calls</span>` : '')]);
     } else if (r.takes) rows.push(['arguments', argumentCount(r.takes)]);
     const types = typesOf(r);
-    if (r.effective && r.effective !== r.name) rows.push(['usage', `<code class="usage">${usage(r.effective, types).html}</code>`]);
+    if (r.syntax) rows.push(['usage', `<code class="usage">${esc(r.syntax)}</code>`]); // a primitive's TeXbook syntax
+    else if (r.effective && r.effective !== r.name) rows.push(['usage', `<code class="usage">${usage(r.effective, types).html}</code>`]);
     if (r.types?.length) rows.push(['types', `<span class="chips">${Object.entries(types).map(([n, t]) => `<span class="x-type"><code>#${n.slice(3)}</code> ${tyLink(t)}</span>`).join('')}</span>`]);
     if (r.forms?.length) rows.push(['forms', r.forms.map((f) => `<code>${esc(f)}</code>`).join(' ')]);
     if (primitive) rows.push(['body', 'none: a TeX primitive']);

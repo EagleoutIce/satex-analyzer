@@ -420,10 +420,10 @@
       update: (deco, tr) => tr.effects.reduce((d, e) => e.is(marks) ? view.Decoration.set(e.value.map(([f, t]) => view.Decoration.mark({ class: 'cm-refmark' }).range(f, t)), true) : d, deco.map(tr.changes)),
       provide: (f) => view.EditorView.decorations.from(f),
     });
-    const theme = new st.Compartment(), lock = new st.Compartment();
+    const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment();
     const ev = new EditorView({
       parent, doc: text,
-      extensions: [basicSetup, tex.language, language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete], addToOptions: [{ position: 80, render: (c) => {
+      extensions: [basicSetup, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete], addToOptions: [{ position: 80, render: (c) => {
         // the detail: a usage line colored like the hover's, then where it comes from
         const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
@@ -474,7 +474,8 @@
       const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY });
       if (pos == null) return;
       if (ev.state.selection.main.empty || pos < ev.state.selection.main.from || pos > ev.state.selection.main.to) ev.dispatch({ selection: { anchor: pos } });
-      if (menuAt(e.clientX, e.clientY)) e.preventDefault();
+      e.preventDefault();
+      menuAt(e.clientX, e.clientY);
     });
     parent.addEventListener('click', (e) => {
       const marker = e.target.closest('.cm-lint-marker');
@@ -486,7 +487,7 @@
     return {
       text: () => doc().toString(),
       // another file's text starts at its top: the last file's scroll position may lie past its end
-      set: (t, readOnly = false) => { ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, selection: { anchor: 0 }, effects: lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : []) }); ev.scrollDOM.scrollTop = 0; },
+      set: (t, readOnly = false) => { ev.dispatch({ effects: lang.reconfigure(/\.bib$/.test(state.file) ? tex.bib : tex.language) }); ev.dispatch({ changes: { from: 0, to: doc().length, insert: t }, selection: { anchor: 0 }, effects: lock.reconfigure(readOnly ? [st.EditorState.readOnly.of(true)] : []) }); ev.scrollDOM.scrollTop = 0; },
       apply: (edits) => ev.dispatch({ changes: edits.map((e) => { const [from, to] = span(e.range); return { from, to, insert: e.newText }; }) }),
       diagnostics: (ds) => ev.dispatch(lint.setDiagnostics(ev.state, ds.map((d, i) => {
         const [from, to] = span(d.range);
@@ -564,9 +565,13 @@
     const request = { file: path(state.root), queries: [{ type: 'occurrences' }], ...(state.file !== state.root ? { config: { trace: 'false' } } : {}) };
     const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records;
     if (!rs) return;
-    // in source order: a sectioning unit is recorded when its contents line is written, after its labels
-    const files = [...new Set(rs.map((r) => r.path ?? r.file))], rank = (r) => files.indexOf(r.path ?? r.file);
-    const own = rs.filter((r) => !r.origin || r.origin === 'document').sort((a, b) => rank(a) - rank(b) || a.line - b.line || (a.col ?? 0) - (b.col ?? 0));
+    // the run's order across files (an \input's contents where it stands); within one stretch of a file, by position
+    const chunks = [], file = (r) => r.path ?? r.file;
+    for (const r of rs.filter((r) => !r.origin || r.origin === 'document')) {
+      if (chunks.at(-1) && file(chunks.at(-1)[0]) === file(r)) chunks.at(-1).push(r); else chunks.push([r]);
+    }
+    chunks.forEach((c) => c.sort((a, b) => a.line - b.line || (a.col ?? 0) - (b.col ?? 0)));
+    const own = chunks.flat();
     const sections = own.filter((r) => r.kind === 'section'), present = [...new Set(sections.map((r) => LEVELS.indexOf(r.detail)).filter((l) => l >= 0))].sort((x, y) => x - y);
     const lowest = present.includes(1) ? 1 : 2; // chapters count as the top level when there are some, else sections
     const at = (r) => `data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}"`;
@@ -904,15 +909,17 @@
     return link;
   }
   /** The editor's context menu at the cursor: the symbol's actions, the fixes there, a link to the line. */
-  function menuAt(x, y) {
+  async function menuAt(x, y) {
     const w = editor.word(), p = editor.position();
+    sync(); // renaming is offered where the server says the name is the project's own
+    const renamable = w && !(state.file in state.ro) && !!(await lsp('textDocument/prepareRename', { textDocument: { uri: uri() }, position: p }).catch(() => null));
     const found = findingsAt(p.line, p.character).map(([d]) => d);
     const fixes = found.flatMap((d) => d.fixes);
     const rules = [...new Set(found.filter((d) => d.fixes.length).map((d) => d.code))];
     const editable = !(state.file in state.ro);
     const items = [
       ...(w?.[3] ? [['Go to definition', 'Ctrl+click', definition]] : []),
-      ...(w && editable ? [['Find references', '', references], ['Rename symbol', 'F2', renameBox]] : []),
+      ...(w && editable ? [['Find references', '', references]] : []), ...(renamable ? [['Rename symbol', 'F2', renameBox]] : []),
       ...(w?.[3] ? [['Explain', '', focusExplain], ['Show expansions', '', () => expansions(w)], ['Trace expansion', '', () => traceCall(`\\${w[2]}`, { file: state.file, line: p.line + 1, col: w[0] + 1 })]] : []),
       ...found.map((d) => [`Explain rule ${d.code}`, '', () => unfold(diagnostics[uri()].indexOf(d), false)]),
       ...(editable ? fixes.map((f) => [`Fix: ${f.title}`, f.safety, () => fix(f)]) : []),
@@ -963,6 +970,18 @@
         .then((r) => r?.[0]?.records ?? []).catch(() => []));
     }
     return explanations.get(k);
+  }
+  /** The same for many names in one query, filling the same cache. */
+  async function explainMany(names) {
+    sync();
+    const target = state.root ?? (state.file in state.ro ? manifest.sample : state.file), key = (n) => `${n}|${target}|${version}|${state.kernel}`;
+    const todo = names.filter((n) => !explanations.has(key(n)));
+    if (todo.length) {
+      const request = { file: path(target), queries: [{ type: 'explain', names: todo }] };
+      const all = lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).then((r) => r?.[0]?.records ?? []).catch(() => []);
+      for (const n of todo) explanations.set(key(n), all.then((rs) => rs.filter((r) => r.name === n)));
+    }
+    return Promise.all(names.map((n) => explanations.get(key(n))));
   }
   /** The Explain macro panel shows `name`: its full record, or the hover until that is back. */
   async function explainName(name, at = null, records = null) {
@@ -1016,15 +1035,15 @@
   function callSite(name) {
     const w = editor.word(), p = editor.position();
     if (w?.[3] && `\\${w[2]}` === name) return { file: state.file, line: p.line + 1, col: w[0] + 1 };
-    const re = new RegExp(`${name.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}(?![A-Za-z@])`);
+    const esc = name.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&'), re = new RegExp(`${esc}(?![A-Za-z@])`);
     for (const file of [state.file, ...state.files.filter((f) => f !== state.file)]) {
       const lines = (file === state.file ? editor.text() : state.texts[file] ?? '').split('\n');
-      for (let i = 0; i < lines.length; i++) { const m = re.exec(lines[i]); if (m) return { file, line: i + 1, col: m.index + 1 }; }
+      for (let i = 0; i < lines.length; i++) { const m = re.exec(lines[i]); if (m && !new RegExp(`(?:\\\\(?:re)?(?:new|provide)command|\\\\[gex]?def|\\\\let)\\*?\\s*\\{?\\s*${esc}(?![A-Za-z@])`).test(lines[i])) return { file, line: i + 1, col: m.index + 1 }; }
     }
     return null;
   }
   /** The steps as a tree by depth: a step with deeper steps after it is a folding node. */
-  function traceTree(steps, name) {
+  function traceTree(steps, name, does = new Map()) {
     const root = { kids: [], depth: -1 }, stack = [root];
     for (const r of steps) {
       while (stack.at(-1).depth >= r.depth) stack.pop();
@@ -1042,7 +1061,8 @@
       const sets = r.sets ? `<span class="tr-sets" title="text this step set">sets <code>${escape(clip(r.sets))}</code></span>` : '';
       const head = `${cacheBadge(STEP_KIND[r.step] ?? 'hashes', r.step)}<code class="${/^\\/.test(r.name) ? 'cs-ref' : ''}" ${/^\\/.test(r.name) ? `data-cs="${escape(r.name)}" tabindex="0"` : ''}>${escape(r.name)}</code>${what}${sets}` +
         `<a href="#" class="tr-at o-go" data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}">${escape(r.file ?? '')}:${r.line}</a>`;
-      return n.kids.length ? `<li><details class="tr-node"${open}><summary>${head}</summary><ul>${n.kids.map((k) => node(k, false)).join('')}</ul></details></li>` : `<li><div class="tr-leaf">${head}</div></li>`;
+      const why = does.get(r.name) ? `<span class="tr-does">${escape(does.get(r.name))}</span>` : '';
+      return n.kids.length ? `<li><details class="tr-node"${open}><summary>${head}${why}</summary><ul>${n.kids.map((k) => node(k, false)).join('')}</ul></details></li>` : `<li><div class="tr-leaf">${head}${why}</div></li>`;
     };
     const rest = root.kids.filter((n) => !shown.includes(n));
     const html = shown.map((n, i) => node(n, i === 0)).join('') +
@@ -1063,14 +1083,43 @@
     const request = { file: path(state.root ?? state.file), config, queries: [{ type: 'trace' }] };
     const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch((e) => ({ error: String(e?.message ?? e) })))?.[0];
     if (mine !== traceRun) return;
-    const steps = rs?.records ?? [];
+    const inProject = (r) => state.files.some((n) => String(r.path ?? r.file ?? '').endsWith(n));
+    const steps = (rs?.records ?? []).filter((r) => traceInternal.checked || inProject(r));
     if (!steps.length) {
-      traceBody.innerHTML = `<p class="muted">${rs?.error ? `The query failed: ${escape(rs.error)}.` : `The run recorded no step for this call${traceInternal.checked ? '' : '. It may expand only inside package code: switch on “include package code”'}.`}</p>`;
+      traceBody.innerHTML = traceHead(at, name, '') + `<p class="muted">${rs?.error ? `The query failed: ${escape(rs.error)}.` : `The run recorded no step for this call${traceInternal.checked ? '' : ' in the project. It may expand only inside library code: switch on “include library code”'}.`}</p>`;
+      traceOutput(at, mine);
       return;
     }
-    const t = traceTree(steps.slice(0, 3000), name);
-    traceBody.innerHTML = t.html;
+    const shown = steps.slice(0, 3000);
+    const names = [...new Set(shown.map((r) => r.name).filter((n) => /^\\/.test(n)))].slice(0, 200);
+    const does = new Map((await explainMany(names).catch(() => [])).flatMap((rs, i) => rs?.[0]?.does ? [[names[i], rs[0].does]] : []));
+    if (mine !== traceRun) return;
+    traceBody.innerHTML = traceHead(at, name, '') + traceTree(shown, name, does).html;
     $('trace-total').textContent = `${plural(steps.length, 'step')}${steps.length > 3000 ? ', the first 3000 shown' : ''}`;
+    traceOutput(at, mine);
+  }
+  /** The call's source line, the call marked, and a place for the text set up to it. */
+  function traceHead(at, name) {
+    const text = (state.texts[Object.keys(state.texts).find((n) => at.file.endsWith(n) || n.endsWith(at.file))] ?? '').split('\n');
+    const lo = Math.max(1, at.line - 1), hi = Math.min(text.length, at.line + 1);
+    const lines = text.slice(lo - 1, hi).map((l, i) => {
+      const n = lo + i, mark = n === at.line;
+      const body = mark ? `${escape(l.slice(0, at.col - 1))}<mark class="tr-call">${escape(l.slice(at.col - 1, at.col - 1 + name.length))}</mark>${escape(l.slice(at.col - 1 + name.length))}` : escape(l);
+      return `<span class="tr-line${mark ? ' on' : ''}"><i>${n}</i>${body || ' '}</span>`;
+    });
+    return `<div class="tr-src"><pre><code>${lines.join('')}</code></pre><div id="trace-before" class="tr-before muted"></div></div>`;
+  }
+  /** The text set before the call, from the typeset rows. */
+  async function traceOutput(at, mine) {
+    const rows = await lsp('satex/typeset', { textDocument: { uri: uri(state.root ?? state.file) } }).catch(() => null);
+    const box = $('trace-before');
+    if (!box || mine !== traceRun) return;
+    const before = [];
+    for (const r of (rows ?? []).filter((r) => r.kind === 'paragraph')) {
+      if (String(r.path ?? "").endsWith(at.file) && (r.line > at.line || (r.line === at.line && (r.col ?? 1) >= at.col))) break;
+      before.push((r.marked ?? r.detail ?? '').replace(/\uE000[^\uE001]*\uE001/g, ''));
+    }
+    box.innerHTML = before.length ? `<b>set before</b> <span>${escape(before.slice(-3).join(' ¶ ').slice(-400))}</span>` : '<b>set before</b> <span>nothing yet</span>';
   }
   traceInternal.onchange = () => { if (traceFor) traceCall(traceFor.name, traceFor.site); };
   $('trace-close').onclick = () => traceBox.close();
@@ -1633,7 +1682,7 @@
    * what its files name, and again whenever a finding or a run says one is not in this installation. */
   const PACKAGES = new Map((manifest.packages ?? []).map((p) => [p.id, p]));
   const fetchedPackages = new Map(); // id -> its load
-  const MISSING = /`([^`\s]+)` is not in this installation/g;
+  const MISSING = /(?:`([^`\s]+)`|(\S+\.(?:sty|cls))) is not in this installation/g;
   const NAMED = /\\(?:documentclass|usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
   /** The bundles of the current kernel for `names` (a class too), and what those need, not yet asked for. */
   function wanted_(names, k = state.kernel) {
@@ -1650,7 +1699,7 @@
   }
   /** The packages and classes the project's own files name. */
   const named = (texts) => [...new Set(texts.flatMap((t) => [...String(t).matchAll(NAMED)].flatMap((m) => m[1].split(',').map((x) => x.trim()).filter(Boolean))))];
-  const missing = (texts) => wanted_([...new Set(texts.flatMap((t) => [...String(t).matchAll(MISSING)].map((m) => m[1].replace(/\.(sty|cls)$/, ''))))]);
+  const missing = (texts) => wanted_([...new Set(texts.flatMap((t) => [...String(t).matchAll(MISSING)].map((m) => (m[1] ?? m[2]).replace(/\.(sty|cls)$/, ''))))]);
   const loadedList = [], inFlight = new Set();
   async function fetchPackages(ids) {
     if (!ids.length) return false;
@@ -1662,6 +1711,8 @@
     const load = ask({ type: 'bundles', base, entries, given }, given ? given.map((g) => g.buffer) : []);
     ids.forEach((id) => { fetchedPackages.set(id, load); inFlight.add(id); });
     try { await load; } catch (e) { ids.forEach((id) => fetchedPackages.delete(id)); toast(`${label} did not load: ${e.message}`); return false; } finally { ids.forEach((id) => inFlight.delete(id)); }
+    // the file index cached before this bundle was in the file system does not list its files: drop it, so the next start rebuilds it
+    try { const stale = ((await ask({ type: 'caches' })).entries ?? []).filter((e) => /\/index-/.test(e.path)).map((e) => e.path); if (stale.length) await ask({ type: 'uncache', paths: stale }); } catch {}
     loads.clear();
     idle();
     status.textContent = `${label} fetched in ${secs(performance.now() - t)}`;
@@ -1824,7 +1875,8 @@
     prefetched = prefetched.then(async () => {
       if (k !== state.kernel) await loadKernel(k);
       const ids = wanted_(named(texts), k).filter((id) => !fetchedPackages.has(id));
-      if (ids.length) await fetchPackages(ids);
+      // the check may have run before the files were there: start over, with the file index rebuilt
+      if (ids.length && await fetchPackages(ids)) { await restart(); if (!plainLint()) await start(); }
     }).catch(() => {});
   }
 
