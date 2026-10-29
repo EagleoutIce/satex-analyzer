@@ -9,7 +9,7 @@ files` says the samples and the offered packages read, and its caches from `sate
     build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site-out
 """
 
-import argparse, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, subprocess, sys, threading, time, tomllib
+import argparse, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, threading, time, tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -471,6 +471,14 @@ def bundle(satex, work):
     for path in sorted(project.iterdir()):
         if path.is_file() and path.name != "satex.yaml":
             tables[0][f"/work/{path.name}"] = path.read_bytes()
+    # The tree's file list (kpathsea's ls-R) names every file a bundle holds, fetched or not: completion
+    # offers each package, and loading one the page has not fetched is a missing file it then fetches.
+    held = sorted({p for files in [*tables, *(f for _, _, f, _ in packages)] for p in files if p.startswith("/texmf.bundle/")})
+    listing = {}
+    for p in held:
+        d, _, f = p.removeprefix("/texmf.bundle/").rpartition("/")
+        listing.setdefault(d, []).append(f)
+    tables[0]["/texmf.bundle/ls-R"] = "".join(f"./{d}:\n" + "".join(f"{f}\n" for f in fs) + "\n" for d, fs in sorted(listing.items())).encode()
     if (tree / "release-texlive.txt").is_file():
         tables[0]["/texmf.bundle/release-texlive.txt"] = (tree / "release-texlive.txt").read_bytes()
     tables[0]["/work/satex.yaml"] = config.replace(str(tree), "/texmf.bundle").encode()
@@ -719,7 +727,11 @@ def main():
                     help="write a .gz beside each compressible file, for a server that serves those as GitHub Pages compresses")
     ap.add_argument("--fresh", action="store_true", help="redo every satex run instead of reusing WORK/listings.json and WORK/memo")
     args = ap.parse_args()
-    global BINARY, KEY, FRESH, SATEX
+    # Ctrl+C stops the build: the terminal signals the satex runs too, and worker threads must not
+    # start more of them, so the process ends at once instead of unwinding the main thread only.
+    for stop in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(stop, lambda number, _: os._exit(128 + number))
+    global BINARY, KEY, FRESH, SATEX, SITE, EXAMPLES
     SATEX = args.satex.resolve()
     BINARY, FRESH = digest(args.satex.resolve().read_bytes()), args.fresh
     KEY = json.loads(subprocess.run([str(args.satex), "cache", "--format", "json"], capture_output=True, text=True).stdout or "{}").get("key") or BINARY
@@ -727,6 +739,12 @@ def main():
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
     work.mkdir(parents=True, exist_ok=True)
+    # One state of the site's sources for the whole build: an edit made while it runs reaches the next one,
+    # never half of this one (a page from after the edit with a script from before it).
+    snapshot = work / "site-src"
+    shutil.rmtree(snapshot, ignore_errors=True)
+    shutil.copytree(SITE, snapshot, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    SITE, EXAMPLES = snapshot, snapshot / "examples"
     listings = work / "listings.json"
     stamp = installation_stamp() + ";" + KEY
     if listings.exists() and not args.fresh:
