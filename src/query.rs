@@ -432,6 +432,8 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// `⟨?⟩` paragraph with `cut` set: `kernel` when the kernel was read only
 /// partly (it is then the only paragraph), `run` when the document was. A
 /// paragraph no page break may part from what follows (a heading) has `kept`.
+/// `keys` lists the labels, references and citations of the user's files
+/// with the place in `detail` where each stands.
 fn typeset(analysis: &Analysis) -> Vec<Record> {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
@@ -449,11 +451,38 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         let end = on_page.len();
         on_page[(from as usize).min(end)..(to as usize).min(end)].fill(true);
     }
+    // The labels, references and citations of the user's files, each set
+    // as a `KEY` mark before the first character read past it.
+    let mut named: Vec<(Span, &'static str, &str)> = analysis
+        .facts
+        .occurrences
+        .iter()
+        .filter(|o| matches!(o.kind, OccKind::Label | OccKind::Ref | OccKind::Cite | OccKind::BibItem))
+        .filter(|o| origin(analysis, o.span.file) == "document")
+        .map(|o| (o.span, o.kind.as_str(), o.key.as_str()))
+        .collect();
+    named.sort_by_key(|(s, ..)| (s.file, s.line, s.col));
+    let mut keys: std::collections::VecDeque<(&str, &str)> = Default::default();
+    let mut next_key: std::collections::HashMap<FileId, usize> = Default::default();
     for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
         let site = Span {
             file: text.site.get(i).map_or(spot.span.file, |s| s.file),
             ..text.site.get(i).copied().unwrap_or(spot.span)
         };
+        let from = *next_key.entry(site.file).or_insert_with(|| named.partition_point(|(s, ..)| s.file < site.file));
+        let upto = from
+            + named[from..]
+                .iter()
+                .take_while(|(s, ..)| s.file == site.file && (s.line, s.col) < (site.line, site.col))
+                .count();
+        for &(_, kind, key) in &named[from..upto] {
+            keys.push_back((kind, key));
+            match choice.as_mut() {
+                Some((_, arms)) => arms[0].push(KEY),
+                None => line.push(KEY),
+            }
+        }
+        next_key.insert(site.file, upto);
         let arm = arms.next_if(|a| a.0 as usize <= i).filter(|a| a.0 as usize == i);
         let boxed = !on_page[i]
             && spot
@@ -478,6 +507,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                 first.take().unwrap_or(site),
                 &std::mem::take(&mut line),
                 std::mem::take(&mut causes),
+                &mut keys,
             );
             if text.kept.binary_search(&(i as u32)).is_ok() {
                 record.insert("kept".into(), json!(true));
@@ -502,7 +532,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     }
     close(&mut line, &mut choice, &mut causes);
     if !line.trim().is_empty() {
-        out.push(paragraph(analysis, first.unwrap_or_default(), &line, causes));
+        out.push(paragraph(analysis, first.unwrap_or_default(), &line, causes, &mut keys));
     }
     // A kernel read only partly leaves the document names the engine's
     // format defines (`\documentclass` set as text), so none of the text is
@@ -516,7 +546,13 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         out.clear();
     }
     if kernel_cut || analysis.exhausted {
-        let mut rest = paragraph(analysis, Span::default(), &note("⟨?⟩"), vec![Cause::Unknown(Span::default())]);
+        let mut rest = paragraph(
+            analysis,
+            Span::default(),
+            &note("⟨?⟩"),
+            vec![Cause::Unknown(Span::default())],
+            &mut Default::default(),
+        );
         rest.insert("cut".into(), json!(if kernel_cut { "kernel" } else { "run" }));
         out.push(rest);
     }
@@ -595,6 +631,9 @@ fn clip(s: &str) -> String {
 
 const NOTE: (char, char) = ('\u{E000}', '\u{E001}');
 
+/// Where a key [`typeset`] lists stands in the text, removed by [`paragraph`].
+const KEY: char = '\u{E002}';
+
 /// `s` as satex's own notation, not a typeset character.
 fn note(s: &str) -> String {
     format!("{}{s}{}", NOTE.0, NOTE.1)
@@ -606,9 +645,27 @@ fn unmarked(s: &str) -> String {
 
 /// A paragraph record: `detail` is plain, `marked` wraps the notation in
 /// private-use characters, `causes` says why each choice or unknown is there.
-fn paragraph(analysis: &Analysis, at: Span, marked: &str, causes: Vec<Cause>) -> Record {
+fn paragraph(
+    analysis: &Analysis,
+    at: Span,
+    marked: &str,
+    causes: Vec<Cause>,
+    keys: &mut std::collections::VecDeque<(&str, &str)>,
+) -> Record {
     let marked = tidy(marked);
+    let (mut placed, mut offset) = (Vec::new(), 0);
+    for c in unmarked(&marked).chars() {
+        if c != KEY {
+            offset += 1;
+        } else if let Some((kind, key)) = keys.pop_front() {
+            placed.push(json!({ "kind": kind, "key": key, "at": offset }));
+        }
+    }
+    let marked: String = marked.chars().filter(|&c| c != KEY).collect();
     let mut record = place(analysis, at);
+    if !placed.is_empty() {
+        record.insert("keys".into(), json!(placed));
+    }
     record.insert("kind".into(), json!("paragraph"));
     record.insert("detail".into(), json!(unmarked(&marked)));
     record.insert("marked".into(), json!(marked));

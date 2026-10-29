@@ -1482,6 +1482,14 @@ fn typeset_of_a_root_splits_the_bibliography() {
     );
     assert!(details.iter().any(|d| d.contains("A Title") && !d.contains("References")), "{details:?}");
     assert!(details.iter().any(|d| d.trim() == "1 Intro"), "{details:?}");
+    // a citation stands where it is set: before its `[1]`
+    let cited = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.starts_with("Chapter text")));
+    let key = cited.and_then(|r| r["keys"].as_array()).and_then(|k| k.first()).cloned().unwrap_or_default();
+    assert_eq!(
+        (key["kind"].as_str(), key["key"].as_str(), key["at"].as_u64()),
+        (Some("cite"), Some("a"), Some(13)),
+        "{cited:?}"
+    );
 }
 
 /// A paragraph set by a sectioning command says which.
