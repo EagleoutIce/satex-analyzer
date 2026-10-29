@@ -28,7 +28,7 @@
 mod doccomment;
 mod handlers;
 mod knowledge;
-mod primitives;
+pub(crate) mod primitives;
 mod unreached;
 #[cfg(target_os = "emscripten")]
 mod wasm;

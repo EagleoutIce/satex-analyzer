@@ -2728,7 +2728,10 @@ fn insert_creates(record: &mut Record, analysis: &Analysis, sym: Sym) {
             continue;
         }
         let name = analysis.interner.name(def.name);
-        match analysis.settings.conventions.is_internal(name) {
+        // A name no document spells as a control word or symbol (`\OT1/cmr/m/n/10`,
+        // a font the selection loaded) is the code's own, like an internal one.
+        let spelled = name.chars().count() == 1 || name.chars().all(char::is_alphabetic);
+        match analysis.settings.conventions.is_internal(name) || !spelled {
             true => internal.insert(analysis.interner.cs(def.name)),
             false => public.insert(analysis.interner.cs(def.name)),
         };
@@ -2822,6 +2825,20 @@ pub fn describe(name: &str) -> Option<&'static str> {
     TABLE.get_or_init(|| DESCRIPTIONS.lines().filter_map(|l| l.split_once('\t')).collect()).get(name).copied()
 }
 
+/// What `name` with this meaning does: a kernel macro that took a
+/// primitive's name (`\end`) has a row of its own, `latex:end`; the
+/// primitive's row never describes it.
+fn describe_meaning(analysis: &Analysis, name: &str, meaning: &Meaning) -> Option<&'static str> {
+    if meaning.as_macro().is_none() {
+        return describe(name);
+    }
+    describe(&format!("latex:{name}")).or_else(|| {
+        (!crate::builtins::primitive_names(analysis.plugins.engine).contains_key(name))
+            .then(|| describe(name))
+            .flatten()
+    })
+}
+
 /// Adds the `documentation`/`reference` link and, when the name has one, the
 /// `does` description.
 fn document(
@@ -2836,7 +2853,7 @@ fn document(
     if let Some((doc, link)) = documentation(analysis, sym, package, is_class, meaning, kernel) {
         record.insert("documentation".into(), json!(doc));
         record.insert("reference".into(), json!(link));
-        if let Some(text) = describe(analysis.interner.name(sym)) {
+        if let Some(text) = describe_meaning(analysis, analysis.interner.name(sym), meaning) {
             record.insert("does".into(), json!(text));
         }
     }
@@ -2976,7 +2993,15 @@ fn insert_call_shape(
     forms: bool,
 ) {
     record.insert("takes".into(), takes_of(analysis, sym, mac, view));
-    let probe = probed(analysis, sym, mac, view);
+    // A primitive the TeXbook gives a syntax for shows it; one that reads a
+    // parameter text (`\def`) has no argument shape a probe could find.
+    let name = analysis.interner.name(sym);
+    let syntax =
+        crate::lsp::primitives::usage(name).filter(|_| matches!(analysis.env.meaning(sym), Meaning::Primitive(_)));
+    if let Some(rest) = syntax {
+        record.insert("syntax".into(), json!(format!("\\{name}{rest}")));
+    }
+    let probe = probed(analysis, sym, mac, view).filter(|_| !syntax.is_some_and(|s| s.contains("⟨parameter text⟩")));
     record.insert(
         "signature".into(),
         match &probe {

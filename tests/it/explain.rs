@@ -897,11 +897,24 @@ fn expands_splits_always_from_conditional_arms() {
 /// group, the internal one folded apart, the local one inside it not at all.
 #[test]
 fn creates_lists_what_the_calls_leave_defined() {
-    let analysis = analyze(r"\catcode`\@=11 \def\mk{\gdef\made{x}\gdef\in@ner{y}{\def\gone{z}}}\mk");
+    let analysis = analyze(
+        r"\catcode`\@=11 \def\mk{\gdef\made{x}\gdef\in@ner{y}\expandafter\gdef\csname f/1\endcsname{}{\def\gone{z}}}\mk",
+    );
     let record = explain_one(&analysis, "mk");
     let names = |field| -> Vec<&str> {
         record.get(field).and_then(Json::as_array).map_or(vec![], |a| a.iter().map(|v| v.as_str().unwrap()).collect())
     };
     assert_eq!(names("creates"), vec![r"\made"]);
-    assert_eq!(names("creates_internal"), vec![r"\in@ner"]);
+    assert_eq!(names("creates_internal"), vec![r"\f/1", r"\in@ner"]);
+}
+
+/// A kernel macro that took a primitive's name is described as itself,
+/// and `\def` shows its TeXbook syntax, not an argument shape.
+#[test]
+fn kernel_end_and_primitive_def_read_as_themselves() {
+    let analysis = analyze_kernel(r"\documentclass{article}\begin{document}x\end{document}");
+    assert_eq!(str_field(&explain_one(&analysis, "end"), "does"), Some("Ends an environment."));
+    let def = explain_one(&analysis, "def");
+    assert!(str_field(&def, "syntax").is_some_and(|s| s.contains("⟨parameter text⟩")), "{def:?}");
+    assert_eq!(str_field(&def, "signature"), None);
 }
