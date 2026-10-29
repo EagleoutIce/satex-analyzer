@@ -186,7 +186,9 @@
   function explain(r) {
     const rows = [];
     const primitive = r.kind === 'primitive';
-    if (r.does) rows.push(['does', esc(r.does)]);
+    // what it does and where its documentation is, in one row
+    const link = r.reference ? `<a href="${esc(r.reference)}" target="_blank" rel="noopener">${esc(r.documentation ?? 'documentation')} ↗</a>` : '';
+    if (r.does || link) rows.push(['docs', [r.does && esc(r.does), link].filter(Boolean).join(' · ')]);
     if (r.signature) {
       const counted = (r.signature.match(/⟨[^⟩]*⟩|[mrRvbluoOdDgGste]/g) ?? []).length;
       const more = r.takes && !r.signature.endsWith('…') && !(r.takes.min <= counted && (r.takes.max ?? Infinity) <= counted);
@@ -210,7 +212,6 @@
     if (made.length || inner.length) rows.push(['creates', `<span class="chips">${made.map(csChip).join('')}</span>` +
       (inner.length ? `<details class="x-more"><summary>${inner.length} internal</summary><span class="chips">${inner.map(csChip).join('')}</span></details>` : '')]);
     if (r.error) rows.push(['error', `<span class="x-err">${esc(r.error)}</span>`]);
-    if (r.reference) rows.push(['docs', `<a href="${esc(r.reference)}" target="_blank" rel="noopener">${esc(r.documentation ?? 'documentation')} ↗</a>`]);
     const tags = [primitive ? 'primitive' : r.tag, r.when && `in the ${r.when}`, r.certain === false && 'uncertain'].filter(Boolean);
     return `<div class="xcard"><div class="x-head"><code class="x-name">${esc(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}${traceButton(r)}</div>` +
       `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
