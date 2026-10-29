@@ -2327,10 +2327,24 @@ fn origin_of(analysis: &Analysis, package: Option<Sym>, file: FileId) -> (u8, Js
 /// tens of thousands the kernel allocates for its own bookkeeping).
 pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool) -> Vec<Record> {
     let mut latest: BTreeMap<Sym, &crate::facts::Definition> = BTreeMap::new();
+    // A definition in a file no user file reads (the kernel's, run by
+    // `\begin{document}`) has no place there: it holds once the run has
+    // passed the first call made at or after the position.
+    let placed = |f: FileId| f == analysis.main_file || analysis.entry.get(f as usize).copied().flatten().is_some();
+    let cut = before.map(|(file, line, col)| {
+        analysis
+            .facts
+            .expansions
+            .iter()
+            .filter(|e| e.span.file == file && !e.span.before(line, col))
+            .filter_map(|e| e.node)
+            .min()
+    });
     for def in &analysis.facts.defs {
         let visible = match before {
             None => true,
-            Some((file, line, col)) => analysis.visible_in(def.span, file, line, col),
+            Some((file, line, col)) if placed(def.span.file) => analysis.visible_in(def.span, file, line, col),
+            Some(_) => cut.flatten().is_none_or(|cut| def.node < cut),
         };
         if visible {
             latest.insert(def.name, def);
