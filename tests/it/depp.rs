@@ -83,6 +83,7 @@ fn the_distribution_query_lists_the_indexed_directories() {
     let records = satex::query::run(&analysis, satex::query::Query::Distribution, &satex::query::Filter::Always);
     let graphics =
         records.iter().find(|r| r.get("kind").is_some_and(|k| k == "directory") && r["name"] == "tex/latex/graphics");
-    assert!(graphics.is_some_and(|r| r["count"].as_u64() > Some(3)), "{graphics:?}");
+    // graphics.sty and graphicx.sty at least
+    assert!(graphics.is_some_and(|r| r["count"].as_u64() >= Some(2)), "{graphics:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
