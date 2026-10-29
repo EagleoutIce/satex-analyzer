@@ -8,6 +8,9 @@ on:
     tags: ['v*']
     paths-ignore:
       - 'editors/**'
+      - 'tests/**'
+      - 'benches/**'
+      - 'scripts/ci-*.sh'
       - '.github/workflows/ci.yml'
       - '.github/workflows/codeql.yml'
       - '.github/workflows/release.yml'
@@ -20,15 +23,43 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: read
 
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
+  # Beside `generate`, which picks it up when the playground needs it.
+  wasm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-emscripten
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: pages-wasm
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Compiles Lua for the browser; see `.cargo/config.toml`.
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.11
+          actions-cache-folder: emsdk-cache
+      - run: cargo build --locked --release --target wasm32-unknown-emscripten --bin satex
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: |
+            target/wasm32-unknown-emscripten/release/satex.js
+            target/wasm32-unknown-emscripten/release/satex.wasm
+          retention-days: 1
+
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     container: texlive/texlive:latest
     steps:
       # Lua and LPeg are compiled from C; pandoc renders the Markdown,
@@ -41,32 +72,43 @@ jobs:
       - uses: actions/checkout@v5
 
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-emscripten
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: pages
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # Compiles Lua for the browser; see `.cargo/config.toml`.
-      - uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: 6.0.11
       - uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Generate the documentation
-        run: |
-          cargo build --release
-          cargo run --release --features doc --bin satex-doc
+      # build.py keys its memo by the analysis, so stale entries are ignored.
+      - uses: actions/cache@v4
+        with:
+          path: site-work
+          key: site-work-${{ github.sha }}
+          restore-keys: site-work-
 
-      - name: Build satex for the browser
-        run: cargo build --release --target wasm32-unknown-emscripten --bin satex
+      - name: Build satex
+        run: cargo build --locked --profile ci --features doc --bin satex --bin satex-doc
+
+      # Failing, the checked-in pages are used.
+      - name: Generate the documentation
+        timeout-minutes: 10
+        continue-on-error: true
+        run: target/ci/satex-doc
 
       - name: Build the site
-        run: python3 doc/site/build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site
+        timeout-minutes: 45
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SATEX_WASM_READY: wasm.ready
+        run: |
+          python3 scripts/ci-await-artifact.py wasm wasm wasm-build wasm.ready &
+          python3 doc/site/build.py --satex target/ci/satex --wasm wasm-build --work site-work --out site
 
+      # Late or failing, the site still deploys.
       - name: Test the playground
+        timeout-minutes: 8
+        continue-on-error: true
         run: |
           python3 -m http.server -d site 8000 > /dev/null 2>&1 &
           sleep 2

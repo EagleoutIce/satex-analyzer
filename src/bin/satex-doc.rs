@@ -67,12 +67,14 @@
 //! drift and fails if a citation no longer resolves, or resolves to a
 //! different line than what is checked in. See [`refresh_citations`].
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 use regex::Regex;
 use satex::builtins::{self, Primitive, Site, Verdict};
@@ -271,9 +273,13 @@ fn run(check: bool) -> Result<(), String> {
     }
     let mut stale = Vec::new();
     let mut written = Vec::new();
-    for (src, dst) in TEMPLATES {
-        let template = fs::read_to_string(src).map_err(|e| format!("{src}: {e}"))?;
-        let generated = render(&template).map_err(|e| format!("{src}: {e}"))?;
+    let templates: Vec<String> = TEMPLATES
+        .iter()
+        .map(|(src, _)| fs::read_to_string(src).map_err(|e| format!("{src}: {e}")))
+        .collect::<Result<_, _>>()?;
+    let expanded = expand_all(templates.iter().flat_map(|t| directives(t)).collect());
+    for ((src, dst), template) in TEMPLATES.iter().zip(&templates) {
+        let generated = render(template, &expanded).map_err(|e| format!("{src}: {e}"))?;
         let generated = linkify_citations(&generated);
         let existing = fs::read_to_string(dst).unwrap_or_default();
         if existing == generated {
@@ -609,18 +615,61 @@ fn refresh_citations(check_only: bool) -> Result<(), String> {
 
 /// Replace every `{{directive}}` in `template` with its expansion, passing
 /// everything else through unchanged.
-fn render(template: &str) -> Result<String, String> {
+/// The `{{...}}` directives of `template`, in order.
+fn directives(template: &str) -> Vec<&str> {
+    template.split("{{").skip(1).filter_map(|d| d.split_once("}}")).map(|(d, _)| d.trim()).collect()
+}
+
+/// Every distinct directive expanded, several at once: each is a separate
+/// `satex` or `pdflatex` run. `satex cache` reports what the others stored,
+/// so those go last. SATEX_DOC_JOBS caps the runs at once, else a core and
+/// 2 GB of the free memory each.
+fn expand_all(mut todo: Vec<&str>) -> HashMap<&str, Result<String, String>> {
+    let mut seen = HashSet::new();
+    todo.retain(|d| seen.insert(*d));
+    let jobs = std::env::var("SATEX_DOC_JOBS").ok().and_then(|j| j.parse().ok()).unwrap_or_else(|| {
+        let free = fs::read_to_string("/proc/meminfo").ok().and_then(|m| {
+            m.lines().find_map(|l| l.strip_prefix("MemAvailable:")?.trim().strip_suffix(" kB")?.parse::<usize>().ok())
+        });
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        free.map_or(cores, |kb| cores.min(kb >> 21).max(1))
+    });
+    let (total, start, done) = (todo.len(), Instant::now(), AtomicUsize::new(0));
+    let (last, first): (Vec<&str>, Vec<&str>) = todo.into_iter().partition(|d| d.contains("satex cache"));
+    let mut out = HashMap::new();
+    for batch in [first, last] {
+        let next = AtomicUsize::new(0);
+        let results = Mutex::new(Vec::new());
+        std::thread::scope(|s| {
+            for _ in 0..jobs.min(batch.len()) {
+                s.spawn(|| {
+                    while let Some(&d) = batch.get(next.fetch_add(1, Ordering::Relaxed)) {
+                        let took = Instant::now();
+                        let r = expand(d);
+                        let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                        let (t, all) = (took.elapsed().as_secs_f32(), start.elapsed().as_secs());
+                        eprintln!("satex-doc: [{n}/{total} {}m{:02}s] {t:.1}s {d}", all / 60, all % 60);
+                        results.lock().expect("results").push((d, r));
+                    }
+                });
+            }
+        });
+        out.extend(results.into_inner().expect("results"));
+    }
+    out
+}
+
+fn render(template: &str, expanded: &HashMap<&str, Result<String, String>>) -> Result<String, String> {
     let mut out = String::new();
     let mut rest = template;
     while let Some(start) = rest.find("{{") {
         out.push_str(&rest[..start]);
         let after = &rest[start + 2..];
         let end = after.find("}}").ok_or("unterminated `{{` directive")?;
-        let directive = after[..end].trim();
         // Expansions are built line by line and so end with a trailing
         // newline; trim it so the template's own surrounding blank lines
         // control spacing, rather than adding to it.
-        out.push_str(expand(directive)?.trim_end_matches('\n'));
+        out.push_str(expanded[after[..end].trim()].clone()?.trim_end_matches('\n'));
         rest = &after[end + 2..];
     }
     out.push_str(rest);

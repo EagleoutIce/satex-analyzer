@@ -2,11 +2,12 @@
 # Runs one shard of the integration suite (`tests/it`, one binary).
 #   scripts/ci-test.sh K/N      shard K of N (1-based)
 #   scripts/ci-test.sh compliance
+#   scripts/ci-test.sh lib
 # Tests are dealt round-robin from the sorted list, the long ones of
 # tests/slow.txt first, so every shard gets a similar share of both.
-# A new test lands in a shard by itself.  Shard 1 also runs the unit tests.
-# The compliance ledger fails on purpose while it has open entries, so it
-# is a shard of its own, reported non-blocking.
+# A new test lands in a shard by itself.  The compliance ledger fails on
+# purpose while it has open entries, so it is a shard of its own, reported
+# non-blocking; being short, it also runs the unit tests (`lib`), blocking.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -16,6 +17,11 @@ run() { cargo test --locked --profile "$profile" --features doc --no-fail-fast "
 if [[ "${1-}" == compliance ]]; then
     set -x
     run --test it -- compliance_matrix::
+    exit
+fi
+if [[ "${1-}" == lib ]]; then
+    set -x
+    run --lib
     exit
 fi
 [[ "${1-}" =~ ^([1-9][0-9]*)/([1-9][0-9]*)$ ]] || { echo "usage: $0 <K/N|compliance>" >&2; exit 2; }
@@ -33,5 +39,4 @@ mapfile -t tests < <(
 (( ${#tests[@]} > 0 )) || { echo "$0: shard $k/$n is empty" >&2; exit 1; }
 
 set -x
-if (( k == 1 )); then run --lib; fi
 run --test it -- --exact "${tests[@]}"

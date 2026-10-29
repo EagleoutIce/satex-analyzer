@@ -31,7 +31,7 @@ while IFS= read -r f; do
         SEMANTICS.md | doc/src/tex-web-*) citations=true ;;
     esac
     case "$f" in
-        editors/* | LICENSE | CITATION.cff | lychee.toml | SEMANTICS.md | \
+        editors/* | scripts/ci-await-artifact.py | LICENSE | CITATION.cff | lychee.toml | SEMANTICS.md | \
             .github/dependabot.yml | .github/codeql-config.yml | \
             .github/workflows/vscode.yml | .github/workflows/pages.yml | \
             .github/workflows/wiki.yml | .github/workflows/release.yml | \

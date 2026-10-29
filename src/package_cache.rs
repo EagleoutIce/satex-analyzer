@@ -1502,7 +1502,8 @@ impl Machine<'_> {
             return Mouth::file(source, id);
         }
         // Only an outermost load waits for another process building its cache: it holds no lock
-        // then, so no two processes wait on each other.
+        // then, so no two processes wait on each other. A cache already there is read without
+        // waiting: a hit must not queue behind other readers.
         let outermost = self.package_capture.is_none() && self.suspended.is_empty() && self.building.is_none();
         self.suspend_recording();
         self.cacheable_load = Some(id);
@@ -1526,7 +1527,10 @@ impl Machine<'_> {
             kind,
             cache: {
                 let cache = cache_file(&dir, &held(name, kind), key.0);
-                if outermost && let Some(lock) = crate::format::build_lock(&cache) {
+                if outermost
+                    && !cache.exists()
+                    && let Some(lock) = crate::format::build_lock(&cache)
+                {
                     self.building = Some((id, std::rc::Rc::new(lock)));
                 }
                 cache

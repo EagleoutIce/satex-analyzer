@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 # A new push replaces the running run of the same ref.
 concurrency:
@@ -36,6 +37,7 @@ jobs:
       rust: ${{ steps.detect.outputs.rust }}
       links: ${{ steps.detect.outputs.links }}
       citations: ${{ steps.detect.outputs.citations }}
+      tree: ${{ steps.detect.outputs.tree }}
     steps:
       # A pull request checks out its merge commit, whose first parent is
       # the base; a push is compared with the commit it replaced.
@@ -47,20 +49,29 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           base=
           case "$EVENT" in
             pull_request) base=HEAD^1 ;;
             push) git fetch --depth=1 origin "$BEFORE" && base=$BEFORE || true ;;
           esac
-          scripts/ci-changes.sh "$base" | tee -a "$GITHUB_OUTPUT"
+          scripts/ci-changes.sh "$base" > changes
+          # A tree a same-repository pull request already passed is not tested again.
+          tree=$(git rev-parse 'HEAD^{tree}')
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          passed=0
+          if [[ "$EVENT" == push ]]; then
+            passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=ci-passed-$tree" \
+              --jq '[.artifacts[] | select((.expired | not) and .workflow_run.head_repository_id == .workflow_run.repository_id)] | length' || echo 0)
+          fi
+          if (( passed > 0 )); then
+            echo "tree $tree already passed" >&2
+            printf 'rust=false\nlinks=false\ncitations=false\n' > changes
+          fi
+          tee -a "$GITHUB_OUTPUT" < changes
 
-  # ---------------------------------------------------------------------
-  # Quick tier: every push and pull request.  Three OSes, current TeX Live
-  # only, the default (~11s) compliance_matrix run.  Kept fast enough that
-  # nobody dreads it; the full cross product and older distributions live
-  # in the release tier below.
-  # ---------------------------------------------------------------------
+  # Quick tier: every push and pull request, current TeX Live only.
   quick-linux:
     name: Test ubuntu-latest (${{ matrix.shard }})
     needs: changes
@@ -102,6 +113,12 @@ jobs:
         env:
           SATEX_REQUIRE_TEX: '1'
         run: bash scripts/ci-test.sh ${{ matrix.shard }}
+
+      - name: Unit tests
+        if: matrix.shard == 'compliance'
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: bash scripts/ci-test.sh lib
 
       # The known-divergence ledger: fails on purpose while any of its ~61
       # entries is open.  Reported here as its own shard, non-blocking, so
@@ -207,11 +224,23 @@ jobs:
           SATEX_REQUIRE_TEX: '1'
         run: cargo test --locked --profile ci --no-fail-fast --test it -- 'compliance_matrix::'
 
-  # ---------------------------------------------------------------------
-  # Release tier: several TeX Live versions, the exhaustive compliance
-  # cross product, and anything else too slow for every push.  Runs when a
-  # release is published, or by hand via workflow_dispatch.
-  # ---------------------------------------------------------------------
+  passed:
+    name: Mark the tree as passed
+    needs: [changes, quick-linux, quick-other, lint]
+    if: >-
+      always() && needs.changes.outputs.rust == 'true' &&
+      needs.quick-linux.result == 'success' && needs.quick-other.result == 'success' && needs.lint.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "${{ github.sha }}" > passed
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-passed-${{ needs.changes.outputs.tree }}
+          path: passed
+          retention-days: 30
+
+  # Release tier: older TeX Live versions and the full compliance cross product.
   full-linux:
     name: Full ubuntu-latest ${{ matrix.tl }} (${{ matrix.shard }})
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
@@ -247,7 +276,7 @@ jobs:
           # Rust build products do not depend on the TeX Live version, so
           # every version shares one cache.
           shared-key: full-linux
-          save-if: ${{ matrix.tl == 'current' && matrix.shard == '1/6' && github.ref == 'refs/heads/main' }}
+          save-if: ${{ matrix.tl == 'current' && matrix.shard == '1/8' && github.ref == 'refs/heads/main' }}
           cache-on-failure: true
 
       - name: The distribution is really there
@@ -258,6 +287,12 @@ jobs:
         env:
           SATEX_REQUIRE_TEX: '1'
         run: bash scripts/ci-test.sh ${{ matrix.shard }}
+
+      - name: Unit tests
+        if: matrix.shard == 'compliance'
+        env:
+          SATEX_REQUIRE_TEX: '1'
+        run: bash scripts/ci-test.sh lib
 
       # Default (~11s) on every version, for visibility of version-specific
       # divergences.  The full cross product (~90s) only on the current
