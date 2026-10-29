@@ -1609,7 +1609,8 @@
     const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records ?? [];
     used = new Map();
     for (const r of rs.filter((r) => r.kind === 'package' || r.kind === 'class')) {
-      const k = `${r.kind}:${r.name}`, u = used.get(k) ?? { own: false, by: new Set() };
+      const k = `${r.kind}:${r.name}`, u = used.get(k) ?? { own: false, by: new Set(), always: false };
+      u.always ||= r.certain;
       // the document's own: loaded by no package, from a file of the project (a hook of pdftex.def runs at depth 0 too)
       if (state.files.includes(r.file) && !r.by) u.own = true; else u.by.add(r.by ?? r.file);
       used.set(k, u);
@@ -1618,11 +1619,12 @@
   const usedText = (cls, what) => {
     const u = used.get(`${cls}:${what}`);
     if (!u) return '';
-    return u.own ? '<span class="use-own">by the document</span>' : `<span class="use-via" title="loaded by ${escape([...u.by].join(', '))}">via ${escape([...u.by].slice(0, 2).join(', '))}${u.by.size > 2 ? ` +${u.by.size - 2}` : ''}</span>`;
+    const how = u.own ? '<span class="use-own">by the document</span>' : `<span class="use-via" title="loaded by ${escape([...u.by].join(', '))}">via ${escape([...u.by].slice(0, 2).join(', '))}${u.by.size > 2 ? ` +${u.by.size - 2}` : ''}</span>`;
+    return u.always ? how : `${how} <span class="use-maybe" title="every load of it depends on an undecided conditional">sometimes</span>`;
   };
   /** What each package (and the kernel, `null`) defines in the open document's run, and the installation's
    * index: fetched when the dialog opens, from the root's `definitions` and `distribution` queries. */
-  let defined = new Map(), indexed = null;
+  let defined = new Map(), indexed = null, folders = [];
   async function facts() {
     const request = { file: path(state.root), queries: [{ type: 'definitions' }, { type: 'distribution' }] };
     const [defs, dist] = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null)) ?? [];
@@ -1634,13 +1636,17 @@
       defined.set(r.package ?? null, d);
     }
     indexed = (dist?.records ?? []).find((r) => r.indexed != null) ?? null;
+    folders = (dist?.records ?? []).filter((r) => r.kind === 'directory');
   }
   const DEFINED = ['public command', 'internal macro', 'environment', 'option', 'register', 'counter', 'length', 'switch', 'alias'];
   const plural = (n, w) => `${n} ${w}${n === 1 ? '' : /(s|ch)$/.test(w) ? 'es' : 's'}`;
   /** One row's details: what it defines and loads, and where its documentation is. */
   function details(cls, what, needs) {
     const parts = [];
-    if (cls === 'index' && indexed) parts.push(`${indexed.indexed} files indexed${indexed.message ? ` · ${escape(indexed.message)}` : ''}`);
+    if (cls === 'index' && indexed) {
+      parts.push(`${indexed.indexed} files indexed${indexed.message ? ` · ${escape(indexed.message)}` : ''}`);
+      if (folders.length) parts.push(`<ul class="cache-dirs">${folders.map((r) => `<li title="${escape(r.root)}/${escape(r.name)}"><span>${escape(r.name || '.')}</span><b>${r.count}</b></li>`).join('')}</ul>`);
+    }
     const d = cls === 'kernel' ? defined.get(null) : (cls === 'package' || cls === 'class') ? defined.get(what) : null;
     if (d) parts.push('defines ' + DEFINED.filter((k) => d[k]).map((k) => plural(d[k], k)).join(', '));
     else if (cls === 'package' || cls === 'class') parts.push('<span class="muted">not loaded by this document</span>');

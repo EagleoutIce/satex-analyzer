@@ -627,7 +627,7 @@ button.apply:hover:not(:disabled) { border-color: currentColor; }
 .cache-fold { font: .7rem ui-monospace, Menlo, monospace; color: var(--muted); background: var(--sunk); border: 1px solid var(--border); border-radius: 999px;
   padding: 0 .45rem; cursor: pointer; white-space: nowrap; }
 .cache-table td.loads { width: 1%; text-align: right; }
-.cache-table td.used { white-space: nowrap; font-size: .76rem; } .use-own { color: var(--accent); font-weight: 600; } .use-via { color: var(--muted); } .cache-table td:nth-child(2) { width: 100%; }
+.cache-table td.used { white-space: nowrap; font-size: .76rem; } .use-own { color: var(--accent); font-weight: 600; } .use-via { color: var(--muted); } .use-maybe { font-size: .68rem; padding: 0 .35em; border: 1px dashed var(--muted); border-radius: 3px; color: var(--muted); } .cache-table td:nth-child(2) { width: 100%; }
 .cache-name { padding: 0; border: 0; background: none; color: var(--fg); font-weight: 600; cursor: pointer; text-align: left; }
 .cache-name::before { content: "▸"; display: inline-block; width: .9rem; color: var(--muted); font-size: .7rem; transition: transform var(--quick); }
 .cache-name[aria-expanded="true"]::before { transform: rotate(90deg); }
@@ -637,3 +637,5 @@ button.apply:hover:not(:disabled) { border-color: currentColor; }
   border-radius: 999px; padding: 0 .45rem; font-size: .7rem; white-space: nowrap; }
 .k-kernel { --k: var(--c4); } .k-class { --k: var(--c5); } .k-package { --k: var(--c2); } .k-index { --k: var(--c6); } .k-facts { --k: var(--c3); } .k-hashes { --k: var(--c0); }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.cache-dirs { list-style: none; margin: .3rem 0 0; padding: 0; max-height: 12rem; overflow: auto; columns: 2 16rem; column-gap: 1.5rem; font: .74rem ui-monospace, Menlo, monospace; }
+.cache-dirs li { display: flex; justify-content: space-between; gap: .6rem; break-inside: avoid; padding: .05rem 0; } .cache-dirs span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .cache-dirs b { font-weight: 400; color: var(--muted); }
