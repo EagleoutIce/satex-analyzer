@@ -182,8 +182,9 @@
    * code, links, emphasis. A `file:line` in code is a place that opens (site.js). */
   const cards = self.satexCards;
   const inline = (t) => cards.inline(t).replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>');
-  /** A code span that is one command explains it on hover (`csTip`), as the editor's hover does. */
-  const commandRefs = (html) => html.replace(/<code>(\\[A-Za-z@]+\*?)<\/code>/g, '<code class="cs-ref" data-cs="$1" tabindex="0">$1</code>');
+  /** A command in text, or alone in a code span, explains itself on hover (`csTip`), as the editor's hover does. */
+  const commandRefs = (html) => html.replace(/(<code>(\\[A-Za-z@_]+(?::[A-Za-z]*)?\*?)<\/code>)|(<code[^>]*>[\s\S]*?<\/code>|<a [^>]*>[\s\S]*?<\/a>|<[^>]+>)|(\\[A-Za-z@_]+(?::[A-Za-z]*)?\*?)/g,
+    (m, span, c1, skip, c2) => skip ? m : `<code class="cs-ref" data-cs="${c1 ?? c2}" tabindex="0">${c1 ?? c2}</code>`);
   const markdown = (text) => text.split(/^```\w*\n([\s\S]*?)^```\s*$/m).map((part, i) => i % 2 ? `<pre><code>${escape(part)}</code></pre>`
     : part.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean).map((b) => /^#+ /.test(b) ? `<h4>${inline(b.replace(/^#+ /, ''))}</h4>`
       : /^[-*] /.test(b) ? `<ul>${b.split(/\n(?=[-*] )/).map((li) => `<li>${inline(li.slice(2))}</li>`).join('')}</ul>` : `<p>${inline(b)}</p>`).join('')).join('');
@@ -195,7 +196,7 @@
     const title = r.summary ?? r.message;
     const refs = (r.references ?? []).map((x) => x.url ? `<a href="${escape(x.url)}" target="_blank" rel="noopener">${escape(x.cite)}</a>` : escape(x.cite));
     return `<div class="explain"><p><span class="cat">${escape(r.category)}</span>${title && title !== d.message ? ` <b>${commandRefs(inline(title))}</b>` : ''}</p>` +
-      `${commandRefs(markdown(r.explanation ?? ''))}<p class="refs">${[...refs, `<a href="${base}wiki/lints.html#${encodeURIComponent(d.code)}">the rule's entry</a>`].join(' · ')}</p></div>`;
+      `${commandRefs(markdown(r.explanation ?? ''))}<p class="refs">${[...refs, `<a href="${base}wiki/lints.html#${encodeURIComponent(d.code)}">SaTeX rule documentation</a>`].join(' · ')}</p></div>`;
   }
   /** A hover's Markdown; its last paragraph, the places and links, is a muted footer. */
   const unescape = (s) => s.replace(/&(lt|gt|quot|amp);/g, (m, e) => ({ lt: '<', gt: '>', quot: '"', amp: '&' })[e]);
@@ -205,7 +206,7 @@
     const section = (md) => {
       const kinds = {};
       // the argument types the section lists (`- `⟨arg1⟩` glue`, roles::Ty), shown in the usage line too
-      const types = Object.fromEntries([...md.matchAll(/^- `⟨(arg\d+)⟩` ((?:\w+ )?(?:register|name)|number|dimen|glue|muglue|quantity|box|key|file|counter|control sequence|options|any)$/gm)].map((m) => [m[1], m[2]]));
+      const types = Object.fromEntries([...md.matchAll(/^- `⟨(arg\d+)⟩` ([^\n`]+)$/gm)].map((m) => [m[1], m[2]]));
       const html = markdown(md).replace(/<code>([^<]*⟨arg\d+⟩[^<]*)<\/code>/g, (m, code) => {
         if (/^⟨arg\d+⟩$/.test(code)) return m;
         const u = cards.usage(unescape(code), types);
@@ -545,20 +546,27 @@
       if (note === undefined) return escape(part);
       if (note === '⟦') { open++; return '<span class="ts-box" title="set in a box: on the page only if the box is used">'; }
       if (note === '⟧') { if (!open) return ''; open--; return '</span>'; }
+      if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `<span class="ts-key ts-key-${escape(kind)}" title="${escape(kind)}">${escape(key)}</span>`; }
       return note === '·' ? '' : `<span class="ts-note">${escape(note)}</span>`;
     }).join('');
     return html + '</span>'.repeat(open);
   }
-  const boxesToggle = $('typeset-boxes');
-  // in the section's header: a click flips the switch, never the section's fold
-  boxesToggle.closest('label').addEventListener('click', (e) => { e.preventDefault(); boxesToggle.checked = !boxesToggle.checked; boxesToggle.onchange(); });
-  try { boxesToggle.checked = localStorage.getItem('satex-typeset-boxes') === '1'; } catch {}
-  const showBoxes = () => typesetBody.classList.toggle('show-boxes', boxesToggle.checked);
-  boxesToggle.onchange = () => { showBoxes(); try { localStorage.setItem('satex-typeset-boxes', boxesToggle.checked ? '1' : '0'); } catch {} };
-  showBoxes();
+  // in the section's header: a click flips a switch, never the section's fold; kept across visits
+  for (const [id, cls, store] of [['typeset-boxes', 'show-boxes', 'satex-typeset-boxes'], ['typeset-keys', 'show-keys', 'satex-typeset-keys']]) {
+    const box = $(id), apply = () => typesetBody.classList.toggle(cls, box.checked);
+    box.closest('label').addEventListener('click', (e) => { e.preventDefault(); box.checked = !box.checked; box.onchange(); });
+    try { box.checked = localStorage.getItem(store) === '1'; } catch {}
+    box.onchange = () => { apply(); try { localStorage.setItem(store, box.checked ? '1' : '0'); } catch {} };
+    apply();
+  }
   /** The document's outline from the root's run (`satex query occurrences`), in reading order: its
    * sectioning units indented by level, each with its labels, then the bibliography and its entries. */
-  const outlineBody = $('outline-body');
+  // the examples fold away; kept across visits
+  const exSect = $('play-exsect');
+  try { exSect.open = localStorage.getItem('satex-examples') !== '0'; } catch {}
+  exSect.addEventListener('toggle', () => { try { localStorage.setItem('satex-examples', exSect.open ? '1' : '0'); } catch {} });
+  const outlineBody = $('outline-body'), outlineOpen = new Set();
+  outlineBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) outlineOpen.add(id); else outlineOpen.delete(id); } }, true);
   const LEVELS = ['part', 'chapter', 'section', 'subsection', 'subsubsection', 'paragraph', 'subparagraph'];
   async function outline() {
     const request = { file: path(state.root), queries: [{ type: 'occurrences' }] };
@@ -567,18 +575,43 @@
     // in source order: a sectioning unit is recorded when its contents line is written, after its labels
     const files = [...new Set(rs.map((r) => r.path ?? r.file))], rank = (r) => files.indexOf(r.path ?? r.file);
     const own = rs.filter((r) => !r.origin || r.origin === 'document').sort((a, b) => rank(a) - rank(b) || a.line - b.line || (a.col ?? 0) - (b.col ?? 0));
-    const sections = own.filter((r) => r.kind === 'section'), top = Math.min(...sections.map((r) => LEVELS.indexOf(r.detail)).filter((l) => l >= 0), 9);
+    const sections = own.filter((r) => r.kind === 'section'), present = [...new Set(sections.map((r) => LEVELS.indexOf(r.detail)).filter((l) => l >= 0))].sort((x, y) => x - y);
+    const lowest = present.includes(1) ? 1 : 2; // chapters count as the top level when there are some, else sections
     const at = (r) => `data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}"`;
+    // LaTeX's numbers: a counter per level from the top one, deeper ones reset, three levels deep; parts count in Roman
+    // numerals on their own; a starred command (read off its source) gets none
+    const count = [], roman = (n) => ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'][n] ?? String(n);
+    let parts = 0;
+    const numberOf = (r) => {
+      const l = LEVELS.indexOf(r.detail), text = state.texts[Object.keys(state.texts).find((n) => String(r.path ?? r.file).endsWith(n))]?.split('\n')[r.line - 1] ?? '';
+      if (l < 0 || l < lowest - 1 && l > 0 || l >= lowest + 3 || /^\\[a-z]+\*/.test(text.slice((r.col ?? 1) - 1))) return '';
+      if (l === 0) return roman(++parts);
+      count.length = l + 1;
+      for (let i = lowest; i <= l; i++) count[i] = (count[i] ?? 0) + (i === l ? 1 : 0);
+      return count.slice(lowest, l + 1).join('.');
+    };
+    const base = (p) => String(p ?? '').split('/').pop();
     const html = [];
     let open = null;
-    const close = () => { if (open) { html.push(open.labels.length ? `<span class="o-labels">${open.labels.join('')}</span>` : '', '</li>'); open = null; } };
+    const close = () => {
+      if (!open) return;
+      const files = [...open.files].filter((f) => /\.(tex|ltx)$/.test(f) && state.files.some((n) => String(f).endsWith(n))), cites = [...open.cites.entries()];
+      html.push(open.labels.length ? `<span class="o-labels">${open.labels.join('')}</span>` : '',
+        files.length > 1 || (files.length && !String(files[0]).endsWith(state.root)) ? `<span class="o-labels o-files" title="the files this part is set from">${files.map((f) => `<span class="o-file">${escape(base(f))}</span>`).join('')}</span>` : '',
+        cites.length ? `<details class="o-cites" data-id="${escape(open.id)}"${outlineOpen.has(open.id) ? ' open' : ''}><summary>${plural(cites.length, 'citation')}</summary><span class="o-labels">${cites.map(([k, c]) => `<a href="#" class="o-go o-label o-bib" ${at(c[0])} title="cited ${c.length}× in this part">${escape(k)}</a>`).join('')}</span></details>` : '', '</li>');
+      open = null;
+    };
     for (const r of own) {
       if (r.kind === 'section') {
         close();
-        const depth = Math.max(0, LEVELS.indexOf(r.detail) - top);
-        html.push(`<li class="o-sec" style="--d:${depth}"><a href="#" class="o-go" ${at(r)} title="${escape(r.detail)} at ${escape((r.file ?? '') + ':' + r.line)}"><span class="o-kind">${escape(r.detail)}</span>${escape(r.key)}</a>`);
-        open = { labels: [] };
-      } else if (r.kind === 'label') {
+        const depth = Math.max(0, present.indexOf(LEVELS.indexOf(r.detail))), num = numberOf(r);
+        html.push(`<li class="o-sec" style="--d:${depth}"><a href="#" class="o-go" ${at(r)} title="${escape(r.detail)} at ${escape((r.file ?? '') + ':' + r.line)}"><span class="o-kind o-sk">${escape(r.detail)}</span>${num ? `<span class="o-num">${num}</span>` : ''}${escape(r.key)}</a>`);
+        open = { labels: [], cites: new Map(), files: new Set([r.path ?? r.file]), id: `${r.path ?? r.file}:${r.line}` };
+      } else if (open && r.kind !== 'bibitem') {
+        open.files.add(r.path ?? r.file);
+        if (r.kind === 'cite') open.cites.set(r.key, [...(open.cites.get(r.key) ?? []), r]);
+      }
+      if (r.kind === 'label') {
         const chip = `<a href="#" class="o-go o-label" ${at(r)} title="label at ${escape((r.file ?? '') + ':' + r.line)}">${escape(r.key)}</a>`;
         if (open) open.labels.push(chip); else html.push(`<li class="o-sec" style="--d:0"><span class="o-labels">${chip}</span></li>`);
       }
@@ -600,12 +633,27 @@
   /** The groups of other files unfolded, kept across checks. */
   const tsOpen = new Set();
   typesetBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) tsOpen.add(id); else tsOpen.delete(id); } }, true);
+  /** `marked` with each key (`at`: its offset in the visible text) as a note of its own, where it stands. */
+  function withKeys(marked, keys) {
+    if (!Array.isArray(keys) || !keys.length) return marked;
+    const at = [...keys].filter((k) => k && k.key != null).sort((a, b) => a.at - b.at);
+    let out = '', seen = 0, i = 0, note = false;
+    const put = (n) => { while (i < at.length && at[i].at <= n) { out += `\uE000\u0001${at[i].kind ?? 'key'}\u0001${at[i].key}\uE001`; i++; } };
+    for (const c of marked) {
+      if (c === '\uE000') note = true;
+      if (!note) put(seen++);
+      out += c;
+      if (c === '\uE001') note = false;
+    }
+    put(Infinity);
+    return out;
+  }
   async function typeset(target) {
     if (target !== uri()) return;
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
     if (!rows || target !== uri()) return;
     const paragraphs = rows.filter((r) => r.kind === 'paragraph');
-    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(r.marked ?? r.detail ?? '')}</span></p>`;
+    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys))}</span></p>`;
     // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
     const html = [];
     for (let i = 0; i < paragraphs.length;) {
@@ -615,7 +663,7 @@
       while (j < paragraphs.length && paragraphs[j].path === r.path) j++;
       const run = paragraphs.slice(i, j), name = (r.path ?? '').split('/').pop();
       const id = `${r.path}|${r.line}`;
-      html.push(`<details class="ts-other" data-id="${escape(id)}"${tsOpen.has(id) ? ' open' : ''}><summary>⟨${escape(name)}⟩ · ${run.length} paragraph${run.length > 1 ? 's' : ''}</summary>${run.map(row).join('')}</details>`);
+      html.push(`<details class="ts-other" data-id="${escape(id)}"${tsOpen.has(id) ? ' open' : ''}><summary><span class="ts-file">${escape(name)}</span> <span class="muted">${plural(run.length, 'paragraph')}</span></summary>${run.map(row).join('')}</details>`);
       i = j;
     }
     typesetBody.innerHTML = html.length ? html.join('') : '<p class="muted">The document sets no paragraph.</p>';
@@ -869,7 +917,7 @@
     const items = [
       ...(w?.[3] ? [['Go to definition', 'Ctrl+click', definition]] : []),
       ...(w && editable ? [['Find references', '', references], ['Rename symbol', 'F2', renameBox]] : []),
-      ...(w?.[3] ? [['Explain', '', focusExplain], ['Show expansions', '', () => expansions(w)]] : []),
+      ...(w?.[3] ? [['Explain', '', focusExplain], ['Show expansions', '', () => expansions(w)], ['Trace expansion', '', () => traceCall(`\\${w[2]}`, { file: state.file, line: p.line + 1, col: w[0] + 1 })]] : []),
       ...found.map((d) => [`Explain rule ${d.code}`, '', () => unfold(diagnostics[uri()].indexOf(d), false)]),
       ...(editable ? fixes.map((f) => [`Fix: ${f.title}`, f.safety, () => fix(f)]) : []),
       ...(editable ? rules.map((c) => [`Fix all ${c}`, `${(diagnostics[uri()] ?? []).filter((d) => d.code === c && d.fixes.length).length}×`, () => fixAll(c, true)]) : []),
@@ -963,6 +1011,85 @@
   document.addEventListener('mouseout', (e) => { if (e.target.closest?.('.cs-ref')) setTimeout(() => { if (!csTip.matches(':hover')) csTip.hidden = true; }, 120); });
   csTip.addEventListener('mouseleave', () => { csTip.hidden = true; });
   document.addEventListener('click', (e) => { const ref = e.target.closest?.('.cs-ref'); if (ref) { csTip.hidden = true; explainName(ref.dataset.cs); } });
+  // ---------------------------------------------------------------- trace: how one call expands
+
+  const traceBox = $('play-trace'), traceBody = $('trace-body'), traceInternal = $('trace-internal');
+  const STEP_KIND = { expand: 'kernel', define: 'package', 'open-file': 'class' };
+  let traceFor = null, traceRun = 0;
+  /** Where to trace `name`: the caret's own call, else its first use in the open file, else in any file of the project. */
+  function callSite(name) {
+    const w = editor.word(), p = editor.position();
+    if (w?.[3] && `\\${w[2]}` === name) return { file: state.file, line: p.line + 1, col: w[0] + 1 };
+    const re = new RegExp(`${name.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}(?![A-Za-z@])`);
+    for (const file of [state.file, ...state.files.filter((f) => f !== state.file)]) {
+      const lines = (file === state.file ? editor.text() : state.texts[file] ?? '').split('\n');
+      for (let i = 0; i < lines.length; i++) { const m = re.exec(lines[i]); if (m) return { file, line: i + 1, col: m.index + 1 }; }
+    }
+    return null;
+  }
+  /** The steps as a tree by depth: a step with deeper steps after it is a folding node. */
+  function traceTree(steps, name) {
+    const root = { kids: [], depth: -1 }, stack = [root];
+    for (const r of steps) {
+      while (stack.at(-1).depth >= r.depth) stack.pop();
+      const node = { r, depth: r.depth, kids: [] };
+      stack.at(-1).kids.push(node);
+      stack.push(node);
+    }
+    const shown = root.kids.some((n) => n.r.name === name) ? root.kids.filter((n) => n.r.name === name) : root.kids;
+    const clip = (t) => (t.length > 160 ? `${t.slice(0, 160)}…` : t);
+    let count = 0;
+    const node = (n, first) => {
+      const { r } = n, open = first && n.kids.length ? ' open' : '';
+      count++;
+      const what = r.inserts != null ? `<span class="tr-arrow">→</span><code class="tr-out">${escape(clip(r.inserts)) || '<i>empty</i>'}</code>` : r.detail ? `<code class="tr-out">${escape(clip(r.detail))}</code>` : '';
+      const sets = r.sets ? `<span class="tr-sets" title="text this step set">sets <code>${escape(clip(r.sets))}</code></span>` : '';
+      const head = `${cacheBadge(STEP_KIND[r.step] ?? 'hashes', r.step)}<code class="${/^\\/.test(r.name) ? 'cs-ref' : ''}" ${/^\\/.test(r.name) ? `data-cs="${escape(r.name)}" tabindex="0"` : ''}>${escape(r.name)}</code>${what}${sets}` +
+        `<a href="#" class="tr-at o-go" data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}">${escape(r.file ?? '')}:${r.line}</a>`;
+      return n.kids.length ? `<li><details class="tr-node"${open}><summary>${head}</summary><ul>${n.kids.map((k) => node(k, false)).join('')}</ul></details></li>` : `<li><div class="tr-leaf">${head}</div></li>`;
+    };
+    const rest = root.kids.filter((n) => !shown.includes(n));
+    const html = shown.map((n, i) => node(n, i === 0)).join('') +
+      (rest.length ? `<li><details class="tr-node"><summary><span class="muted">${plural(rest.length, 'other step')} on this line</span></summary><ul>${rest.map((n) => node(n, false)).join('')}</ul></details></li>` : '');
+    return { html: `<ul class="tr-tree">${html}</ul>`, count };
+  }
+  async function traceCall(name, site = null) {
+    traceFor = { name, site: site ?? callSite(name) };
+    $('trace-title').innerHTML = `Trace <code class="cs-ref" data-cs="${escape(name)}" tabindex="0">${escape(name)}</code>`;
+    if (!traceBox.open) traceBox.showModal();
+    const at = traceFor.site, mine = ++traceRun;
+    $('trace-total').textContent = '';
+    if (!at) { $('trace-note').textContent = ''; traceBody.innerHTML = `<p class="muted">${escape(name)} is not used in the project, so there is no call to trace.</p>`; return; }
+    $('trace-note').textContent = `The call at ${at.file}:${at.line}:${at.col}, as the run expanded it.`;
+    traceBody.innerHTML = '<p class="muted">Tracing…</p>';
+    sync();
+    const config = { trace: 'true', trace_document_only: String(!traceInternal.checked), trace_lines: `[${at.line}, ${at.line}]`, trace_col: String(at.col), trace_file: at.file };
+    const request = { file: path(state.root ?? state.file), config, queries: [{ type: 'trace' }] };
+    const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch((e) => ({ error: String(e?.message ?? e) })))?.[0];
+    if (mine !== traceRun) return;
+    const steps = rs?.records ?? [];
+    if (!steps.length) {
+      traceBody.innerHTML = `<p class="muted">${rs?.error ? `The query failed: ${escape(rs.error)}.` : `The run recorded no step for this call${traceInternal.checked ? '' : '. It may expand only inside package code: switch on “include package code”'}.`}</p>`;
+      return;
+    }
+    const t = traceTree(steps.slice(0, 3000), name);
+    traceBody.innerHTML = t.html;
+    $('trace-total').textContent = `${plural(steps.length, 'step')}${steps.length > 3000 ? ', the first 3000 shown' : ''}`;
+  }
+  traceInternal.onchange = () => { if (traceFor) traceCall(traceFor.name, traceFor.site); };
+  $('trace-close').onclick = () => traceBox.close();
+  traceBox.onclick = (e) => {
+    if (e.target === traceBox) return traceBox.close();
+    const a = e.target.closest('.tr-at');
+    if (!a) return;
+    e.preventDefault();
+    const name = Object.keys(state.texts).find((n) => !(n in state.ro) && a.dataset.path.endsWith(n));
+    if (!name) return;
+    traceBox.close();
+    openPlace(name, { line: +a.dataset.line - 1, character: Math.max(+a.dataset.col - 1, 0) });
+  };
+  document.addEventListener('click', (e) => { const b = e.target.closest?.('.x-trace'); if (b) { csTip.hidden = true; traceCall(b.dataset.trace); } });
+
   function focusExplain() {
     explainBox.open = true;
     explained = '';
@@ -987,12 +1114,15 @@
   const filled = (v) => v != null && v !== '' && !(Array.isArray(v) && !v.length);
   function records(rows) {
     if (command() === 'explain' && rows.every((r) => r.name)) return rows.map(cards.explain).join('');
+    const dirs = rows.filter((r) => r.kind === 'directory' && r.count != null);
+    if (dirs.length) rows = rows.filter((r) => !dirs.includes(r));
     const shapes = new Map();
     for (const r of rows) {
       const k = Object.keys(r).filter((c) => !HIDDEN_COLS.has(c)).join('\0');
       shapes.set(k, [...(shapes.get(k) ?? []), r]);
     }
-    return [...shapes.values()].map((group) => {
+    const list = dirs.length ? `<div class="card"><p>${plural(dirs.length, 'directory')}</p><ul class="cache-dirs">${dirs.map((r) => `<li title="${escape(r.root)}/${escape(r.name)}"><span>${escape(r.name || '.')}</span><b>${r.count}</b></li>`).join('')}</ul></div>` : '';
+    return list + [...shapes.values()].map((group) => {
       const cols = [...new Set(group.flatMap(Object.keys))].filter((c) => !HIDDEN_COLS.has(c) && group.some((r) => filled(r[c]))), title = group[0].tag ?? group[0].kind;
       if (group.length === 1) {
         const r = group[0], head = r.name ?? r.key, rest = cols.filter((k) => k !== 'name' && !(k === 'key' && !r.name));
@@ -1545,7 +1675,7 @@
     timing('t-load', `${loadedList.join(', ')} · last ${secs(performance.now() - t)}`, 'packages fetched after the first download');
     return true;
   }
-  /** What a run's cache report says: the packages and classes served from the caches, the ones analysed anew. */
+  /** What a run's cache report says: the packages and classes served from the caches, the ones analyzed anew. */
   function cacheReport(lines) {
     const reused = [], fresh = [];
     let segments = 0;
@@ -1556,7 +1686,7 @@
       if (s) segments = Number(s[1]);
     }
     if (!reused.length && !fresh.length && !segments) return '';
-    const detail = [reused.length && `cached: ${reused.join(', ')}`, segments && `${segments} package segment${segments > 1 ? 's' : ''} cached`, fresh.length && `analysed anew: ${fresh.join(', ')}`].filter(Boolean).join(' · ');
+    const detail = [reused.length && `cached: ${reused.join(', ')}`, segments && `${segments} package segment${segments > 1 ? 's' : ''} cached`, fresh.length && `analyzed anew: ${fresh.join(', ')}`].filter(Boolean).join(' · ');
     timing('t-cache', detail, 'what the last run reused from the caches and what it analysed again');
     return `${reused.length + segments} cached${fresh.length ? ` · fresh: ${fresh.map((f) => f.split(' ')[0]).join(', ')}` : ''}`;
   }
@@ -1582,20 +1712,20 @@
     return [label, cls, what, needs];
   }
   /** The table: searched, sorted by a header, a class's or package's loads unfolded under it. */
-  let cacheOrder = { key: 'size', down: true };
+  let cacheOrder = { key: 'size', down: true, used: true };
   const cacheBadge = (cls, text) => `<span class="cache-kind k-${cls}">${escape(text)}</span>`;
   function drawCaches(entries) {
     if (entries) { cacheEntries = entries; $('cache-count').textContent = entries.length || ''; }
     const q = cacheFilter.value.trim().toLowerCase();
-    const rows = cacheEntries.map((e) => ({ e, l: cacheLabel(e.path) })).filter(({ l }) => !q || `${l[0]} ${l[2]}`.toLowerCase().includes(q));
+    const rows = cacheEntries.map((e) => { const l = cacheLabel(e.path); return { e, l, u: usedOf(l[1], l[2]) }; }).filter(({ l }) => !q || `${l[0]} ${l[2]}`.toLowerCase().includes(q));
     const by = { size: (r) => r.e.size, name: (r) => (r.l[2] || r.l[0]).toLowerCase(), kind: (r) => r.l[0] }[cacheOrder.key];
-    rows.sort((a, b) => (by(a) < by(b) ? -1 : by(a) > by(b) ? 1 : 0) * (cacheOrder.down ? -1 : 1));
+    rows.sort((a, b) => (cacheOrder.used ? b.u[0] - a.u[0] : 0) || (by(a) < by(b) ? -1 : by(a) > by(b) ? 1 : 0) * (cacheOrder.down ? -1 : 1));
     for (const th of cacheBox.querySelectorAll('th[data-sort]')) {
       if (th.dataset.sort === cacheOrder.key) th.setAttribute('aria-sort', cacheOrder.down ? 'descending' : 'ascending'); else th.removeAttribute('aria-sort');
     }
-    cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs] }, i) =>
+    cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u }, i) =>
       `<tr title="${escape(e.path)}"><td>${cacheBadge(cls, kind)}</td>` +
-      `<td><button type="button" class="cache-name" aria-expanded="false" aria-controls="cache-sub-${i}">${escape(what || kind)}</button></td><td class="used">${usedText(cls, what)}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
+      `<td><button type="button" class="cache-name" aria-expanded="false" aria-controls="cache-sub-${i}">${escape(what || kind)}</button></td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
       `<td class="num">${size(e.size)}</td><td><button type="button" class="small ghost" data-path="${escape(e.path)}" aria-label="drop ${escape(what || kind)}">Drop</button></td></tr>` +
       `<tr class="cache-sub" id="cache-sub-${i}" hidden><td></td><td colspan="5">${details(cls, what, needs)}</td></tr>`).join('') ||
       `<tr><td colspan="6" class="muted">${cacheEntries.length ? 'No match.' : 'Nothing cached yet.'}</td></tr>`;
@@ -1616,11 +1746,16 @@
       used.set(k, u);
     }
   }
-  const usedText = (cls, what) => {
+  /** One marker for every kind: [used, html] of an entry for the open document. */
+  const usedOf = (cls, what) => {
+    const mark = (text, title = '') => [true, `<span class="use use-yes" title="${escape(title)}">${text}</span>`];
+    if (cls === 'kernel') return what.startsWith(manifest.kernels[state.kernel]?.id ?? '\0') ? mark('the run\'s format') : [false, ''];
+    if (cls === 'index') return indexed ? mark('file lookups') : [false, ''];
+    if (cls === 'facts' || cls === 'hashes') return mark('every run');
     const u = used.get(`${cls}:${what}`);
-    if (!u) return '';
-    const how = u.own ? '<span class="use-own">by the document</span>' : `<span class="use-via" title="loaded by ${escape([...u.by].join(', '))}">via ${escape([...u.by].slice(0, 2).join(', '))}${u.by.size > 2 ? ` +${u.by.size - 2}` : ''}</span>`;
-    return u.always ? how : `${how} <span class="use-maybe" title="every load of it depends on an undecided conditional">sometimes</span>`;
+    if (!u) return [false, ''];
+    const [yes, html] = u.own ? mark('by the document') : mark(`via ${escape([...u.by].slice(0, 2).join(', '))}${u.by.size > 2 ? ` +${u.by.size - 2}` : ''}`, `loaded by ${[...u.by].join(', ')}`);
+    return [yes, u.always ? html : `${html} <span class="use-maybe" title="every load of it depends on an undecided conditional">sometimes</span>`];
   };
   /** What each package (and the kernel, `null`) defines in the open document's run, and the installation's
    * index: fetched when the dialog opens, from the root's `definitions` and `distribution` queries. */
@@ -1649,7 +1784,7 @@
     }
     const d = cls === 'kernel' ? defined.get(null) : (cls === 'package' || cls === 'class') ? defined.get(what) : null;
     if (d) parts.push('defines ' + DEFINED.filter((k) => d[k]).map((k) => plural(d[k], k)).join(', '));
-    else if (cls === 'package' || cls === 'class') parts.push('<span class="muted">not loaded by this document</span>');
+    else if (cls === 'package' || cls === 'class') parts.push('<span class="muted">not used by this document</span>');
     if (needs.length) parts.push(`loads ${needs.map((n) => cacheBadge(n.endsWith('.cls') ? 'class' : 'package', n.replace(/\.cls$/, ''))).join(' ')}`);
     const docs = cls === 'kernel' ? 'https://texdoc.org/serve/source2e/0' : (cls === 'package' || cls === 'class') ? `https://texdoc.org/pkg/${encodeURIComponent(what)}` : null;
     if (docs) parts.push(`<a href="${docs}" target="_blank" rel="noopener">documentation ↗</a>`);
@@ -1660,7 +1795,7 @@
   cacheBox.querySelector('thead').onclick = (e) => {
     const key = e.target.closest('th[data-sort]')?.dataset.sort;
     if (!key) return;
-    cacheOrder = { key, down: cacheOrder.key === key ? !cacheOrder.down : key === 'size' };
+    cacheOrder = { key, down: cacheOrder.key === key ? !cacheOrder.down : key === 'size', used: false };
     drawCaches();
   };
   async function uncache(paths) {
@@ -1863,6 +1998,13 @@
     history.replaceState(null, '', link);
     try { await navigator.clipboard.writeText(link); } catch {}
     toast(state.upload ? 'Link copied. It holds the project\'s text files, not its images.' : 'Link copied');
+  };
+
+  // A link that opens GitHub's new-issue form, prefilled and short; it posts nothing.
+  $('play-issue').onclick = () => {
+    const text = (state.texts[state.file] ?? '').slice(0, 1500), version = document.querySelector('a.version')?.textContent.trim() ?? '';
+    const body = `satex ${version}, kernel ${manifest.kernels[state.kernel]?.label ?? ''}\n\nWhat happened:\n\n\n${state.file}:\n\`\`\`latex\n${text}\n\`\`\`\n`;
+    window.open(`${manifest.repository ?? 'https://github.com/EagleoutIce/satex-analyzer'}/issues/new?title=${encodeURIComponent(`[playground] `)}&body=${encodeURIComponent(body)}`, '_blank', 'noopener');
   };
 
   // ---------------------------------------------------------------- start

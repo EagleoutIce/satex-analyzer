@@ -85,8 +85,10 @@
   const slot = (name, kind, ty) => {
     const tip = SLOT[name.toLowerCase()] ?? (/^arg\d+$/.test(name) ? `the ${name.slice(3)}. argument${kind ? `, ${KIND[kind]}` : ''}${ty ? `, read as ${ty}` : ''}` : `${name}, read by the command`);
     // the brackets as entities: a chip is never wrapped again
-    return `<span class="arg arg-${kind ?? 'slot'}" title="${esc(tip)}">&#x27E8;${esc(name)}${ty ? `<small>: ${esc(ty)}</small>` : ''}&#x27E9;</span>`;
+    return `<span class="arg arg-${kind ?? 'slot'}" title="${esc(tip)}">&#x27E8;${esc(name)}${ty ? `<small>: ${tyLink(ty)}</small>` : ''}&#x27E9;</span>`;
   };
+  /** A type's name linking to the wiki's Ty lattice. */
+  const tyLink = (t) => `<a class="ty" target="_blank" rel="noopener" href="${document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? ''}wiki/domains.html#argument-types-the-ty-lattice" title="the type ${esc(t)} in the Ty lattice">${esc(t)}</a>`;
   /** explain's `types` (`#1 skip register`) by argument name: `{ arg1: 'skip register' }`. */
   const typesOf = (r) => Object.fromEntries((r.types ?? []).map((t) => t.match(/^#(\d+) (.+)$/)).filter(Boolean).map(([, n, t]) => [`arg${n}`, t]));
   const KIND = { mand: 'mandatory', opt: 'optional', emb: 'an embellishment' };
@@ -176,6 +178,10 @@
       (up ? ` <a class="upstream" href="${esc(up[0])}" target="_blank" rel="noopener" title="the sources of ${esc(file)} in ${esc(up[1])}">source ↗</a>` : '');
   }
   const csChip = (name) => `<a class="cs" href="#" data-cs="${esc(name)}" title="explain ${esc(name)}">${esc(name)}</a>`;
+  /** The one marker of a package, class or the kernel, as the cache dialog badges them. */
+  const pkgChip = (kind, name) => `<span class="cache-kind k-${kind}" title="${kind === 'kernel' ? 'defined by the kernel' : `from the ${kind} ${esc(name)}`}">${esc(name)}</span>`;
+  /** The playground's button that traces a call of the command. */
+  const traceButton = (r) => document.body.classList.contains('play') && /^\\/.test(r.name) ? ` <button type="button" class="small ghost x-trace" data-trace="${esc(r.name)}" title="step through how a call of ${esc(r.name)} expands">Trace</button>` : '';
   /** One explain record as a card: signature, body, by, defined at, context, uses, expands. */
   function explain(r) {
     const rows = [];
@@ -188,13 +194,13 @@
     } else if (r.takes) rows.push(['arguments', argumentCount(r.takes)]);
     const types = typesOf(r);
     if (r.effective && r.effective !== r.name) rows.push(['usage', `<code class="usage">${usage(r.effective, types).html}</code>`]);
-    if (r.types?.length) rows.push(['types', `<span class="chips">${Object.entries(types).map(([n, t]) => `<span class="x-type"><code>#${n.slice(3)}</code> ${esc(t)}</span>`).join('')}</span>`]);
+    if (r.types?.length) rows.push(['types', `<span class="chips">${Object.entries(types).map(([n, t]) => `<span class="x-type"><code>#${n.slice(3)}</code> ${tyLink(t)}</span>`).join('')}</span>`]);
     if (r.forms?.length) rows.push(['forms', r.forms.map((f) => `<code>${esc(f)}</code>`).join(' ')]);
     if (primitive) rows.push(['body', 'none: a TeX primitive']);
     else if (r.body != null) rows.push(['body', r.body === '' ? '<span class="muted">empty</span>' : `<pre class="x-body"><code>${tex(r.body, true)}</code></pre>`]);
     if (r.by) rows.push(['by', csChip(r.by)]);
-    const owner = r.class ? `class ${esc(r.class)}` : r.package ? (r.package === 'kernel' ? 'the kernel' : `package ${esc(r.package)}`) : '';
-    if (r.path && r.line) rows.push(['defined at', `${placeLink(r.path, r.line, r.file)}${owner ? ` <span class="muted">· ${owner}</span>` : ''}`]);
+    const owner = r.class ? pkgChip('class', r.class) : r.package ? (r.package === 'kernel' ? pkgChip('kernel', 'the kernel') : pkgChip('package', r.package)) : '';
+    if (r.path && r.line) rows.push(['defined at', `${placeLink(r.path, r.line, r.file)}${owner ? ` ${owner}` : ''}`]);
     else if (owner) rows.push(['from', owner]);
     if (r.context) rows.push(['context', esc(r.context)]);
     if (r.uses != null) rows.push(['uses', r.uses ? `${r.uses} in this run` : 'none in this run']);
@@ -202,7 +208,7 @@
     if (r.error) rows.push(['error', `<span class="x-err">${esc(r.error)}</span>`]);
     if (r.reference) rows.push(['docs', `<a href="${esc(r.reference)}" target="_blank" rel="noopener">${esc(r.documentation ?? 'documentation')} ↗</a>`]);
     const tags = [primitive ? 'primitive' : r.tag, r.when && `in the ${r.when}`, r.certain === false && 'uncertain'].filter(Boolean);
-    return `<div class="xcard"><div class="x-head"><code class="x-name">${esc(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}</div>` +
+    return `<div class="xcard"><div class="x-head"><code class="x-name">${esc(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}${traceButton(r)}</div>` +
       `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
   }
   /** The same record as a hover card: its name and kind, where it is
@@ -215,7 +221,7 @@
     const where = r.path && r.line ? placeLink(r.path, r.line, r.file) : '';
     const docs = r.reference ? `<a href="${esc(r.reference)}" target="_blank" rel="noopener">${esc(r.documentation ?? 'docs')} ↗</a>` : '';
     return `<div class="xcard brief"><div class="x-head"><code class="x-name">${esc(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}` +
-      `${where ? ` <span class="x-where">${where}</span>` : ''}</div>` +
+      `${where ? ` <span class="x-where">${where}</span>` : ''}${traceButton(r)}</div>` +
       (r.does ? `<div class="x-does">${esc(r.does)}</div>` : '') + (use ? `<div class="x-use">${use}</div>` : '') + (r.error ? `<div class="x-err">${esc(r.error)}</div>` : '') +
       (docs ? `<div class="x-docs">${docs}</div>` : '') + '</div>';
   }

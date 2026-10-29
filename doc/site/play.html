@@ -10,6 +10,8 @@
         <select id="play-kernel" aria-label="kernel" title="the TeX engine and format"></select>
         <button id="play-link" class="pill" type="button" title="a link that restores the project's files, the open file, the command and the kernel">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 9a3 3 0 0 0 4.2.2l2-2a3 3 0 0 0-4.2-4.2l-.8.8"/><path d="M9 7a3 3 0 0 0-4.2-.2l-2 2a3 3 0 0 0 4.2 4.2l.8-.8"/></svg><span class="label">Copy link</span></button>
+        <button id="play-issue" class="pill" type="button" title="open a GitHub issue form in a new tab, filled with the satex version, the kernel and this file. Nothing is sent until you submit it there">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.8v3.9M8 11v.1"/></svg><span class="label">Report an issue</span></button>
       </span>
     </div>
     <div class="work">
@@ -19,8 +21,9 @@
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button>
             <span id="play-upmenu" class="ctx" role="menu" hidden><button role="menuitem" data-pick="new">New file…</button><button role="menuitem" data-pick="files">Upload files or .zip…</button><button role="menuitem" data-pick="folder">Upload folder…</button></span></span></div>
         <div id="play-files-tree" role="tree" aria-label="the project's files"></div>
-        <div class="treehead examples"><span>Examples</span></div>
-        <div id="play-examples" role="list"></div>
+        <details open class="sect tree-sect" id="play-outline"><summary>Outline <b id="outline-count"></b></summary>
+          <div id="outline-body" class="outline"><p class="muted">The document's parts, labels and bibliography, once it is checked.</p></div></details>
+        <details class="sect tree-sect" id="play-exsect"><summary>Examples</summary><div id="play-examples" role="list"></div></details>
       </nav>
       <div class="treegrip" id="play-treegrip" role="separator" aria-orientation="vertical" aria-label="resize the files" title="drag to resize"></div>
       <div id="play-editor" class="editor"><textarea id="play-source" spellcheck="false" aria-label="LaTeX source"></textarea></div>
@@ -46,22 +49,27 @@
       <div id="lsp-check" class="check" role="status" hidden><span class="ibar" aria-hidden="true"></span><span></span></div>
       <div id="play-refs" class="refs" hidden></div>
       <ul id="lsp-diagnostics" class="diagnostics grow" aria-live="polite"></ul></details>
-    <details open class="sect" id="play-outline"><summary>Outline <b id="outline-count"></b></summary>
-      <div id="outline-body" class="outline grow"><p class="muted">The document's parts, labels and bibliography, once it is checked.</p></div></details>
     <details open class="sect" id="play-explain"><summary>Explain macro <code id="explain-name"></code></summary>
       <div id="explain-body" class="hover grow"><p class="muted">Put the cursor on a command.</p></div></details>
     <details class="sect" id="play-typeset"><summary>Typeset
-      <label class="ts-toggle" title="Show the text set in boxes that never reach the page"><span>show boxed text</span><input type="checkbox" id="typeset-boxes" role="switch"></label></summary>
+      <span class="ts-switches"><label class="ts-toggle" title="Show the text set in boxes that never reach the page"><span>show boxed text</span><input type="checkbox" id="typeset-boxes" role="switch"></label>
+      <label class="ts-toggle" title="Show the keys of labels, references and citations where they stand"><span>show keys</span><input type="checkbox" id="typeset-keys" role="switch"></label></span></summary>
       <div id="typeset-body" class="typeset grow"><p class="muted">What the paragraphs of the open file set, once it is checked.</p></div></details>
     <dialog id="play-cache" class="cache-dialog" aria-labelledby="cache-title">
       <header><h3 id="cache-title">Caches</h3><button type="button" class="ghost small" id="cache-close" aria-label="close">✕</button></header>
-      <p class="muted cache-note">What satex keeps between checks and visits. A dropped entry is analysed again when needed.</p>
+      <p class="muted cache-note">Analysis results kept in this browser. A dropped entry is rebuilt when needed.</p>
       <input type="search" id="cache-filter" autofocus placeholder="Search kernels, classes, packages…" aria-label="search caches">
       <div class="cache-scroll"><table class="cache-table">
         <thead><tr><th data-sort="kind" scope="col">Kind</th><th data-sort="name" scope="col">Name</th><th scope="col">In this document</th><th scope="col" class="num">Loads</th><th data-sort="size" scope="col" class="num" aria-sort="descending">Size</th><th scope="col"><span class="sr">drop</span></th></tr></thead>
         <tbody id="cache-list"></tbody>
       </table></div>
       <footer><span id="cache-total" class="muted"></span><button type="button" class="small ghost" id="cache-clear">Clear all</button></footer>
+    </dialog>
+    <dialog id="play-trace" class="cache-dialog" aria-labelledby="trace-title">
+      <header><h3 id="trace-title">Trace</h3><label class="ts-toggle" title="Also record the steps inside package and kernel files"><span>include package code</span><input type="checkbox" id="trace-internal" role="switch"></label><button type="button" class="ghost small" id="trace-close" aria-label="close">✕</button></header>
+      <p class="muted cache-note" id="trace-note"></p>
+      <div class="cache-scroll" id="trace-body"></div>
+      <footer><span id="trace-total" class="muted"></span><span class="muted">Click a step to open its place.</span></footer>
     </dialog>
     <div class="statusbar" aria-live="polite"><progress id="play-progress" max="1" value="0" aria-label="loading"></progress><span id="play-status">Fetching satex and the TeX bundle…</span>
       <span id="play-pills" class="pills"></span>
