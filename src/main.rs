@@ -1,5 +1,5 @@
 use std::fmt::Write as _;
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, ValueEnum};
@@ -345,10 +345,10 @@ fn run() -> Result<(), String> {
     // `\documentclass` loads it, the class something to define `\section`
     // and its like from.
     let explaining = matches!(cli.command, Some(Command::Explain { .. } | Command::Scope { .. }));
-    if cli.file.is_none() && cli.command().needs_source() && io::stdin().is_terminal() {
+    if cli.file.is_none() && cli.command().needs_source() && satex::progress::terminal(io::stdin()) {
         cli.file = input_for(&std::env::current_dir().unwrap_or_default(), explaining)?;
     }
-    let mut source = if cli.file.is_none() && explaining && io::stdin().is_terminal() {
+    let mut source = if cli.file.is_none() && explaining && satex::progress::terminal(io::stdin()) {
         // Interactive, nothing named, nothing piped in: reading stdin would
         // just hang waiting for input that is never coming.
         EMPTY_DOCUMENT.to_string()
@@ -432,7 +432,7 @@ fn run() -> Result<(), String> {
         true => render::gaps(&analysis),
         false => String::new(),
     };
-    let links = cli.link_policy(io::stdout().is_terminal());
+    let links = cli.link_policy(satex::progress::terminal(io::stdout()));
     let context = Context { analysis: &analysis, source: &source, format: cli.format, links };
     let mut out = anstream::stdout().lock();
     let output = cli.command().run(&context, &mut out)?;
@@ -469,7 +469,7 @@ fn run() -> Result<(), String> {
     // After the command, so that the phases it ran are in the table.
     if cfg.timings {
         let _ = out.flush();
-        anstream::eprint!("{}", render::timings(&analysis, cli.link_policy(io::stderr().is_terminal())));
+        anstream::eprint!("{}", render::timings(&analysis, cli.link_policy(satex::progress::terminal(io::stderr()))));
     }
     Ok(())
 }

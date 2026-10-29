@@ -35,7 +35,13 @@ pub fn disable() {
 }
 
 fn active() -> bool {
-    ENABLED.load(std::sync::atomic::Ordering::Relaxed) && std::io::stderr().is_terminal()
+    ENABLED.load(std::sync::atomic::Ordering::Relaxed) && terminal(std::io::stderr())
+}
+
+/// Whether `stream` is a terminal. Emscripten says every standard stream
+/// is, also where a page prints the lines one by one.
+pub fn terminal(stream: impl IsTerminal) -> bool {
+    stream.is_terminal() && !cfg!(target_os = "emscripten")
 }
 
 impl Bars {

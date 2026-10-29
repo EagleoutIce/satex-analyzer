@@ -7,7 +7,7 @@
 //! never elevates privileges — when the installation's tree cannot be
 //! written it says so and gives the command to run.
 
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 
 use super::{Context, Format, Output};
 use crate::plugin::packages::{Manager, Provided, shell, tree_writable, unresolved};
@@ -159,7 +159,7 @@ fn missing(context: &Context, manager: &Manager) -> Vec<Target> {
 /// Ask before changing the machine.  Without a terminal there is nobody to
 /// ask, so `--yes` has to say it.
 fn confirm(out: &mut impl Write) -> Result<bool, String> {
-    if !std::io::stdin().is_terminal() {
+    if !crate::progress::terminal(std::io::stdin()) {
         return Err("not a terminal: pass --yes to install without asking".into());
     }
     let _ = write!(out, "install these? [y/N] ");
