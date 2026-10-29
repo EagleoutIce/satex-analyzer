@@ -210,6 +210,7 @@ style (9)
 $ satex lint --rules
 severity  category     code                             message                                                         
 error     correctness  already-defined                  `\newcommand` redefines an existing name                        
+error     correctness  bibtex-command-under-biblatex    a BibTeX command biblatex replaces stops the run                
 error     correctness  build-bibliography-disabled      the document has a bibliography, but the build never runs Bib…  
 error     correctness  build-command-placeholders       an engine command in the latexmkrc lacks %S or %O               
 error     correctness  build-engine-mismatch            the build runs another engine, or another output, than the do…  
@@ -217,6 +218,7 @@ error     correctness  build-shell-escape-missing       the document runs progra
 error     correctness  caused-library-error             the document makes package code raise a TeX error               
 error     correctness  math-still-open                  the run is still in math mode where the text ends               
 error     correctness  missing-graphic                  an included image is not there for this output target           
+error     correctness  new-redefines                    a `\new…` declaration silently redefines an existing command    
 error     correctness  not-defined                      `\renewcommand` targets a name that does not exist              
 error     correctness  option-clash                     a package is loaded twice with different options                
 error     correctness  raised-error                     the document's code raises a TeX error                          
@@ -502,7 +504,7 @@ $ satex scope -f samples/paper.tex --at 20:1
 tag          name                                     effecti…  file                
 macro        \Weird                                   \Weird …  paper.tex           @ paper.tex:16:1
 macro        \WeirdMore                               \WeirdM…  paper.tex           @ paper.tex:14:1
-… 8218 more lines omitted
+… 10692 more lines omitted
 ```
 
 </details>

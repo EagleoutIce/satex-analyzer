@@ -192,13 +192,13 @@ The detected TeX installation: provider, version, and the texmf trees searched.
 
 ```text
 $ satex query distribution -f samples/paper.tex
-kind        message                                                               root                                  
-            TeX Live 2026, LaTeX2e 2025-11-01, 6 trees via kpsewhich, 47457 fil…                                        
+kind        name                                                 count  message   root                                  
+                                                                        TeX Liv…                                        
 texmf-tree                                                                        ~/texmf                   
 texmf-tree                                                                        ~/.texliveYYYY/texmf-var  
 texmf-tree                                                                        /usr/local/texlive/texmf-local        
 texmf-tree                                                                        /usr/local/texlive/YYYY/texmf-config  
-… 2 more lines omitted
+… 5384 more lines omitted
 ```
 
 ## catcodes

@@ -787,7 +787,7 @@ The label was on page \pageref{x}.
 ```
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>The label was on page 1.</code></td><td><code>The la<b>·</b>bel was on page <b>⟨?⟩</b>.</code></td><td>⊇</td></tr>
+<tr><td><code>The label was on page 1.</code></td><td><code>The la<b>·</b>bel was on page <b>⟨?⟩</b>. </code></td><td>⊇</td></tr>
 <tr><td><code>Here.</code></td><td><code>Here.</code></td><td>✓</td></tr>
 <tr><td><code></code></td><td><code>Here.</code></td><td>✗</td></tr>
 <tr><td><code></code></td><td><code>assumes assumed-compiles</code></td><td></td></tr>
@@ -803,7 +803,7 @@ Why:
 
 ```sh
 $ satex query typeset -f 11-fixpoint.tex --set limits.seconds=60
-4:2  paragraph  The la·bel was on page ⟨?⟩.
+4:2  paragraph  The la·bel was on page ⟨?⟩. 
 6:11  paragraph  Here.
 6:11  paragraph  Here.
 7:15  assumption  assumed-compiles

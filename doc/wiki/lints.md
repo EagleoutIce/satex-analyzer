@@ -28,6 +28,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | code | kind | quick fix | origin | summary |
 | --- | --- | --- | --- | --- |
 | [`already-defined`](#already-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | — | `\newcommand` redefines an existing name |
+| [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | — | a BibTeX command biblatex replaces stops the run |
 | [`build-bibliography-disabled`](#build-bibliography-disabled) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document has a bibliography, but the build never runs BibTeX or biber |
 | [`build-command-placeholders`](#build-command-placeholders) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | an engine command in the latexmkrc lacks %S or %O |
 | [`build-engine-mismatch`](#build-engine-mismatch) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the build runs another engine, or another output, than the document needs |
@@ -35,6 +36,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | [`caused-library-error`](#caused-library-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document makes package code raise a TeX error |
 | [`math-still-open`](#math-still-open) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 16">chktex 16</a> | the run is still in math mode where the text ends |
 | [`missing-graphic`](#missing-graphic) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | an included image is not there for this output target |
+| [`new-redefines`](#new-redefines) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | a `\new…` declaration silently redefines an existing command |
 | [`not-defined`](#not-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-safe">safe</span> | — | `\renewcommand` targets a name that does not exist |
 | [`option-clash`](#option-clash) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | — | a package is loaded twice with different options |
 | [`raised-error`](#raised-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document's code raises a TeX error |
@@ -138,6 +140,7 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 These rules have quick fixes:
 
 * [`already-defined`](#already-defined) <span class="fix fix-unsafe">unsafe</span> — `\newcommand` redefines an existing name
+* [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) <span class="fix fix-unsafe">unsafe</span> — a BibTeX command biblatex replaces stops the run
 * [`not-defined`](#not-defined) <span class="fix fix-safe">safe</span> — `\renewcommand` targets a name that does not exist
 * [`option-clash`](#option-clash) <span class="fix fix-unsafe">unsafe</span> — a package is loaded twice with different options
 * [`delimiter-not-followed`](#delimiter-not-followed) <span class="fix fix-unsafe">unsafe</span> — `\left`, `\right` or `\middle` is followed by a brace or a math shift
@@ -190,7 +193,7 @@ These rules have quick fixes:
 One group per category. Open a group to read its rules.
 
 <details>
-<summary><b>correctness</b> — 39 rules</summary>
+<summary><b>correctness</b> — 41 rules</summary>
 
 ### already-defined
 
@@ -203,6 +206,18 @@ One group per category. Open a group to read its rules.
 Fix with `\renewcommand` if the redefinition is intended, or pick another name.
 
 See [source2e § ltdefns.dtx](https://ctan.org/pkg/source2e).
+
+### bibtex-command-under-biblatex
+
+<p class="badges"><span class="sev sev-error" title="default: error">◆ default: error</span> <span class="cat">correctness</span> <span class="fix fix-unsafe">unsafe</span></p>
+
+**a BibTeX command biblatex replaces stops the run**
+
+biblatex makes the commands of a BibTeX bibliography raise errors where it has its own: the style is its `style` option, not `\bibliographystyle`, and the databases are named in the preamble with `\addbibresource` and printed with `\printbibliography`, not with `\bibliography` ([biblatex manual, §3.7.1](https://ctan.org/pkg/biblatex) and [§3.7.2](https://ctan.org/pkg/biblatex)). Only a call the run reached and that raised the error is reported.
+
+Fix by deleting `\bibliographystyle` (choose a style with `\usepackage[style=…]{biblatex}`), and by writing `\printbibliography` for `\bibliography` with an `\addbibresource` per database in the preamble.
+
+See [biblatex § §3.7](https://ctan.org/pkg/biblatex).
 
 ### build-bibliography-disabled
 
@@ -289,6 +304,18 @@ See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://githu
 Fix by adding the file, or by producing the format the driver reads.
 
 See [graphics § pdftex.def](https://ctan.org/pkg/graphics).
+
+### new-redefines
+
+<p class="badges"><span class="sev sev-error" title="default: error">◆ default: error</span> <span class="cat">correctness</span></p>
+
+**a `\new…` declaration silently redefines an existing command**
+
+A LaTeX `\new…` command declares a fresh name, and some do not check that it is: `\newif\begin` makes `\begin` a conditional (and defines `\gintrue` and `\ginfalse` from what follows its first two letters), `\newcount` and `\newtoks` overwrite whatever the name meant. Every later use of the name then does something else, and the error a run reports is somewhere after it, often far away. Reported where the document's own `\new…` call made the definition of a name its own files spell.
+
+Fix by giving the declaration the name it was meant to have (a conditional's name begins with `if`), or by declaring the argument it lacks.
+
+See [source2e § ltdefns.dtx](https://ctan.org/pkg/source2e).
 
 ### not-defined
 
