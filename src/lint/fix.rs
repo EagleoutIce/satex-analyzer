@@ -722,6 +722,18 @@ impl<'a> Edits<'a> {
         Some(vec![Edit { path, start, end: end?, replacement: replacement.to_string() }])
     }
 
+    /// The call `\cs{arg}` at `span` replaced by what `with` makes of its
+    /// argument's text, deleted with its line when that is empty.
+    pub fn replace_call(&self, span: Span, with: impl Fn(&str) -> String) -> Option<Vec<Edit>> {
+        let (path, text, mut scan, cs) = self.command(span)?;
+        let group = scan.group()?;
+        let replacement = with(text.slice(group.inner_start, group.inner_end)?);
+        Some(vec![match replacement.is_empty() {
+            true => removal(&text, &path, cs.start, group.end),
+            false => Edit { path, start: cs.start, end: group.end, replacement },
+        }])
+    }
+
     /// Delete a command whose one argument reads `key`: `\label{sec:x}`.
     pub fn delete_command(&self, span: Span, key: &str) -> Option<Vec<Edit>> {
         self.delete_call(span, key).or_else(|| self.delete_call(self.command_of(span)?, key))

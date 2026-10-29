@@ -3412,3 +3412,35 @@ fn a_line_break_in_the_author_leaves_the_document_balanced() {
     assert!(broken_gaps(&analysis).is_empty(), "{:?}", broken_gaps(&analysis));
     assert_eq!(metadata(&analysis, "author"), "A B");
 }
+
+/// BibTeX's commands under biblatex raise its errors; the finding names the
+/// migration and its fix writes biblatex's commands instead.
+#[test]
+fn bibtex_commands_under_biblatex_migrate() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-biblatex-migrate-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = "\\documentclass{article}\n\\usepackage{biblatex}\n\\begin{document}\nx\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
+    let path = dir.join("main.tex");
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    let found = satex::lint::lint(&analysis);
+    let migrated: Vec<_> = found.iter().filter(|f| f["code"] == "bibtex-command-under-biblatex").collect();
+    let names: Vec<&str> = migrated.iter().filter_map(|f| f["name"].as_str()).collect();
+    assert_eq!(names, ["bibliographystyle", "bibliography"], "{found:?}");
+    let replacements: Vec<&str> = migrated
+        .iter()
+        .flat_map(|f| f["edits"].as_array().into_iter().flatten())
+        .filter_map(|e| e["replacement"].as_str())
+        .collect();
+    assert!(replacements.contains(&"\\printbibliography"), "{replacements:?}");
+    assert!(replacements.contains(&"\\addbibresource{refs.bib}\n"), "{replacements:?}");
+    // the errors they explain are theirs
+    assert!(
+        !found.iter().any(|f| f["code"] == "raised-error" && migrated.iter().any(|m| m["line"] == f["line"])),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
