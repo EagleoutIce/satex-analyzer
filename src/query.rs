@@ -1959,6 +1959,22 @@ fn offered_options(analysis: &Analysis, all: bool) -> Vec<Record> {
 /// `\DeclareOptionX` `\@currname.\@currext`).
 pub fn package_options(analysis: &Analysis, package: &str) -> Vec<(String, Option<String>)> {
     let mut out: BTreeMap<String, Option<String>> = BTreeMap::new();
+    options_into(analysis, package, &mut BTreeSet::new(), &mut out);
+    out.into_iter().collect()
+}
+
+/// `package`'s options into `out`, with those of every package its
+/// `\DeclareOption*` handler passes `\CurrentOption` on to (`seen` breaks
+/// cycles).
+fn options_into(
+    analysis: &Analysis,
+    package: &str,
+    seen: &mut BTreeSet<String>,
+    out: &mut BTreeMap<String, Option<String>>,
+) {
+    if !seen.insert(package.to_string()) {
+        return;
+    }
     for def in &analysis.facts.defs {
         if def.tag == "option" && def.package.is_some_and(|p| analysis.interner.name(p) == package) {
             let name = def.subject.map(|s| analysis.interner.name(s)).unwrap_or_default();
@@ -1968,12 +1984,63 @@ pub fn package_options(analysis: &Analysis, package: &str) -> Vec<(String, Optio
             }
         }
     }
-    for ext in ["", ".sty", ".cls"] {
-        for (key, _, default) in keyval_keys(analysis, &format!("KV@{package}{ext}@")) {
-            out.insert(key, default);
+    let (families, passed) = option_handler(analysis, package);
+    let own = ["", ".sty", ".cls"].map(|ext| format!("{package}{ext}"));
+    for family in own.into_iter().chain(families) {
+        for (key, _, default) in keyval_keys(analysis, &format!("KV@{family}@")) {
+            out.entry(key).or_insert(default);
         }
     }
-    out.into_iter().collect()
+    for target in passed {
+        options_into(analysis, &target, seen, out);
+    }
+}
+
+/// Where a package's unnamed options go through its `\DeclareOption*`
+/// handler (`\default@ds`, clsguide § 4.5): the key families a dispatcher
+/// in the package's code is handed `\CurrentOption`, or a macro the
+/// handler names, for, and the packages or classes the handler passes
+/// `\CurrentOption` on to. biblatex sets `blx@opt@ldt` keys at once and
+/// collects the rest in `\blx@theoptions` for `blx@opt@pre`; graphicx
+/// passes its options to graphics.
+fn option_handler(analysis: &Analysis, package: &str) -> (Vec<String>, Vec<String>) {
+    static NAME: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static DISPATCH: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static PASS: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let name = NAME.get_or_init(|| Regex::new(r"\\[A-Za-z@]+").expect("valid regex"));
+    let dispatch =
+        DISPATCH.get_or_init(|| Regex::new(r"\\[A-Za-z@]*setkeys\s*\{([^{}]*)\}\s*\{([^{}]*)\}").expect("valid regex"));
+    let pass = PASS.get_or_init(|| {
+        Regex::new(r"\\PassOptionsTo(?:Package|Class)\s*(?:\{\s*\\CurrentOption\s*\}|\\CurrentOption)\s*\{([^{}]*)\}")
+            .expect("valid regex")
+    });
+    let own = analysis.facts.defs.iter().filter(|d| d.package.is_some_and(|p| analysis.interner.name(p) == package));
+    let bodies: Vec<(&str, String)> = own
+        .filter_map(|d| {
+            Some((analysis.interner.name(d.name), detokenize(&d.mac.as_ref()?.replacement_text, &analysis.interner)))
+        })
+        .collect();
+    let mut named: BTreeSet<&str> = BTreeSet::from(["\\CurrentOption"]);
+    let mut passed: Vec<String> = Vec::new();
+    for (_, body) in bodies.iter().filter(|(n, _)| *n == "default@ds") {
+        named.extend(name.find_iter(body).map(|m| m.as_str()));
+        passed.extend(
+            pass.captures_iter(body).flat_map(|c| c[1].split(',').map(|t| t.trim().to_string()).collect::<Vec<_>>()),
+        );
+    }
+    if named.len() == 1 {
+        return (Vec::new(), passed);
+    }
+    let mut out: Vec<String> = Vec::new();
+    for (_, body) in &bodies {
+        for c in dispatch.captures_iter(body) {
+            let family = c[1].trim().to_string();
+            if name.find_iter(&c[2]).any(|m| named.contains(m.as_str())) && !out.contains(&family) {
+                out.push(family);
+            }
+        }
+    }
+    (out, passed)
 }
 
 /// `satex controls`: what each of `names` governs, or with none named the

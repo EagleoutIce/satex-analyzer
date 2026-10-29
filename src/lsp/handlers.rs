@@ -1435,8 +1435,18 @@ fn files(analysis: &Analysis, kinds: impl Iterator<Item = Exts>, typed: &str) ->
                 let (stem, ext) = (n.as_str(), path.extension().and_then(|e| e.to_str()).unwrap_or_default());
                 let tree = roots.iter().find(|r| path.starts_with(r)).filter(|r| local(analysis, r));
                 let tree = tree.and_then(|r| r.file_name()).map(|t| format!("local: {}", t.to_string_lossy()));
-                let version = identify.then(|| provided(&path)).flatten();
-                let parts: Vec<String> = [detail.take(), version, tree].into_iter().flatten().collect();
+                let head = identify.then(|| head(&path)).flatten().unwrap_or_default();
+                let needs = needs(&head);
+                // A package this run's engine cannot load says so, and comes last.
+                let other = (!needs.is_empty() && !needs.contains(&analysis.plugins.engine)).then(|| {
+                    it.sort_text = Some(format!("{}~", it.sort_text.as_deref().unwrap_or_default()));
+                    let names: Vec<&str> = needs
+                        .iter()
+                        .map(|e| if *e == crate::config::Engine::LuaTeX { "LuaTeX" } else { "XeTeX" })
+                        .collect();
+                    format!("needs {}", names.join(" or "))
+                });
+                let parts: Vec<String> = [detail.take(), provided(&head), tree, other].into_iter().flatten().collect();
                 detail = Some(parts.join(" · "));
                 if matches!(ext, "sty" | "cls") {
                     it.documentation = Some(lsp_types::Documentation::MarkupContent(MarkupContent {
@@ -1493,11 +1503,7 @@ fn local(analysis: &Analysis, root: &std::path::Path) -> bool {
 
 /// What a file says it is (`\ProvidesPackage{x}[2024/01/01 v1.2 …]`, or
 /// expl3's `\ProvidesExplPackage{x}{date}{version}{…}`): date and version.
-fn provided(path: &std::path::Path) -> Option<String> {
-    use std::io::Read;
-    let mut head = Vec::new();
-    std::fs::File::open(path).ok()?.take(16 * 1024).read_to_end(&mut head).ok()?;
-    let head = String::from_utf8_lossy(&head);
+fn provided(head: &str) -> Option<String> {
     let (at, expl) =
         ["\\ProvidesExpl", "\\Provides"].iter().find_map(|m| Some((head.find(m)?, m.ends_with("Expl"))))?;
     let rest = &head[at..];
@@ -1511,6 +1517,43 @@ fn provided(path: &std::path::Path) -> Option<String> {
         rest[..rest.find(']')?].split_whitespace().take(2).collect::<Vec<_>>().join(" ")
     };
     (!text.is_empty()).then_some(text)
+}
+
+/// A file's first lines, where it identifies itself.
+fn head(path: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+    let mut head = Vec::new();
+    std::fs::File::open(path).ok()?.take(16 * 1024).read_to_end(&mut head).ok()?;
+    Some(String::from_utf8_lossy(&head).into_owned())
+}
+
+/// The engines a file says, in its code, it needs: `\RequireLuaTeX`, or a
+/// message that it "requires either XeTeX or LuaTeX" (fontspec), "LuaTeX is
+/// required" (luacode), "Use XeLaTeX or LuaLaTeX instead" (unicode-math); "Don't use XeTeX" is
+/// no such message. A
+/// convention read off its first lines; none found means any engine.
+fn needs(head: &str) -> Vec<crate::config::Engine> {
+    use crate::config::Engine;
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        let engine = r"(Lua|Xe)(?:La)?TeX";
+        Regex::new(&format!(
+            r"(?i)\\Require(Lua|Xe)TeX\b|requires?[\s~]+(?:either[\s~]+)?{engine}(?:[\s~]+or[\s~]+{engine})?|use[\s~]+{engine}(?:[\s~]+or[\s~]+{engine})?[\s~]+instead|{engine}[\s~]+(?:is[\s~]+)?required"
+        ))
+        .unwrap()
+    });
+    let mut out = Vec::new();
+    for line in head.lines().map(uncommented) {
+        // `\def\RequireLuaTeX` (iftex) defines the test, it does not ask for it.
+        let asked = |c: &regex::Captures| !line[..c.get(0).map_or(0, |m| m.start())].trim_end().ends_with("def");
+        for name in re.captures_iter(line).filter(asked).flat_map(|c| c.iter().skip(1).flatten().collect::<Vec<_>>()) {
+            let engine = if name.as_str().eq_ignore_ascii_case("lua") { Engine::LuaTeX } else { Engine::XeTeX };
+            if !out.contains(&engine) {
+                out.push(engine);
+            }
+        }
+    }
+    out
 }
 
 /// What a file of extension `ext` is, and the command this run loaded such

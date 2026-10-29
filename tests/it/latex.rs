@@ -3499,3 +3499,21 @@ fn nested_lists_do_not_end_the_outer_paragraph() {
         assert_eq!(texts, ["x a y", "z"], "{inner}");
     }
 }
+
+/// biblatex's options are keys its `\DeclareOption*` handler hands on:
+/// load-time ones (`style`) at once, the others (`sorting`, `maxnames`)
+/// collected for a later `\setkeys`.
+#[test]
+fn package_options_follow_the_declare_option_handler() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze("\\documentclass{article}\n\\usepackage{biblatex}\n\\begin{document}\nx\n\\end{document}\n");
+    let options: Vec<String> =
+        satex::query::package_options(&analysis, "biblatex").into_iter().map(|(k, _)| k).collect();
+    for wanted in ["style", "backend", "sorting", "maxnames"] {
+        assert!(options.iter().any(|o| o == wanted), "{wanted} not in {options:?}");
+    }
+    // An entry's own options are no package options.
+    assert!(!options.iter().any(|o| o == "uniquepart"), "{options:?}");
+}

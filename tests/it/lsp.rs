@@ -1201,7 +1201,8 @@ fn packages_complete_with_their_version_and_documentation() {
     }) else {
         return;
     };
-    let text = "\\documentclass{article}\n\\usepackage{amsm}\n\\begin{document}\nx\n\\end{document}\n";
+    let text =
+        "\\documentclass{article}\n\\usepackage{amsm}\n\\usepackage{fonts}\n\\begin{document}\nx\n\\end{document}\n";
     let (mut server, uri, _, dir) = open_loaded("pkgversions", text);
     let items = complete(&mut server, &uri, 1, "\\usepackage{amsm".len() as u32);
     let amsmath = items.iter().find(|i| i["label"] == "amsmath").cloned().unwrap_or_default();
@@ -1211,6 +1212,14 @@ fn packages_complete_with_their_version_and_documentation() {
         source.split("\\ProvidesPackage{amsmath}[").nth(1).and_then(|r| r.split_whitespace().next()).unwrap_or("?");
     assert!(amsmath["detail"].as_str().is_some_and(|d| d.contains(date)), "{amsmath}");
     assert!(amsmath["documentation"].to_string().contains("texdoc.org/pkg/amsmath"), "{amsmath}");
+    assert!(!amsmath["detail"].to_string().contains("needs"), "{amsmath}");
+    // fontspec says it "requires either XeTeX or LuaTeX": under pdfTeX it says so, and comes last
+    let items = complete(&mut server, &uri, 2, "\\usepackage{fonts".len() as u32);
+    let needs = |i: &Value| i["detail"].as_str().is_some_and(|d| d.contains("needs XeTeX or LuaTeX"));
+    if let Some(at) = items.iter().position(|i| i["label"] == "fontspec") {
+        assert!(needs(&items[at]), "{}", items[at]);
+        assert!(items[at..].iter().all(needs), "{:?}", labels(&items));
+    }
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1589,6 +1598,25 @@ fn environment_names_are_linked_by_nesting() {
         json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": 0 } }),
     );
     assert_eq!(server.response(id)["result"], Value::Null);
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `\documentclass[` offers the options of the class named after the
+/// cursor, not of every class or package.
+#[test]
+fn class_options_are_the_named_class_s() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text = "\\documentclass[]{article}\n\\usepackage[]{graphicx}\n\\begin{document}\nx\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("classopts", text);
+    let class = complete(&mut server, &uri, 0, "\\documentclass[".len() as u32);
+    let class = labels(&class);
+    assert!(class.contains(&"twocolumn") && !class.contains(&"hiresbb"), "{class:?}");
+    let package = complete(&mut server, &uri, 1, "\\usepackage[".len() as u32);
+    let package = labels(&package);
+    assert!(package.contains(&"hiresbb") && !package.contains(&"twocolumn"), "{package:?}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
