@@ -3461,3 +3461,15 @@ fn a_new_declaration_that_redefines_a_command_is_reported() {
     assert_eq!(named(broken), ["begin"]);
     assert!(named("\\documentclass{article}\n\\newif\\iffancy\n\\begin{document}\nx\n\\end{document}\n").is_empty());
 }
+
+/// A heading written to the table of contents is a sectioning unit, a part
+/// too, which has no running head of its own (`\partmark`).
+#[test]
+fn parts_are_sections_of_the_outline() {
+    if !installed() {
+        return;
+    }
+    let analysis =
+        analyze("\\documentclass{article}\n\\begin{document}\n\\part{Theory}\n\\section{Intro}\nx\n\\end{document}\n");
+    assert_eq!(keys(&analysis, OccKind::Section), ["Theory", "Intro"]);
+}

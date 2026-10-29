@@ -539,9 +539,11 @@ fn line(m: &mut Machine, tokens: &[Token], span: Span) {
     let extent = m.call_extent(span);
     let here = extent.as_ref().map(|(here, _)| *here);
     let own = extent.as_ref().map(|(_, text)| own_text(span, text));
+    let mut list = String::new();
     while let Some((group, end)) = group_span(tokens, at) {
-        onward(m, &group, span);
+        onward(m, &group, span, &list);
         let text = characters(&group).trim().to_string();
+        list.clone_from(&text);
         // A line written onward carries its own keys.
         if self::head(m, &group).is_none() {
             keys.extend(given(&group, span, here));
@@ -625,24 +627,36 @@ fn given(group: &[Token], call: Span, here: Option<Span>) -> Vec<(String, Span)>
 }
 
 /// A line written onward to a list file, `\contentsline{⟨level⟩}{⟨title⟩}…`
-/// (ltsect, `\addcontentsline`): a level with a running head of its own
-/// (`\sectionmark`) is a sectioning unit.
-fn onward(m: &mut Machine, tokens: &[Token], span: Span) {
+/// (ltsect, `\addcontentsline`): one for the table of contents (`list` is
+/// `toc`), or of a level with a running head of its own (`\sectionmark`),
+/// is a sectioning unit.
+fn onward(m: &mut Machine, tokens: &[Token], span: Span, list: &str) {
     let Some((_, at)) = head(m, tokens) else { return };
     let Some((level, end)) = group_span(tokens, at) else { return };
     let Some((title, _)) = group_span(tokens, end) else { return };
     let level = characters(&level).trim().to_string();
     let heads = m.out.interner.lookup(&format!("{level}mark")).is_some_and(|s| m.env.is_defined(s));
-    if !heads {
+    if !heads && list != "toc" {
         return;
     }
-    // The title follows the number, which a command sets as its argument
-    // (`\numberline{1}`). `\protect` is gone once shipped.
-    let mut start = 0;
+    // The title follows the number, set as a command's argument
+    // (`\numberline{1}`) or as text before a command (`I\hspace{1em}`, a
+    // part's). A leading command's argument with text after it is part of
+    // that prefix; `\protect` is gone once shipped.
+    let first_cs = title.iter().position(|t| t.cs().is_some());
+    let mut start = match first_cs {
+        Some(k)
+            if k > 0 && title[..k].iter().all(|t| matches!(t.tok, Tok::Chr(_, Catcode::Letter | Catcode::Other))) =>
+        {
+            k
+        }
+        _ => 0,
+    };
     while title.get(start).is_some_and(|t| t.cs().is_some()) {
-        let numbered = group_span(&title, start + 1)
-            .filter(|(g, _)| characters(g).chars().all(|c| c.is_ascii_digit() || c == '.'));
-        start = numbered.map_or(start + 1, |(_, end)| end);
+        let rest = |end: usize| title[end..].iter().any(|t| !t.is_cat(Catcode::Space));
+        let prefix = group_span(&title, start + 1)
+            .filter(|(g, end)| characters(g).chars().all(|c| c.is_ascii_digit() || c == '.') || rest(*end));
+        start = prefix.map_or(start + 1, |(_, end)| end);
     }
     let key = characters(&title[start.min(title.len())..]).trim().to_string();
     if !key.is_empty() {
