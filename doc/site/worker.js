@@ -12,12 +12,14 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
    * store holds of `files`, `imported` the bundles whose caches it holds. */
   let space = '';
   const kept = new Map(), imported = new Set();
+  let saving = Promise.resolve();
   const cached = (path) => path.startsWith('/cache/') && !path.endsWith('.lock');
   async function keep() {
     if (!store) return;
     const fresh = [...files].filter(([path, data]) => cached(path) && kept.get(path) !== data);
     for (const [path, data] of fresh) kept.set(path, data);
-    if (fresh.length) await store.put(space, fresh).catch(() => {});
+    // in the background: a reply never waits on IndexedDB
+    if (fresh.length) saving = saving.then(() => store.put(space, fresh)).catch(() => {});
   }
 
   /** `url`'s response, its body counted into `progress(label, loaded, total)` as it
@@ -207,13 +209,17 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
     }
     const markers = [...imported].map((id) => `#imported/${id}`);
     imported.clear();
-    await store?.remove(space, [...paths, ...markers]).catch(() => {});
+    saving = saving.then(() => store?.remove(space, [...paths, ...markers])).catch(() => {});
   }
 
   /** Fetches the binary and the default kernel, unless `given` has them. */
   async function init(base, manifest, given = {}) {
     space = manifest.wasm;
-    for (const [path, data] of (await store?.load(space).catch(() => null)) ?? []) {
+    // the kept caches are a head start, never a wait
+    const loading = store?.load(space).catch(() => null);
+    const kept_ = await Promise.race([loading, new Promise((r) => setTimeout(() => r('late'), 3000))]);
+    if (kept_ === 'late') status({ text: 'the browser cache is busy (another tab?): starting without it' });
+    for (const [path, data] of (kept_ === 'late' ? null : kept_) ?? []) {
       if (path.startsWith('#imported/')) imported.add(path.slice('#imported/'.length));
       else { files.set(path, data); kept.set(path, data); }
     }
@@ -237,29 +243,39 @@ if (typeof module === 'object' && module.exports) {
   let engine = null;
   /** The cache directory in IndexedDB: one record per file, keyed [binary, path]; a load drops
    * what other binaries left. Without IndexedDB (a private window) nothing is kept. */
+  const CAP = 150 * 2 ** 20; // bytes kept between visits
   const idb = () => {
     const opened = new Promise((resolve, reject) => {
-      const r = indexedDB.open('satex-playground', 1);
-      r.onupgradeneeded = () => r.result.createObjectStore('cache');
-      r.onsuccess = () => resolve(r.result);
+      const r = indexedDB.open('satex-playground', 2);
+      r.onupgradeneeded = () => { for (const n of ['cache', 'used']) if (!r.result.objectStoreNames.contains(n)) r.result.createObjectStore(n); };
+      // an older tab yields to a newer version; a blocked open means no cache
+      r.onsuccess = () => { r.result.onversionchange = () => r.result.close(); resolve(r.result); };
+      r.onblocked = () => reject(new Error('the cache store is held by another tab'));
       r.onerror = () => reject(r.error);
     });
     const tx = async (mode, f) => {
-      const t = (await opened).transaction('cache', mode), out = f(t.objectStore('cache'));
+      const t = (await opened).transaction(['cache', 'used'], mode), out = f(t.objectStore('cache'), t.objectStore('used'));
       return new Promise((resolve, reject) => { t.oncomplete = () => resolve(out); t.onerror = t.onabort = () => reject(t.error); });
     };
     return {
       async load(space) {
-        const found = [];
-        await tx('readwrite', (s) => s.openCursor().onsuccess = ({ target: { result: c } }) => {
-          if (!c) return;
-          if (c.key[0] === space) found.push([c.key[1], c.value]); else c.delete();
-          c.continue();
-        });
-        return found;
+        const range = IDBKeyRange.bound([space], [space, []]);
+        const [keys, values, used] = await tx('readonly', (st, u) => [st.getAllKeys(range), st.getAll(range), u.getAll(range)]);
+        const found = keys.result.map((k, i) => [k[1], values.result[i], used.result[i] ?? 0]);
+        // background: drop other binaries' records, then evict past CAP
+        let total = found.reduce((n, [, d]) => n + (d?.byteLength ?? 0), 0);
+        const evict = [...found].sort((a, b) => a[2] - b[2]).filter(([, d]) => total > CAP && (total -= d?.byteLength ?? 0) >= 0).map(([p]) => p);
+        tx('readwrite', (st, u) => {
+          for (const store of [st, u]) {
+            store.delete(IDBKeyRange.upperBound([space], true));
+            store.delete(IDBKeyRange.lowerBound([space, []], true));
+            for (const p of evict) store.delete([space, p]);
+          }
+        }).catch(() => {});
+        return found.filter(([p]) => !evict.includes(p)).map(([p, d]) => [p, d]);
       },
-      put: (space, entries) => tx('readwrite', (s) => { for (const [path, data] of entries) s.put(data, [space, path]); }),
-      remove: (space, paths) => tx('readwrite', (s) => { for (const path of paths) s.delete([space, path]); }),
+      put: (space, entries) => tx('readwrite', (s, u) => { for (const [path, data] of entries) { s.put(data, [space, path]); u.put(Date.now(), [space, path]); } }),
+      remove: (space, paths) => tx('readwrite', (s, u) => { for (const path of paths) { s.delete([space, path]); u.delete([space, path]); } }),
     };
   };
   self.onmessage = async ({ data }) => {
@@ -299,7 +315,7 @@ if (typeof module === 'object' && module.exports) {
         self.postMessage({ type: 'lsp', out: await engine.lsp(data.message) });
       }
     } catch (e) {
-      self.postMessage({ type: 'error', of: data.type, message: String(e && e.stack || e) });
+      self.postMessage({ type: 'error', of: data.type, message: e instanceof Error ? `${e.message}\n${e.stack}` : String(e) });
     }
   };
 }

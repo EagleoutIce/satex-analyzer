@@ -260,6 +260,12 @@
   const waiting = {}; // reply type -> resolver; runs, reads and kernel loads go one at a time, in order
   const REPLY = { run: 'result', bundle: 'bundle', bundles: 'bundle', init: 'ready', read: 'file', caches: 'caches', uncache: 'caches' };
   let line_ = Promise.resolve();
+  // a dead worker fails its waiters instead of hanging them
+  worker.onerror = (e) => {
+    e.preventDefault?.();
+    const error = new Error(e.message || 'the worker stopped');
+    for (const [k, w] of Object.entries(waiting)) { delete waiting[k]; w.reject(error); }
+  };
   const ask = (msg, transfer = []) => {
     const asked = line_.then(() => new Promise((resolve, reject) => {
       waiting[REPLY[msg.type]] = { resolve, reject };
