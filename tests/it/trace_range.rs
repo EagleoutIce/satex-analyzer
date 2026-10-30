@@ -226,3 +226,51 @@ fn an_injected_text_is_traced_where_it_is_put() {
     // A line past the end is an error, not an empty trace.
     assert!(!trace(&dir, &["--inject", "\\b", "--at", "40"]).status.success());
 }
+
+fn request(dir: &std::path::Path, body: serde_json::Value) -> serde_json::Value {
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_satex"))
+        .args(["--no-config", "--no-classes", "--no-packages", "--set", "limits.seconds=0", "query", "--request", "-"])
+        .current_dir(dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(body.to_string().as_bytes()).unwrap();
+    serde_json::from_slice(&child.wait_with_output().unwrap().stdout).unwrap()
+}
+
+/// A trace step says how a call got its text: the definition's parameters
+/// and body, the arguments, and what that inserts; and `trace_stop` ends the
+/// run at a step, so a query in the same request sees the state there.
+#[test]
+fn a_trace_step_shows_its_call_and_a_stop_shows_the_state_there() {
+    let dir = crate::support::tmp_root().join(format!("satex-trace-stop-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = "\\def\\v{old}\n\\def\\twice#1{#1#1\\def\\v{new}}\n\\twice{ab}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    let line = main.lines().position(|l| l.starts_with("\\twice")).unwrap() + 1;
+    let config = |stop: Option<u32>| {
+        let mut c = serde_json::json!({ "trace": "true", "trace_lines": format!("[{line}, {line}]") });
+        if let Some(stop) = stop {
+            c["trace_stop"] = serde_json::json!(stop.to_string());
+        }
+        c
+    };
+    let ask = |stop| {
+        let body = serde_json::json!({ "file": dir.join("main.tex"), "config": config(stop),
+            "queries": [{ "type": "trace" }, { "type": "explain", "names": ["\\v"] }] });
+        request(&dir, body)
+    };
+    let full = ask(None);
+    let call = full[0]["records"].as_array().unwrap().iter().find(|r| r["name"] == "\\twice").cloned().unwrap();
+    assert_eq!(call["parameters"], "#1", "{call}");
+    assert_eq!(call["arguments"], serde_json::json!(["ab"]), "{call}");
+    assert!(call["body"].as_str().unwrap().starts_with("#1#1"), "{call}");
+    assert!(call["inserts"].as_str().unwrap().starts_with("abab"), "{call}");
+    assert!(full[1].to_string().contains("new"), "{full}");
+    let index = call["index"].as_u64().unwrap() as u32;
+    let stopped = ask(Some(index));
+    assert!(stopped[1].to_string().contains("old") && !stopped[1].to_string().contains("new"), "{stopped}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

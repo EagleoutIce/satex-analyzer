@@ -137,6 +137,12 @@ pub struct Event {
     /// What the input still holds at this step, nearest first: the tokens
     /// queued to be read, then the file text after them.
     pub ahead: Option<Box<str>>,
+    /// The arms the path took at each undecided choice so far, as `1.0`.
+    pub fork: Box<str>,
+    /// The queued tokens with their catcodes (16: a control sequence), and the
+    /// `\meaning` of the names among them.
+    pub queued: Box<[(Box<str>, u8)]>,
+    pub meanings: Box<[(Sym, Box<str>)]>,
 }
 
 /// A loaded file: its path and its [`LoadKind`] (input, package, class).
@@ -5050,7 +5056,28 @@ will look undefined",
             return;
         }
         let index = self.out.trace.len() as u32;
-        let ahead = Some(self.ahead_text(24, 80).into());
+        let (queued, text) = self.ahead(24, 80);
+        let ahead = Some(format!("{}{text}", crate::tex::detokenize(&queued, &self.out.interner)).into());
+        let mut names: Vec<Sym> = Vec::new();
+        for t in &queued {
+            if let Tok::Cs(sym) = t.tok
+                && !names.contains(&sym)
+                && names.len() < 12
+            {
+                names.push(sym);
+            }
+        }
+        let meanings = names.into_iter().map(|sym| (sym, self.meaning_text(sym).chars().take(240).collect())).collect();
+        let queued = queued
+            .iter()
+            .map(|t| match t.tok {
+                Tok::Chr(_, cat) => {
+                    (crate::tex::detokenize(std::slice::from_ref(t), &self.out.interner).into(), cat as u8)
+                }
+                _ => (crate::tex::detokenize(std::slice::from_ref(t), &self.out.interner).trim_end().into(), 16),
+            })
+            .collect();
+        let fork = self.choices.iter().map(|c| c.arm.to_string()).collect::<Vec<_>>().join(".").into();
         self.out.trace.push(Event {
             index,
             depth: self.within.len() as u16,
@@ -5059,12 +5086,18 @@ will look undefined",
             span,
             detail: detail().map(Into::into),
             ahead,
+            fork,
+            queued,
+            meanings,
         });
+        if self.cfg.trace_stop == Some(index) {
+            self.halted = true;
+        }
     }
 
     /// The input still to be read: up to `tokens` queued tokens, top of
     /// the input stack first, then up to `chars` of the file being read.
-    fn ahead_text(&self, tokens: usize, chars: usize) -> String {
+    fn ahead(&self, tokens: usize, chars: usize) -> (Vec<Token>, String) {
         let mut queued: Vec<Token> = Vec::new();
         for frame in self.input.iter().rev() {
             if queued.len() >= tokens {
@@ -5076,15 +5109,12 @@ will look undefined",
                     queued.extend(toks.get(*pos..).unwrap_or_default().iter().take(tokens - queued.len()))
                 }
                 Frame::File { mouth, .. } => {
-                    let text: String = mouth.source().iter().skip(mouth.offset()).take(chars).collect();
-                    let mut out = crate::tex::detokenize(&queued, &self.out.interner);
-                    out.push_str(&text);
-                    return out;
+                    return (queued, mouth.source().iter().skip(mouth.offset()).take(chars).collect());
                 }
                 _ => {}
             }
         }
-        crate::tex::detokenize(&queued, &self.out.interner)
+        (queued, String::new())
     }
 
     /// Record a construct satex cannot follow yet, once per name and code:

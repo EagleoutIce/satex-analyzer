@@ -947,6 +947,29 @@ mod roots {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The playground's trace of a call: `\begin{document}` after a package,
+    /// one there and one missing, still runs and records its steps.
+    #[test]
+    fn a_trace_of_begin_document_records_its_steps() {
+        for package in ["xcolor", "nosuchpackage"] {
+            let main = format!(
+                "\\documentclass{{article}}\n\\usepackage{{{package}}}\n\\begin{{document}}\nx\n\\end{{document}}\n"
+            );
+            let (mut server, _, dir) = project_with("trace-begin", &[("main.tex", &main)], "main.tex", true);
+            let line = main.lines().position(|l| l.starts_with("\\begin{document}")).unwrap() + 1;
+            let config = json!({ "trace": "true", "trace_document_only": "false", "trace_lines": format!("[{line}, {line}]"),
+                                 "trace_col": "1", "trace_file": "main.tex" });
+            let request = json!({ "file": dir.join("main.tex").display().to_string(), "config": config, "queries": [{ "type": "trace" }] });
+            let id =
+                server.request("workspace/executeCommand", json!({ "command": "satex/query", "arguments": [request] }));
+            let reply = server.response(id);
+            let records = reply["result"][0]["records"].as_array().cloned().unwrap_or_default();
+            assert!(records.len() > 1, "{package}: {reply}");
+            server.shutdown();
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
     /// `a.tex` names the file but does not read it; of `b.tex` and `c.tex`,
     /// which both read it, the likelier one answers, and keeps answering.
     #[test]

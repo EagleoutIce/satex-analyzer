@@ -993,6 +993,9 @@ pub struct Config {
     pub trace_end_col: u32,
     /// Record only these steps of the run.
     pub trace_steps: Option<(u64, u64)>,
+    /// Stop the run at this trace event, so queries see the state there.
+    #[serde(default)]
+    pub trace_stop: Option<u32>,
     pub timings: bool,
     pub opaque_conditionals: Vec<String>,
     /// Arms of a choice inside an expanding scan (`\edef`, `\csname`) run
@@ -1048,6 +1051,7 @@ impl Default for Config {
             trace_lines: None,
             trace_col: 0,
             trace_file: None,
+            trace_stop: None,
             trace_end_col: u32::MAX,
             trace_steps: None,
             timings: false,

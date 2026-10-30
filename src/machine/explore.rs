@@ -29,7 +29,7 @@ pub(super) struct Choice {
     span: Span,
     by: Sym,
     arms: usize,
-    arm: usize,
+    pub(super) arm: usize,
     /// One of the meanings or texts a join left: on this arm the run holds
     /// only where the join's sources agree with the path.
     joined: bool,

@@ -1102,6 +1102,8 @@ fn trace(analysis: &Analysis) -> Vec<Record> {
     for (c, spot) in analysis.facts.text.chars.chars().zip(&analysis.facts.text.at) {
         set.entry(spot.span).or_default().push(c);
     }
+    let calls: HashMap<_, _> = analysis.facts.expansions.iter().map(|e| ((e.span, e.name), e)).collect();
+    let defs: HashMap<_, _> = analysis.facts.defs.iter().map(|d| (d.node, d)).collect();
     analysis
         .trace
         .iter()
@@ -1113,27 +1115,43 @@ fn trace(analysis: &Analysis) -> Vec<Record> {
             record.insert("name".into(), json!(step_name(analysis, event.name)));
             let expand = matches!(event.kind, crate::machine::Step::Expand);
             record.insert("detail".into(), json!(if expand { None } else { event.detail.as_deref() }));
+            let call = expand.then(|| calls.get(&(event.span, event.name))).flatten();
+            let def = call.and_then(|call| match call.meaning {
+                crate::facts::MeaningKind::Macro(n) => defs.get(&n).and_then(|d| Some((*call, d.mac.as_ref()?))),
+                _ => None,
+            });
+            if let Some((call, m)) = def {
+                record.insert("parameters".into(), json!(m.parameter_text.render(&analysis.interner)));
+                record.insert("body".into(), json!(detokenize(&m.replacement_text, &analysis.interner)));
+                let args: Vec<String> = call.arguments.iter().map(|a| detokenize(a, &analysis.interner)).collect();
+                record.insert("arguments".into(), json!(args));
+            }
             if expand && let Some(body) = event.detail.as_deref() {
                 record.insert("inserts".into(), json!(body));
-            } else if expand {
-                let call = analysis.facts.expansions.iter().find(|e| e.span == event.span && e.name == event.name);
-                let def = call.and_then(|call| match call.meaning {
-                    crate::facts::MeaningKind::Macro(n) => {
-                        analysis.facts.defs.iter().find(|d| d.node == n).map(|d| (call, d))
-                    }
-                    _ => None,
-                });
-                if let Some((call, m)) = def.and_then(|(call, d)| Some((call, d.mac.as_ref()?))) {
-                    let args: Vec<Vec<_>> = call.arguments.iter().map(|a| a.to_vec()).collect();
-                    if let Some(body) = crate::machine::substitute(m, &args, usize::MAX) {
-                        record.insert("inserts".into(), json!(detokenize(&body, &analysis.interner)));
-                    }
+            } else if let Some((call, m)) = def {
+                let args: Vec<Vec<_>> = call.arguments.iter().map(|a| a.to_vec()).collect();
+                if let Some(body) = crate::machine::substitute(m, &args, usize::MAX) {
+                    record.insert("inserts".into(), json!(detokenize(&body, &analysis.interner)));
                 }
+            }
+            if !event.fork.is_empty() {
+                record.insert("fork".into(), json!(event.fork.as_ref()));
             }
             if let Some(text) = set.get(&event.span) {
                 record.insert("sets".into(), json!(text));
             }
             record.insert("ahead".into(), json!(event.ahead.as_deref()));
+            if !event.queued.is_empty() {
+                record.insert(
+                    "tokens".into(),
+                    json!(event.queued.iter().map(|(t, c)| json!([t.as_ref(), c])).collect::<Vec<_>>()),
+                );
+            }
+            if !event.meanings.is_empty() {
+                let meanings: Map<String, Json> =
+                    event.meanings.iter().map(|(s, m)| (step_name(analysis, *s), json!(m.as_ref()))).collect();
+                record.insert("meanings".into(), Json::Object(meanings));
+            }
             record
         })
         .collect()

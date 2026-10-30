@@ -1333,7 +1333,7 @@ impl Machine<'_> {
 
     /// `\meaning` writes `macro:⟨parameter text⟩->⟨replacement text⟩` for a
     /// macro, and the primitive's own name otherwise (The TeXbook, ch. 20).
-    fn meaning_text(&mut self, sym: Sym) -> String {
+    pub(crate) fn meaning_text(&mut self, sym: Sym) -> String {
         let escape = self.escape_char();
         let esc: String = escape.into_iter().collect();
         match self.env.meaning(sym) {

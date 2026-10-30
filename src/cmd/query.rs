@@ -395,8 +395,8 @@ pub fn run_request_value(body: &Json, cfg: &Config, cli_file: Option<&Path>) -> 
     }
     // The `options` query reads a key family out of a `\setkeys`-family
     // call's argument, which is only kept when this is on (see
-    // `Command::wants_arguments`).
-    if queries.iter().any(|q| q.get("type").and_then(Json::as_str) == Some("options")) {
+    // `Command::wants_arguments`); a `trace` step names its call's arguments.
+    if queries.iter().any(|q| matches!(q.get("type").and_then(Json::as_str), Some("options" | "trace"))) {
         cfg.record_arguments = true;
     }
     let analysis = Machine::analyze(&source, Some(&file), &cfg);
