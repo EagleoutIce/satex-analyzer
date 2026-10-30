@@ -181,9 +181,9 @@
     $('play-pills').innerHTML = shown.map(([s, w, c]) => `<span class="pill-sev sev-${s}" title="${c} ${w}${c > 1 ? 's' : ''} in the open file">${c} ${w}${c > 1 ? 's' : ''}</span>`).join('');
   }
 
-  /** SGR codes to the classes build.py's ansi() writes; OSC hyperlinks and cursor moves dropped. */
+  /** SGR codes to the classes build.py's ansi() writes; OSC hyperlinks and every other control sequence dropped. */
   function ansi(text) {
-    text = text.replace(/\x1b\]8;[^\x1b\x07]*(\x1b\\|\x07)/g, '').replace(/\x1b\[[0-9;]*[A-HJKST]/g, '');
+    text = text.replace(/\x1b\]8;[^\x1b\x07]*(\x1b\\|\x07)/g, '').replace(/\x1b\[[0-?]*[ -\/]*[@-ln-~]/g, '');
     let classes = new Set(), html = '';
     for (const part of text.split(/(\x1b\[[0-9;]*m)/)) {
       const m = part.match(/^\x1b\[([0-9;]*)m$/);
@@ -201,7 +201,7 @@
     }
     return html + (classes.size ? '</span>' : '');
   }
-  const plain = (text) => text.replace(/\x1b\[[0-9;]*[A-Za-z]|\x1b\]8;[^\x1b\x07]*(\x1b\\|\x07)/g, '');
+  const plain = (text) => text.replace(/\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\]8;[^\x1b\x07]*(\x1b\\|\x07)/g, '');
   /** stderr without the progress bars, which redraw themselves in place. */
   const quiet = (text) => text.replace(/\x1b\[1A/g, '').split('\x1b[J')
     .filter((piece) => !/\[[#-]{20}\]/.test(plain(piece))).join('').trim();
