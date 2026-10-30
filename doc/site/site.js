@@ -26,9 +26,11 @@
   }
   // The TeX tokenizer of the playground's editor, CodeMirror's stex mode. The landing
   // page's examples come colored from build.py.
+  // CodeMirror, vendored (codemirror.js): the page names its hashed file, a dev server the plain one beside site.js
+  const cmAt = document.querySelector('meta[name=satex-cm]'), cmUrl = new URL(cmAt?.content ?? 'codemirror.js', cmAt ? location.href : document.currentScript.src).href;
+  self.siteCM = () => (self.siteCM.loaded ??= import(cmUrl));
   self.siteTex = () => (self.siteTex.loaded ??= (async () => {
-    const [{ StreamLanguage }, { stex }, hl] = await Promise.all(['@codemirror/language@6', '@codemirror/legacy-modes@6/mode/stex',
-      '@lezer/highlight@1'].map((m) => import('https://esm.sh/' + m)));
+    const { language: { StreamLanguage }, stex: { stex }, highlight: hl } = await self.siteCM();
     const t = hl.tags;
     const highlighter = hl.tagHighlighter([[t.tagName, 'cmd'], [t.bracket, 'br'], [t.keyword, 'kw'], [t.comment, 'com'], [t.atom, 'atom'],
       [t.number, 'num'], [t.string, 'str'], [t.special(t.variableName), 'arg'], [t.variableName, 'arg']].map(([tag, c]) => ({ tag, class: `tok-${c}` })));
@@ -300,7 +302,24 @@
   const value = (v) => v == null ? '' : Array.isArray(v) ? v.map((x) => typeof x === 'object' ? value(x) : /^\\/.test(String(x)) ? csChip(String(x)) : `<code>${esc(x)}</code>`).join(' ')
     : typeof v === 'object' ? ('min' in v && 'max' in v ? argumentCount(v) : Object.entries(v).map(([k, x]) => `${esc(k)} ${value(x)}`).join(', '))
       : /^\\/.test(String(v)) ? csChip(String(v)) : /^[{}#]/.test(String(v)) ? `<code>${esc(v)}</code>` : esc(v);
-  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, placeLink, upstream, csChip, value, esc };
+  /** satex's notation in typeset text (`\uE000…\uE001`): `⟦…⟧` is text set in a box, on the page
+   * only if the box is used; `·` a place the line breaker may hyphenate, not shown; `│`, `―`, `▬`
+   * a table's `|`, an `\hline` and a `\rule`, drawn. */
+  const RULES = { '│': ['ts-vrule', 'a \\vrule: a table\'s |'], '―': ['ts-hrule', 'an \\hrule: \\hline'], '▬': ['ts-bar', 'a \\rule'] };
+  function notation(marked) {
+    let open = 0;
+    const html = marked.split(/(\uE000[^\uE001]*\uE001)/).map((part) => {
+      const note = /^\uE000([^\uE001]*)\uE001$/.exec(part)?.[1];
+      if (note === undefined) return esc(part);
+      if (note === '⟦') { open++; return '<span class="ts-box" title="set in a box: on the page only if the box is used">'; }
+      if (note === '⟧') { if (!open) return ''; open--; return '</span>'; }
+      if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `<span class="ts-key ts-key-${esc(kind)}" title="${esc(kind)}">${esc(key)}</span>`; }
+      if (RULES[note]) return `<span class="${RULES[note][0]}" title="${RULES[note][1]}"></span>`;
+      return note === '·' ? '' : `<span class="ts-note">${esc(note)}</span>`;
+    }).join('');
+    return html + '</span>'.repeat(open);
+  }
+  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, placeLink, upstream, csChip, value, esc, notation };
 
   // ------------------------------------------------------------ the landing page's examples
   // A command explains itself on hover, an underline shows its finding: a floating card,

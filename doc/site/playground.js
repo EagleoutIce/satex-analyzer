@@ -357,9 +357,8 @@
   }
 
   // The editor's modules, fetched while satex loads rather than after it.
-  const EDITOR = ['codemirror@6.0.2', '@codemirror/language@6', '@codemirror/lint@6', '@codemirror/autocomplete@6', '@codemirror/view@6',
-    '@codemirror/state@6', '@codemirror/theme-one-dark@6'].map((m) => import(`https://esm.sh/${m}`));
-  for (const loading of EDITOR) loading.catch(() => {}); // a failure shows when the editor is built
+  const EDITOR = self.siteCM().then((m) => [m.codemirror, m.language, m.lint, m.autocomplete, m.view, m.state, m.oneDark]);
+  EDITOR.catch(() => {}); // a failure shows when the editor is built
 
   // ---------------------------------------------------------------- editor
 
@@ -465,7 +464,7 @@
   }
 
   async function codemirror(parent, text) {
-    const [{ EditorView, basicSetup }, language, lint, ac, view, st, { oneDark }, tex] = await Promise.all(EDITOR.concat(self.siteTex()));
+    const [{ EditorView, basicSetup }, language, lint, ac, view, st, { oneDark }, tex] = [...await EDITOR, await self.siteTex()];
     /** Words (file names in arguments) the server resolves a definition for, by start offset. */
     const resolves = new Map();
     const KIND = { 3: 'function', 14: 'keyword', 9: 'namespace', 18: 'variable' };
@@ -694,23 +693,7 @@
   /** What the open file's paragraphs set, from the language server's last
    * analysis (`satex query typeset`); a click goes to the paragraph. */
   const typesetBody = $('typeset-body');
-  /** satex's notation in typeset text (`\uE000…\uE001`): `⟦…⟧` is text set in a box, on the page
-   * only if the box is used; `·` a place the line breaker may hyphenate, not shown; `│`, `―`, `▬`
-   * a table's `|`, an `\hline` and a `\rule`, drawn. */
-  const RULES = { '│': ['ts-vrule', 'a \\vrule: a table\'s |'], '―': ['ts-hrule', 'an \\hrule: \\hline'], '▬': ['ts-bar', 'a \\rule'] };
-  function notation(marked) {
-    let open = 0;
-    const html = marked.split(/(\uE000[^\uE001]*\uE001)/).map((part) => {
-      const note = /^\uE000([^\uE001]*)\uE001$/.exec(part)?.[1];
-      if (note === undefined) return escape(part);
-      if (note === '⟦') { open++; return '<span class="ts-box" title="set in a box: on the page only if the box is used">'; }
-      if (note === '⟧') { if (!open) return ''; open--; return '</span>'; }
-      if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `<span class="ts-key ts-key-${escape(kind)}" title="${escape(kind)}">${escape(key)}</span>`; }
-      if (RULES[note]) return `<span class="${RULES[note][0]}" title="${RULES[note][1]}"></span>`;
-      return note === '·' ? '' : `<span class="ts-note">${escape(note)}</span>`;
-    }).join('');
-    return html + '</span>'.repeat(open);
-  }
+  const notation = self.satexCards.notation;
   // in the section's header: a click flips a switch, never the section's fold; kept across visits
   for (const [id, cls, store] of [['typeset-boxes', 'show-boxes', 'satex-typeset-boxes'], ['typeset-keys', 'show-keys', 'satex-typeset-keys']]) {
     const box = $(id), apply = () => typesetBody.classList.toggle(cls, box.checked);

@@ -773,6 +773,7 @@ def main():
     assets |= {
         "css": emit(out, "style.css", (SITE / "style.css").read_bytes()),
         "sitejs": emit(out, "site.js", (SITE / "site.js").read_bytes()),
+        "cmjs": emit(out, "codemirror.js", (SITE / "codemirror.js").read_bytes()),
         "playjs": emit(out, "play/playground.js", (SITE / "playground.js").read_bytes()),
     }
     table = pages()

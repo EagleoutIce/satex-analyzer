@@ -152,7 +152,7 @@ In the browser, `doc/site/worker.js` fetches the wasm and the bundle and imports
 Every run is a fresh instance over an in-memory file system, as a process would be.
 The language server is one more instance that stays alive. Under Emscripten `satex lsp` has no threads and no stdio.
 It sets up the engine and returns, and `src/lsp/wasm.rs` exports `satex_lsp`, which takes one JSON-RPC message and returns the replies.
-`doc/site/playground.js` sends the edits, debounced, and asks for completion, hover, code actions and rename. The editor is CodeMirror 6 from esm.sh.
+`doc/site/playground.js` sends the edits, debounced, and asks for completion, hover, code actions and rename. The editor is CodeMirror 6, vendored as `doc/site/codemirror.js`.
 The command line is the one way to act. `lint`, `explain`, `query` and the rest are runs. `rename` and `fix` are language server edits applied in the editor.
 Plain `lint` runs only on Enter: the findings panel already shows the language server's.
 F2, the context menu and Ctrl+click rename, explain and go to a definition. A definition in a bundle file opens read-only.
