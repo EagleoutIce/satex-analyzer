@@ -106,11 +106,11 @@ jobs:
           path: editors/vscode
           pattern: vsix-*
           merge-multiple: true
-      # One call per package: each OIDC token is exchanged once.
+      # One upload of every platform's package, once per release tag.
       - name: Marketplace
-        run: for f in satex-*.vsix; do npx vsce publish --oidc --packagePath "$f"; done
+        run: npx vsce publish --oidc --packagePath satex-*.vsix
       - name: Open VSX
-        run: for f in satex-*.vsix; do npx ovsx publish "$f" --trusted-publishing; done
+        run: npx ovsx publish --trusted-publishing --packagePath satex-*.vsix
       - name: Attach to the release
         uses: softprops/action-gh-release@v2
         with:
