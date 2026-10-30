@@ -2043,6 +2043,8 @@
    * what its files name, and again whenever a finding or a run says one is not in this installation. */
   const PACKAGES = new Map((manifest.packages ?? []).map((p) => [p.id, p]));
   const fetchedPackages = new Map(); // id -> its load
+  // kernel/file name -> the bundle holding it (`pgfmath.sty` comes with tikz)
+  const HOLDER = new Map((manifest.packages ?? []).flatMap((p) => (p.files ?? []).map(([f]) => [`${p.kernel}/${f.split('/').pop()}`, p.id])));
   const MISSING = /(?:`([^`\s]+)`|(\S+\.(?:sty|cls))) is not in this installation/g;
   const NAMED = /\\(?:documentclass|usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
   /** The bundles of the current kernel for `names` (a class too), and what those need, not yet asked for. */
@@ -2055,13 +2057,17 @@
       todo.add(id);
       entry.needs.forEach((n) => add(`${kernel}/${n}`));
     };
-    for (const n of names) { add(`${kernel}/${n}`); add(`${kernel}/${n}.cls`); }
+    for (const n of names) {
+      const held = HOLDER.get(`${kernel}/${n}`) ?? HOLDER.get(`${kernel}/${n}.sty`) ?? HOLDER.get(`${kernel}/${n}.cls`);
+      add(`${kernel}/${n.replace(/\.sty$/, '')}`); add(`${kernel}/${n}`); add(`${kernel}/${n}.cls`); if (held) add(held);
+    }
     return [...todo].filter((id) => !fetchedPackages.has(id));
   }
   /** The packages and classes the project's own files name. */
   const named = (texts) => [...new Set(texts.flatMap((t) => [...String(t).matchAll(NAMED)].flatMap((m) => m[1].split(',').map((x) => x.trim()).filter(Boolean))))];
-  const missing = (texts) => wanted_([...new Set(texts.flatMap((t) => [...String(t).matchAll(MISSING)].map((m) => (m[1] ?? m[2]).replace(/\.(sty|cls)$/, ''))))]);
+  const missing = (texts) => wanted_([...new Set(texts.flatMap((t) => [...String(t).matchAll(MISSING)].map((m) => m[1] ?? m[2])))]);
   const loadedList = [], inFlight = new Set();
+  let loadedBytes = 0;
   async function fetchPackages(ids) {
     if (!ids.length) return false;
     const entries = ids.map((id) => PACKAGES.get(id));
@@ -2071,7 +2077,7 @@
     const given = location.protocol === 'file:' ? await Promise.all(entries.map((e) => local(e.bundle))) : undefined;
     const load = ask({ type: 'bundles', base, entries, given }, given ? given.map((g) => g.buffer) : []);
     ids.forEach((id) => { fetchedPackages.set(id, load); inFlight.add(id); });
-    try { await load; } catch (e) { ids.forEach((id) => fetchedPackages.delete(id)); toast(`${label} did not load: ${e.message}`); return false; } finally { ids.forEach((id) => inFlight.delete(id)); }
+    try { await load; } catch (e) { ids.forEach((id) => fetchedPackages.delete(id)); toast(/: 404$/m.test(e.message) ? 'The playground was updated since this page loaded: reload it to fetch packages.' : `${label} did not load: ${e.message.split('\n')[0]}`); return false; } finally { ids.forEach((id) => inFlight.delete(id)); }
     // the file index cached before this bundle was in the file system does not list its files: drop it, so the next start rebuilds it
     try { const stale = ((await ask({ type: 'caches' })).entries ?? []).filter((e) => /\/index-/.test(e.path)).map((e) => e.path); if (stale.length) await ask({ type: 'uncache', paths: stale }); } catch {}
     loads.clear();
@@ -2551,6 +2557,8 @@
     const k = manifest.kernels.findIndex((x) => x.id === link?.k);
     if (k >= 0) { manualKernel = true; if (k > 0) await kernel(k); }
     kernelBox.value = state.kernel;
+    // packages.txt's first section, fetched while the editor loads
+    const preloading = fetchPackages(wanted_(manifest.preload ?? [])).catch(() => false);
     try {
       editor = await codemirror($('play-editor'), '');
       $('play-source').remove();
@@ -2560,6 +2568,7 @@
     }
     button.textContent = 'Run';
     button.disabled = false;
+    await preloading;
     if (link && !link.x) {
       await project(Object.fromEntries(Object.entries(link.p).map(([n, t]) => [n, encode(t)])), 'From the link', link.r);
       if (link.f in state.texts) choose(link.f);

@@ -691,6 +691,10 @@ def playground(satex, wasm, work, out):
         extra.append({"id": f"{kernel}/{name}", "name": name.removesuffix(".cls"), "kernel": kernel, "needs": needs, "label": name,
                       "size": len(packed), "bundle": emit_local(out, f"play/pkg/{kernel}-{name}.bin.gz", packed),
                       "files": [[path, len(data)] for path, data in files.items()]})
+    def preloaded():
+        """packages.txt's first section: fetched with the first download, not on demand."""
+        section = re.search(r"^# with the first download.*\n((?:[^#\n].*\n)+)", (SITE / "packages.txt").read_text(), re.M)
+        return section.group(1).split() if section else []
     def facts():
         """What satex says about itself: its queries, which of them name their file, its rules, its completions."""
         queries = [line.split()[0] for line in run(str(satex), "query", "--list").splitlines()[1:] if line.strip()]
@@ -712,7 +716,7 @@ def playground(satex, wasm, work, out):
     manifest = {
         "js": emit_local(out, "play/satex.js", (wasm / "satex.js").read_bytes()),
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
-        "kernels": kernels, "packages": extra, "unavailable": UNAVAILABLE, "queries": queries, "filtered": filtered, "rules": rules,
+        "kernels": kernels, "packages": extra, "preload": preloaded(), "unavailable": UNAVAILABLE, "queries": queries, "filtered": filtered, "rules": rules,
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(),
     }
