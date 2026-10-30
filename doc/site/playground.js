@@ -146,6 +146,7 @@
   const SEVERITY = ['', 'error', 'warning', 'info', 'hint'];
   const sev = (d) => SEVERITY[d.severity] || 'info';
   const secs = (ms) => `${(ms / 1000).toFixed(2)} s`;
+  const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
   const size = (n) => n < 2 ** 20 ? `${Math.ceil(n / 1024)} KiB` : `${(n / 2 ** 20).toFixed(1)} MiB`;
   const started = performance.now();
 
@@ -171,10 +172,10 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toastBox.classList.remove('on'), 2600);
   }
-  /** One row of the timing pop-up: a line of text, or `items` as chips under it. */
+  /** One row of the timing pop-up: a line of text, `items` folded under it. */
   const timing = (id, text, title = '', items = null) => {
     const dd = Object.assign($(id), { title });
-    dd.innerHTML = escape(text) + (items?.length ? `<span class="t-chips">${items.map((i) => `<code>${escape(i)}</code>`).join('')}</span>` : '');
+    dd.innerHTML = escape(text) + (items?.length ? `<details><summary>${items.length} listed</summary><span class="t-chips">${items.map((i) => `<code>${escape(i)}</code>`).join('')}</span></details>` : '');
   };
   // The status bar: one time, a pill per non-empty severity; the rest in a pop-up on the time.
   const shownTime = (text) => { $('t-time').hidden = false; $('t-time-text').textContent = text; };
@@ -2104,16 +2105,77 @@
     status.textContent = `${label} fetched in ${secs(performance.now() - t)}`;
     status.dataset.packages = [...fetchedPackages.keys()].join(' ');
     loadedList.push(...entries.map((e) => `${e.label} ${size(e.size)}`));
-    timing('t-load', `${plural(loadedList.length, 'bundle')}, the last in ${secs(performance.now() - t)}`, 'packages fetched after the first download', loadedList);
+    loadedBytes += entries.reduce((n, e) => n + e.size, 0);
+    timing('t-load', `${plural(loadedList.length, 'bundle')}, ${size(loadedBytes)}`, 'packages fetched after the first download', loadedList);
     return true;
+  }
+  /** The files the build wrote: alternatives per path, unknown text as chips. */
+  const MARKS = { '\u{10FFFF}': 'char', '\u{10FFFE}': 'digit', '\u{10FFFB}': 'digit', '\u{10FFFA}': 'any', '\u{10FFFD}': 'letter', '\u{10FFFC}': 'other' };
+  const marked = (text) => escape(text).replace(/[\u{10FFF9}-\u{10FFFF}]+/gu, (run) => {
+    const kinds = [...run].map((c) => MARKS[c] ?? 'char');
+    return `<span class="unk" title="unknown: ${kinds.length} ${kinds[0]}${kinds.length > 1 ? 's' : ''}">${kinds.length > 1 ? `${kinds[0]}×${kinds.length}` : kinds[0]}</span>`;
+  });
+  /** The lines of `b` against those of `a` (an LCS): [kind, line], kind '+' added, '-' removed, ' ' kept. */
+  function lineDiff(a, b) {
+    const x = a.split('\n'), y = b.split('\n'), m = x.length, n = y.length;
+    const L = Array.from({ length: m + 1 }, () => new Uint16Array(n + 1));
+    for (let i = m - 1; i >= 0; i--) for (let j = n - 1; j >= 0; j--) L[i][j] = x[i] === y[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    const out = [];
+    let i = 0, j = 0;
+    while (i < m || j < n) {
+      if (i < m && j < n && x[i] === y[j]) { out.push([' ', y[j]]); i++; j++; } else if (i < m && (j >= n || L[i + 1][j] >= L[i][j + 1])) out.push(['-', x[i++]]); else out.push(['+', y[j++]]);
+    }
+    return out;
+  }
+  /** The written files (`satex/written`): per file its runs, the final text, each against the run before; alternatives as tabs. */
+  let writtenFiles = [];
+  const writtenPick = new Map(); // name -> [view, alternative]: view is a run's index, or 'final'
+  function writtenCard({ name, texts, runs = [] }) {
+    const views = [...(runs ?? []).map((r, i) => [i, `run ${i + 1}`, r]), ['final', 'final', texts]];
+    const [view, alt] = writtenPick.get(name) ?? ['final', 0];
+    const k = Math.max(0, views.findIndex(([v]) => v === view)), shown = views[k][2], before = k ? views[k - 1][2] : null;
+    const a = Math.min(alt, (shown?.length ?? 1) - 1), text = shown?.[a], prev = before?.[Math.min(a, before.length - 1)];
+    const lines = text == null ? 0 : text.split('\n').filter(Boolean).length, short = name.split('/').pop();
+    const body = text == null ? '<p class="muted">Not known: the build wrote text satex could not follow here.</p>'
+      : `<pre>${(prev == null ? text.split('\n').map((l) => [' ', l]) : lineDiff(prev, text)).filter(([, l], i, all) => l || i < all.length - 1)
+        .map(([d, l]) => `<span class="wf-l${d === '+' ? ' wf-add' : d === '-' ? ' wf-del' : ''}">${marked(l) || ' '}</span>`).join('')}</pre>`;
+    const changed = prev != null && text != null && prev !== text;
+    return `<div class="wf" data-name="${escape(name)}"><div class="wf-head"><code>${escape(short)}</code><span class="wf-kind">${escape(short.split('.').pop())}</span>` +
+      `<span class="muted">${text == null ? 'unknown' : plural(lines, 'line')}${k ? (changed ? `, changed since ${views[k - 1][1]}` : `, as in ${views[k - 1][1]}`) : ''}</span>` +
+      `<span class="wf-runs" role="tablist">${views.length > 2 ? views.map(([v, label], i) => `<button type="button" role="tab" data-view="${v}" aria-selected="${i === k}">${label}</button>`).join('') : ''}</span></div>` +
+      `${shown && shown.length > 1 ? `<div class="wf-alts" role="tablist">${shown.map((_, i) => `<button type="button" role="tab" data-alt="${i}" aria-selected="${i === a}">path ${i + 1}</button>`).join('')}</div>` : ''}${body}</div>`;
+  }
+  const writtenShow = () => {
+    $('written-count').textContent = writtenFiles.length || '';
+    $('written-body').innerHTML = writtenFiles.length ? writtenFiles.map(writtenCard).join('') : '<p class="muted">The build writes no file.</p>';
+  };
+  $('written-body').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-view], [data-alt]'), name = b?.closest('.wf')?.dataset.name;
+    if (!name) return;
+    const [view, alt] = writtenPick.get(name) ?? ['final', 0];
+    writtenPick.set(name, b.dataset.view !== undefined ? [b.dataset.view === 'final' ? 'final' : +b.dataset.view, alt] : [view, +b.dataset.alt]);
+    writtenShow();
+  });
+  async function written(target) {
+    const files = await lsp('satex/written', { textDocument: { uri: target } }).catch(() => null);
+    if (!files) return;
+    writtenFiles = files;
+    writtenShow();
   }
   /** What a run's cache report says: the packages and classes served from the caches, the ones analyzed anew. */
   function cacheReport(lines) {
     const reused = [], fresh = [];
     let segments = 0;
-    // the run's size: steps, forks, files and lines
-    const run = lines.map(([, t]) => plain(t)).find((t) => t.startsWith('run '));
-    if (run) timing('t-run', '', 'the size of the last analysis', run.slice(4).split(', '));
+    const texts = lines.map(([, t]) => plain(t));
+    const run = texts.find((t) => t.startsWith('run '));
+    $('t-run').innerHTML = run ? run.slice(4).split(', ').map((part) => {
+      const [, n, label] = part.match(/^(\S+) (.*)$/) ?? [, part, ''];
+      return `<span title="${escape(Number(n).toLocaleString('en'))} ${escape(label)}"><b>${escape(compact.format(Number(n)))}</b>${escape(label)}</span>`;
+    }).join('') : '';
+    const slow = texts.map((t) => t.match(/^slow (\d+) (\d+) (.*)$/)).filter(Boolean);
+    $('t-slow').innerHTML = slow.length ? `<h4>slowest files</h4>${slow.map(([, ms, pct, name]) =>
+      `<div class="rp-bar" style="--p:${pct}%" title="${escape(name)}"><span>${escape(name.split('/').pop())}</span><span>${secs(Number(ms))} · ${pct}%</span></div>`).join('')}` : '';
+    $('t-limits').innerHTML = texts.filter((t) => t.startsWith('limit ')).map((t) => `<p>reached ${escape(t.slice(6))}</p>`).join('');
     for (const [, text] of lines) {
       const m = plain(text).match(/cache (?:kernel|class|package) (\S+): (reused|rebuilt \((.*)\))/);
       if (m) (m[2] === 'reused' ? reused : fresh).push(m[3] ? `${m[1]} (${m[3]})` : m[1]);
@@ -2526,6 +2588,7 @@
           outline();
           if (m.params.uri === uri()) prefetchCommands();
           loadCaches(); // the status bar's count, and the table if open
+          if (m.params.uri === uri(state.root ?? state.file)) written(m.params.uri);
           if (m.params.uri === uri()) lsp('satex/caches', { textDocument: { uri: m.params.uri } }).then((r) => cacheReport((r ?? []).map((l) => ['err', l]))).catch(() => {});
           fetchMissing(unresolved);
         }
