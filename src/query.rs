@@ -4221,7 +4221,7 @@ enum KeyDialect<'a> {
 /// asked for by its base name (`itemize`, not `\begin{itemize}`):
 /// `\newenvironment` makes the code that reads `[…]` the environment's own
 /// macro.
-fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<String>)> {
+fn key_family(analysis: &Analysis, sym: Sym) -> Vec<(KeyDialect<'_>, Vec<String>)> {
     // `within` is what dynamically enclosed a call, but a common dispatch
     // idiom (`\@testopt`/`\@ifnextchar` re-invoking the command itself to
     // consume `[…]`) drops the chain — the re-invoked call is recorded with
@@ -4237,19 +4237,32 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<Stri
     for e in &analysis.facts.expansions {
         by_name.entry(e.name).or_default().push(e);
     }
+    // A name the run gave many different meanings is scratch storage
+    // (`\reserved@a`, `\next`): an edge through it links unrelated code, so
+    // the walk does not pass it. Nor does it go further than a call chain
+    // a command's own options plausibly travel.
+    const SCRATCH_DEFS: usize = 4;
+    const MAX_DEPTH: usize = 6;
+    let mut bodies: HashMap<Sym, BTreeSet<String>> = HashMap::default();
+    for d in &analysis.facts.defs {
+        bodies.entry(d.name).or_default().insert(meaning_identity(analysis, d));
+    }
+    let defined: HashMap<Sym, usize> = bodies.into_iter().map(|(k, v)| (k, v.len())).collect();
+    let mut candidates: Vec<(usize, KeyDialect<'_>, Vec<String>)> = Vec::new();
     let mut seen: BTreeSet<Sym> = BTreeSet::from([sym]);
-    let mut frontier = vec![sym];
+    let mut frontier = vec![(sym, 0usize)];
     let mut parent: HashMap<Sym, Sym> = HashMap::default();
-    while let Some(current) = frontier.pop() {
+    while let Some((current, depth)) = frontier.pop() {
         if let Some(dialect) = key_dispatch(analysis.interner.name(current)) {
             // The call this name's own code made comes first: the library
             // calls the same dispatcher for its own keys.
             let mut calls: Vec<_> = by_name.get(&current).into_iter().flatten().collect();
             calls.sort_by_key(|e| !e.within.is_some_and(|w| seen.contains(&w)));
             // A dispatcher whose argument the run did not record is read
-            // off the asked name's own body: `\def\fa[#1]{\pgfkeys{/fa/.cd,#1}}`.
+            // off the body of the macro that called it on the way here:
+            // `\def\fa[#1]{\pgfkeys{/fa/.cd,#1}}`, `\tikzset`'s `\pgfqkeys{/tikz}`.
             let spelled = format!("\\{} {{", analysis.interner.name(current));
-            let from_body = parent.get(&current).filter(|&&p| p == sym).into_iter().find_map(|&s| {
+            let from_body = parent.get(&current).into_iter().find_map(|&s| {
                 let m = analysis.env.meaning(s).as_macro()?.clone();
                 let body = detokenize(&m.replacement_text, &analysis.interner);
                 let at = body.find(&spelled)? + spelled.len();
@@ -4276,22 +4289,27 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<Stri
             let mut known = BTreeSet::new();
             found.retain(|f| known.insert(f.clone()));
             if !found.is_empty() {
-                return Some((dialect, found));
+                candidates.push((depth, dialect, found));
             }
         }
-        let Some(index) = analysis.calls.get(current) else { continue };
+        let Some(index) = analysis.calls.get(current).filter(|_| depth < MAX_DEPTH) else { continue };
         for target in &analysis.calls.edges[index] {
             let callee = analysis.calls.nodes[*target];
             if seen.len() >= MAX_VISITED {
                 break;
             }
+            if defined.get(&callee).copied().unwrap_or(0) > SCRATCH_DEFS {
+                continue;
+            }
             if seen.insert(callee) {
                 parent.insert(callee, current);
-                frontier.push(callee);
+                frontier.push((callee, depth + 1));
             }
         }
     }
-    None
+    // Nearest first: the caller tries them until one names keys the run defined.
+    candidates.sort_by_key(|(depth, ..)| *depth);
+    candidates.into_iter().map(|(_, dialect, found)| (dialect, found)).collect()
 }
 
 /// `satex query options`: the keys an environment or command's optional
@@ -4304,7 +4322,13 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<Stri
 pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
     let wanted = crate::tex::bare_name(name);
     let Some(sym) = analysis.interner.lookup(wanted) else { return Vec::new() };
-    let Some((dialect, families)) = key_family(analysis, sym) else {
+    // The nearest key family whose keys the run defined: a wrapper named like a dispatcher
+    // (`\enit@setkeys`) passes no family keys are stored under.
+    let found = key_family(analysis, sym)
+        .into_iter()
+        .map(|(dialect, families)| family_keys(analysis, dialect, families))
+        .find(|keys| !keys.is_empty());
+    let Some(keys) = found else {
         let mac = analysis.env.meaning(sym).as_macro().map(|m| (**m).clone());
         let shape = effective_of(analysis, sym, mac.as_ref(), Some(crate::probe::State::End));
         if !shape.contains('[') {
@@ -4319,6 +4343,11 @@ pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
         );
         return vec![record];
     };
+    keys
+}
+
+/// The keys stored under `families` in `dialect`, each with its family.
+fn family_keys(analysis: &Analysis, dialect: KeyDialect<'_>, families: Vec<String>) -> Vec<Record> {
     let out: Vec<Record> = match dialect {
         KeyDialect::Pgf => {
             // `.search also` stores the paths it adds in the family's

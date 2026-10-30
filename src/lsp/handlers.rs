@@ -1113,7 +1113,23 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
             true => first_group().unwrap_or_default(),
             false => arg.cmd.to_string(),
         };
-        return option_items(analysis, &target);
+        let mut items = option_items(analysis, &target);
+        // An optional argument with a default offers it; a numeric default
+        // makes it a count (`\newcommand`'s `[0]`): the counts follow.
+        if items.is_empty()
+            && let Some(default) = optional_default(analysis, &target, arg.groups.matches('[').count())
+        {
+            items.push(item(default.clone(), CompletionItemKind::VALUE, Some("default".into()), 0));
+            if default.trim().parse::<u8>().is_ok() {
+                items.extend(
+                    (0..=9u8)
+                        .map(|n| n.to_string())
+                        .filter(|n| *n != default)
+                        .map(|n| item(n, CompletionItemKind::VALUE, None, 1)),
+                );
+            }
+        }
+        return items;
     }
     // A key list in braces (`\pgfkeys{…}`, `\tikzset{…}`, a macro that
     // hands its argument to one).
@@ -1353,6 +1369,20 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
 const KEY_DEPTH: usize = 3;
 
 /// The keys `name`'s optional argument feeds, from [`query::options`].
+/// The default of the `nth` optional argument `name` takes, by its
+/// signature ([`query::signature`]).
+fn optional_default(analysis: &Analysis, name: &str, nth: usize) -> Option<String> {
+    let sym = analysis.interner.lookup(crate::tex::bare_name(name))?;
+    let mac = analysis.env.meaning(sym).as_macro()?.clone();
+    let spec = query::signature(analysis, sym, &mac)?;
+    let optional = spec.items.iter().filter_map(|a| match a {
+        crate::tex::ArgType::Optional(d) => Some(d.clone()),
+        crate::tex::ArgType::Delimited { open: '[', default, .. } => Some(default.clone()),
+        _ => None,
+    });
+    optional.into_iter().nth(nth).flatten()
+}
+
 fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
     query::options(analysis, name)
         .iter()

@@ -658,6 +658,38 @@ const COMPLETE: &str = "\\documentclass{article}
 \\begin{}
 ";
 
+/// Options of commands that read them through a key family or a default,
+/// with nothing else on the line to go by.
+const COMPLETE_OPTIONS: &str = "\\documentclass{article}
+\\usepackage{tikz}
+\\newcommand{\\x}[]{x}
+\\begin{document}
+\\begin{tikzpicture}[]
+\\draw[] (0,0) -- (1,1);
+\\end{tikzpicture}
+\\end{document}
+";
+
+/// What an optional argument takes, from the run: `\newcommand`'s count
+/// from its numeric default, TikZ keys for a picture and a path, never the
+/// keys of an unrelated package the call graph also reaches (xcolor's color
+/// models through scratch macros).
+#[test]
+fn completion_offers_what_an_optional_argument_takes() {
+    let (mut server, uri, _, dir) = open_loaded("options", COMPLETE_OPTIONS);
+    let count = complete(&mut server, &uri, 2, 16);
+    assert_eq!(labels(&count).first(), Some(&"0"), "{:?}", labels(&count));
+    assert!((1..=9).all(|n| labels(&count).contains(&n.to_string().as_str())), "{:?}", labels(&count));
+    for (line, character) in [(4, 20), (5, 6)] {
+        let keys = complete(&mut server, &uri, line, character);
+        let names = labels(&keys);
+        assert!(names.contains(&"thick") && names.contains(&"scale"), "{line}: {names:?}");
+        assert!(!names.contains(&"natural"), "{line}: {names:?}");
+    }
+    drop(server);
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// A completion result's items, an array or a list (LSP `CompletionList`).
 fn completion_items(result: &Value) -> Vec<Value> {
     result.as_array().or_else(|| result["items"].as_array()).cloned().unwrap_or_default()
