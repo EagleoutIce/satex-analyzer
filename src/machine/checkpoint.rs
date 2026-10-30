@@ -270,9 +270,11 @@ fn reread(
                 false if crate::literate::Literate::of(path).is_some() => return None,
                 false => crate::source::decode_counted(&crate::overlay::read_bytes(path).ok()?).0,
             };
-            Some(Mouth::file(&text, file))
+            // One of several texts: which one the path read is its choice, so
+            // it reads the file again from its start.
+            (super::texts_of(&text).len() < 2).then(|| Mouth::file(&text, file))
         });
-        let now = now.as_ref().ok_or(None)?;
+        let now = now.as_ref().ok_or_else(|| Some((paths[usize::from(file)].clone(), 1)))?;
         let read = mouth.retext(now).map_err(|line| Some((paths[usize::from(file)].clone(), line)))?;
         if let Frame::File { mouth, .. } = Rc::make_mut(frame) {
             *mouth = read;

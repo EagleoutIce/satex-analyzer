@@ -2954,12 +2954,20 @@ fn the_build_reruns_only_for_what_it_read() {
     assert_eq!(run("seen.tex", &lof("Seen")).build_runs, 2);
     assert_eq!(run("unseen.tex", &lof("Unseen")).build_runs, 1);
     // A line whose value every run changes (a counter written back, a page
-    // that moves) is widened at its first change: three runs, not the limit.
+    // that moves) is widened when it changes again after the second run:
+    // four runs, not the limit.
     let counting = run(
         "count.tex",
         "\\def\\N{0}\\openin2=\\jobname.lof \\ifeof2 \\else\\closein2 \\input\\jobname.lof \\fi\\immediate\\openout1=\\jobname.lof \\immediate\\write1{\\string\\gdef\\string\\N{\\number\\numexpr\\N+1\\relax}}\\edef\\X{\\N}\n",
     );
-    assert_eq!(counting.build_runs, 3);
+    assert_eq!(counting.build_runs, 4);
+    // A line only the first run wrote shifts the rest: the join aligns on
+    // what each line sets, so the line between the moving ones stays exact.
+    let shifted = run(
+        "shift.tex",
+        "\\def\\N{0}\\openin2=\\jobname.lof \\ifeof2 \\else\\closein2 \\input\\jobname.lof \\fi\\immediate\\openout1=\\jobname.lof \\immediate\\write1{\\string\\gdef\\string\\N{\\number\\numexpr\\N+1\\relax}}\\ifnum\\N=0 \\immediate\\write1{\\string\\gdef\\string\\E{}}\\fi\\immediate\\write1{\\string\\gdef\\string\\K{7}}\\immediate\\write1{\\string\\gdef\\string\\P{\\N}}\\edef\\X{\\N\\P}\n",
+    );
+    assert_eq!(crate::support::body(&shifted, "K"), "7");
     // A `.gls` no `.tex` is named after is a source the document wrote, not
     // a build's: it is read as it is on disk.
     std::fs::write(dir.join("entries.gls"), "\\gdef\\G{}\n").unwrap();
@@ -3011,6 +3019,27 @@ fn the_aux_of_two_paths_holds_what_either_wrote() {
         \\if A\\foo\\gdef\\GotA{}\\fi \\if B\\foo\\gdef\\GotB{}\\fi\n\
         \\ifodd\\pdfuniformdeviate9 \\immediate\\write\\@auxout{\\string\\gdef\\string\\foo{A}}\\else\
         \\immediate\\write\\@auxout{\\string\\gdef\\string\\foo{B}}\\fi\n\\end{document}\n";
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    std::fs::remove_dir_all(dir).ok();
+    assert!(defined(&analysis, "GotA") && defined(&analysis, "GotB"));
+}
+
+/// Paths that wrote the `.aux` with different numbers of lines leave
+/// two texts; the rerun reads each on its own path, also through the
+/// 8-bit engine's byte decoding.
+#[test]
+fn the_aux_texts_of_two_paths_are_read_apart() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-aux-texts-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("texts.tex");
+    let source = "\\documentclass{article}\\makeatletter\\providecommand\\foo{C}\n\\begin{document}\n\
+        \\if A\\foo\\gdef\\GotA{}\\fi \\if B\\foo\\gdef\\GotB{}\\fi\n\
+        \\ifodd\\pdfuniformdeviate9 \\immediate\\write\\@auxout{\\string\\gdef\\string\\foo{A}}\\else\
+        \\immediate\\write\\@auxout{\\string\\gdef\\string\\foo{B}}\\immediate\\write\\@auxout{\\relax}\\fi\n\\end{document}\n";
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
     std::fs::remove_dir_all(dir).ok();

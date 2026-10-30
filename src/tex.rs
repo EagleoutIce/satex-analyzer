@@ -1372,6 +1372,11 @@ impl Mouth {
     }
 
     /// How many characters of the file have been read.
+    /// The text read: one of the texts a file a run wrote may hold.
+    pub fn source(&self) -> &std::rc::Rc<[char]> {
+        &self.src
+    }
+
     pub fn offset(&self) -> usize {
         self.pos
     }

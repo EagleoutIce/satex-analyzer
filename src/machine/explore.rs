@@ -2583,7 +2583,7 @@ impl Machine<'_> {
         /// Tokens of a list a report shows.
         const TOKENS: usize = 8;
         match place {
-            Place::File(file, offset, _) => format!("{}@{offset}", self.out.short_name(*file)),
+            Place::File(file, offset, ..) => format!("{}@{offset}", self.out.short_name(*file)),
             Place::Tokens(toks, pos) => {
                 format!("[{}]", crate::tex::detokenize(&toks[*pos..toks.len().min(pos + TOKENS)], &self.out.interner))
             }
@@ -2703,7 +2703,7 @@ impl Machine<'_> {
         x.page_grew |= y.page_grew;
         // What either path wrote may be in the files (tex.web § 1370).
         x.outputs = super::join_outputs(&x.outputs, &y.outputs, usize::from(self.limits.meaning_set));
-        x.pending = super::join_pending(&x.pending, &y.pending);
+        x.pending = super::join_pending(&x.pending, &y.pending, usize::from(self.limits.meaning_set));
         x.natural = crate::mode::join_natural(x.natural, y.natural);
         x.main_tail = x.main_tail.merge(y.main_tail);
         x.main_depth =
@@ -2943,7 +2943,7 @@ fn place_order(a: &[Place], b: &[Place]) -> std::cmp::Ordering {
     // A key per level, compared in order: a total order, as `sort_by`
     // needs. Text further back (more left to read) comes first.
     let key = |p: &Place| match p {
-        Place::File(f, i, _) => (0, *f as usize, (*i as u64, 0)),
+        Place::File(f, i, ..) => (0, *f as usize, (*i as u64, 0)),
         Place::Pseudo(at, _, i) => (1, at.file as usize, (u64::from(at.line) << 32 | u64::from(at.col), *i)),
         Place::Tokens(t, i) => (2, usize::MAX - (t.len() - i), (0, 0)),
         Place::Returned(t) => (2, usize::MAX - t.len(), (0, 0)),
@@ -2973,7 +2973,9 @@ fn live_frames(input: &Input) -> Vec<&Frame> {
 /// Where one input level stands, `None` once it is read.
 pub(super) fn place(frame: &Frame) -> Option<Place> {
     match frame {
-        Frame::File { mouth, .. } => Some(Place::File(mouth.file, mouth.offset(), mouth.ending())),
+        Frame::File { mouth, .. } => {
+            Some(Place::File(mouth.file, mouth.offset(), mouth.ending(), mouth.source().clone()))
+        }
         Frame::Tokens { toks, pos, .. } => (*pos < toks.len()).then(|| Place::Tokens(toks.clone(), *pos)),
         Frame::Pseudo { mouth, at, pos, .. } => Some(Place::Pseudo(*at, mouth.text().clone(), mouth.offset() + pos)),
         Frame::Returned(tokens) => (!tokens.is_empty()).then(|| Place::Returned(tokens.clone())),
@@ -3091,7 +3093,7 @@ fn left(head: &Key, key: &Key, typed: &crate::env::Typed) -> bool {
         return false;
     };
     match (x, y) {
-        (Place::File(f, i, _), Place::File(g, j, _)) => f == g && j > i,
+        (Place::File(f, i, ..), Place::File(g, j, ..)) => f == g && j > i,
         (Place::Tokens(a, i), Place::Tokens(b, j)) => Rc::ptr_eq(a, b) && j > i,
         (Place::Pseudo(_, a, i), Place::Pseudo(_, b, j)) => Rc::ptr_eq(a, b) && j > i,
         _ => false,

@@ -103,7 +103,7 @@ A box register holds width, height and depth as `Dim`s, read by `\wd`, `\ht`, `\
 | Material | How its size is followed |
 | --- | --- |
 | characters | TFM width, height, depth, kerns and ligatures. A font without metrics widens. |
-| `hpack` / `vpack` | height, depth (resp. width) start at zero (§§ 649, 668). `vpack` moves depth past `\boxmaxdepth` into the height. `\vtop` (§ 1087), `\vcenter` (§ 736). |
+| `hpack` / `vpack` | height, depth (resp. width) start at zero (tex.web §§ 649, 668). `vpack` moves depth past `\boxmaxdepth` into the height. `\vtop` (§ 1087), `\vcenter` (§ 736). |
 | inline math | characters, `\mathchardef` atoms, italic corrections, class spacing (§§ 752-766), `\mathsurround` (§ 1196). Binary atoms, operators, fractions and lost groups widen. `\left`/`\middle`/`\right` (etex.ch). |
 | `\unhbox`, `\unvbox` | the natural size recorded at packing (§ 1110), the tail kept |
 | `\write`, `\openout`, `\closeout` | nothing when `\immediate`, else a whatsit (§§ 1352, 1375) |
@@ -117,15 +117,15 @@ A box register holds width, height and depth as `Dim`s, read by `\wd`, `\ht`, `\
 
 ### Marks
 
-Marks are exact where the lists are recorded: `\topmarks`, `\firstmarks`, `\botmarks` per class from the page lists, the split marks from the part `\vsplit` took (§§ 979, 1012-1014). Otherwise a class holds a `OneOf` of the texts given so far or empty. A mark of a class `satex` cannot name makes every class unknown.
+Marks are exact where the lists are recorded: `\topmarks`, `\firstmarks`, `\botmarks` per class from the page lists, the split marks from the part `\vsplit` took (tex.web §§ 979, 1012-1014). Otherwise a class holds a `OneOf` of the texts given so far or empty. A mark of a class `satex` cannot name makes every class unknown.
 
 ### Paragraphs and line breaking
 
-A paragraph in a vertical box is broken as `line_break` does it (§§ 813-890). `Para` holds the range of lines made so far.
+A paragraph in a vertical box is broken as `line_break` does it (tex.web §§ 813-890). `Para` holds the range of lines made so far.
 
 | Case | Result |
 | --- | --- |
-| forced breaks (penalty ≤ -10000) | exact (§§ 851, 879) |
+| forced breaks (penalty ≤ -10000) | exact (tex.web §§ 851, 879) |
 | all items known, plain parameters | Knuth-Plass in all three passes (§ 863, `src/linebreak.rs`): line count, sizes and `\prevgraf` exact |
 | fits with infinite stretch, or badness bound low enough | one line (§§ 817, 851-859) |
 | otherwise | one line up to one per breakpoint, sizes between zero and the text's |
@@ -173,11 +173,11 @@ typed digits     d, with an interval [lo, hi]
 | `UNKNOWN_DIGIT` | `0`–`9` |
 | `UNKNOWN_NONZERO` | `1`–`9` |
 
-`\the` never prints a leading zero (§§ 103-104). Reading the first digit of an unknown number splits into `-` (digits follow), `0` (nothing follows) and `1`–`9` (one digit fewer may follow), so a digit-stripping loop ends.
+`\the` never prints a leading zero (tex.web §§ 103-104). Reading the first digit of an unknown number splits into `-` (digits follow), `0` (nothing follows) and `1`–`9` (one digit fewer may follow), so a digit-stripping loop ends.
 
 - `\romannumeral` of an unknown number is typed text of class `o`. In a small interval it is one of its numerals.
 - At the end of a ⟨number⟩ scan, paths that differ only in numbers join to typed digits over the hull.
-- A number starting with a known digit has no sign: it lies in 0 to 2³¹-1 (§ 445). A known last digit decides `\ifodd`.
+- A number starting with a known digit has no sign: it lies in 0 to 2³¹-1 (tex.web § 445). A known last digit decides `\ifodd`.
 - `\the` of a dimension in a one-signed interval prints typed digits, a point, at most five digits and `pt`. Scanned back, it is an interval (§§ 448-458), so bounds survive `\pgf@sys@tonumber` and pgfmath's `round`, `floor`, `int`.
 
 ### One-of tokens
@@ -195,7 +195,7 @@ Typed text may carry a maximum token count (`LEN_MARK`, at most 20).
 
 | Source | Bound |
 | --- | --- |
-| `\the`/`\number` of a count | 11 (§ 65) |
+| `\the`/`\number` of a count | 11 (tex.web § 65) |
 | `\the` of a dimension | 14 (§ 103) |
 | a value in an interval | the digits of its larger end |
 | the rest after reading one token | one less; 0 is no text |
@@ -268,12 +268,12 @@ A character whose category is not pinned keeps the set of categories it may have
 
 | State | How it arises |
 | --- | --- |
-| known text | `\immediate\openout` empties it, each `\write` appends a line. A deferred `\write` waits for the shipout (§ 1370). Unknown parts are written as one character per class, which reads back as that class. |
+| known text | `\immediate\openout` empties it, each `\write` appends a line. A deferred `\write` waits for the shipout (§ 1370), as a set of texts like the file. A token for one of several texts parts the path per text, so each writes it exactly. Other unknown parts are written as one character per class, which reads back as that class. |
 | unknown text | a `\write` to a stream number not pinned adds a line of unknown text to every open file |
-| a set of texts | paths that wrote it differently, up to `limits.meaning_set`. A read parts the path per text. |
+| a set of texts | paths that wrote it differently, each distinct text kept, up to `limits.meaning_set`. A read parts the path per text. |
 
-- **Join past the bound** (`join_written`): common first and last lines stay, paired lines keep their common start and end around one unknown character, anything else is one unknown line. An unknown line absorbs the one before it, so joins settle.
-- **The build's files** (`.aux`, `.toc`, `.bbl`, …) are the run's own, kept in an overlay. The build reruns until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`). A changed file counts only when the run read or looked for it. A file in which a rerun changed an existing line is widened: later runs read the join of all its texts. Files an engine left on disk are read only with `load.build_files`.
+- **Join past the bound** (`join_written`): lines align on what they set (command and first argument, a longest common subsequence). Equal lines stay. Paired lines keep their common start and end around one unknown character. A stretch between of unequal length is one unknown line. An unknown line absorbs the one before it, so joins settle.
+- **The build's files** (`.aux`, `.toc`, `.bbl`, …) are the run's own, kept in an overlay. The build reruns until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`). A changed file counts only when the run read or looked for it. The first run reads none of them, so the second run changing lines is expected. A file in which a later rerun changed an existing line again is widened: each text a later run writes joins into the one it shares the most lines with (`widen_text`), so the number of texts does not grow. Files an engine left on disk are read only with `load.build_files`.
 - **Reads** see the run's files first (§ 537), then the disk. A file neither written nor on disk is absent (§ 1275).
 - **`\openin` streams** hold the lines each has left. Paths that differ in a stream leave it unknown, and `\ifeof` is undecided. A stream number in an interval parts the path per stream (§ 436).
 
@@ -370,7 +370,7 @@ Joining pending code into unknown text keeps what it may do (`may_run`): undefin
 - Differing input joins as shared text around one token for either part. Each part must be whole: balanced braces, conditionals closed (`whole`).
 - Only data joins that way. Paths whose pending code differs never join until a common point. Code differs only between passes of one loop.
 - A path raising an error with an exact cause (a certainly undefined name) is dropped: the document is assumed to compile. Library code that redefines `\fi` drops its path too.
-- A cut keeps the lists holding the document's own text, and one in an output routine ends only the routine (§ 1100).
+- A cut keeps the lists holding the document's own text, and one in an output routine ends only the routine (tex.web § 1100).
 
 ## `limits`: where the domains stop being precise
 
@@ -399,7 +399,7 @@ Where `satex` does not yet reach the invariant:
 
 | Limit | What can be missed |
 | --- | --- |
-| executing a character of unknown category | only an active character runs code (§§ 232, 344), and only its bindings are joined in. Groups, modes, files and `\write`s it would make are not. A name built from unknown text (`\csname`) may be any control sequence; executing it widens nothing. |
+| executing a character of unknown category | only an active character runs code (tex.web §§ 232, 344), and only its bindings are joined in. Groups, modes, files and `\write`s it would make are not. A name built from unknown text (`\csname`) may be any control sequence; executing it widens nothing. |
 | a recursion cut at its bound | assignments are widened, catcodes, groups, files, streams and `\write` are not (their sound top would stop the run) |
 | a file the run wrote with unknown text that is also on disk | read as on disk |
 | loops spanning call sites | met again only through an undecided conditional; otherwise left to the stall limit |

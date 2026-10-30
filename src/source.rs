@@ -90,8 +90,8 @@ pub fn recode(text: &str) -> Cow<'_, str> {
 }
 
 /// Each byte a character of its own, as an 8-bit engine reads it; only
-/// the unknown text a run wrote stays one character, so it reads back as
-/// unknown.
+/// the unknown text a run wrote and the mark between the texts a file may
+/// hold stay one character each, so they read back as such.
 fn as_bytes(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len());
     let mut at = 0;
@@ -100,7 +100,9 @@ fn as_bytes(bytes: &[u8]) -> String {
             .then(|| bytes.get(at..at + 4).and_then(|s| std::str::from_utf8(s).ok()))
             .flatten()
             .and_then(|s| s.chars().next())
-            .filter(|c| crate::tex::is_unknown_char(*c) || crate::tex::written_class(*c).is_some());
+            .filter(|c| {
+                crate::tex::is_unknown_char(*c) || crate::tex::written_class(*c).is_some() || *c == crate::tex::TEXT_OR
+            });
         match marker {
             Some(c) => {
                 out.push(c);

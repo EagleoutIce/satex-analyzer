@@ -1138,7 +1138,9 @@ type Written = Rc<[(Sym, Option<Binding>)]>;
 type Outputs = Rc<HashMap<String, Option<String>>>;
 /// The lines a deferred `\write` gave each file: written at the next
 /// shipout (tex.web § 1370), not before.
-type Pending = Rc<HashMap<String, Vec<String>>>;
+/// Per file, the text deferred `\write`s left for the next shipout, as
+/// a file's text: lines, alternatives apart ([`texts_of`]).
+type Pending = Rc<HashMap<String, String>>;
 
 /// The stream a number satex could not pin down names.  `i64::MIN` is past
 /// what `scan_int` can give (tex.web § 445), so no source reaches it.
@@ -1850,11 +1852,12 @@ struct PathState {
 }
 
 /// Where a path stands in the input, for telling when two paths meet: a
-/// file by position, a token list by what is left to read in it. Two
-/// expansions of one macro are separate lists but the same continuation.
+/// file by position and text (paths may read different texts of a file a
+/// run wrote), a token list by what is left to read in it. Two expansions
+/// of one macro are separate lists but the same continuation.
 #[derive(Debug, Clone)]
 enum Place {
-    File(FileId, usize, bool),
+    File(FileId, usize, bool, Rc<[char]>),
     Tokens(Rc<[Token]>, usize),
     Pseudo(Span, Rc<[char]>, usize),
     Returned(Vec<Token>),
@@ -1864,7 +1867,9 @@ enum Place {
 impl PartialEq for Place {
     fn eq(&self, other: &Place) -> bool {
         match (self, other) {
-            (Place::File(f, i, e), Place::File(g, j, d)) => (f, i, e) == (g, j, d),
+            (Place::File(f, i, e, a), Place::File(g, j, d, b)) => {
+                (f, i, e) == (g, j, d) && (Rc::ptr_eq(a, b) || a == b)
+            }
             (Place::Tokens(a, i), Place::Tokens(b, j)) => (Rc::ptr_eq(a, b) && i == j) || a[*i..] == b[*j..],
             (Place::Pseudo(_, a, i), Place::Pseudo(_, b, j)) => Rc::ptr_eq(a, b) && i == j,
             (Place::Returned(a), Place::Returned(b)) => a == b,
@@ -2567,20 +2572,23 @@ impl<'a> Machine<'a> {
                     {
                         return None;
                     }
-                    // A line a rerun changed (a label's page), or anything before
-                    // the last run, is read as the join of both texts: a widening,
-                    // so the build settles. Lines only added (`\bibcite`) stay exact.
-                    // Once widened, a file is only joined, so its text only grows.
+                    // A line a rerun changed again (a label's page that moves on),
+                    // or anything before the last run, is read as the join of both
+                    // texts: a widening, so the build settles. The first run read no
+                    // file, so its lines changing is the usual second run. Lines only
+                    // added (`\bibcite`) stay exact. Once widened, a file is only
+                    // joined, so its text only grows.
                     let widen = widened.contains(&at)
-                        || text
-                            .as_ref()
-                            .is_some_and(|t| !line_changes(now.as_deref().unwrap_or_default(), t).is_empty());
+                        || run > 2
+                            && text
+                                .as_ref()
+                                .is_some_and(|t| !line_changes(now.as_deref().unwrap_or_default(), t).is_empty());
                     if widen {
                         widened.insert(at.clone());
                     }
                     let text = match text {
                         Some(t) if run + 1 < runs && !widen => t.clone(),
-                        Some(t) => either_text(now.as_deref().unwrap_or_default(), t, 1),
+                        Some(t) => widen_text(now.as_deref().unwrap_or_default(), t),
                         None => crate::tex::UNKNOWN_ANY.to_string(),
                     };
                     (now.as_deref() != Some(text.as_str())).then_some((at, text))
@@ -2591,6 +2599,24 @@ impl<'a> Machine<'a> {
                 && crate::overlay::text(&at).as_deref() != Some(text.as_str())
             {
                 changed.push((at, text));
+            }
+            if cfg.verbose >= 1 {
+                let names: Vec<_> =
+                    changed.iter().filter_map(|(at, _)| at.file_name()).map(|n| n.to_string_lossy()).collect();
+                crate::progress::note!(
+                    "satex: build run {run} took {:.1}s; changed: {}",
+                    took.as_secs_f64(),
+                    names.join(", ")
+                );
+            }
+            if cfg.verbose >= 2 {
+                for (at, text) in &changed {
+                    let now = crate::overlay::text(at).unwrap_or_default();
+                    let old: HashSet<&str> = now.lines().collect();
+                    text.lines().filter(|l| !old.contains(l)).for_each(|l| crate::progress::note!("  + {l}"));
+                    let new: HashSet<&str> = text.lines().collect();
+                    now.lines().filter(|l| !new.contains(l)).for_each(|l| crate::progress::note!("  - {l}"));
+                }
             }
             if changed.is_empty() || run == runs {
                 break analysis;
@@ -3799,7 +3825,10 @@ will look undefined",
         let Some(name) = self.stream_files.get(&stream).map(|n| Self::output_name(n)) else { return };
         let open = self.engine_int(&format!("write_open.{stream}"));
         if deferred {
-            Rc::make_mut(&mut self.pending).entry(name).or_default().push(text.to_string());
+            each_text(Rc::make_mut(&mut self.pending).entry(name).or_default(), |t| {
+                t.push_str(text);
+                t.push('\n');
+            });
             return;
         }
         if let Some(slot) = Rc::make_mut(&mut self.outputs).get_mut(&name) {
@@ -3817,14 +3846,15 @@ will look undefined",
     /// tex.web § 1374: a shipout writes what deferred `\write`s left to
     /// the files still open.
     pub(crate) fn ship_pending(&mut self) {
+        let bound = usize::from(self.cfg.limits.meaning_set);
         for (name, lines) in std::mem::take(&mut self.pending).iter() {
             if let Some(Some(file)) = Rc::make_mut(&mut self.outputs).get_mut(name) {
-                each_text(file, |t| {
-                    lines.iter().for_each(|l| {
-                        t.push_str(l);
-                        t.push('\n');
-                    })
-                });
+                let texts = texts_of(file)
+                    .into_iter()
+                    .flat_map(|f| texts_of(lines).into_iter().map(move |l| f.to_string() + l));
+                *file = texts
+                    .fold(None, |x: Option<String>, t| Some(x.map_or(t.clone(), |x| either_text(&x, &t, bound))))
+                    .unwrap_or_default();
             }
         }
     }
@@ -12732,33 +12762,51 @@ fn each_text(file: &mut String, mut f: impl FnMut(&mut String)) {
     *file = texts.join(&format!("{}\n", crate::tex::TEXT_OR));
 }
 
-/// The texts either file may hold. Texts of as many lines join line by
-/// line ([`join_written`]): they differ in values, not in what they hold.
-/// Past `bound` texts, all join.
 /// The keys of the lines whose text changed between two texts a build
 /// wrote, not those only added or dropped: a line's command with its first
 /// braced argument (`\newlabel{x}`), or its text before the first brace
 /// (`\gdef\@abspage@last`).
 fn line_changes(old: &str, new: &str) -> HashSet<String> {
-    let key = |l: &str| -> String {
-        let Some(open) = l.find('{') else { return l.to_string() };
-        let head = l[..open].trim();
-        if !(head.starts_with('\\') && head.matches('\\').count() == 1 && !head.contains(' ')) {
-            return head.to_string();
-        }
-        l[open..].find('}').map_or(l.to_string(), |close| l[..open + close + 1].to_string())
-    };
     let (a, b): (HashSet<&str>, HashSet<&str>) = (old.lines().collect(), new.lines().collect());
-    let added: HashSet<String> = b.difference(&a).map(|l| key(l)).collect();
-    a.difference(&b).map(|l| key(l)).filter(|k| added.contains(k)).collect()
+    let added: HashSet<&str> = b.difference(&a).map(|l| line_key(l)).collect();
+    a.difference(&b).map(|l| line_key(l)).filter(|k| added.contains(k)).map(str::to_string).collect()
 }
 
+/// What a written line sets: its command with the first braced argument
+/// (`\newlabel{x}`), or its text before the first brace.
+fn line_key(l: &str) -> &str {
+    let Some(open) = l.find('{') else { return l };
+    let head = l[..open].trim();
+    if !(head.starts_with('\\') && head.matches('\\').count() == 1 && !head.contains(' ')) {
+        return head;
+    }
+    l[open..].find('}').map_or(l, |close| &l[..open + close + 1])
+}
+
+/// `new` joined into the texts `old` holds: each new text into the one
+/// sharing the most lines with it. No text is added, so reruns settle.
+fn widen_text(old: &str, new: &str) -> String {
+    let mut texts: Vec<String> = texts_of(old).into_iter().map(str::to_string).collect();
+    for t in texts_of(new) {
+        let lines: HashSet<&str> = t.lines().collect();
+        let shared = |x: &String| x.lines().filter(|l| lines.contains(l)).count();
+        if let Some(x) = texts.iter_mut().max_by_key(|x| shared(x))
+            && x != t
+        {
+            *x = join_written(x, t);
+        }
+    }
+    texts.join(&format!("{}\n", crate::tex::TEXT_OR))
+}
+
+/// The texts either file may hold, each distinct one kept: a reader takes
+/// each apart (`\z@` or `\@ne`, not some control sequence). Past `bound`
+/// texts, all join ([`join_written`]).
 fn either_text(a: &str, b: &str, bound: usize) -> String {
     let mut texts: Vec<String> = Vec::new();
     for t in texts_of(a).into_iter().chain(texts_of(b)) {
-        match texts.iter_mut().find(|x| x.lines().count() == t.lines().count()) {
-            Some(x) => *x = join_written(x, t),
-            None => texts.push(t.to_string()),
+        if !texts.iter().any(|x| x == t) {
+            texts.push(t.to_string());
         }
     }
     match texts.len() > bound {
@@ -12783,15 +12831,14 @@ fn join_outputs(a: &Outputs, b: &Outputs, bound: usize) -> Outputs {
     )
 }
 
-/// [`join_outputs`] of the lines deferred `\write`s left for the next shipout.
-fn join_pending(a: &Pending, b: &Pending) -> Pending {
+/// [`join_outputs`] of what deferred `\write`s left for the next shipout.
+fn join_pending(a: &Pending, b: &Pending, bound: usize) -> Pending {
     if a == b {
         return a.clone();
     }
-    let text = |m: &Pending, n| m.get(n).map(|l| l.join("\n")).unwrap_or_default();
+    let text = |m: &Pending, n| m.get(n).cloned().unwrap_or_default();
     let names: HashSet<&String> = a.keys().chain(b.keys()).collect();
-    let lines = |n| join_written(&text(a, n), &text(b, n)).lines().map(str::to_string).collect();
-    Rc::new(names.into_iter().map(|n| (n.clone(), lines(n))).collect())
+    Rc::new(names.into_iter().map(|n| (n.clone(), either_text(&text(a, n), &text(b, n), bound))).collect())
 }
 
 /// A file as either of two paths left it: the lines both begin and end
@@ -12814,15 +12861,44 @@ fn join_written(a: &str, b: &str) -> String {
         (Some(p), Some(q)) => *out.last_mut().expect("a last line") = written_char(p | q, false).to_string(),
         _ => out.push(line),
     };
-    if mx.len() == my.len() {
-        mx.iter().zip(my).for_each(|(p, q)| push(&mut out, join_line(p, q)));
-    } else {
-        // Line ends read back as spaces, an empty line as `\par`.
-        let class = mx.iter().chain(my).fold(crate::tex::TextClass::SPACE.0, |c, l| {
-            c | l.chars().map(char_class).fold(if l.is_empty() { 127 } else { 0 }, |c, d| c | d)
-        });
-        push(&mut out, written_char(class, false).to_string());
+    // Aligned on the lines that set the same thing (a longest common
+    // subsequence of keys): those join line by line, so one line moved in
+    // or out leaves the rest exact. A stretch between of unequal length is
+    // one unknown line.
+    let mut common = vec![vec![0u32; my.len() + 1]; mx.len() + 1];
+    for i in (0..mx.len()).rev() {
+        for j in (0..my.len()).rev() {
+            common[i][j] = match line_key(mx[i]) == line_key(my[j]) {
+                true => common[i + 1][j + 1] + 1,
+                false => common[i + 1][j].max(common[i][j + 1]),
+            };
+        }
     }
+    let stretch = |out: &mut Vec<String>, p: &[&str], q: &[&str]| {
+        if p.len() == q.len() {
+            p.iter().zip(q).for_each(|(p, q)| push(out, join_line(p, q)));
+        } else {
+            // Line ends read back as spaces, an empty line as `\par`.
+            let class = p.iter().chain(q).fold(crate::tex::TextClass::SPACE.0, |c, l| {
+                c | l.chars().map(char_class).fold(if l.is_empty() { 127 } else { 0 }, |c, d| c | d)
+            });
+            push(out, written_char(class, false).to_string());
+        }
+    };
+    let (mut i, mut j, mut from) = (0, 0, (0, 0));
+    while i < mx.len() && j < my.len() {
+        if line_key(mx[i]) == line_key(my[j]) {
+            stretch(&mut out, &mx[from.0..i], &my[from.1..j]);
+            push(&mut out, join_line(mx[i], my[j]));
+            (i, j) = (i + 1, j + 1);
+            from = (i, j);
+        } else if common[i + 1][j] >= common[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    stretch(&mut out, &mx[from.0..], &my[from.1..]);
     x[x.len() - tail..].iter().for_each(|l| push(&mut out, l.to_string()));
     out.into_iter().map(|l| l + "\n").collect()
 }
@@ -12847,6 +12923,9 @@ fn written_char(class: u8, one: bool) -> char {
 /// class. A control word cut into, unknown text next to the place and
 /// unbalanced braces become part of it.
 fn join_line(p: &str, q: &str) -> String {
+    if p == q {
+        return p.to_string();
+    }
     let (x, y): (Vec<char>, Vec<char>) = (p.chars().collect(), q.chars().collect());
     let letter = |c: &char| c.is_ascii_alphabetic() || *c == '@';
     let open = |c: &char| *c == crate::tex::UNKNOWN_ANY || crate::tex::written_class(*c).is_some();

@@ -4373,10 +4373,23 @@ impl Machine<'_> {
         // A deferred one is expanded at shipout (tex.web § 1370): here, with
         // the page number not known, which is all LaTeX's `\protected@write`
         // leaves to then.
-        let text = match immediate {
+        let mut text = match immediate {
             true => self.expand_tokens(Rc::from(text)),
             false => crate::observe::shipped(self, &text),
         };
+        // One of several texts: a path per text, so the file holds it exactly.
+        while let Some((i, texts)) =
+            text.iter().enumerate().find_map(|(i, t)| self.one_of_members(*t).filter(|m| m.len() > 1).map(|m| (i, m)))
+        {
+            let mut pick = None;
+            let groups: Vec<Vec<usize>> = (0..texts.len()).map(|i| vec![i]).collect();
+            self.split_one_of_groups(text[i], span, &groups, |_, arm| {
+                pick = Some(arm);
+                true
+            });
+            let Some(arm) = pick else { break };
+            text.splice(i..=i, texts[arm].iter().copied());
+        }
         crate::observe::write(self, &text, number.unwrap_or(-1));
         // tex.web § 1370: printed to the file, broken at `\newlinechar` (§ 59).
         let newlinechar = self.intern("newlinechar");
