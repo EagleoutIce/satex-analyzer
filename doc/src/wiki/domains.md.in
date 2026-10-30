@@ -249,11 +249,14 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | `graphic file` | a figure, its extension decided by the run | `\includegraphics{⟨fig⟩}` | `file` |
 | `control sequence` | a control sequence an assignment defines | `\def⟨\foo⟩{}` | `any` |
 | `conditional` | a conditional `\newif` defines, `\if⟨name⟩` | `\newif⟨\ifdraft⟩` | `control sequence` |
+| `tl variable`, `seq variable`, `prop variable`, `fp variable`, `bool variable`, `regex variable`, `coffin variable`, `flag variable`, `intarray variable`, `cctab variable` | an expl3 variable, by the module of the function that made or set it in the run (`\tl_set:Nn`, `\seq_new:N`) | `\tl_set:Nn⟨\l_my_tl⟩{x}` | `control sequence` |
+| `str variable`, `clist variable` | a string or comma list, which expl3 keeps as token lists | `\str_set:Nn⟨\l_my_str⟩{x}` | `tl variable` |
 | `options` | the key list a load takes in its optional argument | `\usepackage⟨[a,b]⟩{x}` | `any` |
 | `definition body` | a definition's replacement text, code | `\def\x{⟨\kern1pt⟩}` | `text` |
 | `nothing` | no text, below every type | | every type |
 
 - **Join**: the nearest type above both (`Ty::join`). A dimen and a skip register give `glue`, a label and a citation key give `key`, a `.bib` and a `.tex` use give `file`. The lattice is a tree, so disagreeing uses never stay a set.
+- **expl3 variables.** A name a definition reads (`get_r_token`) while a module function of a variable kind runs (`\tl_…:N…`, `\seq_…:c…`) is a variable of that kind: what the run did, not the name's suffix. Register-backed kinds (`int`, `dim`, `skip`, `muskip`, `box`, `ior`/`iow`) are registers of their kind.
 - **Where types come from.** A scanner's read of the argument (`Facts::types`, joined per place). Else its role (a label is a `key`, a load a `file`, `\bibdata` a `.bib`). Else its macro's body (`roles::assigned`, tex.web §§ 1057, 1224): `#1` after `\penalty` is a number, `#1` heading an assignment a `register`, `#1` inside `\csname` a `name`.
 - **Wrappers** inherit the types of arguments they hand on whole.
 - **Use.** Types order what an editor offers. They add no narrowing to the run: the scanners already read into the [value domains](#value-what-a-control-sequence-or-register-holds).
@@ -360,6 +363,7 @@ Arms of an undecided conditional that reach its `\fi` go on as one path (`fi_mar
 | `limits.choices` per command | the conditional is widened: both arms skipped, one unknown token in their place (`undecided-condition`) |
 | `limits.alike` waiting paths at one place | paths whose input differs only in text join |
 | `limits.paths` | the two furthest back are cut to their shared input levels and joined |
+| fork backstop at a hot site | no new arm, except for paths a look-ahead parted that cannot be joined (other input): they get their arms, since following one would be unsound; under a cut one is followed, the cut summarizes the region |
 
 Paths join between two commands where they stand alike: same input, conditionals, groups and scans (`absorb`). Measured on a TikZ node with unknown height, `limits.alike` 8 takes 2.8k forks, 16 takes 5.1k.
 
