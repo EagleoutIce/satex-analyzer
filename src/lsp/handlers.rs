@@ -1800,6 +1800,15 @@ fn environment_arguments(analysis: &Analysis, env: &str) -> u8 {
         .unwrap_or_else(|| takes(analysis).get(&format!("\\{env}")).copied().unwrap_or(0))
 }
 
+/// A name a file the build wrote defines (`\@abspage@last` from the
+/// `.aux`): it holds from the second run on, which the label says.
+fn written_by(analysis: &Analysis, record: &crate::query::Record) -> Option<String> {
+    let path = record.get("path").and_then(Json::as_str)?;
+    let file = analysis.written.iter().find(|(name, _)| path.ends_with(name.as_str()))?;
+    let name = std::path::Path::new(&file.0).file_name()?.to_string_lossy().into_owned();
+    Some(format!("from {name}, from the second run on"))
+}
+
 /// Each carries a snippet for its mandatory arguments.
 /// The commands in scope at `pos` whose name holds `typed` (case aside),
 /// the best [`COMMANDS_SHOWN`] of them, and whether there were more.
@@ -1854,7 +1863,10 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
                 sort_text: Some(format!("{tier}{:06}{label}", 999_999u32.saturating_sub(count))),
                 label,
                 kind: Some(if tag == "primitive" { CompletionItemKind::KEYWORD } else { CompletionItemKind::FUNCTION }),
-                detail: Some(format!("{effective}  ({package})")),
+                detail: Some(format!(
+                    "{effective}  ({})",
+                    written_by(analysis, &record).unwrap_or(package.to_string())
+                )),
                 insert_text: Some(insert_text),
                 insert_text_format: Some(format),
                 command: pick.then(|| lsp_types::Command {
