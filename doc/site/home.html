@@ -4,20 +4,20 @@
     <span class="tag"><img class="ink l1" src="{{line1}}" alt=""><img class="ink l2" src="{{line2}}" alt=""></span>
   </a>
   <p class="lead">{{description}}</p>
-  <p class="claim">It runs your TeX. <span class="claim-rot" aria-live="polite"><span data-knows>It knows which definition is in force at every line.</span><span data-knows hidden>It knows what a <code>\csname</code> built and what it expands to.</span><span data-knows hidden>It knows the category code of every character, on every path.</span><span data-knows hidden>It knows what each paragraph sets, ligatures and all.</span><span data-knows hidden>It knows what your <code>.aux</code> will say after the next run.</span></span></p>
-  <p class="actions"><a class="button" href="play/index.html">Try it in the browser</a> <a class="button ghost" href="#install">Install</a> <a class="button ghost" href="#compare">How it differs</a> <a class="button ghost" href="guide.html">Guide</a></p>
+  <p class="claim">SaTeX runs the code, so it can tell you <span class="claim-rot" aria-live="polite"><span data-knows>which definition holds at each line.</span><span data-knows hidden>what a <code>\csname</code> built and what that expands to.</span><span data-knows hidden>the category code of each character, on each path.</span><span data-knows hidden>what each paragraph typesets, ligatures included.</span><span data-knows hidden>what the <code>.aux</code> will hold after the next run.</span></span></p>
+  <p class="actions"><a class="button" href="play/index.html">Try it in the browser</a> <a class="button ghost" href="#install">Install</a> <a class="button ghost" href="#compare">Comparison</a> <a class="button ghost" href="guide.html">Guide</a></p>
 </section>
 
 <section class="band" id="examples">
-  <h2>See it on a document</h2>
-  <p class="sub">Hover a command to explain it, an underline to see its finding. Every answer below comes from running the file.</p>
+  <h2>Examples</h2>
+  <p class="sub">Hover a command for its explanation, an underline for its finding. All of it comes from running the file.</p>
   <div class="examples">{{examples}}</div>
-  <p class="muted small">Analyzed at build time with satex <span title="{{versiontitle}}">{{version}}</span>.</p>
+  <p class="muted small">Analyzed at build time with SaTeX <span title="{{versiontitle}}">{{version}}</span>.</p>
 </section>
 
 <section class="band alt" id="run">
-  <h2>Reading text is not enough</h2>
-  <p class="sub">TeX decides what a line means while it runs: catcodes change, names are built, definitions come and go. A tool that only reads the text has to guess. satex interprets the kernel, the class and every package as TeX would, over every path at once, and joins the paths soundly where it cannot decide.</p>
+  <h2>Why run the code</h2>
+  <p class="sub">TeX decides what a line means while it runs: catcodes change, names are built, definitions come and go. A tool that only reads the text has to guess at these. SaTeX interprets the kernel, the class and every package as TeX would, over every path at once, and joins the paths soundly where it cannot decide.</p>
   <div class="contrast" role="tablist" aria-label="examples of what a run knows">
     <button type="button" role="tab" aria-selected="true" data-case="0">A name built by <code>\csname</code></button>
     <button type="button" role="tab" aria-selected="false" data-case="1">An expl3 variant</button>
@@ -47,10 +47,10 @@ a | b \gdef\Maybe{}</code></pre>
 </section>
 
 <section class="band" id="compare">
-  <h2>How it differs</h2>
-  <p class="sub">Each of these tools is good at its job. satex is the one that executes the code, so it can check what the others infer from names and text.</p>
+  <h2>Comparison</h2>
+  <p class="sub">The other tools are good at what they do. SaTeX differs in that it executes the code, so it can check what the others infer from names and text.</p>
   <div class="table-wrap"><table class="compare">
-    <thead><tr><th scope="col"></th><th scope="col">satex</th><th scope="col"><a href="https://github.com/witiko/expltools">explcheck</a></th><th scope="col"><a href="https://github.com/latex-lsp/texlab">TeXLab</a></th><th scope="col"><a href="https://github.com/astoff/digestif">digestif</a></th><th scope="col"><a href="https://www.nongnu.org/chktex/">ChkTeX</a></th></tr></thead>
+    <thead><tr><th scope="col"></th><th scope="col">SaTeX</th><th scope="col"><a href="https://github.com/witiko/expltools">explcheck</a></th><th scope="col"><a href="https://github.com/latex-lsp/texlab">TeXLab</a></th><th scope="col"><a href="https://github.com/astoff/digestif">digestif</a></th><th scope="col"><a href="https://www.nongnu.org/chktex/">ChkTeX</a></th></tr></thead>
     <tbody>
       <tr><th scope="row">How it learns what code does</th><td class="yes">runs it (abstract interpretation)</td><td>text and expl3 naming conventions, flow analysis</td><td>text, a command database</td><td>parsed sources and curated tag files</td><td>regular expressions</td></tr>
       <tr><th scope="row">Names built at run time (<code>\csname</code>, variants, keys)</th><td class="yes">yes, from the run</td><td class="no">no<sup><a href="#ref-dynamic">1</a></sup></td><td class="no">no</td><td class="no">no</td><td class="no">no</td></tr>
