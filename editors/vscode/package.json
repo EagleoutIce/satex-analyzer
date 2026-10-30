@@ -77,6 +77,24 @@
           "default": "hide",
           "description": "What the Problems view shows of satex's findings while a newer analysis runs."
         },
+        "satex.server.maxCores": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "description": "How many CPU cores the server may use at most (Linux, through its cgroup; 0: no cap). How long an analysis may run is `limits.seconds` in satex.yaml."
+        },
+        "satex.server.niceness": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 19,
+          "description": "Scheduling priority of the server, as `nice` writes it: higher yields more to the editor and other programs."
+        },
+        "satex.server.cgroup": {
+          "type": "boolean",
+          "default": true,
+          "description": "On Linux, run the server in a systemd user scope that enforces the memory and core limits (needs systemd-run)."
+        },
         "satex.server.maxMemory": {
           "type": "string",
           "default": "2GiB",

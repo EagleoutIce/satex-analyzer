@@ -118,10 +118,20 @@ async function compile(): Promise<void> {
  * editor; it builds the kernel cache itself on first use.
  */
 function startServer(binary: string): Promise<StreamInfo> {
-    const memory = vscode.workspace.getConfiguration('satex').get<string>('server.maxMemory', '2GiB');
-    const child = spawn(binary, ['lsp', ...(memory ? ['--max-memory', memory] : [])]);
+    const config = vscode.workspace.getConfiguration('satex');
+    const memory = config.get<string>('server.maxMemory', '2GiB');
+    // How long an analysis may run is the project's `limits.seconds` (satex.yaml), not a second setting here.
+    const args = ['lsp', ...(memory ? ['--max-memory', memory] : [])];
+    // On Linux a cgroup caps the server whatever it does: memory without swap and two cores, so
+    // the editor and the desktop stay usable. The in-process budget above still ends a run cleanly first.
+    const cores = config.get<number>('server.maxCores', 2);
+    const capped = process.platform === 'linux' && config.get<boolean>('server.cgroup', true) && memory
+        && !spawnSync('systemd-run', ['--user', '--version']).error;
+    const limits = ['-p', `MemoryMax=${memory.replace(/iB$/, '')}`, '-p', 'MemorySwapMax=0', ...(cores > 0 ? ['-p', `CPUQuota=${cores * 100}%`] : [])];
+    const [command, argv] = capped ? ['systemd-run', ['--user', '--scope', '--quiet', ...limits, binary, ...args]] : [binary, args];
+    const child = spawn(command, argv);
     if (child.pid !== undefined) {
-        try { os.setPriority(child.pid, 10); } catch { /* not ours to lower */ }
+        try { os.setPriority(child.pid, config.get<number>('server.niceness', 10)); } catch { /* not ours to lower */ }
     }
     child.stderr.on('data', (data: Buffer) => client?.outputChannel.append(data.toString()));
     return Promise.resolve({ reader: child.stdout, writer: child.stdin, detached: false });
