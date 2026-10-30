@@ -150,28 +150,39 @@ fn installation(bin: &str) -> Result<String, String> {
     Ok(format!("{kernel}, files {hash:016x}\n"))
 }
 
-/// The type lattice as a Mermaid flowchart, from [`Ty::parent`]: `any` at the
-/// left, each family in its own colour. `nothing`, below every type, is left out.
+/// The type lattice as a Mermaid flowchart from [`Ty::parent`], coloured by
+/// [`Ty::family`]; leaves of one parent share a node, `nothing` is left out.
 fn types_chart() -> String {
     use satex::roles::Ty;
     let all: Vec<Ty> = Ty::all().into_iter().filter(|t| *t != Ty::Bottom).collect();
-    let id = |t: Ty| all.iter().position(|x| *x == t).unwrap_or(0);
-    let family = |t: Ty| match t {
-        Ty::Top => "top",
-        Ty::Number | Ty::Dimen | Ty::Glue | Ty::MuGlue | Ty::Quantity | Ty::Box => "quantity",
-        Ty::Reg(_) | Ty::Register | Ty::Named(_) => "register",
-        Ty::Key(_) | Ty::Options => "key",
-        Ty::File(_) => "file",
-        Ty::Cs | Ty::Switch | Ty::Var(_) => "cs",
-        _ => "text",
-    };
-    let mut out = String::from("```mermaid\nflowchart LR\n");
+    let family = |t: Ty| t.family();
+    let leaf = |t: Ty| t != Ty::Top && !all.iter().any(|c| *c != Ty::Top && c.parent() == t);
+    let mut nodes: Vec<(Option<Ty>, &str, Vec<Ty>)> = Vec::new();
     for &t in &all {
-        let label = if t == Ty::Top { "any".to_string() } else { t.to_string() };
-        let _ = writeln!(out, "  t{}[\"{}\"]:::{}", id(t), label.replace('"', "#quot;"), family(t));
+        let key = leaf(t).then(|| t.parent());
+        match nodes
+            .iter_mut()
+            .find(|(k, f, m)| key.is_some() && *k == key && *f == family(t) && m.iter().all(|x| leaf(*x)))
+        {
+            Some((_, _, members)) => members.push(t),
+            None => nodes.push((key, family(t), vec![t])),
+        }
     }
+    let node = |t: Ty| nodes.iter().position(|(_, _, m)| m.contains(&t)).unwrap_or(0);
+    let mut out = String::from("```mermaid\nflowchart LR\n");
+    for (i, (_, class, members)) in nodes.iter().enumerate() {
+        let names: Vec<String> =
+            members.iter().map(|t| if *t == Ty::Top { "any".to_string() } else { t.to_string() }).collect();
+        let label = names.chunks(3).map(|c| c.join(" · ")).collect::<Vec<_>>().join("<br>");
+        let _ = writeln!(out, "  t{i}[\"{}\"]:::{class}", label.replace('"', "#quot;"));
+    }
+    let mut edges = Vec::new();
     for &t in all.iter().filter(|t| **t != Ty::Top) {
-        let _ = writeln!(out, "  t{} --> t{}", id(t.parent()), id(t));
+        let edge = (node(t.parent()), node(t));
+        if !edges.contains(&edge) {
+            edges.push(edge);
+            let _ = writeln!(out, "  t{} --> t{}", edge.0, edge.1);
+        }
     }
     for (class, fill, stroke) in [
         ("top", "#eef0f2", "#8a8f98"),
@@ -180,6 +191,7 @@ fn types_chart() -> String {
         ("key", "#ede9fe", "#8b5cf6"),
         ("file", "#ccfbf1", "#14b8a6"),
         ("cs", "#fee2e2", "#ef4444"),
+        ("expl3", "#fef9c3", "#ca8a04"),
         ("text", "#dcfce7", "#22c55e"),
     ] {
         let _ = writeln!(out, "  classDef {class} fill:{fill},stroke:{stroke},color:#1f2328");
@@ -259,13 +271,8 @@ fn run(check: bool) -> Result<(), String> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------
-// Citation resolution: `tex.web § N` / `etex.ch \`identifier\`` and the
-// LaTeX2e/expl3 kernel links resolve the *name* (a module number or an
-// identifier, the source of truth kept in prose) against the current
-// upstream commit, rather than a line number hand-typed once and left to
-// rot. See the module doc comment for `--refresh-citations`/`--check-citations`.
-// ---------------------------------------------------------------------
+// Citations (`tex.web § N`, `etex.ch \`identifier\``, kernel links) resolve
+// by name against the upstream commit, never by a hand-typed line number.
 
 /// One upstream source these docs cite by module number (`tex.web`) or by
 /// identifier (`etex.ch`), or without either (`expl3-code`/`latex.ltx`,

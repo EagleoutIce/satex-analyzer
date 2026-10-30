@@ -213,48 +213,48 @@ A register's name is text of its value's kind, because a scanner reads the regis
 
 {{types}}
 
-The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), quantities (blue), registers (orange), keys and options (purple), files (teal), control sequences (red) and text (green). `nothing` is below every type and left out. The labels are the ones signatures and hovers show. In each example the `⟨…⟩` part has the type.
+The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), quantities (blue), registers (orange), keys and options (purple), files (teal), control sequences (red), expl3 variables (yellow) and text (green). Types below one parent that have none below them share a box. `nothing` is below every type and left out. The labels are the ones signatures and hovers show. In each example the `⟨…⟩` part has the type. The table names the type above only where the label does not show it.
 
-| Label | Meaning | Example | Parent |
-|---|---|---|---|
-| `any` | no information, the join of unrelated types | | none |
-| `quantity` | a number, dimen, glue or muglue | `\numexpr1+⟨\dimexpr 1pt\relax⟩` is read as a quantity | `any` |
-| `number` | ⟨number⟩, read by `scan_int` | `\penalty⟨100⟩` | `quantity` |
-| `dimen` | ⟨dimen⟩, read by `scan_dimen` | `\kern⟨2pt⟩` | `glue` |
-| `glue` | ⟨glue⟩, a dimen with optional stretch and shrink | `\hskip⟨1pt plus 1fil⟩` | `quantity` |
-| `muglue` | ⟨mudimen⟩ or ⟨muglue⟩ | `\mskip⟨3mu⟩` | `quantity` |
-| `count register` | a count register an assignment names | `\advance⟨\count@⟩ by 1` | `number` |
-| `box` | a box register's number | `\setbox⟨0⟩\hbox{}` | `number` |
-| `dimen register` | a dimen register an assignment names | `\advance⟨\parindent⟩ by 1pt` | `dimen` |
-| `skip register` | a skip register an assignment names | `\advance⟨\parskip⟩ by 1pt` | `glue` |
-| `muskip register` | a muskip register an assignment names | `\advance⟨\medmuskip⟩ by 1mu` | `muglue` |
-| `toks register`, `read register`, `write register` | the other registers an assignment names | `⟨\toks@⟩={a}` | `any` |
-| `register` | a register of a kind the text does not fix, what a body assigns `#1` to | `\def\x#1#2{\advance⟨#1⟩ by #2}` | `any` |
-| `text` | balanced text of any kind | `\textbf{⟨a name or code⟩}` | `any` |
-| `name` | characters forming a name | `\csname ⟨foo⟩\endcsname` | `text` |
-| `counter` | the name of a LaTeX counter, `c@⟨counter⟩` | `\setcounter{⟨section⟩}{1}` | `name` |
-| `⟨kind⟩ name` | the name of a register of that kind a `\csname` forms | `\csname dimen⟨foo⟩\endcsname` | `name` |
-| `key` | a key of no known kind | `\mykey{⟨x⟩}` of unknown role | `name` |
-| `label` | a label a command defines or references | `\ref{⟨sec:intro⟩}` | `key` |
-| `citation key` | a bibliography entry's key | `\cite{⟨knuth84⟩}` | `key` |
-| `option key` | an option or key a key list names | `\usepackage[⟨draft⟩]{x}` | `key` |
-| `environment name` | an environment's name | `\begin{⟨itemize⟩}` | `key` |
-| `file` | a file of no known kind | `\input{⟨a⟩}` read as `.bib` and `.tex` | `name` |
-| `TeX file (.tex)` | a file read as TeX source | `\input{⟨chapter1⟩}` | `file` |
-| `package (.sty)` | a package | `\usepackage{⟨amsmath⟩}` | `file` |
-| `class (.cls)` | a document class | `\documentclass{⟨article⟩}` | `file` |
-| `bibliography database (.bib)` | a BibTeX database | `\bibliography{⟨refs⟩}` | `file` |
-| `bibliography style (.bst)` | a BibTeX style | `\bibliographystyle{⟨plain⟩}` | `file` |
-| `biblatex bibliography style (.bbx)` | a biblatex bibliography style | `\usepackage[style=⟨authoryear⟩]{biblatex}` | `file` |
-| `biblatex citation style (.cbx)` | a biblatex citation style | `\usepackage[citestyle=⟨numeric⟩]{biblatex}` | `file` |
-| `graphic file` | a figure, its extension decided by the run | `\includegraphics{⟨fig⟩}` | `file` |
-| `control sequence` | a control sequence an assignment defines | `\def⟨\foo⟩{}` | `any` |
-| `conditional` | a conditional `\newif` defines, `\if⟨name⟩` | `\newif⟨\ifdraft⟩` | `control sequence` |
-| `tl variable`, `seq variable`, `prop variable`, `fp variable`, `bool variable`, `regex variable`, `coffin variable`, `flag variable`, `intarray variable`, `cctab variable` | an expl3 variable, by the module of the function that made or set it in the run (`\tl_set:Nn`, `\seq_new:N`) | `\tl_set:Nn⟨\l_my_tl⟩{x}` | `control sequence` |
-| `str variable`, `clist variable` | a string or comma list, which expl3 keeps as token lists | `\str_set:Nn⟨\l_my_str⟩{x}` | `tl variable` |
-| `options` | the key list a load takes in its optional argument | `\usepackage⟨[a,b]⟩{x}` | `any` |
-| `definition body` | a definition's replacement text, code | `\def\x{⟨\kern1pt⟩}` | `text` |
-| `nothing` | no text, below every type | | every type |
+| Label | Meaning | Example |
+|---|---|---|
+| `any` | no information, the join of unrelated types |  |
+| `quantity` | a number, dimen, glue or muglue | `\numexpr1+⟨\dimexpr 1pt\relax⟩` is read as a quantity |
+| `number` | ⟨number⟩, read by `scan_int` | `\penalty⟨100⟩` |
+| `dimen` | ⟨dimen⟩, read by `scan_dimen`; below `glue` | `\kern⟨2pt⟩` |
+| `glue` | ⟨glue⟩, a dimen with optional stretch and shrink | `\hskip⟨1pt plus 1fil⟩` |
+| `muglue` | ⟨mudimen⟩ or ⟨muglue⟩ | `\mskip⟨3mu⟩` |
+| `count register` | a count register an assignment names; below `number` | `\advance⟨\count@⟩ by 1` |
+| `box` | a box register's number; below `number` | `\setbox⟨0⟩\hbox{}` |
+| `dimen register` | a dimen register an assignment names; below `dimen` | `\advance⟨\parindent⟩ by 1pt` |
+| `skip register` | a skip register an assignment names; below `glue` | `\advance⟨\parskip⟩ by 1pt` |
+| `muskip register` | a muskip register an assignment names; below `muglue` | `\advance⟨\medmuskip⟩ by 1mu` |
+| `toks register`, `read register`, `write register` | the other registers an assignment names | `⟨\toks@⟩={a}` |
+| `register` | a register of a kind the text does not fix, what a body assigns `#1` to | `\def\x#1#2{\advance⟨#1⟩ by #2}` |
+| `text` | balanced text of any kind | `\textbf{⟨a name or code⟩}` |
+| `name` | characters forming a name; below `text` | `\csname ⟨foo⟩\endcsname` |
+| `counter` | the name of a LaTeX counter, `c@⟨counter⟩`; below `name` | `\setcounter{⟨section⟩}{1}` |
+| `⟨kind⟩ name` | the name of a register of that kind a `\csname` forms | `\csname dimen⟨foo⟩\endcsname` |
+| `key` | a key of no known kind; below `name` | `\mykey{⟨x⟩}` of unknown role |
+| `label` | a label a command defines or references; below `key` | `\ref{⟨sec:intro⟩}` |
+| `citation key` | a bibliography entry's key | `\cite{⟨knuth84⟩}` |
+| `option key` | an option or key a key list names | `\usepackage[⟨draft⟩]{x}` |
+| `environment name` | an environment's name; below `key` | `\begin{⟨itemize⟩}` |
+| `file` | a file of no known kind; below `name` | `\input{⟨a⟩}` read as `.bib` and `.tex` |
+| `TeX file (.tex)` | a file read as TeX source | `\input{⟨chapter1⟩}` |
+| `package (.sty)` | a package | `\usepackage{⟨amsmath⟩}` |
+| `class (.cls)` | a document class | `\documentclass{⟨article⟩}` |
+| `bibliography database (.bib)` | a BibTeX database | `\bibliography{⟨refs⟩}` |
+| `bibliography style (.bst)` | a BibTeX style | `\bibliographystyle{⟨plain⟩}` |
+| `biblatex bibliography style (.bbx)` | a biblatex bibliography style | `\usepackage[style=⟨authoryear⟩]{biblatex}` |
+| `biblatex citation style (.cbx)` | a biblatex citation style | `\usepackage[citestyle=⟨numeric⟩]{biblatex}` |
+| `graphic file` | a figure, its extension decided by the run | `\includegraphics{⟨fig⟩}` |
+| `control sequence` | a control sequence an assignment defines | `\def⟨\foo⟩{}` |
+| `conditional` | a conditional `\newif` defines, `\if⟨name⟩`; below `control sequence` | `\newif⟨\ifdraft⟩` |
+| `tl variable`, `seq variable`, `prop variable`, `fp variable`, `bool variable`, `regex variable`, `coffin variable`, `flag variable`, `intarray variable`, `cctab variable` | an expl3 variable, by the module of the function that made or set it in the run (`\tl_set:Nn`, `\seq_new:N`) | `\tl_set:Nn⟨\l_my_tl⟩{x}` |
+| `str variable`, `clist variable` | a string or comma list, which expl3 keeps as token lists; below `tl variable` | `\str_set:Nn⟨\l_my_str⟩{x}` |
+| `options` | the key list a load takes in its optional argument | `\usepackage⟨[a,b]⟩{x}` |
+| `definition body` | a definition's replacement text, code; below `text` | `\def\x{⟨\kern1pt⟩}` |
+| `nothing` | no text, below every type |  |
 
 - **Join**: the nearest type above both (`Ty::join`). A dimen and a skip register give `glue`, a label and a citation key give `key`, a `.bib` and a `.tex` use give `file`. The lattice is a tree, so disagreeing uses never stay a set.
 - **expl3 variables.** A name a definition reads (`get_r_token`) while a module function of a variable kind runs (`\tl_…:N…`, `\seq_…:c…`) is a variable of that kind: what the run did, not the name's suffix. Register-backed kinds (`int`, `dim`, `skip`, `muskip`, `box`, `ior`/`iow`) are registers of their kind.

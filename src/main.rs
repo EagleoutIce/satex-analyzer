@@ -192,7 +192,7 @@ fn completions(shell: &str, target: Option<&str>) -> Result<(), String> {
                 .map(|t| {
                     let about = satex::lsp::knowledge::topic(&name(t))
                         .map(|(_, body)| body.split("\n\n").next().unwrap_or(body));
-                    serde_json::json!({ "name": name(t), "parent": name(t.parent()), "about": about })
+                    serde_json::json!({ "name": name(t), "parent": name(t.parent()), "family": t.family(), "about": about })
                 })
                 .collect()
         };

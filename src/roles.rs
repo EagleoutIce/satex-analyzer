@@ -263,6 +263,20 @@ impl Ty {
     }
 
     /// The next type up.
+    /// The family charts and chips colour the type by.
+    pub fn family(self) -> &'static str {
+        match self {
+            Ty::Top | Ty::Bottom => "top",
+            Ty::Number | Ty::Dimen | Ty::Glue | Ty::MuGlue | Ty::Quantity | Ty::Box => "quantity",
+            Ty::Reg(_) | Ty::Register | Ty::Named(_) => "register",
+            Ty::Key(_) | Ty::Options => "key",
+            Ty::File(_) => "file",
+            Ty::Var(_) => "expl3",
+            Ty::Cs | Ty::Switch => "cs",
+            _ => "text",
+        }
+    }
+
     pub fn parent(self) -> Ty {
         use Ty::*;
         match self {
