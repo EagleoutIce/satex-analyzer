@@ -423,7 +423,7 @@ $ satex explain -f samples/paper.tex '\norm'
   effective   \norm{1}
   signature   m
   takes       1
-  uses        1 time, in this run
+  uses        2 times, in this run
   by          \newcommand
   expands     \left, \right
   may_expand  \hat
@@ -478,13 +478,6 @@ offers  amsmath    15     alignedleftspaceno, alignedleftspace…           amsm
 
 ```text
 $ satex query options -f samples/paper.tex --for itemize
-key           default  package         file                
-expand        true     gettitlestring  gettitlestring.sty  @ gettitlestring.sty:159:20
-append        @VOID@   epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:513:20
-disable       true     epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:242:22
-enable        true     epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:243:31
-outdir                 epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:238:24
-… 5 more lines omitted
 ```
 
 </details>
@@ -501,7 +494,7 @@ $ satex slice -f samples/paper.tex '\ifdraft'
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{mypackage}
-… 16 more lines omitted
+… 18 more lines omitted
 ```
 
 </details>
@@ -527,7 +520,7 @@ $ satex lint -f samples/paper.tex --filter 'category=performance'
 performance (1)
 
   ● preamble-cost (1)
-    paper.tex:26:1  5 packages requested directly, 275 files read, 82% of the tokens the build takes
+    paper.tex:26:1  5 packages requested directly, 275 files read, 76% of the tokens the build takes
       26 │ \begin{document}
          │ ^^^^^^
 … 5 more lines omitted
@@ -621,12 +614,12 @@ typeset
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step         name                        detail                    file           
-678     expand       \documentclass                                        paper.tex      @ paper.tex:1:1
-8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
-10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
-10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
-… 182 more lines omitted
+index   step        name                        detail                     file           
+678     expand      \documentclass                                         paper.tex      @ paper.tex:1:1
+8412    open-file   \article                    /usr/local/texlive/YYYY/…  paper.tex      @ paper.tex:1:1
+10261   expand      \par                                                   paper.tex      @ paper.tex:2:1
+10268   expand      \newif                                                 paper.tex      @ paper.tex:3:1
+… 172 more lines omitted
 ```
 
 </details>
