@@ -4503,6 +4503,12 @@ impl Machine<'_> {
             // tex.web § 484: a stream not open reads the terminal, giving whatever
             // the user types. An unpinned number may name an open stream, so it
             // never ends the job.
+            // a missing file's prompt: go on without it, as Return does
+            if open == Some(false) && std::mem::take(&mut self.missing_prompt) {
+                let meaning = self.make_macro(ParameterText::default(), Vec::new());
+                self.define(name, meaning, by, DefMode::Declare, span);
+                return;
+            }
             if open == Some(false) && self.terminal_read_is_fatal(span) {
                 return;
             }

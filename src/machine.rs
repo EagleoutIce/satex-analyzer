@@ -1454,6 +1454,11 @@ pub struct Machine<'a> {
     /// are not counted into.
     pub(crate) diag_floor: usize,
     pub(crate) halted: bool,
+    /// A missing package or class was just reported: its prompt skips it.
+    pub(crate) missing_prompt: bool,
+    /// The group depth a punctuation character's letter status first changed
+    /// at: group ends from there may restore it ([`Machine::letters`]).
+    letters_depth: Option<usize>,
     /// Replaces `Config::max_steps` while the format is being read.
     budget: Option<u64>,
     /// Lines in `latex.ltx`, while it is being interpreted: the denominator
@@ -2274,6 +2279,8 @@ impl<'a> Machine<'a> {
             lua: Default::default(),
             pinned: crate::fixed::HashSet::default(),
             halted: false,
+            missing_prompt: false,
+            letters_depth: None,
             budget: None,
             format_progress: None,
             cached_lines: 0,
@@ -11390,6 +11397,7 @@ will look undefined",
             return;
         }
         let file = file.to_string();
+        self.missing_prompt = true;
         self.note_missing_file(&file, "was not found", at);
     }
 

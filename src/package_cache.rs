@@ -1451,6 +1451,8 @@ impl Machine<'_> {
             text_apart: _,
             // Scratch of one widened conditional.
             skip_log: _,
+            missing_prompt: _,
+            letters_depth: _,
         } = self;
         Rest {
             input,
