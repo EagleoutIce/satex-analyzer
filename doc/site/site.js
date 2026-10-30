@@ -488,6 +488,19 @@
     });
   }
 
+  // "category 12" on a documentation page links to that code's row
+  const catcodes = document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? '';
+  for (const root of document.querySelectorAll('body.doc main')) {
+    const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: (n) => n.parentElement.closest('a, pre, code, h1, h2, h3') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT });
+    const found = [];
+    while (walk.nextNode()) if (/\bcategor(?:y|ies) \d/.test(walk.currentNode.data)) found.push(walk.currentNode);
+    for (const n of found) {
+      const span = document.createElement('span');
+      span.innerHTML = esc(n.data).replace(/\b(categor(?:y|ies) )(1[0-5]|\d)\b/g, (m, w, k) => `${w}<a class="catcode" href="${catcodes}wiki/domains.html#catcode-${k}">${k}</a>`);
+      n.replaceWith(...span.childNodes);
+    }
+  }
+
   // The headings of a documentation page, the one in view marked; a heading
   // in a folded group (the lint rules' categories) comes under the group's name.
   const toc = document.getElementById('toc');
@@ -498,7 +511,9 @@
     const g = h.closest('details')?.querySelector('summary')?.textContent ?? null;
     const label = g && g !== group ? `<span class="grp">${esc(g.split(/\s+[—-]\s+/)[0])}</span>` : '';
     group = g;
-    return `${label}<a class="${h.localName}" href="#${h.id}">${esc(h.firstChild?.textContent ?? h.textContent)}</a>`;
+    // the heading's name, not its gloss: "Meaning sets: what … may mean" lists as "Meaning sets"
+    const text = [...h.childNodes].filter((n) => !n.classList?.contains('self')).map((n) => n.textContent).join('').trim(), name = text.split(': ')[0];
+    return `${label}<a class="${h.localName}" href="#${h.id}" title="${esc(text)}">${esc(name)}</a>`;
   }).join('');
   const links = new Map([...toc.querySelectorAll('a')].map((a, i) => [heads[i], a]));
   const seen = new Set();
