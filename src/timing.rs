@@ -70,16 +70,12 @@ impl Timings {
         }
     }
 
+    // always on: two clock reads per file
     pub fn enter_file(&mut self, file: FileId) {
-        if self.enabled {
-            self.stack.push((file, Instant::now(), Duration::ZERO));
-        }
+        self.stack.push((file, Instant::now(), Duration::ZERO));
     }
 
     pub fn leave_file(&mut self) {
-        if !self.enabled {
-            return;
-        }
         let Some((file, since, children)) = self.stack.pop() else { return };
         let total = since.elapsed();
         if let Some(parent) = self.stack.last_mut() {

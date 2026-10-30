@@ -1061,14 +1061,26 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, msg: EngineMsg) -> Option<E
             // The run's size first, then what it reused: what the playground's timing pop-up shows.
             let report = |a: &Analysis| {
                 let run = format!(
-                    "run {} steps ({} loading), {} forks, {} files, {} lines",
+                    "run {} steps ({} loading), {} forks, {} peak paths, {} files, {} lines",
                     a.steps,
                     a.load_steps,
                     a.forks,
+                    a.peak_paths,
                     a.files.len(),
                     a.lines
                 );
-                std::iter::once(run).chain(a.cache_report()).collect::<Vec<_>>()
+                let files = a.timings.by_file();
+                let total: f64 = files.iter().map(|(_, t, _)| t.as_secs_f64()).sum();
+                let slow = files.into_iter().take(5).map(move |(id, t, _)| {
+                    format!(
+                        "slow {:.0} {:.0} {}",
+                        t.as_secs_f64() * 1000.0,
+                        100.0 * t.as_secs_f64() / total.max(1e-9),
+                        a.file_name(id)
+                    )
+                });
+                let limits = a.limits.iter().map(|l| format!("limit {} {} ({}×)", l.key, l.value, l.count));
+                std::iter::once(run).chain(slow).chain(limits).chain(a.cache_report()).collect::<Vec<_>>()
             };
             let _ = reply.send(with_doc(docs, &uri, |analysis, _| report(analysis)).unwrap_or_default());
         }
