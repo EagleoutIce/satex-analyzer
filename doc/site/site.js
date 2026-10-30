@@ -114,14 +114,12 @@
     const tip = SLOT[name.toLowerCase()] ?? (/^arg\d+$/.test(name) ? `the ${name.slice(3)}. argument${kind ? `, ${KIND[kind]}` : ''}${ty ? `, read as ${ty}` : ''}` : `${name}, read by the command`);
     // the brackets as entities: a chip is never wrapped again
     const named = TY.has(name) ? tyLink(name) : esc(name);
-    // a chip with a type card says what it is in the card, not in a second tooltip under it
-    const card = (ty && TYPES().has(ty)) || (TY.has(name) && TYPES().has(name));
-    return `<span class="arg arg-${kind ?? 'slot'}" ${card ? `data-tip="${esc(tip)}"` : `title="${esc(tip)}"`}>&#x27E8;${named}${ty ? `<small>: ${tyLink(ty)}</small>` : ''}&#x27E9;</span>`;
+    return `<span class="arg arg-${kind ?? 'slot'}" data-tip="${esc(tip)}">&#x27E8;${named}${ty ? `<small>: ${tyLink(ty)}</small>` : ''}&#x27E9;</span>`;
   };
   /** The placeholders of primitive syntax that are types of the Ty lattice. */
   const TY = new Set(['number', 'dimen', 'glue', 'muglue', 'control sequence']);
   /** A type's name linking to the wiki's Ty lattice; hovered, it shows its card ([`tyCard`]). */
-  const tyLink = (t) => `<a class="ty" target="_blank" rel="noopener" href="${document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? ''}wiki/domains.html#argument-types-the-ty-lattice" data-ty="${esc(t)}"${TYPES().has(t) ? '' : ` title="the type ${esc(t)} in the Ty lattice"`}>${esc(t)}</a>`;
+  const tyLink = (t) => `<a class="ty" target="_blank" rel="noopener" href="${document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? ''}wiki/domains.html#argument-types-the-ty-lattice" data-ty="${esc(t)}" data-fam="${esc(TYPES().get(t)?.family ?? '')}"${TYPES().has(t) ? '' : ` title="the type ${esc(t)} in the Ty lattice"`}>${esc(t)}</a>`;
   /** The lattice by name (`satex completions json`'s `types`), when the page has it. */
   const TYPES = () => (window.satexTypes ??= new Map((window.satexTypeList ?? []).map((t) => [t.name, t])));
   /** A type's card: its chain up to `any`, what it is, the types right below it. */
@@ -129,10 +127,12 @@
     const types = TYPES(), t = types.get(name);
     if (!t) return '';
     const up = [];
-    for (let x = t; x && !up.includes(x.name); x = x.name === 'any' ? null : types.get(x.parent)) up.unshift(x.name);
+    // `any` tops every chain: left implied
+    for (let x = t; x && x.name !== 'any' && !up.includes(x.name); x = types.get(x.parent)) up.unshift(x.name);
     const below = [...types.values()].filter((x) => x.parent === name && x.name !== name).map((x) => x.name);
     const chain = up.map((n) => (n === name ? `<b>${esc(n)}</b>` : esc(n))).join(' <span class="ty-sep">›</span> ');
-    return `<div class="ty-chain">${chain}</div><p>${esc(t.about).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` +
+    const badge = t.family === 'expl3' ? ' <span class="ty-badge">expl3</span>' : '';
+    return `<div class="ty-chain">${chain}${badge}</div><p>${esc(t.about).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` +
       (below.length ? `<div class="ty-below"><span>below</span> ${below.map((n) => `<code>${esc(n)}</code>`).join(' ')}</div>` : '') +
       '<div class="ty-foot">click: the lattice in the wiki</div>';
   }
@@ -141,14 +141,18 @@
     document.addEventListener('mouseover', (e) => {
       const a = e.target.closest?.('a.ty[data-ty]'), chip = e.target.closest?.('.arg[data-tip]');
       const ty = a?.dataset.ty ?? chip?.querySelector('a.ty[data-ty]')?.dataset.ty;
-      const html = ty && (chip ? `<div class="ty-what">${esc(chip.dataset.tip)}</div>` : '') + tyCard(ty);
+      const html = (chip ? `<div class="ty-what">${esc(chip.dataset.tip)}</div>` : '') + (ty ? tyCard(ty) : '');
       if (!html) { if (tip && !e.target.closest?.('.ty-tip')) tip.hidden = true; return; }
       tip ??= Object.assign(document.body.appendChild(document.createElement('div')), { className: 'ty-tip', role: 'tooltip' });
       tip.innerHTML = html;
       tip.hidden = false;
-      const r = (chip ?? a).getBoundingClientRect(), w = Math.min(320, innerWidth - 16);
-      tip.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
-      tip.style.top = `${r.bottom + 6 + tip.offsetHeight > innerHeight ? r.top - tip.offsetHeight - 6 : r.bottom + 6}px`;
+      // below or above the chip; a chip inside another card puts it beside that card, never over it
+      const c = (chip ?? a).getBoundingClientRect(), host = (chip ?? a).closest('.cm-tooltip, .cs-tip, .tip')?.getBoundingClientRect() ?? c;
+      const w = Math.min(320, innerWidth - 16), h = tip.offsetHeight;
+      let left = Math.max(8, Math.min(c.left, innerWidth - w - 8)), top = host.bottom + 6 + h <= innerHeight ? host.bottom + 6 : host.top - h - 6;
+      if (top < 0) { top = Math.max(8, Math.min(c.top, innerHeight - h - 8)); left = host.right + 6 + w <= innerWidth ? host.right + 6 : Math.max(8, host.left - w - 6); }
+      tip.style.left = `${left}px`;
+      tip.style.top = `${top}px`;
     });
   }
   /** explain's `types` (`#1 skip register`) by argument name: `{ arg1: 'skip register' }`. */

@@ -537,7 +537,7 @@
       const range = result.range;
       return {
         pos: range ? at(v.state.doc, range.start) : pos, end: range ? at(v.state.doc, range.end) : pos,
-        create: () => { const dom = document.createElement('div'); dom.className = 'hover'; dom.innerHTML = card(value); return { dom }; },
+        create: () => { csTip.hidden = true; const dom = document.createElement('div'); dom.className = 'hover'; dom.innerHTML = card(value); return { dom }; },
       };
     }, { hoverTime: 250, hideOnChange: true });
     // Ctrl (Cmd) held over a command underlines it as a link to its definition.
@@ -1201,7 +1201,9 @@
     const name = ref.dataset.cs, rs = (await explainRecords(name)).filter((r) => r.name === name);
     if (!rs.length || !ref.matches(':hover')) return;
     csTip.innerHTML = cards.explain(rs[0]);
+    (document.querySelector('dialog[open]') ?? document.body).append(csTip); // above a modal
     csTip.hidden = false;
+    document.querySelectorAll('.cm-tooltip-hover').forEach((t) => (t.style.display = 'none')); // the latest hover wins
     const b = ref.getBoundingClientRect(), h = csTip.offsetHeight;
     csTip.style.left = `${Math.max(8, Math.min(b.left, innerWidth - csTip.offsetWidth - 8))}px`;
     csTip.style.top = `${b.bottom + 6 + h > innerHeight ? Math.max(8, b.top - 6 - h) : b.bottom + 6}px`;
