@@ -12800,14 +12800,12 @@ fn line_key(l: &str) -> &str {
     l[open..].find('}').map_or(l, |close| &l[..open + close + 1])
 }
 
-/// `new` joined into the texts `old` holds: each new text into the one
-/// sharing the most lines with it. No text is added, so reruns settle.
+/// `new` joined into the texts `old` holds, each new text into its
+/// nearest ([`nearness`]). No text is added, so reruns settle.
 fn widen_text(old: &str, new: &str) -> String {
     let mut texts: Vec<String> = texts_of(old).into_iter().map(str::to_string).collect();
     for t in texts_of(new) {
-        let lines: HashSet<&str> = t.lines().collect();
-        let shared = |x: &String| x.lines().filter(|l| lines.contains(l)).count();
-        if let Some(x) = texts.iter_mut().max_by_key(|x| shared(x))
+        if let Some(x) = texts.iter_mut().max_by_key(|x| nearness(x, t))
             && x != t
         {
             *x = join_written(x, t);
@@ -12816,20 +12814,34 @@ fn widen_text(old: &str, new: &str) -> String {
     texts.join(&format!("{}\n", crate::tex::TEXT_OR))
 }
 
+/// How well two texts join: first whether their lines set the same things
+/// in the same order (they pair line by line, no unknown line), then how
+/// many lines they share.
+fn nearness(a: &str, b: &str) -> (bool, usize) {
+    let lines: HashSet<&str> = b.lines().collect();
+    (a.lines().map(line_key).eq(b.lines().map(line_key)), a.lines().filter(|l| lines.contains(l)).count())
+}
+
 /// The texts either file may hold, each distinct one kept: a reader takes
 /// each apart (`\z@` or `\@ne`, not some control sequence). Past `bound`
-/// texts, all join ([`join_written`]).
+/// texts, the nearest two join ([`nearness`], [`join_written`]).
 fn either_text(a: &str, b: &str, bound: usize) -> String {
     let mut texts: Vec<String> = Vec::new();
     for t in texts_of(a).into_iter().chain(texts_of(b)) {
-        if !texts.iter().any(|x| x == t) {
-            texts.push(t.to_string());
+        if texts.iter().any(|x| x == t) {
+            continue;
+        }
+        texts.push(t.to_string());
+        if texts.len() > bound.max(1) {
+            let n = texts.len();
+            let pairs = (0..n).flat_map(|i| (i + 1..n).map(move |j| (i, j)));
+            if let Some((i, j)) = pairs.max_by_key(|&(i, j)| nearness(&texts[i], &texts[j])) {
+                let x = texts.remove(j);
+                texts[i] = join_written(&texts[i], &x);
+            }
         }
     }
-    match texts.len() > bound {
-        true => texts[1..].iter().fold(texts[0].clone(), |x, y| join_written(&x, y)),
-        false => texts.join(&format!("{}\n", crate::tex::TEXT_OR)),
-    }
+    texts.join(&format!("{}\n", crate::tex::TEXT_OR))
 }
 
 /// What two paths wrote to their files, joined (tex.web § 1370): a file
@@ -12961,6 +12973,19 @@ fn join_line(p: &str, q: &str) -> String {
             == Some(0)
     };
     if !part(head, tail).iter().all(|s| balanced(s)) {
+        // Places on both sides of a brace: with the same braces, each
+        // stretch between them joins apart.
+        let braces = |s: &[char]| s.iter().filter(|c| matches!(c, '{' | '}')).copied().collect::<Vec<_>>();
+        let escaped = |s: &[char]| s.windows(2).any(|w| w[0] == '\\' && matches!(w[1], '{' | '}'));
+        if braces(&x) == braces(&y) && !escaped(&x) && !escaped(&y) {
+            let mut out = String::new();
+            let ends = braces(&x).into_iter().map(Some).chain([None]);
+            for ((a, b), brace) in p.split(['{', '}']).zip(q.split(['{', '}'])).zip(ends) {
+                out.push_str(&join_line(a, b));
+                out.extend(brace);
+            }
+            return out;
+        }
         (head, tail) = (0, 0);
     }
     // A control word the place ends in runs on into the letters after it.
@@ -12993,4 +13018,36 @@ fn char_class(c: char) -> u8 {
         _ => C::Active,
     };
     T::of(crate::tex::Tok::Chr(c, cat)).0
+}
+
+#[cfg(test)]
+mod written {
+    use super::{either_text, join_line, texts_of};
+    use crate::tex::UNKNOWN_ANY;
+
+    /// Two lines that differ on both sides of a brace join per braced part:
+    /// the page stays a number, not a line of any text.
+    #[test]
+    fn a_line_two_paths_wrote_apart_in_two_places_keeps_its_braces() {
+        let joined = join_line(
+            "\\newlabel{n.5}{{2}{\\numexpr +\\z@ \\relax }}",
+            "\\newlabel{n.5}{{3}{\\numexpr +\\@ne \\relax }}",
+        );
+        // The page a written digit, the value an unknown name: the braces and the rest stay.
+        assert!(joined.starts_with("\\newlabel{n.5}{{") && joined.ends_with(" \\relax }}"), "{joined:?}");
+        assert!(joined.contains("{\\numexpr +"), "{joined:?}");
+    }
+
+    /// Past the bound, only the nearest texts join: a text with a line more
+    /// stays apart from those of another shape.
+    #[test]
+    fn past_the_bound_only_the_nearest_texts_join() {
+        let l = |k: &str, v: u8| format!("\\newlabel{{{k}}}{{{{{v}}}}}\n");
+        let texts = [l("x", 1) + &l("y", 1), l("x", 2) + &l("y", 1), l("x", 1) + &l("y", 1) + &l("z", 1)];
+        let either =
+            texts.iter().fold(String::new(), |all, t| if all.is_empty() { t.clone() } else { either_text(&all, t, 2) });
+        let kept = texts_of(&either);
+        assert_eq!(kept.len(), 2, "{either:?}");
+        assert!(kept.iter().all(|t| !t.contains(UNKNOWN_ANY)), "{either:?}");
+    }
 }
