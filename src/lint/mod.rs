@@ -8,6 +8,7 @@ pub mod cite;
 pub mod colors;
 pub mod correctness;
 pub mod dashes;
+pub mod expl3;
 pub mod fix;
 pub mod italics;
 pub mod mathtext;
@@ -38,6 +39,7 @@ use crate::tex::{Span, Sym};
 pub fn all() -> impl Iterator<Item = &'static Rule> {
     correctness::RULES
         .iter()
+        .chain(expl3::RULES)
         .chain(bibliography::RULES)
         .chain(pdf::RULES)
         .chain(packages::RULES)
@@ -585,8 +587,11 @@ impl Frozen {
 
     pub fn holds(&self, path: &std::path::Path) -> bool {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        self.home.as_ref().is_some_and(|home| repository(&crate::paths::dir_of(&path)).is_some_and(|r| &r != home))
-            || self.globs.iter().any(|g| g.is_match(&path))
+        // A name with no file behind it (stdin, an unsaved buffer) is the document's own.
+        let dir = crate::paths::dir_of(&path);
+        let foreign =
+            dir.canonicalize().ok().and_then(|dir| repository(&dir)).is_some_and(|r| Some(&r) != self.home.as_ref());
+        (self.home.is_some() && foreign) || self.globs.iter().any(|g| g.is_match(&path))
     }
 }
 

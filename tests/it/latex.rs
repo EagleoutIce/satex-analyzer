@@ -3881,3 +3881,29 @@ fn expl3_variables_are_typed_by_the_function_that_made_them() {
     assert_eq!(at(4), Some(Ty::Var(VarKind::Str)));
     assert!(Ty::Var(VarKind::Str).leq(Ty::Var(VarKind::Tl)) && Ty::Var(VarKind::Tl).leq(Ty::Cs));
 }
+
+/// expl3's naming conventions, checked against what the run did: a local
+/// name set globally, a `_tl` name set as a sequence, a constant set again.
+/// A string set as a token list, a global set globally and declarations
+/// are fine.
+#[test]
+fn expl3_conventions_are_checked_against_the_run() {
+    if !installed() {
+        return;
+    }
+    let a = analyze(
+        "\\documentclass{article}\\ExplSyntaxOn\n\
+         \\tl_new:N \\l_bad_scope_tl \\tl_gset:Nn \\l_bad_scope_tl {x}\n\
+         \\seq_new:N \\l_bad_type_tl \\seq_set_split:Nnn \\l_bad_type_tl {,} {a,b}\n\
+         \\tl_const:Nn \\c_bad_const_tl {x} \\tl_set:Nn \\c_bad_const_tl {y}\n\
+         \\str_new:N \\l_ok_str \\tl_set:Nn \\l_ok_str {x} \\tl_new:N \\g_ok_tl \\tl_gset:Nn \\g_ok_tl {x}\n\
+         \\ExplSyntaxOff\n\\begin{document}x\\end{document}\n",
+    );
+    let found = satex::lint::lint(&a);
+    let named = |code: &str| -> Vec<String> {
+        found.iter().filter(|r| r["code"] == code).map(|r| r["name"].as_str().unwrap_or_default().to_string()).collect()
+    };
+    assert_eq!(named("expl3-scope"), vec!["\\l_bad_scope_tl"]);
+    assert_eq!(named("expl3-type"), vec!["\\l_bad_type_tl"]);
+    assert_eq!(named("expl3-constant-set"), vec!["\\c_bad_const_tl"]);
+}
