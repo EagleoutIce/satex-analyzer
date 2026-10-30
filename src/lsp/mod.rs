@@ -299,6 +299,11 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             Ok(Json::Array(ask(engine_tx, |reply| EngineMsg::Typeset(uri, reply))?))
         }
         // The cache report of the last analysis: which kernel, class and package caches it reused or rebuilt.
+        // What the build wrote to each file, `null` where not known.
+        "satex/written" => {
+            let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
+            Ok(Json::Array(ask(engine_tx, |reply| EngineMsg::Written(uri, reply))?))
+        }
         "satex/caches" => {
             let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
             Ok(serde_json::to_value(ask(engine_tx, |reply| EngineMsg::Caches(uri, reply))?).unwrap())
@@ -438,6 +443,7 @@ enum EngineMsg {
     CodeAction(Uri, Sender<Vec<Json>>),
     ExecuteCommand(Json, Sender<Result<Vec<Json>, String>>),
     Typeset(Uri, Sender<Vec<Json>>),
+    Written(Uri, Sender<Vec<Json>>),
     Caches(Uri, Sender<Vec<String>>),
     Shutdown,
 }
@@ -522,6 +528,7 @@ impl EngineMsg {
             | EngineMsg::Completion(uri, ..)
             | EngineMsg::DocumentSymbol(uri, ..)
             | EngineMsg::Typeset(uri, ..)
+            | EngineMsg::Written(uri, ..)
             | EngineMsg::Caches(uri, ..) => Some(uri),
             _ => None,
         }
@@ -904,6 +911,7 @@ impl Engine {
             | EngineMsg::Resolve(..)
             | EngineMsg::DocumentSymbol(..)
             | EngineMsg::Typeset(..)
+            | EngineMsg::Written(..)
             | EngineMsg::Caches(..)
             | EngineMsg::WorkspaceSymbol(..)) => {
                 if let Some(uri) = msg.uri().or_else(|| self.docs.keys().next()).cloned() {
@@ -1056,6 +1064,23 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, msg: EngineMsg) -> Option<E
         EngineMsg::Typeset(uri, reply) => {
             let result = with_doc(docs, &uri, |analysis, _| handlers::typeset(analysis));
             let _ = reply.send(result.unwrap_or_default());
+        }
+        EngineMsg::Written(uri, reply) => {
+            let or = format!("{}\n", crate::tex::TEXT_OR);
+            let files = |a: &Analysis| {
+                let texts = |t: &String| t.split(or.as_str()).map(str::to_owned).collect::<Vec<_>>();
+                a.written
+                    .iter()
+                    .map(|(name, text)| {
+                        // each run's texts too: how the build got there
+                        let runs: Vec<_> = (a.written_runs.iter())
+                            .map(|run| run.iter().find(|(n, _)| n == name).and_then(|(_, t)| t.as_ref().map(texts)))
+                            .collect();
+                        serde_json::json!({"name": name, "texts": text.as_ref().map(texts), "runs": runs})
+                    })
+                    .collect()
+            };
+            let _ = reply.send(with_doc(docs, &uri, |analysis, _| files(analysis)).unwrap_or_default());
         }
         EngineMsg::Caches(uri, reply) => {
             // The run's size first, then what it reused: what the playground's timing pop-up shows.

@@ -405,6 +405,8 @@ pub struct Analysis {
     pub package_caches: Vec<(String, String, String)>,
     /// What the run wrote to each file, by name: `None` where not known.
     pub written: Vec<(String, Option<String>)>,
+    /// `written` of each run of the build, first run first.
+    pub written_runs: Vec<Vec<(String, Option<String>)>>,
     /// How many runs of the build it took to reach the fixpoint
     /// ([`Machine::analyze_build`]).
     pub build_runs: u32,
@@ -2207,6 +2209,7 @@ impl<'a> Machine<'a> {
                 untyped: 0,
                 package_caches: Vec::new(),
                 written: Vec::new(),
+                written_runs: Vec::new(),
                 build_runs: 1,
                 class_caches: Default::default(),
                 cached_files: Default::default(),
@@ -2532,11 +2535,13 @@ impl<'a> Machine<'a> {
         let mut caches = None;
         // The last run that was not stopped by a budget.
         let mut complete: Option<Analysis> = None;
+        let mut history = Vec::new();
         let mut analysis = loop {
             let before = started.elapsed();
             crate::progress::set_run(run);
             let mut analysis = checkpoints.analyze(source, path);
             analysis.build_runs = run;
+            history.push(analysis.written.clone());
             caches.get_or_insert_with(|| (analysis.package_caches.clone(), analysis.format.clone()));
             // A budget stopped it: no other run, and the last one that ran
             // to its end says more than this one.
@@ -2656,6 +2661,7 @@ impl<'a> Machine<'a> {
             placed.iter().for_each(|p| crate::overlay::remove(p));
         }
         (analysis.package_caches, analysis.format) = caches.unwrap_or_default();
+        analysis.written_runs = history;
         analysis
     }
 
