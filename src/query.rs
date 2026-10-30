@@ -4238,11 +4238,9 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<Stri
         by_name.entry(e.name).or_default().push(e);
     }
     let mut seen: BTreeSet<Sym> = BTreeSet::from([sym]);
-    // Breadth first: the nearest dispatcher is the one the call reads its
-    // keys with (`\draw` reaches `/tikz/` before xcolor's color models).
-    let mut frontier = std::collections::VecDeque::from([sym]);
+    let mut frontier = vec![sym];
     let mut parent: HashMap<Sym, Sym> = HashMap::default();
-    while let Some(current) = frontier.pop_front() {
+    while let Some(current) = frontier.pop() {
         if let Some(dialect) = key_dispatch(analysis.interner.name(current)) {
             // The call this name's own code made comes first: the library
             // calls the same dispatcher for its own keys.
@@ -4289,7 +4287,7 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<Stri
             }
             if seen.insert(callee) {
                 parent.insert(callee, current);
-                frontier.push_back(callee);
+                frontier.push(callee);
             }
         }
     }
