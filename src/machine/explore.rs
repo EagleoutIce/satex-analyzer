@@ -2118,8 +2118,16 @@ impl Machine<'_> {
                 .flatten()
                 .filter(|t| t.cs().is_some_and(|s| matches!(self.env.meaning(s), Meaning::Primitive(Primitive::Fi))));
             let Some(fi) = fi else { break };
-            self.next_token();
+            // A read a cut or the budget refuses, or a `\fi` the output
+            // routine may not close, makes no progress: stop there.
+            let open = self.conds.len();
+            if self.next_token().is_none() {
+                break;
+            }
             self.conditional_fi(fi.span);
+            if self.conds.len() >= open {
+                break;
+            }
         }
     }
 

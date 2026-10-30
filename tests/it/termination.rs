@@ -1014,3 +1014,48 @@ fn lint_probes_stop_at_the_run_deadline() {
     assert!(cut.as_ref().is_none_or(|p| !p.complete), "{cut:?}");
     assert!(satex::probe::probe(&a, foo, satex::probe::State::End).is_some_and(|p| p.complete));
 }
+
+/// A line cut on the look-ahead after a number leaves the `\fi` of a
+/// conditional opened before the output routine next, in library code: the
+/// cut refuses its read and the output routine may not close it. Reading
+/// the pending `\fi`s must stop there, at every phase of the budget check.
+#[test]
+fn a_cut_before_a_pending_fi_in_the_output_routine_ends() {
+    // `limits.line_steps`, and the steps between two budget checks: every
+    // phase of the check against the look-ahead is tried.
+    const LINE: u64 = 2_000;
+    const PHASES: u64 = 512;
+    let root = crate::support::tmp_root().join("satex-termination").join("pending-fi");
+    let (doc, lib) = (root.join("doc"), root.join("lib"));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&doc).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    let main = doc.join("main.tex");
+    let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\count1=\\pdfelapsedtime \\input ../lib/p\n\
+                  \\ifnum\\count1>0 \\def\\m{}\\else\\let\\m\\relax\\fi\n\
+                  \\output={\\b\\setbox0\\box255 \\deadcycles0 }\n\
+                  \\hsize100pt \\vsize100pt \\ifnum1=1 \\hbox{}\\penalty-10000\n\\def\\Next{}\n";
+    std::fs::write(&main, source).unwrap();
+    let mut cfg = Config {
+        engine: Some(Engine::PdfTeX),
+        kernel: Some(Kernel::None),
+        load: satex::config::Load { inputs: true, ..Default::default() },
+        ..crate::support::config()
+    };
+    let l = &mut cfg.limits;
+    l.line_steps = LINE;
+    (l.widen_after, l.cycle_after, l.recursion_depth, l.expansion_depth) = (u16::MAX, u16::MAX, u16::MAX, u16::MAX);
+    (l.call_summary_after, l.site_expansions, l.repeat_failures, l.site_forks) = (0, u32::MAX, u32::MAX, 0);
+    let bound = Duration::from_secs(30);
+    for pad in LINE - PHASES..LINE {
+        let body = "\\relax".repeat(pad as usize);
+        std::fs::write(lib.join("p.tex"), format!("\\def\\b{{{body}\\count2=1\\m\\fi}}\n")).unwrap();
+        let (done, ended) = mpsc::channel();
+        let (cfg, main, source) = (cfg.clone(), main.clone(), source.to_string());
+        std::thread::spawn(move || {
+            let _ = done.send(Machine::analyze(&source, Some(&main), &cfg).steps);
+        });
+        assert!(ended.recv_timeout(bound).is_ok(), "{pad} steps of padding: no end within {bound:?}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
