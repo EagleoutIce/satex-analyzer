@@ -2484,14 +2484,12 @@ impl Machine<'_> {
         use crate::machine::classes::CONTROL_SEQUENCE;
         let one = |o: (u32, u8)| Some((vec![vec![o]], None));
         // tex.web § 506: a token behind a `\noexpand` marker is taken as it
-        // stands, an active character as that character.
-        let unexpanded = |m: &Self, token: Token| match token.tok {
-            Tok::Chr(c, cat) => (c as u32, cat as u8),
-            Tok::Cs(inner) => match m.env.meaning(inner) {
-                Meaning::Char(c, cat) => (c as u32, cat as u8),
-                _ => CONTROL_SEQUENCE,
-            },
-            _ => CONTROL_SEQUENCE,
+        // stands, an active character as that character, a name by each
+        // meaning it may have.
+        let unexpanded = |m: &mut Self, token: Token| match token.tok {
+            Tok::Chr(c, cat) => one((c as u32, cat as u8)),
+            Tok::Cs(inner) => Some((vec![m.meaning_operands(inner, true)], None)),
+            _ => one(CONTROL_SEQUENCE),
         };
         loop {
             let token = self.next_token()?;
@@ -2503,7 +2501,7 @@ impl Machine<'_> {
                 return Some(operands);
             }
             if noexpanded {
-                return one(unexpanded(self, token));
+                return unexpanded(self, token);
             }
             // tex.web § 506: an active character that is not behind a
             // `\noexpand` is taken by its meaning, as a control sequence is.
@@ -2516,24 +2514,13 @@ impl Machine<'_> {
             match self.env.meaning(sym) {
                 // One of several meanings: the operands they give, when
                 // none expands.
-                Meaning::Unknown => {
-                    self.approximated = true;
-                    let may = self.env.slot(sym).and_then(|b| b.may.clone());
-                    let operand = |m: &Meaning| match m {
-                        Meaning::Char(c, cat) => Some((*c as u32, *cat as u8)),
-                        Meaning::Unknown | Meaning::Undefined => None,
-                        m if self.expandable_meaning(m) => None,
-                        _ => Some(CONTROL_SEQUENCE),
-                    };
-                    let all: Option<Vec<(u32, u8)>> = may.and_then(|may| may.iter().map(operand).collect());
-                    return Some((vec![all.unwrap_or(vec![UNKNOWN_OPERAND])], None));
-                }
+                Meaning::Unknown => return Some((vec![self.meaning_operands(sym, false)], None)),
                 Meaning::Primitive(Primitive::NoExpand) => {
                     let next = self.noexpanded_next()?;
                     if let Some(operands) = self.abstract_operands(next, true) {
                         return Some(operands);
                     }
-                    return one(unexpanded(self, next));
+                    return unexpanded(self, next);
                 }
                 // `\let\bgroup={` makes the control sequence that character.
                 Meaning::Char(c, cat) => return one((c as u32, cat as u8)),
@@ -2546,6 +2533,28 @@ impl Machine<'_> {
                 _ => return one(CONTROL_SEQUENCE),
             }
         }
+    }
+
+    /// The `\if` operands of `sym`, one per meaning a join left it: unknown
+    /// where a meaning is not known, or expands and no `\noexpand` makes
+    /// it `\relax` (tex.web § 506).
+    fn meaning_operands(&mut self, sym: Sym, noexpanded: bool) -> Vec<(u32, u8)> {
+        use crate::machine::classes::CONTROL_SEQUENCE;
+        let operand = |m: &Self, x: &Meaning| match x {
+            Meaning::Char(c, cat) => Some((*c as u32, *cat as u8)),
+            Meaning::Unknown => None,
+            x if !noexpanded && (*x == Meaning::Undefined || m.expandable_meaning(x)) => None,
+            _ => Some(CONTROL_SEQUENCE),
+        };
+        let all = match self.env.meaning(sym) {
+            Meaning::Unknown => {
+                self.approximated = true;
+                let may = self.env.slot(sym).and_then(|b| b.may.clone());
+                may.and_then(|may| may.iter().map(|x| operand(self, x)).collect())
+            }
+            x => operand(self, &x).map(|o| vec![o]),
+        };
+        all.unwrap_or(vec![UNKNOWN_OPERAND])
     }
 
     /// The operands of an abstract token `t` ([`Machine::token_class`]):

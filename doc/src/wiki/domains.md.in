@@ -72,6 +72,7 @@ After a join of paths that disagree, a `Binding` ([`src/env.rs`](https://github.
 | `\ifx`, `\ifdefined` | decided when every member agrees |
 | execute | splits the run into one path per meaning, `limits.meaning_splits` levels deep. Deeper, or inside an `\edef`, the meaning is unknown. |
 | `\ifx` against one meaning | splits by answer, each side keeping the members that give it |
+| `\if`, `\ifcat` | each member gives its operand, behind `\noexpand` too: a character its code and category, any other meaning a control sequence (tex.web § 506). Decided when every member agrees. Without `\noexpand` an expandable member leaves the operand unknown. |
 | `\let` | copies the whole set |
 | widening | macros without parameters that differ only in digit runs become one macro with typed digits. Else macros with the same prefixes become one macro of unknown text, length-bounded when all are (`macro_hull`). A set with "undefined" keeps it. Anything else is an unknown meaning. |
 

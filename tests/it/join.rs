@@ -511,6 +511,22 @@ fn if_and_ifcat_decide_typed_digits() {
     assert!(with_code(&analysis, "undecided-condition").is_empty());
 }
 
+/// A name joined to a character and a primitive is that character behind
+/// `\noexpand` where it means it (tex.web § 506): `\if` and `\ifcat` test
+/// each meaning, never a control sequence for all.
+#[test]
+fn noexpand_of_a_name_joined_to_a_character_tests_each_meaning() {
+    let analysis = analyze(&format!(
+        r"{PICK2}\let\x=a\else\let\x=\relax\fi
+          \ifcat\noexpand\x a\def\cat{{}}\else\def\nocat{{}}\fi
+          \if\noexpand\x a\def\same{{}}\else\def\notsame{{}}\fi"
+    ));
+    let defined = names(&analysis);
+    for name in ["cat", "nocat", "same", "notsame"] {
+        assert!(defined.contains(&name.to_string()), "{name}: {defined:?}");
+    }
+}
+
 /// One-of texts whose first tokens all agree decide `\if`, `\ifcat`
 /// (behind `\noexpand` too) and `\ifx` on one path.
 #[test]
