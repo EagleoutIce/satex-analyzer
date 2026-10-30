@@ -870,7 +870,8 @@ fn same_demand(plain: &Watch, variant: &Watch, by: usize) -> bool {
 }
 
 /// Items as an xparse argument specification, with `u{…}` for text up to
-/// a delimiter and required text as itself.
+/// a delimiter and required text in `‹…›`, so its letters are not read as
+/// argument types (`‹super›u{\; }`).
 pub fn raw_of(items: &[ArgType]) -> String {
     let mut raw = String::new();
     for item in items {
@@ -881,7 +882,7 @@ pub fn raw_of(items: &[ArgType]) -> String {
             ArgType::Optional(Some(d)) => raw.push_str(&format!("O{{{d}}}")),
             ArgType::Until(d) if d == "{" => raw.push('l'),
             ArgType::Until(d) => raw.push_str(&format!("u{{{d}}}")),
-            ArgType::Literal(text) => raw.push_str(text),
+            ArgType::Literal(text) => raw.push_str(&format!("‹{text}›")),
             ArgType::Keyword { word, value: Some(value) } => raw.push_str(&format!("[{word} ⟨{value}⟩]")),
             ArgType::Keyword { word, value: None } => raw.push_str(&format!("[{word}]")),
             ArgType::Quantity(value) if value == SWITCH => raw.push_str(value),

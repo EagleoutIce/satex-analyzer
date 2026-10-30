@@ -463,6 +463,12 @@ pub fn usage(sig: &str) -> String {
         let c = chars[i];
         i += 1;
         match c {
+            // Required text, as written.
+            '‹' => {
+                let end = chars[i..].iter().position(|c| *c == '›').map_or(chars.len(), |k| i + k);
+                out.extend(&chars[i..end]);
+                i = end + 1;
+            }
             's' => out.push('*'),
             'm' | 'v' => out.push_str(&arg("{", "}")),
             'o' => out.push_str(&arg("[", "]")),

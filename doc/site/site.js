@@ -112,7 +112,9 @@
     const tip = SLOT[name.toLowerCase()] ?? (/^arg\d+$/.test(name) ? `the ${name.slice(3)}. argument${kind ? `, ${KIND[kind]}` : ''}${ty ? `, read as ${ty}` : ''}` : `${name}, read by the command`);
     // the brackets as entities: a chip is never wrapped again
     const named = TY.has(name) ? tyLink(name) : esc(name);
-    return `<span class="arg arg-${kind ?? 'slot'}" title="${esc(tip)}">&#x27E8;${named}${ty ? `<small>: ${tyLink(ty)}</small>` : ''}&#x27E9;</span>`;
+    // a chip with a type card says what it is in the card, not in a second tooltip under it
+    const card = (ty && TYPES().has(ty)) || (TY.has(name) && TYPES().has(name));
+    return `<span class="arg arg-${kind ?? 'slot'}" ${card ? `data-tip="${esc(tip)}"` : `title="${esc(tip)}"`}>&#x27E8;${named}${ty ? `<small>: ${tyLink(ty)}</small>` : ''}&#x27E9;</span>`;
   };
   /** The placeholders of primitive syntax that are types of the Ty lattice. */
   const TY = new Set(['number', 'dimen', 'glue', 'muglue', 'control sequence']);
@@ -135,12 +137,14 @@
   {
     let tip = null;
     document.addEventListener('mouseover', (e) => {
-      const a = e.target.closest?.('a.ty[data-ty]'), html = a && tyCard(a.dataset.ty);
+      const a = e.target.closest?.('a.ty[data-ty]'), chip = e.target.closest?.('.arg[data-tip]');
+      const ty = a?.dataset.ty ?? chip?.querySelector('a.ty[data-ty]')?.dataset.ty;
+      const html = ty && (chip ? `<div class="ty-what">${esc(chip.dataset.tip)}</div>` : '') + tyCard(ty);
       if (!html) { if (tip && !e.target.closest?.('.ty-tip')) tip.hidden = true; return; }
       tip ??= Object.assign(document.body.appendChild(document.createElement('div')), { className: 'ty-tip', role: 'tooltip' });
       tip.innerHTML = html;
       tip.hidden = false;
-      const r = a.getBoundingClientRect(), w = Math.min(320, innerWidth - 16);
+      const r = (chip ?? a).getBoundingClientRect(), w = Math.min(320, innerWidth - 16);
       tip.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
       tip.style.top = `${r.bottom + 6 + tip.offsetHeight > innerHeight ? r.top - tip.offsetHeight - 6 : r.bottom + 6}px`;
     });
@@ -189,6 +193,8 @@
       const c = spec[i];
       if (/\s/.test(c)) { i++; continue; }
       if (c === '⟨') { const j = spec.indexOf('⟩', i); out.push({ key: spec.slice(i, j + 1), html: slot(spec.slice(i + 1, j)) }); i = j + 1; continue; }
+      // required text, as written (`‹key:›`)
+      if (c === '‹') { const j = spec.indexOf('›', i); const lit = spec.slice(i + 1, j < 0 ? spec.length : j); out.push({ key: lit, html: `<span class="arg arg-lit" title="text the command requires here">${esc(lit)}</span>` }); i = j < 0 ? spec.length : j + 1; continue; }
       if (c === '…') { out.push({ html: '<span class="arg arg-more" title="satex saw no more: the command may read further arguments">…</span>' }); i++; continue; }
       if (c === '+' || c === '!') { prefix += c; i++; continue; }
       if (c === '>') { i++; group(); prefix += '>'; continue; }
