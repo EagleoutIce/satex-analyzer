@@ -357,9 +357,9 @@ fn hover_explains_the_line_break_and_glue() {
         server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
     };
     let newline = hover(2);
-    assert!(newline.contains("#### About \\\\") && !newline.contains("null control sequence"), "{newline}");
+    assert!(newline.contains("#### About `\\\\`") && !newline.contains("null control sequence"), "{newline}");
     let glue = hover(18);
-    assert!(glue.contains("#### About glue"), "{glue}");
+    assert!(glue.contains("#### About *glue*"), "{glue}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1148,7 +1148,7 @@ fn hover_explains_quantities_and_completion_types_arguments() {
         json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": 3 } }),
     );
     let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
-    assert!(hover.contains("#### About glue") && hover.contains("plus"), "{hover}");
+    assert!(hover.contains("#### About *glue*") && hover.contains("plus"), "{hover}");
     let items = complete(&mut server, &uri, 4, 6);
     let detail = items.iter().find(|i| i["label"] == "setlength").and_then(|i| i["detail"].as_str());
     assert!(detail.is_some_and(|d| d.contains("{1: skip register}") && d.contains("{2: glue}")), "{detail:?}");
@@ -1318,7 +1318,7 @@ fn keys_are_labels_or_citations() {
         json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": col("\\ref") - 2 } }),
     );
     let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
-    assert!(hover.contains("- `⟨arg1⟩` label") && hover.contains("About label"), "{hover}");
+    assert!(hover.contains("- `⟨arg1⟩` label") && hover.contains("#### About *label*"), "{hover}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1377,7 +1377,7 @@ fn bibliography_arguments_are_typed_as_files() {
         );
         let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
         let kind = if line == 3 { "bibliography style (.bst)" } else { "bibliography database (.bib)" };
-        assert!(hover.contains(&format!("- `⟨arg1⟩` {kind}")) && !hover.contains("About key"), "{hover}");
+        assert!(hover.contains(&format!("- `⟨arg1⟩` {kind}")) && !hover.contains("#### About *key*"), "{hover}");
     }
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);

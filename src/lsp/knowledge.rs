@@ -21,7 +21,9 @@ pub fn about(names: &[String]) -> String {
     for (title, body) in names.iter().filter_map(|n| topic(n)) {
         if !seen.contains(&title) {
             seen.push(title);
-            out.push_str(&format!("#### About {title}\n\n{body}\n\n"));
+            // A command as code, a type in italics: `About `\\``, `About *glue*`.
+            let head = if title.starts_with('\\') { format!("About `{title}`") } else { format!("About *{title}*") };
+            out.push_str(&format!("#### {head}\n\n{body}\n\n"));
         }
     }
     out
