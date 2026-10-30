@@ -465,18 +465,109 @@
   addEventListener('hashchange', unfold);
   unfold();
 
+  // ------------------------------------------------------------ the landing page's live box
+  // The playground's engine (worker and manifest from play/index.html), started once the box is near or focused;
+  // each edit, debounced, shows what its paragraphs typeset with their findings.
+  const live = document.getElementById('live');
+  if (live) {
+    const src = live.querySelector('textarea'), out = live.querySelector('.live-ts'), status = live.querySelector('.live-status');
+    const MiB = (n) => (n / 2 ** 20).toFixed(1), SEV = ['', 'error', 'warning', 'info', 'hint'], uri = 'file:///work/try.tex';
+    const NAMED = /\\(?:documentclass|usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
+    let engine = null, version = 0, timer = 0;
+    const say = (html, bad = false) => { status.innerHTML = html; status.classList.toggle('live-bad', bad); };
+    async function boot() {
+      say('Loading SaTeX…');
+      const at = new URL('play/index.html', location.href);
+      const manifest = JSON.parse((await (await fetch(at)).text()).match(/<script id="satex-play" type="application\/json">(.*?)<\/script>/s)[1]);
+      const worker = new Worker(URL.createObjectURL(new Blob([manifest.worker], { type: 'text/javascript' })));
+      let line = Promise.resolve(), waiting = null, id = 0, found = [];
+      worker.onmessage = ({ data }) => {
+        if (data.type === 'progress') return say(`Loading SaTeX <progress max="${data.total || 1}" value="${data.loaded}"></progress> ${MiB(data.loaded)} of ${MiB(data.total)} MiB`);
+        if (data.type === 'status') return;
+        if (data.type === 'lsp') for (const m of data.out) if (m.method === 'textDocument/publishDiagnostics' && m.params.uri === uri) found = m.params.diagnostics;
+        const w = waiting;
+        waiting = null;
+        if (data.type === 'error') w?.reject(new Error(data.message.split('\n')[0])); else w?.resolve(data);
+      };
+      // one message at a time, each answered before the next goes; `project` and `reset` have no answer
+      const ask = (msg) => (line = line.then(() => new Promise((resolve, reject) => {
+        if (msg.type === 'project' || msg.type === 'reset') resolve(); else waiting = { resolve, reject };
+        worker.postMessage(msg);
+      })));
+      const lsp = async (method, params, note = false) => {
+        const n = ++id, r = await ask({ type: 'lsp', message: { jsonrpc: '2.0', method, params, ...(note ? {} : { id: n }) } });
+        return r.out.find((m) => m.id === n)?.result;
+      };
+      await ask({ type: 'init', base: new URL(manifest.root, at).href, manifest });
+      return { manifest, base: new URL(manifest.root, at).href, kernel: manifest.kernels[0], ask, lsp, have: new Set(), found: () => found, opened: false };
+    }
+    const start = () => (engine ??= boot().catch((e) => { say(`SaTeX did not load: ${esc(e.message)}`, true); throw e; }));
+    /** The bundles the text names (a class or package) and those they need, not loaded yet. */
+    function wanted(e, text) {
+      const byId = new Map((e.manifest.packages ?? []).map((p) => [p.id, p])), picked = new Map();
+      const pick = (id) => { const p = byId.get(id); if (p && !picked.has(id) && !e.have.has(id)) { picked.set(id, p); p.needs.forEach((n) => pick(`${e.kernel.id}/${n}`)); } };
+      for (const m of text.matchAll(NAMED)) for (const n of m[1].split(',').map((x) => x.trim())) { pick(`${e.kernel.id}/${n}`); pick(`${e.kernel.id}/${n}.cls`); }
+      return [...picked.values()];
+    }
+    async function analyze() {
+      const mine = ++version, e = await start(), text = src.value, t0 = performance.now();
+      const more = wanted(e, text);
+      if (more.length) { say(`Loading ${esc(more.map((p) => p.label).join(', '))}…`); await e.ask({ type: 'bundles', base: e.base, entries: more }); more.forEach((p) => e.have.add(p.id)); }
+      if (mine !== version) return;
+      say('Analyzing…');
+      live.classList.add('busy');
+      e.ask({ type: 'project', dir: '/work', files: { 'try.tex': new TextEncoder().encode(text) } });
+      if (!e.opened) {
+        e.opened = true;
+        e.ask({ type: 'reset', args: [...e.kernel.args, '-f', 'try.tex'], cwd: '/work' });
+        await e.lsp('initialize', { processId: null, rootUri: 'file:///work', capabilities: {} });
+        await e.lsp('initialized', {}, true);
+        await e.lsp('textDocument/didOpen', { textDocument: { uri, languageId: 'latex', version: mine, text } }, true);
+      } else {
+        await e.lsp('textDocument/didChange', { textDocument: { uri, version: mine }, contentChanges: [{ text }] }, true);
+        await e.lsp('satex/analyze', {}, true);
+      }
+      if (mine !== version) return; // a newer text is on its way
+      const rows = (await e.lsp('satex/typeset', { textDocument: { uri } })) ?? [];
+      if (mine !== version) return;
+      live.classList.remove('busy');
+      show(rows.filter((r) => r.kind === 'paragraph' && String(r.path ?? '').endsWith('try.tex')), e.found());
+      say(`Analyzed in ${Math.round(performance.now() - t0)} ms. <a href="play/index.html">Open the playground</a> for hover, completion and traces.`);
+    }
+    /** Each paragraph's text, the findings from its lines below it; those before the first paragraph on top. */
+    function show(paragraphs, found) {
+      const at = (d) => d.range.start.line + 1;
+      const note = (d) => `<li class="f-${SEV[d.severity] || 'info'}"><span class="live-at">${at(d)}</span> ${inline(d.message)}</li>`;
+      const owner = (d) => paragraphs.findLastIndex((r) => r.line <= at(d));
+      const under = (i) => { const f = found.filter((d) => owner(d) === i).sort((a, b) => at(a) - at(b)); return f.length ? `<ul class="live-found">${f.map(note).join('')}</ul>` : ''; };
+      out.innerHTML = under(-1) + paragraphs.map((r, i) => `<p class="ts${r.heading ? ' ts-h' : ''}">${notation(r.marked ?? r.detail ?? '')}</p>${under(i)}`).join('')
+        || '<p class="muted">It sets no paragraph.</p>';
+    }
+    src.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(analyze, 350); });
+    src.addEventListener('focus', () => engine || analyze(), { once: true });
+    new IntersectionObserver((seen, o) => { if (seen.some((s) => s.isIntersecting)) { o.disconnect(); if (!engine) analyze(); } }, { rootMargin: '100px' }).observe(live);
+  }
+
   // The landing page: the claim turns through what a run knows; tab rows show one case at a time.
   const knows = [...document.querySelectorAll('[data-knows]')];
-  if (knows.length > 1 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    // a cross-fade: the one leaving slides up while the next slides in from below
-    let shown = 0;
-    setInterval(() => {
-      const [out, next] = [knows[shown], knows[(shown = (shown + 1) % knows.length)]];
+  const dots = document.querySelector('.claim-dots');
+  if (knows.length > 1 && dots) {
+    // a cross-fade, a dot per claim
+    let shown = 0, paused = false;
+    dots.innerHTML = knows.map((k, i) => `<button type="button" role="tab" aria-selected="${!i}" aria-label="${k.textContent}"></button>`).join('');
+    const show = (i) => {
+      if (i === shown) return;
+      const [out, next] = [knows[shown], knows[(shown = i)]];
       out.classList.replace('on', 'off');
       next.classList.remove('off');
       requestAnimationFrame(() => next.classList.add('on'));
       setTimeout(() => out.classList.remove('off'), 800);
-    }, 3600);
+      [...dots.children].forEach((d, j) => d.setAttribute('aria-selected', j === i));
+    };
+    dots.onclick = (e) => { const b = e.target.closest('button'); if (b) { paused = true; show([...dots.children].indexOf(b)); } };
+    const claim = knows[0].closest('.claim');
+    for (const el of [claim, dots]) { el.onmouseenter = () => (paused = true); el.onmouseleave = () => (paused = false); }
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) setInterval(() => paused || show((shown + 1) % knows.length), 4200);
   }
   for (const [tabs, key] of [['.contrast', 'case'], ['.install-tabs', 'way']]) {
     const row = document.querySelector(tabs);

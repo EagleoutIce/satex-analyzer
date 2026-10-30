@@ -3,20 +3,30 @@
     <img class="ink word" src="{{mark}}" alt="">
     <span class="tag"><img class="ink l1" src="{{line1}}" alt=""><img class="ink l2" src="{{line2}}" alt=""></span>
   </a>
-  <p class="lead">{{description}}</p>
-  <p class="claim">SaTeX interprets your TeX abstractly, over every path at once, so it can tell you <span class="claim-rot" aria-live="polite"><span data-knows class="on">which definition holds at each line.</span><span data-knows>what a <code>\csname</code> built and what that expands to.</span><span data-knows>the category code of each character, on each path.</span><span data-knows>what each paragraph typesets, ligatures included.</span><span data-knows>what the <code>.aux</code> will hold after the next run.</span></span></p>
+  <p class="claim"><span class="claim-lead">SaTeX interprets TeX abstractly, on every path at once. Without compiling, it tells you</span><span class="claim-rot" aria-live="polite"><span data-knows class="on">which macros are available at each line, on every path</span><span data-knows>which package a command comes from, and which line loads it</span><span data-knows>what a <code>\csname</code> builds and what that expands to</span><span data-knows>where a branch you never compiled breaks the document</span><span data-knows>the category code of each character, after every <code>\makeatletter</code></span><span data-knows>which options a package reads and what each one changes</span><span data-knows>what each paragraph sets, ligatures included</span><span data-knows>what the <code>.aux</code> holds after the next run, and how many runs the build needs</span></span></p>
+  <p class="claim-dots" role="tablist" aria-label="what SaTeX tells you"></p>
   <p class="actions"><a class="button" href="play/index.html">Try it in the browser</a> <a class="button ghost" href="#install">Install</a> <a class="button ghost" href="#compare">Comparison</a> <a class="button ghost" href="guide.html">Guide</a></p>
 </section>
 
 <section class="band" id="examples">
   <h2>Examples</h2>
-  <p class="sub">Hover a command for its explanation, an underline for its finding. All of it comes from running the file.</p>
+  <p class="sub">Hover a command for its explanation, an underline for its finding. All of it comes from SaTeX's analysis of the file.</p>
   <div class="examples">{{examples}}</div>
   <p class="muted small">Analyzed at build time with SaTeX <span title="{{versiontitle}}">{{version}}</span>.</p>
+  <div class="live" id="live">
+    <div class="live-in"><label for="live-src"><b>Your own</b> · type LaTeX, SaTeX reads it again as you type</label><textarea id="live-src" spellcheck="false" rows="9">\documentclass{article}
+\newcommand{\greet}[1]{Hello, \emph{#1}!}
+\begin{document}
+\section{Welcome}
+\greet{world} Pages 10-12 come next.
+See Section~\ref{sec:none}.
+\end{document}</textarea></div>
+    <div class="live-out"><p class="live-status muted" aria-live="polite">SaTeX runs here once you scroll to this box: about 10&nbsp;MB, loaded once.</p><div class="live-ts typeset"></div></div>
+  </div>
 </section>
 
 <section class="band alt" id="run">
-  <h2>Why run the code</h2>
+  <h2>Why interpret the code</h2>
   <p class="sub">TeX decides what a line means while it runs: catcodes change, names are built, definitions come and go. A tool that only reads the text has to guess at these. SaTeX interprets the kernel, the class and every package as TeX would, over every path at once, and joins the paths soundly where it cannot decide.</p>
   <div class="contrast" role="tablist" aria-label="examples of what a run knows">
     <button type="button" role="tab" aria-selected="true" data-case="0">A name built by <code>\csname</code></button>
@@ -48,7 +58,7 @@ a | b \gdef\Maybe{}</code></pre>
 
 <section class="band" id="compare">
   <h2>Comparison</h2>
-  <p class="sub">The other tools are good at what they do. SaTeX differs in that it executes the code, so it can check what the others infer from names and text.</p>
+  <p class="sub">The other tools are good at what they do. SaTeX interprets the code abstractly, so it can check what the others infer from names and text.</p>
   <div class="table-wrap"><table class="compare">
     <thead><tr><th scope="col"></th><th scope="col">SaTeX</th><th scope="col"><a href="https://github.com/witiko/expltools">explcheck</a></th><th scope="col"><a href="https://github.com/latex-lsp/texlab">TeXLab</a></th><th scope="col"><a href="https://github.com/astoff/digestif">digestif</a></th><th scope="col"><a href="https://www.nongnu.org/chktex/">ChkTeX</a></th></tr></thead>
     <tbody>
