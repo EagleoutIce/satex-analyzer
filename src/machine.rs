@@ -2563,10 +2563,10 @@ impl<'a> Machine<'a> {
                 old.symmetric_difference(&new).any(|line| reads(line))
             };
             // Only a file the run read, or looked for, sends it round again.
+            // Still goes to the overlay, as TeX leaves it on disk.
             let looked = checkpoints.looked();
-            // The build's files this run left other than it read them; the
-            // last run reads those as unknown text, so it ends there.
-            let mut changed: Vec<(PathBuf, String)> = analysis
+            // Files this run left changed, and whether that means another run.
+            let mut changed: Vec<(PathBuf, String, bool)> = analysis
                 .written
                 .iter()
                 // A file a program made (`\write18`) is not text the run wrote:
@@ -2577,12 +2577,10 @@ impl<'a> Machine<'a> {
                     // The run's own copy only: one on disk is an engine's.
                     let now = crate::overlay::text(&at);
                     // A file not there yet is an empty one.
-                    if let Some(new) = text
-                        && (!looked.iter().any(|p| p.components().eq(at.components()))
-                            || !matters(now.as_deref().unwrap_or_default(), new))
-                    {
-                        return None;
-                    }
+                    let again = text.as_ref().is_none_or(|new| {
+                        looked.iter().any(|p| p.components().eq(at.components()))
+                            && matters(now.as_deref().unwrap_or_default(), new)
+                    });
                     // A line a rerun changed again (a label's page that moves on),
                     // or anything before the last run, is read as the join of both
                     // texts: a widening, so the build settles. The first run read no
@@ -2602,18 +2600,19 @@ impl<'a> Machine<'a> {
                         Some(t) => widen_text(now.as_deref().unwrap_or_default(), t),
                         None => crate::tex::UNKNOWN_ANY.to_string(),
                     };
-                    (now.as_deref() != Some(text.as_str())).then_some((at, text))
+                    (now.as_deref() != Some(text.as_str())).then_some((at, text, again))
                 })
                 .collect();
             // The bibliography tool's file, made from the .bib entries cited.
             if let Some((at, text)) = Machine::virtual_bbl(&analysis, &base, path)
                 && crate::overlay::text(&at).as_deref() != Some(text.as_str())
             {
-                changed.push((at, text));
+                changed.push((at, text, true));
             }
             if cfg.verbose >= 1 {
-                let names: Vec<_> =
-                    changed.iter().filter_map(|(at, _)| at.file_name()).map(|n| n.to_string_lossy()).collect();
+                let names: Vec<_> = (changed.iter().filter(|c| c.2).filter_map(|(at, ..)| at.file_name()))
+                    .map(|n| n.to_string_lossy())
+                    .collect();
                 crate::progress::note!(
                     "satex: build run {run} took {:.1}s; changed: {}",
                     took.as_secs_f64(),
@@ -2621,7 +2620,7 @@ impl<'a> Machine<'a> {
                 );
             }
             if cfg.verbose >= 2 {
-                for (at, text) in &changed {
+                for (at, text, _) in &changed {
                     let now = crate::overlay::text(at).unwrap_or_default();
                     let old: HashSet<&str> = now.lines().collect();
                     text.lines().filter(|l| !old.contains(l)).for_each(|l| crate::progress::note!("  + {l}"));
@@ -2629,10 +2628,10 @@ impl<'a> Machine<'a> {
                     now.lines().filter(|l| !new.contains(l)).for_each(|l| crate::progress::note!("  - {l}"));
                 }
             }
-            if changed.is_empty() || run == runs {
+            if !changed.iter().any(|c| c.2) || run == runs {
                 break analysis;
             }
-            for (at, text) in changed {
+            for (at, text, _) in changed {
                 crate::overlay::set(&at, text);
                 placed.push(at);
             }

@@ -3264,6 +3264,28 @@ fn the_build_reruns_only_for_what_it_read() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// A build file named only in another (a part `.aux` the main `.aux`
+/// names) is on disk after the run that wrote it, though no run read it
+/// yet: the next run reads it, so two runs settle, as with LaTeX.
+#[test]
+fn a_build_file_another_names_is_read_in_the_next_run() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-named-file-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = "\\documentclass{article}\\def\\Y{0}\\InputIfFileExists{\\jobname.lof}{}{}\n\
+        \\immediate\\openout1=\\jobname.lof \\immediate\\write1{\\string\\InputIfFileExists{\\jobname.lot}{}{}}\\immediate\\closeout1\n\
+        \\immediate\\openout3=\\jobname.lot \\immediate\\write3{\\string\\gdef\\string\\Y{1}}\\immediate\\closeout3\n\
+        \\edef\\X{\\Y}\\begin{document}\\end{document}\n";
+    let path = dir.join("named.tex");
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    std::fs::remove_dir_all(dir).ok();
+    assert_eq!(crate::support::body(&analysis, "X"), "1");
+    assert_eq!(analysis.build_runs, 2);
+}
+
 /// The bibliography goes into the typeset pass: the build makes its own
 /// `.bbl` from the entries the document cites, so `\bibliography` sets
 /// them and `\cite` finds its label. An entry no `\cite` names is not set.
