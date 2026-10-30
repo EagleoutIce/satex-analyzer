@@ -776,3 +776,8 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .tr-now-row code { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--sunk); padding: .2rem .4rem; border-radius: 6px; }
 .tr-ahead mark { background: color-mix(in srgb, var(--accent) 25%, transparent); color: inherit; border-radius: 3px; }
 .tr-all > summary { cursor: pointer; color: var(--muted); font-size: .8rem; margin: .2rem 0; }
+.lib-kinds { display: flex; gap: .3rem; flex-wrap: wrap; } .lib-kind { border-radius: 999px; padding: .1rem .6rem; font-size: .74rem; background: var(--panel); border: 1px solid var(--border); color: var(--fg); }
+.lib-kind[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: var(--bg); } .lib-kind b { font-weight: 500; opacity: .7; }
+.lib-list li:focus { outline: 2px solid var(--accent); outline-offset: -2px; } .lib-try-it { font-size: .7rem; padding: 0 .4rem; }
+.ty-tip .ty-what { font-weight: 500; margin-bottom: .25rem; padding-bottom: .25rem; border-bottom: 1px solid var(--border); }
+.arg.arg-lit { background: none; border: 0; color: var(--fg); font-style: italic; padding: 0 .1rem; }

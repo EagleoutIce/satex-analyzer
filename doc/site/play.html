@@ -59,6 +59,7 @@
         <div class="lib-bar"><input type="search" id="lib-search" placeholder="Search names in force: \section, tikz, skip…" aria-label="search the names in force">
           <select id="lib-from" aria-label="from which package"><option value="">every package</option></select>
           <label class="ts-toggle" title="Also list internal names: with @, expl3 internals"><span data-short="internal">internal</span><input type="checkbox" id="lib-internal" role="switch" aria-label="internal names"></label></div>
+        <div id="lib-kinds" class="lib-kinds" role="group" aria-label="which kind of name"></div>
         <ul id="lib-list" class="lib-list"><li class="muted">The names appear once the document is checked.</li></ul>
         <div class="lib-try"><label for="lib-text">Try <small class="muted">read right after <code>\begin{document}</code> of this document; the file stays as it is</small></label>
           <textarea id="lib-text" rows="2" spellcheck="false" placeholder="\textbf{bold} 10--12 \hfill right"></textarea>

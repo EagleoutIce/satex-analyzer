@@ -1216,16 +1216,57 @@
     libraryShow();
   }
   /** The first 200 names the search matches: a name starting with it first, then one containing it, then a usage that does. */
+  /** How well `name` matches `q`: a prefix, a part after `@`, `_` or `:`, anywhere, the letters in order, else none. */
+  const libRank = (name, q) => {
+    const n = name.toLowerCase().replace(/^\\/, '');
+    if (!q) return 0;
+    if (n.startsWith(q)) return 0;
+    if (n.split(/[@_:]/).some((part) => part.startsWith(q))) return 1;
+    if (n.includes(q)) return 2;
+    let k = 0;
+    for (const c of n) if (c === q[k]) k++;
+    return k === q.length ? 3 : null;
+  };
+  let libKind = '';
   function libraryShow() {
     const q = libSearch.value.trim().toLowerCase().replace(/^\\/, ''), from = libFrom.value;
-    const rank = (r) => { const n = r.name.toLowerCase().replace(/^\\/, ''); return !q ? 0 : n.startsWith(q) ? 0 : n.includes(q) ? 1 : String(r.effective ?? '').toLowerCase().includes(q) ? 2 : 3; };
-    const hits = libNames.filter((r) => (!from || r.package === from) && rank(r) < 3).sort((a, b) => rank(a) - rank(b) || a.name.length - b.name.length);
+    const kind = (r) => (r.tag === 'environment' ? 'environment' : r.tag === 'primitive' ? 'primitive' : 'command');
+    const hits = libNames
+      .map((r) => [r, libRank(r.name, q) ?? (q && String(r.effective ?? '').toLowerCase().includes(q) ? 4 : null)])
+      .filter(([r, rank]) => rank !== null && (!from || r.package === from) && (!libKind || kind(r) === libKind))
+      .sort((a, b) => a[1] - b[1] || a[0].name.length - b[0].name.length || a[0].name.localeCompare(b[0].name))
+      .map(([r]) => r);
     $('lib-count').textContent = libNames.length ? String(hits.length) : '';
-    libList.innerHTML = hits.slice(0, 200).map((r) => `<li><code class="cs-ref" data-cs="${escape(r.name)}" tabindex="0">${escape(r.name)}</code>` +
-      `${r.effective && r.effective !== r.name ? `<span class="lib-use">${escape(r.effective)}</span>` : ''}<span class="lib-tag">${escape(r.tag ?? '')}</span><span class="lib-pkg">${escape(r.package ?? '')}</span></li>`).join('') +
+    const counts = { '': libNames.length };
+    for (const r of libNames) counts[kind(r)] = (counts[kind(r)] ?? 0) + 1;
+    $('lib-kinds').innerHTML = [['', 'all'], ['command', 'commands'], ['environment', 'environments'], ['primitive', 'primitives']]
+      .map(([k, label]) => `<button type="button" class="lib-kind" aria-pressed="${k === libKind}" data-kind="${k}">${label} <b>${counts[k] ?? 0}</b></button>`).join('');
+    libList.innerHTML = hits.slice(0, 200).map((r, i) => `<li tabindex="-1" data-i="${i}"><code class="cs-ref" data-cs="${escape(r.name)}" tabindex="0">${escape(r.name)}</code>` +
+      `${r.effective && r.effective !== r.name ? `<span class="lib-use">${slotsOf(r.effective)}</span>` : ''}` +
+      `<button type="button" class="lib-try-it ghost small" data-try="${escape(r.effective ?? r.name)}" title="put it in the Try box">try</button>` +
+      `<span class="lib-pkg">${escape(r.package ?? '')}</span></li>`).join('') +
       (hits.length > 200 ? `<li class="muted">${hits.length - 200} more: narrow the search</li>` : '') ||
       `<li class="muted">${libNames.length ? 'No name matches.' : 'The names appear once the document is checked.'}</li>`;
   }
+  /** A usage line with its ⟨…⟩ placeholders as the explain cards draw them. */
+  const slotsOf = (usage) => (cards.slots ? cards.slots(escape(usage)) : escape(usage));
+  $('lib-kinds').addEventListener('click', (e) => { const b = e.target.closest('.lib-kind'); if (b) { libKind = b.dataset.kind; libraryShow(); } });
+  libList.addEventListener('click', (e) => {
+    const t = e.target.closest('.lib-try-it');
+    if (!t) return;
+    // the usage with its placeholders left for the reader to fill
+    const text = $('lib-text');
+    text.value = t.dataset.try.replace(/[⟨⟩]/g, '');
+    text.focus();
+  });
+  // ↓ from the search goes into the list, ↑/↓ move, Enter explains
+  libSearch.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); libList.querySelector('li[data-i]')?.focus(); } });
+  libList.addEventListener('keydown', (e) => {
+    const li = e.target.closest('li[data-i]');
+    if (!li) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); (e.key === 'ArrowDown' ? li.nextElementSibling : li.previousElementSibling ?? libSearch)?.focus(); }
+    if (e.key === 'Enter') { e.preventDefault(); explainName(li.querySelector('.cs-ref').dataset.cs); }
+  });
   libSearch.oninput = libraryShow;
   libFrom.onchange = libraryShow;
   libInternal.onchange = libraryLoad;
