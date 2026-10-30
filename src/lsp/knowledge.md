@@ -65,7 +65,7 @@ An output stream number, 0 to 15, that `\openout` opens and `\write` writes line
 A LaTeX counter, by name: `\newcounter{step}` makes the count register `\c@step` and the printer `\thestep`. `\setcounter`, `\stepcounter` and `\value` take the name.
 
 ## dimen name, skip name, muskip name, toks name, box name, read name, write name
-The characters of a register's name, put together by `\csname` (`\csname dimen@\endcsname`). Which register it is depends on the text.
+A register's name built by `\csname` (`\csname dimen@\endcsname`).
 
 ## control sequence
 A command name: a backslash and letters (`\name`), or a backslash and one other character (`\%`). `\def`, `\let`, `\newcommand` and `\newif` take one to define.
@@ -91,19 +91,19 @@ An expl3 comma list, kept as a token list: `\clist_set:Nn \l_my_clist {a, b}`. N
 An expl3 variable of that kind: a sequence, a property list, a floating point number, a boolean, a compiled regex, a coffin, a flag, an integer array or a category code table. Each is made by its module's `\…_new:N` and changed only through that module's functions. Names end in the kind (`\l_my_seq`).
 
 ## key
-A name something is looked up by: a label, a citation or an option. Case matters.
+A name used to look something up: a label, a citation key or an option. Case matters.
 
 ## label
-The name `\label` gives a place and `\ref` looks up. Case matters, and citation keys live elsewhere.
+The key in `\label{…}`, which `\ref` and `\pageref` refer to. Case matters; citation keys are separate.
 
 ## citation key
-The key of a `.bib` entry or a `\bibitem`, which `\cite` looks up. Case matters, and labels live elsewhere.
+The key of a `.bib` entry or a `\bibitem`, used by `\cite`. Case matters; labels are separate.
 
 ## option key
 A key in a key list (`\pgfkeys`, `\tikzset`, a package's options). A value may follow after `=`.
 
 ## environment name
-What `\begin` opens and `\end` closes: `figure`, `itemize`, or one the document defines.
+The name in `\begin{…}` and `\end{…}`, such as `figure` or `itemize`.
 
 ## file, input file
 A file name, which ends at the first space. TeX adds the usual extension (`.tex`, `.sty`, `.cls`, `.bib`) where the command expects one, and looks in the project, then in the TeX tree.
@@ -137,19 +137,19 @@ The key list in brackets after `\documentclass`, `\usepackage` or `\RequirePacka
 A key may take a value after `=`. Options the class does not know reach the packages that declare them.
 
 ## name
-Characters that make up a name, the way `\csname` builds a command name or LaTeX builds a counter's.
+Text that becomes a name, as inside `\csname…\endcsname` or a counter's name.
 
 ## text
-Any balanced text: names and code alike. Nothing narrower is known about it.
+Balanced text of any kind.
 
 ## definition body
 The replacement text of a definition: code that runs each time the command is used, with `#1`… standing for its arguments.
 
 ## any
-Nothing is known about the text: it is read as it stands.
+No type is known.
 
 ## nothing
-No text at all: the type of an argument nothing reads.
+Below every type: an argument that is never read.
 
 ## bst plain
 BibTeX style: entries sorted by author, then year and title. Labels are numbers. Works with `\cite` and `\bibliographystyle{plain}`.
