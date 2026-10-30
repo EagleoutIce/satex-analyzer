@@ -134,6 +134,9 @@ pub struct Event {
     pub name: Sym,
     pub span: Span,
     pub detail: Option<Box<str>>,
+    /// What the input still holds at this step, nearest first: the tokens
+    /// queued to be read, then the file text after them.
+    pub ahead: Option<Box<str>>,
 }
 
 /// A loaded file: its path and its [`LoadKind`] (input, package, class).
@@ -5033,6 +5036,7 @@ will look undefined",
             return;
         }
         let index = self.out.trace.len() as u32;
+        let ahead = Some(self.ahead_text(24, 80).into());
         self.out.trace.push(Event {
             index,
             depth: self.within.len() as u16,
@@ -5040,7 +5044,33 @@ will look undefined",
             name,
             span,
             detail: detail().map(Into::into),
+            ahead,
         });
+    }
+
+    /// The input still to be read: up to `tokens` queued tokens, top of
+    /// the input stack first, then up to `chars` of the file being read.
+    fn ahead_text(&self, tokens: usize, chars: usize) -> String {
+        let mut queued: Vec<Token> = Vec::new();
+        for frame in self.input.iter().rev() {
+            if queued.len() >= tokens {
+                break;
+            }
+            match frame {
+                Frame::Returned(toks) => queued.extend(toks.iter().rev().take(tokens - queued.len())),
+                Frame::Tokens { toks, pos, .. } => {
+                    queued.extend(toks.get(*pos..).unwrap_or_default().iter().take(tokens - queued.len()))
+                }
+                Frame::File { mouth, .. } => {
+                    let text: String = mouth.source().iter().skip(mouth.offset()).take(chars).collect();
+                    let mut out = crate::tex::detokenize(&queued, &self.out.interner);
+                    out.push_str(&text);
+                    return out;
+                }
+                _ => {}
+            }
+        }
+        crate::tex::detokenize(&queued, &self.out.interner)
     }
 
     /// Record a construct satex cannot follow yet, once per name and code:

@@ -768,3 +768,11 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .compare tbody tr { transition: background-color var(--quick); } .compare tbody tr:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
 .refs { font-size: .8rem; color: var(--muted); padding-left: 1.2rem; margin-top: .8rem; } .refs li { white-space: normal; overflow: visible; background: none; border: 0; box-shadow: none; padding: 0; }
 .more { margin-top: 1rem; } .more > summary { cursor: pointer; color: var(--accent); }
+/* the trace's current step: what it is, what it inserts, what the input still holds */
+.tr-now { border: 1px solid var(--border); border-radius: 10px; padding: .6rem .8rem; margin: 0 0 .6rem; background: var(--panel); display: grid; gap: .35rem; }
+.tr-now-head { display: flex; align-items: baseline; gap: .5rem; } .tr-now-head .tr-at { margin-left: auto; }
+.tr-now-row { display: grid; grid-template-columns: 4.5rem 1fr; gap: .5rem; align-items: baseline; font-size: .82rem; }
+.tr-now-row b { color: var(--muted); font-weight: 500; font-size: .74rem; text-transform: uppercase; letter-spacing: .05em; }
+.tr-now-row code { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--sunk); padding: .2rem .4rem; border-radius: 6px; }
+.tr-ahead mark { background: color-mix(in srgb, var(--accent) 25%, transparent); color: inherit; border-radius: 3px; }
+.tr-all > summary { cursor: pointer; color: var(--muted); font-size: .8rem; margin: .2rem 0; }

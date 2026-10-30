@@ -1347,6 +1347,14 @@
     row?.scrollIntoView({ block: 'nearest' });
     trace.cur = i;
     $('trace-step').textContent = `step ${trace.order.indexOf(i) + 1} of ${trace.order.length}`;
+    // the one step: what it is, what it puts back into the input, and what the input still holds
+    const r = trace.steps[i], name = stepName(r.name);
+    const ahead = String(r.ahead ?? ''), head = ahead.match(/^\\[A-Za-z@:_]+|^\\.|^./s)?.[0] ?? '';
+    $('trace-now').innerHTML = `<div class="tr-now-head">${cacheBadge(STEP_KIND[r.step] ?? 'hashes', r.step)}<code class="cs-ref" data-cs="${escape(name)}" tabindex="0">${escape(name)}</code>` +
+      `<a href="#" class="tr-at o-go" data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}">${escape(r.file ?? '')}:${r.line}</a></div>` +
+      (r.inserts != null ? `<div class="tr-now-row"><b>inserts</b><code>${escape(r.inserts) || '<i>nothing</i>'}</code></div>` : r.detail ? `<div class="tr-now-row"><b>detail</b><code>${escape(r.detail)}</code></div>` : '') +
+      (r.sets ? `<div class="tr-now-row"><b>sets</b><code>${escape(r.sets)}</code></div>` : '') +
+      `<div class="tr-now-row"><b>ahead</b><code class="tr-ahead"><mark>${escape(head)}</mark>${escape(ahead.slice(head.length))}</code></div>`;
   }
   const by = (i, d) => trace.order[Math.max(0, Math.min(trace.order.length - 1, trace.order.indexOf(i) + d))];
   /** The first step after `i` and all it called: over a call. */
@@ -1363,11 +1371,12 @@
     const rest = mine.length ? top.filter((i) => !mine.includes(i)) : [];
     const html = (mine.length ? mine : top).map(stepNode).join('') +
       (rest.length ? `<li><details class="tr-node"><summary><span class="muted">${plural(rest.length, 'other step')} on this line</span></summary><ul>${rest.map(stepNode).join('')}</ul></details></li>` : '');
+    const now = '<div class="tr-now" id="trace-now" aria-live="polite"></div>';
     const bar = '<div class="tr-bar" role="toolbar" aria-label="step through the trace">' +
       [['prev', '◀', 'previous step (←)'], ['next', '▶', 'next step (→)'], ['over', '⤼', 'over this call (⇧→)'], ['out', '⤴', 'out to the caller (↑)']]
         .map(([m, g, t]) => `<button type="button" class="ghost small" data-move="${m}" title="${t}" aria-label="${t}">${g}</button>`).join('') +
       '<span id="trace-step" class="muted"></span></div>';
-    return `${bar}<ul class="tr-tree">${html}</ul>`;
+    return `${bar}${now}<details class="tr-all"><summary>All steps</summary><ul class="tr-tree">${html}</ul></details>`;
   }
   traceBody.addEventListener('toggle', (e) => { const li = e.target.parentElement; if (li?.dataset.i && e.target.open) fill(li); }, true);
   traceBody.addEventListener('mouseover', (e) => {

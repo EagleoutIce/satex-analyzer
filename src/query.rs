@@ -1133,6 +1133,7 @@ fn trace(analysis: &Analysis) -> Vec<Record> {
             if let Some(text) = set.get(&event.span) {
                 record.insert("sets".into(), json!(text));
             }
+            record.insert("ahead".into(), json!(event.ahead.as_deref()));
             record
         })
         .collect()
