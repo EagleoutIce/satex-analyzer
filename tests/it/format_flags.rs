@@ -104,3 +104,18 @@ fn newcommand_takes_a_star_before_its_name() {
     let signature = rows[0]["signature"].as_str().unwrap_or_default();
     assert!(signature.starts_with('s'), "{rows}");
 }
+
+/// The format's environments (`itemize`, `\endtabular`'s pair) are no run's
+/// `\newenvironment`, but `scope` still names them environments: `\X` and
+/// `\endX` both macros.
+#[test]
+fn scope_names_the_format_s_environments() {
+    let output = run(&["scope", "-f", SAMPLE, "--format", "json"]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    let tag = |name: &str| rows.iter().find(|r| r["name"] == name).map(|r| r["tag"].clone());
+    for name in ["\\itemize", "\\enditemize", "\\tabular"] {
+        assert_eq!(tag(name), Some(serde_json::json!("environment")), "{name}");
+    }
+    assert_ne!(tag("\\input"), Some(serde_json::json!("environment")));
+}

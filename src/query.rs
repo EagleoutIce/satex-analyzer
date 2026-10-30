@@ -2595,9 +2595,14 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
         {
             continue;
         }
+        // `\X` and `\endX` both macros: an environment the format made
+        let base = name.strip_prefix("end").filter(|b| !b.is_empty()).unwrap_or(name);
+        let partner = if base.len() == name.len() { format!("end{name}") } else { base.to_string() };
+        let paired = tag == "macro"
+            && analysis.interner.lookup(&partner).is_some_and(|p| analysis.env.meaning(p).as_macro().is_some());
         let mut record = Map::new();
         record.insert("name".into(), json!(analysis.interner.cs(sym)));
-        record.insert("tag".into(), json!(tag));
+        record.insert("tag".into(), json!(if paired { "environment" } else { tag }));
         record.insert("effective".into(), json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), None)));
         record.insert("package".into(), json!("kernel"));
         rows.push((2, record));
