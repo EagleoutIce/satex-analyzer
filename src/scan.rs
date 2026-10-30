@@ -15,18 +15,8 @@ use crate::value::{
 /// ([`Machine::digits_in`]).
 pub(crate) const TYPED_DIGITS: &str = "\u{2}unknown digits:";
 
-/// The number places `[i, j)` of a `k`-digit number in `num` spell. A
-/// length `k` of 0 is one not known, of at least two digits, and `j` of 0
-/// then the end.
+/// The number places `[i, j)` of a `k`-digit number in `num` spell.
 fn places(num: Num, (k, i, j): (u32, u32, u32)) -> Num {
-    if k == 0 {
-        return match (i, j) {
-            (0, 0) => num,
-            (0, j) => Num::range(10i64.pow(j - 1), 10i64.pow(j) - 1),
-            (_, 0) => Num::range(0, num.hi.max(0)),
-            _ => Num::range(0, 10i64.pow(j - i) - 1),
-        };
-    }
     let (p, m) = (10i64.pow(k - j), 10i64.pow(j - i));
     let (lo, hi) = (num.lo.max(0) / p, num.hi.max(0) / p);
     match lo / m == hi / m {
@@ -995,10 +985,9 @@ impl Machine<'_> {
 
     /// What TeX may read as the first token of the digits `whole` stands
     /// for, which lie in `num`: one arm for a sign, for one digit and for
-    /// several, each with the interval `whole` has on it and the tokens it
-    /// spells. Several digits are its first place and the rest, slices of
-    /// `whole` ([`Machine::slice_token`]) of the length both ends have, or
-    /// of one not known.
+    /// each longer length, each with the interval `whole` has on it and the
+    /// tokens it spells. Several digits are its first place and the rest,
+    /// slices of `whole` ([`Machine::slice_token`]).
     pub(crate) fn digit_arms(&mut self, whole: Sym, num: Num, span: Span) -> Vec<(Num, Vec<Token>)> {
         let mut arms = Vec::new();
         if num.lo < 0 {
@@ -1010,14 +999,19 @@ impl Machine<'_> {
         if num.hi >= 0 && num.lo <= 9 {
             arms.push((Num::range(num.lo.max(0), num.hi.min(9)), vec![Token::new(Tok::Cs(whole), span)]));
         }
-        if num.hi >= 10 {
-            let part = Num::range(num.lo.max(10), num.hi);
-            let len = |n: i64| n.to_string().len() as u32;
-            let k = if len(part.lo) == len(part.hi) { len(part.hi) } else { 0 };
+        // An arm per length: its slices know where the number ends.
+        let len = |n: i64| n.to_string().len() as u32;
+        for k in len(num.lo.max(10))..=len(num.hi.max(0)) {
+            let part = Num::range(num.lo.max(10i64.saturating_pow(k - 1)), num.hi.min(10i64.saturating_pow(k) - 1));
+            if k < 2 || part.lo > part.hi {
+                continue;
+            }
             let text =
                 vec![self.slice_token(whole, part, (k, 0, 1), span), self.slice_token(whole, part, (k, 1, k), span)];
             arms.push((part, text));
         }
+        let most = self.scratch.split_digits.entry(whole).or_default();
+        *most = arms.len().max(*most);
         arms
     }
 
@@ -1821,6 +1815,13 @@ impl Machine<'_> {
         // not a bound the interval stretches to.
         if err.0 { value.join(&zero, self.env.sets) } else { value }
     }
+}
+
+/// Digits of any length (a 32-bit value nothing bounds): a split by
+/// length keeps nothing of their bound, so a read takes them whole.
+pub(crate) fn unbounded_digits(num: Num) -> bool {
+    let any = |lo: i64, hi: i64| lo <= 1 && hi >= 1_000_000_000;
+    any(num.lo.max(1), num.hi) && (num.lo >= 0 || any(num.hi.min(-1).saturating_neg(), num.lo.saturating_neg()))
 }
 
 #[cfg(test)]

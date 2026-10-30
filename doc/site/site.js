@@ -111,10 +111,44 @@
   const slot = (name, kind, ty) => {
     const tip = SLOT[name.toLowerCase()] ?? (/^arg\d+$/.test(name) ? `the ${name.slice(3)}. argument${kind ? `, ${KIND[kind]}` : ''}${ty ? `, read as ${ty}` : ''}` : `${name}, read by the command`);
     // the brackets as entities: a chip is never wrapped again
-    return `<span class="arg arg-${kind ?? 'slot'}" title="${esc(tip)}">&#x27E8;${esc(name)}${ty ? `<small>: ${tyLink(ty)}</small>` : ''}&#x27E9;</span>`;
+    const named = TY.has(name) ? tyLink(name) : esc(name);
+    // a chip with a type card says what it is in the card, not in a second tooltip under it
+    const card = (ty && TYPES().has(ty)) || (TY.has(name) && TYPES().has(name));
+    return `<span class="arg arg-${kind ?? 'slot'}" ${card ? `data-tip="${esc(tip)}"` : `title="${esc(tip)}"`}>&#x27E8;${named}${ty ? `<small>: ${tyLink(ty)}</small>` : ''}&#x27E9;</span>`;
   };
-  /** A type's name linking to the wiki's Ty lattice. */
-  const tyLink = (t) => `<a class="ty" target="_blank" rel="noopener" href="${document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? ''}wiki/domains.html#argument-types-the-ty-lattice" title="the type ${esc(t)} in the Ty lattice">${esc(t)}</a>`;
+  /** The placeholders of primitive syntax that are types of the Ty lattice. */
+  const TY = new Set(['number', 'dimen', 'glue', 'muglue', 'control sequence']);
+  /** A type's name linking to the wiki's Ty lattice; hovered, it shows its card ([`tyCard`]). */
+  const tyLink = (t) => `<a class="ty" target="_blank" rel="noopener" href="${document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? ''}wiki/domains.html#argument-types-the-ty-lattice" data-ty="${esc(t)}"${TYPES().has(t) ? '' : ` title="the type ${esc(t)} in the Ty lattice"`}>${esc(t)}</a>`;
+  /** The lattice by name (`satex completions json`'s `types`), when the page has it. */
+  const TYPES = () => (window.satexTypes ??= new Map((window.satexTypeList ?? []).map((t) => [t.name, t])));
+  /** A type's card: its chain up to `any`, what it is, the types right below it. */
+  function tyCard(name) {
+    const types = TYPES(), t = types.get(name);
+    if (!t) return '';
+    const up = [];
+    for (let x = t; x && !up.includes(x.name); x = x.name === 'any' ? null : types.get(x.parent)) up.unshift(x.name);
+    const below = [...types.values()].filter((x) => x.parent === name && x.name !== name).map((x) => x.name);
+    const chain = up.map((n) => (n === name ? `<b>${esc(n)}</b>` : esc(n))).join(' <span class="ty-sep">›</span> ');
+    return `<div class="ty-chain">${chain}</div><p>${esc(t.about).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` +
+      (below.length ? `<div class="ty-below"><span>below</span> ${below.map((n) => `<code>${esc(n)}</code>`).join(' ')}</div>` : '') +
+      '<div class="ty-foot">click: the lattice in the wiki</div>';
+  }
+  {
+    let tip = null;
+    document.addEventListener('mouseover', (e) => {
+      const a = e.target.closest?.('a.ty[data-ty]'), chip = e.target.closest?.('.arg[data-tip]');
+      const ty = a?.dataset.ty ?? chip?.querySelector('a.ty[data-ty]')?.dataset.ty;
+      const html = ty && (chip ? `<div class="ty-what">${esc(chip.dataset.tip)}</div>` : '') + tyCard(ty);
+      if (!html) { if (tip && !e.target.closest?.('.ty-tip')) tip.hidden = true; return; }
+      tip ??= Object.assign(document.body.appendChild(document.createElement('div')), { className: 'ty-tip', role: 'tooltip' });
+      tip.innerHTML = html;
+      tip.hidden = false;
+      const r = (chip ?? a).getBoundingClientRect(), w = Math.min(320, innerWidth - 16);
+      tip.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
+      tip.style.top = `${r.bottom + 6 + tip.offsetHeight > innerHeight ? r.top - tip.offsetHeight - 6 : r.bottom + 6}px`;
+    });
+  }
   /** explain's `types` (`#1 skip register`) by argument name: `{ arg1: 'skip register' }`. */
   const typesOf = (r) => Object.fromEntries((r.types ?? []).map((t) => t.match(/^#(\d+) (.+)$/)).filter(Boolean).map(([, n, t]) => [`arg${n}`, t]));
   const KIND = { mand: 'mandatory', opt: 'optional', emb: 'an embellishment' };
@@ -159,6 +193,8 @@
       const c = spec[i];
       if (/\s/.test(c)) { i++; continue; }
       if (c === '⟨') { const j = spec.indexOf('⟩', i); out.push({ key: spec.slice(i, j + 1), html: slot(spec.slice(i + 1, j)) }); i = j + 1; continue; }
+      // required text, as written (`‹key:›`)
+      if (c === '‹') { const j = spec.indexOf('›', i); const lit = spec.slice(i + 1, j < 0 ? spec.length : j); out.push({ key: lit, html: `<span class="arg arg-lit" title="text the command requires here">${esc(lit)}</span>` }); i = j < 0 ? spec.length : j + 1; continue; }
       if (c === '…') { out.push({ html: '<span class="arg arg-more" title="satex saw no more: the command may read further arguments">…</span>' }); i++; continue; }
       if (c === '+' || c === '!') { prefix += c; i++; continue; }
       if (c === '>') { i++; group(); prefix += '>'; continue; }
@@ -231,7 +267,10 @@
     const owner = r.class ? pkgChip('class', r.class) : r.package ? (r.package === 'kernel' ? pkgChip('kernel', 'the kernel') : pkgChip('package', r.package)) : '';
     if (r.path && r.line) rows.push(['defined at', `${placeLink(r.path, r.line, r.file)}${owner ? ` ${owner}` : ''}`]);
     else if (owner) rows.push(['from', owner]);
-    if (r.context) rows.push(['context', esc(r.context)]);
+    // `in environments via \tikz@installcommands: tikzpicture, scope`: each name a link to its explanation
+    if (r.context) rows.push(['context', esc(r.context)
+      .replace(/: ([^:]+?)(?=, in |, outside|$)/g, (m, list) => `: ${list.split(', ').map((e) => `<code class="cs-ref env-ref" data-cs="\\${e}" tabindex="0">${e}</code>`).join(' ')}`)
+      .replace(/(^|[\s(])(\\[A-Za-z@]+)/g, (m, pre, cs) => `${pre}<code class="cs-ref" data-cs="${cs}" tabindex="0">${cs}</code>`)]);
     if (r.uses != null) rows.push(['uses', r.uses ? `${r.uses} in this run` : 'none in this run']);
     for (const [key, label] of [['expands', 'always expands'], ['may_expand', 'may expand']]) if (r[key]?.length) rows.push([label, `<span class="chips">${r[key].map(csChip).join('')}</span>`]);
     // what the document's calls leave defined: the public names, the internal ones folded
@@ -402,6 +441,29 @@
   const unfold = () => { const t = location.hash ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null; t?.closest('details')?.setAttribute('open', ''); t?.scrollIntoView(); };
   addEventListener('hashchange', unfold);
   unfold();
+
+  // The landing page: the claim turns through what a run knows; tab rows show one case at a time.
+  const knows = [...document.querySelectorAll('[data-knows]')];
+  if (knows.length > 1 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    // a cross-fade: the one leaving slides up while the next slides in from below
+    let shown = 0;
+    setInterval(() => {
+      const [out, next] = [knows[shown], knows[(shown = (shown + 1) % knows.length)]];
+      out.classList.replace('on', 'off');
+      next.classList.remove('off');
+      requestAnimationFrame(() => next.classList.add('on'));
+      setTimeout(() => out.classList.remove('off'), 800);
+    }, 3600);
+  }
+  for (const [tabs, key] of [['.contrast', 'case'], ['.install-tabs', 'way']]) {
+    const row = document.querySelector(tabs);
+    row?.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      for (const t of row.querySelectorAll('button')) t.setAttribute('aria-selected', String(t === b));
+      for (const c of row.parentElement.querySelectorAll(`[data-${key}]:not(button)`)) c.hidden = c.dataset[key] !== b.dataset[key];
+    });
+  }
 
   // The headings of a documentation page, the one in view marked; a heading
   // in a folded group (the lint rules' categories) comes under the group's name.

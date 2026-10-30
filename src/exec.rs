@@ -716,7 +716,12 @@ impl Machine<'_> {
                 self.unread_all(&[Token::new(Tok::Cs(by), span), Token::new(Tok::Cs(name), span), held]);
                 return;
             }
-            let b = b.map(|t| self.one_token(t, false).unwrap_or(t));
+            // Bounded typed digits stay whole: their meaning is their
+            // first character, and the read after it splits them by length.
+            let b = b.map(|t| match t.cs().and_then(|sym| self.typed_digits_of(sym)) {
+                Some(num) if !crate::scan::unbounded_digits(num) => t,
+                _ => self.one_token(t, false).unwrap_or(t),
+            });
             (b, a)
         } else {
             // tex.web § 1221: optional spaces, optional `=`, then at most one
@@ -1592,11 +1597,11 @@ impl Machine<'_> {
         if names > 1 && self.site_forked(span) >= u32::from(self.limits.meaning_set) {
             acc.name.as_deref_mut().expect("the name scan").collapse();
         } else if names > 1 {
-            let chosen = self.split(self.unknown, span, names, |_, arm| {
+            let chosen = self.split(self.unknown, span, names, |m, arm| {
                 let n = acc.name.as_deref_mut().expect("the name scan");
                 // A replayed choice may count other arms: then any name.
-                match n.names.get(arm).cloned() {
-                    Some(one) => n.names = vec![one],
+                match n.keep(arm) {
+                    Some(took) => took.iter().for_each(|(sym, kept)| m.refine_may(*sym, kept)),
                     None => n.collapse(),
                 }
                 true
@@ -1676,7 +1681,8 @@ impl Machine<'_> {
         // per one where the run may part. Read past `LOOP_ENTRIES` times at
         // this `\csname` here, the token is an unknown part of the name: a
         // summary would join the arms into the token again.
-        if !self.loop_capped(site, sym) && self.split_one_of_at(t, site) {
+        let one = self.one_of_members(t).is_some_and(|texts| texts.len() == 1);
+        if (one || !self.loop_capped(site, sym)) && self.split_one_of_at(t, site) {
             return false;
         }
         // A path per meaning, each reading the name on with its own: read
@@ -1873,19 +1879,19 @@ impl Machine<'_> {
     /// `tokens` with typed digits a test narrowed to one number spelled
     /// out: that is the text TeX holds there.
     fn settled<'a>(&self, tokens: &'a [Token]) -> std::borrow::Cow<'a, [Token]> {
-        let one = |t: &Token| {
+        let one = |t: &Token| -> Option<Vec<Token>> {
+            if let Some([text]) = self.one_of_members(*t).as_deref() {
+                return Some(self.settled(text).into_owned());
+            }
             let sym = t.cs()?;
             let place = self.typed_slice(sym).is_none_or(|(_, _, i, j)| j == i + 1);
-            self.typed_digits_of(sym).filter(|n| place && n.lo == n.hi).map(|n| n.lo)
+            let n = self.typed_digits_of(sym).filter(|n| place && n.lo == n.hi)?.lo;
+            Some(n.to_string().chars().map(|c| Token::new(Tok::Chr(c, Catcode::Other), t.span)).collect())
         };
         if !tokens.iter().any(|t| one(t).is_some()) {
             return std::borrow::Cow::Borrowed(tokens);
         }
-        let spell = |t: &Token| match one(t) {
-            Some(n) => n.to_string().chars().map(|c| Token::new(Tok::Chr(c, Catcode::Other), t.span)).collect(),
-            None => vec![*t],
-        };
-        std::borrow::Cow::Owned(tokens.iter().flat_map(spell).collect())
+        std::borrow::Cow::Owned(tokens.iter().flat_map(|t| one(t).unwrap_or_else(|| vec![*t])).collect())
     }
 
     /// Whether two texts may be one: unknown parts stand for any text
@@ -1907,9 +1913,19 @@ impl Machine<'_> {
 
     /// [`Machine::refine`] to one of `members`.
     pub(crate) fn refine_to(&mut self, sym: Sym, members: &[Meaning]) {
-        let keep: Vec<bool> =
-            self.env.arms(sym).iter().map(|arm| members.iter().any(|m| self.may_mean(arm, m))).collect();
+        let keep = self.keep_arms(sym, members);
         self.env.refine_to(sym, members, &keep);
+    }
+
+    /// [`Machine::refine_to`], `members` kept as a set even when one
+    /// ([`crate::env::Env::refine_may`]).
+    pub(crate) fn refine_may(&mut self, sym: Sym, members: &[Meaning]) {
+        let keep = self.keep_arms(sym, members);
+        self.env.refine_may(sym, members, &keep);
+    }
+
+    fn keep_arms(&self, sym: Sym, members: &[Meaning]) -> Vec<bool> {
+        self.env.arms(sym).iter().map(|arm| members.iter().any(|m| self.may_mean(arm, m))).collect()
     }
 
     /// [`Machine::refine`] for a register's value.
@@ -2468,14 +2484,12 @@ impl Machine<'_> {
         use crate::machine::classes::CONTROL_SEQUENCE;
         let one = |o: (u32, u8)| Some((vec![vec![o]], None));
         // tex.web § 506: a token behind a `\noexpand` marker is taken as it
-        // stands, an active character as that character.
-        let unexpanded = |m: &Self, token: Token| match token.tok {
-            Tok::Chr(c, cat) => (c as u32, cat as u8),
-            Tok::Cs(inner) => match m.env.meaning(inner) {
-                Meaning::Char(c, cat) => (c as u32, cat as u8),
-                _ => CONTROL_SEQUENCE,
-            },
-            _ => CONTROL_SEQUENCE,
+        // stands, an active character as that character, a name by each
+        // meaning it may have.
+        let unexpanded = |m: &mut Self, token: Token| match token.tok {
+            Tok::Chr(c, cat) => one((c as u32, cat as u8)),
+            Tok::Cs(inner) => Some((vec![m.meaning_operands(inner, true)], None)),
+            _ => one(CONTROL_SEQUENCE),
         };
         loop {
             let token = self.next_token()?;
@@ -2487,7 +2501,7 @@ impl Machine<'_> {
                 return Some(operands);
             }
             if noexpanded {
-                return one(unexpanded(self, token));
+                return unexpanded(self, token);
             }
             // tex.web § 506: an active character that is not behind a
             // `\noexpand` is taken by its meaning, as a control sequence is.
@@ -2500,24 +2514,13 @@ impl Machine<'_> {
             match self.env.meaning(sym) {
                 // One of several meanings: the operands they give, when
                 // none expands.
-                Meaning::Unknown => {
-                    self.approximated = true;
-                    let may = self.env.slot(sym).and_then(|b| b.may.clone());
-                    let operand = |m: &Meaning| match m {
-                        Meaning::Char(c, cat) => Some((*c as u32, *cat as u8)),
-                        Meaning::Unknown | Meaning::Undefined => None,
-                        m if self.expandable_meaning(m) => None,
-                        _ => Some(CONTROL_SEQUENCE),
-                    };
-                    let all: Option<Vec<(u32, u8)>> = may.and_then(|may| may.iter().map(operand).collect());
-                    return Some((vec![all.unwrap_or(vec![UNKNOWN_OPERAND])], None));
-                }
+                Meaning::Unknown => return Some((vec![self.meaning_operands(sym, false)], None)),
                 Meaning::Primitive(Primitive::NoExpand) => {
                     let next = self.noexpanded_next()?;
                     if let Some(operands) = self.abstract_operands(next, true) {
                         return Some(operands);
                     }
-                    return one(unexpanded(self, next));
+                    return unexpanded(self, next);
                 }
                 // `\let\bgroup={` makes the control sequence that character.
                 Meaning::Char(c, cat) => return one((c as u32, cat as u8)),
@@ -2530,6 +2533,28 @@ impl Machine<'_> {
                 _ => return one(CONTROL_SEQUENCE),
             }
         }
+    }
+
+    /// The `\if` operands of `sym`, one per meaning a join left it: unknown
+    /// where a meaning is not known, or expands and no `\noexpand` makes
+    /// it `\relax` (tex.web § 506).
+    fn meaning_operands(&mut self, sym: Sym, noexpanded: bool) -> Vec<(u32, u8)> {
+        use crate::machine::classes::CONTROL_SEQUENCE;
+        let operand = |m: &Self, x: &Meaning| match x {
+            Meaning::Char(c, cat) => Some((*c as u32, *cat as u8)),
+            Meaning::Unknown => None,
+            x if !noexpanded && (*x == Meaning::Undefined || m.expandable_meaning(x)) => None,
+            _ => Some(CONTROL_SEQUENCE),
+        };
+        let all = match self.env.meaning(sym) {
+            Meaning::Unknown => {
+                self.approximated = true;
+                let may = self.env.slot(sym).and_then(|b| b.may.clone());
+                may.and_then(|may| may.iter().map(|x| operand(self, x)).collect())
+            }
+            x => operand(self, &x).map(|o| vec![o]),
+        };
+        all.unwrap_or(vec![UNKNOWN_OPERAND])
     }
 
     /// The operands of an abstract token `t` ([`Machine::token_class`]):
@@ -2562,10 +2587,13 @@ impl Machine<'_> {
     fn digit_narrowing(&self, t: Token, c: char) -> Option<Narrowing> {
         let sym = t.cs()?;
         let num = self.typed_digits_of(sym)?;
+        // A slice past a number's first place may start with any digit.
+        let first = self.typed_slice(sym).is_none_or(|(.., i, _)| i == 0);
+        let digit = num.lo >= 0 && num.hi <= 9;
         let (relation, bound) = match c {
-            '0' if num.lo >= 0 => ('=', 0),
-            '-' => ('<', 0),
-            '1'..='9' if num.lo >= 0 && num.hi <= 9 => ('=', i64::from(c as u8 - b'0')),
+            '0' if first || digit => ('=', 0),
+            '-' if first => ('<', 0),
+            '1'..='9' if digit => ('=', i64::from(c as u8 - b'0')),
             _ => return None,
         };
         Some((sym, crate::value::Quantity::Int, num, None, relation, (bound, bound)))
@@ -2594,9 +2622,10 @@ impl Machine<'_> {
         if !texts.iter().any(|x| x.is_empty()) {
             return false;
         }
+        let groups: Vec<Vec<usize>> =
+            [true, false].map(|empty| (0..texts.len()).filter(|&i| texts[i].is_empty() == empty).collect()).into();
         let full: Vec<Rc<[Token]>> = texts.into_iter().filter(|x| !x.is_empty()).collect();
-        let Some(sym) = t.cs() else { return false };
-        self.split(sym, t.span, 2, |m, arm| {
+        self.split_one_of_groups(t, t.span, &groups, |m, arm| {
             match (arm, &full[..]) {
                 (0, _) | (_, []) => {}
                 (_, [one]) => m.unread_all(one),
@@ -4353,10 +4382,23 @@ impl Machine<'_> {
         // A deferred one is expanded at shipout (tex.web § 1370): here, with
         // the page number not known, which is all LaTeX's `\protected@write`
         // leaves to then.
-        let text = match immediate {
+        let mut text = match immediate {
             true => self.expand_tokens(Rc::from(text)),
             false => crate::observe::shipped(self, &text),
         };
+        // One of several texts: a path per text, so the file holds it exactly.
+        while let Some((i, texts)) =
+            text.iter().enumerate().find_map(|(i, t)| self.one_of_members(*t).filter(|m| m.len() > 1).map(|m| (i, m)))
+        {
+            let mut pick = None;
+            let groups: Vec<Vec<usize>> = (0..texts.len()).map(|i| vec![i]).collect();
+            self.split_one_of_groups(text[i], span, &groups, |_, arm| {
+                pick = Some(arm);
+                true
+            });
+            let Some(arm) = pick else { break };
+            text.splice(i..=i, texts[arm].iter().copied());
+        }
         crate::observe::write(self, &text, number.unwrap_or(-1));
         // tex.web § 1370: printed to the file, broken at `\newlinechar` (§ 59).
         let newlinechar = self.intern("newlinechar");

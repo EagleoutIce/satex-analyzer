@@ -787,26 +787,20 @@ The label was on page \pageref{x}.
 ```
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>The label was on page 1.</code></td><td><code>The la<b>·</b>bel was on page <b>⟨?⟩</b>. </code></td><td>⊇</td></tr>
-<tr><td><code>Here.</code></td><td><code>Here.</code></td><td>✓</td></tr>
-<tr><td><code></code></td><td><code>Here.</code></td><td>✗</td></tr>
-<tr><td><code></code></td><td><code>assumes assumed-compiles</code></td><td></td></tr>
+<tr><td><code></code></td><td><code> </code></td><td>✓</td></tr>
+<tr><td><code>The label was on page 1.</code></td><td><code>Here.</code></td><td>✗</td></tr>
+<tr><td><code>Here.</code></td><td><code></code></td><td>✗</td></tr>
 </table>
 
-Differs: pdflatex ships `` where satex computes `Here.`.
-
-Why:
-
-- `⟨?⟩`: l.4 sets a character the run could not compute.
+Differs: pdflatex ships `The label was on page 1.` where satex computes `Here.`.
 
 <details><summary>Computed text</summary>
 
 ```sh
 $ satex query typeset -f 11-fixpoint.tex --set limits.seconds=60
-4:2  paragraph  The la·bel was on page ⟨?⟩. 
+6:11  paragraph   
 6:11  paragraph  Here.
-6:11  paragraph  Here.
-7:15  assumption  assumed-compiles
+3:1  assumption  unknown-text-run
 assumption  clock-assumed
 ```
 
@@ -827,7 +821,7 @@ l.6 \label ⇒ \@bsphack \begingroup \UseHookWithArgume… (defines \thepage \pr
 
 </details>
 
-**How satex answers it.** satex runs the build itself, as latexmk does, and never needs a file an engine wrote. The files a run writes live in a virtual file system, and the first run starts without any. When a run ends, a file it read back sends it round again only where a changed line names a key the run read (a reference, a citation, a key it used) or a macro it expanded or defined (`\@abspage@last` at each shipout, a note column's `\slnc@note`), up to `limits.build_runs` rounds. A line nobody refers to, or one that only changes what a table of contents sets, needs no other round: what such a round would refine is typesetting alone. A round resumes from the last checkpoint before the first read of a changed file, so the part of the document before it is not analyzed again. Past the last round, what still changes is unknown text: a [widening](https://doi.org/10.1145/512950.512973) of the [Kleene iteration](https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem) the build is. The files an earlier engine run left on disk are read only with `load.build_files`.
+**How satex answers it.** satex runs the build itself, as latexmk does, and never needs a file an engine wrote. The files a run writes live in a virtual file system, and the first run starts without any. When a run ends, a file it read back sends it round again only where a changed line names a key the run read (a reference, a citation, a key it used) or a macro it expanded or defined (`\@abspage@last` at each shipout, a note column's `\slnc@note`), up to `limits.build_runs` rounds. A line nobody refers to, or one that only changes what a table of contents sets, needs no other round: what such a round would refine is typesetting alone. A round resumes from the last checkpoint before the first read of a changed file, so the part of the document before it is not analyzed again. A file in which a round changed a line already there (a label's page, a counter written back) is from then on the join of what the rounds wrote, so its text only grows and the build settles. Lines only added, as `\bibcite` after the bibliography's first round, stay exact. Past the last round, what still changes is joined the same way: a [widening](https://doi.org/10.1145/512950.512973) of the [Kleene iteration](https://en.wikipedia.org/wiki/Kleene_fixed-point_theorem) the build is. The files an earlier engine run left on disk are read only with `load.build_files`.
 
 ## Where satex is still wrong or stuck
 

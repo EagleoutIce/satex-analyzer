@@ -418,7 +418,7 @@ fn a_trailing_delimiter_runs_to_its_text() {
 fn a_tail_call_adds_what_it_reads_after_the_parameter_text() {
     let analysis = analyze_kernel(r"\newcommand\qtail[2][d]{#1#2}\def\qhead key: #1\;{#1\qtail}");
     let record = explain_one(&analysis, "qhead");
-    assert_eq!(str_field(&record, "signature"), Some(r"key: u{\;}O{d}m"));
+    assert_eq!(str_field(&record, "signature"), Some(r"‹key: ›u{\;}O{d}m"));
     assert_eq!(str_field(&record, "effective"), Some(r"\qhead key: {1}\;[d]{2}"));
 }
 
@@ -448,16 +448,16 @@ fn parameter_texts_are_learned_from_what_fails_to_match() {
             (
                 "Weird",
                 r"\Weird key: {1}, value: {2}, magic: {3}\;super {4}\; ",
-                r"key: u{, value: }u{, magic: }u{\;super }u{\; }",
+                r"‹key: ›u{, value: }u{, magic: }u{\;super }u{\; }",
             ),
-            ("lead", r"\lead x{1}", "xm"),
+            ("lead", r"\lead x{1}", "‹x›m"),
             ("infix", r"\infix{1}-{2}", "u{-}m"),
             ("trail", r"\trail{1}.", "u{.}"),
             ("ld", r"\ld{1}\par ", r"u{\par }"),
             ("od", r"\od{1};", "u{;}"),
-            ("pd", r"\pd<{1}>", "<u{>}"),
-            ("ctrlw", r"\ctrlw\foo {1}", r"\foo m"),
-            ("ctrls", r"\ctrls\;{1}", r"\;m"),
+            ("pd", r"\pd<{1}>", "‹<›u{>}"),
+            ("ctrlw", r"\ctrlw\foo {1}", r"‹\foo ›m"),
+            ("ctrls", r"\ctrls\;{1}", r"‹\;›m"),
         ],
     );
 }
@@ -487,7 +487,7 @@ fn delimited_macros_called_anywhere_are_followed() {
             ("st", r"\st*?{1}", "sm"),
             ("rs", r"\rs*?{1}", "sm"),
             // Required, not optional: the call without `[` does not match.
-            ("req", r"\req[{1}]{2}", "[u{]}m"),
+            ("req", r"\req[{1}]{2}", "‹[›u{]}m"),
         ],
     );
 }

@@ -353,7 +353,7 @@ struct Lists {
     counter_namespace: Option<String>,
     streams: Vec<(i64, Vec<String>, usize)>,
     outputs: Vec<(String, Option<String>)>,
-    pending: Vec<(String, Vec<String>)>,
+    pending: Vec<(String, String)>,
     aliases: Vec<(Sym, Sym)>,
     wild: crate::machine::Wild,
 }

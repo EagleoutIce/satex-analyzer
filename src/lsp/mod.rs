@@ -27,7 +27,7 @@
 
 mod doccomment;
 mod handlers;
-mod knowledge;
+pub mod knowledge;
 pub(crate) mod primitives;
 mod unreached;
 #[cfg(target_os = "emscripten")]
@@ -142,6 +142,7 @@ fn server_capabilities() -> ServerCapabilities {
         }),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec!["\\".into(), "{".into()]),
+            resolve_provider: Some(true),
             ..Default::default()
         }),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
@@ -337,6 +338,11 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             let items = ask(engine_tx, |reply| EngineMsg::Completion(uri, pos, reply))?;
             Ok(serde_json::to_value(items).unwrap())
         }
+        "completionItem/resolve" => {
+            let item: lsp_types::CompletionItem = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let item = ask(engine_tx, |reply| EngineMsg::Resolve(Box::new(item), reply))?;
+            Ok(serde_json::to_value(item).unwrap())
+        }
         "textDocument/documentSymbol" => {
             let p: DocumentSymbolParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let symbols = ask(engine_tx, |reply| EngineMsg::DocumentSymbol(p.text_document.uri, reply))?;
@@ -420,6 +426,8 @@ enum EngineMsg {
     Definition(Uri, Position, Sender<Option<lsp_types::GotoDefinitionResponse>>),
     References(Uri, Position, bool, Sender<Option<Vec<Location>>>),
     Completion(Uri, Position, Sender<lsp_types::CompletionResponse>),
+    /// A completion item's documentation, asked once it is selected.
+    Resolve(Box<lsp_types::CompletionItem>, Sender<lsp_types::CompletionItem>),
     SignatureHelp(Uri, Position, Sender<Option<lsp_types::SignatureHelp>>),
     DocumentSymbol(Uri, Sender<Option<lsp_types::DocumentSymbolResponse>>),
     Highlight(Uri, Position, Sender<Option<Vec<lsp_types::DocumentHighlight>>>),
@@ -832,10 +840,16 @@ impl Engine {
         }
     }
 
-    /// Analyzes every document edited since the last call.
+    /// Analyzes every document edited since the last call, the latest
+    /// first. One the project takes as given (a submodule's, another
+    /// repository's, `project.frozen`) waits until a request asks for it.
     fn flush(&mut self) {
-        for uri in std::mem::take(&mut self.dirty) {
-            self.analyze(&uri);
+        let frozen = crate::lint::Frozen::new(&self.cfg.project, &self.root);
+        let dirty = std::mem::take(&mut self.dirty);
+        for uri in dirty.iter().rev() {
+            if self.docs.get(uri).is_some_and(|d| d.analysis.is_some() || !frozen.holds(&d.path)) {
+                self.analyze(uri);
+            }
         }
     }
 
@@ -886,6 +900,7 @@ impl Engine {
             | EngineMsg::References(..)
             | EngineMsg::SignatureHelp(..)
             | EngineMsg::Completion(..)
+            | EngineMsg::Resolve(..)
             | EngineMsg::DocumentSymbol(..)
             | EngineMsg::Typeset(..)
             | EngineMsg::Caches(..)
@@ -986,7 +1001,36 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, msg: EngineMsg) -> Option<E
             let result = crate::progress::because("completion", || {
                 with_doc(docs, &uri, |analysis, text| handlers::completion(analysis, text, pos))
             });
-            let _ = reply.send(result.unwrap_or(lsp_types::CompletionResponse::Array(Vec::new())));
+            // Each item says which document it came from, for its resolve.
+            let mut result = result.unwrap_or(lsp_types::CompletionResponse::Array(Vec::new()));
+            let items = match &mut result {
+                lsp_types::CompletionResponse::Array(items) => items,
+                lsp_types::CompletionResponse::List(list) => &mut list.items,
+            };
+            for item in items.iter_mut().filter(|i| i.data.is_none()) {
+                item.data = Some(serde_json::json!({ "uri": uri.as_str() }));
+            }
+            let _ = reply.send(result);
+        }
+        EngineMsg::Resolve(mut item, reply) => {
+            // A command's documentation is its hover, kept or made from the last analysis.
+            let uri = item.data.as_ref().and_then(|d| d["uri"].as_str()).and_then(|u| u.parse::<Uri>().ok());
+            let name = format!("\\{}", item.label.trim_start_matches('\\'));
+            let markdown = uri.and_then(|uri| {
+                let key = (uri.clone(), name.clone());
+                hovers.lock().ok().and_then(|h| h.get(&key).cloned()).or_else(|| {
+                    with_doc(docs, &uri, |analysis, _| {
+                        crate::progress::because("completion docs", || handlers::command_markdown(analysis, &name))
+                    })
+                })
+            });
+            if let Some(Some(markdown)) = markdown {
+                item.documentation = Some(lsp_types::Documentation::MarkupContent(lsp_types::MarkupContent {
+                    kind: lsp_types::MarkupKind::Markdown,
+                    value: markdown,
+                }));
+            }
+            let _ = reply.send(*item);
         }
         EngineMsg::DocumentSymbol(uri, reply) => {
             let path = docs.get(&uri).map(|d| d.path.display().to_string());
@@ -1013,7 +1057,19 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, msg: EngineMsg) -> Option<E
             let _ = reply.send(result.unwrap_or_default());
         }
         EngineMsg::Caches(uri, reply) => {
-            let _ = reply.send(with_doc(docs, &uri, |analysis, _| analysis.cache_report()).unwrap_or_default());
+            // The run's size first, then what it reused: what the playground's timing pop-up shows.
+            let report = |a: &Analysis| {
+                let run = format!(
+                    "run {} steps ({} loading), {} forks, {} files, {} lines",
+                    a.steps,
+                    a.load_steps,
+                    a.forks,
+                    a.files.len(),
+                    a.lines
+                );
+                std::iter::once(run).chain(a.cache_report()).collect::<Vec<_>>()
+            };
+            let _ = reply.send(with_doc(docs, &uri, |analysis, _| report(analysis)).unwrap_or_default());
         }
         msg => return Some(msg),
     }

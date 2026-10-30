@@ -4,11 +4,11 @@ import { existsSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { LanguageClient, State, StreamInfo } from 'vscode-languageclient/node';
-import { Actions, Findings } from './sidebar';
-import { Status, Work } from './status';
+import { Actions } from './sidebar';
+import { STALE, Status, Work } from './status';
 import { Steps, TraceEvent } from './steps';
 
-const INSTALL_HINT = 'Install it with `cargo install satex`, download a release from https://github.com/EagleoutIce/satex-analyzer/releases, or set `satex.path`.';
+const INSTALL_HINT = 'Install it with `cargo install satex-analyzer`, download a release from https://github.com/EagleoutIce/satex-analyzer/releases, or set `satex.path`.';
 let client: LanguageClient | undefined;
 let binaryPath = '';
 const trace = vscode.window.createOutputChannel('satex trace');
@@ -77,12 +77,8 @@ async function traceAtCursor(): Promise<void> {
     }
 }
 
-interface BuildRecord { path: string; line: number | null; col: number; severity: string; code: string; message: string; fix: string | null }
-
-const SEVERITY: Record<string, vscode.DiagnosticSeverity> = {
-    error: vscode.DiagnosticSeverity.Error,
-    warning: vscode.DiagnosticSeverity.Warning,
-};
+/** A file's findings as `satex compile --format lsp` writes them. */
+interface BuildFile { uri: string; diagnostics: unknown[] }
 
 /** Build the root document and show the build's findings as diagnostics. */
 async function compile(): Promise<void> {
@@ -97,28 +93,23 @@ async function compile(): Promise<void> {
     buildDiagnostics.clear();
     build.clear();
     build.show(true);
-    const records = await new Promise<BuildRecord[]>(resolve => {
-        const child = spawn(binaryPath, ['compile', '-f', root, '--format', 'json'], { cwd: dir });
+    const files = await new Promise<BuildFile[]>(resolve => {
+        const child = spawn(binaryPath, ['compile', '-f', root, '--format', 'lsp'], { cwd: dir });
         let stdout = '';
         child.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
         child.stderr.on('data', (data: Buffer) => build.append(data.toString()));
         child.on('error', error => { build.appendLine(String(error)); resolve([]); });
         child.on('close', () => {
-            try { resolve(JSON.parse(stdout) as BuildRecord[]); } catch { resolve([]); }
+            try { resolve(JSON.parse(stdout) as BuildFile[]); } catch { resolve([]); }
         });
     });
-    const byFile = new Map<string, vscode.Diagnostic[]>();
-    for (const r of records) {
-        const line = Math.max((r.line ?? 1) - 1, 0);
-        const col = Math.max(r.col - 1, 0);
-        const diagnostic = new vscode.Diagnostic(new vscode.Range(line, col, line, Number.MAX_SAFE_INTEGER),
-            r.fix ? `${r.message}\n${r.fix}` : r.message, SEVERITY[r.severity] ?? vscode.DiagnosticSeverity.Information);
-        diagnostic.source = 'satex build';
-        diagnostic.code = r.code;
-        const file = path.resolve(dir, r.path);
-        byFile.set(file, [...byFile.get(file) ?? [], diagnostic]);
+    // The server's own conversion: the same ranges, severities and codes as its findings.
+    const convert = client?.protocol2CodeConverter;
+    for (const file of files) {
+        const diagnostics = (await convert?.asDiagnostics(file.diagnostics as never)) ?? [];
+        diagnostics.forEach(d => { d.source = 'satex build'; });
+        buildDiagnostics.set(vscode.Uri.parse(file.uri), diagnostics);
     }
-    for (const [file, diagnostics] of byFile) { buildDiagnostics.set(vscode.Uri.file(file), diagnostics); }
 }
 
 /**
@@ -127,10 +118,20 @@ async function compile(): Promise<void> {
  * editor; it builds the kernel cache itself on first use.
  */
 function startServer(binary: string): Promise<StreamInfo> {
-    const memory = vscode.workspace.getConfiguration('satex').get<string>('server.maxMemory', '2GiB');
-    const child = spawn(binary, ['lsp', ...(memory ? ['--max-memory', memory] : [])]);
+    const config = vscode.workspace.getConfiguration('satex');
+    const memory = config.get<string>('server.maxMemory', '2GiB');
+    // How long an analysis may run is the project's `limits.seconds` (satex.yaml), not a second setting here.
+    const args = ['lsp', ...(memory ? ['--max-memory', memory] : [])];
+    // On Linux a cgroup caps the server whatever it does: memory without swap and two cores, so
+    // the editor and the desktop stay usable. The in-process budget above still ends a run cleanly first.
+    const cores = config.get<number>('server.maxCores', 2);
+    const capped = process.platform === 'linux' && config.get<boolean>('server.cgroup', true) && memory
+        && !spawnSync('systemd-run', ['--user', '--version']).error;
+    const limits = ['-p', `MemoryMax=${memory.replace(/iB$/, '')}`, '-p', 'MemorySwapMax=0', ...(cores > 0 ? ['-p', `CPUQuota=${cores * 100}%`] : [])];
+    const [command, argv] = capped ? ['systemd-run', ['--user', '--scope', '--quiet', ...limits, binary, ...args]] : [binary, args];
+    const child = spawn(command, argv);
     if (child.pid !== undefined) {
-        try { os.setPriority(child.pid, 10); } catch { /* not ours to lower */ }
+        try { os.setPriority(child.pid, config.get<number>('server.niceness', 10)); } catch { /* not ours to lower */ }
     }
     child.stderr.on('data', (data: Buffer) => client?.outputChannel.append(data.toString()));
     return Promise.resolve({ reader: child.stdout, writer: child.stdin, detached: false });
@@ -157,6 +158,15 @@ async function harmonize(context: vscode.ExtensionContext): Promise<void> {
     }
 }
 
+/** Which kernel, class and package caches the active document's last analysis reused or rebuilt. */
+async function showCaches(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!client || !editor) { return; }
+    const lines = await client.sendRequest<string[]>('satex/caches', { textDocument: { uri: editor.document.uri.toString() } });
+    await vscode.window.showQuickPick(lines.length ? lines : ['No analysis of this document yet.'],
+        { title: `satex caches: ${path.basename(editor.document.uri.fsPath)}`, placeHolder: 'reused caches load in milliseconds; rebuilt ones are kept for the next run' });
+}
+
 export function activate(context: vscode.ExtensionContext): void {
     const binary = resolveBinary(context);
     if (!binary) {
@@ -165,13 +175,37 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     binaryPath = binary;
     const status = new Status();
-    const findings = new Findings();
-    findings.view = vscode.window.createTreeView('satex.findings', { treeDataProvider: findings });
+    // The findings live in the Problems view. While a newer analysis runs they
+    // are hidden (`satex.findings.whileAnalyzing`: `hide`) or marked as old (`mark`).
+    const published = new Map<string, [vscode.Uri, vscode.Diagnostic[]]>();
+    let analyzing = false;
+    const shown = (diagnostics: vscode.Diagnostic[]): vscode.Diagnostic[] => {
+        if (!analyzing) { return diagnostics; }
+        if (vscode.workspace.getConfiguration('satex').get<string>('findings.whileAnalyzing', 'hide') === 'hide') { return []; }
+        return diagnostics.map(d => Object.assign(new vscode.Diagnostic(d.range, d.message, d.severity),
+            { code: d.code, tags: d.tags, relatedInformation: d.relatedInformation, data: (d as { data?: unknown }).data, source: STALE }));
+    };
     client = new LanguageClient(
         'satex', 'satex', () => startServer(binary),
-        { documentSelector: ['latex', 'tex', 'bibtex'].map(language => ({ language })) });
+        {
+            documentSelector: ['latex', 'tex', 'bibtex'].map(language => ({ language })),
+            middleware: {
+                handleDiagnostics: (uri, diagnostics, next) => {
+                    published.set(uri.toString(), [uri, diagnostics]);
+                    next(uri, shown(diagnostics));
+                },
+            },
+        });
+    const working = (work: Work) => {
+        status.working(work);
+        // A hover's trial run changes no finding.
+        const now = Boolean(work.text) && work.phase !== 'probe';
+        if (now === analyzing) { return; }
+        analyzing = now;
+        for (const [uri, diagnostics] of published.values()) { client?.diagnostics?.set(uri, shown(diagnostics)); }
+    };
     context.subscriptions.push(
-        trace, build, buildDiagnostics, status, findings, findings.view, steps,
+        trace, build, buildDiagnostics, status, steps,
         vscode.commands.registerCommand('satex.traceNext', () => steps.move(1)),
         vscode.commands.registerCommand('satex.tracePrevious', () => steps.move(-1)),
         vscode.commands.registerCommand('satex.tracePick', () => steps.pick()),
@@ -179,11 +213,12 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.window.registerTreeDataProvider('satex.actions', new Actions()),
         vscode.commands.registerCommand('satex.traceAtCursor', traceAtCursor),
         vscode.commands.registerCommand('satex.compile', compile),
-        vscode.commands.registerCommand('satex.focus', () => vscode.commands.executeCommand('workbench.view.extension.satex')),
+        vscode.commands.registerCommand('satex.focus', () => vscode.commands.executeCommand('workbench.actions.view.problems')),
+        vscode.commands.registerCommand('satex.caches', showCaches),
         vscode.commands.registerCommand('satex.restart', () => client?.restart()),
         vscode.commands.registerCommand('satex.showOutput', () => client?.outputChannel.show(true)),
         vscode.commands.registerCommand('satex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
-        client.onNotification('satex/status', (work: Work) => status.working(work)),
+        client.onNotification('satex/status', working),
         client.onDidChangeState(e => status.down(e.newState === State.Stopped)));
     checkTeX();
     void client.start();

@@ -2483,19 +2483,16 @@ macro_rules! at {
 /// (`non_math`), `Some(false)` for one math mode refuses, by the name the
 /// engine gave it.
 pub fn math_material(name: &str) -> Option<bool> {
-    const MATH: &str = "mathchar delimiter radical mathaccent mathord mathop mathbin mathrel mathopen mathclose \
-        mathpunct mathinner underline overline over atop above overwithdelims atopwithdelims abovewithdelims \
-        displaystyle textstyle scriptstyle scriptscriptstyle mathchoice vcenter nonscript mkern mskip limits \
-        nolimits displaylimits left right middle Umathchar Umathcharnum Udelimiter Uradical Umathaccent";
-    const VERTICAL: &str =
-        "par end dump vskip vfil vfill vss vfilneg unvbox unvcopy pagediscards splitdiscards valign hrule";
-    let has = |list: &str| list.split_whitespace().any(|n| n == name);
-    if has(MATH) {
-        Some(true)
-    } else if has(VERTICAL) {
-        Some(false)
-    } else {
-        None
+    match name {
+        "mathchar" | "delimiter" | "radical" | "mathaccent" | "mathord" | "mathop" | "mathbin" | "mathrel"
+        | "mathopen" | "mathclose" | "mathpunct" | "mathinner" | "underline" | "overline" | "over" | "atop"
+        | "above" | "overwithdelims" | "atopwithdelims" | "abovewithdelims" | "displaystyle" | "textstyle"
+        | "scriptstyle" | "scriptscriptstyle" | "mathchoice" | "vcenter" | "nonscript" | "mkern" | "mskip"
+        | "limits" | "nolimits" | "displaylimits" | "left" | "right" | "middle" | "Umathchar" | "Umathcharnum"
+        | "Udelimiter" | "Uradical" | "Umathaccent" => Some(true),
+        "par" | "end" | "dump" | "vskip" | "vfil" | "vfill" | "vss" | "vfilneg" | "unvbox" | "unvcopy"
+        | "pagediscards" | "splitdiscards" | "valign" | "hrule" => Some(false),
+        _ => None,
     }
 }
 

@@ -59,6 +59,17 @@ struct Cli {
     #[arg(long, global = true, help_heading = "Input")]
     no_classes: bool,
 
+    /// Text read at `--at` as if it stood there in the file, such as
+    /// `\mymacro{x}`: every command then sees what it does in the state the
+    /// document has there. The file on disk is not changed.
+    #[arg(long, global = true, value_name = "TEXT", requires = "at", help_heading = "Input")]
+    inject: Option<String>,
+
+    /// Where `--inject` puts its text, `[FILE:]LINE[:COL]`; the main file
+    /// without FILE, the start of the line without COL.
+    #[arg(long, global = true, value_name = "LINE[:COL]", requires = "inject", help_heading = "Input")]
+    at: Option<String>,
+
     /// Stop the interpreter after this many expansion steps.
     #[arg(long, global = true, value_name = "N", help_heading = "Limits")]
     max_steps: Option<u64>,
@@ -172,11 +183,25 @@ fn completions(shell: &str, target: Option<&str>) -> Result<(), String> {
     }
     if shell == "json" {
         let json = command_json(&cmd);
+        // The type lattice, for type hovers: each type, the one above it, and what it is.
+        let types: Vec<serde_json::Value> = {
+            use satex::roles::Ty;
+            let name = |t: Ty| if t == Ty::Top { "any".to_string() } else { t.to_string() };
+            Ty::all()
+                .into_iter()
+                .map(|t| {
+                    let about = satex::lsp::knowledge::topic(&name(t))
+                        .map(|(_, body)| body.split("\n\n").next().unwrap_or(body));
+                    serde_json::json!({ "name": name(t), "parent": name(t.parent()), "about": about })
+                })
+                .collect()
+        };
         let text = serde_json::to_string_pretty(&serde_json::json!({
             "command": json,
             "queries": query::Query::ALL.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
             "config_keys": satex::config::keys(),
             "rules": satex::lint::rules().iter().filter_map(|r| r.get("code").cloned()).collect::<Vec<_>>(),
+            "types": types,
         }));
         return writeln!(out, "{}", text.map_err(|e| e.to_string())?).map_err(|e| e.to_string());
     }
@@ -361,8 +386,8 @@ fn run() -> Result<(), String> {
         note_minimal_document("nothing was piped in");
         source = EMPTY_DOCUMENT.to_string();
     }
-    let injected = match &cli.command {
-        Some(Command::Trace { inject: Some(text), at: Some(at), .. }) => Some(inject(&cli, &mut source, text, at)?),
+    let injected = match (&cli.inject, &cli.at) {
+        (Some(text), Some(at)) => Some(inject(&cli, &mut source, text, at)?),
         _ => None,
     };
     let (mut cfg, _layers) = configure(&cli, Some(&source))?;
@@ -865,7 +890,7 @@ fn discover_input(dir: &Path) -> Result<PathBuf, String> {
     found.root_document().ok_or_else(|| format!("no root document in {}: name one with -f", dir.display()))
 }
 
-/// `trace --inject`: the text put at `--at` in the main file's `source`, or
+/// `--inject`: the text put at `--at` in the main file's `source`, or
 /// in another file through the overlay the run reads files from. The file,
 /// and the positions where the text begins and ends, bound the trace.
 type Injected = (Option<String>, (u32, u32), (u32, u32));

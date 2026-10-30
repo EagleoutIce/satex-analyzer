@@ -114,6 +114,12 @@ Input:
       --no-classes
           Do not load the document class
 
+      --inject <TEXT>
+          Text read at `--at` as if it stood there in the file, such as `\mymacro{x}`: every command then sees what it does in the state the document has there. The file on disk is not changed
+
+      --at <LINE[:COL]>
+          Where `--inject` puts its text, `[FILE:]LINE[:COL]`; the main file without FILE, the start of the line without COL
+
 Limits:
       --max-steps <N>
           Stop the interpreter after this many expansion steps
@@ -235,6 +241,7 @@ warning   correctness  duplicate-bibliography-entry     the same key is declared
 warning   correctness  duplicate-label                  the same label is defined twice                                 
 warning   correctness  environment-mismatch             `\end` names an environment other than the one that is open     
 warning   correctness  expl-syntax-left-on              `\ExplSyntaxOn` is never turned off                             
+warning   correctness  expl3-constant-set               an expl3 constant is set after it was declared                  
 warning   correctness  expl3-signature-mismatch         an expl3 function takes other arguments than its name says      
 warning   correctness  ignored-verbatim-tail            text stands on the line that closes a verbatim body and never…  
 warning   correctness  math-script-braces               `^` and `_` take one token, so what follows needs braces        
@@ -257,6 +264,8 @@ warning   style        command-terminated-space         a control word ate the s
 warning   style        dimension-times                  the letter x stands between two numbers where a multiplicatio…  
 warning   style        double-space                     two interword spaces reached the page, one of them from a tie   
 warning   style        ellipsis-dots                    three periods set three periods, not an ellipsis                
+warning   style        expl3-scope                      an expl3 variable's scope prefix disagrees with how the run a…  
+warning   style        expl3-type                       an expl3 variable's type suffix disagrees with the functions …  
 warning   style        group-local-definition           a definition is made inside a group and lost when it closes     
 warning   style        math-operator-name               an operator name is set in math italic instead of by its comm…  
 warning   style        missing-italic-correction        a slanted letter runs into upright text with no `\/` between …  
@@ -414,7 +423,7 @@ $ satex explain -f samples/paper.tex '\norm'
   effective   \norm{1}
   signature   m
   takes       1
-  uses        1 time, in this run
+  uses        2 times, in this run
   by          \newcommand
   expands     \left, \right
   may_expand  \hat
@@ -469,13 +478,6 @@ offers  amsmath    15     alignedleftspaceno, alignedleftspace…           amsm
 
 ```text
 $ satex query options -f samples/paper.tex --for itemize
-key           default  package         file                
-expand        true     gettitlestring  gettitlestring.sty  @ gettitlestring.sty:159:20
-append        @VOID@   epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:513:20
-disable       true     epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:242:22
-enable        true     epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:243:31
-outdir                 epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:238:24
-… 5 more lines omitted
 ```
 
 </details>
@@ -492,7 +494,7 @@ $ satex slice -f samples/paper.tex '\ifdraft'
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{mypackage}
-… 16 more lines omitted
+… 18 more lines omitted
 ```
 
 </details>
@@ -518,7 +520,7 @@ $ satex lint -f samples/paper.tex --filter 'category=performance'
 performance (1)
 
   ● preamble-cost (1)
-    paper.tex:26:1  5 packages requested directly, 275 files read, 82% of the tokens the build takes
+    paper.tex:26:1  5 packages requested directly, 275 files read, 76% of the tokens the build takes
       26 │ \begin{document}
          │ ^^^^^^
 … 5 more lines omitted
@@ -612,12 +614,12 @@ typeset
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step         name                        detail                    file           
-678     expand       \documentclass                                        paper.tex      @ paper.tex:1:1
-8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
-10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
-10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
-… 182 more lines omitted
+index   step        name                        detail                     file           
+678     expand      \documentclass                                         paper.tex      @ paper.tex:1:1
+8412    open-file   \article                    /usr/local/texlive/YYYY/…  paper.tex      @ paper.tex:1:1
+10261   expand      \par                                                   paper.tex      @ paper.tex:2:1
+10268   expand      \newif                                                 paper.tex      @ paper.tex:3:1
+… 172 more lines omitted
 ```
 
 </details>

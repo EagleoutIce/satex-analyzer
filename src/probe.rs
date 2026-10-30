@@ -28,6 +28,22 @@ pub static WANTED: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     static BACKGROUND: Cell<bool> = const { Cell::new(false) };
+    /// When the run a lint reads began: its probes share the run's
+    /// `limits.seconds` instead of each starting afresh.
+    static RUN_STARTED: Cell<Option<std::time::Instant>> = const { Cell::new(None) };
+}
+
+pub(crate) fn run_started() -> Option<std::time::Instant> {
+    RUN_STARTED.get()
+}
+
+/// `f` with the probes it runs held to the time budget of the run that
+/// began at `started`.
+pub fn within_run<T>(started: Option<std::time::Instant>, f: impl FnOnce() -> T) -> T {
+    let outer = RUN_STARTED.replace(started);
+    let out = f();
+    RUN_STARTED.set(outer);
+    out
 }
 
 /// `f` run as work nobody waits for: `None` when a request came first.
@@ -257,12 +273,18 @@ pub fn probe(analysis: &Analysis, sym: Sym, at: State) -> Option<Probed> {
         Prober { cfg: &cfg, analysis, sym, at, context: None, seen: Default::default(), spent: Spent::default() }
             .derive()
     });
+    // One cut by a lint's deadline is no answer for a later hover.
     if !preempted()
+        && !past_run_deadline(&cfg)
         && let Ok(mut probes) = analysis.probes.lock()
     {
         probes.insert((sym, at), found.clone());
     }
     found
+}
+
+fn past_run_deadline(cfg: &Config) -> bool {
+    cfg.limits.seconds > 0 && run_started().is_some_and(|s| s.elapsed().as_secs() >= cfg.limits.seconds)
 }
 
 /// Environments worth calling `sym` inside, generically: names the loaded
@@ -429,7 +451,8 @@ fn sandbox_config(base: &Config) -> Config {
         verbose: 0,
         trace: false,
         timings: false,
-        limits: Limits { steps: PROBE_STEPS, seconds: 0, ..base.limits.clone() },
+        // Within a lint the run's own clock bounds them (`within_run`).
+        limits: Limits { steps: PROBE_STEPS, ..base.limits.clone() },
         ..base.clone()
     }
 }
@@ -847,7 +870,8 @@ fn same_demand(plain: &Watch, variant: &Watch, by: usize) -> bool {
 }
 
 /// Items as an xparse argument specification, with `u{…}` for text up to
-/// a delimiter and required text as itself.
+/// a delimiter and required text in `‹…›`, so its letters are not read as
+/// argument types (`‹super›u{\; }`).
 pub fn raw_of(items: &[ArgType]) -> String {
     let mut raw = String::new();
     for item in items {
@@ -858,7 +882,7 @@ pub fn raw_of(items: &[ArgType]) -> String {
             ArgType::Optional(Some(d)) => raw.push_str(&format!("O{{{d}}}")),
             ArgType::Until(d) if d == "{" => raw.push('l'),
             ArgType::Until(d) => raw.push_str(&format!("u{{{d}}}")),
-            ArgType::Literal(text) => raw.push_str(text),
+            ArgType::Literal(text) => raw.push_str(&format!("‹{text}›")),
             ArgType::Keyword { word, value: Some(value) } => raw.push_str(&format!("[{word} ⟨{value}⟩]")),
             ArgType::Keyword { word, value: None } => raw.push_str(&format!("[{word}]")),
             ArgType::Quantity(value) if value == SWITCH => raw.push_str(value),

@@ -464,13 +464,26 @@ fn undefined_control_sequences(report: &mut Report) {
         } else {
             (Severity::Warning, format!("`{name}` is undefined on a path satex could not decide"))
         };
-        report.add_as(
-            severity,
-            expansion.span,
-            &name,
-            message,
-            Some(format!("define `{name}` or load the package that provides it")),
-        );
+        // A package of the installation that defines it is offered as the fix.
+        let package =
+            (severity == Severity::Error).then(|| super::shared::providing_package(report.analysis, raw)).flatten();
+        match package.and_then(|p| Some((report.edits().ensure_package(&p)?, p))) {
+            Some((edits, package)) => {
+                let fix = super::fix::Fix::new(
+                    format!("load `{package}`, which defines it"),
+                    super::fix::Applicability::Unsafe,
+                    Some(edits),
+                );
+                report.add_fix_as(severity, expansion.span, &name, message, fix);
+            }
+            None => report.add_as(
+                severity,
+                expansion.span,
+                &name,
+                message,
+                Some(format!("define `{name}` or load the package that provides it")),
+            ),
+        }
     }
 }
 
@@ -588,7 +601,18 @@ fn undefined_environments(report: &mut Report) {
             report.add_doubted(span, &name, message, &cause);
             continue;
         }
-        report.add(span, &name, message, Some(format!("`\\newenvironment{{{name}}}{{…}}{{…}}`")));
+        let package = super::shared::providing_package(report.analysis, &name);
+        match package.and_then(|p| Some((report.edits().ensure_package(&p)?, p))) {
+            Some((edits, package)) => {
+                let fix = super::fix::Fix::new(
+                    format!("load `{package}`, which defines it"),
+                    super::fix::Applicability::Unsafe,
+                    Some(edits),
+                );
+                report.add_fix(span, &name, message, fix);
+            }
+            None => report.add(span, &name, message, Some(format!("`\\newenvironment{{{name}}}{{…}}{{…}}`"))),
+        }
     }
 }
 

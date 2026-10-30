@@ -1372,6 +1372,11 @@ impl Mouth {
     }
 
     /// How many characters of the file have been read.
+    /// The text read: one of the texts a file a run wrote may hold.
+    pub fn source(&self) -> &std::rc::Rc<[char]> {
+        &self.src
+    }
+
     pub fn offset(&self) -> usize {
         self.pos
     }
@@ -2013,4 +2018,11 @@ impl Meaning {
             _ => None,
         }
     }
+}
+
+/// A control sequence's name as written (`\foo`, `foo`) without its escape:
+/// at most one backslash goes, so `\\` names the control symbol `\\`, never
+/// the null control sequence.
+pub fn bare_name(name: &str) -> &str {
+    name.strip_prefix('\\').filter(|rest| !rest.is_empty()).unwrap_or(name)
 }

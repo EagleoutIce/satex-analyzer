@@ -4,18 +4,90 @@
     <span class="tag"><img class="ink l1" src="{{line1}}" alt=""><img class="ink l2" src="{{line2}}" alt=""></span>
   </a>
   <p class="lead">{{description}}</p>
-  <p class="actions"><a class="button" href="play/index.html">Try it in the browser</a> <a class="button ghost" href="#install">Install</a> <a class="button ghost" href="#about">About</a> <a class="button ghost" href="guide.html">Guide</a></p>
+  <p class="claim">SaTeX interprets your TeX abstractly, over every path at once, so it can tell you <span class="claim-rot" aria-live="polite"><span data-knows class="on">which definition holds at each line.</span><span data-knows>what a <code>\csname</code> built and what that expands to.</span><span data-knows>the category code of each character, on each path.</span><span data-knows>what each paragraph typesets, ligatures included.</span><span data-knows>what the <code>.aux</code> will hold after the next run.</span></span></p>
+  <p class="actions"><a class="button" href="play/index.html">Try it in the browser</a> <a class="button ghost" href="#install">Install</a> <a class="button ghost" href="#compare">Comparison</a> <a class="button ghost" href="guide.html">Guide</a></p>
 </section>
-<section class="panel" id="examples">
+
+<section class="band" id="examples">
   <h2>Examples</h2>
+  <p class="sub">Hover a command for its explanation, an underline for its finding. All of it comes from running the file.</p>
   <div class="examples">{{examples}}</div>
-  <p class="muted">Analyzed at build time with satex <span title="{{versiontitle}}">{{version}}</span>.</p>
+  <p class="muted small">Analyzed at build time with SaTeX <span title="{{versiontitle}}">{{version}}</span>.</p>
 </section>
-<section class="panel" id="about">
+
+<section class="band alt" id="run">
+  <h2>Why run the code</h2>
+  <p class="sub">TeX decides what a line means while it runs: catcodes change, names are built, definitions come and go. A tool that only reads the text has to guess at these. SaTeX interprets the kernel, the class and every package as TeX would, over every path at once, and joins the paths soundly where it cannot decide.</p>
+  <div class="contrast" role="tablist" aria-label="examples of what a run knows">
+    <button type="button" role="tab" aria-selected="true" data-case="0">A name built by <code>\csname</code></button>
+    <button type="button" role="tab" aria-selected="false" data-case="1">An expl3 variant</button>
+    <button type="button" role="tab" aria-selected="false" data-case="2">A catcode change</button>
+  </div>
+  <div class="cases">
+    <figure class="case" data-case="0">
+      <pre><code>\expandafter\newcommand\csname note@\romannumeral 2\endcsname{…}
+\csname note@ii\endcsname</code></pre>
+      <div class="views"><div class="view by-text"><b>From the text</b>A name nobody wrote: unknown, so no definition, no usage, no error.</div>
+        <div class="view by-run"><b>From the run</b><code>\note@ii</code> is defined at line 1 and used at line 2, with its body and arguments.</div></div>
+    </figure>
+    <figure class="case" data-case="1" hidden>
+      <pre><code>\cs_new:Npn \my_show:n #1 { … }
+\cs_generate_variant:Nn \my_show:n { V }
+\my_show:V \l_tmpa_tl</code></pre>
+      <div class="views"><div class="view by-text"><b>From the text</b><code>\my_show:V</code> appears nowhere as a definition, which is a known blind spot of surface analysis.</div>
+        <div class="view by-run"><b>From the run</b>The variant is defined by expl3 itself, expands <code>\l_tmpa_tl</code> and calls <code>\my_show:n</code>.</div></div>
+    </figure>
+    <figure class="case" data-case="2" hidden>
+      <pre><code>\catcode`\|=\ifdraft 14 \else 12 \fi
+a | b \gdef\Maybe{}</code></pre>
+      <div class="views"><div class="view by-text"><b>From the text</b><code>|</code> is a character; <code>\Maybe</code> is defined.</div>
+        <div class="view by-run"><b>From the run</b>On one path <code>|</code> starts a comment and <code>\Maybe</code> is never defined: both paths are kept.</div></div>
+    </figure>
+  </div>
+</section>
+
+<section class="band" id="compare">
+  <h2>Comparison</h2>
+  <p class="sub">The other tools are good at what they do. SaTeX differs in that it executes the code, so it can check what the others infer from names and text.</p>
+  <div class="table-wrap"><table class="compare">
+    <thead><tr><th scope="col"></th><th scope="col">SaTeX</th><th scope="col"><a href="https://github.com/witiko/expltools">explcheck</a></th><th scope="col"><a href="https://github.com/latex-lsp/texlab">TeXLab</a></th><th scope="col"><a href="https://github.com/astoff/digestif">digestif</a></th><th scope="col"><a href="https://www.nongnu.org/chktex/">ChkTeX</a></th></tr></thead>
+    <tbody>
+      <tr><th scope="row">Source of its knowledge</th><td class="yes">executing the code (abstract interpretation)</td><td>the text, expl3 naming conventions, flow analysis</td><td>the text and a command database</td><td>package sources and hand-written tag files</td><td>regular expressions</td></tr>
+      <tr><th scope="row">Names made at run time (<code>\csname</code>, variants, keys, …)</th><td class="yes">seen as the run makes them</td><td class="no">not seen<sup><a href="#ref-dynamic">1</a></sup></td><td class="no">not seen</td><td class="no">not seen</td><td class="no">not seen</td></tr>
+      <tr><th scope="row">Languages</th><td class="yes">expl3, LaTeX2e and plain TeX in one run</td><td>expl3</td><td>LaTeX</td><td>LaTeX, ConTeXt, plain TeX, Texinfo</td><td>LaTeX</td></tr>
+      <tr><th scope="row">Values (catcodes, registers, lengths, token lists, …)</th><td class="yes">tracked, unknown ones as typed ranges</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
+      <tr><th scope="row">Conditionals it cannot decide</th><td class="yes">follows both arms and joins them</td><td>marks edges as maybe</td><td>—</td><td>—</td><td>—</td></tr>
+      <tr><th scope="row">Reruns (<code>.aux</code>, <code>.toc</code>, <code>.bbl</code>, …)</th><td class="yes">repeats the runs like latexmk, in memory</td><td>—</td><td>reads the files a build left</td><td>—</td><td>—</td></tr>
+      <tr><th scope="row">Interfaces</th><td class="yes">CLI, LSP, VS Code, browser playground</td><td>CLI, CI</td><td class="yes">LSP</td><td class="yes">LSP</td><td>CLI, used by editors</td></tr>
+      <tr><th scope="row">Style and convention checks</th><td>about 100 lint rules, expl3 conventions confirmed by the run</td><td class="yes">a coded catalog of expl3 warnings and errors</td><td>—</td><td>—</td><td class="yes">many typographic checks</td></tr>
+      <tr><th scope="row">Build and PDF</th><td>builds with latexmk and explains the log</td><td>—</td><td class="yes">build, forward and inverse search</td><td>—</td><td>—</td></tr>
+      <tr><th scope="row">Fixes</th><td class="yes">quick fixes, e.g. load the package that defines a name</td><td>—</td><td>formatting (latexindent)</td><td>—</td><td>—</td></tr>
+      <tr><th scope="row">Scope</th><td class="no">the files a document loads</td><td class="yes">all of TeX Live, with a public report</td><td class="yes">any file</td><td class="yes">any file</td><td class="yes">any file</td></tr>
+      <tr><th scope="row">Speed</th><td class="no">seconds with warm caches; large theses still too slow</td><td class="yes">fast</td><td class="yes">fast</td><td class="yes">fast</td><td class="yes">fast</td></tr>
+    </tbody>
+  </table></div>
+  <ol class="refs">
+    <li id="ref-dynamic">V. Novotný: “[the analyzer] cannot detect function definitions or calls that arise only through dynamic expansion and are not obvious from the surface text of the program”, <a href="https://witiko.github.io/Expl3-Linter-11.5/">Static analysis of expl3 programs (11½)</a>. The series is a careful account of what a text-based approach can do: <a href="https://witiko.github.io/Expl3-Linter-3/">related work</a>, <a href="https://witiko.github.io/Expl3-Linter-2.5/">TeX language servers</a>.</li>
+  </ol>
+</section>
+
+<section class="band alt" id="about">
   <h2>About</h2>
   {{intro}}
 </section>
-<section class="panel" id="install">
+
+<section class="band" id="install">
   <h2>Install</h2>
-  {{install}}
+  <div class="install-tabs" role="tablist" aria-label="ways to install">
+    <button type="button" role="tab" aria-selected="true" data-way="0">VS Code</button>
+    <button type="button" role="tab" aria-selected="false" data-way="1">Binary</button>
+    <button type="button" role="tab" aria-selected="false" data-way="2">Cargo</button>
+  </div>
+  <div class="ways">
+    <div class="way" data-way="0"><p>Install <b>SaTeX</b> from the Visual Studio Marketplace (<code>eagleoutice.satex</code>): findings in the Problems view, hover, completion, traces and quick fixes.</p></div>
+    <div class="way" data-way="1" hidden><p>Download the binary for your platform from the <a href="{{repository}}/releases">latest release</a> and put <code>satex</code> on your <code>PATH</code>.</p></div>
+    <div class="way" data-way="2" hidden><pre><code>cargo install satex-analyzer
+satex lint -f main.tex</code></pre></div>
+  </div>
+  <details class="more"><summary>Shell completion, building from source, the language server</summary>{{install}}</details>
 </section>

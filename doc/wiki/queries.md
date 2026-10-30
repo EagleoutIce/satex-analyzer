@@ -59,7 +59,7 @@ name         count  package         file
 
 ## dependencies
 
-The files, packages and classes the document reads, and what loaded each. Lua modules loaded by `\directlua` chunks appear with kind `lua`. `texlive` names each file's TeX Live package (see [configuration](configuration.md#tex-live-packages-depp)).
+The files, packages and classes the document reads, and what loaded each. Lua modules loaded by `\directlua` chunks appear with kind `lua`. `texlive` names each file's TeX Live package (see [configuration](configuration.md#what-plugins-decide)).
 
 ```text
 $ satex query dependencies -f samples/paper.tex --filter 'kind=package'
@@ -69,7 +69,7 @@ package  read            amstext         amsmath         amsmath.sty         @ a
 package  read            amsgen          amstext         amstext.sty         @ amstext.sty:27:1
 package  read            amsbsy          amsmath         amsmath.sty         @ amsmath.sty:127:1
 package  already-loaded  amsgen          amsbsy          amsbsy.sty          @ amsbsy.sty:27:1
-… 49 more lines omitted
+… 50 more lines omitted
 ```
 
 ## occurrences
@@ -129,7 +129,7 @@ macro-call           \fmtname  latex.ltx                      @ latex.ltx:731:26
 macro-call           \space    latex.ltx                      @ latex.ltx:731:34
 macro-call           \fmtver…  latex.ltx                      @ latex.ltx:731:42
 use                  LaTeX2e…  latex.ltx                      @ latex.ltx:129:24
-… 40113 more lines omitted
+… 40133 more lines omitted
 ```
 
 ## trace
@@ -138,13 +138,13 @@ Every step: which macro expanded, which primitive ran, what changed. Use `satex 
 
 ```text
 $ satex trace -f samples/paper.tex
-index   step         name                        detail                    file           
-678     expand       \documentclass                                        paper.tex      @ paper.tex:1:1
-8412    open-file    \article                    /usr/local/texlive/YYYY…  paper.tex      @ paper.tex:1:1
-10261   expand       \par                                                  paper.tex      @ paper.tex:2:1
-10268   expand       \newif                                                paper.tex      @ paper.tex:3:1
-10272   define       \ifdraft                                              paper.tex      @ paper.tex:3:7
-… 181 more lines omitted
+index   step        name                        detail                     file           
+678     expand      \documentclass                                         paper.tex      @ paper.tex:1:1
+8412    open-file   \article                    /usr/local/texlive/YYYY/…  paper.tex      @ paper.tex:1:1
+10261   expand      \par                                                   paper.tex      @ paper.tex:2:1
+10268   expand      \newif                                                 paper.tex      @ paper.tex:3:1
+10272   define      \ifdraft                                               paper.tex      @ paper.tex:3:7
+… 171 more lines omitted
 ```
 
 `--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile; `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown; `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
@@ -177,13 +177,13 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
-severity     code                        count  message                file            
-imprecision  argument-ends-in-unknown    1      a delimited argument…  latex.ltx       @ latex.ltx:20534:3
-imprecision  unknown-name                7      a name built from un…  latex.ltx       @ latex.ltx:20322:31
-imprecision  unknown-name                7      a name built from un…  latex.ltx       @ latex.ltx:20322:41
-imprecision  mismatched-group            2      extra }, or forgotte…  latex.ltx       @ latex.ltx:20534:3
-imprecision  paths-joined-at             1      2 paths arrived at a…  paper.tex       @ paper.tex:82:15
-… 15 more lines omitted
+severity     code                      count  message                  file            
+imprecision  paths-joined-at           1      2 paths arrived at a j…  paper.tex       @ paper.tex:56:13
+imprecision  argument-ends-in-unknown  1      a delimited argument r…  latex.ltx       @ latex.ltx:20534:3
+imprecision  unknown-name              6      a name built from unkn…  latex.ltx       @ latex.ltx:20322:31
+imprecision  unknown-name              6      a name built from unkn…  latex.ltx       @ latex.ltx:20322:41
+imprecision  mismatched-group          1      extra }, or forgotten …  latex.ltx       @ latex.ltx:20534:3
+… 10 more lines omitted
 ```
 
 ## distribution
@@ -221,7 +221,7 @@ variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.t
 variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
 variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
 variable-definition  \c_sys_…  while e…  expl3-code.tex       @ expl3-code.tex:6668:27
-… 1833 more lines omitted
+… 1829 more lines omitted
 ```
 
 ## project
@@ -287,18 +287,13 @@ This needs call arguments recorded (`record_arguments`). `query options` and `--
 
 ```text
 $ satex query options --for mybanner -f samples/mypackage.sty
-kind  key                 file           
-code  xcolor/natural      mypackage.sty  @ mypackage.sty:4:1
-code  xcolor/rgb          mypackage.sty  @ mypackage.sty:4:1
-code  xcolor/cmy          mypackage.sty  @ mypackage.sty:4:1
-code  xcolor/cmyk         mypackage.sty  @ mypackage.sty:4:1
-code  xcolor/hsb          mypackage.sty  @ mypackage.sty:4:1
-… 52 more lines omitted
+kind        name       detail                                                                                  
+positional  \mybanner  takes an optional argument (\mybanner[plain]) not read through a recognized key family  
 ```
 
 ## typeset
 
-The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. The [challenges](Challenges) compare it with what pdflatex sets.
+The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar; rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
 
 ```text
 $ satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex
@@ -425,7 +420,7 @@ $ satex slice -f samples/paper.tex '\ifdraft'
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{mypackage}
-… 16 more lines omitted
+… 18 more lines omitted
 ```
 
 ```text
@@ -436,7 +431,7 @@ $ satex slice -f samples/paper.tex --where 'kind=begin-environment and key=figur
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{mypackage}
-… 16 more lines omitted
+… 20 more lines omitted
 ```
 
 `--out DIR` writes the slice as a standalone project: the main file plus the local packages, classes, graphics and bibliographies it needs, paths preserved.

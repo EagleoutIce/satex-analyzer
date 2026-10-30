@@ -125,6 +125,42 @@ fn csname_over_undecided_tests_defines_every_name() {
     }
 }
 
+/// A one-of token a read splits holds the text it took on that path,
+/// wherever its copies went: a `\csname` of one copy decides a test of
+/// another.
+#[test]
+fn split_one_of_narrows_its_copies_on_the_path() {
+    let analysis = analyze(
+        r"\edef\x{\ifnum\pdfuniformdeviate2=0 a\else b\fi}\edef\y{\x}\def\a{}
+          \expandafter\ifx\csname\x\endcsname\a \expandafter\ifx\y a\def\same{}\else\def\apart{}\fi\fi",
+    );
+    let defined = names(&analysis);
+    assert!(defined.contains(&"same".to_string()) && !defined.contains(&"apart".to_string()), "{defined:?}");
+}
+
+/// Two choices of the same texts are independent, made in two places,
+/// twice in one, or in passes a loop joins: a split of one narrows
+/// neither the other nor its copies.
+#[test]
+fn split_one_of_leaves_other_choices_of_the_same_texts() {
+    let analysis = analyze(
+        r"\edef\x{\ifnum\pdfuniformdeviate2=0 a\else b\fi}\edef\y{\ifnum\pdfuniformdeviate2=0 a\else b\fi}
+          \expandafter\ifx\x a\expandafter\ifx\y a\def\ya{}\else\def\yb{}\fi\fi
+          \def\m#1{\expandafter\ifx\x#1\def\ms{}\else\def\md{}\fi}\count1=0
+          \def\pass{\edef\x{\ifnum\pdfuniformdeviate2=0 a\else b\fi}\ifnum\count1=0 \let\z\x\fi
+            \advance\count1 1 \ifnum\count1<2 \expandafter\pass\fi}
+          \pass\expandafter\m\z
+          \def\n#1{\expandafter\ifx\x#1\def\ns{}\else\def\nd{}\fi}\count1=0
+          \def\more{\edef\x{\ifnum\pdfuniformdeviate2=0 a\else b\fi}\ifnum\count1=0 \let\w\x\fi
+            \advance\count1 1 \ifnum\pdfuniformdeviate2=0 \expandafter\more\fi}
+          \more\expandafter\n\w",
+    );
+    let defined = names(&analysis);
+    for name in ["ya", "yb", "ms", "md", "ns", "nd"] {
+        assert!(defined.contains(&name.to_string()), "{name}: {defined:?}");
+    }
+}
+
 /// `\pdfuniformdeviate n` is a number in [0, n): its digits are typed
 /// with that interval, and the interval survives `\numexpr`, `\the`,
 /// `\number` and a macro argument. A test the interval decides is decided.
@@ -473,6 +509,22 @@ fn if_and_ifcat_decide_typed_digits() {
         assert!(defined.contains(&yes.to_string()) && !defined.contains(&no.to_string()), "{yes}: {defined:?}");
     }
     assert!(with_code(&analysis, "undecided-condition").is_empty());
+}
+
+/// A name joined to a character and a primitive is that character behind
+/// `\noexpand` where it means it (tex.web § 506): `\if` and `\ifcat` test
+/// each meaning, never a control sequence for all.
+#[test]
+fn noexpand_of_a_name_joined_to_a_character_tests_each_meaning() {
+    let analysis = analyze(&format!(
+        r"{PICK2}\let\x=a\else\let\x=\relax\fi
+          \ifcat\noexpand\x a\def\cat{{}}\else\def\nocat{{}}\fi
+          \if\noexpand\x a\def\same{{}}\else\def\notsame{{}}\fi"
+    ));
+    let defined = names(&analysis);
+    for name in ["cat", "nocat", "same", "notsame"] {
+        assert!(defined.contains(&name.to_string()), "{name}: {defined:?}");
+    }
 }
 
 /// One-of texts whose first tokens all agree decide `\if`, `\ifcat`

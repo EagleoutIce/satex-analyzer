@@ -342,6 +342,28 @@ fn hover_shows_primitive_syntax_only_while_it_is_the_primitive() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `\\` is the control symbol LaTeX defines as a line break, never the
+/// null control sequence; its hover explains it, and a glue parameter's
+/// hover explains glue.
+#[test]
+fn hover_explains_the_line_break_and_glue() {
+    let text = "\\documentclass{article}\n\\begin{document}\nA\\\\ B \\setlength{\\parskip}{1pt}\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_unsaved("linebreak", text);
+    let mut hover = |character: u32| {
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": character } }),
+        );
+        server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
+    };
+    let newline = hover(2);
+    assert!(newline.contains("#### About `\\\\`") && !newline.contains("null control sequence"), "{newline}");
+    let glue = hover(18);
+    assert!(glue.contains("#### About *glue*"), "{glue}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A hover is kept, and the one of a name the document defines is asked
 /// again once an edit redefined it: the diagnostics of the edit come after.
 #[test]
@@ -635,6 +657,38 @@ const COMPLETE: &str = "\\documentclass{article}
 \\end{document}
 \\begin{}
 ";
+
+/// Options of commands that read them through a key family or a default,
+/// with nothing else on the line to go by.
+const COMPLETE_OPTIONS: &str = "\\documentclass{article}
+\\usepackage{tikz}
+\\newcommand{\\x}[]{x}
+\\begin{document}
+\\begin{tikzpicture}[]
+\\draw[] (0,0) -- (1,1);
+\\end{tikzpicture}
+\\end{document}
+";
+
+/// What an optional argument takes, from the run: `\newcommand`'s count
+/// from its numeric default, TikZ keys for a picture and a path, never the
+/// keys of an unrelated package the call graph also reaches (xcolor's color
+/// models through scratch macros).
+#[test]
+fn completion_offers_what_an_optional_argument_takes() {
+    let (mut server, uri, _, dir) = open_loaded("options", COMPLETE_OPTIONS);
+    let count = complete(&mut server, &uri, 2, 16);
+    assert_eq!(labels(&count).first(), Some(&"0"), "{:?}", labels(&count));
+    assert!((1..=9).all(|n| labels(&count).contains(&n.to_string().as_str())), "{:?}", labels(&count));
+    for (line, character) in [(4, 20), (5, 6)] {
+        let keys = complete(&mut server, &uri, line, character);
+        let names = labels(&keys);
+        assert!(names.contains(&"thick") && names.contains(&"scale"), "{line}: {names:?}");
+        assert!(!names.contains(&"natural"), "{line}: {names:?}");
+    }
+    drop(server);
+    std::fs::remove_dir_all(dir).ok();
+}
 
 /// A completion result's items, an array or a list (LSP `CompletionList`).
 fn completion_items(result: &Value) -> Vec<Value> {
@@ -1126,7 +1180,7 @@ fn hover_explains_quantities_and_completion_types_arguments() {
         json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": 3 } }),
     );
     let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
-    assert!(hover.contains("#### About glue") && hover.contains("plus"), "{hover}");
+    assert!(hover.contains("#### About *glue*") && hover.contains("plus"), "{hover}");
     let items = complete(&mut server, &uri, 4, 6);
     let detail = items.iter().find(|i| i["label"] == "setlength").and_then(|i| i["detail"].as_str());
     assert!(detail.is_some_and(|d| d.contains("{1: skip register}") && d.contains("{2: glue}")), "{detail:?}");
@@ -1296,7 +1350,7 @@ fn keys_are_labels_or_citations() {
         json!({ "textDocument": { "uri": uri }, "position": { "line": 2, "character": col("\\ref") - 2 } }),
     );
     let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
-    assert!(hover.contains("- `⟨arg1⟩` label") && hover.contains("About label"), "{hover}");
+    assert!(hover.contains("- `⟨arg1⟩` label") && hover.contains("#### About *label*"), "{hover}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1355,7 +1409,7 @@ fn bibliography_arguments_are_typed_as_files() {
         );
         let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
         let kind = if line == 3 { "bibliography style (.bst)" } else { "bibliography database (.bib)" };
-        assert!(hover.contains(&format!("- `⟨arg1⟩` {kind}")) && !hover.contains("About key"), "{hover}");
+        assert!(hover.contains(&format!("- `⟨arg1⟩` {kind}")) && !hover.contains("#### About *key*"), "{hover}");
     }
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);

@@ -188,8 +188,15 @@ def sidebar(table):
     return re.sub(r"\[([^\]]*)\]\(([^)\s]+)\)", target, text)
 
 
+MERMAID = ('<script type="module">import m from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";'
+           'm.initialize({ startOnLoad: false, theme: "neutral" }); m.run();</script>')
+
+
 def markdown(text):
-    return run("pandoc", "-f", "gfm", "-t", "html5", "--syntax-highlighting=none", "--wrap=none", input=text)
+    """The page's HTML; a Mermaid block becomes a diagram drawn in the browser."""
+    body = run("pandoc", "-f", "gfm", "-t", "html5", "--syntax-highlighting=none", "--wrap=none", input=text)
+    body, charts = re.subn(r'<pre class="mermaid"><code>(.*?)</code></pre>', r'<pre class="mermaid">\1</pre>', body, flags=re.S)
+    return body + MERMAID if charts else body
 
 
 def rewrite(body, source, table, homepage, repo, out, root):

@@ -1536,17 +1536,21 @@ impl Env {
     pub fn refine_to(&mut self, sym: Sym, members: &[Meaning], keep: &[bool]) {
         match members {
             [one] => self.refine(sym, one.clone(), keep),
-            _ => {
-                self.effective += 1;
-                let i = sym.0 as usize;
-                let Some(Some(binding)) = self.slots.get(i) else { return };
-                let binding = Binding { meaning: Meaning::Unknown, may: Some(members.into()), ..binding.clone() };
-                self.correlate(i, keep);
-                self.log(i);
-                self.slots[i] = Some(binding);
-                self.changed(i);
-            }
+            _ => self.refine_may(sym, members, keep),
         }
+    }
+
+    /// [`Env::refine_to`], `members` kept as a set even when one: the
+    /// texts a one-of token still stands for.
+    pub fn refine_may(&mut self, sym: Sym, members: &[Meaning], keep: &[bool]) {
+        self.effective += 1;
+        let i = sym.0 as usize;
+        let Some(Some(binding)) = self.slots.get(i) else { return };
+        let binding = Binding { meaning: Meaning::Unknown, may: Some(members.into()), ..binding.clone() };
+        self.correlate(i, keep);
+        self.log(i);
+        self.slots[i] = Some(binding);
+        self.changed(i);
     }
 
     /// The groups the running path stands in, outermost first: each one's
@@ -1600,9 +1604,14 @@ impl Env {
                 |p: &PathEnv| p.slots.get(&sym).map_or_else(|| (self.slots[i].clone(), self.level[i]), Clone::clone);
             let ((old, x), (new, y)) = (side(a), side(b));
             let differ = !identical(&old, &new);
+            let (old, new) = match differ {
+                true => (self.settle(a, old, typed), self.settle(b, new, typed)),
+                false => (old, new),
+            };
             // A group end puts back what either path saved (tex.web § 283
             // keeps only what both made global).
-            let level = x.max(y);
+            // A level past the joined groups is one only `b` stood in.
+            let level = x.max(y).min(a.marks.len() as u32);
             let joined = join(old.clone(), new, self.sets, Some(typed));
             let joined = match widen {
                 true => {
@@ -1644,6 +1653,43 @@ impl Env {
         let journal = self.join_journals(fork, a, b, low, &mut marks);
         let corr = paired.then(|| self.correlated(apart, a, b, &lost)).flatten();
         (PathEnv { slots, journal, marks: Rc::new(marks), low, corr }, grown, waiting)
+    }
+
+    /// `binding` as path `p` holds it: a one-of token `p` narrowed to one
+    /// text ([`Env::refine_may`]) is that text, so arms that took
+    /// different texts join as texts, not as the token both still hold.
+    fn settle(&self, p: &PathEnv, binding: Option<Binding>, typed: &Typed) -> Option<Binding> {
+        let text = |t: &Token| -> Option<Rc<[Token]>> {
+            let sym = t.cs()?;
+            let name = typed.interner.name(sym);
+            name.strip_prefix(crate::machine::UNKNOWN_NAME)?.strip_prefix(crate::machine::explore::ONE_OF)?;
+            let held = p
+                .slots
+                .get(&sym.0)
+                .map_or_else(|| self.slots.get(sym.0 as usize).cloned().flatten(), |(b, _)| b.clone());
+            match held?.may.as_deref() {
+                Some([Meaning::Macro(d)]) => Some(d.replacement_text.clone()),
+                _ => None,
+            }
+        };
+        let spell = |m: &Meaning| match m {
+            Meaning::Macro(d) if d.replacement_text.iter().any(|t| text(t).is_some()) => {
+                let body: Vec<Token> =
+                    d.replacement_text.iter().flat_map(|t| text(t).map_or_else(|| vec![*t], |x| x.to_vec())).collect();
+                Some(Meaning::Macro(Rc::new(crate::tex::MacroDef { replacement_text: body.into(), ..(**d).clone() })))
+            }
+            _ => None,
+        };
+        let mut b = binding?;
+        if let Some(m) = spell(&b.meaning) {
+            b.meaning = m;
+        }
+        if let Some(may) = &b.may
+            && may.iter().any(|m| spell(m).is_some())
+        {
+            b.may = Some(may.iter().map(|m| spell(m).unwrap_or_else(|| m.clone())).collect());
+        }
+        Some(b)
     }
 
     /// The arms of a join of `a` and `b` that differ in `apart`, each
@@ -1801,12 +1847,28 @@ impl Env {
         while journal.len() > base {
             journal.pop();
         }
-        for (g, (mine, theirs)) in x.into_iter().zip(y).enumerate() {
+        // A group only `a` stands in keeps its saves, joined with what `b`
+        // holds; one only `b` stands in is not in the join.
+        let mut y = y.into_iter();
+        for (g, mine) in x.into_iter().enumerate() {
+            let theirs = y.next().unwrap_or_default();
             if g > 0 && marks[g - 1].journal >= base {
                 marks[g - 1].journal = journal.len();
             }
             let mut merged: Vec<Entry> = Vec::with_capacity(mine.len() + theirs.len());
-            for (entry, other) in mine.into_iter().map(|e| (e, b)).chain(theirs.into_iter().map(|e| (e, a))) {
+            // A slot one path saved twice in a group ends it with what the
+            // first save holds: only that one joins.
+            let first = |entries: Vec<Entry>| {
+                let mut seen = std::collections::HashSet::new();
+                entries.into_iter().filter(|e| seen.insert(e.slot())).collect::<Vec<_>>()
+            };
+            let (mine, theirs) = (first(mine), first(theirs));
+            // A slot both paths saved here: the group's end puts back either save.
+            let saved = |entries: &[Entry]| entries.iter().map(Entry::slot).collect::<std::collections::HashSet<_>>();
+            let (in_mine, in_theirs) = (saved(&mine), saved(&theirs));
+            let tagged =
+                mine.into_iter().map(|e| (e, b, &in_theirs)).chain(theirs.into_iter().map(|e| (e, a, &in_mine)));
+            for (entry, other, both) in tagged {
                 let entry = match entry {
                     Entry::Meaning { sym, old, level, alias, stamp } => {
                         let old = match global(other, sym) {
@@ -1814,7 +1876,7 @@ impl Env {
                             // A name the other path did not save in this
                             // group: its end leaves what that path holds, set
                             // outside the group or at the fork.
-                            None if is_name(&old) => {
+                            None if is_name(&old) && !both.contains(&(false, sym)) => {
                                 let held = match other.slots.get(&sym) {
                                     Some((slot, level)) if (*level as usize) < g => Some(slot.clone()),
                                     Some(_) => None,
@@ -1845,13 +1907,17 @@ impl Env {
 }
 
 impl Entry {
+    /// The slot the entry saves: a name or a character's category.
+    fn slot(&self) -> (bool, u32) {
+        match self {
+            Entry::Meaning { sym, .. } => (false, *sym),
+            Entry::Catcode { character, .. } => (true, u32::from(*character)),
+        }
+    }
+
     /// Whether two entries save the same slot.
     fn same_slot(&self, other: &Entry) -> bool {
-        match (self, other) {
-            (Entry::Meaning { sym: a, .. }, Entry::Meaning { sym: b, .. }) => a == b,
-            (Entry::Catcode { character: a, .. }, Entry::Catcode { character: b, .. }) => a == b,
-            _ => false,
-        }
+        self.slot() == other.slot()
     }
 
     /// Two paths saved the same slot: what either may put back.

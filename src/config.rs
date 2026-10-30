@@ -1940,6 +1940,65 @@ pub fn keys() -> serde_json::Map<String, serde_json::Value> {
     out
 }
 
+/// The JSON schema of `satex.yaml` (`satex.schema.json`): each key with the
+/// type and value [`Config::default`] gives it, described by the comment
+/// after it in `documented`, the repository's own `satex.yaml`.
+pub fn schema(documented: &str) -> serde_json::Value {
+    use serde_json::{Value, json};
+    // `key: value  # text`, nested by indentation; a comment alone on a line goes on.
+    let mut about: std::collections::HashMap<String, String> = Default::default();
+    let (mut path, mut last): (Vec<(usize, String)>, Option<String>) = (Vec::new(), None);
+    for line in documented.lines() {
+        let indent = line.len() - line.trim_start().len();
+        let text = line.trim_start();
+        if let Some(more) = text.strip_prefix('#').filter(|_| indent > 0) {
+            if let Some(key) = &last {
+                about.entry(key.clone()).and_modify(|a| *a = format!("{a} {}", more.trim()));
+            }
+            continue;
+        }
+        let Some((key, rest)) = text.split_once(':').filter(|(k, _)| !k.is_empty() && !k.starts_with(['#', '-']))
+        else {
+            continue;
+        };
+        path.retain(|(i, _)| *i < indent);
+        path.push((indent, key.trim().to_string()));
+        let dotted = path.iter().map(|(_, k)| k.as_str()).collect::<Vec<_>>().join(".");
+        if let Some((_, comment)) = rest.split_once("  # ") {
+            about.insert(dotted.clone(), comment.trim().to_string());
+        }
+        last = Some(dotted);
+    }
+    fn walk(path: &str, v: &Value, about: &std::collections::HashMap<String, String>) -> Value {
+        let mut out = match v {
+            Value::Object(m) => json!({
+                "type": "object",
+                "properties": m.iter().map(|(k, v)| {
+                    let p = if path.is_empty() { k.clone() } else { format!("{path}.{k}") };
+                    (k.clone(), walk(&p, v, about))
+                }).collect::<serde_json::Map<_, _>>(),
+            }),
+            Value::Bool(_) => json!({ "type": "boolean" }),
+            Value::Number(n) if n.is_f64() => json!({ "type": "number" }),
+            Value::Number(_) => json!({ "type": "integer" }),
+            Value::String(_) => json!({ "type": "string" }),
+            Value::Array(_) => json!({ "type": "array" }),
+            Value::Null => json!({}),
+        };
+        if !matches!(v, Value::Object(_) | Value::Null) {
+            out["default"] = v.clone();
+        }
+        if let Some(text) = about.get(path) {
+            out["description"] = json!(text);
+        }
+        out
+    }
+    let mut out = walk("", &serde_json::to_value(Config::default()).unwrap_or_default(), &about);
+    out["$schema"] = json!("http://json-schema.org/draft-07/schema#");
+    out["title"] = json!("satex.yaml");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

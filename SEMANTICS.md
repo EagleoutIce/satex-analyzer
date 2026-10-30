@@ -1034,7 +1034,7 @@ document that redefines the name gets its own meaning back.
 [expl3-code]: https://github.com/latex3/latex3/tree/0838953eace80b804cd47e8a5ee7ff37f8b8b6e0/l3kernel
 [plain]: https://ctan.org/pkg/plain
 [etex.ch]: https://github.com/TeX-Live/texlive-source/blob/3d3a4b2b66ed37e1fc16078b26451e1d9402f86b/texk/web2c/etexdir/etex.ch
-[latex.ltx]: https://github.com/latex3/latex2e/tree/ac5f3d56666db2b895ca8f70959cfdccd6445419/base
+[latex.ltx]: https://github.com/latex3/latex2e/tree/db6df6380f8660758d26b9666d0e70600a3d7be9/base
 
 <!-- tex.web modules. Re-pin with `python3 scripts/tex-web-links.py --update SEMANTICS.md`;
      `--check` (run in CI) fails if these have drifted from the current upstream commit. -->

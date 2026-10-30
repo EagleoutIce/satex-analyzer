@@ -1186,6 +1186,133 @@ x
     assert_eq!(unsupported(&analysis), Vec::<String>::new());
 }
 
+/// `\DocumentMetadata` is the entry point of the PDF-management and tagging
+/// code, so it is in every new document.  It loads pdfmanagement, tagpdf and
+/// the latex-lab testphase files, and satex has to come out the other side
+/// with a bounded run and a bounded report instead of one gap counted into
+/// the millions.
+mod document_metadata {
+    use satex::config::Config;
+    use satex::facts::Severity;
+    use satex::machine::{Analysis, Machine};
+
+    /// The bound one gap at one place is counted to.
+    fn bound() -> u32 {
+        Config::default().limits.repeat_failures
+    }
+
+    fn analyze_with(options: &str, cfg: &Config) -> Analysis {
+        let source = format!(
+            "\\DocumentMetadata{{{options}}}\n\\documentclass{{article}}\n\\begin{{document}}\nx\n\\end{{document}}\n"
+        );
+        Machine::analyze(&source, None, cfg)
+    }
+
+    fn analyze_document(options: &str) -> Analysis {
+        analyze_with(options, &crate::support::config())
+    }
+
+    fn unsupported(analysis: &Analysis) -> Vec<(&str, u32)> {
+        analysis
+            .facts
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Unsupported)
+            .map(|d| (d.code, d.count))
+            .collect()
+    }
+
+    /// No gap at one place may be reported more than `repeat_failures`
+    /// times, and the run may not end in `budget-exhausted`.  The document
+    /// still leaves gaps, so the codes are not asserted away; what is
+    /// asserted is that each is bounded and the run finished.
+    fn stays_bounded(options: &str) {
+        let analysis = analyze_document(options);
+        let bound = bound();
+        let over: Vec<_> = unsupported(&analysis).into_iter().filter(|&(_, n)| n > bound).collect();
+        assert_eq!(over, Vec::new(), "gaps past the bound of {bound} for `{options}`");
+        let exhausted: Vec<_> =
+            unsupported(&analysis).into_iter().filter(|&(code, _)| code == "budget-exhausted").collect();
+        let why: Vec<&str> = analysis
+            .facts
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "budget-exhausted" || d.code == "limit-reached")
+            .map(|d| d.message.as_str())
+            .collect();
+        assert_eq!(exhausted, Vec::new(), "the run ran out of budget on `{options}`: {why:?}");
+        assert!(!analysis.exhausted, "the run was exhausted on `{options}`");
+        // Measured: 20 million tokens with the bound, 240 million without,
+        // out of the 900 million the default budget allows.
+        assert!(analysis.steps < BOUNDED_STEPS, "{} steps for `{options}`", analysis.steps);
+    }
+
+    /// Well above what the bounded run needs and well below what the
+    /// unbounded one took.
+    const BOUNDED_STEPS: u64 = 50_000_000;
+
+    /// tikz, graphicx and hyperref together (epstopdf's `\InputIfFileExists`
+    /// loop, pgfmath's dimension comparisons) end without running out of budget.
+    #[test]
+    fn a_tikz_hyperref_document_does_not_exhaust_the_budget() {
+        if !super::installed() {
+            return;
+        }
+        let source = "\\documentclass[9pt]{article}\n\\usepackage{tikz,graphicx,etoolbox}\n\\usepackage{hyperref}\n\\usetikzlibrary{decorations.pathmorphing,shadows,arrows.meta}\n\\begin{document}\n\\section{One}\\label{sec:one}\n\\begin{tikzpicture}\\node[draw,circle] (a) {x};\\node[draw] (b) at (2,1) {y};\\draw[->] (a) -- (b);\\end{tikzpicture}\n\\end{document}\n";
+        let analysis = crate::support::analyze_latex(source);
+        let exhausted: Vec<_> =
+            unsupported(&analysis).into_iter().filter(|&(code, _)| code == "budget-exhausted").collect();
+        assert_eq!(exhausted, Vec::new());
+        assert!(!analysis.exhausted);
+    }
+
+    #[test]
+    fn the_bare_five_line_document_stays_bounded() {
+        if !super::installed() {
+            return;
+        }
+        stays_bounded("lang=en");
+    }
+
+    /// The options real documents carry: `pdfversion` picks the PDF the
+    /// backend writes, `testphase` loads the latex-lab code, `tagging`
+    /// turns the structure tree on.
+    #[test]
+    fn the_common_options_stay_bounded() {
+        if !super::installed() {
+            return;
+        }
+        stays_bounded("pdfversion=2.0");
+        stays_bounded("lang=en,pdfversion=1.7,testphase={phase-III}");
+        stays_bounded("tagging=on");
+    }
+
+    /// The worst one gap at one place is counted.
+    fn worst(analysis: &Analysis) -> u32 {
+        unsupported(analysis).into_iter().map(|(_, n)| n).max().unwrap_or(0)
+    }
+
+    /// The gap the bound once held down (one counted into the hundreds of
+    /// thousands at `expl3-code.tex` line 12363 under the latex-lab
+    /// testphase code) is gone: the arms of a choice inside an expanding
+    /// body join where they meet, so no path repeats it. Without the
+    /// bound the report is the same as with it.
+    #[test]
+    fn lifting_the_bound_leaves_the_report_as_it_is() {
+        if !super::installed() {
+            return;
+        }
+        const OPTIONS: &str = "lang=en,pdfversion=1.7,testphase={phase-III}";
+        let mut lifted = crate::support::config();
+        lifted.limits.repeat_failures = 0;
+        lifted.limits.steps = BOUNDED_STEPS;
+        let unbounded = worst(&analyze_with(OPTIONS, &lifted));
+        assert!(unbounded <= bound(), "without the bound one gap was counted {unbounded} times");
+        let bounded = worst(&analyze_document(OPTIONS));
+        assert!(bounded <= bound(), "one gap was counted {bounded} times, past the bound of {}", bound());
+    }
+}
+
 /// `\int_rand:n` over a range wider than `\c__kernel_randint_max_int`
 /// (131071) goes through expl3's wide path, where `\tex_uniformdeviate:D`
 /// hands `\__fp_randint_split_o:Nw` text satex cannot know and its
@@ -1803,6 +1930,146 @@ x\label{after}
     }
 }
 
+/// An error the document makes is recovered as TeX recovers it: a flag
+/// raised without `\flag_new:n` makes `\cs:w \relax` (tex.web § 373:
+/// `\endcsname` is inserted and the run goes on), then an extra
+/// `\endcsname` (§ 1135, ignored), over and over. The hundredth error is
+/// reported (TeX would stop there, § 82) and satex reads on. No widening, no repeated-failure
+/// cut, no budget cascade into `\begin{document}`.
+#[test]
+fn an_error_in_the_document_is_recovered_like_tex() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\int_step_inline:nn{\pdfuniformdeviate 9}{\flag_raise:n{test}}
+\flag_clear:n{test}
+\ExplSyntaxOff
+\begin{document}x\end{document}",
+    );
+    let count = |code: &str| {
+        analysis.facts.diagnostics.iter().filter(|d| d.code == code).map(|d| u64::from(d.count)).sum::<u64>()
+    };
+    assert!(count("missing-endcsname") >= 51 && count("extra-endcsname") >= 50, "{:?}", analysis.facts.diagnostics);
+    assert!(count("too-many-errors") >= 1, "the hundredth error is reported");
+    for code in ["repeated-failure", "limit-reached", "budget-exhausted", "line-budget-cut", "unbalanced-argument"] {
+        assert_eq!(count(code), 0, "{code}");
+    }
+    let raised = |text: &str| analysis.facts.raised.iter().any(|r| r.text == text);
+    assert!(raised("Missing \\endcsname inserted") && raised("That makes 100 errors; please try again"));
+    assert!(analysis.steps < 5_000_000, "{} steps", analysis.steps);
+}
+
+/// A resized picture whose styles are set up next to forest, fontawesome
+/// and hyperref: a file name the hooks expand holds unknown text, and
+/// expl3's quote loop over it once ate the marker an outer scan needed
+/// (unbalanced-argument, extra-right-brace at expl3-code.tex:2549, then
+/// missing-endcsname and unbalanced-group by the dozen). Four gaps remain.
+#[test]
+fn resized_picture_with_styles_keeps_file_name_scans() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r#"\documentclass{article}
+\usepackage{graphicx,xcolor}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,calc,shapes.geometric,backgrounds}
+\usepackage{tikz}
+\usepackage{forest}
+\usepackage{commalists-tools}
+\usepackage{fontawesome}
+\usepackage{hyperref}
+\usepackage{csquotes}
+\usetikzlibrary{decorations.pathmorphing,shadows,arrows.meta}
+\pgfdeclarelayer{background}\pgfdeclarelayer{foreground}\pgfdeclarelayer{middle}
+\pgfdeclarelayer{very-background}
+\pgfsetlayers{very-background,background,main,middle,foreground}
+
+\tikzset{
+   Soft/.style={line join=round,line cap=round},
+   All Soft/.style={every path/.append style={Soft}},
+   Blob/.style={
+      draw=black,
+      circle,
+      outer sep=2pt,
+      minimum size=1.8em
+   },
+   Blobs/.style={
+      every node/.append style={Blob}
+   },
+   Use/.style={Blob},
+   RectRounding/.style={rounded corners=3pt},
+   RawRect/.style={
+      draw=black,
+      rectangle,
+      RectRounding,
+      minimum size=1.8em,
+      inner sep=5pt,
+      fill=white,
+   },
+   Rect/.style={
+      draw=black,
+      rectangle,
+      RectRounding,
+      outer sep=2pt,
+      minimum size=1.8em
+   },
+   Def/.style={Rect},
+   Rects/.style={
+      every node/.append style={Rect,minimum width=#1}
+   },
+   Rects/.default={1.5em},
+   Link/.style={
+      draw,
+      Soft,
+      rounded corners=2.5pt,
+      -Kite
+   },
+   Links/.style={
+      every path/.append style={Link}
+   },
+   % for dataflow graphs
+   comm/.style={rectangle,draw=gray,text width=9mm,align=center,minimum height=5mm,font=\ttfamily,fill=white,fill opacity=1,drop shadow={fill=lightgray!50}},
+   d/.style={comm,rounded corners=2pt}, % variable def
+   u/.style={comm,rounded corners=2.5mm}, % variable use % rounded rectangle breaks anchors
+   v/.style={comm,signal, signal to=east and west, gray, text=black, inner sep=-4pt, text width=5mm,fill=lightgray!22!white}, % values
+   e/.style={comm,rounded corners=2.5mm,densely dotted,thick,fill=white}, % exit point
+   F/.style={comm,draw=gray,rounded corners=2pt,fill=white,inner xsep=.5em},
+   fc/.style={comm,double,rounded corners=2pt},
+   w-back/.style={fill=white,inner sep=1pt},
+   T/.style={font=\footnotesize\ttfamily,text=gray},
+   code/.style={font=\ttfamily},
+   dfidn/.style={
+      circle,darkgray,fill opacity=.925,xshift=-1mm,yshift=.15mm,fill=white,draw,minimum size=1.8em,scale=.8,inner sep=-1pt
+   },
+   klabel/.style={font=\scriptsize\sffamily, inner sep=1pt,text=black,above,execute at begin node={\strut}},
+   olabel/.style={midway,fill=white,fill opacity=.75,text opacity=1,rounded corners=2pt,inner sep=1pt,font=\tiny\sffamily},
+}
+\newsavebox\DataFlow
+\setbox\DataFlow=\hbox{\resizebox*!{1.25cm}{\begin{tikzpicture}
+   \node[d] (0) at (0,0) {};
+   \node[u,right=4mm] (1) at (0.east) {};
+   \node[v,above=4mm] (2) at (0.north) {~~~~};
+   \node[u,below=4mm] (3) at (0.south) {};
+   \draw[Link,-Kite] (3) -- (0);
+   \draw[Link,-Kite] (0) -- (1);
+   \draw[Link,dotted] (1) to[bend right] (2);
+\end{tikzpicture}}}
+\newsavebox\ControlFlow
+\setbox\ControlFlow=\hbox{\resizebox*!{1.25cm}{\color{lightgray!80!gray}\begin{tikzpicture}[Link/.style={draw,line cap=round,gray,thick},comm/.append style={very thick}]
+\node[d] (0) at (0,0) {};
+\end{tikzpicture}}}
+\begin{document}
+x\label{after}
+\end{document}"#,
+    );
+    assert_eq!(keys(&analysis, OccKind::Label), vec!["after"]);
+    assert!(broken_gaps(&analysis).is_empty(), "{:?}", broken_gaps(&analysis));
+}
+
 /// The same for a cloud around two lines.
 #[test]
 fn tikz_cloud_node_of_unknown_height_stays_balanced() {
@@ -1916,6 +2183,28 @@ fn tikz_pictures_with_unknown_borders_do_not_exhaust_the_budget() {
     );
     let analysis = analyze(&source);
     assert!(!analysis.exhausted);
+}
+
+/// The scale factor of `\resizebox` is a `\strip@pt` of an unknown quotient:
+/// number text with no `+`, no `--` and at most one `.`, which the delimited
+/// scans of graphics' `\GPT@NormalizeNumber` decide instead of failing on.
+#[test]
+fn a_resized_box_of_unknown_width_normalizes_its_scale() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}\usepackage{graphicx}\begin{document}
+\resizebox{\textwidth}{!}{\rule{\pdfuniformdeviate 100pt}{1pt}}
+\resizebox{\textwidth}{!}{$N$}
+x\label{after}\end{document}",
+    );
+    let count = |code: &str| analysis.facts.diagnostics.iter().filter(|d| d.code == code).count();
+    for code in ["repeated-failure", "limit-reached", "argument-ends-in-unknown"] {
+        assert_eq!(count(code), 0, "{code}: {:?}", analysis.facts.diagnostics);
+    }
+    assert_eq!(keys(&analysis, OccKind::Label), vec!["after".to_string()]);
+    assert!(analysis.steps < 2_500_000, "{} steps", analysis.steps);
 }
 
 /// `\strip@pt` of a dimension of unknown sign: `\the` prints a `-` or a
@@ -2953,6 +3242,21 @@ fn the_build_reruns_only_for_what_it_read() {
     };
     assert_eq!(run("seen.tex", &lof("Seen")).build_runs, 2);
     assert_eq!(run("unseen.tex", &lof("Unseen")).build_runs, 1);
+    // A line whose value every run changes (a counter written back, a page
+    // that moves) is widened when it changes again after the second run:
+    // four runs, not the limit.
+    let counting = run(
+        "count.tex",
+        "\\def\\N{0}\\openin2=\\jobname.lof \\ifeof2 \\else\\closein2 \\input\\jobname.lof \\fi\\immediate\\openout1=\\jobname.lof \\immediate\\write1{\\string\\gdef\\string\\N{\\number\\numexpr\\N+1\\relax}}\\edef\\X{\\N}\n",
+    );
+    assert_eq!(counting.build_runs, 4);
+    // A line only the first run wrote shifts the rest: the join aligns on
+    // what each line sets, so the line between the moving ones stays exact.
+    let shifted = run(
+        "shift.tex",
+        "\\def\\N{0}\\openin2=\\jobname.lof \\ifeof2 \\else\\closein2 \\input\\jobname.lof \\fi\\immediate\\openout1=\\jobname.lof \\immediate\\write1{\\string\\gdef\\string\\N{\\number\\numexpr\\N+1\\relax}}\\ifnum\\N=0 \\immediate\\write1{\\string\\gdef\\string\\E{}}\\fi\\immediate\\write1{\\string\\gdef\\string\\K{7}}\\immediate\\write1{\\string\\gdef\\string\\P{\\N}}\\edef\\X{\\N\\P}\n",
+    );
+    assert_eq!(crate::support::body(&shifted, "K"), "7");
     // A `.gls` no `.tex` is named after is a source the document wrote, not
     // a build's: it is read as it is on disk.
     std::fs::write(dir.join("entries.gls"), "\\gdef\\G{}\n").unwrap();
@@ -3008,6 +3312,47 @@ fn the_aux_of_two_paths_holds_what_either_wrote() {
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
     std::fs::remove_dir_all(dir).ok();
     assert!(defined(&analysis, "GotA") && defined(&analysis, "GotB"));
+}
+
+/// Paths that wrote the `.aux` with different numbers of lines leave
+/// two texts; the rerun reads each on its own path, also through the
+/// 8-bit engine's byte decoding.
+#[test]
+fn the_aux_texts_of_two_paths_are_read_apart() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-aux-texts-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("texts.tex");
+    let source = "\\documentclass{article}\\makeatletter\\providecommand\\foo{C}\n\\begin{document}\n\
+        \\if A\\foo\\gdef\\GotA{}\\fi \\if B\\foo\\gdef\\GotB{}\\fi\n\
+        \\ifodd\\pdfuniformdeviate9 \\immediate\\write\\@auxout{\\string\\gdef\\string\\foo{A}}\\else\
+        \\immediate\\write\\@auxout{\\string\\gdef\\string\\foo{B}}\\immediate\\write\\@auxout{\\relax}\\fi\n\\end{document}\n";
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    std::fs::remove_dir_all(dir).ok();
+    assert!(defined(&analysis, "GotA") && defined(&analysis, "GotB"));
+}
+
+/// Paths that read different `.aux` texts join inside a verbatim group,
+/// where one saved a category twice: leaving the group puts back the
+/// first save, so the space is a space again (tex.web § 282).
+#[test]
+fn a_category_saved_twice_in_a_group_comes_back_as_first_saved() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-saved-twice-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("twice.tex");
+    let source = "\\documentclass{article}\\usepackage{verbatim}\n\\newenvironment{va}{\\verbatim}{\\endverbatim}\n\
+        \\begin{document}\n\\begin{va}\nx\n\\end{va}\n\\ifnum\\catcode32=10 \\else\\gdef\\Leaked{}\\fi\n\
+        \\ifodd\\pdfuniformdeviate9 \\expandafter\\enddocument\\fi\n\\section{A}\\label{a}\n\\end{document}\n";
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    std::fs::remove_dir_all(dir).ok();
+    assert!(!defined(&analysis, "Leaked"));
 }
 
 /// `\romannumeral` of a number in a small interval is one of its numerals
@@ -3516,4 +3861,75 @@ fn package_options_follow_the_declare_option_handler() {
     }
     // An entry's own options are no package options.
     assert!(!options.iter().any(|o| o == "uniquepart"), "{options:?}");
+}
+
+/// A name an expl3 module function makes or sets is a variable of that
+/// module's kind, from the run: `\tl_new:N` and `\seq_new:N` type their
+/// argument, a string is a token list below it.
+#[test]
+fn expl3_variables_are_typed_by_the_function_that_made_them() {
+    if !installed() {
+        return;
+    }
+    use satex::roles::{Ty, VarKind};
+    let a = analyze(
+        "\\documentclass{article}\\ExplSyntaxOn\n\\tl_new:N \\l_my_tl\n\\seq_new:N \\l_my_seq\n\\str_new:N \\l_my_str\n\\ExplSyntaxOff\n\\begin{document}x\\end{document}\n",
+    );
+    let at = |line: u32| a.facts.types.iter().find(|(s, _)| s.line == line).map(|(_, t)| *t);
+    assert_eq!(at(2), Some(Ty::Var(VarKind::Tl)));
+    assert_eq!(at(3), Some(Ty::Var(VarKind::Seq)));
+    assert_eq!(at(4), Some(Ty::Var(VarKind::Str)));
+    assert!(Ty::Var(VarKind::Str).leq(Ty::Var(VarKind::Tl)) && Ty::Var(VarKind::Tl).leq(Ty::Cs));
+}
+
+/// expl3's naming conventions, checked against what the run did: a local
+/// name set globally, a `_tl` name set as a sequence, a constant set again.
+/// A string set as a token list, a global set globally and declarations
+/// are fine.
+#[test]
+fn expl3_conventions_are_checked_against_the_run() {
+    if !installed() {
+        return;
+    }
+    let a = analyze(
+        "\\documentclass{article}\\ExplSyntaxOn\n\
+         \\tl_new:N \\l_bad_scope_tl \\tl_gset:Nn \\l_bad_scope_tl {x}\n\
+         \\seq_new:N \\l_bad_type_tl \\seq_set_split:Nnn \\l_bad_type_tl {,} {a,b}\n\
+         \\tl_const:Nn \\c_bad_const_tl {x} \\tl_set:Nn \\c_bad_const_tl {y}\n\
+         \\str_new:N \\l_ok_str \\tl_set:Nn \\l_ok_str {x} \\tl_new:N \\g_ok_tl \\tl_gset:Nn \\g_ok_tl {x}\n\
+         \\ExplSyntaxOff\n\\begin{document}x\\end{document}\n",
+    );
+    let found = satex::lint::lint(&a);
+    let named = |code: &str| -> Vec<String> {
+        found.iter().filter(|r| r["code"] == code).map(|r| r["name"].as_str().unwrap_or_default().to_string()).collect()
+    };
+    assert_eq!(named("expl3-scope"), vec!["\\l_bad_scope_tl"]);
+    assert_eq!(named("expl3-type"), vec!["\\l_bad_type_tl"]);
+    assert_eq!(named("expl3-constant-set"), vec!["\\c_bad_const_tl"]);
+}
+
+/// hyperref's page anchor runs `\pdfstringdef` on an unknown `\thepage`
+/// inside a group that redefines `\@protected@testopt`. The paths that
+/// parted in there saved it in that group alike, so its end puts back the
+/// kernel's macro. Joined with the inner value instead, every optional-
+/// argument command re-entered itself up to `limits.expansion_depth`.
+#[test]
+fn a_group_both_paths_saved_in_restores_the_saved_meaning() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{hyperref}
+\begin{document}
+\setcounter{page}{\pdfuniformdeviate 5}
+a\clearpage
+\makeatletter
+\edef\after{\meaning\@protected@testopt}
+\end{document}",
+    );
+    assert_eq!(
+        body(&analysis, "after"),
+        r"macro:#1->\ifx \protect \@typeset@protect \expandafter \@testopt \else \@x@protect #1\fi "
+    );
 }

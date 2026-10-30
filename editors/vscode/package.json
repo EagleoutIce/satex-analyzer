@@ -1,9 +1,9 @@
 {
   "name": "satex",
-  "displayName": "satex",
+  "displayName": "SaTeX",
   "description": "LaTeX/TeX static analysis and language server, powered by satex.",
   "version": "0.1.0",
-  "publisher": "TODO-publisher-id",
+  "publisher": "eagleoutice",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -34,7 +34,9 @@
     "untrustedWorkspaces": {
       "supported": "limited",
       "description": "In a workspace that is not trusted, satex analyzes but does not build: `satex: compile` runs latexmk, which runs the project's latexmkrc.",
-      "restrictedConfigurations": ["satex.rootFile"]
+      "restrictedConfigurations": [
+        "satex.rootFile"
+      ]
     }
   },
   "contributes": {
@@ -62,6 +64,37 @@
           "default": true,
           "description": "Show satex in the status bar: what it caches or analyzes, then its errors and warnings."
         },
+        "satex.findings.whileAnalyzing": {
+          "type": "string",
+          "enum": [
+            "hide",
+            "mark"
+          ],
+          "enumDescriptions": [
+            "Hide the findings until the analysis ends.",
+            "Keep them, their source saying they may change."
+          ],
+          "default": "hide",
+          "description": "What the Problems view shows of satex's findings while a newer analysis runs."
+        },
+        "satex.server.maxCores": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "description": "How many CPU cores the server may use at most (Linux, through its cgroup; 0: no cap). How long an analysis may run is `limits.seconds` in satex.yaml."
+        },
+        "satex.server.niceness": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "maximum": 19,
+          "description": "Scheduling priority of the server, as `nice` writes it: higher yields more to the editor and other programs."
+        },
+        "satex.server.cgroup": {
+          "type": "boolean",
+          "default": true,
+          "description": "On Linux, run the server in a systemd user scope that enforces the memory and core limits (needs systemd-run)."
+        },
         "satex.server.maxMemory": {
           "type": "string",
           "default": "2GiB",
@@ -76,31 +109,70 @@
       }
     },
     "viewsContainers": {
-    "activitybar": [
-      { "id": "satex", "title": "satex", "icon": "media/satex.svg" }
-    ]
-  },
-  "views": {
-    "satex": [
-      { "id": "satex.findings", "name": "Findings", "icon": "media/satex.svg" },
-      { "id": "satex.actions", "name": "Actions", "icon": "media/satex.svg" }
-    ]
-  },
-  "keybindings": [
-    { "command": "satex.traceNext", "key": "alt+]", "when": "satex.tracing" },
-    { "command": "satex.tracePrevious", "key": "alt+[", "when": "satex.tracing" },
-    { "command": "satex.traceClose", "key": "escape", "when": "satex.tracing && editorTextFocus && !suggestWidgetVisible" }
-  ],
-  "commands": [
+      "activitybar": [
+        {
+          "id": "satex",
+          "title": "satex",
+          "icon": "media/satex.svg"
+        }
+      ]
+    },
+    "views": {
+      "satex": [
+        {
+          "id": "satex.actions",
+          "name": "Actions",
+          "icon": "media/satex.svg"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "satex.traceNext",
+        "key": "alt+]",
+        "when": "satex.tracing"
+      },
+      {
+        "command": "satex.tracePrevious",
+        "key": "alt+[",
+        "when": "satex.tracing"
+      },
+      {
+        "command": "satex.traceClose",
+        "key": "escape",
+        "when": "satex.tracing && editorTextFocus && !suggestWidgetVisible"
+      }
+    ],
+    "commands": [
       {
         "command": "satex.traceAtCursor",
         "title": "Trace Expansion Here",
         "category": "satex"
       },
-      { "command": "satex.traceNext", "title": "Trace: Next Step", "category": "satex", "enablement": "satex.tracing" },
-      { "command": "satex.tracePrevious", "title": "Trace: Previous Step", "category": "satex", "enablement": "satex.tracing" },
-      { "command": "satex.tracePick", "title": "Trace: Go to Step…", "category": "satex", "enablement": "satex.tracing" },
-      { "command": "satex.traceClose", "title": "Trace: Close", "category": "satex", "enablement": "satex.tracing" },
+      {
+        "command": "satex.traceNext",
+        "title": "Trace: Next Step",
+        "category": "satex",
+        "enablement": "satex.tracing"
+      },
+      {
+        "command": "satex.tracePrevious",
+        "title": "Trace: Previous Step",
+        "category": "satex",
+        "enablement": "satex.tracing"
+      },
+      {
+        "command": "satex.tracePick",
+        "title": "Trace: Go to Step…",
+        "category": "satex",
+        "enablement": "satex.tracing"
+      },
+      {
+        "command": "satex.traceClose",
+        "title": "Trace: Close",
+        "category": "satex",
+        "enablement": "satex.tracing"
+      },
       {
         "command": "satex.compile",
         "title": "Compile",
@@ -109,6 +181,11 @@
       {
         "command": "satex.focus",
         "title": "Show Findings",
+        "category": "satex"
+      },
+      {
+        "command": "satex.caches",
+        "title": "Show Caches",
         "category": "satex"
       },
       {
@@ -140,13 +217,13 @@
     "@eslint/js": "^9.0.0",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^3.0.0",
+    "@vscode/vsce": "^4.1.0",
+    "esbuild": "^0.25.0",
     "eslint": "^9.0.0",
-    "ovsx": "^0.10.0",
+    "ovsx": "^1.3.0",
     "typescript": "^5.5.0",
     "typescript-eslint": "^8.0.0",
-    "vscode-languageclient": "^9.0.1",
-    "esbuild": "^0.25.0"
+    "vscode-languageclient": "^9.0.1"
   },
   "overrides": {
     "@azure/msal-node": "^7.1.0"

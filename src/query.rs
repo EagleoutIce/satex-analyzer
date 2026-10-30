@@ -432,11 +432,14 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// `⟨?⟩` paragraph with `cut` set: `kernel` when the kernel was read only
 /// partly (it is then the only paragraph), `run` when the document was. A
 /// paragraph no page break may part from what follows (a heading) has `kept`.
+/// `│` is a thin `\vrule` (a table's `|`), `―` an `\hrule` (`\hline`),
+/// `▬` a wider `\vrule` (`\rule`).
 /// `keys` lists the labels, references and citations of the user's files
 /// with the place in `detail` where each stands.
 fn typeset(analysis: &Analysis) -> Vec<Record> {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
+    let mut rules = text.rules.iter().peekable();
     let mut out = Vec::new();
     let (mut line, mut first, mut choice) = (String::new(), None, None::<(crate::env::NodeId, [String; 2])>);
     let mut causes: Vec<Cause> = Vec::new();
@@ -464,6 +467,8 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     named.sort_by_key(|(s, ..)| (s.file, s.line, s.col));
     let mut keys: std::collections::VecDeque<(&str, &str)> = Default::default();
     let mut next_key: std::collections::HashMap<FileId, usize> = Default::default();
+    let glyphs = glyphs(analysis);
+    let mut boxes = drawn_boxes(analysis).into_iter().peekable();
     for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
         let site = Span {
             file: text.site.get(i).map_or(spot.span.file, |s| s.file),
@@ -483,13 +488,19 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             }
         }
         next_key.insert(site.file, upto);
+        // A picture or graphic the document set before this character.
+        while let Some((_, label)) =
+            boxes.next_if(|(at, _)| (at.file, at.line, at.col) < (site.file, site.line, site.col))
+        {
+            line.push_str(&note(&format!("▢ {label}")));
+        }
         let arm = arms.next_if(|a| a.0 as usize <= i).filter(|a| a.0 as usize == i);
         let boxed = !on_page[i]
             && spot
                 .modes
                 .within(crate::mode::Modes::INTERNAL_VERTICAL.union(crate::mode::Modes::RESTRICTED_HORIZONTAL));
         let unknown = crate::tex::is_unknown_char(c);
-        let mut c = if unknown { note("⟨?⟩") } else { public(c) };
+        let mut c = if unknown { note("⟨?⟩") } else { glyphs[i].clone() };
         if unknown {
             causes.push(Cause::Unknown(site));
         }
@@ -517,6 +528,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         if !piece.trim().is_empty() {
             first.get_or_insert(site);
         }
+        while let Some(&(_, rule)) = rules.next_if(|r| r.0 as usize <= i) {
+            line.push_str(&note(rule.glyph()));
+        }
         match arm {
             Some(&(_, on, taken)) => {
                 if choice.as_ref().is_some_and(|(n, _)| *n != on) {
@@ -531,6 +545,12 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         }
     }
     close(&mut line, &mut choice, &mut causes);
+    for (_, label) in boxes {
+        line.push_str(&note(&format!("▢ {label}")));
+    }
+    for &(_, rule) in rules {
+        line.push_str(&note(rule.glyph()));
+    }
     if !line.trim().is_empty() {
         out.push(paragraph(analysis, first.unwrap_or_default(), &line, causes, &mut keys));
     }
@@ -613,6 +633,100 @@ enum Cause {
 
 /// A character as typeset text: satex's private-use sentinels become their
 /// public notation or vanish.
+/// What the document's own files set that holds no character the run saw:
+/// an environment with none between its `\begin` and `\end` (a
+/// `tikzpicture`), a graphic. Each where it begins, in reading order.
+fn drawn_boxes(analysis: &Analysis) -> Vec<(Span, String)> {
+    let text = &analysis.facts.text;
+    let mut sites: Vec<(FileId, u32, u32)> = text.site.iter().map(|s| (s.file, s.line, s.col)).collect();
+    sites.sort_unstable();
+    let empty = |from: Span, to: Span| {
+        let i = sites.partition_point(|s| *s < (from.file, from.line, from.col));
+        sites.get(i).is_none_or(|s| *s > (to.file, to.line, to.col))
+    };
+    let mut out = Vec::new();
+    let mut open: Vec<(&str, Span)> = Vec::new();
+    for o in analysis.facts.occurrences.iter().filter(|o| origin(analysis, o.span.file) == "document") {
+        match o.kind {
+            OccKind::BeginEnvironment => open.push((o.key.as_str(), o.span)),
+            OccKind::EndEnvironment => {
+                if let Some(k) = open.iter().rposition(|(name, _)| *name == o.key) {
+                    let (name, from) = open.remove(k);
+                    if from.file == o.span.file && empty(from, o.span) {
+                        // An empty one holding others (a figure of one picture) stands for them.
+                        let key = |s: Span| (s.file, s.line, s.col);
+                        out.retain(|(f, _, t): &(Span, String, Span)| !(key(*f) > key(from) && key(*t) < key(o.span)));
+                        out.push((from, name.to_string(), o.span));
+                    }
+                }
+            }
+            OccKind::Graphics => out.push((o.span, o.key.clone(), o.span)),
+            _ => {}
+        }
+    }
+    let mut out: Vec<(Span, String)> = out.into_iter().map(|(f, name, _)| (f, name)).collect();
+    out.sort_by_key(|(s, _)| (s.file, s.line, s.col));
+    out.dedup();
+    out
+}
+
+/// Each character as set: one a font's ligature program joins to the one
+/// before (tex.web § 1035) is empty, and that one shows the ligature, as
+/// TeX's text conventions write it in Unicode (`--` an en dash).
+fn glyphs(analysis: &Analysis) -> Vec<String> {
+    let text = &analysis.facts.text;
+    let mut fonts = crate::lint::italics::Fonts::of(analysis);
+    let mut out: Vec<String> = text.chars.chars().map(public).collect();
+    let mut seq: Vec<String> = out.clone();
+    let mut held: Option<(usize, u32)> = None;
+    for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
+        let state = analysis.font_states.get(usize::from(spot.font_state)).map_or(0, |s| s.font);
+        let joined = held.filter(|&(j, _)| {
+            let prev = &text.at[j];
+            prev.font_state == spot.font_state && prev.certain && spot.certain && !spot.broken
+        });
+        if let Some((j, left)) = joined
+            && let Some((metrics, size)) = fonts.metrics(state)
+            && let Some(crate::tfm::LigKern::Lig { op: 0, char }) = metrics.lig_kern(left, c as u32, size)
+        {
+            seq[j].push(c);
+            out[j] = match seq[j].as_str() {
+                "--" => "–",
+                "---" => "—",
+                "``" => "“",
+                "''" => "”",
+                "!`" => "¡",
+                "?`" => "¿",
+                ",," => "„",
+                "<<" => "«",
+                ">>" => "»",
+                s => s,
+            }
+            .to_string();
+            out[i].clear();
+            held = Some((j, char));
+            continue;
+        }
+        held = Some((i, c as u32));
+    }
+    out
+}
+
+/// A trace step's name: a register addressed by number as TeX writes it
+/// (`\count188`), not by the slot satex keeps its value in.
+fn step_name(analysis: &Analysis, sym: crate::tex::Sym) -> String {
+    let name = analysis.interner.name(sym);
+    match name.strip_prefix(crate::machine::REGISTER_PREFIX) {
+        Some(rest)
+            if rest.trim_end_matches(|c: char| c.is_ascii_digit()).chars().all(|c| c.is_ascii_lowercase())
+                && rest.ends_with(|c: char| c.is_ascii_digit()) =>
+        {
+            format!("\\{rest}")
+        }
+        _ => analysis.interner.cs(sym),
+    }
+}
+
 fn public(c: char) -> String {
     match c {
         '\u{10FF00}'..='\u{10FFFF}' | '\u{E000}'..='\u{F8FF}' => String::new(),
@@ -728,7 +842,13 @@ fn tidy(line: &str) -> String {
 /// whitespace aside: `equal`, `covers` (the engine's text is one of the
 /// choices, so sound), or `DIFFERS` (unsound).
 pub fn typeset_verdict(computed: &str, typeset: &str) -> &'static str {
-    let squeeze = |s: &str| s.replace("⟨?⟩", "\u{10FFFF}").chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    // Rules are drawn, not characters an engine's log lists.
+    let squeeze = |s: &str| {
+        s.replace("⟨?⟩", "\u{10FFFF}")
+            .chars()
+            .filter(|c| !c.is_whitespace() && !matches!(c, '│' | '―' | '▬'))
+            .collect::<String>()
+    };
     let (computed, typeset) = (squeeze(computed), squeeze(typeset));
     if computed == typeset {
         return "equal";
@@ -861,10 +981,11 @@ fn expansions(analysis: &Analysis) -> Vec<Record> {
             record.insert("node".into(), json!(use_.node));
             record.insert("count".into(), json!(use_.count));
             record.insert("mode".into(), json!(use_.mode.names()));
-            record.insert("arguments".into(), json!(use_.arguments.len()));
+            // The texts its parameters took: none for a macro that reads
+            // what follows itself (`\documentclass` through `\@ifnextchar`).
             record.insert(
-                "argument".into(),
-                json!(use_.arguments.first().map(|a| detokenize(a, &analysis.interner)).unwrap_or_default()),
+                "arguments".into(),
+                json!(use_.arguments.iter().map(|a| detokenize(a, &analysis.interner)).collect::<Vec<_>>()),
             );
             record.insert("conditional".into(), json!(!use_.cds.is_empty()));
             record
@@ -989,7 +1110,7 @@ fn trace(analysis: &Analysis) -> Vec<Record> {
             record.insert("index".into(), json!(event.index));
             record.insert("depth".into(), json!(event.depth));
             record.insert("step".into(), json!(event.kind.as_str()));
-            record.insert("name".into(), json!(analysis.interner.cs(event.name)));
+            record.insert("name".into(), json!(step_name(analysis, event.name)));
             let expand = matches!(event.kind, crate::machine::Step::Expand);
             record.insert("detail".into(), json!(if expand { None } else { event.detail.as_deref() }));
             if expand && let Some(body) = event.detail.as_deref() {
@@ -1012,6 +1133,7 @@ fn trace(analysis: &Analysis) -> Vec<Record> {
             if let Some(text) = set.get(&event.span) {
                 record.insert("sets".into(), json!(text));
             }
+            record.insert("ahead".into(), json!(event.ahead.as_deref()));
             record
         })
         .collect()
@@ -2055,7 +2177,7 @@ pub fn controls_of(analysis: &Analysis, names: &[String], all: bool) -> Vec<Reco
         let mut out = Vec::new();
         for name in names {
             for mut record in controls(analysis, name) {
-                record.insert("for".into(), json!(name.trim_start_matches('\\')));
+                record.insert("for".into(), json!(crate::tex::bare_name(name)));
                 out.push(record);
             }
         }
@@ -2066,7 +2188,7 @@ pub fn controls_of(analysis: &Analysis, names: &[String], all: bool) -> Vec<Reco
 }
 
 pub fn controls(analysis: &Analysis, name: &str) -> Vec<Record> {
-    let wanted = name.trim_start_matches('\\');
+    let wanted = crate::tex::bare_name(name);
     let governed = |cds: &[crate::graph::ControlDep]| -> Option<String> {
         cds.iter().find_map(|cd| {
             let vertex = analysis.graph.vertex(cd.on)?;
@@ -2669,7 +2791,7 @@ fn effective_of(
                     // A control word's name ends before the text, which
                     // the call writes after a space.
                     A::Literal(text) => {
-                        let word = cs.trim_start_matches('\\').chars().count() > 1
+                        let word = crate::tex::bare_name(&cs).chars().count() > 1
                             || cs.chars().last().is_some_and(char::is_alphabetic);
                         if body.is_empty() && word && text.starts_with(char::is_alphabetic) {
                             body.push(' ');
@@ -3617,7 +3739,7 @@ pub fn explain_at(
     let mut out = Vec::new();
     let mut hints = Vec::new();
     for raw in names {
-        let name = raw.trim_start_matches('\\');
+        let name = crate::tex::bare_name(raw);
         let Some(sym) = analysis.interner.lookup(name) else { continue };
         let total = analysis.facts.defs.iter().filter(|d| d.name == sym).count();
         if let Some(at) = at {
@@ -4100,7 +4222,7 @@ enum KeyDialect<'a> {
 /// asked for by its base name (`itemize`, not `\begin{itemize}`):
 /// `\newenvironment` makes the code that reads `[…]` the environment's own
 /// macro.
-fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<String>)> {
+fn key_family(analysis: &Analysis, sym: Sym) -> Vec<(KeyDialect<'_>, Vec<String>)> {
     // `within` is what dynamically enclosed a call, but a common dispatch
     // idiom (`\@testopt`/`\@ifnextchar` re-invoking the command itself to
     // consume `[…]`) drops the chain — the re-invoked call is recorded with
@@ -4116,19 +4238,32 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<Stri
     for e in &analysis.facts.expansions {
         by_name.entry(e.name).or_default().push(e);
     }
+    // A name the run gave many different meanings is scratch storage
+    // (`\reserved@a`, `\next`): an edge through it links unrelated code, so
+    // the walk does not pass it. Nor does it go further than a call chain
+    // a command's own options plausibly travel.
+    const SCRATCH_DEFS: usize = 4;
+    const MAX_DEPTH: usize = 6;
+    let mut bodies: HashMap<Sym, BTreeSet<String>> = HashMap::default();
+    for d in &analysis.facts.defs {
+        bodies.entry(d.name).or_default().insert(meaning_identity(analysis, d));
+    }
+    let defined: HashMap<Sym, usize> = bodies.into_iter().map(|(k, v)| (k, v.len())).collect();
+    let mut candidates: Vec<(usize, KeyDialect<'_>, Vec<String>)> = Vec::new();
     let mut seen: BTreeSet<Sym> = BTreeSet::from([sym]);
-    let mut frontier = vec![sym];
+    let mut frontier = vec![(sym, 0usize)];
     let mut parent: HashMap<Sym, Sym> = HashMap::default();
-    while let Some(current) = frontier.pop() {
+    while let Some((current, depth)) = frontier.pop() {
         if let Some(dialect) = key_dispatch(analysis.interner.name(current)) {
             // The call this name's own code made comes first: the library
             // calls the same dispatcher for its own keys.
             let mut calls: Vec<_> = by_name.get(&current).into_iter().flatten().collect();
             calls.sort_by_key(|e| !e.within.is_some_and(|w| seen.contains(&w)));
             // A dispatcher whose argument the run did not record is read
-            // off the asked name's own body: `\def\fa[#1]{\pgfkeys{/fa/.cd,#1}}`.
+            // off the body of the macro that called it on the way here:
+            // `\def\fa[#1]{\pgfkeys{/fa/.cd,#1}}`, `\tikzset`'s `\pgfqkeys{/tikz}`.
             let spelled = format!("\\{} {{", analysis.interner.name(current));
-            let from_body = parent.get(&current).filter(|&&p| p == sym).into_iter().find_map(|&s| {
+            let from_body = parent.get(&current).into_iter().find_map(|&s| {
                 let m = analysis.env.meaning(s).as_macro()?.clone();
                 let body = detokenize(&m.replacement_text, &analysis.interner);
                 let at = body.find(&spelled)? + spelled.len();
@@ -4155,22 +4290,27 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<Stri
             let mut known = BTreeSet::new();
             found.retain(|f| known.insert(f.clone()));
             if !found.is_empty() {
-                return Some((dialect, found));
+                candidates.push((depth, dialect, found));
             }
         }
-        let Some(index) = analysis.calls.get(current) else { continue };
+        let Some(index) = analysis.calls.get(current).filter(|_| depth < MAX_DEPTH) else { continue };
         for target in &analysis.calls.edges[index] {
             let callee = analysis.calls.nodes[*target];
             if seen.len() >= MAX_VISITED {
                 break;
             }
+            if defined.get(&callee).copied().unwrap_or(0) > SCRATCH_DEFS {
+                continue;
+            }
             if seen.insert(callee) {
                 parent.insert(callee, current);
-                frontier.push(callee);
+                frontier.push((callee, depth + 1));
             }
         }
     }
-    None
+    // Nearest first: the caller tries them until one names keys the run defined.
+    candidates.sort_by_key(|(depth, ..)| *depth);
+    candidates.into_iter().map(|(_, dialect, found)| (dialect, found)).collect()
 }
 
 /// `satex query options`: the keys an environment or command's optional
@@ -4181,9 +4321,15 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<Stri
 /// show when the name takes an optional argument but not through a
 /// recognized key dispatcher (`enumerate`'s label template, for one).
 pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
-    let wanted = name.trim_start_matches('\\');
+    let wanted = crate::tex::bare_name(name);
     let Some(sym) = analysis.interner.lookup(wanted) else { return Vec::new() };
-    let Some((dialect, families)) = key_family(analysis, sym) else {
+    // The nearest key family whose keys the run defined: a wrapper named like a dispatcher
+    // (`\enit@setkeys`) passes no family keys are stored under.
+    let found = key_family(analysis, sym)
+        .into_iter()
+        .map(|(dialect, families)| family_keys(analysis, dialect, families))
+        .find(|keys| !keys.is_empty());
+    let Some(keys) = found else {
         let mac = analysis.env.meaning(sym).as_macro().map(|m| (**m).clone());
         let shape = effective_of(analysis, sym, mac.as_ref(), Some(crate::probe::State::End));
         if !shape.contains('[') {
@@ -4198,6 +4344,11 @@ pub fn options(analysis: &Analysis, name: &str) -> Vec<Record> {
         );
         return vec![record];
     };
+    keys
+}
+
+/// The keys stored under `families` in `dialect`, each with its family.
+fn family_keys(analysis: &Analysis, dialect: KeyDialect<'_>, families: Vec<String>) -> Vec<Record> {
     let out: Vec<Record> = match dialect {
         KeyDialect::Pgf => {
             // `.search also` stores the paths it adds in the family's

@@ -8,6 +8,7 @@ pub mod cite;
 pub mod colors;
 pub mod correctness;
 pub mod dashes;
+pub mod expl3;
 pub mod fix;
 pub mod italics;
 pub mod mathtext;
@@ -38,6 +39,7 @@ use crate::tex::{Span, Sym};
 pub fn all() -> impl Iterator<Item = &'static Rule> {
     correctness::RULES
         .iter()
+        .chain(expl3::RULES)
         .chain(bibliography::RULES)
         .chain(pdf::RULES)
         .chain(packages::RULES)
@@ -482,6 +484,10 @@ impl<'a> Report<'a> {
 }
 
 pub fn lint(analysis: &Analysis) -> Vec<Record> {
+    crate::probe::within_run(analysis.started, || lint_run(analysis))
+}
+
+fn lint_run(analysis: &Analysis) -> Vec<Record> {
     let mut out = Vec::new();
     let sources = fix::Sources::default();
     crate::progress::bar("lint: the text as set", 0, 2, (0, 0), (0, 0), None, &[]);
@@ -556,30 +562,43 @@ pub fn lint(analysis: &Analysis) -> Vec<Record> {
         r.get("severity").and_then(|v| v.as_str()) == Some("error")
             || !r.get("path").and_then(|v| v.as_str()).is_some_and(written_by_run)
     });
-    let frozen: Vec<globset::GlobMatcher> = analysis
-        .settings
-        .project
-        .frozen
-        .iter()
-        .filter_map(|g| globset::Glob::new(g).ok().map(|g| g.compile_matcher()))
-        .collect();
-    // The repository a file belongs to: its nearest ancestor holding a
-    // `.git` (a directory, or the file a submodule checkout has).
-    let repository =
-        |path: &std::path::Path| path.ancestors().skip(1).find(|d| d.join(".git").exists()).map(|d| d.to_path_buf());
     let main = std::path::Path::new(analysis.file_name(analysis.main_file));
-    let main = main.canonicalize().unwrap_or_else(|_| main.to_path_buf());
-    let home = analysis.settings.project.freeze_other_repositories.then(|| repository(&main)).flatten();
-    if !frozen.is_empty() || home.is_some() {
-        out.retain(|r| {
-            let Some(path) = r.get("path").and_then(|v| v.as_str()) else { return true };
-            let path = std::path::Path::new(path);
-            let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-            let foreign = home.as_ref().is_some_and(|home| repository(&path).is_some_and(|r| &r != home));
-            !foreign && !frozen.iter().any(|g| g.is_match(&path))
-        });
-    }
+    let frozen = Frozen::new(&analysis.settings.project, &crate::paths::dir_of(main));
+    out.retain(|r| r.get("path").and_then(|v| v.as_str()).is_none_or(|p| !frozen.holds(std::path::Path::new(p))));
     suppress::apply(analysis, out)
+}
+
+/// The files a project takes as given, never its own to fix: those its
+/// `project.frozen` globs match and, with `freeze_other_repositories`,
+/// those of another repository than the directory `home`'s (a submodule,
+/// a nested clone).
+pub struct Frozen {
+    globs: Vec<globset::GlobMatcher>,
+    home: Option<std::path::PathBuf>,
+}
+
+impl Frozen {
+    pub fn new(project: &crate::config::Project, home: &std::path::Path) -> Frozen {
+        let globs =
+            project.frozen.iter().filter_map(|g| globset::Glob::new(g).ok().map(|g| g.compile_matcher())).collect();
+        let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+        Frozen { globs, home: project.freeze_other_repositories.then(|| repository(&home)).flatten() }
+    }
+
+    pub fn holds(&self, path: &std::path::Path) -> bool {
+        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        // A name with no file behind it (stdin, an unsaved buffer) is the document's own.
+        let dir = crate::paths::dir_of(&path);
+        let foreign =
+            dir.canonicalize().ok().and_then(|dir| repository(&dir)).is_some_and(|r| Some(&r) != self.home.as_ref());
+        (self.home.is_some() && foreign) || self.globs.iter().any(|g| g.is_match(&path))
+    }
+}
+
+/// The repository a directory belongs to: it or its nearest ancestor holding
+/// a `.git` (a directory, or the file a submodule checkout has).
+fn repository(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    dir.ancestors().find(|d| d.join(".git").exists()).map(|d| d.to_path_buf())
 }
 
 /// Whether `path` is a file the run, BibTeX or makeindex writes, not the

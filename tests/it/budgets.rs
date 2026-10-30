@@ -65,9 +65,15 @@ const ROUNDED: u64 = 1667940;
 const CLOUD: u64 = 1953470;
 const PARAGRAPH: u64 = 1456856;
 const DATETIME: u64 = 1734775;
+const METADATA: u64 = 5773865;
+/// What `\DocumentMetadata` cost in all on 2026-10-03, nearly all of it
+/// tagpdf's loading: a load that runs unknown values (`\int_rand:n`) is
+/// analysis too, so its loading has a budget of its own.
+const METADATA_LOADING: u64 = 8_400_000;
 const FLAG: u64 = 852156;
 const NOTEBOOK: u64 = 3669404;
 const OVERFULL: u64 = 2287795;
+const PGFMATH_TYPED: u64 = 898341;
 const GRAPHIC: u64 = 1181589;
 const REGEX_SCAN: u64 = 10924212;
 
@@ -162,6 +168,29 @@ fn datetime2_hyperref_title() {
         "\\documentclass{article}\\usepackage[en-US]{datetime2}\\usepackage{hyperref}\\date{\\today}\\begin{document}\\maketitle\\end{document}",
         DATETIME,
     );
+}
+
+/// pgfmath parses of a bounded number and of `rand`, whose digits it takes
+/// apart one by one (`\pgfmathrand@@`): the paths a digit split makes stay
+/// few, and a number nothing bounds is not split at all.
+#[test]
+fn pgfmath_parse_of_typed_numbers() {
+    let analysis = budget(
+        "pgfmath-typed",
+        "\\documentclass{article}\\usepackage{pgfmath}\\newcount\\k\\loop\\pgfmathparse{rand}\\pgfmathparse{\\pdfuniformdeviate 1000 + 1}\\advance\\k1 \\ifnum\\k<20 \\repeat\\begin{document}x\\end{document}",
+        PGFMATH_TYPED,
+    );
+    if let Some(analysis) = analysis {
+        without("pgfmath-typed", &analysis, &["limit-reached", "repeated-failure"]);
+    }
+}
+
+#[test]
+fn document_metadata() {
+    let source = "\\DocumentMetadata{}\\documentclass{article}\\begin{document}x\\end{document}";
+    if let Some(analysis) = budget("metadata", source, METADATA) {
+        within("metadata loading", analysis.load_steps, METADATA_LOADING);
+    }
 }
 
 #[test]

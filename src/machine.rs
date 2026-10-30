@@ -134,6 +134,9 @@ pub struct Event {
     pub name: Sym,
     pub span: Span,
     pub detail: Option<Box<str>>,
+    /// What the input still holds at this step, nearest first: the tokens
+    /// queued to be read, then the file text after them.
+    pub ahead: Option<Box<str>>,
 }
 
 /// A loaded file: its path and its [`LoadKind`] (input, package, class).
@@ -365,6 +368,8 @@ pub struct Analysis {
     /// Source lines read from files, each counted to where it stopped.
     pub lines: u64,
     pub exhausted: bool,
+    /// When the run's time budget began (`limits.seconds`).
+    pub started: Option<std::time::Instant>,
     /// Final sizes of the interpreter's working sets.
     pub journal_size: usize,
     pub held_tokens_left: usize,
@@ -868,6 +873,10 @@ pub(crate) struct NameAccum {
     /// unknown part (once it has one) and the text after its last. The
     /// name is one of them, split again once it is complete.
     pub(crate) names: Vec<(Option<String>, String)>,
+    /// Per name, the texts the one-of tokens it read were narrowed to on
+    /// the paths that built it ([`Machine::split_one_of_groups`]): the
+    /// split per name narrows them again.
+    pub(crate) took: Vec<Took>,
     pub(crate) at: Option<Span>,
     pub(crate) at_written: bool,
     pub(crate) files: Vec<FileId>,
@@ -886,6 +895,7 @@ impl Default for NameAccum {
     fn default() -> NameAccum {
         NameAccum {
             names: vec![(None, String::new())],
+            took: vec![Took::new()],
             at: None,
             at_written: false,
             files: Vec::new(),
@@ -942,7 +952,33 @@ impl NameAccum {
             }
         }
         self.names = vec![one];
+        self.took = vec![Took::new()];
     }
+
+    /// Only the name at `i`, with what its paths took.
+    pub(crate) fn keep(&mut self, i: usize) -> Option<Took> {
+        let one = self.names.get(i)?.clone();
+        let took = self.took.get(i).cloned().unwrap_or_default();
+        (self.names, self.took) = (vec![one], vec![took.clone()]);
+        Some(took)
+    }
+}
+
+/// One-of tokens a path narrowed, with the texts each still stands for.
+pub(crate) type Took = Vec<(Sym, Rc<[Meaning]>)>;
+
+/// What two paths that built one name took: the tokens both narrowed,
+/// each to the texts of either.
+pub(crate) fn join_took(a: &Took, b: &Took) -> Took {
+    let mut out = Took::new();
+    for (sym, x) in a {
+        if let Some((_, y)) = b.iter().find(|(s, _)| s == sym) {
+            let mut all = x.to_vec();
+            all.extend(y.iter().filter(|m| !x.contains(m)).cloned());
+            out.push((*sym, all.into()));
+        }
+    }
+    out
 }
 
 /// A name built around unknown text: its prefix, its suffix, whether the
@@ -1105,7 +1141,9 @@ type Written = Rc<[(Sym, Option<Binding>)]>;
 type Outputs = Rc<HashMap<String, Option<String>>>;
 /// The lines a deferred `\write` gave each file: written at the next
 /// shipout (tex.web § 1370), not before.
-type Pending = Rc<HashMap<String, Vec<String>>>;
+/// Per file, the text deferred `\write`s left for the next shipout, as
+/// a file's text: lines, alternatives apart ([`texts_of`]).
+type Pending = Rc<HashMap<String, String>>;
 
 /// The stream a number satex could not pin down names.  `i64::MIN` is past
 /// what `scan_int` can give (tex.web § 445), so no source reaches it.
@@ -1170,6 +1208,13 @@ carried! {
     pub(crate) own_switches: HashSet<Sym>,
     /// Names `\csname` built where the document wrote only part of them.
     pub(crate) foreign_names: HashSet<(Sym, Span)>,
+    /// The one-of tokens made ([`Machine::one_of`]): `passes_joined` then,
+    /// and whether a path made one again. Its copies may then stand for
+    /// different choices, and a split narrows none
+    /// ([`Machine::split_one_of_groups`]).
+    pub(crate) made: HashMap<Sym, (u32, bool)>,
+    /// How often passes of a loop or recursion were joined.
+    pub(crate) passes_joined: u32,
     /// The files the `\read` streams are open on, by stream number.
     pub(crate) stream_paths: HashMap<i64, String>,
     /// The furthest line the progress bar saw read by `\read` in each file.
@@ -1216,6 +1261,9 @@ pub(crate) struct Scratch {
     /// The families of names built from unknown digits whose number's own
     /// name was defined ([`Machine::unknown_name_token`]).
     pub(crate) numbered: Vec<Sym>,
+    /// The typed numbers a read split into digit arms, with how many
+    /// ([`Machine::digit_arms`]): paths apart on one join late.
+    pub(crate) split_digits: HashMap<Sym, usize>,
     /// The typed digits `\the` gave per count register, last write and
     /// interval ([`Machine::register_digits`]).
     pub(crate) read_digits: HashMap<(Sym, u64, i64, i64), Sym>,
@@ -1807,11 +1855,12 @@ struct PathState {
 }
 
 /// Where a path stands in the input, for telling when two paths meet: a
-/// file by position, a token list by what is left to read in it. Two
-/// expansions of one macro are separate lists but the same continuation.
+/// file or a token list by what is left to read in it (paths may read
+/// different texts of a file a run wrote). Two expansions
+/// of one macro are separate lists but the same continuation.
 #[derive(Debug, Clone)]
 enum Place {
-    File(FileId, usize, bool),
+    File(FileId, usize, bool, Rc<[char]>),
     Tokens(Rc<[Token]>, usize),
     Pseudo(Span, Rc<[char]>, usize),
     Returned(Vec<Token>),
@@ -1821,7 +1870,16 @@ enum Place {
 impl PartialEq for Place {
     fn eq(&self, other: &Place) -> bool {
         match (self, other) {
-            (Place::File(f, i, e), Place::File(g, j, d)) => (f, i, e) == (g, j, d),
+            // The same file with the same text still to read: paths reading
+            // different texts of a file a run wrote stay apart, a resumed run
+            // whose edit lies before the position does not.
+            (Place::File(f, i, e, a), Place::File(g, j, d, b)) => {
+                (f, e) == (g, d)
+                    && match Rc::ptr_eq(a, b) {
+                        true => i == j,
+                        false => a.len() - i.min(&a.len()) == b.len() - j.min(&b.len()) && a.get(*i..) == b.get(*j..),
+                    }
+            }
             (Place::Tokens(a, i), Place::Tokens(b, j)) => (Rc::ptr_eq(a, b) && i == j) || a[*i..] == b[*j..],
             (Place::Pseudo(_, a, i), Place::Pseudo(_, b, j)) => Rc::ptr_eq(a, b) && i == j,
             (Place::Returned(a), Place::Returned(b)) => a == b,
@@ -2124,6 +2182,7 @@ impl<'a> Machine<'a> {
                 limits: Vec::new(),
                 lines: 0,
                 exhausted: false,
+                started: None,
                 journal_size: 0,
                 held_tokens_left: 0,
                 loop_heads: 0,
@@ -2449,10 +2508,12 @@ impl<'a> Machine<'a> {
         let runs = u32::from(cfg.limits.build_runs).max(1);
         let base = Machine::base_of(Some(path));
         let mut placed: Vec<PathBuf> = Vec::new();
+        let mut widened: HashSet<PathBuf> = HashSet::default();
         let mut run = 1;
         // `limits.seconds` bounds the build, not each run: a run starts only
         // while the time left would let one more as long as the last finish.
         let started = std::time::Instant::now();
+        checkpoints.build_started = Some(started);
         let budget = std::time::Duration::from_secs(cfg.limits.seconds);
         // Later runs replay the caches the first stored: the build reports the first.
         let mut caches = None;
@@ -2522,11 +2583,23 @@ impl<'a> Machine<'a> {
                     {
                         return None;
                     }
-                    // The next run is the last when `run + 1 == runs`: it
-                    // reads what still changed as unknown text, a widening.
+                    // A line a rerun changed again (a label's page that moves on),
+                    // or anything before the last run, is read as the join of both
+                    // texts: a widening, so the build settles. The first run read no
+                    // file, so its lines changing is the usual second run. Lines only
+                    // added (`\bibcite`) stay exact. Once widened, a file is only
+                    // joined, so its text only grows.
+                    let widen = widened.contains(&at)
+                        || run > 2
+                            && text
+                                .as_ref()
+                                .is_some_and(|t| !line_changes(now.as_deref().unwrap_or_default(), t).is_empty());
+                    if widen {
+                        widened.insert(at.clone());
+                    }
                     let text = match text {
-                        Some(t) if run + 1 < runs => t.clone(),
-                        Some(t) => either_text(now.as_deref().unwrap_or_default(), t, 1),
+                        Some(t) if run + 1 < runs && !widen => t.clone(),
+                        Some(t) => widen_text(now.as_deref().unwrap_or_default(), t),
                         None => crate::tex::UNKNOWN_ANY.to_string(),
                     };
                     (now.as_deref() != Some(text.as_str())).then_some((at, text))
@@ -2537,6 +2610,24 @@ impl<'a> Machine<'a> {
                 && crate::overlay::text(&at).as_deref() != Some(text.as_str())
             {
                 changed.push((at, text));
+            }
+            if cfg.verbose >= 1 {
+                let names: Vec<_> =
+                    changed.iter().filter_map(|(at, _)| at.file_name()).map(|n| n.to_string_lossy()).collect();
+                crate::progress::note!(
+                    "satex: build run {run} took {:.1}s; changed: {}",
+                    took.as_secs_f64(),
+                    names.join(", ")
+                );
+            }
+            if cfg.verbose >= 2 {
+                for (at, text) in &changed {
+                    let now = crate::overlay::text(at).unwrap_or_default();
+                    let old: HashSet<&str> = now.lines().collect();
+                    text.lines().filter(|l| !old.contains(l)).for_each(|l| crate::progress::note!("  + {l}"));
+                    let new: HashSet<&str> = text.lines().collect();
+                    now.lines().filter(|l| !new.contains(l)).for_each(|l| crate::progress::note!("  - {l}"));
+                }
             }
             if changed.is_empty() || run == runs {
                 break analysis;
@@ -2742,6 +2833,7 @@ impl<'a> Machine<'a> {
     /// and the facts drawn from all it recorded.
     fn conclude(self, id: FileId) -> Analysis {
         let mut m = self;
+        m.out.started = Some(m.started);
         // tex.web § 1054: `\end` ships out what is left, deferred writes too.
         m.ship_pending();
         let mut written: Vec<(String, Option<String>)> =
@@ -3744,7 +3836,10 @@ will look undefined",
         let Some(name) = self.stream_files.get(&stream).map(|n| Self::output_name(n)) else { return };
         let open = self.engine_int(&format!("write_open.{stream}"));
         if deferred {
-            Rc::make_mut(&mut self.pending).entry(name).or_default().push(text.to_string());
+            each_text(Rc::make_mut(&mut self.pending).entry(name).or_default(), |t| {
+                t.push_str(text);
+                t.push('\n');
+            });
             return;
         }
         if let Some(slot) = Rc::make_mut(&mut self.outputs).get_mut(&name) {
@@ -3762,14 +3857,15 @@ will look undefined",
     /// tex.web § 1374: a shipout writes what deferred `\write`s left to
     /// the files still open.
     pub(crate) fn ship_pending(&mut self) {
+        let bound = usize::from(self.cfg.limits.meaning_set);
         for (name, lines) in std::mem::take(&mut self.pending).iter() {
             if let Some(Some(file)) = Rc::make_mut(&mut self.outputs).get_mut(name) {
-                each_text(file, |t| {
-                    lines.iter().for_each(|l| {
-                        t.push_str(l);
-                        t.push('\n');
-                    })
-                });
+                let texts = texts_of(file)
+                    .into_iter()
+                    .flat_map(|f| texts_of(lines).into_iter().map(move |l| f.to_string() + l));
+                *file = texts
+                    .fold(None, |x: Option<String>, t| Some(x.map_or(t.clone(), |x| either_text(&x, &t, bound))))
+                    .unwrap_or_default();
             }
         }
     }
@@ -4948,6 +5044,7 @@ will look undefined",
             return;
         }
         let index = self.out.trace.len() as u32;
+        let ahead = Some(self.ahead_text(24, 80).into());
         self.out.trace.push(Event {
             index,
             depth: self.within.len() as u16,
@@ -4955,7 +5052,33 @@ will look undefined",
             name,
             span,
             detail: detail().map(Into::into),
+            ahead,
         });
+    }
+
+    /// The input still to be read: up to `tokens` queued tokens, top of
+    /// the input stack first, then up to `chars` of the file being read.
+    fn ahead_text(&self, tokens: usize, chars: usize) -> String {
+        let mut queued: Vec<Token> = Vec::new();
+        for frame in self.input.iter().rev() {
+            if queued.len() >= tokens {
+                break;
+            }
+            match frame {
+                Frame::Returned(toks) => queued.extend(toks.iter().rev().take(tokens - queued.len())),
+                Frame::Tokens { toks, pos, .. } => {
+                    queued.extend(toks.get(*pos..).unwrap_or_default().iter().take(tokens - queued.len()))
+                }
+                Frame::File { mouth, .. } => {
+                    let text: String = mouth.source().iter().skip(mouth.offset()).take(chars).collect();
+                    let mut out = crate::tex::detokenize(&queued, &self.out.interner);
+                    out.push_str(&text);
+                    return out;
+                }
+                _ => {}
+            }
+        }
+        crate::tex::detokenize(&queued, &self.out.interner)
     }
 
     /// Record a construct satex cannot follow yet, once per name and code:
@@ -5069,7 +5192,9 @@ will look undefined",
                     return;
                 }
                 d.count += 1;
-                if d.count == bound {
+                // A named assumption met again is as sound as the first time
+                // (TeX's own error cascade repeats one): only a gap is said.
+                if d.count == bound && severity != Severity::Assumption {
                     self.scratch.repeat_cut = Some((code, span));
                 }
                 return;
@@ -5754,6 +5879,9 @@ will look undefined",
             (State::End, ..) => (analysis.env.snapshot(), analysis.catcodes.clone()),
         };
         let mut m = Machine::new(cfg, PathBuf::new());
+        if let Some(started) = crate::probe::run_started() {
+            m.started = started;
+        }
         m.out.interner = analysis.interner.clone();
         m.out.files = analysis.files.clone();
         m.out.entry = analysis.entry.clone();
@@ -6022,10 +6150,12 @@ will look undefined",
             };
             let label = match (label.is_empty(), probing) {
                 (false, _) => label,
-                (true, Some(sym)) => format!("probing \\{}", self.name(sym)),
+                // A hover tries the command out on typed arguments to learn what it does.
+                (true, Some(sym)) => format!("learning what \\{} does", self.name(sym)),
                 (true, None) => format!("analyzing {own} ({})", self.phase()),
             };
-            let (read, all) = self.frame_read(frame).unwrap_or((1, 1));
+            // A trial run reads no file of the document: no share of it is done.
+            let (read, all) = if probing.is_some() { (0, 0) } else { self.frame_read(frame).unwrap_or((1, 1)) };
             let limit = self.cfg.limits.seconds;
             let clock = (limit > 0).then(|| (self.started.elapsed().as_secs(), limit));
             // Lines read so far: the furthest line seen in every file.
@@ -7893,6 +8023,10 @@ will look undefined",
     /// follows surely.
     fn insert_dollar(&mut self, token: Token) -> bool {
         use crate::mode::Modes;
+        // Neither arm can insert in no known mode: skip the name lookup.
+        if self.mode.is_empty() {
+            return false;
+        }
         let math = match (token.tok, token.cs().map(|sym| self.env.meaning(sym))) {
             (Tok::Chr(_, Catcode::Sup | Catcode::Sub), _) => true,
             (_, Some(Meaning::Register(crate::tex::RegKind::MathChar | crate::tex::RegKind::UMathChar, _))) => true,
@@ -8719,7 +8853,7 @@ will look undefined",
         }
         crate::push_shared(&mut self.within, (sym, node));
         let before = self.input.len();
-        self.record_call(call_key, unknown_operands);
+        self.record_call(call_key, unknown_operands, &arguments);
         self.push_parts(body, sym);
         if self.input.len() == before {
             Rc::make_mut(&mut self.within).pop();
@@ -8757,7 +8891,7 @@ will look undefined",
         if self.stubs.is_none() {
             let stubs = self.cfg.stubs.clone();
             let table =
-                stubs.into_iter().map(|(name, stub)| (self.intern(name.trim_start_matches('\\')), stub)).collect();
+                stubs.into_iter().map(|(name, stub)| (self.intern(crate::tex::bare_name(&name)), stub)).collect();
             self.stubs = Some(Rc::new(table));
         }
         if !self.stubs.as_ref().is_some_and(|t| t.contains_key(&sym)) {
@@ -8838,7 +8972,7 @@ will look undefined",
             crate::config::StubSets::Typed(map) => map.iter().map(|(n, r)| (n.clone(), r.clone())).collect(),
         };
         for (name, typed) in sets {
-            let target = self.intern(name.trim_start_matches('\\'));
+            let target = self.intern(crate::tex::bare_name(&name));
             let text = typed.as_ref().and_then(|r| self.stub_text(r, span));
             match (self.env.meaning(target), text) {
                 // A register keeps its meaning, only what it holds is lost.
@@ -9167,40 +9301,6 @@ will look undefined",
             Some(t) if let Some(num) = t.cs().and_then(|sym| self.typed_digits_of(sym)) => {
                 let sym = t.cs().expect("typed digits are a name");
                 if let Some((whole, k, i, j)) = self.typed_slice(sym) {
-                    // Places from `i` to the end of a number of a length not
-                    // known: one when it has `i + 1` digits, else that place
-                    // and the rest, an arm each.
-                    if k == 0 && j == 0 {
-                        let whole_num = self.typed_digits_of(whole).unwrap_or(num);
-                        let q = 10i64.saturating_pow(i + 1);
-                        let mut arms = Vec::new();
-                        if whole_num.lo < q {
-                            arms.push((crate::value::Num::range(whole_num.lo, whole_num.hi.min(q - 1)), vec![t]));
-                        }
-                        let more = crate::value::Num::range(whole_num.lo.max(q), whole_num.hi);
-                        if whole_num.hi >= q {
-                            let first = self.slice_token(whole, more, (0, i, i + 1), t.span);
-                            let rest = self.slice_token(whole, more, (0, i + 1, 0), t.span);
-                            arms.push((more, vec![first, rest]));
-                        }
-                        if let [(_, text)] = &arms[..] {
-                            if text.len() == 1 {
-                                return vec![t];
-                            }
-                            let text = text.clone();
-                            self.unread_all(&text);
-                            return self.read_undelimited();
-                        }
-                        if self.split(sym, t.span, arms.len(), |m, arm| {
-                            let (part, text) = &arms[arm];
-                            m.refine_value(whole, crate::value::Value::from_num(crate::value::Quantity::Int, *part));
-                            m.unread_all(text);
-                            true
-                        }) {
-                            return self.read_undelimited();
-                        }
-                        return vec![t];
-                    }
                     if j - i > 1 {
                         let whole_num = self.typed_digits_of(whole).unwrap_or(num);
                         let first = self.slice_token(whole, whole_num, (k, i, i + 1), t.span);
@@ -9222,9 +9322,7 @@ will look undefined",
                 // Digits of any length (a 32-bit value nothing bounds): a split
                 // keeps nothing of their bound, so they stay one argument, an
                 // assumption said once below.
-                let any = |lo: i64, hi: i64| lo <= 1 && hi >= 1_000_000_000;
-                let unbounded = any(num.lo.max(1), num.hi)
-                    && (num.lo >= 0 || any(num.hi.min(-1).saturating_neg(), num.lo.saturating_neg()));
+                let unbounded = crate::scan::unbounded_digits(num);
                 let arms = if unbounded { Vec::new() } else { self.digit_arms(sym, num, t.span) };
                 if let [(_, text)] = &arms[..] {
                     let text = text.clone();
@@ -9537,9 +9635,9 @@ will look undefined",
             // Some do: two paths, each with the token for one group of
             // texts. Read as unknown text instead, the scan would end in
             // it on every pass of a loop over it and never get past.
-            let Some(sym) = t.cs() else { return OneOfScan::Unknown };
-            let groups: [Vec<Rc<[Token]>>; 2] = [far, inside].map(|g| g.iter().map(|&i| texts[i].clone()).collect());
-            let parted = self.split(sym, t.span, 2, |m, arm| {
+            let parts = [far, inside];
+            let groups: [Vec<Rc<[Token]>>; 2] = parts.clone().map(|g| g.iter().map(|&i| texts[i].clone()).collect());
+            let parted = self.split_one_of_groups(t, t.span, &parts, |m, arm| {
                 match &groups[arm][..] {
                     [one] => m.unread_all(one),
                     texts => {
@@ -10389,7 +10487,8 @@ will look undefined",
                 .collect::<Option<Vec<Token>>>()
         {
             let mut arm = None;
-            if self.split(t.cs().expect("one-of"), t.span, names.len(), |_, i| {
+            let groups: Vec<Vec<usize>> = (0..names.len()).map(|i| vec![i]).collect();
+            if self.split_one_of_groups(t, t.span, &groups, |_, i| {
                 arm = Some(i);
                 i < names.len()
             }) {
@@ -10399,7 +10498,22 @@ will look undefined",
         self.name_token = Some(t);
         match t.tok {
             Tok::Cs(sym) => {
-                crate::observe::arg_type(self, t.span, crate::roles::Ty::Cs);
+                // A name an expl3 module function defines is a variable of that module.
+                let var = self
+                    .within
+                    .iter()
+                    .find_map(|(f, _)| Some((crate::roles::VarKind::of_function(self.name(*f))?, *f)));
+                crate::observe::arg_type(
+                    self,
+                    t.span,
+                    var.map_or(crate::roles::Ty::Cs, |(k, _)| crate::roles::Ty::Var(k)),
+                );
+                if let Some((kind, by)) = var
+                    && self.own_file(t.span.file)
+                    && self.out.facts.vars.len() < self.cfg.limits.facts
+                {
+                    self.out.facts.vars.push(crate::facts::VarUse { name: sym, kind, by, span: t.span });
+                }
                 Some(sym)
             }
             Tok::Chr(c, Catcode::Active) => Some(self.active_sym(c)),
@@ -10930,12 +11044,43 @@ will look undefined",
     /// reads the token, not where its texts were joined, so reads of one
     /// value at several places are no passes of one loop.
     pub(crate) fn split_one_of_at(&mut self, t: Token, site: Span) -> bool {
-        let Some(sym) = t.cs() else { return false };
         let Some(texts) = self.one_of_members(t) else { return false };
-        self.split(sym, site, texts.len(), |m, arm| {
+        let groups: Vec<Vec<usize>> = (0..texts.len()).map(|i| vec![i]).collect();
+        self.split_one_of_groups(t, site, &groups, |m, arm| {
             m.joined_arm();
             m.unread_all(&texts[arm]);
             true
+        })
+    }
+
+    /// A path per group of the texts `t` stands for ([`Machine::one_of`]),
+    /// on which `t` holds that group alone: every later read of it on the
+    /// path, wherever its copies went, agrees. One group parts nothing.
+    pub(crate) fn split_one_of_groups(
+        &mut self,
+        t: Token,
+        site: Span,
+        groups: &[Vec<usize>],
+        enter: impl FnOnce(&mut Self, usize) -> bool,
+    ) -> bool {
+        let (Some(sym), Some(texts)) = (t.cs(), self.one_of_members(t)) else { return false };
+        if self.carried.made.get(&sym) != Some(&(self.carried.passes_joined, false)) {
+            return self.split(sym, site, groups.len(), enter);
+        }
+        self.split(sym, site, groups.len(), |m, arm| {
+            if groups[arm].is_empty() {
+                return enter(m, arm);
+            }
+            let kept: Vec<Meaning> = groups[arm].iter().map(|&i| explore::text_meaning(texts[i].clone())).collect();
+            m.refine_may(sym, &kept);
+            let kept: Rc<[Meaning]> = kept.into();
+            for n in m.scans.iter_mut().filter_map(|a| a.name.as_deref_mut()) {
+                for took in &mut n.took {
+                    took.retain(|(s, _)| *s != sym);
+                    took.push((sym, kept.clone()));
+                }
+            }
+            enter(m, arm)
         })
     }
 
@@ -10962,9 +11107,10 @@ will look undefined",
             }
             _ => None,
         });
-        let (Some((owner, def)), Some(sym)) = (owned, t.cs()) else { return self.split_one_of(t) };
+        let Some((owner, def)) = owned else { return self.split_one_of(t) };
         let Some(texts) = self.one_of_members(t) else { return false };
-        self.split(sym, t.span, texts.len(), |m, arm| {
+        let groups: Vec<Vec<usize>> = (0..texts.len()).map(|i| vec![i]).collect();
+        self.split_one_of_groups(t, t.span, &groups, |m, arm| {
             let text = MacroDef { replacement_text: texts[arm].clone(), ..(*def).clone() };
             m.refine(owner, Meaning::Macro(Rc::new(text)));
             m.unread_all(&texts[arm]);
@@ -12673,21 +12819,69 @@ fn each_text(file: &mut String, mut f: impl FnMut(&mut String)) {
     *file = texts.join(&format!("{}\n", crate::tex::TEXT_OR));
 }
 
-/// The texts either file may hold. Texts of as many lines join line by
-/// line ([`join_written`]): they differ in values, not in what they hold.
-/// Past `bound` texts, all join.
+/// The keys of the lines whose text changed between two texts a build
+/// wrote, not those only added or dropped: a line's command with its first
+/// braced argument (`\newlabel{x}`), or its text before the first brace
+/// (`\gdef\@abspage@last`).
+fn line_changes(old: &str, new: &str) -> HashSet<String> {
+    let (a, b): (HashSet<&str>, HashSet<&str>) = (old.lines().collect(), new.lines().collect());
+    let added: HashSet<&str> = b.difference(&a).map(|l| line_key(l)).collect();
+    a.difference(&b).map(|l| line_key(l)).filter(|k| added.contains(k)).map(str::to_string).collect()
+}
+
+/// What a written line sets: its command with the first braced argument
+/// (`\newlabel{x}`), or its text before the first brace.
+fn line_key(l: &str) -> &str {
+    let Some(open) = l.find('{') else { return l };
+    let head = l[..open].trim();
+    if !(head.starts_with('\\') && head.matches('\\').count() == 1 && !head.contains(' ')) {
+        return head;
+    }
+    l[open..].find('}').map_or(l, |close| &l[..open + close + 1])
+}
+
+/// `new` joined into the texts `old` holds, each new text into its
+/// nearest ([`nearness`]). No text is added, so reruns settle.
+fn widen_text(old: &str, new: &str) -> String {
+    let mut texts: Vec<String> = texts_of(old).into_iter().map(str::to_string).collect();
+    for t in texts_of(new) {
+        if let Some(x) = texts.iter_mut().max_by_key(|x| nearness(x, t))
+            && x != t
+        {
+            *x = join_written(x, t);
+        }
+    }
+    texts.join(&format!("{}\n", crate::tex::TEXT_OR))
+}
+
+/// How well two texts join: first whether their lines set the same things
+/// in the same order (they pair line by line, no unknown line), then how
+/// many lines they share.
+fn nearness(a: &str, b: &str) -> (bool, usize) {
+    let lines: HashSet<&str> = b.lines().collect();
+    (a.lines().map(line_key).eq(b.lines().map(line_key)), a.lines().filter(|l| lines.contains(l)).count())
+}
+
+/// The texts either file may hold, each distinct one kept: a reader takes
+/// each apart (`\z@` or `\@ne`, not some control sequence). Past `bound`
+/// texts, the nearest two join ([`nearness`], [`join_written`]).
 fn either_text(a: &str, b: &str, bound: usize) -> String {
     let mut texts: Vec<String> = Vec::new();
     for t in texts_of(a).into_iter().chain(texts_of(b)) {
-        match texts.iter_mut().find(|x| x.lines().count() == t.lines().count()) {
-            Some(x) => *x = join_written(x, t),
-            None => texts.push(t.to_string()),
+        if texts.iter().any(|x| x == t) {
+            continue;
+        }
+        texts.push(t.to_string());
+        if texts.len() > bound.max(1) {
+            let n = texts.len();
+            let pairs = (0..n).flat_map(|i| (i + 1..n).map(move |j| (i, j)));
+            if let Some((i, j)) = pairs.max_by_key(|&(i, j)| nearness(&texts[i], &texts[j])) {
+                let x = texts.remove(j);
+                texts[i] = join_written(&texts[i], &x);
+            }
         }
     }
-    match texts.len() > bound {
-        true => texts[1..].iter().fold(texts[0].clone(), |x, y| join_written(&x, y)),
-        false => texts.join(&format!("{}\n", crate::tex::TEXT_OR)),
-    }
+    texts.join(&format!("{}\n", crate::tex::TEXT_OR))
 }
 
 /// What two paths wrote to their files, joined (tex.web § 1370): a file
@@ -12706,15 +12900,14 @@ fn join_outputs(a: &Outputs, b: &Outputs, bound: usize) -> Outputs {
     )
 }
 
-/// [`join_outputs`] of the lines deferred `\write`s left for the next shipout.
-fn join_pending(a: &Pending, b: &Pending) -> Pending {
+/// [`join_outputs`] of what deferred `\write`s left for the next shipout.
+fn join_pending(a: &Pending, b: &Pending, bound: usize) -> Pending {
     if a == b {
         return a.clone();
     }
-    let text = |m: &Pending, n| m.get(n).map(|l| l.join("\n")).unwrap_or_default();
+    let text = |m: &Pending, n| m.get(n).cloned().unwrap_or_default();
     let names: HashSet<&String> = a.keys().chain(b.keys()).collect();
-    let lines = |n| join_written(&text(a, n), &text(b, n)).lines().map(str::to_string).collect();
-    Rc::new(names.into_iter().map(|n| (n.clone(), lines(n))).collect())
+    Rc::new(names.into_iter().map(|n| (n.clone(), either_text(&text(a, n), &text(b, n), bound))).collect())
 }
 
 /// A file as either of two paths left it: the lines both begin and end
@@ -12737,15 +12930,44 @@ fn join_written(a: &str, b: &str) -> String {
         (Some(p), Some(q)) => *out.last_mut().expect("a last line") = written_char(p | q, false).to_string(),
         _ => out.push(line),
     };
-    if mx.len() == my.len() {
-        mx.iter().zip(my).for_each(|(p, q)| push(&mut out, join_line(p, q)));
-    } else {
-        // Line ends read back as spaces, an empty line as `\par`.
-        let class = mx.iter().chain(my).fold(crate::tex::TextClass::SPACE.0, |c, l| {
-            c | l.chars().map(char_class).fold(if l.is_empty() { 127 } else { 0 }, |c, d| c | d)
-        });
-        push(&mut out, written_char(class, false).to_string());
+    // Aligned on the lines that set the same thing (a longest common
+    // subsequence of keys): those join line by line, so one line moved in
+    // or out leaves the rest exact. A stretch between of unequal length is
+    // one unknown line.
+    let mut common = vec![vec![0u32; my.len() + 1]; mx.len() + 1];
+    for i in (0..mx.len()).rev() {
+        for j in (0..my.len()).rev() {
+            common[i][j] = match line_key(mx[i]) == line_key(my[j]) {
+                true => common[i + 1][j + 1] + 1,
+                false => common[i + 1][j].max(common[i][j + 1]),
+            };
+        }
     }
+    let stretch = |out: &mut Vec<String>, p: &[&str], q: &[&str]| {
+        if p.len() == q.len() {
+            p.iter().zip(q).for_each(|(p, q)| push(out, join_line(p, q)));
+        } else {
+            // Line ends read back as spaces, an empty line as `\par`.
+            let class = p.iter().chain(q).fold(crate::tex::TextClass::SPACE.0, |c, l| {
+                c | l.chars().map(char_class).fold(if l.is_empty() { 127 } else { 0 }, |c, d| c | d)
+            });
+            push(out, written_char(class, false).to_string());
+        }
+    };
+    let (mut i, mut j, mut from) = (0, 0, (0, 0));
+    while i < mx.len() && j < my.len() {
+        if line_key(mx[i]) == line_key(my[j]) {
+            stretch(&mut out, &mx[from.0..i], &my[from.1..j]);
+            push(&mut out, join_line(mx[i], my[j]));
+            (i, j) = (i + 1, j + 1);
+            from = (i, j);
+        } else if common[i + 1][j] >= common[i][j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    stretch(&mut out, &mx[from.0..], &my[from.1..]);
     x[x.len() - tail..].iter().for_each(|l| push(&mut out, l.to_string()));
     out.into_iter().map(|l| l + "\n").collect()
 }
@@ -12770,6 +12992,9 @@ fn written_char(class: u8, one: bool) -> char {
 /// class. A control word cut into, unknown text next to the place and
 /// unbalanced braces become part of it.
 fn join_line(p: &str, q: &str) -> String {
+    if p == q {
+        return p.to_string();
+    }
     let (x, y): (Vec<char>, Vec<char>) = (p.chars().collect(), q.chars().collect());
     let letter = |c: &char| c.is_ascii_alphabetic() || *c == '@';
     let open = |c: &char| *c == crate::tex::UNKNOWN_ANY || crate::tex::written_class(*c).is_some();
@@ -12788,6 +13013,19 @@ fn join_line(p: &str, q: &str) -> String {
             == Some(0)
     };
     if !part(head, tail).iter().all(|s| balanced(s)) {
+        // Places on both sides of a brace: with the same braces, each
+        // stretch between them joins apart.
+        let braces = |s: &[char]| s.iter().filter(|c| matches!(c, '{' | '}')).copied().collect::<Vec<_>>();
+        let escaped = |s: &[char]| s.windows(2).any(|w| w[0] == '\\' && matches!(w[1], '{' | '}'));
+        if braces(&x) == braces(&y) && !escaped(&x) && !escaped(&y) {
+            let mut out = String::new();
+            let ends = braces(&x).into_iter().map(Some).chain([None]);
+            for ((a, b), brace) in p.split(['{', '}']).zip(q.split(['{', '}'])).zip(ends) {
+                out.push_str(&join_line(a, b));
+                out.extend(brace);
+            }
+            return out;
+        }
         (head, tail) = (0, 0);
     }
     // A control word the place ends in runs on into the letters after it.
@@ -12820,4 +13058,36 @@ fn char_class(c: char) -> u8 {
         _ => C::Active,
     };
     T::of(crate::tex::Tok::Chr(c, cat)).0
+}
+
+#[cfg(test)]
+mod written {
+    use super::{either_text, join_line, texts_of};
+    use crate::tex::UNKNOWN_ANY;
+
+    /// Two lines that differ on both sides of a brace join per braced part:
+    /// the page stays a number, not a line of any text.
+    #[test]
+    fn a_line_two_paths_wrote_apart_in_two_places_keeps_its_braces() {
+        let joined = join_line(
+            "\\newlabel{n.5}{{2}{\\numexpr +\\z@ \\relax }}",
+            "\\newlabel{n.5}{{3}{\\numexpr +\\@ne \\relax }}",
+        );
+        // The page a written digit, the value an unknown name: the braces and the rest stay.
+        assert!(joined.starts_with("\\newlabel{n.5}{{") && joined.ends_with(" \\relax }}"), "{joined:?}");
+        assert!(joined.contains("{\\numexpr +"), "{joined:?}");
+    }
+
+    /// Past the bound, only the nearest texts join: a text with a line more
+    /// stays apart from those of another shape.
+    #[test]
+    fn past_the_bound_only_the_nearest_texts_join() {
+        let l = |k: &str, v: u8| format!("\\newlabel{{{k}}}{{{{{v}}}}}\n");
+        let texts = [l("x", 1) + &l("y", 1), l("x", 2) + &l("y", 1), l("x", 1) + &l("y", 1) + &l("z", 1)];
+        let either =
+            texts.iter().fold(String::new(), |all, t| if all.is_empty() { t.clone() } else { either_text(&all, t, 2) });
+        let kept = texts_of(&either);
+        assert_eq!(kept.len(), 2, "{either:?}");
+        assert!(kept.iter().all(|t| !t.contains(UNKNOWN_ANY)), "{either:?}");
+    }
 }

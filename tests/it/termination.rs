@@ -836,6 +836,29 @@ mod convergence {
         assert!(crate::support::diagnosed(&a, "site-forks-cut").is_empty());
     }
 
+    /// (2) Thirty TikZ nodes whose text width depends on a random number,
+    /// with pgfmath, `\colorlet` and positioning on them.
+    #[test]
+    fn tikz_nodes_of_unknown_width() {
+        let preamble = "\\usepackage{tikz}\n\\usetikzlibrary{positioning}";
+        let body = r"\begin{tikzpicture}
+\foreach \i [count=\n from 0] in {1,...,30} {
+  \pgfmathsetmacro{\w}{1+\pdfuniformdeviate 5}
+  \pgfmathparse{\w*2+\i}
+  \colorlet{c\i}{blue!\pgfmathresult!red}
+  \ifnum\i=1
+    \node[draw, text width=\w cm, fill=c\i] (n\i) {Node \i};
+  \else
+    \node[draw, text width=\w cm, fill=c\i, right=of n\n] (n\i) {Node \i};
+  \fi
+}
+\end{tikzpicture}";
+        let Some(a) = latex("tikz-nodes", &document(preamble, body), |_| {}) else { return };
+        // A library scan that runs to the file's end gives the document's
+        // text back instead of swallowing it, so the rest is read too.
+        converged(&a, 32_000);
+    }
+
     /// An environment whose name is one of two: `\end` looks its hooks up
     /// by a name holding the one-of token, many `\cs:w` at one site. Past
     /// the fresh entries of that point the token is an unknown part of the
@@ -858,7 +881,10 @@ mod convergence {
 \pdfstringdef\x{\thepage}
 {\let\@number\@firstofone\Hy@unicodefalse\pdfstringdef\x{\thepage}}";
         let Some(a) = latex("pdfstring-page", &document(r"\usepackage{hyperref}", body), |_| {}) else { return };
-        converged(&a, 20_000);
+        // hyperref's Unicode conversion (`\HyPsd@DoConvert`, a test per
+        // character) runs here since group ends restore exact meanings;
+        // a leaked unknown meaning skipped it before (18k forks).
+        converged(&a, 32_000);
     }
 
     /// (3) An expl3 loop whose bound is `\pdfelapsedtime`.
@@ -972,4 +998,19 @@ fn cut_after_a_look_ahead_keeps_earlier_definitions() {
         .map(|e| analysis.interner.name(e.name).to_string())
         .collect();
     assert!(never.is_empty(), "undefined on an exact path: {never:?}");
+}
+
+/// Lint probes share the run's clock: past `limits.seconds` they stop at
+/// once instead of each starting afresh, and what they found is not kept
+/// for a later hover.
+#[test]
+fn lint_probes_stop_at_the_run_deadline() {
+    let mut cfg = crate::support::config();
+    cfg.limits.seconds = 60;
+    let a = satex::machine::Machine::analyze("\\def\\foo#1#2{#1}\n\\foo ab\n", None, &cfg);
+    let foo = a.interner.lookup("foo").expect("defined");
+    let past = Instant::now() - Duration::from_secs(cfg.limits.seconds + 1);
+    let cut = satex::probe::within_run(Some(past), || satex::probe::probe(&a, foo, satex::probe::State::End));
+    assert!(cut.as_ref().is_none_or(|p| !p.complete), "{cut:?}");
+    assert!(satex::probe::probe(&a, foo, satex::probe::State::End).is_some_and(|p| p.complete));
 }

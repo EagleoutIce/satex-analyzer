@@ -53,6 +53,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | [`duplicate-label`](#duplicate-label) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the same label is defined twice |
 | [`environment-mismatch`](#environment-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a> | `\end` names an environment other than the one that is open |
 | [`expl-syntax-left-on`](#expl-syntax-left-on) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | `\ExplSyntaxOn` is never turned off |
+| [`expl3-constant-set`](#expl3-constant-set) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | an expl3 constant is set after it was declared |
 | [`expl3-signature-mismatch`](#expl3-signature-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | an expl3 function takes other arguments than its name says |
 | [`ignored-verbatim-tail`](#ignored-verbatim-tail) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a> | text stands on the line that closes a verbatim body and never reaches the page |
 | [`math-script-braces`](#math-script-braces) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-safe">safe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 3, 25">chktex 3, 25</a> | `^` and `_` take one token, so what follows needs braces |
@@ -75,6 +76,8 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | [`dimension-times`](#dimension-times) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 29">chktex 29</a> | the letter x stands between two numbers where a multiplication sign belongs |
 | [`double-space`](#double-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 30, 39">chktex 30, 39</a> | two interword spaces reached the page, one of them from a tie |
 | [`ellipsis-dots`](#ellipsis-dots) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 11">chktex 11</a> | three periods set three periods, not an ellipsis |
+| [`expl3-scope`](#expl3-scope) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | — | — | an expl3 variable's scope prefix disagrees with how the run assigned it |
+| [`expl3-type`](#expl3-type) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | — | — | an expl3 variable's type suffix disagrees with the functions that set it |
 | [`group-local-definition`](#group-local-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | — | — | a definition is made inside a group and lost when it closes |
 | [`math-operator-name`](#math-operator-name) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 35">chktex 35</a> | an operator name is set in math italic instead of by its command |
 | [`missing-italic-correction`](#missing-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 6">chktex 6</a> | a slanted letter runs into upright text with no `\/` between them |
@@ -193,7 +196,7 @@ These rules have quick fixes:
 One group per category. Open a group to read its rules.
 
 <details>
-<summary><b>correctness</b> — 41 rules</summary>
+<summary><b>correctness</b> — 42 rules</summary>
 
 ### already-defined
 
@@ -510,6 +513,18 @@ Fix by adding `\ExplSyntaxOff` after the code that needs it.
 
 See [source2e § ltfiles.dtx](https://ctan.org/pkg/source2e).
 
+### expl3-constant-set
+
+<p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">correctness</span></p>
+
+**an expl3 constant is set after it was declared**
+
+A `\c_…` variable is a constant ([interface3](https://ctan.org/pkg/l3kernel)): it is made once, by `\…_const:N…` or `\…_new:N`, and never set. The run set this one again.
+
+Fix by making it a variable (`\l_…` or `\g_…`) or by not changing it.
+
+See [interface3 § Naming functions and variables](https://ctan.org/pkg/l3kernel).
+
 ### expl3-signature-mismatch
 
 <p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">correctness</span></p>
@@ -732,7 +747,7 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 </details>
 
 <details>
-<summary><b>style</b> — 48 rules</summary>
+<summary><b>style</b> — 50 rules</summary>
 
 ### accent-on-dotted-letter
 
@@ -803,6 +818,30 @@ The rule reads the periods that reached the page, so an ellipsis a command produ
 Fix by writing the command.
 
 See [chktex 11](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https://ctan.org/pkg/texbook#chapter-18).
+
+### expl3-scope
+
+<p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">style</span></p>
+
+**an expl3 variable's scope prefix disagrees with how the run assigned it**
+
+A variable named `\l_…` is local and `\g_…` global ([interface3](https://ctan.org/pkg/l3kernel)). The run set this one the other way: a `\l_` variable by a global function (`\tl_gset:Nn`), or a `\g_` variable by a local one. Declarations (`\…_new:N`) are global for every variable and do not count.
+
+Fix by renaming the variable or using the function of the other scope.
+
+See [interface3 § Naming functions and variables](https://ctan.org/pkg/l3kernel).
+
+### expl3-type
+
+<p class="badges"><span class="sev sev-warning" title="default: warning">▲ default: warning</span> <span class="cat">style</span></p>
+
+**an expl3 variable's type suffix disagrees with the functions that set it**
+
+A variable's name ends in its type (`_tl`, `_seq`, `_int`, …; [interface3](https://ctan.org/pkg/l3kernel)). The run made or set this one with another module's function, as `\seq_set_split:Nnn` on a `_tl` variable. A string and a comma list are token lists, so token list functions on them are fine.
+
+Fix by renaming the variable or using the functions of its type.
+
+See [interface3 § Naming functions and variables](https://ctan.org/pkg/l3kernel).
 
 ### group-local-definition
 

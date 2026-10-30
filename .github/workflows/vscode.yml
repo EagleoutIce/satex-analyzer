@@ -90,6 +90,10 @@ jobs:
     name: Publish
     needs: build
     runs-on: ubuntu-latest
+    # Trusted publishing: an OIDC token instead of stored ones, for both registries.
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v4
@@ -102,15 +106,31 @@ jobs:
           path: editors/vscode
           pattern: vsix-*
           merge-multiple: true
+      # One upload of every platform's package, once per release tag. A
+      # registry that refuses it is reported, and the other one and the
+      # release still get the packages.
       - name: Marketplace
-        run: npx vsce publish --packagePath satex-*.vsix
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        id: marketplace
+        continue-on-error: true
+        run: npx vsce publish --oidc --packagePath satex-*.vsix
       - name: Open VSX
-        run: for f in satex-*.vsix; do npx ovsx publish "$f" -p "$OVSX_PAT"; done
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        id: openvsx
+        continue-on-error: true
+        run: npx ovsx publish --trusted-publishing --packagePath satex-*.vsix
       - name: Attach to the release
         uses: softprops/action-gh-release@v2
         with:
           files: editors/vscode/satex-*.vsix
+      - name: Report the uploads
+        if: always()
+        env:
+          MARKETPLACE: ${{ steps.marketplace.outcome }}
+          OPENVSX: ${{ steps.openvsx.outcome }}
+        run: |
+          echo "| registry | upload |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| VS Code Marketplace | $MARKETPLACE |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Open VSX | $OPENVSX |" >> "$GITHUB_STEP_SUMMARY"
+          for r in "Marketplace:$MARKETPLACE" "Open VSX:$OPENVSX"; do
+            [ "${r#*:}" = success ] || echo "::warning title=publish::${r%%:*} upload ${r#*:}; the release has the .vsix files to upload by hand"
+          done

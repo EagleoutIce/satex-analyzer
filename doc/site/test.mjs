@@ -510,6 +510,14 @@ async function browser() {
     const detail = await until(`return [...document.querySelectorAll('.cm-tooltip-autocomplete li')].some((li) => /salute/.test(li.textContent) && li.querySelector('.cm-completionDetail .arg-mand'))`, 20000);
     await shot('play-completion');
     check('completion usage colored by argument kind', detail, await js(`return document.querySelector('.cm-tooltip-autocomplete')?.textContent.slice(0, 120) ?? 'no completion'`));
+    // the library lists the names in force and finds one; a scratch text is read in the document's state
+    await js(`const d = document.getElementById('play-library'); d.open = true; d.dispatchEvent(new Event('toggle'))`);
+    const listed = await until(`const s = document.getElementById('lib-search'); s.value = 'textbf'; s.dispatchEvent(new Event('input'));
+      return [...document.querySelectorAll('#lib-list .cs-ref')].some((c) => c.textContent === '\\\\textbf')`, 60000);
+    check('the library finds a name in force', listed, await js(`return document.getElementById('lib-list').textContent.slice(0, 160)`));
+    await js(`document.getElementById('lib-text').value = '\\\\textbf{tried} 10--12'; document.getElementById('lib-run').click()`);
+    const tried = await until(`const o = document.getElementById('lib-out').textContent; return /tried/.test(o) && /10–12/.test(o)`, 120000);
+    check('a tried text is typeset, ligatures and all', tried, await js(`const o = document.getElementById('lib-out'); return o.textContent.slice(0, 200)`));
     await key('Escape');
     for (let i = 0; i < 6; i++) await key('Backspace');
 
@@ -606,6 +614,20 @@ async function browser() {
       return [...document.querySelectorAll('#cache-list .cache-hit')].some((h) => /\\\\microtypesetup\\b/.test(h.textContent))`, 20000);
     check('caches are found by a command they define', found, await js(`return document.getElementById('cache-list').textContent.slice(0, 160)`));
     await js(`document.getElementById('cache-close').click()`);
+
+    // several at once, with what they need, in one batch; a package nobody offers stays a finding
+    const many = join(dir, 'many');
+    mkdirSync(many);
+    writeFileSync(join(many, 'main.tex'), '\\documentclass{article}\n\\usepackage{siunitx,booktabs}\n\\usepackage{tcolorbox}\n\\usepackage{nosuchpackage}\n\\begin{document}\n\\SI{1}{m}\n\\end{document}\n');
+    await upload('play-folder', [many]);
+    const unresolvedNames = `[...document.querySelectorAll('#lsp-diagnostics li')].filter((li) => /unresolved-file/.test(li.textContent)).map((li) => li.textContent)`;
+    check('packages load on demand in one batch', await until(`const p = document.getElementById('play-status').dataset.packages ?? '';
+      return ['siunitx', 'booktabs', 'tcolorbox', 'tikz'].every((n) => new RegExp('/' + n + '\\\\b').test(p)) && document.getElementById('lsp-status').textContent !== 'checking…'
+      && ${unresolvedNames}.length > 0 && ${unresolvedNames}.every((t) => t.includes('nosuchpackage'))`, 180000),
+      await js(`return document.getElementById('play-status').dataset.packages + ' | ' + ${unresolvedNames}.join(' / ').slice(0, 300)`));
+    // a switch in a section header flips when the switch itself is clicked, not only its text
+    const flipped = await js(`const b = document.getElementById('typeset-keys'), was = b.checked; b.click(); const now = b.checked; b.click(); return now !== was && b.checked === was`);
+    check('a header switch flips on its own click', flipped);
     check('no page errors', !errors.length, errors.join(' | ').slice(0, 300));
     ws.close();
   } catch (e) {

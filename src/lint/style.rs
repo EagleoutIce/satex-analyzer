@@ -425,7 +425,7 @@ fn interface(analysis: &Analysis, sym: crate::tex::Sym) -> String {
 /// `conventions.internal`: an `@` (source2e `classes.dtx`), expl3's
 /// `module_function:signature` (interface3, "The naming scheme").
 fn looks_private(analysis: &Analysis, name: &str) -> bool {
-    analysis.settings.conventions.is_internal(name.trim_start_matches('\\'))
+    analysis.settings.conventions.is_internal(crate::tex::bare_name(name))
 }
 
 /// pgfkeys stores a key as `\pgfk@/path/key/.@body` etc.: the user sets it.

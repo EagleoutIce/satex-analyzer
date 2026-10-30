@@ -300,6 +300,13 @@ impl Machine<'_> {
     /// `None` when the command may not make more choices: the caller leaves
     /// this one undecided another way.
     pub(crate) fn branch(&mut self, by: Sym, arms: usize, span: Span) -> Option<usize> {
+        self.branch_at(by, arms, span, false)
+    }
+
+    /// [`Machine::branch`]; `needed` when no other way is sound (paths that
+    /// cannot be one): the fork backstop of a hot site, which only bounds
+    /// work, does not refuse it.
+    fn branch_at(&mut self, by: Sym, arms: usize, span: Span, needed: bool) -> Option<usize> {
         if arms < 2 {
             return (arms == 1).then_some(0);
         }
@@ -317,7 +324,7 @@ impl Machine<'_> {
         }
         // Replays count: each is work at the site. Only a new choice is
         // refused, so a replay follows the run it repeats.
-        if self.hot_site(span) && !scripted {
+        if !needed && self.hot_site(span) && !scripted {
             return None;
         }
         let arm = self.script.get(i).copied().unwrap_or(0);
@@ -547,7 +554,7 @@ impl Machine<'_> {
                     None => {
                         let span = self.position_span();
                         self.swap_choices(&mut outer);
-                        let arm = self.branch(self.unknown, configs.len(), span);
+                        let arm = self.branch_at(self.unknown, configs.len(), span, true);
                         self.swap_choices(&mut outer);
                         let forced = match arm {
                             Some(_) => None,
@@ -564,7 +571,8 @@ impl Machine<'_> {
                                 joined
                             }
                             None => {
-                                if arm.is_none() {
+                                // A cut summarizes the region whatever path it follows.
+                                if arm.is_none() && !self.cutting() {
                                     self.diagnose(
                                         Severity::Unsupported,
                                         "unjoined-lookahead",
@@ -1034,7 +1042,7 @@ impl Machine<'_> {
         let entry = paths.loops.iter().find(|l| l.id == id).map(|l| (l.depth.0, l.depth.1, l.passes));
         let forced = match paths.loops.iter().position(|l| l.id == id) {
             Some(l) => {
-                let (joined, _) = self.join_configs(&fork, &paths.loops[l].joined, &here, false, true);
+                let (joined, _) = self.join_passes(&fork, &paths.loops[l].joined, &here, false, true);
                 // A pass on strictly less bounded text is not counted:
                 // such passes end by construction, each state exact.
                 let before = here.state.loop_bounds.iter().find(|(l, _)| *l == id).and_then(|(_, b)| *b);
@@ -1220,7 +1228,7 @@ impl Machine<'_> {
                     crate::progress::note!("satex: recursion widened at {span:?}, input: {places:#?}");
                 }
                 let depth = paths.heads[level].config.key.places.len();
-                let (joined, _) = self.join_configs(&fork, &paths.heads[level].config, &here, true, false);
+                let (joined, _) = self.join_passes(&fork, &paths.heads[level].config, &here, true, false);
                 self.resume_config(&fork, Config::new(here.state, joined.env, false));
                 while self.input.iter().filter_map(place).count() > depth {
                     self.pop_frame();
@@ -1253,7 +1261,7 @@ impl Machine<'_> {
                     paths.cut[i].1 = summary;
                     cut = Config::new(PathState { input, ..cut.state }, cut.env, false);
                 }
-                let (joined, growth) = self.join_configs(&fork, &paths.cut[i].1, &cut, true, false);
+                let (joined, growth) = self.join_passes(&fork, &paths.cut[i].1, &cut, true, false);
                 let growth =
                     Growth { parts: [growth.parts, if grew { vec!["input"] } else { vec![] }].concat(), ..growth };
                 if !growth.any() {
@@ -1281,7 +1289,7 @@ impl Machine<'_> {
         // that adds nothing the loop is at its fixpoint, and one widened
         // pass more may reach it; only one still growing is summarized.
         let widen = paths.heads[h].passes >= widen_after || forced_join;
-        let (joined, mut growth) = self.join_configs(&fork, &paths.heads[h].config, &here, widen, !widen);
+        let (joined, mut growth) = self.join_passes(&fork, &paths.heads[h].config, &here, widen, !widen);
         if input_grew {
             growth.parts.push("input");
         }
@@ -1408,7 +1416,8 @@ impl Machine<'_> {
         // What the passes began in, joined and widened: a name the passes
         // agree on keeps its value, one they differ in may hold any of them
         // or more.
-        let (joined, _) = self.join_configs(fork, &summarized.joined, &here, true, true);
+        // `here` first: its groups are the ones the summary goes on in.
+        let (joined, _) = self.join_passes(fork, &here, &summarized.joined, true, true);
         // What a name the passes began with and this one disagree on would
         // hold after the passes not run is not known: the passes need not
         // have met a head to widen at (each deeper in conditionals or
@@ -1828,11 +1837,18 @@ impl Machine<'_> {
         self.source_progress - self.lines_read
     }
 
+    /// The most arms a read split a number into whose values two paths
+    /// learned differently, 0 for none ([`partner`]).
+    fn digits_apart(&self, a: &Config, b: &Config) -> usize {
+        let arms = a.env.differing(&b.env).into_iter().filter_map(|sym| self.scratch.split_digits.get(&sym));
+        arms.copied().max().unwrap_or(0)
+    }
+
     /// The running path joins a parked one at its place ([`partner`]).
     fn meet(&mut self, paths: &mut Paths, fork: &Fork) {
         if paths.parked.iter().any(|p| p.key.progress == self.place_progress()) {
             let live = Config::new(self.save_path(), self.env.path(fork), false);
-            if partner(&paths.parked, &live).is_some() {
+            if partner(&paths.parked, &live, &|a, b| self.digits_apart(a, b)).is_some() {
                 let joined = self.absorb(paths, fork, live, true);
                 self.resume_config(fork, joined);
             }
@@ -2125,7 +2141,7 @@ impl Machine<'_> {
     /// which leave the parked ones. `first`: its state is the one kept.
     fn absorb(&mut self, paths: &mut Paths, fork: &Fork, mut config: Config, first: bool) -> Config {
         while !config.ended
-            && let Some(i) = partner(&paths.parked, &config)
+            && let Some(i) = partner(&paths.parked, &config, &|a, b| self.digits_apart(a, b))
         {
             let other = paths.parked.swap_remove(i);
             let (a, b) = if first { (&config, &other) } else { (&other, &config) };
@@ -2220,22 +2236,19 @@ impl Machine<'_> {
         named.sort_by_key(|n| n.0);
         let class = self.class_name(named.iter().map(|n| &n.1[..]));
         let sym = self.intern(&format!("{prefix}{:x?}{class}", named.iter().map(|n| n.0).collect::<Vec<_>>()));
-        let may: Vec<Meaning> = named
-            .into_iter()
-            .map(|(_, text)| {
-                Meaning::Macro(Rc::new(MacroDef {
-                    parameter_text: Default::default(),
-                    arg_spec: None,
-                    replacement_text: text,
-                    long: false,
-                    outer: false,
-                    protected: false,
-                }))
-            })
-            .collect();
-        let mut binding = Binding::builtin(Meaning::Unknown);
-        binding.may = Some(may.into());
-        self.env.constant(sym, binding);
+        let may: Vec<Meaning> = named.into_iter().map(|(_, text)| text_meaning(text)).collect();
+        let now = self.carried.passes_joined;
+        self.carried.made.entry(sym).and_modify(|m| m.1 = true).or_insert((now, false));
+        match self.env.slot(sym).and_then(|b| b.may.clone()) {
+            // Made again on a path that narrowed it, it holds every text anew.
+            Some(had) if had.len() != may.len() => self.env.refine_may(sym, &may, &[]),
+            Some(_) => {}
+            None => {
+                let mut binding = Binding::builtin(Meaning::Unknown);
+                binding.may = Some(may.into());
+                self.env.constant(sym, binding);
+            }
+        }
         Token::new(Tok::Cs(sym), span)
     }
 
@@ -2579,7 +2592,7 @@ impl Machine<'_> {
         /// Tokens of a list a report shows.
         const TOKENS: usize = 8;
         match place {
-            Place::File(file, offset, _) => format!("{}@{offset}", self.out.short_name(*file)),
+            Place::File(file, offset, ..) => format!("{}@{offset}", self.out.short_name(*file)),
             Place::Tokens(toks, pos) => {
                 format!("[{}]", crate::tex::detokenize(&toks[*pos..toks.len().min(pos + TOKENS)], &self.out.interner))
             }
@@ -2595,6 +2608,15 @@ impl Machine<'_> {
     fn resume_config(&mut self, fork: &Fork, config: Config) {
         self.restore_path(config.state);
         self.env.resume(fork, &config.env);
+    }
+
+    /// [`Machine::join_configs`] of passes of one loop or recursion: a
+    /// one-of token made before holds, in the join, copies of several
+    /// passes' choices, so no split narrows it from now on
+    /// ([`Machine::split_one_of_groups`]).
+    fn join_passes(&mut self, fork: &Fork, a: &Config, b: &Config, widen: bool, paired: bool) -> (Config, Growth) {
+        self.carried.passes_joined = self.carried.passes_joined.wrapping_add(1);
+        self.join_configs(fork, a, b, widen, paired)
     }
 
     /// The least upper bound of two paths at one place, and what it holds
@@ -2690,7 +2712,7 @@ impl Machine<'_> {
         x.page_grew |= y.page_grew;
         // What either path wrote may be in the files (tex.web § 1370).
         x.outputs = super::join_outputs(&x.outputs, &y.outputs, usize::from(self.limits.meaning_set));
-        x.pending = super::join_pending(&x.pending, &y.pending);
+        x.pending = super::join_pending(&x.pending, &y.pending, usize::from(self.limits.meaning_set));
         x.natural = crate::mode::join_natural(x.natural, y.natural);
         x.main_tail = x.main_tail.merge(y.main_tail);
         x.main_depth =
@@ -2842,10 +2864,18 @@ fn join_names(a: &Accum, b: &Accum, limit: usize) -> Option<Accum> {
     let other = b.name.as_deref().cloned().unwrap_or_default();
     let mut all = n.names.clone();
     let mut grew = false;
-    for name in other.names {
-        if !all.contains(&name) {
-            all.push(name);
-            grew = true;
+    for (name, took) in other.names.into_iter().zip(other.took) {
+        match all.iter().position(|x| *x == name) {
+            Some(i) => {
+                let joined = super::join_took(&n.took[i], &took);
+                grew |= joined.len() != n.took[i].len();
+                n.took[i] = joined;
+            }
+            None => {
+                all.push(name);
+                n.took.push(took);
+                grew = true;
+            }
         }
     }
     if !grew && n.files == other.files && n.closed == other.closed {
@@ -2922,7 +2952,7 @@ fn place_order(a: &[Place], b: &[Place]) -> std::cmp::Ordering {
     // A key per level, compared in order: a total order, as `sort_by`
     // needs. Text further back (more left to read) comes first.
     let key = |p: &Place| match p {
-        Place::File(f, i, _) => (0, *f as usize, (*i as u64, 0)),
+        Place::File(f, i, ..) => (0, *f as usize, (*i as u64, 0)),
         Place::Pseudo(at, _, i) => (1, at.file as usize, (u64::from(at.line) << 32 | u64::from(at.col), *i)),
         Place::Tokens(t, i) => (2, usize::MAX - (t.len() - i), (0, 0)),
         Place::Returned(t) => (2, usize::MAX - t.len(), (0, 0)),
@@ -2952,7 +2982,9 @@ fn live_frames(input: &Input) -> Vec<&Frame> {
 /// Where one input level stands, `None` once it is read.
 pub(super) fn place(frame: &Frame) -> Option<Place> {
     match frame {
-        Frame::File { mouth, .. } => Some(Place::File(mouth.file, mouth.offset(), mouth.ending())),
+        Frame::File { mouth, .. } => {
+            Some(Place::File(mouth.file, mouth.offset(), mouth.ending(), mouth.source().clone()))
+        }
         Frame::Tokens { toks, pos, .. } => (*pos < toks.len()).then(|| Place::Tokens(toks.clone(), *pos)),
         Frame::Pseudo { mouth, at, pos, .. } => Some(Place::Pseudo(*at, mouth.text().clone(), mouth.offset() + pos)),
         Frame::Returned(tokens) => (!tokens.is_empty()).then(|| Place::Returned(tokens.clone())),
@@ -3070,7 +3102,7 @@ fn left(head: &Key, key: &Key, typed: &crate::env::Typed) -> bool {
         return false;
     };
     match (x, y) {
-        (Place::File(f, i, _), Place::File(g, j, _)) => f == g && j > i,
+        (Place::File(f, i, ..), Place::File(g, j, ..)) => f == g && j > i,
         (Place::Tokens(a, i), Place::Tokens(b, j)) => Rc::ptr_eq(a, b) && j > i,
         (Place::Pseudo(_, a, i), Place::Pseudo(_, b, j)) => Rc::ptr_eq(a, b) && j > i,
         _ => false,
@@ -3107,6 +3139,19 @@ fn same_text(a: &[Token], b: &[Token]) -> bool {
 /// The prefix of the names [`Machine::one_of`] makes.
 pub(crate) const ONE_OF: &str = "one of:";
 
+/// The meaning a one-of token holds for one of its texts: a macro
+/// without parameters ([`Machine::one_of`]).
+pub(crate) fn text_meaning(text: Rc<[Token]>) -> Meaning {
+    Meaning::Macro(Rc::new(MacroDef {
+        parameter_text: Default::default(),
+        arg_spec: None,
+        replacement_text: text,
+        long: false,
+        outer: false,
+        protected: false,
+    }))
+}
+
 /// Whether two paths wait to run the same code at their groups' ends and
 /// after the next assignment: else they stand at different points.
 fn same_code(a: &Tag, b: &Tag) -> bool {
@@ -3117,16 +3162,22 @@ fn same_code(a: &Tag, b: &Tag) -> bool {
 /// one that waits to run the same code and either closed the same
 /// conditional last (both arms of an `\if…` meet after its `\fi`) or,
 /// past [`PARTITIONS`] tags at the place or between two lines of a file
-/// (the statement is over), the first there.
-fn partner(parked: &[Config], config: &Config) -> Option<usize> {
+/// (the statement is over), the first there. Paths that took different
+/// arms of a number's digits (`apart`, the arms the split made) join only
+/// once as many wait or the statement is over: joined earlier, a 1-digit
+/// arm would pair with a 2-digit arm a pass behind it.
+fn partner(parked: &[Config], config: &Config, apart: &dyn Fn(&Config, &Config) -> usize) -> Option<usize> {
     let (key, tag) = (&config.key, &config.tag);
     let here: Vec<usize> = (0..parked.len()).filter(|&i| !parked[i].ended && parked[i].key == *key).collect();
-    let merge = here.len() >= PARTITIONS || key.places.iter().all(|p| matches!(p, Place::File(..) | Place::Pseudo(..)));
     let fi = |i: usize| config.state.fi_mark.is_some() && parked[i].state.fi_mark == config.state.fi_mark;
+    let file = key.places.iter().all(|p| matches!(p, Place::File(..) | Place::Pseudo(..)));
+    let merge = here.len() >= PARTITIONS || file;
+    // Arms of a digit split wait for as many paths as the split made.
+    let own = |i: usize| file || here.len() >= apart(&parked[i], config);
     here.iter()
         .copied()
-        .find(|&i| parked[i].tag == *tag)
-        .or_else(|| here.iter().copied().find(|&i| same_code(&parked[i].tag, tag) && (merge || fi(i))))
+        .find(|&i| parked[i].tag == *tag && own(i))
+        .or_else(|| here.iter().copied().find(|&i| same_code(&parked[i].tag, tag) && own(i) && (merge || fi(i))))
 }
 
 /// The arms the next run of a command takes: the last choice with an arm

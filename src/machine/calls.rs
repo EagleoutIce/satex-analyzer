@@ -32,6 +32,7 @@ pub(crate) struct CallRec {
     leaky: bool,
     /// Its arguments held unknown text.
     unknown: bool,
+    args: Rc<[Vec<Token>]>,
     /// Where the list below the call's text stood: a run ends cleanly
     /// only on that list as the call left it.
     below: Option<FrameMark>,
@@ -43,6 +44,7 @@ pub(crate) struct CallRec {
 struct Run {
     writes: Vec<(Sym, Option<Binding>)>,
     reads: Vec<Sym>,
+    args: Rc<[Vec<Token>]>,
 }
 
 /// Where a list stands: its text (held, so its place is never another
@@ -123,7 +125,7 @@ impl Machine<'_> {
     }
 
     /// As a call's body is pushed: record the run while runs are missing.
-    pub(crate) fn record_call(&mut self, key: CallKey, unknown: bool) {
+    pub(crate) fn record_call(&mut self, key: CallKey, unknown: bool, args: &[Vec<Token>]) {
         let needed = self.summary_after();
         let runs = self.call_runs.entry(key).or_default();
         if !runs.leaky && runs.runs.len() + runs.active < needed {
@@ -147,6 +149,7 @@ impl Machine<'_> {
                 material: self.material,
                 leaky: false,
                 unknown,
+                args: args.into(),
                 below: self.input.last().map(frame_mark),
             };
             crate::push_shared(&mut self.call_recs, rec);
@@ -187,11 +190,11 @@ impl Machine<'_> {
         if !unknown {
             return false;
         }
-        self.apply_summary(key, key.1);
+        self.apply_summary(key, key.1, arguments);
         true
     }
 
-    fn apply_summary(&mut self, key: CallKey, span: Span) {
+    fn apply_summary(&mut self, key: CallKey, span: Span, arguments: &[Vec<Token>]) {
         let runs = std::mem::take(&mut self.call_runs.get_mut(&key).expect("recorded").runs);
         let mut syms: Vec<Sym> = runs.iter().flat_map(|r| r.writes.iter().map(|w| w.0)).collect();
         syms.sort_unstable();
@@ -199,9 +202,39 @@ impl Machine<'_> {
         let typed_syms = self.typed_syms();
         let typed = crate::env::typed!(self, typed_syms);
         let mut writes = Vec::with_capacity(syms.len());
+        // Each run's typed numbers by where its arguments hold them.
+        let numbers = |args: &[Vec<Token>]| -> Vec<Option<Sym>> {
+            (args.iter().flat_map(|a| self.whole_numbers(a)))
+                .map(|t| t.cs().filter(|&s| self.typed_digits_of(s).is_some()))
+                .collect()
+        };
+        let here = numbers(arguments);
+        let to = |r: &Run| -> Option<Vec<(Sym, Sym)>> {
+            let theirs = numbers(&r.args);
+            let alike = theirs.len() == here.len() && theirs.iter().zip(&here).all(|(a, b)| a.is_some() == b.is_some());
+            alike.then(|| theirs.iter().zip(&here).filter_map(|(a, b)| Some(((*a)?, (*b)?))).collect())
+        };
+        let maps: Option<Vec<Vec<(Sym, Sym)>>> = runs.iter().map(to).collect();
         for &sym in &syms {
             let now = self.env.slot_at(sym.0);
             let of = |r: &Run| r.writes.iter().find(|w| w.0 == sym).map_or_else(|| now.clone(), |w| w.1.clone());
+            // Every run wrote the same text of its own arguments' numbers:
+            // this call writes it of its own.
+            if let Some(maps) = &maps
+                && maps.iter().all(|m| m.iter().any(|(a, b)| a != b))
+            {
+                let mine: Option<Vec<_>> = runs.iter().zip(maps).map(|(r, m)| self.relate(&of(r), m)).collect();
+                if let Some(mine) = mine
+                    && mine.windows(2).all(|w| crate::env::same_slot(&w[0], &w[1]))
+                    && !crate::env::same_slot(&mine[0], &of(&runs[0]))
+                {
+                    if let Some(mut b) = mine.into_iter().next().flatten() {
+                        b.certain = false;
+                        writes.push((sym, b));
+                    }
+                    continue;
+                }
+            }
             let mut acc = of(&runs[0]);
             for r in &runs[1..] {
                 let next = of(r);
@@ -285,7 +318,7 @@ impl Machine<'_> {
                 entry.runs.clear();
                 continue;
             }
-            self.call_runs.get_mut(&rec.key).expect("entry").runs.push(Run { writes, reads });
+            self.call_runs.get_mut(&rec.key).expect("entry").runs.push(Run { writes, reads, args: rec.args });
         }
         if self.call_recs.is_empty() {
             self.env.log_reads(false);
@@ -378,4 +411,69 @@ fn accumulates(a: &Run, b: &Run) -> bool {
 /// join stands for no later run.
 fn updates(a: &Run, b: &Run) -> bool {
     a.writes.iter().zip(&b.writes).any(|(x, y)| a.reads.contains(&x.0) && !crate::env::same_slot(&x.1, &y.1))
+}
+
+impl Machine<'_> {
+    /// `text` with each run of slices that spells one typed number from its
+    /// first place to its end as that number: it holds no more.
+    fn whole_numbers(&self, text: &[Token]) -> Vec<Token> {
+        let mut out: Vec<Token> = Vec::with_capacity(text.len());
+        let mut n = 0;
+        while n < text.len() {
+            let cut = |t: &Token| t.cs().and_then(|s| self.typed_slice(s));
+            if let Some((whole, k, 0, mut j)) = cut(&text[n]) {
+                let mut m = n + 1;
+                while j != k
+                    && let Some((w, l, i, e)) = text.get(m).and_then(cut)
+                    && (w, l, i) == (whole, k, j)
+                {
+                    (j, m) = (e, m + 1);
+                }
+                if j == k {
+                    out.push(Token::new(crate::tex::Tok::Cs(whole), text[n].span));
+                    n = m;
+                    continue;
+                }
+            }
+            out.push(text[n]);
+            n += 1;
+        }
+        out
+    }
+
+    /// `b` with its typed numbers whole and those of `map` renamed;
+    /// `None` when a part of one of them is left, which has no rename.
+    fn relate(&self, b: &Option<Binding>, map: &[(Sym, Sym)]) -> Option<Option<Binding>> {
+        let stale = std::cell::Cell::new(false);
+        let swap = |t: &[Token]| -> Rc<[Token]> {
+            (self.whole_numbers(t).into_iter())
+                .map(|t| match t.cs().and_then(|s| map.iter().find(|m| m.0 == s)) {
+                    Some(&(_, to)) => Token::new(crate::tex::Tok::Cs(to), t.span),
+                    None => {
+                        let cut = t.cs().and_then(|s| self.typed_slice(s));
+                        stale.set(stale.get() || cut.is_some_and(|c| map.iter().any(|m| m.0 == c.0)));
+                        t
+                    }
+                })
+                .collect()
+        };
+        let meaning = |m: &Meaning| match m {
+            Meaning::Macro(d) => Meaning::Macro(Rc::new(crate::tex::MacroDef {
+                replacement_text: swap(&d.replacement_text),
+                ..(**d).clone()
+            })),
+            m => m.clone(),
+        };
+        let Some(b) = b else { return Some(None) };
+        let b = Binding {
+            meaning: meaning(&b.meaning),
+            value: match &b.value {
+                crate::value::Value::Toks(t) => crate::value::Value::Toks(swap(t)),
+                v => v.clone(),
+            },
+            may: b.may.as_ref().map(|may| may.iter().map(meaning).collect()),
+            ..b.clone()
+        };
+        (!stale.get()).then_some(Some(b))
+    }
 }

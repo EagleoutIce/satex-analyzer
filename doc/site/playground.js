@@ -5,6 +5,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const manifest = JSON.parse($('satex-play').textContent);
+  window.satexTypeList = manifest.completion?.types;
   const base = new URL(manifest.root, document.baseURI).href;
   const [tabs, args, button, status, output, lspStatus, list, count, cmd, kernelBox, toastBox, ctxMenu, treeBox, examplesBox] =
     ['play-tabs', 'play-args', 'play-run', 'play-status', 'play-output', 'lsp-status', 'lsp-diagnostics', 'lsp-count',
@@ -170,7 +171,11 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toastBox.classList.remove('on'), 2600);
   }
-  const timing = (id, text, title = '') => Object.assign($(id), { textContent: text, title });
+  /** One row of the timing pop-up: a line of text, or `items` as chips under it. */
+  const timing = (id, text, title = '', items = null) => {
+    const dd = Object.assign($(id), { title });
+    dd.innerHTML = escape(text) + (items?.length ? `<span class="t-chips">${items.map((i) => `<code>${escape(i)}</code>`).join('')}</span>` : '');
+  };
   // The status bar: one time, a pill per non-empty severity; the rest in a pop-up on the time.
   const shownTime = (text) => { $('t-time').hidden = false; $('t-time-text').textContent = text; };
   $('t-time').onclick = () => { const pop = $('t-detail'); pop.hidden = !pop.hidden; $('t-time').setAttribute('aria-expanded', !pop.hidden); };
@@ -181,9 +186,9 @@
     $('play-pills').innerHTML = shown.map(([s, w, c]) => `<span class="pill-sev sev-${s}" title="${c} ${w}${c > 1 ? 's' : ''} in the open file">${c} ${w}${c > 1 ? 's' : ''}</span>`).join('');
   }
 
-  /** SGR codes to the classes build.py's ansi() writes; OSC hyperlinks and cursor moves dropped. */
+  /** SGR codes to the classes build.py's ansi() writes; OSC hyperlinks and every other control sequence dropped. */
   function ansi(text) {
-    text = text.replace(/\x1b\]8;[^\x1b\x07]*(\x1b\\|\x07)/g, '').replace(/\x1b\[[0-9;]*[A-HJKST]/g, '');
+    text = text.replace(/\x1b\]8;[^\x1b\x07]*(\x1b\\|\x07)/g, '').replace(/\x1b\[[0-?]*[ -\/]*[@-ln-~]/g, '');
     let classes = new Set(), html = '';
     for (const part of text.split(/(\x1b\[[0-9;]*m)/)) {
       const m = part.match(/^\x1b\[([0-9;]*)m$/);
@@ -201,7 +206,7 @@
     }
     return html + (classes.size ? '</span>' : '');
   }
-  const plain = (text) => text.replace(/\x1b\[[0-9;]*[A-Za-z]|\x1b\]8;[^\x1b\x07]*(\x1b\\|\x07)/g, '');
+  const plain = (text) => text.replace(/\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\]8;[^\x1b\x07]*(\x1b\\|\x07)/g, '');
   /** stderr without the progress bars, which redraw themselves in place. */
   const quiet = (text) => text.replace(/\x1b\[1A/g, '').split('\x1b[J')
     .filter((piece) => !/\[[#-]{20}\]/.test(plain(piece))).join('').trim();
@@ -258,11 +263,55 @@
   const ask = (msg, transfer = []) => {
     const asked = line_.then(() => new Promise((resolve, reject) => {
       waiting[REPLY[msg.type]] = { resolve, reject };
-      worker.postMessage(msg, transfer);
+      post(msg, transfer);
     }));
     line_ = asked.catch(() => {});
     return asked;
   };
+  // Console commands run in a worker of their own, so the language server never waits on one. It gets
+  // the same kernel, bundles and files: each such message goes to both, replayed in order when it starts.
+  const MIRROR = new Set(['init', 'bundle', 'bundles']);
+  const mirrored = [], runnerFiles = { dir: '', files: {} };
+  let runner = null, mirrorable = true;
+  function post(msg, transfer = []) {
+    // a file:// page hands its buffers over, so a second worker cannot get them: commands share the first
+    if (msg.given) mirrorable = false;
+    if (MIRROR.has(msg.type)) mirrored.push(msg);
+    // the project's files as they are now, not every edit that made them
+    if (msg.type === 'project') {
+      if (msg.replace) runnerFiles.files = {};
+      runnerFiles.dir = msg.dir;
+      Object.assign(runnerFiles.files, msg.files ?? {});
+      for (const n of msg.removed ?? []) delete runnerFiles.files[n];
+    }
+    if (MIRROR.has(msg.type) || msg.type === 'project') runner?.send(msg);
+    worker.postMessage(msg, transfer);
+  }
+  function startRunner() {
+    const w = new Worker(URL.createObjectURL(new Blob([manifest.worker], { type: 'text/javascript' })));
+    const replies = {};
+    let chain = Promise.resolve();
+    w.onmessage = ({ data }) => (data.type === 'error' ? replies[REPLY[data.of]]?.reject(new Error(data.message.split('\n')[0])) : replies[data.type]?.resolve(data));
+    // one message at a time, as the first worker gets them through `ask`: the next waits for this one's reply
+    const send = (msg) => {
+      const done = chain.then(() => new Promise((resolve, reject) => {
+        const reply = REPLY[msg.type];
+        if (reply) replies[reply] = { resolve, reject }; else resolve(null);
+        w.postMessage(msg);
+      }));
+      chain = done.catch(() => {});
+      return done;
+    };
+    for (const msg of mirrored) send(msg);
+    send({ type: 'project', dir: runnerFiles.dir, files: runnerFiles.files, replace: true });
+    return { send };
+  }
+  /** A console command: in the second worker where it can be, else in line with the first one's work. */
+  function runCommand(msg) {
+    if (!mirrorable) return ask(msg);
+    runner ??= startRunner();
+    return runner.send(msg);
+  }
 
   // ---------------------------------------------------------------- language server
 
@@ -315,12 +364,25 @@
   // ---------------------------------------------------------------- editor
 
   let editor; // { text(), set(text), diagnostics(list), apply(edits), cursor(), select(c), word() }
-  let version = 0, synced = 0, timer = null, checkStart = 0;
+  let version = 0, synced = 0, analyzedVersion = 0, timer = null, checkStart = 0, retryCompletion = false;
+  let typedAt = 0;
   function changed() {
     version++;
+    typedAt = performance.now();
     if (refs && refs.file === state.file) clearRefs();
     clearTimeout(timer);
-    timer = setTimeout(sync, 400);
+    // A command name or an argument still being typed (`\dra`, `\cite{kn`) waits: the analysis
+    // would block completion for seconds, and its findings would be about unfinished text.
+    const line = editor.text().split('\n')[editor.position().line] ?? '', before = line.slice(0, editor.position().character);
+    timer = setTimeout(sync, /\\[A-Za-z@]*$|\{[^{}\s]*$/.test(before) ? 1500 : 400);
+  }
+  /** After an analysis, the command list the server would offer after a `\\`, asked once at a command
+   * of the file: the first `\\` typed then completes at once. */
+  function prefetchCommands() {
+    const text = editor?.text() ?? '', at = text.search(/\\[A-Za-z@]/);
+    if (at < 0 || commandItems.has(`${uri()}|\\`)) return;
+    const before = text.slice(0, at + 1).split('\n');
+    completions({ line: before.length - 1, character: before.at(-1).length }, before.at(-1).length, '\\');
   }
   /** Sends the buffer to the server unless it already has it: the text
    * only, so what is asked meanwhile is answered from the last analysis. */
@@ -329,7 +391,7 @@
     state.texts[state.file] = editor.text();
     if (data(state.file) && synced !== version) {
       synced = version;
-      worker.postMessage({ type: 'project', dir: state.dir, files: { [state.file]: new TextEncoder().encode(editor.text()) } });
+      post({ type: 'project', dir: state.dir, files: { [state.file]: new TextEncoder().encode(editor.text()) } });
       return true;
     }
     if (synced === version || !opened.has(uri())) return false;
@@ -340,7 +402,9 @@
   /** Once typing pauses: the buffer, and an analysis of it. */
   function sync() {
     clearTimeout(timer);
-    if (push()) {
+    // a completion may have sent the text already: what counts is whether this version was analyzed
+    if (push() | (analyzedVersion !== version && !!state.file && !(state.file in state.ro))) {
+      analyzedVersion = version;
       prefetch();
       // the root's text may now ask for another engine
       if (state.file === state.root && wanted() !== state.kernel && !manualKernel && !following) { following = true; restart().finally(() => { following = false; }); return; }
@@ -370,16 +434,26 @@
    * keeps the server busy, the last items stand in only where they were asked for the same word. */
   const asked = new Map();
   let lastItems = null, lastWord = '';
-  function completions(position, start = position.character) {
+  /** What the server last offered in each kind of place, by file (after a `\\`, in `\begin{`, `\cite{`, …):
+   * what the same kind of place completes from at once. */
+  const commandItems = new Map();
+  /** How long a completion waits for the server before the kept commands answer (the server's answer still replaces them). */
+  const INSTANT_MS = 120;
+  function completions(position, start = position.character, place = null) {
     const k = `${uri()}|${version}|${position.line}:${position.character}`, word = `${uri()}|${position.line}:${start}`;
     if (!asked.has(k)) {
       asked.clear();
       asked.set(k, lsp('textDocument/completion', { textDocument: { uri: uri() }, position }).then((r) => {
         [lastItems, lastWord] = [(Array.isArray(r) ? r : r?.items) ?? [], word];
+        if (place && lastItems.length) commandItems.set(`${uri()}|${place}`, lastItems);
         return lastItems;
       }).catch(() => []));
     }
-    return running && lastItems && lastWord === word ? lastItems : asked.get(k);
+    if (running && lastItems && lastWord === word) return lastItems;
+    const kept = place && commandItems.get(`${uri()}|${place}`);
+    if (!kept) return asked.get(k);
+    // a run keeps the server busy for seconds: the kept commands answer now, the server's items on the next keystroke
+    return Promise.race([asked.get(k), new Promise((done) => setTimeout(() => done(kept), INSTANT_MS))]);
   }
   /** The last hover of each command, by file: shown at once while a run goes on. */
   const keptHovers = new Map();
@@ -405,7 +479,11 @@
       if (!ctx.explicit && before !== '\\' && before !== '{' && !item) return null;
       push();
       const start = before === '\\' ? word.from : key.from;
-      const items = await completions(position(ctx.state.doc, ctx.pos), start - line.from);
+      // the kind of place: a command name, or the argument of the command whose brace is open
+      const place = before === '\\' ? '\\' : line.text.slice(0, key.from - line.from).match(/\\([A-Za-z@]+)\*?(?:\[[^\]]*\])*\{[^{}]*$/)?.[1] ?? null;
+      const items = await completions(position(ctx.state.doc, ctx.pos), start - line.from, place);
+      // typed before the server read it: analyze now, ask again when that run ends
+      if (!items.length && !ctx.explicit) { retryCompletion = true; sync(); }
       // an item that replaces a range (a key path) starts where that range does
       const edit = items.find((i) => i.textEdit)?.textEdit;
       const from = edit ? at(ctx.state.doc, edit.range.start) : before === '\\' ? word.from : key.from;
@@ -418,6 +496,8 @@
         })),
       };
     }
+    // a brace typed before a command closes too (`\\cite{` before `\\end`); TeX has no quote pairs
+    const closing = st.EditorState.languageData.of(() => [{ closeBrackets: { brackets: ['(', '[', '{'], before: ')]}:;>\\' } }]);
     const hover = view.hoverTooltip(async (v, pos) => {
       // The server has the text; it answers from its last analysis at once.
       push();
@@ -507,7 +587,7 @@
     const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment();
     const ev = new EditorView({
       parent, doc: text,
-      extensions: [basicSetup, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete], addToOptions: [{ position: 80, render: (c) => {
+      extensions: [basicSetup, closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete], addToOptions: [{ position: 80, render: (c) => {
         // the detail: a usage line colored like the hover's, then where it comes from
         const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
@@ -582,6 +662,7 @@
           actions: [...d.fixes.map((f) => ({ name: `Fix (${f.safety})`, apply: () => fix(f) })), { name: 'Explain rule', apply: () => unfold(i, false) }],
         };
       }))),
+      complete: () => ac.startCompletion(ev),
       cursor: () => [ev.state.selection.main.anchor, ev.state.selection.main.head],
       select: ([anchor, head] = [0, 0]) => { const n = doc().length; ev.dispatch({ selection: { anchor: Math.min(anchor, n), head: Math.min(head, n) }, scrollIntoView: true }); },
       position: () => position(doc(), ev.state.selection.main.head),
@@ -614,7 +695,9 @@
    * analysis (`satex query typeset`); a click goes to the paragraph. */
   const typesetBody = $('typeset-body');
   /** satex's notation in typeset text (`\uE000…\uE001`): `⟦…⟧` is text set in a box, on the page
-   * only if the box is used; `·` a place the line breaker may hyphenate, not shown. */
+   * only if the box is used; `·` a place the line breaker may hyphenate, not shown; `│`, `―`, `▬`
+   * a table's `|`, an `\hline` and a `\rule`, drawn. */
+  const RULES = { '│': ['ts-vrule', 'a \\vrule: a table\'s |'], '―': ['ts-hrule', 'an \\hrule: \\hline'], '▬': ['ts-bar', 'a \\rule'] };
   function notation(marked) {
     let open = 0;
     const html = marked.split(/(\uE000[^\uE001]*\uE001)/).map((part) => {
@@ -623,6 +706,7 @@
       if (note === '⟦') { open++; return '<span class="ts-box" title="set in a box: on the page only if the box is used">'; }
       if (note === '⟧') { if (!open) return ''; open--; return '</span>'; }
       if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `<span class="ts-key ts-key-${escape(kind)}" title="${escape(kind)}">${escape(key)}</span>`; }
+      if (RULES[note]) return `<span class="${RULES[note][0]}" title="${RULES[note][1]}"></span>`;
       return note === '·' ? '' : `<span class="ts-note">${escape(note)}</span>`;
     }).join('');
     return html + '</span>'.repeat(open);
@@ -630,7 +714,8 @@
   // in the section's header: a click flips a switch, never the section's fold; kept across visits
   for (const [id, cls, store] of [['typeset-boxes', 'show-boxes', 'satex-typeset-boxes'], ['typeset-keys', 'show-keys', 'satex-typeset-keys']]) {
     const box = $(id), apply = () => typesetBody.classList.toggle(cls, box.checked);
-    box.closest('label').addEventListener('click', (e) => { e.preventDefault(); box.checked = !box.checked; box.onchange(); });
+    // the switch itself flips natively; its text flips it here
+    box.closest('label').addEventListener('click', (e) => { if (e.target === box) return; e.preventDefault(); box.checked = !box.checked; box.onchange(); });
     try { box.checked = localStorage.getItem(store) === '1'; } catch {}
     box.onchange = () => { apply(); try { localStorage.setItem(store, box.checked ? '1' : '0'); } catch {} };
     apply();
@@ -771,7 +856,11 @@
       const safety = d.data?.applicability ?? (a.isPreferred ? 'safe' : 'unsafe');
       by.set(key(d), [...(by.get(key(d)) ?? []), { ...a, safety }]);
     }
-    diagnostics[target] = ds.map((d) => ({ ...d, fixes: by.get(key(d)) ?? [] }));
+    // A finding on the word under the cursor while it is typed (`\dra` on the way to `\draw`)
+    // waits until typing moves on: it is about text that is not finished.
+    const typing = target === uri() && performance.now() - typedAt < 4000 && editor?.position?.();
+    const unfinished = (d) => typing && d.range.start.line === typing.line && d.range.start.character <= typing.character && typing.character <= d.range.end.character + 1;
+    diagnostics[target] = ds.filter((d) => !unfinished(d)).map((d) => ({ ...d, fixes: by.get(key(d)) ?? [] }));
     if (target === uri()) render();
     drawTree();
   }
@@ -779,6 +868,7 @@
   function render() {
     const ds = diagnostics[uri()] ?? [];
     editor.diagnostics(ds);
+    if (retryCompletion && !running) { retryCompletion = false; asked.clear(); editor.complete?.(); }
     count.textContent = ds.length;
     pills(ds);
     if (checkStart) { timing('t-check', secs(performance.now() - checkStart), 'the language server analyzed the open file'); shownTime(secs(performance.now() - checkStart)); }
@@ -1110,6 +1200,102 @@
   document.addEventListener('mouseout', (e) => { if (e.target.closest?.('.cs-ref')) setTimeout(() => { if (!csTip.matches(':hover')) csTip.hidden = true; }, 120); });
   csTip.addEventListener('mouseleave', () => { csTip.hidden = true; });
   document.addEventListener('click', (e) => { const ref = e.target.closest?.('.cs-ref'); if (ref) { csTip.hidden = true; explainName(ref.dataset.cs); } });
+  // ---------------------------------------------------------------- library: every name in force, and a scratch line to try them
+
+  const libList = $('lib-list'), libSearch = $('lib-search'), libFrom = $('lib-from'), libInternal = $('lib-internal');
+  let libNames = [], libFor = '';
+  /** The names in force at the end of the root's last run (`scope`), refreshed once per run. */
+  async function libraryLoad() {
+    const key = `${state.root ?? state.file}|${libInternal.checked}|${analyzedVersion}`;
+    if (key === libFor) return libraryShow();
+    libFor = key;
+    const request = { file: path(state.root ?? state.file), queries: [{ type: 'scope', all: libInternal.checked }] };
+    libNames = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records ?? [];
+    const from = libFrom.value, packages = [...new Set(libNames.map((r) => r.package).filter(Boolean))].sort();
+    libFrom.innerHTML = `<option value="">every package</option>${packages.map((p) => `<option${p === from ? ' selected' : ''}>${escape(p)}</option>`).join('')}`;
+    libraryShow();
+  }
+  /** The first 200 names the search matches: a name starting with it first, then one containing it, then a usage that does. */
+  /** How well `name` matches `q`: a prefix, a part after `@`, `_` or `:`, anywhere, the letters in order, else none. */
+  const libRank = (name, q) => {
+    const n = name.toLowerCase().replace(/^\\/, '');
+    if (!q) return 0;
+    if (n.startsWith(q)) return 0;
+    if (n.split(/[@_:]/).some((part) => part.startsWith(q))) return 1;
+    if (n.includes(q)) return 2;
+    let k = 0;
+    for (const c of n) if (c === q[k]) k++;
+    return k === q.length ? 3 : null;
+  };
+  let libKind = '';
+  function libraryShow() {
+    const q = libSearch.value.trim().toLowerCase().replace(/^\\/, ''), from = libFrom.value;
+    const kind = (r) => (r.tag === 'environment' ? 'environment' : r.tag === 'primitive' ? 'primitive' : 'command');
+    const hits = libNames
+      .map((r) => [r, libRank(r.name, q) ?? (q && String(r.effective ?? '').toLowerCase().includes(q) ? 4 : null)])
+      .filter(([r, rank]) => rank !== null && (!from || r.package === from) && (!libKind || kind(r) === libKind))
+      .sort((a, b) => a[1] - b[1] || a[0].name.length - b[0].name.length || a[0].name.localeCompare(b[0].name))
+      .map(([r]) => r);
+    $('lib-count').textContent = libNames.length ? String(hits.length) : '';
+    const counts = { '': libNames.length };
+    for (const r of libNames) counts[kind(r)] = (counts[kind(r)] ?? 0) + 1;
+    $('lib-kinds').innerHTML = [['', 'all'], ['command', 'commands'], ['environment', 'environments'], ['primitive', 'primitives']]
+      .map(([k, label]) => `<button type="button" class="lib-kind" aria-pressed="${k === libKind}" data-kind="${k}">${label} <b>${counts[k] ?? 0}</b></button>`).join('');
+    libList.innerHTML = hits.slice(0, 200).map((r, i) => `<li tabindex="-1" data-i="${i}"><code class="cs-ref" data-cs="${escape(r.name)}" tabindex="0">${escape(r.name)}</code>` +
+      `${r.effective && r.effective !== r.name ? `<span class="lib-use">${slotsOf(r.effective)}</span>` : ''}` +
+      `<button type="button" class="lib-try-it ghost small" data-try="${escape(r.effective ?? r.name)}" title="put it in the Try box">try</button>` +
+      `<span class="lib-pkg">${escape(r.package ?? '')}</span></li>`).join('') +
+      (hits.length > 200 ? `<li class="muted">${hits.length - 200} more: narrow the search</li>` : '') ||
+      `<li class="muted">${libNames.length ? 'No name matches.' : 'The names appear once the document is checked.'}</li>`;
+  }
+  /** A usage line with its ⟨…⟩ placeholders as the explain cards draw them. */
+  const slotsOf = (usage) => (cards.slots ? cards.slots(escape(usage)) : escape(usage));
+  $('lib-kinds').addEventListener('click', (e) => { const b = e.target.closest('.lib-kind'); if (b) { libKind = b.dataset.kind; libraryShow(); } });
+  libList.addEventListener('click', (e) => {
+    const t = e.target.closest('.lib-try-it');
+    if (!t) return;
+    // the usage with its placeholders left for the reader to fill
+    const text = $('lib-text');
+    text.value = t.dataset.try.replace(/[⟨⟩]/g, '');
+    text.focus();
+  });
+  // ↓ from the search goes into the list, ↑/↓ move, Enter explains
+  libSearch.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); libList.querySelector('li[data-i]')?.focus(); } });
+  libList.addEventListener('keydown', (e) => {
+    const li = e.target.closest('li[data-i]');
+    if (!li) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); (e.key === 'ArrowDown' ? li.nextElementSibling : li.previousElementSibling ?? libSearch)?.focus(); }
+    if (e.key === 'Enter') { e.preventDefault(); explainName(li.querySelector('.cs-ref').dataset.cs); }
+  });
+  libSearch.oninput = libraryShow;
+  libFrom.onchange = libraryShow;
+  libInternal.onchange = libraryLoad;
+  $('play-library').addEventListener('toggle', (e) => { if (e.target.open) libraryLoad(); });
+  /** The scratch text read right after the root's `\begin{document}`: what it sets, its findings and what it expanded to. */
+  async function libraryTry() {
+    const text = $('lib-text').value, out = $('lib-out');
+    if (!text.trim()) return;
+    const root = state.root ?? state.file, lines = (root === state.file ? editor.text() : state.texts[root] ?? '').split('\n');
+    const i = lines.findIndex((l) => /\\begin\s*\{document\}/.test(l));
+    if (i < 0) { out.innerHTML = '<p class="muted">The document has no <code>\\begin{document}</code> to read the text after.</p>'; return; }
+    const col = lines[i].search(/\\begin\s*\{document\}/) + lines[i].slice(lines[i].search(/\\begin\s*\{document\}/)).indexOf('}') + 2;
+    out.innerHTML = '<p class="muted">Reading it…</p>';
+    sync();
+    const request = { file: path(root), inject: { text: `\n${text}\n`, at: `${i + 1}:${col}` }, config: { trace: 'true', trace_document_only: 'false' },
+      queries: [{ type: 'typeset' }, { type: 'diagnostics' }, { type: 'trace' }] };
+    const [ts, ds, tr] = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch((e) => [{ error: String(e?.message ?? e) }])) ?? [];
+    if (ts?.error) { out.innerHTML = `<p class="muted">${escape(ts.error)}</p>`; return; }
+    const lo = i + 2, hi = lo + text.split('\n').length - 1, mine = (r) => r.line >= lo && r.line <= hi && String(r.path ?? r.file ?? '').endsWith(root);
+    const set = (ts.records ?? []).filter((r) => r.kind === 'paragraph' && mine(r));
+    const found = (ds?.records ?? []).filter(mine);
+    const top = (tr?.records ?? []).filter((r) => mine(r) && r.inserts != null).slice(0, 12);
+    out.innerHTML = `<div class="typeset">${set.map((r) => `<p class="ts"><span class="ts-text">${notation(r.marked ?? r.detail ?? '')}</span></p>`).join('') || '<p class="muted">It sets no text.</p>'}</div>` +
+      (found.length ? `<ul class="lib-found">${found.map((d) => `<li><b>${escape(d.severity)}</b> ${escape(d.message)}</li>`).join('')}</ul>` : '') +
+      (top.length ? `<details class="lib-steps"><summary>${plural(top.length, 'expansion')}</summary><ul>${top.map((r) => `<li><code class="cs-ref" data-cs="${escape(r.name)}">${escape(r.name)}</code> → <code>${escape(String(r.inserts).slice(0, 160))}</code></li>`).join('')}</ul></details>` : '');
+  }
+  $('lib-run').onclick = libraryTry;
+  $('lib-text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); libraryTry(); } });
+
   // ---------------------------------------------------------------- trace: how one call expands
 
   const traceBox = $('play-trace'), traceBody = $('trace-body'), traceInternal = $('trace-internal');
@@ -1126,33 +1312,132 @@
     }
     return null;
   }
-  /** The steps as a tree by depth: a step with deeper steps after it is a folding node. */
-  function traceTree(steps, name, does = new Map()) {
-    const root = { kids: [], depth: -1 }, stack = [root];
-    for (const r of steps) {
-      while (stack.at(-1).depth >= r.depth) stack.pop();
-      const node = { r, depth: r.depth, kids: [] };
-      stack.at(-1).kids.push(node);
-      stack.push(node);
+  /** The step's name as the server spells it (a register as `\count188`). */
+  const stepName = (n) => String(n ?? '');
+  const OPENS = /^\\(?:if|unless)/, MIDS = /^\\(?:else|or):?$/, CLOSES = /^\\fi:?$/;
+  /** The run's steps as a tree by depth, the parts of conditionals and environments paired. Library steps
+   * show when asked, else only those a project step takes directly (the `\let` in `\documentclass`). */
+  function traceModel(steps, own, internal) {
+    const parent = steps.map(() => -1), stack = [];
+    for (let i = 0; i < steps.length; i++) {
+      while (stack.length && steps[stack.at(-1)].depth >= steps[i].depth) stack.pop();
+      parent[i] = stack.at(-1) ?? -1;
+      stack.push(i);
     }
-    const shown = root.kids.some((n) => n.r.name === name) ? root.kids.filter((n) => n.r.name === name) : root.kids;
-    const clip = (t) => (t.length > 160 ? `${t.slice(0, 160)}…` : t);
-    let count = 0;
-    const node = (n, first) => {
-      const { r } = n, open = first && n.kids.length ? ' open' : '';
-      count++;
-      const what = r.inserts != null ? `<span class="tr-arrow">→</span><code class="tr-out">${escape(clip(r.inserts)) || '<i>empty</i>'}</code>` : r.detail ? `<code class="tr-out">${escape(clip(r.detail))}</code>` : '';
-      const sets = r.sets ? `<span class="tr-sets" title="text this step set">sets <code>${escape(clip(r.sets))}</code></span>` : '';
-      const head = `${cacheBadge(STEP_KIND[r.step] ?? 'hashes', r.step)}<code class="${/^\\/.test(r.name) ? 'cs-ref' : ''}" ${/^\\/.test(r.name) ? `data-cs="${escape(r.name)}" tabindex="0"` : ''}>${escape(r.name)}</code>${what}${sets}` +
-        `<a href="#" class="tr-at o-go" data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}">${escape(r.file ?? '')}:${r.line}</a>`;
-      const why = does.get(r.name) ? `<span class="tr-does">${escape(does.get(r.name))}</span>` : '';
-      return n.kids.length ? `<li><details class="tr-node"${open}><summary>${head}${why}</summary><ul>${n.kids.map((k) => node(k, false)).join('')}</ul></details></li>` : `<li><div class="tr-leaf">${head}${why}</div></li>`;
-    };
-    const rest = root.kids.filter((n) => !shown.includes(n));
-    const html = shown.map((n, i) => node(n, i === 0)).join('') +
-      (rest.length ? `<li><details class="tr-node"><summary><span class="muted">${plural(rest.length, 'other step')} on this line</span></summary><ul>${rest.map((n) => node(n, false)).join('')}</ul></details></li>` : '');
-    return { html: `<ul class="tr-tree">${html}</ul>`, count };
+    const shown = steps.map((r, i) => internal || own(r) || (parent[i] >= 0 && own(steps[parent[i]])));
+    const vparent = steps.map(() => -1), kids = new Map([[-1, []]]);
+    for (let i = 0; i < steps.length; i++) {
+      if (!shown[i]) continue;
+      let p = parent[i];
+      while (p >= 0 && !shown[p]) p = parent[p];
+      vparent[i] = p;
+      if (!kids.has(p)) kids.set(p, []);
+      kids.get(p).push(i);
+    }
+    // `\if…` with its decision, `\else`/`\or` and `\fi`; `\begin` with its `\end`
+    const pair = new Map(), conds = [], envs = [];
+    const link = (a, b, last) => { if (a == null) return; pair.set(b, a); if (last || !pair.has(a)) pair.set(a, b); };
+    steps.forEach((r, i) => {
+      if (!shown[i]) return;
+      const n = r.name ?? '';
+      if (r.step === 'execute' && OPENS.test(n)) conds.push(i);
+      else if (r.step === 'branch' || r.step === 'condition' || MIDS.test(n)) link(conds.at(-1), i, false);
+      else if (CLOSES.test(n)) link(conds.pop(), i, true);
+      else if (n === '\\begin') envs.push(i);
+      else if (n === '\\end') link(envs.pop(), i, true);
+    });
+    const order = steps.map((_, i) => i).filter((i) => shown[i]);
+    return { steps, vparent, kids, pair, order, cur: -1, does: new Map() };
   }
+  let trace = null;
+  const clip = (t) => (t.length > 160 ? `${t.slice(0, 160)}…` : t);
+  function stepHead(i) {
+    const r = trace.steps[i], name = stepName(r.name), cs = /^\\/.test(name);
+    const what = r.inserts != null ? `<span class="tr-arrow">→</span><code class="tr-out">${escape(clip(r.inserts)) || '<i>empty</i>'}</code>` : r.detail ? `<code class="tr-out">${escape(clip(r.detail))}</code>` : '';
+    const sets = r.sets ? `<span class="tr-sets" title="text this step set">sets <code>${escape(clip(r.sets))}</code></span>` : '';
+    const j = trace.pair.get(i), mate = j == null ? '' : stepName(trace.steps[j].name) + (trace.steps[j].detail ? ` ${trace.steps[j].detail}` : '');
+    const link = j == null ? '' : `<a href="#" class="tr-pair" data-go="${j}" title="go to the matching ${escape(mate)}">↔ ${escape(mate)}</a>`;
+    const reg = /^\\(count|dimen|skip|muskip|toks|box)\d+$/.test(name) ? ' title="a register this step assigned"' : '';
+    const does = trace.does.get(r.name) ? `<span class="tr-does">${escape(trace.does.get(r.name))}</span>` : '';
+    return `${cacheBadge(STEP_KIND[r.step] ?? 'hashes', r.step)}<code${reg} class="${cs ? 'cs-ref' : ''}" ${cs ? `data-cs="${escape(name)}" tabindex="0"` : ''}>${escape(name)}</code>${what}${sets}${link}` +
+      `<a href="#" class="tr-at o-go" data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}">${escape(r.file ?? '')}:${r.line}</a>${does}`;
+  }
+  /** One step; its deeper steps are drawn when it first opens, so a long trace costs only what is looked at. */
+  function stepNode(i) {
+    return (trace.kids.get(i) ?? []).length ? `<li data-i="${i}"><details class="tr-node"><summary>${stepHead(i)}</summary><ul></ul></details></li>` : `<li data-i="${i}"><div class="tr-leaf">${stepHead(i)}</div></li>`;
+  }
+  function fill(li) {
+    const ul = li.querySelector(':scope > details > ul');
+    if (ul && !ul.childElementCount) ul.innerHTML = (trace.kids.get(+li.dataset.i) ?? []).map(stepNode).join('');
+  }
+  const rowOf = (i) => traceBody.querySelector(`li[data-i="${i}"] > details > summary, li[data-i="${i}"] > .tr-leaf`);
+  /** Select step `i`: its callers open, it marked and in view, the counter on it. */
+  function stepTo(i) {
+    if (!trace || i == null || i < 0) return;
+    const chain = [];
+    for (let p = trace.vparent[i]; p >= 0; p = trace.vparent[p]) chain.unshift(p);
+    for (const p of chain) {
+      const li = traceBody.querySelector(`li[data-i="${p}"]`);
+      if (!li) break;
+      fill(li);
+      li.querySelector(':scope > details').open = true;
+    }
+    traceBody.querySelector('.tr-cur')?.classList.remove('tr-cur');
+    const row = rowOf(i);
+    row?.classList.add('tr-cur');
+    row?.scrollIntoView({ block: 'nearest' });
+    trace.cur = i;
+    $('trace-step').textContent = `step ${trace.order.indexOf(i) + 1} of ${trace.order.length}`;
+    // the one step: what it is, what it puts back into the input, and what the input still holds
+    const r = trace.steps[i], name = stepName(r.name);
+    const ahead = String(r.ahead ?? ''), head = ahead.match(/^\\[A-Za-z@:_]+|^\\.|^./s)?.[0] ?? '';
+    $('trace-now').innerHTML = `<div class="tr-now-head">${cacheBadge(STEP_KIND[r.step] ?? 'hashes', r.step)}<code class="cs-ref" data-cs="${escape(name)}" tabindex="0">${escape(name)}</code>` +
+      `<a href="#" class="tr-at o-go" data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}">${escape(r.file ?? '')}:${r.line}</a></div>` +
+      (r.inserts != null ? `<div class="tr-now-row"><b>inserts</b><code>${escape(r.inserts) || '<i>nothing</i>'}</code></div>` : r.detail ? `<div class="tr-now-row"><b>detail</b><code>${escape(r.detail)}</code></div>` : '') +
+      (r.sets ? `<div class="tr-now-row"><b>sets</b><code>${escape(r.sets)}</code></div>` : '') +
+      `<div class="tr-now-row"><b>ahead</b><code class="tr-ahead"><mark>${escape(head)}</mark>${escape(ahead.slice(head.length))}</code></div>`;
+  }
+  const by = (i, d) => trace.order[Math.max(0, Math.min(trace.order.length - 1, trace.order.indexOf(i) + d))];
+  /** The first step after `i` and all it called: over a call. */
+  function over(i) {
+    let k = trace.order.indexOf(i) + 1;
+    while (k < trace.order.length && trace.steps[trace.order[k]].depth > trace.steps[i].depth) k++;
+    return trace.order[Math.min(k, trace.order.length - 1)];
+  }
+  const moves = { prev: (i) => by(i, -1), next: (i) => by(i, 1), over, out: (i) => (trace.vparent[i] >= 0 ? trace.vparent[i] : i) };
+  const move = (m) => stepTo(moves[m](trace.cur < 0 ? trace.order[0] : trace.cur));
+  function traceTree(name) {
+    const top = trace.kids.get(-1) ?? [];
+    const mine = top.filter((i) => stepName(trace.steps[i].name) === name);
+    const rest = mine.length ? top.filter((i) => !mine.includes(i)) : [];
+    const html = (mine.length ? mine : top).map(stepNode).join('') +
+      (rest.length ? `<li><details class="tr-node"><summary><span class="muted">${plural(rest.length, 'other step')} on this line</span></summary><ul>${rest.map(stepNode).join('')}</ul></details></li>` : '');
+    const now = '<div class="tr-now" id="trace-now" aria-live="polite"></div>';
+    const bar = '<div class="tr-bar" role="toolbar" aria-label="step through the trace">' +
+      [['prev', '◀', 'previous step (←)'], ['next', '▶', 'next step (→)'], ['over', '⤼', 'over this call (⇧→)'], ['out', '⤴', 'out to the caller (↑)']]
+        .map(([m, g, t]) => `<button type="button" class="ghost small" data-move="${m}" title="${t}" aria-label="${t}">${g}</button>`).join('') +
+      '<span id="trace-step" class="muted"></span></div>';
+    return `${bar}${now}<details class="tr-all"><summary>All steps</summary><ul class="tr-tree">${html}</ul></details>`;
+  }
+  traceBody.addEventListener('toggle', (e) => { const li = e.target.parentElement; if (li?.dataset.i && e.target.open) fill(li); }, true);
+  traceBody.addEventListener('mouseover', (e) => {
+    traceBody.querySelectorAll('.tr-mate').forEach((x) => x.classList.remove('tr-mate'));
+    const li = e.target.closest?.('li[data-i]'), j = li && trace?.pair.get(+li.dataset.i);
+    if (j != null) rowOf(j)?.classList.add('tr-mate');
+  });
+  traceBody.addEventListener('click', (e) => {
+    const m = e.target.closest('[data-move]'), go = e.target.closest('.tr-pair'), row = e.target.closest('li[data-i]');
+    if (!trace) return;
+    if (m) return move(m.dataset.move);
+    if (go) { e.preventDefault(); return stepTo(+go.dataset.go); }
+    if (row && !e.target.closest('.tr-at, .cs-ref')) stepTo(+row.dataset.i);
+  });
+  traceBox.addEventListener('keydown', (e) => {
+    const m = trace && !e.target.closest?.('input, textarea') && { ArrowLeft: 'prev', ArrowRight: e.shiftKey ? 'over' : 'next', ArrowUp: 'out' }[e.key];
+    if (!m) return;
+    e.preventDefault();
+    move(m);
+  });
   async function traceCall(name, site = null) {
     traceFor = { name, site: site ?? callSite(name) };
     $('trace-title').innerHTML = `Trace <code class="cs-ref" data-cs="${escape(name)}" tabindex="0">${escape(name)}</code>`;
@@ -1163,23 +1448,26 @@
     $('trace-note').textContent = `The call at ${at.file}:${at.line}:${at.col}, as the run expanded it.`;
     traceBody.innerHTML = '<p class="muted">Tracing…</p>';
     sync();
-    const config = { trace: 'true', trace_document_only: String(!traceInternal.checked), trace_lines: `[${at.line}, ${at.line}]`, trace_col: String(at.col), trace_file: at.file };
+    const config = { trace: 'true', trace_document_only: 'false', trace_lines: `[${at.line}, ${at.line}]`, trace_col: String(at.col), trace_file: at.file };
     const request = { file: path(state.root ?? state.file), config, queries: [{ type: 'trace' }] };
     const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch((e) => ({ error: String(e?.message ?? e) })))?.[0];
     if (mine !== traceRun) return;
-    const inProject = (r) => state.files.some((n) => String(r.path ?? r.file ?? '').endsWith(n));
-    const steps = (rs?.records ?? []).filter((r) => traceInternal.checked || inProject(r));
-    if (!steps.length) {
-      traceBody.innerHTML = traceHead(at, name, '') + `<p class="muted">${rs?.error ? `The query failed: ${escape(rs.error)}.` : `The run recorded no step for this call${traceInternal.checked ? '' : ' in the project. It may expand only inside library code: switch on “include library code”'}.`}</p>`;
+    const own = (r) => state.files.some((n) => String(r.path ?? r.file ?? '').endsWith(n));
+    trace = traceModel(rs?.records ?? [], own, traceInternal.checked);
+    if (!trace.order.length) {
+      traceBody.innerHTML = traceHead(at, name, '') + `<p class="muted">${rs?.error ? `The query failed: ${escape(rs.error)}.` : 'The run recorded no step for this call.'}</p>`;
       traceOutput(at, mine);
       return;
     }
-    const shown = steps.slice(0, 3000);
-    const names = [...new Set(shown.map((r) => r.name).filter((n) => /^\\/.test(n)))].slice(0, 200);
+    const names = [...new Set(trace.order.slice(0, 2000).map((i) => trace.steps[i].name).filter((n) => /^\\/.test(n)))].slice(0, 200);
     const does = new Map((await explainMany(names).catch(() => [])).flatMap((rs, i) => rs?.[0]?.does ? [[names[i], rs[0].does]] : []));
     if (mine !== traceRun) return;
-    traceBody.innerHTML = traceHead(at, name, '') + traceTree(shown, name, does).html;
-    $('trace-total').textContent = `${plural(steps.length, 'step')}${steps.length > 3000 ? ', the first 3000 shown' : ''}`;
+    trace.does = does;
+    traceBody.innerHTML = traceHead(at, name, '') + traceTree(name);
+    const first = traceBody.querySelector('.tr-tree > li[data-i]');
+    if (first) stepTo(+first.dataset.i);
+    first?.querySelector(':scope > details')?.setAttribute('open', '');
+    $('trace-total').textContent = `${plural(trace.order.length, 'step')}${traceInternal.checked ? '' : `, ${plural(trace.steps.length - trace.order.length, 'library step')} hidden`}`;
     traceOutput(at, mine);
   }
   /** The call's source line, the call marked, and a place for the text set up to it. */
@@ -1290,7 +1578,7 @@
     delete status.dataset.done;
     cmd.textContent = `satex ${words(args.value).filter((x) => x !== 'satex').join(' ')}`;
     try {
-      const data = await ask({ type: 'run', args: a, edits: edits(), cwd: state.dir });
+      const data = await runCommand({ type: 'run', args: a, edits: edits(), cwd: state.dir });
       let stats = '', summary = '';
       const raw = data.lines.map(([kind, text]) => {
         if (kind === 'out') { if (/\d+ errors?, \d+ warnings?/.test(plain(text))) summary = plain(text).trim(); return ansi(text); }
@@ -1460,7 +1748,7 @@
   }
   const encode = (text) => new TextEncoder().encode(text);
   /** The project's texts into the worker's file system, which a new language server boots from. */
-  const store = (names = state.files, removed = []) => worker.postMessage({ type: 'project', dir: state.dir, removed,
+  const store = (names = state.files, removed = []) => post({ type: 'project', dir: state.dir, removed,
     files: Object.fromEntries(names.filter((n) => n in state.texts && !(n in state.ro)).map((n) => [n, encode(state.texts[n])])) });
   const OPEN_AT_START = 16;
   // The engine follows the root: a `% !TEX program =` comment or a package only XeTeX has, else pdfTeX
@@ -1802,13 +2090,16 @@
     status.textContent = `${label} fetched in ${secs(performance.now() - t)}`;
     status.dataset.packages = [...fetchedPackages.keys()].join(' ');
     loadedList.push(...entries.map((e) => `${e.label} ${size(e.size)}`));
-    timing('t-load', `${loadedList.join(', ')} · last ${secs(performance.now() - t)}`, 'packages fetched after the first download');
+    timing('t-load', `${plural(loadedList.length, 'bundle')}, the last in ${secs(performance.now() - t)}`, 'packages fetched after the first download', loadedList);
     return true;
   }
   /** What a run's cache report says: the packages and classes served from the caches, the ones analyzed anew. */
   function cacheReport(lines) {
     const reused = [], fresh = [];
     let segments = 0;
+    // the run's size: steps, forks, files and lines
+    const run = lines.map(([, t]) => plain(t)).find((t) => t.startsWith('run '));
+    if (run) timing('t-run', '', 'the size of the last analysis', run.slice(4).split(', '));
     for (const [, text] of lines) {
       const m = plain(text).match(/cache (?:kernel|class|package) (\S+): (reused|rebuilt \((.*)\))/);
       if (m) (m[2] === 'reused' ? reused : fresh).push(m[3] ? `${m[1]} (${m[3]})` : m[1]);
@@ -1816,8 +2107,8 @@
       if (s) segments = Number(s[1]);
     }
     if (!reused.length && !fresh.length && !segments) return '';
-    const detail = [reused.length && `cached: ${reused.join(', ')}`, segments && `${segments} package segment${segments > 1 ? 's' : ''} cached`, fresh.length && `analyzed anew: ${fresh.join(', ')}`].filter(Boolean).join(' · ');
-    timing('t-cache', detail, 'what the last run reused from the caches and what it analysed again');
+    const detail = [`${reused.length + segments} reused`, fresh.length && `${fresh.length} analyzed anew`].filter(Boolean).join(', ');
+    timing('t-cache', detail, 'what the last run reused from the caches and what it analysed again', [...reused, ...(segments ? [plural(segments, 'package segment')] : []), ...fresh.map((f) => `new: ${f}`)]);
     return `${reused.length + segments} cached${fresh.length ? ` · fresh: ${fresh.map((f) => f.split(' ')[0]).join(', ')}` : ''}`;
   }
   /** The cache entries the worker keeps (worker.js), each with what it stands for; dropping one
@@ -2044,7 +2335,7 @@
     const first = root in texts ? root : found[0];
     manualKernel = false;
     Object.assign(state, { dir: '/work/upload', texts, root: first, file: first, open: [first], files: Object.keys(texts), example: null, upload: true, ro: {} });
-    worker.postMessage({ type: 'project', dir: state.dir, files, replace: true });
+    post({ type: 'project', dir: state.dir, files, replace: true });
     redraw();
     editor.set(texts[state.file]);
     history.replaceState(null, '', location.pathname);
@@ -2059,7 +2350,7 @@
     const texts = Object.entries(files).filter(([n]) => TEXT.test(n)).map(([n, d]) => [n, decoder.decode(d)]);
     Object.assign(state.texts, Object.fromEntries(texts));
     for (const [n] of texts) if (!state.files.includes(n)) state.files.push(n);
-    worker.postMessage({ type: 'project', dir: state.dir, files });
+    post({ type: 'project', dir: state.dir, files });
     if (texts.length) choose(texts[0][0]); else redraw();
     analyze();
     const n = Object.keys(files).length;
@@ -2218,6 +2509,7 @@
           show(m.params.uri, m.params.diagnostics);
           typeset(m.params.uri);
           outline();
+          if (m.params.uri === uri()) prefetchCommands();
           loadCaches(); // the status bar's count, and the table if open
           if (m.params.uri === uri()) lsp('satex/caches', { textDocument: { uri: m.params.uri } }).then((r) => cacheReport((r ?? []).map((l) => ['err', l]))).catch(() => {});
           fetchMissing(unresolved);

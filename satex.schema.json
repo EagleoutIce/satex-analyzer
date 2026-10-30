@@ -1,0 +1,982 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "analysis": {
+      "properties": {
+        "assume_compiles": {
+          "default": true,
+          "description": "assumption: drop a path that raises a certain TeX error in library code; the document's own errors are kept",
+          "type": "boolean"
+        },
+        "assume_environment": {
+          "default": true,
+          "description": "assumption: the build runs in this environment (Lua's os.getenv reads it)",
+          "type": "boolean"
+        },
+        "assume_forced_page_breaks": {
+          "default": true,
+          "description": "assumption: pages break only where a penalty forces it; false also follows breaks where the page may have filled",
+          "type": "boolean"
+        },
+        "assume_packages_close_groups": {
+          "default": true,
+          "description": "assumption: a package closes the groups it opens",
+          "type": "boolean"
+        },
+        "join_paths_at": {
+          "default": [
+            {
+              "command": "\\document",
+              "hook": null
+            }
+          ],
+          "description": "where every path still apart is joined, reported as paths-joined-at - hook: begindocument  # an lthooks hook, when it is used",
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "arm_joins": {
+      "default": true,
+      "description": "arms of a choice inside an \\edef or \\csname join where they meet in it",
+      "type": "boolean"
+    },
+    "at_letter": {
+      "default": false,
+      "description": "start with @ a letter, as .sty files do",
+      "type": "boolean"
+    },
+    "cache": {
+      "properties": {
+        "dir": {},
+        "enabled": {
+          "default": true,
+          "description": "keep the interpreted kernel and packages between runs dir: ~/.cache/satex     # else $SATEX_CACHE, else the platform default",
+          "type": "boolean"
+        },
+        "index": {
+          "description": "packages `satex cache build` prepares, or, when empty, whatever ordinary runs already found expensive to interpret (measured, not a hand-picked list)",
+          "properties": {
+            "auto": {
+              "default": true,
+              "description": "every run stores the packages it reads way mylatexformat dumps one; a %& line or -fmt= in the build configuration names it otherwise",
+              "type": "boolean"
+            },
+            "class": {
+              "default": "article",
+              "description": "the class they are loaded after",
+              "type": "string"
+            },
+            "common": {
+              "default": [
+                "microtype",
+                "cleveref",
+                "zref-clever",
+                "savetrees",
+                "tabularray",
+                "xurl",
+                "glossaries",
+                "enumitem",
+                "nowidow",
+                "silence",
+                "adjustbox",
+                "pdfpages",
+                "pgfplotstable",
+                "memoize",
+                "classicthesis"
+              ],
+              "type": "array"
+            },
+            "engines": {
+              "default": [],
+              "description": "empty: the engine in effect",
+              "type": "array"
+            },
+            "packages": {
+              "default": [],
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "rebuild": {
+          "default": false,
+          "type": "boolean"
+        },
+        "tail": {
+          "default": 256,
+          "description": "characters before a package's end where every line start is a checkpoint",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "clock": {
+      "default": "now",
+      "description": "what \\year, \\month, \\day, \\time and \\pdfcreationdate hold: now | unknown | an ISO date-time",
+      "type": "string"
+    },
+    "conventions": {
+      "description": "how TeX is usually written, where the text alone does not say",
+      "properties": {
+        "definers": {
+          "default": [],
+          "description": "more commands whose next name is the one they define; satex finds those the kernel defines with itself",
+          "type": "array"
+        },
+        "internal": {
+          "default": [
+            "@",
+            "^__",
+            "_.*:"
+          ],
+          "description": "regexes marking internal names (hidden from listings and completion, private to lints)",
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "depp": {
+      "properties": {
+        "file": {},
+        "renames": {
+          "properties": {
+            "base": {
+              "default": "latex",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "rules": {
+          "default": [
+            ".+/tex/[^/]+/([^/]+)",
+            ".+/fonts/.+/([^/]+)"
+          ],
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "engine": {},
+    "expand_in_reports": {
+      "default": [],
+      "description": "macros to expand when reporting a value, e.g. today",
+      "type": "array"
+    },
+    "gaps": {
+      "properties": {
+        "file": {},
+        "log": {
+          "default": true,
+          "description": "append what a run could not follow to file",
+          "type": "boolean"
+        },
+        "report": {
+          "default": true,
+          "description": "and print it file: ~/.cache/satex/gaps.ndjson",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "interaction": {
+      "default": "nonstopmode",
+      "description": "the engine's -interaction: batchmode … errorstopmode",
+      "type": "string"
+    },
+    "kernel": {},
+    "latex_alternatives": {
+      "properties": {},
+      "type": "object"
+    },
+    "limits": {
+      "properties": {
+        "alike": {
+          "default": 8,
+          "description": "waiting paths before those at one place in the same conditionals and groups have their input widened",
+          "type": "integer"
+        },
+        "build_runs": {
+          "default": 5,
+          "description": "runs of the build (latexmk rounds) to reach the fixpoint of .aux/.toc/...; past them unknown; 1 = one run, no earlier files",
+          "type": "integer"
+        },
+        "cache_size": {
+          "default": "2.0 GiB",
+          "description": "caches kept, least recently used evicted; 0 for no bound",
+          "type": "string"
+        },
+        "call_summary_after": {
+          "default": 2,
+          "description": "runs of one call recorded before an unknown-operand call applies their join; 0 = never",
+          "type": "integer"
+        },
+        "choices": {
+          "default": 8,
+          "description": "undecided choices one command may make on one path",
+          "type": "integer"
+        },
+        "conditional_tokens": {
+          "default": 1048576,
+          "description": "tokens read ahead to count the arms of an \\ifcase",
+          "type": "integer"
+        },
+        "cycle_after": {
+          "default": 2,
+          "description": "repeats of one call in the same state before its path ends (the only path is summarized); 0 = never",
+          "type": "integer"
+        },
+        "degrade_at_percent": {
+          "default": 100,
+          "description": "of limits.steps past which the precision limits are halved, step by step; 100 = never",
+          "type": "integer"
+        },
+        "expansion_depth": {
+          "default": 512,
+          "description": "how often one macro may be nested in itself before its recursion is widened",
+          "type": "integer"
+        },
+        "expansion_stack": {
+          "default": 4000,
+          "description": "token lists open at once: expansions, arguments, files",
+          "type": "integer"
+        },
+        "expansion_tokens": {
+          "default": 1048576,
+          "description": "tokens one expansion may add",
+          "type": "integer"
+        },
+        "facts": {
+          "default": 2000000,
+          "description": "definitions, uses and occurrences recorded",
+          "type": "integer"
+        },
+        "file_depth": {
+          "default": 64,
+          "description": "how deep \\input and \\usepackage may nest",
+          "type": "integer"
+        },
+        "format_steps": {
+          "default": 9000000000,
+          "description": "tokens latex.ltx may digest (built once, then cached)",
+          "type": "integer"
+        },
+        "heads_apart": {
+          "default": 32,
+          "description": "loop heads at one place kept apart for differing in code still to run, before they are joined",
+          "type": "integer"
+        },
+        "held_tokens": {
+          "default": 4000000,
+          "description": "tokens waiting to be read",
+          "type": "integer"
+        },
+        "interval_set": {
+          "default": 4,
+          "description": "members a join keeps for a number once intervals are among them, before only their hull",
+          "type": "integer"
+        },
+        "join_arms": {
+          "default": 32,
+          "description": "paths a join keeps paired (which binding goes with which), 0 pairs none",
+          "type": "integer"
+        },
+        "join_names": {
+          "default": 64,
+          "description": "names a join pairs at most; the rest are joined apart",
+          "type": "integer"
+        },
+        "line_steps": {
+          "default": 100000000,
+          "type": "integer"
+        },
+        "loop_heads": {
+          "default": 512,
+          "description": "loop heads and entries one drive keeps with their joined states; the oldest goes first",
+          "type": "integer"
+        },
+        "meaning_set": {
+          "default": 8,
+          "description": "meanings a join keeps as a set before the meaning is unknown",
+          "type": "integer"
+        },
+        "meaning_splits": {
+          "default": 4,
+          "description": "choices a command may have made for a name joined to several meanings to split per meaning",
+          "type": "integer"
+        },
+        "memory": {
+          "default": "8.0 GiB",
+          "description": "what one run may hold at once; 0 lifts the limit",
+          "type": "string"
+        },
+        "paths": {
+          "default": 16,
+          "description": "waiting paths before the two furthest back are cut to the input they share and joined",
+          "type": "integer"
+        },
+        "recursion_depth": {
+          "default": 100,
+          "description": "levels an undecided recursion is followed before it is assumed to end",
+          "type": "integer"
+        },
+        "repeat_failures": {
+          "default": 8,
+          "description": "times one gap may be met at one place before the expansion is dropped",
+          "type": "integer"
+        },
+        "replay_steps": {
+          "default": 1000000,
+          "description": "steps a line the run wrote may take where satex replays it for what it names",
+          "type": "integer"
+        },
+        "save_stack": {
+          "default": 2000000,
+          "description": "assignments a group may have to undo (~200 MB)",
+          "type": "integer"
+        },
+        "seconds": {
+          "default": 300,
+          "description": "wall-clock limit per run, 0 for none",
+          "type": "integer"
+        },
+        "site_expansions": {
+          "default": 16384,
+          "description": "how often one call site may expand without reading on",
+          "type": "integer"
+        },
+        "site_forks": {
+          "default": 4096,
+          "description": "undecided choices one place may make while a line is read before its expansion is cut; 0 = never",
+          "type": "integer"
+        },
+        "steps": {
+          "default": 4000000000,
+          "description": "tokens the document may digest (pdflatex digests ~200M/s; pingus needs ~1.5G real tokens)",
+          "type": "integer"
+        },
+        "threads": {
+          "default": 0,
+          "description": "threads for the project walk; the interpreter runs on one",
+          "type": "integer"
+        },
+        "trace": {
+          "default": 200000,
+          "description": "trace events recorded",
+          "type": "integer"
+        },
+        "value_set": {
+          "default": 8,
+          "description": "values a join keeps for a count or dimension before only the interval",
+          "type": "integer"
+        },
+        "vertices": {
+          "default": 400000,
+          "description": "graph nodes recorded; past it the graph stops growing and the analysis goes on",
+          "type": "integer"
+        },
+        "widen_after": {
+          "default": 3,
+          "description": "rounds a loop head reanalyzes a grown state before widening it",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "lint_off": {
+      "default": [
+        "analysis-imprecision"
+      ],
+      "description": "rule codes that never fire; a profile fills this in",
+      "type": "array"
+    },
+    "lints": {
+      "properties": {
+        "build-cost": {
+          "description": "when preamble-cost and includeonly-available suggest saving a part of the build",
+          "properties": {
+            "characters": {
+              "default": 500000,
+              "description": "includeonly-available: paragraph text the body sets, about 200 pages",
+              "type": "integer"
+            },
+            "share": {
+              "default": 0.5,
+              "description": "the share of the run's tokens the part must take",
+              "type": "number"
+            },
+            "tokens": {
+              "default": 2000000,
+              "description": "a part below this reads in well under a second",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "comment-marker": {
+          "properties": {
+            "markers": {
+              "default": [
+                "TODO",
+                "FIXME",
+                "XXX",
+                "HACK"
+              ],
+              "description": "markers in a comment worth a finding",
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "ellipsis-dots": {
+          "properties": {
+            "center": {
+              "default": "=+-<>",
+              "description": "chktex CenterDots: an ellipsis between these wants \\cdots",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "microtype-available": {
+          "properties": {
+            "characters": {
+              "default": 2500,
+              "description": "justified paragraph text the body must set, about a page",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "table-rules": {
+          "properties": {
+            "rows": {
+              "default": 3,
+              "description": "rows with text, header included, before booktabs rules are asked for",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "unused-definition": {
+          "properties": {
+            "ignore": {
+              "default": [],
+              "description": "regexes on macro names the rule skips",
+              "type": "array"
+            },
+            "pgf_keys": {
+              "default": false,
+              "description": "also flag a pgf key no-one uses",
+              "type": "boolean"
+            },
+            "report_public": {
+              "default": true,
+              "description": "also flag a public name",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "user-pattern": {
+          "description": "chktex UserWarn and UserWarnRegex",
+          "properties": {
+            "patterns": {
+              "default": [],
+              "description": "literal strings to report",
+              "type": "array"
+            },
+            "regexes": {
+              "default": [],
+              "description": "regular expressions to report",
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "wrong-dash": {
+          "description": "how many hyphens belong in each context",
+          "properties": {
+            "digits": {
+              "default": [
+                2
+              ],
+              "description": "chktex NumDash: an en-dash spans a range",
+              "type": "array"
+            },
+            "except": {
+              "default": [
+                "Birch--Swinnerton-Dyer"
+              ],
+              "description": "chktex DashExcpt: spellings to leave alone",
+              "type": "array"
+            },
+            "letters": {
+              "default": [
+                1,
+                3
+              ],
+              "description": "chktex HyphDash: a hyphen or an em-dash",
+              "type": "array"
+            },
+            "words": {
+              "default": [
+                3,
+                2
+              ],
+              "description": "chktex WordDash: an em-dash breaks a sentence, or Bringhurst's spaced en-dash",
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "load": {
+      "description": "what to follow from the document",
+      "properties": {
+        "build_extensions": {
+          "default": [
+            "aux",
+            "toc",
+            "lof",
+            "lot",
+            "loa",
+            "lol",
+            "out",
+            "bbl",
+            "bcf",
+            "run.xml",
+            "blg",
+            "glo",
+            "gls",
+            "glg",
+            "acn",
+            "acr",
+            "alg",
+            "ist",
+            "idx",
+            "ind",
+            "ilg",
+            "nlo",
+            "nls",
+            "slnc",
+            "brf",
+            "nav",
+            "snm",
+            "vrb",
+            "fls",
+            "fdb_latexmk",
+            "xdy",
+            "log"
+          ],
+          "description": "what counts as such a file",
+          "type": "array"
+        },
+        "build_files": {
+          "default": false,
+          "description": "read the .aux, .toc, .bbl, ... an earlier build left; off: absent, the run over-approximates them",
+          "type": "boolean"
+        },
+        "classes": {
+          "default": true,
+          "description": "\\documentclass and \\LoadClass",
+          "type": "boolean"
+        },
+        "expect": {
+          "default": [],
+          "description": "classes and packages a package or class file expects loaded before it (a beamer theme: [beamer])",
+          "type": "array"
+        },
+        "expect_detect": {
+          "default": true,
+          "description": "find them from what the packages on disk define, and say so",
+          "type": "boolean"
+        },
+        "format": {
+          "default": true,
+          "description": "the installation's latex.ltx",
+          "type": "boolean"
+        },
+        "inputs": {
+          "default": true,
+          "description": "\\input and \\include",
+          "type": "boolean"
+        },
+        "packages": {
+          "default": true,
+          "description": "\\usepackage and \\RequirePackage",
+          "type": "boolean"
+        },
+        "skip": {
+          "default": [],
+          "description": "packages to leave unread",
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "lsp": {
+      "properties": {
+        "debounce_ms": {
+          "default": 300,
+          "type": "integer"
+        },
+        "host": {
+          "default": "127.0.0.1",
+          "type": "string"
+        },
+        "port": {}
+      },
+      "type": "object"
+    },
+    "opaque_conditionals": {
+      "default": [],
+      "description": "conditionals to leave undecided, both arms analyzed",
+      "type": "array"
+    },
+    "output": {},
+    "paths": {
+      "description": "kpathsea variables' fallback list: tried after the environment and the project's latexmkrc/Makefile",
+      "properties": {
+        "bibinputs": {
+          "default": [],
+          "description": "BIBINPUTS",
+          "type": "array"
+        },
+        "bstinputs": {
+          "default": [],
+          "description": "BSTINPUTS",
+          "type": "array"
+        },
+        "encfonts": {
+          "default": [],
+          "description": "ENCFONTS",
+          "type": "array"
+        },
+        "output_directory": {
+          "default": "",
+          "description": "-output-directory: a relative name opened at run time is looked up here first",
+          "type": "string"
+        },
+        "texinputs": {
+          "default": [],
+          "description": "TEXINPUTS; a trailing // recurses, as in kpathsea",
+          "type": "array"
+        },
+        "tfmfonts": {
+          "default": [],
+          "description": "TFMFONTS",
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "platform": {},
+    "plugins": {
+      "properties": {
+        "discovery": {
+          "default": true,
+          "description": "walk the project, skipping what .gitignore excludes",
+          "type": "boolean"
+        },
+        "magic": {
+          "default": true,
+          "description": "read % !TeX and % arara: lines",
+          "type": "boolean"
+        },
+        "packages": {
+          "default": false,
+          "description": "ask tlmgr which package ships a missing file (network)",
+          "type": "boolean"
+        },
+        "preload": {
+          "default": true,
+          "description": "honor %& lines and -fmt=",
+          "type": "boolean"
+        },
+        "tools": {
+          "default": true,
+          "description": "infer biber, makeindex and the rest",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "preload": {},
+    "pretex": {
+      "default": "",
+      "type": "string"
+    },
+    "profile": {},
+    "profiles": {
+      "properties": {
+        "class": {
+          "description": "a .cls; the same defaults as a package",
+          "properties": {
+            "at_letter": {
+              "default": true,
+              "type": "boolean"
+            },
+            "lint_off": {
+              "default": [
+                "analysis-imprecision",
+                "unused-label",
+                "microtype-available",
+                "preamble-cost",
+                "comment-marker",
+                "user-pattern",
+                "unreferenced-numbered-display",
+                "build-shell-escape-missing",
+                "build-shell-escape-unneeded",
+                "build-engine-mismatch",
+                "build-bibliography-disabled",
+                "build-bibliography-unneeded",
+                "build-missing-custom-dependency",
+                "build-unused-custom-dependency",
+                "build-command-placeholders",
+                "build-engine-options"
+              ],
+              "type": "array"
+            },
+            "lints": {
+              "properties": {
+                "unused-definition": {
+                  "properties": {
+                    "report_public": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "document": {
+          "description": "a LaTeX document: every default above already fits it"
+        },
+        "literate": {
+          "description": "a .dtx/.ins; unpacks to a package or class",
+          "properties": {
+            "at_letter": {
+              "default": true,
+              "type": "boolean"
+            },
+            "lint_off": {
+              "default": [
+                "analysis-imprecision",
+                "unused-label",
+                "microtype-available",
+                "preamble-cost",
+                "comment-marker",
+                "user-pattern",
+                "unreferenced-numbered-display",
+                "build-shell-escape-missing",
+                "build-shell-escape-unneeded",
+                "build-engine-mismatch",
+                "build-bibliography-disabled",
+                "build-bibliography-unneeded",
+                "build-missing-custom-dependency",
+                "build-unused-custom-dependency",
+                "build-command-placeholders",
+                "build-engine-options"
+              ],
+              "type": "array"
+            },
+            "lints": {
+              "properties": {
+                "unused-definition": {
+                  "properties": {
+                    "report_public": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "package": {
+          "description": "a .sty, read as its own author sees it",
+          "properties": {
+            "at_letter": {
+              "default": true,
+              "type": "boolean"
+            },
+            "lint_off": {
+              "default": [
+                "analysis-imprecision",
+                "unused-label",
+                "microtype-available",
+                "preamble-cost",
+                "comment-marker",
+                "user-pattern",
+                "unreferenced-numbered-display",
+                "build-shell-escape-missing",
+                "build-shell-escape-unneeded",
+                "build-engine-mismatch",
+                "build-bibliography-disabled",
+                "build-bibliography-unneeded",
+                "build-missing-custom-dependency",
+                "build-unused-custom-dependency",
+                "build-command-placeholders",
+                "build-engine-options"
+              ],
+              "type": "array"
+            },
+            "lints": {
+              "description": "a public name is the package's own interface",
+              "properties": {
+                "unused-definition": {
+                  "properties": {
+                    "report_public": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "plain": {
+          "description": "plain TeX: no LaTeX packages, classes or labels",
+          "properties": {
+            "lint_off": {
+              "default": [
+                "analysis-imprecision",
+                "unused-label",
+                "microtype-available",
+                "hand-set-quantity"
+              ],
+              "type": "array"
+            },
+            "load": {
+              "properties": {
+                "classes": {
+                  "default": false,
+                  "type": "boolean"
+                },
+                "packages": {
+                  "default": false,
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "project": {
+      "properties": {
+        "freeze_other_repositories": {
+          "default": true,
+          "description": "files of another git repository (a submodule, a nested clone) count as frozen too",
+          "type": "boolean"
+        },
+        "frozen": {
+          "default": [],
+          "description": "globs of files read and analyzed, but with no findings and no fixes inside; relative to this file",
+          "type": "array"
+        },
+        "ignore_other_configs": {
+          "default": false,
+          "description": "true: satex.yaml files above this one and the global one are not read",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "provider": {},
+    "record_arguments": {
+      "default": false,
+      "description": "keep the argument tokens of every call",
+      "type": "boolean"
+    },
+    "search_paths": {
+      "default": [],
+      "description": "searched before the installation",
+      "type": "array"
+    },
+    "shell_escape": {},
+    "stubs": {
+      "properties": {},
+      "type": "object"
+    },
+    "texlive": {
+      "properties": {
+        "root": {},
+        "year": {}
+      },
+      "type": "object"
+    },
+    "texmf": {
+      "properties": {
+        "bundle": {},
+        "fallback": {
+          "default": true,
+          "description": "may fall back to well-known install paths",
+          "type": "boolean"
+        },
+        "kpsewhich": {
+          "default": true,
+          "description": "may run kpsewhich to find them",
+          "type": "boolean"
+        },
+        "roots": {
+          "default": [],
+          "description": "trees to search instead of kpsewhich's",
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "timings": {
+      "default": false,
+      "description": "measure where the time goes",
+      "type": "boolean"
+    },
+    "trace": {
+      "default": false,
+      "description": "record the execution trace",
+      "type": "boolean"
+    },
+    "trace_col": {
+      "default": 0,
+      "type": "integer"
+    },
+    "trace_document_only": {
+      "default": false,
+      "type": "boolean"
+    },
+    "trace_end_col": {
+      "default": 4294967295,
+      "type": "integer"
+    },
+    "trace_file": {},
+    "trace_lines": {},
+    "trace_steps": {},
+    "verbose": {
+      "default": 0,
+      "type": "integer"
+    }
+  },
+  "title": "satex.yaml",
+  "type": "object"
+}

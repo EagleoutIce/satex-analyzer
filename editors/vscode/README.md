@@ -16,7 +16,7 @@ Static analysis for LaTeX and TeX documents, powered by [satex](https://github.c
 
 satex uses **your installed TeX distribution** (`kpsewhich`, `pdflatex`, ...). TeX Live is **not** bundled, as it is far too large; install TeX Live, MiKTeX or MacTeX yourself. The extension warns if `kpsewhich` or `pdflatex` is not on the `PATH`.
 
-The platform-specific packages bundle the matching `satex` binary. The universal package does not; it uses `satex` from the `PATH` (`cargo install satex`).
+The platform-specific packages bundle the matching `satex` binary. The universal package does not; it uses `satex` from the `PATH` (`cargo install satex-analyzer`).
 
 ## Settings
 

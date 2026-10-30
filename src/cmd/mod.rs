@@ -227,15 +227,6 @@ pub enum Command {
         /// default only the files of the document itself are shown.
         #[arg(long)]
         include_internal: bool,
-        /// Text read at `--at` as if it stood there in the file, such as
-        /// `\mymacro{x}`: the trace shows what it expands to in the state the
-        /// document has there. The file on disk is not changed.
-        #[arg(long, value_name = "TEXT", requires = "at")]
-        inject: Option<String>,
-        /// Where `--inject` puts its text, `[FILE:]LINE[:COL]`; the main file
-        /// without FILE, the start of the line without COL.
-        #[arg(long, value_name = "LINE[:COL]", requires = "inject")]
-        at: Option<String>,
     },
     /// The interpreted LaTeX2e kernel and the package caches.  Without a
     /// further command, prints their status.
@@ -427,7 +418,7 @@ impl Command {
             Command::Controls { names, .. } if names.is_empty() => {
                 vec![crate::config::EVERY_SWITCH.to_string()]
             }
-            Command::Controls { names, .. } => names.iter().map(|n| n.trim_start_matches('\\').to_string()).collect(),
+            Command::Controls { names, .. } => names.iter().map(|n| crate::tex::bare_name(n).to_string()).collect(),
             _ => Vec::new(),
         }
     }
@@ -553,7 +544,7 @@ pub fn split_file(text: &str) -> (Option<String>, &str) {
 /// The one file `--from`, `--to` and `--lines` agree on, if they name any.
 /// `text` with `inject` put before the character at `line` and `col`
 /// (both from 1; `col` 0 is the start of the line), and the position just
-/// after it: what `trace --inject` traces.
+/// after it: what `--inject` reads.
 pub fn inject_text(text: &str, line: u32, col: u32, inject: &str) -> Result<(String, (u32, u32)), String> {
     let past = || format!("the file has no line {line}");
     if line == 0 {

@@ -428,3 +428,36 @@ pub fn own_runaway(analysis: &Analysis, d: &crate::facts::Diagnostic) -> Option<
     let first = d.message.split(':').next().unwrap_or(&d.message);
     Some((at, format!("{first}: the argument of `\\{name}` opened here never closes, {end}")))
 }
+
+/// The installed package that, with what it loads, defines `name` (no
+/// backslash), by the cached index of what each file defines
+/// ([`crate::exports`]): a proposal for a fix the user accepts, never applied
+/// on its own. The index is read once per process, and only when cached.
+pub fn providing_package(analysis: &Analysis, name: &str) -> Option<String> {
+    static INDEX: std::sync::Mutex<Option<(Vec<std::path::PathBuf>, std::sync::Arc<crate::exports::Exports>)>> =
+        std::sync::Mutex::new(None);
+    let roots = &analysis.distribution.roots;
+    let exports = {
+        let mut held = INDEX.lock().ok()?;
+        match held.as_ref().filter(|(r, _)| r == roots) {
+            Some((_, exports)) => exports.clone(),
+            None => {
+                let cfg = &analysis.settings;
+                let cache = cfg
+                    .cache
+                    .enabled
+                    .then(|| cfg.cache.dir.clone().or_else(crate::format::default_cache_dir))
+                    .flatten();
+                let definers = crate::exports::definers(analysis, &cfg.conventions.definers);
+                // Only an index the cache holds: a hint never scans the installation.
+                let exports = std::sync::Arc::new(crate::exports::Exports::cached(roots, cache.as_deref(), &definers)?);
+                *held = Some((roots.clone(), exports.clone()));
+                exports
+            }
+        }
+    };
+    exports
+        .providers(&[name.to_string()])
+        .into_iter()
+        .find_map(|(file, _)| file.strip_suffix(".sty").map(str::to_string))
+}
