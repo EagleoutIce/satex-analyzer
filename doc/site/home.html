@@ -52,15 +52,16 @@ a | b \gdef\Maybe{}</code></pre>
   <div class="table-wrap"><table class="compare">
     <thead><tr><th scope="col"></th><th scope="col">SaTeX</th><th scope="col"><a href="https://github.com/witiko/expltools">explcheck</a></th><th scope="col"><a href="https://github.com/latex-lsp/texlab">TeXLab</a></th><th scope="col"><a href="https://github.com/astoff/digestif">digestif</a></th><th scope="col"><a href="https://www.nongnu.org/chktex/">ChkTeX</a></th></tr></thead>
     <tbody>
-      <tr><th scope="row">How it learns what code does</th><td class="yes">runs it (abstract interpretation)</td><td>text and expl3 naming conventions, flow analysis</td><td>text, a command database</td><td>parsed sources and curated tag files</td><td>regular expressions</td></tr>
-      <tr><th scope="row">Names built at run time (<code>\csname</code>, variants, keys)</th><td class="yes">yes, from the run</td><td class="no">no<sup><a href="#ref-dynamic">1</a></sup></td><td class="no">no</td><td class="no">no</td><td class="no">no</td></tr>
-      <tr><th scope="row">expl3, LaTeX2e and plain TeX together</th><td class="yes">yes</td><td>expl3 parts</td><td>LaTeX markup</td><td>LaTeX, ConTeXt, plain, Texinfo</td><td>LaTeX markup</td></tr>
-      <tr><th scope="row">Values: catcodes, registers, lengths, token lists</th><td class="yes">yes, typed and with intervals</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no</td></tr>
-      <tr><th scope="row">Undecided conditionals</th><td class="yes">every path, joined soundly</td><td>may/definitely edges</td><td>—</td><td>—</td><td>—</td></tr>
-      <tr><th scope="row">Rerun fixpoint (<code>.aux</code>, <code>.toc</code>, <code>.bbl</code>)</th><td class="yes">run like latexmk, in memory</td><td>—</td><td>reads the files of a build</td><td>—</td><td>—</td></tr>
-      <tr><th scope="row">Editor</th><td class="yes">LSP, VS Code, browser playground</td><td>CLI, CI</td><td class="yes">LSP</td><td class="yes">LSP</td><td>CLI, used by editors</td></tr>
-      <tr><th scope="row">Fixes</th><td class="yes">quick fixes from the run (load the package that defines a name)</td><td>—</td><td>formatting (latexindent)</td><td>—</td><td>—</td></tr>
-      <tr><th scope="row">Covers all of TeX Live, fast</th><td class="no">what a document loads; large theses still take long</td><td class="yes">yes, a public report</td><td class="yes">yes</td><td class="yes">yes</td><td class="yes">yes</td></tr>
+      <tr><th scope="row">Source of its knowledge</th><td class="yes">executing the code (abstract interpretation)</td><td>the text, expl3 naming conventions, flow analysis</td><td>the text and a command database</td><td>package sources and hand-written tag files</td><td>regular expressions</td></tr>
+      <tr><th scope="row">Names made at run time (<code>\csname</code>, variants, keys)</th><td class="yes">seen as the run makes them</td><td class="no">not seen<sup><a href="#ref-dynamic">1</a></sup></td><td class="no">not seen</td><td class="no">not seen</td><td class="no">not seen</td></tr>
+      <tr><th scope="row">Languages</th><td class="yes">expl3, LaTeX2e and plain TeX in one run</td><td>expl3</td><td>LaTeX</td><td>LaTeX, ConTeXt, plain TeX, Texinfo</td><td>LaTeX</td></tr>
+      <tr><th scope="row">Values (catcodes, registers, lengths, token lists)</th><td class="yes">tracked, unknown ones as typed ranges</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
+      <tr><th scope="row">Conditionals it cannot decide</th><td class="yes">follows both arms and joins them</td><td>marks edges as maybe</td><td>—</td><td>—</td><td>—</td></tr>
+      <tr><th scope="row">Reruns (<code>.aux</code>, <code>.toc</code>, <code>.bbl</code>)</th><td class="yes">repeats the runs like latexmk, in memory</td><td>—</td><td>reads the files a build left</td><td>—</td><td>—</td></tr>
+      <tr><th scope="row">Interfaces</th><td class="yes">CLI, LSP, VS Code, browser playground</td><td>CLI, CI</td><td class="yes">LSP</td><td class="yes">LSP</td><td>CLI, used by editors</td></tr>
+      <tr><th scope="row">Fixes</th><td class="yes">quick fixes, e.g. load the package that defines a name</td><td>—</td><td>formatting (latexindent)</td><td>—</td><td>—</td></tr>
+      <tr><th scope="row">Scope</th><td class="no">the files a document loads</td><td class="yes">all of TeX Live, with a public report</td><td class="yes">any file</td><td class="yes">any file</td><td class="yes">any file</td></tr>
+      <tr><th scope="row">Speed</th><td class="no">seconds with warm caches; large theses still too slow</td><td class="yes">fast</td><td class="yes">fast</td><td class="yes">fast</td><td class="yes">fast</td></tr>
     </tbody>
   </table></div>
   <ol class="refs">
