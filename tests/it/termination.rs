@@ -836,6 +836,29 @@ mod convergence {
         assert!(crate::support::diagnosed(&a, "site-forks-cut").is_empty());
     }
 
+    /// (2) Thirty TikZ nodes whose text width depends on a random number,
+    /// with pgfmath, `\colorlet` and positioning on them.
+    #[test]
+    fn tikz_nodes_of_unknown_width() {
+        let preamble = "\\usepackage{tikz}\n\\usetikzlibrary{positioning}";
+        let body = r"\begin{tikzpicture}
+\foreach \i [count=\n from 0] in {1,...,30} {
+  \pgfmathsetmacro{\w}{1+\pdfuniformdeviate 5}
+  \pgfmathparse{\w*2+\i}
+  \colorlet{c\i}{blue!\pgfmathresult!red}
+  \ifnum\i=1
+    \node[draw, text width=\w cm, fill=c\i] (n\i) {Node \i};
+  \else
+    \node[draw, text width=\w cm, fill=c\i, right=of n\n] (n\i) {Node \i};
+  \fi
+}
+\end{tikzpicture}";
+        let Some(a) = latex("tikz-nodes", &document(preamble, body), |_| {}) else { return };
+        // A library scan that runs to the file's end gives the document's
+        // text back instead of swallowing it, so the rest is read too.
+        converged(&a, 32_000);
+    }
+
     /// An environment whose name is one of two: `\end` looks its hooks up
     /// by a name holding the one-of token, many `\cs:w` at one site. Past
     /// the fresh entries of that point the token is an unknown part of the
