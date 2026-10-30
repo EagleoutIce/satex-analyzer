@@ -111,20 +111,28 @@ pub fn definers(analysis: &crate::machine::Analysis, extra: &[String]) -> Vec<St
 
 impl Exports {
     /// The index for `roots`, cached while the trees are unchanged.
-    pub fn of(roots: &[PathBuf], cache: Option<&Path>, definers: &[String]) -> Exports {
+    /// The index as the cache holds it, never built here: what a hint may
+    /// read without scanning the installation.
+    pub fn cached(roots: &[PathBuf], cache: Option<&Path>, definers: &[String]) -> Option<Exports> {
         let stamps = crate::distribution::stamps_for(roots);
-        let file = cache.map(|dir| {
-            let joined: String = roots.iter().map(|r| r.display().to_string()).collect();
-            dir.join(format!("exports-v{VERSION}-{:08x}.postcard", crate::format::digest(joined.as_bytes())))
-        });
-        if let Some(cached) = file
-            .as_ref()
-            .and_then(|f| std::fs::read(f).ok())
+        let file = Self::file(roots, cache)?;
+        std::fs::read(file)
+            .ok()
             .and_then(|b| postcard::from_bytes::<Exports>(&b).ok())
             .filter(|e| e.version == VERSION && e.stamps == stamps && e.definers == definers)
-        {
+    }
+
+    fn file(roots: &[PathBuf], cache: Option<&Path>) -> Option<PathBuf> {
+        let joined: String = roots.iter().map(|r| r.display().to_string()).collect();
+        Some(cache?.join(format!("exports-v{VERSION}-{:08x}.postcard", crate::format::digest(joined.as_bytes()))))
+    }
+
+    pub fn of(roots: &[PathBuf], cache: Option<&Path>, definers: &[String]) -> Exports {
+        if let Some(cached) = Self::cached(roots, cache, definers) {
             return cached;
         }
+        let stamps = crate::distribution::stamps_for(roots);
+        let file = Self::file(roots, cache);
         let mut exports = Exports { version: VERSION, stamps, definers: definers.to_vec(), ..Exports::default() };
         let mut found: Vec<(String, PathBuf)> = crate::distribution::files_with(roots, ".sty");
         found.extend(crate::distribution::files_with(roots, ".cls"));
