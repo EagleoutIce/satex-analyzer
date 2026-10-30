@@ -1416,7 +1416,8 @@ impl Machine<'_> {
         // What the passes began in, joined and widened: a name the passes
         // agree on keeps its value, one they differ in may hold any of them
         // or more.
-        let (joined, _) = self.join_passes(fork, &summarized.joined, &here, true, true);
+        // `here` first: its groups are the ones the summary goes on in.
+        let (joined, _) = self.join_passes(fork, &here, &summarized.joined, true, true);
         // What a name the passes began with and this one disagree on would
         // hold after the passes not run is not known: the passes need not
         // have met a head to widen at (each deeper in conditionals or

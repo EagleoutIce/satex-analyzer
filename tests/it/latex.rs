@@ -3907,3 +3907,29 @@ fn expl3_conventions_are_checked_against_the_run() {
     assert_eq!(named("expl3-type"), vec!["\\l_bad_type_tl"]);
     assert_eq!(named("expl3-constant-set"), vec!["\\c_bad_const_tl"]);
 }
+
+/// hyperref's page anchor runs `\pdfstringdef` on an unknown `\thepage`
+/// inside a group that redefines `\@protected@testopt`. The paths that
+/// parted in there saved it in that group alike, so its end puts back the
+/// kernel's macro. Joined with the inner value instead, every optional-
+/// argument command re-entered itself up to `limits.expansion_depth`.
+#[test]
+fn a_group_both_paths_saved_in_restores_the_saved_meaning() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{hyperref}
+\begin{document}
+\setcounter{page}{\pdfuniformdeviate 5}
+a\clearpage
+\makeatletter
+\edef\after{\meaning\@protected@testopt}
+\end{document}",
+    );
+    assert_eq!(
+        body(&analysis, "after"),
+        r"macro:#1->\ifx \protect \@typeset@protect \expandafter \@testopt \else \@x@protect #1\fi "
+    );
+}

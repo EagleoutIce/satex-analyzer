@@ -881,7 +881,10 @@ mod convergence {
 \pdfstringdef\x{\thepage}
 {\let\@number\@firstofone\Hy@unicodefalse\pdfstringdef\x{\thepage}}";
         let Some(a) = latex("pdfstring-page", &document(r"\usepackage{hyperref}", body), |_| {}) else { return };
-        converged(&a, 20_000);
+        // hyperref's Unicode conversion (`\HyPsd@DoConvert`, a test per
+        // character) runs here since group ends restore exact meanings;
+        // a leaked unknown meaning skipped it before (18k forks).
+        converged(&a, 32_000);
     }
 
     /// (3) An expl3 loop whose bound is `\pdfelapsedtime`.

@@ -1610,7 +1610,8 @@ impl Env {
             };
             // A group end puts back what either path saved (tex.web § 283
             // keeps only what both made global).
-            let level = x.max(y);
+            // A level past the joined groups is one only `b` stood in.
+            let level = x.max(y).min(a.marks.len() as u32);
             let joined = join(old.clone(), new, self.sets, Some(typed));
             let joined = match widen {
                 true => {
@@ -1846,7 +1847,11 @@ impl Env {
         while journal.len() > base {
             journal.pop();
         }
-        for (g, (mine, theirs)) in x.into_iter().zip(y).enumerate() {
+        // A group only `a` stands in keeps its saves, joined with what `b`
+        // holds; one only `b` stands in is not in the join.
+        let mut y = y.into_iter();
+        for (g, mine) in x.into_iter().enumerate() {
+            let theirs = y.next().unwrap_or_default();
             if g > 0 && marks[g - 1].journal >= base {
                 marks[g - 1].journal = journal.len();
             }
@@ -1858,7 +1863,12 @@ impl Env {
                 entries.into_iter().filter(|e| seen.insert(e.slot())).collect::<Vec<_>>()
             };
             let (mine, theirs) = (first(mine), first(theirs));
-            for (entry, other) in mine.into_iter().map(|e| (e, b)).chain(theirs.into_iter().map(|e| (e, a))) {
+            // A slot both paths saved here: the group's end puts back either save.
+            let saved = |entries: &[Entry]| entries.iter().map(Entry::slot).collect::<std::collections::HashSet<_>>();
+            let (in_mine, in_theirs) = (saved(&mine), saved(&theirs));
+            let tagged =
+                mine.into_iter().map(|e| (e, b, &in_theirs)).chain(theirs.into_iter().map(|e| (e, a, &in_mine)));
+            for (entry, other, both) in tagged {
                 let entry = match entry {
                     Entry::Meaning { sym, old, level, alias, stamp } => {
                         let old = match global(other, sym) {
@@ -1866,7 +1876,7 @@ impl Env {
                             // A name the other path did not save in this
                             // group: its end leaves what that path holds, set
                             // outside the group or at the fork.
-                            None if is_name(&old) => {
+                            None if is_name(&old) && !both.contains(&(false, sym)) => {
                                 let held = match other.slots.get(&sym) {
                                     Some((slot, level)) if (*level as usize) < g => Some(slot.clone()),
                                     Some(_) => None,
