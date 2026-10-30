@@ -365,11 +365,24 @@
 
   let editor; // { text(), set(text), diagnostics(list), apply(edits), cursor(), select(c), word() }
   let version = 0, synced = 0, analyzedVersion = 0, timer = null, checkStart = 0, retryCompletion = false;
+  let typedAt = 0;
   function changed() {
     version++;
+    typedAt = performance.now();
     if (refs && refs.file === state.file) clearRefs();
     clearTimeout(timer);
-    timer = setTimeout(sync, 400);
+    // A command name or an argument still being typed (`\dra`, `\cite{kn`) waits: the analysis
+    // would block completion for seconds, and its findings would be about unfinished text.
+    const line = editor.text().split('\n')[editor.position().line] ?? '', before = line.slice(0, editor.position().character);
+    timer = setTimeout(sync, /\\[A-Za-z@]*$|\{[^{}\s]*$/.test(before) ? 1500 : 400);
+  }
+  /** After an analysis, the command list the server would offer after a `\\`, asked once at a command
+   * of the file: the first `\\` typed then completes at once. */
+  function prefetchCommands() {
+    const text = editor?.text() ?? '', at = text.search(/\\[A-Za-z@]/);
+    if (at < 0 || commandItems.has(`${uri()}|\\`)) return;
+    const before = text.slice(0, at + 1).split('\n');
+    completions({ line: before.length - 1, character: before.at(-1).length }, before.at(-1).length, '\\');
   }
   /** Sends the buffer to the server unless it already has it: the text
    * only, so what is asked meanwhile is answered from the last analysis. */
@@ -421,22 +434,23 @@
    * keeps the server busy, the last items stand in only where they were asked for the same word. */
   const asked = new Map();
   let lastItems = null, lastWord = '';
-  /** The commands the server last offered after a `\\`, by file: what a new command completes from at once. */
+  /** What the server last offered in each kind of place, by file (after a `\\`, in `\begin{`, `\cite{`, …):
+   * what the same kind of place completes from at once. */
   const commandItems = new Map();
   /** How long a completion waits for the server before the kept commands answer (the server's answer still replaces them). */
   const INSTANT_MS = 120;
-  function completions(position, start = position.character, command = false) {
+  function completions(position, start = position.character, place = null) {
     const k = `${uri()}|${version}|${position.line}:${position.character}`, word = `${uri()}|${position.line}:${start}`;
     if (!asked.has(k)) {
       asked.clear();
       asked.set(k, lsp('textDocument/completion', { textDocument: { uri: uri() }, position }).then((r) => {
         [lastItems, lastWord] = [(Array.isArray(r) ? r : r?.items) ?? [], word];
-        if (command && lastItems.length) commandItems.set(uri(), lastItems);
+        if (place && lastItems.length) commandItems.set(`${uri()}|${place}`, lastItems);
         return lastItems;
       }).catch(() => []));
     }
     if (running && lastItems && lastWord === word) return lastItems;
-    const kept = command && commandItems.get(uri());
+    const kept = place && commandItems.get(`${uri()}|${place}`);
     if (!kept) return asked.get(k);
     // a run keeps the server busy for seconds: the kept commands answer now, the server's items on the next keystroke
     return Promise.race([asked.get(k), new Promise((done) => setTimeout(() => done(kept), INSTANT_MS))]);
@@ -465,7 +479,9 @@
       if (!ctx.explicit && before !== '\\' && before !== '{' && !item) return null;
       push();
       const start = before === '\\' ? word.from : key.from;
-      const items = await completions(position(ctx.state.doc, ctx.pos), start - line.from, before === '\\');
+      // the kind of place: a command name, or the argument of the command whose brace is open
+      const place = before === '\\' ? '\\' : line.text.slice(0, key.from - line.from).match(/\\([A-Za-z@]+)\*?(?:\[[^\]]*\])*\{[^{}]*$/)?.[1] ?? null;
+      const items = await completions(position(ctx.state.doc, ctx.pos), start - line.from, place);
       // typed before the server read it: analyze now, ask again when that run ends
       if (!items.length && !ctx.explicit) { retryCompletion = true; sync(); }
       // an item that replaces a range (a key path) starts where that range does
@@ -840,7 +856,11 @@
       const safety = d.data?.applicability ?? (a.isPreferred ? 'safe' : 'unsafe');
       by.set(key(d), [...(by.get(key(d)) ?? []), { ...a, safety }]);
     }
-    diagnostics[target] = ds.map((d) => ({ ...d, fixes: by.get(key(d)) ?? [] }));
+    // A finding on the word under the cursor while it is typed (`\dra` on the way to `\draw`)
+    // waits until typing moves on: it is about text that is not finished.
+    const typing = target === uri() && performance.now() - typedAt < 4000 && editor?.position?.();
+    const unfinished = (d) => typing && d.range.start.line === typing.line && d.range.start.character <= typing.character && typing.character <= d.range.end.character + 1;
+    diagnostics[target] = ds.filter((d) => !unfinished(d)).map((d) => ({ ...d, fixes: by.get(key(d)) ?? [] }));
     if (target === uri()) render();
     drawTree();
   }
@@ -2027,6 +2047,9 @@
   function cacheReport(lines) {
     const reused = [], fresh = [];
     let segments = 0;
+    // the run's size: steps, forks, files and lines
+    const run = lines.map(([, t]) => plain(t)).find((t) => t.startsWith('run '));
+    if (run) timing('t-run', '', 'the size of the last analysis', run.slice(4).split(', '));
     for (const [, text] of lines) {
       const m = plain(text).match(/cache (?:kernel|class|package) (\S+): (reused|rebuilt \((.*)\))/);
       if (m) (m[2] === 'reused' ? reused : fresh).push(m[3] ? `${m[1]} (${m[3]})` : m[1]);
@@ -2436,6 +2459,7 @@
           show(m.params.uri, m.params.diagnostics);
           typeset(m.params.uri);
           outline();
+          if (m.params.uri === uri()) prefetchCommands();
           loadCaches(); // the status bar's count, and the table if open
           if (m.params.uri === uri()) lsp('satex/caches', { textDocument: { uri: m.params.uri } }).then((r) => cacheReport((r ?? []).map((l) => ['err', l]))).catch(() => {});
           fetchMissing(unresolved);

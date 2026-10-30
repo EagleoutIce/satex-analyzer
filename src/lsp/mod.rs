@@ -1057,7 +1057,19 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, msg: EngineMsg) -> Option<E
             let _ = reply.send(result.unwrap_or_default());
         }
         EngineMsg::Caches(uri, reply) => {
-            let _ = reply.send(with_doc(docs, &uri, |analysis, _| analysis.cache_report()).unwrap_or_default());
+            // The run's size first, then what it reused: what the playground's timing pop-up shows.
+            let report = |a: &Analysis| {
+                let run = format!(
+                    "run {} steps ({} loading), {} forks, {} files, {} lines",
+                    a.steps,
+                    a.load_steps,
+                    a.forks,
+                    a.files.len(),
+                    a.lines
+                );
+                std::iter::once(run).chain(a.cache_report()).collect::<Vec<_>>()
+            };
+            let _ = reply.send(with_doc(docs, &uri, |analysis, _| report(analysis)).unwrap_or_default());
         }
         msg => return Some(msg),
     }
