@@ -235,10 +235,11 @@ async function browser() {
     const ws = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise((r) => { ws.onopen = r; });
     let id = 0;
-    const replies = new Map(), errors = [];
+    const replies = new Map(), errors = [], logs = [];
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data);
       if (m.id) replies.get(m.id)?.(m);
+      else if (m.method === 'Runtime.consoleAPICalled' && /warning|error/.test(m.params.type)) logs.push(m.params.args.map((x) => x.description ?? x.value).join(' ').slice(0, 200));
       else if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.exception?.description ?? m.params.exceptionDetails.text);
     };
     const send = (method, params = {}) => new Promise((r) => { replies.set(++id, r); ws.send(JSON.stringify({ id, method, params })); });
@@ -253,7 +254,7 @@ async function browser() {
     };
     const mouse = async (x, y, opts = {}) => { for (const t of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type: t, x, y, button: 'left', clickCount: 1, ...opts }); };
     /** The screen point of `needle` (its `at`-th character) in the editor's text. */
-    const spot = async (needle, at = 1) => (await settled(needle, at)) ?? (await shot('spot-miss'), Promise.reject(new Error(`no ${needle} in the editor of ${await js(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent`)}: ${await js(`return [...document.querySelectorAll('.cm-line')].map((l) => l.textContent).join(' | ').slice(0, 200)`)}`)));
+    const spot = async (needle, at = 1) => (await settled(needle, at)) ?? (await shot('spot-miss'), Promise.reject(new Error(`no ${needle} in the editor of ${await js(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent`)}: ${await js(`return document.querySelectorAll('.cm-line').length + ' lines: ' + [...document.querySelectorAll('.cm-line')].map((l) => l.textContent).join(' | ').slice(0, 200) + ' / content: ' + (document.querySelector('.cm-content')?.textContent ?? '').slice(0, 100)`)}`)));
     // the editor renders a file's lines a moment after its tab is chosen
     const settled = async (needle, at) => { for (let i = 0; i < 25; i++, await sleep(200)) { const p = await place(needle, at); if (p) return p; } return null; };
     const place = (needle, at = 1) => js(`for (const l of document.querySelectorAll('.cm-line')) { const i = l.textContent.indexOf(${JSON.stringify(needle)}); if (i < 0) continue;
@@ -324,6 +325,381 @@ async function browser() {
     check('ready without a run', await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 240000),
       await js(`return document.getElementById('play-status').textContent`));
     await shot('play-ready');
+    // ---- the wishes of the playground round: each checked in the built page
+    const wishes = async () => {
+      const root = mkdtempSync(join(tmpdir(), 'satex-fresh-'));
+      const editorText = `document.querySelector('.cm-content').textContent`;
+      const quiet = `document.getElementById('lsp-status').textContent !== 'checking…' && !document.getElementById('play-status').classList.contains('busy')`;
+      /** A folder with one main.tex becomes the project; resolves once its first analysis is shown. */
+      const open = async (name, text) => {
+        const d = join(root, name);
+        mkdirSync(d, { recursive: true });
+        writeFileSync(join(d, 'main.tex'), text);
+        await upload('play-folder', [d]);
+        await until(`return ${editorText} === ${JSON.stringify(text.replace(/\n/g, ''))}`, 30000);
+        await sleep(500);
+        return until(`return ${quiet}`, 120000);
+      };
+      check('the editor is CodeMirror', await until(`return !!document.querySelector('.cm-content')`, 60000), logs.slice(-3).join(' | '));
+      // SECTION=name: only the wish sections whose name holds it
+      const section = async (name, f) => { if (process.env.SECTION && !name.includes(process.env.SECTION)) return; try { await f(); } catch (e) { check(`${name}`, false, e.message.slice(0, 300)); } };
+      const findings = `[...document.querySelectorAll('#lsp-diagnostics li')].map((li) => li.textContent)`;
+      const unresolved = (names) => `${findings}.filter((t) => /unresolved-file|not in this installation/.test(t))`;
+      // 2: a missing package is fetched, however deep the next one lies
+      await open('pgf', '\\documentclass{article}\n\\usepackage{pgfmath}\n\\begin{document}\n$\\pgfmathparse{2+3}$\n\\end{document}\n');
+      const pgf = await until(`return /pgfmath/.test(document.getElementById('play-status').dataset.packages ?? '') && ${quiet} && ${unresolved()}.length === 0`, 120000);
+      check('pgfmath is fetched on demand and resolves', pgf, await js(`return (document.getElementById('play-status').dataset.packages ?? '') + ' | ' + ${findings}.join(' / ').slice(0, 300)`));
+      await shot('w2-pgfmath');
+      // 3: the written files: a card per file, its runs, the second run's .aux against the first's
+      await open('written', '\\documentclass{article}\n\\makeatletter\n\\AtBeginDocument{\\immediate\\write\\@mainaux{\\@percentchar\\space seen \\@ifundefined{r@sec:a}{no}{yes}}}\n\\makeatother\n\\begin{document}\n\\tableofcontents\n\\section{Intro}\\label{sec:a}\nSee \\ref{sec:a}.\n\\end{document}\n');
+      await js(`document.getElementById('play-written').open = true`);
+      const wrote = await until(`return [...document.querySelectorAll('#written-body .wf code')].map((c) => c.textContent).join() === 'main.aux,main.toc'`, 30000);
+      const runs = await js(`return [...document.querySelectorAll('#written-body .wf')[0].querySelectorAll('[data-view]')].map((b) => b.textContent)`);
+      await js(`document.querySelector('#written-body .wf [data-view="1"]').click()`);
+      const diff = await js(`const w = document.querySelector('#written-body .wf'); return [[...w.querySelectorAll('.wf-del')].map((e) => e.textContent), [...w.querySelectorAll('.wf-add')].map((e) => e.textContent)]`);
+      check('written files: a card each, 2 runs, the diff shows the changed line', wrote && runs.join() === 'run 1,run 2,final' && diff[0].join() === '% seen no' && diff[1].join() === '% seen yes',
+        JSON.stringify({ runs, diff, text: await js(`return document.getElementById('written-body').textContent.slice(0, 200)`) }));
+      await js(`document.getElementById('play-written').scrollIntoView()`);
+      await shot('w3-written');
+      // 1: the run pop-up
+      await js(`document.getElementById('t-time').click()`);
+      await sleep(400);
+      const pop = await js(`const p = document.getElementById('t-detail'), r = p.getBoundingClientRect();
+        return { shown: !p.hidden, tiles: p.querySelectorAll('.rp-nums > span').length, bars: p.querySelectorAll('.rp-bar').length, over: p.scrollWidth > p.clientWidth + 1 || r.right > innerWidth || r.left < 0, w: Math.round(r.width) }`);
+      check('run pop-up: tiles, slow files, no overflow', pop.shown && pop.tiles >= 5 && pop.bars >= 1 && !pop.over, JSON.stringify(pop));
+      await shot('w1-runpop-light');
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+      await sleep(300);
+      await shot('w1-runpop-dark');
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+      await js(`document.getElementById('t-time').click()`);
+      // 9: a click on the switch itself, with the mouse
+      const sw = await js(`const b = document.getElementById('typeset-keys'); b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, b.checked, document.getElementById('play-typeset')?.open]`);
+      await mouse(sw[0], sw[1]);
+      await sleep(150);
+      const after = await js(`return [document.getElementById('typeset-keys').checked, document.getElementById('play-typeset')?.open]`);
+      check('the switch flips on a real click, the section stays', after[0] !== sw[2] && after[1] === sw[3], JSON.stringify([sw, after]));
+      await mouse(sw[0], sw[1]);
+      // 5: the cache store is bounded and stamped
+      const idb = await js(`const db = await new Promise((ok, no) => { const r = indexedDB.open('satex-playground'); r.onsuccess = () => ok(r.result); r.onerror = no; });
+        const n = (s) => new Promise((ok) => { const q = db.transaction(s).objectStore(s).count(); q.onsuccess = () => ok(q.result); });
+        return { stores: [...db.objectStoreNames], cache: await n('cache'), used: await n('used') }`);
+      check('cache entries carry a last-used stamp', idb.stores.includes('used') && idb.used > 0 && idb.used <= idb.cache, JSON.stringify(idb));
+      await section('8', async () => {
+      // 8: two tooltips never overlap: the latest hovered wins
+      await open('hover', '\\documentclass{article}\n\\begin{document}\nText \\emph{x}\n\\end{document}\n');
+      const visible = `[...document.querySelectorAll('.cm-tooltip-hover, .cs-tip')].filter((t) => !t.hidden && getComputedStyle(t).display !== 'none' && t.getBoundingClientRect().width > 0).map((t) => t.className.split(' ')[0])`;
+      const ed = await spot('\\emph', 3);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: ed[0], y: ed[1] });
+      const cm = await until(`return ${visible}.includes('cm-tooltip-hover')`, 10000);
+      await js(`document.getElementById('lib-open').click()`);
+      await until(`return document.querySelectorAll('#lib-list .cs-ref').length > 3`, 60000);
+      const chip = await js(`const e = document.querySelector('#lib-list .cs-ref'); e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return [b.x + 4, b.y + b.height / 2]`);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: chip[0], y: chip[1] });
+      await until(`return ${visible}.includes('cs-tip')`, 10000);
+      const one = await js(`return ${visible}`);
+      check('chip card hides the editor hover', cm && one.length === 1 && one[0] === 'cs-tip', JSON.stringify(one));
+      await shot('w8-latest-hover');
+      await js(`document.getElementById('play-library').close()`);
+      const ed2 = await spot('\\emph', 3);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: ed2[0], y: ed2[1] });
+      await until(`return ${visible}.includes('cm-tooltip-hover')`, 10000);
+      const two = await js(`return ${visible}`);
+      check('editor hover hides the chip card', two.length === 1 && two[0] === 'cm-tooltip-hover', JSON.stringify(two));
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      });
+      await section('lib', async () => {
+      // the library: each environment once by its name, Try wraps it in \\begin…\\end and typesets it
+      await js(`document.getElementById('lib-open').click()`);
+      await until(`return document.querySelectorAll('#lib-list .cs-ref').length > 3`, 60000);
+      await js(`document.querySelector('.lib-kind[data-kind=environment]').click()`);
+      const env = await js(`return { names: [...document.querySelectorAll('#lib-list .cs-ref')].map((e) => e.textContent), count: +document.querySelector('.lib-kind[data-kind=environment] b').textContent }`);
+      check('library lists each environment once, by name', env.names.includes('itemize') && env.count === env.names.length && new Set(env.names).size === env.names.length
+        && !env.names.some((n) => n.startsWith('\\') || env.names.includes(n.replace(/^end/, '')) && n !== n.replace(/^end/, '')), JSON.stringify(env).slice(0, 300));
+      await js(`const s = document.getElementById('lib-search'); s.value = 'itemize'; s.dispatchEvent(new Event('input')); document.querySelector('#lib-list .lib-try-it').click()`);
+      const tried = await js(`const t = document.getElementById('lib-text'); t.setRangeText('\\\\item one', t.selectionStart, t.selectionStart, 'end'); document.getElementById('lib-run').click(); return t.value`);
+      const out = await until(`return /one/.test(document.querySelector('#lib-out .typeset')?.textContent ?? '')`, 60000);
+      check('Try wraps an environment and typesets it', out && /^\\begin\{itemize\}\n\s*\\item one\n\\end\{itemize\}$/.test(tried), JSON.stringify(tried));
+      await shot('w-lib-env-try');
+      await js(`document.getElementById('play-library').close()`);
+      });
+      await section('hover', async () => {
+      // chip cards: every ⟨argN⟩ explains itself, a type's path stops below `any`, the card never covers the editor's hover
+      await open('chips', '\\documentclass{article}\n\\newcommand{\\twice}[1]{#1#1}\n\\begin{document}\n\\twice{a}\n\\setlength{\\parindent}{1em}\n\\end{document}\n');
+      const tipOf = async (needle) => {
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+        await sleep(300);
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...Object.fromEntries((await spot(needle, 3)).map((v, i) => [i ? 'y' : 'x', v])) });
+        await until(`return !!document.querySelector('.cm-tooltip-hover .arg[data-tip]')`, 15000);
+        const chips = await js(`return [...document.querySelectorAll('.cm-tooltip-hover .arg[data-tip]')].map((c) => { const b = c.getBoundingClientRect(); return [b.x + 4, b.y + b.height / 2, !!c.querySelector('a.ty')]; })`);
+        const c = chips.find((x) => x[2]) ?? chips[0];
+        await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c[0], y: c[1] });
+        await until(`return !document.querySelector('.ty-tip')?.hidden`, 5000);
+        return js(`const t = document.querySelector('.ty-tip'), a = t.getBoundingClientRect(), b = document.querySelector('.cm-tooltip-hover').getBoundingClientRect();
+          return { what: t.querySelector('.ty-what')?.textContent ?? '', chain: t.querySelector('.ty-chain')?.textContent ?? '', over: a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom }`);
+      };
+      const plain = await tipOf('\\twice{a}');
+      await shot('w-hover-untyped');
+      check('an untyped ⟨arg1⟩ shows its card, beside the hover', /1\. argument/.test(plain.what) && !plain.over, JSON.stringify(plain));
+      const typed = await tipOf('\\setlength');
+      await shot('w-hover-typed');
+      check('a type card: its path without any, beside the hover', typed.chain && !/\bany\b/.test(typed.chain) && !typed.over, JSON.stringify(typed));
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      });
+      await section('6, 7', async () => {
+      // 6, 7: completion at once, even right after an edit; tikz keys; argument counts
+      await open('comp', '\\documentclass{article}\n\\usepackage{tikz}\n\\newcommand{\\x}[]{x}\n\\begin{document}\n\\begin{tikzpicture}[]\n\\draw (0,0) -- (1,1);\n\\end{tikzpicture}\n\n\\end{document}\n');
+      const popup = `[...document.querySelectorAll('.cm-tooltip-autocomplete li')].map((l) => l.textContent)`;
+      const at1 = await spot('\\begin{tikzpicture}[', 20);
+      await mouse(...at1);
+      await send('Input.insertText', { text: 'th' });
+      const tk = await until(`return ${popup}.some((t) => /^thick/.test(t))`, 15000);
+      check('tikzpicture options complete to tikz keys', tk, await js(`return ${popup}.slice(0, 8).join(' ')`));
+      await shot('w7-tikz-keys');
+      await key('Escape');
+      const at2 = await spot('\\newcommand{\\x}[', 16);
+      await mouse(...at2);
+      await key(' ', 2, 'Space');
+      const cnt = await until(`return ${popup}.filter((t) => /^[0-9]/.test(t)).length >= 5`, 15000);
+      check('\\newcommand[ offers argument counts', cnt, await js(`return ${popup}.slice(0, 10).join(' ')`));
+      await shot('w7-newcommand-count');
+      await key('Escape');
+      const at3 = await spot('\\end{tikzpicture}', 17);
+      await mouse(...at3);
+      await send('Input.insertText', { text: '\n' });
+      // timed in the page, frame by frame: the polling here is coarser than the bound
+      await js(`window.__seen = 0; const t0 = performance.now(), f = () => { if (${popup}.some((t) => /^pgfmath/.test(t))) window.__seen = Math.round(performance.now() - t0); else requestAnimationFrame(f); }; requestAnimationFrame(f)`);
+      await send('Input.insertText', { text: '\\pgfm' });
+      const fast = await until(`return window.__seen > 0`, 15000);
+      const took = await js(`return window.__seen`);
+      check('typing \\pgfm shows candidates within 300 ms of the keystroke', fast && took < 300, `${took} ms, ${await js(`return ${popup}.slice(0, 5).join(' ')`)}`);
+      await shot('w6-fast-complete');
+      await key('Escape');
+      });
+      await section('11, 12', async () => {
+      // 11, 12: the trace of \begin has steps; the library switch re-renders without a query
+      await js(`window.__q = 0; const o = Worker.prototype.postMessage; Worker.prototype.postMessage = function (m, ...r) { if (m?.type === 'lsp' && JSON.stringify(m).includes('satex/query')) window.__q++; return o.call(this, m, ...r); }`);
+      await open('trace', '\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\pgfmathparse{sign(42)}\n\\pgfmathresult\n\\end{document}\n');
+      const traceAt = async (needle, at) => {
+        const p = await spot(needle, at);
+        await mouse(...p);
+        await js(`document.querySelectorAll('#play-ctx li').forEach((l) => l.remove())`);
+        await mouse(...p, { button: 'right', buttons: 2 });
+        await until(`return [...document.querySelectorAll('#play-ctx li')].some((l) => /Trace/.test(l.textContent))`, 30000);
+        await js(`[...document.querySelectorAll('#play-ctx li')].find((l) => /Trace/.test(l.textContent)).click()`);
+        return until(`return !!document.querySelector('#trace-body .tr-now') || /no step|failed|not used/.test(document.getElementById('trace-body').textContent)`, 120000);
+      };
+      await traceAt('\\begin{document}', 3);
+      const steps = await js(`return [document.getElementById('trace-total').textContent, document.getElementById('trace-body').textContent.slice(0, 160)]`);
+      check('the trace of \\begin has steps', /\d+ steps?/.test(steps[0]) && !/no step/.test(steps[1]), JSON.stringify(steps));
+      await shot('w11-trace-begin');
+      const q0 = await js(`return window.__q`), n0 = steps[0];
+      await js(`document.getElementById('trace-internal').click()`);
+      await sleep(1500);
+      const n1 = await js(`return document.getElementById('trace-total').textContent`);
+      check('library switch re-renders without a new query', await js(`return window.__q`) === q0 && n1 !== n0, `${n0} -> ${n1}, ${q0} queries`);
+      await js(`document.getElementById('trace-internal').click()`);
+      await js(`document.getElementById('trace-close').click()`);
+      });
+      await section('trace viewer', async () => {
+      // the trace dialog: library groups, the how-row, the stepper's token stream, breadcrumb, cards, forks, progress
+      const body = `document.getElementById('trace-body')`;
+      const traceOf = async (needle, at, live = null) => {
+        const p = await spot(needle, at);
+        await mouse(...p);
+        await js(`document.querySelectorAll('#play-ctx li').forEach((l) => l.remove())`); // no stale menu
+        await mouse(...p, { button: 'right', buttons: 2 });
+        if (!await until(`return [...document.querySelectorAll('#play-ctx li')].some((l) => /Trace/.test(l.textContent))`, 30000)) {
+          await shot(`trv-noctx`);
+          throw new Error(`no Trace in the menu at ${needle}: ${await js(`return document.getElementById('play-ctx')?.textContent.slice(0, 200)`)}`);
+        }
+        await js(`[...document.querySelectorAll('#play-ctx li')].find((l) => /Trace/.test(l.textContent)).click()`);
+        if (live) await live();
+        return until(`return !!document.querySelector('#trace-body .tr-now') || /no step|failed|not used/.test(${body}.textContent)`, 120000);
+      };
+      const setLib = (on) => js(`const b = document.getElementById('trace-internal'); if (b.checked !== ${on}) b.click()`);
+      await open('trv', '\\documentclass{article}\n\\usepackage{tikz}\n\\newcommand{\\twice}[1]{#1#1}\n\\newcommand{\\pick}{\\ifnum\\pdfuniformdeviate 10>5 late\\else early\\fi}\n\\begin{document}\n\\pgfmathparse{sign(42)}\n\\pgfmathresult\n\\twice{ab}\n\\pick\\relax\n\\end{document}\n');
+      // 7: live progress while the run goes
+      let seen = [];
+      const watch = async () => { for (let k = 0; k < 12; k++) { seen.push(await js(`return document.getElementById('trace-live')?.textContent ?? ''`)); await sleep(250); } };
+      await setLib(false);
+      await traceOf('\\pgfmathresult', 3, watch);
+      seen = seen.filter(Boolean);
+      check('trace shows live progress: phase and elapsed', seen.some((t) => /^Tracing: .+ · \d+\.\d\d s$/.test(t)) && new Set(seen).size > 1, JSON.stringify(seen.slice(0, 4)));
+      // 1: library work folds into one named line; the switch opens it without a query
+      const groups = await js(`return [...document.querySelectorAll('#trace-body .tr-group')].map((g) => [g.tagName, g.textContent])`);
+      const libRows = await js(`return [...document.querySelectorAll('#trace-body .tr-tree .tr-at')].filter((a) => !/main\\.tex/.test(a.textContent)).length`);
+      check('switch off: library work is one line per trigger, none of its steps', groups.some(([t, x]) => t === 'DIV' && /^paragraph starts \(everypar hook, \d+ steps\)$/.test(x)) && libRows === 0, JSON.stringify([groups, libRows]));
+      await shot('trv1-folded');
+      const q0 = await js(`return window.__q ?? 0`);
+      await setLib(true);
+      await sleep(800);
+      const opened = await js(`const g = document.querySelector('#trace-body details.tr-group'); if (!g) return null; g.open = true; await new Promise((r) => setTimeout(r, 200)); return g.querySelectorAll('li[data-i]').length`);
+      check('switch on: the group opens to its steps, no new query', opened > 0 && (await js(`return window.__q ?? 0`)) === q0, `${opened} kids`);
+      await shot('trv1-open');
+      await setLib(false);
+      await js(`document.getElementById('trace-close').click()`);
+      // 2, 3, 4: \\twice{ab} on one row; the stepper's ends; chips by catcode; the breadcrumb
+      await traceOf('\\twice{ab}', 3);
+      const how = await js(`const h = document.querySelector('#trace-body .tr-tree .tr-how'), res = h?.querySelector('.tr-res'), c = res?.querySelector('code');
+        return h && [h.textContent, Math.abs(res.getBoundingClientRect().top - c.getBoundingClientRect().top) < 4]`);
+      check('\\twice{ab}: body, binding, result on one row, the arrow with its result', how && /body #1#1/.test(how[0]) && /#1 = ab/.test(how[0]) && /→ abab/.test(how[0]) && how[1], JSON.stringify(how));
+      const ends = await js(`const d = (m) => document.querySelector('[data-move=' + m + ']').disabled; return [d('prev'), d('next')]`);
+      check('stepper: back disabled at the first step', ends[0] === true, JSON.stringify(ends));
+      const ins = await js(`return [...document.querySelectorAll('#trace-stream .tr-ins')].map((t) => t.textContent).join('')`);
+      check('stream: what the step put back highlighted', ins === 'abab', ins);
+      const few = await js(`return document.querySelectorAll('.tr-legend .tr-key').length`);
+      await js(`document.querySelector('.tr-legend-btn').click()`);
+      const all = await js(`return [document.querySelectorAll('.tr-legend .tr-key').length, document.querySelector('.tr-legend').textContent]`);
+      check('catcode legend: the categories in the stream, all behind the toggle, by name', few < 17 && all[0] === 17 && /11 letter/.test(all[1]), JSON.stringify([few, all]));
+      await shot('trv2-twice');
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+      await sleep(300);
+      await shot('trv2-twice-dark');
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+      for (let k = 0; k < 400 && !(await js(`return document.querySelector('[data-move=next]').disabled`)); k++) await js(`document.querySelector('[data-move=next]').click()`);
+      check('stepper: next and over disabled at the last step', await js(`return document.querySelector('[data-move=next]').disabled && document.querySelector('[data-move=over]').disabled`));
+      await setLib(true);
+      await until(`return !!document.querySelector('#trace-body .tr-now')`, 5000);
+      await js(`document.getElementById('trace-close').click()`);
+      await traceOf('\\pgfmathresult', 3);
+      for (let k = 0; k < 60 && (await js(`return document.querySelectorAll('.tr-crumbs .tr-crumb').length`)) < 3; k++) await js(`document.querySelector('[data-move=next]').click()`);
+      const crumbs = await js(`return [...document.querySelectorAll('.tr-crumbs .tr-crumb')].map((c) => [c.textContent, c.classList.contains('on')])`);
+      check('breadcrumb: the enclosing calls, the current one marked', crumbs.length >= 2 && crumbs.at(-1)[1] && crumbs.slice(0, -1).every((c) => !c[1]), JSON.stringify(crumbs));
+      await shot('trv4-crumbs');
+      const toks = await js(`return [...document.querySelectorAll('#trace-stream .tr-chips .tr-tok:not(.tr-ins)')].map((a) => [a.textContent, a.title, a.getAttribute('href')])`);
+      check('chips carry their catcode number', await js(`return [...document.querySelectorAll('#trace-stream a.tr-tok')].every((a) => a.querySelector('.tr-cc')?.textContent === a.getAttribute('href').split('-').pop())`));
+      await shot('trv3-chips');
+      check('stream: the input ahead as chips, each with its catcode and wiki link', toks.length > 3 && toks.every(([x, t, h]) => /^\\/.test(x) ? !h : /catcode \d+/.test(t) && /wiki\/domains\.html#catcode-\d+$/.test(h)), JSON.stringify(toks.slice(0, 4)));
+      // 5: every name hoverable, its meaning at the step; click pins; the state panel
+      const cs = await js(`const e = document.querySelector('#trace-stream .tr-chips .tr-cs'); if (!e) return null; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return [b.x + 3, b.y + b.height / 2, e.dataset.cs]`)
+        ?? await js(`const e = document.querySelector('#trace-now .tr-cs'); e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return [b.x + 3, b.y + b.height / 2, e.dataset.cs]`);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cs[0], y: cs[1] });
+      const tip = await until(`const t = document.querySelector('.tr-tip'); return t && !t.hidden && /meaning at /.test(t.textContent)`, 60000);
+      check('a name in the trace shows its meaning at the step', tip, `${cs[2]}: ${await js(`return document.querySelector('.tr-tip')?.textContent.slice(0, 160)`)}`);
+      await mouse(cs[0], cs[1]);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      await sleep(400);
+      check('a click pins the card', await js(`const t = document.querySelector('.tr-tip'); return !t.hidden && t.dataset.pin === '1'`));
+      await shot('trv5-pinned');
+      await js(`document.querySelector('#trace-now').click()`);
+      // a name the step's input does not hold: one query of the run stopped at the step
+      const head = await js(`const e = document.querySelector('#trace-now .tr-now-head .tr-cs'); const b = e.getBoundingClientRect(); return [b.x + 3, b.y + b.height / 2, e.dataset.cs, !!document.querySelector('.tr-means li[data-n="' + CSS.escape(e.dataset.cs) + '"]')]`);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: head[0], y: head[1] });
+      const lazy = await until(`const t = document.querySelector('.tr-tip'); return t && !t.hidden && t.textContent.includes(${JSON.stringify(head[2])}) && /meaning at step/.test(t.textContent)`, 120000);
+      check('a name not queued at the step: its meaning from the run stopped there', lazy && !head[3], `${head[2]}: ${await js(`return document.querySelector('.tr-tip')?.textContent.slice(0, 120)`)}`);
+      await shot('trv5-lazy');
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      await js(`const s = document.querySelector('.tr-state'); s.open = true; s.scrollIntoView()`);
+      await js(`document.querySelector('.tr-allnames').click()`);
+      const every = await until(`return document.querySelectorAll('.tr-every li[data-n]').length > 100`, 120000);
+      await js(`const f = document.querySelector('.tr-filter'); f.value = 'twice'; f.dispatchEvent(new Event('input', { bubbles: true }))`);
+      const filtered = await js(`return [...document.querySelectorAll('.tr-every li[data-n]:not([hidden])')].map((l) => l.dataset.n)`);
+      check('state panel: all names at the step, searchable', every && filtered.includes('\\twice') && filtered.every((n) => /twice/.test(n)), JSON.stringify(filtered.slice(0, 5)));
+      await shot('trv5-state');
+      await setLib(false);
+      await js(`document.getElementById('trace-close').click()`);
+      // 6: an undecided \\ifnum: the joined view and each fork, the stepper following
+      await traceOf('\\pick\\relax', 2);
+      const forks = await js(`return [...document.querySelectorAll('#trace-fork option')].map((o) => o.value)`);
+      const n0 = await js(`return document.getElementById('trace-total').textContent`);
+      await js(`const s = document.getElementById('trace-fork'); s.value = s.options[1].value; s.dispatchEvent(new Event('change', { bubbles: true }))`);
+      await until(`return !!document.querySelector('#trace-body .tr-now')`, 5000);
+      const n1 = await js(`return [document.getElementById('trace-total').textContent, document.getElementById('trace-fork').value]`);
+      check('forks: joined plus each fork, the stepper follows', forks.length >= 3 && forks[0] === '' && n1[1] === forks[1] && n1[0] !== n0, JSON.stringify([forks, n0, n1]));
+      await js(`document.querySelector('#trace-body .tr-all').open = true; document.querySelectorAll('#trace-body .tr-tree details').forEach((d) => d.open = true)`);
+      await sleep(300);
+      await shot('trv6-fork');
+      await js(`const s = document.getElementById('trace-fork'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true }))`);
+      await until(`return !!document.querySelector('#trace-body .tr-now')`, 5000);
+      await js(`document.querySelector('#trace-body .tr-all').open = true; document.querySelectorAll('#trace-body .tr-tree details').forEach((d) => d.open = true)`);
+      await sleep(300);
+      await shot('trv6-joined');
+      await js(`document.getElementById('trace-close').click()`);
+      // 8: a missing package does not end the run before the traced call
+      await open('trmiss', '\\documentclass{article}\n\\usepackage{nosuchpackage}\n\\begin{document}\nHi\n\\end{document}\n');
+      await traceOf('\\begin{document}', 3);
+      const miss = await js(`return [document.getElementById('trace-total').textContent, ${body}.textContent.slice(0, 120)]`);
+      check('trace with a missing package has steps', /\d+ steps?/.test(miss[0]) && !/no step/.test(miss[1]), JSON.stringify(miss));
+      await js(`document.getElementById('trace-close').click()`);
+      });
+      await section('10', async () => {
+      // 10: user macros with delimited parameters read naturally: literal text as ‹…›, no stray letters
+      await open('weird', '\\documentclass{article}\n\\def\\Weird key: #1, value: #2, magic: #3\;{#1#2#3}\n\\def\\WeirdMore key: #1, value: #2, magic: #3\;super #4\; {}\n\\begin{document}\n\\Weird key: a, value: b, magic: c\;\n\\end{document}\n');
+      const wp = await spot('\\Weird key', 3);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: wp[0], y: wp[1] });
+      await until(`return !!document.querySelector('.cm-tooltip-hover .hover')`, 10000);
+      const chips = await js(`return [[...document.querySelectorAll('.cm-tooltip-hover .sig .arg')].map((a) => a.textContent), document.querySelector('.cm-tooltip-hover .hover')?.textContent.slice(0, 300)]`);
+      check('hover signature of \\Weird: literal text and natural chips', chips[0].length >= 3 && chips[0].some((t) => /key/.test(t)) && !chips[0].some((t) => /^(pp|U)$/.test(t)), JSON.stringify(chips));
+      await shot('w10-weird-hover');
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      });
+      await section('examples', async () => {
+      // the examples beside pdflatex's verdict: each with the finding satex computes for it
+      await send('Page.navigate', { url: base + 'index.html' });
+      await until(`return document.querySelectorAll('.examples [role=tab]').length > 3`, 30000);
+      for (const [name, code] of [['csname.tex', 'undefined-control-sequence'], ['options.tex', 'option-clash'], ['rerun.tex', 'undefined-reference']]) {
+        const got = await js(`const t = [...document.querySelectorAll('.examples [role=tab]')].find((t) => t.textContent === '${name}'); if (!t) return null; t.click();
+          const f = document.getElementById(t.getAttribute('aria-controls')); return { codes: [...f.querySelectorAll('.ex-findings li code')].map((c) => c.textContent), pdflatex: /% pdflatex/.test(f.querySelector('pre.src').textContent) }`);
+        check(`example ${name}: pdflatex's verdict and satex's ${code}`, got?.pdflatex && got.codes.includes(code), JSON.stringify(got));
+      }
+      });
+      await section('live', async () => {
+      // the landing page's live box: no engine until it is near, then typeset text and findings, again after an edit
+      for (const [w, h, dark] of [[1440, 900, false], [1440, 900, true], [375, 800, false], [375, 800, true]]) {
+        await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: w < 500 });
+        await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: dark ? 'dark' : 'light' }] });
+        await send('Page.navigate', { url: base + 'index.html' });
+        await until(`return !!document.getElementById('live')`, 30000);
+        await sleep(800);
+        const early = await js(`return performance.getEntriesByType('resource').filter((r) => /\\.wasm|\\.bin\\.gz/.test(r.name)).length`);
+        await js(`document.getElementById('live').scrollIntoView({ block: 'start' })`);
+        const done = await until(`return /Analyzed in/.test(document.querySelector('#live .live-status').textContent)`, 120000);
+        const got = await js(`const o = document.querySelector('#live .live-ts'); return { text: o.textContent.slice(0, 120), found: o.querySelectorAll('.live-found li').length, over: document.documentElement.scrollWidth > innerWidth }`);
+        check(`live box at ${w}px${dark ? ' dark' : ''}: loads when near, typesets with findings`, !early && done && /Hello, world!/.test(got.text) && got.found > 0 && !got.over, JSON.stringify({ early, ...got }));
+        await shot(`w-live-${w}${dark ? '-dark' : ''}`);
+      }
+      await js(`const t = document.getElementById('live-src'); const i = t.value.lastIndexOf('\\\\end'); t.setRangeText('A new line -- here.\\n', i, i, 'end'); t.dispatchEvent(new Event('input'))`);
+      check('live box follows an edit', await until(`return /new line/.test(document.querySelector('#live .live-ts').textContent)`, 30000));
+      await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+      await send('Emulation.clearDeviceMetricsOverride');
+      });
+      await section('docs', async () => {
+      // documentation pages: the contents list heading names only, nothing overflows at 1440 and 1024 px
+      for (const [page, w] of [['guide.html', 1440], ['guide.html', 1024], ['wiki/domains.html', 1440], ['wiki/domains.html', 1024]]) {
+        await send('Emulation.setDeviceMetricsOverride', { width: w, height: 900, deviceScaleFactor: 1, mobile: false });
+        await send('Page.navigate', { url: base + page });
+        await until(`return document.querySelectorAll('#toc a').length > 3`, 30000);
+        const got = await js(`return { toc: [...document.querySelectorAll('#toc a')].map((a) => a.textContent), over: document.documentElement.scrollWidth > innerWidth }`);
+        check(`${page} at ${w}px: contents by heading name, no overflow`, !got.toc.some((t) => /#|: /.test(t)) && !got.over, JSON.stringify(got).slice(0, 200));
+        await shot(`w-docs-${page.replace(/\W+/g, '-')}-${w}`);
+      }
+      await send('Emulation.clearDeviceMetricsOverride');
+      });
+      await section('4', async () => {
+      // 4: the landing hero
+      for (const [w, h, name] of [[1440, 900, 'w4-hero-1440'], [375, 800, 'w4-hero-375']]) {
+        await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: w < 500 });
+        await send('Page.navigate', { url: base + 'index.html' });
+        await until(`return document.querySelectorAll('.claim-dots button').length === document.querySelectorAll('[data-knows]').length`, 30000);
+        const hero = await js(`const rot = document.querySelector('.claim-rot').getBoundingClientRect(), claim = document.querySelector('.claim').getBoundingClientRect();
+          return { dots: document.querySelectorAll('.claim-dots button').length, claims: document.querySelectorAll('[data-knows]').length, lead: !!document.querySelector('.hero .lead, .lead'), overflow: document.documentElement.scrollWidth > innerWidth, rotBelow: rot.top >= claim.top + 10, text: document.querySelector('.claim-rot .on')?.textContent }`);
+        check(`hero at ${w}px: rotating claim on its own line, dots, no overflow, no tagline`, hero.dots > 1 && hero.dots === hero.claims && !hero.lead && !hero.overflow && hero.rotBelow, JSON.stringify(hero));
+        await js(`document.querySelectorAll('.claim-dots button')[2].click()`);
+        await sleep(1000);
+        const jumped = await js(`return [...document.querySelectorAll('[data-knows]')].findIndex((k) => k.classList.contains('on'))`);
+        check(`hero at ${w}px: a dot jumps to its claim`, jumped === 2, String(jumped));
+        await shot(name);
+        await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+        await sleep(300);
+        await shot(`${name}-dark`);
+        await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
+      }
+      await send('Emulation.clearDeviceMetricsOverride');
+      });
+    };
+    if (process.env.NEW_ONLY) { await wishes(); check('no page errors', !errors.length, errors.join(' | ').slice(0, 300)); ws.close(); return; }
     check('Run sits in the console bar', await js(`return !!document.getElementById('play-run').closest('.ask')`));
     check('the engine selector shows its name only', await js(`const k = document.getElementById('play-kernel'); return k.selectedOptions[0].textContent === 'pdfTeX'`),
       await js(`return document.getElementById('play-kernel').selectedOptions[0].textContent`));
@@ -511,7 +887,7 @@ async function browser() {
     await shot('play-completion');
     check('completion usage colored by argument kind', detail, await js(`return document.querySelector('.cm-tooltip-autocomplete')?.textContent.slice(0, 120) ?? 'no completion'`));
     // the library lists the names in force and finds one; a scratch text is read in the document's state
-    await js(`const d = document.getElementById('play-library'); d.open = true; d.dispatchEvent(new Event('toggle'))`);
+    await js(`document.getElementById('lib-open').click()`);
     const listed = await until(`const s = document.getElementById('lib-search'); s.value = 'textbf'; s.dispatchEvent(new Event('input'));
       return [...document.querySelectorAll('#lib-list .cs-ref')].some((c) => c.textContent === '\\\\textbf')`, 60000);
     check('the library finds a name in force', listed, await js(`return document.getElementById('lib-list').textContent.slice(0, 160)`));
