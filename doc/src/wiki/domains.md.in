@@ -48,6 +48,29 @@ The bounded set is `OneOf` for every kind (below). Code that does not inspect th
 
 Macro bodies use the same lift as [meaning sets](#meaning-sets-what-a-control-sequence-may-mean) (`limits.meaning_set`).
 
+## Category codes
+
+Every character has one of TeX's sixteen category codes (The TeXbook, chapter 7). Pages here link each "category N" to its row.
+
+| Code | Category |
+|---|---|
+| <a id="catcode-0"></a>0 | escape character |
+| <a id="catcode-1"></a>1 | begin group |
+| <a id="catcode-2"></a>2 | end group |
+| <a id="catcode-3"></a>3 | math shift |
+| <a id="catcode-4"></a>4 | alignment tab |
+| <a id="catcode-5"></a>5 | end of line |
+| <a id="catcode-6"></a>6 | parameter |
+| <a id="catcode-7"></a>7 | superscript |
+| <a id="catcode-8"></a>8 | subscript |
+| <a id="catcode-9"></a>9 | ignored |
+| <a id="catcode-10"></a>10 | space |
+| <a id="catcode-11"></a>11 | letter |
+| <a id="catcode-12"></a>12 | other character |
+| <a id="catcode-13"></a>13 | active character |
+| <a id="catcode-14"></a>14 | comment |
+| <a id="catcode-15"></a>15 | invalid |
+
 ## Character codes as sets
 
 Code table entries (`\lccode`, `\uccode`, `\sfcode`, `\mathcode`, `\delcode`, tex.web § 1232) hold a `Value`, joined like registers.
