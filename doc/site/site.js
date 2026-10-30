@@ -436,6 +436,22 @@
   addEventListener('hashchange', unfold);
   unfold();
 
+  // The landing page: the claim turns through what a run knows; tab rows show one case at a time.
+  const knows = [...document.querySelectorAll('[data-knows]')];
+  if (knows.length > 1 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    let shown = 0;
+    setInterval(() => { knows[shown].hidden = true; shown = (shown + 1) % knows.length; knows[shown].hidden = false; }, 3200);
+  }
+  for (const [tabs, key] of [['.contrast', 'case'], ['.install-tabs', 'way']]) {
+    const row = document.querySelector(tabs);
+    row?.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      for (const t of row.querySelectorAll('button')) t.setAttribute('aria-selected', String(t === b));
+      for (const c of row.parentElement.querySelectorAll(`[data-${key}]:not(button)`)) c.hidden = c.dataset[key] !== b.dataset[key];
+    });
+  }
+
   // The headings of a documentation page, the one in view marked; a heading
   // in a folded group (the lint rules' categories) comes under the group's name.
   const toc = document.getElementById('toc');
