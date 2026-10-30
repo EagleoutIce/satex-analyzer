@@ -263,11 +263,55 @@
   const ask = (msg, transfer = []) => {
     const asked = line_.then(() => new Promise((resolve, reject) => {
       waiting[REPLY[msg.type]] = { resolve, reject };
-      worker.postMessage(msg, transfer);
+      post(msg, transfer);
     }));
     line_ = asked.catch(() => {});
     return asked;
   };
+  // Console commands run in a worker of their own, so the language server never waits on one. It gets
+  // the same kernel, bundles and files: each such message goes to both, replayed in order when it starts.
+  const MIRROR = new Set(['init', 'bundle', 'bundles']);
+  const mirrored = [], runnerFiles = { dir: '', files: {} };
+  let runner = null, mirrorable = true;
+  function post(msg, transfer = []) {
+    // a file:// page hands its buffers over, so a second worker cannot get them: commands share the first
+    if (msg.given) mirrorable = false;
+    if (MIRROR.has(msg.type)) mirrored.push(msg);
+    // the project's files as they are now, not every edit that made them
+    if (msg.type === 'project') {
+      if (msg.replace) runnerFiles.files = {};
+      runnerFiles.dir = msg.dir;
+      Object.assign(runnerFiles.files, msg.files ?? {});
+      for (const n of msg.removed ?? []) delete runnerFiles.files[n];
+    }
+    if (MIRROR.has(msg.type) || msg.type === 'project') runner?.send(msg);
+    worker.postMessage(msg, transfer);
+  }
+  function startRunner() {
+    const w = new Worker(URL.createObjectURL(new Blob([manifest.worker], { type: 'text/javascript' })));
+    const replies = {};
+    let chain = Promise.resolve();
+    w.onmessage = ({ data }) => (data.type === 'error' ? replies[REPLY[data.of]]?.reject(new Error(data.message.split('\n')[0])) : replies[data.type]?.resolve(data));
+    // one message at a time, as the first worker gets them through `ask`: the next waits for this one's reply
+    const send = (msg) => {
+      const done = chain.then(() => new Promise((resolve, reject) => {
+        const reply = REPLY[msg.type];
+        if (reply) replies[reply] = { resolve, reject }; else resolve(null);
+        w.postMessage(msg);
+      }));
+      chain = done.catch(() => {});
+      return done;
+    };
+    for (const msg of mirrored) send(msg);
+    send({ type: 'project', dir: runnerFiles.dir, files: runnerFiles.files, replace: true });
+    return { send };
+  }
+  /** A console command: in the second worker where it can be, else in line with the first one's work. */
+  function runCommand(msg) {
+    if (!mirrorable) return ask(msg);
+    runner ??= startRunner();
+    return runner.send(msg);
+  }
 
   // ---------------------------------------------------------------- language server
 
@@ -334,7 +378,7 @@
     state.texts[state.file] = editor.text();
     if (data(state.file) && synced !== version) {
       synced = version;
-      worker.postMessage({ type: 'project', dir: state.dir, files: { [state.file]: new TextEncoder().encode(editor.text()) } });
+      post({ type: 'project', dir: state.dir, files: { [state.file]: new TextEncoder().encode(editor.text()) } });
       return true;
     }
     if (synced === version || !opened.has(uri())) return false;
@@ -1464,7 +1508,7 @@
     delete status.dataset.done;
     cmd.textContent = `satex ${words(args.value).filter((x) => x !== 'satex').join(' ')}`;
     try {
-      const data = await ask({ type: 'run', args: a, edits: edits(), cwd: state.dir });
+      const data = await runCommand({ type: 'run', args: a, edits: edits(), cwd: state.dir });
       let stats = '', summary = '';
       const raw = data.lines.map(([kind, text]) => {
         if (kind === 'out') { if (/\d+ errors?, \d+ warnings?/.test(plain(text))) summary = plain(text).trim(); return ansi(text); }
@@ -1634,7 +1678,7 @@
   }
   const encode = (text) => new TextEncoder().encode(text);
   /** The project's texts into the worker's file system, which a new language server boots from. */
-  const store = (names = state.files, removed = []) => worker.postMessage({ type: 'project', dir: state.dir, removed,
+  const store = (names = state.files, removed = []) => post({ type: 'project', dir: state.dir, removed,
     files: Object.fromEntries(names.filter((n) => n in state.texts && !(n in state.ro)).map((n) => [n, encode(state.texts[n])])) });
   const OPEN_AT_START = 16;
   // The engine follows the root: a `% !TEX program =` comment or a package only XeTeX has, else pdfTeX
@@ -2218,7 +2262,7 @@
     const first = root in texts ? root : found[0];
     manualKernel = false;
     Object.assign(state, { dir: '/work/upload', texts, root: first, file: first, open: [first], files: Object.keys(texts), example: null, upload: true, ro: {} });
-    worker.postMessage({ type: 'project', dir: state.dir, files, replace: true });
+    post({ type: 'project', dir: state.dir, files, replace: true });
     redraw();
     editor.set(texts[state.file]);
     history.replaceState(null, '', location.pathname);
@@ -2233,7 +2277,7 @@
     const texts = Object.entries(files).filter(([n]) => TEXT.test(n)).map(([n, d]) => [n, decoder.decode(d)]);
     Object.assign(state.texts, Object.fromEntries(texts));
     for (const [n] of texts) if (!state.files.includes(n)) state.files.push(n);
-    worker.postMessage({ type: 'project', dir: state.dir, files });
+    post({ type: 'project', dir: state.dir, files });
     if (texts.length) choose(texts[0][0]); else redraw();
     analyze();
     const n = Object.keys(files).length;

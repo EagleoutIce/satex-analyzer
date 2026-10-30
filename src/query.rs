@@ -468,6 +468,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let mut keys: std::collections::VecDeque<(&str, &str)> = Default::default();
     let mut next_key: std::collections::HashMap<FileId, usize> = Default::default();
     let glyphs = glyphs(analysis);
+    let mut boxes = drawn_boxes(analysis).into_iter().peekable();
     for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
         let site = Span {
             file: text.site.get(i).map_or(spot.span.file, |s| s.file),
@@ -487,6 +488,12 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             }
         }
         next_key.insert(site.file, upto);
+        // A picture or graphic the document set before this character.
+        while let Some((_, label)) =
+            boxes.next_if(|(at, _)| (at.file, at.line, at.col) < (site.file, site.line, site.col))
+        {
+            line.push_str(&note(&format!("▢ {label}")));
+        }
         let arm = arms.next_if(|a| a.0 as usize <= i).filter(|a| a.0 as usize == i);
         let boxed = !on_page[i]
             && spot
@@ -538,6 +545,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         }
     }
     close(&mut line, &mut choice, &mut causes);
+    for (_, label) in boxes {
+        line.push_str(&note(&format!("▢ {label}")));
+    }
     for &(_, rule) in rules {
         line.push_str(&note(rule.glyph()));
     }
@@ -623,6 +633,43 @@ enum Cause {
 
 /// A character as typeset text: satex's private-use sentinels become their
 /// public notation or vanish.
+/// What the document's own files set that holds no character the run saw:
+/// an environment with none between its `\begin` and `\end` (a
+/// `tikzpicture`), a graphic. Each where it begins, in reading order.
+fn drawn_boxes(analysis: &Analysis) -> Vec<(Span, String)> {
+    let text = &analysis.facts.text;
+    let mut sites: Vec<(FileId, u32, u32)> = text.site.iter().map(|s| (s.file, s.line, s.col)).collect();
+    sites.sort_unstable();
+    let empty = |from: Span, to: Span| {
+        let i = sites.partition_point(|s| *s < (from.file, from.line, from.col));
+        sites.get(i).is_none_or(|s| *s > (to.file, to.line, to.col))
+    };
+    let mut out = Vec::new();
+    let mut open: Vec<(&str, Span)> = Vec::new();
+    for o in analysis.facts.occurrences.iter().filter(|o| origin(analysis, o.span.file) == "document") {
+        match o.kind {
+            OccKind::BeginEnvironment => open.push((o.key.as_str(), o.span)),
+            OccKind::EndEnvironment => {
+                if let Some(k) = open.iter().rposition(|(name, _)| *name == o.key) {
+                    let (name, from) = open.remove(k);
+                    if from.file == o.span.file && empty(from, o.span) {
+                        // An empty one holding others (a figure of one picture) stands for them.
+                        let key = |s: Span| (s.file, s.line, s.col);
+                        out.retain(|(f, _, t): &(Span, String, Span)| !(key(*f) > key(from) && key(*t) < key(o.span)));
+                        out.push((from, name.to_string(), o.span));
+                    }
+                }
+            }
+            OccKind::Graphics => out.push((o.span, o.key.clone(), o.span)),
+            _ => {}
+        }
+    }
+    let mut out: Vec<(Span, String)> = out.into_iter().map(|(f, name, _)| (f, name)).collect();
+    out.sort_by_key(|(s, _)| (s.file, s.line, s.col));
+    out.dedup();
+    out
+}
+
 /// Each character as set: one a font's ligature program joins to the one
 /// before (tex.web § 1035) is empty, and that one shows the ligature, as
 /// TeX's text conventions write it in Unicode (`--` an en dash).
