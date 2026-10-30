@@ -439,8 +439,15 @@
   // The landing page: the claim turns through what a run knows; tab rows show one case at a time.
   const knows = [...document.querySelectorAll('[data-knows]')];
   if (knows.length > 1 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    // a cross-fade: the one leaving slides up while the next slides in from below
     let shown = 0;
-    setInterval(() => { knows[shown].hidden = true; shown = (shown + 1) % knows.length; knows[shown].hidden = false; }, 3200);
+    setInterval(() => {
+      const [out, next] = [knows[shown], knows[(shown = (shown + 1) % knows.length)]];
+      out.classList.replace('on', 'off');
+      next.classList.remove('off');
+      requestAnimationFrame(() => next.classList.add('on'));
+      setTimeout(() => out.classList.remove('off'), 800);
+    }, 3600);
   }
   for (const [tabs, key] of [['.contrast', 'case'], ['.install-tabs', 'way']]) {
     const row = document.querySelector(tabs);

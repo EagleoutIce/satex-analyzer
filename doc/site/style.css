@@ -746,9 +746,9 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .lib-try button { justify-self: start; } .lib-found { margin: .3rem 0; padding-left: 1rem; font-size: .78rem; } .lib-steps { font-size: .78rem; }
 /* the landing page: open bands instead of boxes, a rotating claim, tabbed contrasts */
 .claim { margin: .2rem auto 1rem; max-width: 46rem; font-size: 1.15rem; text-align: center; color: var(--fg); }
-.claim-rot { display: inline-grid; } .claim-rot > span { grid-area: 1 / 1; color: var(--accent); animation: knows-in .5s var(--ease); } .claim-rot > span[hidden] { display: none; }
-@keyframes knows-in { from { opacity: 0; transform: translateY(.4rem); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .claim-rot > span { animation: none; } }
+.claim-rot { display: inline-grid; text-align: left; } .claim-rot > span { grid-area: 1 / 1; color: var(--accent); opacity: 0; transform: translateY(.45em); transition: opacity .7s var(--ease), transform .7s var(--ease); }
+.claim-rot > span.on { opacity: 1; transform: none; } .claim-rot > span.off { transform: translateY(-.45em); }
+@media (prefers-reduced-motion: reduce) { .claim-rot > span { transition: none; } }
 .band { margin: 0; padding: 2.4rem clamp(0rem, 3vw, 2rem) 2rem; border-top: 1px solid var(--border); }
 .band.alt { background: color-mix(in srgb, var(--accent) 4%, transparent); border-radius: 18px; border-top-color: transparent; }
 .band h2 { font-size: 1.6rem; margin: 0 0 .3rem; letter-spacing: -.01em; } .band .sub { margin: 0 0 1.2rem; max-width: 52rem; color: var(--muted); } .small { font-size: .8rem; }
