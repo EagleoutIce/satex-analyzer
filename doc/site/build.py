@@ -367,12 +367,12 @@ def bundle(satex, work):
 
     # The listed packages go beside the examples; the packages an example reads besides go after.
     listed_names = installed(package_names())
-    take([(kernel, flags, doc) for kernel, _, flags in KERNELS for doc in docs] + probe(listed_names), "the files the examples and packages read")
+    take([(kernel, flags, doc) for kernel, _, flags in KERNELS for doc in docs] + probe(listed_names), "[4/4] files read by examples and packages")
     more = installed(list(dict.fromkeys(sorted(f"{p.stem}.cls" if p.suffix == ".cls" else p.stem
                                                for (_, it), paths in list(reads.items()) if it in {d.name for d in docs}
                                                for p in paths if p.suffix in (".sty", ".cls")))))
     more = [n for n in more if n not in listed_names]
-    take(probe(more), "the files the packages the examples load read")
+    take(probe(more), "[4/4] files read by their packages")
     every = listed_names + more
     for kernel, names in absent.items():
         print(f"playground: {len(names)} packages not offered under {kernel} (they do not load there)", file=sys.stderr)
@@ -430,7 +430,7 @@ def bundle(satex, work):
         return archives
 
     # Per kernel, its caches and then the packages' from a copy of them: kernels need not wait for each other.
-    both = parallel("kernel and package caches", KERNELS, lambda k: (kernel_caches(k[0], k[2]), fresh(k[0], k[2])))
+    both = parallel("[4/4] kernel and package caches", KERNELS, lambda k: (kernel_caches(k[0], k[2]), fresh(k[0], k[2])))
     archives = [a for a, _ in both]
     ran = {k: r for (k, _, _), (_, r) in zip(KERNELS, both)}
     tables, have, names = [], set(), {d.name for d in docs}
@@ -661,7 +661,7 @@ def examples(satex, work, project):
             f'<div class="ex-side"><div class="ex-findings">{found}</div>'
             f'<div class="ex-explain"><h4>Explain <code class="xname"></code></h4><div class="xbody"><p class="muted">Hover a command.</p></div></div></div>\n'
             f'<script type="application/json" class="ex-data">{data}</script></figure>')
-    tabs, panels = zip(*parallel("the examples", list(enumerate(roots(EXAMPLES))), one))
+    tabs, panels = zip(*parallel("[4/4] examples", list(enumerate(roots(EXAMPLES))), one))
     return f'<div class="tabs" role="tablist">{"".join(tabs)}</div>' + "\n".join(panels)
 
 
