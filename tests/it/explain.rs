@@ -450,14 +450,14 @@ fn parameter_texts_are_learned_from_what_fails_to_match() {
                 r"\Weird key: {1}, value: {2}, magic: {3}\;super {4}\; ",
                 r"‹key: ›u{, value: }u{, magic: }u{\;super }u{\; }",
             ),
-            ("lead", r"\lead x{1}", "xm"),
+            ("lead", r"\lead x{1}", "‹x›m"),
             ("infix", r"\infix{1}-{2}", "u{-}m"),
             ("trail", r"\trail{1}.", "u{.}"),
             ("ld", r"\ld{1}\par ", r"u{\par }"),
             ("od", r"\od{1};", "u{;}"),
-            ("pd", r"\pd<{1}>", "<u{>}"),
-            ("ctrlw", r"\ctrlw\foo {1}", r"\foo m"),
-            ("ctrls", r"\ctrls\;{1}", r"\;m"),
+            ("pd", r"\pd<{1}>", "‹<›u{>}"),
+            ("ctrlw", r"\ctrlw\foo {1}", r"‹\foo ›m"),
+            ("ctrls", r"\ctrls\;{1}", r"‹\;›m"),
         ],
     );
 }
