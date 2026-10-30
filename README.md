@@ -114,6 +114,12 @@ Input:
       --no-classes
           Do not load the document class
 
+      --inject <TEXT>
+          Text read at `--at` as if it stood there in the file, such as `\mymacro{x}`: every command then sees what it does in the state the document has there. The file on disk is not changed
+
+      --at <LINE[:COL]>
+          Where `--inject` puts its text, `[FILE:]LINE[:COL]`; the main file without FILE, the start of the line without COL
+
 Limits:
       --max-steps <N>
           Stop the interpreter after this many expansion steps
@@ -469,13 +475,6 @@ offers  amsmath    15     alignedleftspaceno, alignedleftspace…           amsm
 
 ```text
 $ satex query options -f samples/paper.tex --for itemize
-key           default  package         file                
-expand        true     gettitlestring  gettitlestring.sty  @ gettitlestring.sty:159:20
-append        @VOID@   epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:513:20
-disable       true     epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:242:22
-enable        true     epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:243:31
-outdir                 epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:238:24
-… 5 more lines omitted
 ```
 
 </details>

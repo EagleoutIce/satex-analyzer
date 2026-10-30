@@ -124,6 +124,7 @@ fn bin() -> String {
 
 /// The file recording which installation the checked-in output was generated
 /// from.
+const SCHEMA: &str = "satex.schema.json";
 const STAMP: &str = "doc/src/.installation";
 
 /// What the samples' output depends on besides satex itself: the kernel and
@@ -225,6 +226,18 @@ fn run(check: bool) -> Result<(), String> {
         }
         fs::write(dst, &generated).map_err(|e| format!("{dst}: {e}"))?;
         written.push(*dst);
+    }
+    // The schema the `# yaml-language-server: $schema=` line of a satex.yaml names.
+    let documented = fs::read_to_string("satex.yaml").map_err(|e| format!("satex.yaml: {e}"))?;
+    let schema = serde_json::to_string_pretty(&satex::config::schema(&documented)).map_err(|e| e.to_string())? + "\n";
+    if fs::read_to_string(SCHEMA).unwrap_or_default() != schema {
+        match check {
+            true => stale.push(SCHEMA),
+            false => {
+                fs::write(SCHEMA, &schema).map_err(|e| format!("{SCHEMA}: {e}"))?;
+                written.push(SCHEMA);
+            }
+        }
     }
     if check {
         return if stale.is_empty() {
