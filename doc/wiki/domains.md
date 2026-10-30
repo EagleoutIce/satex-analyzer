@@ -226,36 +226,48 @@ flowchart LR
   t11["text"]:::text
   t12["name"]:::text
   t13["definition body"]:::text
-  t14["count register"]:::register
-  t15["dimen register"]:::register
-  t16["skip register"]:::register
-  t17["muskip register"]:::register
-  t18["toks register"]:::register
-  t19["box register"]:::register
-  t20["read register"]:::register
-  t21["write register"]:::register
-  t22["counter"]:::register
-  t23["dimen name"]:::register
-  t24["skip name"]:::register
-  t25["muskip name"]:::register
-  t26["toks name"]:::register
-  t27["box name"]:::register
-  t28["read name"]:::register
-  t29["write name"]:::register
-  t30["key"]:::key
-  t31["label"]:::key
-  t32["citation key"]:::key
-  t33["option key"]:::key
-  t34["environment name"]:::key
-  t35["file"]:::file
-  t36["TeX file (.tex)"]:::file
-  t37["package (.sty)"]:::file
-  t38["class (.cls)"]:::file
-  t39["bibliography database (.bib)"]:::file
-  t40["bibliography style (.bst)"]:::file
-  t41["biblatex bibliography style (.bbx)"]:::file
-  t42["biblatex citation style (.cbx)"]:::file
-  t43["graphic file"]:::file
+  t14["tl variable"]:::cs
+  t15["str variable"]:::cs
+  t16["clist variable"]:::cs
+  t17["seq variable"]:::cs
+  t18["prop variable"]:::cs
+  t19["fp variable"]:::cs
+  t20["bool variable"]:::cs
+  t21["regex variable"]:::cs
+  t22["coffin variable"]:::cs
+  t23["flag variable"]:::cs
+  t24["intarray variable"]:::cs
+  t25["cctab variable"]:::cs
+  t26["count register"]:::register
+  t27["dimen register"]:::register
+  t28["skip register"]:::register
+  t29["muskip register"]:::register
+  t30["toks register"]:::register
+  t31["box register"]:::register
+  t32["read register"]:::register
+  t33["write register"]:::register
+  t34["counter"]:::register
+  t35["dimen name"]:::register
+  t36["skip name"]:::register
+  t37["muskip name"]:::register
+  t38["toks name"]:::register
+  t39["box name"]:::register
+  t40["read name"]:::register
+  t41["write name"]:::register
+  t42["key"]:::key
+  t43["label"]:::key
+  t44["citation key"]:::key
+  t45["option key"]:::key
+  t46["environment name"]:::key
+  t47["file"]:::file
+  t48["TeX file (.tex)"]:::file
+  t49["package (.sty)"]:::file
+  t50["class (.cls)"]:::file
+  t51["bibliography database (.bib)"]:::file
+  t52["bibliography style (.bst)"]:::file
+  t53["biblatex bibliography style (.bbx)"]:::file
+  t54["biblatex citation style (.cbx)"]:::file
+  t55["graphic file"]:::file
   t0 --> t1
   t1 --> t2
   t4 --> t3
@@ -269,36 +281,48 @@ flowchart LR
   t0 --> t11
   t11 --> t12
   t11 --> t13
-  t2 --> t14
-  t3 --> t15
-  t4 --> t16
-  t5 --> t17
-  t0 --> t18
-  t0 --> t19
-  t0 --> t20
-  t0 --> t21
-  t12 --> t22
-  t12 --> t23
-  t12 --> t24
-  t12 --> t25
-  t12 --> t26
-  t12 --> t27
-  t12 --> t28
-  t12 --> t29
-  t12 --> t30
-  t30 --> t31
-  t30 --> t32
-  t30 --> t33
-  t30 --> t34
+  t8 --> t14
+  t14 --> t15
+  t14 --> t16
+  t8 --> t17
+  t8 --> t18
+  t8 --> t19
+  t8 --> t20
+  t8 --> t21
+  t8 --> t22
+  t8 --> t23
+  t8 --> t24
+  t8 --> t25
+  t2 --> t26
+  t3 --> t27
+  t4 --> t28
+  t5 --> t29
+  t0 --> t30
+  t0 --> t31
+  t0 --> t32
+  t0 --> t33
+  t12 --> t34
   t12 --> t35
-  t35 --> t36
-  t35 --> t37
-  t35 --> t38
-  t35 --> t39
-  t35 --> t40
-  t35 --> t41
-  t35 --> t42
-  t35 --> t43
+  t12 --> t36
+  t12 --> t37
+  t12 --> t38
+  t12 --> t39
+  t12 --> t40
+  t12 --> t41
+  t12 --> t42
+  t42 --> t43
+  t42 --> t44
+  t42 --> t45
+  t42 --> t46
+  t12 --> t47
+  t47 --> t48
+  t47 --> t49
+  t47 --> t50
+  t47 --> t51
+  t47 --> t52
+  t47 --> t53
+  t47 --> t54
+  t47 --> t55
   classDef top fill:#eef0f2,stroke:#8a8f98,color:#1f2328
   classDef quantity fill:#dbeafe,stroke:#3b82f6,color:#1f2328
   classDef register fill:#ffedd5,stroke:#f97316,color:#1f2328
@@ -345,11 +369,14 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | `graphic file` | a figure, its extension decided by the run | `\includegraphics{⟨fig⟩}` | `file` |
 | `control sequence` | a control sequence an assignment defines | `\def⟨\foo⟩{}` | `any` |
 | `conditional` | a conditional `\newif` defines, `\if⟨name⟩` | `\newif⟨\ifdraft⟩` | `control sequence` |
+| `tl variable`, `seq variable`, `prop variable`, `fp variable`, `bool variable`, `regex variable`, `coffin variable`, `flag variable`, `intarray variable`, `cctab variable` | an expl3 variable, by the module of the function that made or set it in the run (`\tl_set:Nn`, `\seq_new:N`) | `\tl_set:Nn⟨\l_my_tl⟩{x}` | `control sequence` |
+| `str variable`, `clist variable` | a string or comma list, which expl3 keeps as token lists | `\str_set:Nn⟨\l_my_str⟩{x}` | `tl variable` |
 | `options` | the key list a load takes in its optional argument | `\usepackage⟨[a,b]⟩{x}` | `any` |
 | `definition body` | a definition's replacement text, code | `\def\x{⟨\kern1pt⟩}` | `text` |
 | `nothing` | no text, below every type | | every type |
 
 - **Join**: the nearest type above both (`Ty::join`). A dimen and a skip register give `glue`, a label and a citation key give `key`, a `.bib` and a `.tex` use give `file`. The lattice is a tree, so disagreeing uses never stay a set.
+- **expl3 variables.** A name a definition reads (`get_r_token`) while a module function of a variable kind runs (`\tl_…:N…`, `\seq_…:c…`) is a variable of that kind: what the run did, not the name's suffix. Register-backed kinds (`int`, `dim`, `skip`, `muskip`, `box`, `ior`/`iow`) are registers of their kind.
 - **Where types come from.** A scanner's read of the argument (`Facts::types`, joined per place). Else its role (a label is a `key`, a load a `file`, `\bibdata` a `.bib`). Else its macro's body (`roles::assigned`, [tex.web §§ 1057](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20524), [1224](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22902)): `#1` after `\penalty` is a number, `#1` heading an assignment a `register`, `#1` inside `\csname` a `name`.
 - **Wrappers** inherit the types of arguments they hand on whole.
 - **Use.** Types order what an editor offers. They add no narrowing to the run: the scanners already read into the [value domains](#value-what-a-control-sequence-or-register-holds).
@@ -368,8 +395,8 @@ A character whose category is not pinned keeps the set of categories it may have
 | unknown text | a `\write` to a stream number not pinned adds a line of unknown text to every open file |
 | a set of texts | paths that wrote it differently, each distinct text kept, up to `limits.meaning_set`. A read parts the path per text. |
 
-- **Join past the bound** (`join_written`): lines align on what they set (command and first argument, a longest common subsequence). Equal lines stay. Paired lines keep their common start and end around one unknown character. A stretch between of unequal length is one unknown line. An unknown line absorbs the one before it, so joins settle.
-- **The build's files** (`.aux`, `.toc`, `.bbl`, …) are the run's own, kept in an overlay. The build reruns until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`). A changed file counts only when the run read or looked for it. The first run reads none of them, so the second run changing lines is expected. A file in which a later rerun changed an existing line again is widened: each text a later run writes joins into the one it shares the most lines with (`widen_text`), so the number of texts does not grow. Files an engine left on disk are read only with `load.build_files`.
+- **Join past the bound** (`either_text`): past `limits.meaning_set` texts, the nearest two join (`join_written`): first two whose lines set the same things in the same order, so they pair line by line, then two sharing the most lines (`nearness`). Texts of another shape stay apart. Lines align on what they set (command and first argument, a longest common subsequence). Equal lines stay. Paired lines keep their common start and end around one unknown character. Lines that differ on both sides of a brace, with the same braces, keep them: each part between braces joins on its own (a label's page and value, `{2}{\z@}` against `{3}{\@ne}`, stay two braced parts). A stretch between of unequal length is one unknown line. An unknown line absorbs the one before it, so joins settle.
+- **The build's files** (`.aux`, `.toc`, `.bbl`, …) are the run's own, kept in an overlay. The build reruns until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`). A changed file counts only when the run read or looked for it. The first run reads none of them, so the second run changing lines is expected. A file in which a later rerun changed an existing line again is widened: each text a later run writes joins into its nearest (`widen_text`, `nearness`), so the number of texts does not grow. Files an engine left on disk are read only with `load.build_files`.
 - **Reads** see the run's files first ([§ 537](Challenges#11-a-document-is-a-fixpoint-computation)), then the disk. A file neither written nor on disk is absent ([§ 1275](Challenges#11-a-document-is-a-fixpoint-computation)).
 - **`\openin` streams** hold the lines each has left. Paths that differ in a stream leave it unknown, and `\ifeof` is undecided. A stream number in an interval parts the path per stream ([§ 436](Challenges#11-a-document-is-a-fixpoint-computation)).
 
@@ -456,6 +483,7 @@ Arms of an undecided conditional that reach its `\fi` go on as one path (`fi_mar
 | `limits.choices` per command | the conditional is widened: both arms skipped, one unknown token in their place (`undecided-condition`) |
 | `limits.alike` waiting paths at one place | paths whose input differs only in text join |
 | `limits.paths` | the two furthest back are cut to their shared input levels and joined |
+| fork backstop at a hot site | no new arm, except for paths a look-ahead parted that cannot be joined (other input): they get their arms, since following one would be unsound; under a cut one is followed, the cut summarizes the region |
 
 Paths join between two commands where they stand alike: same input, conditionals, groups and scans (`absorb`). Measured on a TikZ node with unknown height, `limits.alike` 8 takes 2.8k forks, 16 takes 5.1k.
 
