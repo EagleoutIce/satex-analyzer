@@ -241,6 +241,7 @@ warning   correctness  duplicate-bibliography-entry     the same key is declared
 warning   correctness  duplicate-label                  the same label is defined twice                                 
 warning   correctness  environment-mismatch             `\end` names an environment other than the one that is open     
 warning   correctness  expl-syntax-left-on              `\ExplSyntaxOn` is never turned off                             
+warning   correctness  expl3-constant-set               an expl3 constant is set after it was declared                  
 warning   correctness  expl3-signature-mismatch         an expl3 function takes other arguments than its name says      
 warning   correctness  ignored-verbatim-tail            text stands on the line that closes a verbatim body and never…  
 warning   correctness  math-script-braces               `^` and `_` take one token, so what follows needs braces        
@@ -263,6 +264,8 @@ warning   style        command-terminated-space         a control word ate the s
 warning   style        dimension-times                  the letter x stands between two numbers where a multiplicatio…  
 warning   style        double-space                     two interword spaces reached the page, one of them from a tie   
 warning   style        ellipsis-dots                    three periods set three periods, not an ellipsis                
+warning   style        expl3-scope                      an expl3 variable's scope prefix disagrees with how the run a…  
+warning   style        expl3-type                       an expl3 variable's type suffix disagrees with the functions …  
 warning   style        group-local-definition           a definition is made inside a group and lost when it closes     
 warning   style        math-operator-name               an operator name is set in math italic instead of by its comm…  
 warning   style        missing-italic-correction        a slanted letter runs into upright text with no `\/` between …  
@@ -475,6 +478,13 @@ offers  amsmath    15     alignedleftspaceno, alignedleftspace…           amsm
 
 ```text
 $ satex query options -f samples/paper.tex --for itemize
+key           default  package         file                
+expand        true     gettitlestring  gettitlestring.sty  @ gettitlestring.sty:159:20
+append        @VOID@   epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:513:20
+disable       true     epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:242:22
+enable        true     epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:243:31
+outdir                 epstopdf-base   epstopdf-base.sty   @ epstopdf-base.sty:238:24
+… 5 more lines omitted
 ```
 
 </details>
