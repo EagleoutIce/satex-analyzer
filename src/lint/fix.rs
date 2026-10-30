@@ -849,6 +849,7 @@ impl<'a> Edits<'a> {
         if alternative.chars().any(|c| cats.get(c) != Catcode::Letter) {
             return None;
         }
+        let mut prefixes = String::new();
         let start = match role {
             CsnameRole::Use => Pos::of(span),
             CsnameRole::Define { .. } | CsnameRole::Let => {
@@ -860,24 +861,41 @@ impl<'a> Edits<'a> {
                     }
                     lexemes.push((scan.name(&lexeme).map(str::to_string), lexeme.start));
                 }
-                let [.., (Some(expandafter), at), (Some(definer), _)] = lexemes.as_slice() else { return None };
-                if self.meaning(expandafter) != Some(Primitive::ExpandAfter) {
-                    return None;
-                }
+                let Some((Some(definer), _)) = lexemes.pop() else { return None };
                 let expected = match role {
                     CsnameRole::Define { global, expand } => Primitive::Def { global, expand },
                     _ => Primitive::Let { global: false, future: false },
                 };
-                if self.meaning(definer) != Some(expected) {
+                if self.meaning(&definer) != Some(expected) {
                     return None;
                 }
-                // A prefix before `\expandafter` would apply to the new command.
-                if let [.., (Some(prefix), _), _, _] = lexemes.as_slice()
-                    && matches!(self.meaning(prefix), Some(Primitive::Prefix(_)))
+                // `\expandafter` reaches past each prefix to the definer
+                // (`\expandafter\protected\expandafter\def`), or a prefix
+                // stands first (`\long\expandafter\def`): TeX expands after
+                // a prefix (tex.web § 1211), so the prefixes go before the
+                // replacement as they stand. `\global` is in it already.
+                let meaning = |k: usize| lexemes[k].0.as_deref().and_then(|n| self.meaning(n));
+                let mut i = lexemes.len().checked_sub(1).filter(|&k| meaning(k) == Some(Primitive::ExpandAfter))?;
+                let mut chain = Vec::new();
+                while let Some(k) = i.checked_sub(1)
+                    && let Some(Primitive::Prefix(prefix)) = meaning(k)
                 {
+                    let global = matches!(role, CsnameRole::Define { global: true, .. });
+                    if !(global && prefix == crate::builtins::Prefix::Global) {
+                        chain.push(format!("\\{}", lexemes[k].0.as_deref().unwrap_or_default()));
+                    }
+                    i = k;
+                    if let Some(k) = i.checked_sub(1).filter(|&k| meaning(k) == Some(Primitive::ExpandAfter)) {
+                        i = k;
+                    }
+                }
+                // An `\expandafter` before the chain would reach into it.
+                if i.checked_sub(1).is_some_and(|k| meaning(k) == Some(Primitive::ExpandAfter)) {
                     return None;
                 }
-                *at
+                chain.reverse();
+                prefixes = chain.concat();
+                lexemes[i].1
             }
             _ => return None,
         };
@@ -910,7 +928,7 @@ impl<'a> Edits<'a> {
         if role == CsnameRole::Let && scan.peek().is_some_and(|l| l.tok == Tok::Chr('=', Catcode::Other)) {
             return None;
         }
-        let mut replacement = format!("\\{alternative}{{{inner}}}");
+        let mut replacement = format!("{prefixes}\\{alternative}{{{inner}}}");
         // TeX skipped the spaces after `\endcsname`.  After `}` they would count.
         let end = match scan.peek() {
             Some(next) if next.start.line == endcsname.end.line => next.start,
