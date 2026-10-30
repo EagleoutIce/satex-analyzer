@@ -384,10 +384,15 @@
   /** After an analysis, the command list the server would offer after a `\\`, asked once at a command
    * of the file: the first `\\` typed then completes at once. */
   function prefetchCommands() {
-    const text = editor?.text() ?? '', at = text.search(/\\[A-Za-z@]/);
-    if (at < 0 || commandItems.has(`${uri()}|\\`)) return;
-    const before = text.slice(0, at + 1).split('\n');
-    completions({ line: before.length - 1, character: before.at(-1).length }, before.at(-1).length, '\\');
+    // every name in force: what a `\\` completes from at once, beyond the server's best few hundred
+    namesInForce(false).then((records) => scopeItems.set(uri(), records.map((r) => ({ label: r.name.replace(/^\\/, ''), detail: r.effective ?? r.name, kind: 3 }))));
+    const text = editor?.text() ?? '';
+    for (const [re, place, skip] of [[/\\[A-Za-z@]/, '\\', 1], [/\\begin\{/, 'begin', 7]]) {
+      const at = text.search(re);
+      if (at < 0 || commandItems.has(`${uri()}|${place}`)) continue;
+      const before = text.slice(0, at + skip).split('\n');
+      completions({ line: before.length - 1, character: before.at(-1).length }, before.at(-1).length, place);
+    }
   }
   /** Sends the buffer to the server unless it already has it: the text
    * only, so what is asked meanwhile is answered from the last analysis. */
@@ -441,9 +446,20 @@
   let lastItems = null, lastWord = '';
   /** What the server last offered in each kind of place, by file (after a `\\`, in `\begin{`, `\cite{`, …):
    * what the same kind of place completes from at once. */
-  const commandItems = new Map();
+  const commandItems = new Map(), scopeItems = new Map();
+  /** The names in force at the end of the root's last run (`scope`), asked once per analysis. */
+  const scopeAsked = new Map();
+  function namesInForce(all) {
+    const key = `${state.root ?? state.file}|${all}|${analyzedVersion}`;
+    if (!scopeAsked.has(key)) {
+      if (scopeAsked.size > 4) scopeAsked.clear();
+      const request = { file: path(state.root ?? state.file), queries: [{ type: 'scope', all }] };
+      scopeAsked.set(key, lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).then((r) => r?.[0]?.records ?? []).catch(() => []));
+    }
+    return scopeAsked.get(key);
+  }
   /** How long a completion waits for the server before the kept commands answer (the server's answer still replaces them). */
-  const INSTANT_MS = 120;
+  const INSTANT_MS = 50;
   function completions(position, start = position.character, place = null) {
     const k = `${uri()}|${version}|${position.line}:${position.character}`, word = `${uri()}|${position.line}:${start}`;
     if (!asked.has(k)) {
@@ -455,10 +471,13 @@
       }).catch(() => []));
     }
     if (running && lastItems && lastWord === word) return lastItems;
-    const kept = place && commandItems.get(`${uri()}|${place}`);
+    const served = place && commandItems.get(`${uri()}|${place}`), names = place === '\\' && scopeItems.get(uri());
+    const kept = names ? [...(served ?? []), ...names.filter((n) => !served?.some((i) => i.label === n.label))] : served;
     if (!kept) return asked.get(k);
-    // a run keeps the server busy for seconds: the kept commands answer now, the server's items on the next keystroke
-    return Promise.race([asked.get(k), new Promise((done) => setTimeout(() => done(kept), INSTANT_MS))]);
+    // a run keeps the server busy for seconds: the kept commands answer now, the server's items replace them when they come
+    let early = false;
+    asked.get(k).then(() => { if (early && document.querySelector('.cm-tooltip-autocomplete') && k.endsWith(`|${version}|${position.line}:${position.character}`)) editor.complete?.(); });
+    return Promise.race([asked.get(k), new Promise((done) => setTimeout(() => { early = true; done(kept); }, INSTANT_MS))]);
   }
   /** The last hover of each command, by file: shown at once while a run goes on. */
   const keptHovers = new Map();
@@ -592,7 +611,7 @@
     const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment();
     const ev = new EditorView({
       parent, doc: text,
-      extensions: [basicSetup, closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete], addToOptions: [{ position: 80, render: (c) => {
+      extensions: [basicSetup, closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
         // the detail: a usage line colored like the hover's, then where it comes from
         const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
@@ -2501,6 +2520,7 @@
             if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok) { show(m.params.uri, m.params.diagnostics); typeset(m.params.uri); } });
             continue;
           }
+          if (running > 0 && m.params.uri === uri()) continue; // intermediate: a newer text is in flight
           show(m.params.uri, m.params.diagnostics);
           typeset(m.params.uri);
           outline();
