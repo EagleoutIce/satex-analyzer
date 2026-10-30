@@ -560,30 +560,40 @@ fn lint_run(analysis: &Analysis) -> Vec<Record> {
         r.get("severity").and_then(|v| v.as_str()) == Some("error")
             || !r.get("path").and_then(|v| v.as_str()).is_some_and(written_by_run)
     });
-    let frozen: Vec<globset::GlobMatcher> = analysis
-        .settings
-        .project
-        .frozen
-        .iter()
-        .filter_map(|g| globset::Glob::new(g).ok().map(|g| g.compile_matcher()))
-        .collect();
-    // The repository a file belongs to: its nearest ancestor holding a
-    // `.git` (a directory, or the file a submodule checkout has).
-    let repository =
-        |path: &std::path::Path| path.ancestors().skip(1).find(|d| d.join(".git").exists()).map(|d| d.to_path_buf());
     let main = std::path::Path::new(analysis.file_name(analysis.main_file));
-    let main = main.canonicalize().unwrap_or_else(|_| main.to_path_buf());
-    let home = analysis.settings.project.freeze_other_repositories.then(|| repository(&main)).flatten();
-    if !frozen.is_empty() || home.is_some() {
-        out.retain(|r| {
-            let Some(path) = r.get("path").and_then(|v| v.as_str()) else { return true };
-            let path = std::path::Path::new(path);
-            let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-            let foreign = home.as_ref().is_some_and(|home| repository(&path).is_some_and(|r| &r != home));
-            !foreign && !frozen.iter().any(|g| g.is_match(&path))
-        });
-    }
+    let frozen = Frozen::new(&analysis.settings.project, &crate::paths::dir_of(main));
+    out.retain(|r| r.get("path").and_then(|v| v.as_str()).is_none_or(|p| !frozen.holds(std::path::Path::new(p))));
     suppress::apply(analysis, out)
+}
+
+/// The files a project takes as given, never its own to fix: those its
+/// `project.frozen` globs match and, with `freeze_other_repositories`,
+/// those of another repository than the directory `home`'s (a submodule,
+/// a nested clone).
+pub struct Frozen {
+    globs: Vec<globset::GlobMatcher>,
+    home: Option<std::path::PathBuf>,
+}
+
+impl Frozen {
+    pub fn new(project: &crate::config::Project, home: &std::path::Path) -> Frozen {
+        let globs =
+            project.frozen.iter().filter_map(|g| globset::Glob::new(g).ok().map(|g| g.compile_matcher())).collect();
+        let home = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+        Frozen { globs, home: project.freeze_other_repositories.then(|| repository(&home)).flatten() }
+    }
+
+    pub fn holds(&self, path: &std::path::Path) -> bool {
+        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        self.home.as_ref().is_some_and(|home| repository(&crate::paths::dir_of(&path)).is_some_and(|r| &r != home))
+            || self.globs.iter().any(|g| g.is_match(&path))
+    }
+}
+
+/// The repository a directory belongs to: it or its nearest ancestor holding
+/// a `.git` (a directory, or the file a submodule checkout has).
+fn repository(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    dir.ancestors().find(|d| d.join(".git").exists()).map(|d| d.to_path_buf())
 }
 
 /// Whether `path` is a file the run, BibTeX or makeindex writes, not the
