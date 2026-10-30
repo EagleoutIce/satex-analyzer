@@ -363,12 +363,8 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     cli.command().check_format(cli.format)?;
-    // `explain` and `scope` ask what a name means rather than what a
-    // document does, so with nothing to read — no `-f`, nothing piped, no
-    // single root found — they still have something to run: the smallest
-    // LaTeX document there is, which gives the kernel and, once
-    // `\documentclass` loads it, the class something to define `\section`
-    // and its like from.
+    // `explain` and `scope` without a document run the smallest LaTeX
+    // document, so the kernel and class still define `\section` and the like.
     let explaining = matches!(cli.command, Some(Command::Explain { .. } | Command::Scope { .. }));
     if cli.file.is_none() && cli.command().needs_source() && satex::progress::terminal(io::stdin()) {
         cli.file = input_for(&std::env::current_dir().unwrap_or_default(), explaining)?;

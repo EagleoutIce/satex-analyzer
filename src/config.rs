@@ -218,14 +218,9 @@ impl Default for Limits {
             format_steps: 9_000_000_000,
             file_depth: 64,
             expansion_depth: 512,
-            // Measured: the kernel's own helpers (`\hexnumber@` inside
-            // `\DeclareMathSymbol`, the expl3 mapping functions) re-expand one
-            // site far more often than that while the source stands still,
-            // and widening them loses every math symbol after the first few.
-            // pgfkeys runs one helper site for every key of a `\tikzset`
-            // list read in one piece, so a long option list passes 256
-            // without looping, and widening it there costs more tokens
-            // than following it.
+            // Measured: kernel helpers (`\hexnumber@`, expl3 mappings) and
+            // pgfkeys over a long `\tikzset` list re-expand one site this often
+            // without looping.
             site_expansions: 16_384,
             // Measured: the heaviest line of a long thesis takes 34-67M
             // steps (about 30 s); a stuck line costs at most 3 times this.

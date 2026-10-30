@@ -293,13 +293,8 @@ const LATEX_ALTERNATIVES: &[(&str, &str)] = &[
     ("openout", "`\\newwrite`"),
 ];
 
-// The rest of chktex's `Primitives` list has no LaTeX interface at all:
-// `\catcode`, `\closein`, `\closeout`, `\delcode`, `\expandafter` (and
-// `\noexpand`, `\relax` and the like, the same story, never listed above
-// either).  A finding for one of these could only repeat that back with
-// nothing to act on, so [`primitive_tex_command`] does not track them on its
-// own — a `latex_alternatives` entry naming one of these (even with an empty
-// value) asks for it by name, and is reported.
+// chktex's other `Primitives` (`\catcode`, `\expandafter`, …) have no LaTeX
+// alternative: reported only when `latex_alternatives` names them.
 
 /// A primitive is only worth reporting while it still means the primitive: a
 /// document that redefines `\count` as its own macro is using its own macro.

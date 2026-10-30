@@ -172,14 +172,9 @@ fn unused_package(report: &mut Report) {
         }
     }
     let of = |file: crate::tex::FileId| files.iter().filter(move |(_, f)| f.contains(&file)).map(|(p, _)| *p);
-    // A package's names: those the format did not have and whose meaning
-    // the run ends with is the one the package gave them, a scratch name it
-    // once set (`\@tempa`) not.
-    // Used is what the document's own code expands, and what the text of a
-    // macro so expanded calls, through any number of macros: the path that
-    // would expand it may be one this run did not take. What
-    // `\begin{document}` and `\end{document}` run is the packages' own
-    // setting up and hooks.
+    // A package's names: new to the format and still holding its meaning
+    // at the end. Used: what the document's code expands, transitively
+    // (`\begin{document}`'s hooks are the packages' own).
     let document =
         |kind| analysis.facts.occurrences.iter().find(|o| o.kind == kind && o.key == "document").map(|o| o.span);
     let (begin, end) =

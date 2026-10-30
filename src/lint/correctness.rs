@@ -352,17 +352,9 @@ fn unguarded_recursion(report: &mut Report) {
             continue;
         }
         let Some(mac) = &def.mac else { continue };
-        // `\newcommand\foo[1][default]{...}` (and `\DeclareRobustCommand`,
-        // `\providecommand`, `\newenvironment`) does not define `\foo` as
-        // its body: ltdefns' `\@xargdef` defines it as a dispatcher that
-        // reads the optional argument and hands off to `\foo`'s internal
-        // counterpart, `\csname\string\foo\endcsname`:
-        //   \def\foo{\@protected@testopt \foo \\foo {default}}
-        // `\foo` genuinely names itself there, but only as data handed to
-        // `\@protected@testopt` (by way of `\expandafter`, already spent by
-        // the time this body exists) — never expanded, by construction, for
-        // every optional-argument command that exists.  Only a self-name
-        // outside that one pairing is a real call to guard against.
+        // An optional-argument command's dispatcher (`\@xargdef`:
+        // `\def\foo{\@protected@testopt \foo \\foo {default}}`) names
+        // itself only as data, never as a call.
         if !observed && only_optarg_wrapper_self_reference(analysis, def.name, mac) {
             continue;
         }

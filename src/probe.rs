@@ -597,12 +597,9 @@ impl Prober<'_, '_> {
                 complete = false;
                 break;
             }
-            // An item that is there only when asked for adds exactly itself
-            // to what is consumed, and leaves the rest read as before: what
-            // a parameter text wanted further on is wanted as far further on.
-            // Or it leads elsewhere, where nothing is wanted before it ends
-            // (`\@ifnextchar[\a\b`, `\b` delimited) — unless it is the
-            // very text the plain call was refused for (`\def\a[#1]`).
+            // An optional item adds just itself to what is consumed, or leads
+            // elsewhere (`\@ifnextchar[\a\b`), unless it is what the plain
+            // call was refused for (`\def\a[#1]`).
             let at = prefix.len();
             let refused = |extra: &str| {
                 plain.demand.as_ref().is_some_and(|d| {
@@ -621,13 +618,9 @@ impl Prober<'_, '_> {
                     })
                     .map(|(_, w)| w)
             };
-            // A starred form may read other arguments than the plain one
-            // (`\@ifstar\a\b`, `\a` delimited): the star is taken, and
-            // what follows it is wanted delimited, where nothing was.
-            // A control sequence wanted here is no star or optional argument:
-            // those read as the wrong token it is refused (`\newif`).
-            // Unless the command looks for a star there itself (`\@ifstar` before
-            // `\newcommand`'s control sequence).
+            // A star form may read other arguments (`\@ifstar\a\b`). Where a
+            // control sequence is wanted (`\newif`) a star is no form, unless
+            // the command looks for one there itself.
             let looked = plain.looked_for.contains(&(at, '*'));
             let cs_here = plain.demand.is_none() && wants_cs(&plain, at);
             let star_same = !star_seen && (!cs_here || looked) && adds("*").is_some();

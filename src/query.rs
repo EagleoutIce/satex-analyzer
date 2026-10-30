@@ -1870,13 +1870,8 @@ fn inlined(analysis: &Analysis, file: FileId) -> bool {
         if file == analysis.main_file {
             return true;
         }
-        // Installation content (the kernel, and every package and class it
-        // ships) is never the document's own to inline: a file it loads
-        // deep inside the kernel's own bootstrap (l3kernel pulling in its
-        // backend, say) has nowhere precise to attribute the load to, so it
-        // falls back to wherever the main file currently is — which would
-        // otherwise read as "the main file `\input`s this" and paste a
-        // library file's raw source into the reconstruction.
+        // Installation files are never the document's to inline: a load deep
+        // in the kernel's bootstrap would otherwise be pinned on the main file.
 
         let Some(load) = loaded_by(analysis, file) else { return false };
         if matches!(load.kind, LoadKind::Package | LoadKind::Class | LoadKind::Inherited) {
@@ -4246,16 +4241,9 @@ enum KeyDialect<'a> {
 /// `\newenvironment` makes the code that reads `[…]` the environment's own
 /// macro.
 fn key_family(analysis: &Analysis, sym: Sym) -> Vec<(KeyDialect<'_>, Vec<String>)> {
-    // `within` is what dynamically enclosed a call, but a common dispatch
-    // idiom (`\@testopt`/`\@ifnextchar` re-invoking the command itself to
-    // consume `[…]`) drops the chain — the re-invoked call is recorded with
-    // no enclosing macro at all.  The *static* call graph (bodies scanned
-    // for names, already transitive) has no such gap, so it is what this
-    // walks to find what `sym`'s code can reach; what actually ran is still
-    // what answers the question, via the family argument an expansion of
-    // one of those names was recorded with.  Indexed by name once so the
-    // walk stays linear in the run rather than rescanning every expansion
-    // at every node.
+    // The static call graph, not `within`: `\@testopt`-style dispatch
+    // re-invokes the command with no enclosing macro. What ran still answers,
+    // via the family argument recorded with an expansion.
     const MAX_VISITED: usize = 4_000;
     let mut by_name: HashMap<Sym, Vec<&crate::facts::Expansion>> = HashMap::default();
     for e in &analysis.facts.expansions {

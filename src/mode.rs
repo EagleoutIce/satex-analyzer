@@ -1108,13 +1108,8 @@ impl Machine<'_> {
     fn new_graf(&mut self, span: Span, indented: bool) {
         let on_page = self.mode == Modes::VERTICAL;
         self.mode = self.mode.map(|m| if m.meets(Modes::ANY_VERTICAL) { Modes::HORIZONTAL } else { m });
-        // A new horizontal list: its tail (`\lastskip`) is empty or the
-        // indent box, neither glue, kern nor penalty. Line breaking undoes
-        // its size, so only the tail and space factor are followed.  The
-        // vertical list the lines go onto keeps its width, first height,
-        // `\boxmaxdepth` mark and `\prevdepth` in the fields a horizontal
-        // list leaves free, and its length in `para`, for `end_graf` to
-        // take up again.
+        // A new horizontal list follows only its tail and space factor; the
+        // vertical list it goes onto parks its fields for `end_graf`.
         let outer = self.natural.unwrap_or_else(Natural::any);
         // tex.web § 1091: `\parskip` goes onto a list that is not empty.
         let parskip = self.glue_parameter("parskip");
@@ -2349,12 +2344,8 @@ impl Machine<'_> {
                     // § 1009: an insert on the page lowers its goal.
                     self.set_engine("page.inserts", Value::Int(1), true);
                 }
-                // tex.web § 889: `\vadjust` material of any width follows
-                // the line.
-                // tex.web §§ 796, 1076: from a box appended to a vertical
-                // list, or an alignment's cell, it moves out after that
-                // list's line: the mark makes that list's size unknown. In a
-                // paragraph its size is added where it closes (§ 889).
+                // `\vadjust` follows the line (tex.web § 889); out of a box or
+                // cell it makes the outer list's size unknown (§§ 796, 1076).
                 if vadjust
                     && self.mode != Modes::HORIZONTAL
                     && let Some(n) = &mut self.natural

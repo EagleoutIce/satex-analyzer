@@ -8653,12 +8653,8 @@ will look undefined",
         // call that is then abandoned, and the rest of the file with them.
         self.end_used_up_lists();
         let depth = self.expanding.get(sym.0 as usize).copied().unwrap_or(0);
-        // The count only stands while the source stands still, the way
-        // `record_expansion` keeps it: widening returns before the site is
-        // recorded again, so a site that once tripped the bound would stay
-        // tripped for the rest of the run even though later calls read new
-        // source.  That is what stopped `\DeclareMathSymbol` after 32 symbols
-        // and left every math symbol past `\Lambda` undefined.
+        // The count holds only while the source stands still; else a tripped
+        // site stays tripped (it once stopped `\DeclareMathSymbol` after 32).
         let site = self
             .expansion_sites
             .get(&(span, sym))
@@ -8820,12 +8816,8 @@ will look undefined",
             }
             None => (true, 1, 0, 0),
         };
-        // The same arguments, input, nesting and bindings as the last
-        // expansion here: TeX is in a state it was in, and repeats it
-        // forever (tex.web § 366 expands deterministically). A path ends
-        // only while another waits to read on; one no other path covers is
-        // summarized, so the run goes on (the repeat may be satex's own
-        // imprecision).
+        // A state seen before repeats forever (tex.web § 366): the path ends
+        // if another waits, else it is summarized and the run goes on.
         if self.limits.cycle_after > 0 && cycled >= u32::from(self.limits.cycle_after) {
             let alone = !self.on_paths() || self.waiting == 0;
             self.diagnose(
@@ -8843,35 +8835,20 @@ will look undefined",
         // The same arguments and input, only deeper in conditionals or
         // groups each time: every round repeats the last, so none ends it.
         let nesting = deeper > u32::from(self.limits.widen_after);
-        // A recursion re-entering this site without reading on, with its
-        // argument scan abandoned and its argument not shrinking, has
-        // nothing left that could end it: the delimiter it seeks is the one
-        // the scan just failed to find, and the next round looks in the
-        // same place. Running it to the per-site bound only repeats that
-        // round, so it is widened sooner, at `recursion_depth`.
+        // Re-entry with an abandoned scan and no shrinking argument looks in
+        // the same place again: widen at `recursion_depth`, not the site bound.
         let rounds = u32::from(self.limits.recursion_depth);
-        // A quark (`\q_nil`, `\q_stop`, …) is a macro whose whole body is
-        // itself: expl3 never expands one, only compares it, but a path
-        // satex could not rule out may try to. That is a fixed point by
-        // construction, like expanding satex's own unknown marker
-        // (`is_unknown_marker`): no argument, nothing can shrink, and no
-        // bound but this one would end it. Cut at `rounds`, not
-        // `site_expansions`.
+        // A quark (`\q_nil`) expands to itself: a fixed point, cut at `rounds`.
         let self_fixed_point = arguments.is_empty()
             && m.replacement_text.len() == 1
             && matches!(m.replacement_text[0].tok, Tok::Cs(s) if s == sym);
-        // `abandoned` alone, without `!shrinking`, still cuts: a scan that
-        // gave up on the unknown marker guessed where its delimiter was
-        // (`read_delimited`'s "a split is made once"), so a shrinking token
-        // count next round is not real progress — the guessed remainder can
-        // shrink by the same dropped tokens every time and never converge,
-        // as a corrupted `array`/`tabularx` column preamble does.
+        // `abandoned` cuts even while shrinking: the guessed split's remainder
+        // can shrink forever (a corrupted `array` column preamble).
         let stuck = nesting
             || (abandoned && visits > rounds && visits <= self.limits.site_expansions)
             || (self_fixed_point && !shrinking && visits > rounds && visits <= self.limits.site_expansions);
-        // `repeats` cannot see a recursion that assigns every round, so
-        // this counts reading on alone (tex.web § 366).  The multiple is
-        // measured, not derived: 16 cuts no loop that was getting somewhere.
+        // A recursion that assigns every round evades `repeats`: count reading
+        // on alone (tex.web § 366); 16 is measured.
         let never_read = self.limits.site_expansions.saturating_mul(16);
         let spinning = unread > never_read;
         if depth >= self.limits.expansion_depth || visits > self.limits.site_expansions || stuck || spinning {
@@ -9812,12 +9789,8 @@ will look undefined",
             );
             strip_braces(std::mem::take(out))
         };
-        // Where a token for one of several texts stands in `out`, and how
-        // deep the conditionals read into the argument nest: an argument
-        // that reads past such a token into the `\fi` of a conditional
-        // open around the call takes the closer of a level it is in. Its
-        // texts were joined apart from the tests that shaped them, so that
-        // is the join's artifact: the argument ends in that text instead.
+        // Where a one-of-several token stands in `out`: reading past it into
+        // an enclosing `\fi` is a join artifact, so the argument ends there.
         let mut joined_at: Option<usize> = None;
         let mut nesting = CondDepth::default();
         // Where short typed text stands in `out` ([`Machine::straddles`]).
@@ -9898,31 +9871,15 @@ will look undefined",
                 }
                 return self.unknown_argument(&out, t.span);
             }
-            // Unknown text may hold the delimiter followed by more text: cut
-            // the argument there and read the rest next, taken to hold no
-            // delimiter, so the split happens once. `UNKNOWN_CHAR` is the
-            // same case as a character rather than a control sequence: an
-            // unbounded run of unknown digits (`\the`/`\number` of an
-            // unknown dimen or count) may itself hide the delimiter.
-            // Without this a corrupted column preamble with an unknown
-            // width is not caught, and the scan hunts character by
-            // character until the line guard stops it.
-            // Typed unknown text is unknown text to the scan only where its
-            // class may hold a brace or the delimiter's first token: the
-            // delimiter may begin in it.
+            // Unknown text (unknown digits too) may hold the delimiter: cut the
+            // argument there once and read the rest as delimiter-free. Typed
+            // text counts only where its class may hold a brace or `first`.
             let first = &delimiter[..1.min(delimiter.len())];
-            // Inside a group no delimiter matches (tex.web § 392): there
-            // unknown text matters only where its class may hold a brace,
-            // which may close the group. Typed text of characters is read
-            // on exactly, so the argument stays typed by what it read.
-            // Typed text shorter than the delimiter and without braces
-            // cannot hold all of it: the delimiter may only straddle it,
-            // which the tokens read after it decide ([`straddles`]), so the
-            // text is read on as it is (an unknown `\escapechar` before a
-            // name `\string` printed).
+            // In a group no delimiter matches (tex.web § 392). Braceless typed
+            // text shorter than the delimiter can only straddle it
+            // ([`straddles`]), so it is read on as it is.
             let short = match (depth, self.typed_text_of(t), self.text_len(t)) {
-                // One such text at a time: two near each other may hold
-                // the delimiter between them.
+                // one at a time: two close ones may hold it between them
                 (0, Some(_), Some(n))
                     if (n as usize) < delimiter.len()
                         && self.may_hold(t, &[]) == Some(false)
@@ -10230,13 +10187,8 @@ will look undefined",
             match &text.items[i] {
                 ParamItem::Lit(expected) => {
                     let t = self.next_token();
-                    // Unknown text may begin with the delimiter: it is
-                    // matched, and the rest of that text is read next.
-                    // One of several texts: a path per text. Unknown text:
-                    // it begins with the delimiter (the rest of it is read
-                    // next), or it is empty and the delimiter follows.
-                    // One of several texts: each text is matched in its
-                    // place, and where they differ a path per outcome.
+                    // Unknown text may begin with the delimiter (the rest is
+                    // read next) or be empty; one of several texts forks.
                     if let Some(t) = t
                         && !self.is_unknown_text(t, &[*expected])
                         && self.one_of_hides(t, &[*expected], None)
@@ -10795,13 +10747,9 @@ will look undefined",
             if let Some(log) = &mut self.skip_log {
                 log.push(t);
             }
-            // Skipping crossed into another file's text: a misjudged test or
-            // `\fi` would otherwise swallow the document. TeX inserts `\fi`
-            // where a file ends inside a skip (tex.web § 336); satex ends the
-            // skip here as though it had, and leaves a marker that splits off
-            // the path skipping on as TeX does. Only after a gap: without one
-            // the skip is TeX's own on purpose (versions.sty, comment.sty),
-            // not a lost `\fi`.
+            // A skip crossing into another file after a gap ends here, as if
+            // `\fi` were inserted (tex.web § 336); a marker forks the path
+            // skipping on. Without a gap it is a deliberate skip (comment.sty).
             let unsure = self.scratch.cond_gaps.get(&at).is_none_or(|&gaps| gaps != self.gaps_raised);
             if unsure && self.last_file.is_some_and(|f| f != at.file) {
                 self.unread(t);

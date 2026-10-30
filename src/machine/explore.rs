@@ -938,12 +938,8 @@ impl Machine<'_> {
                     }
                     m += 1;
                 }
-                // A later command read on from the list the entry's
-                // command came from, a list with no unknown text left,
-                // as deep in conditionals and groups: the entry's call
-                // ended, a sibling call (tex.web §§ 321-322: a list is
-                // read on only once what came of it is done). Read from a
-                // list that list called, it is a recursion: no bound.
+                // Read on from the entry's own list, as deep: a sibling call
+                // (tex.web §§ 321-322). From a list it called: a recursion.
                 let sibling = !read
                     && m == l.levels.len()
                     && levels.len() == m + 1
@@ -1116,13 +1112,9 @@ impl Machine<'_> {
             heads().find(|(_, h)| same(h) && bare(&h.config.key) == *b).map(|(i, _)| i)
         });
         let folded_exact = exact.is_some_and(|h| paths.heads[h].config.key != here.key);
-        // A head at the same place whose input differs only in the digits
-        // of its token lists (a loop whose counter is in its argument,
-        // expl3's `\__flag_height_loop:wN`): the same head, the counter
-        // read as unknown digits ([`widen_input`]). Without this every
-        // pass is a new head and none ever meets. Texts that differ in
-        // more (pgfmath's parser, its expression shrinking) are new heads,
-        // bounded by `recursion_depth` as before.
+        // Heads differing only in digits (a counter in the argument,
+        // `\__flag_height_loop:wN`) are one head, the digits unknown
+        // ([`widen_input`]); other differences stay new heads.
         let typed = crate::env::typed!(self, syms);
         let alike = exact
             .is_none()
