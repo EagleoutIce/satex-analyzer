@@ -1218,8 +1218,10 @@
     const key = `${state.root ?? state.file}|${libInternal.checked}|${analyzedVersion}`;
     if (key === libFor) return libraryShow();
     libFor = key;
-    const request = { file: path(state.root ?? state.file), queries: [{ type: 'scope', all: libInternal.checked }] };
-    libNames = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records ?? [];
+    const records = await namesInForce(libInternal.checked);
+    // an environment once, by its name: \X stays, its \endX goes
+    const names = new Set(records.map((r) => r.name));
+    libNames = records.filter((r) => !(r.tag === 'environment' && r.name.startsWith('\\end') && names.has(`\\${r.name.slice(4)}`)));
     const from = libFrom.value, packages = [...new Set(libNames.map((r) => r.package).filter(Boolean))].sort();
     libFrom.innerHTML = `<option value="">every package</option>${packages.map((p) => `<option${p === from ? ' selected' : ''}>${escape(p)}</option>`).join('')}`;
     libraryShow();
@@ -1245,41 +1247,42 @@
       .filter(([r, rank]) => rank !== null && (!from || r.package === from) && (!libKind || kind(r) === libKind))
       .sort((a, b) => a[1] - b[1] || a[0].name.length - b[0].name.length || a[0].name.localeCompare(b[0].name))
       .map(([r]) => r);
-    $('lib-count').textContent = libNames.length ? String(hits.length) : '';
+    $('lib-count').textContent = libNames.length ? String(libNames.length) : '';
     const counts = { '': libNames.length };
     for (const r of libNames) counts[kind(r)] = (counts[kind(r)] ?? 0) + 1;
     $('lib-kinds').innerHTML = [['', 'all'], ['command', 'commands'], ['environment', 'environments'], ['primitive', 'primitives']]
       .map(([k, label]) => `<button type="button" class="lib-kind" aria-pressed="${k === libKind}" data-kind="${k}">${label} <b>${counts[k] ?? 0}</b></button>`).join('');
-    libList.innerHTML = hits.slice(0, 200).map((r, i) => `<li tabindex="-1" data-i="${i}"><code class="cs-ref" data-cs="${escape(r.name)}" tabindex="0">${escape(r.name)}</code>` +
-      `${r.effective && r.effective !== r.name ? `<span class="lib-use">${slotsOf(r.effective)}</span>` : ''}` +
-      `<button type="button" class="lib-try-it ghost small" data-try="${escape(r.effective ?? r.name)}" title="put it in the Try box">try</button>` +
-      `<span class="lib-pkg">${escape(r.package ?? '')}</span></li>`).join('') +
+    libList.innerHTML = hits.slice(0, 200).map((r, i) => {
+      const env = kind(r) === 'environment', use = r.effective ?? r.name, args = use.startsWith(r.name) ? use.slice(r.name.length) : '';
+      const name = env ? r.name.slice(1) : r.name, shown = env ? `\\begin{${name}}${args}` : use;
+      const tried = env ? `\\begin{${name}}${args}\n  \n\\end{${name}}` : use;
+      return `<li tabindex="-1" data-i="${i}"><code class="cs-ref" data-cs="${escape(r.name)}" tabindex="0">${escape(name)}</code>` +
+      `${shown !== name ? `<span class="lib-use">${slotsOf(shown)}</span>` : ''}` +
+      `<button type="button" class="lib-try-it" data-try="${escape(tried)}" title="try it" aria-label="try it">▸</button>` +
+      `<span class="lib-pkg">${escape(r.package ?? '')}</span></li>`; }).join('') +
       (hits.length > 200 ? `<li class="muted">${hits.length - 200} more: narrow the search</li>` : '') ||
       `<li class="muted">${libNames.length ? 'No name matches.' : 'The names appear once the document is checked.'}</li>`;
   }
   /** A usage line with its ⟨…⟩ placeholders as the explain cards draw them. */
   const slotsOf = (usage) => (cards.slots ? cards.slots(escape(usage)) : escape(usage));
   $('lib-kinds').addEventListener('click', (e) => { const b = e.target.closest('.lib-kind'); if (b) { libKind = b.dataset.kind; libraryShow(); } });
-  libList.addEventListener('click', (e) => {
-    const t = e.target.closest('.lib-try-it');
-    if (!t) return;
-    // the usage with its placeholders left for the reader to fill
-    const text = $('lib-text');
-    text.value = t.dataset.try.replace(/[⟨⟩]/g, '');
-    text.focus();
-  });
-  // ↓ from the search goes into the list, ↑/↓ move, Enter explains
+  // the cursor lands in an environment's body, else at the end
+  const tryIt = (t) => { const text = $('lib-text'), v = t.dataset.try.replace(/[⟨⟩]/g, ''), at = v.indexOf('\n  \n') + 3; text.value = v; grow(); text.focus(); text.setSelectionRange(at > 2 ? at : v.length, at > 2 ? at : v.length); };
+  libList.addEventListener('click', (e) => { const t = e.target.closest('.lib-try-it'); if (t) tryIt(t); });
+  // ↓ from the search goes into the list, ↑/↓ move, Enter tries
   libSearch.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); libList.querySelector('li[data-i]')?.focus(); } });
   libList.addEventListener('keydown', (e) => {
     const li = e.target.closest('li[data-i]');
     if (!li) return;
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); (e.key === 'ArrowDown' ? li.nextElementSibling : li.previousElementSibling ?? libSearch)?.focus(); }
-    if (e.key === 'Enter') { e.preventDefault(); explainName(li.querySelector('.cs-ref').dataset.cs); }
+    if (e.key === 'Enter') { e.preventDefault(); tryIt(li.querySelector('.lib-try-it')); }
   });
   libSearch.oninput = libraryShow;
   libFrom.onchange = libraryShow;
   libInternal.onchange = libraryLoad;
-  $('play-library').addEventListener('toggle', (e) => { if (e.target.open) libraryLoad(); });
+  $('lib-open').onclick = () => { $('play-library').showModal(); libraryLoad(); $('lib-search').focus(); };
+  $('lib-close').onclick = () => $('play-library').close();
+  $('play-library').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
   /** The scratch text read right after the root's `\begin{document}`: what it sets, its findings and what it expanded to. */
   async function libraryTry() {
     const text = $('lib-text').value, out = $('lib-out');
@@ -1302,6 +1305,9 @@
       (found.length ? `<ul class="lib-found">${found.map((d) => `<li><b>${escape(d.severity)}</b> ${escape(d.message)}</li>`).join('')}</ul>` : '') +
       (top.length ? `<details class="lib-steps"><summary>${plural(top.length, 'expansion')}</summary><ul>${top.map((r) => `<li><code class="cs-ref" data-cs="${escape(r.name)}">${escape(r.name)}</code> → <code>${escape(String(r.inserts).slice(0, 160))}</code></li>`).join('')}</ul></details>` : '');
   }
+  // the box grows with its lines, up to eight
+  const grow = () => { const t = $('lib-text'); t.rows = Math.min(8, Math.max(2, t.value.split('\n').length)); };
+  $('lib-text').addEventListener('input', grow);
   $('lib-run').onclick = libraryTry;
   $('lib-text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); libraryTry(); } });
 
