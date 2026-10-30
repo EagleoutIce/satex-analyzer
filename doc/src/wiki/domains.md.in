@@ -294,6 +294,7 @@ A character whose category is not pinned keeps the set of categories it may have
 | key | the macro's definition, the call site, the control sequences in its arguments |
 | record | the first `limits.call_summary_after` (2) runs over unknown operands run the real body and record the names written and read. Runs over known operands are not recorded. Calls a scan expands are not recorded either. |
 | apply | from the third call, if an operand is unknown text or a meaning set: the recorded writes are joined, widened (`widen_slot`) and assigned. The body is skipped. One `call-summarized` imprecision per key. |
+| relate | a name every run left as the same text of its own arguments' typed numbers (slices spelling one whole count as it) gets that text of this call's numbers, not the widened join. `\pgfmath@bgroup@strip` of a new number thus keeps it whole and typed. |
 | never | runs that read on in the file, change a catcode, leave a group, conditional or mode, add to a list, write different names, accumulate (`x` then `x…`), update a name they read (a stack push), or leave code rather than data. Such a key always runs the real body. |
 
 ### The line guard: termination
@@ -349,6 +350,7 @@ Arms of an undecided conditional that reach its `\fi` go on as one path (`fi_mar
 
 - Data becomes an interval or set, differing macros a meaning set, a one-arm macro "that body or undefined". All definitions stay recorded as facts.
 - Arms that leave another way (`\expandafter\@firstoftwo`) join at the next common place.
+- A read of typed digits splits them into a path per sign, one digit and each longer length. Arms that learned different values of one such number stay apart until as many paths wait at the place as the split made, or the statement ends. Joined earlier, pgfmath's digit loop pairs one arm with another a pass behind it. `\futurelet` keeps bounded typed digits whole, so the read after it parts them. Digits of any 32-bit length are not split: `\futurelet` sees their first digit and the rest as untyped digits.
 - A test whose interval straddles its constant splits it: `\ifdim [0pt,345pt] > 100pt` gives `[100.00002pt,345pt]` and `[0pt,100pt]`, joined back at `\fi`.
 
 ### Joins at the limits

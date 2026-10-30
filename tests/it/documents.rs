@@ -422,7 +422,10 @@ fn centered_picture_in_a_saved_parbox_has_its_exact_size() {
     assert_eq!(a.peak_paths, 1, "paths parted");
 }
 
-peak_fixtures! {}
+peak_fixtures! {
+    /// `\pgfmathparse` of an unknown integer three times: a typed result.
+    pgfmath_of_unknown_integer_three_times("call_summary_pgfmath_thrice", "main.tex");
+}
 
 fixtures! {
     /// Notebook-like cells of `obeylines` text with inline code in nodes.

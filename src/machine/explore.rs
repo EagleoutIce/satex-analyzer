@@ -1828,11 +1828,18 @@ impl Machine<'_> {
         self.source_progress - self.lines_read
     }
 
+    /// The most arms a read split a number into whose values two paths
+    /// learned differently, 0 for none ([`partner`]).
+    fn digits_apart(&self, a: &Config, b: &Config) -> usize {
+        let arms = a.env.differing(&b.env).into_iter().filter_map(|sym| self.scratch.split_digits.get(&sym));
+        arms.copied().max().unwrap_or(0)
+    }
+
     /// The running path joins a parked one at its place ([`partner`]).
     fn meet(&mut self, paths: &mut Paths, fork: &Fork) {
         if paths.parked.iter().any(|p| p.key.progress == self.place_progress()) {
             let live = Config::new(self.save_path(), self.env.path(fork), false);
-            if partner(&paths.parked, &live).is_some() {
+            if partner(&paths.parked, &live, &|a, b| self.digits_apart(a, b)).is_some() {
                 let joined = self.absorb(paths, fork, live, true);
                 self.resume_config(fork, joined);
             }
@@ -2125,7 +2132,7 @@ impl Machine<'_> {
     /// which leave the parked ones. `first`: its state is the one kept.
     fn absorb(&mut self, paths: &mut Paths, fork: &Fork, mut config: Config, first: bool) -> Config {
         while !config.ended
-            && let Some(i) = partner(&paths.parked, &config)
+            && let Some(i) = partner(&paths.parked, &config, &|a, b| self.digits_apart(a, b))
         {
             let other = paths.parked.swap_remove(i);
             let (a, b) = if first { (&config, &other) } else { (&other, &config) };
@@ -3144,16 +3151,22 @@ fn same_code(a: &Tag, b: &Tag) -> bool {
 /// one that waits to run the same code and either closed the same
 /// conditional last (both arms of an `\if…` meet after its `\fi`) or,
 /// past [`PARTITIONS`] tags at the place or between two lines of a file
-/// (the statement is over), the first there.
-fn partner(parked: &[Config], config: &Config) -> Option<usize> {
+/// (the statement is over), the first there. Paths that took different
+/// arms of a number's digits (`apart`, the arms the split made) join only
+/// once as many wait or the statement is over: joined earlier, a 1-digit
+/// arm would pair with a 2-digit arm a pass behind it.
+fn partner(parked: &[Config], config: &Config, apart: &dyn Fn(&Config, &Config) -> usize) -> Option<usize> {
     let (key, tag) = (&config.key, &config.tag);
     let here: Vec<usize> = (0..parked.len()).filter(|&i| !parked[i].ended && parked[i].key == *key).collect();
-    let merge = here.len() >= PARTITIONS || key.places.iter().all(|p| matches!(p, Place::File(..) | Place::Pseudo(..)));
     let fi = |i: usize| config.state.fi_mark.is_some() && parked[i].state.fi_mark == config.state.fi_mark;
+    let file = key.places.iter().all(|p| matches!(p, Place::File(..) | Place::Pseudo(..)));
+    let merge = here.len() >= PARTITIONS || file;
+    // Arms of a digit split wait for as many paths as the split made.
+    let own = |i: usize| file || here.len() >= apart(&parked[i], config);
     here.iter()
         .copied()
-        .find(|&i| parked[i].tag == *tag)
-        .or_else(|| here.iter().copied().find(|&i| same_code(&parked[i].tag, tag) && (merge || fi(i))))
+        .find(|&i| parked[i].tag == *tag && own(i))
+        .or_else(|| here.iter().copied().find(|&i| same_code(&parked[i].tag, tag) && own(i) && (merge || fi(i))))
 }
 
 /// The arms the next run of a command takes: the last choice with an arm

@@ -716,7 +716,12 @@ impl Machine<'_> {
                 self.unread_all(&[Token::new(Tok::Cs(by), span), Token::new(Tok::Cs(name), span), held]);
                 return;
             }
-            let b = b.map(|t| self.one_token(t, false).unwrap_or(t));
+            // Bounded typed digits stay whole: their meaning is their
+            // first character, and the read after it splits them by length.
+            let b = b.map(|t| match t.cs().and_then(|sym| self.typed_digits_of(sym)) {
+                Some(num) if !crate::scan::unbounded_digits(num) => t,
+                _ => self.one_token(t, false).unwrap_or(t),
+            });
             (b, a)
         } else {
             // tex.web § 1221: optional spaces, optional `=`, then at most one
@@ -2573,10 +2578,13 @@ impl Machine<'_> {
     fn digit_narrowing(&self, t: Token, c: char) -> Option<Narrowing> {
         let sym = t.cs()?;
         let num = self.typed_digits_of(sym)?;
+        // A slice past a number's first place may start with any digit.
+        let first = self.typed_slice(sym).is_none_or(|(.., i, _)| i == 0);
+        let digit = num.lo >= 0 && num.hi <= 9;
         let (relation, bound) = match c {
-            '0' if num.lo >= 0 => ('=', 0),
-            '-' => ('<', 0),
-            '1'..='9' if num.lo >= 0 && num.hi <= 9 => ('=', i64::from(c as u8 - b'0')),
+            '0' if first || digit => ('=', 0),
+            '-' if first => ('<', 0),
+            '1'..='9' if digit => ('=', i64::from(c as u8 - b'0')),
             _ => return None,
         };
         Some((sym, crate::value::Quantity::Int, num, None, relation, (bound, bound)))
