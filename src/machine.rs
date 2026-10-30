@@ -5154,7 +5154,9 @@ will look undefined",
                     return;
                 }
                 d.count += 1;
-                if d.count == bound {
+                // A named assumption met again is as sound as the first time
+                // (TeX's own error cascade repeats one): only a gap is said.
+                if d.count == bound && severity != Severity::Assumption {
                     self.scratch.repeat_cut = Some((code, span));
                 }
                 return;
