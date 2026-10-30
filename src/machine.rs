@@ -6110,10 +6110,12 @@ will look undefined",
             };
             let label = match (label.is_empty(), probing) {
                 (false, _) => label,
-                (true, Some(sym)) => format!("probing \\{}", self.name(sym)),
+                // A hover tries the command out on typed arguments to learn what it does.
+                (true, Some(sym)) => format!("learning what \\{} does", self.name(sym)),
                 (true, None) => format!("analyzing {own} ({})", self.phase()),
             };
-            let (read, all) = self.frame_read(frame).unwrap_or((1, 1));
+            // A trial run reads no file of the document: no share of it is done.
+            let (read, all) = if probing.is_some() { (0, 0) } else { self.frame_read(frame).unwrap_or((1, 1)) };
             let limit = self.cfg.limits.seconds;
             let clock = (limit > 0).then(|| (self.started.elapsed().as_secs(), limit));
             // Lines read so far: the furthest line seen in every file.

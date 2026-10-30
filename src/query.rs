@@ -467,6 +467,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     named.sort_by_key(|(s, ..)| (s.file, s.line, s.col));
     let mut keys: std::collections::VecDeque<(&str, &str)> = Default::default();
     let mut next_key: std::collections::HashMap<FileId, usize> = Default::default();
+    let glyphs = glyphs(analysis);
     for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
         let site = Span {
             file: text.site.get(i).map_or(spot.span.file, |s| s.file),
@@ -492,7 +493,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                 .modes
                 .within(crate::mode::Modes::INTERNAL_VERTICAL.union(crate::mode::Modes::RESTRICTED_HORIZONTAL));
         let unknown = crate::tex::is_unknown_char(c);
-        let mut c = if unknown { note("⟨?⟩") } else { public(c) };
+        let mut c = if unknown { note("⟨?⟩") } else { glyphs[i].clone() };
         if unknown {
             causes.push(Cause::Unknown(site));
         }
@@ -622,6 +623,63 @@ enum Cause {
 
 /// A character as typeset text: satex's private-use sentinels become their
 /// public notation or vanish.
+/// Each character as set: one a font's ligature program joins to the one
+/// before (tex.web § 1035) is empty, and that one shows the ligature, as
+/// TeX's text conventions write it in Unicode (`--` an en dash).
+fn glyphs(analysis: &Analysis) -> Vec<String> {
+    let text = &analysis.facts.text;
+    let mut fonts = crate::lint::italics::Fonts::of(analysis);
+    let mut out: Vec<String> = text.chars.chars().map(public).collect();
+    let mut seq: Vec<String> = out.clone();
+    let mut held: Option<(usize, u32)> = None;
+    for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
+        let state = analysis.font_states.get(usize::from(spot.font_state)).map_or(0, |s| s.font);
+        let joined = held.filter(|&(j, _)| {
+            let prev = &text.at[j];
+            prev.font_state == spot.font_state && prev.certain && spot.certain && !spot.broken
+        });
+        if let Some((j, left)) = joined
+            && let Some((metrics, size)) = fonts.metrics(state)
+            && let Some(crate::tfm::LigKern::Lig { op: 0, char }) = metrics.lig_kern(left, c as u32, size)
+        {
+            seq[j].push(c);
+            out[j] = match seq[j].as_str() {
+                "--" => "–",
+                "---" => "—",
+                "``" => "“",
+                "''" => "”",
+                "!`" => "¡",
+                "?`" => "¿",
+                ",," => "„",
+                "<<" => "«",
+                ">>" => "»",
+                s => s,
+            }
+            .to_string();
+            out[i].clear();
+            held = Some((j, char));
+            continue;
+        }
+        held = Some((i, c as u32));
+    }
+    out
+}
+
+/// A trace step's name: a register addressed by number as TeX writes it
+/// (`\count188`), not by the slot satex keeps its value in.
+fn step_name(analysis: &Analysis, sym: crate::tex::Sym) -> String {
+    let name = analysis.interner.name(sym);
+    match name.strip_prefix(crate::machine::REGISTER_PREFIX) {
+        Some(rest)
+            if rest.trim_end_matches(|c: char| c.is_ascii_digit()).chars().all(|c| c.is_ascii_lowercase())
+                && rest.ends_with(|c: char| c.is_ascii_digit()) =>
+        {
+            format!("\\{rest}")
+        }
+        _ => analysis.interner.cs(sym),
+    }
+}
+
 fn public(c: char) -> String {
     match c {
         '\u{10FF00}'..='\u{10FFFF}' | '\u{E000}'..='\u{F8FF}' => String::new(),
@@ -876,10 +934,11 @@ fn expansions(analysis: &Analysis) -> Vec<Record> {
             record.insert("node".into(), json!(use_.node));
             record.insert("count".into(), json!(use_.count));
             record.insert("mode".into(), json!(use_.mode.names()));
-            record.insert("arguments".into(), json!(use_.arguments.len()));
+            // The texts its parameters took: none for a macro that reads
+            // what follows itself (`\documentclass` through `\@ifnextchar`).
             record.insert(
-                "argument".into(),
-                json!(use_.arguments.first().map(|a| detokenize(a, &analysis.interner)).unwrap_or_default()),
+                "arguments".into(),
+                json!(use_.arguments.iter().map(|a| detokenize(a, &analysis.interner)).collect::<Vec<_>>()),
             );
             record.insert("conditional".into(), json!(!use_.cds.is_empty()));
             record
@@ -1004,7 +1063,7 @@ fn trace(analysis: &Analysis) -> Vec<Record> {
             record.insert("index".into(), json!(event.index));
             record.insert("depth".into(), json!(event.depth));
             record.insert("step".into(), json!(event.kind.as_str()));
-            record.insert("name".into(), json!(analysis.interner.cs(event.name)));
+            record.insert("name".into(), json!(step_name(analysis, event.name)));
             let expand = matches!(event.kind, crate::machine::Step::Expand);
             record.insert("detail".into(), json!(if expand { None } else { event.detail.as_deref() }));
             if expand && let Some(body) = event.detail.as_deref() {
@@ -4132,9 +4191,11 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<Stri
         by_name.entry(e.name).or_default().push(e);
     }
     let mut seen: BTreeSet<Sym> = BTreeSet::from([sym]);
-    let mut frontier = vec![sym];
+    // Breadth first: the nearest dispatcher is the one the call reads its
+    // keys with (`\draw` reaches `/tikz/` before xcolor's color models).
+    let mut frontier = std::collections::VecDeque::from([sym]);
     let mut parent: HashMap<Sym, Sym> = HashMap::default();
-    while let Some(current) = frontier.pop() {
+    while let Some(current) = frontier.pop_front() {
         if let Some(dialect) = key_dispatch(analysis.interner.name(current)) {
             // The call this name's own code made comes first: the library
             // calls the same dispatcher for its own keys.
@@ -4181,7 +4242,7 @@ fn key_family(analysis: &Analysis, sym: Sym) -> Option<(KeyDialect<'_>, Vec<Stri
             }
             if seen.insert(callee) {
                 parent.insert(callee, current);
-                frontier.push(callee);
+                frontier.push_back(callee);
             }
         }
     }

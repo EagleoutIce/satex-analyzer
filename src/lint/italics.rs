@@ -160,21 +160,21 @@ fn corrections<'a>(analysis: &'a Analysis, view: &View) -> Vec<&'a Expansion> {
 }
 
 /// The metrics of the fonts the run set characters in, each TFM read once.
-struct Fonts<'a> {
+pub(crate) struct Fonts<'a> {
     analysis: &'a Analysis,
     base: PathBuf,
     read: HashMap<u16, Option<(Rc<crate::tfm::Metrics>, Scaled)>>,
 }
 
 impl<'a> Fonts<'a> {
-    fn of(analysis: &'a Analysis) -> Fonts<'a> {
+    pub(crate) fn of(analysis: &'a Analysis) -> Fonts<'a> {
         let base = crate::paths::dir_of(Path::new(analysis.file_name(analysis.main_file)));
         Fonts { analysis, base, read: HashMap::default() }
     }
 
     /// The TFM the engine had loaded for a font state, and the size it was
     /// loaded at.
-    fn metrics(&mut self, font: u16) -> Option<(Rc<crate::tfm::Metrics>, Scaled)> {
+    pub(crate) fn metrics(&mut self, font: u16) -> Option<(Rc<crate::tfm::Metrics>, Scaled)> {
         let (analysis, base) = (self.analysis, &self.base);
         self.read
             .entry(font)

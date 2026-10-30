@@ -373,10 +373,25 @@ pub fn run_request_value(body: &Json, cfg: &Config, cli_file: Option<&Path>) -> 
         .map(std::path::PathBuf::from)
         .or_else(|| cli_file.map(Path::to_path_buf))
         .ok_or("the request names no `file`, and none was given with -f")?;
-    let source = crate::overlay::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let mut source = crate::overlay::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))?;
     let queries = body.get("queries").and_then(Json::as_array).cloned().unwrap_or_default();
     if queries.is_empty() {
         return Err("the request has no `queries` to run".into());
+    }
+    let mut restore = None;
+    // `"inject": {"text", "at": "LINE[:COL]"}`: the text read there as if it
+    // stood in the main file, as `--inject` does; the trace covers just it.
+    if let Some(inject) = body.get("inject") {
+        let text = inject.get("text").and_then(Json::as_str).ok_or("`inject` has no `text`")?;
+        let at = inject.get("at").and_then(Json::as_str).ok_or("`inject` has no `at`")?;
+        let (line, col) = at.split_once(':').unwrap_or((at, "0"));
+        let bad = || format!("`{at}` is no position: use LINE or LINE:COL");
+        let (line, col): (u32, u32) = (line.trim().parse().map_err(|_| bad())?, col.trim().parse().map_err(|_| bad())?);
+        let (with, to) = super::inject_text(&source, line, col, text)?;
+        restore = Some(std::mem::replace(&mut source, with.clone()));
+        crate::overlay::set(&file, with);
+        cfg.trace_lines = Some((line, to.0));
+        (cfg.trace_col, cfg.trace_end_col) = (col.max(1), to.1);
     }
     // The `options` query reads a key family out of a `\setkeys`-family
     // call's argument, which is only kept when this is on (see
@@ -385,6 +400,10 @@ pub fn run_request_value(body: &Json, cfg: &Config, cli_file: Option<&Path>) -> 
         cfg.record_arguments = true;
     }
     let analysis = Machine::analyze(&source, Some(&file), &cfg);
+    // The file reads as before for whatever runs next in this process.
+    if let Some(original) = restore {
+        crate::overlay::set(&file, original);
+    }
     Ok(queries.iter().map(|entry| answer(&analysis, &source, entry)).collect())
 }
 
@@ -393,7 +412,7 @@ pub fn run_request_value(body: &Json, cfg: &Config, cli_file: Option<&Path>) -> 
 /// the request asks for another configuration, which is another analysis.
 pub fn answer_request(body: &Json, analysis: &crate::machine::Analysis, source: &str) -> Option<Vec<Json>> {
     let queries = body.get("queries").and_then(Json::as_array)?;
-    (body.get("config").is_none() && !queries.is_empty())
+    (body.get("config").is_none() && body.get("inject").is_none() && !queries.is_empty())
         .then(|| queries.iter().map(|entry| answer(analysis, source, entry)).collect())
 }
 
@@ -446,6 +465,8 @@ fn answer(analysis: &crate::machine::Analysis, source: &str, entry: &Json) -> Js
             };
         }
         "controls" => query::controls_of(analysis, &strings("names"), flag("all")),
+        // Every name in force at the document's end, as `satex scope` lists them.
+        "scope" => query::scope(analysis, None, flag("all")),
         "slice" => {
             let at = match entry.get("at").and_then(Json::as_str).map(super::parse_place) {
                 Some(Ok(at)) => Some(at),
