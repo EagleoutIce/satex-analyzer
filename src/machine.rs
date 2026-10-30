@@ -2506,6 +2506,7 @@ impl<'a> Machine<'a> {
         // `limits.seconds` bounds the build, not each run: a run starts only
         // while the time left would let one more as long as the last finish.
         let started = std::time::Instant::now();
+        checkpoints.build_started = Some(started);
         let budget = std::time::Duration::from_secs(cfg.limits.seconds);
         // Later runs replay the caches the first stored: the build reports the first.
         let mut caches = None;

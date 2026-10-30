@@ -123,11 +123,21 @@ pub struct Checkpoints<'a> {
     every: u64,
     /// The line the last run resumed at, if it did.
     pub resumed: Option<(String, u32)>,
+    /// When the build began: every run's `limits.seconds` counts from it.
+    pub build_started: Option<std::time::Instant>,
 }
 
 impl<'a> Checkpoints<'a> {
     pub fn new(cfg: &'a Config) -> Self {
-        Checkpoints { cfg, setup: None, list: Vec::new(), log: Vec::new(), every: EVERY, resumed: None }
+        Checkpoints {
+            cfg,
+            setup: None,
+            list: Vec::new(),
+            log: Vec::new(),
+            every: EVERY,
+            resumed: None,
+            build_started: None,
+        }
     }
 
     /// The files the last run read or looked for.
@@ -168,6 +178,9 @@ impl<'a> Checkpoints<'a> {
                 (m, id)
             }
         };
+        if let Some(at) = self.build_started {
+            m.started = at;
+        }
         let next = m.out.steps + self.every;
         let taking = Taking {
             list: std::mem::take(&mut self.list),
@@ -199,8 +212,9 @@ impl<'a> Checkpoints<'a> {
                 edit = edit.into_iter().chain(changed).max_by_key(|(_, line)| *line);
                 continue;
             }
-            // `limits.seconds` bounds each run: it only stops one, never steers it.
-            m.started = std::time::Instant::now();
+            // `limits.seconds` bounds the build: a resumed run has what the
+            // runs before it left (it only stops one, never steers it).
+            m.started = self.build_started.unwrap_or_else(std::time::Instant::now);
             m.checkpoints.resume = Some(Box::new(drive));
             crate::source::set_encoding(m.out.plugins.engine.encoding());
             if let Some(Frame::File { mouth, .. }) = m.input.last() {
