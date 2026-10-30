@@ -1697,3 +1697,23 @@ fn class_options_are_the_named_class_s() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A name with `@` is offered only where `@` is a letter: after
+/// `\makeatletter`, not in the document's own text before it.
+#[test]
+fn completion_offers_at_names_only_where_at_is_a_letter() {
+    let text =
+        "\\documentclass{article}\n\\begin{document}\n\\@ab\n\\makeatletter\n\\@ab\n\\makeatother\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("at-letter", text);
+    let at = |server: &mut Server, line: usize| {
+        let items = complete(server, &uri, line as u32, 4);
+        labels(&items).iter().any(|l| l.starts_with("@") && l.len() > 1)
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let first = lines.iter().position(|l| *l == "\\@ab").unwrap();
+    let inside = lines.iter().rposition(|l| *l == "\\@ab").unwrap();
+    assert!(!at(&mut server, first), "@ names offered where @ is not a letter");
+    assert!(at(&mut server, inside), "no @ names after \\makeatletter");
+    drop(server);
+    std::fs::remove_dir_all(dir).ok();
+}

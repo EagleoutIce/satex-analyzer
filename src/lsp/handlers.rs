@@ -1812,12 +1812,16 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str) -> (Vec<CompletionI
             *used.entry(e.name).or_default() += 1;
         }
     }
+    // a name with `@` only where `@` is a letter (`\makeatletter`, a package)
+    let letters = analysis.facts.letters_at(analysis.main_file, pos.line, pos.col);
+    let typeable =
+        |label: &str| label.chars().count() < 2 || label.chars().all(|c| c.is_alphabetic() || letters.contains(&c));
     let mut items: Vec<CompletionItem> = query::scope(analysis, Some((analysis.main_file, pos.line, pos.col)), true)
         .into_iter()
         .filter_map(|record| {
             let name = record.get("name")?.as_str()?.to_string();
             let label = crate::tex::bare_name(&name).to_string();
-            if !label.to_lowercase().contains(&typed) {
+            if !label.to_lowercase().contains(&typed) || !typeable(&label) {
                 return None;
             }
             let tag = record.get("tag").and_then(Json::as_str).unwrap_or("");

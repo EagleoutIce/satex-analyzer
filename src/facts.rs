@@ -490,6 +490,10 @@ pub struct Facts {
     /// set, with that function ([`crate::roles::VarKind::of_function`]):
     /// what the conventions lints check names against.
     pub vars: Vec<VarUse>,
+    /// Where a non-alphabetic character became a letter or stopped being
+    /// one, at the user's line that caused it (`\makeatletter`); a file's
+    /// line 0 for the letters it opened with: what names can be typed where.
+    pub letters: Vec<(crate::tex::Span, char, bool)>,
     pub expansions: Vec<Expansion>,
     pub loads: Vec<Load>,
     pub occurrences: Vec<Occurrence>,
@@ -555,4 +559,18 @@ pub enum CsnameRole {
     /// `\expandafter\ifx\csname…\endcsname\relax`: it is tested for being
     /// undefined.
     Test,
+}
+
+impl Facts {
+    /// The non-alphabetic characters that are letters at `file:line:col`.
+    pub fn letters_at(&self, file: crate::tex::FileId, line: u32, col: u32) -> Vec<char> {
+        let mut out: Vec<char> = Vec::new();
+        for (_, c, letter) in self.letters.iter().filter(|(s, ..)| s.file == file && (s.line, s.col) < (line, col)) {
+            out.retain(|x| x != c);
+            if *letter {
+                out.push(*c);
+            }
+        }
+        out
+    }
 }

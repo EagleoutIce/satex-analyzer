@@ -4723,7 +4723,21 @@ will look undefined",
         if nest.is_some_and(|n| n.level) && self.mode.meets(crate::mode::Modes::HORIZONTAL) {
             self.end_graf();
         }
-        if let Some(after) = self.env.pop_group(&mut self.catcodes) {
+        let before = self.letters_depth.map(|_| self.letters());
+        let popped = self.env.pop_group(&mut self.catcodes);
+        if let Some(before) = before {
+            let now = self.letters();
+            for c in before.iter().filter(|c| !now.contains(c)) {
+                self.note_letter(*c, false);
+            }
+            for c in now.iter().filter(|c| !before.contains(c)) {
+                self.note_letter(*c, true);
+            }
+            if self.letters_depth.is_some_and(|d| self.env.depth() < d) {
+                self.letters_depth = None;
+            }
+        }
+        if let Some(after) = popped {
             self.unread_all(&after);
             self.group_closed(nest, span);
         }
@@ -4857,8 +4871,30 @@ will look undefined",
     pub fn set_catcode(&mut self, character: char, catcode: Catcode) {
         self.leak_call_recs();
         self.region_catcode(character);
+        let was = self.catcodes.get(character) == Catcode::Letter;
+        if character.is_ascii_punctuation() && was != (catcode == Catcode::Letter) {
+            let depth = self.env.depth();
+            self.letters_depth = Some(self.letters_depth.map_or(depth, |d| d.min(depth)));
+            self.note_letter(character, !was);
+        }
         self.env.save_catcode_state(character, self.catcodes.get(character), self.catcodes.may(character));
         self.catcodes.set(character, catcode);
+    }
+
+    /// The punctuation characters that are letters now: `@` after `\makeatletter`.
+    fn letters(&self) -> Vec<char> {
+        (b'!'..=b'~')
+            .map(char::from)
+            .filter(|c| c.is_ascii_punctuation() && self.catcodes.get(*c) == Catcode::Letter)
+            .collect()
+    }
+
+    /// `character` became a letter or stopped being one, at the user's line that caused it.
+    fn note_letter(&mut self, character: char, letter: bool) {
+        let site = self.call_site(Span::default());
+        if self.own_file(site.file) && self.out.facts.letters.len() < self.cfg.limits.facts {
+            self.out.facts.letters.push((site, character, letter));
+        }
     }
 
     /// `\catcode` through a character number satex could not pin down
@@ -11378,6 +11414,11 @@ will look undefined",
         self.identifying = Some(load);
         self.file_depth += 1;
         self.out.timings.enter_file(id);
+        if self.own_file(id) {
+            let opened = Span { file: id, line: 0, col: 0 };
+            let letters = self.letters();
+            self.out.facts.letters.extend(letters.into_iter().map(|c| (opened, c, true)));
+        }
         let file = self.cfg.trace.then(|| self.out.file_name(id).to_string());
         self.record_with(Step::OpenFile, package.unwrap_or(Sym(0)), span, || file);
         let depth = self.env.depth();
