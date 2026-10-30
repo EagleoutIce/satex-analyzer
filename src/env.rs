@@ -1851,6 +1851,13 @@ impl Env {
                 marks[g - 1].journal = journal.len();
             }
             let mut merged: Vec<Entry> = Vec::with_capacity(mine.len() + theirs.len());
+            // A slot one path saved twice in a group ends it with what the
+            // first save holds: only that one joins.
+            let first = |entries: Vec<Entry>| {
+                let mut seen = std::collections::HashSet::new();
+                entries.into_iter().filter(|e| seen.insert(e.slot())).collect::<Vec<_>>()
+            };
+            let (mine, theirs) = (first(mine), first(theirs));
             for (entry, other) in mine.into_iter().map(|e| (e, b)).chain(theirs.into_iter().map(|e| (e, a))) {
                 let entry = match entry {
                     Entry::Meaning { sym, old, level, alias, stamp } => {
@@ -1890,13 +1897,17 @@ impl Env {
 }
 
 impl Entry {
+    /// The slot the entry saves: a name or a character's category.
+    fn slot(&self) -> (bool, u32) {
+        match self {
+            Entry::Meaning { sym, .. } => (false, *sym),
+            Entry::Catcode { character, .. } => (true, u32::from(*character)),
+        }
+    }
+
     /// Whether two entries save the same slot.
     fn same_slot(&self, other: &Entry) -> bool {
-        match (self, other) {
-            (Entry::Meaning { sym: a, .. }, Entry::Meaning { sym: b, .. }) => a == b,
-            (Entry::Catcode { character: a, .. }, Entry::Catcode { character: b, .. }) => a == b,
-            _ => false,
-        }
+        self.slot() == other.slot()
     }
 
     /// Two paths saved the same slot: what either may put back.

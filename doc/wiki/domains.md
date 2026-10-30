@@ -356,7 +356,7 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 
 ## `CatcodeTable::unknown`: category sets as a lattice element
 
-A character whose category is not pinned keeps the set of categories it may have, one bit each (`CatcodeTable::unknown`, [tex.web § 232](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4811)). A join unions the sets, the save stack restores them, and `\the\catcode` reads them as a set of numbers. Callers ask `cats` or `is_unknown` before trusting `get`.
+A character whose category is not pinned keeps the set of categories it may have, one bit each (`CatcodeTable::unknown`, [tex.web § 232](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4811)). A join unions the sets, the save stack restores them (per group, only the first save of a slot on each path joins: it is what the group's end leaves), and `\the\catcode` reads them as a set of numbers. Callers ask `cats` or `is_unknown` before trusting `get`.
 
 ## Files written in the run
 

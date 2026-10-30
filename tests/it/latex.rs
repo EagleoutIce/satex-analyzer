@@ -3046,6 +3046,26 @@ fn the_aux_texts_of_two_paths_are_read_apart() {
     assert!(defined(&analysis, "GotA") && defined(&analysis, "GotB"));
 }
 
+/// Paths that read different `.aux` texts join inside a verbatim group,
+/// where one saved a category twice: leaving the group puts back the
+/// first save, so the space is a space again (tex.web § 282).
+#[test]
+fn a_category_saved_twice_in_a_group_comes_back_as_first_saved() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-saved-twice-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("twice.tex");
+    let source = "\\documentclass{article}\\usepackage{verbatim}\n\\newenvironment{va}{\\verbatim}{\\endverbatim}\n\
+        \\begin{document}\n\\begin{va}\nx\n\\end{va}\n\\ifnum\\catcode32=10 \\else\\gdef\\Leaked{}\\fi\n\
+        \\ifodd\\pdfuniformdeviate9 \\expandafter\\enddocument\\fi\n\\section{A}\\label{a}\n\\end{document}\n";
+    std::fs::write(&path, source).unwrap();
+    let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
+    std::fs::remove_dir_all(dir).ok();
+    assert!(!defined(&analysis, "Leaked"));
+}
+
 /// `\romannumeral` of a number in a small interval is one of its numerals
 /// (tex.web § 69): a name spelled from it is each name TeX may build.
 #[test]
