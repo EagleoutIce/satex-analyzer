@@ -54,6 +54,16 @@
       <span class="ts-switches"><label class="ts-toggle" title="Show the text set in boxes that never reach the page"><span data-short="boxed">show boxed text</span><input type="checkbox" id="typeset-boxes" role="switch" aria-label="show boxed text"></label>
       <label class="ts-toggle" title="Show the keys of labels, references and citations where they stand"><span data-short="keys">show keys</span><input type="checkbox" id="typeset-keys" role="switch" aria-label="show keys"></label></span></summary>
       <div id="typeset-body" class="typeset grow"><p class="muted">What the paragraphs of the open file set, once it is checked.</p></div></details>
+    <details class="sect" id="play-library"><summary>Library <b id="lib-count"></b></summary>
+      <div class="lib grow">
+        <div class="lib-bar"><input type="search" id="lib-search" placeholder="Search names in force: \section, tikz, skip…" aria-label="search the names in force">
+          <select id="lib-from" aria-label="from which package"><option value="">every package</option></select>
+          <label class="ts-toggle" title="Also list internal names: with @, expl3 internals"><span data-short="internal">internal</span><input type="checkbox" id="lib-internal" role="switch" aria-label="internal names"></label></div>
+        <ul id="lib-list" class="lib-list"><li class="muted">The names appear once the document is checked.</li></ul>
+        <div class="lib-try"><label for="lib-text">Try <small class="muted">read right after <code>\begin{document}</code> of this document; the file stays as it is</small></label>
+          <textarea id="lib-text" rows="2" spellcheck="false" placeholder="\textbf{bold} 10--12 \hfill right"></textarea>
+          <button type="button" id="lib-run" class="small" title="Ctrl+Enter">Typeset it</button><div id="lib-out"></div></div>
+      </div></details>
     <dialog id="play-cache" class="cache-dialog" aria-labelledby="cache-title">
       <header><h3 id="cache-title">Caches</h3><button type="button" class="ghost small" id="cache-close" aria-label="close">✕</button></header>
       <p class="muted cache-note">Analysis results kept in this browser. A dropped entry is rebuilt when needed.</p>

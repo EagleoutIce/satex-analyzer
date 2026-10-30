@@ -116,8 +116,35 @@
   };
   /** The placeholders of primitive syntax that are types of the Ty lattice. */
   const TY = new Set(['number', 'dimen', 'glue', 'muglue', 'control sequence']);
-  /** A type's name linking to the wiki's Ty lattice. */
-  const tyLink = (t) => `<a class="ty" target="_blank" rel="noopener" href="${document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? ''}wiki/domains.html#argument-types-the-ty-lattice" title="the type ${esc(t)} in the Ty lattice">${esc(t)}</a>`;
+  /** A type's name linking to the wiki's Ty lattice; hovered, it shows its card ([`tyCard`]). */
+  const tyLink = (t) => `<a class="ty" target="_blank" rel="noopener" href="${document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? ''}wiki/domains.html#argument-types-the-ty-lattice" data-ty="${esc(t)}"${TYPES().has(t) ? '' : ` title="the type ${esc(t)} in the Ty lattice"`}>${esc(t)}</a>`;
+  /** The lattice by name (`satex completions json`'s `types`), when the page has it. */
+  const TYPES = () => (window.satexTypes ??= new Map((window.satexTypeList ?? []).map((t) => [t.name, t])));
+  /** A type's card: its chain up to `any`, what it is, the types right below it. */
+  function tyCard(name) {
+    const types = TYPES(), t = types.get(name);
+    if (!t) return '';
+    const up = [];
+    for (let x = t; x && !up.includes(x.name); x = x.name === 'any' ? null : types.get(x.parent)) up.unshift(x.name);
+    const below = [...types.values()].filter((x) => x.parent === name && x.name !== name).map((x) => x.name);
+    const chain = up.map((n) => (n === name ? `<b>${esc(n)}</b>` : esc(n))).join(' <span class="ty-sep">›</span> ');
+    return `<div class="ty-chain">${chain}</div><p>${esc(t.about).replace(/`([^`]+)`/g, '<code>$1</code>')}</p>` +
+      (below.length ? `<div class="ty-below"><span>below</span> ${below.map((n) => `<code>${esc(n)}</code>`).join(' ')}</div>` : '') +
+      '<div class="ty-foot">click: the lattice in the wiki</div>';
+  }
+  {
+    let tip = null;
+    document.addEventListener('mouseover', (e) => {
+      const a = e.target.closest?.('a.ty[data-ty]'), html = a && tyCard(a.dataset.ty);
+      if (!html) { if (tip && !e.target.closest?.('.ty-tip')) tip.hidden = true; return; }
+      tip ??= Object.assign(document.body.appendChild(document.createElement('div')), { className: 'ty-tip', role: 'tooltip' });
+      tip.innerHTML = html;
+      tip.hidden = false;
+      const r = a.getBoundingClientRect(), w = Math.min(320, innerWidth - 16);
+      tip.style.left = `${Math.max(8, Math.min(r.left, innerWidth - w - 8))}px`;
+      tip.style.top = `${r.bottom + 6 + tip.offsetHeight > innerHeight ? r.top - tip.offsetHeight - 6 : r.bottom + 6}px`;
+    });
+  }
   /** explain's `types` (`#1 skip register`) by argument name: `{ arg1: 'skip register' }`. */
   const typesOf = (r) => Object.fromEntries((r.types ?? []).map((t) => t.match(/^#(\d+) (.+)$/)).filter(Boolean).map(([, n, t]) => [`arg${n}`, t]));
   const KIND = { mand: 'mandatory', opt: 'optional', emb: 'an embellishment' };
@@ -234,7 +261,10 @@
     const owner = r.class ? pkgChip('class', r.class) : r.package ? (r.package === 'kernel' ? pkgChip('kernel', 'the kernel') : pkgChip('package', r.package)) : '';
     if (r.path && r.line) rows.push(['defined at', `${placeLink(r.path, r.line, r.file)}${owner ? ` ${owner}` : ''}`]);
     else if (owner) rows.push(['from', owner]);
-    if (r.context) rows.push(['context', esc(r.context)]);
+    // `in environments via \tikz@installcommands: tikzpicture, scope`: each name a link to its explanation
+    if (r.context) rows.push(['context', esc(r.context)
+      .replace(/: ([^:]+?)(?=, in |, outside|$)/g, (m, list) => `: ${list.split(', ').map((e) => `<code class="cs-ref env-ref" data-cs="\\${e}" tabindex="0">${e}</code>`).join(' ')}`)
+      .replace(/(^|[\s(])(\\[A-Za-z@]+)/g, (m, pre, cs) => `${pre}<code class="cs-ref" data-cs="${cs}" tabindex="0">${cs}</code>`)]);
     if (r.uses != null) rows.push(['uses', r.uses ? `${r.uses} in this run` : 'none in this run']);
     for (const [key, label] of [['expands', 'always expands'], ['may_expand', 'may expand']]) if (r[key]?.length) rows.push([label, `<span class="chips">${r[key].map(csChip).join('')}</span>`]);
     // what the document's calls leave defined: the public names, the internal ones folded

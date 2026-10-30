@@ -5,6 +5,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const manifest = JSON.parse($('satex-play').textContent);
+  window.satexTypeList = manifest.completion?.types;
   const base = new URL(manifest.root, document.baseURI).href;
   const [tabs, args, button, status, output, lspStatus, list, count, cmd, kernelBox, toastBox, ctxMenu, treeBox, examplesBox] =
     ['play-tabs', 'play-args', 'play-run', 'play-status', 'play-output', 'lsp-status', 'lsp-diagnostics', 'lsp-count',
@@ -170,7 +171,11 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => toastBox.classList.remove('on'), 2600);
   }
-  const timing = (id, text, title = '') => Object.assign($(id), { textContent: text, title });
+  /** One row of the timing pop-up: a line of text, or `items` as chips under it. */
+  const timing = (id, text, title = '', items = null) => {
+    const dd = Object.assign($(id), { title });
+    dd.innerHTML = escape(text) + (items?.length ? `<span class="t-chips">${items.map((i) => `<code>${escape(i)}</code>`).join('')}</span>` : '');
+  };
   // The status bar: one time, a pill per non-empty severity; the rest in a pop-up on the time.
   const shownTime = (text) => { $('t-time').hidden = false; $('t-time-text').textContent = text; };
   $('t-time').onclick = () => { const pop = $('t-detail'); pop.hidden = !pop.hidden; $('t-time').setAttribute('aria-expanded', !pop.hidden); };
@@ -372,16 +377,25 @@
    * keeps the server busy, the last items stand in only where they were asked for the same word. */
   const asked = new Map();
   let lastItems = null, lastWord = '';
-  function completions(position, start = position.character) {
+  /** The commands the server last offered after a `\\`, by file: what a new command completes from at once. */
+  const commandItems = new Map();
+  /** How long a completion waits for the server before the kept commands answer (the server's answer still replaces them). */
+  const INSTANT_MS = 120;
+  function completions(position, start = position.character, command = false) {
     const k = `${uri()}|${version}|${position.line}:${position.character}`, word = `${uri()}|${position.line}:${start}`;
     if (!asked.has(k)) {
       asked.clear();
       asked.set(k, lsp('textDocument/completion', { textDocument: { uri: uri() }, position }).then((r) => {
         [lastItems, lastWord] = [(Array.isArray(r) ? r : r?.items) ?? [], word];
+        if (command && lastItems.length) commandItems.set(uri(), lastItems);
         return lastItems;
       }).catch(() => []));
     }
-    return running && lastItems && lastWord === word ? lastItems : asked.get(k);
+    if (running && lastItems && lastWord === word) return lastItems;
+    const kept = command && commandItems.get(uri());
+    if (!kept) return asked.get(k);
+    // a run keeps the server busy for seconds: the kept commands answer now, the server's items on the next keystroke
+    return Promise.race([asked.get(k), new Promise((done) => setTimeout(() => done(kept), INSTANT_MS))]);
   }
   /** The last hover of each command, by file: shown at once while a run goes on. */
   const keptHovers = new Map();
@@ -407,7 +421,7 @@
       if (!ctx.explicit && before !== '\\' && before !== '{' && !item) return null;
       push();
       const start = before === '\\' ? word.from : key.from;
-      const items = await completions(position(ctx.state.doc, ctx.pos), start - line.from);
+      const items = await completions(position(ctx.state.doc, ctx.pos), start - line.from, before === '\\');
       // typed before the server read it: analyze now, ask again when that run ends
       if (!items.length && !ctx.explicit) { retryCompletion = true; sync(); }
       // an item that replaces a range (a key path) starts where that range does
@@ -640,7 +654,8 @@
   // in the section's header: a click flips a switch, never the section's fold; kept across visits
   for (const [id, cls, store] of [['typeset-boxes', 'show-boxes', 'satex-typeset-boxes'], ['typeset-keys', 'show-keys', 'satex-typeset-keys']]) {
     const box = $(id), apply = () => typesetBody.classList.toggle(cls, box.checked);
-    box.closest('label').addEventListener('click', (e) => { e.preventDefault(); box.checked = !box.checked; box.onchange(); });
+    // the switch itself flips natively; its text flips it here
+    box.closest('label').addEventListener('click', (e) => { if (e.target === box) return; e.preventDefault(); box.checked = !box.checked; box.onchange(); });
     try { box.checked = localStorage.getItem(store) === '1'; } catch {}
     box.onchange = () => { apply(); try { localStorage.setItem(store, box.checked ? '1' : '0'); } catch {} };
     apply();
@@ -1121,6 +1136,61 @@
   document.addEventListener('mouseout', (e) => { if (e.target.closest?.('.cs-ref')) setTimeout(() => { if (!csTip.matches(':hover')) csTip.hidden = true; }, 120); });
   csTip.addEventListener('mouseleave', () => { csTip.hidden = true; });
   document.addEventListener('click', (e) => { const ref = e.target.closest?.('.cs-ref'); if (ref) { csTip.hidden = true; explainName(ref.dataset.cs); } });
+  // ---------------------------------------------------------------- library: every name in force, and a scratch line to try them
+
+  const libList = $('lib-list'), libSearch = $('lib-search'), libFrom = $('lib-from'), libInternal = $('lib-internal');
+  let libNames = [], libFor = '';
+  /** The names in force at the end of the root's last run (`scope`), refreshed once per run. */
+  async function libraryLoad() {
+    const key = `${state.root ?? state.file}|${libInternal.checked}|${analyzedVersion}`;
+    if (key === libFor) return libraryShow();
+    libFor = key;
+    const request = { file: path(state.root ?? state.file), queries: [{ type: 'scope', all: libInternal.checked }] };
+    libNames = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records ?? [];
+    const from = libFrom.value, packages = [...new Set(libNames.map((r) => r.package).filter(Boolean))].sort();
+    libFrom.innerHTML = `<option value="">every package</option>${packages.map((p) => `<option${p === from ? ' selected' : ''}>${escape(p)}</option>`).join('')}`;
+    libraryShow();
+  }
+  /** The first 200 names the search matches: a name starting with it first, then one containing it, then a usage that does. */
+  function libraryShow() {
+    const q = libSearch.value.trim().toLowerCase().replace(/^\\/, ''), from = libFrom.value;
+    const rank = (r) => { const n = r.name.toLowerCase().replace(/^\\/, ''); return !q ? 0 : n.startsWith(q) ? 0 : n.includes(q) ? 1 : String(r.effective ?? '').toLowerCase().includes(q) ? 2 : 3; };
+    const hits = libNames.filter((r) => (!from || r.package === from) && rank(r) < 3).sort((a, b) => rank(a) - rank(b) || a.name.length - b.name.length);
+    $('lib-count').textContent = libNames.length ? String(hits.length) : '';
+    libList.innerHTML = hits.slice(0, 200).map((r) => `<li><code class="cs-ref" data-cs="${escape(r.name)}" tabindex="0">${escape(r.name)}</code>` +
+      `${r.effective && r.effective !== r.name ? `<span class="lib-use">${escape(r.effective)}</span>` : ''}<span class="lib-tag">${escape(r.tag ?? '')}</span><span class="lib-pkg">${escape(r.package ?? '')}</span></li>`).join('') +
+      (hits.length > 200 ? `<li class="muted">${hits.length - 200} more: narrow the search</li>` : '') ||
+      `<li class="muted">${libNames.length ? 'No name matches.' : 'The names appear once the document is checked.'}</li>`;
+  }
+  libSearch.oninput = libraryShow;
+  libFrom.onchange = libraryShow;
+  libInternal.onchange = libraryLoad;
+  $('play-library').addEventListener('toggle', (e) => { if (e.target.open) libraryLoad(); });
+  /** The scratch text read right after the root's `\begin{document}`: what it sets, its findings and what it expanded to. */
+  async function libraryTry() {
+    const text = $('lib-text').value, out = $('lib-out');
+    if (!text.trim()) return;
+    const root = state.root ?? state.file, lines = (root === state.file ? editor.text() : state.texts[root] ?? '').split('\n');
+    const i = lines.findIndex((l) => /\\begin\s*\{document\}/.test(l));
+    if (i < 0) { out.innerHTML = '<p class="muted">The document has no <code>\\begin{document}</code> to read the text after.</p>'; return; }
+    const col = lines[i].search(/\\begin\s*\{document\}/) + lines[i].slice(lines[i].search(/\\begin\s*\{document\}/)).indexOf('}') + 2;
+    out.innerHTML = '<p class="muted">Reading it…</p>';
+    sync();
+    const request = { file: path(root), inject: { text: `\n${text}\n`, at: `${i + 1}:${col}` }, config: { trace: 'true', trace_document_only: 'false' },
+      queries: [{ type: 'typeset' }, { type: 'diagnostics' }, { type: 'trace' }] };
+    const [ts, ds, tr] = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch((e) => [{ error: String(e?.message ?? e) }])) ?? [];
+    if (ts?.error) { out.innerHTML = `<p class="muted">${escape(ts.error)}</p>`; return; }
+    const lo = i + 2, hi = lo + text.split('\n').length - 1, mine = (r) => r.line >= lo && r.line <= hi && String(r.path ?? r.file ?? '').endsWith(root);
+    const set = (ts.records ?? []).filter((r) => r.kind === 'paragraph' && mine(r));
+    const found = (ds?.records ?? []).filter(mine);
+    const top = (tr?.records ?? []).filter((r) => mine(r) && r.inserts != null).slice(0, 12);
+    out.innerHTML = `<div class="typeset">${set.map((r) => `<p class="ts"><span class="ts-text">${notation(r.marked ?? r.detail ?? '')}</span></p>`).join('') || '<p class="muted">It sets no text.</p>'}</div>` +
+      (found.length ? `<ul class="lib-found">${found.map((d) => `<li><b>${escape(d.severity)}</b> ${escape(d.message)}</li>`).join('')}</ul>` : '') +
+      (top.length ? `<details class="lib-steps"><summary>${plural(top.length, 'expansion')}</summary><ul>${top.map((r) => `<li><code class="cs-ref" data-cs="${escape(r.name)}">${escape(r.name)}</code> → <code>${escape(String(r.inserts).slice(0, 160))}</code></li>`).join('')}</ul></details>` : '');
+  }
+  $('lib-run').onclick = libraryTry;
+  $('lib-text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); libraryTry(); } });
+
   // ---------------------------------------------------------------- trace: how one call expands
 
   const traceBox = $('play-trace'), traceBody = $('trace-body'), traceInternal = $('trace-internal');
@@ -1137,33 +1207,123 @@
     }
     return null;
   }
-  /** The steps as a tree by depth: a step with deeper steps after it is a folding node. */
-  function traceTree(steps, name, does = new Map()) {
-    const root = { kids: [], depth: -1 }, stack = [root];
-    for (const r of steps) {
-      while (stack.at(-1).depth >= r.depth) stack.pop();
-      const node = { r, depth: r.depth, kids: [] };
-      stack.at(-1).kids.push(node);
-      stack.push(node);
+  /** The step's name as the server spells it (a register as `\count188`). */
+  const stepName = (n) => String(n ?? '');
+  const OPENS = /^\\(?:if|unless)/, MIDS = /^\\(?:else|or):?$/, CLOSES = /^\\fi:?$/;
+  /** The run's steps as a tree by depth, the parts of conditionals and environments paired. Library steps
+   * show when asked, else only those a project step takes directly (the `\let` in `\documentclass`). */
+  function traceModel(steps, own, internal) {
+    const parent = steps.map(() => -1), stack = [];
+    for (let i = 0; i < steps.length; i++) {
+      while (stack.length && steps[stack.at(-1)].depth >= steps[i].depth) stack.pop();
+      parent[i] = stack.at(-1) ?? -1;
+      stack.push(i);
     }
-    const shown = root.kids.some((n) => n.r.name === name) ? root.kids.filter((n) => n.r.name === name) : root.kids;
-    const clip = (t) => (t.length > 160 ? `${t.slice(0, 160)}…` : t);
-    let count = 0;
-    const node = (n, first) => {
-      const { r } = n, open = first && n.kids.length ? ' open' : '';
-      count++;
-      const what = r.inserts != null ? `<span class="tr-arrow">→</span><code class="tr-out">${escape(clip(r.inserts)) || '<i>empty</i>'}</code>` : r.detail ? `<code class="tr-out">${escape(clip(r.detail))}</code>` : '';
-      const sets = r.sets ? `<span class="tr-sets" title="text this step set">sets <code>${escape(clip(r.sets))}</code></span>` : '';
-      const head = `${cacheBadge(STEP_KIND[r.step] ?? 'hashes', r.step)}<code class="${/^\\/.test(r.name) ? 'cs-ref' : ''}" ${/^\\/.test(r.name) ? `data-cs="${escape(r.name)}" tabindex="0"` : ''}>${escape(r.name)}</code>${what}${sets}` +
-        `<a href="#" class="tr-at o-go" data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}">${escape(r.file ?? '')}:${r.line}</a>`;
-      const why = does.get(r.name) ? `<span class="tr-does">${escape(does.get(r.name))}</span>` : '';
-      return n.kids.length ? `<li><details class="tr-node"${open}><summary>${head}${why}</summary><ul>${n.kids.map((k) => node(k, false)).join('')}</ul></details></li>` : `<li><div class="tr-leaf">${head}${why}</div></li>`;
-    };
-    const rest = root.kids.filter((n) => !shown.includes(n));
-    const html = shown.map((n, i) => node(n, i === 0)).join('') +
-      (rest.length ? `<li><details class="tr-node"><summary><span class="muted">${plural(rest.length, 'other step')} on this line</span></summary><ul>${rest.map((n) => node(n, false)).join('')}</ul></details></li>` : '');
-    return { html: `<ul class="tr-tree">${html}</ul>`, count };
+    const shown = steps.map((r, i) => internal || own(r) || (parent[i] >= 0 && own(steps[parent[i]])));
+    const vparent = steps.map(() => -1), kids = new Map([[-1, []]]);
+    for (let i = 0; i < steps.length; i++) {
+      if (!shown[i]) continue;
+      let p = parent[i];
+      while (p >= 0 && !shown[p]) p = parent[p];
+      vparent[i] = p;
+      if (!kids.has(p)) kids.set(p, []);
+      kids.get(p).push(i);
+    }
+    // `\if…` with its decision, `\else`/`\or` and `\fi`; `\begin` with its `\end`
+    const pair = new Map(), conds = [], envs = [];
+    const link = (a, b, last) => { if (a == null) return; pair.set(b, a); if (last || !pair.has(a)) pair.set(a, b); };
+    steps.forEach((r, i) => {
+      if (!shown[i]) return;
+      const n = r.name ?? '';
+      if (r.step === 'execute' && OPENS.test(n)) conds.push(i);
+      else if (r.step === 'branch' || r.step === 'condition' || MIDS.test(n)) link(conds.at(-1), i, false);
+      else if (CLOSES.test(n)) link(conds.pop(), i, true);
+      else if (n === '\\begin') envs.push(i);
+      else if (n === '\\end') link(envs.pop(), i, true);
+    });
+    const order = steps.map((_, i) => i).filter((i) => shown[i]);
+    return { steps, vparent, kids, pair, order, cur: -1, does: new Map() };
   }
+  let trace = null;
+  const clip = (t) => (t.length > 160 ? `${t.slice(0, 160)}…` : t);
+  function stepHead(i) {
+    const r = trace.steps[i], name = stepName(r.name), cs = /^\\/.test(name);
+    const what = r.inserts != null ? `<span class="tr-arrow">→</span><code class="tr-out">${escape(clip(r.inserts)) || '<i>empty</i>'}</code>` : r.detail ? `<code class="tr-out">${escape(clip(r.detail))}</code>` : '';
+    const sets = r.sets ? `<span class="tr-sets" title="text this step set">sets <code>${escape(clip(r.sets))}</code></span>` : '';
+    const j = trace.pair.get(i), mate = j == null ? '' : stepName(trace.steps[j].name) + (trace.steps[j].detail ? ` ${trace.steps[j].detail}` : '');
+    const link = j == null ? '' : `<a href="#" class="tr-pair" data-go="${j}" title="go to the matching ${escape(mate)}">↔ ${escape(mate)}</a>`;
+    const reg = /^\\(count|dimen|skip|muskip|toks|box)\d+$/.test(name) ? ' title="a register this step assigned"' : '';
+    const does = trace.does.get(r.name) ? `<span class="tr-does">${escape(trace.does.get(r.name))}</span>` : '';
+    return `${cacheBadge(STEP_KIND[r.step] ?? 'hashes', r.step)}<code${reg} class="${cs ? 'cs-ref' : ''}" ${cs ? `data-cs="${escape(name)}" tabindex="0"` : ''}>${escape(name)}</code>${what}${sets}${link}` +
+      `<a href="#" class="tr-at o-go" data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}">${escape(r.file ?? '')}:${r.line}</a>${does}`;
+  }
+  /** One step; its deeper steps are drawn when it first opens, so a long trace costs only what is looked at. */
+  function stepNode(i) {
+    return (trace.kids.get(i) ?? []).length ? `<li data-i="${i}"><details class="tr-node"><summary>${stepHead(i)}</summary><ul></ul></details></li>` : `<li data-i="${i}"><div class="tr-leaf">${stepHead(i)}</div></li>`;
+  }
+  function fill(li) {
+    const ul = li.querySelector(':scope > details > ul');
+    if (ul && !ul.childElementCount) ul.innerHTML = (trace.kids.get(+li.dataset.i) ?? []).map(stepNode).join('');
+  }
+  const rowOf = (i) => traceBody.querySelector(`li[data-i="${i}"] > details > summary, li[data-i="${i}"] > .tr-leaf`);
+  /** Select step `i`: its callers open, it marked and in view, the counter on it. */
+  function stepTo(i) {
+    if (!trace || i == null || i < 0) return;
+    const chain = [];
+    for (let p = trace.vparent[i]; p >= 0; p = trace.vparent[p]) chain.unshift(p);
+    for (const p of chain) {
+      const li = traceBody.querySelector(`li[data-i="${p}"]`);
+      if (!li) break;
+      fill(li);
+      li.querySelector(':scope > details').open = true;
+    }
+    traceBody.querySelector('.tr-cur')?.classList.remove('tr-cur');
+    const row = rowOf(i);
+    row?.classList.add('tr-cur');
+    row?.scrollIntoView({ block: 'nearest' });
+    trace.cur = i;
+    $('trace-step').textContent = `step ${trace.order.indexOf(i) + 1} of ${trace.order.length}`;
+  }
+  const by = (i, d) => trace.order[Math.max(0, Math.min(trace.order.length - 1, trace.order.indexOf(i) + d))];
+  /** The first step after `i` and all it called: over a call. */
+  function over(i) {
+    let k = trace.order.indexOf(i) + 1;
+    while (k < trace.order.length && trace.steps[trace.order[k]].depth > trace.steps[i].depth) k++;
+    return trace.order[Math.min(k, trace.order.length - 1)];
+  }
+  const moves = { prev: (i) => by(i, -1), next: (i) => by(i, 1), over, out: (i) => (trace.vparent[i] >= 0 ? trace.vparent[i] : i) };
+  const move = (m) => stepTo(moves[m](trace.cur < 0 ? trace.order[0] : trace.cur));
+  function traceTree(name) {
+    const top = trace.kids.get(-1) ?? [];
+    const mine = top.filter((i) => stepName(trace.steps[i].name) === name);
+    const rest = mine.length ? top.filter((i) => !mine.includes(i)) : [];
+    const html = (mine.length ? mine : top).map(stepNode).join('') +
+      (rest.length ? `<li><details class="tr-node"><summary><span class="muted">${plural(rest.length, 'other step')} on this line</span></summary><ul>${rest.map(stepNode).join('')}</ul></details></li>` : '');
+    const bar = '<div class="tr-bar" role="toolbar" aria-label="step through the trace">' +
+      [['prev', '◀', 'previous step (←)'], ['next', '▶', 'next step (→)'], ['over', '⤼', 'over this call (⇧→)'], ['out', '⤴', 'out to the caller (↑)']]
+        .map(([m, g, t]) => `<button type="button" class="ghost small" data-move="${m}" title="${t}" aria-label="${t}">${g}</button>`).join('') +
+      '<span id="trace-step" class="muted"></span></div>';
+    return `${bar}<ul class="tr-tree">${html}</ul>`;
+  }
+  traceBody.addEventListener('toggle', (e) => { const li = e.target.parentElement; if (li?.dataset.i && e.target.open) fill(li); }, true);
+  traceBody.addEventListener('mouseover', (e) => {
+    traceBody.querySelectorAll('.tr-mate').forEach((x) => x.classList.remove('tr-mate'));
+    const li = e.target.closest?.('li[data-i]'), j = li && trace?.pair.get(+li.dataset.i);
+    if (j != null) rowOf(j)?.classList.add('tr-mate');
+  });
+  traceBody.addEventListener('click', (e) => {
+    const m = e.target.closest('[data-move]'), go = e.target.closest('.tr-pair'), row = e.target.closest('li[data-i]');
+    if (!trace) return;
+    if (m) return move(m.dataset.move);
+    if (go) { e.preventDefault(); return stepTo(+go.dataset.go); }
+    if (row && !e.target.closest('.tr-at, .cs-ref')) stepTo(+row.dataset.i);
+  });
+  traceBox.addEventListener('keydown', (e) => {
+    const m = trace && !e.target.closest?.('input, textarea') && { ArrowLeft: 'prev', ArrowRight: e.shiftKey ? 'over' : 'next', ArrowUp: 'out' }[e.key];
+    if (!m) return;
+    e.preventDefault();
+    move(m);
+  });
   async function traceCall(name, site = null) {
     traceFor = { name, site: site ?? callSite(name) };
     $('trace-title').innerHTML = `Trace <code class="cs-ref" data-cs="${escape(name)}" tabindex="0">${escape(name)}</code>`;
@@ -1174,23 +1334,26 @@
     $('trace-note').textContent = `The call at ${at.file}:${at.line}:${at.col}, as the run expanded it.`;
     traceBody.innerHTML = '<p class="muted">Tracing…</p>';
     sync();
-    const config = { trace: 'true', trace_document_only: String(!traceInternal.checked), trace_lines: `[${at.line}, ${at.line}]`, trace_col: String(at.col), trace_file: at.file };
+    const config = { trace: 'true', trace_document_only: 'false', trace_lines: `[${at.line}, ${at.line}]`, trace_col: String(at.col), trace_file: at.file };
     const request = { file: path(state.root ?? state.file), config, queries: [{ type: 'trace' }] };
     const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch((e) => ({ error: String(e?.message ?? e) })))?.[0];
     if (mine !== traceRun) return;
-    const inProject = (r) => state.files.some((n) => String(r.path ?? r.file ?? '').endsWith(n));
-    const steps = (rs?.records ?? []).filter((r) => traceInternal.checked || inProject(r));
-    if (!steps.length) {
-      traceBody.innerHTML = traceHead(at, name, '') + `<p class="muted">${rs?.error ? `The query failed: ${escape(rs.error)}.` : `The run recorded no step for this call${traceInternal.checked ? '' : ' in the project. It may expand only inside library code: switch on “include library code”'}.`}</p>`;
+    const own = (r) => state.files.some((n) => String(r.path ?? r.file ?? '').endsWith(n));
+    trace = traceModel(rs?.records ?? [], own, traceInternal.checked);
+    if (!trace.order.length) {
+      traceBody.innerHTML = traceHead(at, name, '') + `<p class="muted">${rs?.error ? `The query failed: ${escape(rs.error)}.` : 'The run recorded no step for this call.'}</p>`;
       traceOutput(at, mine);
       return;
     }
-    const shown = steps.slice(0, 3000);
-    const names = [...new Set(shown.map((r) => r.name).filter((n) => /^\\/.test(n)))].slice(0, 200);
+    const names = [...new Set(trace.order.slice(0, 2000).map((i) => trace.steps[i].name).filter((n) => /^\\/.test(n)))].slice(0, 200);
     const does = new Map((await explainMany(names).catch(() => [])).flatMap((rs, i) => rs?.[0]?.does ? [[names[i], rs[0].does]] : []));
     if (mine !== traceRun) return;
-    traceBody.innerHTML = traceHead(at, name, '') + traceTree(shown, name, does).html;
-    $('trace-total').textContent = `${plural(steps.length, 'step')}${steps.length > 3000 ? ', the first 3000 shown' : ''}`;
+    trace.does = does;
+    traceBody.innerHTML = traceHead(at, name, '') + traceTree(name);
+    const first = traceBody.querySelector('.tr-tree > li[data-i]');
+    if (first) stepTo(+first.dataset.i);
+    first?.querySelector(':scope > details')?.setAttribute('open', '');
+    $('trace-total').textContent = `${plural(trace.order.length, 'step')}${traceInternal.checked ? '' : `, ${plural(trace.steps.length - trace.order.length, 'library step')} hidden`}`;
     traceOutput(at, mine);
   }
   /** The call's source line, the call marked, and a place for the text set up to it. */
@@ -1813,7 +1976,7 @@
     status.textContent = `${label} fetched in ${secs(performance.now() - t)}`;
     status.dataset.packages = [...fetchedPackages.keys()].join(' ');
     loadedList.push(...entries.map((e) => `${e.label} ${size(e.size)}`));
-    timing('t-load', `${loadedList.join(', ')} · last ${secs(performance.now() - t)}`, 'packages fetched after the first download');
+    timing('t-load', `${plural(loadedList.length, 'bundle')}, the last in ${secs(performance.now() - t)}`, 'packages fetched after the first download', loadedList);
     return true;
   }
   /** What a run's cache report says: the packages and classes served from the caches, the ones analyzed anew. */
@@ -1827,8 +1990,8 @@
       if (s) segments = Number(s[1]);
     }
     if (!reused.length && !fresh.length && !segments) return '';
-    const detail = [reused.length && `cached: ${reused.join(', ')}`, segments && `${segments} package segment${segments > 1 ? 's' : ''} cached`, fresh.length && `analyzed anew: ${fresh.join(', ')}`].filter(Boolean).join(' · ');
-    timing('t-cache', detail, 'what the last run reused from the caches and what it analysed again');
+    const detail = [`${reused.length + segments} reused`, fresh.length && `${fresh.length} analyzed anew`].filter(Boolean).join(', ');
+    timing('t-cache', detail, 'what the last run reused from the caches and what it analysed again', [...reused, ...(segments ? [plural(segments, 'package segment')] : []), ...fresh.map((f) => `new: ${f}`)]);
     return `${reused.length + segments} cached${fresh.length ? ` · fresh: ${fresh.map((f) => f.split(' ')[0]).join(', ')}` : ''}`;
   }
   /** The cache entries the worker keeps (worker.js), each with what it stands for; dropping one

@@ -243,7 +243,7 @@ body.play main { padding: 0; height: 100%; display: grid; grid-template-rows: mi
 .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .pane .tabs { padding: .4rem .8rem 0; background: var(--panel); }
 .pane .editor { flex: 1; min-height: 0; overflow: auto; background: var(--panel); }
-.side-pane { background: var(--bg); overflow-y: auto; }
+.side-pane { background: var(--bg); overflow-y: auto; container-type: inline-size; }
 .editor textarea { width: 100%; height: 100%; border: 0; resize: none; padding: .6rem; background: var(--panel); color: var(--fg); }
 .editor .cm-editor { height: 100%; } .cm-editor .cm-scroller { overflow: auto; }
 .cm-editor .cm-gutters { background: var(--sunk); border-right-color: var(--border); color: var(--muted); }
@@ -315,7 +315,8 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .stat-time svg { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
 .stat-time:hover:not(:disabled), .stat-time[aria-expanded=true] { color: var(--fg); border-color: var(--border); background: none; transform: none; box-shadow: none; }
 .stat-time[hidden], .stat-pop[hidden] { display: none; }
-.stat-pop { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 30; margin: 0; padding: .5rem .8rem; display: grid; grid-template-columns: auto auto; gap: .15rem .9rem; white-space: nowrap;
+.stat-pop { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 30; margin: 0; padding: .5rem .8rem; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .15rem .9rem; white-space: nowrap;
+  width: max-content; max-width: min(34rem, calc(100cqw - 2rem));
   background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font: 12px ui-monospace, Menlo, monospace; }
 .stat-pop dt { color: var(--muted); } .stat-pop dd { margin: 0; }
 .stat-pop dd:empty::before { content: "–"; color: var(--muted); }
@@ -719,3 +720,27 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .tr-line { display: block; } .tr-line i { display: inline-block; width: 2.4ch; margin-right: .8ch; text-align: right; font-style: normal; color: var(--muted); }
 .tr-call { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); border-radius: 3px; padding: 0 .1em; }
 .tr-before { padding: .35rem .7rem; border-top: 1px solid var(--border); font-size: .78rem; } .tr-before b { font-weight: 600; margin-right: .4rem; } .tr-before span { font-family: Georgia, serif; font-size: .85rem; }
+/* the trace's stepper: the selected step, the part paired with the one under the pointer */
+.tr-bar { display: flex; align-items: center; gap: .3rem; margin: 0 0 .4rem; } .tr-bar #trace-step { margin-left: .4rem; font-size: .76rem; }
+.tr-cur { background: color-mix(in srgb, var(--accent) 16%, transparent) !important; box-shadow: inset 2px 0 0 var(--accent); }
+.tr-mate { outline: 1px dashed var(--accent); outline-offset: -1px; }
+.tr-pair { font: .72rem ui-monospace, Menlo, monospace; color: var(--muted); white-space: nowrap; text-decoration: none; } .tr-pair:hover { color: var(--accent); }
+/* a type's card: where it stands in the lattice and what it is */
+.ty-tip { position: fixed; z-index: 60; max-width: min(320px, calc(100vw - 16px)); padding: .55rem .7rem; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--fg); box-shadow: 0 6px 20px rgb(0 0 0 / .14); font-size: .8rem; line-height: 1.4; pointer-events: none; }
+.ty-tip[hidden] { display: none; }
+.ty-tip .ty-chain { font-size: .74rem; color: var(--muted); } .ty-tip .ty-chain b { color: var(--accent); font-weight: 600; } .ty-tip .ty-sep { opacity: .6; }
+.ty-tip p { margin: .3rem 0; } .ty-tip code { font-size: .74rem; }
+.ty-tip .ty-below { font-size: .74rem; } .ty-tip .ty-below span { color: var(--muted); margin-right: .2rem; }
+.ty-tip .ty-foot { margin-top: .35rem; font-size: .7rem; color: var(--muted); }
+/* the timing pop-up: long lists wrap as chips */
+.stat-pop dd { min-width: 0; white-space: normal; overflow-wrap: anywhere; } .t-chips { display: flex; flex-wrap: wrap; gap: .2rem; margin-top: .2rem; }
+.t-chips code { font-size: .72rem; padding: 0 .35rem; border-radius: 999px; background: var(--sunk); border: 1px solid var(--border); }
+/* the library: names in force, searchable, and a scratch line read in the document */
+.lib { display: flex; flex-direction: column; gap: .4rem; min-height: 0; }
+.lib-bar { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; } .lib-bar input[type=search] { flex: 1 1 12rem; min-width: 0; }
+.lib-list { list-style: none; margin: 0; padding: 0; overflow: auto; max-height: 18rem; font-size: .8rem; }
+.lib-list li { display: flex; gap: .5rem; align-items: baseline; padding: .12rem .3rem; border-radius: 6px; } .lib-list li:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.lib-use { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: .74rem ui-monospace, Menlo, monospace; }
+.lib-tag, .lib-pkg { font-size: .7rem; color: var(--muted); white-space: nowrap; } .lib-pkg { margin-left: auto; }
+.lib-try { display: grid; gap: .3rem; border-top: 1px solid var(--border); padding-top: .4rem; } .lib-try textarea { font: .8rem ui-monospace, Menlo, monospace; resize: vertical; }
+.lib-try button { justify-self: start; } .lib-found { margin: .3rem 0; padding-left: 1rem; font-size: .78rem; } .lib-steps { font-size: .78rem; }
