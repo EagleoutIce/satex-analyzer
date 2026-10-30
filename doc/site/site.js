@@ -5,7 +5,7 @@
   const dark = () => (root.dataset.theme ?? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark';
   self.siteDark = dark; // playground.js themes its editor by it
   const button = document.getElementById('theme');
-  const label = () => button.setAttribute('aria-pressed', dark());
+  const label = () => button.setAttribute('aria-pressed', String(dark()));
   button.onclick = () => {
     root.dataset.theme = dark() ? 'light' : 'dark';
     try { localStorage.setItem('satex-theme', root.dataset.theme); } catch {}
@@ -19,7 +19,7 @@
       const tab = e.target.closest('[role=tab]');
       if (!tab) return;
       for (const t of list.children) {
-        t.setAttribute('aria-selected', t === tab);
+        t.setAttribute('aria-selected', String(t === tab));
         document.getElementById(t.getAttribute('aria-controls')).hidden = t !== tab;
       }
     };
@@ -426,7 +426,7 @@
         const ok = row.textContent.toLowerCase().includes(q) && selects.every((s) => !s.value ||
           (s.value === '—' ? !facet(row, s.dataset.k).length : facet(row, s.dataset.k).includes(s.value)));
         row.hidden = !ok;
-        shown += ok;
+        shown += +ok;
       }
       count.textContent = shown === rows.length ? '' : `${shown} of ${rows.length}`;
     };
@@ -490,6 +490,7 @@
         if (data.type === 'error') w?.reject(new Error(data.message.split('\n')[0])); else w?.resolve(data);
       };
       // one message at a time, each answered before the next goes; `project` and `reset` have no answer
+      /** @type {(msg: object) => Promise<any>} */
       const ask = (msg) => (line = line.then(() => new Promise((resolve, reject) => {
         if (msg.type === 'project' || msg.type === 'reset') resolve(); else waiting = { resolve, reject };
         worker.postMessage(msg);
@@ -562,7 +563,7 @@
       next.classList.remove('off');
       requestAnimationFrame(() => next.classList.add('on'));
       setTimeout(() => out.classList.remove('off'), 800);
-      [...dots.children].forEach((d, j) => d.setAttribute('aria-selected', j === i));
+      [...dots.children].forEach((d, j) => d.setAttribute('aria-selected', String(j === i)));
     };
     dots.onclick = (e) => { const b = e.target.closest('button'); if (b) { paused = true; show([...dots.children].indexOf(b)); } };
     const claim = knows[0].closest('.claim');

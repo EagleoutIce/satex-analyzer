@@ -4,6 +4,12 @@
 // the same code in node.
 
 /* exported SatexEngine */
+/**
+ * @param {any} createSatex
+ * @param {(label: string, loaded: number, total: number) => void} [progress]
+ * @param {any} [store]
+ * @param {(status: any) => void} [status]
+ */
 function SatexEngine(createSatex, progress = () => {}, store = null, status = () => {}) {
   const files = new Map();
   let wasm = null;
@@ -51,11 +57,11 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
 
   /** The binary, compiled while it downloads. */
   async function compile(url, total) {
-    if (url instanceof Uint8Array) return WebAssembly.compile(url);
+    if (url instanceof Uint8Array) return WebAssembly.compile(/** @type {BufferSource} */ (url));
     try {
       return await WebAssembly.compileStreaming(fetched(url, 'satex', total));
     } catch {
-      return WebAssembly.compile(await bytes(url, 'satex', total)); // served without application/wasm
+      return WebAssembly.compile(/** @type {BufferSource} */ (await bytes(url, 'satex', total))); // served without application/wasm
     }
   }
 

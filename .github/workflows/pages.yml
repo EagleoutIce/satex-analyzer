@@ -79,6 +79,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Type-check the site's scripts
+        run: |
+          npx --yes -p typescript@5.9.3 tsc -p doc/site/jsconfig.json
+          npx --yes -p typescript@5.9.3 tsc -p doc/site/jsconfig.worker.json
 
       # build.py keys its memo by the analysis, so stale entries are ignored.
       - uses: actions/cache@v4

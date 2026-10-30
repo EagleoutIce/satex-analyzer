@@ -72,7 +72,7 @@
       const f = parseFloat(v);
       if (f <= 0 || f >= 100) split.dataset.fold = f <= 0 ? 'editor' : 'side';
       else { delete split.dataset.fold; open = v; }
-      divider.setAttribute('aria-valuenow', Math.round(f));
+      divider.setAttribute('aria-valuenow', String(Math.round(f)));
       Object.assign(kept, { split: v, open });
     };
     const at = (x) => {
@@ -126,7 +126,7 @@
     // the satex console folds away; the state is remembered
     foldConsole = (folded, remember = true) => {
       $('play-termbody').hidden = folded;
-      $('play-termtoggle').setAttribute('aria-expanded', !folded);
+      $('play-termtoggle').setAttribute('aria-expanded', String(!folded));
       $('play-term').classList.toggle('folded', folded);
       if (remember) { kept.console = folded; keep(); }
     };
@@ -179,8 +179,8 @@
   };
   // The status bar: one time, a pill per non-empty severity; the rest in a pop-up on the time.
   const shownTime = (text) => { $('t-time').hidden = false; $('t-time-text').textContent = text; };
-  $('t-time').onclick = () => { const pop = $('t-detail'); pop.hidden = !pop.hidden; $('t-time').setAttribute('aria-expanded', !pop.hidden); };
-  addEventListener('mousedown', (e) => { if (!e.target.closest('.statdetail')) { $('t-detail').hidden = true; $('t-time').setAttribute('aria-expanded', false); } });
+  $('t-time').onclick = () => { const pop = $('t-detail'); pop.hidden = !pop.hidden; $('t-time').setAttribute('aria-expanded', String(!pop.hidden)); };
+  addEventListener('mousedown', (e) => { if (!e.target.closest('.statdetail')) { $('t-detail').hidden = true; $('t-time').setAttribute('aria-expanded', 'false'); } });
   function pills(ds) {
     const n = (s) => ds.filter((d) => (sev(d) === 'hint' ? 'info' : sev(d)) === s).length;
     const shown = [['error', 'error'], ['warning', 'warning'], ['info', 'suggestion']].map(([s, w]) => [s, w, n(s)]).filter(([, , c]) => c);
@@ -332,7 +332,7 @@
     const message = { jsonrpc: '2.0', method, params, ...(notify ? {} : { id: nextId++ }) };
     const runs = method === 'satex/analyze' || method === 'textDocument/didOpen';
     order.push(runs);
-    running += runs;
+    running += +runs;
     worker.postMessage({ type: 'lsp', message });
     return notify ? null : new Promise((resolve, reject) => pending.set(message.id, { resolve, reject }));
   }
@@ -414,7 +414,8 @@
   function sync() {
     clearTimeout(timer);
     // a completion may have sent the text already: what counts is whether this version was analyzed
-    if (push() | (analyzedVersion !== version && !!state.file && !(state.file in state.ro))) {
+    const pushed = push();
+    if (pushed || (analyzedVersion !== version && !!state.file && !(state.file in state.ro))) {
       analyzedVersion = version;
       prefetch();
       // the root's text may now ask for another engine
@@ -499,7 +500,7 @@
       const word = ctx.matchBefore(/[A-Za-z@*_:]*/), key = ctx.matchBefore(/[\w@*:./-]*/);
       const before = ctx.state.sliceDoc(word.from - 1, word.from), line = ctx.state.doc.lineAt(ctx.pos);
       // inside a {…} or […] the cursor's list item starts after `{`, `[`, `,` or `=`
-      const open = [...line.text.slice(0, key.from - line.from)].reduce((d, c) => d + ('{['.includes(c)) - ('}]'.includes(c)), 0) > 0;
+      const open = [...line.text.slice(0, key.from - line.from)].reduce((d, c) => d + +'{['.includes(c) - +'}]'.includes(c), 0) > 0;
       const item = open && /[{[,=]\s*$/.test(line.text.slice(0, key.from - line.from));
       if (!ctx.explicit && before !== '\\' && before !== '{' && !item) return null;
       push();
@@ -724,7 +725,7 @@
   for (const [id, cls, store] of [['typeset-boxes', 'show-boxes', 'satex-typeset-boxes'], ['typeset-keys', 'show-keys', 'satex-typeset-keys']]) {
     const box = $(id), apply = () => typesetBody.classList.toggle(cls, box.checked);
     // the switch itself flips natively; its text flips it here
-    box.closest('label').addEventListener('click', (e) => { if (e.target === box) return; e.preventDefault(); box.checked = !box.checked; box.onchange(); });
+    box.closest('label').addEventListener('click', (e) => { if (e.target === box) return; e.preventDefault(); box.checked = !box.checked; box.dispatchEvent(new Event('change')); });
     try { box.checked = localStorage.getItem(store) === '1'; } catch {}
     box.onchange = () => { apply(); try { localStorage.setItem(store, box.checked ? '1' : '0'); } catch {} };
     apply();
@@ -784,7 +785,7 @@
       if (r.kind === 'section') {
         close();
         const depth = Math.max(0, present.indexOf(LEVELS.indexOf(r.detail))), num = numberOf(r);
-        open = { labels: [], cites: new Map(), files: new Set([r.path ?? r.file]), id: `${r.path ?? r.file}:${r.line}`, depth,
+        open = { first: null, labels: [], cites: new Map(), files: new Set([r.path ?? r.file]), id: `${r.path ?? r.file}:${r.line}`, depth,
           head: `<a href="#" class="o-go" ${at(r)} title="${escape(r.detail)} at ${escape((r.file ?? '') + ':' + r.line)}">${num ? `<span class="o-num">${num}</span>` : ''}${escape(r.key)}</a>` };
       } else if (open && r.kind !== 'bibitem') {
         open.files.add(r.path ?? r.file);
@@ -799,7 +800,7 @@
     const bib = own.filter((r) => r.kind === 'bibitem'), where = own.find((r) => r.kind === 'bibliography');
     if (bib.length || where) html.push(row('bibliography', 0, `<a href="#" class="o-go" ${at(where ?? bib[0])}><span class="o-kind">bibliography</span>${bib.length} entr${bib.length === 1 ? 'y' : 'ies'}</a>`,
       chips(bib.map((r) => `<span class="o-label o-bib" title="${escape((r.file ?? '') + ':' + r.line)}">${escape(r.key)}</span>`))));
-    $('outline-count').textContent = sections.length || '';
+    $('outline-count').textContent = String(sections.length || '');
     outlineBody.innerHTML = html.length ? `<ul class="outline-list">${html.join('')}</ul>` : '<p class="muted">No sections, labels or bibliography yet.</p>';
   }
   outlineBody.addEventListener('click', (e) => {
@@ -1444,7 +1445,7 @@
     const at = trace.order.indexOf(i);
     for (const b of traceBody.querySelectorAll('[data-move]')) {
       const off = (['prev', 'out'].includes(b.dataset.move) && (b.dataset.move === 'prev' ? at <= 0 : trace.vparent[i] < 0)) || (['next', 'over'].includes(b.dataset.move) && at >= trace.order.length - 1);
-      b.disabled = off; b.setAttribute('aria-disabled', off);
+      b.disabled = off; b.setAttribute('aria-disabled', String(off));
     }
     $('trace-step').textContent = `step ${at + 1} of ${trace.order.length}`;
     // the one step: where it sits, what it is, how it got its result, and what the input holds after it
@@ -1606,7 +1607,7 @@
     move(m);
   });
   async function traceCall(name, site = null) {
-    traceFor = { name, site: site ?? callSite(name) };
+    traceFor = { name, site: site ?? callSite(name), config: null, records: null, error: null, fork: null };
     $('trace-title').innerHTML = `Trace <code class="cs-ref" data-cs="${escape(name)}" tabindex="0">${escape(name)}</code>`;
     if (!traceBox.open) traceBox.showModal();
     const at = traceFor.site, mine = ++traceRun;
@@ -1674,7 +1675,7 @@
     const own = (r) => state.files.some((n) => String(r.path ?? r.file ?? '').endsWith(n));
     trace = traceModel(forkView(traceFor.records, traceFor.fork), own, traceInternal.checked);
     if (!trace.order.length && !trace.groups.length) {
-      traceBody.innerHTML = traceHead(at, name, '') + `<p class="muted">${traceFor.error ? `The query failed: ${escape(traceFor.error)}.` : 'The run recorded no step for this call.'}</p>`;
+      traceBody.innerHTML = traceHead(at, name) + `<p class="muted">${traceFor.error ? `The query failed: ${escape(traceFor.error)}.` : 'The run recorded no step for this call.'}</p>`;
       traceOutput(at, mine);
       return;
     }
@@ -1688,7 +1689,7 @@
         if (d && row && !row.querySelector(':scope > .tr-does')) row.insertAdjacentHTML('beforeend', `<span class="tr-does">${escape(d)}</span>`);
       }
     });
-    traceBody.innerHTML = traceHead(at, name, '') + traceTree(name);
+    traceBody.innerHTML = traceHead(at, name) + traceTree(name);
     const first = traceBody.querySelector('.tr-tree > li[data-i]:not([data-i^="g"])');
     if (first) stepTo(+first.dataset.i);
     else if (trace.order.length) stepTo(trace.order[0]);
@@ -1946,7 +1947,7 @@
     if (open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
       e.preventDefault();
       chosen = (chosen + (e.key === 'ArrowDown' ? 1 : choices.length - 1)) % choices.length;
-      menu.dataset.moved = 1;
+      menu.dataset.moved = '1';
       return draw();
     }
     if (open && (e.key === 'Tab' || (e.key === 'Enter' && menu.dataset.moved))) { e.preventDefault(); delete menu.dataset.moved; return accept(chosen); }
@@ -2367,7 +2368,7 @@
       `${shown && shown.length > 1 ? `<div class="wf-alts" role="tablist">${shown.map((_, i) => `<button type="button" role="tab" data-alt="${i}" aria-selected="${i === a}">path ${i + 1}</button>`).join('')}</div>` : ''}${body}</div>`;
   }
   const writtenShow = () => {
-    $('written-count').textContent = writtenFiles.length || '';
+    $('written-count').textContent = String(writtenFiles.length || '');
     $('written-body').innerHTML = writtenFiles.length ? writtenFiles.map(writtenCard).join('') : '<p class="muted">The build writes no file.</p>';
   };
   $('written-body').addEventListener('click', (e) => {
@@ -2439,7 +2440,7 @@
     const rows = cacheEntries.map((e) => { const l = cacheLabel(e.path); return { e, l, u: usedOf(l[1], l[2]), hit: [] }; })
       .filter((r) => !q || (!q.startsWith('\\') && `${r.l[0]} ${r.l[2]}`.toLowerCase().includes(q)) || (r.hit = namesLike(r.l[1], r.l[2], q)).length);
     const by = { size: (r) => r.e.size, name: (r) => (r.l[2] || r.l[0]).toLowerCase(), kind: (r) => r.l[0] }[cacheOrder.key];
-    rows.sort((a, b) => (cacheOrder.used ? b.u[0] - a.u[0] : 0) || (by(a) < by(b) ? -1 : by(a) > by(b) ? 1 : 0) * (cacheOrder.down ? -1 : 1));
+    rows.sort((a, b) => (cacheOrder.used ? Number(b.u[0]) - Number(a.u[0]) : 0) || (by(a) < by(b) ? -1 : by(a) > by(b) ? 1 : 0) * (cacheOrder.down ? -1 : 1));
     for (const th of cacheBox.querySelectorAll('th[data-sort]')) {
       if (th.dataset.sort === cacheOrder.key) th.setAttribute('aria-sort', cacheOrder.down ? 'descending' : 'ascending'); else th.removeAttribute('aria-sort');
     }
@@ -2540,7 +2541,7 @@
     const fold = e.target.closest('.cache-name');
     if (fold) {
       const open = fold.getAttribute('aria-expanded') !== 'true';
-      fold.setAttribute('aria-expanded', open);
+      fold.setAttribute('aria-expanded', String(open));
       $(fold.getAttribute('aria-controls')).hidden = !open;
       return;
     }
@@ -2582,7 +2583,7 @@
   kernelBox.onchange = async () => {
     manualKernel = true;
     kernelBox.disabled = true;
-    try { await kernel(+kernelBox.value); await restart(); if (!plainLint()) await start(); } catch (e) { toast(`the kernel did not load: ${e.message}`); kernelBox.value = state.kernel; }
+    try { await kernel(+kernelBox.value); await restart(); if (!plainLint()) await start(); } catch (e) { toast(`the kernel did not load: ${e.message}`); kernelBox.value = String(state.kernel); }
     kernelBox.disabled = false;
   };
 
@@ -2861,7 +2862,7 @@
     state.texts = { ...sampleTexts, ...(link?.x ? link.p : {}) };
     const k = manifest.kernels.findIndex((x) => x.id === link?.k);
     if (k >= 0) { manualKernel = true; if (k > 0) await kernel(k); }
-    kernelBox.value = state.kernel;
+    kernelBox.value = String(state.kernel);
     // packages.txt's first section, fetched while the editor loads
     const preloading = fetchPackages(wanted_(manifest.preload ?? [])).catch(() => false);
     try {
