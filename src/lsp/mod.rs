@@ -110,6 +110,7 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
         .map_err(|e| e.to_string())?;
 
     let result = main_loop(&connection, &engine_tx, &diagnostics_rx, &hovers);
+    crate::probe::stop_all();
     let _ = engine_tx.send(EngineMsg::Shutdown);
     let _ = engine.join();
     crate::progress::listen(None);

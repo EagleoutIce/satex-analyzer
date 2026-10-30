@@ -54,9 +54,16 @@ pub fn background<T>(f: impl FnOnce() -> T) -> Option<T> {
     (!preempted()).then_some(out)
 }
 
-/// A request waits and this thread's work is [`background`].
+static STOPPING: AtomicBool = AtomicBool::new(false);
+
+/// Stops every run at its next budget check (the server's `exit`).
+pub fn stop_all() {
+    STOPPING.store(true, Ordering::Relaxed);
+}
+
+/// The process exits, or a request waits and this is [`background`] work.
 pub(crate) fn preempted() -> bool {
-    BACKGROUND.get() && WANTED.load(Ordering::Relaxed)
+    STOPPING.load(Ordering::Relaxed) || (BACKGROUND.get() && WANTED.load(Ordering::Relaxed))
 }
 
 /// Tokens the runs of one question read so far ([`QUESTION_STEPS`]).
