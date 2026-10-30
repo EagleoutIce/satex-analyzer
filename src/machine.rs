@@ -10458,7 +10458,9 @@ will look undefined",
         self.name_token = Some(t);
         match t.tok {
             Tok::Cs(sym) => {
-                crate::observe::arg_type(self, t.span, crate::roles::Ty::Cs);
+                // A name an expl3 module function defines is a variable of that module.
+                let var = self.within.iter().find_map(|(f, _)| crate::roles::VarKind::of_function(self.name(*f)));
+                crate::observe::arg_type(self, t.span, var.map_or(crate::roles::Ty::Cs, crate::roles::Ty::Var));
                 Some(sym)
             }
             Tok::Chr(c, Catcode::Active) => Some(self.active_sym(c)),

@@ -78,6 +78,18 @@ A command name: a backslash and letters (`\name`), or a backslash and one other 
 ## conditional
 `\newif\iffoo` makes three commands: `\iffoo` tests, `\footrue` and `\foofalse` set. Use it as `\iffoo ...\else ...\fi`.
 
+## tl variable
+An expl3 token list variable, made by `\tl_new:N` and set by `\tl_set:Nn` and its relatives. By convention its name ends in `_tl`: `\l_my_tl` local, `\g_my_tl` global.
+
+## str variable
+An expl3 string: a token list whose characters are all "other" (spaces stay spaces). `\str_set:Nn` sets it; names end in `_str`.
+
+## clist variable
+An expl3 comma list, kept as a token list: `\clist_set:Nn \l_my_clist {a, b}`. Names end in `_clist`.
+
+## seq variable, prop variable, fp variable, bool variable, regex variable, coffin variable, flag variable, intarray variable, cctab variable
+An expl3 variable of that kind: a sequence, a property list, a floating point number, a boolean, a compiled regex, a coffin, a flag, an integer array or a category code table. Each is made by its module's `\…_new:N` and changed only through that module's functions. Names end in the kind (`\l_my_seq`).
+
 ## key
 A name something is looked up by: a label, a citation or an option. Case matters.
 

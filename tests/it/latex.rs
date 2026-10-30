@@ -3862,3 +3862,22 @@ fn package_options_follow_the_declare_option_handler() {
     // An entry's own options are no package options.
     assert!(!options.iter().any(|o| o == "uniquepart"), "{options:?}");
 }
+
+/// A name an expl3 module function makes or sets is a variable of that
+/// module's kind, from the run: `\tl_new:N` and `\seq_new:N` type their
+/// argument, a string is a token list below it.
+#[test]
+fn expl3_variables_are_typed_by_the_function_that_made_them() {
+    if !installed() {
+        return;
+    }
+    use satex::roles::{Ty, VarKind};
+    let a = analyze(
+        "\\documentclass{article}\\ExplSyntaxOn\n\\tl_new:N \\l_my_tl\n\\seq_new:N \\l_my_seq\n\\str_new:N \\l_my_str\n\\ExplSyntaxOff\n\\begin{document}x\\end{document}\n",
+    );
+    let at = |line: u32| a.facts.types.iter().find(|(s, _)| s.line == line).map(|(_, t)| *t);
+    assert_eq!(at(2), Some(Ty::Var(VarKind::Tl)));
+    assert_eq!(at(3), Some(Ty::Var(VarKind::Seq)));
+    assert_eq!(at(4), Some(Ty::Var(VarKind::Str)));
+    assert!(Ty::Var(VarKind::Str).leq(Ty::Var(VarKind::Tl)) && Ty::Var(VarKind::Tl).leq(Ty::Cs));
+}

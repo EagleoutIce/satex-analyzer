@@ -60,6 +60,72 @@ pub enum KeyKind {
     Any,
 }
 
+/// What an expl3 variable holds, by the module of the function that made or
+/// set it (`\tl_set:Nn`, `\seq_new:N`; interface3, "Naming functions and
+/// variables"). Register-backed kinds (`int`, `dim`, `skip`, `muskip`,
+/// `box`, `ior`/`iow`) are registers of their kind instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum VarKind {
+    Tl,
+    Str,
+    Clist,
+    Seq,
+    Prop,
+    Fp,
+    Bool,
+    Regex,
+    Coffin,
+    Flag,
+    Intarray,
+    Cctab,
+}
+
+impl VarKind {
+    pub const ALL: [VarKind; 12] = [
+        VarKind::Tl,
+        VarKind::Str,
+        VarKind::Clist,
+        VarKind::Seq,
+        VarKind::Prop,
+        VarKind::Fp,
+        VarKind::Bool,
+        VarKind::Regex,
+        VarKind::Coffin,
+        VarKind::Flag,
+        VarKind::Intarray,
+        VarKind::Cctab,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            VarKind::Tl => "tl",
+            VarKind::Str => "str",
+            VarKind::Clist => "clist",
+            VarKind::Seq => "seq",
+            VarKind::Prop => "prop",
+            VarKind::Fp => "fp",
+            VarKind::Bool => "bool",
+            VarKind::Regex => "regex",
+            VarKind::Coffin => "coffin",
+            VarKind::Flag => "flag",
+            VarKind::Intarray => "intarray",
+            VarKind::Cctab => "cctab",
+        }
+    }
+
+    /// The kind whose variable an expl3 function takes as its first
+    /// argument: `\tl_set:Nn`, `\seq_gput_right:cn`. None for another
+    /// module or a function of no variable (`\tl_if_empty:nTF`).
+    pub fn of_function(name: &str) -> Option<VarKind> {
+        let (base, sig) = name.trim_start_matches('\\').split_once(':')?;
+        let module = base.split('_').next()?;
+        if !sig.starts_with(['N', 'c']) {
+            return None;
+        }
+        VarKind::ALL.into_iter().find(|k| k.as_str() == module)
+    }
+}
+
 /// What a file argument is read as: the extension its program adds and the
 /// installation tree (kpathsea's `TEXINPUTS`, `BIBINPUTS`, `BSTINPUTS`) it
 /// searches. `Any` is a file of no known kind, the join of two kinds.
@@ -162,6 +228,9 @@ pub enum Ty {
     Cs,
     /// A conditional `\newif` defines (`\if⟨name⟩`).
     Switch,
+    /// An expl3 variable of a kind ([`VarKind`]): a control sequence the
+    /// module's functions made or set.
+    Var(VarKind),
     /// The key list a loading command takes in its optional argument.
     Options,
     /// A definition's replacement text (tex.web § 473): code.
@@ -183,6 +252,7 @@ impl Ty {
         let files = FILE_KINDS.iter().map(|r| r.0).filter(|k| *k != FileKind::Any);
         let mut out =
             vec![Top, Quantity, Number, Dimen, Glue, MuGlue, Box, Register, Cs, Switch, Options, Text, Name, Body];
+        out.extend(VarKind::ALL.map(Var));
         out.extend(regs.clone().map(Reg));
         out.extend(regs.map(Named));
         out.extend(keys.map(Key));
@@ -206,7 +276,21 @@ impl Ty {
             Name | Body => Text,
             Key(_) => Key(KeyKind::Any),
             File(_) => File(FileKind::Any),
-            Switch => Cs,
+            Switch
+            | Var(
+                VarKind::Tl
+                | VarKind::Seq
+                | VarKind::Prop
+                | VarKind::Fp
+                | VarKind::Bool
+                | VarKind::Regex
+                | VarKind::Coffin
+                | VarKind::Flag
+                | VarKind::Intarray
+                | VarKind::Cctab,
+            ) => Cs,
+            // A string and a comma list are token lists (interface3).
+            Var(VarKind::Str | VarKind::Clist) => Var(VarKind::Tl),
             Reg(_) | Register | Quantity | Text | Cs | Options | Top => Top,
         }
     }
@@ -258,6 +342,7 @@ impl std::fmt::Display for Ty {
             Ty::Reg(k) => write!(f, "{} register", k.as_str()),
             Ty::Named(RegKind::Count) => f.write_str("counter"),
             Ty::Named(k) => write!(f, "{} name", k.as_str()),
+            Ty::Var(k) => write!(f, "{} variable", k.as_str()),
             Ty::File(k) if *k != FileKind::Any => match k.ext() {
                 Some(ext) => write!(f, "{} (.{ext})", k.label()),
                 None => f.write_str(k.label()),
@@ -280,6 +365,7 @@ impl std::fmt::Display for Ty {
                 Ty::Name => "name",
                 Ty::Cs => "control sequence",
                 Ty::Switch => "conditional",
+                Ty::Var(_) => unreachable!("written above"),
                 Ty::Options => "options",
                 Ty::Body => "definition body",
                 Ty::Text => "text",

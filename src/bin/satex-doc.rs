@@ -162,7 +162,7 @@ fn types_chart() -> String {
         Ty::Reg(_) | Ty::Register | Ty::Named(_) => "register",
         Ty::Key(_) | Ty::Options => "key",
         Ty::File(_) => "file",
-        Ty::Cs | Ty::Switch => "cs",
+        Ty::Cs | Ty::Switch | Ty::Var(_) => "cs",
         _ => "text",
     };
     let mut out = String::from("```mermaid\nflowchart LR\n");
