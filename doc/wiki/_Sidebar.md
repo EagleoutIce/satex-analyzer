@@ -23,7 +23,7 @@
 - [Where satex is not exact](Semantics#14-where-satex-is-not-exact)
 - [Caches](Semantics#15-caches)
 
-**[🧗 Why LaTeX is hard](Challenges)**
+**[🧗 Why TeX is hard](Challenges)**
 
 **[🔬 Abstract domains](Domains)**
 - [`Value` and `OneOf`](Domains#value-what-a-control-sequence-or-register-holds)
