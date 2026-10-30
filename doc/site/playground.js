@@ -1318,6 +1318,7 @@
   const traceBox = $('play-trace'), traceBody = $('trace-body'), traceInternal = $('trace-internal');
   const STEP_KIND = { expand: 'kernel', define: 'package', 'open-file': 'class' };
   let traceFor = null, traceRun = 0;
+  let traceLive = null;
   /** Where to trace `name`: the caret's own call, else its first use in the open file, else in any file of the project. */
   function callSite(name) {
     const w = editor.word(), p = editor.position();
@@ -1332,8 +1333,8 @@
   /** The step's name as the server spells it (a register as `\count188`). */
   const stepName = (n) => String(n ?? '');
   const OPENS = /^\\(?:if|unless)/, MIDS = /^\\(?:else|or):?$/, CLOSES = /^\\fi:?$/;
-  /** The run's steps as a tree by depth, the parts of conditionals and environments paired. Library steps
-   * show when asked, else only those a project step takes directly (the `\let` in `\documentclass`). */
+  /** The run's steps as a tree by depth. Library work called by a project step (or by none) folds into one
+   * group per run of sibling library steps; its steps show, and step, only when asked. */
   function traceModel(steps, own, internal) {
     const parent = steps.map(() => -1), stack = [];
     for (let i = 0; i < steps.length; i++) {
@@ -1341,15 +1342,28 @@
       parent[i] = stack.at(-1) ?? -1;
       stack.push(i);
     }
-    const shown = steps.map((r, i) => internal || own(r) || (parent[i] >= 0 && own(steps[parent[i]])));
-    const vparent = steps.map(() => -1), kids = new Map([[-1, []]]);
+    const mine = steps.map(own), top = steps.map((_, i) => !mine[i] && (parent[i] < 0 || mine[parent[i]]));
+    // gof: the group each library step belongs to, through its library callers
+    const groups = [], gof = steps.map(() => -1), lastKid = new Map();
     for (let i = 0; i < steps.length; i++) {
+      const p = parent[i], prev = lastKid.get(p);
+      lastKid.set(p, i);
+      if (mine[i]) continue;
+      if (!top[i]) { gof[i] = gof[p]; groups[gof[i]].size++; continue; }
+      if (prev != null && top[prev]) gof[i] = gof[prev];
+      else { gof[i] = groups.length; groups.push({ parent: p, first: i, size: 0 }); }
+      groups[gof[i]].size++;
+    }
+    const shown = steps.map((_, i) => mine[i] || internal);
+    const vparent = steps.map(() => -1), kids = new Map([[-1, []]]);
+    const put = (k, v) => { if (!kids.has(k)) kids.set(k, []); kids.get(k).push(v); };
+    for (let i = 0; i < steps.length; i++) {
+      if (top[i] && groups[gof[i]].first === i) put(groups[gof[i]].parent, `g${gof[i]}`);
       if (!shown[i]) continue;
       let p = parent[i];
       while (p >= 0 && !shown[p]) p = parent[p];
       vparent[i] = p;
-      if (!kids.has(p)) kids.set(p, []);
-      kids.get(p).push(i);
+      put(top[i] ? `g${gof[i]}` : p, i);
     }
     // `\if…` with its decision, `\else`/`\or` and `\fi`; `\begin` with its `\end`
     const pair = new Map(), conds = [], envs = [];
@@ -1364,55 +1378,133 @@
       else if (n === '\\end') link(envs.pop(), i, true);
     });
     const order = steps.map((_, i) => i).filter((i) => shown[i]);
-    return { steps, vparent, kids, pair, order, cur: -1, does: new Map() };
+    return { steps, parent, vparent, kids, pair, order, groups, gof, top, internal, cur: -1, does: new Map() };
   }
   let trace = null;
   const clip = (t) => (t.length > 160 ? `${t.slice(0, 160)}…` : t);
+  /** Text with each control sequence in it hoverable. */
+  const csText = (t) => {
+    t = String(t);
+    let out = '', k = 0;
+    for (const m of t.matchAll(/\\(?:[^\\\s{}#]+(?= |$)|[^\s])/g)) { out += `${escape(t.slice(k, m.index))}<span class="tr-cs" data-cs="${escape(m[0])}">${escape(m[0])}</span>`; k = m.index + m[0].length; }
+    return out + escape(t.slice(k));
+  };
+  const keyOf = (s) => (String(s)[0] === 'g' ? String(s) : +s);
+  const groupLabel = (g) => {
+    const name = stepName(trace.steps[g.first].name);
+    return /everypar/.test(name) ? `paragraph starts (everypar hook, ${plural(g.size, 'step')})` : `library work from ${name} (${plural(g.size, 'step')})`;
+  };
+  /** How a call got its result, one row: the body, each argument, the result. */
+  function howOf(r, cut = clip) {
+    const bits = r.body != null && r.arguments?.length
+      ? [`<span class="tr-bit"><i>body</i> <code>${csText(cut(r.body))}</code></span>`, ...r.arguments.map((a, k) => `<span class="tr-bit"><code>#${k + 1}</code> = <code>${csText(cut(a))}</code></span>`)] : [];
+    if (r.inserts != null) bits.push(`<span class="tr-bit tr-res">→ <code class="tr-out">${csText(cut(r.inserts)) || '<i>empty</i>'}</code></span>`);
+    else if (r.detail) bits.push(`<span class="tr-bit"><code class="tr-out">${csText(cut(r.detail))}</code></span>`);
+    return bits.length ? `<span class="tr-how">${bits.join('')}</span>` : '';
+  }
+  const csCode = (name, extra = '') => (/^\\/.test(name) ? `<code class="tr-cs${extra}" data-cs="${escape(name)}" tabindex="0">${escape(name)}</code>` : `<code class="${extra.trim()}">${escape(name)}</code>`);
   function stepHead(i) {
-    const r = trace.steps[i], name = stepName(r.name), cs = /^\\/.test(name);
-    const what = r.inserts != null ? `<span class="tr-arrow">→</span><code class="tr-out">${escape(clip(r.inserts)) || '<i>empty</i>'}</code>` : r.detail ? `<code class="tr-out">${escape(clip(r.detail))}</code>` : '';
+    const r = trace.steps[i], name = stepName(r.name);
     const sets = r.sets ? `<span class="tr-sets" title="text this step set">sets <code>${escape(clip(r.sets))}</code></span>` : '';
     const j = trace.pair.get(i), mate = j == null ? '' : stepName(trace.steps[j].name) + (trace.steps[j].detail ? ` ${trace.steps[j].detail}` : '');
     const link = j == null ? '' : `<a href="#" class="tr-pair" data-go="${j}" title="go to the matching ${escape(mate)}">↔ ${escape(mate)}</a>`;
-    const reg = /^\\(count|dimen|skip|muskip|toks|box)\d+$/.test(name) ? ' title="a register this step assigned"' : '';
     const does = trace.does.get(r.name) ? `<span class="tr-does">${escape(trace.does.get(r.name))}</span>` : '';
-    return `${cacheBadge(STEP_KIND[r.step] ?? 'hashes', r.step)}<code${reg} class="${cs ? 'cs-ref' : ''}" ${cs ? `data-cs="${escape(name)}" tabindex="0"` : ''}>${escape(name)}</code>${what}${sets}${link}` +
+    return `${cacheBadge(STEP_KIND[r.step] ?? 'hashes', r.step)}${csCode(name)}${howOf(r)}${sets}${link}` +
       `<a href="#" class="tr-at o-go" data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}">${escape(r.file ?? '')}:${r.line}</a>${does}`;
   }
-  /** One step; its deeper steps are drawn when it first opens, so a long trace costs only what is looked at. */
-  function stepNode(i) {
-    return (trace.kids.get(i) ?? []).length ? `<li data-i="${i}"><details class="tr-node"><summary>${stepHead(i)}</summary><ul></ul></details></li>` : `<li data-i="${i}"><div class="tr-leaf">${stepHead(i)}</div></li>`;
+  /** One step or library group; its deeper steps are drawn when it first opens, so a long trace costs only what is looked at. */
+  function stepNode(k) {
+    if (typeof k === 'string') {
+      const label = `<span class="tr-glabel">${escape(groupLabel(trace.groups[+k.slice(1)]))}</span>`;
+      return trace.internal ? `<li data-i="${k}"><details class="tr-node tr-group"><summary>${label}</summary><ul></ul></details></li>`
+        : `<li data-i="${k}"><div class="tr-leaf tr-group" title="library code; turn on “show package and kernel steps” to open it">${label}</div></li>`;
+    }
+    return (trace.kids.get(k) ?? []).length ? `<li data-i="${k}"><details class="tr-node"><summary>${stepHead(k)}</summary><ul></ul></details></li>` : `<li data-i="${k}"><div class="tr-leaf">${stepHead(k)}</div></li>`;
   }
   function fill(li) {
     const ul = li.querySelector(':scope > details > ul');
-    if (ul && !ul.childElementCount) ul.innerHTML = (trace.kids.get(+li.dataset.i) ?? []).map(stepNode).join('');
+    if (ul && !ul.childElementCount) ul.innerHTML = (trace.kids.get(keyOf(li.dataset.i)) ?? []).map(stepNode).join('');
   }
   const rowOf = (i) => traceBody.querySelector(`li[data-i="${i}"] > details > summary, li[data-i="${i}"] > .tr-leaf`);
+  const openLi = (k) => { const li = traceBody.querySelector(`li[data-i="${k}"]`); if (!li) return false; fill(li); const d = li.querySelector(':scope > details'); if (d) d.open = true; return true; };
   /** Select step `i`: its callers open, it marked and in view, the counter on it. */
   function stepTo(i) {
-    if (!trace || i == null || i < 0) return;
+    if (!trace || i == null || i < 0 || !trace.order.includes(i)) return;
     const chain = [];
     for (let p = trace.vparent[i]; p >= 0; p = trace.vparent[p]) chain.unshift(p);
-    for (const p of chain) {
-      const li = traceBody.querySelector(`li[data-i="${p}"]`);
-      if (!li) break;
-      fill(li);
-      li.querySelector(':scope > details').open = true;
+    for (const a of [...chain, i]) {
+      if (trace.top[a] && !openLi(`g${trace.gof[a]}`)) break;
+      if (a !== i && !openLi(a)) break;
     }
     traceBody.querySelector('.tr-cur')?.classList.remove('tr-cur');
     const row = rowOf(i);
     row?.classList.add('tr-cur');
     row?.scrollIntoView({ block: 'nearest' });
     trace.cur = i;
-    $('trace-step').textContent = `step ${trace.order.indexOf(i) + 1} of ${trace.order.length}`;
-    // the one step: what it is, what it puts back into the input, and what the input still holds
+    const at = trace.order.indexOf(i);
+    for (const b of traceBody.querySelectorAll('[data-move]')) {
+      const off = (['prev', 'out'].includes(b.dataset.move) && (b.dataset.move === 'prev' ? at <= 0 : trace.vparent[i] < 0)) || (['next', 'over'].includes(b.dataset.move) && at >= trace.order.length - 1);
+      b.disabled = off; b.setAttribute('aria-disabled', off);
+    }
+    $('trace-step').textContent = `step ${at + 1} of ${trace.order.length}`;
+    // the one step: where it sits, what it is, how it got its result, and what the input holds after it
     const r = trace.steps[i], name = stepName(r.name);
-    const ahead = String(r.ahead ?? ''), head = ahead.match(/^\\[A-Za-z@:_]+|^\\.|^./s)?.[0] ?? '';
-    $('trace-now').innerHTML = `<div class="tr-now-head">${cacheBadge(STEP_KIND[r.step] ?? 'hashes', r.step)}<code class="cs-ref" data-cs="${escape(name)}" tabindex="0">${escape(name)}</code>` +
+    traceStream(i);
+    const crumbs = [];
+    for (let p = trace.parent[i]; p >= 0; p = trace.parent[p]) if (trace.steps[p].step === 'expand') crumbs.unshift(p);
+    const crumb = (p) => (trace.order.includes(p) ? `<a href="#" class="tr-crumb" data-go="${p}" title="go to this call">${escape(stepName(trace.steps[p].name))}</a>` : `<span class="tr-crumb" title="a library step: turn on “show package and kernel steps” to go there">${escape(stepName(trace.steps[p].name))}</span>`);
+    const nav = `<nav class="tr-crumbs" aria-label="the calls this step is inside">${[...crumbs.map(crumb), `<b class="tr-crumb on" aria-current="step">${escape(name)}</b>`].join('<span class="tr-sep">›</span>')}</nav>`;
+    $('trace-now').innerHTML = nav + `<div class="tr-now-head">${cacheBadge(STEP_KIND[r.step] ?? 'hashes', r.step)}${csCode(name)}` +
       `<a href="#" class="tr-at o-go" data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}">${escape(r.file ?? '')}:${r.line}</a></div>` +
-      (r.inserts != null ? `<div class="tr-now-row"><b>inserts</b><code>${escape(r.inserts) || '<i>nothing</i>'}</code></div>` : r.detail ? `<div class="tr-now-row"><b>detail</b><code>${escape(r.detail)}</code></div>` : '') +
-      (r.sets ? `<div class="tr-now-row"><b>sets</b><code>${escape(r.sets)}</code></div>` : '') +
-      `<div class="tr-now-row"><b>ahead</b><code class="tr-ahead"><mark>${escape(head)}</mark>${escape(ahead.slice(head.length))}</code></div>`;
+      (r.inserts != null || r.detail ? `<div class="tr-now-row"><b>${r.inserts != null ? 'result' : 'detail'}</b>${howOf(r, (t) => t)}</div>` : '') +
+      (r.sets ? `<div class="tr-now-row"><b>sets</b><code>${escape(r.sets)}</code></div>` : '') + statePanel(r);
+  }
+  /** The meanings this step's input names, searchable, and every name in force on request. */
+  function statePanel(r) {
+    const ms = Object.entries(r.meanings ?? {});
+    return `<details class="tr-state" data-step="${trace.steps.indexOf(r)}"${trace.stateOpen ? ' open' : ''}><summary>State at this step: ${plural(ms.length, 'name')} ahead</summary>` +
+      `<input type="search" class="tr-filter" placeholder="filter names" aria-label="filter names" value="${escape(trace.filter ?? '')}">` +
+      `<ul class="tr-means">${ms.map(([n, m]) => `<li data-n="${escape(n)}"${n.toLowerCase().includes((trace.filter ?? '').toLowerCase()) ? '' : ' hidden'}>${csCode(n)} <code class="tr-mean">${csText(m)}</code></li>`).join('') || '<li class="muted">The input ahead names no command.</li>'}</ul>` +
+      `<button type="button" class="ghost small tr-allnames">all names at this step</button><ul class="tr-means tr-every"></ul></details>`;
+  }
+  /** Catcode names, read from the wiki's table once. */
+  let catNames = null;
+  const loadCatNames = () => (catNames ??= fetch(`${base}wiki/domains.html`).then((r) => r.text()).then((t) => {
+    const doc = new DOMParser().parseFromString(t, 'text/html');
+    return new Map([...doc.querySelectorAll('a[id^="catcode-"]')].map((a) => [+a.id.slice(8), a.closest('tr')?.cells[1]?.textContent.trim() ?? '']));
+  }).catch(() => new Map()));
+  let cats = new Map();
+  const catTitle = (c) => (c === 16 ? 'control sequence' : cats.get(c) ? `${cats.get(c)} (catcode ${c})` : `catcode ${c}`);
+  const tokChip = (t, c) => (c === 16 ? csCode(t, ' tr-tok k16') : `<a class="tr-tok k${c}" href="${base}wiki/domains.html#catcode-${c}" target="_blank" title="${escape(catTitle(c))}">${t === ' ' ? '␣' : escape(t)}<sub class="tr-cc">${c}</sub></a>`);
+  /** An expansion's result as tokens: its control sequences, then single characters. */
+  const insChips = (t) => [...String(t).matchAll(/(\\(?:[^\\\s{}#]+(?= |$)|[^]))( ?)|([^])/g)].map((m) => (m[1] ? csCode(m[1], ' tr-tok tr-ins') : `<span class="tr-tok tr-ins" title="put back by this step">${m[3] === ' ' ? '␣' : escape(m[3])}</span>`)).join('');
+  /** The file text after the queued tokens in `ahead`. */
+  function fileRest(r) {
+    const a = String(r.ahead ?? '');
+    let k = 0;
+    for (const [t, c] of r.tokens ?? []) {
+      if (!a.startsWith(t, k)) return '';
+      k += t.length;
+      if (c === 16 && a[k] === ' ') k++;
+    }
+    return a.slice(k);
+  }
+  /** The input after step `i`: what it put back marked, then the tokens that were ahead, then the file. */
+  function traceStream(i) {
+    const box = $('trace-stream');
+    if (!box) return;
+    const r = trace.steps[i];
+    const put = r.step === 'expand' && r.inserts != null ? insChips(r.inserts) : '';
+    const toks = (r.tokens ?? []).map(([t, c]) => tokChip(t, c)).join('');
+    // the categories in this stream; all of them behind the toggle
+    const seen = new Set([...(r.tokens ?? []).map(([, c]) => c), ...(put ? [16] : [])]);
+    const legend = [...Array(17).keys()].filter((c) => trace.legend || seen.has(c)).map((c) => c === 16
+      ? '<span class="tr-key"><b class="k16">cs</b> control sequence</span>'
+      : `<a class="tr-key" href="${base}wiki/domains.html#catcode-${c}" target="_blank"><b class="k${c}">${c}</b> ${escape(cats.get(c) ?? '')}</a>`).join('');
+    box.innerHTML = `<div class="tr-stream-head"><b>input after this step</b><button type="button" class="ghost small tr-legend-btn" aria-expanded="${!!trace.legend}">${trace.legend ? 'fewer catcodes' : 'all catcodes'}</button></div>` +
+      `<div class="tr-chips">${put}${toks}<span class="tr-rest">${escape(clip(r.tokens?.length ? fileRest(r) : String(r.ahead ?? '')))}</span></div>` +
+      `<div class="tr-legend">${legend}</div>`;
+    if (!cats.size) loadCatNames().then((m) => { if (m.size && !cats.size) { cats = m; if (trace?.cur === i) traceStream(i); } });
   }
   const by = (i, d) => trace.order[Math.max(0, Math.min(trace.order.length - 1, trace.order.indexOf(i) + d))];
   /** The first step after `i` and all it called: over a call. */
@@ -1425,30 +1517,88 @@
   const move = (m) => stepTo(moves[m](trace.cur < 0 ? trace.order[0] : trace.cur));
   function traceTree(name) {
     const top = trace.kids.get(-1) ?? [];
-    const mine = top.filter((i) => stepName(trace.steps[i].name) === name);
-    const rest = mine.length ? top.filter((i) => !mine.includes(i)) : [];
-    const html = (mine.length ? mine : top).map(stepNode).join('') +
+    const mine = top.filter((i) => typeof i === 'number' && stepName(trace.steps[i].name) === name);
+    const rest = mine.length ? top.filter((i) => !mine.includes(i) && typeof i === 'number') : [];
+    const html = (mine.length ? top.filter((i) => !rest.includes(i)) : top).map(stepNode).join('') +
       (rest.length ? `<li><details class="tr-node"><summary><span class="muted">${plural(rest.length, 'other step')} on this line</span></summary><ul>${rest.map(stepNode).join('')}</ul></details></li>` : '');
     const now = '<div class="tr-now" id="trace-now" aria-live="polite"></div>';
     const bar = '<div class="tr-bar" role="toolbar" aria-label="step through the trace">' +
       [['prev', '◀', 'previous step (←)'], ['next', '▶', 'next step (→)'], ['over', '⤼', 'over this call (⇧→)'], ['out', '⤴', 'out to the caller (↑)']]
         .map(([m, g, t]) => `<button type="button" class="ghost small" data-move="${m}" title="${t}" aria-label="${t}">${g}</button>`).join('') +
       '<span id="trace-step" class="muted"></span></div>';
-    return `${bar}${now}<details class="tr-all"><summary>All steps</summary><ul class="tr-tree">${html}</ul></details>`;
+    return `${bar}${now}<details class="tr-all" open><summary>All steps</summary><ul class="tr-tree">${html}</ul></details>`;
   }
-  traceBody.addEventListener('toggle', (e) => { const li = e.target.parentElement; if (li?.dataset.i && e.target.open) fill(li); }, true);
+  // ---- the card of a name in the trace: its meaning at the step, then what Explain says
+  const trTip = Object.assign(document.createElement('div'), { className: 'cs-tip tr-tip', hidden: true });
+  traceBox.append(trTip);
+  const atStep = new Map();
+  /** One query of the run stopped at record `r`'s event, cached. */
+  function stopped(r, queries) {
+    const k = `${r.index}|${JSON.stringify(queries)}`;
+    if (!atStep.has(k)) {
+      const request = { file: path(state.root ?? state.file), config: { ...traceFor.config, trace_stop: String(r.index) }, queries };
+      atStep.set(k, lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).then((rs) => rs?.[0]?.records ?? []).catch(() => []));
+    }
+    return atStep.get(k);
+  }
+  async function tipFor(ref) {
+    const name = ref.dataset.cs, si = +(ref.closest('[data-step]')?.dataset.step ?? trace?.cur ?? -1), r = trace?.steps[si];
+    const label = r ? `at step ${trace.order.includes(si) ? trace.order.indexOf(si) + 1 : `event ${r.index}`}` : '';
+    let head = '', rec = null;
+    if (r?.meanings?.[name] != null) head = `<p class="tr-tip-mean"><b>meaning ${label}</b> <code>${csText(r.meanings[name])}</code></p>`;
+    else if (r) {
+      rec = (await stopped(r, [{ type: 'explain', names: [name] }])).find((x) => x.name === name);
+      head = `<p class="tr-tip-mean"><b>meaning ${label}</b> <code>${rec ? csText(rec.tag === 'macro' && rec.body != null ? `macro:${rec.parameters ?? ''}->${rec.body}` : rec.body ?? rec.effective ?? rec.tag ?? '') : 'undefined'}</code></p>`;
+    }
+    rec ??= (await explainRecords(name)).find((x) => x.name === name);
+    return head + (rec ? cards.explain(rec) : '');
+  }
+  async function showTip(ref, pin = false) {
+    const html = await tipFor(ref);
+    if (!pin && (trTip.dataset.pin || !ref.matches(':hover'))) return;
+    trTip.innerHTML = (pin ? '<p class="tr-tip-pin muted">pinned · click outside to close</p>' : '') + (html || `<p class="muted">satex knows no ${escape(ref.dataset.cs)} here.</p>`);
+    trTip.hidden = false;
+    const b = ref.getBoundingClientRect(), h = trTip.offsetHeight;
+    trTip.style.left = `${Math.max(8, Math.min(b.left, innerWidth - trTip.offsetWidth - 8))}px`;
+    trTip.style.top = `${b.bottom + 6 + h > innerHeight ? Math.max(8, b.top - 6 - h) : b.bottom + 6}px`;
+  }
+  traceBox.addEventListener('mouseover', (e) => { const ref = e.target.closest?.('.tr-cs'); if (ref && !trTip.dataset.pin) showTip(ref); });
+  traceBox.addEventListener('mouseout', (e) => { if (e.target.closest?.('.tr-cs')) setTimeout(() => { if (!trTip.dataset.pin && !trTip.matches(':hover')) trTip.hidden = true; }, 150); });
+  trTip.addEventListener('mouseleave', () => { if (!trTip.dataset.pin) trTip.hidden = true; });
+  traceBody.addEventListener('toggle', (e) => {
+    const li = e.target.parentElement;
+    if (li?.dataset.i && e.target.open) fill(li);
+    if (e.target.classList?.contains('tr-state') && trace) trace.stateOpen = e.target.open;
+  }, true);
   traceBody.addEventListener('mouseover', (e) => {
     traceBody.querySelectorAll('.tr-mate').forEach((x) => x.classList.remove('tr-mate'));
     const li = e.target.closest?.('li[data-i]'), j = li && trace?.pair.get(+li.dataset.i);
     if (j != null) rowOf(j)?.classList.add('tr-mate');
   });
-  traceBody.addEventListener('click', (e) => {
-    const m = e.target.closest('[data-move]'), go = e.target.closest('.tr-pair'), row = e.target.closest('li[data-i]');
+  traceBody.addEventListener('input', (e) => {
+    if (!e.target.classList.contains('tr-filter') || !trace) return;
+    const q = (trace.filter = e.target.value).toLowerCase();
+    for (const li of e.target.parentElement.querySelectorAll('li[data-n]')) li.hidden = !li.dataset.n.toLowerCase().includes(q);
+  });
+  traceBody.addEventListener('click', async (e) => {
     if (!trace) return;
+    const m = e.target.closest('[data-move]'), go = e.target.closest('[data-go]'), row = e.target.closest('li[data-i]'), cs = e.target.closest('.tr-cs');
+    if (e.target.closest('.tr-legend-btn')) { trace.legend = !trace.legend; return traceStream(trace.cur); }
+    if (e.target.closest('.tr-allnames')) {
+      const box = e.target.closest('.tr-state'), r = trace.steps[+box.dataset.step], list = box.querySelector('.tr-every');
+      e.target.disabled = true; list.innerHTML = '<li class="muted">running to this step…</li>';
+      const all = await stopped(r, [{ type: 'scope' }]), q = (trace.filter ?? '').toLowerCase();
+      list.innerHTML = all.map((x) => `<li data-n="${escape(x.name)}"${x.name.toLowerCase().includes(q) ? '' : ' hidden'}>${csCode(x.name)} <code class="tr-mean">${escape(x.tag ?? '')}</code></li>`).join('') || '<li class="muted">No names.</li>';
+      e.target.textContent = `${plural(all.length, 'name')} at this step`;
+      return;
+    }
     if (m) return move(m.dataset.move);
     if (go) { e.preventDefault(); return stepTo(+go.dataset.go); }
-    if (row && !e.target.closest('.tr-at, .cs-ref')) stepTo(+row.dataset.i);
+    if (cs) { e.preventDefault(); delete trTip.dataset.pin; await showTip(cs, true); trTip.dataset.pin = '1'; return; }
+    if (row && !e.target.closest('.tr-at, summary.tr-group, .tr-group, input')) stepTo(keyOf(row.dataset.i));
   });
+  traceBox.addEventListener('click', (e) => { if (trTip.dataset.pin && !e.target.closest('.tr-tip, .tr-cs')) { delete trTip.dataset.pin; trTip.hidden = true; } }, true);
+  traceBox.addEventListener('close', () => { delete trTip.dataset.pin; trTip.hidden = true; });
   traceBox.addEventListener('keydown', (e) => {
     const m = trace && !e.target.closest?.('input, textarea') && { ArrowLeft: 'prev', ArrowRight: e.shiftKey ? 'over' : 'next', ArrowUp: 'out' }[e.key];
     if (!m) return;
@@ -1463,28 +1613,88 @@
     $('trace-total').textContent = '';
     if (!at) { $('trace-note').textContent = ''; traceBody.innerHTML = `<p class="muted">${escape(name)} is not used in the project, so there is no call to trace.</p>`; return; }
     $('trace-note').textContent = `The call at ${at.file}:${at.line}:${at.col}, as the run expanded it.`;
-    traceBody.innerHTML = '<p class="muted">Tracing…</p>';
+    const t0 = performance.now();
+    traceBody.innerHTML = '<div class="tr-live"><p class="muted" id="trace-live">Tracing: starting the run…</p><progress id="trace-prog" hidden></progress></div>';
+    let last = {};
+    const draw = () => {
+      const live = $('trace-live'), d = last;
+      if (!live) return;
+      const bits = [d.phase || d.text || 'starting the run', d.file && `${d.file.split('/').pop()}${d.line ? `:${d.line}` : ''}`, d.lines && `${d.lines.toLocaleString('en')} lines read`, d.files && plural(d.files, 'file'), d.paths > 1 && `${d.paths} paths`, secs(performance.now() - t0)].filter(Boolean);
+      live.textContent = `Tracing: ${bits.join(' · ')}`;
+      const bar = $('trace-prog');
+      bar.hidden = !d.total;
+      if (d.total) { bar.max = d.total; bar.value = d.reached ?? 0; }
+    };
+    const tick = setInterval(draw, 250);
+    traceLive = (d) => { if (d.text || d.phase) last = d; draw(); };
     sync();
-    const config = { trace: 'true', trace_document_only: 'false', trace_lines: `[${at.line}, ${at.line}]`, trace_col: String(at.col), trace_file: at.file };
+    const config = traceFor.config = { trace: 'true', trace_document_only: 'false', trace_lines: `[${at.line}, ${at.line}]`, trace_col: String(at.col), trace_file: at.file };
     const request = { file: path(state.root ?? state.file), config, queries: [{ type: 'trace' }] };
     const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch((e) => ({ error: String(e?.message ?? e) })))?.[0];
+    clearInterval(tick);
+    traceLive = null;
     if (mine !== traceRun) return;
+    traceFor.records = rs?.records ?? [];
+    traceFor.error = rs?.error;
+    await traceShow(at, name, mine);
+  }
+  /** The arms of a fork path, "1.0.2". */
+  const armsOf = (f) => String(f ?? '').split('.').filter(Boolean);
+  const startsWith = (a, b) => b.every((x, k) => a[k] === x);
+  /** The paths that end, not continue, another. */
+  const forkLeaves = (records) => {
+    const all = [...new Set(records.map((r) => r.fork).filter(Boolean))];
+    return all.filter((f) => !all.some((g) => g !== f && startsWith(armsOf(g), armsOf(f))));
+  };
+  /** Each fork's whole path: a later fork replays from an earlier step, unmarked until its own choice. */
+  const forkKey = (r) => `${r.name}|${r.file}|${r.line}|${r.col}|${r.depth}`;
+  function forkPaths(records) {
+    const key = forkKey, paths = [[]];
+    records.forEach((r, i) => {
+      let cur = paths.at(-1), q;
+      if (i && !r.fork && records[i - 1].fork && (q = cur.findLastIndex((x) => !x.fork && key(x) === key(r))) >= 0) paths.push((cur = cur.slice(0, q)));
+      cur.push(r);
+    });
+    return paths;
+  }
+  /** One fork's path, or the joined view: the steps all paths share, then those after the last choice. */
+  function forkView(records, fork) {
+    if (forkLeaves(records).length < 2) return records;
+    const paths = forkPaths(records), related = (r) => r.fork && (startsWith(armsOf(r.fork), armsOf(fork)) || startsWith(armsOf(fork), armsOf(r.fork)));
+    if (fork) return paths.find((p) => p.some(related)) ?? records;
+    let n = 0;
+    while (paths.every((p) => p[n] && !p[n].fork && forkKey(p[n]) === forkKey(paths[0][n]))) n++;
+    const last = paths.at(-1);
+    let k = last.length;
+    while (k > n && !last[k - 1].fork) k--;
+    return [...paths[0].slice(0, n), ...last.slice(k)];
+  }
+  /** The trace's tree from the stored records: the library switch asks nothing new. */
+  async function traceShow(at, name, mine) {
     const own = (r) => state.files.some((n) => String(r.path ?? r.file ?? '').endsWith(n));
-    trace = traceModel(rs?.records ?? [], own, traceInternal.checked);
-    if (!trace.order.length) {
-      traceBody.innerHTML = traceHead(at, name, '') + `<p class="muted">${rs?.error ? `The query failed: ${escape(rs.error)}.` : 'The run recorded no step for this call.'}</p>`;
+    trace = traceModel(forkView(traceFor.records, traceFor.fork), own, traceInternal.checked);
+    if (!trace.order.length && !trace.groups.length) {
+      traceBody.innerHTML = traceHead(at, name, '') + `<p class="muted">${traceFor.error ? `The query failed: ${escape(traceFor.error)}.` : 'The run recorded no step for this call.'}</p>`;
       traceOutput(at, mine);
       return;
     }
-    const names = [...new Set(trace.order.slice(0, 2000).map((i) => trace.steps[i].name).filter((n) => /^\\/.test(n)))].slice(0, 200);
-    const does = new Map((await explainMany(names).catch(() => [])).flatMap((rs, i) => rs?.[0]?.does ? [[names[i], rs[0].does]] : []));
-    if (mine !== traceRun) return;
-    trace.does = does;
+    // what the project's own calls do, filled in once known: the tree does not wait for it
+    const names = [...new Set(trace.order.filter((i) => !trace.gof.length || trace.gof[i] < 0).slice(0, 2000).map((i) => trace.steps[i].name).filter((n) => /^\\/.test(n)))].slice(0, 50);
+    explainMany(names).catch(() => []).then((all) => {
+      if (mine !== traceRun) return;
+      all.forEach((rs, k) => { if (rs?.[0]?.does) trace.does.set(names[k], rs[0].does); });
+      for (const li of traceBody.querySelectorAll('li[data-i]')) {
+        const r = trace.steps[+li.dataset.i], row = rowOf(li.dataset.i), d = r && trace.does.get(r.name);
+        if (d && row && !row.querySelector(':scope > .tr-does')) row.insertAdjacentHTML('beforeend', `<span class="tr-does">${escape(d)}</span>`);
+      }
+    });
     traceBody.innerHTML = traceHead(at, name, '') + traceTree(name);
-    const first = traceBody.querySelector('.tr-tree > li[data-i]');
+    const first = traceBody.querySelector('.tr-tree > li[data-i]:not([data-i^="g"])');
     if (first) stepTo(+first.dataset.i);
+    else if (trace.order.length) stepTo(trace.order[0]);
     first?.querySelector(':scope > details')?.setAttribute('open', '');
-    $('trace-total').textContent = `${plural(trace.order.length, 'step')}${traceInternal.checked ? '' : `, ${plural(trace.steps.length - trace.order.length, 'library step')} hidden`}`;
+    const lib = trace.groups.reduce((n, g) => n + g.size, 0);
+    $('trace-total').textContent = `${plural(trace.order.length, 'step')}${traceInternal.checked || !lib ? '' : `, ${plural(lib, 'library step')} folded`}`;
     traceOutput(at, mine);
   }
   /** The call's source line, the call marked, and a place for the text set up to it. */
@@ -1496,7 +1706,9 @@
       const body = mark ? `${escape(l.slice(0, at.col - 1))}<mark class="tr-call">${escape(l.slice(at.col - 1, at.col - 1 + name.length))}</mark>${escape(l.slice(at.col - 1 + name.length))}` : escape(l);
       return `<span class="tr-line${mark ? ' on' : ''}"><i>${n}</i>${body || ' '}</span>`;
     });
-    return `<div class="tr-src"><pre><code>${lines.join('')}</code></pre><div id="trace-before" class="tr-before muted"></div></div>`;
+    const leaves = forkLeaves(traceFor.records ?? []);
+    const forks = leaves.length > 1 ? `<label class="tr-fork">paths <select id="trace-fork"><option value="">joined (steps common to all forks, then the join)</option>${leaves.map((f) => `<option value="${f}"${f === traceFor.fork ? ' selected' : ''}>fork ${escape(f)}</option>`).join('')}</select></label>` : '';
+    return `<div class="tr-src"><pre><code>${lines.join('')}</code></pre>${forks}<div id="trace-stream" class="tr-before"></div><div id="trace-before" class="tr-before muted"></div></div>`;
   }
   /** The text set before the call, from the typeset rows. */
   async function traceOutput(at, mine) {
@@ -1510,7 +1722,8 @@
     }
     box.innerHTML = before.length ? `<b>set before</b> <span>${escape(before.slice(-3).join(' ¶ ').slice(-400))}</span>` : '<b>set before</b> <span>nothing yet</span>';
   }
-  traceInternal.onchange = () => { if (traceFor) traceCall(traceFor.name, traceFor.site); };
+  traceBody.addEventListener('change', (e) => { if (e.target.id === 'trace-fork') { traceFor.fork = e.target.value; traceShow(traceFor.site, traceFor.name, ++traceRun); } });
+  traceInternal.onchange = () => { if (traceFor?.records) traceShow(traceFor.site, traceFor.name, ++traceRun); };
   $('trace-close').onclick = () => traceBox.close();
   traceBox.onclick = (e) => {
     if (e.target === traceBox) return traceBox.close();
@@ -2602,6 +2815,7 @@
         }
       }
     } else if (data.type === 'status') {
+      traceLive?.(data);
       if (data.text && act.phase === 'Analyzing') phase(data.text, data.total ? Math.min(data.reached / data.total, 1) : null);
     } else if (data.type === 'progress') {
       progressed(data);
