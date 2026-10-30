@@ -1855,8 +1855,8 @@ struct PathState {
 }
 
 /// Where a path stands in the input, for telling when two paths meet: a
-/// file by position and text (paths may read different texts of a file a
-/// run wrote), a token list by what is left to read in it. Two expansions
+/// file or a token list by what is left to read in it (paths may read
+/// different texts of a file a run wrote). Two expansions
 /// of one macro are separate lists but the same continuation.
 #[derive(Debug, Clone)]
 enum Place {
@@ -1870,8 +1870,15 @@ enum Place {
 impl PartialEq for Place {
     fn eq(&self, other: &Place) -> bool {
         match (self, other) {
+            // The same file with the same text still to read: paths reading
+            // different texts of a file a run wrote stay apart, a resumed run
+            // whose edit lies before the position does not.
             (Place::File(f, i, e, a), Place::File(g, j, d, b)) => {
-                (f, i, e) == (g, j, d) && (Rc::ptr_eq(a, b) || a == b)
+                (f, e) == (g, d)
+                    && match Rc::ptr_eq(a, b) {
+                        true => i == j,
+                        false => a.len() - i.min(&a.len()) == b.len() - j.min(&b.len()) && a.get(*i..) == b.get(*j..),
+                    }
             }
             (Place::Tokens(a, i), Place::Tokens(b, j)) => (Rc::ptr_eq(a, b) && i == j) || a[*i..] == b[*j..],
             (Place::Pseudo(_, a, i), Place::Pseudo(_, b, j)) => Rc::ptr_eq(a, b) && i == j,
