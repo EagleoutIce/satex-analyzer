@@ -320,7 +320,8 @@ impl Plugins {
     }
 
     /// Which format the source itself asks for.  `% !TeX program = context`
-    /// names it outright; otherwise the ConTeXt commands in the body do.
+    /// names it outright, `tex` or `pdftex` names plain TeX's. Otherwise
+    /// the ConTeXt commands in the body or a `\bye` do.
     /// A configured kernel wins over both.
     pub fn read_kernel(&mut self, cfg: &Config, source: &str) {
         if cfg.kernel.is_some() {
@@ -333,6 +334,8 @@ impl Plugins {
             .map(|m| m.value.trim().to_ascii_lowercase());
         let (kernel, how) = match named.as_deref() {
             Some("context" | "contextjit" | "luametatex" | "mtxrun") => (Kernel::Context, "magic comment"),
+            // An engine started under its own name loads plain TeX's format, not LaTeX's.
+            Some("tex" | "etex" | "pdftex" | "luatex" | "xetex") => (Kernel::Plain, "magic comment"),
             _ => match Kernel::detect(source) {
                 Some(kernel) => (kernel, "read from the source"),
                 None => return,

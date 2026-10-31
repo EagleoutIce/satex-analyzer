@@ -325,7 +325,7 @@ fix_cases! {
     stray_space_fires_and_is_fixed_by_appending_percent("stray-space", "\\documentclass{article}\n\\def\\x{a\n\\textbf{b}}\n\\begin{document}\n\\x\n\\end{document}\n", "stray-space", false, "\\documentclass{article}\n\\def\\x{a%\n\\textbf{b}}\n\\begin{document}\n\\x\n\\end{document}\n");
     /// A body whose `}` starts the next line gets that `}` moved up, and the
     /// blanks the line ends with go with the line end.
-    stray_space_before_a_closing_brace_moves_the_brace_up("stray-brace", "\\documentclass{article}\n\\def\\x{\\textbf{b}  \n  }\n\\begin{document}\n\\x\n\\end{document}\n", "stray-space", false, "\\documentclass{article}\n\\def\\x{\\textbf{b}}\n\\begin{document}\n\\x\n\\end{document}\n");
+    stray_space_before_a_closing_brace_moves_the_brace_up("stray-brace", "\\documentclass{article}\n\\def\\x{\\textbf{b}  \n  }\n\\begin{document}\n\\x z\n\\end{document}\n", "stray-space", false, "\\documentclass{article}\n\\def\\x{\\textbf{b}}\n\\begin{document}\n\\x z\n\\end{document}\n");
 }
 
 #[test]
@@ -344,7 +344,7 @@ fn stray_space_fires_when_a_line_end_is_missing_its_percent() {
     if !installed() {
         return;
     }
-    let source = "\\documentclass{article}\n\\newcommand{\\Weird}[3]{%\n  \\texttt{#1: #2}\n  \\typeout{#3}%\n}\n\\begin{document}\n\\Weird{key}{value}{magic}\n\\end{document}\n";
+    let source = "\\documentclass{article}\n\\newcommand{\\Weird}[3]{%\n  \\texttt{#1: #2}\n  \\typeout{#3}%\n}\n\\begin{document}\n\\Weird{key}{value}{magic} more\n\\end{document}\n";
     let (records, dir) = lint_codes("weird-bad", source, "stray-space");
     assert_eq!(records.len(), 1, "{records:?}");
     assert_eq!(records[0]["line"], 3);
@@ -364,6 +364,45 @@ fn stray_space_follows_the_mode_the_space_is_read_in() {
     let (records, dir) = lint_codes("stray-m", source, "stray-space");
     assert!(records.is_empty(), "{records:?}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A line end before `\end{center}` sets nothing: `\endtrivlist` takes the
+/// space away with `\unskip` (pdflatex's box is the same with a `%` there).
+/// The same line end before more text of the paragraph is a real space.
+#[test]
+fn stray_space_needs_material_after_it() {
+    if !installed() {
+        return;
+    }
+    let env = "\\newenvironment{nb}{%\n\\begin{center}\\fbox{x}}{%\n\\fbox{y}\n\\end{center}\n}\n";
+    let doc = |body: &str| format!("\\documentclass{{article}}\n{env}\\begin{{document}}\n{body}\n\\end{{document}}\n");
+    let (records, dir) = lint_codes("stray-center", &doc("Text \\begin{nb}\\end{nb} after."), "stray-space");
+    assert!(records.is_empty(), "{records:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+    let inline = env.replace("\\begin{center}", "").replace("\\end{center}\n", "");
+    let source = format!(
+        "\\documentclass{{article}}\n{inline}\\begin{{document}}\nText \\begin{{nb}}\\end{{nb}}after.\n\\end{{document}}\n"
+    );
+    let (records, dir) = lint_codes("stray-inline", &source, "stray-space");
+    let lines: Vec<_> = records.iter().map(|r| r["line"].as_u64().unwrap()).collect();
+    assert_eq!(lines, [4], "{records:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Primitives are plain TeX's own interface: a document run with plain
+/// TeX's format (`% !TeX program = tex`) gets no primitive-tex-command,
+/// a LaTeX document still does.
+#[test]
+fn primitive_tex_command_is_latex_advice() {
+    if !installed() {
+        return;
+    }
+    let plain = "% !TeX program = tex\n\\def\\x{a\\hskip 1pt b}\\x\n\\end\n";
+    crate::support::assert_lint(plain, "primitive-tex-command", 0);
+    let latex = "\\documentclass{article}\n\\begin{document}\na\\hskip 1pt b\n\\end{document}\n";
+    let found = satex::lint::lint(&crate::support::analyze_latex(latex));
+    let hskip = found.iter().filter(|r| r["code"] == "primitive-tex-command" && r["line"] == 3);
+    assert_eq!(hskip.count(), 1, "{found:?}");
 }
 
 #[test]
