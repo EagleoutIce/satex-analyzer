@@ -13,7 +13,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   // compare alike. Two outlines are as far apart as the mean distance of each one's points to the
   // other (chamfer distance), plus how much their aspects and their numbers of dots differ. Strokes
   // drawn apart are no dots: a `⇒` drawn in three strokes is one shape, `÷` has two dots.
-  const DRAW = { side: 32, glyph: 96, pen: 9, bitmap: 0.6, outline: 1, stroke: 1.5, either: 0, grid: 8, bins: 4, orient: 24, shortlist: 1500, refine: 5000, off: ['emoji', 'twemojis'], known: 0.2, plain: 0.1, call: 0.2, shown: 14, foreign: 1.12, variant: 0.25, icon: 0.1, aspect: 0.6, dots: 0.8, dot: 4, batch: 300, again: 120, more: 30 };
+  const DRAW = { side: 32, glyph: 96, pen: 9, bitmap: 0.6, outline: 1, stroke: 1.5, either: 0, grid: 8, bins: 4, orient: 24, shortlist: 1500, refine: 5000, off: ['emoji', 'twemojis'], pixel: 1.5, known: 0.2, plain: 0.1, call: 0.2, shown: 14, foreign: 1.12, variant: 0.25, icon: 0.1, aspect: 0.6, dots: 0.8, dot: 4, batch: 300, again: 120, more: 30 };
   const $ = (id) => root.querySelector(`#${id}`), escape = esc;
   const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
   let drawTable = null, drawn = false;
@@ -21,7 +21,9 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   // the packages in use, as this viewer last chose them; those of DRAW.off (emoji) are left out until chosen
   let chosen = {};
   try { chosen = JSON.parse(localStorage.getItem('satex-draw-pkgs') ?? '{}'); } catch {}
-  const used = (p) => chosen[p] ?? !DRAW.off.includes(p);
+  // a package only pictures stand for starts off too: its fonts set nothing to match crisply
+  const pictured = new Set();
+  const used = (p) => chosen[p] ?? !(DRAW.off.includes(p) || pictured.has(p));
   const choose = (ps, on) => { for (const p of ps) chosen[p] = on; try { localStorage.setItem('satex-draw-pkgs', JSON.stringify(chosen)); } catch {} };
   /** The matcher as a function of its surroundings, so one source runs in a Web Worker (this text, in a Blob)
    * or, where that cannot, on the page: `mk(w, h)` makes a canvas, `post(message, transfer)` answers,
@@ -255,6 +257,8 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
         })),
       };
     }).then((t) => {
+      const fonted = new Set(t.rows.filter((s) => !s.bitmap).map((s) => s.pkg));
+      for (const s of t.rows) if (!fonted.has(s.pkg)) pictured.add(s.pkg);
       totals(t, t.rows.length, false);
       send({ type: 'init', fonts: t.fonts.map((f) => ({ family: f.family, url: f.bitmaps ? null : new URL(`${base}${f.url}`, location.href).href })), rows: t.rows.map((s) => [s.font, s.ch, s.bm]), bitmaps: t.bitmaps });
       return t;
@@ -366,7 +370,8 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     // the more a package is relied on (build.py `established`), the lower its symbols score
     const trust = (s) => 1 - DRAW.known * (table.weight?.[s.pkg] ?? 0);
     send({ type: 'match', id: mine, fresh, f, want: Int32Array.from(wanted, (s) => s.i),
-      mul: Float32Array.from(wanted, (s) => (force.has(s.name) ? 1 : DRAW.foreign) * trust(s)), add: Float32Array.from(wanted, (s) => (ranked.get(s) * 0.05 + prior(s)) * trust(s)) });
+      // a picture scores half again worse: a font's glyph of the shape wins
+      mul: Float32Array.from(wanted, (s) => (force.has(s.name) ? 1 : DRAW.foreign) * (s.bitmap ? DRAW.pixel : 1) * trust(s)), add: Float32Array.from(wanted, (s) => (ranked.get(s) * 0.05 + prior(s)) * trust(s)) });
   }
   /** The matcher's answer for the latest request: shown unless it is older. */
   function arrive(m) {
@@ -383,8 +388,15 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       if (!result || (!result.idx.length && result.pending)) return;
       best = Array.from(result.idx, (i, k) => ({ s: table.rows[i], i, head: result.head[k] }));
     } else best = wanted.map((s) => ({ s, i: s.i, head: s.i, score: ranked.get(s) + s.name.length / 100 })).sort((a, b) => a.score - b.score);
-    // rows of one picture follow its first
-    const twins = new Map();
+    // rows of one picture follow its first, and so do a family's later glyphs (`\varpropto`, `\leftpropto` after `\propto`)
+    const twins = new Map(), family = new Map();
+    const kin = (name) => name.replace(/^\\/, '').replace(/^(?:var|left|right|big|small|text|math|mup|mit|mbf|msans|mtt)+(?=[a-z])/i, '').replace(/\{.*$/, '');
+    best = best.map((b) => {
+      if (b.head !== b.i) return b;
+      const first = family.get(kin(b.s.name));
+      if (first == null) { family.set(kin(b.s.name), b.i); return b; }
+      return { ...b, head: first };
+    });
     for (const { s, i, head } of best) if (head !== i) twins.set(head, [...twins.get(head) ?? [], s]);
     const from = (x) => source.get(x.name) ?? x.pkg;
     const off = (x) => (doc && !force.has(x.name) ? ' draw-off' : '');
