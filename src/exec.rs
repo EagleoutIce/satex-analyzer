@@ -2236,7 +2236,9 @@ impl Machine<'_> {
         let dep = on.is_some();
         let open = |m: &mut Self, limit: CondLimit, at: usize| {
             if let Some(on) = on {
-                Rc::make_mut(&mut m.cds).push(ControlDep { on, taken: holds });
+                let dep = ControlDep { on, taken: holds };
+                Rc::make_mut(&mut m.cds).push(dep);
+                m.parted_by.get_or_insert(dep);
             }
             Rc::make_mut(&mut m.conds).insert(at, CondFrame { limit, dep, at: span, kind, many: false });
         };

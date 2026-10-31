@@ -577,3 +577,27 @@ fn the_typeset_text_knows_its_fonts() {
         detail.iter().enumerate().filter(|(_, c)| c.is_alphabetic()).map(|(i, &c)| (c, style(i))).collect();
     assert_eq!(styled, [('A', ""), ('B', "bf"), ('C', "it"), ('D', "tt"), ('E', "sf sc"), ('F', "")], "{row:?}");
 }
+
+/// Paths that part after a conditional or at a name with several meanings
+/// each set their own text: the typeset text holds the alternatives side by
+/// side instead of the characters of both interleaved.
+#[test]
+fn text_of_parted_paths_stays_alternatives() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-parted");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("j.tex"),
+        "\\catcode`\\{=1 \\catcode`\\}=2\n\\def\\t{Ax}\\ifodd\\year \\def\\t{By}\\fi\nZ\\t Q\\par\n\\end\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "j.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .args(["--set", "engine=tex", "--set", "kernel=plain", "--set", "clock=unknown"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let text: Vec<&str> =
+        rows.iter().filter(|r| r["kind"] == "paragraph").filter_map(|r| r["detail"].as_str()).collect();
+    assert!(matches!(text[..], ["Z{By|Ax}Q"] | ["Z{Ax|By}Q"]), "{text:?}");
+}

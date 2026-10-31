@@ -1307,6 +1307,7 @@ impl Machine<'_> {
             source_progress: _,
             doc_mark: _,
             lines_read: _,
+            parted_by: _,
             call_shape: _,
             gaps: _,
             last_file: _,

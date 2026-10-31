@@ -2688,6 +2688,9 @@ impl Machine<'_> {
         if y.cds.len() > x.cds.len() {
             (x.cds, x.conds) = (y.cds.clone(), y.conds.clone());
         }
+        if x.parted_by != y.parted_by {
+            x.parted_by = None;
+        }
         x.material |= y.material;
         x.approximated |= y.approximated;
         for (p, q) in x.scan_starts.iter_mut().zip(&y.scan_starts) {

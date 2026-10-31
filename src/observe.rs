@@ -1385,7 +1385,7 @@ fn set(m: &mut Machine, c: char, span: Span) {
     }
     let font_state = m.observed_font_state();
     let certain = m.exact();
-    let first = m.cds.first().copied();
+    let first = m.cds.first().copied().or(m.parted_by);
     let site = m.call_site(span);
     let text = &mut m.out.facts.text;
     // Both paths through an undecided conditional digest what follows it,

@@ -1334,6 +1334,9 @@ pub struct Machine<'a> {
     /// Where an unknown-text token stood for one character, and which.
     unknown_chars: HashMap<Span, char>,
     pub cds: Rc<Vec<ControlDep>>,
+    /// The undecided conditional arm that parted this path from the others
+    /// still apart from it: text it sets is that arm's.
+    pub(crate) parted_by: Option<ControlDep>,
     /// The conditionals being read, innermost last (tex.web § 489).
     pub conds: Rc<Vec<CondFrame>>,
     /// For each conditional whose test is still being read, how many levels
@@ -1811,6 +1814,7 @@ struct PathState {
     long_argument: bool,
     runaway: Runaway,
     cds: Rc<Vec<ControlDep>>,
+    parted_by: Option<ControlDep>,
     conds: Rc<Vec<CondFrame>>,
     within: Rc<Vec<(Sym, NodeId)>>,
     env_stack: Rc<Vec<Sym>>,
@@ -2236,6 +2240,7 @@ impl<'a> Machine<'a> {
             arm_assumed: false,
             unknown_chars: HashMap::default(),
             cds: Rc::default(),
+            parted_by: None,
             within: Rc::default(),
             env_stack: Rc::default(),
             quantity: crate::observe::Quantities::default(),
@@ -10798,6 +10803,7 @@ will look undefined",
             long_argument: self.long_argument,
             runaway: self.runaway,
             cds: self.cds.clone(),
+            parted_by: self.parted_by,
             conds: self.conds.clone(),
             within: self.within.clone(),
             env_stack: self.env_stack.clone(),
@@ -10871,6 +10877,7 @@ will look undefined",
         self.long_argument = state.long_argument;
         self.runaway = state.runaway;
         self.cds = state.cds;
+        self.parted_by = state.parted_by;
         self.conds = state.conds;
         self.within = state.within;
         self.env_stack = state.env_stack;
@@ -10942,6 +10949,10 @@ will look undefined",
     /// arm is entered or no more choices may be made here.
     pub fn split(&mut self, by: Sym, span: Span, arms: usize, enter: impl FnOnce(&mut Self, usize) -> bool) -> bool {
         let Some(arm) = self.branch(by, arms, span) else { return false };
+        if self.parted_by.is_none() {
+            let on = self.force_reference(by, span);
+            self.parted_by = Some(ControlDep { on, taken: arm == 0 });
+        }
         // A replay that meets fewer arms than its script names: that arm
         // is gone, and its siblings cover the ones left.
         if arm >= arms || !enter(self, arm) {
