@@ -3106,6 +3106,18 @@
     }).catch(() => {});
   }
 
+  /** Files the run looked for and did not find (`\IfFileExists`, listings' language files) that a
+   * bundle holds: fetched, then the check starts over. A probe of a file no bundle has stays as it is. */
+  async function fetchAbsent() {
+    const request = { file: path(state.root ?? state.file), queries: [{ type: 'files' }] };
+    const records = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records ?? [];
+    const kernel = manifest.kernels[state.kernel].id;
+    const held = records.filter((r) => r.kind === 'absent').map((r) => r.file).filter((f) => HOLDER.has(`${kernel}/${f}`));
+    const ids = wanted_(held).filter((id) => !inFlight.has(id));
+    if (!ids.length || !await fetchPackages(ids)) return;
+    await restart();
+    if (!plainLint()) await start();
+  }
   /** After findings or a run name missing packages: fetch them, start over. */
   async function fetchMissing(texts) {
     if (!await fetchPackages(missing(texts))) return false;
@@ -3385,6 +3397,7 @@
           show(m.params.uri, m.params.diagnostics);
           typeset(m.params.uri);
           outline();
+          if (m.params.uri === uri()) fetchAbsent();
           if (m.params.uri === uri()) prefetchCommands();
           loadCaches(); // the status bar's count, and the table if open
           if (m.params.uri === uri(state.root ?? state.file)) written(m.params.uri);
