@@ -2374,7 +2374,13 @@ impl Machine<'_> {
             (Some(Some(text)), _) => Some(Some(text.into_bytes())),
             (_, Some(path)) => Some(crate::overlay::read_bytes(&path).ok()),
             (Some(None), None) => None,
-            (None, None) => Some(None),
+            (None, None) => {
+                // what an installation that has it would read (`\IfFileExists`)
+                if !name.trim().is_empty() && self.out.facts.absent.len() < self.cfg.limits.facts {
+                    self.out.facts.absent.insert(name.trim().to_string());
+                }
+                Some(None)
+            }
         }
     }
 

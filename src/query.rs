@@ -1327,6 +1327,12 @@ fn files(analysis: &Analysis) -> Vec<Record> {
             record.insert("kind".into(), json!(info.kind.as_str()));
             record
         })
+        .chain(analysis.facts.absent.iter().map(|name| {
+            let mut record = Map::new();
+            record.insert("file".into(), json!(name));
+            record.insert("kind".into(), json!("absent"));
+            record
+        }))
         .collect()
 }
 

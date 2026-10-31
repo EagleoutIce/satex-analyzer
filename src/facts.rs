@@ -511,6 +511,9 @@ pub struct Facts {
     pub defs: Vec<Definition>,
     /// The files `\write` handed lines to, as `\openout` named them.
     pub written_files: std::collections::BTreeSet<String>,
+    /// The files `\openin` or `\pdffilesize` looked for and did not find:
+    /// what an installation that has them would read.
+    pub absent: std::collections::BTreeSet<String>,
     /// What each command was seen to read, as `{}` for a mandatory argument,
     /// `[]` for an optional one and `*` for a star: observed while it ran,
     /// not declared anywhere.
