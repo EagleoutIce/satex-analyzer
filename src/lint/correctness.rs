@@ -456,6 +456,7 @@ fn undefined_control_sequences(report: &mut Report) {
     // was read under codes the analysis only assumed: what TeX reads there
     // is not known.
     let assumed = report.analysis.facts.diagnostics.iter().any(|d| d.code == "region-catcodes");
+    let mut known: Option<Vec<String>> = None;
     for expansion in &report.analysis.facts.expansions {
         if !matches!(expansion.meaning, MeaningKind::Undefined | MeaningKind::UndefinedApproximated) {
             continue;
@@ -487,15 +488,60 @@ fn undefined_control_sequences(report: &mut Report) {
                 );
                 report.add_fix_as(severity, expansion.span, &name, message, fix);
             }
-            None => report.add_as(
-                severity,
-                expansion.span,
-                &name,
-                message,
-                Some(format!("define `{name}` or load the package that provides it")),
-            ),
+            None => {
+                let known = known.get_or_insert_with(|| scope_names(report.analysis));
+                let help = match (severity == Severity::Error).then(|| closest(raw, known)).flatten() {
+                    Some(other) => format!("did you mean `\\{other}`?"),
+                    None => format!("define `{name}` or load the package that provides it"),
+                };
+                report.add_as(severity, expansion.span, &name, message, Some(help))
+            }
         }
     }
+}
+
+/// The names that are defined at the end of the run.
+fn scope_names(analysis: &crate::machine::Analysis) -> Vec<String> {
+    crate::query::scope(analysis, None, true)
+        .iter()
+        .filter_map(|r| Some(crate::tex::bare_name(r.get("name")?.as_str()?).to_string()))
+        .filter(|n| n.chars().count() > 1)
+        .collect()
+}
+
+/// The known name nearest to a misspelled one: a typo, a swapped or missing
+/// letter, or a different case, within a quarter of the name's length.
+fn closest<'a>(name: &str, known: &'a [String]) -> Option<&'a str> {
+    let limit = (name.chars().count() / 4).max(1);
+    known
+        .iter()
+        .map(|k| (edits(name, k), k))
+        .filter(|&(d, _)| d <= limit)
+        .min_by_key(|&(d, k)| (d, k.len().abs_diff(name.len()), k.as_str()))
+        .map(|(_, k)| k.as_str())
+}
+
+/// The optimal string alignment distance: insertions, deletions,
+/// substitutions and swaps of neighbours, a case change costing nothing.
+fn edits(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().flat_map(char::to_lowercase).collect();
+    let b: Vec<char> = b.chars().flat_map(char::to_lowercase).collect();
+    if a.len().abs_diff(b.len()) > 3 {
+        return usize::MAX;
+    }
+    let mut d = vec![vec![0usize; b.len() + 1]; a.len() + 1];
+    (0..=a.len()).for_each(|i| d[i][0] = i);
+    (0..=b.len()).for_each(|j| d[0][j] = j);
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            d[i][j] = (d[i - 1][j] + 1).min(d[i][j - 1] + 1).min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                d[i][j] = d[i][j].min(d[i - 2][j - 2] + 1);
+            }
+        }
+    }
+    d[a.len()][b.len()]
 }
 
 /// Every `\errmessage` a real run reaches, once per place and text, placed

@@ -163,6 +163,37 @@ fn an_undefined_name_past_an_approximation_is_a_possible_error() {
     );
 }
 
+/// A misspelled command suggests the defined name nearest to it: a swapped
+/// pair of letters, a letter too many, a different case.
+#[test]
+fn a_misspelled_command_suggests_the_nearest_name() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\newcommand\mymacro{x}
+\begin{document}
+\sectoin{A} \mymacor \Textbf{b} \qwertzuiop
+\end{document}",
+    );
+    let mut found: Vec<String> = satex::lint::lint(&analysis)
+        .iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-control-sequence"))
+        .map(|f| format!("{} {}", f["message"].as_str().unwrap_or_default(), f["fix"].as_str().unwrap_or_default()))
+        .collect();
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            "`\\Textbf` is never defined in this run did you mean `\\textbf`?",
+            "`\\mymacor` is never defined in this run did you mean `\\mymacro`?",
+            "`\\qwertzuiop` is never defined in this run define `\\qwertzuiop` or load the package that provides it",
+            "`\\sectoin` is never defined in this run did you mean `\\section`?",
+        ]
+    );
+}
+
 /// A name read with `{` a letter is TeX's error where the category codes
 /// are known, but not where a cut made the analysis assume them back
 /// (`region-catcodes`): there it is reported as possible only.
