@@ -609,22 +609,39 @@
   const knows = [...document.querySelectorAll('[data-knows]')];
   const dots = document.querySelector('.claim-dots');
   if (knows.length > 1 && dots) {
-    // a cross-fade, a dot per claim
-    let shown = 0, paused = false;
-    dots.innerHTML = knows.map((k, i) => `<button type="button" role="tab" aria-selected="${!i}" aria-label="${k.textContent}"></button>`).join('');
-    const show = (i) => {
-      if (i === shown) return;
-      const [out, next] = [knows[shown], knows[(shown = i)]];
-      out.classList.replace('on', 'off');
-      next.classList.remove('off');
-      requestAnimationFrame(() => next.classList.add('on'));
-      setTimeout(() => out.classList.remove('off'), 800);
-      [...dots.children].forEach((d, j) => d.setAttribute('aria-selected', String(j === i)));
+    // typed out and erased like an editor, code parts marked as a linter would once a claim stands
+    const parts = knows.map((k) => [...k.childNodes].map((n) => ({ text: n.textContent, code: n.nodeName === 'CODE' })));
+    const typed = (i, n) => {
+      let left = n;
+      return parts[i].map(({ text, code }) => {
+        const shown = text.slice(0, Math.max(0, left));
+        left -= text.length;
+        return shown && (code ? `<code>${esc(shown)}</code>` : esc(shown));
+      }).join('');
     };
-    dots.onclick = (e) => { const b = e.target.closest('button'); if (b) { paused = true; show([...dots.children].indexOf(b)); } };
-    const claim = knows[0].closest('.claim');
-    for (const el of [claim, dots]) { el.onmouseenter = () => (paused = true); el.onmouseleave = () => (paused = false); }
-    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) setInterval(() => paused || show((shown + 1) % knows.length), 4200);
+    const length = (i) => parts[i].reduce((sum, p) => sum + p.text.length, 0);
+    const line = knows[0];
+    knows.slice(1).forEach((k) => k.remove());
+    line.classList.add('typing');
+    let shown = 0, paused = false, timer = 0;
+    dots.innerHTML = knows.map((k, i) => `<button type="button" role="tab" aria-selected="${!i}" aria-label="${parts[i].map((p) => p.text).join('')}"></button>`).join('');
+    const run = (i, n, step, then) => {
+      line.innerHTML = typed(i, n);
+      if (step > 0 ? n >= length(i) : n <= 0) return then();
+      timer = setTimeout(() => run(i, n + step, step, then), step > 0 ? 28 + Math.random() * 40 : 12);
+    };
+    const settle = () => { line.classList.add('linted'); timer = setTimeout(() => paused || show((shown + 1) % knows.length), 3200); };
+    const show = (i) => {
+      clearTimeout(timer);
+      line.classList.remove('linted');
+      [...dots.children].forEach((d, j) => d.setAttribute('aria-selected', String(j === i)));
+      run(shown, length(shown), -1, () => { shown = i; run(i, 0, 1, settle); });
+    };
+    dots.onclick = (e) => { const b = e.target.closest('button'); if (b) show([...dots.children].indexOf(b)); };
+    const claim = line.closest('.claim');
+    for (const el of [claim, dots]) { el.onmouseenter = () => (paused = true); el.onmouseleave = () => { paused = false; if (line.classList.contains('linted')) settle(); }; }
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) line.innerHTML = typed(0, length(0));
+    else settle();
   }
   for (const [tabs, key] of [['.contrast', 'case'], ['.install-tabs', 'way']]) {
     const row = document.querySelector(tabs);

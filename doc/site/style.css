@@ -802,16 +802,19 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .draw-cls { font-size: .72rem; } .draw-put { opacity: 0; } .draw-list li:hover .draw-put, .draw-put:focus { opacity: 1; }
 .tree #play-exsect { margin-top: auto; } .tree .grip { margin: .3rem 0 0; }
 /* the landing page: open bands instead of boxes, a rotating claim, tabbed contrasts */
-.claim { display: grid; justify-items: center; gap: .3rem; margin: clamp(1.4rem, 4vh, 2.4rem) auto .2rem; max-width: 46rem; text-align: center; }
-.claim-lead { font-size: 1.1rem; color: var(--muted); text-wrap: balance; }
-.claim-rot { display: grid; width: 100%; min-height: 2.2em; align-items: center; font-size: clamp(1.25rem, 3vw, 1.55rem); font-weight: 600; letter-spacing: -.01em; }
+.claim { display: grid; justify-items: center; gap: .1rem; margin: clamp(1.4rem, 4vh, 2.4rem) auto .2rem; max-width: 46rem; text-align: center; }
+.claim-lead { font-size: .98rem; color: color-mix(in srgb, var(--fg) 72%, var(--bg)); text-wrap: balance; }
+.claim-rot { display: grid; width: 100%; min-height: 1.4em; align-items: center; font-size: clamp(1.25rem, 3vw, 1.55rem); font-weight: 600; letter-spacing: -.01em; }
 .claim-rot code { font: inherit; font-family: ui-monospace, Menlo, monospace; font-weight: 600; background: none; padding: 0; color: inherit; }
 .claim-dots { display: flex; justify-content: center; gap: .3rem; margin: .7rem 0 1.6rem; }
 .claim-dots button { width: .3rem; height: .3rem; min-width: 0; min-height: 0; padding: 0; border-radius: 50%; border: 0; background: var(--border); cursor: pointer; transition: background .3s, width .3s; }
 .claim-dots button[aria-selected=true] { background: var(--accent); width: .9rem; border-radius: 999px; }
-.claim-rot > span { grid-area: 1 / 1; color: var(--accent); opacity: 0; transform: translateY(.45em); transition: opacity .7s var(--ease), transform .7s var(--ease); }
-.claim-rot > span.on { opacity: 1; transform: none; } .claim-rot > span.off { transform: translateY(-.45em); }
-@media (prefers-reduced-motion: reduce) { .claim-rot > span { transition: none; } }
+.claim-rot > span { grid-area: 1 / 1; color: var(--accent); opacity: 0; }
+.claim-rot > span.on, .claim-rot > span.typing { opacity: 1; }
+.claim-rot > span.typing::after { content: ""; display: inline-block; width: 2px; height: 1.05em; margin-left: 2px; vertical-align: -.15em; background: currentColor; animation: caret 1s steps(1) infinite; }
+.claim-rot > span.typing code { text-decoration: underline wavy transparent; text-underline-offset: .22em; transition: text-decoration-color .5s; }
+.claim-rot > span.typing.linted code { text-decoration-color: var(--warning); }
+@keyframes caret { 50% { opacity: 0; } }
 .band { margin: 0; padding: 2.4rem clamp(0rem, 3vw, 2rem) 2rem; border-top: 1px solid var(--border); }
 .band.alt { background: color-mix(in srgb, var(--accent) 4%, transparent); border-radius: 18px; border-top-color: transparent; }
 .band h2 { font-size: 1.6rem; margin: 0 0 .3rem; letter-spacing: -.01em; } .band .sub { margin: 0 0 1.2rem; max-width: 52rem; color: var(--muted); } .small { font-size: .8rem; }
