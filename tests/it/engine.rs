@@ -719,3 +719,15 @@ fn case_codes_past_255_are_valid_only_under_unicode_engines() {
     let pdftex = run(Engine::PdfTeX);
     assert!(pdftex.facts.diagnostics.iter().any(|d| d.code == "invalid-code"));
 }
+
+/// A Texinfo manual reads `\input texinfo` first and runs on plain TeX:
+/// no LaTeX kernel under it.
+#[test]
+fn a_texinfo_manual_runs_on_plain_tex() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\input texinfo\n@setfilename hello.info\n@settitle Hello\n@node Top\n@top Hello\nText.\n@bye\n";
+    let analysis = satex::machine::Machine::analyze(source, None, &crate::support::config());
+    assert_eq!(analysis.plugins.kernel, satex::plugin::Kernel::Plain);
+}

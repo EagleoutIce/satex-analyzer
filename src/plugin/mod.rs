@@ -74,10 +74,6 @@ impl Kernel {
         self == Kernel::Context
     }
 
-    /// Whether the source is a ConTeXt document.  ConTeXt wraps the body in
-    /// `\starttext`/`\stoptext` and loads modules with `\usemodule`
-    /// (ConTeXt reference, "Document structure"); none of the three is a
-    /// LaTeX2e command, so one of them settles it.
     /// The file this kernel is interpreted from, when there is one.
     pub fn source(self) -> Option<&'static str> {
         match self {
@@ -87,6 +83,11 @@ impl Kernel {
         }
     }
 
+    /// The kernel a source asks for.  ConTeXt wraps the body in
+    /// `\starttext`/`\stoptext` and loads modules with `\usemodule`
+    /// (ConTeXt reference, "Document structure"); none of the three is a
+    /// LaTeX2e command, so one of them settles it.  A Texinfo manual starts
+    /// with `\input texinfo`, which texi2dvi runs on plain TeX.
     pub fn detect(source: &str) -> Option<Kernel> {
         let context = ["\\starttext", "\\stoptext", "\\startcomponent", "\\usemodule"]
             .iter()
@@ -96,7 +97,8 @@ impl Kernel {
         }
         // `\bye` ends a plain TeX document and is no LaTeX2e command
         // (The TeXbook, chapter 23); a LaTeX document says `\documentclass`.
-        let plain = source.contains("\\bye") && !source.contains("\\documentclass");
+        let texinfo = source.trim_start().starts_with("\\input texinfo");
+        let plain = texinfo || source.contains("\\bye") && !source.contains("\\documentclass");
         plain.then_some(Kernel::Plain)
     }
 }
