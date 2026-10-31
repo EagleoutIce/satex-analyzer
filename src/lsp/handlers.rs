@@ -798,6 +798,24 @@ pub fn definition(analysis: &Analysis, doc: &Text, path: &str, position: Positio
         return Some(target);
     }
     let sources = Sources::default();
+    // a key in an option list (`\draw[above]`, `\tikzset{x/.style=…}`): where its code is defined
+    let line = doc.line(pos.line);
+    let before = &line[..crate::source::byte_of_col(line, pos.col).min(line.len())];
+    if !is_command && let Some(arg) = argument_at(before) {
+        let item = arg.inside.rsplit(',').next().unwrap_or_default().trim_start();
+        let rest: String = line[before.len()..].chars().take_while(|c| !matches!(c, ',' | '=' | ']' | '}')).collect();
+        let key = format!("{item}{rest}").trim().to_string();
+        let found = query::pgfkeys(analysis, None).into_iter().find(|r| {
+            r.get("key").and_then(Json::as_str).is_some_and(|k| {
+                k.rsplit_once('/').is_some_and(|(_, last)| last == key) || k.ends_with(&format!("/{key}"))
+            })
+        });
+        if let Some(at) =
+            found.as_ref().and_then(|r| r.get("defined")?.as_object()).and_then(|d| record_location(d, &sources))
+        {
+            return Some(GotoDefinitionResponse::Array(vec![at]));
+        }
+    }
     let mut records = if is_command {
         query::explain(analysis, std::slice::from_ref(&name), true).ok()?.0
     } else {
@@ -1556,7 +1574,11 @@ fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
             let key = key.strip_prefix(family).map_or(key, |k| k.trim_start_matches('/'));
             let default = r.get("default").and_then(Json::as_str).filter(|d| !d.is_empty());
             let kind = r.get("kind").and_then(Json::as_str).filter(|k| *k != "code");
-            let detail = [kind.map(str::to_string), default.map(|d| format!("default: {d}")), Some(family.to_string())];
+            // pgfkeys' marker for a key that needs a value reads as words
+            let default = default.map(|d| {
+                if d.contains("pgfkeysvaluerequired") { "needs a value".to_string() } else { format!("default {d}") }
+            });
+            let detail = [kind.map(str::to_string), default, Some(family.to_string())];
             let detail: Vec<String> = detail.into_iter().flatten().filter(|d| !d.is_empty()).collect();
             let rank = r.get("rank").and_then(Json::as_u64).unwrap_or(0) as usize * 10_000 + i.min(9_999);
             Some(key_item(

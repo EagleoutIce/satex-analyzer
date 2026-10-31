@@ -4492,8 +4492,13 @@ pub fn pgfkeys(analysis: &Analysis, prefix: Option<&str>) -> Vec<Record> {
                 (Some(_), _) if key.args.is_some() => "code args",
                 (Some(_), _) => "code",
             };
-            let site = key.code.or(key.value).map_or(Span::default(), |sym| defined_at(analysis, sym));
+            let sym = key.code.or(key.value);
+            let site = sym.map_or(Span::default(), |sym| defined_at(analysis, sym));
             let mut record = place(analysis, site);
+            // where the key's code itself is defined, in the library: what go-to-definition opens
+            if let Some(def) = sym.and_then(|sym| analysis.facts.defs.iter().rev().find(|d| d.name == sym)) {
+                record.insert("defined".into(), json!(place(analysis, def.span)));
+            }
             record.insert("key".into(), json!(path));
             record.insert("kind".into(), json!(handler));
             record.insert(

@@ -1474,6 +1474,24 @@ fn definition_on_a_file_argument_opens_the_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A TikZ key in an option list leads to where its library defines it.
+#[test]
+fn definition_on_a_tikz_key_opens_its_library() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\tikz\\draw[above] (0,0) -- (1,1);\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("tikzkey", text);
+    let id = server.request(
+        "textDocument/definition",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 3, "character": 14 } }),
+    );
+    let result = server.response(id)["result"].to_string();
+    assert!(result.contains("tikz.code.tex"), "{result}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A braced name closes its brace unless one follows, and replaces the rest
 /// of the word under the cursor.
 #[test]
