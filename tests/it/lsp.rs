@@ -1547,6 +1547,11 @@ fn l3keys_complete_keys_and_choices() {
 
 /// The rows of `satex/typeset` for a root with an `\input` file and a bibliography.
 fn typeset_of_a_root(tag: &str) -> Vec<Value> {
+    typeset_after_edit(tag, None, "A Title")
+}
+
+/// [`typeset_of_a_root`], the root's text then replaced by `edit`; asked until a row holds `until`.
+fn typeset_after_edit(tag: &str, edit: Option<&str>, until: &str) -> Vec<Value> {
     let dir = crate::support::tmp_root().join(format!("satex-lsp-typeset-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let text = "\\documentclass{article}\n\\begin{document}\n\\input{chapter}\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
@@ -1565,11 +1570,18 @@ fn typeset_of_a_root(tag: &str) -> Vec<Value> {
         json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
     );
     server.notification("textDocument/publishDiagnostics");
+    if let Some(text) = edit {
+        server.notify(
+            "textDocument/didChange",
+            json!({ "textDocument": { "uri": uri, "version": 2 }, "contentChanges": [{ "text": text }] }),
+        );
+        server.notification("textDocument/publishDiagnostics");
+    }
     let mut rows = Vec::new();
     for _ in 0..20 {
         let id = server.request("satex/typeset", json!({ "textDocument": { "uri": uri } }));
         rows = server.response(id)["result"].as_array().cloned().unwrap_or_default();
-        if rows.iter().any(|r| r["detail"].as_str().is_some_and(|d| d.contains("A Title"))) {
+        if rows.iter().any(|r| r["detail"].as_str().is_some_and(|d| d.contains(until))) {
             break;
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -1641,6 +1653,25 @@ fn typeset_of_a_root_lists_the_bibliography() {
     let rows = typeset_of_a_root("bibliography");
     assert!(
         rows.iter().any(|r| r["file"] == "main.tex" && r["detail"].as_str().is_some_and(|d| d.contains("A Title"))),
+        "{rows:?}"
+    );
+}
+
+/// A `\tableofcontents` added after the first analysis sets the entries:
+/// the `.toc` the run looked for was empty, so its new text sends the
+/// build round again, though the run never expanded `\contentsline`.
+#[test]
+fn typeset_of_a_root_sets_a_table_of_contents_added_later() {
+    if satex::paths::which("kpsewhich").is_err() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\input{chapter}\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
+    let rows = typeset_after_edit("toc", Some(text), "Intro");
+    let toc_line = 3;
+    assert!(
+        rows.iter().any(|r| r["file"] == "main.tex"
+            && r["line"] == toc_line
+            && r["detail"].as_str().is_some_and(|d| d.contains("Intro"))),
         "{rows:?}"
     );
 }

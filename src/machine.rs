@@ -2594,10 +2594,14 @@ impl<'a> Machine<'a> {
                     let at = base.join(name);
                     // The run's own copy only: one on disk is an engine's.
                     let now = crate::overlay::text(&at);
-                    // A file not there yet is an empty one.
+                    // A file not there yet is an empty one. One the run looked
+                    // for and found empty gets read whole next time: the commands
+                    // in it (`\contentsline`) were never expanded, so no line of it
+                    // can be judged by what the run read.
                     let again = text.as_ref().is_none_or(|new| {
+                        let old = now.as_deref().unwrap_or_default();
                         looked.iter().any(|p| p.components().eq(at.components()))
-                            && matters(now.as_deref().unwrap_or_default(), new)
+                            && (old.trim().is_empty() && !new.trim().is_empty() || matters(old, new))
                     });
                     // A line a rerun changed again (a label's page that moves on),
                     // or anything before the last run, is read as the join of both
@@ -4841,11 +4845,15 @@ will look undefined",
         if let Some(call) = self.out.graph.reader {
             self.out.graph.made_by(node, call);
         }
+        let shown = self.cfg.trace.then(|| match derived {
+            true => format!("{} → {}", binding.value.render(), value.render()),
+            false => value.render(),
+        });
         binding.value = value;
         binding.defs = self.def_sites(name, node);
         binding.certain = self.cds.is_empty();
         self.env.set(name, binding, global);
-        self.record(Step::Assign, name, span);
+        self.record_with(Step::Assign, name, span, || shown);
     }
 
     /// The graph side of an assignment whose value is already in place: a
@@ -5774,7 +5782,8 @@ will look undefined",
             }
         }
 
-        self.record(Step::Define, name, span);
+        let shown = self.cfg.trace.then(|| self.meaning_text(name));
+        self.record_with(Step::Define, name, span, || shown);
         let existing = self.definition_sites.get(&(span, name, self.package())).copied();
         // Kernel code re-run in a new environment (`\list`'s own `\def\@itemlabel{#1}`,
         // once per `\begin{itemize}`/`\begin{enumerate}`) hits the same site every time.
