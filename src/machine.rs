@@ -7372,11 +7372,9 @@ will look undefined",
     }
 
     /// A choice at `site`: counted per source line, over all paths and
-    /// replays. Past `limits.site_forks` the expansion above the line is
-    /// cut as the guard cuts it ([`Machine::cut`]) on every path that
-    /// stands on the line, instead of parting again: what it assigned is
-    /// unknown, and the line reads on after an unknown token. Whether it
-    /// was cut.
+    /// replays. Past `limits.site_forks` no path parts there again: the
+    /// caller widens instead (an undecided conditional skips its arms and
+    /// does what they may do). Whether it is past.
     pub(crate) fn hot_site(&mut self, site: Span) -> bool {
         let limit = self.limits.site_forks;
         if limit == 0 || self.budget.is_some() {
@@ -7388,35 +7386,18 @@ will look undefined",
         if *count <= limit {
             return false;
         }
-        if !self.guard_seen.cut {
+        if *count == limit + 1 {
             let file = self.out.short_name(site.file).to_string();
             let at = self.position_span();
-            if self.cfg.verbose >= 4 {
-                crate::progress::note!(
-                    "satex: site {file}:{}:{} cut at {at:?}, {} paths waiting",
-                    site.line,
-                    site.col,
-                    self.waiting
-                );
-            }
             self.diagnose(
                 Severity::Imprecision,
-                "site-forks-cut",
+                "site-forks-widened",
                 site,
                 format!(
-                    "more than {limit} undecided choices were made at {file}:{} while line {} was read; the expansion they were in was cut: what it assigned is unknown",
+                    "more than {limit} undecided choices were made at {file}:{} while line {} was read; later ones there are widened",
                     site.line, at.line
                 ),
             );
-            // The line's first overrun, as the guard counts it: every path
-            // parked on it takes the cut when it runs again.
-            let line = self.guard_key(at);
-            let entry = self.guard.lines.entry(line).or_default();
-            if entry.1 == 0 {
-                *entry = (0, 1);
-            }
-            (self.guard_seen.line, self.guard_seen.level) = (line, entry.1);
-            self.cut();
         }
         true
     }

@@ -833,7 +833,7 @@ mod convergence {
 \ExplSyntaxOff";
         let Some(a) = latex("expl3-maps", &document(preamble, "Text."), |_| {}) else { return };
         converged(&a, 0);
-        assert!(crate::support::diagnosed(&a, "site-forks-cut").is_empty());
+        assert!(crate::support::diagnosed(&a, "site-forks-widened").is_empty());
     }
 
     /// (2) Thirty TikZ nodes whose text width depends on a random number,
@@ -983,7 +983,7 @@ Some text with microtype protrusion and expansion.
         (l.call_summary_after, l.site_expansions, l.site_forks) = (0, u32::MAX, 64);
         let a = Machine::analyze(source, None, &cfg);
         let codes: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).collect();
-        assert!(codes.contains(&"site-forks-cut"), "{codes:?}");
+        assert!(codes.contains(&"site-forks-widened"), "{codes:?}");
         assert!(!codes.contains(&"line-budget-cut"), "{codes:?}");
         assert!(crate::support::defined(&a, "Next"), "{codes:?}");
         assert!(crate::support::defined(&a, "Zero") && crate::support::defined(&a, "One"), "{codes:?}");
