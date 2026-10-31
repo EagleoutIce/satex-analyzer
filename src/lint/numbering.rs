@@ -404,7 +404,11 @@ fn prefer_cleveref(report: &mut Report) {
         fixed.iter_mut().for_each(|e| e.push(replace.clone()));
         let (name, how, load) = match cleveref {
             true => ("cleveref", format!(", where `{call}` reads the name from the label"), ""),
-            false => ("load", format!(": load cleveref (after hyperref) and write `{call}`"), "load cleveref and "),
+            false => (
+                "load",
+                format!(", cleveref's `{call}` reads it from the label"),
+                "load cleveref (after hyperref) and ",
+            ),
         };
         let fix = Fix::new(format!("{load}write `{call}`"), Applicability::Unsafe, fixed);
         report.add_fix(at, name, format!("`{}` names the reference by hand{how}", n.source), fix);

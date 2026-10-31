@@ -829,7 +829,8 @@ fn a_hand_written_name_loads_cleveref_after_hyperref_when_it_is_missing() {
     let found = cleveref_records("cleveref-missing", body);
     assert_eq!(found.len(), 1, "{found:?}");
     let message = found[0]["message"].as_str().unwrap();
-    assert!(message.contains("load cleveref (after hyperref)") && message.contains(r"\Cref{sec:x}"), "{message}");
+    let fix = found[0]["fix"].as_str().unwrap();
+    assert!(fix.contains("load cleveref (after hyperref)") && message.contains(r"\Cref{sec:x}"), "{message} / {fix}");
     // The fix loads it on a line after hyperref's.
     assert_eq!(replacements(&found[0]), ["\n\\usepackage{cleveref}", r"\Cref{sec:x}"], "{found:?}");
     assert_eq!(found[0]["edits"][0]["start"]["line"], 2, "{found:?}");
@@ -869,7 +870,7 @@ fn a_plain_document_is_told_to_load_cleveref_for_a_named_reference() {
     let body = "\\begin{document}\n\\section{A}\\label{sec:a}\nSection~\\ref{sec:a}.\nWe see~\\ref{sec:a} and in~\\ref{sec:a}.\n\\end{document}\n";
     let found = cleveref_records("cleveref-plain", body);
     assert_eq!(found.len(), 1, "{found:?}");
-    assert!(found[0]["message"].as_str().unwrap().contains("load cleveref"), "{found:?}");
+    assert!(found[0]["fix"].as_str().unwrap().contains("load cleveref"), "{found:?}");
     // No `\usepackage` to follow: the load goes before `\begin{document}`.
     assert_eq!(replacements(&found[0]), ["\\usepackage{cleveref}\n", r"\Cref{sec:a}"], "{found:?}");
     assert_eq!(found[0]["edits"][0]["start"]["line"], 2, "{found:?}");
