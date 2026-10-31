@@ -949,11 +949,29 @@ Some text with microtype protrusion and expansion.
         assert_eq!(run("\\def\\cxyd{}\\def\\xab{}"), (true, false));
     }
 
-    /// One place that keeps parting the paths is cut once it passed
-    /// `limits.site_forks` while one line is read: the expansion it is in
-    /// is widened and the run reads on, instead of spending the budget.
+    /// A number's digits in a name spell only its values as `\the` prints
+    /// them: 10..89 never spells `0`, so pgfmath's `0x` base prefix stays
+    /// undefined for it, also once the digits went through a macro.
     #[test]
-    fn a_site_past_its_fork_budget_cuts_its_expansion() {
+    fn a_number_in_a_name_spells_only_its_values() {
+        let source = "\\catcode`\\{=1 \\catcode`\\}=2
+\\expandafter\\def\\csname base@0x\\endcsname{16}
+\\edef\\r{\\the\\numexpr10+\\pdfuniformdeviate 80}
+\\expandafter\\ifx\\csname base@\\r x\\endcsname\\relax\\def\\NotBase{}\\else\\def\\IsBase{}\\fi
+\\def\\n{}\\expandafter\\def\\expandafter\\n\\expandafter{\\r}
+\\expandafter\\ifx\\csname base@\\n x\\endcsname\\relax\\def\\NotBaseB{}\\else\\def\\IsBaseB{}\\fi
+";
+        let a = Machine::analyze(source, None, &super::cfg(1_000_000));
+        for (name, defined) in [("NotBase", true), ("IsBase", false), ("NotBaseB", true), ("IsBaseB", false)] {
+            assert_eq!(crate::support::defined(&a, name), defined, "{name}");
+        }
+    }
+
+    /// One place that keeps parting the paths parts no more once it passed
+    /// `limits.site_forks` while one line is read: its conditional is
+    /// widened and the run reads on, instead of spending the budget.
+    #[test]
+    fn a_site_past_its_fork_budget_widens_its_conditional() {
         let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\count1=\\pdfelapsedtime \\count3=0
 \\def\\x{\\advance\\count2 1 \\ifnum\\count1>\\count2 \\count3=1 \\expandafter\\x\\else\\expandafter\\x\\fi}\\x
 \\ifnum\\count3=0 \\def\\Zero{}\\else\\def\\One{}\\fi

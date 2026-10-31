@@ -11028,6 +11028,7 @@ will look undefined",
         }
         let Some((prefix, suffix)) = self.name_pattern(sym) else { return false };
         let digits = self.name_gap_is_digits(sym);
+        let num = self.name_number(sym);
         let limit = usize::from(self.limits.meaning_set);
         let mut members: Vec<(Sym, Meaning)> = Vec::new();
         for s in self.env.bound() {
@@ -11036,7 +11037,7 @@ will look undefined",
                 || name.len() < prefix.len() + suffix.len()
                 || !name.starts_with(prefix.as_str())
                 || !name.ends_with(suffix.as_str())
-                || (digits && !name[prefix.len()..name.len() - suffix.len()].chars().all(|c| c.is_ascii_digit()))
+                || !gap_fits(&name[prefix.len()..name.len() - suffix.len()], digits, num)
             {
                 continue;
             }
@@ -12140,6 +12141,21 @@ pub(crate) const UNKNOWN_NAME: &str = "\u{2}unknown name:";
 pub(crate) const UNKNOWN_NAME_GAP: char = '\u{3}';
 /// [`UNKNOWN_NAME_GAP`] where the unknown part is digits.
 pub(crate) const UNKNOWN_DIGITS_GAP: char = '\u{7}';
+
+/// Whether `gap` may fill a name's unknown part: digits for a digits gap,
+/// and for a number of values `num` one of them as `\the` prints it, with
+/// no leading zero (tex.web § 64).
+fn gap_fits(gap: &str, digits: bool, num: Option<crate::value::Num>) -> bool {
+    if !digits {
+        return true;
+    }
+    let Some(num) = num else { return gap.bytes().all(|b| b.is_ascii_digit()) };
+    let magnitude = gap.strip_prefix('-').unwrap_or(gap);
+    let spelled = !magnitude.is_empty()
+        && magnitude.bytes().all(|b| b.is_ascii_digit())
+        && (magnitude == "0" || !magnitude.starts_with('0'));
+    spelled && gap.parse::<i64>().is_ok_and(|v| num.lo <= v && v <= num.hi)
+}
 const GAPS: [char; 2] = [UNKNOWN_NAME_GAP, UNKNOWN_DIGITS_GAP];
 /// After a name built around one number's unknown digits: that number's
 /// token, so the names one number spells are one name.
@@ -12187,6 +12203,13 @@ impl Machine<'_> {
         let rest = rest.split_once(NAME_NUMBER).map_or(rest, |(family, _)| family);
         let (prefix, suffix) = rest.split_once(GAPS)?;
         Some((prefix.to_string(), suffix.to_string()))
+    }
+
+    /// The values of the number whose digits fill the gap of `sym`'s name.
+    fn name_number(&self, sym: Sym) -> Option<crate::value::Num> {
+        let rest = self.out.interner.name(sym).strip_prefix(UNKNOWN_NAME)?;
+        let (_, id) = rest.split_once(NAME_NUMBER)?;
+        self.typed_digits_of(Sym(id.parse().ok()?))
     }
 
     /// Whether a name [`Machine::name_pattern`] reads has digits for its
@@ -12631,7 +12654,8 @@ impl Machine<'_> {
         }
         // A name that can spell no defined name is undefined, so `\csname`
         // makes it `\relax`, locally as TeX does.
-        let meaning = match self.spells_defined(prefix, suffix, digits) {
+        let num = number.and_then(|n| self.typed_digits_of(n));
+        let meaning = match self.spells_defined(prefix, suffix, digits, num) {
             false => Meaning::Primitive(Primitive::Relax),
             true => Meaning::Unknown,
         };
@@ -12645,14 +12669,14 @@ impl Machine<'_> {
     /// with a meaning besides `\relax`: a defined name of that shape (digits
     /// in the middle where the unknown part is digits), or
     /// one a name built from unknown text may have defined.
-    fn spells_defined(&self, prefix: &str, suffix: &str, digits: bool) -> bool {
+    fn spells_defined(&self, prefix: &str, suffix: &str, digits: bool, num: Option<crate::value::Num>) -> bool {
         self.wild.overlaps_real(prefix, suffix)
             || self.env.bound().into_iter().any(|s| {
                 let name = self.out.interner.name(s);
                 name.len() >= prefix.len() + suffix.len()
                     && name.starts_with(prefix)
                     && name.ends_with(suffix)
-                    && (!digits || name[prefix.len()..name.len() - suffix.len()].bytes().all(|b| b.is_ascii_digit()))
+                    && gap_fits(&name[prefix.len()..name.len() - suffix.len()], digits, num)
                     && !self.is_unknown_name(s)
                     && !matches!(self.env.meaning(s), Meaning::Undefined | Meaning::Primitive(Primitive::Relax))
             })
