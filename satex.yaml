@@ -178,7 +178,7 @@ limits:
   seconds: 300  # wall-clock limit per run, 0 for none
   repeat_failures: 8  # times one gap may be met at one place before the expansion is dropped
   choices: 8  # undecided choices one command may make on one path
-  site_forks: 4096  # undecided choices one place may make while a line is read before its expansion is cut, 0 = never
+  site_forks: 64  # undecided choices one place may make while a line is read, past which that conditional is widened, 0 = never
   paths: 16  # waiting paths before the two furthest back are cut to the input they share and joined
   alike: 8  # waiting paths before those at one place in the same conditionals and groups have their input widened
   heads_apart: 32  # loop heads at one place kept apart for differing in code still to run, before they are joined
