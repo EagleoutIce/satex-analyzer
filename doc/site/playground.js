@@ -12,13 +12,19 @@
       'play-cmd', 'play-kernel', 'play-toast', 'play-ctx', 'play-files-tree', 'play-examples'].map($);
   // Buttons give up their labels when their bar runs out of room, as in flowR's playground, and get
   // them back once the bar is as wide again as when they lost them: `.tight` on the bar.
+  // Still too narrow with symbols alone, the buttons fold into one menu: `.tighter`.
   function collapsing(bar, overflows) {
-    let lost = 0;
+    let lost = 0, lostMore = 0;
     const check = () => {
       const width = bar.clientWidth;
-      if (bar.classList.contains('tight') && width <= lost) return;
+      if (bar.classList.contains('tighter') && width <= lostMore) return;
+      bar.classList.remove('tighter');
+      if (bar.classList.contains('tight') && width <= lost) { if (overflows()) { lostMore = width; bar.classList.add('tighter'); } return; }
       bar.classList.remove('tight');
-      if (overflows()) { lost = width; bar.classList.add('tight'); }
+      if (!overflows()) return;
+      lost = width;
+      bar.classList.add('tight');
+      if (overflows()) { lostMore = width; bar.classList.add('tighter'); }
     };
     new ResizeObserver(check).observe(bar);
     return check;
@@ -27,6 +33,12 @@
     const filebar = tabs.closest('.filebar'), actions = filebar.querySelector('.actions'), tablist = filebar.querySelector('.tablist');
     // the tabs scroll, or the actions wrapped under them
     const check = collapsing(filebar, () => tabs.scrollWidth > tabs.clientWidth + 1 || actions.offsetTop > tablist.offsetTop + tablist.offsetHeight / 2);
+    // the menu the buttons fold into: a click opens them as a column under it
+    const more = Object.assign(document.createElement('button'), { type: 'button', className: 'pill more-actions', title: 'more actions', innerHTML: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.2"/><circle cx="8" cy="8" r="1.2"/><circle cx="12.5" cy="8" r="1.2"/></svg>' });
+    more.setAttribute('aria-expanded', 'false');
+    actions.append(more);
+    more.onclick = (e) => { e.stopPropagation(); const open = !actions.classList.contains('menu-open'); actions.classList.toggle('menu-open', open); more.setAttribute('aria-expanded', String(open)); };
+    document.addEventListener('click', (e) => { if (!more.contains(e.target)) { actions.classList.remove('menu-open'); more.setAttribute('aria-expanded', 'false'); } });
     new MutationObserver(check).observe(tabs, { childList: true });
     const ask = args.closest('.ask');
     collapsing(ask, () => args.clientWidth < 12 * parseFloat(getComputedStyle(args).fontSize));
@@ -170,6 +182,8 @@
   const projectOf = (name) => name in projects ? name : Object.keys(projects).find((r) => projects[r].includes(name)) ?? null;
   /** Data files (a database, a style) go to the file system, not to the language server as TeX. */
   const data = (name) => /\.(bib|bst|bbl|txt|md|ya?ml)$/i.test(name);
+  /** A database is data for the build and a document for the editor: the server hovers and completes in it. */
+  const database = (name) => /\.bib$/i.test(name);
   const path = (name) => `${state.dir}/${name}`;
   const uri = (name = state.file) => `file://${path(name)}`;
 
@@ -405,6 +419,7 @@
     if (data(state.file) && synced !== version) {
       synced = version;
       post({ type: 'project', dir: state.dir, files: { [state.file]: new TextEncoder().encode(editor.text()) } });
+      if (database(state.file) && opened.has(uri())) lsp('textDocument/didChange', { textDocument: { uri: uri(), version }, contentChanges: [{ text: editor.text() }] }, true);
       return true;
     }
     if (synced === version || !opened.has(uri())) return false;
@@ -505,7 +520,19 @@
       return names.length ? { from, options: names.map((m) => ({ label: m[1], detail: m[2].slice(0, 40), type: 'constant' })) } : null;
     }
     async function complete(ctx) {
-      if (/\.bib$/.test(state.file)) return bibStrings(ctx);
+      const bib = /\.bib$/.test(state.file);
+      if (bib) {
+        const strings = bibStrings(ctx);
+        if (strings) return strings;
+        // after `@` the entry types, at the start of a line in an entry its fields, after `\` the commands
+        const typed = ctx.matchBefore(/[\\@]?[A-Za-z]*/), line = ctx.state.doc.lineAt(ctx.pos);
+        if (!ctx.explicit && !/^[\\@]/.test(typed.text) && !/^\s*[A-Za-z]+$/.test(line.text.slice(0, ctx.pos - line.from))) return null;
+        if (typed.text.startsWith('@') || !typed.text.startsWith('\\')) {
+          push();
+          const lead = typed.text.startsWith('@') ? 1 : 0, items = await completions(position(ctx.state.doc, ctx.pos), typed.from + lead - line.from, typed.text.startsWith('@') ? '@' : 'field');
+          return items.length ? { from: typed.from + lead, filter: false, options: rank(items, ctx.state.sliceDoc(typed.from + lead, ctx.pos)).map((i) => ({ label: i.label, type: 'keyword', info: i.detail })) } : null;
+        }
+      }
       // a command's name, or a key or value in a list (`/demo/mode=fa`)
       const word = ctx.matchBefore(/[A-Za-z@*_:]*/), key = ctx.matchBefore(/[\w@*:./-]*/);
       const before = ctx.state.sliceDoc(word.from - 1, word.from), line = ctx.state.doc.lineAt(ctx.pos);
@@ -860,8 +887,16 @@
     openPlace(name ?? a.dataset.path, { line: +a.dataset.line - 1, character: Math.max(+a.dataset.col - 1, 0) });
   });
   /** The groups of other files unfolded, kept across checks. */
-  const tsOpen = new Set();
-  typesetBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) tsOpen.add(id); else tsOpen.delete(id); } }, true);
+  const tsClosed = new Set();
+  typesetBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) tsClosed.delete(id); else tsClosed.add(id); } }, true);
+  /** The paragraph the cursor stands in, marked; with "only at cursor" the others hidden. */
+  function typesetFollow() {
+    const at = editor?.position()?.line + 1, own = [...typesetBody.querySelectorAll(':scope > p.ts[data-line]')];
+    const here = own.filter((p) => +p.dataset.line <= at).at(-1) ?? null;
+    for (const p of typesetBody.querySelectorAll('p.ts')) p.classList.toggle('ts-current', p === here);
+    typesetBody.classList.toggle('ts-only-here', !!$('typeset-here')?.checked && !!here);
+  }
+  $('typeset-here')?.addEventListener('change', typesetFollow);
   const withKeys = cards.withKeys;
   async function typeset(target) {
     if (target !== uri()) return;
@@ -878,10 +913,11 @@
       while (j < paragraphs.length && paragraphs[j].path === r.path) j++;
       const run = paragraphs.slice(i, j), name = (r.path ?? '').split('/').pop();
       const id = `${r.path}|${r.line}`;
-      html.push(`<details class="ts-other" data-id="${escape(id)}"${tsOpen.has(id) ? ' open' : ''}><summary><span class="ts-file">${escape(name)}</span> <span class="muted">${plural(run.length, 'paragraph')}</span></summary>${run.map(row).join('')}</details>`);
+      html.push(`<details class="ts-other" data-id="${escape(id)}"${tsClosed.has(id) ? '' : ' open'}><summary><span class="ts-file">${escape(name)}</span> <span class="muted">${plural(run.length, 'paragraph')}</span></summary>${run.map(row).join('')}</details>`);
       i = j;
     }
     typesetBody.innerHTML = html.length ? html.join('') : '<p class="muted">The document sets no paragraph.</p>';
+    typesetFollow();
   }
   typesetBody.addEventListener('click', (e) => {
     const p = e.target.closest('.ts');
@@ -1180,6 +1216,7 @@
   var explainTimer = 0, explained = '';
   const explanations = new Map(); // `name|file|version|kernel` -> records
   function explainSoon(at) {
+    if (!at) typesetFollow();
     clearTimeout(explainTimer);
     explainTimer = setTimeout(() => explainAt(at ?? editor?.position()), 200);
   }
@@ -2380,7 +2417,7 @@
   let sampleTexts;
   const opened = new Set();
   function open(name) {
-    if (opened.has(uri(name)) || name in state.ro || data(name)) return;
+    if (opened.has(uri(name)) || name in state.ro || (data(name) && !database(name))) return;
     opened.add(uri(name));
     checking();
     lsp('textDocument/didOpen', { textDocument: { uri: uri(name), languageId: 'latex', version, text: state.texts[name] } }, true);

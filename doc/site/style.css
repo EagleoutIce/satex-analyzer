@@ -549,7 +549,14 @@ details.more[open] > summary { margin-bottom: .3rem; }
 .filebar select { font: inherit; font-size: .76rem; max-width: 9.5rem; padding: .1rem .3rem; border-radius: 1rem; border: 1px solid var(--border); background: var(--panel); color: var(--fg); }
 .pill { display: inline-flex; align-items: center; gap: .3rem; font-size: .76rem; font-weight: 400; padding: .12rem .6rem; border-radius: 1rem; border: 1px solid var(--border); background: var(--panel); color: var(--fg); }
 .pill svg { width: .85rem; height: .85rem; }
-.tight .pill:not(.feature) .label, .ask.tight .hint { display: none; }
+.tight .pill .label, .ask.tight .hint { display: none; } .tight .pill .count { margin-left: .15rem; }
+.filebar .actions { position: relative; } .more-actions { display: none; } .more-actions svg { fill: currentColor; stroke: none; }
+.tighter .more-actions { display: inline-flex; }
+.tighter .actions > .pill:not(.more-actions) { display: none; }
+.filebar.tighter { position: relative; }
+.tighter .actions.menu-open { position: absolute; right: .4rem; top: 100%; z-index: 20; display: flex; flex-direction: column; align-items: stretch; gap: .25rem; padding: .4rem; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgb(0 0 0 / .18); }
+.tighter .actions.menu-open > .pill:not(.more-actions) { display: flex; }
+.tighter .actions.menu-open > .pill .label { display: inline; }
 .tight .pill { padding: .12rem .4rem; }
 .pill:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--panel); }
 .runbtn { display: inline-flex; align-items: center; gap: .35rem; padding: .15rem .9rem; font-size: .78rem; border-radius: 1rem; }
@@ -617,7 +624,7 @@ details.more[open] > summary { margin-bottom: .3rem; }
 }
 
 .ask .runbtn { flex: none; margin-left: .4rem; }
-.ts-other > summary { cursor: pointer; color: var(--muted); font-size: .8rem; padding: .15rem 0; }
+.ts-other > summary { cursor: pointer; color: var(--muted); font-size: .8rem; padding: .15rem 0 .15rem .2rem; list-style-position: inside; }
 .ts-other[open] > summary { margin-bottom: .2rem; }
 .ts-other > .ts { margin-left: 1.2rem; padding-left: .6rem; border-left: 2px solid var(--border); }
 
@@ -1032,3 +1039,9 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .manual { font-size: .62rem; padding: 0 .3rem; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
 .cfg-value input:invalid { border-color: var(--error) !important; }
 .statusbar #cache-open { margin-left: auto; }
+
+.typeset p.ts-current { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+.ts-only-here > :not(p.ts-current) { display: none; }
+/* in the playground a ligature is marked, not animated: that is the landing page's */
+:is(.play-split, #lib-out) .show-ligs .ts-lig::before, #lib-out .ts-lig::before { content: none; animation: none; }
+:is(.play-split, #lib-out) .show-ligs .ts-lig-to, #lib-out .ts-lig-to { max-width: none; opacity: 1; animation: none; }
