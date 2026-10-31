@@ -639,7 +639,7 @@ async function browser() {
       // the examples beside pdflatex's verdict: each with the finding satex computes for it
       await send('Page.navigate', { url: base + 'index.html' });
       await until(`return document.querySelectorAll('.examples [role=tab]').length > 3`, 30000);
-      for (const [name, code] of [['csname.tex', 'undefined-control-sequence'], ['options.tex', 'option-clash'], ['rerun.tex', 'undefined-reference']]) {
+      for (const [name, code] of [['csname.tex', 'undefined-control-sequence'], ['option-clash.tex', 'option-clash'], ['rerun.tex', 'undefined-reference']]) {
         const got = await js(`const t = [...document.querySelectorAll('.examples [role=tab]')].find((t) => t.textContent === '${name}'); if (!t) return null; t.click();
           const f = document.getElementById(t.getAttribute('aria-controls')); return { codes: [...f.querySelectorAll('.ex-findings li code')].map((c) => c.textContent), pdflatex: /% pdflatex/.test(f.querySelector('pre.src').textContent) }`);
         check(`example ${name}: pdflatex's verdict and satex's ${code}`, got?.pdflatex && got.codes.includes(code), JSON.stringify(got));

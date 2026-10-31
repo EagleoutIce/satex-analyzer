@@ -292,7 +292,12 @@ def roots(samples):
 
 def sources():
     """The documents the playground offers: the site's examples, then the repository's samples."""
-    return [EXAMPLES / n for n in roots(EXAMPLES)] + [ROOT / "samples" / n for n in roots(ROOT / "samples")]
+    out = [EXAMPLES / n for n in roots(EXAMPLES)] + [ROOT / "samples" / n for n in roots(ROOT / "samples")]
+    # the playground keys its documents by name
+    twice = sorted({d.name for d in out if [e.name for e in out].count(d.name) > 1})
+    if twice:
+        sys.exit(f"build.py: an example and a sample share a name: {', '.join(twice)}")
+    return out
 
 
 # The kernels the playground offers: a name, a label, the flags that select it.
