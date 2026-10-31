@@ -47,7 +47,7 @@ fn main() {
         };
         imprecise += report.imprecise.len();
         if precision && !report.imprecise.is_empty() {
-            println!("{name}: imprecise: {}", report.imprecise.join("; "));
+            println!("{name}: imprecise: {}", report.imprecise.join(", "));
         }
         let violations = report.violations;
         if violations.is_empty() {
@@ -79,6 +79,6 @@ fn main() {
         }
     }
     let _ = std::fs::remove_dir_all(&work);
-    println!("{failed} of {} programs not covered; {imprecise} facts every run agreed on left open", programs.len());
+    println!("{failed} of {} programs not covered, {imprecise} facts every run agreed on left open", programs.len());
     std::process::exit(i32::from(failed > 0));
 }

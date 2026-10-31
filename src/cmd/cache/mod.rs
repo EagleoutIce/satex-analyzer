@@ -24,7 +24,7 @@ pub fn status(context: &Context, out: &mut impl Write) -> Result<Output, String>
     let as_json = context.format == Format::Json;
 
     let Some(fmt) = &analysis.format else {
-        return Err("no format was read; check `satex query distribution`".into());
+        return Err("no format was read. Check `satex query distribution`".into());
     };
     let state = if fmt.cached { "cached" } else { "interpreted for this run" };
     if as_json {

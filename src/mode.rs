@@ -1530,7 +1530,7 @@ impl Machine<'_> {
             let (severity, message) = match self.cfg.compiles() {
                 true => (
                     Severity::Assumption,
-                    "\\par was put before this command and the paragraph did not end; as in a run that compiles, it is assumed to have ended",
+                    "\\par was put before this command and the paragraph did not end. As in a run that compiles, it is assumed to have ended",
                 ),
                 false => (
                     Severity::Warning,

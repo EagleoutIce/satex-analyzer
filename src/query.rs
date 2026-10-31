@@ -2212,7 +2212,7 @@ fn options_into(
     }
     let (families, passed) = option_handler(analysis, package);
     let own = ["", ".sty", ".cls"].map(|ext| format!("{package}{ext}"));
-    for family in own.into_iter().chain(families) {
+    for family in own.into_iter().chain(families).chain(member_families(analysis, package)) {
         for (key, _, default) in keyval_keys(analysis, &format!("KV@{family}@")) {
             out.entry(key).or_insert(default);
         }
@@ -2220,6 +2220,26 @@ fn options_into(
     for target in passed {
         options_into(analysis, &target, seen, out);
     }
+}
+
+/// The keyval families of a family `package` is a member of: scrbase's
+/// `\DefineFamilyKey` stores `paper` of scrartcl as `\KV@KOMA.typearea.sty@paper`,
+/// and the class processes every member of `KOMA`, the family its own
+/// `KOMA.scrartcl.cls` names.
+fn member_families(analysis: &Analysis, package: &str) -> BTreeSet<String> {
+    let families: BTreeSet<&str> = analysis
+        .facts
+        .defs
+        .iter()
+        .filter_map(|d| analysis.interner.name(d.name).strip_prefix("KV@")?.split_once('@').map(|(f, _)| f))
+        .collect();
+    let own = [".sty", ".cls"].map(|ext| format!(".{package}{ext}"));
+    let parents: BTreeSet<&str> = families.iter().filter_map(|f| own.iter().find_map(|o| f.strip_suffix(o))).collect();
+    families
+        .into_iter()
+        .filter(|f| parents.iter().any(|p| f.strip_prefix(p).is_some_and(|m| m.starts_with('.'))))
+        .map(str::to_string)
+        .collect()
 }
 
 /// Where a package's unnamed options go through its `\DeclareOption*`
@@ -3961,7 +3981,7 @@ pub fn explain_at(
             if let Some(first) = out.get_mut(before) {
                 first.insert("redefined".into(), json!(redefinitions(analysis, sym, total)));
             }
-            hints.push(format!("`\\{name}` has {total} definitions; `--all` lists every one"));
+            hints.push(format!("`\\{name}` has {total} definitions. `--all` lists every one"));
         }
     }
     Ok((out, hints))

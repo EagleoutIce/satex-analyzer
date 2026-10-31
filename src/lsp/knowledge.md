@@ -29,7 +29,7 @@ TeX puts glue between boxes, lines and paragraphs. A plain length is glue that n
 ```
 
 ## muglue, muskip, muskip register, mudimen
-Math spacing is measured in `mu`, 1/18 of an em of the math font. Glue written in `mu` sets the space between math atoms; `\mskip` and `\muskip` registers take it.
+Math spacing is measured in `mu`, 1/18 of an em of the math font. Glue written in `mu` sets the space between math atoms. `\mskip` and `\muskip` registers take it.
 
 ```tex
 \muskip0=3mu plus 2mu minus 1mu
@@ -40,7 +40,7 @@ Math spacing is measured in `mu`, 1/18 of an em of the math font. Glue written i
 Any of the four: a number, a length, glue or math glue. `\advance`, `\multiply` and `\divide` read whichever fits the register they change.
 
 ## box, box register
-A box register keeps typeset material for later. Plain TeX numbers them (0 to 32767 with e-TeX); LaTeX names them with `\newsavebox`.
+A box register keeps typeset material for later. Plain TeX numbers them (0 to 32767 with e-TeX). LaTeX names them with `\newsavebox`.
 `\setbox` fills one, `\box` puts it down and empties it, `\copy` puts it down and keeps it. `\wd`, `\ht` and `\dp` give its size.
 
 ```tex
@@ -82,7 +82,7 @@ A command name: a backslash and letters (`\name`), or a backslash and one other 
 An expl3 token list variable, made by `\tl_new:N` and set by `\tl_set:Nn` and its relatives. By convention its name ends in `_tl`: `\l_my_tl` local, `\g_my_tl` global.
 
 ## str variable
-An expl3 string: a token list whose characters are all "other" (spaces stay spaces). `\str_set:Nn` sets it; names end in `_str`.
+An expl3 string: a token list whose characters are all "other" (spaces stay spaces). `\str_set:Nn` sets it. Names end in `_str`.
 
 ## clist variable
 An expl3 comma list, kept as a token list: `\clist_set:Nn \l_my_clist {a, b}`. Names end in `_clist`.
@@ -94,10 +94,10 @@ An expl3 variable of that kind: a sequence, a property list, a floating point nu
 A name used to look something up: a label, a citation key or an option. Case matters.
 
 ## label
-The key in `\label{…}`, which `\ref` and `\pageref` refer to. Case matters; citation keys are separate.
+The key in `\label{…}`, which `\ref` and `\pageref` refer to. Case matters. Citation keys are separate.
 
 ## citation key
-The key of a `.bib` entry or a `\bibitem`, used by `\cite`. Case matters; labels are separate.
+The key of a `.bib` entry or a `\bibitem`, used by `\cite`. Case matters. Labels are separate.
 
 ## option key
 A key in a key list (`\pgfkeys`, `\tikzset`, a package's options). A value may follow after `=`.

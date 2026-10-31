@@ -535,7 +535,7 @@ impl DependencyGraph {
     }
 
     pub fn to_dot(&self, it: &Interner, files: &[String]) -> String {
-        let mut s = String::from("digraph satex {\n  rankdir=LR;\n  node [shape=box, fontname=\"monospace\"];\n");
+        let mut s = String::from("digraph satex {\n  rankdir=LR;\n  node [shape=box, fontname=\"monospace\"];\n"); // not prose
         for (i, v) in self.vertices.iter().enumerate() {
             let (shape, color) = match v.tag {
                 VertexTag::VariableDefinition => ("box", "#1f77b4"),
@@ -546,21 +546,21 @@ impl DependencyGraph {
             };
             let file = files.get(v.span.file as usize).map(String::as_str).unwrap_or("?");
             s.push_str(&format!(
-                "  n{i} [label=\"{}\\n{}\\n{file}:{}\", shape={shape}, color=\"{color}\"];\n",
+                "  n{i} [label=\"{}\\n{}\\n{file}:{}\", shape={shape}, color=\"{color}\"];\n", // not prose
                 v.tag.as_str(),
                 escape(&v.render(it)),
                 v.span,
             ));
             for cd in &v.cds {
                 s.push_str(&format!(
-                    "  n{i} -> n{} [style=dashed, color=\"#ff7f0e\", label=\"cd:{}\"];\n",
+                    "  n{i} -> n{} [style=dashed, color=\"#ff7f0e\", label=\"cd:{}\"];\n", // not prose
                     cd.on, cd.taken
                 ));
             }
         }
         for (from, targets) in self.out.iter().enumerate() {
             for (to, kind) in targets {
-                s.push_str(&format!("  n{from} -> n{to} [label=\"{}\"];\n", kind.names().join(",")));
+                s.push_str(&format!("  n{from} -> n{to} [label=\"{}\"];\n", kind.names().join(","))); // not prose
             }
         }
         s.push_str("}\n");

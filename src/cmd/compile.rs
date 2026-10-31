@@ -178,7 +178,7 @@ fn explain(logged: &Logged, findings: &[Record], main: &Path) -> Record {
     let why = match finding {
         Some(f) => {
             let text = f.get("message").and_then(|m| m.as_str()).unwrap_or_default();
-            let fix = f.get("fix").and_then(|m| m.as_str()).map(|fix| format!(" — {fix}")).unwrap_or_default();
+            let fix = f.get("fix").and_then(|m| m.as_str()).map(|fix| format!(". {fix}")).unwrap_or_default();
             Some(format!("{text}{fix}"))
         }
         None => code.and_then(|c| crate::lint::all().find(|r| r.code == c)).map(|r| r.summary.to_string()),

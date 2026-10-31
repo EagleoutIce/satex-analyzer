@@ -308,7 +308,7 @@ fn open_unsaved(tag: &str, text: &str) -> (Server, String, Value, std::path::Pat
 fn unsaved_buffer_reports_unused_definition_as_info() {
     let (server, _, published, dir) = open_unsaved("unused", FIXTURE);
     let diagnostics = published["params"]["diagnostics"].as_array().cloned().unwrap_or_default();
-    let unused = diagnostics.iter().find(|d| d["code"] == "unused-definition");
+    let unused = diagnostics.iter().find(|d| d["data"]["rule"] == "unused-definition");
     assert!(
         unused.is_some_and(|d| d["severity"] == 3 && d["message"].as_str().unwrap().contains("\\unused")),
         "{published:?}"
@@ -824,7 +824,7 @@ fn a_finding_covers_its_call() {
     let text = "\\documentclass{article}\n\\newcommand{\\section}{x}\n\\begin{document}\n\\end{document}\n";
     let (server, _, published, dir) = open_loaded("range", text);
     let diagnostics = published["params"]["diagnostics"].as_array().cloned().unwrap_or_default();
-    let found = diagnostics.iter().find(|d| d["code"] == "already-defined").expect("already-defined");
+    let found = diagnostics.iter().find(|d| d["data"]["rule"] == "already-defined").expect("already-defined");
     let range = &found["range"];
     assert_eq!(range["start"], json!({ "line": 1, "character": 0 }), "{found}");
     assert_eq!(range["end"], json!({ "line": 1, "character": 24 }), "{found}");
@@ -1182,9 +1182,9 @@ fn hover_shows_the_active_definition_and_folds_the_others() {
     );
     let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
     let (main, more) = hover.split_once("#### More definitions").unwrap_or((&hover, ""));
-    assert!(main.contains("— preamble"), "{hover}");
+    assert!(main.contains(": preamble"), "{hover}");
     assert!(main.contains("- `⟨arg1⟩` options") && main.contains("- `⟨arg2⟩` class (.cls)"), "{hover}");
-    assert!(more.contains("— document") && !more.contains("— preamble"), "{hover}");
+    assert!(more.contains(": document") && !more.contains(": preamble"), "{hover}");
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1516,8 +1516,8 @@ fn an_unclosed_argument_is_the_document_s_error() {
         "\\documentclass{article}\n\\usepackage{pgfkeys}\n\\begin{document}\n\\pgfkeys{/demo/a=1,\n\\end{document}\n";
     let (server, _, published, dir) = open_loaded("unclosed", text);
     let diagnostics = published["params"]["diagnostics"].as_array().cloned().unwrap_or_default();
-    assert!(!diagnostics.iter().any(|d| d["code"] == "caused-library-error"), "{published}");
-    let own = diagnostics.iter().find(|d| d["code"] == "raised-error").unwrap_or_else(|| panic!("{published}"));
+    assert!(!diagnostics.iter().any(|d| d["data"]["rule"] == "caused-library-error"), "{published}");
+    let own = diagnostics.iter().find(|d| d["data"]["rule"] == "raised-error").unwrap_or_else(|| panic!("{published}"));
     assert!(
         own["message"]
             .as_str()
@@ -1722,6 +1722,31 @@ fn class_options_are_the_named_class_s() {
     let package = complete(&mut server, &uri, 1, "\\usepackage[".len() as u32);
     let package = labels(&package);
     assert!(package.contains(&"hiresbb") && !package.contains(&"twocolumn"), "{package:?}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A class's and a package's key=value options: the keys inside `[…]`,
+/// and after `key=` the values that key takes (KOMA's `paper=`, geometry's).
+#[test]
+fn key_value_options_offer_keys_and_values() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text =
+        "\\documentclass[paper=]{scrartcl}\n\\usepackage[paper=]{geometry}\n\\begin{document}\nx\n\\end{document}\n";
+    let (mut server, uri, _, dir) = open_loaded("kvopts", text);
+    let at = |line: &str| line.find('=').unwrap() as u32;
+    let lines: Vec<&str> = text.lines().collect();
+    let class_keys = complete(&mut server, &uri, 0, "\\documentclass[".len() as u32);
+    assert!(labels(&class_keys).iter().any(|l| l.starts_with("paper")), "{:?}", labels(&class_keys));
+    assert!(labels(&class_keys).iter().any(|l| l.starts_with("fontsize")), "{:?}", labels(&class_keys));
+    let paper = complete(&mut server, &uri, 0, at(lines[0]) + 1);
+    assert!(labels(&paper).contains(&"a4"), "{:?}", labels(&paper));
+    let package_keys = complete(&mut server, &uri, 1, "\\usepackage[".len() as u32);
+    assert!(labels(&package_keys).iter().any(|l| l.starts_with("margin")), "{:?}", labels(&package_keys));
+    let geometry = complete(&mut server, &uri, 1, at(lines[1]) + 1);
+    assert!(labels(&geometry).contains(&"a4paper"), "{:?}", labels(&geometry));
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }

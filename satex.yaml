@@ -11,26 +11,26 @@ load:  # what to follow from the document
   skip: []  # packages to leave unread
   expect: []  # classes and packages a package or class file expects loaded before it (a beamer theme: [beamer])
   expect_detect: true  # find them from what the packages on disk define, and say so
-  build_files: false  # read the .aux, .toc, .bbl, ... an earlier build left; off: absent, the run over-approximates them
+  build_files: false  # read the .aux, .toc, .bbl, ... an earlier build left, off: absent, the run over-approximates them
   build_extensions: [aux, toc, lof, lot, loa, lol, out, bbl, bcf, run.xml, blg, glo, gls, glg, acn, acr, alg, ist, idx, ind, ilg, nlo, nls, slnc, brf, nav, snm, vrb, fls, fdb_latexmk, xdy, log]  # what counts as such a file
 search_paths: []  # searched before the installation
 paths:  # kpathsea variables' fallback list: tried after the
                           # environment and the project's latexmkrc/Makefile
-  texinputs: []  # TEXINPUTS; a trailing // recurses, as in kpathsea
+  texinputs: []  # TEXINPUTS, a trailing // recurses, as in kpathsea
   bibinputs: []  # BIBINPUTS
   bstinputs: []  # BSTINPUTS
   tfmfonts: []  # TFMFONTS
   encfonts: []  # ENCFONTS
   output_directory: ''  # -output-directory: a relative name opened at run time is looked up here first
 at_letter: false  # start with @ a letter, as .sty files do
-lint_off: [analysis-imprecision]  # rule codes that never fire; a profile fills this in
+lint_off: [analysis-imprecision]  # rule codes that never fire, a profile fills this in
 project:
-  frozen: []  # globs of files read and analyzed, but with no findings and no fixes inside; relative to this file
+  frozen: []  # globs of files read and analyzed, but with no findings and no fixes inside, relative to this file
   freeze_other_repositories: true  # files of another git repository (a submodule, a nested clone) count as frozen too
   ignore_other_configs: false  # true: satex.yaml files above this one and the global one are not read
 conventions:  # how TeX is usually written, where the text alone does not say
   internal: ['@', '^__', '_.*:']  # regexes marking internal names (hidden from listings and completion, private to lints)
-  definers: []  # more commands whose next name is the one they define; satex finds those the kernel defines with itself
+  definers: []  # more commands whose next name is the one they define, satex finds those the kernel defines with itself
 lints:
   unused-definition:
     report_public: true  # also flag a public name
@@ -60,7 +60,7 @@ lints:
 
 # Sensible defaults per kind of input, chosen automatically by the input's
 # extension and, failing that, what it starts with (\ProvidesPackage,
-# \documentclass, ...); --profile NAME or profile: above overrides the
+# \documentclass, ...). --profile NAME or profile: above overrides the
 # choice.  Each block is a partial config, merged over everything above.
 # A profile can reuse another with a YAML anchor and `<<:` merge key
 # instead of repeating its keys (`profiles.class: {<<: *library, ...}`).
@@ -74,9 +74,9 @@ profiles:
                build-bibliography-disabled, build-bibliography-unneeded,
                build-missing-custom-dependency, build-unused-custom-dependency,
                build-command-placeholders, build-engine-options]
-  class:  # a .cls; the same defaults as a package
+  class:  # a .cls, the same defaults as a package
     <<: *library
-  literate:  # a .dtx/.ins; unpacks to a package or class
+  literate:  # a .dtx/.ins, unpacks to a package or class
     <<: *library
   plain:  # plain TeX: no LaTeX packages, classes or labels
     load: {packages: false, classes: false}
@@ -110,7 +110,7 @@ cache:
     class: article  # the class they are loaded after
     auto: true  # every run stores the packages it reads
 # preload: preamble.tex     # a preamble to read as this project's format, the
-                            # way mylatexformat dumps one; a %& line or -fmt=
+                            # way mylatexformat dumps one, a %& line or -fmt=
                             # in the build configuration names it otherwise
 # pretex: '\def\draft{}'   # TeX code read before the document (latexmk -usepretex)
 
@@ -118,7 +118,7 @@ opaque_conditionals: []  # conditionals to leave undecided, both arms analyzed
 expand_in_reports: []  # macros to expand when reporting a value, e.g. today
 
 # Primitives the primitive-tex-command rule reports, with what to suggest
-# instead; an empty value suggests nothing.  Entries add to what it knows.
+# instead, an empty value suggests nothing.  Entries add to what it knows.
 latex_alternatives: {}
 
 gaps:
@@ -130,12 +130,12 @@ analysis:
   join_paths_at:  # where every path still apart is joined, reported as paths-joined-at
     - command: \document  # matched by meaning, however the run reaches it
     # - hook: begindocument  # an lthooks hook, when it is used
-  assume_compiles: true  # assumption: drop a path that raises a certain TeX error in library code; the document's own errors are kept
+  assume_compiles: true  # assumption: drop a path that raises a certain TeX error in library code, the document's own errors are kept
   assume_packages_close_groups: true  # assumption: a package closes the groups it opens
   assume_environment: true  # assumption: the build runs in this environment (Lua's os.getenv reads it)
-  assume_forced_page_breaks: true  # assumption: pages break only where a penalty forces it; false also follows breaks where the page may have filled
+  assume_forced_page_breaks: true  # assumption: pages break only where a penalty forces it, false also follows breaks where the page may have filled
 
-# shell_escape: restricted # none | restricted | full; unset, what the build files ask for
+# shell_escape: restricted # none | restricted | full. Unset: what the build files ask for
 # TEMPORARY effect summaries: satex does not follow these macros' internals.
 # Each is said once per run as an `assumption`. Remove when the internals run.
 stubs:
@@ -159,12 +159,12 @@ arm_joins: true  # arms of a choice inside an \edef or \csname join where they m
 
 # Limits: the termination argument. Reaching one stops that part of the run
 # and records a diagnostic. Only choices, site_forks, paths, meaning_splits, widen_after, recursion_depth,
-# call_summary_after, meaning_set and value_set trade precision for time; the rest only stop a run.
+# call_summary_after, meaning_set and value_set trade precision for time, the rest only stop a run.
 limits:
-  memory: 8GiB  # what one run may hold at once; 0 lifts the limit
-  threads: 0  # threads for the project walk; the interpreter runs on one
-  cache_size: 2GiB  # caches kept, least recently used evicted; 0 for no bound
-  steps: 4000000000  # tokens the document may digest (pdflatex digests ~200M/s; pingus needs ~1.5G real tokens)
+  memory: 8GiB  # what one run may hold at once, 0 lifts the limit
+  threads: 0  # threads for the project walk, the interpreter runs on one
+  cache_size: 2GiB  # caches kept, least recently used evicted, 0 for no bound
+  steps: 4000000000  # tokens the document may digest (pdflatex digests ~200M/s, pingus needs ~1.5G real tokens)
   format_steps: 9000000000  # tokens latex.ltx may digest (built once, then cached)
   file_depth: 64  # how deep \input and \usepackage may nest
   expansion_depth: 512  # how often one macro may be nested in itself before its recursion is widened
@@ -173,28 +173,28 @@ limits:
   seconds: 300  # wall-clock limit per run, 0 for none
   repeat_failures: 8  # times one gap may be met at one place before the expansion is dropped
   choices: 8  # undecided choices one command may make on one path
-  site_forks: 4096  # undecided choices one place may make while a line is read before its expansion is cut; 0 = never
+  site_forks: 4096  # undecided choices one place may make while a line is read before its expansion is cut, 0 = never
   paths: 16  # waiting paths before the two furthest back are cut to the input they share and joined
   alike: 8  # waiting paths before those at one place in the same conditionals and groups have their input widened
   heads_apart: 32  # loop heads at one place kept apart for differing in code still to run, before they are joined
   meaning_splits: 4  # choices a command may have made for a name joined to several meanings to split per meaning
   widen_after: 3  # rounds a loop head reanalyzes a grown state before widening it
-  build_runs: 5  # runs of the build (latexmk rounds) to reach the fixpoint of .aux/.toc/...; past them unknown; 1 = one run, no earlier files
+  build_runs: 5  # runs of the build (latexmk rounds) to reach the fixpoint of .aux/.toc/..., past them unknown, 1 = one run, no earlier files
   recursion_depth: 100  # levels an undecided recursion is followed before it is assumed to end
-  loop_heads: 512  # loop heads and entries one drive keeps with their joined states; the oldest goes first
-  call_summary_after: 2  # runs of one call recorded before an unknown-operand call applies their join; 0 = never
-  cycle_after: 2  # repeats of one call in the same state before its path ends (the only path is summarized); 0 = never
+  loop_heads: 512  # loop heads and entries one drive keeps with their joined states, the oldest goes first
+  call_summary_after: 2  # runs of one call recorded before an unknown-operand call applies their join, 0 = never
+  cycle_after: 2  # repeats of one call in the same state before its path ends (the only path is summarized), 0 = never
   meaning_set: 8  # meanings a join keeps as a set before the meaning is unknown
   join_arms: 32  # paths a join keeps paired (which binding goes with which), 0 pairs none
-  join_names: 64  # names a join pairs at most; the rest are joined apart
+  join_names: 64  # names a join pairs at most, the rest are joined apart
   value_set: 8  # values a join keeps for a count or dimension before only the interval
   interval_set: 4  # members a join keeps for a number once intervals are among them, before only their hull
-  degrade_at_percent: 100  # of limits.steps past which the precision limits are halved, step by step; 100 = never
+  degrade_at_percent: 100  # of limits.steps past which the precision limits are halved, step by step, 100 = never
   expansion_tokens: 1048576  # tokens one expansion may add
   conditional_tokens: 1048576  # tokens read ahead to count the arms of an \ifcase
   held_tokens: 4000000  # tokens waiting to be read
   expansion_stack: 4000  # token lists open at once: expansions, arguments, files
   save_stack: 2000000  # assignments a group may have to undo (~200 MB)
-  vertices: 400000  # graph nodes recorded; past it the graph stops growing and the analysis goes on
+  vertices: 400000  # graph nodes recorded, past it the graph stops growing and the analysis goes on
   facts: 2000000  # definitions, uses and occurrences recorded
   trace: 200000  # trace events recorded

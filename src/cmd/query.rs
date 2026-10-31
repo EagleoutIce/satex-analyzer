@@ -23,7 +23,7 @@ pub fn run(
         let names = Query::ALL.iter().map(|(name, _)| Record::from_iter([("name".to_string(), json!(*name))]));
         return Ok(Output::Records(names.collect()));
     }
-    let name = name.ok_or("expected a query name; try --list")?;
+    let name = name.ok_or("expected a query name. Try --list")?;
     let query = Query::parse(name).ok_or_else(|| format!("unknown query `{name}`"))?;
     let filter = parse_filter(filter)?;
     let kept = |found: Vec<Record>| Ok(Output::Records(found.into_iter().filter(|r| filter.accepts(r)).collect()));

@@ -64,8 +64,8 @@ An expl3 name carries its signature after the colon
 ([interface3](https://ctan.org/pkg/expl3), \"Naming conventions\"): one letter
 per argument, `N` a single token, `n` a braced group.
 
-What the function really consumes — the calls the run saw, or probe input
-for one the document defines — takes a different number of arguments, or an
+What the function really consumes (the calls the run saw, or probe input
+for one the document defines) takes a different number of arguments, or an
 optional one or a star, which no expl3 signature has.  `\\foo:nn` that takes
 one argument leaves the second for whatever follows.
 
@@ -82,7 +82,7 @@ text.",
         summary: "a recursive macro has nothing that can stop it",
         explanation: "\
 The run saw the macro's expansion reach the macro again, could not see the
-recursion end, and found no conditional — no `\\if…`, `\\else` or `\\fi` — to
+recursion end, and found no conditional (no `\\if…`, `\\else` or `\\fi`) to
 end it.  A macro nothing expands is judged by the names its replacement text
 holds.  A real run expands until TeX runs out of memory:
 `TeX capacity exceeded, sorry [main memory size]`.

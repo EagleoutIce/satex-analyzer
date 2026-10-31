@@ -330,9 +330,14 @@ pub fn pausing<T>(pause: Pause, f: impl FnOnce() -> T) -> T {
 pub fn pause() {
     let n = PAUSED.get().wrapping_add(1);
     PAUSED.set(n);
-    if n.is_multiple_of(64)
-        && let Some(mut pause) = PAUSE.take()
-    {
+    if n.is_multiple_of(64) {
+        pause_now();
+    }
+}
+
+/// Between two long steps of work (a lint rule each): the pause runs now.
+pub fn pause_now() {
+    if let Some(mut pause) = PAUSE.take() {
         pause();
         PAUSE.set(Some(pause));
     }

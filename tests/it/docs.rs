@@ -176,3 +176,47 @@ fn generated_docs_have_no_machine_specific_paths() {
         violations.join("\n")
     );
 }
+
+/// The prose a reader sees is short sentences: no `;` or `—` joins two
+/// clauses. Code blocks, code spans, HTML tags and entities are masked
+/// first, so code and literal symbols stay. A `—` alone in a table cell is
+/// a symbol, not a dash between words.
+#[test]
+fn prose_has_no_semicolons_or_em_dashes() {
+    let masks = [
+        Regex::new(r"(?s)```.*?```").unwrap(),
+        // A table's empty cell, twice for neighbors sharing a `|`.
+        Regex::new(r"<td[^>]*>\s*—\s*</td>|\|\s*—\s*\|").unwrap(),
+        Regex::new(r"\|\s*—\s*\|").unwrap(),
+        Regex::new(r"(?s)<pre.*?</pre>|<code.*?</code>|<script.*?</script>|<style.*?</style>").unwrap(),
+        Regex::new(r"`[^`\n]*`").unwrap(),
+        Regex::new(r"<[^>\n]*>").unwrap(),
+        Regex::new(r"&#?\w+;").unwrap(),
+        // A link's target: a URL may hold `;`.
+        Regex::new(r"\]\([^)\s]*\)").unwrap(),
+    ];
+    let joined = Regex::new(r"(?m);(\s|$)|—").unwrap();
+    let mut pages: Vec<String> = GENERATED_PAGES.iter().map(|p| p.to_string()).collect();
+    pages.extend(
+        ["src/lsp/knowledge.md", "editors/vscode/README.md", "editors/vscode/package.json", "satex.schema.json"]
+            .map(String::from),
+    );
+    for dir in ["doc/src", "doc/site"] {
+        for entry in walkdir::WalkDir::new(dir).into_iter().filter_map(Result::ok) {
+            let path = entry.path().display().to_string();
+            if path.ends_with(".md.in") || path.ends_with(".html") {
+                pages.push(path);
+            }
+        }
+    }
+    let mut faults = Vec::new();
+    for page in &pages {
+        let text = fs::read_to_string(page).unwrap_or_else(|e| panic!("{page}: {e}"));
+        let masked = masks.iter().fold(text.clone(), |text, re| mask(&text, re));
+        for m in joined.find_iter(&masked) {
+            let line = masked[..m.start()].matches('\n').count() + 1;
+            faults.push(format!("{page}:{line}: {}", text.lines().nth(line - 1).unwrap_or_default().trim()));
+        }
+    }
+    assert!(faults.is_empty(), "rephrase into short sentences:\n{}", faults.join("\n"));
+}

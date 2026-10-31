@@ -143,7 +143,7 @@ impl Machine<'_> {
                 Severity::Imprecision,
                 "unknown-globaldefs",
                 span,
-                "\\globaldefs holds a number satex does not know; what the assignment left is unknown".into(),
+                "\\globaldefs holds a number satex does not know, so what the assignment left is unknown".into(),
             );
             self.widen_recent();
             self.env.set_recent(recent);
@@ -2273,7 +2273,7 @@ impl Machine<'_> {
             return;
         }
         let message = format!(
-            "\\{} could not be decided past the choices one command may make; it is taken as unknown text",
+            "\\{} could not be decided past the choices one command may make. It is taken as unknown text",
             self.name(by)
         );
         self.diagnose(Severity::Assumption, "undecided-condition", span, message);
@@ -2435,7 +2435,7 @@ impl Machine<'_> {
                 Severity::Assumption,
                 "unbalanced-path",
                 span,
-                "a closer met any number of open conditionals and no more paths could part; it is assumed one of them"
+                "a closer met any number of open conditionals and no more paths could part. It is assumed to be one of them"
                     .into(),
             );
         }
@@ -3138,7 +3138,7 @@ impl Machine<'_> {
                     Severity::Warning,
                     "wrong-mode",
                     span,
-                    format!("\\{name} can only be set in {modes} mode; this assignment does nothing"),
+                    format!("\\{name} can only be set in {modes} mode. This assignment does nothing"),
                 );
                 false
             }
@@ -3655,7 +3655,7 @@ impl Machine<'_> {
             Severity::Warning,
             "bad-register-code",
             span,
-            format!("bad {what} ({index}), which must be between 0 and {most}; 0 is used"),
+            format!("bad {what} ({index}), which must be between 0 and {most}. 0 is used"),
         );
         0
     }
@@ -3854,7 +3854,7 @@ impl Machine<'_> {
                     Severity::Warning,
                     "bad-register-code",
                     span,
-                    format!("bad register code ({n}), which must be between 0 and {most}; 0 is used"),
+                    format!("bad register code ({n}), which must be between 0 and {most}. 0 is used"),
                 );
                 Some(self.register_sym(kind, 0))
             }
@@ -4109,7 +4109,7 @@ impl Machine<'_> {
                     Severity::Warning,
                     "invalid-code",
                     span,
-                    format!("invalid code ({n}) for \\{}, which takes at most {most}; 0 is used", table.as_str()),
+                    format!("invalid code ({n}) for \\{}, which takes at most {most}. 0 is used", table.as_str()),
                 );
                 Value::Int(0)
             }
@@ -4151,7 +4151,7 @@ impl Machine<'_> {
                 Severity::Imprecision,
                 "unknown-char-code",
                 span,
-                format!("\\{} of a character satex could not pin down; {what}", table.as_str()),
+                format!("\\{} of a character satex could not pin down: {what}", table.as_str()),
             );
         };
         // Any may be the one assigned, so each holds its old code or the new.
@@ -4317,7 +4317,7 @@ impl Machine<'_> {
                 Severity::Assumption,
                 "region-catcodes",
                 span,
-                "a \\catcode in a skipped expansion lost its operands to the cut; categories are assumed unchanged"
+                "a \\catcode in a skipped expansion lost its operands to the cut. Categories are assumed unchanged"
                     .into(),
             );
         }
@@ -4356,7 +4356,7 @@ impl Machine<'_> {
                 Severity::Imprecision,
                 "unknown-catcode",
                 span,
-                "\\catcode of a character or with a value satex could not pin down; each category it may name is its old one or the one assigned".into(),
+                "\\catcode of a character or with a value satex could not pin down. Each category it may name is its old one or the one assigned".into(),
             );
         };
         self.set_catcode(ch, catcode);
@@ -4436,7 +4436,7 @@ impl Machine<'_> {
                 Severity::Imprecision,
                 "unknown-write-stream",
                 span,
-                "\\write to a stream satex could not pin down; the shell and every open file may get it".into(),
+                "\\write to a stream satex could not pin down. The shell and every open file may get it".into(),
             );
             let label = Some("an unknown stream".to_string());
             self.occurrence(OccKind::ShellEscape, text.clone(), label.clone(), span);
@@ -4524,7 +4524,7 @@ impl Machine<'_> {
                 Severity::Imprecision,
                 "terminal-read",
                 span,
-                format!("\\{} reads from {what}; what it gives is unknown", self.name(by)),
+                format!("\\{} reads from {what}, so what it gives is unknown", self.name(by)),
             );
             self.define(name, Meaning::Unknown, by, DefMode::Declare, span);
             return;
@@ -4962,7 +4962,7 @@ impl Machine<'_> {
                     Severity::Warning,
                     "arithmetic-overflow",
                     span,
-                    "arithmetic overflow; the register keeps its value".into(),
+                    "arithmetic overflow, the register keeps its value".into(),
                 );
                 current
             }

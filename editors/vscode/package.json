@@ -81,7 +81,7 @@
           "type": "number",
           "default": 2,
           "minimum": 0,
-          "description": "How many CPU cores the server may use at most (Linux, through its cgroup; 0: no cap). How long an analysis may run is `limits.seconds` in satex.yaml."
+          "description": "How many CPU cores the server may use at most (Linux, through its cgroup, 0 for no cap). How long an analysis may run is `limits.seconds` in satex.yaml."
         },
         "satex.server.niceness": {
           "type": "number",
@@ -99,7 +99,7 @@
           "type": "string",
           "default": "2GiB",
           "scope": "machine",
-          "markdownDescription": "Most memory one analysis of the language server may hold, such as `2GiB`; it stops cleanly beyond it. Empty: satex's own limit (`limits.memory`)."
+          "markdownDescription": "Most memory one analysis of the language server may hold, such as `2GiB`. It stops cleanly beyond it. Empty: satex's own limit (`limits.memory`)."
         },
         "satex.rootFile": {
           "type": "string",

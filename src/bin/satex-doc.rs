@@ -151,38 +151,46 @@ fn installation(bin: &str) -> Result<String, String> {
 }
 
 /// The type lattice as a Mermaid flowchart from [`Ty::parent`], coloured by
-/// [`Ty::family`]; leaves of one parent share a node, `nothing` is left out.
+/// [`Ty::family`], one node per type. Three or more leaves of one parent and
+/// family stand in a stacked cluster that one edge reaches. `nothing` is left out.
 fn types_chart() -> String {
     use satex::roles::Ty;
     let all: Vec<Ty> = Ty::all().into_iter().filter(|t| *t != Ty::Bottom).collect();
-    let family = |t: Ty| t.family();
+    let id = |t: Ty| all.iter().position(|x| *x == t).unwrap_or(0);
     let leaf = |t: Ty| t != Ty::Top && !all.iter().any(|c| *c != Ty::Top && c.parent() == t);
-    let mut nodes: Vec<(Option<Ty>, &str, Vec<Ty>)> = Vec::new();
-    for &t in &all {
-        let key = leaf(t).then(|| t.parent());
-        match nodes
-            .iter_mut()
-            .find(|(k, f, m)| key.is_some() && *k == key && *f == family(t) && m.iter().all(|x| leaf(*x)))
-        {
-            Some((_, _, members)) => members.push(t),
-            None => nodes.push((key, family(t), vec![t])),
-        }
-    }
-    let node = |t: Ty| nodes.iter().position(|(_, _, m)| m.contains(&t)).unwrap_or(0);
     let mut out = String::from("```mermaid\nflowchart LR\n");
-    for (i, (_, class, members)) in nodes.iter().enumerate() {
-        let names: Vec<String> =
-            members.iter().map(|t| if *t == Ty::Top { "any".to_string() } else { t.to_string() }).collect();
-        let label = names.chunks(3).map(|c| c.join(" · ")).collect::<Vec<_>>().join("<br>");
-        let _ = writeln!(out, "  t{i}[\"{}\"]:::{class}", label.replace('"', "#quot;"));
+    for &t in &all {
+        let name = if t == Ty::Top { "any".to_string() } else { t.to_string() };
+        let _ = writeln!(out, "  t{}[\"{}\"]:::{}", id(t), name.replace('"', "#quot;"), t.family()); // not prose
     }
-    let mut edges = Vec::new();
-    for &t in all.iter().filter(|t| **t != Ty::Top) {
-        let edge = (node(t.parent()), node(t));
-        if !edges.contains(&edge) {
-            edges.push(edge);
-            let _ = writeln!(out, "  t{} --> t{}", edge.0, edge.1);
+    let mut clustered: Vec<Ty> = Vec::new();
+    for &parent in &all {
+        let mut families: Vec<&str> = Vec::new();
+        for &c in all.iter().filter(|c| **c != Ty::Top && c.parent() == parent && leaf(**c)) {
+            if !families.contains(&c.family()) {
+                families.push(c.family());
+            }
         }
+        for family in families {
+            let leaves: Vec<Ty> = all
+                .iter()
+                .copied()
+                .filter(|c| *c != Ty::Top && c.parent() == parent && leaf(*c) && c.family() == family)
+                .collect();
+            if leaves.len() < 3 {
+                continue;
+            }
+            // In an LR chart a cluster laid out LR stacks its unlinked nodes.
+            let _ = writeln!(out, "  subgraph g{}_{family}[\" \"]\n    direction LR", id(parent)); // not prose
+            for c in &leaves {
+                let _ = writeln!(out, "    t{}", id(*c));
+            }
+            let _ = writeln!(out, "  end\n  t{} --> g{}_{family}", id(parent), id(parent));
+            clustered.extend(leaves);
+        }
+    }
+    for &t in all.iter().filter(|t| **t != Ty::Top && !clustered.contains(t)) {
+        let _ = writeln!(out, "  t{} --> t{}", id(t.parent()), id(t));
     }
     for (class, fill, stroke) in [
         ("top", "#eef0f2", "#8a8f98"),
@@ -203,7 +211,7 @@ fn types_chart() -> String {
 fn run(check: bool) -> Result<(), String> {
     let bin = bin();
     if !Path::new(&bin).exists() {
-        return Err(format!("{bin} not found; run `cargo build --release` first"));
+        return Err(format!("{bin} not found. Run `cargo build --release` first"));
     }
     // The first run against a cold cache reports the kernel as interpreted
     // rather than cached, so the generated text would differ from the next
@@ -530,7 +538,7 @@ fn refresh_citations(check_only: bool) -> Result<(), String> {
     const RERUN: &str = "run `cargo run --features doc --bin satex-doc -- --refresh-citations`";
     if check_only && stale {
         return Err(format!(
-            "{TEX_WEB_SECTIONS_TSV}/{TEX_WEB_SHA_TXT} are stale against the current upstream commit ({sha}); {RERUN}"
+            "{TEX_WEB_SECTIONS_TSV}/{TEX_WEB_SHA_TXT} are stale against the current upstream commit ({sha}). {RERUN}"
         ));
     } else if stale {
         fs::write(TEX_WEB_SECTIONS_TSV, &tsv).map_err(|e| format!("{TEX_WEB_SECTIONS_TSV}: {e}"))?;
@@ -543,7 +551,7 @@ fn refresh_citations(check_only: bool) -> Result<(), String> {
         let changed = resolve_file_citations(path, &mut resolver, !check_only)?;
         any_changed |= changed;
         if check_only && changed {
-            return Err(format!("{path}: citations resolve differently against the current upstream commit; {RERUN}"));
+            return Err(format!("{path}: citations resolve differently against the current upstream commit. {RERUN}"));
         }
         if !check_only && changed {
             println!("updated {path}");
@@ -1090,7 +1098,9 @@ fn badges(
         "warning" => "▲",
         _ => "●",
     };
-    let label = if wide { format!("{shape} default: {severity}") } else { shape.to_string() };
+    // The site draws the shape itself (`.sev::before`), so a wide badge
+    // spells the severity only. A table cell keeps its shape for the wiki.
+    let label = if wide { format!("default: {severity}") } else { shape.to_string() };
     let origin = chktex.get(code).map_or("—".into(), |n| {
         format!(
             "<a class=\"from\" href=\"Chktex-Coverage\" title=\"follows chktex warning {}\">chktex {}</a>",
@@ -1111,11 +1121,12 @@ fn badges(
 /// Severity reads as a shape (and its title), not only as a color.
 fn rules_table() -> Result<String, String> {
     let chktex = chktex_origins()?;
-    let mut out = String::from("| code | kind | quick fix | origin | summary |\n| --- | --- | --- | --- | --- |\n");
+    let mut out =
+        String::from("| no. | code | kind | quick fix | origin | summary |\n| --- | --- | --- | --- | --- | --- |\n");
     for rule in lint_json(&["--rules", "--format", "json"])? {
-        let [code, summary] = ["code", "message"].map(|k| rule[k].as_str().unwrap_or(""));
+        let [number, code, summary] = ["number", "code", "message"].map(|k| rule[k].as_str().unwrap_or(""));
         let [kind, fixes, origin] = badges(&rule, &chktex, false);
-        let _ = writeln!(out, "| [`{code}`](#{code}) | {kind} | {fixes} | {origin} | {summary} |");
+        let _ = writeln!(out, "| {number} | [`{code}`](#{code}) | {kind} | {fixes} | {origin} | {summary} |");
     }
     Ok(out)
 }
@@ -1137,7 +1148,7 @@ fn fixes_list() -> Result<String, String> {
     for rule in lint_json(&["--rules", "--format", "json"])? {
         if let Some(kinds) = fix_kinds(&rule) {
             let code = rule["code"].as_str().unwrap_or("");
-            let _ = writeln!(out, "* [`{code}`](#{code}) {kinds} — {}", rule["message"].as_str().unwrap_or(""));
+            let _ = writeln!(out, "* [`{code}`](#{code}) {kinds} {}", rule["message"].as_str().unwrap_or(""));
         }
     }
     Ok(out)
@@ -1194,7 +1205,7 @@ fn explanations() -> Result<String, String> {
             let _ = writeln!(out, "<details>");
             // GitHub renders markdown inside `<details>` only when a blank
             // line follows the `<summary>`, so the headings below need it.
-            let _ = writeln!(out, "<summary><b>{category}</b> — {count} {plural}</summary>\n");
+            let _ = writeln!(out, "<summary><b>{category}</b> ({count} {plural})</summary>\n");
             open = Some(category.to_string());
         }
         out.push_str(&explain_section(rule, &chktex)?);
@@ -1218,7 +1229,10 @@ fn explain_section(
     let summary = rule["summary"].as_str().unwrap_or("");
     let mut out = String::new();
     let _ = writeln!(out, "### {code}\n");
-    let shown: Vec<String> = badges(listed, chktex, true).into_iter().filter(|b| b != "—").collect();
+    let number =
+        format!("<code class=\"num\" title=\"rule number\">{}</code>", listed["number"].as_str().unwrap_or(""));
+    let badges = badges(listed, chktex, true).into_iter().filter(|b| b != "—");
+    let shown: Vec<String> = std::iter::once(number).chain(badges).collect();
     let _ = writeln!(out, "<p class=\"badges\">{}</p>\n", shown.join(" "));
     let _ = writeln!(out, "**{summary}**\n");
     out.push_str(&explanation_markdown(rule["explanation"].as_str().unwrap_or("")));
@@ -1392,7 +1406,7 @@ fn chktex_table() -> Result<String, String> {
                         .iter()
                         .map(|c| format!("`{c}`: {}", defaults.get(c).map_or("?".to_string(), satex_default_cell)))
                         .collect::<Vec<_>>()
-                        .join("; "),
+                        .join(", "),
                 };
                 (covered, satex_default)
             }

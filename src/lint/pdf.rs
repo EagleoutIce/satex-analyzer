@@ -19,11 +19,11 @@ pub static RULES: &[Rule] = &[
         explanation: "\
 `\\pdfliteral` and `\\special{pdf:…}` (what ocgx2, ocg-p and pdfbase use to
 write raw PDF) drop `q`/`Q` and `BMC`/`BDC`/`EMC` straight into the page's
-content stream.  `q`/`Q` save and restore the graphics state — color, line
-width, the current transform; `BMC`/`BDC`/`EMC` bracket marked content, an
+content stream.  `q`/`Q` save and restore the graphics state: color, line
+width, the current transform. `BMC`/`BDC`/`EMC` bracket marked content, an
 optional content group among them.  Both have to nest within the page (PDF
 32000, §§ 8.4.2, 14.6).  One left open leaks its state into everything
-typeset after it; a viewer may also just reject the page.
+typeset after it. A viewer may also just reject the page.
 
 satex does not break pages into content streams itself, so it checks the
 order the run executes the literals in.

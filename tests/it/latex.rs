@@ -3958,3 +3958,20 @@ a\clearpage
         r"macro:#1->\ifx \protect \@typeset@protect \expandafter \@testopt \else \@x@protect #1\fi "
     );
 }
+
+/// mwe's `example-image` ships with the installation: kpathsea finds it,
+/// so `\includegraphics` raises no `missing-graphic`, and its box is the
+/// PDF page's size (pdflatex: 321.19922pt by 240.8994pt).
+#[test]
+fn an_installed_image_is_found_and_sized() {
+    if !installed() {
+        return;
+    }
+    let source = r"\documentclass{article}
+\usepackage{graphicx}
+\begin{document}
+\setbox0\hbox{\includegraphics{example-image}}\xdef\size{\the\wd0,\the\ht0}
+\end{document}";
+    crate::support::assert_lint(source, "missing-graphic", 0);
+    assert_eq!(body(&analyze(source), "size"), "321.19922pt,240.8994pt");
+}

@@ -61,8 +61,8 @@ the primitives in chktexrc's `Primitives` list.  satex reports one only where
 the name still means the primitive, and names the LaTeX command for the same
 job.
 
-For `\\csname` the job is the one the run saw the name formed for — defined,
-aliased, tested or used — and the suggestion is
+For `\\csname` the job is the one the run saw the name formed for (defined,
+aliased, tested or used), and the suggestion is
 [etoolbox](https://ctan.org/pkg/etoolbox)'s command for it when the document
 has it.
 

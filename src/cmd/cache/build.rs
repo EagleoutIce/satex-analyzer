@@ -368,7 +368,7 @@ pub fn prepare(
                 ("fresh", _) => "fresh, skipped".to_string(),
                 ("built", _) => format!("built in {seconds:.1} s, {}", bytesize::ByteSize(entry.bytes)),
                 ("rebuilt", Some(r)) => {
-                    format!("rejected: {r}; rebuilt in {seconds:.1} s, {}", bytesize::ByteSize(entry.bytes))
+                    format!("rejected: {r}, rebuilt in {seconds:.1} s, {}", bytesize::ByteSize(entry.bytes))
                 }
                 (_, Some(r)) => format!("failed: {r}"),
                 (outcome, None) => outcome.to_string(),
@@ -425,7 +425,7 @@ pub fn run(
     }
     let _ = writeln!(
         out,
-        "{} {} built, {} fresh, {} failed; {} of package caches; {:.1} s",
+        "{} {} built, {} fresh, {} failed, {} of package caches, {:.1} s",
         render::label("cache build"),
         count("built") + count("rebuilt"),
         count("fresh"),

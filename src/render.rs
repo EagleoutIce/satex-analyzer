@@ -54,7 +54,8 @@ pub(crate) fn step_style(step: Step) -> Style {
 fn column_style(column: &str) -> Style {
     match column {
         "name" | "callee" | "key" | "subject" | "package" | "class" | "for" => NAME,
-        "code" | "category" | "by" | "status" | "kind" | "tag" | "step" | "file" | "root" | "when" | "context" => DIM,
+        "number" | "code" | "category" | "by" | "status" | "kind" | "tag" | "step" | "file" | "root" | "when"
+        | "context" => DIM,
         _ => Style::new(),
     }
 }
@@ -80,6 +81,7 @@ pub fn terminal_safe(text: &str) -> String {
                     let params = r.find(|c: char| !c.is_ascii_digit() && c != ';' && c != ':')?;
                     r[params..].starts_with('m').then_some(2 + params + 1)
                 });
+                // not prose: an OSC 8 hyperlink
                 let link = rest[1..].strip_prefix("]8;").and_then(|r| {
                     let end = r.find("\x1b\\")?;
                     (!r[..end].contains(|c: char| c.is_control())).then_some(4 + end + 2)
@@ -137,8 +139,8 @@ fn location(record: &Record) -> String {
 }
 
 #[rustfmt::skip]
-const COLUMNS: [&str; 49] = [
-    "index", "warning", "covered", "rules", "id", "step", "severity", "category", "code", "kind", "status",
+const COLUMNS: [&str; 50] = [
+    "index", "warning", "covered", "rules", "id", "step", "severity", "category", "number", "code", "kind", "status",
     "tag", "name", "callee", "key", "subject", "for", "when", "context", "redefined", "effective", "error",
     "signature", "roles", "types", "parameters", "arity", "takes", "uses", "count", "value", "default", "governs", "package",
     "class", "by", "detail", "fix", "message", "does", "documentation", "expands", "may_expand", "creates", "creates_internal", "body", "reference", "root",
@@ -717,8 +719,12 @@ fn findings_section(
         let severity = rule[0].get("severity").map(plain).unwrap_or_default();
         let style = severity_style(&severity);
         let symbol = severity_symbol(&severity);
-        let _ =
-            writeln!(out, "\n  {style}{symbol}{style:#} {BOLD}{}{BOLD:#} {DIM}({}){DIM:#}", code(&rule[0]), rule.len());
+        let _ = writeln!(
+            out,
+            "\n  {style}{symbol}{style:#} {BOLD}{}{BOLD:#} {DIM}({}){DIM:#}",
+            crate::lint::label(&code(&rule[0])),
+            rule.len()
+        );
         let shown = if group { SHOWN_PER_RULE.min(rule.len()) } else { rule.len() };
         for (i, record) in rule[..shown].iter().enumerate() {
             if i > 0 {
@@ -745,7 +751,7 @@ fn precision_line(records: &[&Record]) -> String {
         "{} {}",
         heading("precision"),
         label(&format!(
-            "{} withheld as the run approximated or left parts unread ({}) \u{2014} `satex lint --filter category=precision` shows them",
+            "{} withheld as the run approximated or left parts unread ({}). `satex lint --filter category=precision` shows them",
             plural(records.len(), "finding"),
             rules.join(", ")
         ))
@@ -926,7 +932,7 @@ pub fn summary(analysis: &crate::machine::Analysis, root: &crate::query::Node, d
         .filter(|(_, names)| !names.is_empty())
         .map(|(what, names)| format!("{what}: {}", names.join(", ")))
         .collect();
-        let _ = writeln!(out, "  {} {}", label("package caches"), parts.join("; "));
+        let _ = writeln!(out, "  {} {}", label("package caches"), parts.join(", "));
     }
     let _ = writeln!(out, "  {} {} files, {} tokens", label("read"), analysis.files.len(), analysis.steps);
     if let Some(defines) = defines_line(root) {
@@ -1297,7 +1303,7 @@ pub fn github(records: &[Record]) -> String {
             _ => "notice",
         };
         let message = plain(record.get("message").unwrap_or(&Json::Null));
-        let title = plain(record.get("code").unwrap_or(&Json::Null));
+        let title = crate::lint::label(&plain(record.get("code").unwrap_or(&Json::Null)));
         let file = plain(record.get("path").unwrap_or(&Json::Null));
         let line = record.get("line").and_then(Json::as_u64).unwrap_or(1);
         let column = record.get("col").and_then(Json::as_u64).unwrap_or(1);
@@ -1318,7 +1324,7 @@ pub fn texlog(records: &[Record]) -> String {
     for record in records {
         let text = |key: &str| plain(record.get(key).unwrap_or(&Json::Null)).replace('\n', " ");
         let line = record.get("line").and_then(Json::as_u64).unwrap_or(1);
-        let (path, code, message) = (text("path"), text("code"), text("message"));
+        let (path, code, message) = (text("path"), crate::lint::label(&text("code")), text("message"));
         // TeX opens a file as `(./name.tex`.
         let path = if path.starts_with(['/', '.']) { path } else { format!("./{path}") };
         let _ = match record.get("severity").and_then(Json::as_str) {
@@ -1334,13 +1340,13 @@ pub fn sarif(records: &[Record], version: &str) -> String {
         let mut codes: Vec<String> = records.iter().map(|r| plain(r.get("code").unwrap_or(&Json::Null))).collect();
         codes.sort();
         codes.dedup();
-        codes.into_iter().map(|code| serde_json::json!({ "id": code })).collect()
+        codes.into_iter().map(|code| sarif_rule(&code)).collect()
     };
     let results: Vec<serde_json::Value> = records
         .iter()
         .map(|record| {
             serde_json::json!({
-                "ruleId": plain(record.get("code").unwrap_or(&Json::Null)),
+                "ruleId": rule_id(&plain(record.get("code").unwrap_or(&Json::Null))),
                 "level": match record.get("severity").and_then(Json::as_str) {
                     Some("error") => "error",
                     Some("warning") => "warning",
@@ -1417,6 +1423,19 @@ fn sarif_fixes(record: &Record) -> Json {
         "artifactChanges": changes,
         "properties": { "applicability": record.get("applicability") },
     }])
+}
+
+/// The id a finding's rule has outside satex: its number, else its code.
+fn rule_id(code: &str) -> String {
+    crate::lint::number(code).unwrap_or(code).to_string()
+}
+
+/// SARIF 2.1.0 § 3.49: a rule's number as its id, its code as its name.
+fn sarif_rule(code: &str) -> Json {
+    match crate::lint::number(code) {
+        Some(_) => serde_json::json!({ "id": rule_id(code), "name": code, "helpUri": crate::lint::url(code) }),
+        None => serde_json::json!({ "id": code }),
+    }
 }
 
 /// LSP severities (`DiagnosticSeverity`): 1 error, 2 warning, 3 information.
@@ -1496,14 +1515,18 @@ pub fn lsp_with(records: &[Record], uri: impl Fn(&str) -> String) -> String {
         let col = record.get("col").and_then(Json::as_u64).unwrap_or(1);
         let at = position(&path, line, col);
         let end = sources.get(&path).map_or(col, |text| call_end(text.line(line.max(1) as u32), col as u32) as u64);
-        let diagnostic = serde_json::json!({
+        let code = plain(record.get("code").unwrap_or(&Json::Null));
+        let mut diagnostic = serde_json::json!({
             "range": { "start": at, "end": position(&path, line, end) },
             "severity": lsp_severity(record),
-            "code": record.get("code"),
+            "code": rule_id(&code),
             "source": "satex",
             "message": plain(record.get("message").unwrap_or(&Json::Null)),
-            "data": { "fix": record.get("fix"), "applicability": record.get("applicability"), "group": record.get("group") },
+            "data": { "rule": code, "fix": record.get("fix"), "applicability": record.get("applicability"), "group": record.get("group") },
         });
+        if crate::lint::number(&code).is_some() {
+            diagnostic["codeDescription"] = serde_json::json!({ "href": crate::lint::url(&code) });
+        }
         let changes: serde_json::Map<String, Json> = edits_by_file(record)
             .into_iter()
             .map(|(file, edits)| {
@@ -1621,9 +1644,9 @@ pub fn status(line: &str) -> String {
         let Some((key, rest)) = rest.split_once(" = ") else { return line.to_string() };
         let (value, rest) = rest.split_once(" was reached ").unwrap_or((rest, ""));
         let (count, rest) = rest.split_once(" (first at ").unwrap_or((rest, ""));
-        let (at, advice) = rest.split_once("); ").unwrap_or((rest, ""));
+        let (at, advice) = rest.split_once("). ").unwrap_or((rest, ""));
         format!(
-            "limits.{} = {} was reached {} (first at {}); {}",
+            "limits.{} = {} was reached {} (first at {}). {}",
             paint(WARNING, key),
             paint(BOLD, value),
             paint(BOLD, count),

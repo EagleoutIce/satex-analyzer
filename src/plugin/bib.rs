@@ -286,7 +286,7 @@ fn biber_bbl(entries: &[&Entry], list: &str) -> String {
             if sortinit.is_empty() {
                 sortinit = who[0].0.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
             }
-            let all = hash(&who.iter().map(|(f, g)| format!("{f},{g}")).collect::<Vec<_>>().join(";"));
+            let all = hash(&who.iter().map(|(f, g)| format!("{f},{g}")).collect::<Vec<_>>().join(";")); // not prose
             out.push_str(&format!("      \\strng{{namehash}}{{{all}}}\n      \\strng{{fullhash}}{{{all}}}\n"));
         }
         let lists = [("publisher", "publisher"), ("location", "location"), ("address", "location")]

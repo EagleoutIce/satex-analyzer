@@ -488,6 +488,7 @@ fn term(tokens: &[String], at: &mut usize, lookup: &dyn Fn(&str) -> Option<Var>)
                 *at += 1;
                 break;
             }
+            // not prose: list separators
             if t == "," || t == ";" {
                 *at += 1;
                 continue;

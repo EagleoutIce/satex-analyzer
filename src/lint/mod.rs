@@ -119,6 +119,7 @@ impl Ref {
     /// How a finding cites it: `chktex 8`, `tex.web § 1034`.
     pub fn cite(&self) -> String {
         match self.source.numbered() {
+            _ if self.at.starts_with('§') => format!("{} {}", self.source.as_str(), self.at),
             _ if self.at.starts_with("chapter ") || self.at.starts_with("appendix ") => {
                 format!("{}, {}", self.source.as_str(), self.at)
             }
@@ -290,6 +291,40 @@ pub struct Rule {
     pub run: fn(&mut Report),
 }
 
+impl Rule {
+    /// The rule's stable number, `S001` and on, from `numbers.txt`.
+    pub fn number(&self) -> &'static str {
+        number(self.code).unwrap_or_default()
+    }
+}
+
+/// `numbers.txt`: every number given and its code, retired ones too.
+fn numbers() -> &'static [(&'static str, &'static str)] {
+    static LIST: std::sync::OnceLock<Vec<(&str, &str)>> = std::sync::OnceLock::new();
+    LIST.get_or_init(|| {
+        include_str!("numbers.txt")
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .filter_map(|line| line.split_whitespace().next().zip(line.split_whitespace().nth(1)))
+            .collect()
+    })
+}
+
+/// The stable number of the rule `code`, `None` for no rule.
+pub fn number(code: &str) -> Option<&'static str> {
+    numbers().iter().find(|(_, c)| *c == code).map(|(n, _)| *n)
+}
+
+/// `S012 raised-error`: how output names a finding's rule.
+pub fn label(code: &str) -> String {
+    number(code).map_or_else(|| code.to_string(), |n| format!("{n} {code}"))
+}
+
+/// Where the rule `code` is documented, for an editor to link.
+pub fn url(code: &str) -> String {
+    format!("{}wiki/lints.html#{code}", env!("CARGO_PKG_HOMEPAGE"))
+}
+
 /// What one [`Rule`] can see and write while it runs: the finished
 /// [`Analysis`], and the [`Record`]s it has produced so far via
 /// [`Report::add`].
@@ -368,6 +403,7 @@ impl<'a> Report<'a> {
     ) {
         let mut record = crate::query::place(self.analysis, span);
         record.insert("code".into(), json!(self.rule.code));
+        record.insert("number".into(), json!(self.rule.number()));
         record.insert("category".into(), json!(self.rule.category.as_str()));
         record.insert("severity".into(), json!(severity.as_str()));
         record.insert("name".into(), json!(name));
@@ -472,6 +508,7 @@ impl<'a> Report<'a> {
         record.insert("line".into(), json!(line));
         record.insert("col".into(), json!(1));
         record.insert("code".into(), json!(self.rule.code));
+        record.insert("number".into(), json!(self.rule.number()));
         record.insert("category".into(), json!(self.rule.category.as_str()));
         record.insert("severity".into(), json!(self.rule.severity.as_str()));
         record.insert("name".into(), json!(name));
@@ -496,11 +533,12 @@ fn lint_run(analysis: &Analysis) -> Vec<Record> {
     let index = Index::of(analysis);
     let mut raised: crate::fixed::HashSet<usize> = crate::fixed::HashSet::default();
     let rules: Vec<&Rule> =
-        all().filter(|rule| !analysis.settings.lint_off.iter().any(|code| code == rule.code)).collect();
+        all().filter(|rule| !analysis.settings.lint_off.iter().any(|c| c == rule.code || c == rule.number())).collect();
     for (i, &rule) in rules.iter().enumerate() {
         let label = format!("lint {}", rule.code);
         crate::progress::bar(&label, i, rules.len(), (0, 0), (0, 0), None, &[]);
         crate::progress::tell(crate::progress::Status { text: label, phase: "lint".into(), ..Default::default() });
+        crate::progress::pause_now();
         let mut report = Report {
             analysis,
             sources: &sources,
@@ -620,6 +658,7 @@ pub fn rules() -> Vec<Record> {
         .into_iter()
         .map(|rule| {
             let mut record = serde_json::Map::new();
+            record.insert("number".into(), json!(rule.number()));
             record.insert("code".into(), json!(rule.code));
             record.insert("category".into(), json!(rule.category.as_str()));
             record.insert("severity".into(), json!(rule.severity.as_str()));
@@ -636,19 +675,68 @@ pub fn cites(rule: &Rule) -> String {
     rule.references.iter().map(Ref::cite).collect::<Vec<_>>().join(", ")
 }
 
+/// The rule named by its code or its number.
 pub fn explanation(code: &str) -> Option<&'static Rule> {
-    all().find(|rule| rule.code == code)
+    all().find(|rule| rule.code == code || rule.number() == code)
 }
 
 #[cfg(test)]
 mod tests {
 
-    /// Messages are short sentences: no string literal of a rule joins
-    /// clauses with `;`.  Explanations and tests are prose of their own.
+    /// `numbers.txt` counts up from `S001` with no gap, names each code
+    /// once, lists every rule, and marks each line no rule has as retired:
+    /// a number is never given twice.
     #[test]
-    fn no_message_has_a_semicolon() {
-        for entry in std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lint")).unwrap() {
-            let path = entry.unwrap().path();
+    fn rule_numbers_are_stable() {
+        let lines: Vec<&str> = include_str!("numbers.txt").lines().filter(|l| !l.starts_with('#')).collect();
+        let mut codes = std::collections::HashSet::new();
+        for (i, line) in lines.iter().enumerate() {
+            let words: Vec<&str> = line.split_whitespace().collect();
+            assert_eq!(words[0], format!("S{:03}", i + 1), "numbers.txt counts up by one: {line}");
+            assert!(codes.insert(words[1]), "numbers.txt names `{}` twice", words[1]);
+            let retired = words.get(2) == Some(&"retired");
+            assert_eq!(super::all().any(|r| r.code == words[1]), !retired, "a rule's line is not retired: {line}");
+        }
+        for rule in super::all() {
+            assert!(codes.contains(rule.code), "`{}` needs a number: append it to src/lint/numbers.txt", rule.code);
+        }
+    }
+
+    /// Whether `literal` joins clauses with `;` or `—`, outside its code
+    /// spans, HTML entities and indented code lines. A lone `—` is a
+    /// table's empty cell, not prose.
+    fn joins_clauses(literal: &str) -> bool {
+        if literal == "—" {
+            return false;
+        }
+        let prose: Vec<&str> = literal.lines().filter(|l| !l.starts_with("    ")).collect();
+        let prose = prose.join("\n");
+        let mut text = String::new();
+        for (i, part) in prose.split('`').enumerate() {
+            if i % 2 == 0 {
+                text.push_str(part);
+            }
+        }
+        let entity = |at: usize| {
+            let start = text[..at].rfind('&').unwrap_or(at);
+            start < at && text[start + 1..at].chars().all(|c| c.is_ascii_alphanumeric() || c == '#')
+        };
+        text.contains('—')
+            || text.match_indices(';').any(|(at, _)| {
+                let rest = &text[at + 1..];
+                !entity(at) && (rest.is_empty() || rest.starts_with([' ', '\n']) || rest.starts_with("\\n"))
+            })
+    }
+
+    /// What satex says is short sentences: no string literal outside
+    /// tests joins clauses with `;` or `—`. A literal that is code, not
+    /// prose, says so in a `// not prose` comment on its line or the one
+    /// above.
+    #[test]
+    fn no_message_joins_clauses() {
+        let src = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+        let files = walkdir::WalkDir::new(src).into_iter().filter_map(Result::ok);
+        for path in files.map(|e| e.into_path()).filter(|p| p.extension().is_some_and(|e| e == "rs")) {
             let all = std::fs::read_to_string(&path).unwrap();
             let text = all.split("#[cfg(test)]").next().unwrap_or_default().as_bytes();
             let ident = |i: usize| i > 0 && (text[i - 1].is_ascii_alphanumeric() || text[i - 1] == b'_');
@@ -667,9 +755,11 @@ mod tests {
                             end += if text[end] == b'\\' { 2 } else { 1 };
                         }
                         let literal = String::from_utf8_lossy(&text[i + 1..end]);
-                        let doc = String::from_utf8_lossy(&text[..i]).trim_end().ends_with("explanation:");
-                        let prose = literal.contains("; ") || literal.contains(";\\\n");
-                        assert!(doc || !prose, "{}: {literal:?}", path.display());
+                        let before = String::from_utf8_lossy(&text[..i]);
+                        let near = before.rsplitn(3, '\n').take(2).any(|l| l.contains("// not prose"));
+                        let after = String::from_utf8_lossy(&text[end..]);
+                        let marked = near || after.lines().next().is_some_and(|l| l.contains("// not prose"));
+                        assert!(marked || !joins_clauses(&literal), "{}: {literal:?}", path.display());
                         end + 1
                     }
                     _ => i + 1,

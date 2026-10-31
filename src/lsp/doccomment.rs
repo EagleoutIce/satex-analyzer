@@ -58,7 +58,7 @@ fn param(line: &str) -> Option<(u8, String)> {
     };
     let digits = rest.chars().take_while(char::is_ascii_digit).count();
     let n: u8 = rest[..digits].parse().ok().filter(|n| (1..=9).contains(n))?;
-    let text = rest[digits..].trim_start_matches(|c: char| c.is_whitespace() || ":=-–—.)".contains(c)).trim();
+    let text = rest[digits..].trim_start_matches(|c: char| c.is_whitespace() || ":=-–—.)".contains(c)).trim(); // not prose
     (!text.is_empty()).then(|| (n, text.to_string()))
 }
 

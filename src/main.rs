@@ -32,8 +32,8 @@ struct Cli {
     #[arg(long, global = true, value_name = "FILE", help_heading = "Input")]
     config: Option<PathBuf>,
 
-    /// Ignore every satex.yaml, discovered or named with --config —
-    /// built-in defaults and `--set` only.
+    /// Ignore every satex.yaml, discovered or named with --config. Only
+    /// built-in defaults and `--set` apply.
     #[arg(long, global = true, help_heading = "Input")]
     no_config: bool,
 
@@ -44,14 +44,14 @@ struct Cli {
 
     /// Overrides an option of `satex.yaml` by its dotted path, the value
     /// written as there: `--set limits.memory=8GiB --set load.inputs=false`.
-    /// Repeatable; the flags below win over it.
+    /// Repeatable. The flags below win over it.
     #[arg(long = "set", global = true, value_name = "PATH=VALUE", help_heading = "Input")]
     #[cfg_attr(not(target_os = "emscripten"), arg(add = clap_complete::ArgValueCandidates::new(|| {
         satex::config::keys().into_iter().map(|(k, _)| k).map(|k| clap_complete::CompletionCandidate::new(format!("{k}="))).collect::<Vec<_>>()
     })))]
     set: Vec<String>,
 
-    /// Do not load packages; analyze the document and the kernel only.
+    /// Do not load packages. Analyze the document and the kernel only.
     #[arg(long, global = true, help_heading = "Input")]
     no_packages: bool,
 
@@ -65,7 +65,7 @@ struct Cli {
     #[arg(long, global = true, value_name = "TEXT", requires = "at", help_heading = "Input")]
     inject: Option<String>,
 
-    /// Where `--inject` puts its text, `[FILE:]LINE[:COL]`; the main file
+    /// Where `--inject` puts its text, `[FILE:]LINE[:COL]`. The main file
     /// without FILE, the start of the line without COL.
     #[arg(long, global = true, value_name = "LINE[:COL]", requires = "inject", help_heading = "Input")]
     at: Option<String>,
@@ -279,11 +279,11 @@ fn install_completions(target: Option<&str>) -> Result<(), String> {
         None => known_shells(&home),
     };
     if shells.is_empty() {
-        return Err("found no bash, zsh or fish to set up; name one: `satex completions install zsh`".into());
+        return Err("found no bash, zsh or fish to set up. Name one: `satex completions install zsh`".into());
     }
     for shell in shells {
         let (file, line) = completion_file(&home, shell)
-            .ok_or_else(|| format!("no automatic setup for the shell `{shell}`; see `satex completions --help`"))?;
+            .ok_or_else(|| format!("no automatic setup for the shell `{shell}`. See `satex completions --help`"))?;
         let text = std::fs::read_to_string(&file).unwrap_or_default();
         if text.lines().any(|l| l.trim() == line) {
             println!("{shell}: already set up in {}", file.display());
@@ -294,7 +294,7 @@ fn install_completions(target: Option<&str>) -> Result<(), String> {
         }
         let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
         std::fs::write(&file, format!("{text}{sep}# satex shell completion\n{line}\n")).map_err(|e| e.to_string())?;
-        println!("{shell}: added to {}; run `source {}` to use it in this shell", file.display(), file.display());
+        println!("{shell}: added to {}. Run `source {}` to use it in this shell", file.display(), file.display());
     }
     Ok(())
 }
@@ -340,7 +340,7 @@ fn run() -> Result<(), String> {
 
     if cli.version || cli.command.is_none() {
         if !matches!(cli.format, Format::Text | Format::Json) {
-            return Err(format!("`--format {}` does not apply to `--version`; try text or json", cli.format.as_str()));
+            return Err(format!("`--format {}` does not apply to `--version`. Try text or json", cli.format.as_str()));
         }
         let (cfg, layers) = configure(&cli, None)?;
         let mut out = anstream::stdout().lock();
@@ -506,7 +506,7 @@ fn resolve_profile(cli: &Cli, cfg: &Config, source: Option<&str>) -> Result<sate
     use satex::config::Profile;
     if let Some(name) = &cli.profile {
         return Profile::parse(name)
-            .ok_or_else(|| format!("unknown profile `{name}`; try document, package, class, literate or plain"));
+            .ok_or_else(|| format!("unknown profile `{name}`. Try document, package, class, literate or plain"));
     }
     if let Some(profile) = cfg.profile {
         return Ok(profile);
@@ -743,7 +743,7 @@ fn overview_text(cfg: &Config, layers: &[PathBuf]) -> String {
     }
     let _ = writeln!(out, "\n{}", render::heading("configuration"));
     if layers.is_empty() {
-        let _ = writeln!(out, "  built-in defaults; write satex.yaml to change them");
+        let _ = writeln!(out, "  built-in defaults. Write satex.yaml to change them");
     } else {
         for path in layers {
             let full = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
@@ -866,7 +866,7 @@ fn input_for(dir: &Path, explaining: bool) -> Result<Option<PathBuf>, String> {
 /// `explain`/`scope` fell back to [`EMPTY_DOCUMENT`]: said once, on stderr,
 /// so a name that means nothing there is not a silent surprise.
 fn note_minimal_document(why: &str) {
-    anstream::eprintln!("satex: no document named ({why}); analyzing the smallest LaTeX document instead");
+    anstream::eprintln!("satex: no document named ({why}). Analyzing the smallest LaTeX document instead");
 }
 
 /// The one root document in `dir`.  Several candidates are never guessed
@@ -953,5 +953,30 @@ fn range(text: &str) -> Result<(u64, u64), String> {
     match from <= to {
         true => Ok((from, to)),
         false => Err(format!("`{text}` is an empty range: FROM is past TO")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// `--help` is short sentences: no `;` or `—` joins two clauses.
+    #[test]
+    fn help_joins_no_clauses() {
+        fn walk(cmd: &mut clap::Command, faults: &mut Vec<String>) {
+            let help = cmd.render_long_help().to_string();
+            let prose: String = help.split('`').step_by(2).collect();
+            for line in prose.lines() {
+                let semicolon =
+                    line.match_indices(';').any(|(at, _)| line[at + 1..].starts_with(' ') || at + 1 == line.len());
+                if semicolon || line.contains('—') {
+                    faults.push(format!("{}: {}", cmd.get_name(), line.trim()));
+                }
+            }
+            for sub in cmd.get_subcommands_mut() {
+                walk(sub, faults);
+            }
+        }
+        let mut faults = Vec::new();
+        walk(&mut <super::Cli as clap::CommandFactory>::command(), &mut faults);
+        assert!(faults.is_empty(), "rephrase into short sentences:\n{}", faults.join("\n"));
     }
 }

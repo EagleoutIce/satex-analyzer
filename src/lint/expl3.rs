@@ -30,7 +30,7 @@ Fix by renaming the variable or using the function of the other scope.",
         severity: Severity::Warning,
         summary: "an expl3 variable's type suffix disagrees with the functions that set it",
         explanation: "\
-A variable's name ends in its type (`_tl`, `_seq`, `_int`, …; interface3). The
+A variable's name ends in its type (`_tl`, `_seq`, `_int`, … in interface3). The
 run made or set this one with another module's function, as `\\seq_set_split:Nnn`
 on a `_tl` variable. A string and a comma list are token lists, so token list
 functions on them are fine.

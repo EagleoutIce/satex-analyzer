@@ -42,7 +42,7 @@ fn run() -> Result<(), String> {
             "--dev" => dev = true,
             _ => {
                 return Err(format!(
-                    "unknown argument `{arg}`; usage: cargo playground [--port N] [--out DIR] [--release] [--dev]"
+                    "unknown argument `{arg}`. Usage: cargo playground [--port N] [--out DIR] [--release] [--dev]"
                 ));
             }
         }
@@ -52,7 +52,7 @@ fn run() -> Result<(), String> {
     take_over(&port);
     if dev.is_some() && root.join(&out).join("play/index.html").is_file() {
         let port = free_port(&port)?;
-        println!("playground: dev mode on the existing build in {}; http://127.0.0.1:{port}/play/", out.display());
+        println!("playground: dev mode on the existing build in {} at http://127.0.0.1:{port}/play/", out.display());
         return serve(&root.join(&out), port.parse().map_err(|_| "no port".to_string())?, dev);
     }
     let site = root.join(&out);
@@ -61,16 +61,16 @@ fn run() -> Result<(), String> {
     let port = port.parse().map_err(|_| "no port".to_string())?;
     // A last build serves at once; this one replaces it when done.
     if site.join("play/index.html").is_file() {
-        println!("playground: serving the last build at {url} while rebuilding; Ctrl+C stops");
+        println!("playground: serving the last build at {url} while rebuilding. Ctrl+C stops");
         let next = site.clone();
         std::thread::spawn(move || match build(root, &next, profile) {
-            Ok(()) => say("built; reload the page to load this build"),
-            Err(message) => eprintln!("playground: {message}; the last build stays"),
+            Ok(()) => say("built. Reload the page to load this build"),
+            Err(message) => eprintln!("playground: {message}. The last build stays"),
         });
         return serve(&site, port, dev);
     }
     build(root, &site, profile)?;
-    println!("playground: serving {url}; Ctrl+C stops");
+    println!("playground: serving {url}. Ctrl+C stops");
     serve(&site, port, dev)
 }
 
@@ -90,7 +90,7 @@ fn build(root: &Path, site: &Path, profile: &str) -> Result<(), String> {
     std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
     let lock = std::fs::File::create(target.join("playground.lock")).map_err(|e| e.to_string())?;
     if lock.try_lock().is_err() {
-        say("another playground build is running; waiting for it to finish");
+        say("another playground build is running. Waiting for it to finish");
         lock.lock().map_err(|e| e.to_string())?;
     }
     // Both builds from one source and profile: a cache is keyed on the source digest. The native
@@ -335,9 +335,9 @@ fn say(what: &str) {
 /// The media type a static host gives a file by its extension.
 fn content_type(name: &str) -> &'static str {
     match name.rsplit('.').next().unwrap_or_default() {
-        "html" => "text/html; charset=utf-8",
-        "js" | "mjs" => "text/javascript; charset=utf-8",
-        "css" => "text/css; charset=utf-8",
+        "html" => "text/html; charset=utf-8",             // not prose
+        "js" | "mjs" => "text/javascript; charset=utf-8", // not prose
+        "css" => "text/css; charset=utf-8",               // not prose
         "json" => "application/json",
         "svg" => "image/svg+xml",
         "png" => "image/png",
@@ -346,7 +346,7 @@ fn content_type(name: &str) -> &'static str {
         "gz" => "application/gzip",
         "woff2" => "font/woff2",
         "pdf" => "application/pdf",
-        "txt" | "tex" | "md" => "text/plain; charset=utf-8",
+        "txt" | "tex" | "md" => "text/plain; charset=utf-8", // not prose
         _ => "application/octet-stream",
     }
 }

@@ -566,7 +566,7 @@ impl Machine<'_> {
                                     Severity::Assumption,
                                     "unjoined-lookahead",
                                     span,
-                                    "paths a look ahead parted into end apart past the choices one command may make; they are joined, as deep in conditionals and groups as the deepest".into(),
+                                    "paths a look ahead parted into end apart past the choices one command may make. They are joined, as deep in conditionals and groups as the deepest".into(),
                                 );
                                 joined
                             }
@@ -577,7 +577,7 @@ impl Machine<'_> {
                                         Severity::Unsupported,
                                         "unjoined-lookahead",
                                         span,
-                                        "paths a look ahead parted into end apart in different files past the choices one command may make; the first is followed".into(),
+                                        "paths a look ahead parted into end apart in different files past the choices one command may make. The first is followed".into(),
                                     );
                                 }
                                 // A replayed arm past the configs this run ended with: no run.
@@ -688,7 +688,7 @@ impl Machine<'_> {
             Severity::Imprecision,
             "analysis-ended-early",
             span,
-            "every path was dropped here before the input ended; the run goes on after the expansion they were in, and what it assigned is unknown".into(),
+            "every path was dropped here before the input ended. The run goes on after the expansion they were in, and what it assigned is unknown".into(),
         );
         let syms = self.typed_syms();
         self.env.widen(&written, None, &crate::env::typed!(self, syms));
@@ -1211,7 +1211,7 @@ impl Machine<'_> {
                     "recursion-widened",
                     span,
                     format!(
-                        "\\{} decides a recursion and could not be decided; its deeper levels are widened",
+                        "\\{} decides a recursion and could not be decided. Its deeper levels are widened",
                         self.name(by)
                     ),
                 );
@@ -1317,7 +1317,7 @@ impl Machine<'_> {
             "undecided-loop",
             span,
             format!(
-                "\\{} decides a loop and could not be decided; every number of passes is joined{widened}",
+                "\\{} decides a loop and could not be decided. Every number of passes is joined{widened}",
                 self.name(by)
             ),
         );
@@ -1534,7 +1534,7 @@ impl Machine<'_> {
             "recursion-widened",
             span,
             format!(
-                "\\{} decides a loop met {} times; it is summarized: what it writes may hold anything",
+                "\\{} decides a loop met {} times. It is summarized, so what it writes may hold anything",
                 self.name(by),
                 self.limits.widen_after
             ),
@@ -1673,7 +1673,7 @@ impl Machine<'_> {
                 Severity::Assumption,
                 "unbalanced-path",
                 span,
-                "a loop opened conditionals or groups it was summarized in; they are assumed closed".into(),
+                "a loop opened conditionals or groups it was summarized in. They are assumed closed".into(),
             );
         }
     }
@@ -1762,13 +1762,13 @@ impl Machine<'_> {
         }
         names.extend(parts.iter().map(|p| p.to_string()));
         let apart = if names.is_empty() { "nothing".to_string() } else { names.join(", ") };
-        let kept = if left == 0 { String::new() } else { format!("; {} stay apart", left + 1) };
+        let kept = if left == 0 { String::new() } else { format!(", {} stay apart", left + 1) };
         if count > 1 {
             self.diagnose(
                 Severity::Imprecision,
                 "paths-joined-at",
                 span,
-                format!("{count} paths arrived at a join point and were joined{kept}; they differed in {apart}"),
+                format!("{count} paths arrived at a join point and were joined{kept}. They differed in {apart}"),
             );
         }
         self.resume_config(fork, first);
@@ -1899,7 +1899,7 @@ impl Machine<'_> {
             Severity::Assumption,
             "unbalanced-path",
             span,
-            "a path stood here in more groups than another; the groups are assumed closed, as a package closes what it opens".into(),
+            "a path stood here in more groups than another. The groups are assumed closed, as a package closes what it opens".into(),
         );
     }
 
@@ -1958,7 +1958,7 @@ impl Machine<'_> {
             Severity::Imprecision,
             "paths-widened",
             span,
-            format!("more than {bound} paths waited; those at one point were joined"),
+            format!("more than {bound} paths waited. Those at one point were joined"),
         );
     }
 

@@ -2235,18 +2235,18 @@ impl Limit {
                     Some(bad) => format!("{bad} is used"),
                     None => "the old value is kept".into(),
                 };
-                format!("invalid value ({value}) for \\{name}, which takes {lo}..{hi}; {after}")
+                format!("invalid value ({value}) for \\{name}, which takes {lo}..{hi}. {after}")
             }
             Limit::Quiet { lo, hi, other } => {
-                format!("\\{name} takes {lo}..{hi}; {value} becomes {other} without an error")
+                format!("\\{name} takes {lo}..{hi}, so {value} becomes {other} without an error")
             }
-            Limit::Fixed(reads) => format!("\\{name} is read-only and reads {reads}; this assignment does nothing"),
+            Limit::Fixed(reads) => format!("\\{name} is read-only and reads {reads}. This assignment does nothing"),
             Limit::MathCode { .. } => {
                 let stored = match self.take(value) {
                     Taken::Instead(stored) => stored,
                     _ => 0,
                 };
-                format!("invalid math code ({value}) for \\{name}; {stored} is used")
+                format!("invalid math code ({value}) for \\{name}, {stored} is used")
             }
         }
     }
@@ -2531,13 +2531,13 @@ pub fn verdict(p: Primitive) -> Judgment {
         P::ScanTokens { .. } => {
             at!(V::Exact, "eTeX manual § 3.9. A capacity overflow (`MAX_IN_OPEN`) is diagnosed, not assumed away")
         }
-        P::Use(_) | P::Expanded => at!(V::Exact, "interface3, \"Selecting tokens\"; pdfTeX manual, \"\\expanded\""),
+        P::Use(_) | P::Expanded => at!(V::Exact, "interface3, \"Selecting tokens\", and pdfTeX manual, \"\\expanded\""),
         P::Else | P::Or | P::Fi => {
             at!(V::Exact, "tex.web § 510, including `insert_relax` for an else or fi met mid-test")
         }
         P::Unless => at!(
             V::Approximated,
-            "etex.ch. Exact before a conditional; before a name of unknown meaning the conditional it may open is left undecided",
+            "etex.ch. Exact before a conditional. Before a name of unknown meaning the conditional it may open is left undecided",
         ),
         P::BeginGroup | P::EndGroup | P::Defer(_) => {
             at!(V::Exact, "tex.web §§ 1211, 1 (semi-simple groups, `\\aftergroup`/`\\afterassignment`)")
@@ -2552,7 +2552,7 @@ pub fn verdict(p: Primitive) -> Judgment {
         P::FontDef => at!(V::Exact, "tex.web § 1257 (`\\font`)"),
         P::OpenIn | P::CloseIn | P::Read => at!(
             V::Approximated,
-            "tex.web § 1351. Exact for a known stream number; one satex cannot pin down leaves every stream's state unknown",
+            "tex.web § 1351. Exact for a known stream number. One satex cannot pin down leaves every stream's state unknown",
         ),
         P::Arith(_) => at!(
             V::Approximated,
@@ -2567,7 +2567,7 @@ pub fn verdict(p: Primitive) -> Judgment {
         ),
         P::CatcodeAssign => at!(
             V::Approximated,
-            "exact for one known character and category. Through an unknown character or value (`unknown-catcode`) each character it may name keeps its category or takes one it may be given, structural ones included; the reader splits the path on such a character",
+            "exact for one known character and category. Through an unknown character or value (`unknown-catcode`) each character it may name keeps its category or takes one it may be given, structural ones included. The reader splits the path on such a character",
         ),
         P::CharCode(_) => at!(
             V::Approximated,
@@ -2576,7 +2576,7 @@ pub fn verdict(p: Primitive) -> Judgment {
         P::CaseShift(_) => at!(V::Exact, "tex.web § 1288. Widens a code an unknown token was assigned"),
         P::FontParam(_) => at!(
             V::Approximated,
-            "reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching tex.web § 580's own recovery. An entry satex cannot pin down widens every one it may name",
+            "reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching tex.web § 580's own recovery. An entry satex cannot pin down widens every one it may name",
         ),
         P::FontIdent(_) => at!(V::Exact, "tex.web § 1217: selecting a font is a local assignment"),
 
@@ -2649,7 +2649,7 @@ fn cond_verdict(c: Cond) -> Judgment {
         }
         C::Eof => at!(
             V::Approximated,
-            "satex resolves the real file, so end-of-file is known for a known stream number; one it cannot pin down leaves the test undecided",
+            "satex resolves the real file, so end-of-file is known for a known stream number. One it cannot pin down leaves the test undecided",
         ),
         C::Opaque => at!(V::Approximated, "both branches are analyzed and their state joined, by configuration"),
         C::VMode | C::HMode | C::InnerMode | C::MathMode => at!(
@@ -2717,7 +2717,7 @@ fn special_verdict(s: Special) -> Judgment {
         }
         S::ParShape | S::Penalties | S::CharClass | S::InterCharToks | S::UCode { .. } => at!(
             V::Approximated,
-            "a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached",
+            "a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached",
         ),
     }
 }
@@ -2753,15 +2753,15 @@ fn syntax_verdict(s: Syntax) -> Judgment {
         S::BoxSpec | S::RuleSpec | S::SetBox => at!(V::Exact, "forwarded to the real box-scanning path"),
         S::OpenOut | S::CloseOut => at!(
             V::Approximated,
-            "tracks the stream state a later `\\input` of the written file reads back; a stream number satex cannot pin down widens every stream",
+            "tracks the stream state a later `\\input` of the written file reads back. A stream number satex cannot pin down widens every stream",
         ),
         S::FamilyFont | S::CopyFont { .. } | S::UMathCharDef { .. } | S::SetFontId => at!(
             V::Approximated,
-            "stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown",
+            "stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown",
         ),
         S::ReadLine => at!(
             V::Approximated,
-            "eTeX manual § 3.2, including the terminal-fatal case; a stream number satex cannot pin down gives an unknown line and does not end the job",
+            "eTeX manual § 3.2, including the terminal-fatal case. A stream number satex cannot pin down gives an unknown line and does not end the job",
         ),
         S::PdfXImage => at!(V::Exact, "the file name reaches `observe::image`"),
         S::PdfColorStack => at!(

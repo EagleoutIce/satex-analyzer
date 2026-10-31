@@ -216,7 +216,7 @@ impl Depp {
         if let Some(file) = &self.file {
             let name = file.file_name().and_then(|n| n.to_str()).unwrap_or_default();
             text.push_str(&format!(
-                "; {name} lists {}, {} missing, {} unused",
+                ". {name} lists {}, {} missing, {} unused",
                 self.declared.len(),
                 self.missing().len(),
                 self.unused().len()

@@ -55,7 +55,7 @@ pub struct Context<'a> {
 pub enum Command {
     /// Run a query.  `satex query --list` names them all.
     Query {
-        /// The query to run; see `satex query --list`.
+        /// The query to run. See `satex query --list`.
         #[arg(value_name = "NAME")]
         #[cfg_attr(not(target_os = "emscripten"), arg(add = clap_complete::ArgValueCandidates::new(|| {
             crate::query::Query::ALL.iter().map(|(n, _)| clap_complete::CompletionCandidate::new(*n)).collect::<Vec<_>>()
@@ -78,12 +78,12 @@ pub enum Command {
         #[arg(long)]
         list: bool,
         /// Run every query a JSON request names, against one analysis, and
-        /// print one answer per query in the same order; `-` for stdin.
+        /// print one answer per query in the same order. `-` reads stdin.
         /// See `doc/wiki/queries.md`.
         #[arg(long, value_name = "FILE", conflicts_with_all = ["name", "filter", "text", "prefix", "for_", "list"])]
         request: Option<String>,
     },
-    /// Context-sensitive lints for the input file; `--all` includes libraries.
+    /// Context-sensitive lints for the input file. `--all` includes libraries.
     Lint {
         /// Restrict the findings to a filter expression, for example
         /// `tag=switch and package~^my`.
@@ -108,7 +108,7 @@ pub enum Command {
         /// nothing fixable is left, and report what remains.
         #[arg(long, help_heading = "Fixes")]
         fix: bool,
-        /// Apply the fixes that need a review too; with `--fix` or `--diff`.
+        /// Apply the fixes that need a review too, with `--fix` or `--diff`.
         #[arg(long, help_heading = "Fixes")]
         unsafe_fixes: bool,
         /// Print the fixes as a unified diff instead of writing them.
@@ -126,15 +126,15 @@ pub enum Command {
     },
     /// Control sequences visible at a position, for completion.
     Scope {
-        /// Position as `[FILE:]LINE:COL`, the main file without FILE; omit for
-        /// the end of the document.
+        /// Position as `[FILE:]LINE:COL`, the main file without FILE. Omit it
+        /// for the end of the document.
         #[arg(long, value_name = "[FILE:]LINE:COL")]
         at: Option<String>,
         /// Filter expression, for example `tag=switch and package~^my`.
         #[arg(long, value_name = "EXPR")]
         filter: Option<String>,
         /// Include package and kernel internals, and every register and
-        /// character meaning — hidden by default, so a completion sees the
+        /// character meaning. They are hidden by default, so a completion sees the
         /// hundred names worth offering rather than the kernel's own
         /// bookkeeping.
         #[arg(long)]
@@ -161,7 +161,7 @@ pub enum Command {
         /// Control sequences, environment names or label keys to slice on.
         #[arg(value_name = "NAME")]
         names: Vec<String>,
-        /// Slice on whatever is at this position instead; the main file
+        /// Slice on whatever is at this position instead. The main file
         /// unless a file the run read is named.
         #[arg(long, value_name = "[FILE:]LINE:COL")]
         at: Option<String>,
@@ -170,11 +170,11 @@ pub enum Command {
         /// key=figure` to slice to every figure.
         #[arg(long = "where", value_name = "EXPR")]
         where_: Option<String>,
-        /// Follow dependencies forwards — what the criterion affects.
+        /// Follow dependencies forwards: what the criterion affects.
         #[arg(long)]
         forward: bool,
-        /// Print the matching records instead of the reconstructed document;
-        /// implied by `--format json/csv/markdown`.
+        /// Print the matching records instead of the reconstructed document.
+        /// Implied by `--format json/csv/markdown`.
         #[arg(long)]
         list: bool,
         /// Write a new project into DIR: the sliced main file, plus every
@@ -188,16 +188,16 @@ pub enum Command {
     /// table, each row's `for` column saying which one it answers.
     #[command(alias = "options")]
     Controls {
-        /// A switch (`\ifdraft`), a package option, or any conditional;
-        /// repeatable.
+        /// A switch (`\ifdraft`), a package option, or any conditional.
+        /// Repeatable.
         #[arg(value_name = "NAME")]
         names: Vec<String>,
         /// Include the switches and options the kernel and the packages bring.
         #[arg(long)]
         all: bool,
     },
-    /// The program dependence graph — data dependencies plus control
-    /// dependencies — as DOT or JSON.
+    /// The program dependence graph (data dependencies plus control
+    /// dependencies) as DOT or JSON.
     #[command(alias = "deps")]
     Dependencies,
     /// The execution trace, step by step.
@@ -212,7 +212,7 @@ pub enum Command {
         /// Only these steps of the run.
         #[arg(long, value_name = "FROM:TO")]
         steps: Option<String>,
-        /// Start at this position, `[FILE:]LINE[:COL]`; the main file without FILE.
+        /// Start at this position, `[FILE:]LINE[:COL]`. The main file without FILE.
         #[arg(long, value_name = "LINE[:COL]")]
         from: Option<String>,
         /// End at this position, `[FILE:]LINE[:COL]`.
@@ -223,7 +223,7 @@ pub enum Command {
         /// `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits.
         #[arg(short, long)]
         interactive: bool,
-        /// Also trace what happens in packages, classes and the kernel; by
+        /// Also trace what happens in packages, classes and the kernel. By
         /// default only the files of the document itself are shown.
         #[arg(long)]
         include_internal: bool,
@@ -261,21 +261,21 @@ pub enum Command {
     Tokens,
     /// Print the shell completion script: bash, zsh, fish, elvish or
     /// powershell.  Values complete from the running binary.  `install
-    /// [bash|zsh|fish]` registers it in that shell's startup file; without a
-    /// shell, in every shell installed or in use.
+    /// [bash|zsh|fish]` registers it in that shell's startup file. Without a
+    /// shell, it does so in every shell installed or in use.
     Completions {
         #[arg(value_name = "SHELL", value_parser = clap::builder::PossibleValuesParser::new(
             ["bash", "zsh", "fish", "elvish", "powershell", "install"].map(clap::builder::PossibleValue::new)
                 .into_iter().chain([clap::builder::PossibleValue::new("json").hide(true)])))]
         shell: String,
-        /// The shell `install` sets up; without it, every shell installed
+        /// The shell `install` sets up. Without it, every shell installed
         /// or in use.
         #[arg(value_name = "TARGET", value_parser = ["bash", "zsh", "fish"])]
         target: Option<String>,
     },
     /// A Language Server Protocol server: a thin facade over the queries and
     /// lints above, driven by `initialize`/`didOpen`/`didChange` instead of
-    /// one-shot arguments.  Stdio by default; `--port` switches to TCP.
+    /// one-shot arguments.  Stdio by default, `--port` switches to TCP.
     Lsp {
         /// Listen on this TCP port instead of stdio.
         #[arg(long, value_name = "N")]
@@ -292,9 +292,9 @@ pub enum Command {
 /// `satex cache`'s further commands.
 #[derive(Subcommand)]
 pub enum CacheAction {
-    /// Interpret the kernel, replacing its cache, and the given packages —
+    /// Interpret the kernel, replacing its cache, and the given packages,
     /// or `cache.index`'s configured ones when none are given.  Builds only
-    /// what is missing or stale; `--refresh` rebuilds everything.
+    /// what is missing or stale. `--refresh` rebuilds everything.
     Build {
         /// Packages to prepare instead of the configured ones.
         #[arg(value_name = "PACKAGE")]
@@ -408,7 +408,7 @@ impl Command {
             Command::Trace { .. } => (generic || format == Format::Compact, "text, json, csv, markdown or compact"),
             _ => (generic, "text, json, csv or markdown"),
         };
-        if ok { Ok(()) } else { Err(format!("`--format {}` does not apply here; try {hint}", format.as_str())) }
+        if ok { Ok(()) } else { Err(format!("`--format {}` does not apply here. Try {hint}", format.as_str())) }
     }
 
     pub fn opaque_conditionals(&self) -> Vec<String> {

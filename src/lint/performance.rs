@@ -44,7 +44,7 @@ on every build.",
         summary: "a macro calls itself, directly or through others",
         explanation: "\
 Recursion is normal in TeX, but an unguarded one loops until TeX runs out of
-memory, and the analysis has to widen at it — everything the recursion would
+memory, and the analysis has to widen at it. Everything the recursion would
 have defined becomes unknown.
 
 Fix, if the recursion is unintended, by breaking the cycle.  Otherwise make sure
@@ -76,7 +76,7 @@ Fix by moving the load into the preamble.",
 depp names the TeX Live package of every file a run reads by where it sits in
 the tree (`tex/⟨format⟩/⟨package⟩/`) and writes them to `DEPENDS.txt`.  The
 project's dependency file lacks one of them, so an installation made from it
-— a minimal Docker image, a `texlive.withPackages` — cannot build the
+(a minimal Docker image, a `texlive.withPackages`) cannot build the
 document.
 
 Fix by adding the package to the dependency file, or by rerunning depp.",
@@ -92,7 +92,7 @@ Fix by adding the package to the dependency file, or by rerunning depp.",
         explanation: "\
 Every installation made from the dependency file carries the package, but the
 run reads nothing from it.  It may still be needed for what satex does not
-read — fonts, hyphenation patterns, Lua libraries, programs — so this is a
+read (fonts, hyphenation patterns, Lua libraries, programs), so this is a
 hint, not a verdict.
 
 Fix, if the package really is unused, by deleting its line.",

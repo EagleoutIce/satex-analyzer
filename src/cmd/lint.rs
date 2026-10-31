@@ -44,6 +44,7 @@ pub fn run(
         let text = match context.format {
             Format::Json => serde_json::to_string_pretty(&serde_json::json!({
                 "code": rule.code,
+                "number": rule.number(),
                 "category": rule.category.as_str(),
                 "severity": rule.severity.as_str(),
                 "summary": rule.summary,
@@ -67,7 +68,7 @@ pub fn run(
                 };
                 format!(
                     "{}  {}\n{}\n\n{}{sources}",
-                    render::heading(rule.code),
+                    render::heading(&lint::label(rule.code)),
                     render::label(&format!("{} / {}", rule.category.as_str(), rule.severity.as_str())),
                     rule.summary,
                     rule.explanation

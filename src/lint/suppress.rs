@@ -4,7 +4,7 @@
 //! line of code) suppresses that same line, `% satex-disable CODE…` and
 //! `% satex-enable CODE…` open and close a region, and `%
 //! satex-disable-file CODE…` suppresses everywhere in the file.  Leaving
-//! off the codes means every code.  [`apply`] runs once, after every rule
+//! off the codes means every code. A rule's number (`S012`) names it too.  [`apply`] runs once, after every rule
 //! has produced its findings, so every output format and `--fix` (which
 //! relints after each round) see the same filtered set.
 
@@ -138,7 +138,8 @@ fn unknown_finding(path: &str, line: u32, col: u32, code: &str) -> Record {
     record.insert("path".into(), json!(path));
     record.insert("line".into(), json!(line));
     record.insert("col".into(), json!(col));
-    record.insert("code".into(), json!("unknown-suppress-code"));
+    record.insert("code".into(), json!(RULES[0].code));
+    record.insert("number".into(), json!(RULES[0].number()));
     record.insert("category".into(), json!(Category::Style.as_str()));
     record.insert("severity".into(), json!(Severity::Warning.as_str()));
     record.insert("name".into(), json!(code));
@@ -154,10 +155,11 @@ fn scan(path: &str, text: &str) -> (FileSuppressions, Vec<Record>) {
     for (i, line) in text.lines().enumerate() {
         let ln = i as u32 + 1;
         let Some(comment) = comment_of(line) else { continue };
-        let Some(dir) = parse_directive(comment) else { continue };
-        if let Some(codes) = &dir.codes {
-            for code in codes {
-                if crate::lint::explanation(code).is_none() {
+        let Some(mut dir) = parse_directive(comment) else { continue };
+        for code in dir.codes.iter_mut().flatten() {
+            match crate::lint::explanation(code) {
+                Some(rule) => *code = rule.code.to_string(),
+                None => {
                     let col = line.find(code.as_str()).map_or(1, |b| crate::source::col_of_byte(line, b));
                     warnings.push(unknown_finding(path, ln, col, code));
                 }

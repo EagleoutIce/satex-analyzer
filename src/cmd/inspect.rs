@@ -25,7 +25,7 @@ pub fn explain(context: &Context, names: &[String], all: bool, at: Option<&str>)
     let (records, hints) = query::explain_at(context.analysis, names, all, at.as_ref())?;
     Ok(match hints.is_empty() {
         true => Output::Detail(records),
-        false => Output::DetailPartial(records, hints.join("; ")),
+        false => Output::DetailPartial(records, hints.join(". ")),
     })
 }
 

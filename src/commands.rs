@@ -826,7 +826,7 @@ impl Machine<'_> {
                         crate::facts::Severity::Unsupported,
                         "unknown-parshape",
                         span,
-                        "\\parshape was given a number satex could not pin down; its lines were not read".into(),
+                        "\\parshape was given a number satex could not pin down, so its lines were not read".into(),
                     );
                 };
                 for k in 1..=lines {
@@ -909,7 +909,7 @@ impl Machine<'_> {
                         crate::facts::Severity::Unsupported,
                         "unknown-penalties",
                         span,
-                        format!("\\{name} was given a number satex could not pin down; its penalties were not read"),
+                        format!("\\{name} was given a number satex could not pin down, so its penalties were not read"),
                     );
                 };
                 for k in 1..=count {

@@ -406,7 +406,7 @@ fn shell_escape_missing(report: &mut Report) {
                 line,
                 &format!("${name}"),
                 format!("the document runs programs through `\\write18`, but `${name}` is `{current}`"),
-                Some(format!("${name} = '{}';", with_option(&current, "-shell-escape"))),
+                Some(format!("${name} = '{}';", with_option(&current, "-shell-escape"))), // not prose
             );
         }
     }
@@ -650,7 +650,7 @@ fn missing_custom_dependency(report: &mut Report) {
             line,
             "add_cus_dep",
             format!("the document has a glossary, but {} gives latexmk no rule to build it", file_name(path)),
-            Some("add_cus_dep('glo', 'gls', 0, 'makeglossaries');".into()),
+            Some("add_cus_dep('glo', 'gls', 0, 'makeglossaries');".into()), // not prose
         );
     }
 }
@@ -726,7 +726,7 @@ fn command_placeholders(report: &mut Report) {
                 setting.line,
                 &format!("${name}"),
                 format!("`${name}` has no {}", missing.join(" and ")),
-                Some(format!("${name} = '{} {}';", setting.value, missing.join(" "))),
+                Some(format!("${name} = '{} {}';", setting.value, missing.join(" "))), // not prose
             );
         }
     }
@@ -762,7 +762,7 @@ fn engine_options(report: &mut Report) {
                 setting.line,
                 &format!("${name}"),
                 format!("`${name}` could also pass {}", missing.join(" and ")),
-                Some(format!("${name} = '{suggestion}';")),
+                Some(format!("${name} = '{suggestion}';")), // not prose
             );
         }
     }

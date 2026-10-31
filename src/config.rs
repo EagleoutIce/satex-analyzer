@@ -64,7 +64,7 @@ pub struct Limits {
     pub heads_apart: u16,
     /// Choices one command may have made on one path for a name that a
     /// join left with one of several meanings to still split the run into a
-    /// path per meaning; past them, and with 0 everywhere, it is read as a
+    /// path per meaning. Past them, and with 0 everywhere, it is read as a
     /// name of unknown meaning.
     pub meaning_splits: u16,
     /// How many rounds a loop head analyzes its paths again from a grown
@@ -78,12 +78,12 @@ pub struct Limits {
     /// followed before it is assumed to end within them.
     pub recursion_depth: u16,
     /// How many loop heads and loop entries one drive keeps with their
-    /// joined states; past them the oldest is forgotten. Its count stays
+    /// joined states. Past them the oldest is forgotten. Its count stays
     /// in the load's loop summaries, so it is summarized when met again.
     pub loop_heads: u16,
     /// How many runs of one call, at one site with the same names handed
     /// to it, are recorded before a later call with unknown operands applies
-    /// their join instead of running; 0 never summarizes a call.
+    /// their join instead of running. 0 never summarizes a call.
     pub call_summary_after: u16,
     /// How many times in a row one call may meet the state it met before,
     /// with the same arguments, input, nesting and bindings, before its
@@ -1423,7 +1423,7 @@ pub struct WrongDash {
     /// inside an identifier such as an ISBN or a date (another hyphen,
     /// a letter or a `/` in the same word) are left alone.
     pub digits: Vec<usize>,
-    /// How many belong between spaces, as chktex's `WordDash`; two is
+    /// How many belong between spaces, as chktex's `WordDash`. Two is
     /// Bringhurst's spaced en-dash.
     pub words: Vec<usize>,
     /// Whole spellings to leave alone, as chktex's `DashExcpt`.
@@ -1852,7 +1852,7 @@ fn merge_file(base: &mut serde_yaml_ng::Value, path: &Path, files: &mut Vec<Path
             })
         });
         let Some((without, key)) = dropped else { return eprintln!("satex: {}: ignored: {e}", path.display()) };
-        eprintln!("satex: {}: warning: unknown key `{key}` ignored; the rest of the file applies", path.display());
+        eprintln!("satex: {}: warning: unknown key `{key}` ignored, the rest of the file applies", path.display());
         incoming = without;
     }
 }

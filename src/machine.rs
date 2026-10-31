@@ -550,7 +550,7 @@ impl Analysis {
             .iter()
             .map(|hit| {
                 format!(
-                    "limits.{} = {} was reached {}× (first at {}:{}); raise it with --set limits.{}=<larger>",
+                    "limits.{} = {} was reached {}× (first at {}:{}). Raise it with --set limits.{}=<larger>",
                     hit.key,
                     hit.value,
                     hit.count,
@@ -2430,7 +2430,7 @@ impl<'a> Machine<'a> {
             Severity::Unsupported,
             "internal-error",
             span,
-            format!("satex hit a bug here and stopped ({what} at {at}); please report it"),
+            format!("satex hit a bug here and stopped ({what} at {at}). Please report it"),
         );
     }
 
@@ -2479,8 +2479,8 @@ impl<'a> Machine<'a> {
                 continue;
             }
             let message = format!(
-                "read after {name}, which defines {} of the {} names this file uses without defining them; \
-                 set `load.expect: [{name}]` to say so, or `load.expect_detect: false`",
+                "read after {name}, which defines {} of the {} names this file uses without defining them. \
+                 Set `load.expect: [{name}]` to say so, or `load.expect_detect: false`",
                 names.len() - left,
                 names.len()
             );
@@ -2636,7 +2636,7 @@ impl<'a> Machine<'a> {
                     .map(|n| n.to_string_lossy())
                     .collect();
                 crate::progress::note!(
-                    "satex: build run {run} took {:.1}s; changed: {}",
+                    "satex: build run {run} took {:.1}s, changed: {}",
                     took.as_secs_f64(),
                     names.join(", ")
                 );
@@ -3186,7 +3186,7 @@ impl<'a> Machine<'a> {
         // A pinned clock keys the cache, so only `now` can replay another date.
         let cached = self.clock_cached.take().filter(|_| matches!(self.cfg.clock, crate::config::Clock::Now));
         let cached =
-            cached.map(|name| format!("; {name} keeps the date of the run that cached it")).unwrap_or_default();
+            cached.map(|name| format!(". {name} keeps the date of the run that cached it")).unwrap_or_default();
         self.diagnose(
             Severity::Assumption,
             "clock-assumed",
@@ -3467,7 +3467,7 @@ impl<'a> Machine<'a> {
                 "format-incomplete",
                 Span::default(),
                 format!(
-                    "{} was interpreted to line {reached} of {lines}; names defined after that \
+                    "{} was interpreted to line {reached} of {lines}. Names defined after that \
 will look undefined",
                     source.display()
                 ),
@@ -3656,7 +3656,7 @@ will look undefined",
                 Severity::Warning,
                 "no-format",
                 Span::default(),
-                "no latex.ltx was found; only the engine's primitives are known".into(),
+                "no latex.ltx was found, only the engine's primitives are known".into(),
             );
         }
     }

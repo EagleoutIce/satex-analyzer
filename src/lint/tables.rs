@@ -19,7 +19,7 @@ stands under the digit of the same place: the units under the units, the
 decimal marks under each other.  An `l` or `c` column sets numbers of
 different lengths ragged, and an `r` column lines up only numbers with as many
 decimals.  [siunitx](https://ctan.org/pkg/siunitx)'s `S` column aligns them at
-the decimal mark (§ 7.12 of its manual); its header, not a number, goes in
+the decimal mark (§ 7.12 of its manual). Its header, not a number, goes in
 braces: `{Time}`.
 
 The rule reads the table's source: a column whose cells below the header are
@@ -52,7 +52,7 @@ A unit repeated in every cell of a column says the same thing on each line
 and pushes the numbers out of alignment.  The
 [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed.,
 § 5.4.1) heads such a column with the quantity and its unit, as
-`Time / ms`; with [siunitx](https://ctan.org/pkg/siunitx), `{Time / \\unit{ms}}`
+`Time / ms`. With [siunitx](https://ctan.org/pkg/siunitx), `{Time / \\unit{ms}}`
 over an `S` column of bare numbers.",
         references: &[Ref { source: Source::SiBrochure, at: "5.4.1" }, Ref { source: Source::Siunitx, at: "\\unit" }],
         fixes: &[],
