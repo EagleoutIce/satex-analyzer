@@ -56,7 +56,7 @@ Every step: which macro expanded, which primitive ran, what changed. Use `satex 
 
 {{run(6): satex trace -f samples/paper.tex}}
 
-`--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile; `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown; `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
+`--lines FROM:TO` records only those lines of the main file and what their calls do. `--steps FROM:TO` only those steps. Either end may be left out (`40:`, `:60`). Nothing outside the range is recorded. `--from [FILE:]LINE[:COL]` starts at a position (`FILE` is a trailing part of a path, for a subfile, and `--to` and `--lines` take it too) and runs to the end. `--to [FILE:]LINE[:COL]` ends there. `--interactive` steps through the events one at a time, showing each macro's definition, arguments and inserted tokens: Enter or `e` steps into a call, `o` steps over it, `l` goes to the next line of the main file, `s N` to line N, `c` runs on, `q` quits. Only the document's own files are shown. `--include-internal` adds packages, classes and the kernel. `--format compact` prints at most 8 text lines instead: what each top-level call of the main file expands to, and each conditional's outcome. `--interactive` marks each run of hidden steps in gray, and with `--lines`, `--from` or `--to` ends with the text those lines typeset.
 
 {{run(6): satex trace -f samples/paper.tex --lines 10:11}}
 
@@ -126,7 +126,7 @@ This needs call arguments recorded (`record_arguments`). `query options` and `--
 
 ## typeset
 
-The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar; rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
+The text satex computes the document typesets, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
 
 {{run(6): satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex}}
 
@@ -183,11 +183,11 @@ SaTeX finds a signature by running the command on probe input and watching what 
 
 `--at WHERE` asks for the meaning at one place instead of the default preamble/document view (a suffix on the name would be ambiguous, since `@` is a letter in LaTeX's internal names):
 
-* `--at preamble` — the meaning right before `\begin{document}`.
-* `--at document` — the meaning at the end of the run.
-* `--at 302` — the meaning at line 302 of the main file.
-* `--at somefile.tex:302` — the meaning at line 302 of `somefile.tex`, a file the run read.
-* `--at after:enumitem` — the meaning right after the `enumitem` package finished contributing what it defines.
+* `--at preamble`: the meaning right before `\begin{document}`.
+* `--at document`: the meaning at the end of the run.
+* `--at 302`: the meaning at line 302 of the main file.
+* `--at somefile.tex:302`: the meaning at line 302 of `somefile.tex`, a file the run read.
+* `--at after:enumitem`: the meaning right after the `enumitem` package finished contributing what it defines.
 
 In a [request](#json-requests), an `explain` entry takes the same place as `"at"`.
 
@@ -215,15 +215,15 @@ The criterion is a name, `--at [FILE:]LINE:COL[-LINE[:COL]]` (a range, to the en
 
 `satex query --request FILE` (`-` for stdin) runs several queries on one analysis and prints one JSON answer per query. The request is a JSON object:
 
-* `file` — the document to analyze. Falls back to `-f` when omitted.
-* `config` — optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load.packages": false}`.
-* `queries` — an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, or `options`, with their own arguments:
+* `file`: the document to analyze. Falls back to `-f` when omitted.
+* `config`: optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load.packages": false}`.
+* `queries`: an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, or `options`, with their own arguments:
   * `explain`: `names` (array), `all` (bool).
   * `controls`: `names` (array), `all` (bool).
   * `slice`: `names` (array), `at` (`"[FILE:]LINE:COL"`), `forward` (bool).
   * `options`: `name`.
 
-Each answer is `{"type": …, "records": […]}`, or `{"type": …, "error": …}` for a query that named something wrong — one bad query in the batch does not stop the rest of it.
+Each answer is `{"type": …, "records": […]}`, or `{"type": …, "error": …}` for a query that named something wrong. One bad query in the batch does not stop the rest of it.
 
 {{file: doc/src/wiki/request-example.json}}
 

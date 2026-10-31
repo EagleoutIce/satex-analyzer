@@ -25,18 +25,18 @@ A plugin picks a default from the machine, the installation and the build files.
 | provider | `texlive`, `miktex`, `tectonic` | the locator on `PATH` (`kpsewhich`, `tectonic`), else well-known install paths. `texmf.kpsewhich: false` and `texmf.fallback: false` make the machine look TeX-less (`no-format`, `initex`). |
 | platform | `linux`, `macos`, `windows` | the build target |
 | engine | {{engines}} | `latexmkrc` (`$pdf_mode`), `% !TeX program` |
-| kernel | {{kernels}} | `latex2e` default; ConTeXt from `% !TeX program = context` or `\starttext` |
-| output | {{outputs}} | `$pdf_mode`; decides what `\includegraphics` resolves to |
+| kernel | {{kernels}} | `latex2e` default, ConTeXt from `% !TeX program = context` or `\starttext` |
+| output | {{outputs}} | `$pdf_mode`, decides what `\includegraphics` resolves to |
 | build system | {{build-systems}} | the build file beside the document |
 | tools | `biber`, `bibtex`, `makeindex`, `xindy`, `makeglossaries`, … | the commands the document uses (`plugins.tools`) |
-| magic | `% !TeX`, `% !BIB`, `% arara:` | the leading comment block; only narrows a default |
+| magic | `% !TeX`, `% !BIB`, `% arara:` | the leading comment block, only narrows a default |
 | discovery | root candidates, own classes and packages, build files, bibliographies | a git-style walk (`.gitignore` respected) |
 
 - **Engines.** TeX, e-TeX and pdfTeX are modelled in full. LuaTeX and XeTeX are **experimental**: every primitive is known, but their effects are not modelled. ConTeXt is **experimental** too: its kernel is not interpreted, so `undefined-control-sequence` is off.
-- **Lua.** `\directlua`/`\latelua` are read as strings, not run. Literal `require`/`dofile` are dependencies, and unconditional `tex.print` of literals is read back in; anything else is a `lua-output` gap. Catcode tables and `\luaescapestring` are interpreted, so `ltluatex`, `luacode` and expl3's Lua bridge run from source.
+- **Lua.** `\directlua`/`\latelua` are read as strings, not run. Literal `require`/`dofile` are dependencies, and unconditional `tex.print` of literals is read back in. Anything else is a `lua-output` gap. Catcode tables and `\luaescapestring` are interpreted, so `ltluatex`, `luacode` and expl3's Lua bridge run from source.
 - **l3build.** A `build.lua` runs in a sandboxed `texlua` (else its plain assignments are read). Its source dirs are searched, `.ins`/`.dtx` pairs read through docstrip, and `typesetexe`/`stdengine` pick the engine.
 - **depp.** Every file read maps to its TeX Live package by TDS path. With depp loaded or its file present, `missing-dependency` and `unused-dependency` compare against it. Rules: `depp.rules`, `depp.renames`, `depp.file`.
-- **Preloaded format.** A `%&fmt` line, `-fmt=` or `preload:` names a dumped preamble; SaTeX interprets that preamble instead (up to `\endofdump`). `pretex:` is code read before the first line (latexmk's `-usepretex`).
+- **Preloaded format.** A `%&fmt` line, `-fmt=` or `preload:` names a dumped preamble. SaTeX interprets that preamble instead (up to `\endofdump`). `pretex:` is code read before the first line (latexmk's `-usepretex`).
 
 ### Format and package caches
 
@@ -44,9 +44,9 @@ The interpreted kernel is cached after the first run (`satex cache`, `satex cach
 
 A package is cached per **read set**: the meanings, registers, hooks, options and catcodes it consulted, with the values seen. Its **effect** (bindings, hooks, facts, diagnostics) is replayed in any later run that agrees with the read set. Register allocations are renumbered on replay.
 
-- **Rejected** when a file it read changed, a name now resolves to another file, or the state disagrees. `-v` says why; `satex summary` shows `cached`, `stored`, `stale: …`.
+- **Rejected** when a file it read changed, a name now resolves to another file, or the state disagrees. `-v` says why. `satex summary` shows `cached`, `stored`, `stale: …`.
 - **Not cached**: loads under a conditional or in a group, or that ran out of budget or left a group open.
-- **Nested loads** have their own entries; the outer one resumes at the next line at rest.
+- **Nested loads** have their own entries. The outer one resumes at the next line at rest.
 - **`satex cache build`** prepares the kernel and `cache.index.packages` (or named packages) for `cache.index.engines`, in parallel on `limits.threads`. It reports progress per package and only rebuilds stale ones (`--refresh` forces).
 - **Pruning** keeps this build's kernel and four recent ones, then trims by `limits.cache_size` (2 GiB) least-recently used. `satex cache prune` does only that.
 
@@ -74,7 +74,7 @@ A profile is a partial config chosen by the input's kind. A `.sty` is read as it
 `--profile NAME` or `profile:` forces one. It merges after the discovered layers and before `--config`/`--set`.
 
 ```yaml
-profile: package            # forces one; --profile wins
+profile: package            # forces one. --profile wins
 profiles:
   package:
     at_letter: true
@@ -127,7 +127,7 @@ analysis:
 
 ## Stubs
 
-Stubs are a temporary exception; the goal is none. A stub summarizes a macro SaTeX cannot yet run. Each use is an `assumption`.
+Stubs are a temporary exception. The goal is none. A stub summarizes a macro SaTeX cannot yet run. Each use is an `assumption`.
 
 ```yaml
 stubs:
@@ -135,15 +135,15 @@ stubs:
   \xinttheexpr: { until: \relax, result: { text: number } }
 ```
 
-`args`: `s` star, `o` optional, `m` mandatory; or `until` a delimiter. `result` is an element of the [unknown-text lattice](Domains#unknown-text-the-textclass-lattice): `nothing`, `number` / `{ number: [lo, hi] }`, `dimen`, `text` / `{ text: digits | number | dimension | cs-free | any }`, `box` / `{ box: { width, height, depth } }`. `sets` names what it assigns (`sets: { \pgfmathresult: number }`). A document that redefines the name gets its own definition.
+`args`: `s` star, `o` optional, `m` mandatory, or `until` a delimiter. `result` is an element of the [unknown-text lattice](Domains#unknown-text-the-textclass-lattice): `nothing`, `number` / `{ number: [lo, hi] }`, `dimen`, `text` / `{ text: digits | number | dimension | cs-free | any }`, `box` / `{ box: { width, height, depth } }`. `sets` names what it assigns (`sets: { \pgfmathresult: number }`). A document that redefines the name gets its own definition.
 
 ## What a run may use
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `limits.memory` | `8GiB` | stops the run with `budget-exhausted` (`--max-memory`); library users get no limit |
-| `limits.seconds` | `300` | stops the run; lints after it share the same budget |
+| `limits.memory` | `8GiB` | stops the run with `budget-exhausted` (`--max-memory`), library users get no limit |
+| `limits.seconds` | `300` | stops the run, lints after it share the same budget |
 | `limits.degrade_at_percent` | `100` (off) | past that share of `limits.steps`, halves the time-only limits, reported as `precision-degraded` |
-| `limits.threads` | `0` (`min(4, cores)`) | file walks only; the interpreter is one thread |
+| `limits.threads` | `0` (`min(4, cores)`) | file walks only, the interpreter is one thread |
 
-Steps are counted alike on every machine, so results never depend on speed; seconds and memory only stop a run. The installation's answers (`kpsewhich --expand-var`, engine version) are cached against the program's path and timestamp.
+Steps are counted alike on every machine, so results never depend on speed. Seconds and memory only stop a run. The installation's answers (`kpsewhich --expand-var`, engine version) are cached against the program's path and timestamp.

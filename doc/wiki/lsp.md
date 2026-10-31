@@ -12,7 +12,7 @@ satex lsp --port 9257        # TCP instead, bound to 127.0.0.1
 satex lsp --port 9257 --host 0.0.0.0
 ```
 
-**How it runs.** A document is re-analyzed `lsp.debounce_ms` after its last edit. The run resumes from the last checkpoint whose input is unchanged, so an edit late in the document reruns only what follows it, with the same result as a full run. Each analysis is the whole build (latexmk-style), and its `.aux`/`.bbl` stay for the next one. Queries and the playground read that one analysis. While a run goes on, hover, completion and signature help answer from the last one. `\input` sees the unsaved text of other open documents. A file without `\documentclass` is analyzed as part of the document that reads it.
+**How it runs.** Edits arrive as changed ranges (incremental sync). A document is re-analyzed `lsp.debounce_ms` after its last edit. The run resumes from the last checkpoint whose input is unchanged, so an edit late in the document reruns only what follows it, with the same result as a full run. Each analysis is the whole build (latexmk-style), and its `.aux`/`.bbl` stay for the next one. Queries and the playground read that one analysis. While a run or its lint rules go on, hover, completion and signature help answer from the last one. `\input` sees the unsaved text of other open documents. A file without `\documentclass` is analyzed as part of the document that reads it.
 
 ## Capabilities
 
@@ -20,18 +20,18 @@ satex lsp --port 9257 --host 0.0.0.0
 | --- | --- | --- |
 | Diagnostics | `textDocument/publishDiagnostics` | `satex lint --format lsp` |
 | Quick fixes | `textDocument/codeAction` | the [fix edits](lints.md#quick-fixes) of a finding |
-| Hover | `textDocument/hover` | `satex explain`; on a citation key its `.bib` entry |
+| Hover | `textDocument/hover` | `satex explain`, on a citation key its `.bib` entry |
 | Definition | `textDocument/definition` | `satex explain`, else a source scan |
 | References | `textDocument/references` | `satex query expansions`/`occurrences` |
 | Completion | `textDocument/completion` | `satex scope`, labels, citation keys, environments, files, stored pgfkeys/l3keys |
 | Document symbols | `textDocument/documentSymbol` | sections, labels, document-defined names |
 | Rename | `textDocument/prepareRename`, `rename` | `satex query definitions`/`expansions`/`occurrences` |
 | Linked editing | `textDocument/linkedEditingRange` | a `\begin` name and its `\end`, paired by nesting in the open text |
-| Any query | `workspace/executeCommand` (`satex/query`) | a [query request](queries.md#json-requests); without `file`, the open document |
+| Any query | `workspace/executeCommand` (`satex/query`) | a [query request](queries.md#json-requests). Without `file` it reads the open document |
 
 **Definition fallback.** When the run stopped before a later file defines a name, the server scans the sources: breadth-first through `\input`, `\include`, `\usepackage`, … (at most 200 files), looking for `\def`, `\newcommand`, `\NewDocumentCommand`, `\cs_new:Npn` and relatives. Hover marks such a site as not reached.
 
-**Rename** moves every name one declaration made: `\newcounter{step}` renames `\c@step`, `\thestep`, `\p@step`, `\cl@step`, `\theHstep` and every `{step}` use; `\newenvironment{note}` renames `\begin{note}`/`\end{note}` too. It is refused, with the site named, when a new name is taken, a file may not be edited, or a built name has no spelled site.
+**Rename** moves every name one declaration made: `\newcounter{step}` renames `\c@step`, `\thestep`, `\p@step`, `\cl@step`, `\theHstep` and every `{step}` use. `\newenvironment{note}` renames `\begin{note}`/`\end{note}` too. It is refused, with the site named, when a new name is taken, a file may not be edited, or a built name has no spelled site.
 
 ### Completion
 
@@ -42,8 +42,8 @@ satex lsp --port 9257 --host 0.0.0.0
 | a reference or citation argument | the document's labels or keys, by the argument's key kind (`\ref{` never offers citations) |
 | a file argument | matching files of its kind, the project's and the installation's |
 | a quantity argument (`\setlength{\`) | names holding a fitting quantity first |
-| a key list (`\pgfkeys{`, `\tikzset{`, `\keys_set:nn`) | stored keys of the path or family; `key=` then its choices or `true`/`false` |
-| package options | what the package's `\DeclareOption*` hands on; packages needing another engine come last |
+| a key list (`\pgfkeys{`, `\tikzset{`, `\keys_set:nn`) | stored keys of the path or family, `key=` then its choices or `true`/`false` |
+| package options | what the package's `\DeclareOption*` hands on, packages needing another engine come last |
 
 What an argument is for, its **role**, decides the offer. Roles come from, in order: what the run saw calls do, the command's own body (through any number of wrappers, with literal prefixes), and a seed table for kernel and common package commands the project does not redefine. So `\newcommand\secref[1]{\ref{sec:#1}}` completes `intro` for the label `sec:intro` before it is ever used.
 

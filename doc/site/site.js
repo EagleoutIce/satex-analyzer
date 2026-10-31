@@ -446,8 +446,35 @@
     });
     const count = document.createElement('span');
     count.className = 'muted';
-    bar.append(text, ...selects, count);
-    table.before(bar);
+    const heads = [...table.tHead.rows[0].cells];
+    const last = heads.length - 1;
+    for (const row of rows) if (row.cells[last]) Object.assign(row.cells[last], { title: row.cells[last].textContent.trim() });
+    const stored = `satex-columns:${location.pathname}:${heads.map((h) => h.textContent.trim()).join('|')}`;
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(stored) ?? '{}') ?? {}; } catch {}
+    const menu = Object.assign(document.createElement('details'), { className: 'cols', innerHTML: '<summary>columns</summary><div></div>' });
+    const toggle = (name, on, set) => {
+      const box = Object.assign(document.createElement('input'), { type: 'checkbox', checked: on });
+      box.onchange = () => {
+        set(box.checked);
+        saved[name] = box.checked;
+        try { localStorage.setItem(stored, JSON.stringify(saved)); } catch {}
+      };
+      const label = document.createElement('label');
+      label.append(box, ` ${name}`);
+      menu.lastChild.append(label);
+      set(on);
+    };
+    heads.forEach((th, i) => toggle(th.textContent.trim(), saved[th.textContent.trim()] ?? true,
+      (on) => { for (const row of table.rows) if (row.cells[i]) row.cells[i].hidden = !on; }));
+    toggle('wrap text', saved['wrap text'] ?? false, (on) => table.classList.toggle('wrap', on));
+    document.addEventListener('click', (e) => { if (!menu.contains(e.target)) menu.open = false; });
+    table.classList.add('long');
+    const scroll = Object.assign(document.createElement('div'), { className: 'table-scroll' });
+    table.before(scroll);
+    scroll.append(table);
+    bar.append(text, ...selects, menu, count);
+    scroll.before(bar);
     const apply = () => {
       const q = text.value.toLowerCase();
       let shown = 0;
@@ -644,6 +671,12 @@
     if (!first) return;
     for (const a of links.values()) a.classList.remove('on');
     links.get(first).classList.add('on');
+    const top = first.localName === 'h2' ? first : heads.slice(0, heads.indexOf(first)).findLast((h) => h.localName === 'h2');
+    let open = false;
+    for (const h of heads) {
+      if (h.localName === 'h2') open = h === top;
+      else links.get(h).classList.toggle('open', open);
+    }
   }, { rootMargin: '0px 0px -70% 0px' });
   heads.forEach((h) => observer.observe(h));
 })();

@@ -10,17 +10,17 @@
 
 Every primitive gets one of three verdicts:
 
-- **exact** — satex reproduces the engine's behavior.
-- **approximated** — a sound over-approximation. The table says how.
-- **unsupported + diagnostic** — not modeled, but everything it could affect is widened and the run says so.
+- **exact**: satex reproduces the engine's behavior.
+- **approximated**: a sound over-approximation. The table says how.
+- **unsupported + diagnostic**: not modeled, but everything it could affect is widened and the run says so.
 
 Five answers in the **how** column repeat over many rows. They are written out once here and abbreviated in the table:
 
-- **widens the mode** — `Machine::note_gap` plus widening the mode. The primitive is a meaning of its own for `\ifx`, nothing else.
-- **the stored parameter table** — the value is read and written from the parameter table satex stores.
-- **scanned, not built** — the operand is scanned exactly. The effect is typesetting or PDF output satex does not build, so nothing reads the result back.
-- **scanned, answer unknown** — operands are scanned per the manual. The answer needs state satex does not build (regex captures, PDF pages, the page builder's marks, a clock, an RNG), so it widens to Unknown.
-- **the font's real tables** — read from a loaded font's real TFM or OpenType tables. Unknown once the font or its tables aren't resolved.
+- **widens the mode**: `Machine::note_gap` plus widening the mode. The primitive is a meaning of its own for `\ifx`, nothing else.
+- **the stored parameter table**: the value is read and written from the parameter table satex stores.
+- **scanned, not built**: the operand is scanned exactly. The effect is typesetting or PDF output satex does not build, so nothing reads the result back.
+- **scanned, answer unknown**: operands are scanned per the manual. The answer needs state satex does not build (regex captures, PDF pages, the page builder's marks, a clock, an RNG), so it widens to Unknown.
+- **the font's real tables**: read from a loaded font's real TFM or OpenType tables. Unknown once the font or its tables aren't resolved.
 
 A primitive that scans its operands and drops their effect with neither of the last two is a bug, not a fourth verdict. satex never rests at "unsupported" silently ([Domains § Soundness invariant](Domains#soundness-invariant)). Any found this way are fixed, not documented as sound, and listed separately below until they are.
 
@@ -59,13 +59,13 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\box` | [`Register(Box)`][builtins-2548] | approximated | exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\boxmaxdepth` | [`DimenParameter`][builtins-2562] | exact | the stored parameter table |
 | `\brokenpenalty` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
-| `\catcode` | [`CatcodeAssign`][builtins-2568] | approximated | exact for one known character and category. Through an unknown character or value (`unknown-catcode`) each character it may name keeps its category or takes one it may be given, structural ones included; the reader splits the path on such a character |
+| `\catcode` | [`CatcodeAssign`][builtins-2568] | approximated | exact for one known character and category. Through an unknown character or value (`unknown-catcode`) each character it may name keeps its category or takes one it may be given, structural ones included. The reader splits the path on such a character |
 | `\char` | [`Mode(Horizontal(Char))`][builtins-2853] | exact | a real item, appended to the list satex tracks |
 | `\chardef` | [`RegisterDef(Char)`][builtins-2548] | approximated | exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\cleaders` | [`Mode(Leaders)`][builtins-2825] | approximated | the box or rule is scanned exactly. [tex.web § 1078](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20920)'s repeated copies are not laid out, since satex tracks natural size, not a page |
-| `\closein` | [`CloseIn`][builtins-2553] | approximated | [tex.web § 1351](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L24696). Exact for a known stream number; one satex cannot pin down leaves every stream's state unknown |
-| `\closeout` | [`Command(CloseOut)`][builtins-2754] | approximated | tracks the stream state a later `\input` of the written file reads back; a stream number satex cannot pin down widens every stream |
-| `\clubpenalties` | [`Special(Penalties)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
+| `\closein` | [`CloseIn`][builtins-2553] | approximated | [tex.web § 1351](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L24696). Exact for a known stream number. One satex cannot pin down leaves every stream's state unknown |
+| `\closeout` | [`Command(CloseOut)`][builtins-2754] | approximated | tracks the stream state a later `\input` of the written file reads back. A stream number satex cannot pin down widens every stream |
+| `\clubpenalties` | [`Special(Penalties)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\clubpenalty` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\copy` | [`Mode(Box(Copy))`][builtins-2873] | exact | the real box machinery |
 | `\count` | [`Register(Count)`][builtins-2548] | approximated | exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
@@ -95,7 +95,7 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\displayindent` | [`DimenParameter`][builtins-2562] | exact | the stored parameter table |
 | `\displaylimits` | [`Command(Limits)`][builtins-2738] | approximated | no operand. Where the scripts go is not followed, so the formula's size widens |
 | `\displaystyle` | [`Mode(MathStyle(0))`][builtins-2837] | approximated | [tex.web § 1171](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
-| `\displaywidowpenalties` | [`Special(Penalties)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
+| `\displaywidowpenalties` | [`Special(Penalties)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\displaywidowpenalty` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\displaywidth` | [`DimenParameter`][builtins-2562] | exact | the stored parameter table |
 | `\divide` | [`Arith(Divide)`][builtins-2557] | approximated | exact for known operands. Interval arithmetic and [tex.web § 222](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4513)'s zero default otherwise |
@@ -141,7 +141,7 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\fontcharht` | [`LastItem(FontCharHt)`][builtins-2692] | approximated | exact for a TFM font ([etex_man § 3.10](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf)). A native font's height, depth and italic correction are not read, so it widens to Unknown |
 | `\fontcharic` | [`LastItem(FontCharIc)`][builtins-2692] | approximated | exact for a TFM font ([etex_man § 3.10](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf)). A native font's height, depth and italic correction are not read, so it widens to Unknown |
 | `\fontcharwd` | [`LastItem(FontCharWd)`][builtins-2691] | exact | a TFM's or a native font's real glyph advance |
-| `\fontdimen` | [`FontParam(Dimen)`][builtins-2577] | approximated | reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\fontdimen` | [`FontParam(Dimen)`][builtins-2577] | approximated | reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\fontname` | [`Convert(FontName)`][builtins-2783] | exact | a real constant or stored name |
 | `\futurelet` | [`Let { global: false, future: true }`][builtins-2518] | exact | [tex.web § 1221](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22838), including the two-token `\futurelet` lookahead |
 | `\gdef` | [`Def { global: true, expand: false }`][builtins-2516] | exact | [tex.web § 476](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9357). An unterminated definition is diagnosed, not read past the file's end |
@@ -170,7 +170,7 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\hss` | [`Mode(Horizontal(Fil(2)))`][builtins-2853] | exact | a real item, appended to the list satex tracks |
 | `\ht` | [`Special(BoxDimen)`][builtins-2716] | approximated | round-trips through the register consistently. The box behind it is never built |
 | `\hyphenation` | [`Command(GeneralText)`][builtins-2774] | approximated | scanned, not built |
-| `\hyphenchar` | [`FontParam(HyphenChar)`][builtins-2577] | approximated | reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\hyphenchar` | [`FontParam(HyphenChar)`][builtins-2577] | approximated | reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\hyphenpenalty` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\if` | [`If(Chars)`][builtins-2645] | approximated | exact for known characters. Undecided when either operand is an unresolved character |
 | `\ifcase` | [`If(Case)`][builtins-2648] | approximated | [tex.web § 509](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9875). Every arm is analyzed as its own path when the selector is unknown |
@@ -178,7 +178,7 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\ifcsname` | [`If(Csname)`][builtins-2640] | exact | builds the name and looks it up |
 | `\ifdefined` | [`If(Defined)`][builtins-2638] | approximated | exact for a known name. Narrowed by which names could still be undefined otherwise |
 | `\ifdim` | [`If(Dim)`][builtins-2642] | approximated | exact for known operands. Narrows the interval on each branch otherwise |
-| `\ifeof` | [`If(Eof)`][builtins-2650] | approximated | satex resolves the real file, so end-of-file is known for a known stream number; one it cannot pin down leaves the test undecided |
+| `\ifeof` | [`If(Eof)`][builtins-2650] | approximated | satex resolves the real file, so end-of-file is known for a known stream number. One it cannot pin down leaves the test undecided |
 | `\iffalse` | [`If(False)`][builtins-2632] | exact | a constant |
 | `\iffontchar` | [`If(FontChar)`][builtins-2666] | exact | [eTeX manual § 3.10](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf): read from the font's real character table |
 | `\ifhbox` | [`If(Box)`][builtins-2659] | approximated | exact for a known box state (void, `\hbox`, `\vbox`). Undecided once the register is Unknown |
@@ -200,7 +200,7 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\insert` | [`Mode(Insert { vadjust: false })`][builtins-2831] | approximated | opens the insert's own list. Not told apart from the vertical list around it |
 | `\insertpenalties` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\interactionmode` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
-| `\interlinepenalties` | [`Special(Penalties)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
+| `\interlinepenalties` | [`Special(Penalties)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\interlinepenalty` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\jobname` | [`Text(JobName)`][builtins-2620] | exact | the run's real main file name |
 | `\kern` | [`Typeset(Dimen)`][builtins-2891] | approximated | `\kern` is exact. `\mkern`'s math-unit dimension always widens to Unknown, since it needs math-font setup satex does not run |
@@ -272,8 +272,8 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\number` | [`Text(Number)`][builtins-2621] | approximated | exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
 | `\numexpr` | [`Expr(Count)`][builtins-2592] | exact | [eTeX manual § 3.5](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf) |
 | `\omit` | [`Command(Nothing)`][builtins-2729] | approximated | no operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
-| `\openin` | [`OpenIn`][builtins-2553] | approximated | [tex.web § 1351](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L24696). Exact for a known stream number; one satex cannot pin down leaves every stream's state unknown |
-| `\openout` | [`Command(OpenOut)`][builtins-2754] | approximated | tracks the stream state a later `\input` of the written file reads back; a stream number satex cannot pin down widens every stream |
+| `\openin` | [`OpenIn`][builtins-2553] | approximated | [tex.web § 1351](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L24696). Exact for a known stream number. One satex cannot pin down leaves every stream's state unknown |
+| `\openout` | [`Command(OpenOut)`][builtins-2754] | approximated | tracks the stream state a later `\input` of the written file reads back. A stream number satex cannot pin down widens every stream |
 | `\or` | [`Or`][builtins-2536] | exact | [tex.web § 510](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9892), including `insert_relax` for an else or fi met mid-test |
 | `\outer` | [`Prefix(Outer)`][builtins-2519] | exact | [tex.web § 1211](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22720) |
 | `\output` | [`TokensParameter`][builtins-2564] | approximated | the stored parameter table, but setting any `\every…` list widens the dimensions of boxes that were already packed before it was read |
@@ -294,7 +294,7 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\par` | [`Mode(Par)`][builtins-2817] | exact | [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web)'s own mode-transition rules |
 | `\parfillskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | the stored parameter table |
 | `\parindent` | [`DimenParameter`][builtins-2562] | exact | the stored parameter table |
-| `\parshape` | [`Special(ParShape)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
+| `\parshape` | [`Special(ParShape)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\parshapedimen` | [`LastItem(ParShapeDimen)`][builtins-2696] | exact | read from the stored `\parshape` |
 | `\parshapeindent` | [`LastItem(ParShapeIndent)`][builtins-2696] | exact | read from the stored `\parshape` |
 | `\parshapelength` | [`LastItem(ParShapeLength)`][builtins-2696] | exact | read from the stored `\parshape` |
@@ -312,8 +312,8 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\protected` | [`Prefix(Protected)`][builtins-2519] | exact | [tex.web § 1211](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22720) |
 | `\radical` | [`Command(Number)`][builtins-2774] | approximated | scanned, not built |
 | `\raise` | [`Mode(Shift { vertical: true })`][builtins-2817] | exact | [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web)'s own mode-transition rules |
-| `\read` | [`Read`][builtins-2553] | approximated | [tex.web § 1351](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L24696). Exact for a known stream number; one satex cannot pin down leaves every stream's state unknown |
-| `\readline` | [`Command(ReadLine)`][builtins-2762] | approximated | [eTeX manual § 3.2](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf), including the terminal-fatal case; a stream number satex cannot pin down gives an unknown line and does not end the job |
+| `\read` | [`Read`][builtins-2553] | approximated | [tex.web § 1351](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L24696). Exact for a known stream number. One satex cannot pin down leaves every stream's state unknown |
+| `\readline` | [`Command(ReadLine)`][builtins-2762] | approximated | [eTeX manual § 3.2](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf), including the terminal-fatal case. A stream number satex cannot pin down gives an unknown line and does not end the job |
 | `\relax` | [`Relax`][builtins-2593] | exact | [tex.web § 1211](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22720) |
 | `\relpenalty` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\right` | [`Mode(LeftRight { opens: false, closes: true })`][builtins-2841] | approximated | the math left group is kept ([tex.web § 1191](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22367)). The size of the list it delimits widens |
@@ -323,8 +323,8 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\savinghyphcodes` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\savingvdiscards` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\scantokens` | [`ScanTokens { text: false }`][builtins-2532] | exact | [eTeX manual § 3.9](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf). A capacity overflow (`MAX_IN_OPEN`) is diagnosed, not assumed away |
-| `\scriptfont` | [`Command(FamilyFont)`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown |
-| `\scriptscriptfont` | [`Command(FamilyFont)`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown |
+| `\scriptfont` | [`Command(FamilyFont)`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
+| `\scriptscriptfont` | [`Command(FamilyFont)`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
 | `\scriptscriptstyle` | [`Mode(MathStyle(6))`][builtins-2837] | approximated | [tex.web § 1171](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
 | `\scriptspace` | [`DimenParameter`][builtins-2562] | exact | the stored parameter table |
 | `\scriptstyle` | [`Mode(MathStyle(4))`][builtins-2837] | approximated | [tex.web § 1171](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
@@ -342,7 +342,7 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\showlists` | [`Command(Nothing)`][builtins-2729] | approximated | no operand. The size of what `\span`, a fraction or `\overline`/`\underline` builds is widened, not computed |
 | `\showthe` | [`Command(Internal)`][builtins-2752] | exact | `\showthe` |
 | `\showtokens` | [`Command(GeneralText)`][builtins-2774] | approximated | scanned, not built |
-| `\skewchar` | [`FontParam(SkewChar)`][builtins-2577] | approximated | reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\skewchar` | [`FontParam(SkewChar)`][builtins-2577] | approximated | reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\skip` | [`Register(Skip)`][builtins-2548] | approximated | exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\skipdef` | [`RegisterDef(Skip)`][builtins-2548] | approximated | exact for a known register index. An unknown index joins the value into every register it could name (`weaken_registers`) |
 | `\spacefactor` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
@@ -358,7 +358,7 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\splittopskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | the stored parameter table |
 | `\string` | [`Text(String)`][builtins-2621] | approximated | exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
 | `\tabskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | the stored parameter table |
-| `\textfont` | [`Command(FamilyFont)`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown |
+| `\textfont` | [`Command(FamilyFont)`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
 | `\textstyle` | [`Mode(MathStyle(2))`][builtins-2837] | approximated | [tex.web § 1171](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22139): the style of the atoms after it in inline math. Scripts in display style widen |
 | `\the` | [`Text(The)`][builtins-2621] | approximated | exact for a known operand. Widens when the token's meaning or a register's digits are unresolved |
 | `\thickmuskip` | [`GlueParameter { mu: true }`][builtins-2562] | exact | the stored parameter table |
@@ -392,7 +392,7 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\unhbox` | [`Mode(Horizontal(Unpackage { take: true }))`][builtins-2855] | approximated | a void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
 | `\unhcopy` | [`Mode(Horizontal(Unpackage { take: false }))`][builtins-2855] | approximated | a void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
 | `\unkern` | [`Typeset(Plain)`][builtins-2889] | exact | `\unskip`, `\unkern` and `\unpenalty` remove the real tail item |
-| `\unless` | [`Unless`][builtins-2538] | approximated | etex.ch. Exact before a conditional; before a name of unknown meaning the conditional it may open is left undecided |
+| `\unless` | [`Unless`][builtins-2538] | approximated | etex.ch. Exact before a conditional. Before a name of unknown meaning the conditional it may open is left undecided |
 | `\unpenalty` | [`Typeset(Plain)`][builtins-2889] | exact | `\unskip`, `\unkern` and `\unpenalty` remove the real tail item |
 | `\unskip` | [`Typeset(Plain)`][builtins-2889] | exact | `\unskip`, `\unkern` and `\unpenalty` remove the real tail item |
 | `\unvbox` | [`Mode(Vertical(Unpackage { take: true }))`][builtins-2855] | approximated | a void register adds nothing. A real one becomes Unknown, since its content is not tracked once boxed |
@@ -415,7 +415,7 @@ Source: [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36
 | `\vss` | [`Mode(Vertical(Fil(2)))`][builtins-2853] | exact | a real item, appended to the list satex tracks |
 | `\vtop` | [`Mode(Box(VTop))`][builtins-2873] | exact | the real box machinery |
 | `\wd` | [`Special(BoxDimen)`][builtins-2716] | approximated | round-trips through the register consistently. The box behind it is never built |
-| `\widowpenalties` | [`Special(Penalties)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
+| `\widowpenalties` | [`Special(Penalties)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\widowpenalty` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\write` | [`Write`][builtins-2588] | approximated | `\immediate\write` is exact. A deferred `\write`'s text is recorded unexpanded, since satex never reaches shipout to expand it |
 | `\xdef` | [`Def { global: true, expand: true }`][builtins-2516] | exact | [tex.web § 476](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9357). An unterminated definition is diagnosed, not read past the file's end |
@@ -429,19 +429,19 @@ Source: the [pdfTeX manual, "Primitives"](https://ctan.org/pkg/pdftex).
 
 | primitive | modeled as | verdict | how |
 | --- | --- | --- | --- |
-| `\efcode` | [`FontParam(CharCode(1000))`][builtins-2577] | approximated | reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
-| `\expanded` | [`Expanded`][builtins-2534] | exact | [interface3, "Selecting tokens"](https://ctan.org/pkg/l3kernel); [pdfTeX manual, "\expanded"](https://ctan.org/pkg/pdftex) |
+| `\efcode` | [`FontParam(CharCode(1000))`][builtins-2577] | approximated | reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\expanded` | [`Expanded`][builtins-2534] | exact | [interface3, "Selecting tokens"](https://ctan.org/pkg/l3kernel), and [pdfTeX manual, "\expanded"](https://ctan.org/pkg/pdftex) |
 | `\ifincsname` | [`If(InCsname)`][builtins-2664] | exact | computed from state satex already tracks (`eval_extra_condition`) |
 | `\ifpdfabsdim` | [`If(AbsDim)`][builtins-2664] | exact | computed from state satex already tracks (`eval_extra_condition`) |
 | `\ifpdfabsnum` | [`If(AbsNum)`][builtins-2664] | exact | computed from state satex already tracks (`eval_extra_condition`) |
 | `\ifpdfprimitive` | [`If(Primitive)`][builtins-2664] | exact | computed from state satex already tracks (`eval_extra_condition`) |
 | `\ignoreprimitiveerror` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
-| `\knaccode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
-| `\knbccode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
-| `\knbscode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\knaccode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\knbccode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\knbscode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\leftmarginkern` | [`Convert(LeftMarginKern)`][builtins-2805] | approximated | scanned, answer unknown |
-| `\letterspacefont` | [`Command(CopyFont { amount: true })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown |
-| `\lpcode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\letterspacefont` | [`Command(CopyFont { amount: true })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
+| `\lpcode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\partokencontext` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\partokenname` | [`Command(Token)`][builtins-2751] | exact | `\show` |
 | `\pdfadjustinterwordglue` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
@@ -452,7 +452,7 @@ Source: the [pdfTeX manual, "Primitives"](https://ctan.org/pkg/pdftex).
 | `\pdfcolorstack` | [`Command(PdfColorStack)`][builtins-2767] | approximated | the operation and stack id are tracked. The color text itself is a recorded occurrence, not replayed |
 | `\pdfcolorstackinit` | [`Convert(ColorStackInit)`][builtins-2795] | approximated | `\pdfcolorstackinit` hands out the next color stack number, widened rather than counted exactly. The color text is a recorded occurrence, not replayed |
 | `\pdfcompresslevel` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
-| `\pdfcopyfont` | [`Command(CopyFont { amount: false })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown |
+| `\pdfcopyfont` | [`Command(CopyFont { amount: false })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
 | `\pdfcreationdate` | [`Convert(CreationDate)`][builtins-2805] | approximated | scanned, answer unknown |
 | `\pdfdecimaldigits` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\pdfdest` | [`Command(PdfDest)`][builtins-2774] | approximated | scanned, not built |
@@ -581,12 +581,12 @@ Source: the [pdfTeX manual, "Primitives"](https://ctan.org/pkg/pdftex).
 | `\pdfximagebbox` | [`Convert(ImageBBox)`][builtins-2805] | approximated | scanned, answer unknown |
 | `\quitvmode` | [`Mode(QuitVMode)`][builtins-2817] | exact | [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web)'s own mode-transition rules |
 | `\rightmarginkern` | [`Convert(MarginKern)`][builtins-2805] | approximated | scanned, answer unknown |
-| `\rpcode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
-| `\shbscode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\rpcode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\shbscode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\showstream` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
-| `\stbscode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\stbscode` | [`FontParam(CharCode(0))`][builtins-2577] | approximated | reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 | `\synctex` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
-| `\tagcode` | [`FontParam(TagCode { lig: true })`][builtins-2577] | approximated | reads the stored font table; a read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
+| `\tagcode` | [`FontParam(TagCode { lig: true })`][builtins-2577] | approximated | reads the stored font table. A read past the last-loaded font's dimensions is discarded, matching [tex.web § 580](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L11284)'s own recovery. An entry satex cannot pin down widens every one it may name |
 
 ### XeTeX extensions
 
@@ -596,16 +596,16 @@ Source: the [XeTeX reference](https://tug.org/xetex/).
 | --- | --- | --- | --- |
 | `\Uchar` | [`Convert(Uchar { catcode: false })`][builtins-2792] | exact | [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web), eTeX and XeTeX's character and category-code construction rules |
 | `\Ucharcat` | [`Convert(Uchar { catcode: true })`][builtins-2792] | exact | [tex.web](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web), eTeX and XeTeX's character and category-code construction rules |
-| `\Udelcode` | [`Special(UCode { math: false, num: false })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
-| `\Udelcodenum` | [`Special(UCode { math: false, num: true })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
+| `\Udelcode` | [`Special(UCode { math: false, num: false })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
+| `\Udelcodenum` | [`Special(UCode { math: false, num: true })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\Udelimiter` | [`Command(Numbers(3))`][builtins-2774] | approximated | scanned, not built |
 | `\Umathaccent` | [`Command(MathAccent)`][builtins-2774] | approximated | scanned, not built |
 | `\Umathchar` | [`Command(Numbers(3))`][builtins-2774] | approximated | scanned, not built |
-| `\Umathchardef` | [`Command(UMathCharDef { num: false })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown |
+| `\Umathchardef` | [`Command(UMathCharDef { num: false })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
 | `\Umathcharnum` | [`Command(Numbers(1))`][builtins-2774] | approximated | scanned, not built |
-| `\Umathcharnumdef` | [`Command(UMathCharDef { num: true })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown |
-| `\Umathcode` | [`Special(UCode { math: true, num: false })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
-| `\Umathcodenum` | [`Special(UCode { math: true, num: true })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
+| `\Umathcharnumdef` | [`Command(UMathCharDef { num: true })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
+| `\Umathcode` | [`Special(UCode { math: true, num: false })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
+| `\Umathcodenum` | [`Special(UCode { math: true, num: true })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\Uradical` | [`Command(Numbers(2))`][builtins-2774] | approximated | scanned, not built |
 | `\XeTeXOTcountfeatures` | [`LastItem(Xetex(OtCountFeatures))`][builtins-2707] | approximated | the font's real tables |
 | `\XeTeXOTcountlanguages` | [`LastItem(Xetex(OtCountLanguages))`][builtins-2707] | approximated | the font's real tables |
@@ -613,7 +613,7 @@ Source: the [XeTeX reference](https://tug.org/xetex/).
 | `\XeTeXOTfeaturetag` | [`LastItem(Xetex(OtFeatureTag))`][builtins-2707] | approximated | the font's real tables |
 | `\XeTeXOTlanguagetag` | [`LastItem(Xetex(OtLanguageTag))`][builtins-2707] | approximated | the font's real tables |
 | `\XeTeXOTscripttag` | [`LastItem(Xetex(OtScriptTag))`][builtins-2707] | approximated | the font's real tables |
-| `\XeTeXcharclass` | [`Special(CharClass)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
+| `\XeTeXcharclass` | [`Special(CharClass)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\XeTeXcharglyph` | [`LastItem(Xetex(CharGlyph))`][builtins-2707] | approximated | the font's real tables |
 | `\XeTeXcountfeatures` | [`LastItem(Xetex(CountFeatures))`][builtins-2707] | approximated | the font's real tables |
 | `\XeTeXcountglyphs` | [`LastItem(Xetex(CountGlyphs))`][builtins-2707] | approximated | the font's real tables |
@@ -621,8 +621,8 @@ Source: the [XeTeX reference](https://tug.org/xetex/).
 | `\XeTeXcountvariations` | [`LastItem(Xetex(CountVariations))`][builtins-2707] | approximated | the font's real tables |
 | `\XeTeXdashbreakstate` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\XeTeXdefaultencoding` | [`Command(FileName)`][builtins-2774] | approximated | scanned, not built |
-| `\XeTeXdelcode` | [`Special(UCode { math: false, num: false })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
-| `\XeTeXdelcodenum` | [`Special(UCode { math: false, num: true })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
+| `\XeTeXdelcode` | [`Special(UCode { math: false, num: false })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
+| `\XeTeXdelcodenum` | [`Special(UCode { math: false, num: true })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\XeTeXdelimiter` | [`Command(Numbers(3))`][builtins-2774] | approximated | scanned, not built |
 | `\XeTeXfeaturecode` | [`LastItem(Xetex(FeatureCode))`][builtins-2707] | approximated | the font's real tables |
 | `\XeTeXfeaturename` | [`Convert(Xetex(FeatureName))`][builtins-2803] | approximated | exact from a loaded font's real tables. Unknown once they aren't resolved |
@@ -640,7 +640,7 @@ Source: the [XeTeX reference](https://tug.org/xetex/).
 | `\XeTeXinputencoding` | [`Command(FileName)`][builtins-2774] | approximated | scanned, not built |
 | `\XeTeXinputnormalization` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\XeTeXinterchartokenstate` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
-| `\XeTeXinterchartoks` | [`Special(InterCharToks)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
+| `\XeTeXinterchartoks` | [`Special(InterCharToks)`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\XeTeXinterwordspaceshaping` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\XeTeXisdefaultselector` | [`LastItem(Xetex(IsDefaultSelector))`][builtins-2707] | approximated | the font's real tables |
 | `\XeTeXisexclusivefeature` | [`LastItem(Xetex(IsExclusiveFeature))`][builtins-2707] | approximated | the font's real tables |
@@ -650,11 +650,11 @@ Source: the [XeTeX reference](https://tug.org/xetex/).
 | `\XeTeXlinebreakskip` | [`GlueParameter { mu: false }`][builtins-2562] | exact | the stored parameter table |
 | `\XeTeXmathaccent` | [`Command(MathAccent)`][builtins-2774] | approximated | scanned, not built |
 | `\XeTeXmathchar` | [`Command(Numbers(3))`][builtins-2774] | approximated | scanned, not built |
-| `\XeTeXmathchardef` | [`Command(UMathCharDef { num: false })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown |
+| `\XeTeXmathchardef` | [`Command(UMathCharDef { num: false })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
 | `\XeTeXmathcharnum` | [`Command(Numbers(1))`][builtins-2774] | approximated | scanned, not built |
-| `\XeTeXmathcharnumdef` | [`Command(UMathCharDef { num: true })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown |
-| `\XeTeXmathcode` | [`Special(UCode { math: true, num: false })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
-| `\XeTeXmathcodenum` | [`Special(UCode { math: true, num: true })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry; one it cannot pin down widens every entry the write may have reached |
+| `\XeTeXmathcharnumdef` | [`Command(UMathCharDef { num: true })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
+| `\XeTeXmathcode` | [`Special(UCode { math: true, num: false })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
+| `\XeTeXmathcodenum` | [`Special(UCode { math: true, num: true })`][builtins-2718] | approximated | a table satex stores and reads back exactly for a known entry. One it cannot pin down widens every entry the write may have reached |
 | `\XeTeXpdffile` | [`Command(PicFile)`][builtins-2774] | approximated | scanned, not built |
 | `\XeTeXpdfpagecount` | [`LastItem(PdfPageCount)`][builtins-2705] | approximated | widens to Unknown. The file's page count needs parsing a PDF satex does not read |
 | `\XeTeXpicfile` | [`Command(PicFile)`][builtins-2774] | approximated | scanned, not built |
@@ -850,7 +850,7 @@ Source: the [LuaTeX manual](https://ctan.org/pkg/luatex).
 | `\catcodetable` | [`Lua(SelectCatcodes)`][builtins-2915] | exact | a real string escape or catcode-table operation |
 | `\clearmarks` | [`Unmodeled`][builtins-2610] | unsupported + diagnostic | widens the mode |
 | `\compoundhyphenmode` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
-| `\copyfont` | [`Command(CopyFont { amount: false })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown |
+| `\copyfont` | [`Command(CopyFont { amount: false })`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
 | `\crampeddisplaystyle` | [`Unmodeled`][builtins-2610] | unsupported + diagnostic | widens the mode |
 | `\crampedscriptscriptstyle` | [`Unmodeled`][builtins-2610] | unsupported + diagnostic | widens the mode |
 | `\crampedscriptstyle` | [`Unmodeled`][builtins-2610] | unsupported + diagnostic | widens the mode |
@@ -981,7 +981,7 @@ Source: the [LuaTeX manual](https://ctan.org/pkg/luatex).
 | `\saveimageresource` | [`Command(PdfXImage)`][builtins-2766] | exact | the file name reaches `observe::image` |
 | `\savepos` | [`Unmodeled`][builtins-2610] | unsupported + diagnostic | widens the mode |
 | `\scantextokens` | [`ScanTokens { text: true }`][builtins-2532] | exact | [eTeX manual § 3.9](https://mirrors.ctan.org/systems/doc/etex/etex_man.pdf). A capacity overflow (`MAX_IN_OPEN`) is diagnosed, not assumed away |
-| `\setfontid` | [`Command(SetFontId)`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables; an operand satex cannot pin down leaves the entry, or the font the name means, unknown |
+| `\setfontid` | [`Command(SetFontId)`][builtins-2758] | approximated | stored and consumed by satex's own font and math-code tables. An operand satex cannot pin down leaves the entry, or the font the name means, unknown |
 | `\shapemode` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\suppressifcsnameerror` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |
 | `\suppresslongerror` | [`IntegerParameter`][builtins-2562] | exact | the stored parameter table |

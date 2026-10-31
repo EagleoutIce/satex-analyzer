@@ -356,7 +356,9 @@ def bundle(satex, work):
         # cmbx12.tfm for cmr10.tfm): the files of the same kind beside each one read. Classes, packages
         # and documents load by name.
         option = lambda p: (p.relative_to(dist).parts[0] == "tex" and p.suffix not in (".sty", ".cls", ".tex", ".ltx")) or p.suffix in (".tfm", ".vf")
-        return read | {q for p in read if option(p) for q in p.parent.glob(f"*{p.suffix}")}
+        # A package's own images (mwe's example-image): \includegraphics finds them on the tree's ls-R.
+        images = {q for p in read if p.suffix == ".sty" for q in p.parent.iterdir() if q.suffix in (".pdf", ".png", ".jpg")}
+        return read | images | {q for p in read if option(p) for q in p.parent.glob(f"*{p.suffix}")}
 
     absent = {}
     reads = {}  # (kernel, document or package) -> the distribution files it reads

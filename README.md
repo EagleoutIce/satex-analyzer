@@ -55,7 +55,7 @@ plugins: 48 in 11 kinds
   build system        5  latexmk, make, tectonic, arara, l3build
   tools               7  biber, bibtex, makeindex, xindy, makeglossaries, dvips, ps2pdf
   magic comments      3  % !TeX, % !BIB, % arara:
-… 16 more lines omitted
+… 17 more lines omitted
 ```
 
 <details>
@@ -69,20 +69,20 @@ Usage: satex [OPTIONS] [COMMAND]
 
 Commands:
   query         Run a query.  `satex query --list` names them all
-  lint          Context-sensitive lints for the input file; `--all` includes libraries
+  lint          Context-sensitive lints for the input file. `--all` includes libraries
   summary       What the document and every file it loads contribute
   scope         Control sequences visible at a position, for completion
   explain       What a control sequence means and where it comes from
   slice         Slice the document around a control sequence, environment or position: a compilable reconstruction of the main file by default
   controls      Everything a switch, option or conditional governs.  Without a name, the switches and options in effect.  Several names answer in one table, each row's `for` column saying which one it answers
-  dependencies  The program dependence graph — data dependencies plus control dependencies — as DOT or JSON
+  dependencies  The program dependence graph (data dependencies plus control dependencies) as DOT or JSON
   trace         The execution trace, step by step
   cache         The interpreted LaTeX2e kernel and the package caches.  Without a further command, prints their status
   compile       Build the document with latexmk, or the engine where latexmk is missing, and explain each error and warning the log reports by what the analysis found there.  Never opens a viewer.  The build runs the project's own code, its latexmkrc and what it lets TeX run, so build only projects you trust
   install       Install the packages the document loads that this machine does not have.  Asks first, never elevates, and is never run by `lint --fix`
   tokens        The token stream the mouth produces
-  completions   Print the shell completion script: bash, zsh, fish, elvish or powershell.  Values complete from the running binary.  `install [bash|zsh|fish]` registers it in that shell's startup file; without a shell, in every shell installed or in use
-  lsp           A Language Server Protocol server: a thin facade over the queries and lints above, driven by `initialize`/`didOpen`/`didChange` instead of one-shot arguments.  Stdio by default; `--port` switches to TCP
+  completions   Print the shell completion script: bash, zsh, fish, elvish or powershell.  Values complete from the running binary.  `install [bash|zsh|fish]` registers it in that shell's startup file. Without a shell, it does so in every shell installed or in use
+  lsp           A Language Server Protocol server: a thin facade over the queries and lints above, driven by `initialize`/`didOpen`/`didChange` instead of one-shot arguments.  Stdio by default, `--port` switches to TCP
   help          Print this message or the help of the given subcommand(s)
 
 Options:
@@ -100,16 +100,16 @@ Input:
           An extra config file, merged on top of every discovered satex.yaml (built-in defaults, the global config, the ones from the filesystem root down to the document's directory)
 
       --no-config
-          Ignore every satex.yaml, discovered or named with --config — built-in defaults and `--set` only
+          Ignore every satex.yaml, discovered or named with --config. Only built-in defaults and `--set` apply
 
       --profile <NAME>
           Which defaults to apply (usually auto-detected): document, package, class, literate or plain
 
       --set <PATH=VALUE>
-          Overrides an option of `satex.yaml` by its dotted path, the value written as there: `--set limits.memory=8GiB --set load.inputs=false`. Repeatable; the flags below win over it
+          Overrides an option of `satex.yaml` by its dotted path, the value written as there: `--set limits.memory=8GiB --set load.inputs=false`. Repeatable. The flags below win over it
 
       --no-packages
-          Do not load packages; analyze the document and the kernel only
+          Do not load packages. Analyze the document and the kernel only
 
       --no-classes
           Do not load the document class
@@ -118,7 +118,7 @@ Input:
           Text read at `--at` as if it stood there in the file, such as `\mymacro{x}`: every command then sees what it does in the state the document has there. The file on disk is not changed
 
       --at <LINE[:COL]>
-          Where `--inject` puts its text, `[FILE:]LINE[:COL]`; the main file without FILE, the start of the line without COL
+          Where `--inject` puts its text, `[FILE:]LINE[:COL]`. The main file without FILE, the start of the line without COL
 
 Limits:
       --max-steps <N>
@@ -184,7 +184,7 @@ Context-sensitive diagnostics: undefined names, duplicates, dead code and misuse
 $ satex lint -f samples/paper.tex
 correctness (1)
 
-  ◆ already-defined (1)
+  ◆ S001 already-defined (1)
     paper.tex:24:1  \repeat is already defined
       24 │ \newcommand{\repeat}[1]{#1\repeat{#1}}
          │ ^^^^^^^^^^^
@@ -192,19 +192,19 @@ correctness (1)
 
 style (9)
 
-  ● inconsistent-precision (1)
+  ● S077 inconsistent-precision (1)
     paper.tex:70:16  numeric column 2 mixes 1 to 2 decimal places: give every number one precision
       70 │     Ours     & 0.92  \\
          │                ^
          = hint: round them by hand, or let siunitx `S` round with `round-mode = places`
 
-  ● numbers-not-aligned (1)
+  ● S081 numbers-not-aligned (1)
     paper.tex:70:16  numeric column 2 is set `c`: align its decimal separators with siunitx `S`, or at least use `r`
       70 │     Ours     & 0.92  \\
          │                ^
          = hint: add `\usepackage{siunitx}`, set column 2 as `S` and brace its header: `{Score}`
 
-  ● primitive-tex-command (1)
+  ● S084 primitive-tex-command (1)
     paper.tex:22:1  `\csname` is plain TeX. Here it uses a control sequence by name
 … 49 more lines omitted
 ```
@@ -214,108 +214,108 @@ style (9)
 
 ```text
 $ satex lint --rules
-severity  category     code                             message                                                         
-error     correctness  already-defined                  `\newcommand` redefines an existing name                        
-error     correctness  bibtex-command-under-biblatex    a BibTeX command biblatex replaces stops the run                
-error     correctness  build-bibliography-disabled      the document has a bibliography, but the build never runs Bib…  
-error     correctness  build-command-placeholders       an engine command in the latexmkrc lacks %S or %O               
-error     correctness  build-engine-mismatch            the build runs another engine, or another output, than the do…  
-error     correctness  build-shell-escape-missing       the document runs programs through `\write18`, but the build …  
-error     correctness  caused-library-error             the document makes package code raise a TeX error               
-error     correctness  math-still-open                  the run is still in math mode where the text ends               
-error     correctness  missing-graphic                  an included image is not there for this output target           
-error     correctness  new-redefines                    a `\new…` declaration silently redefines an existing command    
-error     correctness  not-defined                      `\renewcommand` targets a name that does not exist              
-error     correctness  option-clash                     a package is loaded twice with different options                
-error     correctness  raised-error                     the document's code raises a TeX error                          
-error     correctness  undefined-color                  a color is used, or aliased from, before xcolor ever defines …  
-error     correctness  undefined-control-sequence       a control sequence is used that nothing defines                 
-error     correctness  undefined-environment            `\begin` names an environment that is not defined               
-error     correctness  undefined-glossary-entry         a glossary or acronym entry is used but never declared          
-error     correctness  unguarded-recursion              a recursive macro has nothing that can stop it                  
-warning   correctness  build-missing-custom-dependency  the document writes glossary files, but latexmk has no rule t…  
-warning   correctness  catcode-escapes-group            a category code change is still in force at the end of the run  
-warning   correctness  conflicting-color-definition     the same color name is defined twice with different colors      
-warning   correctness  delimiter-not-followed           `\left`, `\right` or `\middle` is followed by a brace or a ma…  
-warning   correctness  duplicate-bibliography-entry     the same key is declared by two bibliography entries            
-warning   correctness  duplicate-label                  the same label is defined twice                                 
-warning   correctness  environment-mismatch             `\end` names an environment other than the one that is open     
-warning   correctness  expl-syntax-left-on              `\ExplSyntaxOn` is never turned off                             
-warning   correctness  expl3-constant-set               an expl3 constant is set after it was declared                  
-warning   correctness  expl3-signature-mismatch         an expl3 function takes other arguments than its name says      
-warning   correctness  ignored-verbatim-tail            text stands on the line that closes a verbatim body and never…  
-warning   correctness  math-script-braces               `^` and `_` take one token, so what follows needs braces        
-warning   correctness  missing-dependency               a TeX Live package the run reads from is not in the dependenc…  
-warning   correctness  unbalanced-brackets              a file sets more of one bracket than of its partner             
-warning   correctness  unbalanced-color-stack           a `\pdfcolorstack` push is never popped, or a pop has nothing…  
-warning   correctness  unbalanced-pdf-content           a PDF literal opens marked content or a graphics state that i…  
-warning   correctness  undefined-citation               a citation names a key no bibliography entry declares           
-warning   correctness  undefined-optional-content       marked content refers to an optional content group no resourc…  
-warning   correctness  undefined-reference              `\ref` names a label that is never defined                      
-warning   correctness  uninstalled-package              the package is not installed, and the distribution could inst…  
-warning   correctness  unresolved-file                  a package, class or input file is not in the installation       
-info      correctness  expected-load                    the file was read after a package it expects loaded             
-info      correctness  math-mode-mismatch               \(, \), \[ or \] stands where the mode does not allow it        
-info      correctness  unintended-escape                a command is followed by an escaped punctuation mark, which i…  
-warning   security     build-shell-escape-unneeded      the build allows `\write18`, but the document never uses it     
-warning   security     shell-escape                     the document runs a program through `\write18`                  
-warning   style        accent-on-dotted-letter          an accent sits on top of the dot of an `i` or a `j`             
-warning   style        command-terminated-space         a control word ate the space after it and the next word is se…  
-warning   style        dimension-times                  the letter x stands between two numbers where a multiplicatio…  
-warning   style        double-space                     two interword spaces reached the page, one of them from a tie   
-warning   style        ellipsis-dots                    three periods set three periods, not an ellipsis                
-warning   style        expl3-scope                      an expl3 variable's scope prefix disagrees with how the run a…  
-warning   style        expl3-type                       an expl3 variable's type suffix disagrees with the functions …  
-warning   style        group-local-definition           a definition is made inside a group and lost when it closes     
-warning   style        math-operator-name               an operator name is set in math italic instead of by its comm…  
-warning   style        missing-italic-correction        a slanted letter runs into upright text with no `\/` between …  
-warning   style        missing-nonbreaking-space        an ordinary space in front of a reference lets the line break…  
-warning   style        parenthesis-spacing              a parenthesis carries the space of the text inside it instead…  
-warning   style        quote-direction                  a quotation mark points the wrong way, or a run of them mixes…  
-warning   style        sentence-spacing                 a period set the wrong width of space for the sentence around…  
-warning   style        space-before-command             a space lets the line break between a word and the mark that …  
-warning   style        space-before-punctuation         a space stands between a word and the punctuation after it      
-warning   style        stray-italic-correction          a repeated italic correction, or one in front of a period or …  
-warning   style        unknown-suppress-code            a satex-disable comment names a code no rule has                
-warning   style        user-pattern                     the source matches a pattern the project asked to be warned a…  
-warning   style        wrong-dash                       a run of hyphens sets a dash of the wrong length for what sta…  
-warning   style        wrong-quote-character            a character that is not a quotation mark stands in for one      
-warning   style        zero-italic-correction           the italic correction is zero here, so `\/` changes nothing     
-info      style        build-bibliography-unneeded      the build configures BibTeX or biber for a document without a…  
-info      style        build-engine-options             the engine command could report errors as file:line and write…  
-info      style        build-unused-custom-dependency   a latexmk custom dependency that nothing in the document trig…  
-info      style        comment-marker                   a comment still carries a TODO-style marker                     
-info      style        computer-modern-in-t1            T1 text in Computer Modern relies on cm-super for scalable fo…  
-info      style        csquotes-available               the document sets quotation marks by hand instead of loading …  
-info      style        dead-definition                  a definition is replaced before anything uses it                
-info      style        duplicate-color-value            two color names store the exact same color                      
-info      style        duplicate-package                a package is loaded more than once                              
-info      style        hand-set-quantity                a number and its unit are set by hand where siunitx would set…  
-info      style        inconsistent-precision           the numbers of a table column give different numbers of decim…  
-info      style        math-punctuation                 punctuation sits on the wrong side of a formula                 
-info      style        math-shift-dollars               display math opened with `$$` where LaTeX spells it \[          
-info      style        microtype-available              the engine can protrude characters and expand fonts, but micr…  
-info      style        numbers-not-aligned              a table column of numbers does not line them up at their deci…  
-info      style        ot1-font-encoding                accented letters are built with `\accent` because the text is…  
-info      style        prefer-cleveref                  a hand-written name in front of `\ref` is what cleveref sets …  
-info      style        primitive-tex-command            a plain TeX primitive is used where LaTeX has its own interfa…  
-info      style        quote-ligature                   three quotation marks in a row set a double and a single mark…  
-info      style        quote-punctuation                punctuation stands inside the closing quotation mark            
-info      style        stray-space                      a macro body picked up a space from an unescaped line end       
-info      style        table-rules                      a table is ruled with vertical rules or `\hline`                
-info      style        unit-in-cells                    every number of a table column carries the same unit            
-info      style        unreferenced-numbered-display    a display that stepped a counter is never referenced, so its …  
-info      style        unused-bibitem                   a `\bibitem` written in the document is never cited             
-info      style        unused-color                     a color the document defines is never used                      
-info      style        unused-definition                a macro defined in the document is never used                   
-info      style        unused-label                     a label is never referenced                                     
-warning   performance  package-after-preamble           a package is loaded after `\begin{document}`                    
-info      performance  includeonly-available            a document of several `\include`d parts is built whole          
-info      performance  preamble-cost                    what the preamble costs on every build                          
-info      performance  recursive-macro                  a macro calls itself, directly or through others                
-info      performance  unused-dependency                the dependency file lists a TeX Live package no file of the r…  
-info      performance  unused-package                   a loaded package defines nothing the document uses              
-info      precision    analysis-imprecision             the analysis had to widen                                       
+severity  category     number  code                             message                                                 
+error     correctness  S001    already-defined                  `\newcommand` redefines an existing name                
+error     correctness  S002    bibtex-command-under-biblatex    a BibTeX command biblatex replaces stops the run        
+error     correctness  S003    build-bibliography-disabled      the document has a bibliography, but the build never …  
+error     correctness  S004    build-command-placeholders       an engine command in the latexmkrc lacks %S or %O       
+error     correctness  S005    build-engine-mismatch            the build runs another engine, or another output, tha…  
+error     correctness  S006    build-shell-escape-missing       the document runs programs through `\write18`, but th…  
+error     correctness  S007    caused-library-error             the document makes package code raise a TeX error       
+error     correctness  S008    math-still-open                  the run is still in math mode where the text ends       
+error     correctness  S009    missing-graphic                  an included image is not there for this output target   
+error     correctness  S010    new-redefines                    a `\new…` declaration silently redefines an existing …  
+error     correctness  S011    not-defined                      `\renewcommand` targets a name that does not exist      
+error     correctness  S012    option-clash                     a package is loaded twice with different options        
+error     correctness  S013    raised-error                     the document's code raises a TeX error                  
+error     correctness  S014    undefined-color                  a color is used, or aliased from, before xcolor ever …  
+error     correctness  S015    undefined-control-sequence       a control sequence is used that nothing defines         
+error     correctness  S016    undefined-environment            `\begin` names an environment that is not defined       
+error     correctness  S017    undefined-glossary-entry         a glossary or acronym entry is used but never declared  
+error     correctness  S018    unguarded-recursion              a recursive macro has nothing that can stop it          
+warning   correctness  S019    build-missing-custom-dependency  the document writes glossary files, but latexmk has n…  
+warning   correctness  S020    catcode-escapes-group            a category code change is still in force at the end o…  
+warning   correctness  S021    conflicting-color-definition     the same color name is defined twice with different c…  
+warning   correctness  S022    delimiter-not-followed           `\left`, `\right` or `\middle` is followed by a brace…  
+warning   correctness  S023    duplicate-bibliography-entry     the same key is declared by two bibliography entries    
+warning   correctness  S024    duplicate-label                  the same label is defined twice                         
+warning   correctness  S025    environment-mismatch             `\end` names an environment other than the one that i…  
+warning   correctness  S026    expl-syntax-left-on              `\ExplSyntaxOn` is never turned off                     
+warning   correctness  S027    expl3-constant-set               an expl3 constant is set after it was declared          
+warning   correctness  S028    expl3-signature-mismatch         an expl3 function takes other arguments than its name…  
+warning   correctness  S029    ignored-verbatim-tail            text stands on the line that closes a verbatim body a…  
+warning   correctness  S030    math-script-braces               `^` and `_` take one token, so what follows needs bra…  
+warning   correctness  S031    missing-dependency               a TeX Live package the run reads from is not in the d…  
+warning   correctness  S032    unbalanced-brackets              a file sets more of one bracket than of its partner     
+warning   correctness  S033    unbalanced-color-stack           a `\pdfcolorstack` push is never popped, or a pop has…  
+warning   correctness  S034    unbalanced-pdf-content           a PDF literal opens marked content or a graphics stat…  
+warning   correctness  S035    undefined-citation               a citation names a key no bibliography entry declares   
+warning   correctness  S036    undefined-optional-content       marked content refers to an optional content group no…  
+warning   correctness  S037    undefined-reference              `\ref` names a label that is never defined              
+warning   correctness  S038    uninstalled-package              the package is not installed, and the distribution co…  
+warning   correctness  S039    unresolved-file                  a package, class or input file is not in the installa…  
+info      correctness  S040    expected-load                    the file was read after a package it expects loaded     
+info      correctness  S041    math-mode-mismatch               \(, \), \[ or \] stands where the mode does not allow…  
+info      correctness  S042    unintended-escape                a command is followed by an escaped punctuation mark,…  
+warning   security     S043    build-shell-escape-unneeded      the build allows `\write18`, but the document never u…  
+warning   security     S044    shell-escape                     the document runs a program through `\write18`          
+warning   style        S045    accent-on-dotted-letter          an accent sits on top of the dot of an `i` or a `j`     
+warning   style        S046    command-terminated-space         a control word ate the space after it and the next wo…  
+warning   style        S047    dimension-times                  the letter x stands between two numbers where a multi…  
+warning   style        S048    double-space                     two interword spaces reached the page, one of them fr…  
+warning   style        S049    ellipsis-dots                    three periods set three periods, not an ellipsis        
+warning   style        S050    expl3-scope                      an expl3 variable's scope prefix disagrees with how t…  
+warning   style        S051    expl3-type                       an expl3 variable's type suffix disagrees with the fu…  
+warning   style        S052    group-local-definition           a definition is made inside a group and lost when it …  
+warning   style        S053    math-operator-name               an operator name is set in math italic instead of by …  
+warning   style        S054    missing-italic-correction        a slanted letter runs into upright text with no `\/` …  
+warning   style        S055    missing-nonbreaking-space        an ordinary space in front of a reference lets the li…  
+warning   style        S056    parenthesis-spacing              a parenthesis carries the space of the text inside it…  
+warning   style        S057    quote-direction                  a quotation mark points the wrong way, or a run of th…  
+warning   style        S058    sentence-spacing                 a period set the wrong width of space for the sentenc…  
+warning   style        S059    space-before-command             a space lets the line break between a word and the ma…  
+warning   style        S060    space-before-punctuation         a space stands between a word and the punctuation aft…  
+warning   style        S061    stray-italic-correction          a repeated italic correction, or one in front of a pe…  
+warning   style        S062    unknown-suppress-code            a satex-disable comment names a code no rule has        
+warning   style        S063    user-pattern                     the source matches a pattern the project asked to be …  
+warning   style        S064    wrong-dash                       a run of hyphens sets a dash of the wrong length for …  
+warning   style        S065    wrong-quote-character            a character that is not a quotation mark stands in fo…  
+warning   style        S066    zero-italic-correction           the italic correction is zero here, so `\/` changes n…  
+info      style        S067    build-bibliography-unneeded      the build configures BibTeX or biber for a document w…  
+info      style        S068    build-engine-options             the engine command could report errors as file:line a…  
+info      style        S069    build-unused-custom-dependency   a latexmk custom dependency that nothing in the docum…  
+info      style        S070    comment-marker                   a comment still carries a TODO-style marker             
+info      style        S071    computer-modern-in-t1            T1 text in Computer Modern relies on cm-super for sca…  
+info      style        S072    csquotes-available               the document sets quotation marks by hand instead of …  
+info      style        S073    dead-definition                  a definition is replaced before anything uses it        
+info      style        S074    duplicate-color-value            two color names store the exact same color              
+info      style        S075    duplicate-package                a package is loaded more than once                      
+info      style        S076    hand-set-quantity                a number and its unit are set by hand where siunitx w…  
+info      style        S077    inconsistent-precision           the numbers of a table column give different numbers …  
+info      style        S078    math-punctuation                 punctuation sits on the wrong side of a formula         
+info      style        S079    math-shift-dollars               display math opened with `$$` where LaTeX spells it \[  
+info      style        S080    microtype-available              the engine can protrude characters and expand fonts, …  
+info      style        S081    numbers-not-aligned              a table column of numbers does not line them up at th…  
+info      style        S082    ot1-font-encoding                accented letters are built with `\accent` because the…  
+info      style        S083    prefer-cleveref                  a hand-written name in front of `\ref` is what clever…  
+info      style        S084    primitive-tex-command            a plain TeX primitive is used where LaTeX has its own…  
+info      style        S085    quote-ligature                   three quotation marks in a row set a double and a sin…  
+info      style        S086    quote-punctuation                punctuation stands inside the closing quotation mark    
+info      style        S087    stray-space                      a macro body picked up a space from an unescaped line…  
+info      style        S088    table-rules                      a table is ruled with vertical rules or `\hline`        
+info      style        S089    unit-in-cells                    every number of a table column carries the same unit    
+info      style        S090    unreferenced-numbered-display    a display that stepped a counter is never referenced,…  
+info      style        S091    unused-bibitem                   a `\bibitem` written in the document is never cited     
+info      style        S092    unused-color                     a color the document defines is never used              
+info      style        S093    unused-definition                a macro defined in the document is never used           
+info      style        S094    unused-label                     a label is never referenced                             
+warning   performance  S095    package-after-preamble           a package is loaded after `\begin{document}`            
+info      performance  S096    includeonly-available            a document of several `\include`d parts is built whole  
+info      performance  S097    preamble-cost                    what the preamble costs on every build                  
+info      performance  S098    recursive-macro                  a macro calls itself, directly or through others        
+info      performance  S099    unused-dependency                the dependency file lists a TeX Live package no file …  
+info      performance  S100    unused-package                   a loaded package defines nothing the document uses      
+info      precision    S101    analysis-imprecision             the analysis had to widen                               
 ```
 
 </details>
@@ -324,11 +324,11 @@ info      precision    analysis-imprecision             the analysis had to wide
 
 ```text
 $ satex lint --explain unguarded-recursion
-unguarded-recursion  correctness / error
+S018 unguarded-recursion  correctness / error
 a recursive macro has nothing that can stop it
 
 The run saw the macro's expansion reach the macro again, could not see the
-recursion end, and found no conditional — no `\if…`, `\else` or `\fi` — to
+recursion end, and found no conditional (no `\if…`, `\else` or `\fi`) to
 end it.  A macro nothing expands is judged by the names its replacement text
 holds.  A real run expands until TeX runs out of memory:
 `TeX capacity exceeded, sorry [main memory size]`.
@@ -348,12 +348,12 @@ For CI, output formats include `--format github` (GitHub Actions annotations) an
 
 ```text
 $ satex lint -f samples/paper.tex --format github
-::error file=samples/paper.tex,line=24,col=1,title=already-defined::\repeat is already defined
-::notice file=samples/paper.tex,line=76,col=1,title=unused-label::label `sec:conclusion` is never referenced
-::notice file=samples/paper.tex,line=42,col=1,title=unused-label::label `sec:method` is never referenced
-::notice file=samples/paper.tex,line=22,col=1,title=primitive-tex-command::`\csname` is plain TeX. Here it uses a control sequence by name
-::notice file=samples/preamble.tex,line=1,col=1,title=unused-definition::\hello is never used
-::notice file=samples/paper.tex,line=14,col=1,title=unused-definition::\WeirdMore is never used
+::error file=samples/paper.tex,line=24,col=1,title=S001 already-defined::\repeat is already defined
+::notice file=samples/paper.tex,line=76,col=1,title=S094 unused-label::label `sec:conclusion` is never referenced
+::notice file=samples/paper.tex,line=42,col=1,title=S094 unused-label::label `sec:method` is never referenced
+::notice file=samples/paper.tex,line=22,col=1,title=S084 primitive-tex-command::`\csname` is plain TeX. Here it uses a control sequence by name
+::notice file=samples/preamble.tex,line=1,col=1,title=S093 unused-definition::\hello is never used
+::notice file=samples/paper.tex,line=14,col=1,title=S093 unused-definition::\WeirdMore is never used
 … 5 more lines omitted
 ```
 
@@ -519,7 +519,7 @@ Shows what a build costs: which packages and files dominate, and what to do abou
 $ satex lint -f samples/paper.tex --filter 'category=performance'
 performance (1)
 
-  ● preamble-cost (1)
+  ● S097 preamble-cost (1)
     paper.tex:26:1  5 packages requested directly, 275 files read, 76% of the tokens the build takes
       26 │ \begin{document}
          │ ^^^^^^

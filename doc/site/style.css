@@ -79,7 +79,7 @@ main img[src$=".gif"] { display: block; width: min(100%, 44rem); height: auto; m
 .side ul a, .toc a { color: var(--muted); }
 .toc b { display: block; margin-bottom: .3rem; }
 .toc a { display: block; padding: .1rem 0 .1rem .6rem; border-left: 2px solid var(--border); line-height: 1.35; }
-.toc a.h3 { padding-left: 1.3rem; font-size: .85rem; }
+.toc a.h3 { padding-left: 1.3rem; font-size: .85rem; display: none; } .toc a.h3.open { display: block; }
 .toc a.on { color: var(--accent); border-left-color: var(--accent); }
 main { min-width: 0; padding: 1rem 0; }
 /* documentation text: tight headings, blocks and tables */
@@ -228,6 +228,24 @@ tbody tr { transition: background-color var(--quick); }
 tbody tr:hover { background: var(--sunk); }
 td .sev { border: 0; padding: 0; font-size: 0; vertical-align: -1px; }
 td .sev + .cat { margin-left: .2rem; }
+/* one line per row: cells never wrap, the last column cut to the width left */
+.table-scroll { overflow-x: auto; margin: .8rem 0; }
+main table.long, body.doc main table.long { display: table; width: 100%; margin: 0; }
+table.long :is(th, td) { white-space: nowrap; vertical-align: middle; padding: .2rem .5rem; width: 1%; }
+table.long td { border-width: 0 0 1px; }
+table.long th { border-width: 0 0 1px; }
+table.long:not(.wrap) :is(td, th):last-child { max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; }
+table.long.wrap td:last-child { white-space: normal; min-width: 14rem; }
+table.long .cat { border: 0; background: none; padding: 0; font-weight: 500; }
+table.long code { padding: 0 .25rem; }
+.cols { position: relative; font-size: .88rem; }
+.cols > summary { list-style: none; cursor: pointer; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: .3rem .6rem; }
+.cols > summary::-webkit-details-marker { display: none; }
+.cols > summary::after { content: " ▾"; color: var(--muted); }
+.cols > div { position: absolute; left: 0; z-index: 2; display: grid; gap: .2rem; margin-top: .25rem; padding: .45rem .7rem; min-width: 10rem; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgb(0 0 0 / .12); }
+.cols label { display: flex; align-items: center; gap: .45rem; white-space: nowrap; cursor: pointer; }
+.filters .cols input { flex: none; min-width: 0; margin: 0; padding: 0; }
+.badges .num { font-size: .78rem; font-weight: 600; }
 .from { font-size: .75rem; font-weight: 600; white-space: nowrap; border-radius: 999px; padding: 0 .45rem; color: var(--c5); border: 1px solid color-mix(in srgb, var(--c5) 45%, transparent); }
 .from:hover { text-decoration: none; background: color-mix(in srgb, var(--c5) 14%, transparent); }
 

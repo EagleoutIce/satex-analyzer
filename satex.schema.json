@@ -5,7 +5,7 @@
       "properties": {
         "assume_compiles": {
           "default": true,
-          "description": "assumption: drop a path that raises a certain TeX error in library code; the document's own errors are kept",
+          "description": "assumption: drop a path that raises a certain TeX error in library code, the document's own errors are kept",
           "type": "boolean"
         },
         "assume_environment": {
@@ -15,7 +15,7 @@
         },
         "assume_forced_page_breaks": {
           "default": true,
-          "description": "assumption: pages break only where a penalty forces it; false also follows breaks where the page may have filled",
+          "description": "assumption: pages break only where a penalty forces it, false also follows breaks where the page may have filled",
           "type": "boolean"
         },
         "assume_packages_close_groups": {
@@ -59,7 +59,7 @@
           "properties": {
             "auto": {
               "default": true,
-              "description": "every run stores the packages it reads way mylatexformat dumps one; a %& line or -fmt= in the build configuration names it otherwise",
+              "description": "every run stores the packages it reads way mylatexformat dumps one, a %& line or -fmt= in the build configuration names it otherwise",
               "type": "boolean"
             },
             "class": {
@@ -121,7 +121,7 @@
       "properties": {
         "definers": {
           "default": [],
-          "description": "more commands whose next name is the one they define; satex finds those the kernel defines with itself",
+          "description": "more commands whose next name is the one they define, satex finds those the kernel defines with itself",
           "type": "array"
         },
         "internal": {
@@ -199,17 +199,17 @@
         },
         "build_runs": {
           "default": 5,
-          "description": "runs of the build (latexmk rounds) to reach the fixpoint of .aux/.toc/...; past them unknown; 1 = one run, no earlier files",
+          "description": "runs of the build (latexmk rounds) to reach the fixpoint of .aux/.toc/..., past them unknown, 1 = one run, no earlier files",
           "type": "integer"
         },
         "cache_size": {
           "default": "2.0 GiB",
-          "description": "caches kept, least recently used evicted; 0 for no bound",
+          "description": "caches kept, least recently used evicted, 0 for no bound",
           "type": "string"
         },
         "call_summary_after": {
           "default": 2,
-          "description": "runs of one call recorded before an unknown-operand call applies their join; 0 = never",
+          "description": "runs of one call recorded before an unknown-operand call applies their join, 0 = never",
           "type": "integer"
         },
         "choices": {
@@ -224,12 +224,12 @@
         },
         "cycle_after": {
           "default": 2,
-          "description": "repeats of one call in the same state before its path ends (the only path is summarized); 0 = never",
+          "description": "repeats of one call in the same state before its path ends (the only path is summarized), 0 = never",
           "type": "integer"
         },
         "degrade_at_percent": {
           "default": 100,
-          "description": "of limits.steps past which the precision limits are halved, step by step; 100 = never",
+          "description": "of limits.steps past which the precision limits are halved, step by step, 100 = never",
           "type": "integer"
         },
         "expansion_depth": {
@@ -284,7 +284,7 @@
         },
         "join_names": {
           "default": 64,
-          "description": "names a join pairs at most; the rest are joined apart",
+          "description": "names a join pairs at most, the rest are joined apart",
           "type": "integer"
         },
         "line_steps": {
@@ -293,7 +293,7 @@
         },
         "loop_heads": {
           "default": 512,
-          "description": "loop heads and entries one drive keeps with their joined states; the oldest goes first",
+          "description": "loop heads and entries one drive keeps with their joined states, the oldest goes first",
           "type": "integer"
         },
         "meaning_set": {
@@ -308,7 +308,7 @@
         },
         "memory": {
           "default": "8.0 GiB",
-          "description": "what one run may hold at once; 0 lifts the limit",
+          "description": "what one run may hold at once, 0 lifts the limit",
           "type": "string"
         },
         "paths": {
@@ -348,17 +348,17 @@
         },
         "site_forks": {
           "default": 4096,
-          "description": "undecided choices one place may make while a line is read before its expansion is cut; 0 = never",
+          "description": "undecided choices one place may make while a line is read before its expansion is cut, 0 = never",
           "type": "integer"
         },
         "steps": {
           "default": 4000000000,
-          "description": "tokens the document may digest (pdflatex digests ~200M/s; pingus needs ~1.5G real tokens)",
+          "description": "tokens the document may digest (pdflatex digests ~200M/s, pingus needs ~1.5G real tokens)",
           "type": "integer"
         },
         "threads": {
           "default": 0,
-          "description": "threads for the project walk; the interpreter runs on one",
+          "description": "threads for the project walk, the interpreter runs on one",
           "type": "integer"
         },
         "trace": {
@@ -373,7 +373,7 @@
         },
         "vertices": {
           "default": 400000,
-          "description": "graph nodes recorded; past it the graph stops growing and the analysis goes on",
+          "description": "graph nodes recorded, past it the graph stops growing and the analysis goes on",
           "type": "integer"
         },
         "widen_after": {
@@ -388,7 +388,7 @@
       "default": [
         "analysis-imprecision"
       ],
-      "description": "rule codes that never fire; a profile fills this in",
+      "description": "rule codes that never fire, a profile fills this in",
       "type": "array"
     },
     "lints": {
@@ -577,7 +577,7 @@
         },
         "build_files": {
           "default": false,
-          "description": "read the .aux, .toc, .bbl, ... an earlier build left; off: absent, the run over-approximates them",
+          "description": "read the .aux, .toc, .bbl, ... an earlier build left, off: absent, the run over-approximates them",
           "type": "boolean"
         },
         "classes": {
@@ -663,7 +663,7 @@
         },
         "texinputs": {
           "default": [],
-          "description": "TEXINPUTS; a trailing // recurses, as in kpathsea",
+          "description": "TEXINPUTS, a trailing // recurses, as in kpathsea",
           "type": "array"
         },
         "tfmfonts": {
@@ -714,7 +714,7 @@
     "profiles": {
       "properties": {
         "class": {
-          "description": "a .cls; the same defaults as a package",
+          "description": "a .cls, the same defaults as a package",
           "properties": {
             "at_letter": {
               "default": true,
@@ -762,7 +762,7 @@
           "description": "a LaTeX document: every default above already fits it"
         },
         "literate": {
-          "description": "a .dtx/.ins; unpacks to a package or class",
+          "description": "a .dtx/.ins, unpacks to a package or class",
           "properties": {
             "at_letter": {
               "default": true,
@@ -892,7 +892,7 @@
         },
         "frozen": {
           "default": [],
-          "description": "globs of files read and analyzed, but with no findings and no fixes inside; relative to this file",
+          "description": "globs of files read and analyzed, but with no findings and no fixes inside, relative to this file",
           "type": "array"
         },
         "ignore_other_configs": {

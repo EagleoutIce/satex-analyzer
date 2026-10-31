@@ -50,7 +50,7 @@ See Section~\ref{sec:none}.
     <figure class="case" data-case="2" hidden>
       <pre><code>\catcode`\|=\ifdraft 14 \else 12 \fi
 a | b \gdef\Maybe{}</code></pre>
-      <div class="views"><div class="view by-text"><b>From the text</b><code>|</code> is a character; <code>\Maybe</code> is defined.</div>
+      <div class="views"><div class="view by-text"><b>From the text</b><code>|</code> is a character. <code>\Maybe</code> is defined.</div>
         <div class="view by-run"><b>From the run</b>On one path <code>|</code> starts a comment and <code>\Maybe</code> is never defined: both paths are kept.</div></div>
     </figure>
   </div>
@@ -73,7 +73,7 @@ a | b \gdef\Maybe{}</code></pre>
       <tr><th scope="row">Build and PDF</th><td>builds with latexmk and explains the log</td><td>—</td><td class="yes">build, forward and inverse search</td><td>—</td><td>—</td></tr>
       <tr><th scope="row">Fixes</th><td class="yes">quick fixes, e.g. load the package that defines a name</td><td>—</td><td>formatting (latexindent)</td><td>—</td><td>—</td></tr>
       <tr><th scope="row">Scope</th><td class="no">the files a document loads</td><td class="yes">all of TeX Live, with a public report</td><td class="yes">any file</td><td class="yes">any file</td><td class="yes">any file</td></tr>
-      <tr><th scope="row">Speed</th><td class="no">seconds with warm caches; large theses still too slow</td><td class="yes">fast</td><td class="yes">fast</td><td class="yes">fast</td><td class="yes">fast</td></tr>
+      <tr><th scope="row">Speed</th><td class="no">seconds with warm caches, large theses still too slow</td><td class="yes">fast</td><td class="yes">fast</td><td class="yes">fast</td><td class="yes">fast</td></tr>
     </tbody>
   </table></div>
   <ol class="refs">

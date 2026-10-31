@@ -12,7 +12,7 @@ One invariant holds everywhere: a construct is followed **exactly**, or its resu
 
 - [`Value`](#value-what-a-control-sequence-or-register-holds) and [the set lift `OneOf`](#the-set-lift-oneof)
 - [Character codes](#character-codes-as-sets), [colors](#colors-color-and-colors), [meaning sets](#meaning-sets-what-a-control-sequence-may-mean)
-- [Modes and boxes](#modes-and-box-dimensions), [unknown text](#unknown-text-the-textclass-lattice), [category sets](#catcodetableunknown-category-sets-as-a-lattice-element), [argument types](#argument-types-the-ty-lattice)
+- [Modes and boxes](#modes-and-box-dimensions), [unknown text](#unknown-text-the-textclass-lattice), [category sets](#category-sets-as-a-lattice-element), [argument types](#argument-types-the-ty-lattice)
 - [Files written in the run](#files-written-in-the-run), [names from unknown text](#names-from-unknown-text), [call summaries](#call-summaries-what-a-call-did-twice)
 - [The join](#the-join-in-general), [`limits`](#limits-where-the-domains-stop-being-precise), [known limits](#known-limits), [the soundness invariant](#soundness-invariant)
 
@@ -71,6 +71,10 @@ Every character has one of TeX's sixteen category codes ([The TeXbook, chapter 7
 | <a id="catcode-14"></a>14 | comment |
 | <a id="catcode-15"></a>15 | invalid |
 
+### Category sets as a lattice element
+
+A character whose category is not pinned keeps the set of categories it may have, one bit each (`CatcodeTable::unknown`, [tex.web § 232](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4811)). A join unions the sets, the save stack restores them (per group, only the first save of a slot on each path joins: it is what the group's end leaves), and `\the\catcode` reads them as a set of numbers. Callers ask `cats` or `is_unknown` before trusting `get`.
+
 ## Character codes as sets
 
 Code table entries (`\lccode`, `\uccode`, `\sfcode`, `\mathcode`, `\delcode`, [tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L23040)) hold a `Value`, joined like registers.
@@ -107,7 +111,7 @@ A widened macro whose members all hold a token holds one too, so `\ifx` can stil
 
 `Modes` ([`src/mode.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/mode.rs)) is the set of TeX's six modes the run may be in ([tex.web § 211](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4220)). `\ifvmode`, `\ifhmode`, `\ifmmode` and `\ifinner` are decided when every mode agrees. Paths join by union.
 
-`Dim { lo, hi }` is one length: box sizes, added up as `hpack` ([§ 649](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L12910)) and `vpack` ([§ 668](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L13152)) do. An item `satex` cannot follow widens the size to `Dim::ANY`; it is never left out.
+`Dim { lo, hi }` is one length: box sizes, added up as `hpack` ([§ 649](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L12910)) and `vpack` ([§ 668](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L13152)) do. An item `satex` cannot follow widens the size to `Dim::ANY`. It is never left out.
 
 The list's tail (`Last`) is what `\lastskip`, `\lastkern`, `\lastpenalty` and `\lastnodetype` read:
 
@@ -154,7 +158,7 @@ A paragraph in a vertical box is broken as `line_break` does it ([tex.web §§ 8
 | fits with infinite stretch, or badness bound low enough | one line ([§§ 817](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16090), [851](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16750)–[859](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16900)) |
 | otherwise | one line up to one per breakpoint, sizes between zero and the text's |
 
-- Line width is `\hsize`; with `\parshape` or `\hangindent` it is unknown ([§§ 847](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16676)–[848](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16702)).
+- Line width is `\hsize`. With `\parshape` or `\hangindent` it is unknown ([§§ 847](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16676)–[848](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16702)).
 - At `\par`: final glue dropped, `\parfillskip` added ([§ 816](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16066)). Interline glue from `\baselineskip` or `\lineskip` ([§ 679](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L13312)), both joined when either may apply. `\prevdepth` ([§ 219](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4423)), `\parskip` ([§ 1091](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21111)).
 - **Hyphenation** ([§§ 919](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L18072)–[965](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L18820)) uses the format's own `\patterns` and `\hyphenation` (`src/hyph.rs`). Each found gap is a may-hyphen (`·` in the typeset view). A one-line paragraph gets none ([§ 902](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L17669)). An unknown language or `\lccode` marks every gap.
 - Line parameters are read at `\par`. If they changed after a line was set, the sizes widen.
@@ -183,7 +187,7 @@ typed digits     d, with an interval [lo, hi]
 
 - **Why it matters.** A scan delimited by `}` finds nothing in text without `b`. One delimited by a space finds nothing without `_`. `\ifx` against a letter cannot match without `l`. Nothing without `c` is a control sequence.
 - **Typed digits** carry their `Num`: `\ifnum`, `\numexpr` and `\csname` read the interval back.
-- **Join** is the union of kinds; the text is non-empty only if both are. A run of unknown tokens collapses into one token of the run's class. Widening moves up and stops at the top.
+- **Join** is the union of kinds. The text is non-empty only if both are. A run of unknown tokens collapses into one token of the run's class. Widening moves up and stops at the top.
 - **Printing.** `\detokenize` and `\string` give the printed class ([tex.web § 464](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9142)).
 - One constructor makes all unknown text: `Machine::unknown_text`.
 
@@ -222,10 +226,18 @@ Typed text may carry a maximum token count (`LEN_MARK`, at most 20).
 | `\the`/`\number` of a count | 11 ([tex.web § 65](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L1613)) |
 | `\the` of a dimension | 14 ([§ 103](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L2199)) |
 | a value in an interval | the digits of its larger end |
-| the rest after reading one token | one less; 0 is no text |
-| a join | the larger bound; a collapsed run sums them |
+| the rest after reading one token | one less, 0 is no text |
+| a join | the larger bound, a collapsed run sums them |
 
 A loop pass whose pending input strictly shrinks is not counted against `limits.widen_after` (`input_bound`), so such loops run exactly to their end. A [loop summary](#call-summaries-what-a-call-did-twice) widens what its passes wrote against the loop's start: bounds no pass moved stay, moved ones go to the end of their range, and a widened token list keeps its frame.
+
+### Names from unknown text
+
+`Wild` ([`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)) holds the families of names a definition of a partly unknown name may have made ([tex.web § 372](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7745)): the known text around the unknown part, as in `\csname MT@inh@\x\endcsname`.
+
+- A name of such a family may be undefined, `\relax` (a `\csname` may have made it), or one of up to 8 meanings the family's writes gave. Families join by union. Past 1024 they widen to what they share.
+- A name around one number's typed digits is that number's own name: `\tl_map_inline:nn` defines and calls the same `__tl_map_⟨n⟩:w` exactly. Another definition that may hit the same name joins into it (a weak update).
+- A name of wholly unknown text adds no family. It is assumed fresh (`unknown-name-defines-fresh`, an imprecision): it redefines no existing name. Otherwise one such definition would make every `\ifcsname` undecided.
 
 ## Argument types: the `Ty` lattice
 
@@ -243,7 +255,7 @@ flowchart LR
   t4["glue"]:::quantity
   t5["muglue"]:::quantity
   t6["box"]:::quantity
-  t7["register · toks register · box register<br>read register · write register"]:::register
+  t7["register"]:::register
   t8["control sequence"]:::cs
   t9["conditional"]:::cs
   t10["options"]:::key
@@ -251,24 +263,107 @@ flowchart LR
   t12["name"]:::text
   t13["definition body"]:::text
   t14["tl variable"]:::expl3
-  t15["str variable · clist variable"]:::expl3
-  t16["seq variable · prop variable · fp variable<br>bool variable · regex variable · coffin variable<br>flag variable · intarray variable · cctab variable"]:::expl3
-  t17["count register"]:::register
-  t18["dimen register"]:::register
-  t19["skip register"]:::register
-  t20["muskip register"]:::register
-  t21["counter · dimen name · skip name<br>muskip name · toks name · box name<br>read name · write name"]:::register
-  t22["key"]:::key
-  t23["label · citation key · option key<br>environment name"]:::key
-  t24["file"]:::file
-  t25["TeX file (.tex) · package (.sty) · class (.cls)<br>bibliography database (.bib) · bibliography style (.bst) · biblatex bibliography style (.bbx)<br>biblatex citation style (.cbx) · graphic file"]:::file
+  t15["str variable"]:::expl3
+  t16["clist variable"]:::expl3
+  t17["seq variable"]:::expl3
+  t18["prop variable"]:::expl3
+  t19["fp variable"]:::expl3
+  t20["bool variable"]:::expl3
+  t21["regex variable"]:::expl3
+  t22["coffin variable"]:::expl3
+  t23["flag variable"]:::expl3
+  t24["intarray variable"]:::expl3
+  t25["cctab variable"]:::expl3
+  t26["count register"]:::register
+  t27["dimen register"]:::register
+  t28["skip register"]:::register
+  t29["muskip register"]:::register
+  t30["toks register"]:::register
+  t31["box register"]:::register
+  t32["read register"]:::register
+  t33["write register"]:::register
+  t34["counter"]:::register
+  t35["dimen name"]:::register
+  t36["skip name"]:::register
+  t37["muskip name"]:::register
+  t38["toks name"]:::register
+  t39["box name"]:::register
+  t40["read name"]:::register
+  t41["write name"]:::register
+  t42["key"]:::key
+  t43["label"]:::key
+  t44["citation key"]:::key
+  t45["option key"]:::key
+  t46["environment name"]:::key
+  t47["file"]:::file
+  t48["TeX file (.tex)"]:::file
+  t49["package (.sty)"]:::file
+  t50["class (.cls)"]:::file
+  t51["bibliography database (.bib)"]:::file
+  t52["bibliography style (.bst)"]:::file
+  t53["biblatex bibliography style (.bbx)"]:::file
+  t54["biblatex citation style (.cbx)"]:::file
+  t55["graphic file"]:::file
+  subgraph g0_register[" "]
+    direction LR
+    t7
+    t30
+    t31
+    t32
+    t33
+  end
+  t0 --> g0_register
+  subgraph g8_expl3[" "]
+    direction LR
+    t17
+    t18
+    t19
+    t20
+    t21
+    t22
+    t23
+    t24
+    t25
+  end
+  t8 --> g8_expl3
+  subgraph g12_register[" "]
+    direction LR
+    t34
+    t35
+    t36
+    t37
+    t38
+    t39
+    t40
+    t41
+  end
+  t12 --> g12_register
+  subgraph g42_key[" "]
+    direction LR
+    t43
+    t44
+    t45
+    t46
+  end
+  t42 --> g42_key
+  subgraph g47_file[" "]
+    direction LR
+    t48
+    t49
+    t50
+    t51
+    t52
+    t53
+    t54
+    t55
+  end
+  t47 --> g47_file
   t0 --> t1
   t1 --> t2
   t4 --> t3
   t1 --> t4
   t1 --> t5
   t2 --> t6
-  t0 --> t7
   t0 --> t8
   t8 --> t9
   t0 --> t10
@@ -277,16 +372,13 @@ flowchart LR
   t11 --> t13
   t8 --> t14
   t14 --> t15
-  t8 --> t16
-  t2 --> t17
-  t3 --> t18
-  t4 --> t19
-  t5 --> t20
-  t12 --> t21
-  t12 --> t22
-  t22 --> t23
-  t12 --> t24
-  t24 --> t25
+  t14 --> t16
+  t2 --> t26
+  t3 --> t27
+  t4 --> t28
+  t5 --> t29
+  t12 --> t42
+  t12 --> t47
   classDef top fill:#eef0f2,stroke:#8a8f98,color:#1f2328
   classDef quantity fill:#dbeafe,stroke:#3b82f6,color:#1f2328
   classDef register fill:#ffedd5,stroke:#f97316,color:#1f2328
@@ -297,33 +389,33 @@ flowchart LR
   classDef text fill:#dcfce7,stroke:#22c55e,color:#1f2328
 ```
 
-The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), quantities (blue), registers (orange), keys and options (purple), files (teal), control sequences (red), expl3 variables (yellow) and text (green). Types below one parent that have none below them share a box. `nothing` is below every type and left out. The labels are the ones signatures and hovers show. In each example the `⟨…⟩` part has the type. The table names the type above only where the label does not show it.
+The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), quantities (blue), registers (orange), keys and options (purple), files (teal), control sequences (red), expl3 variables (yellow) and text (green). Each type is its own node. Three or more types below one parent, with none below them, stand in one stacked cluster. `nothing` is below every type and left out. The labels are the ones signatures and hovers show. In each example the `⟨…⟩` part has the type. The table names the type above only where the label does not show it.
 
 | Label | Meaning | Example |
 |---|---|---|
 | `any` | no information, the join of unrelated types |  |
 | `quantity` | a number, dimen, glue or muglue | `\numexpr1+⟨\dimexpr 1pt\relax⟩` is read as a quantity |
 | `number` | ⟨number⟩, read by `scan_int` | `\penalty⟨100⟩` |
-| `dimen` | ⟨dimen⟩, read by `scan_dimen`; below `glue` | `\kern⟨2pt⟩` |
+| `dimen` | ⟨dimen⟩, read by `scan_dimen`, below `glue` | `\kern⟨2pt⟩` |
 | `glue` | ⟨glue⟩, a dimen with optional stretch and shrink | `\hskip⟨1pt plus 1fil⟩` |
 | `muglue` | ⟨mudimen⟩ or ⟨muglue⟩ | `\mskip⟨3mu⟩` |
-| `count register` | a count register an assignment names; below `number` | `\advance⟨\count@⟩ by 1` |
-| `box` | a box register's number; below `number` | `\setbox⟨0⟩\hbox{}` |
-| `dimen register` | a dimen register an assignment names; below `dimen` | `\advance⟨\parindent⟩ by 1pt` |
-| `skip register` | a skip register an assignment names; below `glue` | `\advance⟨\parskip⟩ by 1pt` |
-| `muskip register` | a muskip register an assignment names; below `muglue` | `\advance⟨\medmuskip⟩ by 1mu` |
+| `count register` | a count register an assignment names, below `number` | `\advance⟨\count@⟩ by 1` |
+| `box` | a box register's number, below `number` | `\setbox⟨0⟩\hbox{}` |
+| `dimen register` | a dimen register an assignment names, below `dimen` | `\advance⟨\parindent⟩ by 1pt` |
+| `skip register` | a skip register an assignment names, below `glue` | `\advance⟨\parskip⟩ by 1pt` |
+| `muskip register` | a muskip register an assignment names, below `muglue` | `\advance⟨\medmuskip⟩ by 1mu` |
 | `toks register`, `read register`, `write register` | the other registers an assignment names | `⟨\toks@⟩={a}` |
 | `register` | a register of a kind the text does not fix, what a body assigns `#1` to | `\def\x#1#2{\advance⟨#1⟩ by #2}` |
 | `text` | balanced text of any kind | `\textbf{⟨a name or code⟩}` |
-| `name` | characters forming a name; below `text` | `\csname ⟨foo⟩\endcsname` |
-| `counter` | the name of a LaTeX counter, `c@⟨counter⟩`; below `name` | `\setcounter{⟨section⟩}{1}` |
+| `name` | characters forming a name, below `text` | `\csname ⟨foo⟩\endcsname` |
+| `counter` | the name of a LaTeX counter, `c@⟨counter⟩`, below `name` | `\setcounter{⟨section⟩}{1}` |
 | `⟨kind⟩ name` | the name of a register of that kind a `\csname` forms | `\csname dimen⟨foo⟩\endcsname` |
-| `key` | a key of no known kind; below `name` | `\mykey{⟨x⟩}` of unknown role |
-| `label` | a label a command defines or references; below `key` | `\ref{⟨sec:intro⟩}` |
+| `key` | a key of no known kind, below `name` | `\mykey{⟨x⟩}` of unknown role |
+| `label` | a label a command defines or references, below `key` | `\ref{⟨sec:intro⟩}` |
 | `citation key` | a bibliography entry's key | `\cite{⟨knuth84⟩}` |
 | `option key` | an option or key a key list names | `\usepackage[⟨draft⟩]{x}` |
-| `environment name` | an environment's name; below `key` | `\begin{⟨itemize⟩}` |
-| `file` | a file of no known kind; below `name` | `\input{⟨a⟩}` read as `.bib` and `.tex` |
+| `environment name` | an environment's name, below `key` | `\begin{⟨itemize⟩}` |
+| `file` | a file of no known kind, below `name` | `\input{⟨a⟩}` read as `.bib` and `.tex` |
 | `TeX file (.tex)` | a file read as TeX source | `\input{⟨chapter1⟩}` |
 | `package (.sty)` | a package | `\usepackage{⟨amsmath⟩}` |
 | `class (.cls)` | a document class | `\documentclass{⟨article⟩}` |
@@ -333,11 +425,11 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 | `biblatex citation style (.cbx)` | a biblatex citation style | `\usepackage[citestyle=⟨numeric⟩]{biblatex}` |
 | `graphic file` | a figure, its extension decided by the run | `\includegraphics{⟨fig⟩}` |
 | `control sequence` | a control sequence an assignment defines | `\def⟨\foo⟩{}` |
-| `conditional` | a conditional `\newif` defines, `\if⟨name⟩`; below `control sequence` | `\newif⟨\ifdraft⟩` |
+| `conditional` | a conditional `\newif` defines, `\if⟨name⟩`, below `control sequence` | `\newif⟨\ifdraft⟩` |
 | `tl variable`, `seq variable`, `prop variable`, `fp variable`, `bool variable`, `regex variable`, `coffin variable`, `flag variable`, `intarray variable`, `cctab variable` | an expl3 variable, by the module of the function that made or set it in the run (`\tl_set:Nn`, `\seq_new:N`) | `\tl_set:Nn⟨\l_my_tl⟩{x}` |
-| `str variable`, `clist variable` | a string or comma list, which expl3 keeps as token lists; below `tl variable` | `\str_set:Nn⟨\l_my_str⟩{x}` |
+| `str variable`, `clist variable` | a string or comma list, which expl3 keeps as token lists, below `tl variable` | `\str_set:Nn⟨\l_my_str⟩{x}` |
 | `options` | the key list a load takes in its optional argument | `\usepackage⟨[a,b]⟩{x}` |
-| `definition body` | a definition's replacement text, code; below `text` | `\def\x{⟨\kern1pt⟩}` |
+| `definition body` | a definition's replacement text, code, below `text` | `\def\x{⟨\kern1pt⟩}` |
 | `nothing` | no text, below every type |  |
 
 - **Join**: the nearest type above both (`Ty::join`). A dimen and a skip register give `glue`, a label and a citation key give `key`, a `.bib` and a `.tex` use give `file`. The lattice is a tree, so disagreeing uses never stay a set.
@@ -345,10 +437,6 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 - **Where types come from.** A scanner's read of the argument (`Facts::types`, joined per place). Else its role (a label is a `key`, a load a `file`, `\bibdata` a `.bib`). Else its macro's body (`roles::assigned`, [tex.web §§ 1057](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20524), [1224](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L22902)): `#1` after `\penalty` is a number, `#1` heading an assignment a `register`, `#1` inside `\csname` a `name`.
 - **Wrappers** inherit the types of arguments they hand on whole.
 - **Use.** Types order what an editor offers. They add no narrowing to the run: the scanners already read into the [value domains](#value-what-a-control-sequence-or-register-holds).
-
-## `CatcodeTable::unknown`: category sets as a lattice element
-
-A character whose category is not pinned keeps the set of categories it may have, one bit each (`CatcodeTable::unknown`, [tex.web § 232](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4811)). A join unions the sets, the save stack restores them (per group, only the first save of a slot on each path joins: it is what the group's end leaves), and `\the\catcode` reads them as a set of numbers. Callers ask `cats` or `is_unknown` before trusting `get`.
 
 ## Files written in the run
 
@@ -364,14 +452,6 @@ A character whose category is not pinned keeps the set of categories it may have
 - **The build's files** (`.aux`, `.toc`, `.bbl`, …) are the run's own, kept in an overlay. The build reruns until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`). A changed file sends the build round again only when the run read or looked for it. Every file a run wrote goes to the overlay, as TeX leaves it on disk, so the next run reads a part `.aux` the main `.aux` first names, not a missing file. The first run reads none of them, so the second run changing lines is expected. A file in which a later rerun changed an existing line again is widened: each text a later run writes joins into its nearest (`widen_text`, `nearness`), so the number of texts does not grow. Files an engine left on disk are read only with `load.build_files`.
 - **Reads** see the run's files first ([§ 537](Challenges#11-a-document-is-a-fixpoint-computation)), then the disk. A file neither written nor on disk is absent ([§ 1275](Challenges#11-a-document-is-a-fixpoint-computation)).
 - **`\openin` streams** hold the lines each has left. Paths that differ in a stream leave it unknown, and `\ifeof` is undecided. A stream number in an interval parts the path per stream ([§ 436](Challenges#11-a-document-is-a-fixpoint-computation)).
-
-## Names from unknown text
-
-`Wild` ([`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)) holds the families of names a definition of a partly unknown name may have made ([tex.web § 372](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7745)): the known text around the unknown part, as in `\csname MT@inh@\x\endcsname`.
-
-- A name of such a family may be undefined, `\relax` (a `\csname` may have made it), or one of up to 8 meanings the family's writes gave. Families join by union; past 1024 they widen to what they share.
-- A name around one number's typed digits is that number's own name: `\tl_map_inline:nn` defines and calls the same `__tl_map_⟨n⟩:w` exactly. Another definition that may hit the same name joins into it (a weak update).
-- A name of wholly unknown text adds no family. It is assumed fresh (`unknown-name-defines-fresh`, an imprecision): it redefines no existing name. Otherwise one such definition would make every `\ifcsname` undecided.
 
 ## Call summaries: what a call did twice
 
@@ -403,7 +483,7 @@ Rules that keep cuts sound and convergent:
 - **Loop entries.** A summary unwinds only to where its loop was entered. A head met after the entry's caller read on is a new entry ([tex.web § 325](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7015)), so a summary never closes its caller's groups.
 - **What a pass wrote** is compared against the fork's binding, so a name set back (`\thepage` around `\protected@write`) is not widened. The body runs once more from the widened state before the cut, so names it opens arrive as a family.
 - **Loop exits in a scan** (`\edef`, `\expanded`): the cut continues on a path that already left the loop with the same text. Without one it reads one unknown token and skips to the scan's `}`. Scan cuts are per path.
-- **Endless loops** (`limits.cycle_after`) end a path only when another path covers it; else it is summarized and goes on.
+- **Endless loops** (`limits.cycle_after`) end a path only when another path covers it. Else it is summarized and goes on.
 - **Unwinding** drops token lists and closes the conditionals and groups their text opened ([§§ 281](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L6035)–[283](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L6070)), widening values a group restores. Levels left open become [stacks as intervals](#stacks-as-intervals).
 - **The output routine** is a unit: an open output group ([§ 989](#stacks-as-intervals)), flushed with its conditionals when it ends ([§ 1100](#stacks-as-intervals)).
 
@@ -418,7 +498,7 @@ Every domain joins the same way: **hull plus bounded union**. Keep the exact mem
 
 ### Arms kept paired
 
-A join that is not widened keeps its arms paired (`Corr`, [`src/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/env.rs)): per arm, the bindings of the names that differ. pgfmath's operation stack and its top differ together; joined apart, a later split pairs `neg` with a stack that never held it (a false missing number).
+A join that is not widened keeps its arms paired (`Corr`, [`src/env.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/env.rs)): per arm, the bindings of the names that differ. pgfmath's operation stack and its top differ together. Joined apart, a later split pairs `neg` with a stack that never held it (a false missing number).
 
 - Learning one paired name narrows the others to the arms that allow it.
 - A name written after the join leaves the pairing. Past `limits.join_arms` arms, the name with the most bindings leaves first.
@@ -448,7 +528,7 @@ Arms of an undecided conditional that reach its `\fi` go on as one path (`fi_mar
 | `limits.choices` per command | the conditional is widened: both arms skipped, one unknown token in their place (`undecided-condition`) |
 | `limits.alike` waiting paths at one place | paths whose input differs only in text join |
 | `limits.paths` | the two furthest back are cut to their shared input levels and joined |
-| fork backstop at a hot site | no new arm, except for paths a look-ahead parted that cannot be joined (other input): they get their arms, since following one would be unsound; under a cut one is followed, the cut summarizes the region |
+| fork backstop at a hot site | no new arm, except for paths a look-ahead parted that cannot be joined (other input): they get their arms, since following one would be unsound. Under a cut one is followed and the cut summarizes the region |
 
 Paths join between two commands where they stand alike: same input, conditionals, groups and scans (`absorb`). Measured on a TikZ node with unknown height, `limits.alike` 8 takes 2.8k forks, 16 takes 5.1k.
 
@@ -470,22 +550,24 @@ The knobs that trade precision for a bounded search ([`src/config.rs`](https://g
 | [`limits.choices`](Configuration#what-a-run-may-use) | 8 | Undecided choices one command may make on one path.  Past them a conditional is taken as unknown text, reported as an `assumption`. |
 | [`limits.site_forks`](Configuration#what-a-run-may-use) | 4096 | Undecided choices one site (a conditional, a name of several meanings) may make, over all paths and replays, while the run reads one source line. Past them the expansion above that line is cut as `line_steps` cuts it (`site-forks-cut`): what it assigned is unknown, and the line reads on after an unknown token. Many paths through one place say little the join of a few did not. 0 turns it off. |
 | [`limits.paths`](Configuration#what-a-run-may-use) | 16 | Paths one drive keeps waiting before the two furthest back at one source position are cut to the input levels they share and joined. |
-| [`limits.meaning_splits`](Configuration#what-a-run-may-use) | 4 | Choices one command may have made on one path for a name that a join left with one of several meanings to still split the run into a path per meaning; past them, and with 0 everywhere, it is read as a name of unknown meaning. |
+| [`limits.meaning_splits`](Configuration#what-a-run-may-use) | 4 | Choices one command may have made on one path for a name that a join left with one of several meanings to still split the run into a path per meaning. Past them, and with 0 everywhere, it is read as a name of unknown meaning. |
 | [`limits.widen_after`](Configuration#what-a-run-may-use) | 3 | How many rounds a loop head analyzes its paths again from a grown joined state before what still grows is widened (SEMANTICS [§ 14](Configuration#what-a-run-may-use)). |
 | [`limits.recursion_depth`](Configuration#what-a-run-may-use) | 100 | How many levels deep a recursion whose continuation is undecided is followed before it is assumed to end within them. |
-| [`limits.loop_heads`](Configuration#what-a-run-may-use) | 512 | How many loop heads and loop entries one drive keeps with their joined states; past them the oldest is forgotten. Its count stays in the load's loop summaries, so it is summarized when met again. |
-| [`limits.call_summary_after`](Configuration#what-a-run-may-use) | 2 | How many runs of one call, at one site with the same names handed to it, are recorded before a later call with unknown operands applies their join instead of running; 0 never summarizes a call. |
+| [`limits.loop_heads`](Configuration#what-a-run-may-use) | 512 | How many loop heads and loop entries one drive keeps with their joined states. Past them the oldest is forgotten. Its count stays in the load's loop summaries, so it is summarized when met again. |
+| [`limits.call_summary_after`](Configuration#what-a-run-may-use) | 2 | How many runs of one call, at one site with the same names handed to it, are recorded before a later call with unknown operands applies their join instead of running. 0 never summarizes a call. |
 | [`limits.meaning_set`](Configuration#what-a-run-may-use) | 8 | How many meanings a join leaves a name with as a set (one of them) before it has an unknown meaning. |
 | [`limits.value_set`](Configuration#what-a-run-may-use) | 8 | How many values a join leaves a count or dimension register with as a set before only their interval is kept. |
 
-## Registers behind an unpinned index
+## Writes through an unknown index
+
+### Registers behind an unpinned index
 
 A write through an index not pinned to one number (`\count#1=…`) must hold for every register it may name (`weaken_registers`, [`src/exec.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/exec.rs)):
 
-- a narrow interval (at most `limits.value_set` registers): each is joined with the value;
-- otherwise every register of the kind is weakened, and unseen ones read as the whole range (`register_top`), no longer as zero.
+- A narrow interval (at most `limits.value_set` registers): each is joined with the value.
+- Otherwise every register of the kind is weakened, and unseen ones read as the whole range (`register_top`), no longer as zero.
 
-## Code tables behind an unknown character
+### Code tables behind an unknown character
 
 A `\catcode`, `\lccode`, `\uccode`, `\sfcode`, `\mathcode` or `\delcode` write through an unknown character ([tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L23040)) leaves every entry it may name at {old, new}, structural characters included.
 
@@ -499,10 +581,10 @@ Where `satex` does not yet reach the invariant:
 
 | Limit | What can be missed |
 | --- | --- |
-| executing a character of unknown category | only an active character runs code ([tex.web §§ 232](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4811), [344](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7286)), and only its bindings are joined in. Groups, modes, files and `\write`s it would make are not. A name built from unknown text (`\csname`) may be any control sequence; executing it widens nothing. |
+| executing a character of unknown category | only an active character runs code ([tex.web §§ 232](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L4811), [344](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7286)), and only its bindings are joined in. Groups, modes, files and `\write`s it would make are not. A name built from unknown text (`\csname`) may be any control sequence, executing it widens nothing. |
 | a recursion cut at its bound | assignments are widened, catcodes, groups, files, streams and `\write` are not (their sound top would stop the run) |
 | a file the run wrote with unknown text that is also on disk | read as on disk |
-| loops spanning call sites | met again only through an undecided conditional; otherwise left to the stall limit |
+| loops spanning call sites | met again only through an undecided conditional, otherwise left to the stall limit |
 
 ## Soundness invariant
 

@@ -2933,6 +2933,8 @@
           pending.delete(m.id);
           if (m.error) p.reject(new Error(m.error.message.replace(/^[\w/]+: /, ''))); else p.resolve(m.result ?? null);
         } else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) {
+          // The rule's number is the LSP code: the page keys rules by name.
+          for (const d of m.params.diagnostics) [d.number, d.code] = [d.code, d.data?.rule ?? d.code];
           // Findings that come from a missing package wait for it: shown once its bundle is in.
           const unresolved = m.params.diagnostics.filter((d) => d.code === 'unresolved-file').map((d) => d.message);
           const waiting = missing(unresolved);

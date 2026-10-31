@@ -129,7 +129,7 @@ check(`${sampled.length} of ${offered.length} packages on demand resolve`, offer
     const entries = await fetchFor(second, kernel, [name, ...(manifest.projects?.[name] ?? [])]);
     const run = await second.run([...kernel.args, 'lint', '--format', 'lsp', '-f', name]);
     const found = JSON.parse(run.lines.filter((l) => l[0] === 'out').map((l) => l[1]).join('\n') || '[]')
-      .flatMap((f) => (f.diagnostics ?? []).map((d) => `${d.code}@${d.range.start.line + 1}`)).sort().join();
+      .flatMap((f) => (f.diagnostics ?? []).map((d) => `${d.data?.rule ?? d.code}@${d.range.start.line + 1}`)).sort().join();
     check(`${name} opens with its ${entries.length} bundles only`, found === built[i], `${entries.reduce((n, e) => n + e.size, 0)} bytes, ${Math.round(performance.now() - t)} ms; ${found === built[i] ? found.split(',').filter(Boolean).length + ' findings' : `got [${found}] want [${built[i]}]`}`);
   }
 }
@@ -147,7 +147,7 @@ t = performance.now();
 await lsp('initialize', { capabilities: {} }, 1);
 const published = (await lsp('textDocument/didOpen', { textDocument: { uri, languageId: 'latex', version: 1, text: source } }))
   .find((m) => m.method === 'textDocument/publishDiagnostics' && m.params.uri === uri);
-const codes = published?.params.diagnostics.map((d) => d.code) ?? [];
+const codes = published?.params.diagnostics.map((d) => d.data?.rule ?? d.code) ?? [];
 source = source.replace('\\end{document}', '\\gre\n\\end{document}');
 await edit(2, source);
 const line = source.split('\n').findIndex((l) => l === '\\gre');
@@ -165,7 +165,7 @@ check('hover shows a usage line, no raw signature', /⟨arg1⟩/.test(card) && !
 const unsaved = samples[manifest.sample].replace('\\begin{document}', '\\def\\foo{}\n\\begin{document}');
 const pub = (await edit(3, unsaved))
   .find((m) => m.method === 'textDocument/publishDiagnostics' && m.params.uri === uri);
-const lspFound = (pub?.params.diagnostics ?? []).map((d) => `${d.code}/${['', 'error', 'warning', 'info', 'info'][d.severity]}`);
+const lspFound = (pub?.params.diagnostics ?? []).map((d) => `${d.data?.rule ?? d.code}/${['', 'error', 'warning', 'info', 'info'][d.severity]}`);
 const lintRun = await engine.run(['lint', '--format', 'json', '-f', manifest.sample], { [`/work/${manifest.sample}`]: new TextEncoder().encode(unsaved) });
 const lintFound = JSON.parse(lintRun.lines.filter((l) => l[0] === 'out').map((l) => l[1]).join('\n') || '[]').map((r) => `${r.code}/${r.severity}`);
 check('unused-definition shown as by lint', lspFound.includes('unused-definition/info') && lspFound.sort().join() === lintFound.sort().join(), `lsp [${lspFound}] lint [${lintFound}]`);
@@ -189,7 +189,7 @@ const wide = (await edit(4, source.replace('\\begin{document}', `${redefined}\n\
 const rline = source.replace('\\begin{document}', `${redefined}\n\\begin{document}`).split('\n').findIndex((l) => l === redefined);
 const marks = (wide?.params.diagnostics ?? []).filter((d) => d.range.start.line === rline);
 check('finding underlines the whole call', marks.some((d) => d.range.end.line === rline && d.range.end.character - d.range.start.character === redefined.length),
-  marks.map((d) => `${d.code} ${d.range.start.character}-${d.range.end.character}`).join(', ') || 'no finding on the line');
+  marks.map((d) => `${d.data?.rule ?? d.code} ${d.range.start.character}-${d.range.end.character}`).join(', ') || 'no finding on the line');
 // a source cited in running text is a link
 const cited = Object.entries(manifest.rules).find(([, r]) => /\[tex\.web § \d+\]\(https:\/\/[^)]*tex\.web#L\d+\)/.test(r.explanation ?? ''));
 check('tex.web reference in an explanation is a link', !!cited, cited?.[0] ?? 'no explanation links one');

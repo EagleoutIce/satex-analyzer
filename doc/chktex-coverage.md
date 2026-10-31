@@ -10,7 +10,7 @@ Every satex rule names the warning it follows, and each row below links to the r
 
 Source: [ChkTeX 1.7.9 manual, § 8](https://www.nongnu.org/chktex/).
 
-"chktex enables it" is chktex's own default, from that manual: whether the warning is reported without `-w`. "satex enables it" is a different question answered from a different place — `satex.yaml`'s `lint_off` — and the two can and do disagree: a rule chktex is silent about by default may fire in satex, and a rule chktex reports by default may be off for some [profile](Configuration#profiles). See [Configuration](Configuration#profiles) for what the profiles are and what each one is for.
+"chktex enables it" is chktex's own default, from that manual: whether the warning is reported without `-w`. "satex enables it" is a different question answered from a different place, `satex.yaml`'s `lint_off`, and the two can and do disagree: a rule chktex is silent about by default may fire in satex, and a rule chktex reports by default may be off for some [profile](Configuration#profiles). See [Configuration](Configuration#profiles) for what the profiles are and what each one is for.
 
 | # | chktex reports | chktex enables it | satex rule | satex enables it |
 | --- | --- | --- | --- | --- |
@@ -31,7 +31,7 @@ Source: [ChkTeX 1.7.9 manual, § 8](https://www.nongnu.org/chktex/).
 | 15 | No match found for `'%s'`. | on | [`environment-mismatch`](Lints#environment-mismatch) | yes |
 | 16 | Mathmode still on at end of LaTeX file. | on | [`math-still-open`](Lints#math-still-open) | yes |
 | 17 | Number of one character doesn't match the number of another. | on | [`unbalanced-brackets`](Lints#unbalanced-brackets) | yes |
-| 18 | You should use either ``` `` ``` or `''` as an alternative to `"`. | on | [`wrong-quote-character`](Lints#wrong-quote-character), [`csquotes-available`](Lints#csquotes-available) | `wrong-quote-character`: yes; `csquotes-available`: yes |
+| 18 | You should use either ``` `` ``` or `''` as an alternative to `"`. | on | [`wrong-quote-character`](Lints#wrong-quote-character), [`csquotes-available`](Lints#csquotes-available) | `wrong-quote-character`: yes, `csquotes-available`: yes |
 | 19 | You should use `'` (ASCII 39) instead of `´` (ASCII 180). | off | [`wrong-quote-character`](Lints#wrong-quote-character) | yes |
 | 20 | User-specified pattern found. | on | [`user-pattern`](Lints#user-pattern) | yes |
 | 21 | This command might not be intended. | off | [`unintended-escape`](Lints#unintended-escape) | yes |
