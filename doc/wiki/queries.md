@@ -301,6 +301,10 @@ $ satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex
 assumption  clock-assumed
 ```
 
+## previews
+
+The arrow tips and fill patterns the run declared, each drawn by TeX (`latex` and `dvisvgm`) as SVG. The names are `arrow:SPEC` and `pattern:NAME`. The pictures are kept in `previews.json` in the cache directory, where completion reads them.
+
 ## produces
 
 Where a piece of text can come from, with or without expansion. `--text` is a literal, case-sensitive substring. `kind` says how: `source` (literal in a file. `tag` `comment` if commented out), `macro body` (at the definition), `value` (a register, counter or length. Dimensions in points), `occurrence` (a label, section title, …), `metadata` (`\title`, `\author`, `\date`), or `expansion` (a call the run expanded).

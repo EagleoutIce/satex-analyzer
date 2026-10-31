@@ -278,10 +278,13 @@ pub enum Query {
     Options,
     /// The text the run computes the document typesets; see [`typeset`].
     Typeset,
+    /// The arrow tips and patterns the run declared, drawn by TeX; see
+    /// [`crate::preview::sheet`].
+    Previews,
 }
 
 impl Query {
-    pub const ALL: [(&'static str, Query); 20] = [
+    pub const ALL: [(&'static str, Query); 21] = [
         ("definitions", Query::Definitions),
         ("expansions", Query::Expansions),
         ("dependencies", Query::Dependencies),
@@ -302,6 +305,7 @@ impl Query {
         ("pgfkeys", Query::Pgfkeys),
         ("options", Query::Options),
         ("typeset", Query::Typeset),
+        ("previews", Query::Previews),
     ];
 
     pub fn parse(name: &str) -> Option<Query> {
@@ -1034,6 +1038,10 @@ pub fn run(analysis: &Analysis, query: Query, filter: &Filter) -> Vec<Record> {
         // for: `cmd::query` calls `options` directly.
         Query::Options => Vec::new(),
         Query::Typeset => typeset(analysis),
+        Query::Previews => crate::preview::sheet(analysis)
+            .into_iter()
+            .map(|(name, svg)| Record::from_iter([("name".to_string(), json!(name)), ("svg".to_string(), json!(svg))]))
+            .collect(),
     };
     all.into_iter().filter(|r| filter.accepts(r)).collect()
 }

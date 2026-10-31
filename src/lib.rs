@@ -60,6 +60,7 @@ pub mod overlay;
 pub mod paths;
 pub mod pdfbox;
 pub mod plugin;
+pub mod preview;
 pub mod probe;
 pub mod progress;
 pub mod project;

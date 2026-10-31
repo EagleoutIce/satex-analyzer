@@ -690,6 +690,42 @@ fn completion_offers_what_an_optional_argument_takes() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// TikZ draws with what its keys hand pgf: `thick` a width, `densely dashed`
+/// a dash pattern, `-Stealth` a tip and `pattern=` a fill TeX draws. Each
+/// item carries its picture.
+#[test]
+fn completion_pictures_what_tikz_keys_draw() {
+    let text = COMPLETE_OPTIONS
+        .replace("\\usepackage{tikz}", "\\usepackage{tikz}\n\\usetikzlibrary{arrows.meta,patterns}")
+        .replace("\\end{tikzpicture}", "\\fill[pattern=] (0,0) circle (1);\n\\end{tikzpicture}");
+    let (mut server, uri, _, dir) = open_loaded("pictures", &text);
+    let draw = "\\draw[".len() as u32;
+    let find = |items: &[Value], label: &str| items.iter().find(|i| i["label"] == label).cloned();
+    let items = complete(&mut server, &uri, 6, draw);
+    let thick = find(&items, "thick").expect("thick offered");
+    assert!(thick["documentation"]["value"].as_str().unwrap_or("").contains("0.8pt"), "{thick}");
+    assert!(thick["data"]["preview"].as_str().is_some_and(|s| s.starts_with("<svg")), "{thick}");
+    let dashed = find(&items, "densely dashed").expect("densely dashed offered");
+    assert!(dashed["documentation"]["value"].as_str().unwrap_or("").contains("on 3pt off 2pt"), "{dashed}");
+    assert!(dashed["data"]["preview"].as_str().is_some_and(|s| s.contains("stroke-dasharray")), "{dashed}");
+    // TeX draws tips and patterns in the background: a later completion has them.
+    let mut pictured = |line: u32, character: u32, label: &str| {
+        (0..120).any(|_| {
+            let found = find(&complete(&mut server, &uri, line, character), label);
+            let found = found.unwrap_or_else(|| panic!("{label} offered"));
+            let svg = found["data"]["preview"].as_str().is_some_and(|s| s.contains("<svg"));
+            if !svg {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            svg
+        })
+    };
+    assert!(pictured(6, draw, "-Stealth"), "no picture of -Stealth");
+    assert!(pictured(7, "\\fill[pattern=".len() as u32, "north east lines"), "no picture of north east lines");
+    drop(server);
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// A completion result's items, an array or a list (LSP `CompletionList`).
 fn completion_items(result: &Value) -> Vec<Value> {
     result.as_array().or_else(|| result["items"].as_array()).cloned().unwrap_or_default()

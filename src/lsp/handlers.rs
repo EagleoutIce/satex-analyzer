@@ -20,6 +20,7 @@ use serde_json::Value as Json;
 
 use crate::lint::fix::{Pos, Sources, Text};
 use crate::machine::Analysis;
+use crate::preview::Stroke;
 use crate::query::{self, Filter, Query, Record};
 
 /// LSP position (0-based line, UTF-16 column) to satex's (1-based line,
@@ -1182,6 +1183,18 @@ fn argument_items(analysis: &Analysis, doc: &Text, arg: &Arg, after: &str, pos: 
             true => first_group().unwrap_or_default(),
             false => arg.cmd.to_string(),
         };
+        // `key=`: the tips or patterns the key hands pgf.
+        if let Some((key, _)) = arg.inside.rsplit(',').next().and_then(|o| o.split_once('=')) {
+            let options = query::options(analysis, &target);
+            let family = options.iter().find_map(|r| r.get("family")?.as_str().filter(|f| f.starts_with('/')));
+            if let Some(family) = family {
+                let path = format!("{}/{}", family.trim_end_matches('/'), key.trim());
+                let drawn = drawn_items(analysis, &path, &[Stroke::Arrows, Stroke::Pattern]);
+                if !drawn.is_empty() {
+                    return drawn;
+                }
+            }
+        }
         let mut items = option_items(analysis, &target);
         // An optional argument with a default offers it; a numeric default
         // makes it a count (`\newcommand`'s `[0]`): the counts follow.
@@ -1310,12 +1323,50 @@ fn takes_value(r: &Record) -> bool {
 }
 
 /// A key's completion: the key, then `=` with the cursor after it where it takes a value.
-fn key_item(mut it: CompletionItem, key: &str, r: &Record) -> CompletionItem {
+fn key_item(analysis: &Analysis, mut it: CompletionItem, key: &str, r: &Record) -> CompletionItem {
+    if let Some(path) = r.get("key").and_then(Json::as_str) {
+        it = pictured(analysis, it, path, None);
+    }
     if takes_value(r) {
         it.insert_text = Some(format!("{}=$1", key.replace('$', "\\$")));
         it.insert_text_format = Some(InsertTextFormat::SNIPPET);
     }
     it
+}
+
+/// `it` with the picture of setting `path` to `value` ([`crate::preview`]):
+/// as documentation for an editor, as `data.preview` for the playground.
+fn pictured(analysis: &Analysis, it: CompletionItem, path: &str, value: Option<&str>) -> CompletionItem {
+    with_preview(it, crate::preview::of_key(analysis, path, value))
+}
+
+fn with_preview(mut it: CompletionItem, preview: Option<crate::preview::Preview>) -> CompletionItem {
+    if let Some(p) = preview {
+        it.documentation = Some(lsp_types::Documentation::MarkupContent(lsp_types::MarkupContent {
+            kind: lsp_types::MarkupKind::Markdown,
+            value: p.markdown(),
+        }));
+        it.data = Some(serde_json::json!({ "preview": p.svg }));
+    }
+    it
+}
+
+/// What `path`'s code hands a setter of `kinds` that TeX draws: the arrow
+/// specs or pattern names the run declared, each with its picture.
+fn drawn_items(analysis: &Analysis, path: &str, kinds: &[Stroke]) -> Vec<CompletionItem> {
+    let sets = crate::preview::sets(analysis, path);
+    let mut out = Vec::new();
+    for &kind in kinds.iter().filter(|k| sets.contains(k)) {
+        let (names, what) = match kind {
+            Stroke::Arrows => (crate::preview::arrow_specs(analysis), "arrow tips"),
+            _ => (crate::preview::pattern_names(analysis), "pattern"),
+        };
+        out.extend(names.into_iter().map(|n| {
+            let it = item(n.clone(), CompletionItemKind::ENUM_MEMBER, Some(what.into()), 50_000);
+            with_preview(it, crate::preview::drawn(analysis, kind, &n))
+        }));
+    }
+    out
 }
 
 /// The items of a key list at the cursor, from the keys the run stored
@@ -1390,6 +1441,7 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
             out.extend(
                 children(&dir).into_iter().map(|(n, _)| item(n, CompletionItemKind::ENUM_MEMBER, Some(path.into()), 0)),
             );
+            out.extend(drawn_items(analysis, path, &[Stroke::Arrows, Stroke::Pattern]));
         }
         return out;
     }
@@ -1402,8 +1454,12 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
             .map(|(name, r)| {
                 let key = format!("{dir}{name}");
                 let rank = name.matches('/').count();
-                let mut it =
-                    key_item(item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank), &key, &r);
+                let mut it = key_item(
+                    analysis,
+                    item(key.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank),
+                    &key,
+                    &r,
+                );
                 let new_text = it.insert_text.take().unwrap_or(key);
                 it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
                 it
@@ -1420,7 +1476,7 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
             below(&format!("{}/", d.trim_end_matches('/')), KEY_DEPTH).into_iter().filter(|(n, _)| n.contains('/'))
         });
         keys.extend(deeper.map(|(name, r)| {
-            key_item(item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 99_999), &name, &r)
+            key_item(analysis, item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), 99_999), &name, &r)
         }));
         return keys;
     }
@@ -1428,7 +1484,7 @@ fn key_items(analysis: &Analysis, doc: &Text, arg: &Arg, pos: Pos) -> Vec<Comple
         .flat_map(|d| below(&format!("{}/", d.trim_end_matches('/')), KEY_DEPTH))
         .map(|(name, r)| {
             let rank = name.matches('/').count();
-            key_item(item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank), &name, &r)
+            key_item(analysis, item(name.clone(), CompletionItemKind::PROPERTY, Some(detail(&r)), rank), &name, &r)
         })
         .collect()
 }
@@ -1453,7 +1509,15 @@ fn optional_default(analysis: &Analysis, name: &str, nth: usize) -> Option<Strin
 }
 
 fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
-    query::options(analysis, name)
+    let options = query::options(analysis, name);
+    let families: BTreeSet<&str> = options.iter().filter_map(|r| r.get("family")?.as_str()).collect();
+    // A family whose unknown keys may be arrow specs takes the declared tips.
+    let tips: Vec<CompletionItem> = families
+        .iter()
+        .filter(|f| f.starts_with('/'))
+        .flat_map(|f| drawn_items(analysis, &format!("{}/.unknown", f.trim_end_matches('/')), &[Stroke::Arrows]))
+        .collect();
+    options
         .iter()
         .enumerate()
         .filter_map(|(i, r)| {
@@ -1465,8 +1529,14 @@ fn option_items(analysis: &Analysis, name: &str) -> Vec<CompletionItem> {
             let detail = [kind.map(str::to_string), default.map(|d| format!("default: {d}")), Some(family.to_string())];
             let detail: Vec<String> = detail.into_iter().flatten().filter(|d| !d.is_empty()).collect();
             let rank = r.get("rank").and_then(Json::as_u64).unwrap_or(0) as usize * 10_000 + i.min(9_999);
-            Some(key_item(item(key.to_string(), CompletionItemKind::PROPERTY, Some(detail.join("  ")), rank), key, r))
+            Some(key_item(
+                analysis,
+                item(key.to_string(), CompletionItemKind::PROPERTY, Some(detail.join("  ")), rank),
+                key,
+                r,
+            ))
         })
+        .chain(tips)
         .collect()
 }
 
