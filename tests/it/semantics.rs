@@ -1813,7 +1813,7 @@ fn a_catcode_of_a_character_in_a_narrow_interval_widens_only_that_interval() {
           \ifnum\catcode250=12 \def\stillother{1}\else\def\changed{1}\fi",
     );
     let said = diagnosed(&analysis, "unknown-catcode");
-    assert!(said.iter().any(|m| m.contains("each category it may name")), "{said:?}");
+    assert!(said.iter().any(|m| m.contains("Each category it may name")), "{said:?}");
     assert!(!said.iter().any(|m| m.contains("no category is known")), "{said:?}");
     assert_eq!(body(&analysis, "letter"), "11", "a is still a letter");
     // The real state past the `\fi`, not just what the run said about it:
@@ -2461,7 +2461,7 @@ fn an_halign_of_two_rows_has_its_exact_height() {
 /// so the text is one of those two, never unknown text.
 #[test]
 fn meaning_of_a_built_name_is_a_family_member_or_relax() {
-    let source = r"\def\zq1#1#2{}
+    let source = r"\expandafter\def\csname zq1\endcsname#1#2{}
         \edef\h{\number\pdfuniformdeviate 20}
         \edef\out{\expandafter\meaning\csname zq\h\endcsname}";
     let text = out(source);
