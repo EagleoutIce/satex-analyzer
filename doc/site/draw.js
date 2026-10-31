@@ -13,8 +13,8 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   // compare alike. Two outlines are as far apart as the mean distance of each one's points to the
   // other (chamfer distance), plus how much their aspects and their numbers of dots differ. Strokes
   // drawn apart are no dots: a `⇒` drawn in three strokes is one shape, `÷` has two dots.
-  const DRAW = { side: 32, glyph: 96, pen: 9, bitmap: 0.6, outline: 1, stroke: 1.5, either: 0, grid: 8, bins: 4, orient: 24, shortlist: 1500, refine: 5000, off: ['emoji', 'twemojis'], workers: 4, cut: 1.8, pixel: 1.5, known: 0.2, plain: 0.1, call: 0.2, shown: 14, foreign: 1.12, variant: 0.25, icon: 0.1, aspect: 0.6, dots: 0.8, dot: 4, batch: 300, again: 120, more: 30 };
-  const $ = (id) => root.querySelector(`#${id}`), escape = esc;
+  const DRAW = { side: 32, glyph: 96, pen: 9, bitmap: 0.6, outline: 1, stroke: 1.5, either: 0, grid: 8, bins: 4, orient: 24, shortlist: 1500, refine: 5000, off: ['emoji', 'twemojis'], workers: 4, cut: 2.6, least: 12, pixel: 1.5, known: 0.2, plain: 0.1, call: 0.2, shown: 14, foreign: 1.12, variant: 0.25, icon: 0.1, aspect: 0.6, dots: 0.8, dot: 4, batch: 300, again: 120, more: 30 };
+  const $ = (id) => root.querySelector(`#${id}`);
   const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
   let drawTable = null, drawn = false;
   const drawFilter = { from: 'all', kind: '', mode: '', shape: '' };
@@ -150,7 +150,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     /** How far apart two shapes' features are: 0 for the same outline. */
     function apart([pa, da, aa, ka, sa, ea, ha], [pb, db, ab, kb, sb, eb, hb]) {
       let ab_ = 0, ba = 0, sab = 0, sba = 0;
-          for (const p of pa) ab_ += db[p];
+      for (const p of pa) ab_ += db[p];
       for (const p of pb) ba += da[p];
       for (const p of sa) sab += eb[p];
       for (const p of sb) sba += ea[p];
@@ -258,7 +258,8 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     drawTable ??= fetch(`${base}${symbols}`).then((r) => r.json()).then(async ({ fonts, rows, glyphs, weight }) => {
       // symbols no font sets are bitmaps (w, h, then 1 bit per pixel), one after the other in a gzipped file: the last "font"
       const bitmaps = [], bytes = new Uint8Array(await new Response((await fetch(`${base}${glyphs}`)).body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
-      for (let at = 0; at < bytes.length; at += 2 + Math.ceil(bytes[at] * bytes[at + 1] / 8)) bitmaps.push({ w: bytes[at], h: bytes[at + 1], bits: bytes.subarray(at + 2, at + 2 + Math.ceil(bytes[at] * bytes[at + 1] / 8)) });
+      const end = (at) => at + 2 + Math.ceil(bytes[at] * bytes[at + 1] / 8);
+      for (let at = 0; at < bytes.length; at = end(at)) bitmaps.push({ w: bytes[at], h: bytes[at + 1], bits: bytes.subarray(at + 2, end(at)) });
       return {
         weight, bitmaps,
         fonts: [...fonts.map((url, i) => ({ family: `satex-sym-${i}`, url, ready: null })), { bitmaps: true, ready: null }],
@@ -286,18 +287,16 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   }
   /** A row's glyph: its character in its font, or its bitmap as the mask of a box in the text colour. */
   const glyph = (s, table) => {
-    if (!s.bitmap) return `<span class="draw-glyph" style="font-family: '${table.fonts[s.font].family}'">${escape(s.ch)}</span>`;
+    if (!s.bitmap) return `<span class="draw-glyph" style="font-family: '${table.fonts[s.font].family}'">${esc(s.ch)}</span>`;
     s.url ??= bitmapCanvas(s.bitmap).toDataURL();
-    return `<span class="draw-glyph draw-bmp" style="--bmp: url(${s.url})" role="img" aria-label="${escape(s.name)}"></span>`;
+    return `<span class="draw-glyph draw-bmp" style="--bmp: url(${s.url})" role="img" aria-label="${esc(s.name)}"></span>`;
   };
   /** Plain symbols over the styled copies of alphabets (math alphanumerics) and over icons. */
-  const prior = (s) => (s.code >= 0x1d400 && s.code < 0x1d800 ? DRAW.variant : s.cls === 'icon' ? DRAW.icon : s.bitmap ? DRAW.plain + (s.name.includes('{') ? DRAW.call : 0) : 0);
-  const drawKind = (s) => (s.cls === 'icon' ? 'symbol' : s.cls === 'alpha' ? 'letter' : 'symbol');
+  // a math alphabet's variant (`\mbfsansalpha`) ranks after the letter itself (`\alpha`, set from the same block)
+  const prior = (s) => (s.code >= 0x1d400 && s.code < 0x1d800 && /^\\m(?:it|up|bf|sans|tt|scr|frak|Bbb)/.test(s.name) ? DRAW.variant : s.cls === 'icon' ? DRAW.icon : s.bitmap ? DRAW.plain + (s.name.includes('{') ? DRAW.call : 0) : 0);
+  const drawKind = (s) => (s.cls === 'alpha' ? 'letter' : 'symbol');
   const drawMode = (s) => (s.cls === 'icon' || s.cls === 'text' || s.cls === 'other' ? 'text' : 'math');
-  /** How well the search `q` names `s`: every word found in its command, glyph name or description; a
-   * command starting with it first, then a word starting with it, then anywhere; null when not. */
-  /** How well the search words name a symbol, lower better, or null: the name itself first, then a word
-   * the name or description starts, then one inside a word, then one a letter off (a typo). */
+  /** Whether `a` and `b` are at most one edit apart. */
   const near = (a, b) => {
     if (Math.abs(a.length - b.length) > 1) return false;
     let i = 0, j = 0, edits = 0;
@@ -308,6 +307,8 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     }
     return edits + (a.length - i) + (b.length - j) <= 1;
   };
+  /** How well the search words name a symbol, lower better, or null: the name itself first, then a word
+   * the name or description starts, then one inside a word, then one a letter off (a typo). */
   const named = (s, words) => {
     const bare = s.name.replace(/^\\/, '').toLowerCase();
     if (words.length === 1 && bare === words[0]) return -2;
@@ -322,8 +323,8 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   };
   /** Whether every word of the search names the package: inside its name, or (from four letters) spread over it. */
   const packageNamed = (pkg, words) => {
-    const p = pkg.toLowerCase().replace(/\.cls$/, '');
-    return words.every((w) => p.includes(w) || (w.length > 3 && (() => { let i = 0; for (const c of p) if (c === w[i]) i++; return i === w.length; })()));
+    const p = pkg.toLowerCase().replace(/\.cls$/, ''), spread = (w) => { let i = 0; for (const c of p) if (c === w[i]) i++; return i === w.length; };
+    return words.every((w) => p.includes(w) || (w.length > 3 && spread(w)));
   };
   /** The packages' list: each with its count of symbols, a box to leave it out; all or none at once. */
   function packagesShow(table) {
@@ -332,7 +333,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     const list = [...counts].sort((a, b) => a[0].localeCompare(b[0], 'en', { sensitivity: 'base' }));
     $('draw-pkgs').textContent = `packages ${list.filter(([p]) => used(p)).length}/${list.length}`;
     $('draw-pkg-list').innerHTML = `<div class="draw-pkg-all"><button type="button" class="ghost small" data-all="1">all</button><button type="button" class="ghost small" data-all="0">none</button></div>` +
-      list.map(([p, n]) => `<label><input type="checkbox" data-pkg="${escape(p)}"${used(p) ? ' checked' : ''}> ${escape(p)} <b>${n.toLocaleString('en')}</b></label>`).join('');
+      list.map(([p, n]) => `<label><input type="checkbox" data-pkg="${esc(p)}"${used(p) ? ' checked' : ''}> ${esc(p)} <b>${n.toLocaleString('en')}</b></label>`).join('');
   }
   // the table's size, matches and recognition time, beside the pad's buttons
   let meta = ['', ''], took = '';
@@ -356,7 +357,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     if (fresh) { started = performance.now(); limit = DRAW.more; }
     const [table, names] = await Promise.all([symbolsLoad(), inForce()]);
     if (mine !== matching) return;
-    if (!table.rows.length) { list.innerHTML = `<li class="muted">The symbols did not load${table.error ? `: ${escape(table.error)}` : ''}. Reload the page to try again.</li>`; return; }
+    if (!table.rows.length) { list.innerHTML = `<li class="muted">The symbols did not load${table.error ? `: ${esc(table.error)}` : ''}. Reload the page to try again.</li>`; return; }
     // "this document": the names in force in its run, nothing a package it does not load defines
     const source = new Map(names), force = new Set(source.keys());
     const ranked = new Map();
@@ -365,9 +366,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       if (!used(s.pkg)) return false;
       if ((drawFilter.kind && drawKind(s) !== drawFilter.kind) || (drawFilter.mode && drawMode(s) !== drawFilter.mode)) return false;
       if (drawFilter.shape && (drawFilter.shape === 'pixel') !== !!s.bitmap) return false;
-      // nothing drawn or searched: the most relied-on packages' symbols first, to browse
-      // within a rank the more relied-on package first; the plain characters last when browsing
-      // a picture ranks after a font's glyph when browsing: fonts draw crisp, and a picture may be a sample
+      // within a rank the more relied-on package first; browsing puts plain characters and pictures last
       const known = table.weight?.[s.pkg] ?? 0, plain = (s.code > 32 && s.code < 128 ? 1 : 0) + (s.bitmap ? 0.6 : 0);
       const hit = words.length ? named(s, words) ?? (packageNamed(s.pkg, words) ? 3 : null) : null;
       const r = words.length ? (hit == null ? null : hit - known / 2) : f ? 0 : 1 - known + plain;
@@ -407,7 +406,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       if (!result || (!result.idx.length && result.pending)) return;
       // only what looks enough like the best match: within DRAW.cut of its distance
       const bound = result.score.length ? result.score[0] * DRAW.cut + 0.05 : Infinity;
-      best = Array.from(result.idx, (i, k) => ({ s: table.rows[i], i, head: result.head[k], score: result.score[k] })).filter((b) => b.score <= bound);
+      best = Array.from(result.idx, (i, k) => ({ s: table.rows[i], i, head: result.head[k], score: result.score[k] })).filter((b, k) => k < DRAW.least || b.score <= bound);
     } else best = wanted.map((s) => ({ s, i: s.i, head: s.i, score: ranked.get(s) + s.name.length / 100 })).sort((a, b) => a.score - b.score);
     // rows of one picture follow its first, and so do a family's later glyphs (`\varpropto`, `\leftpropto` after `\propto`)
     const twins = new Map(), family = new Map();
@@ -421,32 +420,30 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     for (const { s, i, head } of best) if (head !== i) twins.set(head, [...twins.get(head) ?? [], s]);
     const from = (x) => source.get(x.name) ?? x.pkg;
     const off = (x) => (doc && !force.has(x.name) ? ' draw-off' : '');
-    const chip = (x) => force.has(x.name) ? `<code class="cs-ref" data-cs="${escape(x.name)}" tabindex="0">${escape(x.name)}</code>`
-      : `<code class="draw-name${off(x)}" data-sym="${x.i}" tabindex="0">${escape(x.name)}</code>`;
+    const chip = (x) => force.has(x.name) ? `<code class="cs-ref" data-cs="${esc(x.name)}" tabindex="0">${esc(x.name)}</code>`
+      : `<code class="draw-name${off(x)}" data-sym="${x.i}" tabindex="0">${esc(x.name)}</code>`;
     const loaded = (pkg) => [...source.values()].includes(pkg) || pkg === 'kernel';
     // a name's packages: the first three, then how many more
-    const pkgs = (list) => { const p = [...new Set(list.map(from))]; return escape(p.slice(0, 3).join(', ')) + (p.length > 3 ? ` +${p.length - 3}` : ''); };
-    const seen = new Set(), rows = [];
+    const pkgs = (list) => { const p = [...new Set(list.map(from))]; return esc(p.slice(0, 3).join(', ')) + (p.length > 3 ? ` +${p.length - 3}` : ''); };
+    const seen = new Set(), rows = [], icon = ICON[label] ?? ICON.Insert;
     let glyphs = 0;
     for (const { s, i, head } of best) {
       if (head !== i || seen.has(s.ch)) continue;
       seen.add(s.ch);
       if (glyphs++ >= limit) continue;
-      // one row per glyph however many packages set it: its first command, in force first, with every package
-      // that defines that name; other names for the glyph on request
-      // the name a document has, else the one of the most relied-on package, leads
+      // one row per glyph with every package that sets it, led by the name in force, else the most relied-on one; other names on request
       const chs = new Set([s, ...twins.get(i) ?? []].map((x) => x.ch)), all = wanted.filter((x) => chs.has(x.ch))
         .sort((a, b) => force.has(b.name) - force.has(a.name) || (table.weight?.[b.pkg] ?? 0) - (table.weight?.[a.pkg] ?? 0) || a.name.length - b.name.length);
       const byName = [...Map.groupBy(all, (x) => x.name).values()];
       const [[main, ...same], ...others] = byName, have = force.has(main.name), pkg = from(main);
       const use = `\\usepackage{${pkg.replace(/\.cls$/, '')}}`;
-      const act = (title, icon, extra = '', x = main, xp = pkg) => `<button type="button" class="pill draw-put" data-name="${escape(x.name)}" data-pkg="${escape(xp)}"${extra} title="${escape(title)}" aria-label="${escape(title)}">${icon}</button>`;
+      const act = (title, icon, extra = '', x = main, xp = pkg) => `<button type="button" class="pill draw-put" data-name="${esc(x.name)}" data-pkg="${esc(xp)}"${extra} title="${esc(title)}" aria-label="${esc(title)}">${icon}</button>`;
       rows.push(`<li class="draw-row">${glyph(s, table)}` +
-        `<span class="draw-what">${chip(main)}${s.bitmap ? '<span class="draw-px" title="a picture from the symbol list: no font sets it">px</span>' : ''}<span class="lib-pkg${doc && !have ? ' draw-off' : ''}" title="${doc && !have ? `not loaded: ${escape(use)}` : escape([main, ...same].map(from).join(', '))}">${pkgs([main, ...same])}</span>` +
-        (others.length ? `<button type="button" class="draw-more-pill" aria-expanded="false" title="${escape(others.map((xs) => `${xs[0].name} (${[...new Set(xs.map(from))].join(', ')})`).join('\n'))}">+${plural(others.length, 'alias')}</button>` : '') + '</span>' +
-        `<span class="draw-acts">${act(`${label} ${main.name}`, ICON[label] ?? ICON.Insert)}` +
-        (usepackage && !have && !loaded(pkg) ? act(`${label} ${main.name} with ${use}`, ICON.package, ` data-use="${escape(use)}"`) : '') + '</span>' +
-        (others.length ? `<ul class="draw-more" hidden>${others.map((xs) => `<li>${chip(xs[0])} <span class="lib-pkg${off(xs[0])}">${pkgs(xs)}${doc && !force.has(xs[0].name) ? ', not loaded' : ''}</span><span class="draw-acts">${act(`${label} ${xs[0].name}`, ICON[label] ?? ICON.Insert, '', xs[0], from(xs[0]))}</span></li>`).join('')}</ul>` : '') + '</li>');
+        `<span class="draw-what">${chip(main)}${s.bitmap ? '<span class="draw-px" title="a picture from the symbol list: no font sets it">px</span>' : ''}<span class="lib-pkg${doc && !have ? ' draw-off' : ''}" title="${doc && !have ? `not loaded: ${esc(use)}` : esc([main, ...same].map(from).join(', '))}">${pkgs([main, ...same])}</span>` +
+        (others.length ? `<button type="button" class="draw-more-pill" aria-expanded="false" title="${esc(others.map((xs) => `${xs[0].name} (${[...new Set(xs.map(from))].join(', ')})`).join('\n'))}">+${plural(others.length, 'alias')}</button>` : '') + '</span>' +
+        `<span class="draw-acts">${act(`${label} ${main.name}`, icon)}` +
+        (usepackage && !have && !loaded(pkg) ? act(`${label} ${main.name} with ${use}`, ICON.package, ` data-use="${esc(use)}"`) : '') + '</span>' +
+        (others.length ? `<ul class="draw-more" hidden>${others.map((xs) => `<li>${chip(xs[0])} <span class="lib-pkg${off(xs[0])}">${pkgs(xs)}${doc && !force.has(xs[0].name) ? ', not loaded' : ''}</span><span class="draw-acts">${act(`${label} ${xs[0].name}`, icon, '', xs[0], from(xs[0]))}</span></li>`).join('')}</ul>` : '') + '</li>');
     }
     if (glyphs > limit) rows.push(`<li class="draw-row-more"><button type="button" class="ghost small" data-more="1">show ${Math.min(DRAW.more, glyphs - limit)} more${words.length ? ` of ${glyphs.toLocaleString('en')}` : ''}</button></li>`);
     // the glyphs shown appear once their fonts are in, measured or not
