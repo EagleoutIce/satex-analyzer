@@ -441,7 +441,8 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
     let mut rules = text.rules.iter().peekable();
-    let mut aligns = text.align.iter().peekable();
+    let marks: Vec<String> = text.align.iter().map(|(_, mark)| mark.name()).collect();
+    let mut aligns = text.align.iter().zip(&marks).peekable();
     let mut out = Vec::new();
     let (mut line, mut first, mut choice) = (String::new(), None, None::<(crate::env::NodeId, [String; 2])>);
     let mut causes: Vec<Cause> = Vec::new();
@@ -533,9 +534,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         if !piece.trim().is_empty() {
             first.get_or_insert(site);
         }
-        while let Some(&(_, mark)) = aligns.next_if(|a| a.0 as usize <= i) {
+        while let Some((_, mark)) = aligns.next_if(|a| a.0.0 as usize <= i) {
             line.push(KEY);
-            keys.push_back((ALIGN, mark.name()));
+            keys.push_back((ALIGN, mark.as_str()));
         }
         while let Some(&(_, rule)) = rules.next_if(|r| r.0 as usize <= i) {
             line.push_str(&note(rule.glyph()));
@@ -568,9 +569,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     for (_, label) in boxes {
         line.push_str(&note(&format!("▢ {label}")));
     }
-    for &(_, mark) in aligns {
+    for (_, mark) in aligns {
         line.push(KEY);
-        keys.push_back((ALIGN, mark.name()));
+        keys.push_back((ALIGN, mark.as_str()));
     }
     for &(_, rule) in rules {
         line.push_str(&note(rule.glyph()));
@@ -875,7 +876,13 @@ fn paragraph(
     causes: Vec<Cause>,
     keys: &mut std::collections::VecDeque<(&str, &str)>,
 ) -> Record {
-    let marked = tidy(marked);
+    // marks (keys, an alignment's or a box's end) at the ends hold no space before or after them
+    let ends = |chars: &mut dyn Iterator<Item = char>| {
+        chars.take_while(|&c| c == KEY || c.is_whitespace()).filter(|&c| c == KEY).count()
+    };
+    let core = marked.trim_matches(|c: char| c == KEY || c.is_whitespace());
+    let (head, tail) = (ends(&mut marked.chars()), if core.is_empty() { 0 } else { ends(&mut marked.chars().rev()) });
+    let marked = tidy(&format!("{}{core}{}", KEY.to_string().repeat(head), KEY.to_string().repeat(tail)));
     let (mut placed, mut fonts, mut aligned, mut ligatures, mut offset) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
     for c in unmarked(&marked).chars() {

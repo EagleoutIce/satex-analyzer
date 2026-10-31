@@ -449,6 +449,7 @@ fn rules_are_typeset_between_the_text() {
         .iter()
         .flat_map(|r| r["align"].as_array().into_iter().flatten())
         .filter_map(|m| m["mark"].as_str())
+        .filter(|m| matches!(*m, "begin" | "cell" | "row" | "end"))
         .collect();
     assert_eq!(marks, ["begin", "cell", "row", "end"]);
 }
@@ -677,4 +678,33 @@ fn a_use_after_a_join_names_every_definition_it_read() {
         rows[0]["one_of"].as_array().into_iter().flatten().filter_map(|a| a["body"].as_str()).collect();
     bodies.sort_unstable();
     assert_eq!(bodies, ["Ax", "By"], "{rows:?}");
+}
+
+/// Capability: typesetting feedback. A table of contents line is its
+/// number in a box of the width `\numberline` gives it, the title, leaders
+/// and the page number in a box of its own: the marks a view sets it by.
+#[test]
+fn a_contents_line_keeps_its_boxes_and_leaders() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-contents");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("c.tex"),
+        "\\documentclass{article}\n\\begin{document}\n\\makeatletter\n\\@dottedtocline{1}{1.5em}{2.3em}{\\numberline{1}Intro}{1}\n\\makeatother\n\\end{document}\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "c.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let marks: Vec<&str> = rows
+        .iter()
+        .flat_map(|r| r["align"].as_array().into_iter().flatten())
+        .filter_map(|m| m["mark"].as_str())
+        .collect();
+    assert!(
+        marks.iter().any(|m| m.starts_with("box ")) && marks.contains(&"boxend") && marks.contains(&"leaders"),
+        "{marks:?}"
+    );
 }

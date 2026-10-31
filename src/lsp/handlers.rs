@@ -137,6 +137,9 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
     if let Some(markdown) = directive_hover(analysis, path, pos) {
         return Some(markdown_hover(markdown));
     }
+    if let Some(markdown) = magic_hover(analysis, doc, pos) {
+        return Some(markdown_hover(markdown));
+    }
     if let Some(markdown) = cite_hover(analysis, doc.line(pos.line), pos.col) {
         return Some(markdown_hover(markdown));
     }
@@ -147,6 +150,27 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
         load_hover(analysis, path, pos, &name).or_else(|| bib_style_hover(analysis, path, pos, &name))?
     };
     Some(markdown_hover(markdown))
+}
+
+/// What satex did with the magic comment (`% !TeX program = …`, `% arara: …`)
+/// on the cursor's line: the engine it ran, the root it read the file through.
+fn magic_hover(analysis: &Analysis, doc: &Text, pos: Pos) -> Option<String> {
+    let magic = crate::plugin::magic::scan(doc.line(pos.line)).into_iter().next()?;
+    let what = match magic.key.to_ascii_lowercase().as_str() {
+        "tex program" => format!(
+            "satex ran this document with the {:?} engine{}.",
+            analysis.plugins.engine,
+            if analysis.plugins.program.is_empty() {
+                String::new()
+            } else {
+                format!(" (`{}`)", analysis.plugins.program)
+            }
+        ),
+        "tex root" => format!("satex reads this file through its root, `{}`.", magic.value),
+        "arara" => "satex's build reads this arara directive as one of the build's steps.".into(),
+        _ => "satex reads it and does not act on it.".into(),
+    };
+    Some(format!("**Magic comment** `{}` = `{}`\n\n{what}", magic.key, magic.value))
 }
 
 /// The outcome of the `%\satex@` directive the cursor is on, from its

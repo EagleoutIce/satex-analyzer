@@ -384,27 +384,37 @@ pub struct Text {
     /// Rules set between characters (tex.web § 463): the number of
     /// characters set before each, and its kind.
     pub rules: Vec<(u32, Rule)>,
-    /// An alignment's (`\halign`, a `tabular`'s) parts between characters:
-    /// the number of characters set before each.
+    /// An alignment's (`\halign`, a `tabular`'s) parts, an `\hbox to` set
+    /// in the line and leaders between characters: the number of characters
+    /// set before each.
     pub align: Vec<(u32, Align)>,
 }
 
-/// Where an alignment begins, ends a cell (`&`) or a row (`\cr`), and ends.
+/// Where an alignment begins, ends a cell (`&`) or a row (`\cr`), and
+/// ends; where a box of a set width begins in the line and ends (a table of
+/// contents' `\numberline`, its page number), and where leaders fill it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Align {
     Begin,
     Cell,
     Row,
     End,
+    /// An `\hbox to` this width (sp).
+    BoxTo(crate::value::Scaled),
+    BoxEnd,
+    Leaders,
 }
 
 impl Align {
-    pub fn name(self) -> &'static str {
+    pub fn name(self) -> String {
         match self {
-            Align::Begin => "begin",
-            Align::Cell => "cell",
-            Align::Row => "row",
-            Align::End => "end",
+            Align::Begin => "begin".into(),
+            Align::Cell => "cell".into(),
+            Align::Row => "row".into(),
+            Align::End => "end".into(),
+            Align::BoxTo(width) => format!("box {:.2}", width as f64 / 65536.0),
+            Align::BoxEnd => "boxend".into(),
+            Align::Leaders => "leaders".into(),
         }
     }
 }

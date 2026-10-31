@@ -1913,6 +1913,13 @@ impl Machine<'_> {
             }
             crate::observe::align(self, crate::facts::Align::End);
         }
+        if nest.code == Some(group::HBOX)
+            && nest.placed
+            && matches!(nest.to, Packing::To(width) if width.known().is_some())
+            && nest.shift == Dim::exact(0)
+        {
+            crate::observe::align(self, crate::facts::Align::BoxEnd);
+        }
         if !nest.level {
             self.mode = self.mode.without(Modes::ANY_MATH).union(nest.mode.and(Modes::ANY_MATH));
             // The group's list, boxed (tex.web §§ 720, 755): its last
@@ -2339,7 +2346,12 @@ impl Machine<'_> {
                 let shift = if back { Dim::exact(0).reduced_by(amount) } else { amount };
                 self.scan_box(BoxContext::Shift(shift), span);
             }
-            ModeCmd::Leaders => self.scan_box(BoxContext::Leaders, span),
+            ModeCmd::Leaders => {
+                if self.mode.meets(Modes::ANY_HORIZONTAL) {
+                    crate::observe::align(self, crate::facts::Align::Leaders);
+                }
+                self.scan_box(BoxContext::Leaders, span)
+            }
             ModeCmd::ShipOut => self.scan_box(BoxContext::Ship, span),
             // tex.web § 1099 `begin_insert_or_adjust`.
             ModeCmd::Insert { vadjust } => {
@@ -3494,6 +3506,14 @@ impl Machine<'_> {
         }
         let mut nest = self.env.nest().expect("the box's group is open");
         nest.to = to;
+        // a box of a set width in the line: what a view sets as that wide (a `\numberline`)
+        if matches!(context, BoxContext::Direct)
+            && code == Some(group::HBOX)
+            && let Packing::To(width) = to
+            && let Some(width) = width.known()
+        {
+            crate::observe::align(self, crate::facts::Align::BoxTo(width));
+        }
         match context {
             BoxContext::Set { register, global, within } => nest.target = Some((register, global, within)),
             BoxContext::Direct => nest.placed = true,
