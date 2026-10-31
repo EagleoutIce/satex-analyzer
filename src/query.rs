@@ -815,7 +815,8 @@ fn encoding_slots(analysis: &Analysis) -> HashMap<String, HashMap<u32, char>> {
     let read = |name: &str| crate::distribution::tex_file(roots, name).and_then(|p| std::fs::read_to_string(p).ok());
     let mut out = HashMap::default();
     let encodings: std::collections::BTreeSet<&str> =
-        analysis.font_states.iter().map(|s| &*s.encoding).filter(|e| !e.is_empty() && *e != "TU").collect();
+        // OT1 has no one layout: cmtt sets `\` and braces where cmr sets quotes and dashes (fntguide § 4.2)
+        analysis.font_states.iter().map(|s| &*s.encoding).filter(|e| !e.is_empty() && !matches!(*e, "TU" | "OT1")).collect();
     if encodings.is_empty() {
         return out;
     }
