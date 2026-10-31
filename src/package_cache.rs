@@ -2096,7 +2096,7 @@ impl Machine<'_> {
                         .slots
                         .get(d.name.0 as usize)
                         .and_then(|b| b.as_ref())
-                        .is_some_and(|b| b.meaning != Meaning::Undefined)
+                        .is_some_and(|b| b.meaning.latex_defined())
                 } else {
                     d.redefines
                 },
@@ -2520,11 +2520,11 @@ impl Machine<'_> {
 
     /// Whether defining `name` redefines it, decided by initial state (no read; replay re-decides).
     pub(crate) fn redefines(&self, name: Sym) -> (bool, bool) {
+        let defined = self.env.slot(name).is_some_and(|b| b.meaning.latex_defined());
         if self.package_capture.is_some() && !self.env.meaning_written(name) {
-            let defined = self.env.slot(name).is_some_and(|b| b.meaning != Meaning::Undefined);
             return (defined, true);
         }
-        (self.env.is_defined(name), false)
+        (self.env.is_defined(name) && defined, false)
     }
 
     /// Texts copied into `meaning`, where old text goes (so replay can re-make the definition).

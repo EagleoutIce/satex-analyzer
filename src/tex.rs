@@ -2018,6 +2018,10 @@ impl Meaning {
             _ => None,
         }
     }
+    /// Defined as `\@ifundefined` sees it: a `\relax` name, as `\csname` leaves, is not.
+    pub fn latex_defined(&self) -> bool {
+        !matches!(self, Meaning::Undefined | Meaning::Primitive(Primitive::Relax))
+    }
 }
 
 /// A control sequence's name as written (`\foo`, `foo`) without its escape:

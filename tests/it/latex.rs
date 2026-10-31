@@ -3827,6 +3827,9 @@ fn a_new_declaration_that_redefines_a_command_is_reported() {
     let broken = "\\documentclass{article}\n\\newif\n\\begin{document}\nx\n\\end{document}\n";
     assert_eq!(named(broken), ["begin"]);
     assert!(named("\\documentclass{article}\n\\newif\\iffancy\n\\begin{document}\nx\n\\end{document}\n").is_empty());
+    // `\csname` leaves `\relax`, which `\@ifundefined` reads as undefined
+    let by_name = "\\documentclass{article}\n\\expandafter\\newcommand\\csname note\\endcsname{x}\n\\begin{document}\nx\n\\end{document}\n";
+    assert!(named(by_name).is_empty());
 }
 
 /// A heading written to the table of contents is a sectioning unit, a part
