@@ -9,7 +9,7 @@ files` says the samples and the offered packages read, and its caches from `sate
     build.py --satex target/release/satex --wasm target/wasm32-unknown-emscripten/release --out site-out
 """
 
-import argparse, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, threading, time, tomllib
+import argparse, math, unicodedata, base64, concurrent.futures, datetime, gzip, hashlib, html, inspect, json, os, pickle, re, shutil, signal, subprocess, sys, threading, time, tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,11 +37,14 @@ def available_memory():
 JOBS = int(os.environ.get("SATEX_SITE_JOBS") or max(1, min(os.cpu_count() or 2, available_memory() // 2**31)))
 
 
-def parallel(label, jobs, f):
+BAR = threading.Lock()  # the one running step that draws the terminal's bar; steps beside it log lines
+
+
+def parallel(label, jobs, f, workers=None):
     """`f` of each job, in order, JOBS at a time. A terminal gets a bar naming the running jobs;
     a log gets a line per tenth."""
     jobs, out, done, running, lock = list(jobs), {}, 0, {}, threading.Lock()
-    tty, start = sys.stderr.isatty(), time.monotonic()
+    tty, start = sys.stderr.isatty() and BAR.acquire(blocking=False), time.monotonic()
     name = lambda job: " ".join(dict.fromkeys(getattr(x, "name", x) for x in job if isinstance(x, (str, Path)))) \
         if isinstance(job, tuple) else str(job)
 
@@ -56,7 +59,7 @@ def parallel(label, jobs, f):
             print(f"\r\x1b[K{line[:shutil.get_terminal_size().columns - 1]}", end="\n" if done == len(jobs) else "",
                   file=sys.stderr, flush=True)
         elif done == len(jobs) or done % max(1, len(jobs) // 10) == 0:
-            print(line, file=sys.stderr, flush=True)
+            print(("\r\x1b[K" if sys.stderr.isatty() else "") + line, file=sys.stderr, flush=True)
 
     def tracked(i):
         with lock:
@@ -79,7 +82,7 @@ def parallel(label, jobs, f):
 
     if tty:
         threading.Thread(target=tick, daemon=True).start()
-    with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
+    with concurrent.futures.ThreadPoolExecutor(workers or JOBS) as pool:
         futures = {pool.submit(tracked, i): i for i in range(len(jobs))}
         for finished in concurrent.futures.as_completed(futures):
             out[futures[finished]] = finished.result()
@@ -87,6 +90,8 @@ def parallel(label, jobs, f):
                 done += 1
                 show()
     stop.set()
+    if tty:
+        BAR.release()
     return [out[i] for i in range(len(jobs))]
 # What `satex query files` listed, by what it depends on: the document, the
 # flags, the project config and the installation (its ls-R files). A listing
@@ -527,15 +532,10 @@ def previews(satex, work, tree):
     return json.dumps({r["name"]: r["svg"] for r in rows if r["svg"]}).encode()
 
 
-def manuals(satex, work, tables, packages):
-    """What the bundled packages' manuals say about their commands (`satex query`'s `docs`), mined here
-    because the bundle has no documented sources: a `.satex-docs` file in each package's documentation
-    directory, in the bundle (a kernel's or a package's) that holds the file it was mined for."""
-    dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
-    # the installation itself, not the bundle's tree: its packages' documented sources are beside them
+def mine(satex, work, names):
+    """The manuals' records for the packages `names`, mined from the installation (a `satex query`'s `docs` each)."""
     probes, flags = work / "manuals", KERNELS[0][2]
     probes.mkdir(exist_ok=True)
-    names = sorted({name for _, name, _, _ in packages if not name.endswith(".cls")})
     env = dict(os.environ, SATEX_CACHE=str(work / "cache-install"))
 
     def mined(name):
@@ -547,10 +547,23 @@ def manuals(satex, work, tables, packages):
             return json.loads(done.stdout)[0]["records"]
         except (json.JSONDecodeError, IndexError, KeyError):
             return []
-    records = memo(work, "manuals", [BINARY, names], lambda: [r for rs in parallel("[4/4] package manuals", names, mined) for r in rs])
+    # beside the bundle's own steps: half the workers each
+    return memo(work, "manuals", [BINARY, names], lambda: [r for rs in parallel("[4/4] package manuals", names, mined, max(1, JOBS // 2)) for r in rs])
+
+
+def manuals(satex, work, tables, packages, offered, records):
+    """What the bundled packages' manuals say about their commands (`satex query`'s `docs`), mined here
+    because the bundle has no documented sources: a `.satex-docs` file in each package's documentation
+    directory, in the bundle (a kernel's or a package's) that holds the file it was mined for. `records`
+    were mined for the `offered` packages, the rest are mined now. Returns the stems of the packages with a manual."""
+    dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
+    # the installation itself, not the bundle's tree: its packages' documented sources are beside them
+    rest = sorted({name for _, name, _, _ in packages if not name.endswith(".cls")} - set(offered))
+    records = records + (mine(satex, work, rest) if rest else [])
     by_file = {}
     for r in records:
         by_file.setdefault(str(Path(r.pop("package_file")).resolve()), {}).setdefault(r.pop("dir"), {})[r["name"]] = r
+    documented = set()
     for files in [*tables, *(f for _, _, f, _ in packages)]:
         for held in [p for p in files if p.startswith("/texmf.bundle/") and p.endswith((".sty", ".cls"))]:
             native = str(dist / held.removeprefix("/texmf.bundle/"))
@@ -558,6 +571,8 @@ def manuals(satex, work, tables, packages):
                 if Path(d).resolve().is_relative_to(dist):
                     target = f"/texmf.bundle/{Path(d).resolve().relative_to(dist).as_posix()}/{Path(native).stem}.satex-docs"
                     files[target] = json.dumps(list(rows.values()), ensure_ascii=False).encode()
+                    documented.add(Path(native).stem)
+    return documented
 
 
 def package_names():
@@ -774,12 +789,16 @@ def examples(satex, work, project):
 
 def playground(satex, wasm, work, out):
     offered = package_names()
+    # mining the manuals needs no bundle: it runs beside the caches and the rest
+    side = concurrent.futures.ThreadPoolExecutor(1)
+    mining = side.submit(mine, satex, work, sorted(n for n in offered if not n.endswith(".cls")))
     sources_ = [(d.name, d.read_bytes()) for d in sources()] + [(c, (d.parent / c).read_bytes()) for d in sources() for c in projects()[d.name]]
     tables, packages, samples, project = memo(
         work, "bundle", [KEY, LISTINGS.get("@stamp"), offered, sources_, tree_digest(ROOT / "samples"), (SITE / "playground.yaml").read_text(),
                          inspect.getsource(bundle)],
         lambda: bundle(satex, work))
-    manuals(satex, work, tables, packages)
+    documented = manuals(satex, work, tables, packages, offered, mining.result())
+    side.shutdown()
     # `cargo playground` builds the wasm meanwhile and names it done here.
     ready = os.environ.get("SATEX_WASM_READY")
     while ready and not Path(ready).exists():
@@ -798,6 +817,7 @@ def playground(satex, wasm, work, out):
         packed = gzip.compress(b"".join(files.values()), 9, mtime=0)
         extra.append({"id": f"{kernel}/{name}", "name": name.removesuffix(".cls"), "kernel": kernel, "needs": needs, "label": name,
                       "size": len(packed), "bundle": emit_local(out, f"play/pkg/{kernel}-{name}.bin.gz", packed),
+                      "manual": name.removesuffix(".cls") in documented,
                       "files": [[path, len(data)] for path, data in files.items()]})
     def facts():
         """What satex says about itself: its queries, which of them name their file, its rules, its completions."""
@@ -817,7 +837,7 @@ def playground(satex, wasm, work, out):
                  for r in json.loads(run(str(satex), "lint", "--rules", "--format", "json"))}
         return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json"))
     queries, filtered, rules, completion = memo(work, "facts", [BINARY, tree_digest(project)], facts)
-    table, files = memo(work, "symbols", [BINARY, ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(symbols), inspect.getsource(comprehensive)],
+    table, files = memo(work, "symbols", [BINARY, ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(symbols), inspect.getsource(comprehensive), GLYPH],
                         lambda: symbols(satex, project, dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))))
     # every rule's card on any page (site.js), from the same records the playground's findings show
     (out / "rules.json").write_text(json.dumps(rules))
@@ -827,7 +847,8 @@ def playground(satex, wasm, work, out):
         "kernels": kernels, "packages": extra, "preload": first_download(), "unavailable": UNAVAILABLE, "queries": queries, "filtered": filtered, "rules": rules,
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(), "plugins": plugins(),
-        "symbols": emit(out, "play/symbols.json", json.dumps({**table, "fonts": [emit(out, f"play/fonts/{f.name}", f.read_bytes()) for f in files]}).encode()),
+        "symbols": emit(out, "play/symbols.json", json.dumps({**table, "glyphs": emit(out, "play/glyphs.bin.gz", gzip.compress(table["glyphs"], 9, mtime=0)),
+                                                                "fonts": [emit(out, f"play/fonts/{f.name}", f.read_bytes()) for f in files]}).encode()),
         "schema": emit(out, "play/satex.schema.json", (ROOT / "satex.schema.json").read_bytes()),
     }
     sizes = {k["id"]: f"{k['size'] / 2**20:.1f} MiB gz, {len(k['files'])} files" for k in kernels}
@@ -875,31 +896,137 @@ def plugins():
     return out
 
 
+GLYPH = 32
+
+
 def comprehensive(dist):
-    r"""The Comprehensive LaTeX Symbol List's inventory: each command of its tables with the installed
-    packages that table is for, read off its source (`symtable[ABBR]`, `\newcommand\ABBR{\pkgname{…}}`
-    and the entry macros `\K`, `\X`, `\W…` before each command). A name the list gives no installed
-    package is left out."""
+    r"""The Comprehensive LaTeX Symbol List's inventory, read off its typeset PDF, which shows every symbol
+    whatever font or package sets it: [command, package, kind, table title, glyph] of each row of its
+    tables, the glyph a bitmap, the bytes width and height then the pixels, 1 bit each (at most GLYPH wide) cut from the page's
+    cell left of the monospaced command. The tables' packages are those of the list of tables (`AMS` is
+    what the list's introduction says it is), none for the kernel's own. A package that is not installed
+    leaves its rows out; a command is kept with its arguments unless they are the examples `{A}`."""
+    pdf = dist / "doc/latex/comprehensive/symbols-a4.pdf"
     source = dist / "doc/latex/comprehensive/source/symbols.tex"
-    if not source.is_file():
-        return {}
-    text = source.read_text(errors="replace")
-    named = {abbr: re.findall(r"\\pkgname\{([^}]+)\}", body) for abbr, body in re.findall(r"\\newcommand\*?\{?\\(\w+)\}?\{((?:[^{}]|\{[^{}]*\})*)\}", text)}
-    found = {}
-    for abbr, body in re.findall(r"\\begin\{(?:long)?symtable\}\[(\w+)\](.*?)\\end\{(?:long)?symtable\}", text, re.S):
-        for cmd in re.findall(r"\\(?:K[a-z]*|KN|X|W[a-z]*)(?:\[[^\]]*\])*(\\[A-Za-z]+)", body):
-            found.setdefault(cmd, set()).update(named.get(abbr, []))
-    wanted = sorted({p for ps in found.values() for p in ps})
+    if not pdf.is_file() or not shutil.which("pdftohtml") or not shutil.which("pdftoppm"):
+        return []
+    import io
+    import numpy
+    from PIL import Image
+    xml = run("pdftohtml", "-xml", "-i", "-stdout", str(pdf))
+    fonts = {i: re.sub(r"^\w+\+", "", name) for i, name in re.findall(r'<fontspec id="(\d+)"[^>]* family="([^"]+)"', xml)}
+    pages = []
+    for chunk in xml.split('<page number="')[1:]:
+        its = [{"top": int(t), "left": int(l), "w": int(w), "h": int(h), "font": fonts[f], "txt": html.unescape(re.sub(r"</?[a-z][^>]*>", "", x))}
+               for t, l, w, h, f, x in re.findall(r'<text top="(-?\d+)" left="(-?\d+)" width="(\d+)" height="(\d+)" font="(\d+)">(.*?)</text>', chunk)]
+        pages.append((int(chunk[:chunk.index('"')]), its))
+    size = re.search(r'<page number="1" position="absolute" top="0" left="0" height="(\d+)" width="(\d+)"', xml)
+    height, width = int(size[1]), int(size[2])
+    ams = re.search(r"means to use the \\AMS\{\} packages, viz\.\\ \\pkgname\{(\w+)\}", source.read_text(errors="replace")) if source.is_file() else None
+    # the list of tables: each table's packages and title
+    toc = {}
+    for _, its in pages:
+        for it in its:
+            m = re.match(r"Table (\d+):", it["txt"])
+            if m and it["left"] < 140 and "SFRM" in it["font"]:
+                line = [x for x in its if abs(x["top"] - it["top"]) <= 3 and 150 < x["left"] < 770]
+                pkgs = [x["txt"].strip() for x in line if "SFRM" not in x["font"] and re.fullmatch(r"[\w-]+", x["txt"].strip())]
+                title = " ".join([it["txt"][len(m[0]):]] + [x["txt"] for x in line if "SFRM" in x["font"]])
+                title = re.sub(r"(\s*\.)+\s*\d*\s*$", "", re.sub(r"L A TEX 2\S*", "LaTeX2e", title)).strip()
+                toc.setdefault(int(m[1]), ([ams[1] if p == "AMS" and ams else p for p in pkgs], title))
+    wanted = sorted({p for ps, _ in toc.values() for p in ps})
     have = {Path(p).stem for p in subprocess.run(["kpsewhich", *[f"{w}.sty" for w in wanted]], capture_output=True, text=True).stdout.split()}
-    return {cmd: sorted(ps & have) for cmd, ps in found.items() if ps & have}
+    scale = 3
+
+    def page(number, its, chapter, table):
+        """The rows of one page as [table, kind, command, example, glyph], and the table its end is in."""
+        caps = sorted((it["top"], int(its[i + 1]["txt"].split(":")[0])) for i, it in enumerate(its[:-1])
+                      if it["txt"] == "Table" and "CSC" in it["font"] and re.match(r"\d+:", its[i + 1]["txt"]))
+        cells = [it for it in its if re.search(r"TT|Mono", it["font"]) and it["top"] > 130]
+        for it in its:
+            m = re.fullmatch(r"Chapter (\d+)\.", it["txt"])
+            if m and it["top"] < 130:
+                chapter = int(m[1])
+        out, shot = [], None
+        for c in cells:
+            tab = table
+            for top, n in caps:
+                if c["top"] >= top - 2:
+                    tab = n
+            m = re.match(r"\\(?:[A-Za-z@]+|.)((?:\{[^{}]*\}|\[[^\]]*\])*)", c["txt"])
+            name = (m[0] if m[1] not in ("", "{A}", "{}") else m[0][:len(m[0]) - len(m[1])]) if m else c["txt"] if len(c["txt"]) <= 3 and c["txt"].strip() else None
+            if not name or tab not in toc or chapter < 2:
+                continue
+            # prose mentioning a command is no table row: a word right before it
+            if any(abs(d["top"] - c["top"]) < 8 and 0 <= c["left"] - d["left"] - d["w"] < 5 and re.search(r"[A-Za-z]{3}", d["txt"]) and d not in cells for d in its):
+                continue
+            column = sorted((d for d in cells if abs(d["left"] - c["left"]) <= 6), key=lambda d: d["top"])
+            i = column.index(c)
+            mid = lambda a, b: (a["top"] + a["h"] / 2 + b["top"] + b["h"] / 2) / 2
+            y0 = mid(column[i - 1], c) if i else c["top"] - 40
+            y1 = mid(c, column[i + 1]) if i + 1 < len(column) else c["top"] + c["h"] + 40
+            row = [d["left"] + d["w"] for d in cells if d is not c and d["left"] + d["w"] <= c["left"] + 2 and d["top"] < y1 and d["top"] + d["h"] > y0]
+            x0 = max(row, default=c["left"] - 260)
+            if shot is None:
+                shot = numpy.asarray(Image.open(io.BytesIO(subprocess.run(
+                    ["pdftoppm", "-gray", "-f", str(number), "-l", str(number), "-scale-to-x", str(width * scale), "-scale-to-y", str(height * scale), str(pdf)],
+                    capture_output=True).stdout)).convert("L"))
+            cell = shot[int(max(y0, 0) * scale):int(y1 * scale), int(max(x0, 0) * scale):int((c["left"] - 3) * scale)]
+            ink = cell < 215
+            cols = numpy.flatnonzero(ink.any(0))
+            if not len(cols):
+                continue
+            # the leftmost piece of ink: a symbol, not the second column of `\Big` versions or a description
+            end = next((k for k in range(1, len(cols)) if cols[k] - cols[k - 1] > 9 * scale), len(cols))
+            ink = ink[:, cols[0]:cols[end - 1] + 1]
+            rows = numpy.flatnonzero(ink.any(1))
+            if ink.sum() < 4:
+                continue
+            ink = ink[rows[0]:rows[-1] + 1]
+            k = GLYPH / max(ink.shape)
+            img = Image.fromarray((ink * 255).astype("uint8")).resize((max(1, round(ink.shape[1] * k)), max(1, round(ink.shape[0] * k))), Image.LANCZOS)
+            mask = numpy.asarray(img) > 90
+            out.append([tab, ("text", "math")[chapter == 3] if chapter in (2, 3) else "other", name, c["txt"],
+                        bytes(mask.shape[::-1]) + numpy.packbits(mask).tobytes()])
+        return out, (caps[-1][1] if caps else table), chapter
+
+    state, found = (None, 0), []
+    for number, its in pages:
+        if number >= 14:
+            out, *state = page(number, its, state[1], state[0])
+            found += out
+    seen, result = set(), []
+    for tab, kind, name, example, glyph in found:
+        pkgs, title = toc[tab]
+        for pkg in [p for p in pkgs if p in have] or ([] if pkgs else ["kernel"]):
+            if (name, pkg) not in seen:
+                seen.add((name, pkg))
+                result.append([name, pkg, kind, title, glyph])
+    return result
+
+
+def established(dist, packages):
+    """How much each of `packages` is relied on, 0 to 1: the log of how many files of the installation's
+    packages and classes load it, against the most loaded one."""
+    names, loads = set(packages), {}
+    pattern = re.compile(rb"\\(?:RequirePackage|usepackage)(?:\[[^\]]*\])?\{([^}]*)\}")
+    for path in (dist / "tex").rglob("*"):
+        if path.suffix in (".sty", ".cls") and path.is_file():
+            for group in set(pattern.findall(path.read_bytes())):
+                for name in group.decode(errors="replace").split(","):
+                    if name.strip() in names:
+                        loads[name.strip()] = loads.get(name.strip(), 0) + 1
+    top = math.log1p(max(loads.values(), default=1))
+    return {p: round(math.log1p(loads.get(p, 0)) / top, 2) for p in packages}
 
 
 def symbols(satex, project, env):
     """The symbols the playground's drawing pad matches against, each drawn in the font that sets it:
     unicode-math's table of the installation in unicode-math's default font, and the icon packages'
-    commands in their own fonts. Rows are `[codepoint, name, class, description, font, package]`;
-    a font is an index into `fonts`, a package the one to load for the name (`satex` `providers`, else
-    the table's own package)."""
+    commands in their own fonts, then what the symbol list shows beside them. Rows are
+    `[codepoint, name, class, description, font, package]`; a font is an index into `fonts`, a package the
+    one to load for the name (`satex` `providers`, else the table's own package). A symbol no font here
+    sets has font -1 and a seventh field, its index into `glyphs`: the bitmaps (see `comprehensive`) one after the other."""
     dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
     fonts, rows = [], []
     def font(path):
@@ -924,13 +1051,25 @@ def symbols(satex, project, env):
             provider = {}
         f = font(Path(math_font))
         rows += [[c, name, cls, about, f, provider.get(name, "unicode-math")] for c, name, cls, about in math]
-        # the same command as the symbol list's packages give it: the same glyph, more places it comes from
-        listed = comprehensive(dist)
-        rows += [[c, name, cls, about, f, pkg] for c, name, cls, about in math for pkg in listed.get(name, []) if pkg != provider.get(name, "unicode-math")]
+        # the plain text characters, which no list of commands shows: `?` is typed as it is, the special ones as TeX spells them
+        spelled = {"#": r"\#", "$": r"\$", "%": r"\%", "&": r"\&", "_": r"\_", "{": r"\{", "}": r"\}", "~": r"\textasciitilde", "^": r"\textasciicircum", "\\": r"\textbackslash"}
+        rows += [[ord(c), spelled.get(c, c), "text", unicodedata.name(c).lower(), f, "kernel"] for c in map(chr, range(33, 127))]
     for package in ICON_PACKAGES:
         # the icon's own name (`skull-crossbones`) is what a search finds it by
         rows += [[code, cmd, "icon", name.replace("-", " "), font(path), package] for cmd, code, path, name in icons(dist, package)]
-    return {"fonts": [p.name for p in fonts], "rows": rows}, fonts
+    # the symbol list's rows: a command a font already sets only gains the packages the list gives it; the
+    # rest (text characters and commands, accents, other fonts' symbols) are drawn from the list's own page
+    known, taken, glyphs = {}, {(r[1], r[5]) for r in rows}, {}
+    for r in rows:
+        known.setdefault(r[1], r)
+    for name, pkg, kind, title, bitmap in comprehensive(dist):
+        if (name, pkg) in taken:
+            continue
+        taken.add((name, pkg))
+        base = known.get(name)
+        rows.append([*base[:5], pkg] if base and base[4] >= 0 else [0, name, kind, title, -1, pkg, glyphs.setdefault(bitmap, len(glyphs))])
+    return {"fonts": [p.name for p in fonts], "rows": rows, "glyphs": b"".join(glyphs),
+            "weight": {**established(dist, sorted({r[5] for r in rows})), "kernel": 1, "unicode-math": 1}}, fonts
 
 
 # ---------------------------------------------------------------- site

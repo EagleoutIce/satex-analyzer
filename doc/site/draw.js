@@ -13,7 +13,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   // compare alike. Two outlines are as far apart as the mean distance of each one's points to the
   // other (chamfer distance), plus how much their aspects and their numbers of dots differ. Strokes
   // drawn apart are no dots: a `⇒` drawn in three strokes is one shape, `÷` has two dots.
-  const DRAW = { side: 32, glyph: 96, pen: 9, shown: 14, foreign: 1.12, aspect: 0.6, dots: 0.8, dot: 4, batch: 300, again: 120, more: 30 };
+  const DRAW = { side: 32, glyph: 96, pen: 9, bitmap: 0.6, outline: 1, stroke: 1.5, either: 0, grid: 8, shortlist: 1500, known: 0.1, plain: 0.1, call: 0.2, shown: 14, foreign: 1.12, variant: 0.25, icon: 0.1, aspect: 0.6, dots: 0.8, dot: 4, batch: 300, again: 120, more: 30 };
   const $ = (id) => root.querySelector(`#${id}`), escape = esc;
   const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
   let drawTable = null, drawn = false;
@@ -41,11 +41,48 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     wc.drawImage(canvas, 0, 0, w, h, 0, 0, n, n);
     const wp = wc.getImageData(0, 0, n, n).data, wink = new Uint8Array(n * n);
     for (let i = 0; i < n * n; i++) wink[i] = wp[i * 4 + 3] > 40 ? 1 : 0;
-    return points.length ? [Uint16Array.from(points), distances(points, n), Math.log(bw / bh), dots(wink, n)] : null;
+    if (!points.length) return null;
+    const thinned = thin(ink, n), bones = thinned.length ? thinned : Uint16Array.from(points);
+    return [Uint16Array.from(points), distances(points, n), Math.log(bw / bh), dots(wink, n), bones, distances(bones, n), spread(bones, n)];
+  }
+  /** The centre lines of `ink` (Zhang-Suen thinning) as cell indices: a thick stroke and a thin one have the same. */
+  function thin(ink, n) {
+    const a = Uint8Array.from(ink), drop = [];
+    for (let again = true; again;) {
+      again = false;
+      for (let pass = 0; pass < 2; pass++) {
+        drop.length = 0;
+        for (let y = 1; y < n - 1; y++) for (let x = 1; x < n - 1; x++) {
+          const i = y * n + x;
+          if (!a[i]) continue;
+          const q = [a[i - n], a[i - n + 1], a[i + 1], a[i + n + 1], a[i + n], a[i + n - 1], a[i - 1], a[i - n - 1]];
+          const b = q.reduce((t, v) => t + v, 0);
+          let cross = 0;
+          for (let k = 0; k < 8; k++) if (!q[k] && q[(k + 1) % 8]) cross++;
+          if (b < 2 || b > 6 || cross !== 1) continue;
+          if (pass ? q[0] * q[2] * q[6] === 0 && q[0] * q[4] * q[6] === 0 : q[0] * q[2] * q[4] === 0 && q[2] * q[4] * q[6] === 0) drop.push(i);
+        }
+        for (const i of drop) a[i] = 0;
+        if (drop.length) again = true;
+      }
+    }
+    const out = [];
+    for (let i = 0; i < n * n; i++) if (a[i]) out.push(i);
+    return Uint16Array.from(out);
+  }
+  /** Where the centre lines lie, coarsely: their cells spread bilinearly over a DRAW.grid square grid, as shares of the whole. */
+  function spread(bones, n) {
+    const g = DRAW.grid, d = new Float32Array(g * g), k = (g - 1) / (n - 1);
+    for (const p of bones) {
+      const x = (p % n) * k, y = Math.floor(p / n) * k, x0 = Math.min(Math.floor(x), g - 2), y0 = Math.min(Math.floor(y), g - 2), fx = x - x0, fy = y - y0;
+      d[y0 * g + x0] += (1 - fx) * (1 - fy); d[y0 * g + x0 + 1] += fx * (1 - fy); d[(y0 + 1) * g + x0] += (1 - fx) * fy; d[(y0 + 1) * g + x0 + 1] += fx * fy;
+    }
+    for (let i = 0; i < d.length; i++) d[i] /= bones.length;
+    return d;
   }
   /** Each cell's distance to the nearest point, by two chamfer passes (3 along, 4 across). */
   function distances(points, n) {
-    const d = new Uint16Array(n * n).fill(9999);
+    const d = new Uint8Array(n * n).fill(255);
     for (const p of points) d[p] = 0;
     const relax = (i, j, cost) => { if (d[j] + cost < d[i]) d[i] = d[j] + cost; };
     for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
@@ -80,23 +117,45 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     }
     return count;
   }
+  /** A cheap bound on `apart`, to pick the shapes worth measuring in full: how far apart the centre lines' coarse spreads and the aspects are. */
+  function roughly(a, b) {
+    let share = 0;
+    for (let i = 0; i < a[6].length; i++) share += Math.abs(a[6][i] - b[6][i]);
+    return share / 2 + DRAW.aspect * Math.abs(a[2] - b[2]);
+  }
   /** How far apart two shapes' features are: 0 for the same outline. */
-  function apart([pa, da, aa, ka], [pb, db, ab, kb]) {
-    let ab_ = 0, ba = 0;
+  function apart([pa, da, aa, ka, sa, ea], [pb, db, ab, kb, sb, eb]) {
+    let ab_ = 0, ba = 0, sab = 0, sba = 0;
     for (const p of pa) ab_ += db[p];
     for (const p of pb) ba += da[p];
-    return (ab_ / pa.length + ba / pb.length) / 3 + DRAW.aspect * Math.abs(aa - ab) + DRAW.dots * Math.min(3, Math.abs(ka - kb));
+    for (const p of sa) sab += eb[p];
+    for (const p of sb) sba += ea[p];
+    const edge = DRAW.outline * (ab_ / pa.length + ba / pb.length) / 3, bone = DRAW.stroke * (sab / sa.length + sba / sb.length) / 3;
+    return (DRAW.either ? Math.min(edge, bone) : edge + bone) + DRAW.aspect * Math.abs(aa - ab) + DRAW.dots * Math.min(3, Math.abs(ka - kb));
   }
   /** The symbol table; each font's glyphs are measured once a candidate in it is wanted. */
   async function symbolsLoad() {
-    drawTable ??= fetch(`${base}${symbols}`).then((r) => r.json()).then(({ fonts, rows }) => ({
-      fonts: fonts.map((url, i) => ({ family: `satex-sym-${i}`, url, ready: null })),
-      rows: rows.map(([code, name, cls, about, font, pkg]) => ({
-        ch: String.fromCodePoint(code), code, name, cls, about, font, pkg, f: undefined,
-        text: `${name.slice(1)} ${about ?? ''}`.toLowerCase().replace(/[-_]/g, ' '),
-      })),
-    })).then((t) => { totals(t); return t; }).catch((e) => ({ fonts: [], rows: [], error: String(e?.message ?? e) }));
+    drawTable ??= fetch(`${base}${symbols}`).then((r) => r.json()).then(async ({ fonts, rows, glyphs, weight }) => {
+      // symbols no font sets are bitmaps (w, h, then 1 bit per pixel), one after the other in a gzipped file: the last "font"
+      const bitmaps = [], bytes = new Uint8Array(await new Response((await fetch(`${base}${glyphs}`)).body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer());
+      for (let at = 0; at < bytes.length; at += 2 + Math.ceil(bytes[at] * bytes[at + 1] / 8)) bitmaps.push({ w: bytes[at], h: bytes[at + 1], bits: bytes.subarray(at + 2, at + 2 + Math.ceil(bytes[at] * bytes[at + 1] / 8)) });
+      return {
+        weight,
+        fonts: [...fonts.map((url, i) => ({ family: `satex-sym-${i}`, url, ready: null })), { bitmaps: true, ready: null }],
+        rows: rows.map(([code, name, cls, about, font, pkg, bitmap]) => ({
+          ch: bitmap == null ? String.fromCodePoint(code) : `#${bitmap}`, code, name, cls, about, pkg, f: undefined, bitmap: bitmaps[bitmap], font: bitmap == null ? font : fonts.length,
+          text: `${name.replace(/^\\/, '')} ${about ?? ''}`.toLowerCase().replace(/[-_]/g, ' '),
+        })),
+      };
+    }).then((t) => { totals(t); return t; }).catch((e) => ({ fonts: [], rows: [], error: String(e?.message ?? e) }));
     return drawTable;
+  }
+  /** A bitmap symbol as a canvas: its pixels in the alpha channel, at its own size. */
+  function bitmapCanvas({ w, h, bits }) {
+    const c = Object.assign(document.createElement('canvas'), { width: w, height: h }), g = c.getContext('2d', { willReadFrequently: true }), img = g.createImageData(w, h);
+    for (let i = 0; i < w * h; i++) img.data[i * 4 + 3] = (bits[i >> 3] >> (7 - (i & 7))) & 1 ? 255 : 0;
+    g.putImageData(img, 0, 0);
+    return c;
   }
   const idle = () => new Promise((done) => (self.requestIdleCallback ? requestIdleCallback(() => done(), { timeout: 30 }) : setTimeout(done, 0)));
   /** A font's glyphs drawn and measured, a few hundred at a time between frames, `more()` after each batch;
@@ -104,6 +163,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   /** A font's face, loaded once: rows drawn in it show their glyphs as soon as it is in. */
   function faceReady(table, i) {
     const font = table.fonts[i];
+    if (font.bitmaps) return Promise.resolve();
     font.face ??= new FontFace(font.family, `url(${base}${font.url})`).load().then((face) => { document.fonts.add(face); return face; });
     return font.face;
   }
@@ -115,10 +175,15 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       c.font = `${DRAW.glyph * 0.7}px "${font.family}"`;
       c.textAlign = 'center';
       c.textBaseline = 'middle';
-      const draw = (ch) => { c.clearRect(0, 0, g.width, g.height); c.fillText(ch, g.width / 2, g.height / 2); return features(g); };
+      // a bitmap is set as big as a font's glyph is: its longer side at DRAW.bitmap of the canvas
+      const draw = (s) => {
+        c.clearRect(0, 0, g.width, g.height);
+        if (s.bitmap) { const k = DRAW.glyph * DRAW.bitmap / Math.max(s.bitmap.w, s.bitmap.h); c.drawImage(bitmapCanvas(s.bitmap), (g.width - s.bitmap.w * k) / 2, (g.height - s.bitmap.h * k) / 2, s.bitmap.w * k, s.bitmap.h * k); } else c.fillText(s.ch, g.width / 2, g.height / 2);
+        return features(g);
+      };
       const mine = table.rows.filter((s) => s.font === i);
       for (let k = 0; k < mine.length; k += DRAW.batch) {
-        for (const s of mine.slice(k, k + DRAW.batch)) s.f = draw(s.ch);
+        for (const s of mine.slice(k, k + DRAW.batch)) s.f = draw(s);
         font.more?.();
         await idle();
       }
@@ -126,8 +191,16 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     font.more = more;
     return font.ready;
   }
+  /** A row's glyph: its character in its font, or its bitmap as the mask of a box in the text colour. */
+  const glyph = (s, table) => {
+    if (!s.bitmap) return `<span class="draw-glyph" style="font-family: '${table.fonts[s.font].family}'">${escape(s.ch)}</span>`;
+    s.url ??= bitmapCanvas(s.bitmap).toDataURL();
+    return `<span class="draw-glyph draw-bmp" style="--bmp: url(${s.url})" role="img" aria-label="${escape(s.name)}"></span>`;
+  };
+  /** Plain symbols over the styled copies of alphabets (math alphanumerics) and over icons. */
+  const prior = (s) => (s.code >= 0x1d400 && s.code < 0x1d800 ? DRAW.variant : s.cls === 'icon' ? DRAW.icon : s.bitmap ? DRAW.plain + (s.name.includes('{') ? DRAW.call : 0) : 0);
   const drawKind = (s) => (s.cls === 'icon' ? 'symbol' : s.cls === 'alpha' ? 'letter' : 'symbol');
-  const drawMode = (s) => (s.cls === 'icon' ? 'text' : 'math');
+  const drawMode = (s) => (s.cls === 'icon' || s.cls === 'text' || s.cls === 'other' ? 'text' : 'math');
   /** How well the search `q` names `s`: every word found in its command, glyph name or description; a
    * command starting with it first, then a word starting with it, then anywhere; null when not. */
   const named = (s, words) => {
@@ -139,6 +212,11 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     }
     return rank;
   };
+  /** Whether every word of the search names the package: inside its name, or (from four letters) spread over it. */
+  const packageNamed = (pkg, words) => {
+    const p = pkg.toLowerCase().replace(/\.cls$/, '');
+    return words.every((w) => p.includes(w) || (w.length > 3 && (() => { let i = 0; for (const c of p) if (c === w[i]) i++; return i === w.length; })()));
+  };
   /** The packages' list: each with its count of symbols, a box to leave it out; all or none at once. */
   function packagesShow(table) {
     const counts = new Map();
@@ -148,11 +226,17 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     $('draw-pkg-list').innerHTML = `<div class="draw-pkg-all"><button type="button" class="ghost small" data-all="1">all</button><button type="button" class="ghost small" data-all="0">none</button></div>` +
       list.map(([p, n]) => `<label><input type="checkbox" data-pkg="${escape(p)}"${skipped.has(p) ? '' : ' checked'}> ${escape(p)} <b>${n.toLocaleString('en')}</b></label>`).join('');
   }
+  // the table's size, matches and recognition time, beside the pad's buttons
+  let meta = ['', ''], took = '';
+  const total = $('draw-total'), tools = root.querySelector('.draw-pad .draw-tools');
+  if (tools) { total.classList.add('draw-meta'); tools.append(total); }
+  const metaShow = () => { total.textContent = [...meta, took].filter(Boolean).join(' · '); };
   /** The table's size, and how many symbols the filters leave. */
   function totals(table, shown = null) {
     packagesShow(table);
     const pkgs = new Set(table.rows.map((s) => s.pkg)).size;
-    $('draw-total').textContent = `${table.rows.length.toLocaleString('en')} symbols from ${pkgs} packages${shown == null ? '' : ` · ${shown.toLocaleString('en')} match`}`;
+    meta = [`${table.rows.length.toLocaleString('en')} symbols from ${pkgs} packages`, shown == null ? '' : `${shown.toLocaleString('en')} ${shown === 1 ? 'match' : 'matches'}`];
+    metaShow();
   }
   let matching = 0, started = 0, redraw = 0, limit = DRAW.shown;
   /** The candidates for the drawing and the search, best first: shown from the glyphs measured so far,
@@ -161,7 +245,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     const mine = fresh ? ++matching : matching, list = $('draw-list'), f = features(pad);
     const words = $('draw-search').value.trim().toLowerCase().replace(/^\\/, '').split(/[\s\-_]+/).filter(Boolean);
     if (fresh) { started = performance.now(); limit = DRAW.more; }
-    if (!f && !words.length) { list.innerHTML = ''; return; }
+    if (!f && !words.length) { list.innerHTML = ''; took = ''; metaShow(); return; }
     const [table, names] = await Promise.all([symbolsLoad(), inForce()]);
     if (mine !== matching) return;
     if (!table.rows.length) { list.innerHTML = `<li class="muted">The symbols did not load${table.error ? `: ${escape(table.error)}` : ''}. Reload the page to try again.</li>`; return; }
@@ -172,17 +256,21 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       if (drawFilter.from !== 'all' && !force.has(s.name)) return false;
       if (skipped.has(s.pkg)) return false;
       if ((drawFilter.kind && drawKind(s) !== drawFilter.kind) || (drawFilter.mode && drawMode(s) !== drawFilter.mode)) return false;
-      const r = words.length ? named(s, words) : 0;
+      const r = words.length ? named(s, words) ?? (packageNamed(s.pkg, words) ? 3 : null) : 0;
       if (r == null) return false;
       ranked.set(s, r);
       return true;
     });
-    totals(table, wanted.length);
+    totals(table, words.length ? wanted.length : null);
     // the fonts measured in the background: each batch ranks again, at most every DRAW.again ms
     const again = () => { if (mine === matching && !redraw) redraw = setTimeout(() => { redraw = 0; drawMatch(false); }, DRAW.again); };
     if (f) for (const i of new Set(wanted.map((s) => s.font))) fontReady(table, i, again);
-    const score = (s) => (f ? apart(f, s.f) * (force.has(s.name) ? 1 : DRAW.foreign) + ranked.get(s) * 0.05 : ranked.get(s) + s.name.length / 100);
-    const best = wanted.filter((s) => !f || s.f).map((s) => [s, score(s)]).sort((a, b) => a[1] - b[1]);
+    // the more a package is relied on (build.py `established`), the lower its symbols score
+    const score = (s) => (f ? (apart(f, s.f) * (force.has(s.name) ? 1 : DRAW.foreign) + ranked.get(s) * 0.05 + prior(s)) * (1 - DRAW.known * (table.weight?.[s.pkg] ?? 0)) : ranked.get(s) + s.name.length / 100);
+    let pool = wanted.filter((s) => !f || s.f);
+    // a query measures a shortlist in full, the rest by their cheap bound alone
+    if (f && pool.length > DRAW.shortlist) pool = pool.map((s) => [s, roughly(f, s.f)]).sort((a, b) => a[1] - b[1]).slice(0, DRAW.shortlist).map(([s]) => s);
+    const best = pool.map((s) => [s, score(s)]).sort((a, b) => a[1] - b[1]);
     const from = (x) => source.get(x.name) ?? x.pkg;
     const off = (x) => (doc && !force.has(x.name) ? ' draw-off' : '');
     const chip = (x) => force.has(x.name) ? `<code class="cs-ref" data-cs="${escape(x.name)}" tabindex="0">${escape(x.name)}</code>`
@@ -202,24 +290,27 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       const byName = [...Map.groupBy(all, (x) => x.name).values()];
       const [[main, ...same], ...others] = byName, have = force.has(main.name), pkg = from(main);
       const use = `\\usepackage{${pkg.replace(/\.cls$/, '')}}`;
-      const act = (title, icon, extra = '') => `<button type="button" class="pill draw-put" data-name="${escape(main.name)}" data-pkg="${escape(pkg)}"${extra} title="${escape(title)}" aria-label="${escape(title)}">${icon}</button>`;
-      rows.push(`<li class="draw-row"><span class="draw-glyph" style="font-family: '${table.fonts[s.font].family}'">${escape(s.ch)}</span>` +
+      const act = (title, icon, extra = '', x = main, xp = pkg) => `<button type="button" class="pill draw-put" data-name="${escape(x.name)}" data-pkg="${escape(xp)}"${extra} title="${escape(title)}" aria-label="${escape(title)}">${icon}</button>`;
+      rows.push(`<li class="draw-row">${glyph(s, table)}` +
         `<span class="draw-what">${chip(main)}<span class="lib-pkg${doc && !have ? ' draw-off' : ''}" title="${doc && !have ? `not loaded: ${escape(use)}` : escape([main, ...same].map(from).join(', '))}">${pkgs([main, ...same])}</span>` +
         (others.length ? `<button type="button" class="draw-more-pill" aria-expanded="false" title="other commands that set it">+${plural(others.length, 'alias')}</button>` : '') + '</span>' +
         `<span class="draw-acts">${act(`${label} ${main.name}`, ICON[label] ?? ICON.Insert)}` +
         (usepackage && !have && !loaded(pkg) ? act(`${label} ${main.name} with ${use}`, ICON.package, ` data-use="${escape(use)}"`) : '') + '</span>' +
-        (others.length ? `<ul class="draw-more" hidden>${others.map((xs) => `<li>${chip(xs[0])} <span class="lib-pkg${off(xs[0])}">${pkgs(xs)}${doc && !force.has(xs[0].name) ? ', not loaded' : ''}</span></li>`).join('')}</ul>` : '') + '</li>');
+        (others.length ? `<ul class="draw-more" hidden>${others.map((xs) => `<li>${chip(xs[0])} <span class="lib-pkg${off(xs[0])}">${pkgs(xs)}${doc && !force.has(xs[0].name) ? ', not loaded' : ''}</span><span class="draw-acts">${act(`${label} ${xs[0].name}`, ICON[label] ?? ICON.Insert, '', xs[0], from(xs[0]))}</span></li>`).join('')}</ul>` : '') + '</li>');
     }
-    if (glyphs > limit) rows.push(`<li class="draw-row-more"><button type="button" class="ghost small" data-more="1">show ${Math.min(DRAW.more, glyphs - limit)} more of ${glyphs.toLocaleString('en')}</button></li>`);
+    if (glyphs > limit) rows.push(`<li class="draw-row-more"><button type="button" class="ghost small" data-more="1">show ${Math.min(DRAW.more, glyphs - limit)} more${words.length ? ` of ${glyphs.toLocaleString('en')}` : ''}</button></li>`);
     // the glyphs shown appear once their fonts are in, measured or not
     for (const i of new Set([...seen].map((ch) => wanted.find((x) => x.ch === ch)?.font).filter((i) => i != null))) faceReady(table, i).catch(() => {});
     list.dataset.strokes = String(mine);
-    list.innerHTML = rows.join('') || `<li class="muted">${drawFilter.from === 'loaded' ? 'No symbol of this document matches: try every package.' : 'No symbol matches.'}</li>`;
+    list.innerHTML = rows.join('') || `<li class="muted">${drawFilter.from === 'loaded' ? 'No symbol of this document matches: try every package.' : 'No symbol or package matches.'}</li>`;
     // how long the drawing took to rank: first results, then the full ranking once every font is measured
     const ms = Math.round(performance.now() - started), pending = f && [...new Set(wanted.map((s) => s.font))].some((i) => table.rows.some((s) => s.font === i && s.f === undefined));
     list.dataset[fresh ? 'first' : 'full'] = String(ms);
     if (!pending) list.dataset.full = String(ms);
     list.classList.toggle('refining', !!pending);
+    total.classList.toggle('refining', !!pending);
+    took = f ? `${ms} ms` : '';
+    metaShow();
   }
   const ICON = {
     Insert: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v8M4.5 7l3.5 3.5L11.5 7M3 13.5h10"/></svg>',
@@ -231,8 +322,8 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     const el = e.target.closest('[data-sym]');
     if (!el) return;
     const s = (await symbolsLoad()).rows[+el.dataset.sym];
-    const does = [s.about, `U+${s.code.toString(16).toUpperCase().padStart(4, '0')}`].filter(Boolean).join(' · ');
-    if (self.satexTip && self.satexCards) self.satexTip.card.show(el, self.satexCards.explain({ name: s.name, tag: s.cls === 'icon' ? 'icon' : `math ${s.cls}`, does, package: s.pkg }));
+    const does = [s.about, s.bitmap ? '' : `U+${s.code.toString(16).toUpperCase().padStart(4, '0')}`].filter(Boolean).join(' · ');
+    if (self.satexTip && self.satexCards) self.satexTip.card.show(el, self.satexCards.explain({ name: s.name, tag: s.cls === 'icon' ? 'icon' : s.cls === 'text' || s.cls === 'other' ? s.cls : `math ${s.cls}`, does, package: s.pkg }));
     else el.title = `${s.name}: ${does}, ${s.pkg}`;
   });
   $('draw-list').addEventListener('mouseout', (e) => { if (e.target.closest('[data-sym]')) self.satexTip?.card.hide(150); });
@@ -251,6 +342,34 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     pad.addEventListener('pointerup', () => { last = null; if (drawn) drawMatch(); });
     $('draw-clear').onclick = clear;
     $('draw-search').addEventListener('input', () => drawMatch());
+    // the search field: an icon button until wanted, folded again by Escape or by leaving it empty
+    const find = $('draw-find'), field = $('draw-search').closest('.search');
+    if (find) {
+      const chips = $('draw-filters'), fold = () => { chips.hidden = field.hidden = true; find.setAttribute('aria-expanded', 'false'); };
+      const unfold = () => { chips.hidden = field.hidden = false; find.setAttribute('aria-expanded', 'true'); $('draw-search').focus(); };
+      find.setAttribute('aria-controls', 'draw-search');
+      fold();
+      find.onclick = () => (field.hidden ? unfold() : $('draw-search').value ? $('draw-search').focus() : fold());
+      $('draw-search').addEventListener('blur', () => setTimeout(() => { if (!$('draw-search').value && !document.activeElement?.closest('#draw-filters, #draw-find')) fold(); }, 0));
+      chips.addEventListener('mousedown', (e) => { if (e.target.closest('.lib-kind')) e.preventDefault(); });
+      $('draw-search').addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('draw-search').value) { fold(); find.focus(); } });
+    }
+    // day or night: kept in the address (an embedding frame, a reload) and in the browser
+    const theme = $('draw-theme'), html = document.documentElement;
+    if (theme) {
+      const dark = () => (html.dataset.theme ? html.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches);
+      // the icon is the mode a press switches to: a sun at night, a moon by day
+      const sun = '<circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/>', moon = '<path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5z"/>';
+      const mark = () => { theme.setAttribute('aria-pressed', String(dark())); theme.querySelector('svg').innerHTML = dark() ? sun : moon; };
+      mark();
+      theme.onclick = () => {
+        const t = dark() ? 'light' : 'dark';
+        html.dataset.theme = t;
+        try { const u = new URL(location.href); u.searchParams.set('theme', t); history.replaceState(null, '', u); } catch {}
+        try { localStorage.setItem('satex-theme', t); } catch {}
+        mark();
+      };
+    }
     // how it matches and its credits: the site's card where the page has one, else a popover of the browser's
     $('draw-help').onclick = (e) => {
       const html = `<div class="draw-about">${$('draw-about').innerHTML}</div>`;
@@ -262,7 +381,10 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     };
     // the package filter: a button with a list under it
     $('draw-filters').insertAdjacentHTML('beforeend', '<span class="sep"></span><span class="draw-pkg-wrap"><button type="button" class="lib-kind" id="draw-pkgs" aria-expanded="false" aria-controls="draw-pkg-list">packages</button><div id="draw-pkg-list" class="draw-pkg-list" hidden></div></span>');
-    $('draw-pkgs').addEventListener('click', () => { const l = $('draw-pkg-list'), open = l.hidden; l.hidden = !open; $('draw-pkgs').setAttribute('aria-expanded', String(open)); });
+    const packagesOpen = (open) => { $('draw-pkg-list').hidden = !open; $('draw-pkgs').setAttribute('aria-expanded', String(open)); };
+    $('draw-pkgs').addEventListener('click', () => packagesOpen($('draw-pkg-list').hidden));
+    document.addEventListener('click', (e) => { if (!e.target.closest('.draw-pkg-wrap')) packagesOpen(false); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('draw-pkg-list').hidden) { packagesOpen(false); $('draw-pkgs').focus(); } });
     $('draw-pkg-list').addEventListener('change', (e) => {
       const p = e.target.dataset.pkg;
       if (p == null) return;
