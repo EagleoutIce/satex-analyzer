@@ -926,13 +926,16 @@
   const dots = document.querySelector('.claim-dots');
   if (knows.length > 1 && dots) {
     // typed out and erased like an editor, code parts marked as a linter would once a claim stands
-    const parts = knows.map((k) => [...k.childNodes].map((n) => ({ text: n.textContent, code: n.nodeName === 'CODE' })));
+    // a claim's `<template>` is the sketch shown once it stands: what the run computes for it
+    const mocks = knows.map((k) => k.querySelector('template')?.innerHTML ?? null);
+    const parts = knows.map((k) => [...k.childNodes].filter((n) => n.nodeName !== 'TEMPLATE')
+      .map((n) => ({ text: n.textContent, code: n.nodeName === 'CODE', href: n.nodeName === 'A' ? n.getAttribute('href') : null })));
     const typed = (i, n) => {
       let left = n;
-      return parts[i].map(({ text, code }) => {
+      return parts[i].map(({ text, code, href }) => {
         const shown = text.slice(0, Math.max(0, left));
         left -= text.length;
-        return shown && (code ? `<code>${esc(shown)}</code>` : esc(shown));
+        return shown && (code ? `<code>${esc(shown)}</code>` : href ? `<a href="${esc(href)}">${esc(shown)}</a>` : esc(shown));
       }).join('');
     };
     const length = (i) => parts[i].reduce((sum, p) => sum + p.text.length, 0);
@@ -950,9 +953,10 @@
     const own = [...document.querySelectorAll('.ex-data')].flatMap((s) => { try { const d = JSON.parse(s.textContent); return Object.values(d.cs).flat().filter((r) => r.path === d.name && r.effective && r.effective !== r.name); } catch { return []; } });
     const offered = [...new Map(own.map((r) => [r.name, r])).values()].slice(0, 3);
     const complete = () => {
-      const chip = line.querySelector('code');
-      if (!chip || !chip.textContent.startsWith('\\') || !offered.length) return false;
-      chip.insertAdjacentHTML('afterend', `<ul class="claim-complete" aria-hidden="true" style="left:${chip.offsetLeft}px">${offered.map((r) => `<li><code class="usage">${usage(r.effective, typesOf(r)).html}</code><span>${esc(r.file ?? r.path ?? '')}</span></li>`).join('')}</ul>`);
+      const chip = line.querySelector('code'), mock = mocks[shown];
+      if (!chip || !mock || mock.trim() === 'complete' && !offered.length) return false;
+      const body = mock.trim() === 'complete' ? offered.map((r) => `<li><code class="usage">${usage(r.effective, typesOf(r)).html}</code><span>${esc(r.file ?? r.path ?? '')}</span></li>`).join('') : mock;
+      chip.insertAdjacentHTML('afterend', `<ul class="claim-complete" aria-hidden="true" style="left:${chip.offsetLeft}px">${body}</ul>`);
       const pop = line.querySelector('.claim-complete');
       setTimeout(() => pop.classList.add('on'), 450);
       return true;

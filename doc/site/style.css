@@ -907,7 +907,7 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .draw-more { grid-column: 2 / -1; margin: 0 0 .3rem; padding: 0; list-style: none; font-size: .76rem; } .draw-more li { display: flex; gap: .5rem; align-items: center; } .draw-more .draw-acts { margin-left: auto; }
 .draw-acts { display: flex; gap: .25rem; } .draw-acts .pill { padding: .15rem .35rem; } .draw-acts .pill svg { width: .85rem; height: .85rem; }
 .draw-put.done svg { display: none; } .draw-put.done::before { content: "✓"; color: var(--safe); }
-.draw-glyph { transition: transform .15s var(--ease); transform-origin: left center; } .draw-glyph:hover { transform: scale(2.4); position: relative; z-index: 3; background: var(--panel); border-radius: 4px; }
+.draw-glyph { transition: transform .15s var(--ease); transform-origin: left center; } .draw-glyph:hover { transform: scale(2.4); position: relative; z-index: 3; background: var(--panel); color: var(--fg); border-radius: 4px; }
 .draw-row-more { text-align: center; padding: .4rem; list-style: none; }
 
 .draw-glyph { flex: none; width: 2rem; text-align: center; font-size: 1.4rem; line-height: 1; }
@@ -931,8 +931,8 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .claim-rot > span.typing code { text-decoration: underline wavy transparent; text-underline-offset: .22em; transition: text-decoration-color .5s; }
 .claim-rot > span.typing.linted code { text-decoration-color: var(--warning); }
 .claim-rot > span { position: relative; }
-.claim-rot { padding-bottom: 4.8rem; }
-.claim-complete { position: absolute; top: 100%; z-index: 2; margin: .1rem 0 0; padding: .2rem; list-style: none; text-align: left; white-space: nowrap; pointer-events: none;
+.claim-dots { margin-bottom: 6rem; }
+.claim-complete { position: absolute; top: calc(100% + 2.3rem); z-index: 2; margin: .1rem 0 0; padding: .2rem; list-style: none; text-align: left; white-space: nowrap; pointer-events: none;
   font: 400 .78rem system-ui, sans-serif; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow);
   opacity: 0; transform: translateY(-.2rem); transition: opacity .3s var(--ease), transform .3s var(--ease); }
 .claim-complete.on { opacity: 1; transform: none; }
@@ -1046,3 +1046,11 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 :is(.play-split, #lib-out) .show-ligs .ts-lig::before, #lib-out .ts-lig::before { content: none; animation: none; }
 :is(.play-split, #lib-out) .show-ligs .ts-lig-to, #lib-out .ts-lig-to { max-width: none; opacity: 1; animation: none; }
 .tree #play-outline > .grip, .tree #play-outline .grip { display: none; }
+
+/* Draw alone: tools and search on top, the pad left and the results right at every width */
+.draw-top { display: flex; gap: .5rem; align-items: center; margin: .5rem 1rem 0; } .draw-top .search { flex: 1 1 auto; }
+.draw-top .search input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.draw-box { flex-wrap: nowrap; } .draw-pad { flex: none; width: min(16rem, 42vw); } #draw-pad { width: 100%; }
+.draw-results { flex: 1 1 0; } .draw-solo .draw-box > .draw-results { max-height: none; }
+.draw-pad .draw-meta { flex: none; margin: 0; }
+.draw-bmp:hover { background: currentColor; }
