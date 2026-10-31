@@ -55,7 +55,7 @@ plugins: 48 in 11 kinds
   build system        5  latexmk, make, tectonic, arara, l3build
   tools               7  biber, bibtex, makeindex, xindy, makeglossaries, dvips, ps2pdf
   magic comments      3  % !TeX, % !BIB, % arara:
-… 17 more lines omitted
+… 16 more lines omitted
 ```
 
 <details>
@@ -216,12 +216,14 @@ style (9)
 $ satex lint --rules
 severity  category     number  code                             message                                                 
 error     correctness  C001    already-defined                  `\newcommand` redefines an existing name                
+error     correctness  C043    assertion-refuted                an assertion fails on a run of the document             
 error     correctness  C002    bibtex-command-under-biblatex    a BibTeX command biblatex replaces stops the run        
 error     correctness  C003    build-bibliography-disabled      the document has a bibliography, but the build never …  
 error     correctness  C004    build-command-placeholders       an engine command in the latexmkrc lacks %S or %O       
 error     correctness  C005    build-engine-mismatch            the build runs another engine, or another output, tha…  
 error     correctness  C006    build-shell-escape-missing       the document runs programs through `\write18`, but th…  
 error     correctness  C007    caused-library-error             the document makes package code raise a TeX error       
+error     correctness  C046    invalid-directive                a `%\satex@` directive cannot be read                   
 error     correctness  C008    math-still-open                  the run is still in math mode where the text ends       
 error     correctness  C009    missing-graphic                  an included image is not there for this output target   
 error     correctness  C010    new-redefines                    a `\new…` declaration silently redefines an existing …  
@@ -254,6 +256,8 @@ warning   correctness  C036    undefined-optional-content       marked content r
 warning   correctness  C037    undefined-reference              `\ref` names a label that is never defined              
 warning   correctness  C038    uninstalled-package              the package is not installed, and the distribution co…  
 warning   correctness  C039    unresolved-file                  a package, class or input file is not in the installa…  
+info      correctness  C044    assertion-proved                 an assertion holds on every path                        
+info      correctness  C045    assumption-made                  the document assumes a condition                        
 info      correctness  C040    expected-load                    the file was read after a package it expects loaded     
 info      correctness  C041    math-mode-mismatch               \(, \), \[ or \] stands where the mode does not allow…  
 info      correctness  C042    unintended-escape                a command is followed by an escaped punctuation mark,…  
@@ -316,6 +320,7 @@ info      performance  P004    recursive-macro                  a macro calls it
 info      performance  P005    unused-dependency                the dependency file lists a TeX Live package no file …  
 info      performance  P006    unused-package                   a loaded package defines nothing the document uses      
 info      precision    A001    analysis-imprecision             the analysis had to widen                               
+info      precision    A002    assertion-unknown                an assertion could not be decided                       
 ```
 
 </details>
@@ -588,6 +593,7 @@ gaps
 pgfkeys           
 options           
 typeset           
+previews          
 ```
 
 </details>
