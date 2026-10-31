@@ -476,7 +476,7 @@ async function browser() {
         // the match of the whole drawing: one per stroke ended, the last one shown
         await until(`return document.querySelectorAll('#draw-list li .draw-glyph').length > 2`, 60000);
         await sleep(1500);
-        got[name] = await js(`return [...document.querySelectorAll('#draw-list > li')].map((li) => li.querySelector('.draw-glyph').textContent + ' ' + li.querySelector('.draw-names').textContent)`);
+        got[name] = await js(`return [...document.querySelectorAll('#draw-list > li')].map((li) => li.querySelector('.draw-glyph').textContent + ' ' + li.querySelector('.draw-what').textContent)`);
         await shot(`draw-${name}`);
       }
       const rank = (name, re) => got[name].findIndex((t) => re.test(t));

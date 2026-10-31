@@ -827,7 +827,7 @@ ICON_PACKAGES = ["fontawesome", "fontawesome5", "fontawesome6", "fontawesome7", 
 
 
 def icons(dist, package):
-    r"""[command, codepoint, font file] of each icon `package` defines, read off its own files: fontawesome5's
+    r"""[command, codepoint, font file, icon name] of each icon `package` defines, read off its own files: fontawesome5's
     and later's `\__fontawesome_def_icon:nnnnn`, else a `\def\faX{\faicon{name}}` with the name's `\symbol{"…}`.
     The font is the package's own OpenType or TrueType file, the brands one for a brands icon."""
     sty = run("kpsewhich", f"{package}.sty").strip()
@@ -841,10 +841,10 @@ def icons(dist, package):
         brands = part.startswith("brands")
         # a brand's one face, else the solid one: the package's default style
         return next((f for f in fonts if ("Brands" in f.name) == brands and (brands or "Solid" in f.name)), fonts[0])
-    out = [[cmd, int(code, 16), font(part)] for cmd, part, code in
-           re.findall(r'\\__fontawesome_def_icon:nnnnn\{(\\\w+)\}\{[\w-]+\}\{(\w+)\}\{\d+\}\{"([0-9A-Fa-f]+)\}', texts)]
+    out = [[cmd, int(code, 16), font(part), name] for cmd, name, part, code in
+           re.findall(r'\\__fontawesome_def_icon:nnnnn\{(\\\w+)\}\{([\w-]+)\}\{(\w+)\}\{\d+\}\{"([0-9A-Fa-f]+)\}', texts)]
     codes = dict(re.findall(r'\\csname \w+@([\w-]+)\\endcsname\{+(?:\\\w+)?\\symbol\{"([0-9A-Fa-f]+)\}', texts))
-    out += [[cmd, int(codes[name], 16), fonts[0]] for cmd, name in re.findall(r'\\def(\\\w+)\{+\\\w+icon\{([\w-]+)\}\}', texts) if name in codes]
+    out += [[cmd, int(codes[name], 16), fonts[0], name] for cmd, name in re.findall(r'\\def(\\\w+)\{+\\\w+icon\{([\w-]+)\}\}', texts) if name in codes]
     return out
 
 
@@ -914,7 +914,8 @@ def symbols(satex, project, env):
         listed = comprehensive(dist)
         rows += [[c, name, cls, about, f, pkg] for c, name, cls, about in math for pkg in listed.get(name, []) if pkg != provider.get(name, "unicode-math")]
     for package in ICON_PACKAGES:
-        rows += [[code, cmd, "icon", "", font(path), package] for cmd, code, path in icons(dist, package)]
+        # the icon's own name (`skull-crossbones`) is what a search finds it by
+        rows += [[code, cmd, "icon", name.replace("-", " "), font(path), package] for cmd, code, path, name in icons(dist, package)]
     return {"fonts": [p.name for p in fonts], "rows": rows}, fonts
 
 

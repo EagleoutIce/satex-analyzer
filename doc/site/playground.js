@@ -1212,7 +1212,6 @@
     if (k === explained && !records) return;
     explained = k;
     explainLabel.textContent = name;
-    explainBox.open = true;
     if (!records && at) {
       lsp('textDocument/hover', { textDocument: { uri: uri() }, position: at }).then((result) => {
         const c = result?.contents, value = typeof c === 'string' ? c : c?.value ?? '';
@@ -1444,7 +1443,7 @@
     const text = $('lib-text').value, out = $('lib-out');
     if (!text.trim()) return;
     const scratch = tryRoot(), t0 = performance.now();
-    $('try-status').textContent = 'typesetting…';
+    $('try-status').innerHTML = `${self.satexProgress.html(null, 'typesetting')} typesetting…`;
     sync();
     const [file, kernelConfig] = scratch ? await tryScratch(scratch) : [path(state.root ?? state.file), {}];
     const { i, col } = scratch ? tryPlace(file, scratch.text) : tryPlace(), root = file.split('/').pop();
@@ -1639,11 +1638,16 @@
   const drawPicker = self.satexDraw({
     root: $('play-draw'), base, symbols: manifest.symbols,
     inForce: async () => (await namesInForce(true)).map((r) => [r.name, libSource(r)]),
-    pick: (name) => {
-      const at = editor.position();
-      editor.apply([{ range: { start: at, end: at }, newText: name }]);
+    usepackage: true,
+    // the name at the cursor; with its package, the \usepackage line too, before \begin{document} when it is not there yet
+    pick: (name, pkg, use) => {
+      const at = editor.position(), lines = editor.text().split('\n'), begin = lines.findIndex((l) => /\\begin\s*\{document\}/.test(l));
+      const edits = [{ range: { start: at, end: at }, newText: name }];
+      const adds = use && begin >= 0 && !editor.text().includes(use);
+      if (adds) edits.unshift({ range: { start: { line: begin, character: 0 }, end: { line: begin, character: 0 } }, newText: `${use}\n` });
+      editor.apply(edits);
       $('play-draw').close();
-      toast(`${name} inserted`);
+      toast(adds ? `${name} inserted, ${use} added` : `${name} inserted`);
     },
   });
   $('draw-open').onclick = () => { $('play-draw').showModal(); drawPicker.load(); };
@@ -1967,16 +1971,14 @@
     if (!at) { $('trace-note').textContent = ''; traceBody.innerHTML = `<p class="muted">${escape(name)} is not used in the project, so there is no call to trace.</p>`; return; }
     $('trace-note').textContent = `The call at ${at.file}:${at.line}:${at.col}, as the run expanded it.`;
     const t0 = performance.now();
-    traceBody.innerHTML = '<div class="tr-live"><p class="muted" id="trace-live">Tracing: starting the run…</p><progress id="trace-prog" hidden></progress></div>';
+    traceBody.innerHTML = `<div class="tr-live"><p class="muted" id="trace-live">Tracing: starting the run…</p>${self.satexProgress.html(null, 'tracing')}</div>`;
     let last = {};
     const draw = () => {
       const live = $('trace-live'), d = last;
       if (!live) return;
       const bits = [d.phase || d.text || 'starting the run', d.file && `${d.file.split('/').pop()}${d.line ? `:${d.line}` : ''}`, d.lines && `${num(d.lines)} lines read`, d.files && plural(d.files, 'file'), d.paths > 1 && `${d.paths} paths`, secs(performance.now() - t0)].filter(Boolean);
       live.textContent = `Tracing: ${bits.join(' · ')}`;
-      const bar = $('trace-prog');
-      bar.hidden = !d.total;
-      if (d.total) { bar.max = d.total; bar.value = d.reached ?? 0; }
+      self.satexProgress.set(traceBody.querySelector('.sx-progress'), d.total ? Math.min((d.reached ?? 0) / d.total, 1) : null);
     };
     const tick = setInterval(draw, 250);
     traceLive = (d) => { if (d.text || d.phase) last = d; draw(); };
@@ -2849,7 +2851,7 @@
     const rest = rows.slice(RP_SHOWN);
     return rows.length ? `<h4>${title}</h4>${rows.slice(0, RP_SHOWN).map(bar).join('')}${rest.length ? `<details class="rp-more"><summary>show all ${rows.length}</summary>${rest.map(bar).join('')}</details>` : ''}` : '';
   }
-  const heatDraw = () => editor?.heat?.(heatShown && heat && heat.file.endsWith(`/${state.file}`) ? heat.lines : null);
+  const heatDraw = () => editor?.heat?.(heatShown && heat && (heat.file === state.file || heat.file.endsWith(`/${state.file}`)) ? heat.lines : null);
   $('t-heat').addEventListener('change', (e) => { if (e.target.closest('.t-heatgutter')) { heatShown = e.target.checked; heatDraw(); } });
   $('t-heat').addEventListener('click', (e) => { const b = e.target.closest('[data-line]'); if (b) { const at = { line: +b.dataset.line - 1, character: 0 }; editor.focus({ start: at, end: at }); } });
   /** The cache entries the worker keeps (worker.js), each with what it stands for; dropping one
@@ -3225,10 +3227,10 @@
     if (act.phase !== name) act.since = now;
     if (text !== act.text || got !== act.got) act.changed = now;
     Object.assign(act, { phase: name, text, got, all });
-    bar.hidden = false;
-    // a status without both counts shows work going on, not a share of it
-    if (!Number.isFinite(done)) bar.removeAttribute('value'); else bar.value = done;
-    status.textContent = text;
+    // a status without both counts shows work going on, not a share of it; with them, the time left
+    self.satexProgress.set(bar, Number.isFinite(done) ? done : null);
+    const left = Number.isFinite(done) ? self.satexProgress.left(done, now - act.since) : null;
+    status.textContent = left ? `${text} · about ${left} s left` : text;
     status.title = '';
     drawAct();
   }
@@ -3254,7 +3256,7 @@
   actHost.addEventListener('mouseenter', () => showAct(true)); actHost.addEventListener('mouseleave', () => showAct(false));
   actHost.addEventListener('focusin', () => showAct(true)); actHost.addEventListener('focusout', () => showAct(false));
   function progressed({ label, loaded, total }) {
-    if (PHASE[label]) { bar.removeAttribute('value'); busy(PHASE[label][0], PHASE[label][1]); return; }
+    if (PHASE[label]) { busy(PHASE[label][0], PHASE[label][1]); return; }
     loads.set(label, [loaded, total]);
     const [got, all] = [...loads.values()].reduce(([g, a], [l, t]) => [g + l, a + t], [0, 0]);
     const names = [...loads.keys()];

@@ -16,16 +16,18 @@
     <button type="button" class="lib-kind" data-f="kind" data-v="" aria-pressed="true">all</button><button type="button" class="lib-kind" data-f="kind" data-v="symbol" aria-pressed="false">symbols</button><button type="button" class="lib-kind" data-f="kind" data-v="letter" aria-pressed="false">letters</button>
     <span class="sep"></span><button type="button" class="lib-kind" data-f="mode" data-v="" aria-pressed="true">all</button><button type="button" class="lib-kind" data-f="mode" data-v="math" aria-pressed="false">math</button><button type="button" class="lib-kind" data-f="mode" data-v="text" aria-pressed="false">text</button></div>
   <div class="draw-box"><div class="draw-pad"><canvas id="draw-pad" width="256" height="256" aria-label="drawing area"></canvas>
-    <button type="button" class="small ghost" id="draw-clear">Clear</button></div>
-    <ol id="draw-list" class="draw-list" aria-live="polite"></ol></div>
-  <footer><details class="draw-about muted"><summary>about</summary>Your drawing and each symbol's outline are compared by how far each one's points lie from the other's.
+    <span class="draw-tools"><button type="button" class="pill" id="draw-clear" title="Clear the drawing" aria-label="Clear the drawing"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5l4 4-6.5 6.5H4l-1.5-1.5a1.4 1.4 0 0 1 0-2z"/><path d="M6 6l4 4M7 13.5h6.5"/></svg></button>
+        <button type="button" class="pill" id="draw-help" title="How it matches, and credits" aria-label="How it matches, and credits"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M6.3 6.2a1.8 1.8 0 1 1 2.4 1.7c-.5.2-.7.6-.7 1.1v.4M8 11.4v.1"/></svg></button></span></div>
+    <div class="draw-results"><label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg><input type="search" id="draw-search" placeholder="or search: skull, arrow, integral…" aria-label="search the symbols by name or description"></label>
+        <ol id="draw-list" class="draw-list" aria-live="polite"></ol><p id="draw-total" class="muted draw-total"></p></div></div>
+  <template id="draw-about">Your drawing and each symbol's outline are compared by how far each one's points lie from the other's.
     Inspired by <a href="https://detexify.kirelabs.org" target="_blank" rel="noopener">Detexify</a> (Daniel Kirsch). The symbols come from unicode-math's table (LPPL) and the icon packages' own files, each drawn in its package's font: <a href="{{root}}credits.html#symbols" target="_blank" rel="noopener">credits</a>.
-    Part of <a href="{{root}}index.html" target="_blank" rel="noopener">SaTeX</a>.</details></footer>
+    Part of <a href="{{root}}index.html" target="_blank" rel="noopener">SaTeX</a>.</template>
 </main>
 <script>
   // a pick copies the command (or its \usepackage) and tells a page that embeds this one
   addEventListener('DOMContentLoaded', () => self.satexDraw({
-    root: document.getElementById('draw'), base: '{{root}}', symbols: '{{symbols}}', label: 'Copy', usepackage: true,
+    root: document.getElementById('draw'), base: '{{root}}', symbols: '{{symbols}}', label: 'Copy', document: false,
     pick: (text, pkg) => {
       navigator.clipboard?.writeText(text).catch(() => {});
       if (parent !== self) parent.postMessage({ type: 'satex-draw', text, package: pkg }, '*');

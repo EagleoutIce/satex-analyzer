@@ -213,6 +213,20 @@
     return { el, show, hide, later };
   }
   const tips = self.satexTip = { card: floating('tip-card'), note: floating('tip-note') };
+  // One progress bar for the site: a share when the work has a total (and the time left once it is
+  // known), a moving shimmer when it has none. `satexProgress.html(done)` writes one, `.set(el, done)`
+  // moves one, both with the role and values a screen reader reads.
+  self.satexProgress = {
+    html: (done = null, label = 'progress') => `<span class="sx-progress${done == null ? ' sx-busy' : ''}" role="progressbar" aria-label="${esc(label)}" aria-valuemin="0" aria-valuemax="100"${done == null ? '' : ` aria-valuenow="${Math.round(done * 100)}"`} style="--done: ${done ?? 0}"><span class="sx-fill"></span></span>`,
+    set(el, done = null) {
+      el.hidden = false;
+      el.classList.toggle('sx-busy', done == null);
+      el.style.setProperty('--done', String(done ?? 0));
+      if (done == null) el.removeAttribute('aria-valuenow'); else el.setAttribute('aria-valuenow', String(Math.round(done * 100)));
+    },
+    /** The time left for a share `done` reached `ms` after the start, once enough of it is done to tell. */
+    left: (done, ms) => (done > 0.05 && done < 1 ? Math.max(1, Math.round((ms * (1 - done)) / done / 1000)) : null),
+  };
   {
     const { note } = tips;
     // a native `title` would bring the browser's own tooltip: lent to the note while hovered
@@ -443,7 +457,7 @@
       if (!lig) return esc(part);
       const [from, to] = lig, n = [...to].length, glyph = [...part].slice(0, n).join('');
       lig = null;
-      return `<span class="ts-lig" title="a ligature of ${esc([...from].join(' '))}"><span class="ts-lig-from">${esc(from)}</span><span class="ts-lig-to">${esc(glyph)}</span></span>${esc([...part].slice(n).join(''))}`;
+      return `<span class="ts-lig" data-from="${esc(from)}" title="a ligature of ${esc([...from].join(' '))}"><span class="ts-lig-to">${esc(glyph)}</span></span>${esc([...part].slice(n).join(''))}`;
     };
     const opened = () => {
       if (row === null) return '';
@@ -451,7 +465,12 @@
       row = null;
       return tr;
     };
+    // a box of a set width in the line (a contents line's number, its page) is set that wide; leaders fill the rest
+    let boxes = 0;
     const grid = (mark) => {
+      if (mark.startsWith('box ')) { boxes++; return `<span class="ts-boxto" style="min-width: ${parseFloat(mark.slice(4))}pt">`; }
+      if (mark === 'boxend') { if (!boxes) return ''; boxes--; return '</span>'; }
+      if (mark === 'leaders') return '<span class="ts-leaders" aria-hidden="true"></span>';
       if (mark === 'begin') { table++; row = false; return '<span class="ts-table">'; }
       if (!table) return '';
       if (mark === 'cell') return `${opened()}</span><span class="ts-td">`;
@@ -480,7 +499,7 @@
       if (RULES[note]) return `${tr}<span class="${RULES[note][0]}" title="${RULES[note][1]}"></span>`;
       return `${tr}<span class="ts-note">${esc(note)}</span>`;
     }).join('');
-    return html + '</span>'.repeat(open + 2 * table);
+    return html + '</span>'.repeat(open + 2 * table + boxes);
   }
   /** The Markdown satex writes, for hovers and rule explanations: headings, paragraphs, lists,
    * fenced or indented code, links, emphasis. */
@@ -629,7 +648,7 @@
     const worker = new Worker(URL.createObjectURL(new Blob([manifest.worker], { type: 'text/javascript' })));
     let line = Promise.resolve(), waiting = null, id = 0;
     worker.onmessage = ({ data }) => {
-      if (data.type === 'progress') return say(`Loading SaTeX <progress max="${data.total || 1}" value="${data.loaded}"></progress> ${MiB(data.loaded)} of ${MiB(data.total)} MiB`);
+      if (data.type === 'progress') return say(`${self.satexProgress.html(data.total ? data.loaded / data.total : null, 'loading SaTeX')} Loading SaTeX: ${MiB(data.loaded)} of ${MiB(data.total)} MiB`);
       if (data.type === 'status') return;
       if (data.type === 'lsp') for (const m of data.out) if (m.method === 'textDocument/publishDiagnostics') found.set(m.params.uri, m.params.diagnostics);
       const w = waiting;
