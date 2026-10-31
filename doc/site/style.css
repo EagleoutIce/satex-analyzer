@@ -523,6 +523,8 @@ main td .badges, main td .cat { white-space: nowrap; }
 /* a hover's other definitions, folded */
 details.more > summary { color: var(--muted); cursor: pointer; font-size: .85em; margin-top: .4rem; }
 details.more[open] > summary { margin-bottom: .3rem; }
+#explain-body details.more { font-size: .85em; }
+#explain-body details.more .xcard pre.x-body { font-size: 11px; } #explain-body details.more .xcard dt { font-size: .7rem; }
 
 /* playground, after flowR's: tabs with the actions beside them, the files in a tree left of
    the editor, the command line under it with its output, the analysis right */

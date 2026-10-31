@@ -98,7 +98,8 @@
     for (const sect of document.querySelectorAll('.side-pane > details.sect, .tree > details.sect')) {
       const body = sect.querySelector('.grow');
       if (!body) continue;
-      if (sect.id in kept.open) sect.open = kept.open[sect.id];
+      // the Explain macro panel starts folded on every visit
+      if (sect.id in kept.open && sect.id !== 'play-explain') sect.open = kept.open[sect.id];
       sect.addEventListener('toggle', () => { kept.open[sect.id] = sect.open; keep(); });
       const grip = Object.assign(document.createElement('div'), { className: 'grip', title: 'drag to resize, down to nothing to close; double-click: fit' });
       grip.setAttribute('role', 'separator');
