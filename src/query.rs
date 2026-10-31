@@ -3185,7 +3185,7 @@ fn document(
 }
 
 /// A manual on texdoc.org, which serves the same PDF a local `texdoc` opens.
-fn texdoc(name: &str) -> String {
+pub fn texdoc(name: &str) -> String {
     format!("https://texdoc.org/serve/{name}/0")
 }
 

@@ -8,18 +8,56 @@ pub struct DocComment {
     pub params: Vec<(u8, String)>,
 }
 
-/// The comment block that ends on the line above 1-based `line` of `source`.
+/// The comment block that ends on the line above 1-based `line` of
+/// `source`, and the comment that ends that line. A `#n` in the text
+/// becomes `⟨argn⟩`, the name the usage line gives that argument.
 pub fn above(source: &str, line: usize) -> Option<DocComment> {
     let lines: Vec<&str> = source.lines().collect();
     let mut at = line.checked_sub(1)?;
     let mut block = Vec::new();
+    if let Some(trailing) = lines.get(at).and_then(|l| trailing_comment(l)) {
+        block.push(trailing);
+    }
     while at > 0 {
         let Some(comment) = lines.get(at - 1)?.trim().strip_prefix('%') else { break };
         block.push(comment.trim_start_matches('%').trim());
         at -= 1;
     }
     block.reverse();
-    parse(&block)
+    let mut doc = parse(&block)?;
+    doc.text = arg_names(&doc.text);
+    Some(doc)
+}
+
+/// The comment after code on `line`: `\def\x#1% the year`.
+fn trailing_comment(line: &str) -> Option<&str> {
+    let mut escaped = false;
+    for (i, c) in line.char_indices() {
+        match c {
+            '%' if !escaped => {
+                let code = line[..i].trim();
+                return (!code.is_empty()).then(|| line[i..].trim_start_matches('%').trim()).filter(|t| !t.is_empty());
+            }
+            '\\' => escaped = !escaped,
+            _ => escaped = false,
+        }
+    }
+    None
+}
+
+fn arg_names(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match chars.peek().filter(|d| c == '#' && ('1'..='9').contains(d)) {
+            Some(&d) => {
+                out.push_str(&format!("⟨arg{d}⟩"));
+                chars.next();
+            }
+            None => out.push(c),
+        }
+    }
+    out
 }
 
 fn parse(block: &[&str]) -> Option<DocComment> {
@@ -72,6 +110,13 @@ mod tests {
         let doc = above(source, 8).expect("documented");
         assert_eq!(doc.text, "Greets someone.");
         assert_eq!(doc.params, vec![(1, "who is greeted, by name".into()), (2, "the greeting".into())]);
+    }
+
+    #[test]
+    fn the_comment_on_the_definition_line_names_its_arguments() {
+        let source = "\\def\\ckleapyear#1% check if #1 is a leap year.\n  {#1}\n";
+        assert_eq!(above(source, 1).expect("documented").text, "check if ⟨arg1⟩ is a leap year.");
+        assert_eq!(above("\\def\\x{50\\%}\n", 1), None);
     }
 
     #[test]

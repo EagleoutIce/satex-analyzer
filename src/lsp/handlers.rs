@@ -39,9 +39,10 @@ fn to_lsp(doc: &Text, pos: Pos) -> Position {
     }
 }
 
+/// An expl3 function name (`\tl_set:Nn`) is one word: its `:` tells it from `\foo_x`.
 fn word_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\\[A-Za-z@]+|\\.|[A-Za-z0-9_:.+*-]+").unwrap())
+    RE.get_or_init(|| Regex::new(r"\\[A-Za-z@_]+:[A-Za-z]*|\\[A-Za-z@]+|\\.|[A-Za-z0-9_:.+*-]+").unwrap())
 }
 
 /// The control sequence or key under the cursor: its name (without a
@@ -237,12 +238,17 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
             markdown.push_str(&format!("{MORE_DEFINITIONS}\n\n"));
         }
         let text = |key: &str| record.get(key).and_then(Json::as_str);
+        let mined = text("path").and_then(|p| crate::plugin::docs::index().lookup(std::path::Path::new(p), name));
+        let mined = mined.as_ref();
         match text("when") {
             Some(w) => markdown.push_str(&format!("### `\\{name}`: {w}\n\n")),
             None => markdown.push_str(&format!("### `\\{name}`\n\n")),
         }
         if let Some(does) = text("does") {
             markdown.push_str(&format!("{does}\n\n"));
+        } else if let Some((m, does)) = mined.and_then(|m| Some((m, m.text.as_deref()?))) {
+            let manual = m.link.as_ref().and_then(|(l, _)| l.strip_prefix("texdoc ")).unwrap_or(&m.from);
+            markdown.push_str(&format!("{does} {}\n\n", extracted(&format!("from the {manual} manual"))));
         }
         if n == 0
             && let Some((at, set)) = typesets(analysis, name)
@@ -251,6 +257,8 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
         }
         if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
             markdown.push_str(&format!("`\\{name}{}`\n\n", usage(sig)));
+        } else if let Some(usage) = mined.and_then(|m| m.usage.as_deref()) {
+            markdown.push_str(&format!("`{usage}`\n\n"));
         }
         let types = arg_types(record);
         for (arg, ty) in &types {
@@ -261,7 +269,7 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
         }
         if let Some(doc) = documented(record) {
             if !doc.text.is_empty() {
-                markdown.push_str(&format!("{}\n\n", doc.text));
+                markdown.push_str(&format!("{} {}\n\n", doc.text, extracted("from the source comment")));
             }
             for (n, text) in &doc.params {
                 markdown.push_str(&format!("- `⟨arg{n}⟩` {text}\n"));
@@ -274,7 +282,9 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
         if let (Some(file), Some(line)) = (text("file"), record.get("line").and_then(Json::as_u64)) {
             foot.push(format!("`{file}:{line}`"));
         }
-        if let (Some(doc), Some(url)) = (text("documentation"), text("reference")) {
+        if let Some((doc, url)) = mined.and_then(|m| m.link.as_ref()) {
+            foot.push(format!("[{doc}]({url})"));
+        } else if let (Some(doc), Some(url)) = (text("documentation"), text("reference")) {
             foot.push(format!("[{doc}]({url})"));
         } else if let Some(doc) = text("documentation") {
             markdown.push_str(&format!("{doc}\n\n"));
@@ -333,6 +343,11 @@ fn arg_types(record: &Record) -> Vec<(String, String)> {
         .filter_map(|t| t.strip_prefix('#')?.split_once(' '))
         .map(|(n, ty)| (format!("⟨arg{n}⟩"), ty.to_string()))
         .collect()
+}
+
+/// The label that sets text satex extracted apart from what it authored.
+fn extracted(origin: &str) -> String {
+    format!("*({origin})*")
 }
 
 /// The comment block above the definition a record names.

@@ -853,7 +853,10 @@ fn comments_above_a_definition_document_its_arguments() {
         json!({ "textDocument": { "uri": uri }, "position": { "line": 6, "character": 3 } }),
     );
     let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
-    assert!(hover.contains("Greets someone.") && hover.contains("`⟨arg1⟩` who is greeted"), "{hover}");
+    assert!(
+        hover.contains("Greets someone. *(from the source comment)*") && hover.contains("`⟨arg1⟩` who is greeted"),
+        "{hover}"
+    );
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1769,4 +1772,56 @@ fn completion_offers_at_names_only_where_at_is_a_letter() {
     assert!(at(&mut server, inside), "no @ names after \\makeatletter");
     drop(server);
     std::fs::remove_dir_all(dir).ok();
+}
+
+/// A hover shows what the defining package's manual says (src/plugin/docs):
+/// mined in the background, so a later hover shows it. The kernel's
+/// internals link to source2e, expl3 to interface3, a package to its own PDF.
+#[test]
+fn hover_shows_the_mined_manual() {
+    let lines = [
+        "\\documentclass{article}",
+        "\\usepackage{ifthen,xspace}",
+        "\\xspaceaddexceptions{\\relax}",
+        "\\makeatletter\\def\\oops{\\@latex@error{a}{b}}\\makeatother",
+        "\\ExplSyntaxOn \\tl_set:Nn \\l_tmpa_tl {x} \\ExplSyntaxOff",
+        "\\begin{document}",
+        "\\ifthenelse{1=1}{a}{b}",
+        "\\end{document}",
+    ];
+    let (mut server, uri, _, dir) = open_loaded("mined", &(lines.join("\n") + "\n"));
+    let at = |name: &str| {
+        let line = lines.iter().position(|l| l.contains(name)).unwrap();
+        (line as u32, (lines[line].find(name).unwrap() + 2) as u32)
+    };
+    let mut until = |name: &str, wanted: &[&str]| {
+        let (line, character) = at(name);
+        let mut last = String::new();
+        for _ in 0..300 {
+            let id = server.request(
+                "textDocument/hover",
+                json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": character } }),
+            );
+            last = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+            if wanted.iter().all(|w| last.contains(w)) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        panic!("{name}: {wanted:?} not in\n{last}");
+    };
+    until(
+        "\\@latex@error",
+        &[
+            "for use in the LaTeX core. *(from the source2e manual)*",
+            "[texdoc source2e](https://texdoc.org/serve/source2e/0)",
+        ],
+    );
+    until("\\tl_set:Nn", &["Sets ⟨tl var⟩ to contain ⟨tokens⟩", "texdoc interface3"]);
+    let package = ["you can add new commands", "*(from the xspace manual)*", "[texdoc xspace]"];
+    until("\\xspaceaddexceptions", &package);
+    // An authored description stays first: the manual adds the link.
+    until("\\ifthenelse", &["Tests a condition and chooses code.\n", "[texdoc ifthen]"]);
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
 }

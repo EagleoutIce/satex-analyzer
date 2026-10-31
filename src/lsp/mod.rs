@@ -99,6 +99,14 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
     let debounce = Duration::from_millis(cfg.lsp.debounce_ms.max(1));
     let hovers = Hovers::default();
     let engine_hovers = hovers.clone();
+    // A package's manual mined: its names' hovers are asked again.
+    let weak = std::sync::Arc::downgrade(&hovers);
+    crate::plugin::docs::index().subscribe(Box::new(move |names| {
+        let names: std::collections::HashSet<&String> = names.iter().collect();
+        if let Some(Ok(mut hovers)) = weak.upgrade().as_ref().map(|h| h.lock()) {
+            hovers.retain(|(_, n), _| !names.contains(n));
+        }
+    }));
     // The stack the command line's main thread has: deep expansion nests that far.
     let engine = std::thread::Builder::new()
         .stack_size(8 << 20)
@@ -808,13 +816,21 @@ impl Engine {
         let mut used: Vec<(u32, String)> = used.into_iter().map(|(sym, n)| (n, name(sym))).collect();
         used.sort_by(|a, b| b.cmp(a));
         let store = hover_store(self.cfg, analysis, &dir);
+        let docs = crate::plugin::docs::index();
+        let mut dirs = std::collections::HashSet::new();
+        for file in analysis.file_names().iter().map(Path::new) {
+            if dirs.insert(file.parent()) {
+                docs.request(file);
+            }
+        }
         let Ok(mut hovers) = self.hovers.lock() else { return };
         hovers.retain(|(u, n), _| u != uri || same && !own.contains(n));
         // What an earlier session kept for these same loads.
         if !same && let Some(path) = &store {
             let kept: HashMap<String, Option<String>> =
                 std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-            for (name, markdown) in kept.into_iter().filter(|(name, _)| !own.contains(name)) {
+            // A name a manual mined since documents may have been kept without it.
+            for (name, markdown) in kept.into_iter().filter(|(name, _)| !own.contains(name) && !docs.knows(name)) {
                 hovers.entry((uri.clone(), name)).or_insert(markdown);
             }
         }

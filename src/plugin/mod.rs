@@ -5,6 +5,7 @@ pub mod bib;
 pub mod build;
 pub mod depp;
 pub mod discovery;
+pub mod docs;
 pub mod format;
 pub mod l3build;
 pub mod lua;
