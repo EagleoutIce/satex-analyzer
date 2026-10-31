@@ -37,14 +37,29 @@ def available_memory():
 JOBS = int(os.environ.get("SATEX_SITE_JOBS") or max(1, min(os.cpu_count() or 2, available_memory() // 2**31)))
 
 
-BAR = threading.Lock()  # the one running step that draws the terminal's bar; steps beside it log lines
+BOARD = {"lines": {}, "drawn": 0, "lock": threading.Lock()}  # the steps running side by side, a bar each
+
+
+def board(label, line, final=False):
+    """Redraw every running step's bar in place, one line each; a finished step's line stays above them."""
+    width = shutil.get_terminal_size().columns - 1
+    with BOARD["lock"]:
+        out = f"\x1b[{BOARD['drawn']}F" if BOARD["drawn"] else "\r"
+        if final:
+            BOARD["lines"].pop(label, None)
+            out += f"\x1b[K{line[:width]}\n"
+        else:
+            BOARD["lines"][label] = line
+        out += "".join(f"\x1b[K{l[:width]}\n" for l in BOARD["lines"].values()) + "\x1b[J"
+        BOARD["drawn"] = len(BOARD["lines"])
+        print(out, end="", file=sys.stderr, flush=True)
 
 
 def parallel(label, jobs, f, workers=None):
     """`f` of each job, in order, JOBS at a time. A terminal gets a bar naming the running jobs;
     a log gets a line per tenth."""
     jobs, out, done, running, lock = list(jobs), {}, 0, {}, threading.Lock()
-    tty, start = sys.stderr.isatty() and BAR.acquire(blocking=False), time.monotonic()
+    tty, start = sys.stderr.isatty(), time.monotonic()
     name = lambda job: " ".join(dict.fromkeys(getattr(x, "name", x) for x in job if isinstance(x, (str, Path)))) \
         if isinstance(job, tuple) else str(job)
 
@@ -56,10 +71,9 @@ def parallel(label, jobs, f, workers=None):
             names = sorted(running.values())
             if names and done < len(jobs):
                 line += " · " + ", ".join(names[:3]) + (f" +{len(names) - 3}" if len(names) > 3 else "")
-            print(f"\r\x1b[K{line[:shutil.get_terminal_size().columns - 1]}", end="\n" if done == len(jobs) else "",
-                  file=sys.stderr, flush=True)
+            board(label, line, final=done == len(jobs))
         elif done == len(jobs) or done % max(1, len(jobs) // 10) == 0:
-            print(("\r\x1b[K" if sys.stderr.isatty() else "") + line, file=sys.stderr, flush=True)
+            print(line, file=sys.stderr, flush=True)
 
     def tracked(i):
         with lock:
@@ -90,8 +104,6 @@ def parallel(label, jobs, f, workers=None):
                 done += 1
                 show()
     stop.set()
-    if tty:
-        BAR.release()
     return [out[i] for i in range(len(jobs))]
 # What `satex query files` listed, by what it depends on: the document, the
 # flags, the project config and the installation (its ls-R files). A listing
