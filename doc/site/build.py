@@ -729,6 +729,8 @@ def playground(satex, wasm, work, out):
                  for r in json.loads(run(str(satex), "lint", "--rules", "--format", "json"))}
         return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json"))
     queries, filtered, rules, completion = memo(work, "facts", [BINARY, tree_digest(project)], facts)
+    # every rule's card on any page (site.js), from the same records the playground's findings show
+    (out / "rules.json").write_text(json.dumps(rules))
     manifest = {
         "js": emit_local(out, "play/satex.js", (wasm / "satex.js").read_bytes()),
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
@@ -736,6 +738,7 @@ def playground(satex, wasm, work, out):
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(),
         "symbols": emit(out, "play/symbols.json", json.dumps(symbols()).encode()),
+        "schema": emit(out, "play/satex.schema.json", (ROOT / "satex.schema.json").read_bytes()),
     }
     sizes = {k["id"]: f"{k['size'] / 2**20:.1f} MiB gz, {len(k['files'])} files" for k in kernels}
     print(f"playground: wasm {len(wasm_bytes) / 2**20:.1f} MiB, {sizes}; {len(extra)} package bundles on demand, "
@@ -745,15 +748,15 @@ def playground(satex, wasm, work, out):
 
 def symbols():
     """The symbols the playground's drawing pad matches against: unicode-math's table of the
-    installation, each command with the character it sets, `[codepoint, name, class]`."""
+    installation, each command with the character it sets, `[codepoint, name, class, description]`."""
     table = run("kpsewhich", "unicode-math-table.tex").strip()
     if not table:
         return []
-    rows = re.findall(r'\\UnicodeMathSymbol\{"([0-9A-Fa-f]+)\}\{(\\[A-Za-z]+)\s*\}\{\\math(\w+)\}', Path(table).read_text())
-    out = [[int(c, 16), name, cls] for c, name, cls in rows]
+    rows = re.findall(r'\\UnicodeMathSymbol\{"([0-9A-Fa-f]+)\}\{(\\[A-Za-z]+)\s*\}\{\\math(\w+)\}\{([^}]*)\}', Path(table).read_text())
+    out = [[int(c, 16), name, cls, about] for c, name, cls, about in rows]
     # unicode-math's upright Greek (`\mupalpha`) is what the kernel's `\alpha` names
-    names = {n for _, n, _ in out}
-    out += [[c, "\\" + n[4:], cls] for c, n, cls in list(out) if n.startswith("\\mup") and cls == "alpha" and "\\" + n[4:] not in names]
+    names = {n for _, n, *_ in out}
+    out += [[c, "\\" + n[4:], cls, about] for c, n, cls, about in list(out) if n.startswith("\\mup") and cls == "alpha" and "\\" + n[4:] not in names]
     return out
 
 

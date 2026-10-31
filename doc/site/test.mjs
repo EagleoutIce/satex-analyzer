@@ -503,6 +503,17 @@ async function browser() {
       await js(`document.getElementById('trace-internal').click()`);
       await js(`document.getElementById('trace-close').click()`);
       });
+      await section('settings', async () => {
+      // a satex.yaml key set in the settings dialog reaches the run: `clock` fixes what \\year reads
+      await open('clock', '\\documentclass{article}\n\\begin{document}\nYear \\the\\year.\n\\end{document}\n');
+      await js(`document.getElementById('cfg-open').click()`);
+      await until(`return !!document.querySelector('#cfg-list [data-cfg="clock"]')`, 30000);
+      await js(`const i = document.querySelector('#cfg-list [data-cfg="clock"]'); i.value = '1999-06-01T00:00:00'; i.dispatchEvent(new Event('change', { bubbles: true })); document.getElementById('play-config').close()`);
+      await js(`document.getElementById('play-typeset').open = true`);
+      const year = await until(`return /Year 1999/.test(document.getElementById('typeset-body').textContent)`, 120000);
+      check('the clock setting changes \\the\\year', year, await js(`return document.getElementById('typeset-body').textContent.slice(0, 120)`));
+      await js(`document.getElementById('cfg-open').click(); document.getElementById('cfg-reset').click(); document.getElementById('play-config').close()`);
+      });
       await section('leapyear', async () => {
       await js(`document.getElementById('play-exsect').open = true; [...document.querySelectorAll('#play-examples *')].find((e) => e.children.length === 0 && e.textContent.trim().startsWith('leapyear'))?.click()`);
       await until(`return /leapyear/.test(document.querySelector('.tabs [aria-selected=true]')?.textContent ?? '')`, 30000);

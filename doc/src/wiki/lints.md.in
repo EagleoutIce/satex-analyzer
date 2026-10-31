@@ -6,7 +6,7 @@
 
 `satex lint` checks the input file with every rule below. `--all` also checks the packages and classes it loads. `--rules` lists the codes, `--explain CODE` prints one rule's explanation. See [Chktex-Coverage](Chktex-Coverage) for the chktex warning each rule follows, and [Primitive-coverage](Primitive-coverage) and [Domains](Domains) for how satex gets the facts a rule reads.
 
-Every rule has a stable number, such as `S012`. Output shows it before the code: the text and GitHub formats, SARIF's rule id and the editor's diagnostic code. `--explain`, `lint_off` and the suppression comments take the number in place of the code. A new rule gets the next free number in [`src/lint/numbers.txt`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/lint/numbers.txt). A removed rule keeps its line there, so a number never changes meaning.
+Every rule has a stable number: its category's letter and a count, such as `C012`. The letters are `C` correctness, `X` security, `S` style, `P` performance and `A` precision (of the analysis). Output shows it before the code: the text and GitHub formats, SARIF's rule id and the editor's diagnostic code. `--explain`, `lint_off` and the suppression comments take the number in place of the code. A new rule gets the next free number of its category in [`src/lint/numbers.txt`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/lint/numbers.txt). A removed rule keeps its line there, so a number never changes meaning. A rule that moves to another category keeps its number, so suppressions and links that name it stay valid.
 
 ## Errors caused in package code
 
@@ -23,9 +23,11 @@ A comment in the document silences findings. Without codes it silences every rul
 
 They apply to every output format and to `--fix`. An unknown code is reported as `unknown-suppress-code`.
 
+`satex lint --style` lists the rules the project breaks so often that they may be its style, as an editor asks about them (`style_prompt` in `satex.yaml`).
+
 ## Rules
 
-Every rule, with a link to its explanation below. The shape gives the severity: ◆ error, ▲ warning, ● info. The badge gives the category. The origin names the [chktex](Chktex-Coverage) warnings a rule follows. On the site, the columns menu hides columns and wraps long summaries.
+Every rule, with a link to its explanation below. The shape gives the severity: ◆ error, ▲ warning, ● info. The badge gives the category. The engine column names the engines a rule is about, when not all of them. The origin names the [chktex](Chktex-Coverage) warnings a rule follows. On the site the table comes in pages, and the columns icon in its header hides columns or wraps long summaries. Hovering a rule's name anywhere on the site shows its card.
 
 {{rules}}
 

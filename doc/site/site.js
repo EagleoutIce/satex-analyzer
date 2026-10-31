@@ -33,31 +33,45 @@
     const { language: { StreamLanguage }, stex: { stex }, highlight: hl } = await self.siteCM();
     const t = hl.tags;
     const highlighter = hl.tagHighlighter([[t.tagName, 'cmd'], [t.bracket, 'br'], [t.keyword, 'kw'], [t.comment, 'com'], [t.atom, 'atom'],
-      [t.number, 'num'], [t.string, 'str'], [t.special(t.variableName), 'arg'], [t.variableName, 'arg']].map(([tag, c]) => ({ tag, class: `tok-${c}` })));
-    // BibTeX: @type, key, field names, braces and values, in the TeX mode's classes
+      [t.number, 'num'], [t.string, 'str'], [t.definition(t.variableName), 'def'], [t.special(t.variableName), 'arg'], [t.variableName, 'arg'], [t.operator, 'br']].map(([tag, c]) => ({ tag, class: `tok-${c}` })));
+    // BibTeX (btxdoc § 2): `@type{key, field = value # value}`; `@string`, `@preamble` and `@comment`
+    // are commands, not entries. A braced value is TeX: commands, braces and math in the TeX mode's classes.
+    const COMMANDS = /^@(string|preamble|comment)\b/i;
     const bib = StreamLanguage.define({
-      startState: () => ({ depth: 0, key: false }),
+      startState: () => ({ depth: 0, key: false, command: '', field: true }),
       token(s, st) {
         if (st.depth === 0) {
-          if (s.match(/@[A-Za-z]+/)) { st.key = true; return 'tag'; }
-          if (st.key && s.match(/[{(]/)) { st.depth = 1; return 'bracket'; }
+          const command = s.match(COMMANDS);
+          if (command) { st.command = command[1].toLowerCase(); st.key = false; return 'keyword'; }
+          if (s.match(/@[A-Za-z]+/)) { st.command = ''; st.key = true; return 'tag'; }
+          if ((st.key || st.command) && s.match(/[{(]/)) { st.depth = 1; st.field = true; return 'bracket'; }
           if (s.eatSpace()) return null;
           s.skipTo('@') || s.skipToEnd(); return 'comment';
         }
-        if (st.depth > 1) { // inside a braced value
+        if (st.command === 'comment') {
+          if (s.match(/[{(]/)) { st.depth++; return 'comment'; }
+          if (s.match(/[})]/)) { if (--st.depth === 0) st.command = ''; return 'comment'; }
+          s.match(/[^{}()]+/) || s.next(); return 'comment';
+        }
+        if (st.depth > 1) { // inside a braced value: TeX
+          if (s.match(/\\(?:[A-Za-z@]+|.)/)) return 'tagName';
+          if (s.match(/\$/)) return 'atom';
           if (s.match(/[{]/)) { st.depth++; return 'bracket'; }
           if (s.match(/[}]/)) { st.depth--; return 'bracket'; }
-          s.match(/[^{}]+/); return 'string';
+          s.match(/[^{}\\$]+/) || s.next(); return 'string';
         }
         if (s.eatSpace()) return null;
         if (st.key) { st.key = false; if (s.match(/[^,\s{}]+/)) return 'atom'; }
         if (s.match(/[{]/)) { st.depth = 2; return 'bracket'; }
-        if (s.match(/[})]/)) { st.depth = 0; st.key = false; return 'bracket'; }
-        if (s.match(/"[^"]*"?/)) return 'string';
+        if (s.match(/[})]/)) { st.depth = 0; st.key = false; st.command = ''; return 'bracket'; }
+        if (s.match(/"(?:[^"\\]|\\.)*"?/)) return 'string';
         if (s.match(/\d+/)) return 'number';
-        if (s.match(/[A-Za-z_-][\w:.-]*(?=\s*=)/)) return 'keyword';
-        if (s.match(/[=#,]/)) return 'punctuation';
-        s.next(); return 'variableName';
+        if (s.match(/#/)) return 'operator';
+        if (s.match(/,/)) { st.field = true; return 'punctuation'; }
+        if (s.match(/=/)) { st.field = false; return 'punctuation'; }
+        // before `=`: a field name, or the name a @string defines; after it: a @string name used
+        if (s.match(/[A-Za-z_][\w:.+/-]*/)) return st.field ? (st.command === 'string' ? 'variableName.definition' : 'keyword') : 'variableName.special';
+        s.next(); return null;
       },
     });
     // a control symbol (`\ `, `\-`, `\'`) is one token, as for TeX; stex leaves some of them split
@@ -190,7 +204,7 @@
       if (!html) { if (!e.target.closest?.('.tip-note')) note.hide(); return; }
       note.show(chip ?? a, html, (chip ?? a).closest('.tip, .cm-tooltip'));
     });
-    document.addEventListener('pointerdown', () => { untitle(); note.hide(); }, true);
+    document.addEventListener('pointerdown', (e) => { untitle(); note.hide(); if (!e.target.closest?.('.tip-card')) tips.card.hide(); }, true);
   }
   /** explain's `types` (`#1 skip register`) by argument name: `{ arg1: 'skip register' }`. */
   const typesOf = (r) => Object.fromEntries((r.types ?? []).map((t) => t.match(/^#(\d+) (.+)$/)).filter(Boolean).map(([, n, t]) => [`arg${n}`, t]));
@@ -305,7 +319,7 @@
       rows.push(['signature', signature(r.signature) + (more ? ` <span class="muted">reads ${argumentCount(r.takes)} with what it calls</span>` : '')]);
     } else if (r.takes) rows.push(['arguments', argumentCount(r.takes)]);
     const types = typesOf(r);
-    if (r.syntax) rows.push(['usage', `<code class="usage">${esc(r.syntax)}</code>`]); // a primitive's TeXbook syntax
+    if (r.syntax) rows.push(['usage', `<code class="usage">${slots(esc(r.syntax))}</code>`]); // a primitive's TeXbook syntax
     else if (r.effective && r.effective !== r.name) rows.push(['usage', `<code class="usage">${usage(r.effective, types).html}</code>`]);
     if (r.types?.length) rows.push(['types', `<span class="chips">${Object.entries(types).map(([n, t]) => `<span class="x-type"><code>#${n.slice(3)}</code> ${tyLink(t)}</span>`).join('')}</span>`]);
     if (r.forms?.length) rows.push(['forms', r.forms.map((f) => `<code>${esc(f)}</code>`).join(' ')]);
@@ -366,7 +380,51 @@
     }).join('');
     return html + '</span>'.repeat(open);
   }
-  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, placeLink, upstream, csChip, csName, value, esc, notation };
+  /** The Markdown satex writes, for hovers and rule explanations: headings, paragraphs, lists,
+   * fenced or indented code, links, emphasis. */
+  const indented = (b) => b.split('\n').every((l) => !l.trim() || /^ {4}/.test(l));
+  const markdown = (text) => text.split(/^```\w*\n([\s\S]*?)^```\s*$/m).map((part, i) => i % 2 ? `<pre><code>${esc(part)}</code></pre>`
+    : part.split(/\n{2,}/).filter((b) => b.trim()).map((b) => indented(b) ? `<pre><code>${esc(b.replace(/^ {4}/gm, ''))}</code></pre>`
+      : /^#+ /.test(b.trim()) ? `<h4>${inline(b.trim().replace(/^#+ /, ''))}</h4>`
+        : /^[-*] /.test(b.trim()) ? `<ul>${b.trim().split(/\n(?=[-*] )/).map((li) => `<li>${inline(li.slice(2))}</li>`).join('')}</ul>`
+          : `<p>${inline(b.trim())}</p>`).join('')).join('');
+  /** A lint rule's card, the parts and markup of its section on the rules page: name, number,
+   * severity, category, engines, fixes, summary, text and references. */
+  const ruleCard = (r, href = '') => {
+    const refs = (r.references ?? []).map((x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.cite)}</a>`).join(', ');
+    const engines = (r.engines ?? []).join(', ');
+    const badges = [`<code class="num" title="rule number">${esc(r.number ?? '')}</code>`,
+      `<span class="sev sev-${esc(r.severity)}" title="default: ${esc(r.severity)}">default: ${esc(r.severity)}</span>`,
+      `<span class="cat cat-${esc(r.category)}">${esc(r.category)}</span>`,
+      ...(engines ? [`<span class="eng" title="only under ${esc(engines)}">${esc(engines)}</span>`] : []),
+      ...(r.fixes ?? []).map((f) => `<span class="fix fix-${esc(f)}">${esc(f)}</span>`)];
+    const name = href ? `<a href="${esc(href)}">${esc(r.code)}</a>` : esc(r.code);
+    return `<section class="rule rule-tip"><h4>${name}</h4><p class="badges">${badges.join(' ')}</p>` +
+      `<p><b>${inline(r.summary ?? r.message ?? '')}</b></p>${markdown(r.explanation ?? '')}${refs ? `<p>See ${refs}.</p>` : ''}</section>`;
+  };
+  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation };
+  // A rule named anywhere on the site, as a link into the rules page or its code or number in a
+  // code span, shows its card. The cards' data is the rules the build wrote, fetched once.
+  const RULES_URL = new URL('rules.json', document.currentScript?.src ?? location.href);
+  let ruleData = null;
+  const ruleNamed = async (name) => {
+    const all = await (ruleData ??= fetch(RULES_URL).then((r) => r.ok ? r.json() : {}).catch(() => ({})));
+    return all[name] ?? Object.values(all).find((r) => r.number === name);
+  };
+  const ruleLink = (code) => new URL(`wiki/lints.html#${encodeURIComponent(code)}`, RULES_URL).href;
+  self.satexRule = { named: ruleNamed, link: ruleLink };
+  const RULE_NAME = /^(?:[a-z0-9]+(?:-[a-z0-9]+)+|[CXSPA]\d{3})$/;
+  document.addEventListener('mouseover', async (e) => {
+    const el = e.target.closest?.('a[href*="lints.html#"], code');
+    if (!el || el.closest('.tip, section.rule, .cm-editor')) return;
+    const name = el.localName === 'a' ? decodeURIComponent(el.hash.slice(1)) : el.textContent.trim();
+    if (!RULE_NAME.test(name)) return;
+    const rule = await ruleNamed(name);
+    if (rule && el.matches(':hover')) tips.card.show(el, ruleCard(rule, ruleLink(rule.code)));
+  });
+  document.addEventListener('mouseout', (e) => {
+    if (e.target.closest?.('a[href*="lints.html#"], code') && tips.card.el.querySelector('.rule-tip')) tips.card.hide(200);
+  });
 
   // ------------------------------------------------------------ the landing page's examples
   // A command explains itself on hover, an underline shows its finding: a floating card,
@@ -423,17 +481,27 @@
     show(data.initial);
   }
 
-  // Long tables: a header click sorts; a text box and one select per badge kind filter.
+  // Long tables: a header click sorts, a text box and one select per badge kind filter, pages
+  // of a chosen size, and a columns menu on the header that hides any column.
   const RANK = { error: 0, warning: 1, info: 2, hint: 3 };
-  const FACETS = { sev: 'severity', cat: 'category', fix: 'quick fix', from: 'origin' };
-  const facet = (row, k) => [...row.querySelectorAll('.' + k)].map((e) => k === 'sev' ? e.title.split(' ').pop() : e.textContent.split(' ')[0]);
+  const FACETS = { sev: 'severity', cat: 'category', eng: 'engine', fix: 'quick fix', from: 'origin' };
+  const facet = (row, k) => [...row.querySelectorAll('.' + k)].flatMap((e) => k === 'sev' ? [e.title.split(' ').pop()]
+    : k === 'eng' ? e.textContent.split(', ') : [e.textContent.split(' ')[0]]);
   const key = (cell) => { const sev = cell?.querySelector('.sev'); return (sev ? RANK[sev.title.split(' ').pop()] ?? 9 : '') + (cell?.textContent.trim() ?? ''); };
+  const SIZES = [25, 50, 100, 0];
+  const remember = (name, fallback) => { try { return JSON.parse(localStorage.getItem(name) ?? 'null') ?? fallback; } catch { return fallback; } };
+  const keep = (name, value) => { try { localStorage.setItem(name, JSON.stringify(value)); } catch {} };
   for (const table of document.querySelectorAll('main table')) {
     const body = table.tBodies[0];
     const rows = [...(body?.rows ?? [])];
     if (rows.length < 20) continue;
-    const bar = document.createElement('div');
-    bar.className = 'filters';
+    const heads = [...table.tHead.rows[0].cells];
+    const names = heads.map((h) => h.textContent.trim());
+    // the summary takes the width the other columns leave, cut to one line
+    const grow = Math.max(names.indexOf('summary'), 0) || heads.length - 1;
+    for (const row of [table.tHead.rows[0], ...rows]) row.cells[grow]?.classList.add('fill');
+    for (const row of rows) if (row.cells[grow]) row.cells[grow].title = row.cells[grow].textContent.trim();
+    const bar = Object.assign(document.createElement('div'), { className: 'filters' });
     const text = Object.assign(document.createElement('input'), { type: 'search', placeholder: `filter ${rows.length} rows…` });
     const selects = Object.entries(FACETS).flatMap(([k, label]) => {
       const values = [...new Set(rows.flatMap((r) => facet(r, k)))].sort();
@@ -444,61 +512,74 @@
       select.dataset.k = k;
       return [select];
     });
-    const count = document.createElement('span');
-    count.className = 'muted';
-    const heads = [...table.tHead.rows[0].cells];
-    const last = heads.length - 1;
-    for (const row of rows) if (row.cells[last]) Object.assign(row.cells[last], { title: row.cells[last].textContent.trim() });
-    const stored = `satex-columns:${location.pathname}:${heads.map((h) => h.textContent.trim()).join('|')}`;
-    let saved = {};
-    try { saved = JSON.parse(localStorage.getItem(stored) ?? '{}') ?? {}; } catch {}
-    const menu = Object.assign(document.createElement('details'), { className: 'cols', innerHTML: '<summary>columns</summary><div></div>' });
+    const stored = `satex-table:${location.pathname}:${names.join('|')}`;
+    const saved = remember(stored, {});
+    const menu = Object.assign(document.createElement('details'), { className: 'cols',
+      innerHTML: '<summary title="columns" aria-label="columns"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M2 3h3v10H2zM6.5 3h3v10h-3zM11 3h3v10h-3z" fill="currentColor"/></svg></summary><div></div>' });
     const toggle = (name, on, set) => {
       const box = Object.assign(document.createElement('input'), { type: 'checkbox', checked: on });
-      box.onchange = () => {
-        set(box.checked);
-        saved[name] = box.checked;
-        try { localStorage.setItem(stored, JSON.stringify(saved)); } catch {}
-      };
+      box.onchange = () => { set(box.checked); saved[name] = box.checked; keep(stored, saved); };
       const label = document.createElement('label');
       label.append(box, ` ${name}`);
       menu.lastChild.append(label);
       set(on);
     };
-    heads.forEach((th, i) => toggle(th.textContent.trim(), saved[th.textContent.trim()] ?? true,
-      (on) => { for (const row of table.rows) if (row.cells[i]) row.cells[i].hidden = !on; }));
+    names.forEach((name, i) => toggle(name, saved[name] ?? true, (on) => { for (const row of table.rows) if (row.cells[i]) row.cells[i].hidden = !on; }));
     toggle('wrap text', saved['wrap text'] ?? false, (on) => table.classList.toggle('wrap', on));
+    menu.onclick = menu.onkeydown = (e) => e.stopPropagation();
     document.addEventListener('click', (e) => { if (!menu.contains(e.target)) menu.open = false; });
+    heads.at(-1).append(menu);
     table.classList.add('long');
     const scroll = Object.assign(document.createElement('div'), { className: 'table-scroll' });
     table.before(scroll);
     scroll.append(table);
-    bar.append(text, ...selects, menu, count);
+    const pager = Object.assign(document.createElement('div'), { className: 'pager' });
+    const size = Object.assign(document.createElement('select'), { title: 'rows per page',
+      innerHTML: SIZES.map((n) => `<option value="${n}">${n ? `${n} per page` : 'all rows'}</option>`).join('') });
+    size.value = String(saved['page size'] ?? SIZES[0]);
+    const [prev, next] = ['‹', '›'].map((t) => Object.assign(document.createElement('button'), { type: 'button', textContent: t }));
+    const where = Object.assign(document.createElement('span'), { className: 'muted' });
+    pager.append(prev, where, next, size);
+    scroll.after(pager);
+    bar.append(text, ...selects);
     scroll.before(bar);
+    let page = 0;
     const apply = () => {
       const q = text.value.toLowerCase();
-      let shown = 0;
-      for (const row of rows) {
-        const ok = row.textContent.toLowerCase().includes(q) && selects.every((s) => !s.value ||
-          (s.value === '—' ? !facet(row, s.dataset.k).length : facet(row, s.dataset.k).includes(s.value)));
-        row.hidden = !ok;
-        shown += +ok;
-      }
-      count.textContent = shown === rows.length ? '' : `${shown} of ${rows.length}`;
+      const ok = rows.filter((row) => row.textContent.toLowerCase().includes(q) && selects.every((s) => !s.value ||
+        (s.value === '—' ? !facet(row, s.dataset.k).length : facet(row, s.dataset.k).includes(s.value))));
+      const per = +size.value || ok.length || 1, pages = Math.max(1, Math.ceil(ok.length / per));
+      page = Math.min(page, pages - 1);
+      const shown = new Set(ok.slice(page * per, (page + 1) * per));
+      for (const row of rows) row.hidden = !shown.has(row);
+      where.textContent = `${ok.length ? page * per + 1 : 0}–${Math.min((page + 1) * per, ok.length)} of ${ok.length}${ok.length < rows.length ? ` (${rows.length} in all)` : ''}`;
+      prev.disabled = page === 0;
+      next.disabled = page >= pages - 1;
     };
-    bar.oninput = apply;
-    for (const [i, th] of [...table.tHead.rows[0].cells].entries()) {
+    bar.oninput = () => { page = 0; apply(); };
+    size.onchange = () => { saved['page size'] = +size.value; keep(stored, saved); page = 0; apply(); };
+    prev.onclick = () => { page -= 1; apply(); };
+    next.onclick = () => { page += 1; apply(); };
+    table.satexFilter = (k, value) => {
+      const select = selects.find((s) => s.dataset.k === k);
+      if (select) select.value = value;
+      page = 0;
+      apply();
+    };
+    for (const [i, th] of heads.entries()) {
       th.classList.add('sortable');
       th.tabIndex = 0;
       th.onclick = th.onkeydown = (e) => {
         if (e.key && e.key !== 'Enter') return;
         const dir = th.getAttribute('aria-sort') === 'ascending' ? -1 : 1;
-        for (const h of th.parentNode.cells) h.removeAttribute('aria-sort');
+        for (const h of heads) h.removeAttribute('aria-sort');
         th.setAttribute('aria-sort', dir > 0 ? 'ascending' : 'descending');
         rows.sort((a, b) => dir * key(a.cells[i]).localeCompare(key(b.cells[i]), undefined, { numeric: true }));
         body.append(...rows);
+        apply();
       };
     }
+    apply();
   }
 
   // A lint rule's section (a heading with badges under it) is one card; every heading
@@ -671,16 +752,33 @@
   const toc = document.getElementById('toc');
   const heads = [...document.querySelectorAll('body.doc main :is(h2, h3)[id]')];
   if (!toc || heads.length < 2) return toc?.remove();
+  // A folded group (the lint rules' categories) is a link that filters the rule table to it,
+  // and unfolds to list its headings.
   let group = null;
-  toc.innerHTML = '<b>On this page</b>' + heads.map((h) => {
+  const blocks = heads.map((h) => {
     const g = h.closest('details')?.querySelector('summary')?.textContent ?? null;
-    const label = g && g !== group ? `<span class="grp">${esc(g.split(/\s+[—-]\s+/)[0])}</span>` : '';
+    const name = g?.split(/\s+[(—-]/)[0] ?? '';
+    const open = g && g !== group ? `<div class="grp-block"><span class="grp-row"><a class="grp" href="#rules" data-cat="${esc(name)}">${esc(g)}</a><button type="button" class="grp-more" aria-expanded="false" title="list its rules">▸</button></span><div class="grp-items" hidden>` : '';
+    const close = group && g !== group ? '</div></div>' : '';
     group = g;
     // the heading's name, not its gloss: "Meaning sets: what … may mean" lists as "Meaning sets"
-    const text = [...h.childNodes].filter((n) => !n.classList?.contains('self')).map((n) => n.textContent).join('').trim(), name = text.split(': ')[0];
-    return `${label}<a class="${h.localName}" href="#${h.id}" title="${esc(text)}">${esc(name)}</a>`;
-  }).join('');
-  const links = new Map([...toc.querySelectorAll('a')].map((a, i) => [heads[i], a]));
+    const text = [...h.childNodes].filter((n) => !n.classList?.contains('self')).map((n) => n.textContent).join('').trim(), short = text.split(': ')[0];
+    return `${close}${open}<a class="${h.localName}" href="#${h.id}" title="${esc(text)}">${esc(short)}</a>`;
+  });
+  toc.innerHTML = '<b>On this page</b>' + blocks.join('') + (group ? '</div></div>' : '');
+  toc.addEventListener('click', (e) => {
+    const more = e.target.closest('.grp-more');
+    if (more) {
+      const items = more.closest('.grp-block').querySelector('.grp-items');
+      items.hidden = !items.hidden;
+      more.setAttribute('aria-expanded', String(!items.hidden));
+      more.textContent = items.hidden ? '▸' : '▾';
+      return;
+    }
+    const grp = e.target.closest('a.grp');
+    document.querySelector('main table.long')?.satexFilter?.('cat', grp?.dataset.cat ?? '');
+  });
+  const links = new Map([...toc.querySelectorAll('a.h2, a.h3')].map((a, i) => [heads[i], a]));
   const seen = new Set();
   const observer = new IntersectionObserver((entries) => {
     for (const e of entries) e.isIntersecting ? seen.add(e.target) : seen.delete(e.target);

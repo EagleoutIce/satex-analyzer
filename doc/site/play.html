@@ -14,6 +14,8 @@
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5h9M8 3.5v9.5M6 13h4"/></svg><span class="label">Try</span></button>
         <button id="draw-open" class="pill feature" type="button" aria-haspopup="dialog" aria-label="Draw a symbol" title="draw a symbol, get the commands that set it">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 2.5l3 3L6 13H3v-3zM9 4l3 3"/></svg><span class="label">Draw</span></button>
+        <button id="cfg-open" class="pill feature" type="button" aria-haspopup="dialog" aria-label="Settings" title="the satex.yaml settings of the playground's runs: the date \year reads, limits, lints…">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg><span class="label">Settings</span></button>
         <button id="play-link" class="pill" type="button" aria-label="Copy link" title="a link that restores the project's files, the open file, the command and the kernel">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 9a3 3 0 0 0 4.2.2l2-2a3 3 0 0 0-4.2-4.2l-.8.8"/><path d="M9 7a3 3 0 0 0-4.2-.2l-2 2a3 3 0 0 0 4.2 4.2l.8-.8"/></svg><span class="label">Copy link</span></button>
         <button id="play-issue" class="pill" type="button" aria-label="Report an issue" title="open a GitHub issue form in a new tab, filled with the satex version, the kernel and this file. Nothing is sent until you submit it there">
@@ -74,13 +76,23 @@
       </div></dialog>
     <dialog id="play-try" class="cache-dialog try-dialog" aria-labelledby="try-title">
       <header><h3 id="try-title">Try</h3><button type="button" class="ghost small" id="try-close" aria-label="close">✕</button></header>
-      <p class="muted cache-note">Read right after <code>\begin{document}</code> of this document. The file stays as it is.</p>
+      <p class="muted cache-note" id="try-note">Read right after <code>\begin{document}</code> of this document. The file stays as it is.</p>
       <div class="try-box"><textarea id="lib-text" rows="3" spellcheck="false" aria-label="text to try" placeholder="\textbf{bold} 10--12 \hfill right"></textarea>
         <button type="button" id="lib-run" class="runbtn" title="Ctrl+Enter">Typeset</button></div>
+      <div class="try-bar"><label class="ts-toggle"><span>typeset as you type</span><input type="checkbox" id="try-auto" role="switch" checked></label><span id="try-status" class="muted"></span></div>
       <div id="lib-out" class="try-out"></div></dialog>
+    <dialog id="play-config" class="cache-dialog" aria-labelledby="cfg-title">
+      <header><h3 id="cfg-title">Settings</h3><button type="button" class="ghost small" id="cfg-close" aria-label="close">✕</button></header>
+      <p class="muted cache-note">The satex.yaml keys of the playground's runs, from satex's schema. A changed key holds for every check here and for the link you share.</p>
+      <div class="lib-bar cfg-bar"><label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+        <input type="search" id="cfg-search" placeholder="Search settings: clock, limits, lint…" aria-label="search the settings"></label></div>
+      <ul id="cfg-list" class="cache-scroll cfg-list"></ul>
+      <footer><span id="cfg-total" class="muted"></span><button type="button" class="small ghost" id="cfg-reset">Reset all</button></footer></dialog>
     <dialog id="play-draw" class="cache-dialog draw-dialog" aria-labelledby="draw-title">
       <header><h3 id="draw-title">Draw a symbol</h3><button type="button" class="ghost small" id="draw-close" aria-label="close">✕</button></header>
-      <p class="muted cache-note" id="draw-note">Draw it in the box. The closest symbols the document can set are listed beside it.</p>
+      <p class="muted cache-note" id="draw-note">Draw it in the box. Your drawing and each symbol's glyph are cut to their ink, scaled to one small square and compared pixel by pixel.
+        Names in force in this document rank first. The idea follows <a href="https://detexify.kirelabs.org" target="_blank" rel="noopener">Detexify</a> by Daniel Kirsch, without its code or data.
+        The symbols come from unicode-math's <code>unicode-math-table.tex</code> (Will Robertson and others, LPPL).</p>
       <div class="draw-box"><div class="draw-pad"><canvas id="draw-pad" width="256" height="256" aria-label="drawing area"></canvas>
         <button type="button" class="small ghost" id="draw-clear">Clear</button></div>
         <ol id="draw-list" class="draw-list" aria-live="polite"></ol></div></dialog>

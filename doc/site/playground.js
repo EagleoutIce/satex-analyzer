@@ -170,6 +170,21 @@
   const uri = (name = state.file) => `file://${path(name)}`;
 
   let toastTimer;
+  /** A rule the project breaks often: asks whether that is its style. The server records the answer in satex.yaml. */
+  const styleQueue = [];
+  function askStyle(candidate) {
+    if (document.querySelector('.style-ask')) return void styleQueue.push(candidate);
+    const ask = Object.assign(document.createElement('div'), { className: 'style-ask', role: 'alertdialog' });
+    ask.innerHTML = `<p>${inline(candidate.question)}</p><button data-a="off">Yes, turn it off</button><button>No</button><button data-a="keep">Never ask</button>`;
+    ask.onclick = (e) => {
+      const button = e.target.closest('button');
+      if (!button) return;
+      ask.remove();
+      if (styleQueue.length) askStyle(styleQueue.shift());
+      if (button.dataset.a) lsp('workspace/executeCommand', { command: 'satex/style', arguments: [{ code: candidate.code, answer: button.dataset.a }] }).catch((err) => toast(`not recorded: ${err.message}`));
+    };
+    toastBox.before(ask);
+  }
   function toast(text) {
     toastBox.textContent = text;
     toastBox.classList.add('on');
@@ -228,15 +243,10 @@
   const markdown = (text) => text.split(/^```\w*\n([\s\S]*?)^```\s*$/m).map((part, i) => i % 2 ? `<pre><code>${escape(part)}</code></pre>`
     : part.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean).map((b) => /^#+ /.test(b) ? `<h4>${inline(b.replace(/^#+ /, ''))}</h4>`
       : /^[-*] /.test(b) ? `<ul>${b.split(/\n(?=[-*] )/).map((li) => `<li>${inline(li.slice(2))}</li>`).join('')}</ul>` : `<p>${inline(b)}</p>`).join('')).join('');
-  /** A rule's explanation under one of its findings: the finding already shows its severity
-   * and message, so only the category, the rule's title if it says more, the text and links. */
+  /** A finding's rule as its card, the same one the rules page and every rule hover show. */
   function explanation(d) {
     const r = manifest.rules[d.code];
-    if (!r) return '';
-    const title = r.summary ?? r.message;
-    const refs = (r.references ?? []).map((x) => x.url ? `<a href="${escape(x.url)}" target="_blank" rel="noopener">${escape(x.cite)}</a>` : escape(x.cite));
-    return `<div class="explain"><p><span class="cat">${escape(r.category)}</span>${title && title !== d.message ? ` <b>${commandRefs(inline(title))}</b>` : ''}</p>` +
-      `${commandRefs(markdown(r.explanation ?? ''))}<p class="refs">${[...refs, `<a href="${base}wiki/lints.html#${encodeURIComponent(d.code)}">SaTeX rule documentation</a>`].join(' · ')}</p></div>`;
+    return r ? commandRefs(cards.ruleCard(r, `${base}wiki/lints.html#${encodeURIComponent(d.code)}`)) : '';
   }
   /** A hover's Markdown; its last paragraph, the places and links, is a muted footer. */
   const unescape = (s) => s.replace(/&(lt|gt|quot|amp);/g, (m, e) => ({ lt: '<', gt: '>', quot: '"', amp: '&' })[e]);
@@ -500,7 +510,15 @@
     /** Words (file names in arguments) the server resolves a definition for, by start offset. */
     const resolves = new Map();
     const KIND = { 3: 'function', 14: 'keyword', 9: 'namespace', 18: 'variable' };
+    /** In a .bib file, after `=` or `#`: the @string names the file defines. */
+    function bibStrings(ctx) {
+      const word = ctx.matchBefore(/[A-Za-z_][\w:.+/-]*/), from = word?.from ?? ctx.pos;
+      if (!/[=#]\s*$/.test(ctx.state.sliceDoc(Math.max(0, from - 40), from)) && !ctx.explicit) return null;
+      const names = [...ctx.state.doc.toString().matchAll(/@string\s*[{(]\s*([A-Za-z_][\w:.+/-]*)\s*=\s*("[^"]*"|\{[^}]*\}|[^,})]*)/gi)];
+      return names.length ? { from, options: names.map((m) => ({ label: m[1], detail: m[2].slice(0, 40), type: 'constant' })) } : null;
+    }
     async function complete(ctx) {
+      if (/\.bib$/.test(state.file)) return bibStrings(ctx);
       // a command's name, or a key or value in a list (`/demo/mode=fa`)
       const word = ctx.matchBefore(/[A-Za-z@*_:]*/), key = ctx.matchBefore(/[\w@*:./-]*/);
       const before = ctx.state.sliceDoc(word.from - 1, word.from), line = ctx.state.doc.lineAt(ctx.pos);
@@ -543,7 +561,7 @@
       if (!value && !found.length) return null;
       const range = result?.range, [from, to] = range ? [at(v.state.doc, range.start), at(v.state.doc, range.end)]
         : found.length ? span(found[0][0].range) : [pos, pos];
-      return { from, to, html: found.map(([d]) => findingCard(d)).join('') + (value ? `<div class="hover">${card(value)}</div>` : '') };
+      return { from, to, html: found.map(([d]) => findingCard(d) + explanation(d)).join('') + (value ? `<div class="hover">${card(value)}</div>` : '') };
     }
     // Ctrl (Cmd) held over a command underlines it as a link to its definition.
     const link = st.StateEffect.define();
@@ -1315,29 +1333,43 @@
   libFrom.onchange = libraryShow;
   libInternal.onchange = libraryLoad;
   $('lib-open').onclick = () => { $('play-library').showModal(); libraryLoad(); $('lib-search').focus(); };
-  $('try-open').onclick = () => { $('play-try').showModal(); $('lib-text').focus(); };
-  for (const [box, x] of [['play-library', 'lib-close'], ['play-try', 'try-close'], ['play-draw', 'draw-close']]) {
+  $('try-open').onclick = () => { tryNote(); $('play-try').showModal(); $('lib-text').focus(); };
+  let tryTimer = 0;
+  $('lib-text').addEventListener('input', () => { clearTimeout(tryTimer); if ($('try-auto').checked) tryTimer = setTimeout(libraryTry, 500); });
+  for (const [box, x] of [['play-library', 'lib-close'], ['play-try', 'try-close'], ['play-draw', 'draw-close'], ['play-config', 'cfg-close']]) {
     $(x).onclick = () => $(box).close();
     $(box).addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
   }
   /** The scratch text read right after the root's `\begin{document}`: what it sets, its findings and what it expanded to. */
+  /** Where Try reads its text in the root: right after `\begin{document}`, else (plain TeX) before `\bye`, else at the end. */
+  function tryPlace() {
+    const root = state.root ?? state.file, lines = (root === state.file ? editor.text() : state.texts[root] ?? '').split('\n');
+    const begin = lines.findIndex((l) => /\\begin\s*\{document\}/.test(l));
+    if (begin >= 0) {
+      const at = lines[begin].search(/\\begin\s*\{document\}/);
+      return { root, i: begin, col: at + lines[begin].slice(at).indexOf('}') + 2, where: 'right after <code>\\begin{document}</code>' };
+    }
+    const bye = lines.findIndex((l) => /\\bye\b/.test(l));
+    if (bye >= 0) return { root, i: bye, col: lines[bye].search(/\\bye\b/) + 1, where: 'right before <code>\\bye</code>' };
+    const last = lines.length - 1;
+    return { root, i: last, col: lines[last].length + 1, where: 'at the end' };
+  }
+  const tryNote = () => { $('try-note').innerHTML = `Read ${tryPlace().where} of this document. The file stays as it is.`; };
   async function libraryTry() {
     const text = $('lib-text').value, out = $('lib-out');
     if (!text.trim()) return;
-    const root = state.root ?? state.file, lines = (root === state.file ? editor.text() : state.texts[root] ?? '').split('\n');
-    const i = lines.findIndex((l) => /\\begin\s*\{document\}/.test(l));
-    if (i < 0) { out.innerHTML = '<p class="muted">The document has no <code>\\begin{document}</code> to read the text after.</p>'; return; }
-    const col = lines[i].search(/\\begin\s*\{document\}/) + lines[i].slice(lines[i].search(/\\begin\s*\{document\}/)).indexOf('}') + 2;
-    out.innerHTML = '<p class="muted">Reading it…</p>';
+    const { root, i, col } = tryPlace(), t0 = performance.now();
+    $('try-status').textContent = 'typesetting…';
     sync();
     const request = { file: path(root), inject: { text: `\n${text}\n`, at: `${i + 1}:${col}` }, config: { trace: 'true', trace_document_only: 'false' },
       queries: [{ type: 'typeset' }, { type: 'diagnostics' }, { type: 'trace' }] };
     const [ts, ds, tr] = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch((e) => [{ error: String(e?.message ?? e) }])) ?? [];
-    if (ts?.error) { out.innerHTML = `<p class="muted">${escape(ts.error)}</p>`; return; }
+    if (ts?.error) { out.innerHTML = `<p class="muted">${escape(ts.error)}</p>`; $('try-status').textContent = ''; return; }
     const lo = i + 2, hi = lo + text.split('\n').length - 1, mine = (r) => r.line >= lo && r.line <= hi && String(r.path ?? r.file ?? '').endsWith(root);
     const set = (ts.records ?? []).filter((r) => r.kind === 'paragraph' && mine(r));
     const found = (ds?.records ?? []).filter(mine);
     const top = (tr?.records ?? []).filter((r) => mine(r) && r.inserts != null).slice(0, 12);
+    $('try-status').textContent = `typeset in ${secs(performance.now() - t0)} · ${plural(set.length, 'paragraph')}${found.length ? ` · ${plural(found.length, 'finding')}` : ''}`;
     out.innerHTML = `<div class="typeset">${set.map((r) => `<p class="ts"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', [], r.fonts))}</span></p>`).join('') || '<p class="muted">It sets no text.</p>'}</div>` +
       (found.length ? `<ul class="lib-found">${found.map((d) => `<li><b>${escape(d.severity)}</b> ${escape(d.message)}</li>`).join('')}</ul>` : '') +
       (top.length ? `<details class="lib-steps"><summary>${plural(top.length, 'expansion')}</summary><ul>${top.map((r) => `<li><code class="cs-ref" data-cs="${escape(r.name)}">${escape(r.name)}</code> → <code>${escape(String(r.inserts).slice(0, 160))}</code></li>`).join('')}</ul></details>` : '');
@@ -1347,6 +1379,54 @@
   $('lib-text').addEventListener('input', grow);
   $('lib-run').onclick = libraryTry;
   $('lib-text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); libraryTry(); } });
+
+  // ---------------------------------------------------------------- settings: the satex.yaml keys of the playground's runs
+
+  // The keys, their types, defaults and descriptions come from satex.schema.json; each changed one
+  // reaches every run and the language server as `--set key=value`.
+  let configSet = {};
+  try { configSet = JSON.parse(localStorage.getItem('satex-config')) ?? {}; } catch {}
+  const configKeep = (set) => { configSet = set; try { localStorage.setItem('satex-config', JSON.stringify(set)); } catch {} };
+  const yamlValue = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
+  function configFlags() { return Object.entries(configSet).flatMap(([k, v]) => ['--set', `${k}=${yamlValue(v)}`]); }
+  let configKeys = null;
+  const leaves = (props, at = '') => Object.entries(props ?? {}).flatMap(([k, p]) => (p.type === 'object' && p.properties
+    ? leaves(p.properties, `${at}${k}.`) : [{ key: at + k, type: [].concat(p.type ?? 'string')[0], options: p.enum, def: p.default, about: p.description ?? '' }]));
+  const configLoad = () => (configKeys ??= fetch(`${base}${manifest.schema}`).then((r) => r.json()).then((s) => leaves(s.properties)).catch(() => []));
+  const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  function configInput(k, value) {
+    if (k.type === 'boolean') return `<input type="checkbox" role="switch" data-cfg="${escape(k.key)}"${value ? ' checked' : ''}>`;
+    if (k.options) return `<select class="dropdown" data-cfg="${escape(k.key)}">${k.options.map((o) => `<option${sameValue(o, value) ? ' selected' : ''}>${escape(o)}</option>`).join('')}</select>`;
+    const text = value == null ? '' : typeof value === 'string' ? value : JSON.stringify(value);
+    return `<input type="${['integer', 'number'].includes(k.type) ? 'number' : 'text'}" data-cfg="${escape(k.key)}" value="${escape(text)}" spellcheck="false">`;
+  }
+  async function configShow() {
+    const keys = await configLoad(), q = $('cfg-search').value.trim().toLowerCase();
+    const hits = keys.filter((k) => !q || k.key.toLowerCase().includes(q) || k.about.toLowerCase().includes(q));
+    $('cfg-list').innerHTML = hits.map((k) => {
+      const changed = k.key in configSet, value = changed ? configSet[k.key] : k.def;
+      return `<li class="cfg-row${changed ? ' cfg-changed' : ''}"><div class="cfg-what"><code>${escape(k.key)}</code><span class="muted">${escape(k.about)}</span></div>` +
+        `<label class="${k.type === 'boolean' ? 'ts-toggle ' : ''}cfg-value">${configInput(k, value)}</label>` +
+        `<button type="button" class="ghost small" data-reset="${escape(k.key)}"${changed ? '' : ' hidden'} title="back to the default: ${escape(yamlValue(k.def ?? ''))}">Reset</button></li>`;
+    }).join('') || '<li class="muted">No setting matches.</li>';
+    const n = Object.keys(configSet).length;
+    $('cfg-total').textContent = n ? `${plural(n, 'setting')} changed` : 'every setting at its default';
+  }
+  let configTimer = 0;
+  const configApply = (set) => { configKeep(set); configShow(); clearTimeout(configTimer); configTimer = setTimeout(() => restart(), 600); };
+  $('cfg-open').onclick = () => { $('play-config').showModal(); configShow(); $('cfg-search').focus(); };
+  $('cfg-search').oninput = configShow;
+  $('cfg-list').addEventListener('change', async (e) => {
+    const el = e.target.closest('[data-cfg]'), k = el && (await configLoad()).find((x) => x.key === el.dataset.cfg);
+    if (!k) return;
+    let value = el.type === 'checkbox' ? el.checked : el.value;
+    if (['integer', 'number'].includes(k.type)) value = Number(value);
+    else if (['array', 'object'].includes(k.type)) { try { value = JSON.parse(value); } catch { el.setCustomValidity('JSON: ["a", "b"]'); el.reportValidity(); return; } }
+    const { [k.key]: _, ...rest } = configSet;
+    configApply(sameValue(value, k.def) ? rest : { ...rest, [k.key]: value });
+  });
+  $('cfg-list').addEventListener('click', (e) => { const b = e.target.closest('[data-reset]'); if (b) { const { [b.dataset.reset]: _, ...rest } = configSet; configApply(rest); } });
+  $('cfg-reset').onclick = () => configApply({});
 
   // ---------------------------------------------------------------- draw: a symbol drawn, the commands that set it
 
@@ -1380,13 +1460,16 @@
   async function symbolsLoad() {
     if (drawSyms) return drawSyms;
     const list = await fetch(`${base}${manifest.symbols}`).then((r) => r.json()).catch(() => []);
+    const font = `${DRAW.glyph * 0.7}px "STIX Two Math", "Cambria Math", "Noto Sans Math", serif`;
+    // a glyph drawn before its font arrived would be the fallback's, and rank differently next time
+    await document.fonts.load(font, list.map(([code]) => String.fromCodePoint(code)).join('')).catch(() => {});
     const g = Object.assign(document.createElement('canvas'), { width: DRAW.glyph, height: DRAW.glyph }), c = g.getContext('2d', { willReadFrequently: true });
-    c.font = `${DRAW.glyph * 0.7}px "STIX Two Math", "Cambria Math", "Noto Sans Math", serif`;
+    c.font = font;
     c.textAlign = 'center';
     c.textBaseline = 'middle';
     const draw = (ch) => { c.clearRect(0, 0, g.width, g.height); c.fillText(ch, g.width / 2, g.height / 2); return features(g); };
     const none = draw('\u{10FFFD}'), same = (a, b) => a && b && a.every((v, i) => v === b[i]);
-    drawSyms = list.map(([code, name, cls]) => ({ ch: String.fromCodePoint(code), name, cls })).map((s) => ({ ...s, f: draw(s.ch) })).filter((s) => s.f && !same(s.f, none));
+    drawSyms = list.map(([code, name, cls, about]) => ({ ch: String.fromCodePoint(code), code, name, cls, about })).map((s) => ({ ...s, f: draw(s.ch) })).filter((s) => s.f && !same(s.f, none));
     return drawSyms;
   }
   async function drawMatch() {
@@ -1407,8 +1490,8 @@
       if (seen.has(s.ch)) continue;
       seen.add(s.ch);
       const all = syms.filter((x) => x.ch === s.ch).sort((a, b) => force.has(b.name) - force.has(a.name));
-      rows.push(`<li><span class="draw-glyph">${escape(s.ch)}</span><span class="draw-names">${all.map((x) => `<code class="cs-ref${force.has(x.name) ? '' : ' draw-off'}" data-cs="${escape(x.name)}" tabindex="0">${escape(x.name)}</code>`).join(' ')}</span>` +
-        `<span class="muted draw-cls">${escape(s.cls)}</span><button type="button" class="small ghost draw-put" data-name="${escape(all[0].name)}" title="insert ${escape(all[0].name)} at the cursor">Insert</button></li>`);
+      rows.push(`<li><span class="draw-glyph">${escape(s.ch)}</span><span class="draw-names">${all.map((x) => `<code class="${force.has(x.name) ? 'cs-ref' : 'draw-off'}" data-cs="${escape(x.name)}" tabindex="0" title="${force.has(x.name) ? '' : `${escape(x.name)}: ${escape(x.about ?? '')}, U+${x.code.toString(16).toUpperCase().padStart(4, '0')}. Not in force in this document: unicode-math defines it`}">${escape(x.name)}</code>`).join(' ')}</span>` +
+        `<button type="button" class="small ghost draw-put" data-name="${escape(all[0].name)}" title="insert ${escape(all[0].name)} at the cursor">Insert</button></li>`);
     }
     list.innerHTML = rows.join('');
   }
@@ -1520,10 +1603,19 @@
     return /everypar/.test(name) ? `paragraph starts (everypar hook, ${plural(g.size, 'step')})` : `library work from ${name} (${plural(g.size, 'step')})`;
   };
   /** How a call got its result, one row: the body, each argument, the result. */
+  /** Text the step panel shows whole: its middle folds when long, the arguments' text marked where they were put. */
+  function longText(t, marks = []) {
+    const html = (x) => marks.filter(Boolean).reduce((parts, m) => parts.flatMap((p) => (typeof p === 'string' ? p.split(m).flatMap((q, i) => (i ? [{ m }, q] : [q])) : [p])), [x])
+      .map((p) => (typeof p === 'string' ? csText(p) : `<mark>${csText(p.m)}</mark>`)).join('');
+    if (t.length <= LONG.head + LONG.tail + LONG.slack) return html(t);
+    return `<details class="tr-long"><summary>${html(t.slice(0, LONG.head))} <span class="tr-more">… ${num(t.length - LONG.head - LONG.tail)} characters</span> ${html(t.slice(-LONG.tail))}</summary>${html(t)}</details>`;
+  }
+  const LONG = { head: 220, tail: 60, slack: 40 };
   function howOf(r, cut = clip) {
+    const whole = cut !== clip, text = (t, marks) => (whole ? longText(String(t), marks) : csText(cut(t)));
     const bits = r.body != null && r.arguments?.length
-      ? [`<span class="tr-bit"><i>body</i> <code>${csText(cut(r.body))}</code></span>`, ...r.arguments.map((a, k) => `<span class="tr-bit"><code>#${k + 1}</code> = <code>${csText(cut(a))}</code></span>`)] : [];
-    if (r.inserts != null) bits.push(`<span class="tr-bit tr-res">→ <code class="tr-out">${csText(cut(r.inserts)) || '<i>empty</i>'}</code></span>`);
+      ? [`<span class="tr-bit"><i>body</i> <code>${text(r.body)}</code></span>`, ...r.arguments.map((a, k) => `<span class="tr-bit"><code>#${k + 1}</code> = <code>${csText(cut(a))}</code></span>`)] : [];
+    if (r.inserts != null) bits.push(`<span class="tr-bit tr-res">→ <code class="tr-out">${text(r.inserts, r.arguments) || '<i>empty</i>'}</code></span>`);
     else if (r.detail) bits.push(`<span class="tr-bit">${['assign', 'define'].includes(r.step) ? '= ' : ''}<code class="tr-out">${csText(cut(r.detail))}</code></span>`);
     return bits.length ? `<span class="tr-how">${bits.join('')}</span>` : '';
   }
@@ -1603,9 +1695,14 @@
   let cats = new Map();
   /** A category by its name in the wiki's table (tex.web § 207) and its number: "begin group (1)". */
   const catTitle = (c) => (c === 16 ? 'control sequence' : cats.get(c) ? `${cats.get(c)} (${c})` : `catcode ${c}`);
-  const tokChip = (t, c) => (c === 16 ? csCode(t, ' tr-tok k16') : `<a class="tr-tok k${c}" href="${base}wiki/domains.html#catcode-${c}" target="_blank" title="${escape(catTitle(c))}">${t === ' ' ? '␣' : escape(t)}<sub class="tr-cc">${c}</sub></a>`);
+  const STREAM = { head: 16, tail: 6 };
+  const tokChip = (t, c, ins = false) => (c === 16 ? csCode(t, ` tr-tok k16${ins ? ' tr-put' : ''}`) : `<a class="tr-tok k${c}${ins ? ' tr-put' : ''}" href="${base}wiki/domains.html#catcode-${c}" target="_blank" title="${escape(catTitle(c))}">${t === ' ' ? '␣' : escape(t)}<sub class="tr-cc">${c}</sub></a>`);
   /** An expansion's result as tokens: its control sequences, then single characters. */
-  const insChips = (t) => [...String(t).matchAll(/(\\(?:[^\\\s{}#]+(?= |$)|[^]))( ?)|([^])/g)].map((m) => (m[1] ? csCode(m[1], ' tr-tok tr-ins') : `<span class="tr-tok tr-ins" title="put back by this step">${m[3] === ' ' ? '␣' : escape(m[3])}</span>`)).join('');
+  const insTokens = (t) => [...String(t).matchAll(/(\\(?:[^\\\s{}#]+(?= |$)|[^]))( ?)|([^])/g)];
+  const insChip = (m) => (m[1] ? csCode(m[1], ' tr-tok tr-ins') : `<span class="tr-tok tr-ins" title="put back by this step">${m[3] === ' ' ? '␣' : escape(m[3])}</span>`);
+  /** Chips, the middle of a long run folded into a button that shows them all. */
+  const foldChips = (chips) => (chips.length > STREAM.head + STREAM.tail && !trace.wholeStream
+    ? [...chips.slice(0, STREAM.head), `<button type="button" class="tr-more" data-whole="1">… ${num(chips.length - STREAM.head - STREAM.tail)} tokens</button>`, ...chips.slice(-STREAM.tail)] : chips).join('');
   /** The file text after the queued tokens in `ahead`. */
   function fileRest(r) {
     const a = String(r.ahead ?? '');
@@ -1622,8 +1719,13 @@
     const box = $('trace-stream');
     if (!box) return;
     const r = trace.steps[i];
-    const put = r.step === 'expand' && r.inserts != null ? insChips(r.inserts) : '';
-    const toks = (r.tokens ?? []).map(([t, c]) => tokChip(t, c)).join('');
+    // the queued tokens carry their catcodes; the first of them are the ones this step put back
+    const putBack = r.step === 'expand' && r.inserts != null ? insTokens(r.inserts).length : 0, queued = r.tokens ?? [];
+    const put = putBack && !queued.length ? foldChips(insTokens(r.inserts).map(insChip)) : '';
+    const shown = queued.length > STREAM.head + STREAM.tail && !trace.wholeStream
+      ? [...queued.slice(0, STREAM.head).map((t, j) => [t, j]), null, ...queued.slice(-STREAM.tail).map((t, j) => [t, queued.length - STREAM.tail + j])] : queued.map((t, j) => [t, j]);
+    const toks = shown.map((x) => (x ? tokChip(x[0][0], x[0][1], x[1] < putBack) : `<button type="button" class="tr-more" data-whole="1">… ${num(queued.length - STREAM.head - STREAM.tail)} tokens</button>`)).join('')
+      + (putBack > queued.length && queued.length ? `<span class="tr-more muted">… ${num(putBack - queued.length)} more put back</span>` : '');
     // the categories in this stream; all of them behind the toggle
     const seen = new Set([...(r.tokens ?? []).map(([, c]) => c), ...(put ? [16] : [])]);
     const legend = [...Array(17).keys()].filter((c) => trace.legend || seen.has(c)).map((c) => c === 16
@@ -1706,6 +1808,7 @@
     if (!trace) return;
     const m = e.target.closest('[data-move]'), go = e.target.closest('[data-go]'), row = e.target.closest('li[data-i]'), cs = e.target.closest('.tr-cs');
     if (e.target.closest('.tr-legend-btn')) { trace.legend = !trace.legend; return traceStream(trace.cur); }
+    if (e.target.closest('[data-whole]')) { trace.wholeStream = true; return traceStream(trace.cur); }
     if (e.target.closest('.tr-allnames')) {
       const box = e.target.closest('.tr-state'), r = trace.steps[+box.dataset.step], list = box.querySelector('.tr-every');
       e.target.disabled = true; list.innerHTML = '<li class="muted">running to this step…</li>';
@@ -1780,6 +1883,17 @@
     return paths;
   }
   /** One fork's path, or the joined view: the steps all paths share, then those after the last choice. */
+  /** A brace group's steps under its `{`, a conditional's under its branch up to the `\fi`: one level deeper each. */
+  function nestBlocks(steps) {
+    const open = [];
+    return steps.map((r) => {
+      while (open.length && r.depth < open.at(-1)) open.pop();
+      if ((r.step === 'close-group' || (r.step === 'execute' && r.name === '\\fi')) && open.at(-1) === r.depth) open.pop();
+      const nested = open.length ? { ...r, depth: r.depth + open.length } : r;
+      if (r.step === 'open-group' || r.step === 'branch') open.push(r.depth);
+      return nested;
+    });
+  }
   function forkView(records, fork) {
     if (forkLeaves(records).length < 2) return records;
     const paths = forkPaths(records), related = (r) => r.fork && (startsWith(armsOf(r.fork), armsOf(fork)) || startsWith(armsOf(fork), armsOf(r.fork)));
@@ -1798,7 +1912,7 @@
     // one row per statement: `\def` executed and `\tleapy` defined are one step, the define's
     const steps = forkView(traceFor.records, traceFor.fork).filter((r, i, all) => !(r.step === 'execute' && ['define', 'assign'].includes(all[i + 1]?.step)
       && all[i + 1].line === r.line && all[i + 1].path === r.path && all[i + 1].depth === r.depth));
-    trace = traceModel(steps, own, traceInternal.checked);
+    trace = traceModel(nestBlocks(steps), own, traceInternal.checked);
     if (!trace.order.length && !trace.groups.length) {
       traceBody.innerHTML = traceHead(at, name) + `<p class="muted">${traceFor.error ? `The query failed: ${escape(traceFor.error)}.` : 'The run recorded no step for this call.'}</p>`;
       traceOutput(at, mine);
@@ -1873,7 +1987,7 @@
   // ---------------------------------------------------------------- runs
 
   /** The kernel's flags; a project in its own directory under /work reads the playground's satex.yaml by name. */
-  const flags = () => [...manifest.kernels[state.kernel].args, ...(state.dir !== '/work' ? ['--config', '/work/satex.yaml'] : [])];
+  const flags = () => [...manifest.kernels[state.kernel].args, ...(state.dir !== '/work' ? ['--config', '/work/satex.yaml'] : []), ...configFlags()];
   const command = () => words(args.value).filter((x) => x !== 'satex' && !x.startsWith('-'))[0];
   /** Plain `lint` repeats what the language server shows: it runs only when asked to. */
   const plainLint = () => words(args.value).filter((x) => x !== 'satex').join(' ') === 'lint';
@@ -2852,7 +2966,8 @@
     // the project: an example's changed files, or all of an upload's text files
     const files = state.files.filter((n) => n in state.texts && (state.upload || state.texts[n] !== sampleTexts[n]));
     const data = { x: state.example, r: state.root, l: state.files, p: Object.fromEntries(files.map((n) => [n, state.texts[n]])),
-      f: state.file in state.ro ? state.root : state.file, a: args.value, k: manifest.kernels[state.kernel].id, c: editor.cursor() };
+      f: state.file in state.ro ? state.root : state.file, a: args.value, k: manifest.kernels[state.kernel].id, c: editor.cursor(),
+      ...(Object.keys(configSet).length ? { s: configSet } : {}) };
     const packed = await through(new TextEncoder().encode(JSON.stringify(data)), new CompressionStream('deflate-raw'));
     let s = '';
     for (let i = 0; i < packed.length; i += 0x8000) s += String.fromCharCode(...packed.subarray(i, i + 0x8000));
@@ -2932,6 +3047,8 @@
           const p = pending.get(m.id);
           pending.delete(m.id);
           if (m.error) p.reject(new Error(m.error.message.replace(/^[\w/]+: /, ''))); else p.resolve(m.result ?? null);
+        } else if (m.method === 'satex/styleCandidates') {
+          for (const c of m.params.candidates ?? []) askStyle(c);
         } else if (m.method === 'textDocument/publishDiagnostics' && m.params.uri.startsWith(`file://${state.dir}/`)) {
           // The rule's number is the LSP code: the page keys rules by name.
           for (const d of m.params.diagnostics) [d.number, d.code] = [d.code, d.data?.rule ?? d.code];
@@ -3002,6 +3119,7 @@
     const ex = link ? link.x : hash in sampleTexts && !shared.has(hash) ? hash : projectOf(hash) ?? manifest.sample;
     state.texts = { ...sampleTexts, ...(link?.x ? link.p : {}) };
     const k = manifest.kernels.findIndex((x) => x.id === link?.k);
+    if (link?.s) configKeep(link.s);
     if (k >= 0) { manualKernel = true; if (k > 0) await kernel(k); }
     kernelBox.value = String(state.kernel);
     // packages.txt's first section, fetched while the editor loads

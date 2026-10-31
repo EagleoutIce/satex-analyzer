@@ -143,7 +143,7 @@ index   step        name                        detail                     file
 8412    open-file   \article                    /usr/local/texlive/YYYY/…  paper.tex      @ paper.tex:1:1
 10261   expand      \par                                                   paper.tex      @ paper.tex:2:1
 10268   expand      \newif                                                 paper.tex      @ paper.tex:3:1
-10272   define      \ifdraft                                               paper.tex      @ paper.tex:3:7
+10272   define      \ifdraft                    iffalse                    paper.tex      @ paper.tex:3:7
 … 171 more lines omitted
 ```
 
@@ -151,9 +151,9 @@ index   step        name                        detail                     file
 
 ```text
 $ satex trace -f samples/paper.tex --lines 10:11
-index  step    name         file       
-0      expand  \newcommand  paper.tex  @ paper.tex:11:1
-105    define  \highlight   paper.tex  @ paper.tex:11:13
+index  step    name         detail                        file       
+0      expand  \newcommand                                paper.tex  @ paper.tex:11:1
+105    define  \highlight   \long macro:#1->\textbf {#1}  paper.tex  @ paper.tex:11:13
 ```
 
 ## files

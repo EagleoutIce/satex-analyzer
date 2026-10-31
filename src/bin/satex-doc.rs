@@ -1091,7 +1091,7 @@ fn badges(
     rule: &serde_json::Value,
     chktex: &std::collections::BTreeMap<String, Vec<String>>,
     wide: bool,
-) -> [String; 3] {
+) -> [String; 4] {
     let [code, category, severity] = ["code", "category", "severity"].map(|k| rule[k].as_str().unwrap_or(""));
     let shape = match severity {
         "error" => "◆",
@@ -1108,10 +1108,16 @@ fn badges(
             n.join(", ")
         )
     });
+    let engines: Vec<&str> = rule["engines"].as_array().into_iter().flatten().filter_map(|e| e.as_str()).collect();
+    let engine = match engines.is_empty() {
+        true => "—".to_string(),
+        false => format!("<span class=\"eng\" title=\"only under {0}\">{0}</span>", engines.join(", ")),
+    };
     [
         format!(
-            "<span class=\"sev sev-{severity}\" title=\"default: {severity}\">{label}</span> <span class=\"cat\">{category}</span>"
+            "<span class=\"sev sev-{severity}\" title=\"default: {severity}\">{label}</span> <span class=\"cat cat-{category}\">{category}</span>"
         ),
+        engine,
         fix_kinds(rule).unwrap_or_else(|| "—".into()),
         origin,
     ]
@@ -1121,12 +1127,14 @@ fn badges(
 /// Severity reads as a shape (and its title), not only as a color.
 fn rules_table() -> Result<String, String> {
     let chktex = chktex_origins()?;
-    let mut out =
-        String::from("| no. | code | kind | quick fix | origin | summary |\n| --- | --- | --- | --- | --- | --- |\n");
+    let mut out = String::from(
+        "| no. | code | kind | engine | quick fix | summary | origin |\n| --- | --- | --- | --- | --- | --- | --- |\n",
+    );
     for rule in lint_json(&["--rules", "--format", "json"])? {
         let [number, code, summary] = ["number", "code", "message"].map(|k| rule[k].as_str().unwrap_or(""));
-        let [kind, fixes, origin] = badges(&rule, &chktex, false);
-        let _ = writeln!(out, "| {number} | [`{code}`](#{code}) | {kind} | {fixes} | {origin} | {summary} |");
+        let [kind, engine, fixes, origin] = badges(&rule, &chktex, false);
+        let _ =
+            writeln!(out, "| {number} | [`{code}`](#{code}) | {kind} | {engine} | {fixes} | {summary} | {origin} |");
     }
     Ok(out)
 }

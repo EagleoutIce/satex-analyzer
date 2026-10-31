@@ -6,7 +6,7 @@
 
 `satex lint` checks the input file with every rule below. `--all` also checks the packages and classes it loads. `--rules` lists the codes, `--explain CODE` prints one rule's explanation. See [Chktex-Coverage](Chktex-Coverage) for the chktex warning each rule follows, and [Primitive-coverage](Primitive-coverage) and [Domains](Domains) for how satex gets the facts a rule reads.
 
-Every rule has a stable number, such as `S012`. Output shows it before the code: the text and GitHub formats, SARIF's rule id and the editor's diagnostic code. `--explain`, `lint_off` and the suppression comments take the number in place of the code. A new rule gets the next free number in [`src/lint/numbers.txt`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/lint/numbers.txt). A removed rule keeps its line there, so a number never changes meaning.
+Every rule has a stable number: its category's letter and a count, such as `C012`. The letters are `C` correctness, `X` security, `S` style, `P` performance and `A` precision (of the analysis). Output shows it before the code: the text and GitHub formats, SARIF's rule id and the editor's diagnostic code. `--explain`, `lint_off` and the suppression comments take the number in place of the code. A new rule gets the next free number of its category in [`src/lint/numbers.txt`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/lint/numbers.txt). A removed rule keeps its line there, so a number never changes meaning. A rule that moves to another category keeps its number, so suppressions and links that name it stay valid.
 
 ## Errors caused in package code
 
@@ -23,113 +23,115 @@ A comment in the document silences findings. Without codes it silences every rul
 
 They apply to every output format and to `--fix`. An unknown code is reported as `unknown-suppress-code`.
 
+`satex lint --style` lists the rules the project breaks so often that they may be its style, as an editor asks about them (`style_prompt` in `satex.yaml`).
+
 ## Rules
 
-Every rule, with a link to its explanation below. The shape gives the severity: ◆ error, ▲ warning, ● info. The badge gives the category. The origin names the [chktex](Chktex-Coverage) warnings a rule follows. On the site, the columns menu hides columns and wraps long summaries.
+Every rule, with a link to its explanation below. The shape gives the severity: ◆ error, ▲ warning, ● info. The badge gives the category. The engine column names the engines a rule is about, when not all of them. The origin names the [chktex](Chktex-Coverage) warnings a rule follows. On the site the table comes in pages, and the columns icon in its header hides columns or wraps long summaries. Hovering a rule's name anywhere on the site shows its card.
 
-| no. | code | kind | quick fix | origin | summary |
-| --- | --- | --- | --- | --- | --- |
-| S001 | [`already-defined`](#already-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | — | `\newcommand` redefines an existing name |
-| S002 | [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | — | a BibTeX command biblatex replaces stops the run |
-| S003 | [`build-bibliography-disabled`](#build-bibliography-disabled) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document has a bibliography, but the build never runs BibTeX or biber |
-| S004 | [`build-command-placeholders`](#build-command-placeholders) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | an engine command in the latexmkrc lacks %S or %O |
-| S005 | [`build-engine-mismatch`](#build-engine-mismatch) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the build runs another engine, or another output, than the document needs |
-| S006 | [`build-shell-escape-missing`](#build-shell-escape-missing) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document runs programs through `\write18`, but the build does not allow it |
-| S007 | [`caused-library-error`](#caused-library-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document makes package code raise a TeX error |
-| S008 | [`math-still-open`](#math-still-open) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 16">chktex 16</a> | the run is still in math mode where the text ends |
-| S009 | [`missing-graphic`](#missing-graphic) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | an included image is not there for this output target |
-| S010 | [`new-redefines`](#new-redefines) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | a `\new…` declaration silently redefines an existing command |
-| S011 | [`not-defined`](#not-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-safe">safe</span> | — | `\renewcommand` targets a name that does not exist |
-| S012 | [`option-clash`](#option-clash) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | — | a package is loaded twice with different options |
-| S013 | [`raised-error`](#raised-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | the document's code raises a TeX error |
-| S014 | [`undefined-color`](#undefined-color) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | a color is used, or aliased from, before xcolor ever defines it |
-| S015 | [`undefined-control-sequence`](#undefined-control-sequence) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | a control sequence is used that nothing defines |
-| S016 | [`undefined-environment`](#undefined-environment) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | `\begin` names an environment that is not defined |
-| S017 | [`undefined-glossary-entry`](#undefined-glossary-entry) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | a glossary or acronym entry is used but never declared |
-| S018 | [`unguarded-recursion`](#unguarded-recursion) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat">correctness</span> | — | — | a recursive macro has nothing that can stop it |
-| S019 | [`build-missing-custom-dependency`](#build-missing-custom-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the document writes glossary files, but latexmk has no rule to process them |
-| S020 | [`catcode-escapes-group`](#catcode-escapes-group) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | a category code change is still in force at the end of the run |
-| S021 | [`conflicting-color-definition`](#conflicting-color-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the same color name is defined twice with different colors |
-| S022 | [`delimiter-not-followed`](#delimiter-not-followed) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a> | `\left`, `\right` or `\middle` is followed by a brace or a math shift |
-| S023 | [`duplicate-bibliography-entry`](#duplicate-bibliography-entry) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the same key is declared by two bibliography entries |
-| S024 | [`duplicate-label`](#duplicate-label) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the same label is defined twice |
-| S025 | [`environment-mismatch`](#environment-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a> | `\end` names an environment other than the one that is open |
-| S026 | [`expl-syntax-left-on`](#expl-syntax-left-on) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | `\ExplSyntaxOn` is never turned off |
-| S027 | [`expl3-constant-set`](#expl3-constant-set) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | an expl3 constant is set after it was declared |
-| S028 | [`expl3-signature-mismatch`](#expl3-signature-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | an expl3 function takes other arguments than its name says |
-| S029 | [`ignored-verbatim-tail`](#ignored-verbatim-tail) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a> | text stands on the line that closes a verbatim body and never reaches the page |
-| S030 | [`math-script-braces`](#math-script-braces) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-safe">safe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 3, 25">chktex 3, 25</a> | `^` and `_` take one token, so what follows needs braces |
-| S031 | [`missing-dependency`](#missing-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | <span class="fix fix-safe">safe</span> | — | a TeX Live package the run reads from is not in the dependency file |
-| S032 | [`unbalanced-brackets`](#unbalanced-brackets) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 17">chktex 17</a> | a file sets more of one bracket than of its partner |
-| S033 | [`unbalanced-color-stack`](#unbalanced-color-stack) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | a `\pdfcolorstack` push is never popped, or a pop has nothing to pop |
-| S034 | [`unbalanced-pdf-content`](#unbalanced-pdf-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | a PDF literal opens marked content or a graphics state that is never closed |
-| S035 | [`undefined-citation`](#undefined-citation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | a citation names a key no bibliography entry declares |
-| S036 | [`undefined-optional-content`](#undefined-optional-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | marked content refers to an optional content group no resource names |
-| S037 | [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | `\ref` names a label that is never defined |
-| S038 | [`uninstalled-package`](#uninstalled-package) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | — | the package is not installed, and the distribution could install it |
-| S039 | [`unresolved-file`](#unresolved-file) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">correctness</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> | a package, class or input file is not in the installation |
-| S040 | [`expected-load`](#expected-load) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">correctness</span> | — | — | the file was read after a package it expects loaded |
-| S041 | [`math-mode-mismatch`](#math-mode-mismatch) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">correctness</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 49">chktex 49</a> | \(, \), \[ or \] stands where the mode does not allow it |
-| S042 | [`unintended-escape`](#unintended-escape) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">correctness</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 21">chktex 21</a> | a command is followed by an escaped punctuation mark, which is another command |
-| S043 | [`build-shell-escape-unneeded`](#build-shell-escape-unneeded) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">security</span> | — | — | the build allows `\write18`, but the document never uses it |
-| S044 | [`shell-escape`](#shell-escape) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">security</span> | — | — | the document runs a program through `\write18` |
-| S045 | [`accent-on-dotted-letter`](#accent-on-dotted-letter) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 7">chktex 7</a> | an accent sits on top of the dot of an `i` or a `j` |
-| S046 | [`command-terminated-space`](#command-terminated-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 1">chktex 1</a> | a control word ate the space after it and the next word is set against what it produced |
-| S047 | [`dimension-times`](#dimension-times) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 29">chktex 29</a> | the letter x stands between two numbers where a multiplication sign belongs |
-| S048 | [`double-space`](#double-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 30, 39">chktex 30, 39</a> | two interword spaces reached the page, one of them from a tie |
-| S049 | [`ellipsis-dots`](#ellipsis-dots) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 11">chktex 11</a> | three periods set three periods, not an ellipsis |
-| S050 | [`expl3-scope`](#expl3-scope) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | — | — | an expl3 variable's scope prefix disagrees with how the run assigned it |
-| S051 | [`expl3-type`](#expl3-type) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | — | — | an expl3 variable's type suffix disagrees with the functions that set it |
-| S052 | [`group-local-definition`](#group-local-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | — | — | a definition is made inside a group and lost when it closes |
-| S053 | [`math-operator-name`](#math-operator-name) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 35">chktex 35</a> | an operator name is set in math italic instead of by its command |
-| S054 | [`missing-italic-correction`](#missing-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 6">chktex 6</a> | a slanted letter runs into upright text with no `\/` between them |
-| S055 | [`missing-nonbreaking-space`](#missing-nonbreaking-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 2">chktex 2</a> | an ordinary space in front of a reference lets the line break before the number |
-| S056 | [`parenthesis-spacing`](#parenthesis-spacing) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 36, 37">chktex 36, 37</a> | a parenthesis carries the space of the text inside it instead of the text around it |
-| S057 | [`quote-direction`](#quote-direction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 32, 33, 34">chktex 32, 33, 34</a> | a quotation mark points the wrong way, or a run of them mixes both directions |
-| S058 | [`sentence-spacing`](#sentence-spacing) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 12, 13">chktex 12, 13</a> | a period set the wrong width of space for the sentence around it |
-| S059 | [`space-before-command`](#space-before-command) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 24, 42">chktex 24, 42</a> | a space lets the line break between a word and the mark that belongs to it |
-| S060 | [`space-before-punctuation`](#space-before-punctuation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 26">chktex 26</a> | a space stands between a word and the punctuation after it |
-| S061 | [`stray-italic-correction`](#stray-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 5, 28">chktex 5, 28</a> | a repeated italic correction, or one in front of a period or comma |
-| S062 | [`unknown-suppress-code`](#unknown-suppress-code) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | — | — | a satex-disable comment names a code no rule has |
-| S063 | [`user-pattern`](#user-pattern) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 20, 44">chktex 20, 44</a> | the source matches a pattern the project asked to be warned about |
-| S064 | [`wrong-dash`](#wrong-dash) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 8">chktex 8</a> | a run of hyphens sets a dash of the wrong length for what stands around it |
-| S065 | [`wrong-quote-character`](#wrong-quote-character) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 18, 19">chktex 18, 19</a> | a character that is not a quotation mark stands in for one |
-| S066 | [`zero-italic-correction`](#zero-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 4">chktex 4</a> | the italic correction is zero here, so `\/` changes nothing |
-| S067 | [`build-bibliography-unneeded`](#build-bibliography-unneeded) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | the build configures BibTeX or biber for a document without a bibliography |
-| S068 | [`build-engine-options`](#build-engine-options) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | the engine command could report errors as file:line and write SyncTeX data |
-| S069 | [`build-unused-custom-dependency`](#build-unused-custom-dependency) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a latexmk custom dependency that nothing in the document triggers |
-| S070 | [`comment-marker`](#comment-marker) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 22">chktex 22</a> | a comment still carries a TODO-style marker |
-| S071 | [`computer-modern-in-t1`](#computer-modern-in-t1) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | T1 text in Computer Modern relies on cm-super for scalable fonts |
-| S072 | [`csquotes-available`](#csquotes-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 18">chktex 18</a> | the document sets quotation marks by hand instead of loading csquotes |
-| S073 | [`dead-definition`](#dead-definition) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span> | — | a definition is replaced before anything uses it |
-| S074 | [`duplicate-color-value`](#duplicate-color-value) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | two color names store the exact same color |
-| S075 | [`duplicate-package`](#duplicate-package) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> | — | a package is loaded more than once |
-| S076 | [`hand-set-quantity`](#hand-set-quantity) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a number and its unit are set by hand where siunitx would set them |
-| S077 | [`inconsistent-precision`](#inconsistent-precision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | the numbers of a table column give different numbers of decimals |
-| S078 | [`math-punctuation`](#math-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | <a class="from" href="Chktex-Coverage" title="follows chktex warning 40">chktex 40</a> | punctuation sits on the wrong side of a formula |
-| S079 | [`math-shift-dollars`](#math-shift-dollars) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 45, 46">chktex 45, 46</a> | display math opened with `$$` where LaTeX spells it \[ |
-| S080 | [`microtype-available`](#microtype-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | the engine can protrude characters and expand fonts, but microtype is not loaded |
-| S081 | [`numbers-not-aligned`](#numbers-not-aligned) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a table column of numbers does not line them up at their decimal mark |
-| S082 | [`ot1-font-encoding`](#ot1-font-encoding) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | accented letters are built with `\accent` because the text is set in OT1 |
-| S083 | [`prefer-cleveref`](#prefer-cleveref) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a hand-written name in front of `\ref` is what cleveref sets from the label itself |
-| S084 | [`primitive-tex-command`](#primitive-tex-command) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 41">chktex 41</a> | a plain TeX primitive is used where LaTeX has its own interface |
-| S085 | [`quote-ligature`](#quote-ligature) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 23">chktex 23</a> | three quotation marks in a row set a double and a single mark with nothing between them |
-| S086 | [`quote-punctuation`](#quote-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | <a class="from" href="Chktex-Coverage" title="follows chktex warning 38">chktex 38</a> | punctuation stands inside the closing quotation mark |
-| S087 | [`stray-space`](#stray-space) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-safe">safe</span> | — | a macro body picked up a space from an unescaped line end |
-| S088 | [`table-rules`](#table-rules) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a table is ruled with vertical rules or `\hline` |
-| S089 | [`unit-in-cells`](#unit-in-cells) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | every number of a table column carries the same unit |
-| S090 | [`unreferenced-numbered-display`](#unreferenced-numbered-display) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a display that stepped a counter is never referenced, so its number is spent for nothing |
-| S091 | [`unused-bibitem`](#unused-bibitem) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a `\bibitem` written in the document is never cited |
-| S092 | [`unused-color`](#unused-color) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | — | — | a color the document defines is never used |
-| S093 | [`unused-definition`](#unused-definition) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a macro defined in the document is never used |
-| S094 | [`unused-label`](#unused-label) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">style</span> | <span class="fix fix-unsafe">unsafe</span> | — | a label is never referenced |
-| S095 | [`package-after-preamble`](#package-after-preamble) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat">performance</span> | <span class="fix fix-unsafe">unsafe</span> | — | a package is loaded after `\begin{document}` |
-| S096 | [`includeonly-available`](#includeonly-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">performance</span> | <span class="fix fix-unsafe">unsafe</span> | — | a document of several `\include`d parts is built whole |
-| S097 | [`preamble-cost`](#preamble-cost) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">performance</span> | <span class="fix fix-unsafe">unsafe</span> | — | what the preamble costs on every build |
-| S098 | [`recursive-macro`](#recursive-macro) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">performance</span> | — | — | a macro calls itself, directly or through others |
-| S099 | [`unused-dependency`](#unused-dependency) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">performance</span> | <span class="fix fix-unsafe">unsafe</span> | — | the dependency file lists a TeX Live package no file of the run comes from |
-| S100 | [`unused-package`](#unused-package) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">performance</span> | <span class="fix fix-unsafe">unsafe</span> | — | a loaded package defines nothing the document uses |
-| S101 | [`analysis-imprecision`](#analysis-imprecision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat">precision</span> | — | — | the analysis had to widen |
+| no. | code | kind | engine | quick fix | summary | origin |
+| --- | --- | --- | --- | --- | --- | --- |
+| C001 | [`already-defined`](#already-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe">unsafe</span> | `\newcommand` redefines an existing name | — |
+| C002 | [`bibtex-command-under-biblatex`](#bibtex-command-under-biblatex) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe">unsafe</span> | a BibTeX command biblatex replaces stops the run | — |
+| C003 | [`build-bibliography-disabled`](#build-bibliography-disabled) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | the document has a bibliography, but the build never runs BibTeX or biber | — |
+| C004 | [`build-command-placeholders`](#build-command-placeholders) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | an engine command in the latexmkrc lacks %S or %O | — |
+| C005 | [`build-engine-mismatch`](#build-engine-mismatch) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | the build runs another engine, or another output, than the document needs | — |
+| C006 | [`build-shell-escape-missing`](#build-shell-escape-missing) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | the document runs programs through `\write18`, but the build does not allow it | — |
+| C007 | [`caused-library-error`](#caused-library-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | the document makes package code raise a TeX error | — |
+| C008 | [`math-still-open`](#math-still-open) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | the run is still in math mode where the text ends | <a class="from" href="Chktex-Coverage" title="follows chktex warning 16">chktex 16</a> |
+| C009 | [`missing-graphic`](#missing-graphic) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | an included image is not there for this output target | — |
+| C010 | [`new-redefines`](#new-redefines) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | a `\new…` declaration silently redefines an existing command | — |
+| C011 | [`not-defined`](#not-defined) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe">safe</span> | `\renewcommand` targets a name that does not exist | — |
+| C012 | [`option-clash`](#option-clash) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe">unsafe</span> | a package is loaded twice with different options | — |
+| C013 | [`raised-error`](#raised-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | the document's code raises a TeX error | — |
+| C014 | [`undefined-color`](#undefined-color) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | a color is used, or aliased from, before xcolor ever defines it | — |
+| C015 | [`undefined-control-sequence`](#undefined-control-sequence) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | a control sequence is used that nothing defines | — |
+| C016 | [`undefined-environment`](#undefined-environment) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | `\begin` names an environment that is not defined | — |
+| C017 | [`undefined-glossary-entry`](#undefined-glossary-entry) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | a glossary or acronym entry is used but never declared | — |
+| C018 | [`unguarded-recursion`](#unguarded-recursion) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | a recursive macro has nothing that can stop it | — |
+| C019 | [`build-missing-custom-dependency`](#build-missing-custom-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | the document writes glossary files, but latexmk has no rule to process them | — |
+| C020 | [`catcode-escapes-group`](#catcode-escapes-group) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a category code change is still in force at the end of the run | — |
+| C021 | [`conflicting-color-definition`](#conflicting-color-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | the same color name is defined twice with different colors | — |
+| C022 | [`delimiter-not-followed`](#delimiter-not-followed) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe">unsafe</span> | `\left`, `\right` or `\middle` is followed by a brace or a math shift | <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a> |
+| C023 | [`duplicate-bibliography-entry`](#duplicate-bibliography-entry) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | the same key is declared by two bibliography entries | — |
+| C024 | [`duplicate-label`](#duplicate-label) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | the same label is defined twice | — |
+| C025 | [`environment-mismatch`](#environment-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe">unsafe</span> | `\end` names an environment other than the one that is open | <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a> |
+| C026 | [`expl-syntax-left-on`](#expl-syntax-left-on) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | `\ExplSyntaxOn` is never turned off | — |
+| C027 | [`expl3-constant-set`](#expl3-constant-set) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | an expl3 constant is set after it was declared | — |
+| C028 | [`expl3-signature-mismatch`](#expl3-signature-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | an expl3 function takes other arguments than its name says | — |
+| C029 | [`ignored-verbatim-tail`](#ignored-verbatim-tail) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe">unsafe</span> | text stands on the line that closes a verbatim body and never reaches the page | <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a> |
+| C030 | [`math-script-braces`](#math-script-braces) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe">safe</span> | `^` and `_` take one token, so what follows needs braces | <a class="from" href="Chktex-Coverage" title="follows chktex warning 3, 25">chktex 3, 25</a> |
+| C031 | [`missing-dependency`](#missing-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe">safe</span> | a TeX Live package the run reads from is not in the dependency file | — |
+| C032 | [`unbalanced-brackets`](#unbalanced-brackets) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a file sets more of one bracket than of its partner | <a class="from" href="Chktex-Coverage" title="follows chktex warning 17">chktex 17</a> |
+| C033 | [`unbalanced-color-stack`](#unbalanced-color-stack) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | <span class="eng" title="only under pdftex, luatex">pdftex, luatex</span> | — | a `\pdfcolorstack` push is never popped, or a pop has nothing to pop | — |
+| C034 | [`unbalanced-pdf-content`](#unbalanced-pdf-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | <span class="eng" title="only under pdftex, luatex, xetex">pdftex, luatex, xetex</span> | — | a PDF literal opens marked content or a graphics state that is never closed | — |
+| C035 | [`undefined-citation`](#undefined-citation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a citation names a key no bibliography entry declares | — |
+| C036 | [`undefined-optional-content`](#undefined-optional-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | marked content refers to an optional content group no resource names | — |
+| C037 | [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | `\ref` names a label that is never defined | — |
+| C038 | [`uninstalled-package`](#uninstalled-package) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | the package is not installed, and the distribution could install it | — |
+| C039 | [`unresolved-file`](#unresolved-file) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | a package, class or input file is not in the installation | <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> |
+| C040 | [`expected-load`](#expected-load) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | the file was read after a package it expects loaded | — |
+| C041 | [`math-mode-mismatch`](#math-mode-mismatch) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | — | \(, \), \[ or \] stands where the mode does not allow it | <a class="from" href="Chktex-Coverage" title="follows chktex warning 49">chktex 49</a> |
+| C042 | [`unintended-escape`](#unintended-escape) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe">unsafe</span> | a command is followed by an escaped punctuation mark, which is another command | <a class="from" href="Chktex-Coverage" title="follows chktex warning 21">chktex 21</a> |
+| X001 | [`build-shell-escape-unneeded`](#build-shell-escape-unneeded) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-security">security</span> | — | — | the build allows `\write18`, but the document never uses it | — |
+| X002 | [`shell-escape`](#shell-escape) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-security">security</span> | — | — | the document runs a program through `\write18` | — |
+| S001 | [`accent-on-dotted-letter`](#accent-on-dotted-letter) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | an accent sits on top of the dot of an `i` or a `j` | <a class="from" href="Chktex-Coverage" title="follows chktex warning 7">chktex 7</a> |
+| S002 | [`command-terminated-space`](#command-terminated-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe">safe</span> | a control word ate the space after it and the next word is set against what it produced | <a class="from" href="Chktex-Coverage" title="follows chktex warning 1">chktex 1</a> |
+| S003 | [`dimension-times`](#dimension-times) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | the letter x stands between two numbers where a multiplication sign belongs | <a class="from" href="Chktex-Coverage" title="follows chktex warning 29">chktex 29</a> |
+| S004 | [`double-space`](#double-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span> | two interword spaces reached the page, one of them from a tie | <a class="from" href="Chktex-Coverage" title="follows chktex warning 30, 39">chktex 30, 39</a> |
+| S005 | [`ellipsis-dots`](#ellipsis-dots) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | three periods set three periods, not an ellipsis | <a class="from" href="Chktex-Coverage" title="follows chktex warning 11">chktex 11</a> |
+| S006 | [`expl3-scope`](#expl3-scope) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | an expl3 variable's scope prefix disagrees with how the run assigned it | — |
+| S007 | [`expl3-type`](#expl3-type) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | an expl3 variable's type suffix disagrees with the functions that set it | — |
+| S008 | [`group-local-definition`](#group-local-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | a definition is made inside a group and lost when it closes | — |
+| S009 | [`math-operator-name`](#math-operator-name) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | an operator name is set in math italic instead of by its command | <a class="from" href="Chktex-Coverage" title="follows chktex warning 35">chktex 35</a> |
+| S010 | [`missing-italic-correction`](#missing-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a slanted letter runs into upright text with no `\/` between them | <a class="from" href="Chktex-Coverage" title="follows chktex warning 6">chktex 6</a> |
+| S011 | [`missing-nonbreaking-space`](#missing-nonbreaking-space) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | an ordinary space in front of a reference lets the line break before the number | <a class="from" href="Chktex-Coverage" title="follows chktex warning 2">chktex 2</a> |
+| S012 | [`parenthesis-spacing`](#parenthesis-spacing) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a parenthesis carries the space of the text inside it instead of the text around it | <a class="from" href="Chktex-Coverage" title="follows chktex warning 36, 37">chktex 36, 37</a> |
+| S013 | [`quote-direction`](#quote-direction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a quotation mark points the wrong way, or a run of them mixes both directions | <a class="from" href="Chktex-Coverage" title="follows chktex warning 32, 33, 34">chktex 32, 33, 34</a> |
+| S014 | [`sentence-spacing`](#sentence-spacing) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a period set the wrong width of space for the sentence around it | <a class="from" href="Chktex-Coverage" title="follows chktex warning 12, 13">chktex 12, 13</a> |
+| S015 | [`space-before-command`](#space-before-command) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a space lets the line break between a word and the mark that belongs to it | <a class="from" href="Chktex-Coverage" title="follows chktex warning 24, 42">chktex 24, 42</a> |
+| S016 | [`space-before-punctuation`](#space-before-punctuation) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe">safe</span> | a space stands between a word and the punctuation after it | <a class="from" href="Chktex-Coverage" title="follows chktex warning 26">chktex 26</a> |
+| S017 | [`stray-italic-correction`](#stray-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span> | a repeated italic correction, or one in front of a period or comma | <a class="from" href="Chktex-Coverage" title="follows chktex warning 5, 28">chktex 5, 28</a> |
+| S018 | [`unknown-suppress-code`](#unknown-suppress-code) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | a satex-disable comment names a code no rule has | — |
+| S019 | [`user-pattern`](#user-pattern) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | — | the source matches a pattern the project asked to be warned about | <a class="from" href="Chktex-Coverage" title="follows chktex warning 20, 44">chktex 20, 44</a> |
+| S020 | [`wrong-dash`](#wrong-dash) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a run of hyphens sets a dash of the wrong length for what stands around it | <a class="from" href="Chktex-Coverage" title="follows chktex warning 8">chktex 8</a> |
+| S021 | [`wrong-quote-character`](#wrong-quote-character) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a character that is not a quotation mark stands in for one | <a class="from" href="Chktex-Coverage" title="follows chktex warning 18, 19">chktex 18, 19</a> |
+| S022 | [`zero-italic-correction`](#zero-italic-correction) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe">safe</span> | the italic correction is zero here, so `\/` changes nothing | <a class="from" href="Chktex-Coverage" title="follows chktex warning 4">chktex 4</a> |
+| S023 | [`build-bibliography-unneeded`](#build-bibliography-unneeded) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | the build configures BibTeX or biber for a document without a bibliography | — |
+| S024 | [`build-engine-options`](#build-engine-options) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | the engine command could report errors as file:line and write SyncTeX data | — |
+| S025 | [`build-unused-custom-dependency`](#build-unused-custom-dependency) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | a latexmk custom dependency that nothing in the document triggers | — |
+| S026 | [`comment-marker`](#comment-marker) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | a comment still carries a TODO-style marker | <a class="from" href="Chktex-Coverage" title="follows chktex warning 22">chktex 22</a> |
+| S027 | [`computer-modern-in-t1`](#computer-modern-in-t1) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex">pdftex</span> | <span class="fix fix-unsafe">unsafe</span> | T1 text in Computer Modern relies on cm-super for scalable fonts | — |
+| S028 | [`csquotes-available`](#csquotes-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | the document sets quotation marks by hand instead of loading csquotes | <a class="from" href="Chktex-Coverage" title="follows chktex warning 18">chktex 18</a> |
+| S029 | [`dead-definition`](#dead-definition) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span> | a definition is replaced before anything uses it | — |
+| S030 | [`duplicate-color-value`](#duplicate-color-value) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | two color names store the exact same color | — |
+| S031 | [`duplicate-package`](#duplicate-package) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe">safe</span> | a package is loaded more than once | — |
+| S032 | [`hand-set-quantity`](#hand-set-quantity) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a number and its unit are set by hand where siunitx would set them | — |
+| S033 | [`inconsistent-precision`](#inconsistent-precision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | the numbers of a table column give different numbers of decimals | — |
+| S034 | [`math-punctuation`](#math-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | punctuation sits on the wrong side of a formula | <a class="from" href="Chktex-Coverage" title="follows chktex warning 40">chktex 40</a> |
+| S035 | [`math-shift-dollars`](#math-shift-dollars) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe">safe</span> | display math opened with `$$` where LaTeX spells it \[ | <a class="from" href="Chktex-Coverage" title="follows chktex warning 45, 46">chktex 45, 46</a> |
+| S036 | [`microtype-available`](#microtype-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex, luatex">pdftex, luatex</span> | <span class="fix fix-unsafe">unsafe</span> | the engine can protrude characters and expand fonts, but microtype is not loaded | — |
+| S037 | [`numbers-not-aligned`](#numbers-not-aligned) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | a table column of numbers does not line them up at their decimal mark | — |
+| S038 | [`ot1-font-encoding`](#ot1-font-encoding) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | <span class="eng" title="only under pdftex">pdftex</span> | <span class="fix fix-unsafe">unsafe</span> | accented letters are built with `\accent` because the text is set in OT1 | — |
+| S039 | [`prefer-cleveref`](#prefer-cleveref) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a hand-written name in front of `\ref` is what cleveref sets from the label itself | — |
+| S040 | [`primitive-tex-command`](#primitive-tex-command) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a plain TeX primitive is used where LaTeX has its own interface | <a class="from" href="Chktex-Coverage" title="follows chktex warning 41">chktex 41</a> |
+| S041 | [`quote-ligature`](#quote-ligature) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | three quotation marks in a row set a double and a single mark with nothing between them | <a class="from" href="Chktex-Coverage" title="follows chktex warning 23">chktex 23</a> |
+| S042 | [`quote-punctuation`](#quote-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | punctuation stands inside the closing quotation mark | <a class="from" href="Chktex-Coverage" title="follows chktex warning 38">chktex 38</a> |
+| S043 | [`stray-space`](#stray-space) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe">safe</span> | a macro body picked up a space from an unescaped line end | — |
+| S044 | [`table-rules`](#table-rules) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | a table is ruled with vertical rules or `\hline` | — |
+| S045 | [`unit-in-cells`](#unit-in-cells) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | every number of a table column carries the same unit | — |
+| S046 | [`unreferenced-numbered-display`](#unreferenced-numbered-display) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a display that stepped a counter is never referenced, so its number is spent for nothing | — |
+| S047 | [`unused-bibitem`](#unused-bibitem) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | a `\bibitem` written in the document is never cited | — |
+| S048 | [`unused-color`](#unused-color) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | a color the document defines is never used | — |
+| S049 | [`unused-definition`](#unused-definition) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a macro defined in the document is never used | — |
+| S050 | [`unused-label`](#unused-label) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a label is never referenced | — |
+| P001 | [`package-after-preamble`](#package-after-preamble) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe">unsafe</span> | a package is loaded after `\begin{document}` | — |
+| P002 | [`includeonly-available`](#includeonly-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe">unsafe</span> | a document of several `\include`d parts is built whole | — |
+| P003 | [`preamble-cost`](#preamble-cost) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe">unsafe</span> | what the preamble costs on every build | — |
+| P004 | [`recursive-macro`](#recursive-macro) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | — | a macro calls itself, directly or through others | — |
+| P005 | [`unused-dependency`](#unused-dependency) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe">unsafe</span> | the dependency file lists a TeX Live package no file of the run comes from | — |
+| P006 | [`unused-package`](#unused-package) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe">unsafe</span> | a loaded package defines nothing the document uses | — |
+| A001 | [`analysis-imprecision`](#analysis-imprecision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-precision">precision</span> | — | — | the analysis had to widen | — |
 
 ## Quick-fixes
 
@@ -202,7 +204,7 @@ One group per category. Open a group to read its rules.
 
 ### already-defined
 
-<p class="badges"><code class="num" title="rule number">S001</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">C001</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **`\newcommand` redefines an existing name**
 
@@ -214,7 +216,7 @@ See [source2e § ltdefns.dtx](https://ctan.org/pkg/source2e).
 
 ### bibtex-command-under-biblatex
 
-<p class="badges"><code class="num" title="rule number">S002</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">C002</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **a BibTeX command biblatex replaces stops the run**
 
@@ -226,7 +228,7 @@ See [biblatex §3.7](https://ctan.org/pkg/biblatex).
 
 ### build-bibliography-disabled
 
-<p class="badges"><code class="num" title="rule number">S003</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C003</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
 
 **the document has a bibliography, but the build never runs BibTeX or biber**
 
@@ -238,7 +240,7 @@ See [latexmk § $bibtex_use](https://ctan.org/pkg/latexmk).
 
 ### build-command-placeholders
 
-<p class="badges"><code class="num" title="rule number">S004</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C004</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
 
 **an engine command in the latexmkrc lacks %S or %O**
 
@@ -250,7 +252,7 @@ See [latexmk § FORMAT OF COMMAND SPECIFICATIONS](https://ctan.org/pkg/latexmk).
 
 ### build-engine-mismatch
 
-<p class="badges"><code class="num" title="rule number">S005</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C005</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
 
 **the build runs another engine, or another output, than the document needs**
 
@@ -262,7 +264,7 @@ See [latexmk § $pdf_mode](https://ctan.org/pkg/latexmk).
 
 ### build-shell-escape-missing
 
-<p class="badges"><code class="num" title="rule number">S006</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C006</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
 
 **the document runs programs through `\write18`, but the build does not allow it**
 
@@ -274,7 +276,7 @@ See [latexmk § $pdf_mode](https://ctan.org/pkg/latexmk), [arara § The official
 
 ### caused-library-error
 
-<p class="badges"><code class="num" title="rule number">S007</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C007</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
 
 **the document makes package code raise a TeX error**
 
@@ -286,7 +288,7 @@ See [The TeXbook, chapter 27](https://ctan.org/pkg/texbook#chapter-27).
 
 ### math-still-open
 
-<p class="badges"><code class="num" title="rule number">S008</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 16">chktex 16</a></p>
+<p class="badges"><code class="num" title="rule number">C008</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 16">chktex 16</a></p>
 
 **the run is still in math mode where the text ends**
 
@@ -300,7 +302,7 @@ See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://githu
 
 ### missing-graphic
 
-<p class="badges"><code class="num" title="rule number">S009</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C009</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
 
 **an included image is not there for this output target**
 
@@ -312,7 +314,7 @@ See [graphics § pdftex.def](https://ctan.org/pkg/graphics).
 
 ### new-redefines
 
-<p class="badges"><code class="num" title="rule number">S010</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C010</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
 
 **a `\new…` declaration silently redefines an existing command**
 
@@ -324,7 +326,7 @@ See [source2e § ltdefns.dtx](https://ctan.org/pkg/source2e).
 
 ### not-defined
 
-<p class="badges"><code class="num" title="rule number">S011</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span> <span class="fix fix-safe">safe</span></p>
+<p class="badges"><code class="num" title="rule number">C011</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe">safe</span></p>
 
 **`\renewcommand` targets a name that does not exist**
 
@@ -336,7 +338,7 @@ See [source2e § ltdefns.dtx](https://ctan.org/pkg/source2e).
 
 ### option-clash
 
-<p class="badges"><code class="num" title="rule number">S012</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">C012</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **a package is loaded twice with different options**
 
@@ -348,7 +350,7 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 ### raised-error
 
-<p class="badges"><code class="num" title="rule number">S013</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C013</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
 
 **the document's code raises a TeX error**
 
@@ -356,7 +358,7 @@ Running the document reaches `\errmessage`, which every LaTeX error (`\PackageEr
 
 ### undefined-color
 
-<p class="badges"><code class="num" title="rule number">S014</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C014</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
 
 **a color is used, or aliased from, before xcolor ever defines it**
 
@@ -368,7 +370,7 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 ### undefined-control-sequence
 
-<p class="badges"><code class="num" title="rule number">S015</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C015</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
 
 **a control sequence is used that nothing defines**
 
@@ -380,7 +382,7 @@ See [The TeXbook, chapter 27](https://ctan.org/pkg/texbook#chapter-27).
 
 ### undefined-environment
 
-<p class="badges"><code class="num" title="rule number">S016</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C016</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
 
 **`\begin` names an environment that is not defined**
 
@@ -392,7 +394,7 @@ See [source2e § ltmiscen.dtx](https://ctan.org/pkg/source2e).
 
 ### undefined-glossary-entry
 
-<p class="badges"><code class="num" title="rule number">S017</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C017</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
 
 **a glossary or acronym entry is used but never declared**
 
@@ -404,7 +406,7 @@ See [glossaries § Defining glossary entries](https://ctan.org/pkg/glossaries).
 
 ### unguarded-recursion
 
-<p class="badges"><code class="num" title="rule number">S018</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C018</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span></p>
 
 **a recursive macro has nothing that can stop it**
 
@@ -414,7 +416,7 @@ Fix by adding the test that stops it, or by removing the self-reference.
 
 ### build-missing-custom-dependency
 
-<p class="badges"><code class="num" title="rule number">S019</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C019</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
 
 **the document writes glossary files, but latexmk has no rule to process them**
 
@@ -429,7 +431,7 @@ See [latexmk § CUSTOM DEPENDENCIES](https://ctan.org/pkg/latexmk), [glossaries 
 
 ### catcode-escapes-group
 
-<p class="badges"><code class="num" title="rule number">S020</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C020</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
 
 **a category code change is still in force at the end of the run**
 
@@ -441,7 +443,7 @@ See [The TeXbook, chapter 5](https://ctan.org/pkg/texbook#chapter-5).
 
 ### conflicting-color-definition
 
-<p class="badges"><code class="num" title="rule number">S021</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C021</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
 
 **the same color name is defined twice with different colors**
 
@@ -453,7 +455,7 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 ### delimiter-not-followed
 
-<p class="badges"><code class="num" title="rule number">S022</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a></p>
+<p class="badges"><code class="num" title="rule number">C022</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a></p>
 
 **`\left`, `\right` or `\middle` is followed by a brace or a math shift**
 
@@ -467,7 +469,7 @@ See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://githu
 
 ### duplicate-bibliography-entry
 
-<p class="badges"><code class="num" title="rule number">S023</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C023</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
 
 **the same key is declared by two bibliography entries**
 
@@ -479,7 +481,7 @@ See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
 
 ### duplicate-label
 
-<p class="badges"><code class="num" title="rule number">S024</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C024</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
 
 **the same label is defined twice**
 
@@ -491,7 +493,7 @@ See [source2e § ltxref.dtx](https://ctan.org/pkg/source2e).
 
 ### environment-mismatch
 
-<p class="badges"><code class="num" title="rule number">S025</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a></p>
+<p class="badges"><code class="num" title="rule number">C025</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a></p>
 
 **`\end` names an environment other than the one that is open**
 
@@ -505,7 +507,7 @@ See [chktex 9](https://www.nongnu.org/chktex/), [chktex 10](https://www.nongnu.o
 
 ### expl-syntax-left-on
 
-<p class="badges"><code class="num" title="rule number">S026</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C026</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
 
 **`\ExplSyntaxOn` is never turned off**
 
@@ -517,7 +519,7 @@ See [source2e § ltfiles.dtx](https://ctan.org/pkg/source2e).
 
 ### expl3-constant-set
 
-<p class="badges"><code class="num" title="rule number">S027</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C027</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
 
 **an expl3 constant is set after it was declared**
 
@@ -529,7 +531,7 @@ See [interface3 § Naming functions and variables](https://ctan.org/pkg/l3kernel
 
 ### expl3-signature-mismatch
 
-<p class="badges"><code class="num" title="rule number">S028</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C028</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
 
 **an expl3 function takes other arguments than its name says**
 
@@ -543,7 +545,7 @@ See [interface3 § Naming conventions](https://ctan.org/pkg/l3kernel).
 
 ### ignored-verbatim-tail
 
-<p class="badges"><code class="num" title="rule number">S029</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a></p>
+<p class="badges"><code class="num" title="rule number">C029</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a></p>
 
 **text stands on the line that closes a verbatim body and never reaches the page**
 
@@ -557,7 +559,7 @@ See [chktex 31](https://www.nongnu.org/chktex/).
 
 ### math-script-braces
 
-<p class="badges"><code class="num" title="rule number">S030</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span> <span class="fix fix-safe">safe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 3, 25">chktex 3, 25</a></p>
+<p class="badges"><code class="num" title="rule number">C030</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe">safe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 3, 25">chktex 3, 25</a></p>
 
 **`^` and `_` take one token, so what follows needs braces**
 
@@ -571,7 +573,7 @@ See [chktex 3](https://www.nongnu.org/chktex/), [chktex 25](https://www.nongnu.o
 
 ### missing-dependency
 
-<p class="badges"><code class="num" title="rule number">S031</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span> <span class="fix fix-safe">safe</span></p>
+<p class="badges"><code class="num" title="rule number">C031</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe">safe</span></p>
 
 **a TeX Live package the run reads from is not in the dependency file**
 
@@ -581,7 +583,7 @@ Fix by adding the package to the dependency file, or by rerunning depp.
 
 ### unbalanced-brackets
 
-<p class="badges"><code class="num" title="rule number">S032</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 17">chktex 17</a></p>
+<p class="badges"><code class="num" title="rule number">C032</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 17">chktex 17</a></p>
 
 **a file sets more of one bracket than of its partner**
 
@@ -595,7 +597,7 @@ See [chktex 17](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https:
 
 ### unbalanced-color-stack
 
-<p class="badges"><code class="num" title="rule number">S033</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C033</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="eng" title="only under pdftex, luatex">pdftex, luatex</span></p>
 
 **a `\pdfcolorstack` push is never popped, or a pop has nothing to pop**
 
@@ -607,7 +609,7 @@ See [pdftex § 8.9.8](https://ctan.org/pkg/pdftex).
 
 ### unbalanced-pdf-content
 
-<p class="badges"><code class="num" title="rule number">S034</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C034</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="eng" title="only under pdftex, luatex, xetex">pdftex, luatex, xetex</span></p>
 
 **a PDF literal opens marked content or a graphics state that is never closed**
 
@@ -621,7 +623,7 @@ See [PDF 32000 § 8.4.2](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfsta
 
 ### undefined-citation
 
-<p class="badges"><code class="num" title="rule number">S035</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C035</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
 
 **a citation names a key no bibliography entry declares**
 
@@ -633,7 +635,7 @@ See [source2e § ltbibl.dtx](https://ctan.org/pkg/source2e).
 
 ### undefined-optional-content
 
-<p class="badges"><code class="num" title="rule number">S036</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C036</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
 
 **marked content refers to an optional content group no resource names**
 
@@ -645,7 +647,7 @@ See [PDF 32000 § 8.11.3.2](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdf
 
 ### undefined-reference
 
-<p class="badges"><code class="num" title="rule number">S037</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C037</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
 
 **`\ref` names a label that is never defined**
 
@@ -657,7 +659,7 @@ See [source2e § ltxref.dtx](https://ctan.org/pkg/source2e).
 
 ### uninstalled-package
 
-<p class="badges"><code class="num" title="rule number">S038</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C038</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span></p>
 
 **the package is not installed, and the distribution could install it**
 
@@ -669,7 +671,7 @@ See [TeX Live manual § tlmgr](https://tug.org/texlive/doc.html), [MiKTeX manual
 
 ### unresolved-file
 
-<p class="badges"><code class="num" title="rule number">S039</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a></p>
+<p class="badges"><code class="num" title="rule number">C039</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a></p>
 
 **a package, class or input file is not in the installation**
 
@@ -681,7 +683,7 @@ See [chktex 27](https://www.nongnu.org/chktex/).
 
 ### expected-load
 
-<p class="badges"><code class="num" title="rule number">S040</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">correctness</span></p>
+<p class="badges"><code class="num" title="rule number">C040</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-correctness">correctness</span></p>
 
 **the file was read after a package it expects loaded**
 
@@ -691,7 +693,7 @@ Fix by naming what the file expects in `load.expect`, or by loading it with `\Re
 
 ### math-mode-mismatch
 
-<p class="badges"><code class="num" title="rule number">S041</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 49">chktex 49</a></p>
+<p class="badges"><code class="num" title="rule number">C041</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-correctness">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 49">chktex 49</a></p>
 
 **\(, \), \[ or \] stands where the mode does not allow it**
 
@@ -705,7 +707,7 @@ See [chktex 49](https://www.nongnu.org/chktex/), [source2e § ltmath.dtx](https:
 
 ### unintended-escape
 
-<p class="badges"><code class="num" title="rule number">S042</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">correctness</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 21">chktex 21</a></p>
+<p class="badges"><code class="num" title="rule number">C042</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 21">chktex 21</a></p>
 
 **a command is followed by an escaped punctuation mark, which is another command**
 
@@ -724,7 +726,7 @@ See [chktex 21](https://www.nongnu.org/chktex/), [The TeXbook, chapter 9](https:
 
 ### build-shell-escape-unneeded
 
-<p class="badges"><code class="num" title="rule number">S043</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">security</span></p>
+<p class="badges"><code class="num" title="rule number">X001</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-security">security</span></p>
 
 **the build allows `\write18`, but the document never uses it**
 
@@ -736,7 +738,7 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 
 ### shell-escape
 
-<p class="badges"><code class="num" title="rule number">S044</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">security</span></p>
+<p class="badges"><code class="num" title="rule number">X002</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-security">security</span></p>
 
 **the document runs a program through `\write18`**
 
@@ -753,7 +755,7 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 
 ### accent-on-dotted-letter
 
-<p class="badges"><code class="num" title="rule number">S045</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 7">chktex 7</a></p>
+<p class="badges"><code class="num" title="rule number">S001</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 7">chktex 7</a></p>
 
 **an accent sits on top of the dot of an `i` or a `j`**
 
@@ -767,7 +769,7 @@ See [chktex 7](https://www.nongnu.org/chktex/), [The TeXbook, chapter 9](https:/
 
 ### command-terminated-space
 
-<p class="badges"><code class="num" title="rule number">S046</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-safe">safe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 1">chktex 1</a></p>
+<p class="badges"><code class="num" title="rule number">S002</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-safe">safe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 1">chktex 1</a></p>
 
 **a control word ate the space after it and the next word is set against what it produced**
 
@@ -781,7 +783,7 @@ See [chktex 1](https://www.nongnu.org/chktex/), [The TeXbook, chapter 3](https:/
 
 ### dimension-times
 
-<p class="badges"><code class="num" title="rule number">S047</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 29">chktex 29</a></p>
+<p class="badges"><code class="num" title="rule number">S003</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 29">chktex 29</a></p>
 
 **the letter x stands between two numbers where a multiplication sign belongs**
 
@@ -795,7 +797,7 @@ See [chktex 29](https://www.nongnu.org/chktex/), [The TeXbook, chapter 16](https
 
 ### double-space
 
-<p class="badges"><code class="num" title="rule number">S048</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 30, 39">chktex 30, 39</a></p>
+<p class="badges"><code class="num" title="rule number">S004</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 30, 39">chktex 30, 39</a></p>
 
 **two interword spaces reached the page, one of them from a tie**
 
@@ -809,7 +811,7 @@ See [chktex 39](https://www.nongnu.org/chktex/), [chktex 30](https://www.nongnu.
 
 ### ellipsis-dots
 
-<p class="badges"><code class="num" title="rule number">S049</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 11">chktex 11</a></p>
+<p class="badges"><code class="num" title="rule number">S005</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 11">chktex 11</a></p>
 
 **three periods set three periods, not an ellipsis**
 
@@ -823,7 +825,7 @@ See [chktex 11](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https
 
 ### expl3-scope
 
-<p class="badges"><code class="num" title="rule number">S050</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S006</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span></p>
 
 **an expl3 variable's scope prefix disagrees with how the run assigned it**
 
@@ -835,7 +837,7 @@ See [interface3 § Naming functions and variables](https://ctan.org/pkg/l3kernel
 
 ### expl3-type
 
-<p class="badges"><code class="num" title="rule number">S051</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S007</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span></p>
 
 **an expl3 variable's type suffix disagrees with the functions that set it**
 
@@ -847,7 +849,7 @@ See [interface3 § Naming functions and variables](https://ctan.org/pkg/l3kernel
 
 ### group-local-definition
 
-<p class="badges"><code class="num" title="rule number">S052</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S008</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span></p>
 
 **a definition is made inside a group and lost when it closes**
 
@@ -859,7 +861,7 @@ See [The TeXbook, chapter 5](https://ctan.org/pkg/texbook#chapter-5).
 
 ### math-operator-name
 
-<p class="badges"><code class="num" title="rule number">S053</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 35">chktex 35</a></p>
+<p class="badges"><code class="num" title="rule number">S009</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 35">chktex 35</a></p>
 
 **an operator name is set in math italic instead of by its command**
 
@@ -873,7 +875,7 @@ See [chktex 35](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https
 
 ### missing-italic-correction
 
-<p class="badges"><code class="num" title="rule number">S054</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 6">chktex 6</a></p>
+<p class="badges"><code class="num" title="rule number">S010</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 6">chktex 6</a></p>
 
 **a slanted letter runs into upright text with no `\/` between them**
 
@@ -887,7 +889,7 @@ See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https:/
 
 ### missing-nonbreaking-space
 
-<p class="badges"><code class="num" title="rule number">S055</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 2">chktex 2</a></p>
+<p class="badges"><code class="num" title="rule number">S011</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 2">chktex 2</a></p>
 
 **an ordinary space in front of a reference lets the line break before the number**
 
@@ -901,7 +903,7 @@ See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https:
 
 ### parenthesis-spacing
 
-<p class="badges"><code class="num" title="rule number">S056</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 36, 37">chktex 36, 37</a></p>
+<p class="badges"><code class="num" title="rule number">S012</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 36, 37">chktex 36, 37</a></p>
 
 **a parenthesis carries the space of the text inside it instead of the text around it**
 
@@ -917,7 +919,7 @@ See [chktex 36](https://www.nongnu.org/chktex/), [chktex 37](https://www.nongnu.
 
 ### quote-direction
 
-<p class="badges"><code class="num" title="rule number">S057</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 32, 33, 34">chktex 32, 33, 34</a></p>
+<p class="badges"><code class="num" title="rule number">S013</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 32, 33, 34">chktex 32, 33, 34</a></p>
 
 **a quotation mark points the wrong way, or a run of them mixes both directions**
 
@@ -931,7 +933,7 @@ See [chktex 32](https://www.nongnu.org/chktex/), [chktex 33](https://www.nongnu.
 
 ### sentence-spacing
 
-<p class="badges"><code class="num" title="rule number">S058</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 12, 13">chktex 12, 13</a></p>
+<p class="badges"><code class="num" title="rule number">S014</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 12, 13">chktex 12, 13</a></p>
 
 **a period set the wrong width of space for the sentence around it**
 
@@ -945,7 +947,7 @@ See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.
 
 ### space-before-command
 
-<p class="badges"><code class="num" title="rule number">S059</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 24, 42">chktex 24, 42</a></p>
+<p class="badges"><code class="num" title="rule number">S015</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 24, 42">chktex 24, 42</a></p>
 
 **a space lets the line break between a word and the mark that belongs to it**
 
@@ -959,7 +961,7 @@ See [chktex 24](https://www.nongnu.org/chktex/), [chktex 42](https://www.nongnu.
 
 ### space-before-punctuation
 
-<p class="badges"><code class="num" title="rule number">S060</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-safe">safe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 26">chktex 26</a></p>
+<p class="badges"><code class="num" title="rule number">S016</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-safe">safe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 26">chktex 26</a></p>
 
 **a space stands between a word and the punctuation after it**
 
@@ -973,7 +975,7 @@ See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://githu
 
 ### stray-italic-correction
 
-<p class="badges"><code class="num" title="rule number">S061</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 5, 28">chktex 5, 28</a></p>
+<p class="badges"><code class="num" title="rule number">S017</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 5, 28">chktex 5, 28</a></p>
 
 **a repeated italic correction, or one in front of a period or comma**
 
@@ -987,7 +989,7 @@ See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.o
 
 ### unknown-suppress-code
 
-<p class="badges"><code class="num" title="rule number">S062</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S018</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span></p>
 
 **a satex-disable comment names a code no rule has**
 
@@ -997,7 +999,7 @@ Fix by correcting the code, or removing it if the rule was renamed or never exis
 
 ### user-pattern
 
-<p class="badges"><code class="num" title="rule number">S063</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 20, 44">chktex 20, 44</a></p>
+<p class="badges"><code class="num" title="rule number">S019</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 20, 44">chktex 20, 44</a></p>
 
 **the source matches a pattern the project asked to be warned about**
 
@@ -1011,7 +1013,7 @@ See [chktex 20](https://www.nongnu.org/chktex/), [chktex 44](https://www.nongnu.
 
 ### wrong-dash
 
-<p class="badges"><code class="num" title="rule number">S064</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 8">chktex 8</a></p>
+<p class="badges"><code class="num" title="rule number">S020</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 8">chktex 8</a></p>
 
 **a run of hyphens sets a dash of the wrong length for what stands around it**
 
@@ -1025,7 +1027,7 @@ See [chktex 8](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https:/
 
 ### wrong-quote-character
 
-<p class="badges"><code class="num" title="rule number">S065</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 18, 19">chktex 18, 19</a></p>
+<p class="badges"><code class="num" title="rule number">S021</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 18, 19">chktex 18, 19</a></p>
 
 **a character that is not a quotation mark stands in for one**
 
@@ -1039,7 +1041,7 @@ See [chktex 18](https://www.nongnu.org/chktex/), [chktex 19](https://www.nongnu.
 
 ### zero-italic-correction
 
-<p class="badges"><code class="num" title="rule number">S066</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">style</span> <span class="fix fix-safe">safe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 4">chktex 4</a></p>
+<p class="badges"><code class="num" title="rule number">S022</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-style">style</span> <span class="fix fix-safe">safe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 4">chktex 4</a></p>
 
 **the italic correction is zero here, so `\/` changes nothing**
 
@@ -1053,7 +1055,7 @@ See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github
 
 ### build-bibliography-unneeded
 
-<p class="badges"><code class="num" title="rule number">S067</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S023</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span></p>
 
 **the build configures BibTeX or biber for a document without a bibliography**
 
@@ -1065,7 +1067,7 @@ See [latexmk § $bibtex_use](https://ctan.org/pkg/latexmk).
 
 ### build-engine-options
 
-<p class="badges"><code class="num" title="rule number">S068</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S024</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span></p>
 
 **the engine command could report errors as file:line and write SyncTeX data**
 
@@ -1077,7 +1079,7 @@ See [pdftex § -file-line-error](https://ctan.org/pkg/pdftex), [luatex § -synct
 
 ### build-unused-custom-dependency
 
-<p class="badges"><code class="num" title="rule number">S069</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S025</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span></p>
 
 **a latexmk custom dependency that nothing in the document triggers**
 
@@ -1089,7 +1091,7 @@ See [latexmk § CUSTOM DEPENDENCIES](https://ctan.org/pkg/latexmk).
 
 ### comment-marker
 
-<p class="badges"><code class="num" title="rule number">S070</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 22">chktex 22</a></p>
+<p class="badges"><code class="num" title="rule number">S026</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 22">chktex 22</a></p>
 
 **a comment still carries a TODO-style marker**
 
@@ -1103,7 +1105,7 @@ See [chktex 22](https://www.nongnu.org/chktex/).
 
 ### computer-modern-in-t1
 
-<p class="badges"><code class="num" title="rule number">S071</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">S027</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="eng" title="only under pdftex">pdftex</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **T1 text in Computer Modern relies on cm-super for scalable fonts**
 
@@ -1117,7 +1119,7 @@ See [lmodern § Latin Modern](https://ctan.org/pkg/lm), [fntguide § 5](https://
 
 ### csquotes-available
 
-<p class="badges"><code class="num" title="rule number">S072</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 18">chktex 18</a></p>
+<p class="badges"><code class="num" title="rule number">S028</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 18">chktex 18</a></p>
 
 **the document sets quotation marks by hand instead of loading csquotes**
 
@@ -1131,7 +1133,7 @@ See [chktex 18](https://www.nongnu.org/chktex/), [csquotes § 3.1](https://ctan.
 
 ### dead-definition
 
-<p class="badges"><code class="num" title="rule number">S073</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">S029</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-safe">safe</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **a definition is replaced before anything uses it**
 
@@ -1141,7 +1143,7 @@ Fix by deleting the first definition, or by checking which one was meant.
 
 ### duplicate-color-value
 
-<p class="badges"><code class="num" title="rule number">S074</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S030</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span></p>
 
 **two color names store the exact same color**
 
@@ -1153,7 +1155,7 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 ### duplicate-package
 
-<p class="badges"><code class="num" title="rule number">S075</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-safe">safe</span></p>
+<p class="badges"><code class="num" title="rule number">S031</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-safe">safe</span></p>
 
 **a package is loaded more than once**
 
@@ -1165,7 +1167,7 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 ### hand-set-quantity
 
-<p class="badges"><code class="num" title="rule number">S076</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">S032</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **a number and its unit are set by hand where siunitx would set them**
 
@@ -1179,7 +1181,7 @@ See [SI brochure § 5.4.3](https://www.bipm.org/en/publications/si-brochure), [s
 
 ### inconsistent-precision
 
-<p class="badges"><code class="num" title="rule number">S077</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S033</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span></p>
 
 **the numbers of a table column give different numbers of decimals**
 
@@ -1189,7 +1191,7 @@ See [siunitx § 4.6](https://ctan.org/pkg/siunitx).
 
 ### math-punctuation
 
-<p class="badges"><code class="num" title="rule number">S078</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 40">chktex 40</a></p>
+<p class="badges"><code class="num" title="rule number">S034</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 40">chktex 40</a></p>
 
 **punctuation sits on the wrong side of a formula**
 
@@ -1203,7 +1205,7 @@ See [chktex 40](https://www.nongnu.org/chktex/), [The TeXbook, chapter 18](https
 
 ### math-shift-dollars
 
-<p class="badges"><code class="num" title="rule number">S079</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-safe">safe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 45, 46">chktex 45, 46</a></p>
+<p class="badges"><code class="num" title="rule number">S035</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-safe">safe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 45, 46">chktex 45, 46</a></p>
 
 **display math opened with `$$` where LaTeX spells it \[**
 
@@ -1217,7 +1219,7 @@ See [chktex 45](https://www.nongnu.org/chktex/), [chktex 46](https://www.nongnu.
 
 ### microtype-available
 
-<p class="badges"><code class="num" title="rule number">S080</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">S036</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="eng" title="only under pdftex, luatex">pdftex, luatex</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **the engine can protrude characters and expand fonts, but microtype is not loaded**
 
@@ -1229,7 +1231,7 @@ See [microtype § 1](https://ctan.org/pkg/microtype), [pdftex § \pdfprotrudecha
 
 ### numbers-not-aligned
 
-<p class="badges"><code class="num" title="rule number">S081</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S037</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span></p>
 
 **a table column of numbers does not line them up at their decimal mark**
 
@@ -1241,7 +1243,7 @@ See [siunitx § 7.12](https://ctan.org/pkg/siunitx).
 
 ### ot1-font-encoding
 
-<p class="badges"><code class="num" title="rule number">S082</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">S038</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="eng" title="only under pdftex">pdftex</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **accented letters are built with `\accent` because the text is set in OT1**
 
@@ -1255,7 +1257,7 @@ See [source2e § ot1enc.def](https://ctan.org/pkg/source2e), [fntguide § 5](htt
 
 ### prefer-cleveref
 
-<p class="badges"><code class="num" title="rule number">S083</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">S039</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **a hand-written name in front of `\ref` is what cleveref sets from the label itself**
 
@@ -1271,7 +1273,7 @@ See [cleveref § 2](https://ctan.org/pkg/cleveref).
 
 ### primitive-tex-command
 
-<p class="badges"><code class="num" title="rule number">S084</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 41">chktex 41</a></p>
+<p class="badges"><code class="num" title="rule number">S040</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 41">chktex 41</a></p>
 
 **a plain TeX primitive is used where LaTeX has its own interface**
 
@@ -1285,7 +1287,7 @@ See [chktex 41](https://www.nongnu.org/chktex/), [l2tabu § 1](https://ctan.org/
 
 ### quote-ligature
 
-<p class="badges"><code class="num" title="rule number">S085</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 23">chktex 23</a></p>
+<p class="badges"><code class="num" title="rule number">S041</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 23">chktex 23</a></p>
 
 **three quotation marks in a row set a double and a single mark with nothing between them**
 
@@ -1299,7 +1301,7 @@ See [chktex 23](https://www.nongnu.org/chktex/), [The TeXbook, chapter 2](https:
 
 ### quote-punctuation
 
-<p class="badges"><code class="num" title="rule number">S086</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 38">chktex 38</a></p>
+<p class="badges"><code class="num" title="rule number">S042</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 38">chktex 38</a></p>
 
 **punctuation stands inside the closing quotation mark**
 
@@ -1311,7 +1313,7 @@ See [chktex 38](https://www.nongnu.org/chktex/).
 
 ### stray-space
 
-<p class="badges"><code class="num" title="rule number">S087</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-safe">safe</span></p>
+<p class="badges"><code class="num" title="rule number">S043</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-safe">safe</span></p>
 
 **a macro body picked up a space from an unescaped line end**
 
@@ -1325,7 +1327,7 @@ See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/fd728dfcded
 
 ### table-rules
 
-<p class="badges"><code class="num" title="rule number">S088</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S044</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span></p>
 
 **a table is ruled with vertical rules or `\hline`**
 
@@ -1335,7 +1337,7 @@ See [booktabs § 2](https://ctan.org/pkg/booktabs).
 
 ### unit-in-cells
 
-<p class="badges"><code class="num" title="rule number">S089</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S045</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span></p>
 
 **every number of a table column carries the same unit**
 
@@ -1345,7 +1347,7 @@ See [SI brochure § 5.4.1](https://www.bipm.org/en/publications/si-brochure), [s
 
 ### unreferenced-numbered-display
 
-<p class="badges"><code class="num" title="rule number">S090</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">S046</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **a display that stepped a counter is never referenced, so its number is spent for nothing**
 
@@ -1359,7 +1361,7 @@ See [amsmath § 3.1](https://ctan.org/pkg/amsmath), [clsguide § counters](https
 
 ### unused-bibitem
 
-<p class="badges"><code class="num" title="rule number">S091</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S047</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span></p>
 
 **a `\bibitem` written in the document is never cited**
 
@@ -1371,7 +1373,7 @@ See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
 
 ### unused-color
 
-<p class="badges"><code class="num" title="rule number">S092</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span></p>
+<p class="badges"><code class="num" title="rule number">S048</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span></p>
 
 **a color the document defines is never used**
 
@@ -1383,7 +1385,7 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 ### unused-definition
 
-<p class="badges"><code class="num" title="rule number">S093</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">S049</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **a macro defined in the document is never used**
 
@@ -1393,7 +1395,7 @@ Fix by deleting it, or by checking why nothing calls it yet.
 
 ### unused-label
 
-<p class="badges"><code class="num" title="rule number">S094</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">style</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">S050</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **a label is never referenced**
 
@@ -1406,7 +1408,7 @@ Fix by deleting the `\label`, or by checking the `\ref` that was meant to use it
 
 ### package-after-preamble
 
-<p class="badges"><code class="num" title="rule number">S095</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">P001</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **a package is loaded after `\begin{document}`**
 
@@ -1418,7 +1420,7 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 ### includeonly-available
 
-<p class="badges"><code class="num" title="rule number">S096</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">P002</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **a document of several `\include`d parts is built whole**
 
@@ -1430,7 +1432,7 @@ See [source2e § ltfiles.dtx](https://ctan.org/pkg/source2e).
 
 ### preamble-cost
 
-<p class="badges"><code class="num" title="rule number">S097</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">P003</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **what the preamble costs on every build**
 
@@ -1444,7 +1446,7 @@ See [The LaTeX Companion § formats](https://ctan.org/pkg/tlc3-examples).
 
 ### recursive-macro
 
-<p class="badges"><code class="num" title="rule number">S098</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">performance</span></p>
+<p class="badges"><code class="num" title="rule number">P004</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span></p>
 
 **a macro calls itself, directly or through others**
 
@@ -1454,7 +1456,7 @@ Fix, if the recursion is unintended, by breaking the cycle. Otherwise make sure 
 
 ### unused-dependency
 
-<p class="badges"><code class="num" title="rule number">S099</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">P005</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **the dependency file lists a TeX Live package no file of the run comes from**
 
@@ -1464,7 +1466,7 @@ Fix, if the package really is unused, by deleting its line.
 
 ### unused-package
 
-<p class="badges"><code class="num" title="rule number">S100</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
+<p class="badges"><code class="num" title="rule number">P006</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
 
 **a loaded package defines nothing the document uses**
 
@@ -1479,7 +1481,7 @@ Fix, if the package really is unused, by deleting the `\usepackage`: it is read 
 
 ### analysis-imprecision
 
-<p class="badges"><code class="num" title="rule number">S101</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat">precision</span></p>
+<p class="badges"><code class="num" title="rule number">A001</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-precision">precision</span></p>
 
 **the analysis had to widen**
 
