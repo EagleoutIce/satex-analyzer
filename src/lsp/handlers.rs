@@ -2005,16 +2005,20 @@ pub fn document_symbols(analysis: &Analysis, path: &str, doc: &Text) -> Option<V
     (!out.is_empty()).then_some(out)
 }
 
-/// `lint`'s findings, in `render::lsp`'s shape: `[{uri, diagnostics,
-/// codeActions}, …]`, one entry per file the findings touch. Precision
-/// notes are the analysis's, not the document's: an editor hides them.
-pub fn diagnostics_json(analysis: &Analysis) -> Vec<Json> {
-    let records: Vec<Record> = crate::lint::lint(analysis)
+/// `lint`'s findings in the document's own files. Precision notes are the
+/// analysis's, not the document's: an editor hides them.
+pub fn findings(analysis: &Analysis) -> Vec<Record> {
+    crate::lint::lint(analysis)
         .into_iter()
         .filter(|r| r.get("origin").and_then(Json::as_str) == Some("document"))
         .filter(|r| r.get("category").and_then(Json::as_str) != Some("precision"))
-        .collect();
-    let text = crate::render::lsp_with(&records, |path| path_uri(path).to_string());
+        .collect()
+}
+
+/// `records` in `render::lsp`'s shape: `[{uri, diagnostics, codeActions}, …]`,
+/// one entry per file they touch.
+pub fn diagnostics_json(records: &[Record]) -> Vec<Json> {
+    let text = crate::render::lsp_with(records, |path| path_uri(path).to_string());
     serde_json::from_str(&text).unwrap_or_default()
 }
 

@@ -1825,3 +1825,74 @@ fn hover_shows_the_mined_manual() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A server over `dir` with `args`, `main.tex` written there and opened.
+fn open_styled(tag: &str, args: &[&str]) -> (Server, std::path::PathBuf) {
+    let dir = crate::support::tmp_root().join(format!("satex-lsp-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("main.tex"), crate::style_prompt::hskips(12)).unwrap();
+    let args = [&["--set", "limits.seconds=0"], args].concat();
+    let mut server = Server::start_with(&crate::support::test_cache(), &dir, &args);
+    let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));
+    server.response(id);
+    server.notify("initialized", json!({}));
+    open_file(&mut server, &dir, "main.tex");
+    (server, dir)
+}
+
+/// A rule the new project breaks often is asked about once. Yes writes it
+/// into the project's satex.yaml and takes its findings off at once.
+#[test]
+fn yes_to_the_style_prompt_turns_the_rule_off() {
+    let (mut server, dir) = open_styled("style-yes", &[]);
+    let prompt = server.notification("window/showMessageRequest");
+    let message = prompt["params"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("hskip") && message.contains("primitive-tex-command"), "{message}");
+    server.write(&json!({ "jsonrpc": "2.0", "id": prompt["id"], "result": { "title": "Yes, turn it off" } }));
+    let published = server.notification("textDocument/publishDiagnostics");
+    let rules: Vec<&str> = published["params"]["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["data"]["rule"].as_str())
+        .collect();
+    assert!(!rules.contains(&"primitive-tex-command"), "{rules:?}");
+    let written = std::fs::read_to_string(dir.join("satex.yaml")).unwrap_or_default();
+    assert!(written.contains("lint_off+: [primitive-tex-command]"), "{written}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// With `style_prompt.enabled` off, nothing is asked.
+#[test]
+fn no_style_prompt_when_it_is_off() {
+    let (mut server, dir) = open_styled("style-off", &["--set", "style_prompt.enabled=false"]);
+    let id = server.request("workspace/symbol", json!({ "query": "" }));
+    loop {
+        let msg = server.read();
+        assert_ne!(msg["method"], "window/showMessageRequest", "{msg}");
+        if msg["id"] == id {
+            break;
+        }
+    }
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A hover over a finding shows its rule's card.
+#[test]
+fn a_hover_over_a_finding_shows_its_rule() {
+    let (mut server, dir) = open_styled("rule-card", &["--set", "style_prompt.enabled=false"]);
+    let uri = fixture_uri(&dir.join("main.tex"));
+    let line = crate::style_prompt::hskips(1).lines().position(|l| l.contains("hskip")).unwrap() as u32;
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": 3 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    let number = satex::lint::number("primitive-tex-command").unwrap();
+    assert!(hover.contains("primitive-tex-command") && hover.contains(number), "{hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}

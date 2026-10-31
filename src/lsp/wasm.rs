@@ -11,11 +11,10 @@ use std::ffi::{CStr, CString, c_char};
 use lsp_server::{Message, Notification, Response};
 
 use super::{Engine, notification, respond, server_capabilities};
-use lsp_types::PublishDiagnosticsParams;
 
 struct Local {
     engine: Engine,
-    diagnostics: crossbeam_channel::Receiver<PublishDiagnosticsParams>,
+    outbox: crossbeam_channel::Receiver<Notification>,
     reply: CString,
 }
 
@@ -27,14 +26,14 @@ unsafe extern "C" {
 }
 
 pub fn serve(cfg: crate::config::Config, root: std::path::PathBuf, main: Option<std::path::PathBuf>) -> ! {
-    let (tx, diagnostics) = crossbeam_channel::unbounded();
+    let (tx, outbox) = crossbeam_channel::unbounded();
     let engine = Engine::new(cfg, root, main, tx);
     crate::progress::listen(Some(Box::new(|now: &crate::progress::Status| {
         if let Some(json) = serde_json::to_string(now).ok().and_then(|j| CString::new(j).ok()) {
             unsafe { satex_status(json.as_ptr()) }
         }
     })));
-    LOCAL.set(Some(Local { engine, diagnostics, reply: CString::default() }));
+    LOCAL.set(Some(Local { engine, outbox, reply: CString::default() }));
     unsafe { emscripten_exit_with_live_runtime() }
 }
 
@@ -77,11 +76,7 @@ impl Local {
             }
             _ => vec![],
         };
-        out.extend(
-            self.diagnostics
-                .try_iter()
-                .map(|p| Message::Notification(Notification::new("textDocument/publishDiagnostics".into(), p))),
-        );
+        out.extend(self.outbox.try_iter().map(Message::Notification));
         out
     }
 }

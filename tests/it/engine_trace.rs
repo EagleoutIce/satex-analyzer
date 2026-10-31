@@ -186,7 +186,8 @@ fn satex_trace_contains_every_step_a_real_engine_took() {
             .trace
             .iter()
             .filter(|e| e.kind == Step::Branch)
-            .map(|e| (cs(e.name), e.detail.as_deref().unwrap_or("").to_string()))
+            // the outcome after what a numeric test compared (`1 = 1: true`)
+            .map(|e| (cs(e.name), e.detail.as_deref().unwrap_or("").rsplit(": ").next().unwrap_or("").to_string()))
             .collect();
         let (satex_opens, satex_closes) = analysis.trace.iter().fold((0u32, 0u32), |(o, c), e| match e.kind {
             Step::OpenGroup => (o + 1, c),

@@ -1448,6 +1448,8 @@ pub struct Machine<'a> {
     /// The register that interval was read from, and what quantity it is.
     pub(crate) abs_from: Option<(Sym, crate::value::Quantity)>,
     pub(crate) abs_whole: bool,
+    /// The operands a traced numeric test compared (`1900 = 1900`), for its branch step.
+    pub(crate) compared: Option<String>,
     /// A unit's value over an interval of numbers (see `scan_units`).
     pub(crate) ranged: Option<crate::value::Num>,
     /// An undecided `\ifnum`/`\ifdim` of such a register against a known
@@ -2270,6 +2272,7 @@ impl<'a> Machine<'a> {
             graph_full_noted: false,
             abs_parts: None,
             abs_from: None,
+            compared: None,
             abs_whole: false,
             ranged: None,
             narrowing: None,

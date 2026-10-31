@@ -1385,6 +1385,7 @@ impl Machine<'_> {
             graph_full_noted: _,
             abs_parts: _,
             abs_from: _,
+            compared: _,
             abs_whole: _,
             ranged: _,
             narrowing: _,

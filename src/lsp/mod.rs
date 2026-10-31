@@ -61,6 +61,17 @@ use crate::machine::{Analysis, Machine};
 /// minus `file` when the request means the document that sent it.
 const EXECUTE_COMMAND: &str = "satex/query";
 
+/// The answer to a style prompt, `{code, answer}` with `answer` `off` or
+/// `keep`, recorded in the project's `satex.yaml`.
+const STYLE_COMMAND: &str = "satex/style";
+
+/// The prompt's answers, as `window/showMessageRequest` offers them.
+const STYLE_ANSWERS: [(&str, Option<crate::config::StyleChoice>); 3] = [
+    ("Yes, turn it off", Some(crate::config::StyleChoice::Off)),
+    ("No", None),
+    ("Never ask", Some(crate::config::StyleChoice::Keep)),
+];
+
 /// The hovers of control sequences by document and name, `None` where there
 /// is none: shared with the connection thread, which answers from them while
 /// the engine analyzes. Filled on demand, and while the engine is idle for
@@ -95,7 +106,7 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
     })));
 
     let (engine_tx, engine_rx) = crossbeam_channel::unbounded::<EngineMsg>();
-    let (diagnostics_tx, diagnostics_rx) = crossbeam_channel::unbounded::<PublishDiagnosticsParams>();
+    let (outbox, outbox_rx) = crossbeam_channel::unbounded::<Notification>();
     let debounce = Duration::from_millis(cfg.lsp.debounce_ms.max(1));
     let hovers = Hovers::default();
     let engine_hovers = hovers.clone();
@@ -112,12 +123,12 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
         .stack_size(8 << 20)
         .spawn(move || {
             handlers::VIEW.with_borrow_mut(|view| named.iter().for_each(|r| view.add(r)));
-            let engine = Engine::new(cfg, root, main, diagnostics_tx).with_hovers(engine_hovers);
+            let engine = Engine::new(cfg, root, main, outbox).with_hovers(engine_hovers);
             engine_loop(engine_rx.clone(), Engine { inbox: Some(engine_rx), ..engine }, debounce)
         })
         .map_err(|e| e.to_string())?;
 
-    let result = main_loop(&connection, &engine_tx, &diagnostics_rx, &hovers);
+    let result = main_loop(&connection, &engine_tx, &outbox_rx, &hovers);
     crate::probe::stop_all();
     let _ = engine_tx.send(EngineMsg::Shutdown);
     let _ = engine.join();
@@ -156,7 +167,7 @@ fn server_capabilities() -> ServerCapabilities {
         }),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         execute_command_provider: Some(ExecuteCommandOptions {
-            commands: vec![EXECUTE_COMMAND.to_string()],
+            commands: vec![EXECUTE_COMMAND.to_string(), STYLE_COMMAND.to_string()],
             ..Default::default()
         }),
         ..Default::default()
@@ -168,11 +179,13 @@ fn server_capabilities() -> ServerCapabilities {
 fn main_loop(
     connection: &Connection,
     engine_tx: &Sender<EngineMsg>,
-    diagnostics_rx: &Receiver<PublishDiagnosticsParams>,
+    outbox: &Receiver<Notification>,
     hovers: &Hovers,
 ) -> Result<(), String> {
     // The open documents' text, to find the name under a hover here.
     let mut texts: HashMap<Uri, String> = HashMap::default();
+    let mut prompts: HashMap<lsp_server::RequestId, String> = HashMap::default();
+    let mut findings: Findings = HashMap::default();
     loop {
         select! {
             recv(connection.receiver) -> msg => {
@@ -181,12 +194,12 @@ fn main_loop(
                         if connection.handle_shutdown(&req).map_err(|e| e.to_string())? {
                             return Ok(());
                         }
-                        match kept_hover(&req, &texts, hovers).or_else(|| linked(&req, |uri| texts.get(uri))) {
-                            Some(hover) => {
-                                let _ = connection.sender.send(Message::Response(Response::new_ok(req.id, hover)));
-                            }
-                            None => handle_request(connection, engine_tx, req),
-                        }
+                        let cards = rule_cards(&req, &findings);
+                        let response = match kept_hover(&req, &texts, hovers).or_else(|| linked(&req, |uri| texts.get(uri))) {
+                            Some(hover) => Response::new_ok(req.id, hover),
+                            None => respond(&mut |m| to_engine(engine_tx, m), req),
+                        };
+                        let _ = connection.sender.send(Message::Response(with_cards(response, cards)));
                     }
                     Ok(Message::Notification(not)) => {
                         if let Some(m) = notification(not, |uri| texts.get(uri).map(String::as_str)) {
@@ -202,18 +215,52 @@ fn main_loop(
                             to_engine(engine_tx, m);
                         }
                     }
-                    Ok(Message::Response(_)) => {}
+                    Ok(Message::Response(answer)) => {
+                        if let Some(code) = prompts.remove(&answer.id)
+                            && let Some(choice) = style_choice(&answer)
+                        {
+                            to_engine(engine_tx, EngineMsg::Style(code, choice, crossbeam_channel::bounded(1).0));
+                        }
+                    }
                     Err(_) => return Ok(()),
                 }
             }
-            recv(diagnostics_rx) -> params => {
-                if let Ok(params) = params {
-                    let note = Notification::new("textDocument/publishDiagnostics".into(), params);
+            recv(outbox) -> note => match note {
+                Ok(note) if note.method == STYLE_NOTIFICATION => {
+                    for candidate in note.params["candidates"].as_array().into_iter().flatten() {
+                        let id = lsp_server::RequestId::from(format!("satex-style-{}", prompts.len()));
+                        prompts.insert(id.clone(), candidate["code"].as_str().unwrap_or_default().to_string());
+                        let _ = connection.sender.send(Message::Request(style_prompt(id, candidate)));
+                    }
+                }
+                Ok(note) => {
+                    if let Ok(params) = serde_json::from_value::<PublishDiagnosticsParams>(note.params.clone()) {
+                        let rules = params.diagnostics.iter().filter_map(|d| Some((d.range, d.data.as_ref()?.get("rule")?.as_str()?.to_string())));
+                        findings.insert(params.uri.clone(), rules.collect());
+                    }
                     let _ = connection.sender.send(Message::Notification(note));
                 }
+                Err(_) => {}
             }
         }
     }
+}
+
+/// The engine's notification naming the rules that may be the project's style.
+const STYLE_NOTIFICATION: &str = "satex/styleCandidates";
+
+/// One style candidate asked as `window/showMessageRequest`, which any
+/// client can answer.
+fn style_prompt(id: lsp_server::RequestId, candidate: &Json) -> Request {
+    let actions: Vec<Json> = STYLE_ANSWERS.iter().map(|(title, _)| serde_json::json!({ "title": title })).collect();
+    let params = serde_json::json!({ "type": 3, "message": candidate["question"], "actions": actions });
+    Request::new(id, "window/showMessageRequest".into(), params)
+}
+
+/// What a client's answer to [`style_prompt`] records, `None` for no.
+fn style_choice(answer: &Response) -> Option<crate::config::StyleChoice> {
+    let title = answer.response_result.as_ref().ok()?.get("title")?.as_str()?;
+    STYLE_ANSWERS.iter().find(|(t, _)| *t == title)?.1
 }
 
 /// Where the hovers of a document whose run read these files are kept
@@ -262,8 +309,35 @@ fn linked<'a>(req: &Request, text: impl FnOnce(&Uri) -> Option<&'a String>) -> O
     Some(serde_json::to_value(ranges).unwrap_or(Json::Null))
 }
 
-fn handle_request(connection: &Connection, engine_tx: &Sender<EngineMsg>, req: Request) {
-    let _ = connection.sender.send(Message::Response(respond(&mut |m| to_engine(engine_tx, m), req)));
+/// The rule of each published finding, by where it stands.
+type Findings = HashMap<Uri, Vec<(lsp_types::Range, String)>>;
+
+/// For a hover over findings, their rules' cards ([`crate::lint::rule_markdown`]).
+fn rule_cards(req: &Request, findings: &Findings) -> Option<String> {
+    if req.method != "textDocument/hover" {
+        return None;
+    }
+    let at: lsp_types::TextDocumentPositionParams = serde_json::from_value(req.params.clone()).ok()?;
+    let mut codes: Vec<&str> = findings
+        .get(&at.text_document.uri)?
+        .iter()
+        .filter(|(range, _)| range.start <= at.position && at.position <= range.end)
+        .map(|(_, code)| code.as_str())
+        .collect();
+    codes.dedup();
+    let cards: Vec<String> =
+        codes.iter().filter_map(|c| crate::lint::explanation(c)).map(crate::lint::rule_markdown).collect();
+    (!cards.is_empty()).then(|| cards.join("\n\n---\n\n"))
+}
+
+/// A hover's answer with `cards` after what it says, or as all it says.
+fn with_cards(mut response: Response, cards: Option<String>) -> Response {
+    let (Some(cards), Ok(result)) = (cards, response.response_result.as_mut()) else { return response };
+    match result.pointer_mut("/contents/value").and_then(|v| v.as_str().map(str::to_string).zip(Some(v))) {
+        Some((text, value)) => *value = Json::String(format!("{text}\n\n---\n\n{cards}")),
+        None => *result = serde_json::json!({ "contents": { "kind": "markdown", "value": cards } }),
+    }
+    response
 }
 
 /// Hands `msg` to the engine, which stops the probes it runs in the background for it.
@@ -392,6 +466,16 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
         }
         "workspace/executeCommand" => {
             let p: ExecuteCommandParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            if p.command == STYLE_COMMAND {
+                let arg = p.arguments.first().cloned().unwrap_or_default();
+                let code = arg["code"].as_str().ok_or("expected `{code, answer}`")?.to_string();
+                let choice = match arg["answer"].as_str() {
+                    Some("off") => crate::config::StyleChoice::Off,
+                    Some("keep") => crate::config::StyleChoice::Keep,
+                    _ => return Err("`answer` is `off` or `keep`".into()),
+                };
+                return ask(engine_tx, |reply| EngineMsg::Style(code, choice, reply))?;
+            }
             if p.command != EXECUTE_COMMAND {
                 return Err(format!("unknown command `{}`. This server only runs `{EXECUTE_COMMAND}`", p.command));
             }
@@ -477,6 +561,8 @@ enum EngineMsg {
     WorkspaceSymbol(String, Sender<Vec<lsp_types::SymbolInformation>>),
     CodeAction(Uri, Sender<Vec<Json>>),
     ExecuteCommand(Json, Sender<Result<Vec<Json>, String>>),
+    /// A style prompt's answer for a rule: the path of the `satex.yaml` written.
+    Style(String, crate::config::StyleChoice, Sender<Result<Json, String>>),
     Typeset(Uri, Sender<Vec<Json>>),
     Written(Uri, Sender<Vec<Json>>),
     Caches(Uri, Sender<Vec<String>>),
@@ -533,7 +619,12 @@ struct Engine {
     runs: HashMap<PathBuf, Run>,
     /// The root a run was seen to read each file from.
     owners: HashMap<PathBuf, PathBuf>,
-    diagnostics_tx: Sender<PublishDiagnosticsParams>,
+    /// Where the engine's notifications go: diagnostics, style candidates.
+    outbox: Sender<Notification>,
+    /// The rules a style prompt was sent for, asked once per session.
+    asked: HashSet<String>,
+    /// The rules turned off by a style prompt in this session.
+    silenced: Vec<String>,
     hovers: Hovers,
     /// The names whose hover the engine computes while it is idle.
     prefill: std::collections::VecDeque<(Uri, String)>,
@@ -571,12 +662,7 @@ impl EngineMsg {
 }
 
 impl Engine {
-    fn new(
-        mut cfg: Config,
-        root: PathBuf,
-        main: Option<PathBuf>,
-        diagnostics_tx: Sender<PublishDiagnosticsParams>,
-    ) -> Self {
+    fn new(mut cfg: Config, root: PathBuf, main: Option<PathBuf>, outbox: Sender<Notification>) -> Self {
         // Completion reads the key family an argument feeds off the calls.
         cfg.record_arguments = true;
         Engine {
@@ -588,7 +674,9 @@ impl Engine {
             main,
             runs: HashMap::default(),
             owners: HashMap::default(),
-            diagnostics_tx,
+            outbox,
+            asked: HashSet::new(),
+            silenced: Vec::new(),
             hovers: Hovers::default(),
             prefill: Default::default(),
             preambles: HashMap::default(),
@@ -637,11 +725,59 @@ impl Engine {
             // Requests that only read are answered while the rules run.
             let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).collect();
             let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
-            for params in self.serving(|engine| publish(&mut engine.actions, &analysis, &path, &open)) {
-                let _ = self.diagnostics_tx.send(params);
-            }
+            let (published, candidates) = self.serving(|engine| {
+                let records = engine.unsilenced(handlers::findings(&analysis));
+                let candidates = crate::lint::style_candidates(&records, &analysis.settings.style_prompt);
+                (publish(&mut engine.actions, &analysis, &records, &path, &open), candidates)
+            });
+            self.send_diagnostics(published);
+            self.ask_style(candidates);
         }
         crate::progress::idle();
+    }
+
+    fn send_diagnostics(&self, published: Vec<PublishDiagnosticsParams>) {
+        for params in published {
+            let _ = self.outbox.send(Notification::new("textDocument/publishDiagnostics".into(), params));
+        }
+    }
+
+    fn unsilenced(&self, mut records: Vec<crate::query::Record>) -> Vec<crate::query::Record> {
+        records.retain(|r| !self.silenced.iter().any(|c| r.get("code").and_then(Json::as_str) == Some(c)));
+        records
+    }
+
+    /// Sends the style candidates not asked about yet in this session.
+    fn ask_style(&mut self, candidates: Vec<crate::query::Record>) {
+        let asked = &mut self.asked;
+        let new: Vec<_> = candidates
+            .into_iter()
+            .filter(|c| asked.insert(c.get("code").and_then(Json::as_str).unwrap_or_default().to_string()))
+            .collect();
+        if !new.is_empty() {
+            let _ = self
+                .outbox
+                .send(Notification::new(STYLE_NOTIFICATION.into(), serde_json::json!({ "candidates": new })));
+        }
+    }
+
+    /// Records a style prompt's answer. A rule turned off leaves the open
+    /// documents' diagnostics at once, not only from the next server start.
+    fn answer_style(&mut self, code: String, choice: crate::config::StyleChoice) -> Result<Json, String> {
+        let path = crate::config::record_style_choice(&self.root, &code, choice)?;
+        if choice == crate::config::StyleChoice::Off {
+            self.silenced.push(code);
+            let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).collect();
+            let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
+            let analyzed: Vec<(PathBuf, Rc<Analysis>)> =
+                self.docs.values().filter_map(|d| Some((d.path.clone(), d.analysis.clone()?))).collect();
+            for (path, analysis) in analyzed {
+                let records = self.unsilenced(handlers::findings(&analysis));
+                let published = publish(&mut self.actions, &analysis, &records, &path, &open);
+                self.send_diagnostics(published);
+            }
+        }
+        Ok(serde_json::json!(path.display().to_string()))
     }
 
     /// The analysis answering for `path`: that of the root its `% !TeX root`
@@ -991,6 +1127,9 @@ impl Engine {
                 self.fresh(&uri);
                 let _ = reply.send(self.actions.get(&uri).cloned().unwrap_or_default());
             }
+            EngineMsg::Style(code, choice, reply) => {
+                let _ = reply.send(self.answer_style(code, choice));
+            }
             EngineMsg::ExecuteCommand(body, reply) => {
                 // An open document's own analysis answers; another file is run.
                 let file = body.get("file").and_then(Json::as_str).map(PathBuf::from);
@@ -1198,6 +1337,7 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
 fn publish(
     actions: &mut HashMap<Uri, Vec<Json>>,
     analysis: &Analysis,
+    records: &[crate::query::Record],
     own: &Path,
     open: &[&Path],
 ) -> Vec<PublishDiagnosticsParams> {
@@ -1209,7 +1349,7 @@ fn publish(
         .chain(open.iter().copied().filter(read))
         .map(|p| handlers::path_uri(&p.display().to_string()).to_string())
         .collect();
-    let mut groups: Vec<Json> = handlers::diagnostics_json(analysis)
+    let mut groups: Vec<Json> = handlers::diagnostics_json(records)
         .into_iter()
         .filter(|g| g.get("uri").and_then(Json::as_str).is_some_and(|u| shown.iter().any(|s| s == u)))
         .collect();

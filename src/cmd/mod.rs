@@ -104,6 +104,10 @@ pub enum Command {
         /// Print every finding, instead of a count for a rule that repeats.
         #[arg(long, help_heading = "Selection")]
         no_group: bool,
+        /// List the rules the project breaks so often they may be its style
+        /// (`style_prompt` in satex.yaml), instead of the findings.
+        #[arg(long, help_heading = "Rules")]
+        style: bool,
         /// Apply the safe fixes to the project's files, lint again until
         /// nothing fixable is left, and report what remains.
         #[arg(long, help_heading = "Fixes")]
@@ -393,9 +397,9 @@ impl Command {
     pub fn check_format(&self, format: Format) -> Result<(), String> {
         let generic = matches!(format, Format::Text | Format::Json | Format::Csv | Format::Markdown);
         let (ok, hint): (bool, &str) = match self {
-            Command::Lint { rules: true, .. } | Command::Lint { chktex: true, .. } => {
-                (generic, "text, json, csv or markdown")
-            }
+            Command::Lint { rules: true, .. }
+            | Command::Lint { chktex: true, .. }
+            | Command::Lint { style: true, .. } => (generic, "text, json, csv or markdown"),
             Command::Lint { explain: Some(_), .. } => (matches!(format, Format::Text | Format::Json), "text or json"),
             Command::Lint { .. } | Command::Compile => (
                 generic || matches!(format, Format::Github | Format::Sarif | Format::Lsp | Format::Texlog),
@@ -442,7 +446,7 @@ impl Command {
                 let file = trace_file(&[from.as_deref(), to.as_deref(), lines.as_deref()])?;
                 query::trace(context, filter.as_deref(), *interactive, *include_internal, file.as_deref(), out)
             }
-            Command::Lint { filter, all, rules, explain, chktex, fix, unsafe_fixes, diff, no_group: _ } => {
+            Command::Lint { filter, all, rules, explain, chktex, style, fix, unsafe_fixes, diff, no_group: _ } => {
                 let fixing = lint::Fixing { fix: *fix, unsafe_fixes: *unsafe_fixes, diff: *diff };
                 let selection = lint::Selection {
                     filter: filter.as_deref(),
@@ -450,6 +454,7 @@ impl Command {
                     rules: *rules,
                     explain: explain.as_deref(),
                     chktex: *chktex,
+                    style: *style,
                 };
                 lint::run(context, selection, fixing, out)
             }

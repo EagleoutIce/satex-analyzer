@@ -2240,12 +2240,15 @@ impl Machine<'_> {
             }
             Rc::make_mut(&mut m.conds).insert(at, CondFrame { limit, dep, at: span, kind, many: false });
         };
+        let compared = self.compared.take();
+        let outcome =
+            |taken: &str| Some(compared.as_ref().map_or_else(|| taken.to_string(), |c| format!("{c}: {taken}")));
         if holds {
-            self.record_with(Step::Branch, by, span, || Some("true"));
+            self.record_with(Step::Branch, by, span, || outcome("true"));
             self.note_conditional(by, span, Some(Some(0)));
             return open(self, CondLimit::Else, base);
         }
-        self.record_with(Step::Branch, by, span, || Some("false"));
+        self.record_with(Step::Branch, by, span, || outcome("false"));
         match self.pass_outer(false, span, base) {
             Some((Primitive::Else | Primitive::Or, mark)) => {
                 self.note_conditional(by, span, Some(Some(1)));
@@ -2767,6 +2770,12 @@ impl Machine<'_> {
                 let ys = b.map(Num::exact).or_else(|| self.abs.take());
                 let from_b = self.abs_from.take();
                 let ys_exact = b.map(|n| vec![n]).or_else(|| self.abs_exact.take());
+                if self.cfg.trace {
+                    let shown = |n: Option<i64>, set: &Option<Num>| {
+                        n.map_or_else(|| set.map_or("?".into(), |x| format!("{}..{}", x.lo, x.hi)), |n| n.to_string())
+                    };
+                    self.compared = Some(format!("{} {} {}", shown(a, &xs), relation.unwrap_or('?'), shown(b, &ys)));
+                }
                 let ((xs, xs_exact, a, from), (ys, ys_exact, b, from_b)) =
                     absolute(cond == Cond::AbsNum, [(xs, xs_exact, a, from), (ys, ys_exact, b, from_b)]);
                 self.decide_numbers(xs, xs_exact, relation, ys, ys_exact, (a, b), (from, from_b))

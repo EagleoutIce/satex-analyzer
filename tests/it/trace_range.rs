@@ -300,8 +300,12 @@ fn a_register_in_the_trace_carries_its_allocated_name() {
 #[test]
 fn the_leap_year_trace_records_values_and_branches() {
     let source = include_str!("../../doc/site/examples/leapyear.tex");
-    let cfg =
-        satex::config::Config { kernel: Some(satex::plugin::Kernel::None), trace: true, ..crate::support::config() };
+    let cfg = satex::config::Config {
+        engine: Some(satex::config::Engine::Tex),
+        kernel: Some(satex::plugin::Kernel::Plain),
+        trace: true,
+        ..crate::support::config()
+    };
     let analysis = satex::machine::Machine::analyze(source, None, &cfg);
     let rows = satex::query::run(&analysis, satex::query::Query::Trace, &satex::query::Filter::Always);
     let of = |step: &str, name: &str| -> Vec<String> {
@@ -314,7 +318,10 @@ fn the_leap_year_trace_records_values_and_branches() {
     assert_eq!(of("assign", "\\count10")[..years.len()], years, "{rows:?}");
     // \divide\count1 by 4 after \count1=1900
     assert_eq!(of("assign", "\\count1").get(1).map(String::as_str), Some("1900 → 475"));
-    let branches: Vec<String> = of("branch", "\\ifnum");
+    let compared = of("branch", "\\ifnum");
+    // \ifnum\count1=\count10 for 1900: 1900 is 4 · 475
+    assert_eq!(compared.first().map(String::as_str), Some("1900 = 1900: true"), "{compared:?}");
+    let branches: Vec<&str> = compared.iter().filter_map(|d| d.rsplit(": ").next()).collect();
     let expected = ["true", "true", "false", "false", "true", "false", "true", "true", "true"];
     assert_eq!(branches[..expected.len()], expected, "{branches:?}");
     assert_eq!(of("define", "\\tleapy").first().map(String::as_str), Some("macro:->not "));

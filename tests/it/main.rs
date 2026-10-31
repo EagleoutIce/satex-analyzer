@@ -68,6 +68,7 @@ mod semantics;
 mod slice;
 mod slice_build;
 mod stubs;
+mod style_prompt;
 mod support;
 mod tables;
 mod termination;
