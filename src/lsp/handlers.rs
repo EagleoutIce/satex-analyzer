@@ -253,7 +253,7 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
         if n == 0
             && let Some((at, set)) = typesets(analysis, name)
         {
-            markdown.push_str(&format!("Typesets `{set}` at line {}\n\n", at.line));
+            markdown.push_str(&format!("Typesets {set} at line {}\n\n", at.line));
         }
         if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
             markdown.push_str(&format!("`\\{name}{}`\n\n", usage(sig)));

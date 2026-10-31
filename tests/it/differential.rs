@@ -578,6 +578,35 @@ fn the_typeset_text_knows_its_fonts() {
     assert_eq!(styled, [('A', ""), ('B', "bf"), ('C', "it"), ('D', "tt"), ('E', "sf sc"), ('F', "")], "{row:?}");
 }
 
+/// Capability: explain. The names one call of the document defines are
+/// linked: `\newcounter{steps}` makes `\c@steps` with `\thesteps`, and
+/// `\newtcolorbox{note}` makes the environment's `\note` with `\endnote`.
+#[test]
+fn names_one_call_defines_are_defined_together() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("defined-together");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("t.tex"),
+        "\\documentclass{article}\n\\usepackage{tcolorbox}\n\\newcounter{steps}\n\\newtcolorbox{note}{}\n\\begin{document}\nx\n\\end{document}\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["explain", "\\c@steps", "\\note", "--format", "json", "-f", "t.tex"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let together = |name: &str| -> Vec<String> {
+        rows.iter()
+            .filter(|r| r["name"] == name)
+            .flat_map(|r| r["together"].as_array().cloned().unwrap_or_default())
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    };
+    assert!(together("\\c@steps").iter().any(|n| n == "\\thesteps"), "{rows:?}");
+    assert!(together("\\note").iter().any(|n| n == "\\endnote"), "{rows:?}");
+}
+
 /// Paths that part after a conditional or at a name with several meanings
 /// each set their own text: the typeset text holds the alternatives side by
 /// side instead of the characters of both interleaved.

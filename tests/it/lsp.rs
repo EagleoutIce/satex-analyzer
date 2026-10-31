@@ -1896,3 +1896,43 @@ fn a_hover_over_a_finding_shows_its_rule() {
     server.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Hovers kept between sessions never carry one project's names into
+/// another: a name defined in a file of the project (a `.aux` the run
+/// writes, a style file beside the document) is the project's own, so the
+/// second project's hover names its own definition, not the first's.
+#[test]
+fn kept_hovers_stay_with_their_project() {
+    let base = crate::support::tmp_root().join(format!("satex-lsp-projects-{}", std::process::id()));
+    let cache = base.join("cache");
+    let hover = |dir: &std::path::Path, line_of_def: usize| -> String {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("lib.sty"), format!("{}\\def\\shared{{x}}\n", "\n".repeat(line_of_def - 1))).unwrap();
+        let text = "\\catcode`\\{=1 \\catcode`\\}=2 \\input lib.sty\n\\shared\n";
+        std::fs::write(dir.join("main.tex"), text).unwrap();
+        let uri = fixture_uri(&dir.join("main.tex"));
+        let mut server = Server::start_in(&cache, dir);
+        let id =
+            server.request("initialize", json!({ "processId": null, "rootUri": fixture_uri(dir), "capabilities": {} }));
+        server.response(id);
+        server.notify("initialized", json!({}));
+        server.notify(
+            "textDocument/didOpen",
+            json!({ "textDocument": { "uri": uri, "languageId": "tex", "version": 1, "text": text } }),
+        );
+        server.notification("textDocument/publishDiagnostics");
+        let id = server.request(
+            "textDocument/hover",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 2 } }),
+        );
+        let card = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+        server.notify("textDocument/didClose", json!({ "textDocument": { "uri": uri } }));
+        server.shutdown();
+        card
+    };
+    let first = hover(&base.join("a"), 1);
+    assert!(first.contains("lib.sty:1"), "{first}");
+    let second = hover(&base.join("b"), 3);
+    assert!(second.contains("lib.sty:3") && !second.contains("lib.sty:1"), "{second}");
+    let _ = std::fs::remove_dir_all(&base);
+}

@@ -610,8 +610,13 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     out
 }
 
-/// What the call at `at` typesets: the characters set while the user's file
-/// was read at the one place past the call, `⟦…⟧` for those in an unused box.
+/// How many characters of what a call typesets a hover shows.
+const PREVIEW: usize = 100;
+
+/// What the call at `at` typesets, as Markdown: the characters set while the
+/// user's file was read at the one place past the call, in a code span; what
+/// an undecided conditional sets either way as its alternatives, `a` / `b`;
+/// at most [`PREVIEW`] characters, then `…`.
 pub fn typeset_by(analysis: &Analysis, at: Span) -> Option<String> {
     let text = &analysis.facts.text;
     let after = |s: &Span| s.file == at.file && (s.line, s.col) > (at.line, at.col);
@@ -622,25 +627,37 @@ pub fn typeset_by(analysis: &Analysis, at: Span) -> Option<String> {
     if next.is_some_and(|n| (site.line, site.col) > n) {
         return None;
     }
-    let mut on_page = vec![false; text.at.len()];
-    for &(from, to) in &text.placed {
-        let end = on_page.len();
-        on_page[(from as usize).min(end)..(to as usize).min(end)].fill(true);
+    // runs of plain text and of alternatives, each alternative's arms by the arm taken
+    let mut runs: Vec<(Option<crate::env::NodeId>, [String; 2])> = Vec::new();
+    let mut shown = 0;
+    for (i, c) in text.chars.chars().enumerate().skip(first).take_while(|(i, _)| text.site.get(*i) == Some(&site)) {
+        if shown == PREVIEW {
+            break;
+        }
+        let c = if crate::tex::is_unknown_char(c) { "⟨?⟩".to_string() } else { public(c) };
+        shown += c.chars().count();
+        let arm = text.arms.binary_search_by_key(&(i as u32), |a| a.0).ok().map(|k| text.arms[k]);
+        let on = arm.map(|(_, on, _)| on);
+        if runs.last().is_none_or(|(o, _)| *o != on) {
+            runs.push((on, Default::default()));
+        }
+        let last = runs.last_mut().expect("pushed");
+        last.1[usize::from(arm.is_some_and(|(_, _, taken)| !taken))].push_str(&c);
     }
-    let boxes = crate::mode::Modes::INTERNAL_VERTICAL.union(crate::mode::Modes::RESTRICTED_HORIZONTAL);
-    let out: String = text
-        .chars
-        .chars()
-        .zip(&text.at)
-        .enumerate()
-        .skip(first)
-        .take_while(|(i, _)| text.site.get(*i) == Some(&site))
-        .map(|(i, (c, spot))| {
-            let c = if crate::tex::is_unknown_char(c) { "⟨?⟩".to_string() } else { public(c) };
-            if !on_page[i] && spot.modes.within(boxes) { format!("⟦{c}⟧") } else { c }
+    let code = |s: &str| format!("`{}`", s.replace('`', "ˋ"));
+    let mut out: String = runs
+        .iter()
+        .filter(|(_, [a, b])| !a.trim().is_empty() || !b.trim().is_empty())
+        .map(|(on, [a, b])| match on {
+            None => code(a),
+            Some(_) => format!("{} / {}", code(a), code(b)),
         })
-        .collect();
-    (!out.trim().is_empty()).then_some(out)
+        .collect::<Vec<_>>()
+        .join(" ");
+    if shown == PREVIEW {
+        out.push_str(" …");
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 /// What made a character of the typeset text uncertain.
@@ -3269,11 +3286,44 @@ fn uses_in(analysis: &Analysis, sym: Sym, window: Window) -> u32 {
         .sum()
 }
 
+/// The other names the document's call that made `def` defined: the names a
+/// `\newcounter{x}` (`\c@x`, `\thex`, …) or a `\newenvironment` makes
+/// together. The call is the document's expansion last begun before the
+/// definition, as `new_redefines` finds it.
+fn defined_together(analysis: &Analysis, def: &crate::facts::Definition) -> Vec<String> {
+    let mut calls: Vec<(crate::env::NodeId, Span)> = analysis
+        .facts
+        .expansions
+        .iter()
+        .filter(|e| origin(analysis, e.span.file) == "document")
+        .filter_map(|e| Some((e.node?, e.span)))
+        .collect();
+    calls.sort_by_key(|c| c.0);
+    let call = |node| calls.get(calls.partition_point(|c| c.0 <= node).wrapping_sub(1)).map(|c| c.1);
+    // a definition the document's own text makes is no call's
+    let made = |d: &crate::facts::Definition| origin(analysis, d.span.file) != "document";
+    let Some(mine) = call(def.node).filter(|_| made(def)) else { return Vec::new() };
+    let mut out: Vec<String> = analysis
+        .facts
+        .defs
+        .iter()
+        .filter(|d| d.name != def.name && made(d) && call(d.node) == Some(mine))
+        .map(|d| analysis.interner.cs(d.name))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 fn record_for_def(analysis: &Analysis, def: &crate::facts::Definition, window: Window) -> Record {
     let mut record = place(analysis, def.span);
     record.insert("name".into(), json!(analysis.interner.cs(def.name)));
     record.insert("tag".into(), json!(def.tag));
     record.insert("by".into(), json!(analysis.interner.cs(def.by)));
+    let together = defined_together(analysis, def);
+    if !together.is_empty() {
+        record.insert("together".into(), json!(together));
+    }
     if analysis.facts.defs.iter().any(|d| d.name == def.name && d.via == Some(def.name) && d.node > def.node) {
         record.insert("once".into(), json!(true));
     }
