@@ -250,7 +250,8 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
         fonts: [...fonts.map((url, i) => ({ family: `satex-sym-${i}`, url, ready: null })), { bitmaps: true, ready: null }],
         rows: rows.map(([code, name, cls, about, font, pkg, bitmap], i) => ({
           ch: bitmap == null ? String.fromCodePoint(code) : `#${bitmap}`, code, name, cls, about, pkg, i, bm: bitmap ?? -1, bitmap: bitmaps[bitmap], font: bitmap == null ? font : fonts.length,
-          text: `${name.replace(/^\\/, '')} ${about ?? ''}`.toLowerCase().replace(/[-_]/g, ' '),
+          // the name, its camel-case words (`faSkullCrossbones`: fa skull crossbones) and what it is
+          text: `${name.replace(/^\\/, '')} ${name.replace(/^\\/, '').replace(/([a-z])([A-Z])/g, '$1 $2')} ${about ?? ''}`.toLowerCase().replace(/[-_{}]/g, ' '),
         })),
       };
     }).then((t) => {
@@ -279,12 +280,27 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   const drawMode = (s) => (s.cls === 'icon' || s.cls === 'text' || s.cls === 'other' ? 'text' : 'math');
   /** How well the search `q` names `s`: every word found in its command, glyph name or description; a
    * command starting with it first, then a word starting with it, then anywhere; null when not. */
+  /** How well the search words name a symbol, lower better, or null: the name itself first, then a word
+   * the name or description starts, then one inside a word, then one a letter off (a typo). */
+  const near = (a, b) => {
+    if (Math.abs(a.length - b.length) > 1) return false;
+    let i = 0, j = 0, edits = 0;
+    while (i < a.length && j < b.length) {
+      if (a[i] === b[j]) { i++; j++; continue; }
+      if (++edits > 1) return false;
+      if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+    }
+    return edits + (a.length - i) + (b.length - j) <= 1;
+  };
   const named = (s, words) => {
+    const bare = s.name.replace(/^\\/, '').toLowerCase();
+    if (words.length === 1 && bare === words[0]) return -2;
     let rank = 0;
     for (const w of words) {
       const at = s.text.indexOf(w);
-      if (at < 0) return null;
-      rank += at === 0 ? 0 : s.text[at - 1] === ' ' ? 1 : 2;
+      if (at >= 0) { rank += at === 0 ? 0 : s.text[at - 1] === ' ' ? 1 : 2; continue; }
+      if (w.length < 4 || !s.text.split(' ').some((t) => near(t, w))) return null;
+      rank += 3;
     }
     return rank;
   };
@@ -334,7 +350,11 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       if ((drawFilter.kind && drawKind(s) !== drawFilter.kind) || (drawFilter.mode && drawMode(s) !== drawFilter.mode)) return false;
       if (drawFilter.shape && (drawFilter.shape === 'pixel') !== !!s.bitmap) return false;
       // nothing drawn or searched: the most relied-on packages' symbols first, to browse
-      const r = words.length ? named(s, words) ?? (packageNamed(s.pkg, words) ? 3 : null) : f ? 0 : 1 - (table.weight?.[s.pkg] ?? 0);
+      // within a rank the more relied-on package first; the plain characters last when browsing
+      // a picture ranks after a font's glyph when browsing: fonts draw crisp, and a picture may be a sample
+      const known = table.weight?.[s.pkg] ?? 0, plain = (s.code > 32 && s.code < 128 ? 1 : 0) + (s.bitmap ? 0.6 : 0);
+      const hit = words.length ? named(s, words) ?? (packageNamed(s.pkg, words) ? 3 : null) : null;
+      const r = words.length ? (hit == null ? null : hit - known / 2) : f ? 0 : 1 - known + plain;
       if (r == null) return false;
       ranked.set(s, r);
       return true;
@@ -383,13 +403,13 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       // that defines that name; other names for the glyph on request
       // the name a document has, else the one of the most relied-on package, leads
       const chs = new Set([s, ...twins.get(i) ?? []].map((x) => x.ch)), all = wanted.filter((x) => chs.has(x.ch))
-        .sort((a, b) => force.has(b.name) - force.has(a.name) || (table.weight?.[b.pkg] ?? 0) - (table.weight?.[a.pkg] ?? 0));
+        .sort((a, b) => force.has(b.name) - force.has(a.name) || (table.weight?.[b.pkg] ?? 0) - (table.weight?.[a.pkg] ?? 0) || a.name.length - b.name.length);
       const byName = [...Map.groupBy(all, (x) => x.name).values()];
       const [[main, ...same], ...others] = byName, have = force.has(main.name), pkg = from(main);
       const use = `\\usepackage{${pkg.replace(/\.cls$/, '')}}`;
       const act = (title, icon, extra = '', x = main, xp = pkg) => `<button type="button" class="pill draw-put" data-name="${escape(x.name)}" data-pkg="${escape(xp)}"${extra} title="${escape(title)}" aria-label="${escape(title)}">${icon}</button>`;
-      rows.push(`<li class="draw-row">${glyph(s, table)}${s.bitmap ? '<span class="draw-px" title="a picture from the symbol list: no font sets it">px</span>' : ''}` +
-        `<span class="draw-what">${chip(main)}<span class="lib-pkg${doc && !have ? ' draw-off' : ''}" title="${doc && !have ? `not loaded: ${escape(use)}` : escape([main, ...same].map(from).join(', '))}">${pkgs([main, ...same])}</span>` +
+      rows.push(`<li class="draw-row">${glyph(s, table)}` +
+        `<span class="draw-what">${chip(main)}${s.bitmap ? '<span class="draw-px" title="a picture from the symbol list: no font sets it">px</span>' : ''}<span class="lib-pkg${doc && !have ? ' draw-off' : ''}" title="${doc && !have ? `not loaded: ${escape(use)}` : escape([main, ...same].map(from).join(', '))}">${pkgs([main, ...same])}</span>` +
         (others.length ? `<button type="button" class="draw-more-pill" aria-expanded="false" title="other commands that set it">+${plural(others.length, 'alias')}</button>` : '') + '</span>' +
         `<span class="draw-acts">${act(`${label} ${main.name}`, ICON[label] ?? ICON.Insert)}` +
         (usepackage && !have && !loaded(pkg) ? act(`${label} ${main.name} with ${use}`, ICON.package, ` data-use="${escape(use)}"`) : '') + '</span>' +
@@ -465,8 +485,8 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       pop.togglePopover();
     };
     // the filters as dropdowns in the bar beside the search: kind, mode, glyph source, then the packages
-    const FILTERS = [['kind', 'all kinds', [['symbol', 'symbols'], ['letter', 'letters']]], ['mode', 'math and text', [['math', 'math'], ['text', 'text']]],
-      ['shape', 'fonts and pictures', [['font', 'set by a font'], ['pixel', 'pictures only']]]];
+    const FILTERS = [['kind', 'any kind', [['symbol', 'symbols'], ['letter', 'letters']]], ['mode', 'any mode', [['math', 'math'], ['text', 'text']]],
+      ['shape', 'any source', [['font', 'fonts'], ['pixel', 'pictures']]]];
     $('draw-filters').innerHTML = FILTERS.map(([f, all, options]) => `<select class="dropdown" data-f="${f}" aria-label="${all}"><option value="">${all}</option>` +
       options.map(([v, label]) => `<option value="${v}">${label}</option>`).join('') + '</select>').join('');
     root.querySelector('.draw-top')?.append($('draw-filters'));
