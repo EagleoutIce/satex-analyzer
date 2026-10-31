@@ -78,12 +78,34 @@
     // a `%\satex@assert{…}` directive is a keyword with TeX after it, not a comment
     // a magic comment's key (`% !TeX program =`, `% arara:`) and its value, apart from a plain comment
     const MAGIC = /^%\s*(?:!T[eE]X\s+(?:TS-)?[\w-]+\s*=?|arara:)/;
+    // a verbatim body (lstlisting, minted, verbatim) is code in the language it names, not TeX:
+    // its comments, strings and numbers by that language's comment marker, TeX by TeX's own rules
+    const VERBATIM = /\\begin\{(lstlisting|verbatim\*?|Verbatim|BVerbatim|minted|comment)\}(?:\[([^\]]*)\])?(?:\{([^}]*)\})?/;
+    const COMMENT = [[/^(python|ruby|r|perl|bash|sh|make|yaml|julia)$/i, '#'], [/^(tex|latex|matlab|octave|erlang|prolog)$/i, '%'], [/^(lua|sql|haskell|ada)$/i, '--'], [/./, '//']];
+    const code = (s, lang) => {
+      const mark = lang ? COMMENT.find(([re]) => re.test(lang))[1] : null;
+      if (mark && s.match(mark)) { s.skipToEnd(); return 'comment'; }
+      if (s.match(/^"(?:[^"\\]|\\.)*"?/) || s.match(/^'(?:[^'\\]|\\.)*'?/)) return 'string';
+      if (s.match(/^\d[\d._]*(?:e[+-]?\d+)?/i)) return 'number';
+      if (s.match(/^[A-Za-z_]\w*(?=\s*\()/)) return 'variableName.function';
+      if (s.match(/^[A-Za-z_]\w*/)) return lang ? 'variableName' : null;
+      s.next();
+      return null;
+    };
     const tex = {
       ...stex,
-      startState: () => ({ ...stex.startState(), magic: false }),
-      copyState: (st) => ({ ...stex.copyState(st), magic: st.magic }),
+      startState: () => ({ ...stex.startState(), magic: false, verb: null, opening: null }),
+      copyState: (st) => ({ ...stex.copyState(st), magic: st.magic, verb: st.verb, opening: st.opening }),
       token: (s, st) => {
-        if (s.sol()) st.magic = false;
+        if (s.sol()) { st.magic = false; if (st.opening) [st.verb, st.opening] = [st.opening, null]; }
+        if (st.verb) {
+          if (s.sol() && s.match(new RegExp(`^\\s*\\\\end\\{${st.verb.env.replace('*', '\\*')}\\}`), false)) st.verb = null;
+          else if (!/^(tex|latex)$/i.test(st.verb.lang ?? '')) return code(s, st.verb.lang);
+        }
+        if (!st.verb && s.sol()) {
+          const open = s.string.match(VERBATIM);
+          if (open) st.opening = { env: open[1], lang: open[1] === 'minted' ? open[3] : open[2]?.match(/language\s*=\s*(?:\[[^\]]*\])?\s*(\w+)/)?.[1] ?? null };
+        }
         if (st.magic) { s.skipToEnd(); return 'attributeValue'; }
         if (s.sol() && s.match(MAGIC)) { st.magic = true; return 'meta'; }
         if (s.match(/^%\s*\\satex@[A-Za-z]+/)) return 'keyword';
