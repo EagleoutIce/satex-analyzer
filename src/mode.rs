@@ -1908,6 +1908,7 @@ impl Machine<'_> {
             if let (Some(n), Some(w)) = (&mut nest.natural, width) {
                 n.wide = n.wide.max(w);
             }
+            crate::observe::align(self, crate::facts::Align::End);
         }
         if !nest.level {
             self.mode = self.mode.without(Modes::ANY_MATH).union(nest.mode.and(Modes::ANY_MATH));
@@ -2691,6 +2692,7 @@ impl Machine<'_> {
         if !self.capture_templates(span) {
             return;
         }
+        crate::observe::align(self, crate::facts::Align::Begin);
         let mut nest = self.env.nest().expect("the alignment's group is open");
         nest.align = nest.align.map(|a| Align { columns: self.tpl_int("n") > 1, ..a });
         self.env.set_nest(nest);
@@ -2985,6 +2987,7 @@ impl Machine<'_> {
             }
             return;
         }
+        crate::observe::align(self, crate::facts::Align::Cell);
         if j >= self.tpl_int("m") {
             self.tpl_set("m", Value::Int(j + 1));
             let w = self.tpl(&format!("w.{j}"));
@@ -3119,6 +3122,7 @@ impl Machine<'_> {
     /// the row's height and depth are maxima from zero.
     fn end_row(&mut self, nest: &mut Nest) {
         self.end_word();
+        crate::observe::align(self, crate::facts::Align::Row);
         let Some(mut align) = nest.align else { return };
         let size = self.natural.map_or([Dim::ANY; 3], |n| [n.along, n.height.at_least_zero(), n.depth.at_least_zero()]);
         match self.templated() {

@@ -384,6 +384,29 @@ pub struct Text {
     /// Rules set between characters (tex.web § 463): the number of
     /// characters set before each, and its kind.
     pub rules: Vec<(u32, Rule)>,
+    /// An alignment's (`\halign`, a `tabular`'s) parts between characters:
+    /// the number of characters set before each.
+    pub align: Vec<(u32, Align)>,
+}
+
+/// Where an alignment begins, ends a cell (`&`) or a row (`\cr`), and ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Align {
+    Begin,
+    Cell,
+    Row,
+    End,
+}
+
+impl Align {
+    pub fn name(self) -> &'static str {
+        match self {
+            Align::Begin => "begin",
+            Align::Cell => "cell",
+            Align::Row => "row",
+            Align::End => "end",
+        }
+    }
 }
 
 /// A rule [`Text::rules`] keeps.

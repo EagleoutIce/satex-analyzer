@@ -420,7 +420,8 @@ fn a_kernel_cut_short_typesets_unknown_text() {
 
 /// Capability: typesetting feedback. A table's `|` and `\\hline` and a
 /// `\\rule` bar are drawn between the text (tex.web § 463). Struts, rules
-/// of no width (`\\strut`, array's `\\@arstrut`), are not.
+/// of no width (`\\strut`, array's `\\@arstrut`), are not. Its cells
+/// and rows are marked, so a view can draw the grid.
 #[test]
 fn rules_are_typeset_between_the_text() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-rules");
@@ -443,6 +444,13 @@ fn rules_are_typeset_between_the_text() {
         .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
         .collect();
     assert_eq!(text, ["AB", "―│ a │ b │―", "Rule ▬ here."]);
+    // the table's grid: where it begins, parts its cell and row, and ends
+    let marks: Vec<&str> = rows
+        .iter()
+        .flat_map(|r| r["align"].as_array().into_iter().flatten())
+        .filter_map(|m| m["mark"].as_str())
+        .collect();
+    assert_eq!(marks, ["begin", "cell", "row", "end"]);
 }
 
 /// Capability: typesetting feedback. The hyphenation points satex marks

@@ -1241,6 +1241,19 @@ pub fn rule(m: &mut Machine, vertical: bool, [width, height, depth]: [Option<Opt
     }
 }
 
+/// An alignment's part, between the characters around it, where
+/// [`typeset`] would keep a character.
+pub fn align(m: &mut Machine, mark: crate::facts::Align) {
+    if m.package().is_some() || m.reading_format() {
+        return;
+    }
+    let text = &mut m.out.facts.text;
+    let at = text.at.len() as u32;
+    if text.align.len() < m.cfg.limits.facts && !text.align.ends_with(&[(at, mark)]) {
+        text.align.push((at, mark));
+    }
+}
+
 pub fn typeset(m: &mut Machine, c: char, span: Span) {
     if m.package().is_some() || m.reading_format() {
         m.quantity = Quantities::default();
