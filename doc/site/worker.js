@@ -152,6 +152,10 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
   /** A bundle, a kernel's or a package's: its files join the tree, a kernel's caches
    * the cache directory. `fetching` is its download, when already under way. */
   async function bundle(base, entry, given, fetching) {
+    const archive = await unpack(base, entry, given, fetching);
+    return archive ? cacheImport([archive]) : { lines: [], status: 0, ms: 0 };
+  }
+  async function unpack(base, entry, given, fetching) {
     const packed = await (fetching ?? bytes(given ?? base + entry.bundle, entry.label, entry.size));
     progress('unpacking', 0, 0);
     const blob = await gunzip(packed);
@@ -162,26 +166,28 @@ function SatexEngine(createSatex, progress = () => {}, store = null, status = ()
     }
     // a kernel's caches, imported once: the store keeps them for the next load
     const archive = `/kernels/${entry.id}/satex-cache.bin`;
-    if (!files.has(archive)) return { lines: [], status: 0, ms: 0 };
-    if (imported.has(entry.id)) { files.delete(archive); return { lines: [], status: 0, ms: 0 }; }
+    if (!files.has(archive)) return null;
+    if (imported.has(entry.id)) { files.delete(archive); return null; }
+    return entry.id;
+  }
+  /** The caches of these bundles, imported in one run: each run boots an instance with the whole tree. */
+  async function cacheImport(ids) {
     progress('importing', 0, 0);
-    const done = await run(['cache', 'import', `/kernels/${entry.id}`], {}, '/work');
-    files.delete(archive);
-    imported.add(entry.id);
-    await store?.put(space, [[`#imported/${entry.id}`, new Uint8Array()]]).catch(() => {});
+    const done = await run(['cache', 'import', ...ids.map((id) => `/kernels/${id}`)], {}, '/work');
+    for (const id of ids) { files.delete(`/kernels/${id}/satex-cache.bin`); imported.add(id); }
+    await store?.put(space, ids.map((id) => [`#imported/${id}`, new Uint8Array()])).catch(() => {});
     return done;
   }
 
   /** Several bundles: all downloads start at once, the files and caches join the tree in order. */
   async function bundles(base, entries, given = []) {
     const downloads = entries.map((entry, i) => given[i] ?? bytes(base + entry.bundle, entry.label, entry.size));
-    const done = { lines: [], status: 0, ms: 0 };
+    const ids = [];
     for (const [i, entry] of entries.entries()) {
-      const one = await bundle(base, entry, null, downloads[i]);
-      done.lines.push(...one.lines);
-      done.ms += one.ms;
+      const id = await unpack(base, entry, null, downloads[i]);
+      if (id) ids.push(id);
     }
-    return done;
+    return ids.length ? cacheImport(ids) : { lines: [], status: 0, ms: 0 };
   }
 
   /** Files under `dir`: a new project's replace the last one's, added ones join them,

@@ -1,0 +1,33 @@
+% !TeX program = tex
+\def\ckleapyear#1% check if #1 is a leap year.
+{%
+  {%
+     \def\tleapy{not }% Most years fail.
+     \count10=#1
+     \count1=#1
+     \divide\count1 by 4
+     \multiply\count1 by 4
+     \ifnum\count1=\count10 % Worrry about 100 & 400.
+          \count2=#1
+          \divide\count2 by 100
+          \multiply\count2 by 100
+          \ifnum\count2=\count10 % Not a leap year unless 400 also divides.
+               \count3=#1
+               \divide\count3 by 400
+               \multiply\count3 by 400
+               \ifnum\count3=\count10
+                    \def\tleapy{}% Special leap year.
+               \fi
+          \else
+               \def\tleapy{}% This gets regular leap years.
+          \fi
+     \fi
+     The year #1 is \tleapy a leap year.\par
+  }%
+}
+\ckleapyear{1900}
+\ckleapyear{1990}
+\ckleapyear{1996}
+\ckleapyear{2000}
+\ckleapyear{2004}
+\ckleapyear{\the\year}

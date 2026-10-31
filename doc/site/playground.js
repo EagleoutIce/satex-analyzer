@@ -94,7 +94,7 @@
 
     // each section of the side pane: a grip under its body
     kept.heights ??= {};
-    for (const sect of document.querySelectorAll('.side-pane > details.sect')) {
+    for (const sect of document.querySelectorAll('.side-pane > details.sect, .tree > details.sect')) {
       const body = sect.querySelector('.grow');
       if (!body) continue;
       const grip = Object.assign(document.createElement('div'), { className: 'grip', title: 'drag to resize, down to nothing to close; double-click: fit' });
@@ -147,6 +147,10 @@
   const sev = (d) => SEVERITY[d.severity] || 'info';
   const secs = (ms) => `${(ms / 1000).toFixed(2)} s`;
   const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
+  /** A count with its thousands set apart by thin spaces: 21 939. */
+  const num = (n) => Number(n).toLocaleString('en').replace(/,/g, '\u2009');
+  /** A count in a chip or badge: 22k, 1.4M; the exact one is `num`'s. */
+  const short = (n) => compact.format(Number(n)).toLowerCase().replace('m', 'M');
   const size = (n) => n < 2 ** 20 ? `${Math.ceil(n / 1024)} KiB` : `${(n / 2 ** 20).toFixed(1)} MiB`;
   const started = performance.now();
 
@@ -215,9 +219,10 @@
 
   /** The Markdown satex writes, for hovers and rule explanations: headings, paragraphs, lists,
    * code, links, emphasis. A `file:line` in code is a place that opens (site.js). */
-  const cards = self.satexCards;
+  const cards = self.satexCards, tips = self.satexTip;
   const inline = (t) => cards.inline(t).replace(/(^|[\s(])\*([^*\s][^*]*)\*/g, '$1<i>$2</i>');
-  /** A command in text, or alone in a code span, explains itself on hover (`csTip`), as the editor's hover does. */
+  const findingCard = (d) => `<div class="tip-lint f-${sev(d)}"><p><span class="sev sev-${sev(d)}">${sev(d)}</span> <code>${escape(d.code)}</code> ${inline(d.message)}</p></div>`;
+  /** A command in text, or alone in a code span, explains itself on hover (`tips.card`), as the editor's hover does. */
   const commandRefs = (html) => html.replace(/(<code>(\\[A-Za-z@_]+(?::[A-Za-z]*)?\*?)<\/code>)|(<code[^>]*>[\s\S]*?<\/code>|<a [^>]*>[\s\S]*?<\/a>|<[^>]+>)|(\\[A-Za-z@_]+(?::[A-Za-z]*)?\*?)/g,
     (m, span, c1, skip, c2) => skip ? m : `<code class="cs-ref" data-cs="${c1 ?? c2}" tabindex="0">${c1 ?? c2}</code>`);
   const markdown = (text) => text.split(/^```\w*\n([\s\S]*?)^```\s*$/m).map((part, i) => i % 2 ? `<pre><code>${escape(part)}</code></pre>`
@@ -524,7 +529,7 @@
     }
     // a brace typed before a command closes too (`\\cite{` before `\\end`); TeX has no quote pairs
     const closing = st.EditorState.languageData.of(() => [{ closeBrackets: { brackets: ['(', '[', '{'], before: ')]}:;>\\' } }]);
-    const hover = view.hoverTooltip(async (v, pos) => {
+    async function hoverCard(v, pos) {
       // The server has the text; it answers from its last analysis at once.
       push();
       const line = v.state.doc.lineAt(pos), word = wordAt(line.text, pos - line.from);
@@ -534,13 +539,12 @@
       const result = running && keptHovers.has(key) ? keptHovers.get(key) : await asking;
       const c = result?.contents;
       const value = typeof c === 'string' ? c : c?.value ?? (Array.isArray(c) ? c.map((x) => x.value ?? x).join('\n') : '');
-      if (!value) return null;
-      const range = result.range;
-      return {
-        pos: range ? at(v.state.doc, range.start) : pos, end: range ? at(v.state.doc, range.end) : pos,
-        create: () => { csTip.hidden = true; const dom = document.createElement('div'); dom.className = 'hover'; dom.innerHTML = card(value); return { dom }; },
-      };
-    }, { hoverTime: 250, hideOnChange: true });
+      const p = position(v.state.doc, pos), found = findingsAt(p.line, p.character);
+      if (!value && !found.length) return null;
+      const range = result?.range, [from, to] = range ? [at(v.state.doc, range.start), at(v.state.doc, range.end)]
+        : found.length ? span(found[0][0].range) : [pos, pos];
+      return { from, to, html: found.map(([d]) => findingCard(d)).join('') + (value ? `<div class="hover">${card(value)}</div>` : '') };
+    }
     // Ctrl (Cmd) held over a command underlines it as a link to its definition.
     const link = st.StateEffect.define();
     const linkField = st.StateField.define({
@@ -613,13 +617,13 @@
     const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment();
     const ev = new EditorView({
       parent, doc: text,
-      extensions: [basicSetup, closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), lint.lintGutter(), ac.autocompletion({ override: [complete], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
+      extensions: [basicSetup, closing, lang.of(/\.bib$/.test(state.file) ? tex.bib : tex.language), language.syntaxHighlighting(tex.highlighter), lint.lintGutter({ tooltipFilter: () => [] }), lint.linter(null, { tooltipFilter: () => [] }), ac.autocompletion({ override: [complete], activateOnTypingDelay: 40, addToOptions: [{ position: 80, render: (c) => {
         // the detail: a usage line colored like the hover's, then where it comes from
         const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
         span.innerHTML = (use ? cards.usage(use).html : '') + (from ? ` <span class="muted">${escape(from)}</span>` : '');
         return span;
-      } }] }), hover,
+      } }] }),
         linkField, markField, linkedField, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([])],
     });
@@ -652,6 +656,25 @@
     const underline = (r) => { if (String(r) !== String(linked)) { linked = r; ev.dispatch({ effects: link.of(r) }); } };
     parent.addEventListener('mousemove', (e) => { const ctrl = e.ctrlKey || e.metaKey; if (ctrl) resolve(e); underline(ctrl ? under(e) : null); const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY }); if (pos != null) explainSoon(position(doc(), pos)); });
     parent.addEventListener('mouseleave', () => underline(null));
+    let hovered = null, hoverTimer = 0;
+    const unhover = () => { clearTimeout(hoverTimer); if (hovered) { hovered = null; tips.card.hide(150); } };
+    parent.addEventListener('mousemove', (e) => {
+      const pos = ev.posAtCoords({ x: e.clientX, y: e.clientY });
+      if (hovered && pos != null && pos >= hovered.from && pos <= hovered.to) return;
+      unhover();
+      if (pos == null || e.buttons) return;
+      const version = doc();
+      hoverTimer = setTimeout(async () => {
+        const c = await hoverCard(ev, pos);
+        if (!c || doc() !== version || !parent.matches(':hover')) return;
+        const a = ev.coordsAtPos(c.from), b = ev.coordsAtPos(c.to) ?? a;
+        if (!a) return;
+        hovered = c;
+        tips.card.show({ left: a.left, top: a.top, right: b.right, bottom: Math.max(a.bottom, b.bottom) }, c.html);
+      }, 250);
+    });
+    parent.addEventListener('mouseleave', unhover);
+    parent.addEventListener('keydown', unhover);
     addEventListener('keyup', (e) => (e.key === 'Control' || e.key === 'Meta') && underline(null));
     parent.addEventListener('mousedown', (e) => {
       if (!(e.ctrlKey || e.metaKey) || e.button !== 0 || !under(e)) return;
@@ -813,12 +836,12 @@
   /** The groups of other files unfolded, kept across checks. */
   const tsOpen = new Set();
   typesetBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) tsOpen.add(id); else tsOpen.delete(id); } }, true);
-  /** `marked` with each key (`at`: its offset in the visible text) as a note of its own, where it stands. */
-  function withKeys(marked, keys) {
-    if (!Array.isArray(keys) || !keys.length) return marked;
-    const at = [...keys].filter((k) => k && k.key != null).sort((a, b) => a.at - b.at);
+  /** `marked` with each key and font change (`at`: its offset in the visible text) as a note of its own, where it stands. */
+  function withKeys(marked, keys = [], fonts = []) {
+    const at = [...(keys ?? []).filter((k) => k?.key != null), ...(fonts ?? [])].sort((a, b) => a.at - b.at);
+    if (!at.length) return marked;
     let out = '', seen = 0, i = 0, note = false;
-    const put = (n) => { while (i < at.length && at[i].at <= n) { out += `\uE000\u0001${at[i].kind ?? 'key'}\u0001${at[i].key}\uE001`; i++; } };
+    const put = (n) => { while (i < at.length && at[i].at <= n) { const k = at[i++]; out += k.style != null ? `\uE000\u0002${k.style}\uE001` : `\uE000\u0001${k.kind ?? 'key'}\u0001${k.key}\uE001`; } };
     for (const c of marked) {
       if (c === '\uE000') note = true;
       if (!note) put(seen++);
@@ -833,7 +856,7 @@
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
     if (!rows || target !== uri()) return;
     const paragraphs = rows.filter((r) => r.kind === 'paragraph');
-    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys))}</span></p>`;
+    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts))}</span></p>`;
     // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
     const html = [];
     for (let i = 0; i < paragraphs.length;) {
@@ -1194,28 +1217,28 @@
       (rest.length ? `<details class="more"><summary>More definitions</summary>${rest.map(cards.explain).join('')}</details>` : '');
     else if (!explainBody.querySelector('.hover')) explainBody.innerHTML = `<p class="muted">satex knows no ${escape(name)} here.</p>`;
   }
-  const csTip = Object.assign(document.createElement('div'), { className: 'cs-tip', hidden: true });
-  document.body.append(csTip);
   document.addEventListener('mouseover', async (e) => {
     const ref = e.target.closest?.('.cs-ref');
     if (!ref) return;
     const name = ref.dataset.cs, rs = (await explainRecords(name)).filter((r) => r.name === name);
     if (!rs.length || !ref.matches(':hover')) return;
-    csTip.innerHTML = cards.explain(rs[0]);
-    (document.querySelector('dialog[open]') ?? document.body).append(csTip); // above a modal
-    csTip.hidden = false;
-    document.querySelectorAll('.cm-tooltip-hover').forEach((t) => (t.style.display = 'none')); // the latest hover wins
-    const b = ref.getBoundingClientRect(), h = csTip.offsetHeight;
-    csTip.style.left = `${Math.max(8, Math.min(b.left, innerWidth - csTip.offsetWidth - 8))}px`;
-    csTip.style.top = `${b.bottom + 6 + h > innerHeight ? Math.max(8, b.top - 6 - h) : b.bottom + 6}px`;
+    tips.card.show(ref, cards.explain(rs[0]));
   });
-  document.addEventListener('mouseout', (e) => { if (e.target.closest?.('.cs-ref')) setTimeout(() => { if (!csTip.matches(':hover')) csTip.hidden = true; }, 120); });
-  csTip.addEventListener('mouseleave', () => { csTip.hidden = true; });
-  document.addEventListener('click', (e) => { const ref = e.target.closest?.('.cs-ref'); if (ref) { csTip.hidden = true; explainName(ref.dataset.cs); } });
+  document.addEventListener('mouseout', (e) => { if (e.target.closest?.('.cs-ref') && !tips.card.el.dataset.pin) tips.card.hide(150); });
+  document.addEventListener('click', (e) => { const ref = e.target.closest?.('.cs-ref'); if (ref) { tips.card.hide(); explainName(ref.dataset.cs); } });
   // ---------------------------------------------------------------- library: every name in force, and a scratch line to try them
 
   const libList = $('lib-list'), libSearch = $('lib-search'), libFrom = $('lib-from'), libInternal = $('lib-internal');
-  let libNames = [], libFor = '';
+  let libNames = [], libFor = '', libUses = new Map();
+  /** How useful a name is to a document, best first: used in the project, defined by it, then
+   * public names before internals, documented ones (`does`) first, macros before primitives,
+   * names of letters before control symbols. */
+  const libUseful = (r) => {
+    const used = libUses.get(r.name) ?? 0;
+    return [used ? 0 : 1, r.package === 'document' ? 0 : 1, /[@_:]/.test(r.name.slice(1)) ? 1 : 0, r.does ? 0 : 1,
+      r.tag === 'primitive' ? 1 : 0, /^\\[A-Za-z]+$/.test(r.name) ? 0 : 1, -used];
+  };
+  const byUse = (a, b) => { const x = libUseful(a), y = libUseful(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
   /** The names in force at the end of the root's last run (`scope`), refreshed once per run. */
   async function libraryLoad() {
     const key = `${state.root ?? state.file}|${libInternal.checked}|${analyzedVersion}`;
@@ -1225,6 +1248,9 @@
     // an environment once, by its name: \X stays, its \endX goes
     const names = new Set(records.map((r) => r.name));
     libNames = records.filter((r) => !(r.tag === 'environment' && r.name.startsWith('\\end') && names.has(`\\${r.name.slice(4)}`)));
+    libUses = new Map();
+    for (const [file, text] of Object.entries(state.texts)) if (state.files.includes(file) && !data(file))
+      for (const m of String(text).matchAll(/\\begin\s*\{([^{}]+)\}|\\([A-Za-z@]+|.)/g)) { const n = `\\${m[1] ?? m[2]}`; libUses.set(n, (libUses.get(n) ?? 0) + 1); }
     const from = libFrom.value, packages = [...new Set(libNames.map((r) => r.package).filter(Boolean))].sort();
     libFrom.innerHTML = `<option value="">every package</option>${packages.map((p) => `<option${p === from ? ' selected' : ''}>${escape(p)}</option>`).join('')}`;
     libraryShow();
@@ -1248,29 +1274,34 @@
     const hits = libNames
       .map((r) => [r, libRank(r.name, q) ?? (q && String(r.effective ?? '').toLowerCase().includes(q) ? 4 : null)])
       .filter(([r, rank]) => rank !== null && (!from || r.package === from) && (!libKind || kind(r) === libKind))
-      .sort((a, b) => a[1] - b[1] || a[0].name.length - b[0].name.length || a[0].name.localeCompare(b[0].name))
+      .sort((a, b) => a[1] - b[1] || byUse(a[0], b[0]) || a[0].name.length - b[0].name.length || a[0].name.localeCompare(b[0].name))
       .map(([r]) => r);
-    $('lib-count').textContent = libNames.length ? String(libNames.length) : '';
+    $('lib-count').textContent = libNames.length ? short(libNames.length) : '';
     const counts = { '': libNames.length };
     for (const r of libNames) counts[kind(r)] = (counts[kind(r)] ?? 0) + 1;
     $('lib-kinds').innerHTML = [['', 'all'], ['command', 'commands'], ['environment', 'environments'], ['primitive', 'primitives']]
-      .map(([k, label]) => `<button type="button" class="lib-kind" aria-pressed="${k === libKind}" data-kind="${k}">${label} <b>${counts[k] ?? 0}</b></button>`).join('');
+      .map(([k, label]) => `<button type="button" class="lib-kind" aria-pressed="${k === libKind}" data-kind="${k}">${label} <b title="${num(counts[k] ?? 0)}">${short(counts[k] ?? 0)}</b></button>`).join('');
     libList.innerHTML = hits.slice(0, 200).map((r, i) => {
       const env = kind(r) === 'environment', use = r.effective ?? r.name, args = use.startsWith(r.name) ? use.slice(r.name.length) : '';
       const name = env ? r.name.slice(1) : r.name, shown = env ? `\\begin{${name}}${args}` : use;
       const tried = env ? `\\begin{${name}}${args}\n  \n\\end{${name}}` : use;
-      return `<li tabindex="-1" data-i="${i}"><code class="cs-ref" data-cs="${escape(r.name)}" tabindex="0">${escape(name)}</code>` +
-      `${shown !== name ? `<span class="lib-use">${slotsOf(shown)}</span>` : ''}` +
+      return `<li tabindex="-1" data-i="${i}"><code class="cs-ref" data-cs="${escape(r.name)}" tabindex="0">${cards.csName(name)}</code>` +
+      `${shown !== name ? `<span class="lib-use">${slotsOf(shown)}</span>` : ''}<span class="lib-does">${escape(r.does ?? '')}</span>` +
       `<button type="button" class="lib-try-it" data-try="${escape(tried)}" title="try it" aria-label="try it">▸</button>` +
       `<span class="lib-pkg">${escape(r.package ?? '')}</span></li>`; }).join('') +
-      (hits.length > 200 ? `<li class="muted">${hits.length - 200} more: narrow the search</li>` : '') ||
+      (hits.length > 200 ? `<li class="muted">${num(hits.length - 200)} more: narrow the search</li>` : '') ||
       `<li class="muted">${libNames.length ? 'No name matches.' : 'The names appear once the document is checked.'}</li>`;
   }
   /** A usage line with its ⟨…⟩ placeholders as the explain cards draw them. */
   const slotsOf = (usage) => (cards.slots ? cards.slots(escape(usage)) : escape(usage));
   $('lib-kinds').addEventListener('click', (e) => { const b = e.target.closest('.lib-kind'); if (b) { libKind = b.dataset.kind; libraryShow(); } });
   // the cursor lands in an environment's body, else at the end
-  const tryIt = (t) => { const text = $('lib-text'), v = t.dataset.try.replace(/[⟨⟩]/g, ''), at = v.indexOf('\n  \n') + 3; text.value = v; grow(); text.focus(); text.setSelectionRange(at > 2 ? at : v.length, at > 2 ? at : v.length); };
+  const tryIt = (t) => {
+    const text = $('lib-text'), v = t.dataset.try.replace(/[⟨⟩]/g, ''), at = v.indexOf('\n  \n') + 3;
+    $('play-library').close();
+    $('try-open').click();
+    text.value = v; grow(); text.setSelectionRange(at > 2 ? at : v.length, at > 2 ? at : v.length);
+  };
   libList.addEventListener('click', (e) => { const t = e.target.closest('.lib-try-it'); if (t) tryIt(t); });
   // ↓ from the search goes into the list, ↑/↓ move, Enter tries
   libSearch.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); libList.querySelector('li[data-i]')?.focus(); } });
@@ -1284,8 +1315,11 @@
   libFrom.onchange = libraryShow;
   libInternal.onchange = libraryLoad;
   $('lib-open').onclick = () => { $('play-library').showModal(); libraryLoad(); $('lib-search').focus(); };
-  $('lib-close').onclick = () => $('play-library').close();
-  $('play-library').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+  $('try-open').onclick = () => { $('play-try').showModal(); $('lib-text').focus(); };
+  for (const [box, x] of [['play-library', 'lib-close'], ['play-try', 'try-close'], ['play-draw', 'draw-close']]) {
+    $(x).onclick = () => $(box).close();
+    $(box).addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+  }
   /** The scratch text read right after the root's `\begin{document}`: what it sets, its findings and what it expanded to. */
   async function libraryTry() {
     const text = $('lib-text').value, out = $('lib-out');
@@ -1304,7 +1338,7 @@
     const set = (ts.records ?? []).filter((r) => r.kind === 'paragraph' && mine(r));
     const found = (ds?.records ?? []).filter(mine);
     const top = (tr?.records ?? []).filter((r) => mine(r) && r.inserts != null).slice(0, 12);
-    out.innerHTML = `<div class="typeset">${set.map((r) => `<p class="ts"><span class="ts-text">${notation(r.marked ?? r.detail ?? '')}</span></p>`).join('') || '<p class="muted">It sets no text.</p>'}</div>` +
+    out.innerHTML = `<div class="typeset">${set.map((r) => `<p class="ts"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', [], r.fonts))}</span></p>`).join('') || '<p class="muted">It sets no text.</p>'}</div>` +
       (found.length ? `<ul class="lib-found">${found.map((d) => `<li><b>${escape(d.severity)}</b> ${escape(d.message)}</li>`).join('')}</ul>` : '') +
       (top.length ? `<details class="lib-steps"><summary>${plural(top.length, 'expansion')}</summary><ul>${top.map((r) => `<li><code class="cs-ref" data-cs="${escape(r.name)}">${escape(r.name)}</code> → <code>${escape(String(r.inserts).slice(0, 160))}</code></li>`).join('')}</ul></details>` : '');
   }
@@ -1314,6 +1348,95 @@
   $('lib-run').onclick = libraryTry;
   $('lib-text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); libraryTry(); } });
 
+  // ---------------------------------------------------------------- draw: a symbol drawn, the commands that set it
+
+  // The candidates are unicode-math's table of the installation (build.py `symbols`). The browser
+  // draws each one's character; it and the drawing, cut to their ink and scaled to one square,
+  // are compared pixel by pixel after a blur. Names in force in the document rank first.
+  const DRAW = { side: 20, glyph: 64, pen: 9, shown: 14, foreign: 1.12 };
+  const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
+  let drawSyms = null, drawn = false;
+  /** The ink of `canvas`, cut to its bounding box, scaled into DRAW.side², blurred: one value per pixel. */
+  function features(canvas) {
+    const { width: w, height: h } = canvas, data = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+    let x0 = w, y0 = h, x1 = -1, y1 = -1;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (data[(y * w + x) * 4 + 3] > 40) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+    if (x1 < 0) return null;
+    const n = DRAW.side, small = Object.assign(document.createElement('canvas'), { width: n, height: n }), c = small.getContext('2d', { willReadFrequently: true });
+    const bw = x1 - x0 + 1, bh = y1 - y0 + 1, k = (n - 4) / Math.max(bw, bh);
+    c.filter = 'blur(1.5px)';
+    c.drawImage(canvas, x0, y0, bw, bh, (n - bw * k) / 2, (n - bh * k) / 2, bw * k, bh * k);
+    const px = c.getImageData(0, 0, n, n).data, out = new Float32Array(n * n + 1);
+    for (let i = 0; i < n * n; i++) out[i] = px[i * 4 + 3] / 255;
+    // centred and of unit length: a thin glyph and a thick stroke of one shape come out alike
+    const mean = out.reduce((a, v) => a + v, 0) / (n * n);
+    let norm = 0;
+    for (let i = 0; i < n * n; i++) { out[i] -= mean; norm += out[i] ** 2; }
+    for (let i = 0; i < n * n; i++) out[i] /= Math.sqrt(norm) || 1;
+    out[n * n] = Math.log(bw / bh); // the aspect, which the square loses
+    return out;
+  }
+  /** Each symbol's features, drawn once; a character the browser has no glyph for is left out. */
+  async function symbolsLoad() {
+    if (drawSyms) return drawSyms;
+    const list = await fetch(`${base}${manifest.symbols}`).then((r) => r.json()).catch(() => []);
+    const g = Object.assign(document.createElement('canvas'), { width: DRAW.glyph, height: DRAW.glyph }), c = g.getContext('2d', { willReadFrequently: true });
+    c.font = `${DRAW.glyph * 0.7}px "STIX Two Math", "Cambria Math", "Noto Sans Math", serif`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    const draw = (ch) => { c.clearRect(0, 0, g.width, g.height); c.fillText(ch, g.width / 2, g.height / 2); return features(g); };
+    const none = draw('\u{10FFFD}'), same = (a, b) => a && b && a.every((v, i) => v === b[i]);
+    drawSyms = list.map(([code, name, cls]) => ({ ch: String.fromCodePoint(code), name, cls })).map((s) => ({ ...s, f: draw(s.ch) })).filter((s) => s.f && !same(s.f, none));
+    return drawSyms;
+  }
+  async function drawMatch() {
+    const list = $('draw-list'), f = features(pad);
+    if (!f) { list.innerHTML = ''; return; }
+    const [syms, names] = await Promise.all([symbolsLoad(), namesInForce(true)]);
+    if (!syms.length) { list.innerHTML = '<li class="muted">This build has no symbol table.</li>'; return; }
+    const force = new Set(names.map((r) => r.name)), n = DRAW.side * DRAW.side;
+    const best = syms.map((s) => {
+      let d = 0;
+      for (let i = 0; i < n; i++) d += (s.f[i] - f[i]) ** 2;
+      d += (s.f[n] - f[n]) ** 2 / 4;
+      return [s, d * (force.has(s.name) ? 1 : DRAW.foreign)];
+    }).sort((a, b) => a[1] - b[1]);
+    const seen = new Set(), rows = [];
+    for (const [s] of best) {
+      if (rows.length >= DRAW.shown) break;
+      if (seen.has(s.ch)) continue;
+      seen.add(s.ch);
+      const all = syms.filter((x) => x.ch === s.ch).sort((a, b) => force.has(b.name) - force.has(a.name));
+      rows.push(`<li><span class="draw-glyph">${escape(s.ch)}</span><span class="draw-names">${all.map((x) => `<code class="cs-ref${force.has(x.name) ? '' : ' draw-off'}" data-cs="${escape(x.name)}" tabindex="0">${escape(x.name)}</code>`).join(' ')}</span>` +
+        `<span class="muted draw-cls">${escape(s.cls)}</span><button type="button" class="small ghost draw-put" data-name="${escape(all[0].name)}" title="insert ${escape(all[0].name)} at the cursor">Insert</button></li>`);
+    }
+    list.innerHTML = rows.join('');
+  }
+  {
+    const clear = () => { pen.clearRect(0, 0, pad.width, pad.height); drawn = false; $('draw-list').innerHTML = ''; };
+    let last = null;
+    const at = (e) => { const b = pad.getBoundingClientRect(); return [(e.clientX - b.left) * pad.width / b.width, (e.clientY - b.top) * pad.height / b.height]; };
+    pad.addEventListener('pointerdown', (e) => { pad.setPointerCapture(e.pointerId); last = at(e); drawn = true; });
+    pad.addEventListener('pointermove', (e) => {
+      if (!last) return;
+      const p = at(e);
+      Object.assign(pen, { lineWidth: DRAW.pen, lineCap: 'round', lineJoin: 'round', strokeStyle: getComputedStyle(pad).color });
+      pen.beginPath(); pen.moveTo(...last); pen.lineTo(...p); pen.stroke();
+      last = p;
+    });
+    pad.addEventListener('pointerup', () => { last = null; if (drawn) drawMatch(); });
+    $('draw-clear').onclick = clear;
+    $('draw-open').onclick = () => { $('play-draw').showModal(); symbolsLoad(); };
+    $('draw-list').addEventListener('click', (e) => {
+      const b = e.target.closest('.draw-put');
+      if (!b) return;
+      const at = editor.position();
+      editor.apply([{ range: { start: at, end: at }, newText: b.dataset.name }]);
+      $('play-draw').close();
+      toast(`${b.dataset.name} inserted`);
+    });
+  }
+
   // ---------------------------------------------------------------- trace: how one call expands
 
   const traceBox = $('play-trace'), traceBody = $('trace-body'), traceInternal = $('trace-internal');
@@ -1321,6 +1444,7 @@
   let traceFor = null, traceRun = 0;
   let traceLive = null;
   /** Where to trace `name`: the caret's own call, else its first use in the open file, else in any file of the project. */
+  self.satexCalled = (name) => callSite(name) != null;
   function callSite(name) {
     const w = editor.word(), p = editor.position();
     if (w?.[3] && `\\${w[2]}` === name) return { file: state.file, line: p.line + 1, col: w[0] + 1 };
@@ -1400,10 +1524,12 @@
     const bits = r.body != null && r.arguments?.length
       ? [`<span class="tr-bit"><i>body</i> <code>${csText(cut(r.body))}</code></span>`, ...r.arguments.map((a, k) => `<span class="tr-bit"><code>#${k + 1}</code> = <code>${csText(cut(a))}</code></span>`)] : [];
     if (r.inserts != null) bits.push(`<span class="tr-bit tr-res">→ <code class="tr-out">${csText(cut(r.inserts)) || '<i>empty</i>'}</code></span>`);
-    else if (r.detail) bits.push(`<span class="tr-bit"><code class="tr-out">${csText(cut(r.detail))}</code></span>`);
+    else if (r.detail) bits.push(`<span class="tr-bit">${['assign', 'define'].includes(r.step) ? '= ' : ''}<code class="tr-out">${csText(cut(r.detail))}</code></span>`);
     return bits.length ? `<span class="tr-how">${bits.join('')}</span>` : '';
   }
-  const csCode = (name, extra = '') => (/^\\/.test(name) ? `<code class="tr-cs${extra}" data-cs="${escape(name)}" tabindex="0">${escape(name)}</code>` : `<code class="${extra.trim()}">${escape(name)}</code>`);
+  const regAlias = new Map();
+  const aliasOf = (name) => (regAlias.has(name) ? `<span class="tr-alias" title="the name the document's packages gave this register">${regAlias.get(name).map((n) => cards.csName(n)).join(', ')}</span>` : '');
+  const csCode = (name, extra = '') => (/^\\/.test(name) ? `<code class="tr-cs${extra}" data-cs="${escape(name)}" tabindex="0">${cards.csName(name)}</code>${aliasOf(name)}` : `<code class="${extra.trim()}">${escape(name)}</code>`);
   function stepHead(i) {
     const r = trace.steps[i], name = stepName(r.name);
     const sets = r.sets ? `<span class="tr-sets" title="text this step set">sets <code>${escape(clip(r.sets))}</code></span>` : '';
@@ -1475,7 +1601,8 @@
     return new Map([...doc.querySelectorAll('a[id^="catcode-"]')].map((a) => [+a.id.slice(8), a.closest('tr')?.cells[1]?.textContent.trim() ?? '']));
   }).catch(() => new Map()));
   let cats = new Map();
-  const catTitle = (c) => (c === 16 ? 'control sequence' : cats.get(c) ? `${cats.get(c)} (catcode ${c})` : `catcode ${c}`);
+  /** A category by its name in the wiki's table (tex.web § 207) and its number: "begin group (1)". */
+  const catTitle = (c) => (c === 16 ? 'control sequence' : cats.get(c) ? `${cats.get(c)} (${c})` : `catcode ${c}`);
   const tokChip = (t, c) => (c === 16 ? csCode(t, ' tr-tok k16') : `<a class="tr-tok k${c}" href="${base}wiki/domains.html#catcode-${c}" target="_blank" title="${escape(catTitle(c))}">${t === ' ' ? '␣' : escape(t)}<sub class="tr-cc">${c}</sub></a>`);
   /** An expansion's result as tokens: its control sequences, then single characters. */
   const insChips = (t) => [...String(t).matchAll(/(\\(?:[^\\\s{}#]+(?= |$)|[^]))( ?)|([^])/g)].map((m) => (m[1] ? csCode(m[1], ' tr-tok tr-ins') : `<span class="tr-tok tr-ins" title="put back by this step">${m[3] === ' ' ? '␣' : escape(m[3])}</span>`)).join('');
@@ -1500,8 +1627,8 @@
     // the categories in this stream; all of them behind the toggle
     const seen = new Set([...(r.tokens ?? []).map(([, c]) => c), ...(put ? [16] : [])]);
     const legend = [...Array(17).keys()].filter((c) => trace.legend || seen.has(c)).map((c) => c === 16
-      ? '<span class="tr-key"><b class="k16">cs</b> control sequence</span>'
-      : `<a class="tr-key" href="${base}wiki/domains.html#catcode-${c}" target="_blank"><b class="k${c}">${c}</b> ${escape(cats.get(c) ?? '')}</a>`).join('');
+      ? '<span class="tr-key"><b class="k16">control sequence</b></span>'
+      : `<a class="tr-key" href="${base}wiki/domains.html#catcode-${c}" target="_blank"><b class="k${c}">${escape(catTitle(c))}</b></a>`).join('');
     box.innerHTML = `<div class="tr-stream-head"><b>input after this step</b><button type="button" class="ghost small tr-legend-btn" aria-expanded="${!!trace.legend}">${trace.legend ? 'fewer catcodes' : 'all catcodes'}</button></div>` +
       `<div class="tr-chips">${put}${toks}<span class="tr-rest">${escape(clip(r.tokens?.length ? fileRest(r) : String(r.ahead ?? '')))}</span></div>` +
       `<div class="tr-legend">${legend}</div>`;
@@ -1530,8 +1657,7 @@
     return `${bar}${now}<details class="tr-all" open><summary>All steps</summary><ul class="tr-tree">${html}</ul></details>`;
   }
   // ---- the card of a name in the trace: its meaning at the step, then what Explain says
-  const trTip = Object.assign(document.createElement('div'), { className: 'cs-tip tr-tip', hidden: true });
-  traceBox.append(trTip);
+  const trTip = tips.card.el;
   const atStep = new Map();
   /** One query of the run stopped at record `r`'s event, cached. */
   function stopped(r, queries) {
@@ -1557,15 +1683,10 @@
   async function showTip(ref, pin = false) {
     const html = await tipFor(ref);
     if (!pin && (trTip.dataset.pin || !ref.matches(':hover'))) return;
-    trTip.innerHTML = (pin ? '<p class="tr-tip-pin muted">pinned · click outside to close</p>' : '') + (html || `<p class="muted">satex knows no ${escape(ref.dataset.cs)} here.</p>`);
-    trTip.hidden = false;
-    const b = ref.getBoundingClientRect(), h = trTip.offsetHeight;
-    trTip.style.left = `${Math.max(8, Math.min(b.left, innerWidth - trTip.offsetWidth - 8))}px`;
-    trTip.style.top = `${b.bottom + 6 + h > innerHeight ? Math.max(8, b.top - 6 - h) : b.bottom + 6}px`;
+    tips.card.show(ref, (pin ? '<p class="tr-tip-pin muted">pinned · click outside to close</p>' : '') + (html || `<p class="muted">satex knows no ${escape(ref.dataset.cs)} here.</p>`));
   }
   traceBox.addEventListener('mouseover', (e) => { const ref = e.target.closest?.('.tr-cs'); if (ref && !trTip.dataset.pin) showTip(ref); });
-  traceBox.addEventListener('mouseout', (e) => { if (e.target.closest?.('.tr-cs')) setTimeout(() => { if (!trTip.dataset.pin && !trTip.matches(':hover')) trTip.hidden = true; }, 150); });
-  trTip.addEventListener('mouseleave', () => { if (!trTip.dataset.pin) trTip.hidden = true; });
+  traceBox.addEventListener('mouseout', (e) => { if (e.target.closest?.('.tr-cs') && !trTip.dataset.pin) tips.card.hide(150); });
   traceBody.addEventListener('toggle', (e) => {
     const li = e.target.parentElement;
     if (li?.dataset.i && e.target.open) fill(li);
@@ -1598,8 +1719,8 @@
     if (cs) { e.preventDefault(); delete trTip.dataset.pin; await showTip(cs, true); trTip.dataset.pin = '1'; return; }
     if (row && !e.target.closest('.tr-at, summary.tr-group, .tr-group, input')) stepTo(keyOf(row.dataset.i));
   });
-  traceBox.addEventListener('click', (e) => { if (trTip.dataset.pin && !e.target.closest('.tr-tip, .tr-cs')) { delete trTip.dataset.pin; trTip.hidden = true; } }, true);
-  traceBox.addEventListener('close', () => { delete trTip.dataset.pin; trTip.hidden = true; });
+  traceBox.addEventListener('click', (e) => { if (trTip.dataset.pin && !e.target.closest('.tip-card, .tr-cs')) tips.card.hide(); }, true);
+  traceBox.addEventListener('close', () => tips.card.hide());
   traceBox.addEventListener('keydown', (e) => {
     const m = trace && !e.target.closest?.('input, textarea') && { ArrowLeft: 'prev', ArrowRight: e.shiftKey ? 'over' : 'next', ArrowUp: 'out' }[e.key];
     if (!m) return;
@@ -1620,7 +1741,7 @@
     const draw = () => {
       const live = $('trace-live'), d = last;
       if (!live) return;
-      const bits = [d.phase || d.text || 'starting the run', d.file && `${d.file.split('/').pop()}${d.line ? `:${d.line}` : ''}`, d.lines && `${d.lines.toLocaleString('en')} lines read`, d.files && plural(d.files, 'file'), d.paths > 1 && `${d.paths} paths`, secs(performance.now() - t0)].filter(Boolean);
+      const bits = [d.phase || d.text || 'starting the run', d.file && `${d.file.split('/').pop()}${d.line ? `:${d.line}` : ''}`, d.lines && `${num(d.lines)} lines read`, d.files && plural(d.files, 'file'), d.paths > 1 && `${d.paths} paths`, secs(performance.now() - t0)].filter(Boolean);
       live.textContent = `Tracing: ${bits.join(' · ')}`;
       const bar = $('trace-prog');
       bar.hidden = !d.total;
@@ -1673,7 +1794,11 @@
   /** The trace's tree from the stored records: the library switch asks nothing new. */
   async function traceShow(at, name, mine) {
     const own = (r) => state.files.some((n) => String(r.path ?? r.file ?? '').endsWith(n));
-    trace = traceModel(forkView(traceFor.records, traceFor.fork), own, traceInternal.checked);
+    for (const r of traceFor.records) for (const [k, v] of Object.entries(r.aliases ?? {})) regAlias.set(k, v);
+    // one row per statement: `\def` executed and `\tleapy` defined are one step, the define's
+    const steps = forkView(traceFor.records, traceFor.fork).filter((r, i, all) => !(r.step === 'execute' && ['define', 'assign'].includes(all[i + 1]?.step)
+      && all[i + 1].line === r.line && all[i + 1].path === r.path && all[i + 1].depth === r.depth));
+    trace = traceModel(steps, own, traceInternal.checked);
     if (!trace.order.length && !trace.groups.length) {
       traceBody.innerHTML = traceHead(at, name) + `<p class="muted">${traceFor.error ? `The query failed: ${escape(traceFor.error)}.` : 'The run recorded no step for this call.'}</p>`;
       traceOutput(at, mine);
@@ -1736,7 +1861,7 @@
     traceBox.close();
     openPlace(name, { line: +a.dataset.line - 1, character: Math.max(+a.dataset.col - 1, 0) });
   };
-  document.addEventListener('click', (e) => { const b = e.target.closest?.('.x-trace'); if (b) { csTip.hidden = true; traceCall(b.dataset.trace); } });
+  document.addEventListener('click', (e) => { const b = e.target.closest?.('.x-trace'); if (b) { tips.card.hide(); if (b.dataset.try != null) tryIt(b); else traceCall(b.dataset.trace); } });
 
   function focusExplain() {
     explainBox.open = true;
@@ -2036,7 +2161,7 @@
     return `<span class="tcount sev-${worst}" title="${ds.length} finding${ds.length > 1 ? 's' : ''}">${ds.length}</span>`;
   }
   /** A root candidate: a TeX file that starts a document. */
-  const rootable = (name) => /\.(tex|ltx)$/.test(name) && /\\documentclass|\\begin\s*\{document\}|\\bye\b/.test(state.texts[name] ?? '');
+  const rootable = (name) => /\.(tex|ltx)$/.test(name) && /\\documentclass|\\begin\s*\{document\}|\\bye\b|^%\s*!T[eE]X\s+(?:TS-)?program\s*=/m.test(state.texts[name] ?? '');
   const foldedDirs = new Set();
   function drawTree() {
     const names = [...state.files].sort((a, b) => a.localeCompare(b));
@@ -2314,7 +2439,8 @@
     if (!ids.length) return false;
     const entries = ids.map((id) => PACKAGES.get(id));
     const label = entries.map((e) => e.label).join(', ');
-    busy('Fetching', `Fetching ${entries.map((e) => `${e.label} ${size(e.size)}`).join(', ')}…`);
+    busy('Fetching', `Fetching ${plural(entries.length, 'package')}, ${size(entries.reduce((n, e) => n + e.size, 0))}…`);
+    status.title = entries.map((e) => `${e.label} ${size(e.size)}`).join(', ');
     const t = performance.now();
     const given = location.protocol === 'file:' ? await Promise.all(entries.map((e) => local(e.bundle))) : undefined;
     const load = ask({ type: 'bundles', base, entries, given }, given ? given.map((g) => g.buffer) : []);
@@ -2324,7 +2450,8 @@
     try { const stale = ((await ask({ type: 'caches' })).entries ?? []).filter((e) => /\/index-/.test(e.path)).map((e) => e.path); if (stale.length) await ask({ type: 'uncache', paths: stale }); } catch {}
     loads.clear();
     idle();
-    status.textContent = `${label} fetched in ${secs(performance.now() - t)}`;
+    status.textContent = `${plural(entries.length, 'package')} fetched in ${secs(performance.now() - t)}`;
+    status.title = label;
     status.dataset.packages = [...fetchedPackages.keys()].join(' ');
     loadedList.push(...entries.map((e) => `${e.label} ${size(e.size)}`));
     loadedBytes += entries.reduce((n, e) => n + e.size, 0);
@@ -2353,23 +2480,29 @@
   let writtenFiles = [];
   const writtenPick = new Map(); // name -> [view, alternative]: view is a run's index, or 'final'
   function writtenCard({ name, texts, runs = [] }) {
-    const views = [...(runs ?? []).map((r, i) => [i, `run ${i + 1}`, r]), ['final', 'final', texts]];
+    // the build's fixpoint is its last run's text: no tab of its own then
+    const same = (x, y) => JSON.stringify(x) === JSON.stringify(y), last = (runs ?? []).length - 1;
+    const views = (runs ?? []).map((r, i) => [i === last && same(r, texts) ? 'final' : i, `run ${i + 1}`, r]);
+    if (views.at(-1)?.[0] !== 'final') views.push(['final', 'final', texts]);
     const [view, alt] = writtenPick.get(name) ?? ['final', 0];
     const k = Math.max(0, views.findIndex(([v]) => v === view)), shown = views[k][2], before = k ? views[k - 1][2] : null;
     const a = Math.min(alt, (shown?.length ?? 1) - 1), text = shown?.[a], prev = before?.[Math.min(a, before.length - 1)];
     const lines = text == null ? 0 : text.split('\n').filter(Boolean).length, short = name.split('/').pop();
     const body = text == null ? '<p class="muted">Not known: the build wrote text satex could not follow here.</p>'
       : `<pre>${(prev == null ? text.split('\n').map((l) => [' ', l]) : lineDiff(prev, text)).filter(([, l], i, all) => l || i < all.length - 1)
-        .map(([d, l]) => `<span class="wf-l${d === '+' ? ' wf-add' : d === '-' ? ' wf-del' : ''}">${marked(l) || ' '}</span>`).join('')}</pre>`;
+        .map(([d, l]) => `<span class="wf-l${d === '+' ? ' wf-add' : d === '-' ? ' wf-del' : ''}">${commandRefs(marked(l)) || ' '}</span>`).join('')}</pre>`;
     const changed = prev != null && text != null && prev !== text;
-    return `<div class="wf" data-name="${escape(name)}"><div class="wf-head"><code>${escape(short)}</code><span class="wf-kind">${escape(short.split('.').pop())}</span>` +
+    const ext = short.split('.').pop(), ty = (manifest.completion?.types ?? []).find((t) => t.name.endsWith(`(.${ext})`));
+    const kind = ty ? `<a class="wf-kind ty" data-ty="${escape(ty.name)}" href="${base}wiki/domains.html#files-written-in-the-run" target="_blank" rel="noopener">${escape(ext)}</a>`
+      : `<a class="wf-kind" href="${base}wiki/domains.html#files-written-in-the-run" target="_blank" rel="noopener" title="a file the build writes and reads back: how satex follows it">${escape(ext)}</a>`;
+    return `<div class="wf" data-name="${escape(name)}"><div class="wf-head"><code>${escape(short)}</code>${kind}` +
       `<span class="muted">${text == null ? 'unknown' : plural(lines, 'line')}${k ? (changed ? `, changed since ${views[k - 1][1]}` : `, as in ${views[k - 1][1]}`) : ''}</span>` +
-      `<span class="wf-runs" role="tablist">${views.length > 2 ? views.map(([v, label], i) => `<button type="button" role="tab" data-view="${v}" aria-selected="${i === k}">${label}</button>`).join('') : ''}</span></div>` +
+      `<span class="wf-runs" role="tablist">${views.length > 1 ? views.map(([v, label, t], i) => `<button type="button" role="tab" data-view="${v}" aria-selected="${i === k}"${i !== k && same(t, shown) ? ' class="wf-same" title="the same text as the tab shown"' : ''}>${label}</button>`).join('') : ''}</span></div>` +
       `${shown && shown.length > 1 ? `<div class="wf-alts" role="tablist">${shown.map((_, i) => `<button type="button" role="tab" data-alt="${i}" aria-selected="${i === a}">path ${i + 1}</button>`).join('')}</div>` : ''}${body}</div>`;
   }
   const writtenShow = () => {
     $('written-count').textContent = String(writtenFiles.length || '');
-    $('written-body').innerHTML = writtenFiles.length ? writtenFiles.map(writtenCard).join('') : '<p class="muted">The build writes no file.</p>';
+    $('written-body').innerHTML = writtenFiles.length ? '<p class="muted wf-note">Each file is empty when the build starts: the first run reads none of them, the next run reads what this one wrote.</p>' + writtenFiles.map(writtenCard).join('') : '<p class="muted">The build writes no file.</p>';
   };
   $('written-body').addEventListener('click', (e) => {
     const b = e.target.closest('[data-view], [data-alt]'), name = b?.closest('.wf')?.dataset.name;
@@ -2390,14 +2523,17 @@
     let segments = 0;
     const texts = lines.map(([, t]) => plain(t));
     const run = texts.find((t) => t.startsWith('run '));
-    $('t-run').innerHTML = run ? run.slice(4).split(', ').map((part) => {
-      const [, n, label] = part.match(/^(\S+) (.*)$/) ?? [, part, ''];
-      return `<span title="${escape(Number(n).toLocaleString('en'))} ${escape(label)}"><b>${escape(compact.format(Number(n)))}</b>${escape(label)}</span>`;
-    }).join('') : '';
-    const slow = texts.map((t) => t.match(/^slow (\d+) (\d+) (.*)$/)).filter(Boolean);
-    $('t-slow').innerHTML = slow.length ? `<h4>slowest files</h4>${slow.map(([, ms, pct, name]) =>
-      `<div class="rp-bar" style="--p:${pct}%" title="${escape(name)}"><span>${escape(name.split('/').pop())}</span><span>${secs(Number(ms))} · ${pct}%</span></div>`).join('')}` : '';
-    $('t-limits').innerHTML = texts.filter((t) => t.startsWith('limit ')).map((t) => `<p>reached ${escape(t.slice(6))}</p>`).join('');
+    // the language server's report has the run's size; a console run's output does not, and keeps it
+    if (run) {
+      $('t-run').innerHTML = run.slice(4).split(', ').map((part) => {
+        const [, n, label] = part.match(/^(\S+) (.*)$/) ?? [, part, ''];
+        return `<span title="${escape(num(n))} ${escape(label)}"><b>${escape(Number(n) >= 1e4 ? short(n) : num(n))}</b>${escape(label)}</span>`;
+      }).join('') + ($('t-time-text').textContent ? `<span title="the whole check"><b>${escape($('t-time-text').textContent)}</b>total</span>` : '');
+      const slow = texts.map((t) => t.match(/^slow (\d+) (\d+) (.*)$/)).filter(Boolean);
+      $('t-slow').innerHTML = slow.length ? `<h4>slowest files</h4>${slow.map(([, ms, pct, name]) =>
+        `<div class="rp-bar" style="--p:${pct}%" title="${escape(name)}"><span>${escape(name.split('/').pop())}</span><span>${secs(Number(ms))} · ${pct}%</span></div>`).join('')}` : '';
+      $('t-limits').innerHTML = texts.filter((t) => t.startsWith('limit ')).map((t) => `<p>reached ${escape(t.slice(6))}</p>`).join('');
+    }
     for (const [, text] of lines) {
       const m = plain(text).match(/cache (?:kernel|class|package) (\S+): (reused|rebuilt \((.*)\))/);
       if (m) (m[2] === 'reused' ? reused : fresh).push(m[3] ? `${m[1]} (${m[3]})` : m[1]);
@@ -2434,7 +2570,7 @@
   let cacheOrder = { key: 'size', down: true, used: true };
   const cacheBadge = (cls, text) => `<span class="cache-kind k-${cls}">${escape(text)}</span>`;
   function drawCaches(entries) {
-    if (entries) { cacheEntries = entries; $('cache-count').textContent = entries.length || ''; }
+    if (entries) { cacheEntries = entries; $('cache-count').textContent = entries.length ? short(entries.length) : ''; }
     const q = cacheFilter.value.trim().toLowerCase();
     // a row matches by its kind and name, or by a command it defined in the run (`\textcolor`)
     const rows = cacheEntries.map((e) => { const l = cacheLabel(e.path); return { e, l, u: usedOf(l[1], l[2]), hit: [] }; })
@@ -2505,7 +2641,7 @@
     const part = q.startsWith('\\'), w = q.replace(/^\\/, '');
     return w ? [...definedOf(cls, what)?.names ?? []].filter((n) => part ? n.toLowerCase().includes(w) : n.replace(/^\\/, '').toLowerCase() === w) : [];
   };
-  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : /(s|ch)$/.test(w) ? 'es' : 's'}`;
+  const plural = (n, w) => `${num(n)} ${w}${n === 1 ? '' : /(s|ch)$/.test(w) ? 'es' : 's'}`;
   /** One row's details: what it defines and loads, and where its documentation is. */
   function details(cls, what, needs) {
     const parts = [];
@@ -2783,7 +2919,9 @@
     if (PHASE[label]) { bar.removeAttribute('value'); busy(PHASE[label][0], PHASE[label][1]); return; }
     loads.set(label, [loaded, total]);
     const [got, all] = [...loads.values()].reduce(([g, a], [l, t]) => [g + l, a + t], [0, 0]);
-    busy('Fetching', `Fetching ${[...loads.keys()].join(' and ')}: ${mib(got)} of ${mib(all)} MiB`, { done: all ? Math.min(got / all, 1) : null, got, all });
+    const names = [...loads.keys()];
+    busy('Fetching', `Fetching ${names.length > 2 ? plural(names.length, 'download') : names.join(' and ')}: ${mib(got)} of ${mib(all)} MiB`, { done: all ? Math.min(got / all, 1) : null, got, all });
+    status.title = names.join(', ');
   }
 
   worker.onmessage = async ({ data }) => {
@@ -2800,7 +2938,8 @@
           const waiting = missing(unresolved);
           if ((waiting.length || inFlight.size) && m.params.uri === uri()) {
             const names = [...new Set([...waiting, ...inFlight])].map((id) => PACKAGES.get(id).label).join(', ');
-                        busy('Loading', `Loading ${names}…`);
+            busy('Loading', `Loading ${plural(names.split(', ').length, 'package')}…`);
+            status.title = names;
             if (waiting.length) fetchMissing(unresolved).then((ok) => { if (!ok) { show(m.params.uri, m.params.diagnostics); typeset(m.params.uri); } });
             continue;
           }

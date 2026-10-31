@@ -415,7 +415,9 @@ fn run() -> Result<(), String> {
             CacheAction::Export { archive, only, without } => {
                 satex::cmd::cache::export(&cfg, archive, (only, without), json, &mut out)
             }
-            CacheAction::Import { archive } => satex::cmd::cache::import(&cfg, archive, json, &mut out),
+            CacheAction::Import { archives } => {
+                archives.iter().try_for_each(|archive| satex::cmd::cache::import(&cfg, archive, json, &mut out))
+            }
             CacheAction::Clear => satex::cmd::cache::clear(&cfg, json, &mut out),
             CacheAction::Prune => satex::cmd::cache::prune(&cfg, json, &mut out),
         };

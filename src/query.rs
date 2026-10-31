@@ -435,7 +435,8 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// `│` is a thin `\vrule` (a table's `|`), `―` an `\hrule` (`\hline`),
 /// `▬` a wider `\vrule` (`\rule`).
 /// `keys` lists the labels, references and citations of the user's files
-/// with the place in `detail` where each stands.
+/// with the place in `detail` where each stands. `fonts` lists where the
+/// font changes, as [`font_styles`] names it.
 fn typeset(analysis: &Analysis) -> Vec<Record> {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
@@ -465,6 +466,8 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         .map(|o| (o.span, o.kind.as_str(), o.key.as_str()))
         .collect();
     named.sort_by_key(|(s, ..)| (s.file, s.line, s.col));
+    let styles = font_styles(analysis);
+    let mut style = "";
     let mut keys: std::collections::VecDeque<(&str, &str)> = Default::default();
     let mut next_key: std::collections::HashMap<FileId, usize> = Default::default();
     let glyphs = glyphs(analysis);
@@ -524,6 +527,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                 record.insert("kept".into(), json!(true));
             }
             out.push(record);
+            style = "";
         }
         if !piece.trim().is_empty() {
             first.get_or_insert(site);
@@ -540,6 +544,13 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             }
             None => {
                 close(&mut line, &mut choice, &mut causes);
+                // a font set under an undecided conditional shows from the next sure character
+                let now = styles.get(usize::from(spot.font_state)).map_or("", String::as_str);
+                if now != style {
+                    style = now;
+                    line.push(KEY);
+                    keys.push_back((FONT, now));
+                }
                 line.push_str(&piece);
             }
         }
@@ -712,6 +723,31 @@ fn glyphs(analysis: &Analysis) -> Vec<String> {
     out
 }
 
+/// The names allocated to each register, by the register as [`step_name`]
+/// writes it (`\count188`): a `\countdef`-style name's own register, and
+/// the box of a `\chardef` constant made by an allocation macro, the macro
+/// that made such names (`\newbox` gives `\@tempboxa` its number so).
+fn register_aliases(analysis: &Analysis) -> HashMap<String, Vec<String>> {
+    use crate::tex::RegKind;
+    let meaning = |sym| analysis.env.meaning(sym);
+    let register = |m: &Meaning| matches!(m, Meaning::Register(k, _) if !matches!(k, RegKind::Char | RegKind::MathChar | RegKind::UMathChar));
+    let allocators: BTreeSet<Sym> =
+        analysis.facts.defs.iter().filter(|d| register(&meaning(d.name))).filter_map(|d| d.via).collect();
+    let boxes: BTreeSet<Sym> =
+        analysis.facts.defs.iter().filter(|d| d.via.is_some_and(|v| allocators.contains(&v))).map(|d| d.name).collect();
+    let mut out: HashMap<String, Vec<String>> = HashMap::default();
+    for i in 0..analysis.interner.len() as u32 {
+        let sym = Sym(i);
+        let key = match meaning(sym) {
+            Meaning::Register(RegKind::Char, n) if boxes.contains(&sym) => format!("\\{}{n}", RegKind::Box.as_str()),
+            m @ Meaning::Register(kind, n) if register(&m) => format!("\\{}{n}", kind.as_str()),
+            _ => continue,
+        };
+        out.entry(key).or_default().push(analysis.interner.cs(sym));
+    }
+    out
+}
+
 /// A trace step's name: a register addressed by number as TeX writes it
 /// (`\count188`), not by the slot satex keeps its value in.
 fn step_name(analysis: &Analysis, sym: crate::tex::Sym) -> String {
@@ -748,6 +784,40 @@ const NOTE: (char, char) = ('\u{E000}', '\u{E001}');
 /// Where a key [`typeset`] lists stands in the text, removed by [`paragraph`].
 const KEY: char = '\u{E002}';
 
+/// The kind of a [`KEY`] that marks a font change, not a key.
+const FONT: &str = "font";
+
+/// Each row of [`Analysis::font_states`] as its family, series and shape
+/// among the kernel's defaults (`\sfdefault`, `\ttdefault`, `\bfdefault`,
+/// `\itdefault`, `\sldefault`, `\scdefault`, fntguide § 2.5): `sf`, `tt`,
+/// `bf`, `it`, `sl`, `sc`, space-separated; empty for the defaults or an
+/// unknown font.
+fn font_styles(analysis: &Analysis) -> Vec<String> {
+    // A default's text up to the kernel's `\@empty` end marker (`b\@empty`).
+    let axis = |names: &[&'static str]| -> Vec<(&'static str, String)> {
+        let text = |n| Some(crate::lint::shared::macro_text(analysis, n)?.split('\\').next()?.trim().to_string());
+        names.iter().filter_map(|n| Some((&n[..2], text(n)?))).collect()
+    };
+    // `\bfseries` sets the family's own bold series (`\bfseries@rm`, `bx`) when the kernel has one.
+    let (family, series, shape) = (
+        axis(&["sfdefault", "ttdefault"]),
+        axis(&["bfdefault", "bfseries@rm", "bfseries@sf", "bfseries@tt"]),
+        axis(&["itdefault", "sldefault", "scdefault"]),
+    );
+    let pick = |axis: &[(&'static str, String)], value: &str| axis.iter().find(|(_, d)| d == value).map(|(k, _)| *k);
+    analysis
+        .font_states
+        .iter()
+        .map(|s| {
+            [pick(&family, &s.family), pick(&series, &s.series), pick(&shape, &s.shape)]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect()
+}
+
 /// `s` as satex's own notation, not a typeset character.
 fn note(s: &str) -> String {
     format!("{}{s}{}", NOTE.0, NOTE.1)
@@ -767,18 +837,25 @@ fn paragraph(
     keys: &mut std::collections::VecDeque<(&str, &str)>,
 ) -> Record {
     let marked = tidy(marked);
-    let (mut placed, mut offset) = (Vec::new(), 0);
+    let (mut placed, mut fonts, mut offset) = (Vec::new(), Vec::new(), 0);
     for c in unmarked(&marked).chars() {
         if c != KEY {
             offset += 1;
         } else if let Some((kind, key)) = keys.pop_front() {
-            placed.push(json!({ "kind": kind, "key": key, "at": offset }));
+            if kind == FONT {
+                fonts.push(json!({ "style": key, "at": offset }));
+            } else {
+                placed.push(json!({ "kind": kind, "key": key, "at": offset }));
+            }
         }
     }
     let marked: String = marked.chars().filter(|&c| c != KEY).collect();
     let mut record = place(analysis, at);
     if !placed.is_empty() {
         record.insert("keys".into(), json!(placed));
+    }
+    if fonts.iter().any(|f| f["style"] != "") {
+        record.insert("fonts".into(), json!(fonts));
     }
     record.insert("kind".into(), json!("paragraph"));
     record.insert("detail".into(), json!(unmarked(&marked)));
@@ -1098,6 +1175,7 @@ fn dependency_graph(analysis: &Analysis) -> Vec<Record> {
 /// Each step, with what a macro call inserts and the text a step set at
 /// its own position (`\meaning`, `\the`, a character).
 fn trace(analysis: &Analysis) -> Vec<Record> {
+    let aliases = register_aliases(analysis);
     let mut set: HashMap<Span, String> = HashMap::default();
     for (c, spot) in analysis.facts.text.chars.chars().zip(&analysis.facts.text.at) {
         set.entry(spot.span).or_default().push(c);
@@ -1112,7 +1190,12 @@ fn trace(analysis: &Analysis) -> Vec<Record> {
             record.insert("index".into(), json!(event.index));
             record.insert("depth".into(), json!(event.depth));
             record.insert("step".into(), json!(event.kind.as_str()));
-            record.insert("name".into(), json!(step_name(analysis, event.name)));
+            let name = match (event.name, event.kind) {
+                (Sym(0), crate::machine::Step::OpenGroup) => "{".to_string(),
+                (Sym(0), crate::machine::Step::CloseGroup) => "}".to_string(),
+                (sym, _) => step_name(analysis, sym),
+            };
+            record.insert("name".into(), json!(name));
             let expand = matches!(event.kind, crate::machine::Step::Expand);
             record.insert("detail".into(), json!(if expand { None } else { event.detail.as_deref() }));
             let call = expand.then(|| calls.get(&(event.span, event.name))).flatten();
@@ -1151,6 +1234,14 @@ fn trace(analysis: &Analysis) -> Vec<Record> {
                 let meanings: Map<String, Json> =
                     event.meanings.iter().map(|(s, m)| (step_name(analysis, *s), json!(m.as_ref()))).collect();
                 record.insert("meanings".into(), Json::Object(meanings));
+            }
+            let named: Map<String, Json> = std::iter::once(event.name)
+                .chain(event.meanings.iter().map(|(s, _)| *s))
+                .map(|s| step_name(analysis, s))
+                .filter_map(|n| Some((n.clone(), json!(aliases.get(&n)?))))
+                .collect();
+            if !named.is_empty() {
+                record.insert("aliases".into(), Json::Object(named));
             }
             record
         })
@@ -2527,6 +2618,7 @@ fn origin_of(analysis: &Analysis, package: Option<Sym>, file: FileId) -> (u8, Js
 /// tag whitelist does not recognize as a name a document would look up
 /// (registers and the like, which crowd out the useful hundred with the
 /// tens of thousands the kernel allocates for its own bookkeeping).
+/// `does` is the one-line description of a documented kernel command.
 pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool) -> Vec<Record> {
     let mut latest: BTreeMap<Sym, &crate::facts::Definition> = BTreeMap::new();
     // A definition in a file no user file reads (the kernel's, run by
@@ -2564,6 +2656,9 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
         record.insert("effective".into(), json!(effective_of(analysis, def.name, def.mac.as_deref(), None)));
         let (tier, origin) = origin_of(analysis, def.package, def.span.file);
         record.insert("package".into(), origin);
+        if let Some(does) = describe_meaning(analysis, name, &analysis.env.meaning(def.name)) {
+            record.insert("does".into(), json!(does));
+        }
         rows.push((tier, record));
     }
     let recorded: BTreeSet<Sym> = analysis.facts.defs.iter().map(|d| d.name).collect();
@@ -2600,6 +2695,9 @@ pub fn scope(analysis: &Analysis, before: Option<(FileId, u32, u32)>, all: bool)
         record.insert("tag".into(), json!(if paired { "environment" } else { tag }));
         record.insert("effective".into(), json!(effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), None)));
         record.insert("package".into(), json!("kernel"));
+        if let Some(does) = describe_meaning(analysis, name, &meaning) {
+            record.insert("does".into(), json!(does));
+        }
         rows.push((2, record));
     }
     rows.sort_by(|(ta, a), (tb, b)| {

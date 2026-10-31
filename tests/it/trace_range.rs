@@ -274,3 +274,52 @@ fn a_trace_step_shows_its_call_and_a_stop_shows_the_state_there() {
     assert!(stopped[1].to_string().contains("old") && !stopped[1].to_string().contains("new"), "{stopped}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A register a trace step names by number carries the names the run
+/// allocated to it: `\newcount` gave `\@tempcnta` its count.
+#[test]
+fn a_register_in_the_trace_carries_its_allocated_name() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source =
+        "\\documentclass{article}\n\\begin{document}\n\\makeatletter\\@tempcnta=5 \\makeatother\n\\end{document}\n";
+    let cfg = satex::config::Config { trace: true, ..crate::support::config() };
+    let analysis = satex::machine::Machine::analyze(source, None, &cfg);
+    let rows = satex::query::run(&analysis, satex::query::Query::Trace, &satex::query::Filter::Always);
+    let named = rows.iter().filter_map(|r| r.get("aliases")?.as_object()).flatten().any(|(register, names)| {
+        register.starts_with("\\count") && names.as_array().is_some_and(|n| n.iter().any(|n| n == "\\@tempcnta"))
+    });
+    assert!(named, "no step names \\@tempcnta's count");
+}
+
+/// The playground's plain-TeX leap-year example, traced: each assignment
+/// carries the register's value (an `\advance`-style one the value before
+/// it too), each `\ifnum` the branch TeX takes. 1900 is no leap year (4
+/// and 100 divide it, 400 does not), 1990 none, 1996 and 2000 are.
+#[test]
+fn the_leap_year_trace_records_values_and_branches() {
+    let source = include_str!("../../doc/site/examples/leapyear.tex");
+    let cfg =
+        satex::config::Config { kernel: Some(satex::plugin::Kernel::None), trace: true, ..crate::support::config() };
+    let analysis = satex::machine::Machine::analyze(source, None, &cfg);
+    let rows = satex::query::run(&analysis, satex::query::Query::Trace, &satex::query::Filter::Always);
+    let of = |step: &str, name: &str| -> Vec<String> {
+        rows.iter()
+            .filter(|r| r["step"] == step && r["name"] == name)
+            .filter_map(|r| r["detail"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let years = ["1900", "1990", "1996", "2000", "2004"];
+    assert_eq!(of("assign", "\\count10")[..years.len()], years, "{rows:?}");
+    // \divide\count1 by 4 after \count1=1900
+    assert_eq!(of("assign", "\\count1").get(1).map(String::as_str), Some("1900 → 475"));
+    let branches: Vec<String> = of("branch", "\\ifnum");
+    let expected = ["true", "true", "false", "false", "true", "false", "true", "true", "true"];
+    assert_eq!(branches[..expected.len()], expected, "{branches:?}");
+    assert_eq!(of("define", "\\tleapy").first().map(String::as_str), Some("macro:->not "));
+    assert!(
+        rows.iter().filter(|r| r["step"] == "open-group").all(|r| r["name"] == "{"),
+        "a group's step names its brace"
+    );
+}

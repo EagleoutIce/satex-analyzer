@@ -8,6 +8,12 @@
       </div>
       <span class="actions">
         <select id="play-kernel" aria-label="kernel" title="the TeX engine and format"></select>
+        <button id="lib-open" class="pill feature" type="button" aria-haspopup="dialog" aria-label="Library" title="every name in force at the end of the document: search them, see how each is used, try one">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 4.5C6.8 3.4 5 3 2.5 3v9.5c2.5 0 4.3.4 5.5 1.5 1.2-1.1 3-1.5 5.5-1.5V3C11 3 9.2 3.4 8 4.5zM8 4.5V14"/></svg><span class="label">Library</span><b id="lib-count" class="count"></b></button>
+        <button id="try-open" class="pill feature" type="button" aria-haspopup="dialog" aria-label="Try" title="type a few lines and see what they set, read right after \begin{document} of this document">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5h9M8 3.5v9.5M6 13h4"/></svg><span class="label">Try</span></button>
+        <button id="draw-open" class="pill feature" type="button" aria-haspopup="dialog" aria-label="Draw a symbol" title="draw a symbol, get the commands that set it">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 2.5l3 3L6 13H3v-3zM9 4l3 3"/></svg><span class="label">Draw</span></button>
         <button id="play-link" class="pill" type="button" aria-label="Copy link" title="a link that restores the project's files, the open file, the command and the kernel">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 9a3 3 0 0 0 4.2.2l2-2a3 3 0 0 0-4.2-4.2l-.8.8"/><path d="M9 7a3 3 0 0 0-4.2-.2l-2 2a3 3 0 0 0 4.2 4.2l.8-.8"/></svg><span class="label">Copy link</span></button>
         <button id="play-issue" class="pill" type="button" aria-label="Report an issue" title="open a GitHub issue form in a new tab, filled with the satex version, the kernel and this file. Nothing is sent until you submit it there">
@@ -22,8 +28,8 @@
             <span id="play-upmenu" class="ctx" role="menu" hidden><button role="menuitem" data-pick="new">New file…</button><button role="menuitem" data-pick="files">Upload files or .zip…</button><button role="menuitem" data-pick="folder">Upload folder…</button></span></span></div>
         <div id="play-files-tree" role="tree" aria-label="the project's files"></div>
         <details open class="sect tree-sect" id="play-outline"><summary>Outline <b id="outline-count"></b></summary>
-          <div id="outline-body" class="outline"><p class="muted">The document's parts, labels and bibliography, once it is checked.</p></div></details>
-        <details class="sect tree-sect" id="play-exsect"><summary>Examples</summary><div id="play-examples" role="list"></div></details>
+          <div id="outline-body" class="outline grow"><p class="muted">The document's parts, labels and bibliography, once it is checked.</p></div></details>
+        <details class="sect tree-sect" id="play-exsect"><summary>Examples</summary><div id="play-examples" class="grow" role="list"></div></details>
       </nav>
       <div class="treegrip" id="play-treegrip" role="separator" aria-orientation="vertical" aria-label="resize the files" title="drag to resize"></div>
       <div id="play-editor" class="editor"><textarea id="play-source" spellcheck="false" aria-label="LaTeX source"></textarea></div>
@@ -59,15 +65,25 @@
     <dialog id="play-library" class="cache-dialog lib-dialog" aria-labelledby="lib-title">
       <header><h3 id="lib-title">Library</h3><button type="button" class="ghost small" id="lib-close" aria-label="close">✕</button></header>
       <div class="lib grow">
-        <div class="lib-bar"><input type="search" id="lib-search" placeholder="Search names in force: \section, tikz, skip…" aria-label="search the names in force">
-          <select id="lib-from" aria-label="from which package"><option value="">every package</option></select>
+        <div class="lib-bar"><label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+          <input type="search" id="lib-search" placeholder="Search names: \section, tikz, skip…" aria-label="search the names in force"></label>
+          <select id="lib-from" class="dropdown" aria-label="from which package"><option value="">every package</option></select>
           <label class="ts-toggle" title="Also list internal names: with @, expl3 internals"><span data-short="internal">internal</span><input type="checkbox" id="lib-internal" role="switch" aria-label="internal names"></label></div>
         <div id="lib-kinds" class="lib-kinds" role="group" aria-label="which kind of name"></div>
         <ul id="lib-list" class="lib-list"><li class="muted">The names appear once the document is checked.</li></ul>
-        <div class="lib-try"><label for="lib-text">Try <small class="muted">read right after <code>\begin{document}</code> of this document; the file stays as it is</small></label>
-          <textarea id="lib-text" rows="2" spellcheck="false" placeholder="\textbf{bold} 10--12 \hfill right"></textarea>
-          <button type="button" id="lib-run" class="small" title="Ctrl+Enter">Typeset it</button><div id="lib-out"></div></div>
       </div></dialog>
+    <dialog id="play-try" class="cache-dialog try-dialog" aria-labelledby="try-title">
+      <header><h3 id="try-title">Try</h3><button type="button" class="ghost small" id="try-close" aria-label="close">✕</button></header>
+      <p class="muted cache-note">Read right after <code>\begin{document}</code> of this document. The file stays as it is.</p>
+      <div class="try-box"><textarea id="lib-text" rows="3" spellcheck="false" aria-label="text to try" placeholder="\textbf{bold} 10--12 \hfill right"></textarea>
+        <button type="button" id="lib-run" class="runbtn" title="Ctrl+Enter">Typeset</button></div>
+      <div id="lib-out" class="try-out"></div></dialog>
+    <dialog id="play-draw" class="cache-dialog draw-dialog" aria-labelledby="draw-title">
+      <header><h3 id="draw-title">Draw a symbol</h3><button type="button" class="ghost small" id="draw-close" aria-label="close">✕</button></header>
+      <p class="muted cache-note" id="draw-note">Draw it in the box. The closest symbols the document can set are listed beside it.</p>
+      <div class="draw-box"><div class="draw-pad"><canvas id="draw-pad" width="256" height="256" aria-label="drawing area"></canvas>
+        <button type="button" class="small ghost" id="draw-clear">Clear</button></div>
+        <ol id="draw-list" class="draw-list" aria-live="polite"></ol></div></dialog>
     <dialog id="play-cache" class="cache-dialog" aria-labelledby="cache-title">
       <header><h3 id="cache-title">Caches</h3><button type="button" class="ghost small" id="cache-close" aria-label="close">✕</button></header>
       <p class="muted cache-note">Analysis results kept in this browser. A dropped entry is rebuilt when needed.</p>
@@ -86,7 +102,6 @@
     </dialog>
     <div class="statusbar" aria-live="polite"><span class="actbox" tabindex="0" title=""><progress id="play-progress" max="1" value="0" aria-label="loading"></progress><span id="play-status">Fetching satex and the TeX bundle…</span><dl id="act-detail" class="stat-pop" hidden></dl></span>
       <span id="play-pills" class="pills"></span>
-      <button type="button" class="stat-btn" id="lib-open" aria-haspopup="dialog" title="every name in force, and a box to try them">library <b id="lib-count"></b></button>
       <button type="button" class="stat-btn" id="cache-open" aria-haspopup="dialog" title="what satex keeps between checks and visits"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/></svg>caches <b id="cache-count"></b></button>
       <span class="statdetail"><button id="t-time" class="stat-time" type="button" aria-expanded="false" aria-controls="t-detail" title="timings and size of the last run" hidden><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.2 1.5"/></svg><span id="t-time-text"></span></button>
         <div id="t-detail" class="stat-pop run-pop" hidden><div id="t-run" class="rp-nums"></div><div id="t-slow" class="rp-slow"></div><div id="t-limits" class="rp-limits"></div>

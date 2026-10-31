@@ -544,3 +544,28 @@ fn a_section_number_and_its_title_are_apart() {
     let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
     assert!(texts.contains(&"1 Intro"), "{texts:?}");
 }
+
+/// The typeset text says where its font changes, by the kernel's defaults:
+/// `\textbf` is `\bfdefault`, `\itshape` `\itdefault`, and so on.
+#[test]
+fn the_typeset_text_knows_its_fonts() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\nA \\textbf{B} {\\itshape C} \\texttt{D} \\textsf{\\textsc{E}} F\n\\end{document}\n";
+    let analysis = analyze_latex(source);
+    let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+    let row = rows.iter().find(|r| r.get("kind").and_then(|k| k.as_str()) == Some("paragraph")).expect("a paragraph");
+    let detail: Vec<char> = row["detail"].as_str().unwrap().chars().collect();
+    let fonts = row["fonts"].as_array().expect("fonts");
+    let style = |at: usize| {
+        fonts
+            .iter()
+            .take_while(|f| f["at"].as_u64().unwrap() as usize <= at)
+            .last()
+            .map_or("", |f| f["style"].as_str().unwrap())
+    };
+    let styled: Vec<(char, &str)> =
+        detail.iter().enumerate().filter(|(_, c)| c.is_alphabetic()).map(|(i, &c)| (c, style(i))).collect();
+    assert_eq!(styled, [('A', ""), ('B', "bf"), ('C', "it"), ('D', "tt"), ('E', "sf sc"), ('F', "")], "{row:?}");
+}

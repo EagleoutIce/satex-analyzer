@@ -60,7 +60,9 @@
         s.next(); return 'variableName';
       },
     });
-    return { language: StreamLanguage.define(stex), bib, highlighter };
+    // a control symbol (`\ `, `\-`, `\'`) is one token, as for TeX; stex leaves some of them split
+    const tex = { ...stex, token: (s, st) => (s.match(/^\\[^A-Za-z@\xc0-\uffff]/) ? 'tag' : stex.token(s, st)) };
+    return { language: StreamLanguage.define(tex), bib, highlighter };
   })());
 
   // ------------------------------------------------------------ explain cards
@@ -136,24 +138,59 @@
       (below.length ? `<div class="ty-below"><span>below</span> ${below.map((n) => `<code>${esc(n)}</code>`).join(' ')}</div>` : '') +
       '<div class="ty-foot">click: the lattice in the wiki</div>';
   }
+  // ------------------------------------------------------------ tooltips
+  // Every tooltip of the site is one of two floating cards made here: `satexTip.card` for a
+  // command's card, a finding or a name in a trace, `satexTip.note` for short text (a `title`,
+  // a type, an argument chip), which may stand beside a card.
+  const clamp = (x, lo, hi) => Math.min(Math.max(x, lo), hi);
+  function floating(cls) {
+    const el = Object.assign(document.createElement('div'), { className: `tip ${cls}`, hidden: true, role: 'tooltip' });
+    let timer = 0;
+    const later = (f, ms) => { clearTimeout(timer); timer = setTimeout(f, ms); };
+    const hide = (ms = 0) => later(() => { el.hidden = true; delete el.dataset.pin; }, ms);
+    el.addEventListener('mouseenter', () => clearTimeout(timer));
+    el.addEventListener('mouseleave', () => { if (!el.dataset.pin) hide(120); });
+    /** Below `at` (an element or a rect), else above it; beside `host` when that is a card it would cover. */
+    const show = (at, html, host = null) => {
+      clearTimeout(timer);
+      // a modal dialog's top layer hides anything outside it
+      const layer = at.closest?.('dialog[open]') ?? document.querySelector('dialog[open]') ?? document.body;
+      if (el.parentElement !== layer) layer.append(el);
+      el.innerHTML = html;
+      el.hidden = false;
+      const a = at.getBoundingClientRect?.() ?? at, h = host?.getBoundingClientRect() ?? a, w = el.offsetWidth, ht = el.offsetHeight;
+      let left = clamp(a.left, 8, innerWidth - w - 8), top = h.bottom + 6 + ht <= innerHeight ? h.bottom + 6 : h.top - ht - 6;
+      if (top < 8) { top = clamp(a.top, 8, innerHeight - ht - 8); left = h.right + 6 + w <= innerWidth ? h.right + 6 : Math.max(8, h.left - w - 6); }
+      Object.assign(el.style, { left: `${left}px`, top: `${top}px` });
+    };
+    return { el, show, hide, later };
+  }
+  const tips = self.satexTip = { card: floating('tip-card'), note: floating('tip-note') };
   {
-    let tip = null;
+    const { note } = tips;
+    // a native `title` would bring the browser's own tooltip: lent to the note while hovered
+    let titled = null;
+    const untitle = () => { if (titled) { titled.title = titled.dataset.title; delete titled.dataset.title; titled = null; } };
     document.addEventListener('mouseover', (e) => {
       const a = e.target.closest?.('a.ty[data-ty]'), chip = e.target.closest?.('.arg[data-tip]');
       const ty = a?.dataset.ty ?? chip?.querySelector('a.ty[data-ty]')?.dataset.ty;
       const html = (chip ? `<div class="ty-what">${esc(chip.dataset.tip)}</div>` : '') + (ty ? tyCard(ty) : '');
-      if (!html) { if (tip && !e.target.closest?.('.ty-tip')) tip.hidden = true; return; }
-      tip ??= Object.assign(document.body.appendChild(document.createElement('div')), { className: 'ty-tip', role: 'tooltip' });
-      tip.innerHTML = html;
-      tip.hidden = false;
-      // below or above the chip; a chip inside another card puts it beside that card, never over it
-      const c = (chip ?? a).getBoundingClientRect(), host = (chip ?? a).closest('.cm-tooltip, .cs-tip, .tip')?.getBoundingClientRect() ?? c;
-      const w = Math.min(320, innerWidth - 16), h = tip.offsetHeight;
-      let left = Math.max(8, Math.min(c.left, innerWidth - w - 8)), top = host.bottom + 6 + h <= innerHeight ? host.bottom + 6 : host.top - h - 6;
-      if (top < 0) { top = Math.max(8, Math.min(c.top, innerHeight - h - 8)); left = host.right + 6 + w <= innerWidth ? host.right + 6 : Math.max(8, host.left - w - 6); }
-      tip.style.left = `${left}px`;
-      tip.style.top = `${top}px`;
+      const t = !html && (e.target.closest?.('[title]') ?? (titled?.contains(e.target) ? titled : null));
+      if (t) {
+        if (t === titled) return;
+        untitle();
+        if (!t.title.trim()) return;
+        titled = t;
+        t.dataset.title = t.title;
+        t.removeAttribute('title');
+        note.later(() => { if (titled === t) note.show(t, esc(t.dataset.title), t.closest('.tip')); }, 450);
+        return;
+      }
+      untitle();
+      if (!html) { if (!e.target.closest?.('.tip-note')) note.hide(); return; }
+      note.show(chip ?? a, html, (chip ?? a).closest('.tip, .cm-tooltip'));
     });
+    document.addEventListener('pointerdown', () => { untitle(); note.hide(); }, true);
   }
   /** explain's `types` (`#1 skip register`) by argument name: `{ arg1: 'skip register' }`. */
   const typesOf = (r) => Object.fromEntries((r.types ?? []).map((t) => t.match(/^#(\d+) (.+)$/)).filter(Boolean).map(([, n, t]) => [`arg${n}`, t]));
@@ -245,11 +282,16 @@
     return `<a class="place" href="${esc(href)}" data-path="${esc(path)}" data-line="${line}" title="open ${esc(path)} at line ${line}">${esc(file)}:${line}</a>` +
       (up ? ` <a class="upstream" href="${esc(up[0])}" target="_blank" rel="noopener" title="the sources of ${esc(file)} in ${esc(up[1])}">source ↗</a>` : '');
   }
-  const csChip = (name) => `<a class="cs" href="#" data-cs="${esc(name)}" title="explain ${esc(name)}">${esc(name)}</a>`;
+  /** A command's name as shown: a control space `\ ` keeps its space visible, as one token. */
+  const csName = (name) => esc(String(name ?? '').replace(/^\\ $/, '\\␣'));
+  const csChip = (name) => `<a class="cs" href="#" data-cs="${esc(name)}" title="explain ${csName(name)}">${csName(name)}</a>`;
   /** The one marker of a package, class or the kernel, as the cache dialog badges them. */
   const pkgChip = (kind, name) => `<span class="cache-kind k-${kind}" title="${kind === 'kernel' ? 'defined by the kernel' : `from the ${kind} ${esc(name)}`}">${esc(name)}</span>`;
   /** The playground's button that traces a call of the command. */
-  const traceButton = (r) => document.body.classList.contains('play') && /^\\/.test(r.name) ? ` <button type="button" class="small ghost x-trace" data-trace="${esc(r.name)}" title="step through how a call of ${esc(r.name)} expands">Trace</button>` : '';
+  /** Trace where the project calls the name (the playground's `satexCalled`), else Try a sample call in a scratch run. */
+  const traceButton = (r) => !document.body.classList.contains('play') || !/^\\/.test(r.name) ? ''
+    : r.uses !== 0 && (self.satexCalled?.(r.name) ?? true) ? ` <button type="button" class="small ghost x-trace" data-trace="${esc(r.name)}" title="step through how a call of ${csName(r.name)} expands">Trace</button>`
+      : ` <button type="button" class="small ghost x-trace" data-try="${esc(r.effective ?? r.name)}" title="the project never calls ${csName(r.name)}: try a call in a scratch run, its arguments yours to fill in">Try</button>`;
   /** One explain record as a card: signature, body, by, defined at, context, uses, expands. */
   function explain(r) {
     const rows = [];
@@ -285,7 +327,7 @@
       (inner.length ? `<details class="x-more"><summary>${inner.length} internal</summary><span class="chips">${inner.map(csChip).join('')}</span></details>` : '')]);
     if (r.error) rows.push(['error', `<span class="x-err">${esc(r.error)}</span>`]);
     const tags = [primitive ? 'primitive' : r.tag, r.when && `in the ${r.when}`, r.certain === false && 'uncertain'].filter(Boolean);
-    return `<div class="xcard"><div class="x-head"><code class="x-name">${esc(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}${traceButton(r)}</div>` +
+    return `<div class="xcard"><div class="x-head"><code class="x-name">${csName(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}${traceButton(r)}</div>` +
       `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
   }
   /** The same record as a hover card: its name and kind, where it is
@@ -297,7 +339,7 @@
       : r.takes ? argumentCount(r.takes) : '';
     const where = r.path && r.line ? placeLink(r.path, r.line, r.file) : '';
     const docs = r.reference ? `<a href="${esc(r.reference)}" target="_blank" rel="noopener">${esc(r.documentation ?? 'docs')} ↗</a>` : '';
-    return `<div class="xcard brief"><div class="x-head"><code class="x-name">${esc(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}` +
+    return `<div class="xcard brief"><div class="x-head"><code class="x-name">${csName(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}` +
       `${where ? ` <span class="x-where">${where}</span>` : ''}${traceButton(r)}</div>` +
       (r.does ? `<div class="x-does">${esc(r.does)}</div>` : '') + (use ? `<div class="x-use">${use}</div>` : '') + (r.error ? `<div class="x-err">${esc(r.error)}</div>` : '') +
       (docs ? `<div class="x-docs">${docs}</div>` : '') + '</div>';
@@ -311,10 +353,11 @@
    * a table's `|`, an `\hline` and a `\rule`, drawn. */
   const RULES = { '│': ['ts-vrule', 'a \\vrule: a table\'s |'], '―': ['ts-hrule', 'an \\hrule: \\hline'], '▬': ['ts-bar', 'a \\rule'] };
   function notation(marked) {
-    let open = 0;
+    let open = 0, font = '';
     const html = marked.split(/(\uE000[^\uE001]*\uE001)/).map((part) => {
       const note = /^\uE000([^\uE001]*)\uE001$/.exec(part)?.[1];
-      if (note === undefined) return esc(part);
+      if (note === undefined) return font && part ? `<span class="${font}">${esc(part)}</span>` : esc(part);
+      if (note[0] === '\u0002') { font = note.slice(1).split(' ').filter(Boolean).map((x) => `ts-${x}`).join(' '); return ''; }
       if (note === '⟦') { open++; return '<span class="ts-box" title="set in a box: on the page only if the box is used">'; }
       if (note === '⟧') { if (!open) return ''; open--; return '</span>'; }
       if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `<span class="ts-key ts-key-${esc(kind)}" title="${esc(kind)}">${esc(key)}</span>`; }
@@ -323,18 +366,13 @@
     }).join('');
     return html + '</span>'.repeat(open);
   }
-  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, placeLink, upstream, csChip, value, esc, notation };
+  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, placeLink, upstream, csChip, csName, value, esc, notation };
 
   // ------------------------------------------------------------ the landing page's examples
   // A command explains itself on hover, an underline shows its finding: a floating card,
   // so nothing on the page moves. The panel beside keeps the last command explained.
-  const tip = Object.assign(document.createElement('div'), { className: 'tip', hidden: true });
-  let tipTimer = 0;
-  const hideTip = () => { clearTimeout(tipTimer); tipTimer = setTimeout(() => { tip.hidden = true; }, 250); };
-  tip.onmouseenter = () => clearTimeout(tipTimer);
-  tip.onmouseleave = hideTip;
+  const { card } = tips, tip = card.el;
   for (const fig of document.querySelectorAll('.example')) {
-    if (!tip.isConnected) document.body.append(tip);
     const data = JSON.parse(fig.querySelector('.ex-data').textContent);
     const pane = fig.querySelector('.ex-explain');
     // A command before `\begin{document}` means what it means in the preamble.
@@ -360,30 +398,21 @@
         (d.fix ? `<p class="tip-fix"><span class="fix fix-${d.applicability}">fix</span> ${inline(d.fix)}${diff}</p>` : '') + '</div>';
     };
     const lit = (ks, on) => { for (const k of ks) for (const x of fig.querySelectorAll(`[data-lint~="${k}"]`)) x.classList.toggle('lit', on); };
-    const put = (el) => {
-      const b = el.getBoundingClientRect();
-      tip.hidden = false;
-      const w = tip.offsetWidth, h = tip.offsetHeight;
-      const top = b.bottom + 6 + h > innerHeight && b.top - 6 - h > 0 ? b.top - 6 - h : b.bottom + 6;
-      Object.assign(tip.style, { left: `${Math.max(8, Math.min(b.left, innerWidth - w - 16))}px`, top: `${top}px` });
-    };
     src.addEventListener('mouseover', (e) => {
       const el = e.target.closest('[data-cs], [data-lint]');
       if (!el) return;
-      clearTimeout(tipTimer);
       const ks = el.dataset.lint ? el.dataset.lint.split(' ') : [];
       const cs = el.dataset.cs ? record(el.dataset.cs, el) : null;
-      if (!ks.length && !cs) return hideTip();
-      tip.innerHTML = ks.map(lintCard).join('') + (cs ? brief(cs) : '');
+      if (!ks.length && !cs) return card.hide(250);
+      card.show(el, ks.map(lintCard).join('') + (cs ? brief(cs) : ''));
       tip.dataset.fig = fig.id;
       if (cs) show(el.dataset.cs, el);
       lit(ks, true);
-      put(el);
     });
     src.addEventListener('mouseout', (e) => {
       const el = e.target.closest('[data-lint]');
       if (el) lit(el.dataset.lint.split(' '), false);
-      hideTip();
+      card.hide(250);
     });
     const list = fig.querySelector('.ex-findings');
     list?.addEventListener('mouseover', (e) => { const li = e.target.closest('li[data-k]'); if (li) lit([li.dataset.k], true); });

@@ -287,7 +287,9 @@ EXAMPLES = SITE / "examples"
 
 
 def roots(samples):
-    return sorted(p.name for p in samples.glob("*.tex") if "\\documentclass" in p.read_text(errors="replace"))
+    # a LaTeX document, or one whose magic comment names its engine (a plain TeX file)
+    root = lambda t: "\\documentclass" in t or re.search(r"^%\s*!T[eE]X\s+(?:TS-)?program\s*=", t, re.M)
+    return sorted(p.name for p in samples.glob("*.tex") if root(p.read_text(errors="replace")))
 
 
 def sources():
@@ -315,6 +317,12 @@ SAMPLE = "hello.tex"  # the document the playground opens with: the first downlo
 def file_of(name):
     """The file a package (`name`) or class (`name.cls`) is."""
     return name if name.endswith(".cls") else f"{name}.sty"
+
+
+def first_download():
+    """packages.txt's first section: fetched with the first download, not on demand."""
+    section = re.search(r"^# with the first download.*\n((?:[^#\n].*\n)+)", (SITE / "packages.txt").read_text(), re.M)
+    return section.group(1).split() if section else []
 
 
 def probe_doc(probes, name):
@@ -413,7 +421,7 @@ def bundle(satex, work):
     def fresh(kernel, flags):
         """One cache archive per package or class held by the entries running every example made,
         from a copy of the kernel's caches (`satex cache export --only`)."""
-        return memo(work, f"fresh-{kernel}", [KEY, kernel, flags, tree_digest(project)], lambda: fresh_run(kernel, flags))
+        return memo(work, f"fresh-{kernel}", [KEY, kernel, flags, tree_digest(project), first_download()], lambda: fresh_run(kernel, flags))
 
     def fresh_run(kernel, flags):
         cache = work / f"cache-docs-{kernel}"
@@ -424,6 +432,11 @@ def bundle(satex, work):
         with concurrent.futures.ThreadPoolExecutor(max(1, JOBS // len(KERNELS))) as inner:
             list(inner.map(lambda d: subprocess.run([str(satex), *flags, "lint", "-f", d.name], cwd=project, env=penv,
                                                     capture_output=True, check=False), docs))
+            # the first download's packages get entries even when no example loads them: a probe document's.
+            # Not its classes: a KOMA class's entries are about 9 MiB gz each, too much for the first download.
+            first = [probe_doc(probes, n) for n in installed(first_download()) if kernel != "plain" and not n.endswith(".cls")]
+            list(inner.map(lambda d: subprocess.run([str(satex), *flags, "lint", "-f", d.name], cwd=probes, env=penv,
+                                                    capture_output=True, check=False), first))
         out = work / f"export-{kernel}.bin"
         held = set(json.loads(run(str(satex), "--format", "json", "cache", "export", str(out), env=penv))["holds"].values())
         archives = {}
@@ -696,10 +709,6 @@ def playground(satex, wasm, work, out):
         extra.append({"id": f"{kernel}/{name}", "name": name.removesuffix(".cls"), "kernel": kernel, "needs": needs, "label": name,
                       "size": len(packed), "bundle": emit_local(out, f"play/pkg/{kernel}-{name}.bin.gz", packed),
                       "files": [[path, len(data)] for path, data in files.items()]})
-    def preloaded():
-        """packages.txt's first section: fetched with the first download, not on demand."""
-        section = re.search(r"^# with the first download.*\n((?:[^#\n].*\n)+)", (SITE / "packages.txt").read_text(), re.M)
-        return section.group(1).split() if section else []
     def facts():
         """What satex says about itself: its queries, which of them name their file, its rules, its completions."""
         queries = [line.split()[0] for line in run(str(satex), "query", "--list").splitlines()[1:] if line.strip()]
@@ -721,14 +730,29 @@ def playground(satex, wasm, work, out):
     manifest = {
         "js": emit_local(out, "play/satex.js", (wasm / "satex.js").read_bytes()),
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
-        "kernels": kernels, "packages": extra, "preload": preloaded(), "unavailable": UNAVAILABLE, "queries": queries, "filtered": filtered, "rules": rules,
+        "kernels": kernels, "packages": extra, "preload": first_download(), "unavailable": UNAVAILABLE, "queries": queries, "filtered": filtered, "rules": rules,
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(),
+        "symbols": emit(out, "play/symbols.json", json.dumps(symbols()).encode()),
     }
     sizes = {k["id"]: f"{k['size'] / 2**20:.1f} MiB gz, {len(k['files'])} files" for k in kernels}
     print(f"playground: wasm {len(wasm_bytes) / 2**20:.1f} MiB, {sizes}; {len(extra)} package bundles on demand, "
           f"{sum(p['size'] for p in extra) / 2**20:.1f} MiB gz in all", file=sys.stderr)
     return manifest, examples(satex, work, project)
+
+
+def symbols():
+    """The symbols the playground's drawing pad matches against: unicode-math's table of the
+    installation, each command with the character it sets, `[codepoint, name, class]`."""
+    table = run("kpsewhich", "unicode-math-table.tex").strip()
+    if not table:
+        return []
+    rows = re.findall(r'\\UnicodeMathSymbol\{"([0-9A-Fa-f]+)\}\{(\\[A-Za-z]+)\s*\}\{\\math(\w+)\}', Path(table).read_text())
+    out = [[int(c, 16), name, cls] for c, name, cls in rows]
+    # unicode-math's upright Greek (`\mupalpha`) is what the kernel's `\alpha` names
+    names = {n for _, n, _ in out}
+    out += [[c, "\\" + n[4:], cls] for c, n, cls in list(out) if n.startswith("\\mup") and cls == "alpha" and "\\" + n[4:] not in names]
+    return out
 
 
 # ---------------------------------------------------------------- site

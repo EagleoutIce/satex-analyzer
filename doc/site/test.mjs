@@ -288,8 +288,8 @@ async function browser() {
     let at = await center(`${hello} [data-cs="\\\\greet"]`);
     const before = await js(layout);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
-    check('landing command hover card', await until(`const t = document.querySelector('.tip:not([hidden])'); return t && /greet/.test(t.querySelector('.x-name')?.textContent) && t.querySelector('.sig .arg[title]')`, 5000),
-      await js(`return document.querySelector('.tip')?.textContent.slice(0, 120) ?? 'no card'`));
+    check('landing command hover card', await until(`const t = document.querySelector('.tip-card:not([hidden])'); return t && /greet/.test(t.querySelector('.x-name')?.textContent) && t.querySelector('.sig .arg[title]')`, 5000),
+      await js(`return document.querySelector('.tip-card')?.textContent.slice(0, 120) ?? 'no card'`));
     await shot('landing-command-hover');
     const after = await js(layout);
     check('landing hover moves nothing', before === after, before === after ? '' : `${before} -> ${after}`);
@@ -299,7 +299,7 @@ async function browser() {
       const line = document.querySelector('${hello} [data-lint~="' + k + '"]').closest('.ln'); return [...line.querySelectorAll('[data-lint~="' + k + '"]')].map((e) => e.textContent).join('') === line.textContent`));
     at = await center(`${hello} [data-lint].f-error`);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
-    check('landing finding hover', await until(`return /already defined/.test(document.querySelector('.tip:not([hidden]) .tip-lint')?.textContent ?? '')`, 5000));
+    check('landing finding hover', await until(`return /already defined/.test(document.querySelector('.tip-card:not([hidden]) .tip-lint')?.textContent ?? '')`, 5000));
     await shot('landing-finding-hover');
     check('landing finding hover moves nothing', before === await js(layout));
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
@@ -388,25 +388,26 @@ async function browser() {
       await section('8', async () => {
       // 8: two tooltips never overlap: the latest hovered wins
       await open('hover', '\\documentclass{article}\n\\begin{document}\nText \\emph{x}\n\\end{document}\n');
-      const visible = `[...document.querySelectorAll('.cm-tooltip-hover, .cs-tip')].filter((t) => !t.hidden && getComputedStyle(t).display !== 'none' && t.getBoundingClientRect().width > 0).map((t) => t.className.split(' ')[0])`;
+      // one card for both: what it shows says which hover won
+      const visible = `[...document.querySelectorAll('.tip-card')].filter((t) => !t.hidden && t.getBoundingClientRect().width > 0).map((t) => t.querySelector(':scope > .hover') ? 'editor' : 'chip')`;
       const ed = await spot('\\emph', 3);
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: ed[0], y: ed[1] });
-      const cm = await until(`return ${visible}.includes('cm-tooltip-hover')`, 10000);
+      const cm = await until(`return ${visible}.includes('editor')`, 10000);
       await js(`document.getElementById('lib-open').click()`);
       await until(`return document.querySelectorAll('#lib-list .cs-ref').length > 3`, 60000);
       const chip = await js(`const e = document.querySelector('#lib-list .cs-ref'); e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return [b.x + 4, b.y + b.height / 2]`);
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: chip[0], y: chip[1] });
-      await until(`return ${visible}.includes('cs-tip')`, 10000);
+      await until(`return ${visible}.includes('chip')`, 10000);
       const one = await js(`return ${visible}`);
-      check('chip card hides the editor hover', cm && one.length === 1 && one[0] === 'cs-tip', JSON.stringify(one));
+      check('chip card hides the editor hover', cm && one.length === 1 && one[0] === 'chip', JSON.stringify(one));
       await shot('w8-latest-hover');
       await js(`document.getElementById('play-library').close()`);
       const ed2 = await spot('\\emph', 3);
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: ed2[0], y: ed2[1] });
-      await until(`return ${visible}.includes('cm-tooltip-hover')`, 10000);
+      await until(`return ${visible}.includes('editor')`, 10000);
       const two = await js(`return ${visible}`);
-      check('editor hover hides the chip card', two.length === 1 && two[0] === 'cm-tooltip-hover', JSON.stringify(two));
+      check('editor hover hides the chip card', two.length === 1 && two[0] === 'editor', JSON.stringify(two));
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
       });
       await section('lib', async () => {
@@ -431,12 +432,12 @@ async function browser() {
         await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
         await sleep(300);
         await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...Object.fromEntries((await spot(needle, 3)).map((v, i) => [i ? 'y' : 'x', v])) });
-        await until(`return !!document.querySelector('.cm-tooltip-hover .arg[data-tip]')`, 15000);
-        const chips = await js(`return [...document.querySelectorAll('.cm-tooltip-hover .arg[data-tip]')].map((c) => { const b = c.getBoundingClientRect(); return [b.x + 4, b.y + b.height / 2, !!c.querySelector('a.ty')]; })`);
+        await until(`return !!document.querySelector('.tip-card .arg[data-tip]')`, 15000);
+        const chips = await js(`return [...document.querySelectorAll('.tip-card .arg[data-tip]')].map((c) => { const b = c.getBoundingClientRect(); return [b.x + 4, b.y + b.height / 2, !!c.querySelector('a.ty')]; })`);
         const c = chips.find((x) => x[2]) ?? chips[0];
         await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c[0], y: c[1] });
-        await until(`return !document.querySelector('.ty-tip')?.hidden`, 5000);
-        return js(`const t = document.querySelector('.ty-tip'), a = t.getBoundingClientRect(), b = document.querySelector('.cm-tooltip-hover').getBoundingClientRect();
+        await until(`return !document.querySelector('.tip-note')?.hidden`, 5000);
+        return js(`const t = document.querySelector('.tip-note'), a = t.getBoundingClientRect(), b = document.querySelector('.tip-card').getBoundingClientRect();
           return { what: t.querySelector('.ty-what')?.textContent ?? '', chain: t.querySelector('.ty-chain')?.textContent ?? '', over: a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom }`);
       };
       const plain = await tipOf('\\twice{a}');
@@ -501,6 +502,21 @@ async function browser() {
       check('library switch re-renders without a new query', await js(`return window.__q`) === q0 && n1 !== n0, `${n0} -> ${n1}, ${q0} queries`);
       await js(`document.getElementById('trace-internal').click()`);
       await js(`document.getElementById('trace-close').click()`);
+      });
+      await section('leapyear', async () => {
+      await js(`document.getElementById('play-exsect').open = true; [...document.querySelectorAll('#play-examples *')].find((e) => e.children.length === 0 && e.textContent.trim().startsWith('leapyear'))?.click()`);
+      await until(`return /leapyear/.test(document.querySelector('.tabs [aria-selected=true]')?.textContent ?? '')`, 30000);
+      await until(`return ${quiet}`, 120000);
+      const p = await spot('\\ckleapyear{2000}', 3);
+      await mouse(...p, { button: 'right', buttons: 2 });
+      await until(`return [...document.querySelectorAll('#play-ctx li')].some((l) => /Trace/.test(l.textContent))`, 30000);
+      await js(`[...document.querySelectorAll('#play-ctx li')].find((l) => /Trace/.test(l.textContent)).click()`);
+      await until(`return !!document.querySelector('#trace-body .tr-now')`, 120000);
+      await js(`document.querySelectorAll('#trace-body details').forEach((d) => (d.open = true))`);
+      const text = await js(`return document.getElementById('trace-body').textContent`);
+      check('the leap-year trace shows the values assigned', /= 2000/.test(text) && /2000 → 500/.test(text), text.slice(0, 300));
+      await shot('w-leapyear-trace');
+      await js(`document.getElementById('play-trace').close()`);
       });
       await section('trace viewer', async () => {
       // the trace dialog: library groups, the how-row, the stepper's token stream, breadcrumb, cards, forks, progress
@@ -571,24 +587,24 @@ async function browser() {
       const toks = await js(`return [...document.querySelectorAll('#trace-stream .tr-chips .tr-tok:not(.tr-ins)')].map((a) => [a.textContent, a.title, a.getAttribute('href')])`);
       check('chips carry their catcode number', await js(`return [...document.querySelectorAll('#trace-stream a.tr-tok')].every((a) => a.querySelector('.tr-cc')?.textContent === a.getAttribute('href').split('-').pop())`));
       await shot('trv3-chips');
-      check('stream: the input ahead as chips, each with its catcode and wiki link', toks.length > 3 && toks.every(([x, t, h]) => /^\\/.test(x) ? !h : /catcode \d+/.test(t) && /wiki\/domains\.html#catcode-\d+$/.test(h)), JSON.stringify(toks.slice(0, 4)));
+      check('stream: the input ahead as chips, each with its catcode and wiki link', toks.length > 3 && toks.every(([x, t, h]) => /^\\/.test(x) ? !h : /\(\d+\)$|catcode \d+/.test(t) && /wiki\/domains\.html#catcode-\d+$/.test(h)), JSON.stringify(toks.slice(0, 4)));
       // 5: every name hoverable, its meaning at the step; click pins; the state panel
       const cs = await js(`const e = document.querySelector('#trace-stream .tr-chips .tr-cs'); if (!e) return null; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return [b.x + 3, b.y + b.height / 2, e.dataset.cs]`)
         ?? await js(`const e = document.querySelector('#trace-now .tr-cs'); e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return [b.x + 3, b.y + b.height / 2, e.dataset.cs]`);
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: cs[0], y: cs[1] });
-      const tip = await until(`const t = document.querySelector('.tr-tip'); return t && !t.hidden && /meaning at /.test(t.textContent)`, 60000);
-      check('a name in the trace shows its meaning at the step', tip, `${cs[2]}: ${await js(`return document.querySelector('.tr-tip')?.textContent.slice(0, 160)`)}`);
+      const tip = await until(`const t = document.querySelector('.tip-card'); return t && !t.hidden && /meaning at /.test(t.textContent)`, 60000);
+      check('a name in the trace shows its meaning at the step', tip, `${cs[2]}: ${await js(`return document.querySelector('.tip-card')?.textContent.slice(0, 160)`)}`);
       await mouse(cs[0], cs[1]);
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
       await sleep(400);
-      check('a click pins the card', await js(`const t = document.querySelector('.tr-tip'); return !t.hidden && t.dataset.pin === '1'`));
+      check('a click pins the card', await js(`const t = document.querySelector('.tip-card'); return !t.hidden && t.dataset.pin === '1'`));
       await shot('trv5-pinned');
       await js(`document.querySelector('#trace-now').click()`);
       // a name the step's input does not hold: one query of the run stopped at the step
       const head = await js(`const e = document.querySelector('#trace-now .tr-now-head .tr-cs'); const b = e.getBoundingClientRect(); return [b.x + 3, b.y + b.height / 2, e.dataset.cs, !!document.querySelector('.tr-means li[data-n="' + CSS.escape(e.dataset.cs) + '"]')]`);
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: head[0], y: head[1] });
-      const lazy = await until(`const t = document.querySelector('.tr-tip'); return t && !t.hidden && t.textContent.includes(${JSON.stringify(head[2])}) && /meaning at step/.test(t.textContent)`, 120000);
-      check('a name not queued at the step: its meaning from the run stopped there', lazy && !head[3], `${head[2]}: ${await js(`return document.querySelector('.tr-tip')?.textContent.slice(0, 120)`)}`);
+      const lazy = await until(`const t = document.querySelector('.tip-card'); return t && !t.hidden && t.textContent.includes(${JSON.stringify(head[2])}) && /meaning at step/.test(t.textContent)`, 120000);
+      check('a name not queued at the step: its meaning from the run stopped there', lazy && !head[3], `${head[2]}: ${await js(`return document.querySelector('.tip-card')?.textContent.slice(0, 120)`)}`);
       await shot('trv5-lazy');
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
       await js(`const s = document.querySelector('.tr-state'); s.open = true; s.scrollIntoView()`);
@@ -629,8 +645,8 @@ async function browser() {
       await open('weird', '\\documentclass{article}\n\\def\\Weird key: #1, value: #2, magic: #3\;{#1#2#3}\n\\def\\WeirdMore key: #1, value: #2, magic: #3\;super #4\; {}\n\\begin{document}\n\\Weird key: a, value: b, magic: c\;\n\\end{document}\n');
       const wp = await spot('\\Weird key', 3);
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: wp[0], y: wp[1] });
-      await until(`return !!document.querySelector('.cm-tooltip-hover .hover')`, 10000);
-      const chips = await js(`return [[...document.querySelectorAll('.cm-tooltip-hover .sig .arg')].map((a) => a.textContent), document.querySelector('.cm-tooltip-hover .hover')?.textContent.slice(0, 300)]`);
+      await until(`return !!document.querySelector('.tip-card .hover')`, 10000);
+      const chips = await js(`return [[...document.querySelectorAll('.tip-card .sig .arg')].map((a) => a.textContent), document.querySelector('.tip-card .hover')?.textContent.slice(0, 300)]`);
       check('hover signature of \\Weird: literal text and natural chips', chips[0].length >= 3 && chips[0].some((t) => /key/.test(t)) && !chips[0].some((t) => /^(pp|U)$/.test(t)), JSON.stringify(chips));
       await shot('w10-weird-hover');
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
@@ -815,10 +831,10 @@ async function browser() {
     // hover card: a usage line, a footer, no raw signature
     let p = await spot('\\newcommand', 3);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p[0], y: p[1] });
-    const hoverText = await until(`return document.querySelector('.cm-tooltip-hover .hover')`, 20000) && await js(`return document.querySelector('.cm-tooltip-hover .hover').textContent`);
-    check('hover card', /⟨arg1⟩/.test(hoverText) && !/signature/.test(hoverText) && await js(`return !!document.querySelector('.cm-tooltip-hover .foot')`), hoverText.slice(0, 100));
-    check('hover usage colored by argument kind', await js(`const u = [...document.querySelectorAll('.cm-tooltip-hover code.usage .arg')].map((a) => a.className.split('-').pop());
-      return ['flag', 'mand', 'opt'].every((k) => u.includes(k)) && !document.querySelector('.cm-tooltip-hover .arg .arg')`), await js(`return document.querySelector('.cm-tooltip-hover code.usage')?.innerHTML.slice(0, 300) ?? 'no usage'`));
+    const hoverText = await until(`return document.querySelector('.tip-card .hover')`, 20000) && await js(`return document.querySelector('.tip-card .hover').textContent`);
+    check('hover card', /⟨arg1⟩/.test(hoverText) && !/signature/.test(hoverText) && await js(`return !!document.querySelector('.tip-card .foot')`), hoverText.slice(0, 100));
+    check('hover usage colored by argument kind', await js(`const u = [...document.querySelectorAll('.tip-card code.usage .arg')].map((a) => a.className.split('-').pop());
+      return ['flag', 'mand', 'opt'].every((k) => u.includes(k)) && !document.querySelector('.tip-card .arg .arg')`), await js(`return document.querySelector('.tip-card code.usage')?.innerHTML.slice(0, 300) ?? 'no usage'`));
     await shot('play-hover-newcommand');
 
     // the Explain macro panel follows the mouse, no click
@@ -865,8 +881,8 @@ async function browser() {
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p[0] + 40, y: p[1] + 200 });
     await sleep(200);
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p[0], y: p[1] });
-    const fresh = await until(`return /salute/.test(document.querySelector('.cm-tooltip-hover .hover')?.textContent ?? '')`, 20000);
-    check('hover after rename', renamed && fresh, await js(`return document.querySelector('.cm-tooltip-hover .hover')?.textContent?.slice(0, 80) ?? 'no card'`));
+    const fresh = await until(`return /salute/.test(document.querySelector('.tip-card .hover')?.textContent ?? '')`, 20000);
+    check('hover after rename', renamed && fresh, await js(`return document.querySelector('.tip-card .hover')?.textContent?.slice(0, 80) ?? 'no card'`));
     check('rename applies', await until(`return /\\\\salute\\{/.test(document.querySelector('.cm-content').textContent) && !/\\\\greet/.test(document.querySelector('.cm-content').textContent)`, 10000));
 
     // a finding satex lowered below its rule's default shows its own severity alone

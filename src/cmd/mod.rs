@@ -323,13 +323,13 @@ pub enum CacheAction {
         #[arg(long, value_name = "NAME")]
         without: Vec<String>,
     },
-    /// Unpack an archive into the cache directory. A cache it holds that
-    /// this build cannot use is skipped with a line saying why. A directory
-    /// names its `satex-cache.bin`.
+    /// Unpack archives into the cache directory, in order. A cache one holds
+    /// that this build cannot use is skipped with a line saying why. A
+    /// directory names its `satex-cache.bin`.
     Import {
-        /// The archive, or a bundle directory holding one.
-        #[arg(value_name = "ARCHIVE")]
-        archive: std::path::PathBuf,
+        /// An archive, or a bundle directory holding one.
+        #[arg(value_name = "ARCHIVE", required = true)]
+        archives: Vec<std::path::PathBuf>,
     },
     /// Delete every cache: the interpreted kernel and the package caches.
     Clear,
