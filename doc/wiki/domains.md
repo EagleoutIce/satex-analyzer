@@ -48,6 +48,29 @@ The bounded set is `OneOf` for every kind (below). Code that does not inspect th
 
 Macro bodies use the same lift as [meaning sets](#meaning-sets-what-a-control-sequence-may-mean) (`limits.meaning_set`).
 
+## Category codes
+
+Every character has one of TeX's sixteen category codes ([The TeXbook, chapter 7](https://ctan.org/pkg/texbook#chapter-7)). Pages here link each "category N" to its row.
+
+| Code | Category |
+|---|---|
+| <a id="catcode-0"></a>0 | escape character |
+| <a id="catcode-1"></a>1 | begin group |
+| <a id="catcode-2"></a>2 | end group |
+| <a id="catcode-3"></a>3 | math shift |
+| <a id="catcode-4"></a>4 | alignment tab |
+| <a id="catcode-5"></a>5 | end of line |
+| <a id="catcode-6"></a>6 | parameter |
+| <a id="catcode-7"></a>7 | superscript |
+| <a id="catcode-8"></a>8 | subscript |
+| <a id="catcode-9"></a>9 | ignored |
+| <a id="catcode-10"></a>10 | space |
+| <a id="catcode-11"></a>11 | letter |
+| <a id="catcode-12"></a>12 | other character |
+| <a id="catcode-13"></a>13 | active character |
+| <a id="catcode-14"></a>14 | comment |
+| <a id="catcode-15"></a>15 | invalid |
+
 ## Character codes as sets
 
 Code table entries (`\lccode`, `\uccode`, `\sfcode`, `\mathcode`, `\delcode`, [tex.web § 1232](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L23040)) hold a `Value`, joined like registers.
@@ -72,6 +95,7 @@ After a join of paths that disagree, a `Binding` ([`src/env.rs`](https://github.
 | `\ifx`, `\ifdefined` | decided when every member agrees |
 | execute | splits the run into one path per meaning, `limits.meaning_splits` levels deep. Deeper, or inside an `\edef`, the meaning is unknown. |
 | `\ifx` against one meaning | splits by answer, each side keeping the members that give it |
+| `\if`, `\ifcat` | each member gives its operand, behind `\noexpand` too: a character its code and category, any other meaning a control sequence ([tex.web § 506](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L9814)). Decided when every member agrees. Without `\noexpand` an expandable member leaves the operand unknown. |
 | `\let` | copies the whole set |
 | widening | macros without parameters that differ only in digit runs become one macro with typed digits. Else macros with the same prefixes become one macro of unknown text, length-bounded when all are (`macro_hull`). A set with "undefined" keeps it. Anything else is an unknown meaning. |
 
@@ -219,55 +243,25 @@ flowchart LR
   t4["glue"]:::quantity
   t5["muglue"]:::quantity
   t6["box"]:::quantity
-  t7["register"]:::register
+  t7["register · toks register · box register<br>read register · write register"]:::register
   t8["control sequence"]:::cs
   t9["conditional"]:::cs
   t10["options"]:::key
   t11["text"]:::text
   t12["name"]:::text
   t13["definition body"]:::text
-  t14["tl variable"]:::cs
-  t15["str variable"]:::cs
-  t16["clist variable"]:::cs
-  t17["seq variable"]:::cs
-  t18["prop variable"]:::cs
-  t19["fp variable"]:::cs
-  t20["bool variable"]:::cs
-  t21["regex variable"]:::cs
-  t22["coffin variable"]:::cs
-  t23["flag variable"]:::cs
-  t24["intarray variable"]:::cs
-  t25["cctab variable"]:::cs
-  t26["count register"]:::register
-  t27["dimen register"]:::register
-  t28["skip register"]:::register
-  t29["muskip register"]:::register
-  t30["toks register"]:::register
-  t31["box register"]:::register
-  t32["read register"]:::register
-  t33["write register"]:::register
-  t34["counter"]:::register
-  t35["dimen name"]:::register
-  t36["skip name"]:::register
-  t37["muskip name"]:::register
-  t38["toks name"]:::register
-  t39["box name"]:::register
-  t40["read name"]:::register
-  t41["write name"]:::register
-  t42["key"]:::key
-  t43["label"]:::key
-  t44["citation key"]:::key
-  t45["option key"]:::key
-  t46["environment name"]:::key
-  t47["file"]:::file
-  t48["TeX file (.tex)"]:::file
-  t49["package (.sty)"]:::file
-  t50["class (.cls)"]:::file
-  t51["bibliography database (.bib)"]:::file
-  t52["bibliography style (.bst)"]:::file
-  t53["biblatex bibliography style (.bbx)"]:::file
-  t54["biblatex citation style (.cbx)"]:::file
-  t55["graphic file"]:::file
+  t14["tl variable"]:::expl3
+  t15["str variable · clist variable"]:::expl3
+  t16["seq variable · prop variable · fp variable<br>bool variable · regex variable · coffin variable<br>flag variable · intarray variable · cctab variable"]:::expl3
+  t17["count register"]:::register
+  t18["dimen register"]:::register
+  t19["skip register"]:::register
+  t20["muskip register"]:::register
+  t21["counter · dimen name · skip name<br>muskip name · toks name · box name<br>read name · write name"]:::register
+  t22["key"]:::key
+  t23["label · citation key · option key<br>environment name"]:::key
+  t24["file"]:::file
+  t25["TeX file (.tex) · package (.sty) · class (.cls)<br>bibliography database (.bib) · bibliography style (.bst) · biblatex bibliography style (.bbx)<br>biblatex citation style (.cbx) · graphic file"]:::file
   t0 --> t1
   t1 --> t2
   t4 --> t3
@@ -283,97 +277,68 @@ flowchart LR
   t11 --> t13
   t8 --> t14
   t14 --> t15
-  t14 --> t16
-  t8 --> t17
-  t8 --> t18
-  t8 --> t19
-  t8 --> t20
-  t8 --> t21
-  t8 --> t22
-  t8 --> t23
-  t8 --> t24
-  t8 --> t25
-  t2 --> t26
-  t3 --> t27
-  t4 --> t28
-  t5 --> t29
-  t0 --> t30
-  t0 --> t31
-  t0 --> t32
-  t0 --> t33
-  t12 --> t34
-  t12 --> t35
-  t12 --> t36
-  t12 --> t37
-  t12 --> t38
-  t12 --> t39
-  t12 --> t40
-  t12 --> t41
-  t12 --> t42
-  t42 --> t43
-  t42 --> t44
-  t42 --> t45
-  t42 --> t46
-  t12 --> t47
-  t47 --> t48
-  t47 --> t49
-  t47 --> t50
-  t47 --> t51
-  t47 --> t52
-  t47 --> t53
-  t47 --> t54
-  t47 --> t55
+  t8 --> t16
+  t2 --> t17
+  t3 --> t18
+  t4 --> t19
+  t5 --> t20
+  t12 --> t21
+  t12 --> t22
+  t22 --> t23
+  t12 --> t24
+  t24 --> t25
   classDef top fill:#eef0f2,stroke:#8a8f98,color:#1f2328
   classDef quantity fill:#dbeafe,stroke:#3b82f6,color:#1f2328
   classDef register fill:#ffedd5,stroke:#f97316,color:#1f2328
   classDef key fill:#ede9fe,stroke:#8b5cf6,color:#1f2328
   classDef file fill:#ccfbf1,stroke:#14b8a6,color:#1f2328
   classDef cs fill:#fee2e2,stroke:#ef4444,color:#1f2328
+  classDef expl3 fill:#fef9c3,stroke:#ca8a04,color:#1f2328
   classDef text fill:#dcfce7,stroke:#22c55e,color:#1f2328
 ```
 
-The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), quantities (blue), registers (orange), keys and options (purple), files (teal), control sequences (red) and text (green). `nothing` is below every type and left out. The labels are the ones signatures and hovers show. In each example the `⟨…⟩` part has the type.
+The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), quantities (blue), registers (orange), keys and options (purple), files (teal), control sequences (red), expl3 variables (yellow) and text (green). Types below one parent that have none below them share a box. `nothing` is below every type and left out. The labels are the ones signatures and hovers show. In each example the `⟨…⟩` part has the type. The table names the type above only where the label does not show it.
 
-| Label | Meaning | Example | Parent |
-|---|---|---|---|
-| `any` | no information, the join of unrelated types | | none |
-| `quantity` | a number, dimen, glue or muglue | `\numexpr1+⟨\dimexpr 1pt\relax⟩` is read as a quantity | `any` |
-| `number` | ⟨number⟩, read by `scan_int` | `\penalty⟨100⟩` | `quantity` |
-| `dimen` | ⟨dimen⟩, read by `scan_dimen` | `\kern⟨2pt⟩` | `glue` |
-| `glue` | ⟨glue⟩, a dimen with optional stretch and shrink | `\hskip⟨1pt plus 1fil⟩` | `quantity` |
-| `muglue` | ⟨mudimen⟩ or ⟨muglue⟩ | `\mskip⟨3mu⟩` | `quantity` |
-| `count register` | a count register an assignment names | `\advance⟨\count@⟩ by 1` | `number` |
-| `box` | a box register's number | `\setbox⟨0⟩\hbox{}` | `number` |
-| `dimen register` | a dimen register an assignment names | `\advance⟨\parindent⟩ by 1pt` | `dimen` |
-| `skip register` | a skip register an assignment names | `\advance⟨\parskip⟩ by 1pt` | `glue` |
-| `muskip register` | a muskip register an assignment names | `\advance⟨\medmuskip⟩ by 1mu` | `muglue` |
-| `toks register`, `read register`, `write register` | the other registers an assignment names | `⟨\toks@⟩={a}` | `any` |
-| `register` | a register of a kind the text does not fix, what a body assigns `#1` to | `\def\x#1#2{\advance⟨#1⟩ by #2}` | `any` |
-| `text` | balanced text of any kind | `\textbf{⟨a name or code⟩}` | `any` |
-| `name` | characters forming a name | `\csname ⟨foo⟩\endcsname` | `text` |
-| `counter` | the name of a LaTeX counter, `c@⟨counter⟩` | `\setcounter{⟨section⟩}{1}` | `name` |
-| `⟨kind⟩ name` | the name of a register of that kind a `\csname` forms | `\csname dimen⟨foo⟩\endcsname` | `name` |
-| `key` | a key of no known kind | `\mykey{⟨x⟩}` of unknown role | `name` |
-| `label` | a label a command defines or references | `\ref{⟨sec:intro⟩}` | `key` |
-| `citation key` | a bibliography entry's key | `\cite{⟨knuth84⟩}` | `key` |
-| `option key` | an option or key a key list names | `\usepackage[⟨draft⟩]{x}` | `key` |
-| `environment name` | an environment's name | `\begin{⟨itemize⟩}` | `key` |
-| `file` | a file of no known kind | `\input{⟨a⟩}` read as `.bib` and `.tex` | `name` |
-| `TeX file (.tex)` | a file read as TeX source | `\input{⟨chapter1⟩}` | `file` |
-| `package (.sty)` | a package | `\usepackage{⟨amsmath⟩}` | `file` |
-| `class (.cls)` | a document class | `\documentclass{⟨article⟩}` | `file` |
-| `bibliography database (.bib)` | a BibTeX database | `\bibliography{⟨refs⟩}` | `file` |
-| `bibliography style (.bst)` | a BibTeX style | `\bibliographystyle{⟨plain⟩}` | `file` |
-| `biblatex bibliography style (.bbx)` | a biblatex bibliography style | `\usepackage[style=⟨authoryear⟩]{biblatex}` | `file` |
-| `biblatex citation style (.cbx)` | a biblatex citation style | `\usepackage[citestyle=⟨numeric⟩]{biblatex}` | `file` |
-| `graphic file` | a figure, its extension decided by the run | `\includegraphics{⟨fig⟩}` | `file` |
-| `control sequence` | a control sequence an assignment defines | `\def⟨\foo⟩{}` | `any` |
-| `conditional` | a conditional `\newif` defines, `\if⟨name⟩` | `\newif⟨\ifdraft⟩` | `control sequence` |
-| `tl variable`, `seq variable`, `prop variable`, `fp variable`, `bool variable`, `regex variable`, `coffin variable`, `flag variable`, `intarray variable`, `cctab variable` | an expl3 variable, by the module of the function that made or set it in the run (`\tl_set:Nn`, `\seq_new:N`) | `\tl_set:Nn⟨\l_my_tl⟩{x}` | `control sequence` |
-| `str variable`, `clist variable` | a string or comma list, which expl3 keeps as token lists | `\str_set:Nn⟨\l_my_str⟩{x}` | `tl variable` |
-| `options` | the key list a load takes in its optional argument | `\usepackage⟨[a,b]⟩{x}` | `any` |
-| `definition body` | a definition's replacement text, code | `\def\x{⟨\kern1pt⟩}` | `text` |
-| `nothing` | no text, below every type | | every type |
+| Label | Meaning | Example |
+|---|---|---|
+| `any` | no information, the join of unrelated types |  |
+| `quantity` | a number, dimen, glue or muglue | `\numexpr1+⟨\dimexpr 1pt\relax⟩` is read as a quantity |
+| `number` | ⟨number⟩, read by `scan_int` | `\penalty⟨100⟩` |
+| `dimen` | ⟨dimen⟩, read by `scan_dimen`; below `glue` | `\kern⟨2pt⟩` |
+| `glue` | ⟨glue⟩, a dimen with optional stretch and shrink | `\hskip⟨1pt plus 1fil⟩` |
+| `muglue` | ⟨mudimen⟩ or ⟨muglue⟩ | `\mskip⟨3mu⟩` |
+| `count register` | a count register an assignment names; below `number` | `\advance⟨\count@⟩ by 1` |
+| `box` | a box register's number; below `number` | `\setbox⟨0⟩\hbox{}` |
+| `dimen register` | a dimen register an assignment names; below `dimen` | `\advance⟨\parindent⟩ by 1pt` |
+| `skip register` | a skip register an assignment names; below `glue` | `\advance⟨\parskip⟩ by 1pt` |
+| `muskip register` | a muskip register an assignment names; below `muglue` | `\advance⟨\medmuskip⟩ by 1mu` |
+| `toks register`, `read register`, `write register` | the other registers an assignment names | `⟨\toks@⟩={a}` |
+| `register` | a register of a kind the text does not fix, what a body assigns `#1` to | `\def\x#1#2{\advance⟨#1⟩ by #2}` |
+| `text` | balanced text of any kind | `\textbf{⟨a name or code⟩}` |
+| `name` | characters forming a name; below `text` | `\csname ⟨foo⟩\endcsname` |
+| `counter` | the name of a LaTeX counter, `c@⟨counter⟩`; below `name` | `\setcounter{⟨section⟩}{1}` |
+| `⟨kind⟩ name` | the name of a register of that kind a `\csname` forms | `\csname dimen⟨foo⟩\endcsname` |
+| `key` | a key of no known kind; below `name` | `\mykey{⟨x⟩}` of unknown role |
+| `label` | a label a command defines or references; below `key` | `\ref{⟨sec:intro⟩}` |
+| `citation key` | a bibliography entry's key | `\cite{⟨knuth84⟩}` |
+| `option key` | an option or key a key list names | `\usepackage[⟨draft⟩]{x}` |
+| `environment name` | an environment's name; below `key` | `\begin{⟨itemize⟩}` |
+| `file` | a file of no known kind; below `name` | `\input{⟨a⟩}` read as `.bib` and `.tex` |
+| `TeX file (.tex)` | a file read as TeX source | `\input{⟨chapter1⟩}` |
+| `package (.sty)` | a package | `\usepackage{⟨amsmath⟩}` |
+| `class (.cls)` | a document class | `\documentclass{⟨article⟩}` |
+| `bibliography database (.bib)` | a BibTeX database | `\bibliography{⟨refs⟩}` |
+| `bibliography style (.bst)` | a BibTeX style | `\bibliographystyle{⟨plain⟩}` |
+| `biblatex bibliography style (.bbx)` | a biblatex bibliography style | `\usepackage[style=⟨authoryear⟩]{biblatex}` |
+| `biblatex citation style (.cbx)` | a biblatex citation style | `\usepackage[citestyle=⟨numeric⟩]{biblatex}` |
+| `graphic file` | a figure, its extension decided by the run | `\includegraphics{⟨fig⟩}` |
+| `control sequence` | a control sequence an assignment defines | `\def⟨\foo⟩{}` |
+| `conditional` | a conditional `\newif` defines, `\if⟨name⟩`; below `control sequence` | `\newif⟨\ifdraft⟩` |
+| `tl variable`, `seq variable`, `prop variable`, `fp variable`, `bool variable`, `regex variable`, `coffin variable`, `flag variable`, `intarray variable`, `cctab variable` | an expl3 variable, by the module of the function that made or set it in the run (`\tl_set:Nn`, `\seq_new:N`) | `\tl_set:Nn⟨\l_my_tl⟩{x}` |
+| `str variable`, `clist variable` | a string or comma list, which expl3 keeps as token lists; below `tl variable` | `\str_set:Nn⟨\l_my_str⟩{x}` |
+| `options` | the key list a load takes in its optional argument | `\usepackage⟨[a,b]⟩{x}` |
+| `definition body` | a definition's replacement text, code; below `text` | `\def\x{⟨\kern1pt⟩}` |
+| `nothing` | no text, below every type |  |
 
 - **Join**: the nearest type above both (`Ty::join`). A dimen and a skip register give `glue`, a label and a citation key give `key`, a `.bib` and a `.tex` use give `file`. The lattice is a tree, so disagreeing uses never stay a set.
 - **expl3 variables.** A name a definition reads (`get_r_token`) while a module function of a variable kind runs (`\tl_…:N…`, `\seq_…:c…`) is a variable of that kind: what the run did, not the name's suffix. Register-backed kinds (`int`, `dim`, `skip`, `muskip`, `box`, `ior`/`iow`) are registers of their kind.
@@ -396,7 +361,7 @@ A character whose category is not pinned keeps the set of categories it may have
 | a set of texts | paths that wrote it differently, each distinct text kept, up to `limits.meaning_set`. A read parts the path per text. |
 
 - **Join past the bound** (`either_text`): past `limits.meaning_set` texts, the nearest two join (`join_written`): first two whose lines set the same things in the same order, so they pair line by line, then two sharing the most lines (`nearness`). Texts of another shape stay apart. Lines align on what they set (command and first argument, a longest common subsequence). Equal lines stay. Paired lines keep their common start and end around one unknown character. Lines that differ on both sides of a brace, with the same braces, keep them: each part between braces joins on its own (a label's page and value, `{2}{\z@}` against `{3}{\@ne}`, stay two braced parts). A stretch between of unequal length is one unknown line. An unknown line absorbs the one before it, so joins settle.
-- **The build's files** (`.aux`, `.toc`, `.bbl`, …) are the run's own, kept in an overlay. The build reruns until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`). A changed file counts only when the run read or looked for it. The first run reads none of them, so the second run changing lines is expected. A file in which a later rerun changed an existing line again is widened: each text a later run writes joins into its nearest (`widen_text`, `nearness`), so the number of texts does not grow. Files an engine left on disk are read only with `load.build_files`.
+- **The build's files** (`.aux`, `.toc`, `.bbl`, …) are the run's own, kept in an overlay. The build reruns until they stop changing ([challenge 11](Challenges#11-a-document-is-a-fixpoint-computation), `limits.build_runs`). A changed file sends the build round again only when the run read or looked for it. Every file a run wrote goes to the overlay, as TeX leaves it on disk, so the next run reads a part `.aux` the main `.aux` first names, not a missing file. The first run reads none of them, so the second run changing lines is expected. A file in which a later rerun changed an existing line again is widened: each text a later run writes joins into its nearest (`widen_text`, `nearness`), so the number of texts does not grow. Files an engine left on disk are read only with `load.build_files`.
 - **Reads** see the run's files first ([§ 537](Challenges#11-a-document-is-a-fixpoint-computation)), then the disk. A file neither written nor on disk is absent ([§ 1275](Challenges#11-a-document-is-a-fixpoint-computation)).
 - **`\openin` streams** hold the lines each has left. Paths that differ in a stream leave it unknown, and `\ifeof` is undecided. A stream number in an interval parts the path per stream ([§ 436](Challenges#11-a-document-is-a-fixpoint-computation)).
 

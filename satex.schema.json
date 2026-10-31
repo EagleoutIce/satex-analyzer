@@ -972,6 +972,7 @@
     "trace_file": {},
     "trace_lines": {},
     "trace_steps": {},
+    "trace_stop": {},
     "verbose": {
       "default": 0,
       "type": "integer"

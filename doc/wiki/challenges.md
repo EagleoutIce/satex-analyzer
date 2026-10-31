@@ -1,6 +1,6 @@
-# Why LaTeX is hard to analyze
+# Why TeX is hard to analyze
 
-satex analyzes LaTeX by running it on abstract values.
+satex analyzes TeX, and LaTeX on top of it, by running it on abstract values.
 This page lists what makes that harder than for other languages. Under each problem: how satex answers it, and the research behind that.
 Every example is a complete document. Below each one, a table puts the text one pdflatex run ships (read from the boxes `\tracingoutput` logs, random seed 7) next to the text satex computes (`satex query typeset`), paragraph by paragraph. If a row is not equal, a short list says why: which conditional stayed undecided. Two collapsed blocks show the commands that ran, with the computed text and with a trace of what each call inserted, what each primitive set and how each conditional went.
 
@@ -874,7 +874,7 @@ l.7 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_enviro
 l.8 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
 l.8 \ref ⇒ \__cmd_start:nNNnnn {s}\ref  \ref code {… (defines \l__cmd_environment_bool \l__cmd_args_tl \l__cmd_fn_tl … 51 more)
 l.9 \node ⇒ \tikz@path@overlay {node} (defines \tikz@signal@path \pgfutil@reserved@d \pgfutil@reserved@a … 474 more)
-… 3 more
+… 2 more
 ```
 
 </details>
