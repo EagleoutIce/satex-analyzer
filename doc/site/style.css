@@ -1054,3 +1054,5 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .draw-results { flex: 1 1 0; } .draw-solo .draw-box > .draw-results { max-height: none; }
 .draw-pad .draw-meta { flex: none; margin: 0; }
 .draw-bmp:hover { background: currentColor; }
+.claim-cc code { letter-spacing: .05em; } .claim-cc .cc { display: inline-flex; flex-direction: column; align-items: center; line-height: 1.1; margin: 0 .04em; }
+.claim-cc .cc sub { font-size: .6rem; color: var(--muted); }

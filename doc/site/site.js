@@ -958,7 +958,7 @@
       const body = mock.trim() === 'complete' ? offered.map((r) => `<li><code class="usage">${usage(r.effective, typesOf(r)).html}</code><span>${esc(r.file ?? r.path ?? '')}</span></li>`).join('') : mock;
       chip.insertAdjacentHTML('afterend', `<ul class="claim-complete" aria-hidden="true" style="left:${chip.offsetLeft}px">${body}</ul>`);
       const pop = line.querySelector('.claim-complete');
-      setTimeout(() => pop.classList.add('on'), 450);
+      setTimeout(() => pop.classList.add('on'), 1000);
       return true;
     };
     const settle = () => { if (!complete()) line.classList.add('linted'); timer = setTimeout(() => paused || show((shown + 1) % knows.length), 3200); };
