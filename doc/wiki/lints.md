@@ -127,7 +127,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | S050 | [`unused-label`](#unused-label) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe">unsafe</span> | a label is never referenced | — |
 | P001 | [`package-after-preamble`](#package-after-preamble) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe">unsafe</span> | a package is loaded after `\begin{document}` | — |
 | P002 | [`includeonly-available`](#includeonly-available) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe">unsafe</span> | a document of several `\include`d parts is built whole | — |
-| P003 | [`preamble-cost`](#preamble-cost) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe">unsafe</span> | what the preamble costs on every build | — |
+| P003 | [`preamble-cost`](#preamble-cost) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe">unsafe</span> | the preamble costs time on every build | — |
 | P004 | [`recursive-macro`](#recursive-macro) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | — | a macro calls itself, directly or through others | — |
 | P005 | [`unused-dependency`](#unused-dependency) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe">unsafe</span> | the dependency file lists a TeX Live package no file of the run comes from | — |
 | P006 | [`unused-package`](#unused-package) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-performance">performance</span> | — | <span class="fix fix-unsafe">unsafe</span> | a loaded package defines nothing the document uses | — |
@@ -191,7 +191,7 @@ These rules have quick fixes:
 * [`unused-label`](#unused-label) <span class="fix fix-unsafe">unsafe</span> a label is never referenced
 * [`package-after-preamble`](#package-after-preamble) <span class="fix fix-unsafe">unsafe</span> a package is loaded after `\begin{document}`
 * [`includeonly-available`](#includeonly-available) <span class="fix fix-unsafe">unsafe</span> a document of several `\include`d parts is built whole
-* [`preamble-cost`](#preamble-cost) <span class="fix fix-unsafe">unsafe</span> what the preamble costs on every build
+* [`preamble-cost`](#preamble-cost) <span class="fix fix-unsafe">unsafe</span> the preamble costs time on every build
 * [`unused-dependency`](#unused-dependency) <span class="fix fix-unsafe">unsafe</span> the dependency file lists a TeX Live package no file of the run comes from
 * [`unused-package`](#unused-package) <span class="fix fix-unsafe">unsafe</span> a loaded package defines nothing the document uses
 
@@ -1319,11 +1319,11 @@ See [chktex 38](https://www.nongnu.org/chktex/).
 
 Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7326)).
 
-The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been.
+The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been. Only a space that a character, box or rule follows in its list is reported. The glue that ends a paragraph goes ([§ 816](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16066)), and glue before it only widens the end of the last line. One an `\unskip` takes is gone too ([§ 1105](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L21264)), as at `\end{center}`.
 
 Fix by writing `%` at the end of that line.
 
-See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7326), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20358).
+See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L7326), [tex.web § 816](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L16066), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/fd728dfcdeda36e6180c75121b35aa1b128771f0/texk/web2c/tex.web#L20358).
 
 ### table-rules
 
@@ -1434,7 +1434,7 @@ See [source2e § ltfiles.dtx](https://ctan.org/pkg/source2e).
 
 <p class="badges"><code class="num" title="rule number">P003</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-performance">performance</span> <span class="fix fix-unsafe">unsafe</span></p>
 
-**what the preamble costs on every build**
+**the preamble costs time on every build**
 
 The packages the document asks for and the files read before `\begin{document}`, reported when the preamble takes most of the tokens the build interprets and is no small one.
 

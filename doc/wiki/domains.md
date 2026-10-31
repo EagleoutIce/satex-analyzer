@@ -440,7 +440,7 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 
 ## Files written in the run
 
-`satex` writes nothing to disk. What a run writes lives per path in `Outputs` ([`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)).
+`satex` writes nothing to disk. A run's written files live per path in `Outputs` ([`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)).
 
 | State | How it arises |
 | --- | --- |
@@ -547,16 +547,16 @@ The knobs that trade precision for a bounded search ([`src/config.rs`](https://g
 
 | setting | default | what it bounds |
 | --- | --- | --- |
-| [`limits.choices`](Configuration#what-a-run-may-use) | 8 | Undecided choices one command may make on one path.  Past them a conditional is taken as unknown text, reported as an `assumption`. |
-| [`limits.site_forks`](Configuration#what-a-run-may-use) | 64 | Undecided choices one site (a conditional, a name of several meanings) may make, over all paths and replays, while the run reads one source line. Past them the site parts no more paths: a conditional there skips its arms and does what they may do (`site-forks-widened`). Many paths through one place say little the join of a few did not. 0 turns it off. |
-| [`limits.paths`](Configuration#what-a-run-may-use) | 16 | Paths one drive keeps waiting before the two furthest back at one source position are cut to the input levels they share and joined. |
-| [`limits.meaning_splits`](Configuration#what-a-run-may-use) | 4 | Choices one command may have made on one path for a name that a join left with one of several meanings to still split the run into a path per meaning. Past them, and with 0 everywhere, it is read as a name of unknown meaning. |
-| [`limits.widen_after`](Configuration#what-a-run-may-use) | 3 | How many rounds a loop head analyzes its paths again from a grown joined state before what still grows is widened (SEMANTICS [§ 14](Configuration#what-a-run-may-use)). |
-| [`limits.recursion_depth`](Configuration#what-a-run-may-use) | 100 | How many levels deep a recursion whose continuation is undecided is followed before it is assumed to end within them. |
-| [`limits.loop_heads`](Configuration#what-a-run-may-use) | 512 | How many loop heads and loop entries one drive keeps with their joined states. Past them the oldest is forgotten. Its count stays in the load's loop summaries, so it is summarized when met again. |
-| [`limits.call_summary_after`](Configuration#what-a-run-may-use) | 2 | How many runs of one call, at one site with the same names handed to it, are recorded before a later call with unknown operands applies their join instead of running. 0 never summarizes a call. |
-| [`limits.meaning_set`](Configuration#what-a-run-may-use) | 8 | How many meanings a join leaves a name with as a set (one of them) before it has an unknown meaning. |
-| [`limits.value_set`](Configuration#what-a-run-may-use) | 8 | How many values a join leaves a count or dimension register with as a set before only their interval is kept. |
+| [`limits.choices`](Configuration#what-a-run-may-use) | 8 | How many undecided `\if` one command may split into paths. Past them the command's result is unknown text, reported as an `assumption`. Higher keeps more combinations apart and costs time. |
+| [`limits.site_forks`](Configuration#what-a-run-may-use) | 64 | How many paths one place in a source line may start, counted over all paths. Past them an `\if` there is no longer followed both ways: the run takes the effects either branch may have (`site-forks-widened`). Lower finishes a `\foreach` with unknown bounds sooner but knows less. 0 turns it off. |
+| [`limits.paths`](Configuration#what-a-run-may-use) | 16 | How many alternative paths satex keeps at once. Past them the two oldest at one place are merged into one. Higher is more precise, slower and takes more memory. |
+| [`limits.meaning_splits`](Configuration#what-a-run-may-use) | 4 | How often one command may split the run per meaning of a name that has several, such as `\x` defined differently in two branches. Past them, and with 0, the name reads as unknown. |
+| [`limits.widen_after`](Configuration#what-a-run-may-use) | 3 | How many rounds a loop is followed exactly before values that still change become ranges (SEMANTICS [§ 14](Configuration#what-a-run-may-use)). A `\loop` counting to an unknown bound has its counter as a range after these rounds. |
+| [`limits.recursion_depth`](Configuration#what-a-run-may-use) | 100 | How deep a macro that calls itself while an `\if` is undecided is followed before the recursion is assumed to end there. |
+| [`limits.loop_heads`](Configuration#what-a-run-may-use) | 512 | How many loops one run remembers with their merged states. Past them the oldest is forgotten, and summarized when it comes back. |
+| [`limits.call_summary_after`](Configuration#what-a-run-may-use) | 2 | After this many runs of one call at one place, a call with unknown arguments reuses their merged result instead of running again. `\pgfmathparse{\x}` with an unknown `\x` is then one step. 0 never does. |
+| [`limits.meaning_set`](Configuration#what-a-run-may-use) | 8 | How many possible meanings a name keeps after branches merge. Past them its meaning is unknown. |
+| [`limits.value_set`](Configuration#what-a-run-may-use) | 8 | How many exact values a count or length keeps after branches merge. Past them only its range is kept, so `{1, 5}` becomes `1..5`. |
 
 ## Writes through an unknown index
 

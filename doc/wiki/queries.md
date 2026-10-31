@@ -129,7 +129,7 @@ macro-call           \fmtname  latex.ltx                      @ latex.ltx:731:26
 macro-call           \space    latex.ltx                      @ latex.ltx:731:34
 macro-call           \fmtver…  latex.ltx                      @ latex.ltx:731:42
 use                  LaTeX2e…  latex.ltx                      @ latex.ltx:129:24
-… 40133 more lines omitted
+… 40134 more lines omitted
 ```
 
 ## trace
@@ -271,7 +271,7 @@ code args  /demo/label                                          \def \demol…  
 
 ## gaps
 
-What the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `gaps.log` use the same list.
+Lists the places the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `gaps.log` use the same list.
 
 ```text
 $ satex query gaps -f samples/mypackage.sty

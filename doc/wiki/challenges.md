@@ -594,14 +594,18 @@ l.5 \nest ⇒ \ifnum \pdfuniformdeviate 4>0 (\nest {\n…
 ```
 
 <table><tr><th>pdflatex ships</th><th>satex computes</th><th></th></tr>
-<tr><td><code>done</code></td><td><code>done</code></td><td>✓</td></tr>
+<tr><td><code>done</code></td><td><code><b>{</b>d<b>|</b><b>}</b>one</code></td><td>⊇</td></tr>
 </table>
+
+Why:
+
+- `{d|}`: l.3 `\ifnum\n>0` is undecided, it reads `\n`.
 
 <details><summary>Computed text</summary>
 
 ```sh
 $ satex query typeset -f r7-merge-cost.tex --set limits.seconds=60
-6:16  paragraph  done
+6:16  paragraph  {d|}one
 assumption  clock-assumed
 ```
 
@@ -770,7 +774,7 @@ l.3 \ifdefined\XeTeXversion ⇒ false
 
 One run is not the program. A build runs pdflatex, bibtex or biber, makeindex, and pdflatex again, until the auxiliary files stop changing. latexmk compares the files after each run and stops at the fixpoint or after a fixed number of runs.
 Each run reads what the last one wrote: labels and page numbers from the `.aux`, the table of contents, the bibliography, longtable's column widths, tikz's `remember picture` positions.
-What a run writes depends on what it read. A `\ref` that turns `??` into `12` changes a line's width, which moves a page break, which changes a `\pageref`.
+A run writes from what it read. A `\ref` that turns `??` into `12` changes a line's width, which moves a page break, which changes a `\pageref`.
 The cycle need not converge. A `\pageref` whose own text pushes its target onto the next page oscillates between two values, and varioref reports such a loop.
 Inside one run the output routine is a cycle of its own: it fires when a page fills, and what it puts back decides the next break.
 

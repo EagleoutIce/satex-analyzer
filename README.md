@@ -311,7 +311,7 @@ info      style        S049    unused-definition                a macro defined 
 info      style        S050    unused-label                     a label is never referenced                             
 warning   performance  P001    package-after-preamble           a package is loaded after `\begin{document}`            
 info      performance  P002    includeonly-available            a document of several `\include`d parts is built whole  
-info      performance  P003    preamble-cost                    what the preamble costs on every build                  
+info      performance  P003    preamble-cost                    the preamble costs time on every build                  
 info      performance  P004    recursive-macro                  a macro calls itself, directly or through others        
 info      performance  P005    unused-dependency                the dependency file lists a TeX Live package no file …  
 info      performance  P006    unused-package                   a loaded package defines nothing the document uses      

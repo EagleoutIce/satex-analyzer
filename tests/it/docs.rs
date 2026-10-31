@@ -218,5 +218,15 @@ fn prose_has_no_semicolons_or_em_dashes() {
             faults.push(format!("{page}:{line}: {}", text.lines().nth(line - 1).unwrap_or_default().trim()));
         }
     }
+    // A soft rule: a sentence that opens with "What" reads indirect. Said, not failed.
+    let what = Regex::new(r"(?m)(^|[.!?]\s+)What ").unwrap();
+    for page in &pages {
+        let text = fs::read_to_string(page).unwrap_or_default();
+        let masked = masks.iter().fold(text.clone(), |text, re| mask(&text, re));
+        for m in what.find_iter(&masked) {
+            let line = masked[..m.start()].matches('\n').count() + 1;
+            eprintln!("warning: {page}:{line}: a sentence starts with \"What\", say it directly");
+        }
+    }
     assert!(faults.is_empty(), "rephrase into short sentences:\n{}", faults.join("\n"));
 }

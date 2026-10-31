@@ -299,7 +299,7 @@ The diagram follows `Ty::parent`, one colour per family: the top `any` (grey), q
 
 ## Files written in the run
 
-`satex` writes nothing to disk. What a run writes lives per path in `Outputs` ([`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)).
+`satex` writes nothing to disk. A run's written files live per path in `Outputs` ([`src/machine.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/machine.rs)).
 
 | State | How it arises |
 | --- | --- |

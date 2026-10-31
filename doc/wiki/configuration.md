@@ -19,66 +19,172 @@ Mappings merge recursively. A list replaces the outer one unless its key ends in
 # satex configuration. Merged from the global config, then every satex.yaml
 # from the filesystem root down to the input file's directory, then --config PATH, then --set.
 # `satex --version` can be used to list the files actually merged for a run.
+# A line `#! affects:` names what a setting changes, `#! example:` shows it, `#! range:` bounds it.
 
-load:  # what to follow from the document
-  packages: true  # \usepackage and \RequirePackage
-  classes: true  # \documentclass and \LoadClass
-  inputs: true  # \input and \include
-  format: true  # the installation's latex.ltx
-  skip: []  # packages to leave unread
-  expect: []  # classes and packages a package or class file expects loaded before it (a beamer theme: [beamer])
-  expect_detect: true  # find them from what the packages on disk define, and say so
-  build_files: false  # read the .aux, .toc, .bbl, ... an earlier build left, off: absent, the run over-approximates them
-  build_extensions: [aux, toc, lof, lot, loa, lol, out, bbl, bcf, run.xml, blg, glo, gls, glg, acn, acr, alg, ist, idx, ind, ilg, nlo, nls, slnc, brf, nav, snm, vrb, fls, fdb_latexmk, xdy, log]  # what counts as such a file
-search_paths: []  # searched before the installation
-paths:  # kpathsea variables' fallback list: tried after the
-                          # environment and the project's latexmkrc/Makefile
-  texinputs: []  # TEXINPUTS, a trailing // recurses, as in kpathsea
-  bibinputs: []  # BIBINPUTS
-  bstinputs: []  # BSTINPUTS
-  tfmfonts: []  # TFMFONTS
-  encfonts: []  # ENCFONTS
-  output_directory: ''  # -output-directory: a relative name opened at run time is looked up here first
-at_letter: false  # start with @ a letter, as .sty files do
-lint_off: [analysis-imprecision]  # rule codes that never fire, a profile fills this in
+load:  # which files the run follows from the document
+  packages: true  # read the packages \usepackage loads. Off, their commands look undefined
+    #! affects: precision, speed
+    #! example: \usepackage{amsmath} \[ \text{x} \]
+    #! example: off: \text is reported as undefined
+  classes: true  # read the class \documentclass loads. Off, \section and friends look undefined
+    #! affects: precision, speed
+    #! example: \documentclass{article} \section{Intro}
+    #! example: off: \section is reported as undefined
+  inputs: true  # read the files \input and \include name. Off, their labels and definitions are missing
+    #! affects: precision, speed
+    #! example: \input{chapter1} \ref{sec:one}
+    #! example: off: the label from chapter1.tex is reported as undefined
+  format: true  # start from the installation's LaTeX format. Off, only TeX's primitives are known
+    #! affects: precision, speed
+    #! example: \newcommand\x{1}
+    #! example: off: \newcommand is unknown
+  skip: []  # packages to leave unread, their commands then look undefined
+    #! affects: precision, speed
+    #! example: skip: [tikz]
+    #! example: no \tikz picture is followed
+  expect: []  # classes and packages a package or class needs loaded before it, when you analyze that file alone
+    #! affects: precision
+    #! example: expect: [beamer]
+    #! example: a beamer theme .sty then sees \usebeamercolor defined
+  expect_detect: true  # guess those from what the installed packages define, and say which it picked
+    #! affects: precision
+    #! example: a .sty that uses \setbeamercolor gets beamer loaded first
+  build_files: false  # read the .aux, .toc, .bbl and others an earlier build left. Off, satex works them out itself
+    #! affects: soundness, precision
+    #! example: on: \ref{x} reads the number a stale .aux holds
+    #! example: off: it reads what this run's own pass computes
+  build_extensions: [aux, toc, lof, lot, loa, lol, out, bbl, bcf, run.xml, blg, glo, gls, glg, acn, acr, alg, ist, idx, ind, ilg, nlo, nls, slnc, brf, nav, snm, vrb, fls, fdb_latexmk, xdy, log]  # file endings that count as build files
+    #! affects: soundness
+    #! example: add mtc to treat minitoc's files as build output
+search_paths: []  # folders searched for files before the installation
+  #! affects: precision
+  #! example: search_paths: [styles]
+  #! example: \usepackage{mystyle} finds styles/mystyle.sty
+paths:  # where kpathsea looks, used after the environment and the project's latexmkrc or Makefile
+  texinputs: []  # extra folders for TeX files, as TEXINPUTS. A trailing // searches below too
+    #! affects: precision
+    #! example: texinputs: [lib//]
+    #! example: \input{macros} finds lib/common/macros.tex
+  bibinputs: []  # extra folders for .bib files, as BIBINPUTS
+    #! affects: precision
+    #! example: bibinputs: [bib]
+    #! example: \addbibresource{refs.bib} finds bib/refs.bib
+  bstinputs: []  # extra folders for .bst styles, as BSTINPUTS
+    #! affects: precision
+    #! example: bstinputs: [bst]
+    #! example: \bibliographystyle{mystyle} finds bst/mystyle.bst
+  tfmfonts: []  # extra folders for font metrics, as TFMFONTS
+    #! affects: precision
+    #! example: tfmfonts: [fonts]
+    #! example: a local font's widths become known
+  encfonts: []  # extra folders for font encodings, as ENCFONTS
+    #! affects: precision
+    #! example: encfonts: [fonts]
+  output_directory: ''  # the build's -output-directory. Files the run writes are looked up there first
+    #! affects: precision
+    #! example: output_directory: build
+    #! example: the .aux is read from build/main.aux
+at_letter: false  # treat @ as a letter from the start, as .sty files do
+  #! affects: precision
+  #! example: on: \@ifnextchar reads as one name in a file without \makeatletter
+lint_off: [analysis-imprecision]  # rules that never report, by code or number
+  #! affects: output
+  #! example: lint_off+: [unused-label]
+  #! example: unused labels are no longer reported
 style_prompt:  # an editor asks whether a rule the project breaks often is its style
   enabled: true  # false: never ask
-  min_findings: 10  # findings of one rule in the project's own files before it is asked about
-  categories: [style]  # rule categories a project may call its style
+    #! affects: output
+    #! example: false: no prompt, even for 100 findings of one rule
+  min_findings: 10  # how many findings of one rule in your own files before the editor asks. Higher asks less often
+    #! affects: output
+    #! example: 3: twelve \hskip already prompt to turn off primitive-tex-command
+  categories: [style]  # rule categories the editor may ask about
+    #! affects: output
+    #! example: categories: [style, performance]
   keep: []  # rules the project keeps and is never asked about again
+    #! affects: output
+    #! example: keep: [primitive-tex-command]
 project:
-  frozen: []  # globs of files read and analyzed, but with no findings and no fixes inside, relative to this file
-  freeze_other_repositories: true  # files of another git repository (a submodule, a nested clone) count as frozen too
-  ignore_other_configs: false  # true: satex.yaml files above this one and the global one are not read
+  frozen: []  # globs of files that are read and analyzed but get no findings and no fixes, relative to this file
+    #! affects: output
+    #! example: frozen: ['vendor/**']
+    #! example: findings in vendor/theme.sty are not shown
+  freeze_other_repositories: true  # files from another git repository (a submodule, a nested clone) count as frozen too
+    #! affects: output
+    #! example: a template submodule's files get no findings
+  ignore_other_configs: false  # true: read only this satex.yaml, not the ones above it nor the global one
+    #! affects: output
+    #! example: a parent folder's lint_off no longer applies here
 conventions:  # how TeX is usually written, where the text alone does not say
-  internal: ['@', '^__', '_.*:']  # regexes marking internal names (hidden from listings and completion, private to lints)
-  definers: []  # more commands whose next name is the one they define, satex finds those the kernel defines with itself
+  internal: ['@', '^__', '_.*:']  # names matching these patterns count as internal: hidden in completion, private to lints
+    #! affects: output
+    #! example: add '^my@' to hide your package's helper macros
+  definers: []  # your commands that define the name written after them, like \newcommand does
+    #! affects: precision
+    #! example: definers: ['\defmacro']
+    #! example: \defmacro\foo{...} then counts as a definition of \foo
 lints:
   unused-definition:
-    report_public: true  # also flag a public name
-    ignore: []  # regexes on macro names the rule skips
-    pgf_keys: false  # also flag a pgf key no-one uses
-  wrong-dash:  # how many hyphens belong in each context
-    letters: [1, 3]  # chktex HyphDash: a hyphen or an em-dash
-    digits: [2]  # chktex NumDash: an en-dash spans a range
-    words: [3, 2]  # chktex WordDash: an em-dash breaks a sentence, or Bringhurst's spaced en-dash
-    except: [Birch--Swinnerton-Dyer]  # chktex DashExcpt: spellings to leave alone
-  user-pattern:  # chktex UserWarn and UserWarnRegex
-    patterns: []  # literal strings to report
-    regexes: []  # regular expressions to report
+    report_public: true  # also report an unused command with a public name. Off for packages, whose commands are their interface
+      #! affects: output
+      #! example: \newcommand\Hello{hi} never used: reported only when on
+    ignore: []  # patterns on command names the rule leaves alone
+      #! affects: output
+      #! example: ignore: ['^todo']
+    pgf_keys: false  # also report a pgf key that is never used
+      #! affects: output
+      #! example: \tikzset{mystyle/.style={red}} never used: reported when on
+  wrong-dash:  # how many hyphens belong in each place
+    letters: [1, 3]  # allowed between letters, as chktex's HyphDash: a hyphen or an em-dash
+      #! affects: output
+      #! example: well--known is reported, well-known is not
+    digits: [2]  # allowed between digits, as chktex's NumDash: an en-dash for a range
+      #! affects: output
+      #! example: pages 1-5 is reported, 1--5 is not
+    words: [3, 2]  # allowed between spaces, as chktex's WordDash: an em-dash, or a spaced en-dash
+      #! affects: output
+      #! example: a -- b is fine with 2 in the list
+    except: [Birch--Swinnerton-Dyer]  # spellings to leave alone, as chktex's DashExcpt
+      #! affects: output
+      #! example: except: [Navier--Stokes]
+  user-pattern:  # your own text to report, as chktex's UserWarn and UserWarnRegex
+    patterns: []  # literal text to report wherever the document has it
+      #! affects: output
+      #! example: patterns: ['e.g. ']
+    regexes: []  # regular expressions to report the same way
+      #! affects: output
+      #! example: regexes: ['\bvery\b']
   comment-marker:
-    markers: [TODO, FIXME, XXX, HACK]  # markers in a comment worth a finding
-  build-cost:  # when preamble-cost and includeonly-available suggest saving a part of the build
-    tokens: 2000000  # a part below this reads in well under a second
-    share: 0.5  # the share of the run's tokens the part must take
-    characters: 500000  # includeonly-available: paragraph text the body sets, about 200 pages
+    markers: [TODO, FIXME, XXX, HACK]  # words in a comment that get a finding
+      #! affects: output
+      #! example: % TODO cite this gets a finding
+  build-cost:  # when the build is slow enough to suggest a format or \includeonly
+    tokens: 2000000  # a part smaller than this reads in well under a second and is never suggested
+      #! affects: output
+      #! example: lower it to get preamble-cost on smaller preambles
+    share: 0.5  # the share of the whole run the part must take
+      #! affects: output
+      #! range: 0..1
+      #! example: 0.3: a preamble taking a third of the run is reported
+    characters: 500000  # text the body must set before \includeonly is suggested, about 200 pages
+      #! affects: output
+      #! example: a 50-page article never gets includeonly-available
   microtype-available:
-    characters: 2500  # justified paragraph text the body must set, about a page
+    characters: 2500  # justified text the body must set before microtype is suggested, about a page
+      #! affects: output
+      #! example: a one-paragraph letter never gets microtype-available
   ellipsis-dots:
-    center: '=+-<>'  # chktex CenterDots: an ellipsis between these wants \cdots
+    center: '=+-<>'  # after or before these, an ellipsis should be \cdots, as chktex's CenterDots
+      #! affects: output
+      #! example: $a_1 + \ldots + a_n$ is reported, \cdots is wanted
   table-rules:
-    rows: 3  # rows with text, header included, before booktabs rules are asked for
-# profile: package          # forces one instead of detecting it from the input
+    rows: 3  # rows with text, header included, before booktabs rules are suggested
+      #! affects: output
+      #! example: a two-row table with \hline gets no finding
+# profile: package          # the kind of input whose defaults apply: document, package, class, literate or plain. Detected when unset
+#! affects: output, precision
+#! example: profile: package
+#! example: an unused public macro of your .sty is no longer reported
 
 # Sensible defaults per kind of input, chosen automatically by the input's
 # extension and, failing that, what it starts with (\ProvidesPackage,
@@ -105,22 +211,50 @@ profiles:
     lint_off: [analysis-imprecision, unused-label, microtype-available, hand-set-quantity]
 
 # Detected when left out.
-# engine: pdftex         # tex | pdftex | luatex | xetex
-# kernel: latex2e        # latex2e | context (experimental)
-# provider: texlive      # texlive | miktex | tectonic
-# platform: linux        # linux | macos | windows
-# output: pdf            # pdf | dvi | ps | html
-# texlive: {root: /usr/local/texlive, year: 2026}
+# engine: pdftex         # the engine whose primitives exist: tex, pdftex, luatex or xetex
+#! affects: precision
+#! example: engine: luatex
+#! example: \directlua is known and \pdfliteral is not
+# kernel: latex2e        # the format the engine starts with: latex2e, plain, context (experimental) or none
+#! affects: precision, output
+#! example: kernel: plain
+#! example: \count10=1 is plain TeX's way and gets no primitive-tex-command
+# provider: texlive      # the TeX distribution: texlive, miktex or tectonic
+#! affects: precision
+#! example: provider: miktex looks files up the way MiKTeX does
+# platform: linux        # the operating system the build runs on: linux, macos or windows
+#! affects: precision
+#! example: platform: windows
+#! example: \input{Chapter} also finds chapter.tex, as on a case-insensitive disk
+# output: pdf            # what the build produces: pdf, dvi, ps or html
+#! affects: precision
+#! example: output: dvi
+#! example: \includegraphics{fig} looks for fig.eps, not fig.pdf
+# texlive: {root: /usr/local/texlive, year: 2026}  # where TeX Live is when kpsewhich cannot say
+#! affects: precision
+#! example: texlive: {root: /opt/texlive, year: 2025}
 
 texmf:
-  roots: []  # trees to search instead of kpsewhich's
-  kpsewhich: true  # may run kpsewhich to find them
-  fallback: true  # may fall back to well-known install paths
+  roots: []  # TeX trees to search instead of the ones kpsewhich names
+    #! affects: precision
+    #! example: roots: [/opt/texlive/2026/texmf-dist]
+  kpsewhich: true  # may run kpsewhich to find the installation
+    #! affects: precision, speed
+    #! example: off: only roots and well-known install paths are searched
+  fallback: true  # may look in well-known install paths when nothing else finds TeX
+    #! affects: precision
+    #! example: off: with no kpsewhich and no roots, no package is found
 
 cache:
-  enabled: true  # keep the interpreted kernel and packages between runs
-  # dir: ~/.cache/satex     # else $SATEX_CACHE, else the platform default
-  tail: 256  # characters before a package's end where every line start is a checkpoint
+  enabled: true  # keep the interpreted kernel and packages between runs. Off, every run starts from scratch
+    #! affects: speed
+    #! example: off: each run reads latex.ltx again, seconds instead of milliseconds
+  # dir: ~/.cache/satex     # where caches are kept. Unset: $SATEX_CACHE, else the platform's cache folder
+    #! affects: speed
+    #! example: dir: /fast-disk/satex
+  tail: 256  # characters before a package's end where a run may resume from a saved state
+    #! affects: speed, memory
+    #! example: higher: more resume points, a larger cache
   index:  # packages `satex cache build` prepares, or, when
                             # empty, whatever ordinary runs already found
                             # expensive to interpret (measured, not a hand-picked list)
@@ -128,36 +262,71 @@ cache:
     common: [microtype, cleveref, zref-clever, savetrees, tabularray, xurl, glossaries,
       enumitem, nowidow, silence, adjustbox, pdfpages, pgfplotstable, memoize,
       classicthesis]  # prepared first while packages is empty, where installed
-    engines: []  # empty: the engine in effect
-    class: article  # the class they are loaded after
-    auto: true  # every run stores the packages it reads
-# preload: preamble.tex     # a preamble to read as this project's format, the
-                            # way mylatexformat dumps one, a %& line or -fmt=
-                            # in the build configuration names it otherwise
-# pretex: '\def\draft{}'   # TeX code read before the document (latexmk -usepretex)
+    engines: []  # engines to prepare for. Empty: the engine in use
+      #! affects: speed
+      #! example: engines: [pdftex, luatex]
+    class: article  # the class the prepared packages are loaded after
+      #! affects: speed
+      #! example: class: scrartcl prepares caches that fit KOMA documents
+    auto: true  # every run stores the packages it reads, so the next run starts faster
+      #! affects: speed, memory
+      #! example: off: only satex cache build fills the cache
+# preload: preamble.tex     # a preamble the build dumps as its own format, as mylatexformat does.
+                            # A %& line or -fmt= in the build files names it otherwise
+#! affects: precision
+#! example: preload: preamble.tex
+#! example: commands from preamble.tex are known before the document starts
+# pretex: '\def\draft{}'   # TeX code read before the document, as latexmk -usepretex passes it
+#! affects: precision
+#! example: pretex: '\def\draft{}'
+#! example: \ifdefined\draft is true in the document
 
-opaque_conditionals: []  # conditionals to leave undecided, both arms analyzed
-expand_in_reports: []  # macros to expand when reporting a value, e.g. today
+opaque_conditionals: []  # conditionals to leave undecided, so both branches are checked
+  #! affects: precision, output
+  #! example: opaque_conditionals: ['\ifdraft']
+  #! example: code in both \ifdraft branches gets findings
+expand_in_reports: []  # macros to show expanded in reports
+  #! affects: output
+  #! example: expand_in_reports: ['\today']
 
 # Primitives the primitive-tex-command rule reports, with what to suggest
 # instead, an empty value suggests nothing.  Entries add to what it knows.
 latex_alternatives: {}
 
 gaps:
-  log: true  # append what a run could not follow to file
-  report: true  # and print it
-  # file: ~/.cache/satex/gaps.ndjson
+  log: true  # write what a run could not follow to a file, for bug reports
+    #! affects: output
+    #! example: off: nothing is appended to gaps.ndjson
+  report: true  # print what a run could not follow after its findings
+    #! affects: output
+    #! example: off: the "recognized gaps" lines are not printed
+  # file: ~/.cache/satex/gaps.ndjson  # where gaps.log writes. Unset: the cache folder
+    #! affects: output
 
 analysis:
-  join_paths_at:  # where every path still apart is joined, reported as paths-joined-at
+  join_paths_at:  # where all paths still apart are merged into one, reported as paths-joined-at
+    #! affects: precision, speed
+    #! example: - hook: begindocument
+    #! example: paths still apart at \begin{document} merge there, so the body is read once
     - command: \document  # matched by meaning, however the run reaches it
     # - hook: begindocument  # an lthooks hook, when it is used
-  assume_compiles: true  # assumption: drop a path that raises a certain TeX error in library code, the document's own errors are kept
-  assume_packages_close_groups: true  # assumption: a package closes the groups it opens
-  assume_environment: true  # assumption: the build runs in this environment (Lua's os.getenv reads it)
-  assume_forced_page_breaks: true  # assumption: pages break only where a penalty forces it, false also follows breaks where the page may have filled
+  assume_compiles: true  # assume the document compiles: drop a path where package code raises a TeX error. Your own errors are always kept
+    #! affects: precision, soundness
+    #! example: off: a path where \ifx went the impossible way inside a package stays, with its error
+  assume_packages_close_groups: true  # assume a package closes every group it opens
+    #! affects: precision, soundness
+    #! example: off: a group a package leaves open is followed into the document
+  assume_environment: true  # assume the build runs with this machine's environment variables
+    #! affects: precision, soundness
+    #! example: off: \directlua{tex.print(os.getenv("HOME"))} prints unknown text
+  assume_forced_page_breaks: true  # assume pages break only where a penalty forces it
+    #! affects: precision, soundness
+    #! example: off: \thepage after a long paragraph may also be one more
 
-# shell_escape: restricted # none | restricted | full. Unset: what the build files ask for
+# shell_escape: restricted # which programs \write18 may run: none, restricted or full. Unset: what the build files ask for
+#! affects: precision, soundness
+#! example: shell_escape: full
+#! example: \write18{date > now.tex} runs, so \input{now} reads its output
 # TEMPORARY effect summaries: satex does not follow these macros' internals.
 # Each is said once per run as an `assumption`. Remove when the internals run.
 stubs:
@@ -165,61 +334,168 @@ stubs:
   \xinttheexpr: { until: \relax, result: { text: number } }
 
 interaction: nonstopmode  # the engine's -interaction: batchmode … errorstopmode
-clock: now  # what \year, \month, \day, \time and \pdfcreationdate hold: now | unknown | an ISO date-time
+  #! affects: precision
+  #! example: \ifnum\interactionmode=0 is true under batchmode
+clock: now  # sets the date \year, \month, \day, \time and \pdfcreationdate report: now, unknown, or an ISO date-time
+  #! affects: precision
+  #! example: clock: 2026-09-29
+  #! example: \today is September 29, 2026
 
 plugins:
   magic: true  # read % !TeX and % arara: lines
-  tools: true  # infer biber, makeindex and the rest
-  preload: true  # honor %& lines and -fmt=
-  discovery: true  # walk the project, skipping what .gitignore excludes
-  packages: false  # ask tlmgr which package ships a missing file (network)
+    #! affects: precision
+    #! example: % !TeX program = lualatex makes the run use LuaTeX
+  tools: true  # work out which tools the build runs: biber, makeindex and others
+    #! affects: precision, output
+    #! example: off: a .bbl biber would write is not computed
+  preload: true  # honor %& lines and -fmt= in the build files
+    #! affects: precision
+    #! example: %&mypreamble reads mypreamble's dumped preamble first
+  discovery: true  # walk the project for other files, skipping what .gitignore excludes
+    #! affects: precision, speed
+    #! example: off: an \input file is analyzed alone, without its root document
+  packages: false  # ask tlmgr which package ships a missing file. Needs the network
+    #! affects: output, speed
+    #! example: on: the missing-file finding says install the package mwe
 
-trace: false  # record the execution trace
+lsp:  # how satex lsp serves an editor
+  host: 127.0.0.1  # the address --port listens on
+    #! affects: output
+  debounce_ms: 300  # how long to wait after an edit before analyzing again. Lower answers sooner but runs more often
+    #! affects: speed
+    #! example: 1000: fast typing triggers one run per pause, not per keystroke
+  # port: 2087  # a TCP port to serve on instead of stdio
+    #! affects: output
+
+trace: false  # record every step of the run, for satex trace
+  #! affects: speed, memory
+  #! example: on: satex trace can step through the run
 timings: false  # measure where the time goes
-record_arguments: false  # keep the argument tokens of every call
-arm_joins: true  # arms of a choice inside an \edef or \csname join where they meet in it
+  #! affects: output
+  #! example: on: the run reports how long each phase took
+record_arguments: false  # keep the argument text of every call, for the options query
+  #! affects: memory
+  #! example: on: satex query options --for tikzpicture lists the keys used
+arm_joins: true  # inside an \edef or \csname, merge both branches of an undecided \if where they meet. Off, the whole command runs once per branch
+  #! affects: speed
+  #! example: \edef\x{\ifdraft a\else b\fi c}: on, one run with a or b, off, two runs
 
 # Limits: the termination argument. Reaching one stops that part of the run
 # and records a diagnostic. Only choices, site_forks, paths, meaning_splits, widen_after, recursion_depth,
 # call_summary_after, meaning_set and value_set trade precision for time, the rest only stop a run.
 limits:
-  memory: 8GiB  # what one run may hold at once, 0 lifts the limit
-  threads: 0  # threads for the project walk, the interpreter runs on one
-  cache_size: 2GiB  # caches kept, least recently used evicted, 0 for no bound
-  steps: 4000000000  # tokens the document may digest (pdflatex digests ~200M/s, pingus needs ~1.5G real tokens)
-  format_steps: 9000000000  # tokens latex.ltx may digest (built once, then cached)
-  file_depth: 64  # how deep \input and \usepackage may nest
-  expansion_depth: 512  # how often one macro may be nested in itself before its recursion is widened
-  site_expansions: 16384  # how often one call site may expand without reading on
-  replay_steps: 1000000  # steps a line the run wrote may take where satex replays it for what it names
-  seconds: 300  # wall-clock limit per run, 0 for none
-  repeat_failures: 8  # times one gap may be met at one place before the expansion is dropped
-  choices: 8  # undecided choices one command may make on one path
-  site_forks: 4096  # undecided choices one place may make while a line is read before its expansion is cut, 0 = never
-  paths: 16  # waiting paths before the two furthest back are cut to the input they share and joined
-  alike: 8  # waiting paths before those at one place in the same conditionals and groups have their input widened
-  heads_apart: 32  # loop heads at one place kept apart for differing in code still to run, before they are joined
-  meaning_splits: 4  # choices a command may have made for a name joined to several meanings to split per meaning
-  widen_after: 3  # rounds a loop head reanalyzes a grown state before widening it
-  build_runs: 5  # runs of the build (latexmk rounds) to reach the fixpoint of .aux/.toc/..., past them unknown, 1 = one run, no earlier files
-  recursion_depth: 100  # levels an undecided recursion is followed before it is assumed to end
-  loop_heads: 512  # loop heads and entries one drive keeps with their joined states, the oldest goes first
-  call_summary_after: 2  # runs of one call recorded before an unknown-operand call applies their join, 0 = never
-  cycle_after: 2  # repeats of one call in the same state before its path ends (the only path is summarized), 0 = never
-  meaning_set: 8  # meanings a join keeps as a set before the meaning is unknown
-  join_arms: 32  # paths a join keeps paired (which binding goes with which), 0 pairs none
-  join_names: 64  # names a join pairs at most, the rest are joined apart
-  value_set: 8  # values a join keeps for a count or dimension before only the interval
-  interval_set: 4  # members a join keeps for a number once intervals are among them, before only their hull
-  degrade_at_percent: 100  # of limits.steps past which the precision limits are halved, step by step, 100 = never
-  expansion_tokens: 1048576  # tokens one expansion may add
-  conditional_tokens: 1048576  # tokens read ahead to count the arms of an \ifcase
-  held_tokens: 4000000  # tokens waiting to be read
-  expansion_stack: 4000  # token lists open at once: expansions, arguments, files
-  save_stack: 2000000  # assignments a group may have to undo (~200 MB)
-  vertices: 400000  # graph nodes recorded, past it the graph stops growing and the analysis goes on
-  facts: 2000000  # definitions, uses and occurrences recorded
-  trace: 200000  # trace events recorded
+  memory: 8GiB  # most memory one run may use. It stops cleanly beyond it. 0 lifts the limit
+    #! affects: memory
+    #! example: memory: 2GiB stops a runaway run before it slows the machine
+  threads: 0  # threads for walking the project's files, 0 lets satex choose. The analysis itself uses one
+    #! affects: speed
+    #! example: threads: 1 keeps the walk on one core
+  cache_size: 2GiB  # most disk the caches may take, the least recently used go first. 0 for no bound
+    #! affects: speed
+    #! example: cache_size: 500MiB keeps fewer packages ready
+  steps: 4000000000  # how many tokens the document may run through before the run stops. Raise it for huge documents
+    #! affects: speed
+    #! example: a 1000-page thesis with TikZ may need more
+  format_steps: 9000000000  # the same for reading the LaTeX format, which is cached after the first time
+    #! affects: speed
+    #! example: rarely needs a change
+  file_depth: 64  # how deeply \input and \usepackage may nest
+    #! affects: precision
+    #! example: a file that inputs itself stops after 64 levels
+  expansion_depth: 512  # how often a macro may call itself inside itself before its recursion is approximated
+    #! affects: precision, speed
+    #! example: \def\a{\a\relax} stops after 512 levels with a finding
+  site_expansions: 16384  # how often one place may expand without reading further before it is given up
+    #! affects: precision, speed
+    #! example: a loop that never consumes input stops here
+  replay_steps: 1000000  # how long satex may rerun a line the document wrote to a file, to learn the labels in it
+    #! affects: precision, speed
+    #! example: a huge \write to the .aux is read without its labels past this
+  seconds: 300  # most seconds one run may take, a safety net. 0 for no limit
+    #! affects: speed
+    #! example: seconds: 30 for an editor that should never wait long
+  repeat_failures: 8  # how often satex may meet the same thing it cannot follow at one place before skipping that expansion
+    #! affects: precision, speed
+    #! example: a loop over an unsupported primitive stops after 8 rounds
+  choices: 8  # how many undecided \if one command may split into paths. Past them its result is unknown text
+    #! affects: precision, speed
+    #! example: higher: \ifdraft inside a command with many \if is still followed both ways
+  site_forks: 64  # how many paths one place in a line may start before its \if is approximated. 0 = never
+    #! affects: precision, speed
+    #! example: lower: a \foreach with unknown bounds finishes faster but knows less
+  paths: 16  # how many alternative paths satex keeps at once before merging the oldest two. Higher is more precise and slower
+    #! affects: precision, speed, memory
+    #! example: \ifdraft ... \fi many times over: more paths keep each combination apart
+  alike: 8  # how many paths at the same place may wait before their remaining input is merged into one. Higher is more precise and slower
+    #! affects: precision, speed
+    #! example: two paths at one \fi that only differ in a later word are merged sooner when lower
+  heads_apart: 32  # how many versions of one loop satex keeps apart while they still differ in what they will run
+    #! affects: precision, speed
+    #! example: a \loop whose body depends on the round stays exact longer when higher
+  meaning_splits: 4  # how often one command may split a run per meaning of a name that has several
+    #! affects: precision, speed
+    #! example: \x defined differently in two branches is followed per meaning up to this
+  widen_after: 3  # how many rounds a loop is followed exactly before what still changes becomes a range
+    #! affects: precision, speed
+    #! example: \loop\advance\c by1 ... \repeat with unknown bound: c becomes a range after 3 rounds
+  build_runs: 5  # how many LaTeX runs satex simulates to settle .aux, .toc and the rest. 1 runs once with no earlier files
+    #! affects: precision, speed
+    #! example: 1: \ref and \tableofcontents read nothing from an earlier run
+  recursion_depth: 100  # how deep an undecided recursion is followed before it is assumed to end
+    #! affects: precision, speed
+    #! example: a macro that calls itself while an \if is unknown stops at 100 levels
+  loop_heads: 512  # how many loops one run remembers. The oldest is forgotten first
+    #! affects: precision, memory
+    #! example: a document with thousands of \foreach loops may need more
+  call_summary_after: 2  # after this many runs of one call, a call with unknown arguments reuses their result instead of running. 0 = never
+    #! affects: precision, speed
+    #! example: \pgfmathparse{\x} with unknown \x reuses what earlier calls did
+  cycle_after: 2  # how often one call may repeat exactly the same state before satex ends that endless loop. 0 = never
+    #! affects: speed
+    #! example: \def\a{\a}\a ends after 2 identical rounds
+  meaning_set: 8  # how many possible meanings a name keeps after branches merge before it becomes unknown
+    #! affects: precision, speed
+    #! example: \x defined in 3 branches keeps all 3 meanings
+  join_arms: 32  # how many merged branches remember which values belong together. 0 remembers none
+    #! affects: precision, memory
+    #! example: \ifdraft\def\a{1}\def\b{1}\else\def\a{2}\def\b{2}\fi: a and b stay paired
+  join_names: 64  # how many names a merge keeps paired at most, the rest are merged on their own
+    #! affects: precision, memory
+    #! example: higher: more names keep their pairing after an \if
+  value_set: 8  # how many exact values a number or length keeps after branches merge before only its range is kept
+    #! affects: precision
+    #! example: \count0 is 1 or 5: kept as {1, 5}, not 1..5
+  interval_set: 4  # how many ranges a number keeps before they are merged into one
+    #! affects: precision
+    #! example: {0..10, 100..120} stays two ranges instead of 0..120
+  degrade_at_percent: 100  # past this share of steps, precision limits are halved so the run finishes. 100 = never
+    #! affects: precision, speed
+    #! range: 0..100
+    #! example: 80: a huge document finishes with fewer paths kept
+  expansion_tokens: 1048576  # most tokens one expansion may produce
+    #! affects: memory
+    #! example: a runaway \edef stops here instead of filling memory
+  conditional_tokens: 1048576  # most tokens read ahead to find the branches of an \ifcase
+    #! affects: memory
+    #! example: an \ifcase with a huge body is cut here
+  held_tokens: 4000000  # most tokens waiting to be read at once
+    #! affects: memory
+    #! example: a macro that keeps pushing input stops here
+  expansion_stack: 4000  # most macros, arguments and files open at once
+    #! affects: memory
+    #! example: deep recursion without tail calls stops here
+  save_stack: 2000000  # most assignments one group may have to undo, about 200 MB
+    #! affects: memory
+    #! example: a group with millions of \def stops here
+  vertices: 400000  # most steps the dependency graph records. Past it the graph stops growing, the analysis goes on
+    #! affects: memory, output
+    #! example: satex slice on a long document sees only the first part
+  facts: 2000000  # most definitions, uses and other facts recorded
+    #! affects: memory, output
+    #! example: queries miss facts past this on huge documents
+  trace: 200000  # most events satex trace records
+    #! affects: memory, output
+    #! example: a trace of a long run shows only its start
 ```
 
 ## What plugins decide
@@ -345,15 +621,15 @@ analysis:
     - hook: begindocument
 ```
 
-`analysis.join_paths_at` (default `[{command: \document}]`): Points where every path still apart is joined, whatever else differs. A `command` is matched by its meaning: `\document` joins wherever the run starts that meaning, from `\begin{document}`, an alias or an `\expandafter`. A `hook` is an lthooks name and joins when the hook is used. A slot the paths disagree on becomes the join of their values, widened when needed, and no path is dropped. Each join is reported once as the `imprecision` diagnostic `paths-joined-at`, with how many paths arrived and what kept them apart.
+`analysis.join_paths_at` (default `[{command: \document}]`): Places where all paths still apart are merged into one. A `command` matches by meaning, so `\document` merges at `\begin{document}` however the run gets there. A `hook` is an lthooks name. Values the paths disagree on are merged, no path is dropped, and each merge is reported once as `paths-joined-at`.
 
-`analysis.assume_compiles` (default `true`): A soundiness assumption: the document compiles without errors. A path that raises a certain TeX error in library code (a package, the kernel) is then no run of the document, and is dropped. An error is certain when it arises on state the run knows exactly, before any approximation. An error in the document's own text is always kept, to be reported and fixed. Each drop is reported once as an `assumption` diagnostic, and the last path is never dropped. `false` keeps every path.
+`analysis.assume_compiles` (default `true`): Assumes the document compiles. A path where a package or the kernel raises a certain TeX error cannot be a real run, so it is dropped. Errors in your own text are always kept and reported. Each drop is reported once as an `assumption`, the last path is never dropped, and `false` keeps every path.
 
-`analysis.assume_packages_close_groups` (default `true`): A soundiness assumption: a package closes the groups it opens, so two paths at the same line of a file, one in more groups, join with those closed. `false` keeps such paths apart.
+`analysis.assume_packages_close_groups` (default `true`): Assumes a package closes every group it opens, so paths that differ only in open groups merge. `false` keeps them apart.
 
-`analysis.assume_environment` (default `true`): A soundiness assumption: the build runs in the environment SaTeX runs in, which Lua's `os.getenv` reads. `false` makes every variable unknown.
+`analysis.assume_environment` (default `true`): Assumes the build sees this machine's environment variables, as Lua's `os.getenv` reads them. `false` makes every variable unknown.
 
-`analysis.assume_forced_page_breaks` (default `true`): A soundiness assumption: a page breaks only where a penalty forces it (`\clearpage`, `\newpage`, `\end`). `false` also fires the output routine wherever the page may have filled, one path each way.
+`analysis.assume_forced_page_breaks` (default `true`): Assumes pages break only where something forces it (`\clearpage`, `\newpage`, `\end`). `false` also follows a page break wherever the page may have filled, one path each way.
 
 ## Stubs
 

@@ -110,7 +110,7 @@ Fix, if the package really is unused, by deleting its line.",
         code: "preamble-cost",
         category: Category::Performance,
         severity: Severity::Info,
-        summary: "what the preamble costs on every build",
+        summary: "the preamble costs time on every build",
         explanation: "\
 The packages the document asks for and the files read before
 `\\begin{document}`, reported when the preamble takes most of the tokens

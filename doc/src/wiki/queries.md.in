@@ -110,7 +110,7 @@ The pgfkeys keys defined at the end of the run and what each does (`initial`, `c
 
 ## gaps
 
-What the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `gaps.log` use the same list.
+Lists the places the run could not interpret, grouped by cause. Widened recursion and undecided conditionals are not gaps: both stay sound. `satex --stats` and `gaps.log` use the same list.
 
 {{run(6): satex query gaps -f samples/mypackage.sty}}
 

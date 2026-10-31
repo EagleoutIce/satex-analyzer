@@ -40,18 +40,19 @@ pub struct Limits {
     /// no limit.  A safety net: no document should come near it.  Like
     /// `memory`, it never changes where a path is cut before that stop.
     pub seconds: u64,
-    /// Undecided choices one command may make on one path.  Past them a
-    /// conditional is taken as unknown text, reported as an `assumption`.
+    /// How many undecided `\if` one command may split into paths. Past them
+    /// the command's result is unknown text, reported as an `assumption`.
+    /// Higher keeps more combinations apart and costs time.
     pub choices: u16,
-    /// Undecided choices one site (a conditional, a name of several
-    /// meanings) may make, over all paths and replays, while the run reads
-    /// one source line. Past them the site parts no more paths: a
-    /// conditional there skips its arms and does what they may do
-    /// (`site-forks-widened`). Many paths through one place say little
-    /// the join of a few did not. 0 turns it off.
+    /// How many paths one place in a source line may start, counted over all
+    /// paths. Past them an `\if` there is no longer followed both ways: the
+    /// run takes the effects either branch may have (`site-forks-widened`).
+    /// Lower finishes a `\foreach` with unknown bounds sooner but knows less.
+    /// 0 turns it off.
     pub site_forks: u32,
-    /// Paths one drive keeps waiting before the two furthest back at one
-    /// source position are cut to the input levels they share and joined.
+    /// How many alternative paths satex keeps at once. Past them the two
+    /// oldest at one place are merged into one. Higher is more precise,
+    /// slower and takes more memory.
     pub paths: u16,
     /// Paths one drive keeps waiting before it joins those that stand
     /// alike (one source position, the same conditionals, groups and
@@ -62,36 +63,35 @@ pub struct Limits {
     /// they will still run (an operation stacked or not) before they are
     /// joined after all. Halved under time pressure.
     pub heads_apart: u16,
-    /// Choices one command may have made on one path for a name that a
-    /// join left with one of several meanings to still split the run into a
-    /// path per meaning. Past them, and with 0 everywhere, it is read as a
-    /// name of unknown meaning.
+    /// How often one command may split the run per meaning of a name that
+    /// has several, such as `\x` defined differently in two branches. Past
+    /// them, and with 0, the name reads as unknown.
     pub meaning_splits: u16,
-    /// How many rounds a loop head analyzes its paths again from a grown
-    /// joined state before what still grows is widened (SEMANTICS § 14).
+    /// How many rounds a loop is followed exactly before values that still
+    /// change become ranges (SEMANTICS § 14). A `\loop` counting to an
+    /// unknown bound has its counter as a range after these rounds.
     pub widen_after: u16,
     /// How many runs of the build (latexmk's rounds) the analysis takes to
     /// reach the files' fixpoint; past them what still changes is unknown.
     /// 1 runs once, with no file of an earlier run.
     pub build_runs: u16,
-    /// How many levels deep a recursion whose continuation is undecided is
-    /// followed before it is assumed to end within them.
+    /// How deep a macro that calls itself while an `\if` is undecided is
+    /// followed before the recursion is assumed to end there.
     pub recursion_depth: u16,
-    /// How many loop heads and loop entries one drive keeps with their
-    /// joined states. Past them the oldest is forgotten. Its count stays
-    /// in the load's loop summaries, so it is summarized when met again.
+    /// How many loops one run remembers with their merged states. Past
+    /// them the oldest is forgotten, and summarized when it comes back.
     pub loop_heads: u16,
-    /// How many runs of one call, at one site with the same names handed
-    /// to it, are recorded before a later call with unknown operands applies
-    /// their join instead of running. 0 never summarizes a call.
+    /// After this many runs of one call at one place, a call with unknown
+    /// arguments reuses their merged result instead of running again.
+    /// `\pgfmathparse{\x}` with an unknown `\x` is then one step. 0 never does.
     pub call_summary_after: u16,
     /// How many times in a row one call may meet the state it met before,
     /// with the same arguments, input, nesting and bindings, before its
     /// path is ended (the only path is summarized instead): TeX repeats
     /// that state forever; 0 never ends one.
     pub cycle_after: u16,
-    /// How many meanings a join leaves a name with as a set (one of them)
-    /// before it has an unknown meaning.
+    /// How many possible meanings a name keeps after branches merge. Past
+    /// them its meaning is unknown.
     pub meaning_set: u16,
     /// How many arms a join of paths keeps paired ([`crate::env::Corr`]):
     /// which binding of one name goes with which of another.
@@ -99,8 +99,8 @@ pub struct Limits {
     /// How many names a join pairs at most: past them the rest are joined
     /// apart, as unpaired names are.
     pub join_names: u16,
-    /// How many values a join leaves a count or dimension register with as
-    /// a set before only their interval is kept.
+    /// How many exact values a count or length keeps after branches merge.
+    /// Past them only its range is kept, so `{1, 5}` becomes `1..5`.
     pub value_set: u16,
     /// How many members a join leaves a number with as a set once
     /// intervals are among them (`{[0,10], [100,120]}`) before only their
@@ -523,31 +523,35 @@ impl<'de> Deserialize<'de> for Clock {
     }
 }
 
-/// How the engine was started with respect to `\write18` (TeX Live manual).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum ShellEscape {
-    /// `--no-shell-escape`: nothing runs.
-    None,
-    /// `--shell-restricted`: only the programs the installation's
-    /// `shell_escape_commands` names (`kpsewhich -var-value`).
-    #[default]
-    Restricted,
-    /// `--shell-escape`: anything runs.
-    Full,
+named_enum! {
+    /// How the engine was started with respect to `\write18` (TeX Live manual).
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize, Default)]
+    #[serde(rename_all = "lowercase")]
+    pub enum ShellEscape {
+        /// `--no-shell-escape`: nothing runs.
+        None => "none",
+        /// `--shell-restricted`: only the programs the installation's
+        /// `shell_escape_commands` names (`kpsewhich -var-value`).
+        #[default]
+        Restricted => "restricted",
+        /// `--shell-escape`: anything runs.
+        Full => "full",
+    }
 }
 
-/// The engine's `-interaction` option (tex.web § 73): `\batchmode` = 0 …
-/// `\errorstopmode` = 3.  Builds run unattended, so nothing is typed at the
-/// terminal; the default is `nonstopmode`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum Interaction {
-    Batchmode,
-    #[default]
-    Nonstopmode,
-    Scrollmode,
-    Errorstopmode,
+named_enum! {
+    /// The engine's `-interaction` option (tex.web § 73): `\batchmode` = 0 …
+    /// `\errorstopmode` = 3.  Builds run unattended, so nothing is typed at the
+    /// terminal. The default is `nonstopmode`.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug, Deserialize, Serialize, Default)]
+    #[serde(rename_all = "lowercase")]
+    pub enum Interaction {
+        Batchmode => "batchmode",
+        #[default]
+        Nonstopmode => "nonstopmode",
+        Scrollmode => "scrollmode",
+        Errorstopmode => "errorstopmode",
+    }
 }
 
 /// `cache.index:` in `satex.yaml`.  A package cache holds the state a
@@ -815,36 +819,27 @@ impl Default for Cache {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AnalysisConfig {
-    /// Points where every path still apart is joined, whatever else
-    /// differs. A `command` is matched by its meaning: `\document`
-    /// joins wherever the run starts that meaning, from
-    /// `\begin{document}`, an alias or an `\expandafter`. A `hook` is
-    /// an lthooks name and joins when the hook is used. A slot the
-    /// paths disagree on becomes the join of their values, widened when
-    /// needed, and no path is dropped. Each join is reported once as
-    /// the `imprecision` diagnostic `paths-joined-at`, with how many
-    /// paths arrived and what kept them apart.
+    /// Places where all paths still apart are merged into one. A `command`
+    /// matches by meaning, so `\document` merges at `\begin{document}`
+    /// however the run gets there. A `hook` is an lthooks name. Values the
+    /// paths disagree on are merged, no path is dropped, and each merge is
+    /// reported once as `paths-joined-at`.
     pub join_paths_at: Vec<JoinPoint>,
-    /// A soundiness assumption: the document compiles without errors. A
-    /// path that raises a certain TeX error in library code (a package,
-    /// the kernel) is then no run of the document, and is dropped. An
-    /// error is certain when it arises on state the run knows exactly,
-    /// before any approximation. An error in the document's own text is
-    /// always kept, to be reported and fixed. Each drop is reported once
-    /// as an `assumption` diagnostic, and the last path is never dropped.
-    /// `false` keeps every path.
+    /// Assumes the document compiles. A path where a package or the kernel
+    /// raises a certain TeX error cannot be a real run, so it is dropped.
+    /// Errors in your own text are always kept and reported. Each drop is
+    /// reported once as an `assumption`, the last path is never dropped,
+    /// and `false` keeps every path.
     pub assume_compiles: bool,
-    /// A soundiness assumption: a package closes the groups it opens, so
-    /// two paths at the same line of a file, one in more groups, join with
-    /// those closed. `false` keeps such paths apart.
+    /// Assumes a package closes every group it opens, so paths that differ
+    /// only in open groups merge. `false` keeps them apart.
     pub assume_packages_close_groups: bool,
-    /// A soundiness assumption: the build runs in the environment SaTeX
-    /// runs in, which Lua's `os.getenv` reads. `false` makes every
-    /// variable unknown.
+    /// Assumes the build sees this machine's environment variables, as
+    /// Lua's `os.getenv` reads them. `false` makes every variable unknown.
     pub assume_environment: bool,
-    /// A soundiness assumption: a page breaks only where a penalty forces
-    /// it (`\clearpage`, `\newpage`, `\end`). `false` also fires the
-    /// output routine wherever the page may have filled, one path each way.
+    /// Assumes pages break only where something forces it (`\clearpage`,
+    /// `\newpage`, `\end`). `false` also follows a page break wherever the
+    /// page may have filled, one path each way.
     pub assume_forced_page_breaks: bool,
 }
 
@@ -2038,20 +2033,44 @@ pub fn keys() -> serde_json::Map<String, serde_json::Value> {
     out
 }
 
-/// The JSON schema of `satex.yaml` (`satex.schema.json`): each key with the
-/// type and value [`Config::default`] gives it, described by the comment
-/// after it in `documented`, the repository's own `satex.yaml`.
-pub fn schema(documented: &str) -> serde_json::Value {
-    use serde_json::{Value, json};
-    // `key: value  # text`, nested by indentation; a comment alone on a line goes on.
-    let mut about: std::collections::HashMap<String, String> = Default::default();
+/// What `documented`, the repository's own `satex.yaml`, says about each
+/// dotted key: its description (`key: value  # text`, a comment alone on a
+/// line goes on) and the `#! affects:`, `#! example:` and `#! range:` lines
+/// under it.
+#[derive(Default)]
+struct Documented {
+    description: String,
+    affects: Vec<String>,
+    example: Vec<String>,
+    range: Option<(f64, f64)>,
+}
+
+fn documented_keys(documented: &str) -> std::collections::HashMap<String, Documented> {
+    let mut about: std::collections::HashMap<String, Documented> = Default::default();
     let (mut path, mut last): (Vec<(usize, String)>, Option<String>) = (Vec::new(), None);
     for line in documented.lines() {
         let indent = line.len() - line.trim_start().len();
         let text = line.trim_start();
+        if let Some(meta) = text.strip_prefix("#!") {
+            let Some(entry) = last.as_ref().and_then(|key| about.get_mut(key)) else { continue };
+            match meta.trim().split_once(':').map(|(k, v)| (k.trim(), v.trim())) {
+                Some(("affects", v)) => entry.affects.extend(v.split(',').map(|a| a.trim().to_string())),
+                Some(("example", v)) => entry.example.push(v.to_string()),
+                Some(("range", v)) => {
+                    entry.range = v.split_once("..").and_then(|(lo, hi)| Some((lo.parse().ok()?, hi.parse().ok()?)))
+                }
+                _ => {}
+            }
+            continue;
+        }
+        // A commented-out setting (`# engine: pdftex  # …`) documents that key.
+        let commented = text.strip_prefix('#').map(str::trim_start).filter(|c| setting_line(c));
+        let text = commented.unwrap_or(text);
         if let Some(more) = text.strip_prefix('#').filter(|_| indent > 0) {
-            if let Some(key) = &last {
-                about.entry(key.clone()).and_modify(|a| *a = format!("{a} {}", more.trim()));
+            if let Some(entry) =
+                last.as_ref().and_then(|key| about.get_mut(key)).filter(|_| !more.trim_start().starts_with('-'))
+            {
+                entry.description = format!("{} {}", entry.description, more.trim());
             }
             continue;
         }
@@ -2062,12 +2081,59 @@ pub fn schema(documented: &str) -> serde_json::Value {
         path.retain(|(i, _)| *i < indent);
         path.push((indent, key.trim().to_string()));
         let dotted = path.iter().map(|(_, k)| k.as_str()).collect::<Vec<_>>().join(".");
-        if let Some((_, comment)) = rest.split_once("  # ") {
-            about.insert(dotted.clone(), comment.trim().to_string());
-        }
+        let description = rest.split_once(" # ").map(|(_, c)| c.trim().to_string()).unwrap_or_default();
+        about.insert(dotted.clone(), Documented { description, ..Documented::default() });
         last = Some(dotted);
     }
-    fn walk(path: &str, v: &Value, about: &std::collections::HashMap<String, String>) -> Value {
+    about
+}
+
+/// Whether a comment's text is a setting, `key: value` with a plain key.
+fn setting_line(text: &str) -> bool {
+    text.split_once(':').is_some_and(|(key, value)| {
+        !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !value.trim().is_empty()
+    })
+}
+
+/// The values a setting whose default is unset may take, from its type's
+/// own list of spellings.
+fn choices(path: &str) -> Option<Vec<&'static str>> {
+    let names = |all: &[&'static str]| Some(all.to_vec());
+    match path {
+        "engine" => names(&Engine::ALL.iter().map(|e| e.as_str()).collect::<Vec<_>>()),
+        "kernel" => names(&crate::plugin::Kernel::ALL.iter().map(|k| k.as_str()).collect::<Vec<_>>()),
+        "provider" => names(&crate::plugin::Provider::ALL.iter().map(|p| p.as_str()).collect::<Vec<_>>()),
+        "platform" => names(&crate::plugin::Platform::ALL.iter().map(|p| p.as_str()).collect::<Vec<_>>()),
+        "output" => names(&crate::plugin::Output::ALL.iter().map(|o| o.as_str()).collect::<Vec<_>>()),
+        "profile" => names(&Profile::ALL.iter().map(|p| p.as_str()).collect::<Vec<_>>()),
+        "shell_escape" => names(&ShellEscape::ALL.iter().map(|s| s.as_str()).collect::<Vec<_>>()),
+        "interaction" => names(&Interaction::ALL.iter().map(|i| i.as_str()).collect::<Vec<_>>()),
+        _ => None,
+    }
+}
+
+/// The JSON schema of `satex.yaml` (`satex.schema.json`): each key with the
+/// type and value [`Config::default`] gives it, described by
+/// [`documented_keys`]. Enumerated settings list their values, lists their
+/// items' type, and counts their bounds: never below 0 unless a range says so.
+pub fn schema(documented: &str) -> serde_json::Value {
+    use serde_json::{Value, json};
+    let about = documented_keys(documented);
+    fn item(v: Option<&Value>) -> Value {
+        match v {
+            Some(Value::Object(m)) => json!({
+                "type": "object",
+                "properties": m.keys().map(|k| (k.clone(), json!({ "type": "string" }))).collect::<serde_json::Map<_, _>>(),
+                "minProperties": 1,
+                "maxProperties": 1,
+            }),
+            Some(Value::Number(n)) if n.is_f64() => json!({ "type": "number" }),
+            Some(Value::Number(_)) => json!({ "type": "integer", "minimum": 0 }),
+            Some(Value::Bool(_)) => json!({ "type": "boolean" }),
+            _ => json!({ "type": "string" }),
+        }
+    }
+    fn walk(path: &str, v: &Value, about: &std::collections::HashMap<String, Documented>) -> Value {
         let mut out = match v {
             Value::Object(m) => json!({
                 "type": "object",
@@ -2077,17 +2143,40 @@ pub fn schema(documented: &str) -> serde_json::Value {
                 }).collect::<serde_json::Map<_, _>>(),
             }),
             Value::Bool(_) => json!({ "type": "boolean" }),
-            Value::Number(n) if n.is_f64() => json!({ "type": "number" }),
-            Value::Number(_) => json!({ "type": "integer" }),
+            Value::Number(n) if n.is_f64() => json!({ "type": "number", "minimum": 0 }),
+            Value::Number(_) => json!({ "type": "integer", "minimum": 0 }),
             Value::String(_) => json!({ "type": "string" }),
-            Value::Array(_) => json!({ "type": "array" }),
+            Value::Array(a) => json!({ "type": "array", "items": item(a.first()) }),
             Value::Null => json!({}),
         };
+        if let Some(values) = choices(path) {
+            out["type"] = json!("string");
+            out["enum"] = json!(values);
+        }
+        if path == "clock" {
+            out = json!({ "oneOf": [
+                { "type": "string", "enum": ["now", "unknown"] },
+                { "type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(Z|[+-]\d{2}:\d{2})?)?$" },
+            ] });
+        }
         if !matches!(v, Value::Object(_) | Value::Null) {
             out["default"] = v.clone();
         }
-        if let Some(text) = about.get(path) {
-            out["description"] = json!(text);
+        if let Some(doc) = about.get(path) {
+            if !doc.description.is_empty() {
+                out["description"] = json!(doc.description.trim());
+            }
+            if !doc.affects.is_empty() {
+                out["x-affects"] = json!(doc.affects);
+            }
+            if !doc.example.is_empty() {
+                out["x-example"] = json!(doc.example.join("\n"));
+            }
+            if let Some((lo, hi)) = doc.range {
+                let bound = |x: f64| if x.fract() == 0.0 { json!(x as i64) } else { json!(x) };
+                out["minimum"] = bound(lo);
+                out["maximum"] = bound(hi);
+            }
         }
         out
     }
