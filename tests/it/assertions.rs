@@ -124,3 +124,11 @@ fn thepage_compares_the_counter_whatever_prints_it() {
         assert!(found.iter().any(|f| f.starts_with("assertion-refuted: `\\thepage > 3`")), "{numbering}: {found:?}");
     }
 }
+
+/// An assertion on the file's last line, with nothing read after it, is
+/// still checked.
+#[test]
+fn an_assertion_at_the_end_of_the_file_is_checked() {
+    let analysis = analyze("\\countdef\\x=10 \\x=3\n%\\satex@assert{\\x = 3}\n");
+    only(&analysis, "assertion-proved");
+}

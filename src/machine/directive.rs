@@ -55,13 +55,17 @@ impl Machine<'_> {
     }
 
     /// A file ends with directives the main loop has not reached yet: the
-    /// file that read it runs them next.
+    /// file that read it runs them next, the main file's run now.
     pub(super) fn pass_directives_on(&mut self, mouth: &mut Mouth) {
         if mouth.directives.is_empty() {
             return;
         }
         if let Some(outer) = self.file_mouth() {
             outer.directives.append(&mut mouth.directives);
+        } else if self.own_file(mouth.file) && !self.halted {
+            for d in std::mem::take(&mut mouth.directives) {
+                self.directive(&d);
+            }
         }
     }
 
