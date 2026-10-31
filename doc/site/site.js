@@ -453,11 +453,15 @@
     // row: false while a row waits for its first character, true if an \hline rules it, null when one is open
     let open = 0, font = '', table = 0, row = null, lig = null;
     // a ligature: the characters the font joined, then the glyph it set (`.show-ligs` animates the join)
+    const ligature = (from, to) => {
+      const code = [...to].length === 1 ? ` (U+${to.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')})` : '';
+      return `Ligature: the font sets ${[...from].join(' + ')} as one glyph, ${to}${code}, as its ligature table says`;
+    };
     const joined = (part) => {
       if (!lig) return esc(part);
       const [from, to] = lig, n = [...to].length, glyph = [...part].slice(0, n).join('');
       lig = null;
-      return `<span class="ts-lig" data-from="${esc(from)}" title="a ligature of ${esc([...from].join(' '))}"><span class="ts-lig-to">${esc(glyph)}</span></span>${esc([...part].slice(n).join(''))}`;
+      return `<span class="ts-lig" data-from="${esc(from)}" title="${esc(ligature(from, to))}"><span class="ts-lig-to">${esc(glyph)}</span></span>${esc([...part].slice(n).join(''))}`;
     };
     const opened = () => {
       if (row === null) return '';
@@ -469,7 +473,7 @@
     let boxes = 0;
     const grid = (mark) => {
       if (mark.startsWith('box ')) { boxes++; return `<span class="ts-boxto" style="min-width: ${parseFloat(mark.slice(4))}pt">`; }
-      if (mark === 'boxend') { if (!boxes) return ''; boxes--; return '</span>'; }
+      if (mark === 'boxend') { if (!boxes) return ''; boxes--; return '</span>\u0000'; }
       if (mark === 'leaders') return '<span class="ts-leaders" aria-hidden="true"></span>';
       if (mark === 'begin') { table++; row = false; return '<span class="ts-table">'; }
       if (!table) return '';
@@ -498,8 +502,10 @@
       if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `${tr}<span class="ts-key ts-key-${esc(kind)}" title="${esc(kind)}">${esc(key)}</span>`; }
       if (RULES[note]) return `${tr}<span class="${RULES[note][0]}" title="${RULES[note][1]}"></span>`;
       return `${tr}<span class="ts-note">${esc(note)}</span>`;
-    }).join('');
-    return html + '</span>'.repeat(open + 2 * table + boxes);
+    }).join('').replace(/<span class="ts-boxto" style="[^"]*"><\/span>\u0000/g, '');
+    // set boxes at both ends (a contents line, a label) align the line as a row
+    const aligned = html.startsWith('<span class="ts-boxto"') && html.endsWith('\u0000') || html.includes('ts-leaders');
+    return (aligned ? '<i class="ts-row" hidden></i>' : '') + html.replaceAll('\u0000', '') + '</span>'.repeat(open + 2 * table + boxes);
   }
   /** The Markdown satex writes, for hovers and rule explanations: headings, paragraphs, lists,
    * fenced or indented code, links, emphasis. */
@@ -519,7 +525,7 @@
       ...(own ? [] : [`<span class="sev sev-${esc(r.severity)}" title="default: ${esc(r.severity)}">default: ${esc(r.severity)}</span>`]),
       `<span class="cat cat-${esc(r.category)}">${esc(r.category)}</span>`,
       ...(engines ? [`<span class="eng" title="only under ${esc(engines)}">${esc(engines)}</span>`] : []),
-      ...(r.fixes ?? []).map((f) => `<span class="fix fix-${esc(f)}">${esc(f)}</span>`)];
+      ...(r.fixes ?? []).map((f) => `<span class="fix fix-${esc(f)}" title="${f === 'safe' ? 'safe: keeps the meaning, --fix applies it' : 'unsafe: may change the meaning, only --unsafe-fixes applies it'}">${f === 'safe' ? 'S' : 'U'}</span>`)];
     const name = href ? `<a href="${esc(href)}">${esc(r.code)}</a>` : esc(r.code);
     return `<section class="rule rule-tip"><h4>${name}</h4><p class="badges">${badges.join(' ')}</p>` +
       `<p><b>${inline(r.summary ?? r.message ?? '')}</b></p>${markdown(r.explanation ?? '')}${refs ? `<p>See ${refs}.</p>` : ''}</section>`;
@@ -794,7 +800,7 @@
   const RANK = { error: 0, warning: 1, info: 2, hint: 3 };
   const FACETS = { sev: 'severity', cat: 'category', eng: 'engine', fix: 'quick fix', from: 'origin' };
   const facet = (row, k) => [...row.querySelectorAll('.' + k)].flatMap((e) => k === 'sev' ? [e.title.split(' ').pop()]
-    : k === 'eng' ? e.textContent.split(', ') : [e.textContent.split(' ')[0]]);
+    : k === 'eng' ? e.textContent.split(', ') : k === 'fix' ? [e.className.replace(/.*fix-/, '')] : [e.textContent.split(' ')[0]]);
   const key = (cell) => { const sev = cell?.querySelector('.sev'); return (sev ? RANK[sev.title.split(' ').pop()] ?? 9 : '') + (cell?.textContent.trim() ?? ''); };
   const SIZES = [25, 50, 100, 0];
   const remember = (name, fallback) => { try { return JSON.parse(localStorage.getItem(name) ?? 'null') ?? fallback; } catch { return fallback; } };
@@ -815,7 +821,7 @@
       const values = [...new Set(rows.flatMap((r) => facet(r, k)))].sort();
       if (!values.length) return [];
       const select = document.createElement('select');
-      select.innerHTML = `<option value="">${label}: all</option>` + (k === 'sev' || k === 'cat' ? '' : '<option value="—">none</option>') +
+      select.innerHTML = `<option value="">${label}</option>` + (k === 'sev' || k === 'cat' ? '' : '<option value="—">none</option>') +
         values.map((v) => `<option>${v}</option>`).join('');
       select.dataset.k = k;
       return [select];
@@ -832,11 +838,12 @@
       menu.lastChild.append(label);
       set(on);
     };
-    names.forEach((name, i) => toggle(name, saved[name] ?? true, (on) => { for (const row of table.rows) if (row.cells[i]) row.cells[i].hidden = !on; }));
+    // the engine and origin columns start hidden: the summary gets their room
+    names.forEach((name, i) => toggle(name, saved[name] ?? !['engine', 'origin'].includes(name), (on) => { for (const row of table.rows) if (row.cells[i]) row.cells[i].hidden = !on; }));
     toggle('wrap text', saved['wrap text'] ?? false, (on) => table.classList.toggle('wrap', on));
     menu.onclick = menu.onkeydown = (e) => e.stopPropagation();
     document.addEventListener('click', (e) => { if (!menu.contains(e.target)) menu.open = false; });
-    heads.at(-1).append(menu);
+    bar.append(menu);
     table.classList.add('long');
     const scroll = Object.assign(document.createElement('div'), { className: 'table-scroll' });
     table.before(scroll);
@@ -908,6 +915,10 @@
   // A link into a folded section unfolds it.
   const unfold = () => { const t = location.hash ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null; t?.closest('details')?.setAttribute('open', ''); t?.scrollIntoView(); };
   addEventListener('hashchange', unfold);
+  document.addEventListener('click', (e) => {
+    const d = e.target.closest('main details[id^=category-] > summary')?.parentElement;
+    if (d) setTimeout(() => { if (d.open) { history.replaceState(null, '', '#' + d.id); d.scrollIntoView({ behavior: 'smooth' }); } });
+  });
   unfold();
 
   // The landing page: the claim turns through what a run knows; tab rows show one case at a time.
@@ -940,20 +951,24 @@
     const offered = [...new Map(own.map((r) => [r.name, r])).values()].slice(0, 3);
     const complete = () => {
       const chip = line.querySelector('code');
-      if (!chip || !chip.textContent.startsWith('\\') || !offered.length) return;
-      chip.insertAdjacentHTML('afterend', `<ul class="claim-complete" aria-hidden="true">${offered.map((r) => `<li><code class="usage">${usage(r.effective, typesOf(r)).html}</code><span>${esc(r.file ?? r.path ?? '')}</span></li>`).join('')}</ul>`);
+      if (!chip || !chip.textContent.startsWith('\\') || !offered.length) return false;
+      chip.insertAdjacentHTML('afterend', `<ul class="claim-complete" aria-hidden="true" style="left:${chip.offsetLeft}px">${offered.map((r) => `<li><code class="usage">${usage(r.effective, typesOf(r)).html}</code><span>${esc(r.file ?? r.path ?? '')}</span></li>`).join('')}</ul>`);
+      const pop = line.querySelector('.claim-complete');
+      setTimeout(() => pop.classList.add('on'), 450);
+      return true;
     };
-    const settle = () => { line.classList.add('linted'); complete(); timer = setTimeout(() => paused || show((shown + 1) % knows.length), 3200); };
+    const settle = () => { if (!complete()) line.classList.add('linted'); timer = setTimeout(() => paused || show((shown + 1) % knows.length), 3200); };
     const show = (i) => {
       clearTimeout(timer);
       line.classList.remove('linted');
-      line.querySelector('.claim-complete')?.remove();
+      const pop = line.querySelector('.claim-complete');
+      pop?.classList.remove('on');
       [...dots.children].forEach((d, j) => d.setAttribute('aria-selected', String(j === i)));
-      run(shown, length(shown), -1, () => { shown = i; run(i, 0, 1, settle); });
+      timer = setTimeout(() => run(shown, length(shown), -1, () => { shown = i; run(i, 0, 1, settle); }), pop ? 320 : 0);
     };
     dots.onclick = (e) => { const b = e.target.closest('button'); if (b) show([...dots.children].indexOf(b)); };
     const claim = line.closest('.claim');
-    for (const el of [claim, dots]) { el.onmouseenter = () => (paused = true); el.onmouseleave = () => { paused = false; if (line.classList.contains('linted')) settle(); }; }
+    for (const el of [claim, dots]) { el.onmouseenter = () => (paused = true); el.onmouseleave = () => { paused = false; if (line.classList.contains('linted') || line.querySelector('.claim-complete')) { clearTimeout(timer); timer = setTimeout(() => paused || show((shown + 1) % knows.length), 1500); } }; }
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) line.innerHTML = typed(0, length(0));
     else settle();
   }
@@ -991,7 +1006,7 @@
   const blocks = heads.map((h) => {
     const g = h.closest('details')?.querySelector('summary')?.textContent ?? null;
     const name = g?.split(/\s+[(—-]/)[0] ?? '';
-    const open = g && g !== group ? `<div class="grp-block"><span class="grp-row"><a class="grp" href="#rules" data-cat="${esc(name)}">${esc(g)}</a><button type="button" class="grp-more" aria-expanded="false" title="list its rules">▸</button></span><div class="grp-items" hidden>` : '';
+    const open = g && g !== group ? `<div class="grp-block"><span class="grp-row"><a class="grp" href="#category-${esc(name.toLowerCase())}" data-cat="${esc(name)}">${esc(g)}</a><button type="button" class="grp-more" aria-expanded="false" title="list its rules">▸</button></span><div class="grp-items" hidden>` : '';
     const close = group && g !== group ? '</div></div>' : '';
     group = g;
     // the heading's name, not its gloss: "Meaning sets: what … may mean" lists as "Meaning sets"

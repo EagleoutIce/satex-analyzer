@@ -429,7 +429,7 @@ async function browser() {
       });
       await section('typeset', async () => {
       // the Typeset panel: a table as a grid, its \hline a rule; a reference's key where the \ref stands, never inside a word
-      await open('table', '\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:a}\nSee Section~\\ref{sec:a} for the hyphenation of everything.\n\n\\begin{tabular}{lc}\nMethod & Score \\\\ \\hline\nOurs & 0.92 \\\\\nBase & 1.5 \\\\\n\\end{tabular}\n\\end{document}\n');
+      await open('table', '\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:a}\nSee Section~\\ref{sec:a} for the hyphenation of everything \\makebox[2cm]{boxed}.\n\n\\begin{tabular}{lc}\nMethod & Score \\\\ \\hline\nOurs & 0.92 \\\\\nBase & 1.5 \\\\\n\\end{tabular}\n\\end{document}\n');
       await js(`const d = document.getElementById('play-typeset'); d.open = true; const k = document.getElementById('typeset-keys'); if (!k.checked) k.click()`);
       await until(`return !!document.querySelector('#typeset-body .ts-table')`, 30000);
       const ts = await js(`const t = document.querySelector('#typeset-body .ts-table');
@@ -439,6 +439,18 @@ async function browser() {
       await shot('typeset-table');
       check('a table is a grid: rows, cells, the hline a rule', JSON.stringify(ts.rows) === JSON.stringify([['Method', 'Score'], ['Ours', '0.92'], ['Base', '1.5']]) && ts.ruled === 1, JSON.stringify(ts));
       check('a reference key stands where the \\ref does', ts.chips.length === 1 && !ts.chips.some(([a, b]) => /\w$/.test(a) && /^\w/.test(b)), JSON.stringify(ts.chips));
+      // a paragraph sets its words on full lines: a box in it (a label, a \hbox to the width) never squeezes the text into a column
+      const narrow = await js(`return [...document.querySelectorAll('#typeset-body .ts-text')].filter((t) => t.textContent.trim().length > 12)
+        .filter((t) => t.getBoundingClientRect().width < 8 * parseFloat(getComputedStyle(t).fontSize)).map((t) => t.textContent.trim().slice(0, 30))`);
+      check('typeset paragraphs keep the width of the pane', narrow.length === 0, JSON.stringify(narrow));
+      });
+      await section('outline', async () => {
+      // a label belongs to the section it stands in, though the run reports labels after every section
+      await open('outline', '\\documentclass{article}\n\\begin{document}\n\\section{Alpha}\\label{sec:alpha}\nText~\\cite{k}.\n\n\\subsection{Beta}\nMore.\n\\end{document}\n');
+      await until(`return document.querySelectorAll('#outline-body .o-sec').length >= 2`, 30000);
+      const owners = await js(`return [...document.querySelectorAll('#outline-body .o-sec')].map((li) => [li.querySelector('.o-go')?.textContent ?? '', [...li.querySelectorAll('.o-label')].map((l) => l.textContent)])`);
+      const alpha = owners.find(([h]) => h.includes('Alpha')), beta = owners.find(([h]) => h.includes('Beta'));
+      check('a label sits under the section it follows', alpha?.[1].includes('sec:alpha') && !beta?.[1].includes('sec:alpha'), JSON.stringify(owners));
       });
       await section('draw', async () => {
       // drawn shapes, strokes of points in [-1, 1]² (y down), among every package's math symbols: each finds its command

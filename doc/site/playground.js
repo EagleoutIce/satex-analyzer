@@ -694,7 +694,8 @@
       }, 250);
     });
     parent.addEventListener('mouseleave', unhover);
-    parent.addEventListener('keydown', unhover);
+    // a modifier alone (a screenshot shortcut, ctrl for the link) keeps the card
+    parent.addEventListener('keydown', (e) => ['Control', 'Meta', 'Shift', 'Alt', 'OS', 'Super'].includes(e.key) || unhover());
     addEventListener('keyup', (e) => (e.key === 'Control' || e.key === 'Meta') && underline(null));
     parent.addEventListener('mousedown', (e) => {
       if (!(e.ctrlKey || e.metaKey) || e.button !== 0 || !under(e)) return;
@@ -788,13 +789,14 @@
     const request = { file: path(state.root), queries: [{ type: 'occurrences' }], ...(state.file !== state.root ? { config: { trace: 'false' } } : {}) };
     const rs = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch(() => null))?.[0]?.records;
     if (!rs) return;
-    // the run's order across files (an \input's contents where it stands); within one stretch of a file, by position
-    const chunks = [], file = (r) => r.path ?? r.file;
-    for (const r of rs.filter((r) => !r.origin || r.origin === 'document')) {
-      if (chunks.at(-1) && file(chunks.at(-1)[0]) === file(r)) chunks.at(-1).push(r); else chunks.push([r]);
-    }
-    chunks.forEach((c) => c.sort((a, b) => a.line - b.line || (a.col ?? 0) - (b.col ?? 0)));
-    const own = chunks.flat();
+    // sections in the run's order; labels, citations and the rest come after them, each placed by its source position
+    const own = rs.filter((r) => !r.origin || r.origin === 'document'), file = (r) => r.path ?? r.file;
+    const before = (a, b) => a.line < b.line || a.line === b.line && (a.col ?? 0) <= (b.col ?? 0);
+    const firstOf = new Map();
+    own.forEach((r, i) => { if (!firstOf.has(file(r))) firstOf.set(file(r), i); });
+    const heads = own.map((r, i) => [r, i]).filter(([r]) => r.kind === 'section');
+    /** The section a record stands in: the last one before it in its file, else the last one before its file starts. */
+    const owner = (r) => heads.findLast(([s]) => file(s) === file(r) && before(s, r))?.[1] ?? heads.findLast(([, i]) => i < firstOf.get(file(r)))?.[1] ?? -1;
     const sections = own.filter((r) => r.kind === 'section'), present = [...new Set(sections.map((r) => LEVELS.indexOf(r.detail)).filter((l) => l >= 0))].sort((x, y) => x - y);
     const lowest = present.includes(1) ? 1 : 2; // chapters count as the top level when there are some, else sections
     const at = (r) => `data-path="${escape(r.path ?? r.file ?? '')}" data-line="${r.line}" data-col="${r.col ?? 1}"`;
@@ -825,7 +827,10 @@
       html.push(row(open.id, open.depth, open.head + (open.first ? `<span class="o-first" title="label ${escape(open.first)}">${escape(open.first)}</span>` : ''), chips(open.labels) + chips(fileChips) + chips(cites)));
       open = null;
     };
-    for (const r of own) {
+    const placed = own.filter((r) => r.kind !== 'section').map((r) => [r, owner(r)]);
+    const inOrder = [...placed.filter(([, o]) => o < 0).map(([r]) => r), ...heads.flatMap(([s, i]) => [s,
+      ...placed.filter(([, o]) => o === i).map(([r]) => r).sort((a, b) => file(a) === file(b) ? (before(a, b) ? -1 : 1) : 0)])];
+    for (const r of inOrder) {
       if (r.kind === 'section') {
         close();
         const depth = Math.max(0, present.indexOf(LEVELS.indexOf(r.detail))), num = numberOf(r);
@@ -919,7 +924,7 @@
     lspStatus.textContent = state.file in state.ro ? 'read-only file' : ds.length ? '' : 'none';
     const fixButton = (f, j) => `<button class="small apply fix-${f.safety}" data-j="${j}" title="${escape(f.title)}">Fix (${f.safety})</button>`;
     const item = (d, i) => `<li class="f-${sev(d)}${unfolded.has(key(d)) ? ' open' : ''}" data-i="${i}" tabindex="0">` +
-      `<span class="msg"><b class="rn">${escape(d.code ?? '')}</b>: ${commandRefs(inline(d.message))}</span>` +
+      `<span class="msg" title="${escape(d.message ?? '')}">${d.number ? `<code class="rno" title="rule number">${escape(d.number)}</code> ` : ''}<b class="rn">${escape(d.code ?? '')}</b>: ${commandRefs(inline(d.message))}</span>` +
       `<span class="where"><b class="loc">${d.range.start.line + 1}:${d.range.start.character + 1}</b><span class="shape" title="${sev(d)}" aria-label="${sev(d)}"></span></span>` +
       `<span class="acts">${d.fixes.map(fixButton).join('')}<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
       (unfolded.has(key(d)) ? explanation(d) : '') + '</li>';
@@ -1325,11 +1330,12 @@
     for (const r of libNames) counts.set(libSource(r), (counts.get(libSource(r)) ?? 0) + 1);
     const prefix = `${manifest.kernels[state.kernel]?.id}/`;
     const known = [...new Set((manifest.packages ?? []).filter((p) => p.id.startsWith(prefix)).map((p) => p.label.replace(/\.cls$/, '')))].filter((p) => !counts.has(p)).sort();
+    const manual = new Set((manifest.packages ?? []).filter((p) => p.manual).map((p) => p.label.replace(/\.cls$/, '')));
     const first = ['document', 'kernel'].filter((p) => counts.has(p));
     const loaded = [...counts.keys()].filter((p) => !first.includes(p)).sort();
     const q = libFrom.value.trim().toLowerCase(), all = q === libPick.toLowerCase();
     const hit = (p) => all || p.toLowerCase().includes(q);
-    const row = (p, label = p) => `<li role="option" data-pick="${escape(p)}" aria-selected="${p === libPick}">${escape(label)}${counts.has(p) ? ` <b class="count" title="${num(counts.get(p))} names">${short(counts.get(p))}</b>` : ''}</li>`;
+    const row = (p, label = p) => `<li role="option" data-pick="${escape(p)}" aria-selected="${p === libPick}">${escape(label)}${manual.has(p) ? ' <span class="manual" title="its manual is mined for descriptions">docs</span>' : ''}${counts.has(p) ? ` <b class="count" title="${num(counts.get(p))} names">${short(counts.get(p))}</b>` : ''}</li>`;
     const rest = known.filter(hit);
     libFromList.innerHTML = [...(all || !q ? [row('', 'every package')] : []), ...[...first, ...loaded].filter(hit).map((p) => row(p)),
       ...(rest.length ? [`<li class="muted" role="presentation">not loaded</li>`, ...rest.map((p) => row(p))] : [])].join('') || '<li class="muted">No package matches.</li>';
@@ -1490,7 +1496,8 @@
   let configRejected = null;
   const leaves = (props, at = '') => Object.entries(props ?? {}).flatMap(([k, p]) => (p.type === 'object' && p.properties
     ? leaves(p.properties, `${at}${k}.`) : [{ key: at + k, type: [].concat(p.type ?? 'string')[0], options: p.enum, def: p.default, about: p.description ?? '',
-      affects: [].concat(p['x-affects'] ?? []), example: p['x-example'], items: p.items, min: p.minimum, max: p.maximum }]));
+      affects: [].concat(p['x-affects'] ?? []), example: p['x-example'], items: p.items, min: p.minimum, max: p.maximum,
+      suggest: (p.oneOf ?? []).flatMap((o) => o.enum ?? []), pattern: (p.oneOf ?? []).find((o) => o.pattern)?.pattern }]));
   /** A key's group: its first part (`limits`), or `general` for a key of one part. */
   const groupOf_ = (k) => (k.key.includes('.') ? k.key.split('.')[0] : 'general');
   /** The plugins (build.py `plugins`) and the keys each one reads: its own section, `plugins.<name>` its switch. */
@@ -1503,7 +1510,10 @@
     if (k.type === 'boolean') return `<input type="checkbox" role="switch" data-cfg="${escape(k.key)}"${value ? ' checked' : ''}>`;
     if (k.options) return `<select class="dropdown" data-cfg="${escape(k.key)}">${k.options.map((o) => `<option${sameValue(o, value) ? ' selected' : ''}>${escape(o)}</option>`).join('')}</select>`;
     const text = value == null ? '' : typeof value === 'string' ? value : JSON.stringify(value);
-    return `<input type="${['integer', 'number'].includes(k.type) ? 'number' : 'text'}" data-cfg="${escape(k.key)}" value="${escape(text)}" spellcheck="false">`;
+    // a value of a few names or a pattern (`clock`: now, unknown or a date) completes from the names and today
+    const suggest = k.suggest?.length ? [...k.suggest, ...(k.pattern?.includes('\\d{4}') ? [new Date().toISOString().slice(0, 10)] : [])] : [];
+    const list = suggest.length ? `<datalist id="cfg-dl-${escape(k.key)}">${suggest.map((o) => `<option value="${escape(o)}">`).join('')}</datalist>` : '';
+    return `<input type="${['integer', 'number'].includes(k.type) ? 'number' : 'text'}" data-cfg="${escape(k.key)}" value="${escape(text)}" spellcheck="false"${list ? ` list="cfg-dl-${escape(k.key)}"` : ''}${k.pattern ? ` pattern="${escape(k.suggest?.length ? `(${k.suggest.join('|')})|${k.pattern.replace(/^\^|\$$/g, '')}` : k.pattern)}"` : ''}>${list}`;
   }
   /** The search: words that a key or its description holds, and filters: `@changed`, `@group:limits`, `@affects:precision`. */
   function configMatch(k, q) {
@@ -1511,6 +1521,33 @@
     return words.every((w) => w === '@changed' ? k.key in configSet || `${k.key}+` in configSet
       : w.startsWith('@group:') ? groupOf_(k) === w.slice(7) : w.startsWith('@affects:') ? k.affects.includes(w.slice(9))
         : k.key.toLowerCase().includes(w) || k.about.toLowerCase().includes(w));
+  }
+  /** The plugins tab: those with settings as groups, then the others in one compact list, one line each. */
+  function configPlugins(hits, q, section, closed) {
+    const own = PLUGINS.map((p) => [p, hits.filter((k) => pluginOf(k) === p.name)]);
+    const set = own.filter(([, ks]) => ks.length).map(([p, ks]) => section(p.name, p.name, p.about, ks, !!q || !closed.has(p.name)));
+    const plain = own.filter(([p, ks]) => !ks.length && !q && p.about)
+      .map(([p]) => `<li class="cfg-plain" title="${escape(p.about.replaceAll('`', ''))}"><b>${escape(p.name)}</b><span>${inline(p.about)}</span></li>`);
+    return set.join('') + (plain.length ? `<li class="cfg-group"><p class="cfg-plain-head">Without settings, always on</p><ul>${plain.join('')}</ul></li>` : '');
+  }
+  /** A setting's value an example line spells: `- field: v` items of a list, or `name: v` with the key's own name. */
+  function exampleValue(k, line) {
+    const read = (v) => { try { return JSON.parse(v); } catch { return /^\[.*\]$/.test(v) ? v.slice(1, -1).split(',').map((x) => x.trim()).filter(Boolean) : v; } };
+    const item = line.match(/^- (\w+): (.+)$/);
+    if (item && k.type === 'array') return [{ [item[1]]: read(item[2]) }];
+    const own = line.match(/^(\w+): (.+)$/);
+    return own && own[1] === k.key.split('.').at(-1) ? read(own[2]) : undefined;
+  }
+  /** An example as code, with the effect of each switch (`on:`, `off:`) and the prose apart, and a button that sets a value it spells. */
+  function configExample(k) {
+    const lines = typeof k.example === 'string' ? k.example.split('\n') : [configYamlOf({ [k.key]: k.example })];
+    return lines.map((line) => {
+      const effect = line.match(/^(on|off): (.*)$/);
+      if (effect) return `<p class="cfg-effect"><span class="cfg-aff">${effect[1]}</span> ${inline(effect[2])}</p>`;
+      const value = exampleValue(k, line);
+      if (value !== undefined) return `<p class="cfg-try"><code>${escape(configYamlOf({ [k.key]: value }).replace(/\n\s*/g, ' '))}</code><button type="button" class="ghost small" data-use="${escape(k.key)}" data-value="${escape(JSON.stringify(value))}">use</button></p>`;
+      return /^[\\%]/.test(line) ? `<pre><code>${escape(line)}</code></pre>` : `<p>${inline(line)}</p>`;
+    }).join('');
   }
   /** A list's editor: a row per item, an object's fields side by side, remove and add. */
   function configList(k, value) {
@@ -1550,15 +1587,18 @@
     // the filters as chips under the search: what the keys of this tab can be narrowed by
     const tabKeys = keys.filter((k) => (cfgTab === 'plugins') === !!pluginOf(k));
     const groups = [...new Set(tabKeys.map(groupOf_))], affects = [...new Set(tabKeys.flatMap((k) => k.affects))];
-    $('cfg-filters').innerHTML = ['@changed', ...affects.map((a) => `@affects:${a}`), ...groups.map((g) => `@group:${g}`)]
-      .map((f) => `<button type="button" class="lib-kind" data-filter="${escape(f)}" aria-pressed="${q.split(/\s+/).includes(f)}">${escape(f)}</button>`).join('');
+    // the filters complete a word that starts with `@`
+    const typing = $('cfg-search').value.match(/(?:^|\s)(@\S*)$/)?.[1]?.toLowerCase();
+    const filters = ['@changed', ...affects.map((a) => `@affects:${a}`), ...groups.map((g) => `@group:${g}`)].filter((f) => typing != null && f.startsWith(typing) && f !== typing);
+    $('cfg-filters').hidden = !filters.length;
+    $('cfg-filters').innerHTML = filters.map((f) => `<button type="button" class="lib-kind" data-filter="${escape(f)}">${escape(f)}</button>`).join('');
     const row = (k) => {
       const added = configSet[`${k.key}+`], changed = k.key in configSet || !!added;
       const rejected = configRejected && k.key in configRejected.set && !(k.key in configSet);
       const value = rejected ? configRejected.set[k.key] : k.key in configSet ? configSet[k.key] : k.def;
       const badges = k.affects.map((a) => `<span class="cfg-aff" title="changing it changes the ${escape(a)}">${escape(a)}</span>`).join('');
-      const example = k.example == null ? '' : `<details class="cfg-example"><summary>example</summary><pre><code>${escape(typeof k.example === 'string' ? k.example : configYamlOf({ [k.key]: k.example }))}</code></pre></details>`;
-      return `<li class="cfg-row${changed ? ' cfg-changed' : ''}${rejected ? ' cfg-bad' : ''}"><div class="cfg-what"${rejected ? ` data-why="not applied: ${escape(configRejected.why)}"` : ''}><span><code>${escape(k.key)}</code>${badges}</span><span class="muted">${escape(k.about)}</span>` +
+      const example = k.example == null ? '' : `<details class="cfg-example"><summary>example</summary>${configExample(k)}</details>`;
+      return `<li class="cfg-row${changed ? ' cfg-changed' : ''}${rejected ? ' cfg-bad' : ''}"><div class="cfg-what"${rejected ? ` data-why="not applied: ${escape(configRejected.why)}"` : ''}><span><code>${k.key.includes('.') ? `<span class="cfg-prefix">${escape(k.key.slice(0, k.key.lastIndexOf('.') + 1))}</span>` : ''}${escape(k.key.slice(k.key.lastIndexOf('.') + 1))}</code>${badges}</span><span class="muted">${escape(k.about)}</span>` +
         `${added ? `<span class="muted">adds ${added.map((x) => `<code>${escape(x)}</code>`).join(', ')}</span>` : ''}${example}</div>` +
         (k.type === 'array' ? `<div class="cfg-value">${configList(k, value)}</div>` : `<label class="${k.type === 'boolean' ? 'ts-toggle ' : ''}cfg-value">${configInput(k, value)}</label>`) +
         `<button type="button" class="ghost small" data-reset="${escape(k.key)}"${changed ? '' : ' hidden'} title="back to the default: ${escape(yamlValue(k.def ?? ''))}">Reset</button></li>`;
@@ -1568,8 +1608,8 @@
     const section = (id, head, about, ks, open) => `<li class="cfg-group"><details${open ? ' open' : ''} data-group="${escape(id)}"><summary><b>${escape(head)}</b>` +
       `${about ? ` <span class="muted">${escape(about)}</span>` : ''} <span class="muted">${plural(ks.length, 'key')}${changedIn(ks) ? `, ${changedIn(ks)} changed` : ''}</span></summary><ul>${ks.map(row).join('')}</ul></details></li>`;
     $('cfg-list').innerHTML = (cfgTab === 'plugins'
-      ? PLUGINS.map((p) => [p, hits.filter((k) => pluginOf(k) === p.name)]).filter(([p, ks]) => ks.length || (!q && p.about)).map(([p, ks]) => section(p.name, p.name, p.about, ks, !!q || changedIn(ks) > 0))
-      : groups.map((g) => [g, hits.filter((k) => groupOf_(k) === g)]).filter(([, ks]) => ks.length).map(([g, ks]) => section(g, g, '', ks, !!q || changedIn(ks) > 0 || cfgOpen.has(g)))).join('')
+      ? configPlugins(hits, q, section, cfgClosed)
+      : groups.map((g) => [g, hits.filter((k) => groupOf_(k) === g)]).filter(([, ks]) => ks.length).map(([g, ks]) => section(g, g, '', ks, !!q || changedIn(ks) > 0 || !cfgClosed.has(g)))).join('')
       || '<li class="muted">No setting matches.</li>';
     const n = Object.keys(configSet).length;
     $('cfg-total').textContent = n ? `${plural(n, 'setting')} changed` : 'every setting at its default';
@@ -1578,14 +1618,14 @@
   const configApply = (set) => { configKeep(set); configShow(); clearTimeout(configTimer); configTimer = setTimeout(() => restart(), 600); };
   $('cfg-open').onclick = () => { $('play-config').showModal(); configShow(); $('cfg-search').focus(); };
   $('cfg-search').oninput = configShow;
-  const cfgOpen = new Set();
-  $('cfg-list').addEventListener('toggle', (e) => { const g = e.target.dataset?.group; if (g) { if (e.target.open) cfgOpen.add(g); else cfgOpen.delete(g); } }, true);
+  const cfgClosed = new Set();
+  $('cfg-list').addEventListener('toggle', (e) => { const g = e.target.dataset?.group; if (g) { if (e.target.open) cfgClosed.delete(g); else cfgClosed.add(g); } }, true);
   $('cfg-tabs').addEventListener('click', (e) => { const t = e.target.closest('[data-tab]'); if (!t) return; cfgYaml = t.dataset.tab === 'yaml'; if (!cfgYaml) cfgTab = t.dataset.tab; configShow(); });
   $('cfg-filters').addEventListener('click', (e) => {
     const f = e.target.closest('[data-filter]')?.dataset.filter, s = $('cfg-search');
     if (!f) return;
-    const words = s.value.trim().split(/\s+/).filter(Boolean);
-    s.value = (words.includes(f) ? words.filter((w) => w !== f) : [...words, f]).join(' ');
+    s.value = `${s.value.replace(/@\S*$/, '')}${f} `;
+    s.focus();
     configShow();
   });
   // the YAML view: the whole of the changed settings as satex.yaml, read back and checked as it is typed
@@ -1632,6 +1672,7 @@
     if (why) return refuse(why);
     configApply(next);
   });
+  $('cfg-list').addEventListener('click', (e) => { const u = e.target.closest('[data-use]'); if (u) { configApply({ ...configSet, [u.dataset.use]: JSON.parse(u.dataset.value) }); return; } });
   $('cfg-list').addEventListener('click', (e) => { const b = e.target.closest('[data-reset]'); if (b) { const { [b.dataset.reset]: _, [`${b.dataset.reset}+`]: __, ...rest } = configSet; configApply(rest); } });
   $('cfg-reset').onclick = () => configApply({});
 
@@ -2810,7 +2851,7 @@
     if (run) {
       $('t-run').innerHTML = run.slice(4).split(', ').map((part) => {
         const [, n, label] = part.match(/^(\S+) (.*)$/) ?? [, part, ''];
-        return `<span title="${escape(num(n))} ${escape(label)}"><b>${escape(Number(n) >= 1e4 ? short(n) : num(n))}</b>${escape(label)}</span>`;
+        return `<span title="${escape(num(n))} ${escape(label)}${RUN_MEANS[label.trim()] ? `: ${RUN_MEANS[label.trim()]}` : ''}"><b>${escape(Number(n) >= 1e4 ? short(n) : num(n))}</b>${escape(label)}</span>`;
       }).join('') + ($('t-time-text').textContent ? `<span title="the whole check"><b>${escape($('t-time-text').textContent)}</b>total</span>` : '');
       const slow = texts.map((t) => t.match(/^slow (\d+) (\d+) (.*)$/)).filter(Boolean);
       $('t-slow').innerHTML = rpBars(slow.map(([, ms, pct, name]) => [name, +ms, pct, ` title="${escape(name)}"`]), 'slowest files',
@@ -2832,6 +2873,12 @@
   /** The main file's tokens per line, as a strip in the editor's gutter and its costliest lines in the
    * pop-up; each lint rule's time and findings, slowest first. */
   let heat = null;
+  /** What each count of the run means: a fork splits one path in two, paths are the runs alive at once. */
+  const RUN_MEANS = {
+    forks: 'how often a path split in two at a conditional or value satex could not decide. Each split adds one path',
+    'peak paths': 'the most alternative runs alive at the same time. Paths that agree again join, so this stays far below the forks',
+    steps: 'tokens read and expanded, on all paths together',
+  };
   function heatShow(texts) {
     const file = texts.find((t) => t.startsWith('heat '))?.slice(5) ?? '';
     const lines = texts.map((t) => t.match(/^line (\d+) (\d+)$/)).filter(Boolean).map(([, l, n]) => [+l, +n]);
@@ -2839,20 +2886,24 @@
     heatDraw();
     const top = [...lines].sort((a, b) => b[1] - a[1]).map(([l, n]) => [l, n, 0, ` data-line="${l}" title="go to line ${l}"`]);
     $('t-heat').innerHTML = (top.length ? `<label class="ts-toggle t-heatgutter"><span>heat in the gutter</span><input type="checkbox" role="switch"${heatShown ? ' checked' : ''}></label>` : '') +
-      rpBars(top, `busiest lines of ${escape(file.split('/').pop())}`, ([l]) => `line ${l}`, ([, n]) => `${short(n)} tokens`);
-    const rules = texts.map((t) => t.match(/^rule (\S+) (\d+) (\d+)$/)).filter(Boolean).map(([, code, us, n]) => [code, +us, +n]);
-    $('t-rules').innerHTML = rpBars(rules, `lint rules: ${secs(rules.reduce((s, r) => s + r[1], 0) / 1000)} in all`,
-      ([code]) => escape(code), ([, us, n]) => `${secs(us / 1000)} · ${plural(n, 'finding')}`);
+      rpBars(top, `busiest lines of ${escape(file.split('/').pop())}`, ([l]) => `line ${l}`, ([, n]) => `${short(n)} tokens`, false);
+    // the rules that took time or found something, with their numbers
+    const all = texts.map((t) => t.match(/^rule (\S+) (\d+) (\d+)$/)).filter(Boolean).map(([, code, us, n]) => [code, +us, +n]);
+    const rules = all.filter(([, us, n]) => n || us >= 500);
+    const enabled = PLUGINS.filter((p) => configSet[`plugins.${p.name}`] !== false).length;
+    $('t-rules').innerHTML = rpBars(rules, `lint rules: ${plural(all.length, 'rule')}, ${secs(all.reduce((s, r) => s + r[1], 0) / 1000)} in all`,
+      ([code]) => `${manifest.rules[code]?.number ? `<code class="rno">${escape(manifest.rules[code].number)}</code> ` : ''}${escape(code)}`, ([, us, n]) => `${secs(us / 1000)} · ${plural(n, 'finding')}`) +
+      `<p class="muted rp-note">${plural(PLUGINS.length, 'plugin')}, ${enabled} on</p>`;
   }
   let heatShown = false;
   /** The pop-up's bars, `[label, value, _, attributes]` rows largest first: the first three, the rest folded.
    * A bar's share is of the largest one. */
   const RP_SHOWN = 3;
-  function rpBars(rows, title, label, value) {
+  function rpBars(rows, title, label, value, fold = true) {
     const most = Math.max(1, ...rows.map((r) => r[1]));
     const bar = (r) => `<div class="rp-bar" style="--p:${(100 * r[1] / most).toFixed(1)}%"${r[3] ?? ''}><span>${label(r)}</span><span>${value(r)}</span></div>`;
     const rest = rows.slice(RP_SHOWN);
-    return rows.length ? `<h4>${title}</h4>${rows.slice(0, RP_SHOWN).map(bar).join('')}${rest.length ? `<details class="rp-more"><summary>show all ${rows.length}</summary>${rest.map(bar).join('')}</details>` : ''}` : '';
+    return rows.length ? `<h4>${title}</h4>${rows.slice(0, RP_SHOWN).map(bar).join('')}${rest.length && fold ? `<details class="rp-more"><summary>show all ${rows.length}</summary><div class="rp-scroll">${rest.map(bar).join('')}</div></details>` : ''}` : '';
   }
   const heatDraw = () => editor?.heat?.(heatShown && heat && (heat.file === state.file || heat.file.endsWith(`/${state.file}`)) ? heat.lines : null);
   $('t-heat').addEventListener('change', (e) => { if (e.target.closest('.t-heatgutter')) { heatShown = e.target.checked; heatDraw(); } });
