@@ -45,6 +45,12 @@ pub struct Timings {
     /// Phases timed after the analysis is finished, so behind a lock: the
     /// command that reads the analysis only has it by shared reference.
     after: crate::fixed::Mutex<Vec<(Phase, Duration)>>,
+    /// Always counted: tokens read since the main file's line was last
+    /// read, per line (`main_line`, 0 before the first), what a view's heat shows.
+    main_line: u32,
+    main_lines: Vec<u64>,
+    /// Each lint rule's last run over this analysis: its time and findings.
+    rules: crate::fixed::Mutex<crate::fixed::HashMap<&'static str, (Duration, usize)>>,
 }
 
 impl Timings {
@@ -125,6 +131,41 @@ impl Timings {
         let mut out: Vec<_> = self.written.iter().map(|(&s, w)| (s, w.clone())).collect();
         out.sort_unstable_by_key(|(s, w)| (std::cmp::Reverse(w.0), *s));
         out.truncate(n);
+        out
+    }
+
+    /// The main file's line read last: the tokens read next are its heat.
+    pub fn at_main_line(&mut self, line: u32) {
+        self.main_line = line;
+    }
+
+    pub fn count_main_token(&mut self) {
+        let line = self.main_line as usize;
+        if line > 0 {
+            if self.main_lines.len() <= line {
+                self.main_lines.resize(line + 1, 0);
+            }
+            self.main_lines[line] += 1;
+        }
+    }
+
+    /// The main file's lines that read tokens: (line, tokens).
+    pub fn main_heat(&self) -> impl Iterator<Item = (u32, u64)> + '_ {
+        self.main_lines.iter().enumerate().filter(|(_, n)| **n > 0).map(|(line, n)| (line as u32, *n))
+    }
+
+    /// A lint rule ran over this analysis in `elapsed`, finding `found`.
+    pub fn rule(&self, code: &'static str, elapsed: Duration, found: usize) {
+        if let Ok(mut rules) = self.rules.lock() {
+            rules.insert(code, (elapsed, found));
+        }
+    }
+
+    /// The rules' last runs, slowest first.
+    pub fn rules(&self) -> Vec<(&'static str, Duration, usize)> {
+        let mut out: Vec<_> =
+            self.rules.lock().map(|r| r.iter().map(|(c, (t, n))| (*c, *t, *n)).collect()).unwrap_or_default();
+        out.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
         out
     }
 

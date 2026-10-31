@@ -4102,6 +4102,11 @@ will look undefined",
         {
             self.out.timings.at_site(t.span.file, t.span.line);
         }
+        if let Some(t) = t
+            && t.span.file == self.out.main_file
+        {
+            self.out.timings.at_main_line(t.span.line);
+        }
         t
     }
 
@@ -4114,6 +4119,7 @@ will look undefined",
         if self.out.timings.is_enabled() {
             self.out.timings.count_token();
         }
+        self.out.timings.count_main_token();
         // A scan that began in text a cut dropped ends there: it never
         // reads on into the file below ([`Machine::scan_end`]).
         if self.scan_cut {

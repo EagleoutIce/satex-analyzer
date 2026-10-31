@@ -937,10 +937,17 @@ impl Engine {
         let name = |sym| analysis.interner.name(sym).to_string();
         let loads: Vec<String> = analysis.facts.loads.iter().map(|l| l.name.clone()).collect();
         let same = self.preambles.insert(uri.clone(), loads.clone()).is_some_and(|before| before == loads);
-        let own: std::collections::HashSet<String> =
-            analysis.facts.defs.iter().filter(|d| d.package.is_none()).map(|d| name(d.name)).collect();
-        // The commands the document's own files call, not the kernel's inner ones.
         let dir = crate::paths::dir_of(Path::new(analysis.file_name(analysis.main_file)));
+        // The project's own names: defined by the document or in a file of the project, a
+        // written `.aux` among them, whatever package's code read it there.
+        let own: std::collections::HashSet<String> = analysis
+            .facts
+            .defs
+            .iter()
+            .filter(|d| d.package.is_none() || crate::paths::within(&dir, Path::new(analysis.file_name(d.span.file))))
+            .map(|d| name(d.name))
+            .collect();
+        // The commands the document's own files call, not the kernel's inner ones.
         let mut owned: HashMap<crate::tex::FileId, bool> = HashMap::default();
         let mut used: HashMap<crate::tex::Sym, u32> = HashMap::default();
         for e in &analysis.facts.expansions {
@@ -1289,7 +1296,18 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, msg: EngineMsg) -> Option<E
                     )
                 });
                 let limits = a.limits.iter().map(|l| format!("limit {} {} ({}×)", l.key, l.value, l.count));
-                std::iter::once(run).chain(slow).chain(limits).chain(a.cache_report()).collect::<Vec<_>>()
+                // the main file's tokens per line, and each lint rule's time (µs) and findings
+                let heat = std::iter::once(format!("heat {}", a.file_name(a.main_file)))
+                    .chain(a.timings.main_heat().map(|(line, n)| format!("line {line} {n}")));
+                let rules =
+                    a.timings.rules().into_iter().map(|(code, t, n)| format!("rule {code} {} {n}", t.as_micros()));
+                std::iter::once(run)
+                    .chain(slow)
+                    .chain(limits)
+                    .chain(heat)
+                    .chain(rules)
+                    .chain(a.cache_report())
+                    .collect::<Vec<_>>()
             };
             let _ = reply.send(with_doc(docs, &uri, |analysis, _| report(analysis)).unwrap_or_default());
         }

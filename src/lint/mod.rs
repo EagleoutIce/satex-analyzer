@@ -562,7 +562,9 @@ fn lint_run(analysis: &Analysis) -> Vec<Record> {
             reference: cites(rule),
             out: Vec::new(),
         };
+        let since = std::time::Instant::now();
         (rule.run)(&mut report);
+        analysis.timings.rule(rule.code, since.elapsed(), report.out.len());
         // One finding per source site: a rule met again there (a macro body
         // used several times) says nothing new.
         let mut sites = crate::fixed::HashSet::default();
