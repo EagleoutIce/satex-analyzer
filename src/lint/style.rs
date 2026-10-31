@@ -102,9 +102,17 @@ of the line (tex.web § 347).
 The finding follows the modes the run read that space in (§ 1043: a space is
 glue only in horizontal mode).  It says the macro *inserts* a space where
 every reading was horizontal, and that it *may* where some might have been.
+Only a space that a character, box or rule follows in its list is reported.
+The glue that ends a paragraph goes (§ 816), and glue before it only widens
+the end of the last line. One an `\\unskip` takes is gone too (§ 1105), as
+at `\\end{center}`.
 
 Fix by writing `%` at the end of that line.",
-        references: &[Ref { source: Source::TeXWeb, at: "347" }, Ref { source: Source::TeXWeb, at: "1043" }],
+        references: &[
+            Ref { source: Source::TeXWeb, at: "347" },
+            Ref { source: Source::TeXWeb, at: "816" },
+            Ref { source: Source::TeXWeb, at: "1043" },
+        ],
         fixes: &[Applicability::Safe],
         engines: &[],
         run: stray_space,
@@ -182,7 +190,7 @@ fn stray_space(report: &mut Report) {
                 .entry(tok.span.file)
                 .or_insert_with(|| report.edits().text(tok.span.file).map(|(_, text)| text))
                 .clone();
-            if line_end_space(text.as_deref(), tok.span) {
+            if line_end_space(text.as_deref(), tok.span) && analysis.facts.kept_spaces.contains(&tok.span) {
                 let modes = analysis.facts.spaces.get(&tok.span).copied().unwrap_or_default();
                 let verb = match (modes.meets(Modes::ANY_HORIZONTAL), modes.within(Modes::ANY_HORIZONTAL)) {
                     (false, _) => continue,

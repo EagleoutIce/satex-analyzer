@@ -1444,6 +1444,8 @@ impl Machine<'_> {
             cacheable_load: _,
             building: _,
             par_kept: _,
+            open_spaces: _,
+            taken_space: _,
             par_inserted: _,
             // Output bookkeeping, not runtime state.
             diag_seen: _,

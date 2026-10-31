@@ -534,6 +534,10 @@ pub struct Facts {
     /// The modes each space token was read in outside package code
     /// (tex.web § 1043: glue in horizontal mode, nothing otherwise).
     pub spaces: crate::fixed::HashMap<Span, crate::mode::Modes>,
+    /// The spaces whose glue a character, box or rule followed on its list,
+    /// so it shows: neither a paragraph's end (tex.web § 816) nor
+    /// `\unskip` (§ 1105) took it away.
+    pub kept_spaces: crate::fixed::HashSet<Span>,
     /// Every conditional the run evaluated outside package code.
     pub conditionals: Vec<Conditional>,
     /// Numbers with letters set right after them, outside package code.

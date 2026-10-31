@@ -1558,6 +1558,11 @@ pub struct Machine<'a> {
     /// A paragraph just ended and no space followed it yet: a `\penalty`
     /// of 10000 now keeps it with what comes next ([`crate::facts::Text::kept`]).
     pub(crate) par_kept: bool,
+    /// The spaces outside package code whose glue no material followed yet on its list.
+    pub(crate) open_spaces: Vec<Span>,
+    /// The open space an `\unskip` took last: glue appended next is it put back,
+    /// as LaTeX's `\sw@slant` does around an italic correction.
+    pub(crate) taken_space: Option<Span>,
     /// Digits satex does not know, such as `\the\count0` of an unknown
     /// count: unknown text to a scan, but character tokens of category 12
     /// to `\ifx`, `\if`, `\ifcat`, `\let` and `\futurelet` (their
@@ -2345,6 +2350,8 @@ impl<'a> Machine<'a> {
             cacheable_load: None,
             building: None,
             par_kept: false,
+            open_spaces: Vec::new(),
+            taken_space: None,
             gaps: HashSet::default(),
             pdf_string: false,
             last_file: None,
@@ -3704,6 +3711,7 @@ will look undefined",
         self.definition_sites.clear();
         self.expansion_sites.clear();
         self.out.facts.spaces.clear();
+        self.out.facts.kept_spaces.clear();
         self.out.facts.text = crate::facts::Text::default();
         self.out.font_states.truncate(1);
         self.font_watch = FontWatch::default();
@@ -6876,6 +6884,9 @@ will look undefined",
                 }
                 if let Some((width, spec)) = glue {
                     self.append_item(crate::mode::Item::glue(width, spec));
+                    if self.packages.is_empty() {
+                        self.open_spaces.push(token.span);
+                    }
                 }
             }
             // tex.web § 1090: a letter or other character is horizontal

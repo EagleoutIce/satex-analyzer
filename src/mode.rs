@@ -1583,6 +1583,9 @@ impl Machine<'_> {
     pub(crate) fn end_graf(&mut self) {
         self.par_inserted = None;
         if self.mode.meets(Modes::HORIZONTAL) {
+            // § 816: the last glue goes, and glue before it only widens the last line's end
+            self.open_spaces.clear();
+            self.taken_space = None;
             self.set_badness(None);
         }
         // tex.web § 1096: the error count starts over with each paragraph.
@@ -3908,9 +3911,21 @@ impl Machine<'_> {
         }
     }
 
+    /// Material follows the open spaces' glue: they show.
+    fn spaces_followed(&mut self) {
+        let spans = std::mem::take(&mut self.open_spaces);
+        self.out.facts.kept_spaces.extend(spans);
+        self.taken_space = None;
+    }
+
     /// An item goes onto the current list: its natural size grows by it
     /// (tex.web §§ 651-656 `hpack`, 669-670 `vpack`).
     pub(crate) fn append_item(&mut self, item: Item) {
+        match item {
+            Item::Rule { .. } | Item::Box(_) | Item::Unknown => self.spaces_followed(),
+            Item::Glue(..) => self.open_spaces.extend(self.taken_space.take()),
+            _ => {}
+        }
         let fresh = self.page_empty();
         // right after a paragraph on the page's list: marks and writes may come between, no space
         if self.mode.meets(Modes::ANY_VERTICAL) && matches!(item, Item::Glue(..) | Item::Kern(_)) {
@@ -4451,6 +4466,7 @@ impl Machine<'_> {
     /// same word, or with the font's left boundary at the word's start.
     /// Other ligatures, missing characters and native fonts are not followed.
     pub(crate) fn append_char(&mut self, c: u32) {
+        self.spaces_followed();
         self.material = MATERIAL | BOXED;
         // The lines a paragraph breaks into are boxes, so a character set
         // outside a box will reach the page.
@@ -5343,6 +5359,9 @@ impl Machine<'_> {
     }
 
     pub(crate) fn remove_item(&mut self, removed: Removed) {
+        if removed == Removed::Glue {
+            self.taken_space = self.open_spaces.pop();
+        }
         self.end_word();
         let Some(mut n) = self.natural else { return };
         // tex.web § 1105 in inline math: an item of that kind last in the
