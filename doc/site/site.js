@@ -101,10 +101,11 @@
   const tex = (text, link = false) => esc(text).replace(/(%[^\n]*)|(\\(?:[A-Za-z@_:]+|.))|([{}[\]])|(#+\d)/g, (m, com, cmd, br) =>
     `<span class="tok-${com ? 'com' : cmd ? 'cmd' : br ? 'br' : 'arg'}">${link && cmd && /^\\[A-Za-z@_:]+$/.test(m) ? `<a class="cs bl" href="#" data-cs="${m}" title="explain ${m}">${m}</a>` : m}</span>`);
   /** `code`, links and bold of satex's Markdown; a `file:line` is a place. */
-  const inline = (t) => esc(t).split(/(`[^`]+`)/).map((p, i) => {
+  // a code span between double backticks may hold one (`` `* ``)
+  const inline = (t) => esc(t).split(/(``.+?``|`[^`]+`)/).map((p, i) => {
     if (!(i % 2)) return p.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
       .replace(/\*\(([^*]+)\)\*/g, '<span class="x-from">($1)</span>').replace(/\*([^*\s][^*]*)\*/g, '<em>$1</em>');
-    const code = p.slice(1, -1), at = code.match(/^([\w./-]+\.\w+):(\d+)$/);
+    const code = p.startsWith('``') ? p.slice(2, -2).trim() : p.slice(1, -1), at = code.match(/^([\w./-]+\.\w+):(\d+)$/);
     return at ? placeLink(at[1], +at[2]) : `<code>${code}</code>`;
   }).join('');
 
