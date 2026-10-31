@@ -10,19 +10,9 @@
 
 <section class="band" id="examples">
   <h2>Examples</h2>
-  <p class="sub">Hover a command for its explanation, an underline for its finding. All of it comes from SaTeX's analysis of the file.</p>
+  <p class="sub">Hover a command for its explanation, an underline or a marker for its finding. Beside each file is what it typesets. All of it comes from SaTeX's analysis of the file. The last tab is yours to type in.</p>
   <div class="examples">{{examples}}</div>
   <p class="muted small">Analyzed at build time with SaTeX <span title="{{versiontitle}}">{{version}}</span>.</p>
-  <div class="live" id="live">
-    <div class="live-in"><label for="live-src"><b>Your own</b> · type LaTeX, SaTeX reads it again as you type</label><textarea id="live-src" spellcheck="false" rows="9">\documentclass{article}
-\newcommand{\greet}[1]{Hello, \emph{#1}!}
-\begin{document}
-\section{Welcome}
-\greet{world} Pages 10-12 come next.
-See Section~\ref{sec:none}.
-\end{document}</textarea></div>
-    <div class="live-out"><p class="live-status muted" aria-live="polite">SaTeX runs here once you scroll to this box: about 10&nbsp;MB, loaded once.</p><div class="live-ts typeset"></div></div>
-  </div>
 </section>
 
 <section class="band alt" id="run">

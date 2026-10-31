@@ -69,7 +69,9 @@
       <div class="lib grow">
         <div class="lib-bar"><label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
           <input type="search" id="lib-search" placeholder="Search names: \section, tikz, skip…" aria-label="search the names in force"></label>
-          <select id="lib-from" class="dropdown" aria-label="from which package"><option value="">every package</option></select>
+          <label class="search lib-from"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.2V8.5z"/></svg>
+            <input type="search" id="lib-from" placeholder="every package" aria-label="from which package" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="lib-from-list" autocomplete="off" spellcheck="false">
+            <ul id="lib-from-list" class="complete" role="listbox" hidden></ul></label>
           <label class="ts-toggle" title="Also list internal names: with @, expl3 internals"><span data-short="internal">internal</span><input type="checkbox" id="lib-internal" role="switch" aria-label="internal names"></label></div>
         <div id="lib-kinds" class="lib-kinds" role="group" aria-label="which kind of name"></div>
         <ul id="lib-list" class="lib-list"><li class="muted">The names appear once the document is checked.</li></ul>
@@ -79,7 +81,8 @@
       <p class="muted cache-note" id="try-note">Read right after <code>\begin{document}</code> of this document. The file stays as it is.</p>
       <div class="try-box"><textarea id="lib-text" rows="3" spellcheck="false" aria-label="text to try" placeholder="\textbf{bold} 10--12 \hfill right"></textarea>
         <button type="button" id="lib-run" class="runbtn" title="Ctrl+Enter">Typeset</button></div>
-      <div class="try-bar"><label class="ts-toggle"><span>typeset as you type</span><input type="checkbox" id="try-auto" role="switch" checked></label><span id="try-status" class="muted"></span></div>
+      <div class="try-bar"><label class="ts-toggle"><span>typeset as you type</span><input type="checkbox" id="try-auto" role="switch" checked></label>
+        <select id="try-engine" class="dropdown" aria-label="where Try reads the text"><option value="">in this document</option><option value="article">LaTeX article</option><option value="plain">plain TeX</option></select><span id="try-status" class="muted"></span></div>
       <div id="lib-out" class="try-out"></div></dialog>
     <dialog id="play-config" class="cache-dialog" aria-labelledby="cfg-title">
       <header><h3 id="cfg-title">Settings</h3><button type="button" class="ghost small" id="cfg-close" aria-label="close">✕</button></header>
@@ -88,11 +91,19 @@
         <input type="search" id="cfg-search" placeholder="Search settings: clock, limits, lint…" aria-label="search the settings"></label></div>
       <ul id="cfg-list" class="cache-scroll cfg-list"></ul>
       <footer><span id="cfg-total" class="muted"></span><button type="button" class="small ghost" id="cfg-reset">Reset all</button></footer></dialog>
+    <dialog id="play-replace" class="cache-dialog ask-dialog" aria-labelledby="replace-title">
+      <header><h3 id="replace-title">Replace the open project?</h3></header>
+      <p class="cache-note" id="replace-text"></p>
+      <form method="dialog" class="ask-foot"><button value="tab" class="small ghost">Open in a new tab</button><button value="cancel" class="small ghost">Cancel</button><button value="replace" class="small">Replace</button></form></dialog>
     <dialog id="play-draw" class="cache-dialog draw-dialog" aria-labelledby="draw-title">
       <header><h3 id="draw-title">Draw a symbol</h3><button type="button" class="ghost small" id="draw-close" aria-label="close">✕</button></header>
-      <p class="muted cache-note" id="draw-note">Draw it in the box. Your drawing and each symbol's glyph are cut to their ink, scaled to one small square and compared pixel by pixel.
+      <p class="muted cache-note" id="draw-note">Draw it in the box. Your drawing and each symbol's outline are compared by how far each one's points lie from the other's.
         Names in force in this document rank first. The idea follows <a href="https://detexify.kirelabs.org" target="_blank" rel="noopener">Detexify</a> by Daniel Kirsch, without its code or data.
-        The symbols come from unicode-math's <code>unicode-math-table.tex</code> (Will Robertson and others, LPPL).</p>
+        The symbols come from unicode-math's table (LPPL) and the icon packages' own mapping files, each drawn in its package's font: <a href="../credits.html#symbols">credits</a>.</p>
+      <div id="draw-filters" class="lib-kinds draw-filters" role="group" aria-label="which symbols">
+        <button type="button" class="lib-kind" data-f="from" data-v="loaded" aria-pressed="true">this document</button><button type="button" class="lib-kind" data-f="from" data-v="all" aria-pressed="false">every package</button>
+        <span class="sep"></span><button type="button" class="lib-kind" data-f="kind" data-v="" aria-pressed="true">all</button><button type="button" class="lib-kind" data-f="kind" data-v="symbol" aria-pressed="false">symbols</button><button type="button" class="lib-kind" data-f="kind" data-v="letter" aria-pressed="false">letters</button>
+        <span class="sep"></span><button type="button" class="lib-kind" data-f="mode" data-v="" aria-pressed="true">all</button><button type="button" class="lib-kind" data-f="mode" data-v="math" aria-pressed="false">math</button><button type="button" class="lib-kind" data-f="mode" data-v="text" aria-pressed="false">text</button></div>
       <div class="draw-box"><div class="draw-pad"><canvas id="draw-pad" width="256" height="256" aria-label="drawing area"></canvas>
         <button type="button" class="small ghost" id="draw-clear">Clear</button></div>
         <ol id="draw-list" class="draw-list" aria-live="polite"></ol></div></dialog>
@@ -116,7 +127,7 @@
       <span id="play-pills" class="pills"></span>
       <button type="button" class="stat-btn" id="cache-open" aria-haspopup="dialog" title="what satex keeps between checks and visits"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><ellipse cx="8" cy="4" rx="5.5" ry="2"/><path d="M2.5 4v8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2V4M2.5 8c0 1.1 2.5 2 5.5 2s5.5-.9 5.5-2"/></svg>caches <b id="cache-count"></b></button>
       <span class="statdetail"><button id="t-time" class="stat-time" type="button" aria-expanded="false" aria-controls="t-detail" title="timings and size of the last run" hidden><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.2 1.5"/></svg><span id="t-time-text"></span></button>
-        <div id="t-detail" class="stat-pop run-pop" hidden><div id="t-run" class="rp-nums"></div><div id="t-slow" class="rp-slow"></div><div id="t-limits" class="rp-limits"></div>
+        <div id="t-detail" class="stat-pop run-pop" hidden><div id="t-run" class="rp-nums"></div><div id="t-slow" class="rp-slow"></div><div id="t-heat" class="rp-slow"></div><div id="t-rules" class="rp-slow"></div><div id="t-limits" class="rp-limits"></div>
           <dl class="rp-times"><dt>check</dt><dd id="t-check"></dd><dt>command</dt><dd id="t-stats"></dd><dt>caches</dt><dd id="t-cache"></dd><dt>fetched</dt><dd id="t-load"></dd><dt>init</dt><dd id="t-init"></dd></dl></div></span></div>
   </section>
 </div>

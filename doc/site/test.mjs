@@ -303,13 +303,19 @@ async function browser() {
     await shot('landing-finding-hover');
     check('landing finding hover moves nothing', before === await js(layout));
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 2, y: 2 });
-    // the macros example: an explain panel, signature chips with explanations, no raw JSON
+    // the macros example: a click on a command pins its full card, signature chips explained; beside it, what it typesets
     await js(`[...document.querySelectorAll('.examples [role=tab]')].find((t) => /macros/.test(t.textContent)).click()`);
-    const panel = await js(`const f = document.querySelector('.example:not([hidden])'); return [f.querySelector('.ex-explain .xname').textContent, f.querySelector('.ex-explain').textContent,
-      [...f.querySelectorAll('.ex-explain .sig .arg')].map((a) => a.title)]`);
+    at = await center('.example:not([hidden]) [data-cs="\\\\twice"]');
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
+    await mouse(...at);
+    await until(`return document.querySelector('.tip-card:not([hidden])')?.dataset.pin === '1'`, 5000);
+    const panel = await js(`const t = document.querySelector('.tip-card'); return [t.querySelector('.x-name')?.textContent, t.textContent, [...t.querySelectorAll('.sig .arg')].map((a) => a.title)]`);
     await shot('landing-macros');
-    check('macros example explains \\twice', panel[0] === '\\twice' && /#1#1/.test(panel[1]) && panel[2].length === 1 && /mandatory/.test(panel[2][0]), JSON.stringify(panel).slice(0, 200));
-    check('no raw JSON on the landing page', await js(`return ![...document.querySelectorAll('.ex-explain, .ex-findings')].some((e) => /[{\\[]"|"max"|"min"/.test(e.textContent))`));
+    check('macros example: a click pins the card of \\twice', panel[0] === '\\twice' && /#1#1/.test(panel[1]) && panel[2].length === 1 && /mandatory/.test(panel[2][0]), JSON.stringify(panel).slice(0, 200));
+    check('examples show what they typeset', await js(`return [...document.querySelectorAll('.example:not(.live) .ex-side')].every((s) => s.querySelector('.ts'))`));
+    check('no raw JSON on the landing page', await js(`return ![...document.querySelectorAll('.ex-side, .tip-card')].some((e) => /[{\\[]"|"max"|"min"/.test(e.textContent))`));
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 2, y: 2, button: 'left', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 2, y: 2, button: 'left', clickCount: 1 });
     await js(`[...document.querySelectorAll('.examples [role=tab]')].find((t) => /spacing/.test(t.textContent)).click()`);
     check('typographic findings marked', await js(`const t = [...document.querySelectorAll('.example:not([hidden]) .lint.typo')]; return t.length >= 2 && t.some((e) => e.textContent === '-')`));
 
@@ -409,6 +415,51 @@ async function browser() {
       const two = await js(`return ${visible}`);
       check('editor hover hides the chip card', two.length === 1 && two[0] === 'editor', JSON.stringify(two));
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+      });
+      await section('typeset', async () => {
+      // the Typeset panel: a table as a grid, its \hline a rule; a reference's key where the \ref stands, never inside a word
+      await open('table', '\\documentclass{article}\n\\begin{document}\n\\section{Intro}\\label{sec:a}\nSee Section~\\ref{sec:a} for the hyphenation of everything.\n\n\\begin{tabular}{lc}\nMethod & Score \\\\ \\hline\nOurs & 0.92 \\\\\nBase & 1.5 \\\\\n\\end{tabular}\n\\end{document}\n');
+      await js(`const d = document.getElementById('play-typeset'); d.open = true; const k = document.getElementById('typeset-keys'); if (!k.checked) k.click()`);
+      await until(`return !!document.querySelector('#typeset-body .ts-table')`, 30000);
+      const ts = await js(`const t = document.querySelector('#typeset-body .ts-table');
+        const rows = [...t.querySelectorAll('.ts-tr')].filter((r) => r.textContent.trim()).map((r) => [...r.querySelectorAll('.ts-td')].map((c) => c.textContent.trim()));
+        const chips = [...document.querySelectorAll('#typeset-body .ts-key-ref')].map((k) => [k.previousSibling?.textContent ?? '', k.nextSibling?.textContent ?? '']);
+        return { rows, ruled: t.querySelectorAll('.ts-ruled').length, chips }`);
+      await shot('typeset-table');
+      check('a table is a grid: rows, cells, the hline a rule', JSON.stringify(ts.rows) === JSON.stringify([['Method', 'Score'], ['Ours', '0.92'], ['Base', '1.5']]) && ts.ruled === 1, JSON.stringify(ts));
+      check('a reference key stands where the \\ref does', ts.chips.length === 1 && !ts.chips.some(([a, b]) => /\w$/.test(a) && /^\w/.test(b)), JSON.stringify(ts.chips));
+      });
+      await section('draw', async () => {
+      // drawn shapes, as strokes of points in [-1, 1]²: each finds its symbol among the first three
+      await open('draw', '\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n');
+      const line = (a, b, n = 16) => Array.from({ length: n + 1 }, (_, i) => [a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n]);
+      const path = (ps) => ps.slice(1).flatMap((p, i) => line(ps[i], p, 6).slice(i ? 1 : 0));
+      const shapes = {
+        circle: [[...Array(49)].map((_, i) => [Math.cos(i / 48 * 2 * Math.PI), Math.sin(i / 48 * 2 * Math.PI)])],
+        plus: [line([-1, 0], [1, 0]), line([0, -1], [0, 1])],
+        times: [line([-1, -1], [1, 1]), line([1, -1], [-1, 1])],
+        arrow: [line([-1, 0], [1, 0]), path([[0.5, -0.45], [1, 0], [0.5, 0.45]])],
+        integral: [path([[0.5, -0.8], [0.35, -1], [0.15, -0.95], [0.05, -0.7], [0, 0], [-0.05, 0.7], [-0.15, 0.95], [-0.35, 1], [-0.5, 0.8]])],
+      };
+      const expected = { circle: /[○◯∘◦⚪⭘]/, plus: /[+⊕]/, times: /[×⨯✕]/, arrow: /[→⟶]/, integral: /[∫⌠]/ };
+      await js(`document.getElementById('draw-open').click()`);
+      const got = {};
+      for (const [name, strokes] of Object.entries(shapes)) {
+        await js(`document.getElementById('draw-clear').click()`);
+        const b = await js(`const r = document.getElementById('draw-pad').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, r.width * 0.3]`);
+        for (const stroke of strokes) {
+          const at = ([x, y]) => ({ x: b[0] + x * b[2], y: b[1] + y * (name === 'integral' ? b[2] : b[2] * 0.8) });
+          await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...at(stroke[0]), button: 'left', buttons: 1, clickCount: 1 });
+          for (const p of stroke) await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at(p), button: 'left', buttons: 1 });
+          await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at(stroke.at(-1)), button: 'left', buttons: 0, clickCount: 1 });
+        }
+        await until(`return document.querySelectorAll('#draw-list li .draw-glyph').length > 2`, 30000);
+        await sleep(300);
+        got[name] = await js(`return [...document.querySelectorAll('#draw-list li')].slice(0, 3).map((li) => li.querySelector('.draw-glyph').textContent + ' ' + li.querySelector('.draw-names').textContent)`);
+      }
+      await shot('draw');
+      check('drawn shapes find their symbol among the first three', Object.entries(expected).every(([n, re]) => got[n].some((t) => re.test(t[0] ?? ''))), JSON.stringify(got));
+      await js(`document.getElementById('play-draw').close()`);
       });
       await section('lib', async () => {
       // the library: each environment once by its name, Try wraps it in \\begin…\\end and typesets it
@@ -668,27 +719,31 @@ async function browser() {
       await until(`return document.querySelectorAll('.examples [role=tab]').length > 3`, 30000);
       for (const [name, code] of [['csname.tex', 'undefined-control-sequence'], ['option-clash.tex', 'option-clash'], ['rerun.tex', 'undefined-reference']]) {
         const got = await js(`const t = [...document.querySelectorAll('.examples [role=tab]')].find((t) => t.textContent === '${name}'); if (!t) return null; t.click();
-          const f = document.getElementById(t.getAttribute('aria-controls')); return { codes: [...f.querySelectorAll('.ex-findings li code')].map((c) => c.textContent), pdflatex: /% pdflatex/.test(f.querySelector('pre.src').textContent) }`);
+          const f = document.getElementById(t.getAttribute('aria-controls')); return { codes: [...f.querySelectorAll('.eol')].map((c) => c.textContent), pdflatex: /% pdflatex/.test(f.querySelector('pre.src').textContent) }`);
         check(`example ${name}: pdflatex's verdict and satex's ${code}`, got?.pdflatex && got.codes.includes(code), JSON.stringify(got));
       }
       });
       await section('live', async () => {
-      // the landing page's live box: no engine until it is near, then typeset text and findings, again after an edit
+      // the landing page's last tab: no engine until it opens, then the editor, typeset text and underlined findings, again after an edit
       for (const [w, h, dark] of [[1440, 900, false], [1440, 900, true], [375, 800, false], [375, 800, true]]) {
         await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: w < 500 });
         await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: dark ? 'dark' : 'light' }] });
         await send('Page.navigate', { url: base + 'index.html' });
-        await until(`return !!document.getElementById('live')`, 30000);
+        await until(`return !!document.querySelector('.example.live')`, 30000);
         await sleep(800);
         const early = await js(`return performance.getEntriesByType('resource').filter((r) => /\\.wasm|\\.bin\\.gz/.test(r.name)).length`);
-        await js(`document.getElementById('live').scrollIntoView({ block: 'start' })`);
-        const done = await until(`return /Analyzed in/.test(document.querySelector('#live .live-status').textContent)`, 120000);
-        const got = await js(`const o = document.querySelector('#live .live-ts'); return { text: o.textContent.slice(0, 120), found: o.querySelectorAll('.live-found li').length, over: document.documentElement.scrollWidth > innerWidth }`);
-        check(`live box at ${w}px${dark ? ' dark' : ''}: loads when near, typesets with findings`, !early && done && /Hello, world!/.test(got.text) && got.found > 0 && !got.over, JSON.stringify({ early, ...got }));
+        await js(`const t = document.getElementById(document.querySelector('.example.live').getAttribute('aria-labelledby')); t.scrollIntoView({ block: 'start' }); t.click()`);
+        const done = await until(`return /Analyzed in/.test(document.querySelector('.example.live .live-status').textContent)`, 120000);
+        await until(`return document.querySelectorAll('.example.live .cm-lintRange').length > 0`, 10000);
+        const got = await js(`const f = document.querySelector('.example.live'); return { text: f.querySelector('.live-ts').textContent.slice(0, 120), found: f.querySelectorAll('.cm-lintRange').length,
+          colored: f.querySelectorAll('.cm-content .tok-cmd').length, over: document.documentElement.scrollWidth > innerWidth }`);
+        check(`own tab at ${w}px${dark ? ' dark' : ''}: loads when opened, an editor, typesets with findings`, !early && done && /Hello, world!/.test(got.text) && got.found > 0 && got.colored > 3 && !got.over, JSON.stringify({ early, ...got }));
         await shot(`w-live-${w}${dark ? '-dark' : ''}`);
       }
-      await js(`const t = document.getElementById('live-src'); const i = t.value.lastIndexOf('\\\\end'); t.setRangeText('A new line -- here.\\n', i, i, 'end'); t.dispatchEvent(new Event('input'))`);
-      check('live box follows an edit', await until(`return /new line/.test(document.querySelector('#live .live-ts').textContent)`, 30000));
+      const pe = await spot('\\end{document}', 0);
+      await mouse(...pe);
+      await send('Input.insertText', { text: 'A new line -- here.\n' });
+      check('own tab follows an edit', await until(`return /new line/.test(document.querySelector('.example.live .live-ts').textContent)`, 30000));
       await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
       await send('Emulation.clearDeviceMetricsOverride');
       });

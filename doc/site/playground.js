@@ -181,7 +181,11 @@
       if (!button) return;
       ask.remove();
       if (styleQueue.length) askStyle(styleQueue.shift());
-      if (button.dataset.a) lsp('workspace/executeCommand', { command: 'satex/style', arguments: [{ code: candidate.code, answer: button.dataset.a }] }).catch((err) => toast(`not recorded: ${err.message}`));
+      if (!button.dataset.a) return;
+      lsp('workspace/executeCommand', { command: 'satex/style', arguments: [{ code: candidate.code, answer: button.dataset.a }] }).catch((err) => toast(`not recorded: ${err.message}`));
+      // the settings keep the answer, so it holds after a restart and in a shared link
+      const key = `${button.dataset.a === 'off' ? 'lint_off' : 'style_prompt.keep'}+`, had = configSet[key] ?? [];
+      if (!had.includes(candidate.code)) configKeep({ ...configSet, [key]: [...had, candidate.code] });
     };
     toastBox.before(ask);
   }
@@ -632,6 +636,19 @@
         selection: { anchor: from + 1 }, userEvent: 'input.type' });
       return true;
     });
+    // The main file's heat (`heatShow`): a strip in the gutter, darker where a line read more tokens.
+    const heatSet = st.StateEffect.define();
+    const heatField = st.StateField.define({ create: () => null, update: (h, tr) => tr.effects.reduce((v, e) => e.is(heatSet) ? e.value : v, tr.docChanged ? null : h) });
+    class HeatMark extends view.GutterMarker {
+      constructor(share, n) { super(); this.share = share; this.n = n; }
+      eq(o) { return o.n === this.n && o.share === this.share; }
+      toDOM() { return Object.assign(document.createElement('span'), { className: 'cm-heat-mark', title: `${num(this.n)} tokens read from this line`, style: `--heat: ${this.share}` }); }
+    }
+    const heatGutter = view.gutter({
+      class: 'cm-heat',
+      lineMarker: (v, line) => { const h = v.state.field(heatField), n = h?.lines.get(v.state.doc.lineAt(line.from).number); return n ? new HeatMark(Math.max(0.12, Math.log1p(n) / Math.log1p(h.most)).toFixed(2), n) : null; },
+      lineMarkerChange: (u) => u.startState.field(heatField) !== u.state.field(heatField),
+    });
     const theme = new st.Compartment(), lock = new st.Compartment(), lang = new st.Compartment();
     const ev = new EditorView({
       parent, doc: text,
@@ -642,7 +659,7 @@
         span.innerHTML = (use ? cards.usage(use).html : '') + (from ? ` <span class="muted">${escape(from)}</span>` : '');
         return span;
       } }] }),
-        linkField, markField, linkedField, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
+        linkField, markField, linkedField, heatField, heatGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
         EditorView.updateListener.of((u) => { if (u.docChanged) { resolves.clear(); changed(); } else if (u.selectionSet) explainSoon(); if (u.docChanged || u.selectionSet) linkAround(u.view); }), theme.of([]), lock.of([])],
     });
     // the site's light/dark choice (site.js) picks the editor's theme
@@ -730,6 +747,7 @@
         };
       }))),
       complete: () => ac.startCompletion(ev),
+      heat: (lines) => ev.dispatch({ effects: heatSet.of(lines?.size ? { lines, most: Math.max(...lines.values()) } : null) }),
       cursor: () => [ev.state.selection.main.anchor, ev.state.selection.main.head],
       select: ([anchor, head] = [0, 0]) => { const n = doc().length; ev.dispatch({ selection: { anchor: Math.min(anchor, n), head: Math.min(head, n) }, scrollIntoView: true }); },
       position: () => position(doc(), ev.state.selection.main.head),
@@ -854,27 +872,13 @@
   /** The groups of other files unfolded, kept across checks. */
   const tsOpen = new Set();
   typesetBody.addEventListener('toggle', (e) => { const id = e.target.dataset?.id; if (id) { if (e.target.open) tsOpen.add(id); else tsOpen.delete(id); } }, true);
-  /** `marked` with each key and font change (`at`: its offset in the visible text) as a note of its own, where it stands. */
-  function withKeys(marked, keys = [], fonts = []) {
-    const at = [...(keys ?? []).filter((k) => k?.key != null), ...(fonts ?? [])].sort((a, b) => a.at - b.at);
-    if (!at.length) return marked;
-    let out = '', seen = 0, i = 0, note = false;
-    const put = (n) => { while (i < at.length && at[i].at <= n) { const k = at[i++]; out += k.style != null ? `\uE000\u0002${k.style}\uE001` : `\uE000\u0001${k.kind ?? 'key'}\u0001${k.key}\uE001`; } };
-    for (const c of marked) {
-      if (c === '\uE000') note = true;
-      if (!note) put(seen++);
-      out += c;
-      if (c === '\uE001') note = false;
-    }
-    put(Infinity);
-    return out;
-  }
+  const withKeys = cards.withKeys;
   async function typeset(target) {
     if (target !== uri()) return;
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
     if (!rows || target !== uri()) return;
     const paragraphs = rows.filter((r) => r.kind === 'paragraph');
-    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts))}</span></p>`;
+    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align))}</span></p>`;
     // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
     const html = [];
     for (let i = 0; i < paragraphs.length;) {
@@ -1247,7 +1251,9 @@
   // ---------------------------------------------------------------- library: every name in force, and a scratch line to try them
 
   const libList = $('lib-list'), libSearch = $('lib-search'), libFrom = $('lib-from'), libInternal = $('lib-internal');
-  let libNames = [], libFor = '', libUses = new Map();
+  let libNames = [], libFor = '', libUses = new Map(), libPick = '';
+  /** Where a name in force comes from, as the package filter names it. */
+  const libSource = (r) => r.package || 'kernel';
   /** How useful a name is to a document, best first: used in the project, defined by it, then
    * public names before internals, documented ones (`does`) first, macros before primitives,
    * names of letters before control symbols. */
@@ -1269,8 +1275,6 @@
     libUses = new Map();
     for (const [file, text] of Object.entries(state.texts)) if (state.files.includes(file) && !data(file))
       for (const m of String(text).matchAll(/\\begin\s*\{([^{}]+)\}|\\([A-Za-z@]+|.)/g)) { const n = `\\${m[1] ?? m[2]}`; libUses.set(n, (libUses.get(n) ?? 0) + 1); }
-    const from = libFrom.value, packages = [...new Set(libNames.map((r) => r.package).filter(Boolean))].sort();
-    libFrom.innerHTML = `<option value="">every package</option>${packages.map((p) => `<option${p === from ? ' selected' : ''}>${escape(p)}</option>`).join('')}`;
     libraryShow();
   }
   /** The first 200 names the search matches: a name starting with it first, then one containing it, then a usage that does. */
@@ -1287,11 +1291,11 @@
   };
   let libKind = '';
   function libraryShow() {
-    const q = libSearch.value.trim().toLowerCase().replace(/^\\/, ''), from = libFrom.value;
+    const q = libSearch.value.trim().toLowerCase().replace(/^\\/, ''), from = libPick;
     const kind = (r) => (r.tag === 'environment' ? 'environment' : r.tag === 'primitive' ? 'primitive' : 'command');
     const hits = libNames
       .map((r) => [r, libRank(r.name, q) ?? (q && String(r.effective ?? '').toLowerCase().includes(q) ? 4 : null)])
-      .filter(([r, rank]) => rank !== null && (!from || r.package === from) && (!libKind || kind(r) === libKind))
+      .filter(([r, rank]) => rank !== null && (!from || libSource(r) === from) && (!libKind || kind(r) === libKind))
       .sort((a, b) => a[1] - b[1] || byUse(a[0], b[0]) || a[0].name.length - b[0].name.length || a[0].name.localeCompare(b[0].name))
       .map(([r]) => r);
     $('lib-count').textContent = libNames.length ? short(libNames.length) : '';
@@ -1308,8 +1312,44 @@
       `<button type="button" class="lib-try-it" data-try="${escape(tried)}" title="try it" aria-label="try it">▸</button>` +
       `<span class="lib-pkg">${escape(r.package ?? '')}</span></li>`; }).join('') +
       (hits.length > 200 ? `<li class="muted">${num(hits.length - 200)} more: narrow the search</li>` : '') ||
-      `<li class="muted">${libNames.length ? 'No name matches.' : 'The names appear once the document is checked.'}</li>`;
+      `<li class="muted">${!libNames.length ? 'The names appear once the document is checked.' : from && !libNames.some((r) => libSource(r) === from)
+        ? `${escape(from)} is not loaded in this document: <code>\\usepackage{${escape(from)}}</code> loads it.` : 'No name matches.'}</li>`;
   }
+  // the package filter: a search over the sources of the names in force with their counts, then the packages the playground knows
+  const libFromList = $('lib-from-list');
+  function libFromDraw() {
+    const counts = new Map();
+    for (const r of libNames) counts.set(libSource(r), (counts.get(libSource(r)) ?? 0) + 1);
+    const prefix = `${manifest.kernels[state.kernel]?.id}/`;
+    const known = [...new Set((manifest.packages ?? []).filter((p) => p.id.startsWith(prefix)).map((p) => p.label.replace(/\.cls$/, '')))].filter((p) => !counts.has(p)).sort();
+    const first = ['document', 'kernel'].filter((p) => counts.has(p));
+    const loaded = [...counts.keys()].filter((p) => !first.includes(p)).sort();
+    const q = libFrom.value.trim().toLowerCase(), all = q === libPick.toLowerCase();
+    const hit = (p) => all || p.toLowerCase().includes(q);
+    const row = (p, label = p) => `<li role="option" data-pick="${escape(p)}" aria-selected="${p === libPick}">${escape(label)}${counts.has(p) ? ` <b class="count" title="${num(counts.get(p))} names">${short(counts.get(p))}</b>` : ''}</li>`;
+    const rest = known.filter(hit);
+    libFromList.innerHTML = [...(all || !q ? [row('', 'every package')] : []), ...[...first, ...loaded].filter(hit).map((p) => row(p)),
+      ...(rest.length ? [`<li class="muted" role="presentation">not loaded</li>`, ...rest.map((p) => row(p))] : [])].join('') || '<li class="muted">No package matches.</li>';
+    libFromList.hidden = false;
+    libFrom.setAttribute('aria-expanded', 'true');
+  }
+  const libFromClose = () => { libFromList.hidden = true; libFrom.setAttribute('aria-expanded', 'false'); libFrom.value = libPick; };
+  const libFromTake = (p) => { libPick = p; libFromClose(); libraryShow(); };
+  libFrom.addEventListener('focus', libFromDraw);
+  libFrom.addEventListener('input', libFromDraw);
+  libFrom.addEventListener('blur', () => setTimeout(libFromClose, 150));
+  libFromList.addEventListener('mousedown', (e) => { const li = e.target.closest('[data-pick]'); if (li) { e.preventDefault(); libFromTake(li.dataset.pick); } });
+  libFrom.addEventListener('keydown', (e) => {
+    const rows = [...libFromList.querySelectorAll('[data-pick]')], at = rows.findIndex((r) => r.getAttribute('aria-selected') === 'true');
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (libFromList.hidden) return libFromDraw();
+      const next = rows[Math.max(0, Math.min(rows.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)))];
+      rows.forEach((r) => r.setAttribute('aria-selected', String(r === next)));
+      next?.scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') { e.preventDefault(); libFromTake(rows[Math.max(0, at)]?.dataset.pick ?? libPick); }
+    else if (e.key === 'Escape' && !libFromList.hidden) { e.preventDefault(); libFromClose(); }
+  });
   /** A usage line with its ⟨…⟩ placeholders as the explain cards draw them. */
   const slotsOf = (usage) => (cards.slots ? cards.slots(escape(usage)) : escape(usage));
   $('lib-kinds').addEventListener('click', (e) => { const b = e.target.closest('.lib-kind'); if (b) { libKind = b.dataset.kind; libraryShow(); } });
@@ -1330,7 +1370,6 @@
     if (e.key === 'Enter') { e.preventDefault(); tryIt(li.querySelector('.lib-try-it')); }
   });
   libSearch.oninput = libraryShow;
-  libFrom.onchange = libraryShow;
   libInternal.onchange = libraryLoad;
   $('lib-open').onclick = () => { $('play-library').showModal(); libraryLoad(); $('lib-search').focus(); };
   $('try-open').onclick = () => { tryNote(); $('play-try').showModal(); $('lib-text').focus(); };
@@ -1342,8 +1381,8 @@
   }
   /** The scratch text read right after the root's `\begin{document}`: what it sets, its findings and what it expanded to. */
   /** Where Try reads its text in the root: right after `\begin{document}`, else (plain TeX) before `\bye`, else at the end. */
-  function tryPlace() {
-    const root = state.root ?? state.file, lines = (root === state.file ? editor.text() : state.texts[root] ?? '').split('\n');
+  function tryPlace(root = state.root ?? state.file, text = root === state.file ? editor.text() : state.texts[root] ?? '') {
+    const lines = text.split('\n');
     const begin = lines.findIndex((l) => /\\begin\s*\{document\}/.test(l));
     if (begin >= 0) {
       const at = lines[begin].search(/\\begin\s*\{document\}/);
@@ -1354,14 +1393,35 @@
     const last = lines.length - 1;
     return { root, i: last, col: lines[last].length + 1, where: 'at the end' };
   }
-  const tryNote = () => { $('try-note').innerHTML = `Read ${tryPlace().where} of this document. The file stays as it is.`; };
+  /** Try's other places: a scratch document of its own, under its kernel, in place of this one. */
+  const TRY_ROOTS = {
+    article: { kernel: 'pdftex', text: '\\documentclass{article}\n\\begin{document}\n\\end{document}\n', label: 'an empty article' },
+    plain: { kernel: 'plain', text: '\\bye\n', label: 'an empty plain TeX file' },
+  };
+  const tryRoot = () => TRY_ROOTS[$('try-engine').value];
+  const tryNote = () => {
+    const scratch = tryRoot();
+    $('try-note').innerHTML = scratch ? `Read in ${scratch.label}, under its own kernel.` : `Read ${tryPlace().where} of this document. The file stays as it is.`;
+  };
+  $('try-engine').onchange = () => { tryNote(); if ($('lib-text').value.trim()) libraryTry(); };
+  /** The scratch root of `scratch` in the worker's files, its kernel loaded: [path, the kernel's flags as settings]. */
+  async function tryScratch(scratch) {
+    const k = manifest.kernels.findIndex((x) => x.id === scratch.kernel), name = `try-${scratch.kernel}.tex`;
+    await loadKernel(k);
+    post({ type: 'project', dir: '/work/try', files: { [name]: encode(scratch.text) } });
+    const args = manifest.kernels[k].args, config = {};
+    for (let j = 0; j + 1 < args.length; j += 2) if (args[j] === '--set') { const [key, ...v] = args[j + 1].split('='); config[key] = v.join('='); }
+    return [`/work/try/${name}`, config];
+  }
   async function libraryTry() {
     const text = $('lib-text').value, out = $('lib-out');
     if (!text.trim()) return;
-    const { root, i, col } = tryPlace(), t0 = performance.now();
+    const scratch = tryRoot(), t0 = performance.now();
     $('try-status').textContent = 'typesetting…';
     sync();
-    const request = { file: path(root), inject: { text: `\n${text}\n`, at: `${i + 1}:${col}` }, config: { trace: 'true', trace_document_only: 'false' },
+    const [file, kernelConfig] = scratch ? await tryScratch(scratch) : [path(state.root ?? state.file), {}];
+    const { i, col } = scratch ? tryPlace(file, scratch.text) : tryPlace(), root = file.split('/').pop();
+    const request = { file, inject: { text: `\n${text}\n`, at: `${i + 1}:${col}` }, config: { ...kernelConfig, trace: 'true', trace_document_only: 'false' },
       queries: [{ type: 'typeset' }, { type: 'diagnostics' }, { type: 'trace' }] };
     const [ts, ds, tr] = (await lsp('workspace/executeCommand', { command: 'satex/query', arguments: [request] }).catch((e) => [{ error: String(e?.message ?? e) }])) ?? [];
     if (ts?.error) { out.innerHTML = `<p class="muted">${escape(ts.error)}</p>`; $('try-status').textContent = ''; return; }
@@ -1370,7 +1430,7 @@
     const found = (ds?.records ?? []).filter(mine);
     const top = (tr?.records ?? []).filter((r) => mine(r) && r.inserts != null).slice(0, 12);
     $('try-status').textContent = `typeset in ${secs(performance.now() - t0)} · ${plural(set.length, 'paragraph')}${found.length ? ` · ${plural(found.length, 'finding')}` : ''}`;
-    out.innerHTML = `<div class="typeset">${set.map((r) => `<p class="ts"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', [], r.fonts))}</span></p>`).join('') || '<p class="muted">It sets no text.</p>'}</div>` +
+    out.innerHTML = `<div class="typeset">${set.map((r) => `<p class="ts"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', [], r.fonts, r.align))}</span></p>`).join('') || '<p class="muted">It sets no text.</p>'}</div>` +
       (found.length ? `<ul class="lib-found">${found.map((d) => `<li><b>${escape(d.severity)}</b> ${escape(d.message)}</li>`).join('')}</ul>` : '') +
       (top.length ? `<details class="lib-steps"><summary>${plural(top.length, 'expansion')}</summary><ul>${top.map((r) => `<li><code class="cs-ref" data-cs="${escape(r.name)}">${escape(r.name)}</code> → <code>${escape(String(r.inserts).slice(0, 160))}</code></li>`).join('')}</ul></details>` : '');
   }
@@ -1404,8 +1464,9 @@
     const keys = await configLoad(), q = $('cfg-search').value.trim().toLowerCase();
     const hits = keys.filter((k) => !q || k.key.toLowerCase().includes(q) || k.about.toLowerCase().includes(q));
     $('cfg-list').innerHTML = hits.map((k) => {
-      const changed = k.key in configSet, value = changed ? configSet[k.key] : k.def;
-      return `<li class="cfg-row${changed ? ' cfg-changed' : ''}"><div class="cfg-what"><code>${escape(k.key)}</code><span class="muted">${escape(k.about)}</span></div>` +
+      const added = configSet[`${k.key}+`], changed = k.key in configSet || !!added, value = k.key in configSet ? configSet[k.key] : k.def;
+      return `<li class="cfg-row${changed ? ' cfg-changed' : ''}"><div class="cfg-what"><code>${escape(k.key)}</code><span class="muted">${escape(k.about)}</span>` +
+        `${added ? `<span class="muted">adds ${added.map((x) => `<code>${escape(x)}</code>`).join(', ')}</span>` : ''}</div>` +
         `<label class="${k.type === 'boolean' ? 'ts-toggle ' : ''}cfg-value">${configInput(k, value)}</label>` +
         `<button type="button" class="ghost small" data-reset="${escape(k.key)}"${changed ? '' : ' hidden'} title="back to the default: ${escape(yamlValue(k.def ?? ''))}">Reset</button></li>`;
     }).join('') || '<li class="muted">No setting matches.</li>';
@@ -1425,18 +1486,21 @@
     const { [k.key]: _, ...rest } = configSet;
     configApply(sameValue(value, k.def) ? rest : { ...rest, [k.key]: value });
   });
-  $('cfg-list').addEventListener('click', (e) => { const b = e.target.closest('[data-reset]'); if (b) { const { [b.dataset.reset]: _, ...rest } = configSet; configApply(rest); } });
+  $('cfg-list').addEventListener('click', (e) => { const b = e.target.closest('[data-reset]'); if (b) { const { [b.dataset.reset]: _, [`${b.dataset.reset}+`]: __, ...rest } = configSet; configApply(rest); } });
   $('cfg-reset').onclick = () => configApply({});
 
   // ---------------------------------------------------------------- draw: a symbol drawn, the commands that set it
 
-  // The candidates are unicode-math's table of the installation (build.py `symbols`). The browser
-  // draws each one's character; it and the drawing, cut to their ink and scaled to one square,
-  // are compared pixel by pixel after a blur. Names in force in the document rank first.
-  const DRAW = { side: 20, glyph: 64, pen: 9, shown: 14, foreign: 1.12 };
+  // The candidates (build.py `symbols`) are unicode-math's table and the icon packages' commands, each
+  // drawn in the font that sets it. The drawing and each glyph are cut to their ink, scaled into one
+  // square with their aspect kept, and reduced to their outline: a filled icon and a drawn outline
+  // compare alike. Two outlines are as far apart as the mean distance of each one's points to the
+  // other (chamfer distance), plus how much their aspects and their numbers of pieces differ.
+  const DRAW = { side: 32, glyph: 96, pen: 9, shown: 14, foreign: 1.12, aspect: 0.6, pieces: 0.5 };
   const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
-  let drawSyms = null, drawn = false;
-  /** The ink of `canvas`, cut to its bounding box, scaled into DRAW.side², blurred: one value per pixel. */
+  let drawTable = null, drawn = false;
+  const drawFilter = { from: 'loaded', kind: '', mode: '' };
+  /** The ink of `canvas` as [outline points, distance map, aspect, pieces], or null without ink. */
   function features(canvas) {
     const { width: w, height: h } = canvas, data = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
     let x0 = w, y0 = h, x1 = -1, y1 = -1;
@@ -1444,57 +1508,118 @@
     if (x1 < 0) return null;
     const n = DRAW.side, small = Object.assign(document.createElement('canvas'), { width: n, height: n }), c = small.getContext('2d', { willReadFrequently: true });
     const bw = x1 - x0 + 1, bh = y1 - y0 + 1, k = (n - 4) / Math.max(bw, bh);
-    c.filter = 'blur(1.5px)';
     c.drawImage(canvas, x0, y0, bw, bh, (n - bw * k) / 2, (n - bh * k) / 2, bw * k, bh * k);
-    const px = c.getImageData(0, 0, n, n).data, out = new Float32Array(n * n + 1);
-    for (let i = 0; i < n * n; i++) out[i] = px[i * 4 + 3] / 255;
-    // centred and of unit length: a thin glyph and a thick stroke of one shape come out alike
-    const mean = out.reduce((a, v) => a + v, 0) / (n * n);
-    let norm = 0;
-    for (let i = 0; i < n * n; i++) { out[i] -= mean; norm += out[i] ** 2; }
-    for (let i = 0; i < n * n; i++) out[i] /= Math.sqrt(norm) || 1;
-    out[n * n] = Math.log(bw / bh); // the aspect, which the square loses
-    return out;
+    const px = c.getImageData(0, 0, n, n).data, ink = new Uint8Array(n * n);
+    for (let i = 0; i < n * n; i++) ink[i] = px[i * 4 + 3] > 64 ? 1 : 0;
+    const on = (x, y) => x >= 0 && y >= 0 && x < n && y < n && ink[y * n + x];
+    const points = [];
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (on(x, y) && !(on(x - 1, y) && on(x + 1, y) && on(x, y - 1) && on(x, y + 1))) points.push(y * n + x);
+    return points.length ? [Uint16Array.from(points), distances(points, n), Math.log(bw / bh), pieces(ink, n)] : null;
   }
-  /** Each symbol's features, drawn once; a character the browser has no glyph for is left out. */
+  /** Each cell's distance to the nearest point, by two chamfer passes (3 along, 4 across). */
+  function distances(points, n) {
+    const d = new Uint16Array(n * n).fill(9999);
+    for (const p of points) d[p] = 0;
+    const relax = (i, j, cost) => { if (d[j] + cost < d[i]) d[i] = d[j] + cost; };
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+      const i = y * n + x;
+      if (x > 0) relax(i, i - 1, 3);
+      if (y > 0) { relax(i, i - n, 3); if (x > 0) relax(i, i - n - 1, 4); if (x < n - 1) relax(i, i - n + 1, 4); }
+    }
+    for (let y = n - 1; y >= 0; y--) for (let x = n - 1; x >= 0; x--) {
+      const i = y * n + x;
+      if (x < n - 1) relax(i, i + 1, 3);
+      if (y < n - 1) { relax(i, i + n, 3); if (x < n - 1) relax(i, i + n + 1, 4); if (x > 0) relax(i, i + n - 1, 4); }
+    }
+    return d;
+  }
+  /** The ink's connected pieces: an `x` with two dots has three. */
+  function pieces(ink, n) {
+    const seen = new Uint8Array(n * n);
+    let count = 0;
+    for (let s = 0; s < n * n; s++) {
+      if (!ink[s] || seen[s]) continue;
+      count++;
+      const stack = [s];
+      seen[s] = 1;
+      while (stack.length) {
+        const i = stack.pop(), x = i % n, y = (i - x) / n;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const u = x + dx, v = y + dy, j = v * n + u;
+          if (u >= 0 && v >= 0 && u < n && v < n && ink[j] && !seen[j]) { seen[j] = 1; stack.push(j); }
+        }
+      }
+    }
+    return count;
+  }
+  /** How far apart two shapes' features are: 0 for the same outline. */
+  function apart([pa, da, aa, ka], [pb, db, ab, kb]) {
+    let ab_ = 0, ba = 0;
+    for (const p of pa) ab_ += db[p];
+    for (const p of pb) ba += da[p];
+    return (ab_ / pa.length + ba / pb.length) / 3 + DRAW.aspect * Math.abs(aa - ab) + DRAW.pieces * Math.min(3, Math.abs(ka - kb));
+  }
+  /** The symbol table, its fonts loaded only once a candidate drawn in them is wanted. */
   async function symbolsLoad() {
-    if (drawSyms) return drawSyms;
-    const list = await fetch(`${base}${manifest.symbols}`).then((r) => r.json()).catch(() => []);
-    const font = `${DRAW.glyph * 0.7}px "STIX Two Math", "Cambria Math", "Noto Sans Math", serif`;
-    // a glyph drawn before its font arrived would be the fallback's, and rank differently next time
-    await document.fonts.load(font, list.map(([code]) => String.fromCodePoint(code)).join('')).catch(() => {});
-    const g = Object.assign(document.createElement('canvas'), { width: DRAW.glyph, height: DRAW.glyph }), c = g.getContext('2d', { willReadFrequently: true });
-    c.font = font;
-    c.textAlign = 'center';
-    c.textBaseline = 'middle';
-    const draw = (ch) => { c.clearRect(0, 0, g.width, g.height); c.fillText(ch, g.width / 2, g.height / 2); return features(g); };
-    const none = draw('\u{10FFFD}'), same = (a, b) => a && b && a.every((v, i) => v === b[i]);
-    drawSyms = list.map(([code, name, cls, about]) => ({ ch: String.fromCodePoint(code), code, name, cls, about })).map((s) => ({ ...s, f: draw(s.ch) })).filter((s) => s.f && !same(s.f, none));
-    return drawSyms;
+    drawTable ??= fetch(`${base}${manifest.symbols}`).then((r) => r.json()).then(({ fonts, rows }) => ({
+      fonts: fonts.map((url, i) => ({ family: `satex-sym-${i}`, url, ready: null })),
+      rows: rows.map(([code, name, cls, about, font, pkg]) => ({ ch: String.fromCodePoint(code), code, name, cls, about, font, pkg, f: undefined })),
+    })).catch(() => ({ fonts: [], rows: [] }));
+    return drawTable;
   }
+  /** A font's glyphs drawn and measured, once: a character the font has no glyph for is left out. */
+  function fontReady(table, i) {
+    const font = table.fonts[i];
+    font.ready ??= (async () => {
+      const face = new FontFace(font.family, `url(${base}${font.url})`);
+      document.fonts.add(await face.load());
+      const g = Object.assign(document.createElement('canvas'), { width: DRAW.glyph, height: DRAW.glyph }), c = g.getContext('2d', { willReadFrequently: true });
+      c.font = `${DRAW.glyph * 0.7}px "${font.family}"`;
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      const draw = (ch) => { c.clearRect(0, 0, g.width, g.height); c.fillText(ch, g.width / 2, g.height / 2); return features(g); };
+      for (const s of table.rows) if (s.font === i) s.f = draw(s.ch);
+    })().catch(() => { for (const s of table.rows) if (s.font === i) s.f = null; });
+    return font.ready;
+  }
+  const drawKind = (s) => (s.cls === 'icon' ? 'symbol' : s.cls === 'alpha' ? 'letter' : 'symbol');
+  const drawMode = (s) => (s.cls === 'icon' ? 'text' : 'math');
   async function drawMatch() {
     const list = $('draw-list'), f = features(pad);
     if (!f) { list.innerHTML = ''; return; }
-    const [syms, names] = await Promise.all([symbolsLoad(), namesInForce(true)]);
-    if (!syms.length) { list.innerHTML = '<li class="muted">This build has no symbol table.</li>'; return; }
-    const force = new Set(names.map((r) => r.name)), n = DRAW.side * DRAW.side;
-    const best = syms.map((s) => {
-      let d = 0;
-      for (let i = 0; i < n; i++) d += (s.f[i] - f[i]) ** 2;
-      d += (s.f[n] - f[n]) ** 2 / 4;
-      return [s, d * (force.has(s.name) ? 1 : DRAW.foreign)];
-    }).sort((a, b) => a[1] - b[1]);
+    const [table, names] = await Promise.all([symbolsLoad(), namesInForce(true)]);
+    const force = new Set(names.map((r) => r.name)), loaded = new Set(names.map(libSource));
+    const wanted = table.rows.filter((s) => (drawFilter.from === 'all' || force.has(s.name) || loaded.has(s.pkg))
+      && (!drawFilter.kind || drawKind(s) === drawFilter.kind) && (!drawFilter.mode || drawMode(s) === drawFilter.mode));
+    if (!table.rows.length) { list.innerHTML = '<li class="muted">This build has no symbol table.</li>'; return; }
+    await Promise.all([...new Set(wanted.map((s) => s.font))].map((i) => fontReady(table, i)));
+    const best = wanted.filter((s) => s.f).map((s) => [s, apart(f, s.f) * (force.has(s.name) ? 1 : DRAW.foreign)]).sort((a, b) => a[1] - b[1]);
     const seen = new Set(), rows = [];
     for (const [s] of best) {
       if (rows.length >= DRAW.shown) break;
-      if (seen.has(s.ch)) continue;
-      seen.add(s.ch);
-      const all = syms.filter((x) => x.ch === s.ch).sort((a, b) => force.has(b.name) - force.has(a.name));
-      rows.push(`<li><span class="draw-glyph">${escape(s.ch)}</span><span class="draw-names">${all.map((x) => `<code class="${force.has(x.name) ? 'cs-ref' : 'draw-off'}" data-cs="${escape(x.name)}" tabindex="0" title="${force.has(x.name) ? '' : `${escape(x.name)}: ${escape(x.about ?? '')}, U+${x.code.toString(16).toUpperCase().padStart(4, '0')}. Not in force in this document: unicode-math defines it`}">${escape(x.name)}</code>`).join(' ')}</span>` +
+      const key = `${s.font}|${s.ch}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const all = wanted.filter((x) => x.font === s.font && x.ch === s.ch).sort((a, b) => force.has(b.name) - force.has(a.name));
+      const pkgs = [...new Set(all.map((x) => x.pkg))];
+      const have = all.some((x) => force.has(x.name) || loaded.has(x.pkg));
+      rows.push(`<li><span class="draw-glyph" style="font-family: '${table.fonts[s.font].family}'">${escape(s.ch)}</span><span class="draw-names">${all.map((x) => force.has(x.name)
+        ? `<code class="cs-ref" data-cs="${escape(x.name)}" tabindex="0">${escape(x.name)}</code>`
+        : `<code class="draw-off" data-sym="${table.rows.indexOf(x)}" tabindex="0">${escape(x.name)}</code>`).join(' ')}</span>` +
+        `<span class="lib-pkg${have ? '' : ' draw-off'}" title="${have ? 'in force in this document' : 'not loaded in this document'}">${escape(pkgs.join(', '))}</span>` +
         `<button type="button" class="small ghost draw-put" data-name="${escape(all[0].name)}" title="insert ${escape(all[0].name)} at the cursor">Insert</button></li>`);
     }
-    list.innerHTML = rows.join('');
+    list.innerHTML = rows.join('') || `<li class="muted">${drawFilter.from === 'loaded' ? 'No symbol of this document matches: try every package.' : 'No symbol matches.'}</li>`;
   }
+  /** A name not in force: its card from the table, with the package that defines it. */
+  $('draw-list').addEventListener('mouseover', async (e) => {
+    const el = e.target.closest('[data-sym]');
+    if (!el) return;
+    const s = (await symbolsLoad()).rows[+el.dataset.sym];
+    const does = [s.about, `U+${s.code.toString(16).toUpperCase().padStart(4, '0')}`].filter(Boolean).join(' · ');
+    tips.card.show(el, cards.explain({ name: s.name, tag: s.cls === 'icon' ? 'icon' : `math ${s.cls}`, does, package: s.pkg }));
+  });
+  $('draw-list').addEventListener('mouseout', (e) => { if (e.target.closest('[data-sym]')) tips.card.hide(150); });
   {
     const clear = () => { pen.clearRect(0, 0, pad.width, pad.height); drawn = false; $('draw-list').innerHTML = ''; };
     let last = null;
@@ -1510,6 +1635,13 @@
     pad.addEventListener('pointerup', () => { last = null; if (drawn) drawMatch(); });
     $('draw-clear').onclick = clear;
     $('draw-open').onclick = () => { $('play-draw').showModal(); symbolsLoad(); };
+    $('draw-filters').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-f]');
+      if (!b) return;
+      drawFilter[b.dataset.f] = b.dataset.v;
+      for (const x of $('draw-filters').querySelectorAll(`[data-f="${b.dataset.f}"]`)) x.setAttribute('aria-pressed', String(x === b));
+      if (drawn) drawMatch();
+    });
     $('draw-list').addEventListener('click', (e) => {
       const b = e.target.closest('.draw-put');
       if (!b) return;
@@ -2323,6 +2455,7 @@
     synced = version; // the server has this text: opened with it, or kept in sync with it
     render();
     typeset(uri());
+    heatDraw();
   }
   /** Closes a tab; the last one closed leaves the root open. */
   function closeTab(name) {
@@ -2369,7 +2502,25 @@
     await restart();
     toast(`${name} is the root`);
   }
-  examplesBox.onclick = (e) => { const row = e.target.closest('[data-example]'); if (row) example(row.dataset.example); };
+  /** The open project's files that differ from how they were loaded. */
+  const changedFiles = () => { sync(); return state.files.filter((n) => n in state.texts && !(n in state.ro) && (state.upload || state.texts[n] !== sampleTexts[n])); };
+  /** Asks before `what` (a name, `hash` the page's address for it) takes the place of an edited project:
+   * true to go on, a new tab on request. */
+  function replaceOk(what, hash) {
+    const changed = changedFiles();
+    if (!changed.length || (!state.upload && what === state.example)) return Promise.resolve(true);
+    const box = $('play-replace');
+    $('replace-text').innerHTML = `Open ${escape(what)} in place of ${state.upload ? 'your project' : escape(state.example)}? ` +
+      `Your edits to ${changed.map((n) => `<code>${escape(n)}</code>`).join(', ')} are ${state.upload ? 'lost' : 'kept until you leave the page'}. Copy a link first to keep them.`;
+    box.returnValue = '';
+    box.showModal();
+    return new Promise((done) => box.addEventListener('close', () => {
+      if (box.returnValue === 'tab') window.open(`${location.pathname}#${hash}`, '_blank', 'noopener');
+      done(box.returnValue === 'replace');
+    }, { once: true }));
+  }
+  const exampleAsked = async (ex) => { if (await replaceOk(ex, encodeURIComponent(ex))) await example(ex); };
+  examplesBox.onclick = (e) => { const row = e.target.closest('[data-example]'); if (row) exampleAsked(row.dataset.example); };
   treeBox.onclick = (e) => {
     const folder = e.target.closest('[data-folder]');
     if (folder) { const f = folder.dataset.folder; if (foldedDirs.has(f)) foldedDirs.delete(f); else foldedDirs.add(f); return drawTree(); }
@@ -2397,7 +2548,8 @@
   addEventListener('hashchange', () => {
     const h = decodeURIComponent(location.hash.slice(1)), opening = h.match(/^open=(.+):(\d+)$/);
     if (opening) openPlace(opening[1], { line: Number(opening[2]) - 1, character: 0 });
-    else if (!h.startsWith('s=') && h in sampleTexts && !shared.has(h)) example(h);
+    else if (h.startsWith('s=')) linkAsked(h);
+    else if (h in sampleTexts && !shared.has(h) && h !== state.example) exampleAsked(h);
   });
 
   /** A name box in the tree, at `row` or at the end: Enter takes the name, Escape cancels. */
@@ -2647,6 +2799,7 @@
       $('t-slow').innerHTML = slow.length ? `<h4>slowest files</h4>${slow.map(([, ms, pct, name]) =>
         `<div class="rp-bar" style="--p:${pct}%" title="${escape(name)}"><span>${escape(name.split('/').pop())}</span><span>${secs(Number(ms))} · ${pct}%</span></div>`).join('')}` : '';
       $('t-limits').innerHTML = texts.filter((t) => t.startsWith('limit ')).map((t) => `<p>reached ${escape(t.slice(6))}</p>`).join('');
+      heatShow(texts);
     }
     for (const [, text] of lines) {
       const m = plain(text).match(/cache (?:kernel|class|package) (\S+): (reused|rebuilt \((.*)\))/);
@@ -2659,6 +2812,26 @@
     timing('t-cache', detail, 'what the last run reused from the caches and what it analysed again', [...reused, ...(segments ? [plural(segments, 'package segment')] : []), ...fresh.map((f) => `new: ${f}`)]);
     return `${reused.length + segments} cached${fresh.length ? ` · fresh: ${fresh.map((f) => f.split(' ')[0]).join(', ')}` : ''}`;
   }
+  /** The main file's tokens per line, as a strip in the editor's gutter and its costliest lines in the
+   * pop-up; each lint rule's time and findings, slowest first. A bar's share is of the largest one. */
+  let heat = null;
+  function heatShow(texts) {
+    const file = texts.find((t) => t.startsWith('heat '))?.slice(5) ?? '';
+    const lines = texts.map((t) => t.match(/^line (\d+) (\d+)$/)).filter(Boolean).map(([, l, n]) => [+l, +n]);
+    heat = { file, lines: new Map(lines) };
+    heatDraw();
+    const bars = (rows, title, label, value) => {
+      const most = Math.max(1, ...rows.map((r) => r.at(1)));
+      return rows.length ? `<h4>${title}</h4>${rows.map((r) => `<div class="rp-bar" style="--p:${(100 * r[1] / most).toFixed(1)}%"${r[3] ?? ''}><span>${label(r)}</span><span>${value(r)}</span></div>`).join('')}` : '';
+    };
+    const top = [...lines].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([l, n]) => [l, n, 0, ` data-line="${l}" title="go to line ${l}"`]);
+    $('t-heat').innerHTML = bars(top, `busiest lines of ${escape(file.split('/').pop())}`, ([l]) => `line ${l}`, ([, n]) => `${short(n)} tokens`);
+    const rules = texts.map((t) => t.match(/^rule (\S+) (\d+) (\d+)$/)).filter(Boolean).map(([, code, us, n]) => [code, +us, +n]);
+    $('t-rules').innerHTML = bars(rules.slice(0, 8), `lint rules: ${secs(rules.reduce((s, r) => s + r[1], 0) / 1000)} in all`,
+      ([code]) => escape(code), ([, us, n]) => `${secs(us / 1000)} · ${plural(n, 'finding')}`);
+  }
+  const heatDraw = () => editor?.heat?.(heat && heat.file.endsWith(`/${state.file}`) ? heat.lines : null);
+  $('t-heat').addEventListener('click', (e) => { const b = e.target.closest('[data-line]'); if (b) { const at = { line: +b.dataset.line - 1, character: 0 }; editor.focus({ start: at, end: at }); } });
   /** The cache entries the worker keeps (worker.js), each with what it stands for; dropping one
    * restarts the language server, so the next check analyses that part again. */
   const cacheBox = $('play-cache'), cacheList = $('cache-list');
@@ -2687,19 +2860,21 @@
     if (entries) { cacheEntries = entries; $('cache-count').textContent = entries.length ? short(entries.length) : ''; }
     const q = cacheFilter.value.trim().toLowerCase();
     // a row matches by its kind and name, or by a command it defined in the run (`\textcolor`)
-    const rows = cacheEntries.map((e) => { const l = cacheLabel(e.path); return { e, l, u: usedOf(l[1], l[2]), hit: [] }; })
-      .filter((r) => !q || (!q.startsWith('\\') && `${r.l[0]} ${r.l[2]}`.toLowerCase().includes(q)) || (r.hit = namesLike(r.l[1], r.l[2], q)).length);
+    // a package another one loads matches inside it too (pgf in tikz), its row unfolded
+    const rows = cacheEntries.map((e) => { const l = cacheLabel(e.path); return { e, l, u: usedOf(l[1], l[2]), hit: [], via: [] }; })
+      .filter((r) => !q || (!q.startsWith('\\') && `${r.l[0]} ${r.l[2]}`.toLowerCase().includes(q)) || (r.hit = namesLike(r.l[1], r.l[2], q)).length
+        || (!q.startsWith('\\') && (r.via = r.l[3].filter((n) => n.toLowerCase().includes(q))).length));
     const by = { size: (r) => r.e.size, name: (r) => (r.l[2] || r.l[0]).toLowerCase(), kind: (r) => r.l[0] }[cacheOrder.key];
     rows.sort((a, b) => (cacheOrder.used ? Number(b.u[0]) - Number(a.u[0]) : 0) || (by(a) < by(b) ? -1 : by(a) > by(b) ? 1 : 0) * (cacheOrder.down ? -1 : 1));
     for (const th of cacheBox.querySelectorAll('th[data-sort]')) {
       if (th.dataset.sort === cacheOrder.key) th.setAttribute('aria-sort', cacheOrder.down ? 'descending' : 'ascending'); else th.removeAttribute('aria-sort');
     }
-    const hits = (hit) => hit.length ? ` <span class="muted cache-hit">defines ${hit.slice(0, 3).map((n) => `<code>${escape(n)}</code>`).join(', ')}${hit.length > 3 ? ` +${hit.length - 3}` : ''}</span>` : '';
-    cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u, hit }, i) =>
+    const hits = (verb, hit) => hit.length ? ` <span class="muted cache-hit">${verb} ${hit.slice(0, 3).map((n) => `<code>${escape(n.replace(/\.cls$/, ''))}</code>`).join(', ')}${hit.length > 3 ? ` +${hit.length - 3}` : ''}</span>` : '';
+    cacheList.innerHTML = rows.map(({ e, l: [kind, cls, what, needs], u, hit, via }, i) =>
       `<tr title="${escape(e.path)}"><td>${cacheBadge(cls, kind)}</td>` +
-      `<td><button type="button" class="cache-name" aria-expanded="false" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>${hits(hit)}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
+      `<td><button type="button" class="cache-name" aria-expanded="${via.length > 0}" aria-controls="cache-sub-${i}">${escape(what || kind)}</button>${hits('defines', hit)}${hits('loads', via)}</td><td class="used">${u[1] || '<span class="use-no" title="not used by the open document">—</span>'}</td><td class="loads">${needs.length ? `<span class="cache-fold" title="it loads ${needs.length}">${needs.length}</span>` : ''}</td>` +
       `<td class="num">${size(e.size)}</td><td><button type="button" class="small ghost" data-path="${escape(e.path)}" aria-label="drop ${escape(what || kind)}">Drop</button></td></tr>` +
-      `<tr class="cache-sub" id="cache-sub-${i}" hidden><td></td><td colspan="5">${details(cls, what, needs)}</td></tr>`).join('') ||
+      `<tr class="cache-sub" id="cache-sub-${i}"${via.length ? '' : ' hidden'}><td></td><td colspan="5">${details(cls, what, needs)}</td></tr>`).join('') ||
       `<tr><td colspan="6" class="muted">${cacheEntries.length ? 'No match.' : 'Nothing cached yet.'}</td></tr>`;
     $('cache-total').textContent = rows.length ? `${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}, ${size(rows.reduce((n, { e }) => n + e.size, 0))} in total` : '';
   }
@@ -2974,7 +3149,33 @@
     return `${location.href.split('#')[0]}#s=${btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`;
   }
   async function restore(hash) {
-    try { return JSON.parse(new TextDecoder().decode(await through(unb64(hash), new DecompressionStream('deflate-raw')))); } catch { return null; }
+    let link;
+    try { link = JSON.parse(new TextDecoder().decode(await through(unb64(hash), new DecompressionStream('deflate-raw')))); } catch { return null; }
+    // a link from before projects: one file and its text
+    if (link && !link.p) link = { ...link, x: projectOf(link.f) ?? link.f, p: { [link.f]: link.t } };
+    if (link?.x && !(link.x in sampleTexts)) sampleTexts[link.x] = '';
+    return link;
+  }
+  /** A shared project: its settings, kernel, files, open file, command and cursor. */
+  async function openLink(link) {
+    if (link.s) configKeep(link.s);
+    const k = manifest.kernels.findIndex((x) => x.id === link.k);
+    if (k >= 0 && k !== state.kernel) { manualKernel = true; await kernel(k); }
+    if (!link.x) {
+      await project(Object.fromEntries(Object.entries(link.p).map(([n, t]) => [n, encode(t)])), 'From the link', link.r);
+      if (link.f in state.texts) choose(link.f);
+      args.value = link.a;
+    } else {
+      if (state.upload) Object.assign(state, { dir: '/work', texts: { ...sampleTexts }, upload: false, lists: {} });
+      Object.assign(state.texts, link.p);
+      delete state.lists[link.x];
+      await example(link.x, { file: link.f, list: link.l, root: link.r, command: link.a });
+    }
+    if (link.c) editor.select(link.c);
+  }
+  async function linkAsked(hash) {
+    const link = await restore(hash.slice(2));
+    if (link && await replaceOk(link.x ? `the shared ${link.x}` : 'the shared project', hash)) await openLink(link);
   }
   $('play-link').onclick = async () => {
     const link = await permalink();
@@ -3111,10 +3312,7 @@
     idle();
     sampleTexts = ready.samples;
     const hash = decodeURIComponent(location.hash.slice(1));
-    let link = hash.startsWith('s=') ? await restore(hash.slice(2)) : null;
-    // a link from before projects: one file and its text
-    if (link && !link.p) link = { ...link, x: projectOf(link.f) ?? link.f, p: { [link.f]: link.t } };
-    if (link?.x && !(link.x in sampleTexts)) sampleTexts[link.x] = '';
+    const link = hash.startsWith('s=') ? await restore(hash.slice(2)) : null;
     if (hash.startsWith('open=')) history.replaceState(null, '', location.pathname);
     const ex = link ? link.x : hash in sampleTexts && !shared.has(hash) ? hash : projectOf(hash) ?? manifest.sample;
     state.texts = { ...sampleTexts, ...(link?.x ? link.p : {}) };
@@ -3134,12 +3332,8 @@
     button.textContent = 'Run';
     button.disabled = false;
     await preloading;
-    if (link && !link.x) {
-      await project(Object.fromEntries(Object.entries(link.p).map(([n, t]) => [n, encode(t)])), 'From the link', link.r);
-      if (link.f in state.texts) choose(link.f);
-      args.value = link.a;
-    } else await example(ex, { file: link?.f ?? (shared.has(hash) ? hash : ex), list: link?.l, root: link?.r, command: link?.a });
-    if (link?.c) editor.select(link.c);
+    if (link) await openLink(link);
+    else await example(ex, { file: shared.has(hash) ? hash : ex });
     const opening = hash.match(/^open=(.+):(\d+)$/);
     if (opening) await openPlace(opening[1], { line: Number(opening[2]) - 1, character: 0 });
     if (!plainLint()) return link && !link.x ? start() : undefined;

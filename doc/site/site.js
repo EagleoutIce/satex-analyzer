@@ -88,7 +88,8 @@
     `<span class="tok-${com ? 'com' : cmd ? 'cmd' : br ? 'br' : 'arg'}">${link && cmd && /^\\[A-Za-z@_:]+$/.test(m) ? `<a class="cs bl" href="#" data-cs="${m}" title="explain ${m}">${m}</a>` : m}</span>`);
   /** `code`, links and bold of satex's Markdown; a `file:line` is a place. */
   const inline = (t) => esc(t).split(/(`[^`]+`)/).map((p, i) => {
-    if (!(i % 2)) return p.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+    if (!(i % 2)) return p.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+      .replace(/\*\(([^*]+)\)\*/g, '<span class="x-from">($1)</span>').replace(/\*([^*\s][^*]*)\*/g, '<em>$1</em>');
     const code = p.slice(1, -1), at = code.match(/^([\w./-]+\.\w+):(\d+)$/);
     return at ? placeLink(at[1], +at[2]) : `<code>${code}</code>`;
   }).join('');
@@ -364,21 +365,63 @@
       : /^\\/.test(String(v)) ? csChip(String(v)) : /^[{}#]/.test(String(v)) ? `<code>${esc(v)}</code>` : esc(v);
   /** satex's notation in typeset text (`\uE000…\uE001`): `⟦…⟧` is text set in a box, on the page
    * only if the box is used; `·` a place the line breaker may hyphenate, not shown; `│`, `―`, `▬`
-   * a table's `|`, an `\hline` and a `\rule`, drawn. */
+   * a table's `|`, an `\hline` and a `\rule`, drawn. An alignment's parts (`\u0003begin`, `cell`, `row`,
+   * `end`) make a grid: a row opens at its first character, so an `\hline` before it rules its top. */
   const RULES = { '│': ['ts-vrule', 'a \\vrule: a table\'s |'], '―': ['ts-hrule', 'an \\hrule: \\hline'], '▬': ['ts-bar', 'a \\rule'] };
+  /** `marked` with each key and font change as a note of its own, where it stands. `at` counts every
+   * character but the note brackets, a note's own (a hyphen's `·`) too, and a key never parts a note. */
+  function withKeys(marked, keys = [], fonts = [], align = []) {
+    const at = [...(keys ?? []).filter((k) => k?.key != null), ...(fonts ?? []), ...(align ?? [])].sort((a, b) => a.at - b.at);
+    if (!at.length) return marked;
+    let out = '', seen = 0, i = 0, note = false;
+    const mark = (k) => k.style != null ? `\u0002${k.style}` : k.mark != null ? `\u0003${k.mark}` : `\u0001${k.kind ?? 'key'}\u0001${k.key}`;
+    const put = (n) => { while (i < at.length && at[i].at <= n) out += `\uE000${mark(at[i++])}\uE001`; };
+    for (const c of marked) {
+      if (c === '\uE000') { put(seen); note = true; } else if (c === '\uE001') note = false;
+      else { if (!note) put(seen); seen++; }
+      out += c;
+    }
+    put(Infinity);
+    return out;
+  }
   function notation(marked) {
-    let open = 0, font = '';
+    // row: false while a row waits for its first character, true if an \hline rules it, null when one is open
+    let open = 0, font = '', table = 0, row = null;
+    const opened = () => {
+      if (row === null) return '';
+      const tr = `<span class="ts-tr${row ? ' ts-ruled' : ''}"><span class="ts-td">`;
+      row = null;
+      return tr;
+    };
+    const grid = (mark) => {
+      if (mark === 'begin') { table++; row = false; return '<span class="ts-table">'; }
+      if (!table) return '';
+      if (mark === 'cell') return `${opened()}</span><span class="ts-td">`;
+      const shut = row === null ? '</span></span>' : row ? '<span class="ts-tr ts-ruled"></span>' : '';
+      if (mark === 'row') { row = false; return shut; }
+      table--;
+      row = null;
+      return `${shut}</span>`;
+    };
     const html = marked.split(/(\uE000[^\uE001]*\uE001)/).map((part) => {
       const note = /^\uE000([^\uE001]*)\uE001$/.exec(part)?.[1];
-      if (note === undefined) return font && part ? `<span class="${font}">${esc(part)}</span>` : esc(part);
+      if (note === undefined) {
+        if (row !== null && !part.trim()) return '';
+        const tr = table ? opened() : '';
+        return tr + (font && part ? `<span class="${font}">${esc(part)}</span>` : esc(part));
+      }
+      if (note[0] === '\u0003') return grid(note.slice(1));
+      if (note === '―' && table && row !== null) { row = true; return ''; }
       if (note[0] === '\u0002') { font = note.slice(1).split(' ').filter(Boolean).map((x) => `ts-${x}`).join(' '); return ''; }
-      if (note === '⟦') { open++; return '<span class="ts-box" title="set in a box: on the page only if the box is used">'; }
-      if (note === '⟧') { if (!open) return ''; open--; return '</span>'; }
-      if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `<span class="ts-key ts-key-${esc(kind)}" title="${esc(kind)}">${esc(key)}</span>`; }
-      if (RULES[note]) return `<span class="${RULES[note][0]}" title="${RULES[note][1]}"></span>`;
-      return note === '·' ? '' : `<span class="ts-note">${esc(note)}</span>`;
+      if (note === '·') return '';
+      const tr = table ? opened() : '';
+      if (note === '⟦') { open++; return `${tr}<span class="ts-box" title="set in a box: on the page only if the box is used">`; }
+      if (note === '⟧') { if (!open) return tr; open--; return `${tr}</span>`; }
+      if (note[0] === '\u0001') { const [, kind, key] = note.split('\u0001'); return `${tr}<span class="ts-key ts-key-${esc(kind)}" title="${esc(kind)}">${esc(key)}</span>`; }
+      if (RULES[note]) return `${tr}<span class="${RULES[note][0]}" title="${RULES[note][1]}"></span>`;
+      return `${tr}<span class="ts-note">${esc(note)}</span>`;
     }).join('');
-    return html + '</span>'.repeat(open);
+    return html + '</span>'.repeat(open + 2 * table);
   }
   /** The Markdown satex writes, for hovers and rule explanations: headings, paragraphs, lists,
    * fenced or indented code, links, emphasis. */
@@ -402,7 +445,7 @@
     return `<section class="rule rule-tip"><h4>${name}</h4><p class="badges">${badges.join(' ')}</p>` +
       `<p><b>${inline(r.summary ?? r.message ?? '')}</b></p>${markdown(r.explanation ?? '')}${refs ? `<p>See ${refs}.</p>` : ''}</section>`;
   };
-  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation };
+  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys };
   // A rule named anywhere on the site, as a link into the rules page or its code or number in a
   // code span, shows its card. The cards' data is the rules the build wrote, fetched once.
   const RULES_URL = new URL('rules.json', document.currentScript?.src ?? location.href);
@@ -427,12 +470,24 @@
   });
 
   // ------------------------------------------------------------ the landing page's examples
-  // A command explains itself on hover, an underline shows its finding: a floating card,
-  // so nothing on the page moves. The panel beside keeps the last command explained.
+  // Each example: its source, findings underlined with a marker at the line's end, and what it
+  // typesets beside it. A command explains itself on hover, a finding shows its rule: one floating
+  // card, so nothing on the page moves; a click on a command pins its full card.
   const { card } = tips, tip = card.el;
-  for (const fig of document.querySelectorAll('.example')) {
+  /** Typeset paragraphs as the playground's Typeset panel draws them. */
+  const paragraphs = (rows) => rows.map((r) => `<p class="ts${r.heading ? ` ts-h ts-${esc(r.heading)}` : ''}"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align))}</span></p>`).join('')
+    || '<p class="muted">It sets no paragraph.</p>';
+  const lintCard = (d) => {
+    const diff = d.typo ? (d.edits ?? []).map((e) => ` <span class="diff"><del>${esc(e.from) || '␣'}</del>→<ins>${esc(e.to) || '∅'}</ins></span>`).join('') : '';
+    return `<div class="tip-lint f-${d.severity}"><p><span class="sev sev-${d.severity}">${d.severity}</span> <code>${esc(d.code)}</code> ${inline(d.message)}</p>` +
+      (d.fix ? `<p class="tip-fix"><span class="fix fix-${d.applicability}">fix</span> ${inline(d.fix)}${diff}</p>` : '') + '</div>';
+  };
+  /** The findings' cards, then their rules' cards. */
+  const findingCards = async (ds) => ds.map(lintCard).join('') + (await Promise.all([...new Set(ds.map((d) => d.code))].map(ruleNamed)))
+    .filter(Boolean).map((r) => ruleCard(r, ruleLink(r.code))).join('');
+  for (const fig of document.querySelectorAll('.example:not(.live)')) {
     const data = JSON.parse(fig.querySelector('.ex-data').textContent);
-    const pane = fig.querySelector('.ex-explain');
+    fig.querySelector('.ex-side').innerHTML = paragraphs(data.ts ?? []);
     // A command before `\begin{document}` means what it means in the preamble.
     const src = fig.querySelector('pre.src');
     const lines = [...src.querySelectorAll('.ln')];
@@ -442,43 +497,152 @@
       const all = data.cs[name] ?? [];
       return all.find((r) => r.when && r.when === when(el)) ?? all.find((r) => !r.error) ?? all[0];
     };
-    const show = (name, el) => {
-      const r = record(name, el);
-      if (!r) return false;
-      pane.querySelector('.xname').textContent = name;
-      pane.querySelector('.xbody').innerHTML = explain(r);
-      return true;
-    };
-    const lintCard = (k) => {
-      const d = data.lints[k];
-      const diff = d.typo ? d.edits.map((e) => ` <span class="diff"><del>${esc(e.from) || '␣'}</del>→<ins>${esc(e.to) || '∅'}</ins></span>`).join('') : '';
-      return `<div class="tip-lint f-${d.severity}"><p><span class="sev sev-${d.severity}">${d.severity}</span> <code>${esc(d.code)}</code> ${inline(d.message)}</p>` +
-        (d.fix ? `<p class="tip-fix"><span class="fix fix-${d.applicability}">fix</span> ${inline(d.fix)}${diff}</p>` : '') + '</div>';
-    };
     const lit = (ks, on) => { for (const k of ks) for (const x of fig.querySelectorAll(`[data-lint~="${k}"]`)) x.classList.toggle('lit', on); };
-    src.addEventListener('mouseover', (e) => {
+    src.addEventListener('mouseover', async (e) => {
       const el = e.target.closest('[data-cs], [data-lint]');
-      if (!el) return;
+      if (!el || tip.dataset.pin) return;
       const ks = el.dataset.lint ? el.dataset.lint.split(' ') : [];
       const cs = el.dataset.cs ? record(el.dataset.cs, el) : null;
       if (!ks.length && !cs) return card.hide(250);
-      card.show(el, ks.map(lintCard).join('') + (cs ? brief(cs) : ''));
-      tip.dataset.fig = fig.id;
-      if (cs) show(el.dataset.cs, el);
       lit(ks, true);
+      const html = (ks.length ? await findingCards(ks.map((k) => data.lints[k])) : '') + (cs ? brief(cs) : '');
+      if (!el.matches(':hover')) return;
+      card.show(el, html);
+      tip.dataset.fig = fig.id;
     });
     src.addEventListener('mouseout', (e) => {
       const el = e.target.closest('[data-lint]');
       if (el) lit(el.dataset.lint.split(' '), false);
-      card.hide(250);
+      if (!tip.dataset.pin) card.hide(250);
     });
-    const list = fig.querySelector('.ex-findings');
-    list?.addEventListener('mouseover', (e) => { const li = e.target.closest('li[data-k]'); if (li) lit([li.dataset.k], true); });
-    list?.addEventListener('mouseout', (e) => { const li = e.target.closest('li[data-k]'); if (li) lit([li.dataset.k], false); });
-    const pick = (e) => { const a = e.target.closest('a.cs'); if (a && (e.currentTarget !== tip || tip.dataset.fig === fig.id) && show(a.dataset.cs)) e.preventDefault(); };
-    fig.addEventListener('click', pick);
-    tip.addEventListener('click', pick);
-    show(data.initial);
+    // a click on a command, here or in its card, pins its full card
+    const pin = (e) => {
+      const a = e.target.closest('[data-cs]');
+      const r = a && (e.currentTarget !== tip || tip.dataset.fig === fig.id) && record(a.dataset.cs, a);
+      if (!r) return;
+      e.preventDefault();
+      card.show(a, explain(r));
+      tip.dataset.fig = fig.id;
+      tip.dataset.pin = '1';
+    };
+    src.addEventListener('click', pin);
+    tip.addEventListener('click', pin);
+  }
+
+  // The last tab: the reader's own text in the playground's editor and engine (worker and manifest
+  // from play/index.html), started once the tab opens; each edit, debounced, shows what it typesets
+  // and its findings, underlined like the examples'.
+  const live = document.querySelector('.example.live');
+  if (live) {
+    const out = live.querySelector('.live-ts'), status = live.querySelector('.live-status'), host = live.querySelector('.live-src');
+    const MiB = (n) => (n / 2 ** 20).toFixed(1), SEV = ['', 'error', 'warning', 'info', 'info'], uri = 'file:///work/try.tex';
+    const NAMED = /\\(?:documentclass|usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
+    const FIRST = '\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, \\emph{#1}!}\n\\begin{document}\n\\section{Welcome}\n\\greet{world} Pages 10-12 come next.\nSee Section~\\ref{sec:none}.\n\\end{document}\n';
+    let engine = null, version = 0, timer = 0, editor = null;
+    const say = (html, bad = false) => { status.innerHTML = html; status.classList.toggle('live-bad', bad); };
+    async function boot() {
+      say('Loading SaTeX…');
+      const at = new URL('play/index.html', location.href);
+      const manifest = JSON.parse((await (await fetch(at)).text()).match(/<script id="satex-play" type="application\/json">(.*?)<\/script>/s)[1]);
+      const worker = new Worker(URL.createObjectURL(new Blob([manifest.worker], { type: 'text/javascript' })));
+      let line = Promise.resolve(), waiting = null, id = 0, found = [];
+      worker.onmessage = ({ data }) => {
+        if (data.type === 'progress') return say(`Loading SaTeX <progress max="${data.total || 1}" value="${data.loaded}"></progress> ${MiB(data.loaded)} of ${MiB(data.total)} MiB`);
+        if (data.type === 'status') return;
+        if (data.type === 'lsp') for (const m of data.out) if (m.method === 'textDocument/publishDiagnostics' && m.params.uri === uri) found = m.params.diagnostics;
+        const w = waiting;
+        waiting = null;
+        if (data.type === 'error') w?.reject(new Error(data.message.split('\n')[0])); else w?.resolve(data);
+      };
+      // one message at a time, each answered before the next goes; `project` and `reset` have no answer
+      /** @type {(msg: object) => Promise<any>} */
+      const ask = (msg) => (line = line.then(() => new Promise((resolve, reject) => {
+        if (msg.type === 'project' || msg.type === 'reset') resolve(); else waiting = { resolve, reject };
+        worker.postMessage(msg);
+      })));
+      const lsp = async (method, params, note = false) => {
+        const n = ++id, r = await ask({ type: 'lsp', message: { jsonrpc: '2.0', method, params, ...(note ? {} : { id: n }) } });
+        return r.out.find((m) => m.id === n)?.result;
+      };
+      await ask({ type: 'init', base: new URL(manifest.root, at).href, manifest });
+      return { manifest, base: new URL(manifest.root, at).href, kernel: manifest.kernels[0], ask, lsp, have: new Set(), found: () => found, opened: false };
+    }
+    const start = () => (engine ??= boot().catch((e) => { say(`SaTeX did not load: ${esc(e.message)}`, true); throw e; }));
+    /** The bundles the text names (a class or package) and those they need, not loaded yet. */
+    function wanted(e, text) {
+      const byId = new Map((e.manifest.packages ?? []).map((p) => [p.id, p])), picked = new Map();
+      const pick = (id) => { const p = byId.get(id); if (p && !picked.has(id) && !e.have.has(id)) { picked.set(id, p); p.needs.forEach((n) => pick(`${e.kernel.id}/${n}`)); } };
+      for (const m of text.matchAll(NAMED)) for (const n of m[1].split(',').map((x) => x.trim())) { pick(`${e.kernel.id}/${n}`); pick(`${e.kernel.id}/${n}.cls`); }
+      return [...picked.values()];
+    }
+    const text = () => editor?.state.doc.toString() ?? FIRST;
+    async function analyze() {
+      const mine = ++version, e = await start(), now = text(), t0 = performance.now();
+      const more = wanted(e, now);
+      if (more.length) { say(`Loading ${esc(more.map((p) => p.label).join(', '))}…`); await e.ask({ type: 'bundles', base: e.base, entries: more }); more.forEach((p) => e.have.add(p.id)); }
+      if (mine !== version) return;
+      say('Analyzing…');
+      live.classList.add('busy');
+      e.ask({ type: 'project', dir: '/work', files: { 'try.tex': new TextEncoder().encode(now) } });
+      if (!e.opened) {
+        e.opened = true;
+        e.ask({ type: 'reset', args: [...e.kernel.args, '-f', 'try.tex'], cwd: '/work' });
+        await e.lsp('initialize', { processId: null, rootUri: 'file:///work', capabilities: {} });
+        await e.lsp('initialized', {}, true);
+        await e.lsp('textDocument/didOpen', { textDocument: { uri, languageId: 'latex', version: mine, text: now } }, true);
+      } else {
+        await e.lsp('textDocument/didChange', { textDocument: { uri, version: mine }, contentChanges: [{ text: now }] }, true);
+        await e.lsp('satex/analyze', {}, true);
+      }
+      if (mine !== version) return; // a newer text is on its way
+      const rows = (await e.lsp('satex/typeset', { textDocument: { uri } })) ?? [];
+      if (mine !== version) return;
+      live.classList.remove('busy');
+      out.innerHTML = paragraphs(rows.filter((r) => r.kind === 'paragraph' && String(r.path ?? '').endsWith('try.tex')));
+      underline(e.found());
+      say(`Analyzed in ${Math.round(performance.now() - t0)} ms. <a href="play/index.html">The playground</a> has traces, the library and more.`);
+    }
+    /** The editor: the playground's tokenizer, completion and hover from the engine's language server. */
+    let underline = () => {};
+    async function edit() {
+      const [{ codemirror: { EditorView, basicSetup }, autocomplete: ac, lint, language, oneDark: { oneDark }, state: st }, tex] = await Promise.all([self.siteCM(), self.siteTex()]);
+      const pos = (doc, p) => { const l = doc.lineAt(p); return { line: l.number - 1, character: p - l.from }; };
+      const off = (doc, p) => Math.min(doc.line(Math.min(p.line + 1, doc.lines)).from + p.character, doc.length);
+      async function complete(ctx) {
+        const word = ctx.matchBefore(/\\[A-Za-z@]*/);
+        if (!word || !engine) return null;
+        const e = await engine, r = await e.lsp('textDocument/completion', { textDocument: { uri }, position: pos(ctx.state.doc, ctx.pos) });
+        const items = (Array.isArray(r) ? r : r?.items) ?? [];
+        return { from: word.from + 1, options: items.slice(0, 200).map((i) => ({ label: i.label.replace(/^\\/, ''), detail: i.detail, apply: i.insertText?.replace(/^\\/, '') ?? i.label.replace(/^\\/, '') })) };
+      }
+      const theme = new st.Compartment();
+      editor = new EditorView({
+        parent: host, doc: FIRST,
+        extensions: [basicSetup, language.syntaxHighlighting(tex.highlighter), tex.language, lint.linter(null), lint.lintGutter(), ac.autocompletion({ override: [complete] }), theme.of(dark() ? oneDark : []),
+          EditorView.updateListener.of((u) => { if (u.docChanged) { clearTimeout(timer); timer = setTimeout(analyze, 350); } })],
+      });
+      new MutationObserver(() => editor.dispatch({ effects: theme.reconfigure(dark() ? oneDark : []) })).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+      underline = (ds) => editor.dispatch(lint.setDiagnostics(editor.state, ds.map((d) => {
+        const from = off(editor.state.doc, d.range.start), to = off(editor.state.doc, d.range.end);
+        return { from, to: Math.min(Math.max(to, from + 1), editor.state.doc.length), severity: SEV[d.severity] || 'info', message: d.message, source: d.data?.rule ?? d.code };
+      })));
+      // hover: the language server's card, as in the playground
+      let shown = null;
+      host.addEventListener('mousemove', (ev) => {
+        const p = editor.posAtCoords({ x: ev.clientX, y: ev.clientY });
+        if (p == null || !engine) return;
+        clearTimeout(shown);
+        shown = setTimeout(async () => {
+          const e = await engine, r = await e.lsp('textDocument/hover', { textDocument: { uri }, position: pos(editor.state.doc, p) }).catch(() => null);
+          const c = r?.contents, value = typeof c === 'string' ? c : c?.value ?? '';
+          const at = editor.coordsAtPos(p);
+          if (value && at && host.matches(':hover')) card.show({ left: at.left, top: at.top, right: at.right, bottom: at.bottom }, `<div class="hover">${markdown(value)}</div>`);
+        }, 300);
+      });
+      host.addEventListener('mouseleave', () => { clearTimeout(shown); card.hide(150); });
+    }
+    const open = () => { if (!editor) edit().then(analyze); };
+    document.getElementById(live.getAttribute('aria-labelledby'))?.addEventListener('click', open);
   }
 
   // Long tables: a header click sorts, a text box and one select per badge kind filter, pages
@@ -601,90 +765,6 @@
   const unfold = () => { const t = location.hash ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null; t?.closest('details')?.setAttribute('open', ''); t?.scrollIntoView(); };
   addEventListener('hashchange', unfold);
   unfold();
-
-  // ------------------------------------------------------------ the landing page's live box
-  // The playground's engine (worker and manifest from play/index.html), started once the box is near or focused;
-  // each edit, debounced, shows what its paragraphs typeset with their findings.
-  const live = document.getElementById('live');
-  if (live) {
-    const src = live.querySelector('textarea'), out = live.querySelector('.live-ts'), status = live.querySelector('.live-status');
-    const MiB = (n) => (n / 2 ** 20).toFixed(1), SEV = ['', 'error', 'warning', 'info', 'hint'], uri = 'file:///work/try.tex';
-    const NAMED = /\\(?:documentclass|usepackage|RequirePackage)\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g;
-    let engine = null, version = 0, timer = 0;
-    const say = (html, bad = false) => { status.innerHTML = html; status.classList.toggle('live-bad', bad); };
-    async function boot() {
-      say('Loading SaTeX…');
-      const at = new URL('play/index.html', location.href);
-      const manifest = JSON.parse((await (await fetch(at)).text()).match(/<script id="satex-play" type="application\/json">(.*?)<\/script>/s)[1]);
-      const worker = new Worker(URL.createObjectURL(new Blob([manifest.worker], { type: 'text/javascript' })));
-      let line = Promise.resolve(), waiting = null, id = 0, found = [];
-      worker.onmessage = ({ data }) => {
-        if (data.type === 'progress') return say(`Loading SaTeX <progress max="${data.total || 1}" value="${data.loaded}"></progress> ${MiB(data.loaded)} of ${MiB(data.total)} MiB`);
-        if (data.type === 'status') return;
-        if (data.type === 'lsp') for (const m of data.out) if (m.method === 'textDocument/publishDiagnostics' && m.params.uri === uri) found = m.params.diagnostics;
-        const w = waiting;
-        waiting = null;
-        if (data.type === 'error') w?.reject(new Error(data.message.split('\n')[0])); else w?.resolve(data);
-      };
-      // one message at a time, each answered before the next goes; `project` and `reset` have no answer
-      /** @type {(msg: object) => Promise<any>} */
-      const ask = (msg) => (line = line.then(() => new Promise((resolve, reject) => {
-        if (msg.type === 'project' || msg.type === 'reset') resolve(); else waiting = { resolve, reject };
-        worker.postMessage(msg);
-      })));
-      const lsp = async (method, params, note = false) => {
-        const n = ++id, r = await ask({ type: 'lsp', message: { jsonrpc: '2.0', method, params, ...(note ? {} : { id: n }) } });
-        return r.out.find((m) => m.id === n)?.result;
-      };
-      await ask({ type: 'init', base: new URL(manifest.root, at).href, manifest });
-      return { manifest, base: new URL(manifest.root, at).href, kernel: manifest.kernels[0], ask, lsp, have: new Set(), found: () => found, opened: false };
-    }
-    const start = () => (engine ??= boot().catch((e) => { say(`SaTeX did not load: ${esc(e.message)}`, true); throw e; }));
-    /** The bundles the text names (a class or package) and those they need, not loaded yet. */
-    function wanted(e, text) {
-      const byId = new Map((e.manifest.packages ?? []).map((p) => [p.id, p])), picked = new Map();
-      const pick = (id) => { const p = byId.get(id); if (p && !picked.has(id) && !e.have.has(id)) { picked.set(id, p); p.needs.forEach((n) => pick(`${e.kernel.id}/${n}`)); } };
-      for (const m of text.matchAll(NAMED)) for (const n of m[1].split(',').map((x) => x.trim())) { pick(`${e.kernel.id}/${n}`); pick(`${e.kernel.id}/${n}.cls`); }
-      return [...picked.values()];
-    }
-    async function analyze() {
-      const mine = ++version, e = await start(), text = src.value, t0 = performance.now();
-      const more = wanted(e, text);
-      if (more.length) { say(`Loading ${esc(more.map((p) => p.label).join(', '))}…`); await e.ask({ type: 'bundles', base: e.base, entries: more }); more.forEach((p) => e.have.add(p.id)); }
-      if (mine !== version) return;
-      say('Analyzing…');
-      live.classList.add('busy');
-      e.ask({ type: 'project', dir: '/work', files: { 'try.tex': new TextEncoder().encode(text) } });
-      if (!e.opened) {
-        e.opened = true;
-        e.ask({ type: 'reset', args: [...e.kernel.args, '-f', 'try.tex'], cwd: '/work' });
-        await e.lsp('initialize', { processId: null, rootUri: 'file:///work', capabilities: {} });
-        await e.lsp('initialized', {}, true);
-        await e.lsp('textDocument/didOpen', { textDocument: { uri, languageId: 'latex', version: mine, text } }, true);
-      } else {
-        await e.lsp('textDocument/didChange', { textDocument: { uri, version: mine }, contentChanges: [{ text }] }, true);
-        await e.lsp('satex/analyze', {}, true);
-      }
-      if (mine !== version) return; // a newer text is on its way
-      const rows = (await e.lsp('satex/typeset', { textDocument: { uri } })) ?? [];
-      if (mine !== version) return;
-      live.classList.remove('busy');
-      show(rows.filter((r) => r.kind === 'paragraph' && String(r.path ?? '').endsWith('try.tex')), e.found());
-      say(`Analyzed in ${Math.round(performance.now() - t0)} ms. <a href="play/index.html">Open the playground</a> for hover, completion and traces.`);
-    }
-    /** Each paragraph's text, the findings from its lines below it; those before the first paragraph on top. */
-    function show(paragraphs, found) {
-      const at = (d) => d.range.start.line + 1;
-      const note = (d) => `<li class="f-${SEV[d.severity] || 'info'}"><span class="live-at">${at(d)}</span> ${inline(d.message)}</li>`;
-      const owner = (d) => paragraphs.findLastIndex((r) => r.line <= at(d));
-      const under = (i) => { const f = found.filter((d) => owner(d) === i).sort((a, b) => at(a) - at(b)); return f.length ? `<ul class="live-found">${f.map(note).join('')}</ul>` : ''; };
-      out.innerHTML = under(-1) + paragraphs.map((r, i) => `<p class="ts${r.heading ? ' ts-h' : ''}">${notation(r.marked ?? r.detail ?? '')}</p>${under(i)}`).join('')
-        || '<p class="muted">It sets no paragraph.</p>';
-    }
-    src.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(analyze, 350); });
-    src.addEventListener('focus', () => engine || analyze(), { once: true });
-    new IntersectionObserver((seen, o) => { if (seen.some((s) => s.isIntersecting)) { o.disconnect(); if (!engine) analyze(); } }, { rootMargin: '100px' }).observe(live);
-  }
 
   // The landing page: the claim turns through what a run knows; tab rows show one case at a time.
   const knows = [...document.querySelectorAll('[data-knows]')];

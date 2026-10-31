@@ -161,7 +161,7 @@ def version(cargo):
 def pages():
     """Repository Markdown -> site path: the README is the guide, wiki pages live under wiki/."""
     table = {"README.md": "guide.html", "SEMANTICS.md": "SEMANTICS.html",
-             "doc/chktex-coverage.md": "chktex-coverage.html", "doc/developing.md": "developing.html"}
+             "doc/chktex-coverage.md": "chktex-coverage.html", "doc/developing.md": "developing.html", "doc/credits.md": "credits.html"}
     for md in sorted((ROOT / "doc/wiki").glob("*.md")):
         if not md.name.startswith("_"):
             table[f"doc/wiki/{md.name}"] = f"wiki/{md.stem}.html"
@@ -512,6 +512,39 @@ def bundle(satex, work):
     return tables, packages, [p.name for p in docs], project
 
 
+def manuals(satex, work, tables, packages):
+    """What the bundled packages' manuals say about their commands (`satex query`'s `docs`), mined here
+    because the bundle has no documented sources: a `.satex-docs` file in each package's documentation
+    directory, in the bundle (a kernel's or a package's) that holds the file it was mined for."""
+    dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
+    # the installation itself, not the bundle's tree: its packages' documented sources are beside them
+    probes, flags = work / "manuals", KERNELS[0][2]
+    probes.mkdir(exist_ok=True)
+    names = sorted({name for _, name, _, _ in packages if not name.endswith(".cls")})
+    env = dict(os.environ, SATEX_CACHE=str(work / "cache-install"))
+
+    def mined(name):
+        doc = probe_doc(probes, name)
+        request = json.dumps({"file": doc.name, "queries": [{"type": "docs"}]})
+        done = subprocess.run([str(satex), *flags, "query", "--request", "-", "-f", doc.name], input=request, cwd=probes, env=env,
+                              capture_output=True, text=True)
+        try:
+            return json.loads(done.stdout)[0]["records"]
+        except (json.JSONDecodeError, IndexError, KeyError):
+            return []
+    records = memo(work, "manuals", [BINARY, names], lambda: [r for rs in parallel("[4/4] package manuals", names, mined) for r in rs])
+    by_file = {}
+    for r in records:
+        by_file.setdefault(str(Path(r.pop("package_file")).resolve()), {}).setdefault(r.pop("dir"), {})[r["name"]] = r
+    for files in [*tables, *(f for _, _, f, _ in packages)]:
+        for held in [p for p in files if p.startswith("/texmf.bundle/") and p.endswith((".sty", ".cls"))]:
+            native = str(dist / held.removeprefix("/texmf.bundle/"))
+            for d, rows in by_file.get(native, {}).items():
+                if Path(d).resolve().is_relative_to(dist):
+                    target = f"/texmf.bundle/{Path(d).resolve().relative_to(dist).as_posix()}/{Path(native).stem}.satex-docs"
+                    files[target] = json.dumps(list(rows.values()), ensure_ascii=False).encode()
+
+
 def package_names():
     """The packages and classes to offer: those the tests' fixtures, the examples and samples
     load, satex.yaml's `cache.index.common`, then doc/site/packages.txt, each once.
@@ -634,22 +667,37 @@ def findings_run(satex, project, env, name, source):
     out = []
     for d in (d for f in lsp for d in f.get("diagnostics", [])):
         start, end = d["range"]["start"], d["range"]["end"]
-        row = next((r for r in rows if r["code"] == d["code"] and r["message"] == d["message"]), {})
+        # the language server's code is the rule's number, its name in `data.rule`
+        code = (d.get("data") or {}).get("rule") or d["code"]
+        row = next((r for r in rows if r["code"] == code and r["message"] == d["message"]), {})
         edits = [{"from": text(e["start"])[e["start"]["col"] - 1:e["end"]["col"] - 1] if e["start"]["line"] == e["end"]["line"] else "",
                   "to": e["replacement"]} for e in row.get("edits", []) if e.get("path", name) == name]
         sev = ["", "error", "warning", "info", "info"][d.get("severity", 3)]
         data = d.get("data", {})
-        out.append({"code": d["code"], "message": d["message"], "severity": sev, "rank": ["error", "warning", "info"].index(sev),
+        out.append({"code": code, "number": d["code"], "message": d["message"], "severity": sev, "rank": ["error", "warning", "info"].index(sev),
                     "start": (start["line"], start["character"]), "end": (end["line"], end["character"]),
                     "fix": data.get("fix", ""), "applicability": data.get("applicability", "unsafe"), "edits": edits,
-                    "typo": bool(TYPOGRAPHIC.search(d["code"])) and start["line"] == end["line"] and end["character"] - start["character"] <= 3})
+                    "typo": bool(TYPOGRAPHIC.search(code)) and start["line"] == end["line"] and end["character"] - start["character"] <= 3})
     return sorted(out, key=lambda d: (d["rank"], d["start"]))
 
 
+def typeset(satex, project, env, name, source):
+    """The paragraphs the example sets (`satex query typeset`), as the playground's Typeset panel shows them."""
+    def make():
+        done = subprocess.run([str(satex), "query", "typeset", "--format", "json", "-f", name], cwd=project, env=env, capture_output=True, text=True)
+        try:
+            rows = json.loads(done.stdout or "[]")
+        except json.JSONDecodeError:
+            return []
+        keep = ("line", "marked", "detail", "keys", "fonts", "align", "heading", "cut")
+        return [{k: r[k] for k in keep if k in r} for r in rows if r.get("kind") == "paragraph" and str(r.get("path", "")).endswith(name)]
+    return memo(work_of(env), "typeset", [BINARY, name, source, tree_digest(project)], make)
+
+
 def examples(satex, work, project):
-    """Each example as a tab, analyzed at build time: its findings underlined in the source
-    and listed beside it, and what `satex explain` says of every command it uses, shown on
-    hover. The panel starts with the command `commands()` names, else the example's own."""
+    """Each example as a tab, analyzed at build time: its findings underlined in the source with
+    a marker at the line's end, what it typesets beside it, and what `satex explain` says of every
+    command it uses, shown on hover. A last tab is the reader's own text, analyzed in the page."""
     env = dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))
     dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
 
@@ -661,28 +709,28 @@ def examples(satex, work, project):
         cs = explained(satex, project, env, name, used, dist)
         called = {x for rs in cs.values() for r in rs for x in r.get("expands", []) + [r.get("by")] if x and x not in cs}
         cs |= explained(satex, project, env, name, called, dist)
-        argv = commands()[name].split()
-        order = [m.group() for line in source.splitlines() for m in TOKEN.finditer(line) if m.group() in cs and m.group() != "\\documentclass"]
-        own = [n for n in order if any(r.get("path") == name for r in cs[n])]
-        initial = argv[1] if argv[0] == "explain" and len(argv) > 1 else (own or order or [""])[0]
-        data = json.dumps({"cs": cs, "lints": lints, "initial": initial}).replace("</", "<\\/")
-        lines = "\n".join(f'<span class="ln" data-l="{n + 1}">{tex_html(l, n, lints)}</span>' for n, l in enumerate(source.splitlines()))
-        items = "".join(f'<li class="f-{d["severity"]}" data-k="{k}"><span class="sev sev-{d["severity"]}">{d["severity"]}</span> '
-                        f'<b>{d["start"][0] + 1}:{d["start"][1] + 1}</b> <code>{html.escape(d["code"])}</code> {re.sub(r"`([^`]+)`", r"<code>\1</code>", html.escape(d["message"]))}</li>'
-                        for k, d in enumerate(lints))
-        found = f'<h4>Findings <b>{len(lints)}</b></h4><ul class="diagnostics">{items}</ul>' if lints else '<h4>Findings</h4><p class="muted">none</p>'
+        data = json.dumps({"cs": cs, "lints": lints, "ts": typeset(satex, project, env, name, source)}).replace("</", "<\\/")
+        # a finding's marker at the end of the line it starts on: its severity and rule
+        ends = lambda n: "".join(f'<span class="eol f-{d["severity"]}" data-lint="{k}">{html.escape(d["code"])}</span>' for k, d in enumerate(lints) if d["start"][0] == n)
+        lines = "\n".join(f'<span class="ln" data-l="{n + 1}">{tex_html(l, n, lints)}{ends(n)}</span>' for n, l in enumerate(source.splitlines()))
         sel = "true" if i == 0 else "false"
         tab = (f'<button role="tab" aria-selected="{sel}" aria-controls="ex-{i}" id="ex-tab-{i}">{html.escape(name)}</button>')
         return tab, (
             f'<figure class="example" role="tabpanel" id="ex-{i}" aria-labelledby="ex-tab-{i}"{"" if i == 0 else " hidden"}>\n'
-            f'<figcaption><span class="muted">Hover a command to explain it, an underline to see its finding.</span>'
+            f'<figcaption><span class="muted">Hover a command to explain it, an underline or a marker to see its finding.</span>'
             f'<a class="button ghost small" href="play/index.html#{name}">open in the playground →</a></figcaption>\n'
             f'<pre class="src"><code>{lines}</code></pre>\n'
-            f'<div class="ex-side"><div class="ex-findings">{found}</div>'
-            f'<div class="ex-explain"><h4>Explain <code class="xname"></code></h4><div class="xbody"><p class="muted">Hover a command.</p></div></div></div>\n'
+            f'<div class="ex-side typeset" aria-label="what SaTeX computes it typesets"></div>\n'
             f'<script type="application/json" class="ex-data">{data}</script></figure>')
-    tabs, panels = zip(*parallel("[4/4] examples", list(enumerate(roots(EXAMPLES))), one))
-    return f'<div class="tabs" role="tablist">{"".join(tabs)}</div>' + "\n".join(panels)
+    jobs = list(enumerate(roots(EXAMPLES)))
+    tabs, panels = zip(*parallel("[4/4] examples", jobs, one))
+    own = len(jobs)
+    tab = f'<button role="tab" aria-selected="false" aria-controls="ex-{own}" id="ex-tab-{own}">your own</button>'
+    panel = (f'<figure class="example live" role="tabpanel" id="ex-{own}" aria-labelledby="ex-tab-{own}" hidden>\n'
+             f'<figcaption><span class="muted live-status" aria-live="polite">Type LaTeX: SaTeX reads it again as you type, in this page (about 10&nbsp;MB, loaded once).</span>'
+             f'<a class="button ghost small" href="play/index.html">open the playground →</a></figcaption>\n'
+             f'<div class="src live-src"></div>\n<div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div></figure>')
+    return f'<div class="tabs" role="tablist">{"".join(tabs)}{tab}</div>' + "\n".join([*panels, panel])
 
 
 def playground(satex, wasm, work, out):
@@ -692,6 +740,7 @@ def playground(satex, wasm, work, out):
         work, "bundle", [KEY, LISTINGS.get("@stamp"), offered, sources_, tree_digest(ROOT / "samples"), (SITE / "playground.yaml").read_text(),
                          inspect.getsource(bundle)],
         lambda: bundle(satex, work))
+    manuals(satex, work, tables, packages)
     # `cargo playground` builds the wasm meanwhile and names it done here.
     ready = os.environ.get("SATEX_WASM_READY")
     while ready and not Path(ready).exists():
@@ -729,6 +778,8 @@ def playground(satex, wasm, work, out):
                  for r in json.loads(run(str(satex), "lint", "--rules", "--format", "json"))}
         return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json"))
     queries, filtered, rules, completion = memo(work, "facts", [BINARY, tree_digest(project)], facts)
+    table, files = memo(work, "symbols", [BINARY, ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(symbols)],
+                        lambda: symbols(satex, project, dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))))
     # every rule's card on any page (site.js), from the same records the playground's findings show
     (out / "rules.json").write_text(json.dumps(rules))
     manifest = {
@@ -737,7 +788,7 @@ def playground(satex, wasm, work, out):
         "kernels": kernels, "packages": extra, "preload": first_download(), "unavailable": UNAVAILABLE, "queries": queries, "filtered": filtered, "rules": rules,
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(),
-        "symbols": emit(out, "play/symbols.json", json.dumps(symbols()).encode()),
+        "symbols": emit(out, "play/symbols.json", json.dumps({**table, "fonts": [emit(out, f"play/fonts/{f.name}", f.read_bytes()) for f in files]}).encode()),
         "schema": emit(out, "play/satex.schema.json", (ROOT / "satex.schema.json").read_bytes()),
     }
     sizes = {k["id"]: f"{k['size'] / 2**20:.1f} MiB gz, {len(k['files'])} files" for k in kernels}
@@ -746,18 +797,65 @@ def playground(satex, wasm, work, out):
     return manifest, examples(satex, work, project)
 
 
-def symbols():
-    """The symbols the playground's drawing pad matches against: unicode-math's table of the
-    installation, each command with the character it sets, `[codepoint, name, class, description]`."""
-    table = run("kpsewhich", "unicode-math-table.tex").strip()
-    if not table:
+# Icon packages whose own files map each command to a character of their own font.
+ICON_PACKAGES = ["fontawesome", "fontawesome5", "fontawesome6", "fontawesome7", "academicons"]
+
+
+def icons(dist, package):
+    r"""[command, codepoint, font file] of each icon `package` defines, read off its own files: fontawesome5's
+    and later's `\__fontawesome_def_icon:nnnnn`, else a `\def\faX{\faicon{name}}` with the name's `\symbol{"…}`.
+    The font is the package's own OpenType or TrueType file, the brands one for a brands icon."""
+    sty = run("kpsewhich", f"{package}.sty").strip()
+    if not sty:
         return []
-    rows = re.findall(r'\\UnicodeMathSymbol\{"([0-9A-Fa-f]+)\}\{(\\[A-Za-z]+)\s*\}\{\\math(\w+)\}\{([^}]*)\}', Path(table).read_text())
-    out = [[int(c, 16), name, cls, about] for c, name, cls, about in rows]
-    # unicode-math's upright Greek (`\mupalpha`) is what the kernel's `\alpha` names
-    names = {n for _, n, *_ in out}
-    out += [[c, "\\" + n[4:], cls, about] for c, n, cls, about in list(out) if n.startswith("\\mup") and cls == "alpha" and "\\" + n[4:] not in names]
+    texts = "\n".join(p.read_text(errors="replace") for p in Path(sty).parent.iterdir() if p.suffix in (".sty", ".def", ".tex"))
+    fonts = sorted(p for d in ("opentype", "truetype") for p in (dist / "fonts" / d / "public" / package).glob("*.[ot]tf"))
+    if not fonts:
+        return []
+    def font(part):
+        brands = part.startswith("brands")
+        # a brand's one face, else the solid one: the package's default style
+        return next((f for f in fonts if ("Brands" in f.name) == brands and (brands or "Solid" in f.name)), fonts[0])
+    out = [[cmd, int(code, 16), font(part)] for cmd, part, code in
+           re.findall(r'\\__fontawesome_def_icon:nnnnn\{(\\\w+)\}\{[\w-]+\}\{(\w+)\}\{\d+\}\{"([0-9A-Fa-f]+)\}', texts)]
+    codes = dict(re.findall(r'\\csname \w+@([\w-]+)\\endcsname\{+(?:\\\w+)?\\symbol\{"([0-9A-Fa-f]+)\}', texts))
+    out += [[cmd, int(codes[name], 16), fonts[0]] for cmd, name in re.findall(r'\\def(\\\w+)\{+\\\w+icon\{([\w-]+)\}\}', texts) if name in codes]
     return out
+
+
+def symbols(satex, project, env):
+    """The symbols the playground's drawing pad matches against, each drawn in the font that sets it:
+    unicode-math's table of the installation in unicode-math's default font, and the icon packages'
+    commands in their own fonts. Rows are `[codepoint, name, class, description, font, package]`;
+    a font is an index into `fonts`, a package the one to load for the name (`satex` `providers`, else
+    the table's own package)."""
+    dist = Path(run("kpsewhich", "-var-value", "TEXMFDIST").strip()).resolve()
+    fonts, rows = [], []
+    def font(path):
+        if path not in fonts:
+            fonts.append(path)
+        return fonts.index(path)
+    table = run("kpsewhich", "unicode-math-table.tex").strip()
+    xetex = run("kpsewhich", "unicode-math-xetex.sty").strip()
+    default = re.search(r"\\setmathfont\{([^}]+\.otf)\}", Path(xetex).read_text()) if xetex else None
+    math_font = default and run("kpsewhich", default[1]).strip()
+    if table and math_font:
+        found = re.findall(r'\\UnicodeMathSymbol\{"([0-9A-Fa-f]+)\}\{(\\[A-Za-z]+)\s*\}\{\\math(\w+)\}\{([^}]*)\}', Path(table).read_text())
+        math = [[int(c, 16), name, cls, about] for c, name, cls, about in found]
+        # unicode-math's upright Greek (`\mupalpha`) is what the kernel's `\alpha` names
+        names = {n for _, n, *_ in math}
+        math += [[c, "\\" + n[4:], cls, about] for c, n, cls, about in list(math) if n.startswith("\\mup") and cls == "alpha" and "\\" + n[4:] not in names]
+        request = json.dumps({"file": SAMPLE, "queries": [{"type": "providers", "names": sorted({n for _, n, *_ in math})}]})
+        done = subprocess.run([str(satex), "query", "--request", "-", "-f", SAMPLE], input=request, cwd=project, env=env, capture_output=True, text=True)
+        try:
+            provider = {r["name"]: r["package"] for r in json.loads(done.stdout)[0]["records"]}
+        except (json.JSONDecodeError, IndexError, KeyError):
+            provider = {}
+        f = font(Path(math_font))
+        rows += [[c, name, cls, about, f, provider.get(name, "unicode-math")] for c, name, cls, about in math]
+    for package in ICON_PACKAGES:
+        rows += [[code, cmd, "icon", "", font(path), package] for cmd, code, path in icons(dist, package)]
+    return {"fonts": [p.name for p in fonts], "rows": rows}, fonts
 
 
 # ---------------------------------------------------------------- site
