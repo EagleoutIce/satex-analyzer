@@ -121,6 +121,11 @@ pub fn names_with(roots: &[PathBuf], dir: &str, ext: &str) -> Vec<String> {
     names
 }
 
+/// Where the installation's `tex` tree has the file `name`.
+pub fn tex_file(roots: &[PathBuf], name: &str) -> Option<PathBuf> {
+    index_for(roots, None).0.get(name)?.iter().find(|path| path.is_file()).cloned()
+}
+
 /// Where the first of `roots` has the file `name` under `dir`.
 pub fn file_under(roots: &[PathBuf], dir: &str, name: &str) -> Option<PathBuf> {
     roots.iter().find_map(|root| {

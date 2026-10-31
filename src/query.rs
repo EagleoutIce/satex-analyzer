@@ -723,7 +723,12 @@ fn drawn_boxes(analysis: &Analysis) -> Vec<(Span, String)> {
 fn glyphs(analysis: &Analysis) -> (Vec<String>, Vec<Option<String>>) {
     let text = &analysis.facts.text;
     let mut fonts = crate::lint::italics::Fonts::of(analysis);
-    let mut out: Vec<String> = text.chars.chars().map(public).collect();
+    let slots = encoding_slots(analysis);
+    let shown = |c: char, spot: &crate::facts::Spot| {
+        let encoding = analysis.font_states.get(usize::from(spot.font_state)).map(|s| &*s.encoding);
+        encoding.and_then(|e| slots.get(e)?.get(&(c as u32)).copied()).unwrap_or(c)
+    };
+    let mut out: Vec<String> = text.chars.chars().zip(&text.at).map(|(c, spot)| public(shown(c, spot))).collect();
     let mut seq: Vec<String> = out.clone();
     let mut held: Option<(usize, u32)> = None;
     for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
@@ -799,6 +804,44 @@ fn step_name(analysis: &Analysis, sym: crate::tex::Sym) -> String {
         }
         _ => analysis.interner.cs(sym),
     }
+}
+
+/// Per font encoding of the run (`OMS`), the character each slot it
+/// declares a text symbol at stands for: `\DeclareTextSymbol` in the
+/// encoding's `.def` file names the command, `tuenc.def` its code point.
+/// `\{` sets slot 102 of an OMS font, which is `{`, not `f`.
+fn encoding_slots(analysis: &Analysis) -> HashMap<String, HashMap<u32, char>> {
+    let roots = &analysis.distribution.roots;
+    let read = |name: &str| crate::distribution::tex_file(roots, name).and_then(|p| std::fs::read_to_string(p).ok());
+    let mut out = HashMap::default();
+    let encodings: std::collections::BTreeSet<&str> =
+        analysis.font_states.iter().map(|s| &*s.encoding).filter(|e| !e.is_empty() && *e != "TU").collect();
+    if encodings.is_empty() {
+        return out;
+    }
+    let Some(unicode) = read("tuenc.def") else { return out };
+    let code = regex::Regex::new(r#"\\DeclareUnicodeSymbol\{\\(\w+)\}\s*\{"([0-9A-Fa-f]+)\}"#).expect("tuenc regex");
+    let points: HashMap<&str, char> = code
+        .captures_iter(&unicode)
+        .filter_map(|c| Some((c.get(1)?.as_str(), char::from_u32(u32::from_str_radix(&c[2], 16).ok()?)?)))
+        .collect();
+    for encoding in encodings {
+        let Some(def) = read(&format!("{}enc.def", encoding.to_lowercase())) else { continue };
+        let symbol = regex::Regex::new(&format!(
+            r#"\\DeclareTextSymbol\{{\\(\w+)\}}\{{{}\}}\{{(\d+|"[0-9A-Fa-f]+|'[0-7]+)\}}"#,
+            regex::escape(encoding)
+        ))
+        .expect("symbol regex");
+        let slot = |n: &str| match n.as_bytes()[0] {
+            b'"' => u32::from_str_radix(&n[1..], 16).ok(),
+            b'\'' => u32::from_str_radix(&n[1..], 8).ok(),
+            _ => n.parse().ok(),
+        };
+        let table: HashMap<u32, char> =
+            symbol.captures_iter(&def).filter_map(|c| Some((slot(&c[2])?, *points.get(&c[1])?))).collect();
+        out.insert(encoding.to_string(), table);
+    }
+    out
 }
 
 fn public(c: char) -> String {

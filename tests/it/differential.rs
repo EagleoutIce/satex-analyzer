@@ -554,6 +554,20 @@ fn a_section_number_and_its_title_are_apart() {
     assert!(texts.contains(&"1 Intro"), "{texts:?}");
 }
 
+/// A slot reads as the character its font's encoding puts there: `\{`
+/// sets slot 102 of an OMS font, a brace, while `\char102` in OT1 is `f`.
+#[test]
+fn a_symbol_reads_as_its_encoding_says() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\na\\{b\\}c \\char102\n\\end{document}\n";
+    let analysis = analyze_latex(source);
+    let rows = satex::query::run(&analysis, satex::query::Query::Typeset, &satex::query::Filter::Always);
+    let texts: Vec<&str> = rows.iter().filter_map(|r| r.get("detail").and_then(|d| d.as_str())).collect();
+    assert!(texts.contains(&"a{b}c f"), "{texts:?}");
+}
+
 /// The typeset text says where its font changes, by the kernel's defaults:
 /// `\textbf` is `\bfdefault`, `\itshape` `\itdefault`, and so on.
 #[test]
