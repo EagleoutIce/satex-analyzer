@@ -132,3 +132,14 @@ fn an_assertion_at_the_end_of_the_file_is_checked() {
     let analysis = analyze("\\countdef\\x=10 \\x=3\n%\\satex@assert{\\x = 3}\n");
     only(&analysis, "assertion-proved");
 }
+
+/// `>=` is the test `<` negated: assuming it narrows to the values at or
+/// above the bound, so the same assertion after it holds.
+#[test]
+fn an_assumption_with_a_negated_relation_narrows_the_right_way() {
+    let analysis = analyze(
+        "\\countdef\\x=10 \\x=\\pdfuniformdeviate 10\n%\\satex@assume{\\x >= 5}\n%\\satex@assert{\\x >= 5}\n\\relax\n",
+    );
+    let found = outcomes(&analysis);
+    assert!(found.iter().any(|f| f.starts_with("assertion-proved:")), "{found:?}");
+}

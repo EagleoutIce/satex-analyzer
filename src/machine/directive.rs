@@ -217,7 +217,7 @@ impl Machine<'_> {
             let (cond, by) = if dimen { (Cond::Dim, "ifdim") } else { (Cond::Num, "ifnum") };
             let by = self.intern(by);
             let (holds, narrowing) = self.test(cond, by, toks)?;
-            let narrow = narrowing.map(|n| self.narrowed(n, false));
+            let narrow = narrowing.map(|n| self.narrowed(n, negate));
             return Ok(Atom { holds: holds.map(|h| h != negate), narrow, operands: Some((sides, dimen)) });
         }
         let mut toks = self.directive_tokens(text, span);
