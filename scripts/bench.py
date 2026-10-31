@@ -63,10 +63,12 @@ def main():
     ap.add_argument("--timeout", type=int, default=120)
     args = ap.parse_args()
 
-    docs = [d for d in Path(args.docs).read_text().split() if Path(d).exists()]
+    # a line is a document, then `-kernel` for each kernel it is not run under
+    lines = [l.split() for l in Path(args.docs).read_text().splitlines() if l.strip()]
+    docs = [(l[0], {k[1:] for k in l[1:] if k.startswith("-")}) for l in lines if Path(l[0]).exists()]
     runs = []
-    for doc in docs:
-        for kernel in args.kernels:
+    for doc, skipped in docs:
+        for kernel in (k for k in args.kernels if k not in skipped):
             run(args.satex, doc, kernel, args.timeout * 8)
             r = {"doc": doc, "kernel": kernel, **run(args.satex, doc, kernel, args.timeout)}
             print(json.dumps(r), file=sys.stderr, flush=True)
