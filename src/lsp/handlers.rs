@@ -158,7 +158,7 @@ fn cite_hover(analysis: &Analysis, line: &str, col: u32) -> Option<String> {
     let e = bib_entries(analysis).iter().find(|e| e.key == key.trim())?;
     let field = |names: &[&str]| e.fields.iter().find(|(n, _)| names.contains(&n.as_str())).map(|(_, v)| v.as_str());
     let venue = field(&["journal", "journaltitle", "booktitle", "publisher", "school", "institution", "howpublished"]);
-    let mut markdown = format!("### `{}` — {}\n\n", e.key, e.kind);
+    let mut markdown = format!("### `{}`: {}\n\n", e.key, e.kind);
     if !e.title.is_empty() {
         markdown.push_str(&format!("**{}**\n\n", e.title));
     }
@@ -225,7 +225,7 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
         if sites.is_empty() {
             return None;
         }
-        markdown.push_str(&format!("### `\\{name}` — not reached by the analysis\n\n"));
+        markdown.push_str(&format!("### `\\{name}`: not reached by the analysis\n\n"));
         for site in &sites {
             markdown.push_str(&format!("`{}:{}` (source scan)\n\n", site.path, site.pos.line));
         }
@@ -238,7 +238,7 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
         }
         let text = |key: &str| record.get(key).and_then(Json::as_str);
         match text("when") {
-            Some(w) => markdown.push_str(&format!("### `\\{name}` — {w}\n\n")),
+            Some(w) => markdown.push_str(&format!("### `\\{name}`: {w}\n\n")),
             None => markdown.push_str(&format!("### `\\{name}`\n\n")),
         }
         if let Some(does) = text("does") {
@@ -535,7 +535,7 @@ fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Opt
         return None;
     }
     let (what, ext, topic) = if bibtex { ("BibTeX", "bst", "bst") } else { ("biblatex", "bbx", "biblatex style") };
-    let mut md = format!("### `{word}` — {what} style\n\n");
+    let mut md = format!("### `{word}`: {what} style\n\n");
     let file = format!("{word}.{ext}");
     let dirs = crate::paths::effective(
         "BSTINPUTS",
@@ -580,7 +580,7 @@ fn load_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Option<S
         .loads
         .iter()
         .find(|l| l.name == word && l.span.line == pos.line && analysis.file_name(l.span.file) == path)?;
-    let mut md = format!("### `{}` — {}\n\n", load.name, load.kind.as_str());
+    let mut md = format!("### `{}`: {}\n\n", load.name, load.kind.as_str());
     if let Some(provided) = &load.provided {
         md.push_str(&format!("{provided}\n\n"));
     }

@@ -124,7 +124,7 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
 
 fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::INCREMENTAL)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
@@ -180,8 +180,8 @@ fn main_loop(
                             None => handle_request(connection, engine_tx, req),
                         }
                     }
-                    Ok(Message::Notification(not)) => handle_notification(
-                        &mut |m| {
+                    Ok(Message::Notification(not)) => {
+                        if let Some(m) = notification(not, |uri| texts.get(uri).map(String::as_str)) {
                             match &m {
                                 EngineMsg::Open(uri, _, text) | EngineMsg::Change(uri, text) => {
                                     texts.insert(uri.clone(), text.clone());
@@ -191,10 +191,9 @@ fn main_loop(
                                 }
                                 _ => {}
                             }
-                            to_engine(engine_tx, m)
-                        },
-                        not,
-                    ),
+                            to_engine(engine_tx, m);
+                        }
+                    }
                     Ok(Message::Response(_)) => {}
                     Err(_) => return Ok(()),
                 }
@@ -386,7 +385,7 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
         "workspace/executeCommand" => {
             let p: ExecuteCommandParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             if p.command != EXECUTE_COMMAND {
-                return Err(format!("unknown command `{}`; this server only runs `{EXECUTE_COMMAND}`", p.command));
+                return Err(format!("unknown command `{}`. This server only runs `{EXECUTE_COMMAND}`", p.command));
             }
             let body = p.arguments.into_iter().next().ok_or("expected one argument: a `satex query --request` body")?;
             ask(engine_tx, |reply| EngineMsg::ExecuteCommand(body, reply))?.map(Json::Array)
@@ -395,20 +394,30 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
     }
 }
 
-fn handle_notification(engine_tx: Send<'_>, not: Notification) {
-    let sent = match not.method.as_str() {
+/// The engine's message for a notification, `None` for one it ignores.
+/// An edit arrives as ranges (incremental sync) applied to `text_of` the
+/// document, and leaves as its whole new text.
+fn notification<'a>(not: Notification, text_of: impl Fn(&Uri) -> Option<&'a str>) -> Option<EngineMsg> {
+    match not.method.as_str() {
         "textDocument/didOpen" => serde_json::from_value::<DidOpenTextDocumentParams>(not.params).ok().and_then(|p| {
             let uri = p.text_document.uri;
             let path = handlers::uri_to_path(&uri)?;
             Some(EngineMsg::Open(uri, path, p.text_document.text))
         }),
-        // Full sync only (see `server_capabilities`): the whole text
-        // arrives in the one change, so the latest one wins.
-        "textDocument/didChange" => {
-            serde_json::from_value::<DidChangeTextDocumentParams>(not.params).ok().and_then(|p| {
-                p.content_changes.into_iter().next_back().map(|c| EngineMsg::Change(p.text_document.uri, c.text))
-            })
-        }
+        "textDocument/didChange" => serde_json::from_value::<DidChangeTextDocumentParams>(not.params).ok().map(|p| {
+            let uri = p.text_document.uri;
+            let mut text = text_of(&uri).unwrap_or_default().to_string();
+            for change in p.content_changes {
+                match change.range {
+                    Some(range) => {
+                        let (start, end) = (offset(&text, range.start), offset(&text, range.end));
+                        text.replace_range(start..end.max(start), &change.text);
+                    }
+                    None => text = change.text,
+                }
+            }
+            EngineMsg::Change(uri, text)
+        }),
         "textDocument/didSave" => serde_json::from_value::<DidSaveTextDocumentParams>(not.params)
             .ok()
             .and_then(|p| p.text.map(|text| EngineMsg::Change(p.text_document.uri, text))),
@@ -416,10 +425,28 @@ fn handle_notification(engine_tx: Send<'_>, not: Notification) {
             .ok()
             .map(|p| EngineMsg::Close(p.text_document.uri)),
         _ => None,
-    };
-    if let Some(msg) = sent {
-        engine_tx(msg);
     }
+}
+
+/// The byte offset of an LSP position in `text`: lines split at `\n`,
+/// columns in UTF-16 code units, clamped to the line's end.
+fn offset(text: &str, at: Position) -> usize {
+    let mut start = 0;
+    for _ in 0..at.line {
+        match text[start..].find('\n') {
+            Some(i) => start += i + 1,
+            None => return text.len(),
+        }
+    }
+    let line = text[start..].split('\n').next().unwrap_or_default();
+    let mut units = 0;
+    for (i, c) in line.char_indices() {
+        if units >= at.character as usize {
+            return start + i;
+        }
+        units += c.len_utf16();
+    }
+    start + line.len()
 }
 
 // --- engine thread: owns every Analysis, never sends one out -----------
@@ -599,8 +626,10 @@ impl Engine {
             self.refresh_hovers(uri);
         }
         if fresh {
-            let open: Vec<&Path> = self.docs.values().map(|d| d.path.as_path()).collect();
-            for params in publish(&mut self.actions, &analysis, &path, &open) {
+            // Requests that only read are answered while the rules run.
+            let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).collect();
+            let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
+            for params in self.serving(|engine| publish(&mut engine.actions, &analysis, &path, &open)) {
                 let _ = self.diagnostics_tx.send(params);
             }
         }

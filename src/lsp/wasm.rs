@@ -10,7 +10,7 @@ use std::ffi::{CStr, CString, c_char};
 
 use lsp_server::{Message, Notification, Response};
 
-use super::{Engine, handle_notification, respond, server_capabilities};
+use super::{Engine, notification, respond, server_capabilities};
 use lsp_types::PublishDiagnosticsParams;
 
 struct Local {
@@ -66,13 +66,9 @@ impl Local {
             }
             Ok(Message::Notification(not)) => {
                 let opened = not.method == "textDocument/didOpen";
-                handle_notification(
-                    &mut |m| {
-                        engine.step(m);
-                        true
-                    },
-                    not,
-                );
+                if let Some(m) = notification(not, |uri| engine.docs.get(uri).map(|d| d.text.as_str())) {
+                    engine.step(m);
+                }
                 // A document just opened has no analysis to answer from yet.
                 if opened {
                     engine.flush();
