@@ -776,7 +776,8 @@ def examples(satex, work, project):
             f'<pre class="src"><code>{lines}</code></pre>\n'
             f'<div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div>\n'
             f'<script type="application/json" class="ex-data">{data}</script></figure>')
-    jobs = list(enumerate(roots(EXAMPLES)))
+    shown = [l.strip() for l in (EXAMPLES / "landing.txt").read_text().splitlines() if l.strip() and not l.startswith("#")]
+    jobs = list(enumerate(n for n in shown if n in roots(EXAMPLES)))
     tabs, panels = zip(*parallel("[4/4] examples", jobs, one))
     own = len(jobs)
     tab = f'<button role="tab" aria-selected="false" aria-controls="ex-{own}" id="ex-tab-{own}">your own</button>'
