@@ -268,8 +268,11 @@ fn dev_source(path: &str, site: &Path, src: &Path) -> Option<(String, Vec<u8>)> 
         manifest["worker"] = std::fs::read_to_string(src.join("worker.js")).ok()?.into();
         let json = manifest.to_string().replace("</", "<\\/");
         let page = std::fs::read_to_string(src.join("play.html")).ok()?;
-        let page =
-            page.replace("{{manifest}}", &json).replace("{{root}}", "../").replace("{{playjs}}", "play/playground.js");
+        let page = page
+            .replace("{{manifest}}", &json)
+            .replace("{{root}}", "../")
+            .replace("{{playjs}}", "play/playground.js")
+            .replace("{{drawjs}}", "draw.js");
         return Some(("index.html".into(), format!("{}{page}{}", &built[..lo], &built[hi..]).into_bytes()));
     }
     let name = path.rsplit('/').next()?;

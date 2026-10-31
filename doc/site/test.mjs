@@ -58,9 +58,14 @@ const fetchFor = async (eng, kernel, files) => {
   await eng.bundles(base, entries, base.startsWith('file:') ? await Promise.all(entries.map((e) => bytes(e.bundle))) : undefined);
   return entries;
 };
+// a sample's magic comment names its engine, as the page's `engineOf` reads it: plain TeX runs on its own kernel
+const kernelOf = (text) => /^%\s*!T[eE]X\s+(?:TS-)?program\s*=\s*tex\b/m.test(text) ? manifest.kernels.find((k) => k.id === 'plain') : manifest.kernels[0];
+const kernelsLoaded = new Set([manifest.kernels[0].id]);
 for (const name of manifest.samples) {
-  await fetchFor(engine, manifest.kernels[0], [name, ...(manifest.projects?.[name] ?? [])]);
-  const run = await engine.run(['-v', 'lint', '-f', name], { [`/work/${name}`]: new TextEncoder().encode(samples[name]) });
+  const kernel = kernelOf(samples[name]);
+  if (!kernelsLoaded.has(kernel.id)) { kernelsLoaded.add(kernel.id); await engine.bundle(base, kernel, base.startsWith('file:') ? await bytes(kernel.bundle) : undefined); }
+  await fetchFor(engine, kernel, [name, ...(manifest.projects?.[name] ?? [])]);
+  const run = await engine.run([...kernel.args, '-v', 'lint', '-f', name], { [`/work/${name}`]: new TextEncoder().encode(samples[name]) });
   const out = run.lines.filter((l) => l[0] === 'out').map((l) => l[1]);
   const summary = out.find((l) => /\d+ errors?, \d+ warnings?/.test(l));
   // what the bundles hold must come from them; the project's own packages are analysed here
@@ -224,25 +229,31 @@ function chromium() {
 async function browser() {
   const chrome = chromium();
   if (!chrome) return console.log('skip: no Chromium for the browser checks (set CHROME)');
-  const port = 9300 + Math.floor(Math.random() * 600);
   const profile = mkdtempSync(join(tmpdir(), 'satex-test-'));
-  const proc = spawn(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
-    '--allow-file-access-from-files', '--window-size=1440,1000', 'about:blank'], { stdio: 'ignore' });
+  // the DevTools protocol over a pipe (fds 3 and 4, messages ending in NUL): no port to open or find
+  const proc = spawn(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--remote-debugging-pipe', `--user-data-dir=${profile}`,
+    '--allow-file-access-from-files', '--window-size=1440,1000', 'about:blank'], { stdio: ['ignore', 'ignore', process.env.CHROME_LOG ? 'inherit' : 'ignore', 'pipe', 'pipe'] });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   try {
-    let target;
-    for (let i = 0; i < 100 && !target; i++) { await sleep(200); try { target = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((x) => x.type === 'page'); } catch {} }
-    const ws = new WebSocket(target.webSocketDebuggerUrl);
-    await new Promise((r) => { ws.onopen = r; });
-    let id = 0;
+    let id = 0, session, rest = '';
     const replies = new Map(), errors = [], logs = [];
+    const ws = { close: () => proc.stdio[3].end() };
+    const raw = (method, params = {}, sessionId = session) => new Promise((r) => { replies.set(++id, r); proc.stdio[3].write(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }) + '\0'); });
+    proc.stdio[4].on('data', (chunk) => {
+      const parts = (rest + chunk.toString()).split('\0');
+      rest = parts.pop();
+      for (const part of parts) if (part) ws.onmessage({ data: part });
+    });
     ws.onmessage = (e) => {
       const m = JSON.parse(e.data);
       if (m.id) replies.get(m.id)?.(m);
       else if (m.method === 'Runtime.consoleAPICalled' && /warning|error/.test(m.params.type)) logs.push(m.params.args.map((x) => x.description ?? x.value).join(' ').slice(0, 200));
       else if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.exception?.description ?? m.params.exceptionDetails.text);
     };
-    const send = (method, params = {}) => new Promise((r) => { replies.set(++id, r); ws.send(JSON.stringify({ id, method, params })); });
+    let page;
+    for (let i = 0; i < 100 && !page; i++) { await sleep(100); page = (await raw('Target.getTargets', {}, null)).result?.targetInfos?.find((t) => t.type === 'page'); }
+    session = (await raw('Target.attachToTarget', { targetId: page.targetId, flatten: true }, null)).result.sessionId;
+    const send = (method, params = {}) => raw(method, params);
     const js = async (expr) => {
       const r = await send('Runtime.evaluate', { expression: `(async () => { ${expr} })()`, awaitPromise: true, returnByValue: true });
       if (r.result?.exceptionDetails) throw new Error(`${expr.slice(0, 80)}: ${r.result.exceptionDetails.exception?.description}`);
@@ -359,7 +370,7 @@ async function browser() {
       // 3: the written files: a card per file, its runs, the second run's .aux against the first's
       await open('written', '\\documentclass{article}\n\\makeatletter\n\\AtBeginDocument{\\immediate\\write\\@mainaux{\\@percentchar\\space seen \\@ifundefined{r@sec:a}{no}{yes}}}\n\\makeatother\n\\begin{document}\n\\tableofcontents\n\\section{Intro}\\label{sec:a}\nSee \\ref{sec:a}.\n\\end{document}\n');
       await js(`document.getElementById('play-written').open = true`);
-      const wrote = await until(`return [...document.querySelectorAll('#written-body .wf code')].map((c) => c.textContent).join() === 'main.aux,main.toc'`, 30000);
+      const wrote = await until(`return [...document.querySelectorAll('#written-body .wf-head code')].map((c) => c.textContent).join() === 'main.aux,main.toc'`, 30000);
       const runs = await js(`return [...document.querySelectorAll('#written-body .wf')[0].querySelectorAll('[data-view]')].map((b) => b.textContent)`);
       await js(`document.querySelector('#written-body .wf [data-view="1"]').click()`);
       const diff = await js(`const w = document.querySelector('#written-body .wf'); return [[...w.querySelectorAll('.wf-del')].map((e) => e.textContent), [...w.querySelectorAll('.wf-add')].map((e) => e.textContent)]`);
@@ -430,36 +441,68 @@ async function browser() {
       check('a reference key stands where the \\ref does', ts.chips.length === 1 && !ts.chips.some(([a, b]) => /\w$/.test(a) && /^\w/.test(b)), JSON.stringify(ts.chips));
       });
       await section('draw', async () => {
-      // drawn shapes, as strokes of points in [-1, 1]²: each finds its symbol among the first three
+      // drawn shapes, strokes of points in [-1, 1]² (y down), among every package's math symbols: each finds its command
+      // among the first three, and a mirrored twin never ranks above it
       await open('draw', '\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n');
       const line = (a, b, n = 16) => Array.from({ length: n + 1 }, (_, i) => [a[0] + (b[0] - a[0]) * i / n, a[1] + (b[1] - a[1]) * i / n]);
-      const path = (ps) => ps.slice(1).flatMap((p, i) => line(ps[i], p, 6).slice(i ? 1 : 0));
+      const path = (ps) => ps.slice(1).flatMap((p, i) => line(ps[i], p, 8).slice(i ? 1 : 0));
+      const ring = (f, n = 64) => Array.from({ length: n + 1 }, (_, i) => f(i / n * 2 * Math.PI));
       const shapes = {
-        circle: [[...Array(49)].map((_, i) => [Math.cos(i / 48 * 2 * Math.PI), Math.sin(i / 48 * 2 * Math.PI)])],
+        Rightarrow: [line([-1, -0.3], [0.6, -0.3]), line([-1, 0.3], [0.6, 0.3]), path([[0.3, -0.7], [1, 0], [0.3, 0.7]])],
+        rightarrow: [line([-1, 0], [1, 0]), path([[0.5, -0.45], [1, 0], [0.5, 0.45]])],
+        leftarrow: [line([1, 0], [-1, 0]), path([[-0.5, -0.45], [-1, 0], [-0.5, 0.45]])],
+        int: [path([[0.45, -0.8], [0.3, -1], [0.12, -0.95], [0.04, -0.7], [0, 0], [-0.04, 0.7], [-0.12, 0.95], [-0.3, 1], [-0.45, 0.8]])],
+        sum: [path([[0.7, -1], [-0.7, -1], [0.15, 0], [-0.7, 1], [0.7, 1]])],
+        infty: [ring((t) => [Math.cos(t) / (1 + Math.sin(t) ** 2), 0.9 * Math.sin(t) * Math.cos(t) / (1 + Math.sin(t) ** 2)])],
+        leq: [path([[0.8, -0.9], [-0.8, -0.35], [0.8, 0.2]]), line([-0.8, 0.65], [0.8, 0.65])],
+        circ: [ring((t) => [Math.cos(t), Math.sin(t)])],
         plus: [line([-1, 0], [1, 0]), line([0, -1], [0, 1])],
         times: [line([-1, -1], [1, 1]), line([1, -1], [-1, 1])],
-        arrow: [line([-1, 0], [1, 0]), path([[0.5, -0.45], [1, 0], [0.5, 0.45]])],
-        integral: [path([[0.5, -0.8], [0.35, -1], [0.15, -0.95], [0.05, -0.7], [0, 0], [-0.05, 0.7], [-0.15, 0.95], [-0.35, 1], [-0.5, 0.8]])],
       };
-      const expected = { circle: /[○◯∘◦⚪⭘]/, plus: /[+⊕]/, times: /[×⨯✕]/, arrow: /[→⟶]/, integral: /[∫⌠]/ };
-      await js(`document.getElementById('draw-open').click()`);
+      const expected = { Rightarrow: /\\Rightarrow\b/, rightarrow: /\\(rightarrow|to)\b/, leftarrow: /\\(leftarrow|gets)\b/, int: /\\int\b/, sum: /\\sum\b/,
+        infty: /\\infty\b/, leq: /\\(leq|le)\b/, circ: /\\(circ|bigcirc|mdlgwhtcircle|mdwhtcircle|lgwhtcircle)\b/, plus: /\\(plus|mathplus)\b|^\+/, times: /\\times\b/ };
+      const twins = { Rightarrow: /\\Leftarrow\b/, rightarrow: /\\leftarrow\b/, leftarrow: /\\rightarrow\b/ };
+      await js(`document.getElementById('draw-open').click(); document.querySelector('[data-f=from][data-v=all]').click(); document.querySelector('[data-f=mode][data-v=math]').click()`);
       const got = {};
       for (const [name, strokes] of Object.entries(shapes)) {
         await js(`document.getElementById('draw-clear').click()`);
-        const b = await js(`const r = document.getElementById('draw-pad').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, r.width * 0.3]`);
+        const b = await js(`const r = document.getElementById('draw-pad').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, r.width * 0.32]`);
         for (const stroke of strokes) {
-          const at = ([x, y]) => ({ x: b[0] + x * b[2], y: b[1] + y * (name === 'integral' ? b[2] : b[2] * 0.8) });
+          const at = ([x, y]) => ({ x: b[0] + x * b[2], y: b[1] + y * b[2] });
           await send('Input.dispatchMouseEvent', { type: 'mousePressed', ...at(stroke[0]), button: 'left', buttons: 1, clickCount: 1 });
           for (const p of stroke) await send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...at(p), button: 'left', buttons: 1 });
           await send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...at(stroke.at(-1)), button: 'left', buttons: 0, clickCount: 1 });
         }
-        await until(`return document.querySelectorAll('#draw-list li .draw-glyph').length > 2`, 30000);
-        await sleep(300);
-        got[name] = await js(`return [...document.querySelectorAll('#draw-list li')].slice(0, 3).map((li) => li.querySelector('.draw-glyph').textContent + ' ' + li.querySelector('.draw-names').textContent)`);
+        await until(`return document.querySelectorAll('#draw-list li .draw-glyph').length > 2`, 60000);
+        await sleep(400);
+        got[name] = await js(`return [...document.querySelectorAll('#draw-list li')].map((li) => li.querySelector('.draw-glyph').textContent + ' ' + li.querySelector('.draw-names').textContent)`);
+        await shot(`draw-${name}`);
       }
-      await shot('draw');
-      check('drawn shapes find their symbol among the first three', Object.entries(expected).every(([n, re]) => got[n].some((t) => re.test(t[0] ?? ''))), JSON.stringify(got));
+      const rank = (name, re) => got[name].findIndex((t) => re.test(t));
+      const top1 = Object.keys(shapes).filter((n) => rank(n, expected[n]) === 0), top3 = Object.keys(shapes).filter((n) => rank(n, expected[n]) >= 0 && rank(n, expected[n]) < 3);
+      console.log(`draw precision: top-1 ${top1.length}/${Object.keys(shapes).length} (${top1.join(' ')}), top-3 ${top3.length}/${Object.keys(shapes).length}`);
+      check('drawn shapes find their command among the first three', top3.length === Object.keys(shapes).length, JSON.stringify(Object.fromEntries(Object.entries(got).map(([n, t]) => [n, t.slice(0, 3)]))));
+      check('a mirrored twin never ranks above the drawn arrow', Object.entries(twins).every(([n, re]) => rank(n, re) < 0 || rank(n, re) > rank(n, expected[n])),
+        JSON.stringify(Object.fromEntries(Object.keys(twins).map((n) => [n, [rank(n, expected[n]), rank(n, twins[n])]]))));
       await js(`document.getElementById('play-draw').close()`);
+      });
+      await section('drawpage', async () => {
+      // Draw alone (draw/index.html): no site chrome, fits 320 px, a drawn circle finds candidates, ?theme=dark holds
+      await send('Emulation.setDeviceMetricsOverride', { width: 320, height: 700, deviceScaleFactor: 1, mobile: true });
+      await send('Page.navigate', { url: base + 'draw/index.html?theme=dark' });
+      await until(`return !!self.satexDraw && !!document.getElementById('draw-pad')`, 30000);
+      const b = await js(`const r = document.getElementById('draw-pad').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2, r.width * 0.3]`);
+      const ring = [...Array(49)].map((_, i) => [b[0] + Math.cos(i / 48 * 2 * Math.PI) * b[2], b[1] + Math.sin(i / 48 * 2 * Math.PI) * b[2]]);
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: ring[0][0], y: ring[0][1], button: 'left', buttons: 1, clickCount: 1 });
+      for (const [x, y] of ring) await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, button: 'left', buttons: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: ring.at(-1)[0], y: ring.at(-1)[1], button: 'left', buttons: 0, clickCount: 1 });
+      const found = await until(`return document.querySelectorAll('#draw-list li .draw-glyph').length > 2`, 60000);
+      const page = await js(`return { header: !!document.querySelector('header.top'), dark: document.documentElement.dataset.theme, over: document.documentElement.scrollWidth > innerWidth }`);
+      await shot('draw-page-320');
+      check('Draw alone: candidates at 320 px, no chrome, the theme from the link', found && !page.header && page.dark === 'dark' && !page.over, JSON.stringify(page));
+      await send('Emulation.clearDeviceMetricsOverride');
+      await send('Page.navigate', { url: base + 'play/index.html' });
+      await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 180000);
       });
       await section('lib', async () => {
       // the library: each environment once by its name, Try wraps it in \\begin…\\end and typesets it
@@ -759,6 +802,16 @@ async function browser() {
       }
       await send('Emulation.clearDeviceMetricsOverride');
       });
+      await section('settings', async () => {
+      // a stored setting satex refuses never holds the start up: the page starts with the defaults
+      await send('Page.navigate', { url: base + 'play/index.html' });
+      await until(`return !!document.getElementById('play-status')`, 30000);
+      await js(`localStorage.setItem('satex-config', JSON.stringify({ clock: 'unk' }))`);
+      await send('Page.reload');
+      const started = await until(`return document.getElementById('play-status').dataset.done === 'ready'`, 180000);
+      check('an invalid stored setting does not block the start', started && await js(`return localStorage.getItem('satex-config') === '{}' && /Reset 1 setting \\(clock: unk\\)/.test(document.getElementById('play-toast').textContent)`),
+        await js(`return document.getElementById('play-status').textContent + ' | ' + document.getElementById('play-toast').textContent`));
+      });
       await section('4', async () => {
       // 4: the landing hero
       for (const [w, h, name] of [[1440, 900, 'w4-hero-1440'], [375, 800, 'w4-hero-375']]) {
@@ -998,7 +1051,10 @@ async function browser() {
       await js(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent + ' / ' + document.getElementById('play-toast').textContent`));
 
     // projects: an example's files in the tree, its root marked; an \input file is analyzed with the root
+    // the open example is edited: the page asks first, and Replace goes on
     await js(`document.querySelector('#play-examples [data-example="thesis.tex"]').click()`);
+    check('an edited project is not replaced unasked', await until(`return document.getElementById('play-replace').open`, 5000));
+    await js(`document.querySelector('#play-replace button[value=replace]').click()`);
     check('an example is a project', await until(`return [...document.querySelectorAll('#play-files-tree .file')].map((f) => f.dataset.name).join() === 'chapter.tex,refs.bib,thesis.tex'
       && !!document.querySelector('#play-files-tree .root[data-name="thesis.tex"]') && !document.querySelector('#play-tabs .ro')`, 20000),
       await js(`return [...document.querySelectorAll('#play-files-tree .file')].map((f) => f.dataset.name).join()`));
@@ -1020,7 +1076,7 @@ async function browser() {
     check('new file', await until(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent === 'notes.tex' && !!document.querySelector('#play-files-tree [data-name="notes.tex"]')`, 5000));
     await js(`const del = () => document.querySelector('#play-files-tree [data-name="notes.tex"] [data-act=delete]'); del().click(); del().click()`);
     check('delete', await until(`return !document.querySelector('#play-files-tree [data-name="notes.tex"]') && !document.querySelector('#play-tabs [data-name="notes.tex"]')`, 5000));
-    await js(`document.querySelector('#play-examples [data-example="${manifest.sample}"]').click()`);
+    await js(`document.querySelector('#play-examples [data-example="${manifest.sample}"]').click(); await new Promise((r) => setTimeout(r, 300)); document.querySelector('#play-replace[open] button[value=replace]')?.click()`);
     await until(`return document.querySelector('#play-tabs [aria-selected=true]')?.textContent === '${manifest.sample}'`, 10000);
 
     // uploads: one file joins the project; a folder becomes the project

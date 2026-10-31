@@ -684,14 +684,19 @@ def findings_run(satex, project, env, name, source):
 def typeset(satex, project, env, name, source):
     """The paragraphs the example sets (`satex query typeset`), as the playground's Typeset panel shows them."""
     def make():
-        done = subprocess.run([str(satex), "query", "typeset", "--format", "json", "-f", name], cwd=project, env=env, capture_output=True, text=True)
+        # a plain TeX file (its magic comment names `tex`) runs on the plain kernel, as the playground runs it
+        plain = re.search(r"^%\s*!T[eE]X\s+(?:TS-)?program\s*=\s*tex\b", source, re.M)
+        flags = next(f for k, _, f in KERNELS if k == "plain") if plain else []
+        done = subprocess.run([str(satex), *flags, "query", "typeset", "--format", "json", "-f", name], cwd=project, env=env, capture_output=True, text=True)
         try:
             rows = json.loads(done.stdout or "[]")
         except json.JSONDecodeError:
             return []
         keep = ("line", "marked", "detail", "keys", "fonts", "align", "heading", "cut")
-        return [{k: r[k] for k in keep if k in r} for r in rows if r.get("kind") == "paragraph" and str(r.get("path", "")).endswith(name)]
-    return memo(work_of(env), "typeset", [BINARY, name, source, tree_digest(project)], make)
+        # the project's own files: an \\input chapter's text too, not a package's
+        own = lambda path: not Path(path).is_absolute() or Path(path).resolve().is_relative_to(project.resolve())
+        return [{k: r[k] for k in keep if k in r} for r in rows if r.get("kind") == "paragraph" and own(str(r.get("path", "")))]
+    return memo(work_of(env), "typeset", [BINARY, name, source, tree_digest(project), inspect.getsource(typeset)], make)
 
 
 def examples(satex, work, project):
@@ -778,7 +783,7 @@ def playground(satex, wasm, work, out):
                  for r in json.loads(run(str(satex), "lint", "--rules", "--format", "json"))}
         return queries, [q for q in queries if per_file(q)], rules, json.loads(run(str(satex), "completions", "json"))
     queries, filtered, rules, completion = memo(work, "facts", [BINARY, tree_digest(project)], facts)
-    table, files = memo(work, "symbols", [BINARY, ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(symbols)],
+    table, files = memo(work, "symbols", [BINARY, ICON_PACKAGES, inspect.getsource(icons), inspect.getsource(symbols), inspect.getsource(comprehensive)],
                         lambda: symbols(satex, project, dict(os.environ, SATEX_CACHE=str(work / f"cache-{KERNELS[0][0]}"))))
     # every rule's card on any page (site.js), from the same records the playground's findings show
     (out / "rules.json").write_text(json.dumps(rules))
@@ -787,7 +792,7 @@ def playground(satex, wasm, work, out):
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
         "kernels": kernels, "packages": extra, "preload": first_download(), "unavailable": UNAVAILABLE, "queries": queries, "filtered": filtered, "rules": rules,
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
-        "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(),
+        "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(), "plugins": plugins(),
         "symbols": emit(out, "play/symbols.json", json.dumps({**table, "fonts": [emit(out, f"play/fonts/{f.name}", f.read_bytes()) for f in files]}).encode()),
         "schema": emit(out, "play/satex.schema.json", (ROOT / "satex.schema.json").read_bytes()),
     }
@@ -823,6 +828,38 @@ def icons(dist, package):
     return out
 
 
+def plugins():
+    """satex's plugins, each module of src/plugin with the first sentence of its module docs: the
+    playground's Settings lists them with the keys each one reads."""
+    out = []
+    for path in sorted((ROOT / "src/plugin").iterdir()):
+        source = path / "mod.rs" if path.is_dir() else path
+        if source.suffix != ".rs" or source.stem == "mod" and not path.is_dir() or not source.is_file():
+            continue
+        doc = " ".join(l.removeprefix("//!").strip() for l in source.read_text().splitlines() if l.startswith("//!"))
+        out.append({"name": path.stem, "about": re.split(r"(?<=\.)\s", doc, maxsplit=1)[0] if doc else ""})
+    return out
+
+
+def comprehensive(dist):
+    r"""The Comprehensive LaTeX Symbol List's inventory: each command of its tables with the installed
+    packages that table is for, read off its source (`symtable[ABBR]`, `\newcommand\ABBR{\pkgname{…}}`
+    and the entry macros `\K`, `\X`, `\W…` before each command). A name the list gives no installed
+    package is left out."""
+    source = dist / "doc/latex/comprehensive/source/symbols.tex"
+    if not source.is_file():
+        return {}
+    text = source.read_text(errors="replace")
+    named = {abbr: re.findall(r"\\pkgname\{([^}]+)\}", body) for abbr, body in re.findall(r"\\newcommand\*?\{?\\(\w+)\}?\{((?:[^{}]|\{[^{}]*\})*)\}", text)}
+    found = {}
+    for abbr, body in re.findall(r"\\begin\{(?:long)?symtable\}\[(\w+)\](.*?)\\end\{(?:long)?symtable\}", text, re.S):
+        for cmd in re.findall(r"\\(?:K[a-z]*|KN|X|W[a-z]*)(?:\[[^\]]*\])*(\\[A-Za-z]+)", body):
+            found.setdefault(cmd, set()).update(named.get(abbr, []))
+    wanted = sorted({p for ps in found.values() for p in ps})
+    have = {Path(p).stem for p in subprocess.run(["kpsewhich", *[f"{w}.sty" for w in wanted]], capture_output=True, text=True).stdout.split()}
+    return {cmd: sorted(ps & have) for cmd, ps in found.items() if ps & have}
+
+
 def symbols(satex, project, env):
     """The symbols the playground's drawing pad matches against, each drawn in the font that sets it:
     unicode-math's table of the installation in unicode-math's default font, and the icon packages'
@@ -853,6 +890,9 @@ def symbols(satex, project, env):
             provider = {}
         f = font(Path(math_font))
         rows += [[c, name, cls, about, f, provider.get(name, "unicode-math")] for c, name, cls, about in math]
+        # the same command as the symbol list's packages give it: the same glyph, more places it comes from
+        listed = comprehensive(dist)
+        rows += [[c, name, cls, about, f, pkg] for c, name, cls, about in math for pkg in listed.get(name, []) if pkg != provider.get(name, "unicode-math")]
     for package in ICON_PACKAGES:
         rows += [[code, cmd, "icon", "", font(path), package] for cmd, code, path in icons(dist, package)]
     return {"fonts": [p.name for p in fonts], "rows": rows}, fonts
@@ -911,6 +951,7 @@ def main():
         "sitejs": emit(out, "site.js", (SITE / "site.js").read_bytes()),
         "cmjs": emit(out, "codemirror.js", (SITE / "codemirror.js").read_bytes()),
         "playjs": emit(out, "play/playground.js", (SITE / "playground.js").read_bytes()),
+        "drawjs": emit(out, "draw.js", (SITE / "draw.js").read_bytes()),
     }
     table = pages()
     nav = sidebar(table)
@@ -951,6 +992,9 @@ def main():
                                                        "description": html.escape(cargo["description"])})
     page("index.html", "satex", home, side=False)
     page("play/index.html", "Playground", fill((SITE / "play.html").read_text(), {**assets, **parts}), side=False, kind="play")
+    # Draw alone, to embed: its own page without the site's chrome
+    (out / "draw").mkdir(exist_ok=True)
+    (out / "draw/index.html").write_text(fill((SITE / "draw.html").read_text(), {**assets, "root": "../", "symbols": manifest["symbols"]}))
     (out / ".nojekyll").write_text("")
     if args.precompress:
         precompress(out)

@@ -15,7 +15,7 @@
         <button id="draw-open" class="pill feature" type="button" aria-haspopup="dialog" aria-label="Draw a symbol" title="draw a symbol, get the commands that set it">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 2.5l3 3L6 13H3v-3zM9 4l3 3"/></svg><span class="label">Draw</span></button>
         <button id="cfg-open" class="pill feature" type="button" aria-haspopup="dialog" aria-label="Settings" title="the satex.yaml settings of the playground's runs: the date \year reads, limits, lints…">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/></svg><span class="label">Settings</span></button>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4h11M2.5 8h11M2.5 12h11"/><g style="fill: var(--panel)"><circle cx="5.5" cy="4" r="1.5"/><circle cx="10.5" cy="8" r="1.5"/><circle cx="7" cy="12" r="1.5"/></g></svg><span class="label">Settings</span></button>
         <button id="play-link" class="pill" type="button" aria-label="Copy link" title="a link that restores the project's files, the open file, the command and the kernel">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7 9a3 3 0 0 0 4.2.2l2-2a3 3 0 0 0-4.2-4.2l-.8.8"/><path d="M9 7a3 3 0 0 0-4.2-.2l-2 2a3 3 0 0 0 4.2 4.2l.8-.8"/></svg><span class="label">Copy link</span></button>
         <button id="play-issue" class="pill" type="button" aria-label="Report an issue" title="open a GitHub issue form in a new tab, filled with the satex version, the kernel and this file. Nothing is sent until you submit it there">
@@ -30,7 +30,7 @@
             <span id="play-upmenu" class="ctx" role="menu" hidden><button role="menuitem" data-pick="new">New file…</button><button role="menuitem" data-pick="files">Upload files or .zip…</button><button role="menuitem" data-pick="folder">Upload folder…</button></span></span></div>
         <div id="play-files-tree" role="tree" aria-label="the project's files"></div>
         <details open class="sect tree-sect" id="play-outline"><summary>Outline <b id="outline-count"></b></summary>
-          <div id="outline-body" class="outline grow"><p class="muted">The document's parts, labels and bibliography, once it is checked.</p></div></details>
+          <div id="outline-body" class="outline grow"><p class="muted">Parts, labels and bibliography of the document, after each check.</p></div></details>
         <details class="sect tree-sect" id="play-exsect"><summary>Examples</summary><div id="play-examples" class="grow" role="list"></div></details>
       </nav>
       <div class="treegrip" id="play-treegrip" role="separator" aria-orientation="vertical" aria-label="resize the files" title="drag to resize"></div>
@@ -57,13 +57,13 @@
       <div id="play-refs" class="refs" hidden></div>
       <ul id="lsp-diagnostics" class="diagnostics grow" aria-live="polite"></ul></details>
     <details open class="sect" id="play-explain"><summary>Explain macro <code id="explain-name"></code></summary>
-      <div id="explain-body" class="hover grow"><p class="muted">Put the cursor on a command.</p></div></details>
+      <div id="explain-body" class="hover grow"><p class="muted">The command at the cursor, explained.</p></div></details>
     <details class="sect" id="play-typeset"><summary>Typeset
       <span class="ts-switches"><label class="ts-toggle" title="Show the text set in boxes that never reach the page"><span data-short="boxed">show boxed text</span><input type="checkbox" id="typeset-boxes" role="switch" aria-label="show boxed text"></label>
       <label class="ts-toggle" title="Show the keys of labels, references and citations where they stand"><span data-short="keys">show keys</span><input type="checkbox" id="typeset-keys" role="switch" aria-label="show keys"></label></span></summary>
-      <div id="typeset-body" class="typeset grow"><p class="muted">What the paragraphs of the open file set, once it is checked.</p></div></details>
+      <div id="typeset-body" class="typeset grow"><p class="muted">Paragraphs of the open file, set after each check.</p></div></details>
     <details class="sect" id="play-written"><summary>Written files <b id="written-count"></b></summary>
-      <div id="written-body" class="written grow"><p class="muted">What the build writes to its .aux, .toc and other files, as satex computes it: each text a path may write, unknown parts marked.</p></div></details>
+      <div id="written-body" class="written grow"><p class="muted">Files the build writes (.aux, .toc …), as satex computes them. Unknown parts are marked.</p></div></details>
     <dialog id="play-library" class="cache-dialog lib-dialog" aria-labelledby="lib-title">
       <header><h3 id="lib-title">Library</h3><button type="button" class="ghost small" id="lib-close" aria-label="close">✕</button></header>
       <div class="lib grow">
@@ -74,7 +74,7 @@
             <ul id="lib-from-list" class="complete" role="listbox" hidden></ul></label>
           <label class="ts-toggle" title="Also list internal names: with @, expl3 internals"><span data-short="internal">internal</span><input type="checkbox" id="lib-internal" role="switch" aria-label="internal names"></label></div>
         <div id="lib-kinds" class="lib-kinds" role="group" aria-label="which kind of name"></div>
-        <ul id="lib-list" class="lib-list"><li class="muted">The names appear once the document is checked.</li></ul>
+        <ul id="lib-list" class="lib-list"><li class="muted">Names in force, after each check.</li></ul>
       </div></dialog>
     <dialog id="play-try" class="cache-dialog try-dialog" aria-labelledby="try-title">
       <header><h3 id="try-title">Try</h3><button type="button" class="ghost small" id="try-close" aria-label="close">✕</button></header>
@@ -86,10 +86,13 @@
       <div id="lib-out" class="try-out"></div></dialog>
     <dialog id="play-config" class="cache-dialog" aria-labelledby="cfg-title">
       <header><h3 id="cfg-title">Settings</h3><button type="button" class="ghost small" id="cfg-close" aria-label="close">✕</button></header>
-      <p class="muted cache-note">The satex.yaml keys of the playground's runs, from satex's schema. A changed key holds for every check here and for the link you share.</p>
-      <div class="lib-bar cfg-bar"><label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
-        <input type="search" id="cfg-search" placeholder="Search settings: clock, limits, lint…" aria-label="search the settings"></label></div>
+      <p class="muted cache-note">satex.yaml keys of the playground's runs, from satex's schema. A changed key holds for every check here and for the link you share.</p>
+      <div class="lib-bar cfg-bar"><span id="cfg-tabs" class="lib-kinds" role="group" aria-label="which settings"><button type="button" class="lib-kind" data-tab="core" aria-pressed="true">core</button><button type="button" class="lib-kind" data-tab="plugins" aria-pressed="false">plugins</button><button type="button" class="lib-kind" data-tab="yaml" aria-pressed="false">YAML</button></span>
+        <label class="search"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+        <input type="search" id="cfg-search" placeholder="Search settings: clock, limits, @changed…" aria-label="search the settings"></label></div>
+      <div id="cfg-filters" class="lib-kinds cfg-filters" role="group" aria-label="filters"></div>
       <ul id="cfg-list" class="cache-scroll cfg-list"></ul>
+      <textarea id="cfg-yaml" class="cfg-yaml" spellcheck="false" aria-label="the changed settings as satex.yaml" hidden></textarea>
       <footer><span id="cfg-total" class="muted"></span><button type="button" class="small ghost" id="cfg-reset">Reset all</button></footer></dialog>
     <dialog id="play-replace" class="cache-dialog ask-dialog" aria-labelledby="replace-title">
       <header><h3 id="replace-title">Replace the open project?</h3></header>
@@ -97,16 +100,16 @@
       <form method="dialog" class="ask-foot"><button value="tab" class="small ghost">Open in a new tab</button><button value="cancel" class="small ghost">Cancel</button><button value="replace" class="small">Replace</button></form></dialog>
     <dialog id="play-draw" class="cache-dialog draw-dialog" aria-labelledby="draw-title">
       <header><h3 id="draw-title">Draw a symbol</h3><button type="button" class="ghost small" id="draw-close" aria-label="close">✕</button></header>
-      <p class="muted cache-note" id="draw-note">Draw it in the box. Your drawing and each symbol's outline are compared by how far each one's points lie from the other's.
-        Names in force in this document rank first. The idea follows <a href="https://detexify.kirelabs.org" target="_blank" rel="noopener">Detexify</a> by Daniel Kirsch, without its code or data.
-        The symbols come from unicode-math's table (LPPL) and the icon packages' own mapping files, each drawn in its package's font: <a href="../credits.html#symbols">credits</a>.</p>
+      <p class="cache-note" id="draw-note">Draw a symbol. The closest matches appear on the right.</p>
       <div id="draw-filters" class="lib-kinds draw-filters" role="group" aria-label="which symbols">
-        <button type="button" class="lib-kind" data-f="from" data-v="loaded" aria-pressed="true">this document</button><button type="button" class="lib-kind" data-f="from" data-v="all" aria-pressed="false">every package</button>
+        <button type="button" class="lib-kind" data-f="from" data-v="all" aria-pressed="true">every package</button><button type="button" class="lib-kind" data-f="from" data-v="loaded" aria-pressed="false">this document</button>
         <span class="sep"></span><button type="button" class="lib-kind" data-f="kind" data-v="" aria-pressed="true">all</button><button type="button" class="lib-kind" data-f="kind" data-v="symbol" aria-pressed="false">symbols</button><button type="button" class="lib-kind" data-f="kind" data-v="letter" aria-pressed="false">letters</button>
         <span class="sep"></span><button type="button" class="lib-kind" data-f="mode" data-v="" aria-pressed="true">all</button><button type="button" class="lib-kind" data-f="mode" data-v="math" aria-pressed="false">math</button><button type="button" class="lib-kind" data-f="mode" data-v="text" aria-pressed="false">text</button></div>
       <div class="draw-box"><div class="draw-pad"><canvas id="draw-pad" width="256" height="256" aria-label="drawing area"></canvas>
         <button type="button" class="small ghost" id="draw-clear">Clear</button></div>
-        <ol id="draw-list" class="draw-list" aria-live="polite"></ol></div></dialog>
+        <ol id="draw-list" class="draw-list" aria-live="polite"></ol></div>
+      <footer><details class="draw-about muted"><summary>about</summary>Your drawing and each symbol's outline are compared by how far each one's points lie from the other's. Names in force in this document rank first.
+        Inspired by <a href="https://detexify.kirelabs.org" target="_blank" rel="noopener">Detexify</a> (Daniel Kirsch). The symbols come from unicode-math's table (LPPL) and the icon packages' own files, each drawn in its package's font: <a href="../credits.html#symbols">credits</a>.</details></footer></dialog>
     <dialog id="play-cache" class="cache-dialog" aria-labelledby="cache-title">
       <header><h3 id="cache-title">Caches</h3><button type="button" class="ghost small" id="cache-close" aria-label="close">✕</button></header>
       <p class="muted cache-note">Analysis results kept in this browser. A dropped entry is rebuilt when needed.</p>
@@ -135,4 +138,5 @@
 <div id="play-toast" class="toast" role="status"></div>
 <div id="play-drop" class="drop" hidden>Drop files, a folder or a .zip</div>
 <script id="satex-play" type="application/json">{{manifest}}</script>
+<script src="{{root}}{{drawjs}}" defer></script>
 <script src="{{root}}{{playjs}}" defer></script>

@@ -11,7 +11,7 @@ SaTeX is MIT licensed. The site and its playground also ship or draw on the work
 
 The playground's drawing pad finds the command that sets a symbol you draw.
 
-- The idea follows [Detexify](https://detexify.kirelabs.org) by Daniel Kirsch. No code or data of it is used: SaTeX compares outlines its own way.
+- Inspired by [Detexify](https://detexify.kirelabs.org) (Daniel Kirsch).
 - The math symbols and their names come from unicode-math's `unicode-math-table.tex` (Will Robertson, Philipp Stephani, Joseph Wright and others), LaTeX Project Public License.
 - They are drawn in Latin Modern Math, unicode-math's default font (GUST e-foundry), GUST Font License.
 - The icons come from the mapping files of the `fontawesome` package (Xavier Danaux), `fontawesome5` (Marcel Krüger) and `fontawesome6` and `fontawesome7` (Daniel Nagel), LaTeX Project Public License. They are drawn in the Font Awesome Free fonts these packages include (Dave Gandy, Fonticons), SIL Open Font License 1.1.

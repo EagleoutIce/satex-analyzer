@@ -33,7 +33,7 @@
     const { language: { StreamLanguage }, stex: { stex }, highlight: hl } = await self.siteCM();
     const t = hl.tags;
     const highlighter = hl.tagHighlighter([[t.tagName, 'cmd'], [t.bracket, 'br'], [t.keyword, 'kw'], [t.comment, 'com'], [t.atom, 'atom'],
-      [t.number, 'num'], [t.string, 'str'], [t.definition(t.variableName), 'def'], [t.special(t.variableName), 'arg'], [t.variableName, 'arg'], [t.operator, 'br']].map(([tag, c]) => ({ tag, class: `tok-${c}` })));
+      [t.number, 'num'], [t.string, 'str'], [t.definition(t.variableName), 'def'], [t.special(t.variableName), 'arg'], [t.variableName, 'arg'], [t.operator, 'br'], [t.meta, 'magic'], [t.attributeValue, 'magicv']].map(([tag, c]) => ({ tag, class: `tok-${c}` })));
     // BibTeX (btxdoc § 2): `@type{key, field = value # value}`; `@string`, `@preamble` and `@comment`
     // are commands, not entries. A braced value is TeX: commands, braces and math in the TeX mode's classes.
     const COMMANDS = /^@(string|preamble|comment)\b/i;
@@ -75,7 +75,19 @@
       },
     });
     // a control symbol (`\ `, `\-`, `\'`) is one token, as for TeX; stex leaves some of them split
-    const tex = { ...stex, token: (s, st) => (s.match(/^\\[^A-Za-z@\xc0-\uffff]/) ? 'tag' : stex.token(s, st)) };
+    // a magic comment's key (`% !TeX program =`, `% arara:`) and its value, apart from a plain comment
+    const MAGIC = /^%\s*(?:!T[eE]X\s+(?:TS-)?[\w-]+\s*=?|arara:)/;
+    const tex = {
+      ...stex,
+      startState: () => ({ ...stex.startState(), magic: false }),
+      copyState: (st) => ({ ...stex.copyState(st), magic: st.magic }),
+      token: (s, st) => {
+        if (s.sol()) st.magic = false;
+        if (st.magic) { s.skipToEnd(); return 'attributeValue'; }
+        if (s.sol() && s.match(MAGIC)) { st.magic = true; return 'meta'; }
+        return s.match(/^\\[^A-Za-z@\xc0-\uffff]/) ? 'tag' : stex.token(s, st);
+      },
+    };
     return { language: StreamLanguage.define(tex), bib, highlighter };
   })());
 
@@ -136,7 +148,8 @@
   /** The placeholders of primitive syntax that are types of the Ty lattice. */
   const TY = new Set(['number', 'dimen', 'glue', 'muglue', 'control sequence']);
   /** A type's name linking to the wiki's Ty lattice; hovered, it shows its card ([`tyCard`]). */
-  const tyLink = (t) => `<a class="ty" target="_blank" rel="noopener" href="${document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? ''}wiki/domains.html#argument-types-the-ty-lattice" data-ty="${esc(t)}" data-fam="${esc(TYPES().get(t)?.family ?? '')}"${TYPES().has(t) ? '' : ` title="the type ${esc(t)} in the Ty lattice"`}>${esc(t)}</a>`;
+  // a type with a card of its own is underlined as more to see; one the lattice lacks has only a note
+  const tyLink = (t) => `<a class="ty${TYPES().has(t) ? '' : ' ty-plain'}" target="_blank" rel="noopener" href="${document.querySelector('a.brand')?.getAttribute('href')?.replace(/index\.html$/, '') ?? ''}wiki/domains.html#argument-types-the-ty-lattice" data-ty="${esc(t)}" data-fam="${esc(TYPES().get(t)?.family ?? '')}"${TYPES().has(t) ? '' : ` title="the type ${esc(t)} in the Ty lattice"`}>${esc(t)}</a>`;
   /** The lattice by name (`satex completions json`'s `types`), when the page has it. */
   const TYPES = () => (window.satexTypes ??= new Map((window.satexTypeList ?? []).map((t) => [t.name, t])));
   /** A type's card: its chain up to `any`, what it is, the types right below it. */
@@ -158,6 +171,12 @@
   // command's card, a finding or a name in a trace, `satexTip.note` for short text (a `title`,
   // a type, an argument chip), which may stand beside a card.
   const clamp = (x, lo, hi) => Math.min(Math.max(x, lo), hi);
+  /** Whether a menu, a completion list or a modal dialog the user opened lies over `at` (an element, or a
+   * rect of the editor): what is under it shows no card or note. */
+  const covered = (at) => {
+    const over = [...document.querySelectorAll('.ctx:not([hidden]), .cm-tooltip-autocomplete, dialog[open]')];
+    return over.length > 0 && !over.some((o) => at.closest && o.contains(at));
+  };
   function floating(cls) {
     const el = Object.assign(document.createElement('div'), { className: `tip ${cls}`, hidden: true, role: 'tooltip' });
     let timer = 0;
@@ -168,6 +187,7 @@
     /** Below `at` (an element or a rect), else above it; beside `host` when that is a card it would cover. */
     const show = (at, html, host = null) => {
       clearTimeout(timer);
+      if (covered(at)) return hide();
       // a modal dialog's top layer hides anything outside it
       const layer = at.closest?.('dialog[open]') ?? document.querySelector('dialog[open]') ?? document.body;
       if (el.parentElement !== layer) layer.append(el);
@@ -327,6 +347,7 @@
     if (primitive) rows.push(['body', 'none: a TeX primitive']);
     else if (r.body != null) rows.push(['body', r.body === '' ? '<span class="muted">empty</span>' : `<pre class="x-body"><code>${tex(r.body, true)}</code></pre>`]);
     if (r.by) rows.push(['by', csChip(r.by)]);
+    if (r.together?.length) rows.push(['defined with', `<span class="chips">${r.together.map(csChip).join('')}</span>`]);
     const owner = r.class ? pkgChip('class', r.class) : r.package ? (r.package === 'kernel' ? pkgChip('kernel', 'the kernel') : pkgChip('package', r.package)) : '';
     if (r.path && r.line) rows.push(['defined at', `${placeLink(r.path, r.line, r.file)}${owner ? ` ${owner}` : ''}`]);
     else if (owner) rows.push(['from', owner]);
@@ -345,6 +366,9 @@
     return `<div class="xcard"><div class="x-head"><code class="x-name">${csName(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}${traceButton(r)}</div>` +
       `<dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></div>`;
   }
+  /** A record's usage line, as its cards show it: the arguments as typed chips. */
+  const useOf = (r) => (r.effective && r.effective !== r.name ? `<code class="usage">${usage(r.effective, typesOf(r)).html}</code>`
+    : r.signature ? signature(r.signature) : r.syntax ? `<code class="usage">${slots(esc(r.syntax))}</code>` : '');
   /** The same record as a hover card: its name and kind, where it is
    * defined, how it is used, the error it raises and its documentation. */
   function brief(r) {
@@ -356,7 +380,8 @@
     const docs = r.reference ? `<a href="${esc(r.reference)}" target="_blank" rel="noopener">${esc(r.documentation ?? 'docs')} ↗</a>` : '';
     return `<div class="xcard brief"><div class="x-head"><code class="x-name">${csName(r.name)}</code>${tags.map((t) => ` <span class="x-kind">${esc(t)}</span>`).join('')}` +
       `${where ? ` <span class="x-where">${where}</span>` : ''}${traceButton(r)}</div>` +
-      (r.does ? `<div class="x-does">${esc(r.does)}</div>` : '') + (use ? `<div class="x-use">${use}</div>` : '') + (r.error ? `<div class="x-err">${esc(r.error)}</div>` : '') +
+      (r.does ? `<div class="x-does">${esc(r.does)}</div>` : '') + (use ? `<div class="x-use">${use}</div>` : '') +
+      (r.together?.length ? `<div class="x-with muted">defined together with <span class="chips">${r.together.slice(0, 6).map(csChip).join('')}</span>${r.together.length > 6 ? ` +${r.together.length - 6}` : ''}</div>` : '') + (r.error ? `<div class="x-err">${esc(r.error)}</div>` : '') +
       (docs ? `<div class="x-docs">${docs}</div>` : '') + '</div>';
   }
   /** Any other record value for a table cell: lists as chips, never raw JSON. */
@@ -433,11 +458,12 @@
           : `<p>${inline(b.trim())}</p>`).join('')).join('');
   /** A lint rule's card, the parts and markup of its section on the rules page: name, number,
    * severity, category, engines, fixes, summary, text and references. */
-  const ruleCard = (r, href = '') => {
+  const ruleCard = (r, href = '', own = false) => {
     const refs = (r.references ?? []).map((x) => `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.cite)}</a>`).join(', ');
     const engines = (r.engines ?? []).join(', ');
     const badges = [`<code class="num" title="rule number">${esc(r.number ?? '')}</code>`,
-      `<span class="sev sev-${esc(r.severity)}" title="default: ${esc(r.severity)}">default: ${esc(r.severity)}</span>`,
+      // a finding's own card shows its severity once, its own, not the rule's default
+      ...(own ? [] : [`<span class="sev sev-${esc(r.severity)}" title="default: ${esc(r.severity)}">default: ${esc(r.severity)}</span>`]),
       `<span class="cat cat-${esc(r.category)}">${esc(r.category)}</span>`,
       ...(engines ? [`<span class="eng" title="only under ${esc(engines)}">${esc(engines)}</span>`] : []),
       ...(r.fixes ?? []).map((f) => `<span class="fix fix-${esc(f)}">${esc(f)}</span>`)];
@@ -445,7 +471,30 @@
     return `<section class="rule rule-tip"><h4>${name}</h4><p class="badges">${badges.join(' ')}</p>` +
       `<p><b>${inline(r.summary ?? r.message ?? '')}</b></p>${markdown(r.explanation ?? '')}${refs ? `<p>See ${refs}.</p>` : ''}</section>`;
   };
-  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys };
+  /** A hover's Markdown; its last paragraph, the places and links, is a muted footer. */
+  const unescape = (s) => s.replace(/&(lt|gt|quot|amp);/g, (m, e) => ({ lt: '<', gt: '>', quot: '"', amp: '&' })[e]);
+  /** A hover's Markdown: its usage lines colored, each ⟨argN⟩ elsewhere in the kind its usage gave it. */
+  const hoverCard = (value) => {
+    // each definition is its own section: its types belong to its own usage line
+    const section = (md) => {
+      const kinds = {};
+      // the argument types the section lists (`- `⟨arg1⟩` glue`, roles::Ty), shown in the usage line too
+      const types = Object.fromEntries([...md.matchAll(/^- `⟨(arg\d+)⟩` ([^\n`]+)$/gm)].map((m) => [m[1], m[2]]));
+      const html = markdown(md).replace(/<code>([^<]*⟨arg\d+⟩[^<]*)<\/code>/g, (m, code) => {
+        if (/^⟨arg\d+⟩$/.test(code)) return m;
+        const u = usage(unescape(code), types);
+        Object.assign(kinds, u.kinds);
+        return `<code class="usage">${u.html}</code>`;
+      });
+      return slots(html, kinds).replace(/<p>((?:\s|·|<a [^>]*>[^<]*<\/a>)+)<\/p>/g, '<p class="foot">$1</p>');
+    };
+    const sections = (md) => md.split(/^(?=### )/m).map(section).join('');
+    // the definitions that do not hold at the cursor fold away (lsp::handlers::MORE_DEFINITIONS)
+    const [main, more] = value.split(/^#### More definitions\n+/m);
+    return sections(main) + (more ? `<details class="more"><summary>More definitions</summary>${sections(more)}</details>` : '');
+  };
+
+  self.satexCards = { explain, brief, signature, slots, usage, tex, inline, markdown, ruleCard, placeLink, upstream, csChip, csName, value, esc, notation, withKeys, hover: hoverCard, useOf };
   // A rule named anywhere on the site, as a link into the rules page or its code or number in a
   // code span, shows its card. The cards' data is the rules the build wrote, fetched once.
   const RULES_URL = new URL('rules.json', document.currentScript?.src ?? location.href);
@@ -636,7 +685,7 @@
           const e = await engine, r = await e.lsp('textDocument/hover', { textDocument: { uri }, position: pos(editor.state.doc, p) }).catch(() => null);
           const c = r?.contents, value = typeof c === 'string' ? c : c?.value ?? '';
           const at = editor.coordsAtPos(p);
-          if (value && at && host.matches(':hover')) card.show({ left: at.left, top: at.top, right: at.right, bottom: at.bottom }, `<div class="hover">${markdown(value)}</div>`);
+          if (value && at && host.matches(':hover')) card.show({ left: at.left, top: at.top, right: at.right, bottom: at.bottom }, `<div class="hover">${hoverCard(value)}</div>`);
         }, 300);
       });
       host.addEventListener('mouseleave', () => { clearTimeout(shown); card.hide(150); });

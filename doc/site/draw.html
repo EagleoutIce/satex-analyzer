@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Draw a symbol · satex</title>
+<link rel="icon" href="{{root}}{{favicon}}" type="image/svg+xml">
+<link rel="stylesheet" href="{{root}}{{css}}">
+<script>{ const t = new URLSearchParams(location.search).get('theme'); if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; }</script>
+<script src="{{root}}{{drawjs}}" defer></script>
+</head>
+<body class="draw-page">
+<main id="draw" class="draw-solo">
+  <p class="cache-note" id="draw-note">Draw a symbol. The closest matches appear on the right.</p>
+  <div id="draw-filters" class="lib-kinds draw-filters" role="group" aria-label="which symbols">
+    <button type="button" class="lib-kind" data-f="kind" data-v="" aria-pressed="true">all</button><button type="button" class="lib-kind" data-f="kind" data-v="symbol" aria-pressed="false">symbols</button><button type="button" class="lib-kind" data-f="kind" data-v="letter" aria-pressed="false">letters</button>
+    <span class="sep"></span><button type="button" class="lib-kind" data-f="mode" data-v="" aria-pressed="true">all</button><button type="button" class="lib-kind" data-f="mode" data-v="math" aria-pressed="false">math</button><button type="button" class="lib-kind" data-f="mode" data-v="text" aria-pressed="false">text</button></div>
+  <div class="draw-box"><div class="draw-pad"><canvas id="draw-pad" width="256" height="256" aria-label="drawing area"></canvas>
+    <button type="button" class="small ghost" id="draw-clear">Clear</button></div>
+    <ol id="draw-list" class="draw-list" aria-live="polite"></ol></div>
+  <footer><details class="draw-about muted"><summary>about</summary>Your drawing and each symbol's outline are compared by how far each one's points lie from the other's.
+    Inspired by <a href="https://detexify.kirelabs.org" target="_blank" rel="noopener">Detexify</a> (Daniel Kirsch). The symbols come from unicode-math's table (LPPL) and the icon packages' own files, each drawn in its package's font: <a href="{{root}}credits.html#symbols" target="_blank" rel="noopener">credits</a>.
+    Part of <a href="{{root}}index.html" target="_blank" rel="noopener">SaTeX</a>.</details></footer>
+</main>
+<script>
+  // a pick copies the command (or its \usepackage) and tells a page that embeds this one
+  addEventListener('DOMContentLoaded', () => self.satexDraw({
+    root: document.getElementById('draw'), base: '{{root}}', symbols: '{{symbols}}', label: 'Copy', usepackage: true,
+    pick: (text, pkg) => {
+      navigator.clipboard?.writeText(text).catch(() => {});
+      if (parent !== self) parent.postMessage({ type: 'satex-draw', text, package: pkg }, '*');
+    },
+  }).load());
+</script>
+</body>
+</html>

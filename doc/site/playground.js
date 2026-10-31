@@ -250,30 +250,9 @@
   /** A finding's rule as its card, the same one the rules page and every rule hover show. */
   function explanation(d) {
     const r = manifest.rules[d.code];
-    return r ? commandRefs(cards.ruleCard(r, `${base}wiki/lints.html#${encodeURIComponent(d.code)}`)) : '';
+    return r ? `<div class="explain">${commandRefs(cards.ruleCard(r, `${base}wiki/lints.html#${encodeURIComponent(d.code)}`, true))}</div>` : '';
   }
-  /** A hover's Markdown; its last paragraph, the places and links, is a muted footer. */
-  const unescape = (s) => s.replace(/&(lt|gt|quot|amp);/g, (m, e) => ({ lt: '<', gt: '>', quot: '"', amp: '&' })[e]);
-  /** A hover's Markdown: its usage lines colored, each ⟨argN⟩ elsewhere in the kind its usage gave it. */
-  const card = (value) => {
-    // each definition is its own section: its types belong to its own usage line
-    const section = (md) => {
-      const kinds = {};
-      // the argument types the section lists (`- `⟨arg1⟩` glue`, roles::Ty), shown in the usage line too
-      const types = Object.fromEntries([...md.matchAll(/^- `⟨(arg\d+)⟩` ([^\n`]+)$/gm)].map((m) => [m[1], m[2]]));
-      const html = markdown(md).replace(/<code>([^<]*⟨arg\d+⟩[^<]*)<\/code>/g, (m, code) => {
-        if (/^⟨arg\d+⟩$/.test(code)) return m;
-        const u = cards.usage(unescape(code), types);
-        Object.assign(kinds, u.kinds);
-        return `<code class="usage">${u.html}</code>`;
-      });
-      return cards.slots(html, kinds).replace(/<p>((?:\s|·|<a [^>]*>[^<]*<\/a>)+)<\/p>/g, '<p class="foot">$1</p>');
-    };
-    const sections = (md) => md.split(/^(?=### )/m).map(section).join('');
-    // the definitions that do not hold at the cursor fold away (lsp::handlers::MORE_DEFINITIONS)
-    const [main, more] = value.split(/^#### More definitions\n+/m);
-    return sections(main) + (more ? `<details class="more"><summary>More definitions</summary>${sections(more)}</details>` : '');
-  };
+  const card = cards.hover;
 
   // ---------------------------------------------------------------- worker requests
 
@@ -775,7 +754,7 @@
   // ---------------------------------------------------------------- findings and fixes
 
   const diagnostics = {}; // uri -> the last list, each with its fixes
-  const key = (d) => `${d.code}|${d.range.start.line}:${d.range.start.character}|${d.message}`;
+  const key = (d) => `${d.data?.rule ?? d.code}|${d.range.start.line}:${d.range.start.character}|${d.message}`;
   /** What the open file's paragraphs set, from the language server's last
    * analysis (`satex query typeset`); a click goes to the paragraph. */
   const typesetBody = $('typeset-body');
@@ -1163,11 +1142,21 @@
   function showMenu(items, x, y) {
     ctxMenu.innerHTML = items.map(([label, hint], i) => `<li role="menuitem" tabindex="-1" data-i="${i}">${escape(label)}<span class="muted">${escape(hint)}</span></li>`).join('');
     ctxMenu.hidden = false;
+    tips.card.hide();
+    tips.note.hide();
     Object.assign(ctxMenu.style, { left: `${Math.max(4, Math.min(x, innerWidth - ctxMenu.offsetWidth - 8))}px`, top: `${Math.max(4, Math.min(y, innerHeight - ctxMenu.offsetHeight - 8))}px` });
     ctxMenu.onclick = (e) => { const li = e.target.closest('li'); if (li) { ctxMenu.hidden = true; items[li.dataset.i][2](); } };
   }
   addEventListener('mousedown', (e) => { if (!e.target.closest('.ctx')) for (const m of document.querySelectorAll('.ctx')) m.hidden = true; });
-  addEventListener('keydown', (e) => { if (e.key === 'Escape') { for (const m of document.querySelectorAll('.ctx')) m.hidden = true; drop.hidden = true; } });
+  // Escape closes the open menu, else the open dialog, wherever the focus is: the browser's own close
+  // of a dialog opened by a script can wait for a user gesture, and the keys after it would go nowhere
+  addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    const menus = [...document.querySelectorAll('.ctx:not([hidden])')], dialog = [...document.querySelectorAll('dialog[open]')].pop();
+    drop.hidden = true;
+    if (menus.length) menus.forEach((m) => { m.hidden = true; });
+    else if (dialog) { e.preventDefault(); dialog.close(); }
+  });
 
   // ---------------------------------------------------------------- the Explain macro panel
 
@@ -1253,7 +1242,7 @@
   const libList = $('lib-list'), libSearch = $('lib-search'), libFrom = $('lib-from'), libInternal = $('lib-internal');
   let libNames = [], libFor = '', libUses = new Map(), libPick = '';
   /** Where a name in force comes from, as the package filter names it. */
-  const libSource = (r) => r.package || 'kernel';
+  const libSource = (r) => (!r.package || r.package.endsWith('.ltx') ? 'kernel' : r.package); // a format file (latex.ltx) is the kernel
   /** How useful a name is to a document, best first: used in the project, defined by it, then
    * public names before internals, documented ones (`does`) first, macros before primitives,
    * names of letters before control symbols. */
@@ -1268,10 +1257,13 @@
     const key = `${state.root ?? state.file}|${libInternal.checked}|${analyzedVersion}`;
     if (key === libFor) return libraryShow();
     libFor = key;
+    libSig.clear();
     const records = await namesInForce(libInternal.checked);
-    // an environment once, by its name: \X stays, its \endX goes
+    // an environment once, by its name: \X stays as the environment, its \endX goes
     const names = new Set(records.map((r) => r.name));
-    libNames = records.filter((r) => !(r.tag === 'environment' && r.name.startsWith('\\end') && names.has(`\\${r.name.slice(4)}`)));
+    const paired = (n) => names.has(`\\end${n.slice(1)}`) && n !== '\\end';
+    libNames = records.filter((r) => !(r.name.startsWith('\\end') && r.name !== '\\end' && names.has(`\\${r.name.slice(4)}`)))
+      .map((r) => (paired(r.name) && r.tag !== 'primitive' ? { ...r, tag: 'environment' } : r));
     libUses = new Map();
     for (const [file, text] of Object.entries(state.texts)) if (state.files.includes(file) && !data(file))
       for (const m of String(text).matchAll(/\\begin\s*\{([^{}]+)\}|\\([A-Za-z@]+|.)/g)) { const n = `\\${m[1] ?? m[2]}`; libUses.set(n, (libUses.get(n) ?? 0) + 1); }
@@ -1293,11 +1285,14 @@
   function libraryShow() {
     const q = libSearch.value.trim().toLowerCase().replace(/^\\/, ''), from = libPick;
     const kind = (r) => (r.tag === 'environment' ? 'environment' : r.tag === 'primitive' ? 'primitive' : 'command');
+    // a name, else its description or usage, else an argument's type (`label` finds \ref by its ⟨label⟩)
+    const about = (r) => `${r.effective ?? ''} ${r.does ?? ''} ${(libSig.get(r.name)?.types ?? []).join(' ')}`.toLowerCase();
     const hits = libNames
-      .map((r) => [r, libRank(r.name, q) ?? (q && String(r.effective ?? '').toLowerCase().includes(q) ? 4 : null)])
+      .map((r) => [r, libRank(r.name, q) ?? (q && about(r).includes(q) ? 4 : null)])
       .filter(([r, rank]) => rank !== null && (!from || libSource(r) === from) && (!libKind || kind(r) === libKind))
       .sort((a, b) => a[1] - b[1] || byUse(a[0], b[0]) || a[0].name.length - b[0].name.length || a[0].name.localeCompare(b[0].name))
       .map(([r]) => r);
+    libSigned(hits.slice(0, LIB_SIGNED));
     $('lib-count').textContent = libNames.length ? short(libNames.length) : '';
     const counts = { '': libNames.length };
     for (const r of libNames) counts[kind(r)] = (counts[kind(r)] ?? 0) + 1;
@@ -1307,12 +1302,13 @@
       const env = kind(r) === 'environment', use = r.effective ?? r.name, args = use.startsWith(r.name) ? use.slice(r.name.length) : '';
       const name = env ? r.name.slice(1) : r.name, shown = env ? `\\begin{${name}}${args}` : use;
       const tried = env ? `\\begin{${name}}${args}\n  \n\\end{${name}}` : use;
-      return `<li tabindex="-1" data-i="${i}"><code class="cs-ref" data-cs="${escape(r.name)}" tabindex="0">${cards.csName(name)}</code>` +
-      `${shown !== name ? `<span class="lib-use">${slotsOf(shown)}</span>` : ''}<span class="lib-does">${escape(r.does ?? '')}</span>` +
+      const signed = libSig.get(r.name), line = (signed && cards.useOf(signed)) || (shown !== name ? slotsOf(shown) : '');
+      return `<li tabindex="-1" data-i="${i}" data-name="${escape(r.name)}"><code class="cs-ref" data-cs="${escape(r.name)}" tabindex="0">${cards.csName(name)}</code>` +
+      `<span class="lib-use">${line}</span><span class="lib-does">${escape(r.does ?? signed?.does ?? '')}</span>` +
       `<button type="button" class="lib-try-it" data-try="${escape(tried)}" title="try it" aria-label="try it">▸</button>` +
-      `<span class="lib-pkg">${escape(r.package ?? '')}</span></li>`; }).join('') +
+      `<span class="lib-pkg">${escape(libSource(r))}</span></li>`; }).join('') +
       (hits.length > 200 ? `<li class="muted">${num(hits.length - 200)} more: narrow the search</li>` : '') ||
-      `<li class="muted">${!libNames.length ? 'The names appear once the document is checked.' : from && !libNames.some((r) => libSource(r) === from)
+      `<li class="muted">${!libNames.length ? 'Names in force, after each check.' : from && !libNames.some((r) => libSource(r) === from)
         ? `${escape(from)} is not loaded in this document: <code>\\usepackage{${escape(from)}}</code> loads it.` : 'No name matches.'}</li>`;
   }
   // the package filter: a search over the sources of the names in force with their counts, then the packages the playground knows
@@ -1350,6 +1346,29 @@
     } else if (e.key === 'Enter') { e.preventDefault(); libFromTake(rows[Math.max(0, at)]?.dataset.pick ?? libPick); }
     else if (e.key === 'Escape' && !libFromList.hidden) { e.preventDefault(); libFromClose(); }
   });
+  /** Each listed name's explain record, asked for the first rows shown: their usage lines with typed
+   * argument chips, as the hover card draws them, and their argument types for the search. */
+  const LIB_SIGNED = 60, LIB_BATCH = 12, libSig = new Map();
+  async function libSigned(rows) {
+    const todo = rows.map((r) => r.name).filter((n) => !libSig.has(n));
+    if (!todo.length) return;
+    todo.forEach((n) => libSig.set(n, null));
+    // a few at a time, so the first rows show theirs soon
+    for (let k = 0; k < todo.length; k += LIB_BATCH) {
+      const part = todo.slice(k, k + LIB_BATCH), found = await explainMany(part);
+      part.forEach((n, i) => libSig.set(n, found[i]?.find((r) => !r.error) ?? found[i]?.[0] ?? null));
+      libSignedShow(part);
+    }
+  }
+  function libSignedShow(names) {
+    for (const li of libList.querySelectorAll('li[data-name]')) {
+      const r = names.includes(li.dataset.name) && libSig.get(li.dataset.name), use = r && cards.useOf(r);
+      if (!r) continue;
+      if (use) li.querySelector('.lib-use').innerHTML = use + (r.together?.length
+        ? ` <details class="lib-with"><summary title="defined together with these">+${r.together.length}</summary>${r.together.map(cards.csChip).join(' ')}</details>` : '');
+      if (!li.querySelector('.lib-does').textContent && r.does) li.querySelector('.lib-does').textContent = r.does;
+    }
+  }
   /** A usage line with its ⟨…⟩ placeholders as the explain cards draw them. */
   const slotsOf = (usage) => (cards.slots ? cards.slots(escape(usage)) : escape(usage));
   $('lib-kinds').addEventListener('click', (e) => { const b = e.target.closest('.lib-kind'); if (b) { libKind = b.dataset.kind; libraryShow(); } });
@@ -1407,7 +1426,10 @@
   /** The scratch root of `scratch` in the worker's files, its kernel loaded: [path, the kernel's flags as settings]. */
   async function tryScratch(scratch) {
     const k = manifest.kernels.findIndex((x) => x.id === scratch.kernel), name = `try-${scratch.kernel}.tex`;
+    // the language server's instance holds the files it started with: a kernel fetched now needs a new one
+    const fresh = !state.loaded.has(k);
     await loadKernel(k);
+    if (fresh) await restart();
     post({ type: 'project', dir: '/work/try', files: { [name]: encode(scratch.text) } });
     const args = manifest.kernels[k].args, config = {};
     for (let j = 0; j + 1 < args.length; j += 2) if (args[j] === '--set') { const [key, ...v] = args[j + 1].split('='); config[key] = v.join('='); }
@@ -1448,10 +1470,26 @@
   try { configSet = JSON.parse(localStorage.getItem('satex-config')) ?? {}; } catch {}
   const configKeep = (set) => { configSet = set; try { localStorage.setItem('satex-config', JSON.stringify(set)); } catch {} };
   const yamlValue = (v) => (typeof v === 'string' ? v : JSON.stringify(v));
-  function configFlags() { return Object.entries(configSet).flatMap(([k, v]) => ['--set', `${k}=${yamlValue(v)}`]); }
+  function configFlags(set = configSet) { return Object.entries(set).flatMap(([k, v]) => ['--set', `${k}=${yamlValue(v)}`]); }
+  /** Whether satex takes the settings `set`: null, else its reason, from a run that only reads them. */
+  async function configRefused(set) {
+    if (!Object.keys(set).length) return null;
+    const r = await ask({ type: 'run', args: [...configFlags(set), 'query', '--list'], edits: {}, cwd: '/work' }).catch((e) => ({ status: 1, lines: [['err', e.message]] }));
+    if (r.status === 0) return null;
+    return r.lines.filter(([k, t]) => k === 'err' && !/ignored: /.test(t)).map(([, t]) => plain(t).replace(/^satex: /, '')).pop() ?? 'satex does not take it';
+  }
   let configKeys = null;
+  /** Settings set aside at the start ({set, why}): shown in the dialog, never applied. */
+  let configRejected = null;
   const leaves = (props, at = '') => Object.entries(props ?? {}).flatMap(([k, p]) => (p.type === 'object' && p.properties
-    ? leaves(p.properties, `${at}${k}.`) : [{ key: at + k, type: [].concat(p.type ?? 'string')[0], options: p.enum, def: p.default, about: p.description ?? '' }]));
+    ? leaves(p.properties, `${at}${k}.`) : [{ key: at + k, type: [].concat(p.type ?? 'string')[0], options: p.enum, def: p.default, about: p.description ?? '',
+      affects: [].concat(p['x-affects'] ?? []), example: p['x-example'], items: p.items, min: p.minimum, max: p.maximum }]));
+  /** A key's group: its first part (`limits`), or `general` for a key of one part. */
+  const groupOf_ = (k) => (k.key.includes('.') ? k.key.split('.')[0] : 'general');
+  /** The plugins (build.py `plugins`) and the keys each one reads: its own section, `plugins.<name>` its switch. */
+  const PLUGINS = manifest.plugins ?? [];
+  const pluginOf = (k) => PLUGINS.find((p) => k.key === `plugins.${p.name}` || k.key.split('.')[0] === p.name)?.name ?? null;
+  let cfgTab = 'core', cfgYaml = false;
   const configLoad = () => (configKeys ??= fetch(`${base}${manifest.schema}`).then((r) => r.json()).then((s) => leaves(s.properties)).catch(() => []));
   const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   function configInput(k, value) {
@@ -1460,16 +1498,72 @@
     const text = value == null ? '' : typeof value === 'string' ? value : JSON.stringify(value);
     return `<input type="${['integer', 'number'].includes(k.type) ? 'number' : 'text'}" data-cfg="${escape(k.key)}" value="${escape(text)}" spellcheck="false">`;
   }
+  /** The search: words that a key or its description holds, and filters: `@changed`, `@group:limits`, `@affects:precision`. */
+  function configMatch(k, q) {
+    const words = q.split(/\s+/).filter(Boolean);
+    return words.every((w) => w === '@changed' ? k.key in configSet || `${k.key}+` in configSet
+      : w.startsWith('@group:') ? groupOf_(k) === w.slice(7) : w.startsWith('@affects:') ? k.affects.includes(w.slice(9))
+        : k.key.toLowerCase().includes(w) || k.about.toLowerCase().includes(w));
+  }
+  /** A list's editor: a row per item, an object's fields side by side, remove and add. */
+  function configList(k, value) {
+    const fields = k.items?.properties ? Object.keys(k.items.properties) : null, list = Array.isArray(value) ? value : [];
+    const item = (v, i) => `<li data-item="${i}">${fields ? fields.map((f) => `<input type="text" data-field="${escape(f)}" placeholder="${escape(f)}" value="${escape(v?.[f] ?? '')}" spellcheck="false">`).join('')
+      : `<input type="text" value="${escape(typeof v === 'string' ? v : JSON.stringify(v))}" spellcheck="false">`}<button type="button" class="ghost small" data-drop="${i}" aria-label="remove">×</button></li>`;
+    return `<ul class="cfg-items" data-cfg="${escape(k.key)}" data-list="1">${list.map(item).join('')}<li><button type="button" class="ghost small" data-add="1">Add</button></li></ul>`;
+  }
+  /** The settings changed, as the satex.yaml that sets them. */
+  const configYamlOf = (set) => {
+    const tree = {};
+    for (const [k, v] of Object.entries(set)) { const parts = k.split('.'); let at = tree; parts.slice(0, -1).forEach((p) => { at = at[p] ??= {}; }); at[parts.at(-1)] = v; }
+    const out = (o, pad) => Object.entries(o).map(([k, v]) => v && typeof v === 'object' && !Array.isArray(v) ? `${pad}${k}:\n${out(v, `${pad}  `)}` : `${pad}${k}: ${yamlValue(v)}`).join('\n');
+    return out(tree, '');
+  };
+  /** The YAML view's text as settings: nested keys by indentation, each value as JSON or else as text; null when it does not read. */
+  const configFromYaml = (text) => {
+    const set = {}, stack = [];
+    for (const line of text.split('\n')) {
+      if (!line.trim() || /^\s*#/.test(line)) continue;
+      const m = line.match(/^(\s*)([\w.+-]+):\s*(.*)$/);
+      if (!m) return null;
+      const depth = m[1].length;
+      while (stack.length && stack.at(-1)[0] >= depth) stack.pop();
+      const key = [...stack.map((s) => s[1]), m[2]].join('.');
+      if (m[3] === '') { stack.push([depth, m[2]]); continue; }
+      try { set[key] = JSON.parse(m[3]); } catch { set[key] = m[3]; }
+    }
+    return set;
+  };
   async function configShow() {
     const keys = await configLoad(), q = $('cfg-search').value.trim().toLowerCase();
-    const hits = keys.filter((k) => !q || k.key.toLowerCase().includes(q) || k.about.toLowerCase().includes(q));
-    $('cfg-list').innerHTML = hits.map((k) => {
-      const added = configSet[`${k.key}+`], changed = k.key in configSet || !!added, value = k.key in configSet ? configSet[k.key] : k.def;
-      return `<li class="cfg-row${changed ? ' cfg-changed' : ''}"><div class="cfg-what"><code>${escape(k.key)}</code><span class="muted">${escape(k.about)}</span>` +
-        `${added ? `<span class="muted">adds ${added.map((x) => `<code>${escape(x)}</code>`).join(', ')}</span>` : ''}</div>` +
-        `<label class="${k.type === 'boolean' ? 'ts-toggle ' : ''}cfg-value">${configInput(k, value)}</label>` +
+    for (const t of $('cfg-tabs').querySelectorAll('[data-tab]')) t.setAttribute('aria-pressed', String(t.dataset.tab === (cfgYaml ? 'yaml' : cfgTab)));
+    $('cfg-yaml').hidden = !cfgYaml;
+    $('cfg-list').hidden = cfgYaml;
+    if (cfgYaml) { if (document.activeElement !== $('cfg-yaml')) $('cfg-yaml').value = configYamlOf(configSet); }
+    // the filters as chips under the search: what the keys of this tab can be narrowed by
+    const tabKeys = keys.filter((k) => (cfgTab === 'plugins') === !!pluginOf(k));
+    const groups = [...new Set(tabKeys.map(groupOf_))], affects = [...new Set(tabKeys.flatMap((k) => k.affects))];
+    $('cfg-filters').innerHTML = ['@changed', ...affects.map((a) => `@affects:${a}`), ...groups.map((g) => `@group:${g}`)]
+      .map((f) => `<button type="button" class="lib-kind" data-filter="${escape(f)}" aria-pressed="${q.split(/\s+/).includes(f)}">${escape(f)}</button>`).join('');
+    const row = (k) => {
+      const added = configSet[`${k.key}+`], changed = k.key in configSet || !!added;
+      const rejected = configRejected && k.key in configRejected.set && !(k.key in configSet);
+      const value = rejected ? configRejected.set[k.key] : k.key in configSet ? configSet[k.key] : k.def;
+      const badges = k.affects.map((a) => `<span class="cfg-aff" title="changing it changes the ${escape(a)}">${escape(a)}</span>`).join('');
+      const example = k.example == null ? '' : `<details class="cfg-example"><summary>example</summary><pre><code>${escape(typeof k.example === 'string' ? k.example : configYamlOf({ [k.key]: k.example }))}</code></pre></details>`;
+      return `<li class="cfg-row${changed ? ' cfg-changed' : ''}${rejected ? ' cfg-bad' : ''}"><div class="cfg-what"${rejected ? ` data-why="not applied: ${escape(configRejected.why)}"` : ''}><span><code>${escape(k.key)}</code>${badges}</span><span class="muted">${escape(k.about)}</span>` +
+        `${added ? `<span class="muted">adds ${added.map((x) => `<code>${escape(x)}</code>`).join(', ')}</span>` : ''}${example}</div>` +
+        (k.type === 'array' ? `<div class="cfg-value">${configList(k, value)}</div>` : `<label class="${k.type === 'boolean' ? 'ts-toggle ' : ''}cfg-value">${configInput(k, value)}</label>`) +
         `<button type="button" class="ghost small" data-reset="${escape(k.key)}"${changed ? '' : ' hidden'} title="back to the default: ${escape(yamlValue(k.def ?? ''))}">Reset</button></li>`;
-    }).join('') || '<li class="muted">No setting matches.</li>';
+    };
+    const changedIn = (ks) => ks.filter((k) => k.key in configSet || `${k.key}+` in configSet).length;
+    const hits = tabKeys.filter((k) => configMatch(k, q));
+    const section = (id, head, about, ks, open) => `<li class="cfg-group"><details${open ? ' open' : ''} data-group="${escape(id)}"><summary><b>${escape(head)}</b>` +
+      `${about ? ` <span class="muted">${escape(about)}</span>` : ''} <span class="muted">${plural(ks.length, 'key')}${changedIn(ks) ? `, ${changedIn(ks)} changed` : ''}</span></summary><ul>${ks.map(row).join('')}</ul></details></li>`;
+    $('cfg-list').innerHTML = (cfgTab === 'plugins'
+      ? PLUGINS.map((p) => [p, hits.filter((k) => pluginOf(k) === p.name)]).filter(([p, ks]) => ks.length || (!q && p.about)).map(([p, ks]) => section(p.name, p.name, p.about, ks, !!q || changedIn(ks) > 0))
+      : groups.map((g) => [g, hits.filter((k) => groupOf_(k) === g)]).filter(([, ks]) => ks.length).map(([g, ks]) => section(g, g, '', ks, !!q || changedIn(ks) > 0 || cfgOpen.has(g)))).join('')
+      || '<li class="muted">No setting matches.</li>';
     const n = Object.keys(configSet).length;
     $('cfg-total').textContent = n ? `${plural(n, 'setting')} changed` : 'every setting at its default';
   }
@@ -1477,180 +1571,77 @@
   const configApply = (set) => { configKeep(set); configShow(); clearTimeout(configTimer); configTimer = setTimeout(() => restart(), 600); };
   $('cfg-open').onclick = () => { $('play-config').showModal(); configShow(); $('cfg-search').focus(); };
   $('cfg-search').oninput = configShow;
+  const cfgOpen = new Set();
+  $('cfg-list').addEventListener('toggle', (e) => { const g = e.target.dataset?.group; if (g) { if (e.target.open) cfgOpen.add(g); else cfgOpen.delete(g); } }, true);
+  $('cfg-tabs').addEventListener('click', (e) => { const t = e.target.closest('[data-tab]'); if (!t) return; cfgYaml = t.dataset.tab === 'yaml'; if (!cfgYaml) cfgTab = t.dataset.tab; configShow(); });
+  $('cfg-filters').addEventListener('click', (e) => {
+    const f = e.target.closest('[data-filter]')?.dataset.filter, s = $('cfg-search');
+    if (!f) return;
+    const words = s.value.trim().split(/\s+/).filter(Boolean);
+    s.value = (words.includes(f) ? words.filter((w) => w !== f) : [...words, f]).join(' ');
+    configShow();
+  });
+  // the YAML view: the whole of the changed settings as satex.yaml, read back and checked as it is typed
+  let yamlTimer = 0;
+  $('cfg-yaml').addEventListener('input', () => {
+    clearTimeout(yamlTimer);
+    yamlTimer = setTimeout(async () => {
+      const box = $('cfg-yaml'), set = configFromYaml(box.value), why = set ? await configRefused(set) : 'it does not read as `key: value` lines';
+      box.classList.toggle('cfg-yaml-bad', !!why);
+      $('cfg-total').textContent = why ? `not applied: ${why}` : '';
+      if (!why && !sameValue(set, configSet)) configApply(set);
+    }, 500);
+  });
+  // a list's rows: an item added or removed, any field changed, is the key's new value
+  $('cfg-list').addEventListener('click', (e) => {
+    const list = e.target.closest('[data-list]');
+    if (!list) return;
+    if (e.target.closest('[data-add]')) { const li = document.createElement('li'); li.dataset.item = 'new'; li.innerHTML = list.querySelector('li[data-item]')?.innerHTML.replace(/value="[^"]*"/g, 'value=""') ?? '<input type="text" spellcheck="false"><button type="button" class="ghost small" data-drop aria-label="remove">×</button>'; list.lastElementChild.before(li); li.querySelector('input')?.focus(); }
+    else if (e.target.closest('[data-drop]')) { e.target.closest('li').remove(); list.dispatchEvent(new Event('change', { bubbles: true })); }
+  });
   $('cfg-list').addEventListener('change', async (e) => {
     const el = e.target.closest('[data-cfg]'), k = el && (await configLoad()).find((x) => x.key === el.dataset.cfg);
     if (!k) return;
-    let value = el.type === 'checkbox' ? el.checked : el.value;
-    if (['integer', 'number'].includes(k.type)) value = Number(value);
-    else if (['array', 'object'].includes(k.type)) { try { value = JSON.parse(value); } catch { el.setCustomValidity('JSON: ["a", "b"]'); el.reportValidity(); return; } }
+    const listOf = (ul) => [...ul.querySelectorAll('li[data-item]')].map((li) => {
+      const fields = [...li.querySelectorAll('[data-field]')];
+      if (fields.length) return Object.fromEntries(fields.filter((f) => f.value.trim()).map((f) => [f.dataset.field, f.value.trim()]));
+      const v = li.querySelector('input').value.trim();
+      try { return JSON.parse(v); } catch { return v; }
+    }).filter((v) => v !== '' && !(typeof v === 'object' && !Object.keys(v).length));
+    let value = el.dataset.list ? listOf(el) : el.type === 'checkbox' ? el.checked : el.value;
+    el.setCustomValidity?.('');
+    el.closest('.cfg-row').classList.remove('cfg-bad');
+    const refuse = (why) => { el.setCustomValidity?.(why); el.reportValidity?.(); el.closest('.cfg-row').classList.add('cfg-bad'); el.closest('.cfg-row').querySelector('.cfg-what').dataset.why = why; };
+    if (['integer', 'number'].includes(k.type)) {
+      value = Number(value);
+      if (!Number.isFinite(value) || (k.type === 'integer' && !Number.isInteger(value))) return refuse(`a${k.type === 'integer' ? 'n integer' : ' number'}`);
+      if (k.min != null && value < k.min) return refuse(`at least ${k.min}`);
+      if (k.max != null && value > k.max) return refuse(`at most ${k.max}`);
+    } else if (k.type === 'object' && !el.dataset.list) { try { value = JSON.parse(value); } catch { return refuse('JSON: {"key": "value"}'); } }
     const { [k.key]: _, ...rest } = configSet;
-    configApply(sameValue(value, k.def) ? rest : { ...rest, [k.key]: value });
+    const next = sameValue(value, k.def) ? rest : { ...rest, [k.key]: value };
+    // a value satex refuses is shown, never applied: the language server would not start with it
+    const why = await configRefused(next);
+    if (why) return refuse(why);
+    configApply(next);
   });
   $('cfg-list').addEventListener('click', (e) => { const b = e.target.closest('[data-reset]'); if (b) { const { [b.dataset.reset]: _, [`${b.dataset.reset}+`]: __, ...rest } = configSet; configApply(rest); } });
   $('cfg-reset').onclick = () => configApply({});
 
   // ---------------------------------------------------------------- draw: a symbol drawn, the commands that set it
 
-  // The candidates (build.py `symbols`) are unicode-math's table and the icon packages' commands, each
-  // drawn in the font that sets it. The drawing and each glyph are cut to their ink, scaled into one
-  // square with their aspect kept, and reduced to their outline: a filled icon and a drawn outline
-  // compare alike. Two outlines are as far apart as the mean distance of each one's points to the
-  // other (chamfer distance), plus how much their aspects and their numbers of pieces differ.
-  const DRAW = { side: 32, glyph: 96, pen: 9, shown: 14, foreign: 1.12, aspect: 0.6, pieces: 0.5 };
-  const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
-  let drawTable = null, drawn = false;
-  const drawFilter = { from: 'loaded', kind: '', mode: '' };
-  /** The ink of `canvas` as [outline points, distance map, aspect, pieces], or null without ink. */
-  function features(canvas) {
-    const { width: w, height: h } = canvas, data = canvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
-    let x0 = w, y0 = h, x1 = -1, y1 = -1;
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (data[(y * w + x) * 4 + 3] > 40) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
-    if (x1 < 0) return null;
-    const n = DRAW.side, small = Object.assign(document.createElement('canvas'), { width: n, height: n }), c = small.getContext('2d', { willReadFrequently: true });
-    const bw = x1 - x0 + 1, bh = y1 - y0 + 1, k = (n - 4) / Math.max(bw, bh);
-    c.drawImage(canvas, x0, y0, bw, bh, (n - bw * k) / 2, (n - bh * k) / 2, bw * k, bh * k);
-    const px = c.getImageData(0, 0, n, n).data, ink = new Uint8Array(n * n);
-    for (let i = 0; i < n * n; i++) ink[i] = px[i * 4 + 3] > 64 ? 1 : 0;
-    const on = (x, y) => x >= 0 && y >= 0 && x < n && y < n && ink[y * n + x];
-    const points = [];
-    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (on(x, y) && !(on(x - 1, y) && on(x + 1, y) && on(x, y - 1) && on(x, y + 1))) points.push(y * n + x);
-    return points.length ? [Uint16Array.from(points), distances(points, n), Math.log(bw / bh), pieces(ink, n)] : null;
-  }
-  /** Each cell's distance to the nearest point, by two chamfer passes (3 along, 4 across). */
-  function distances(points, n) {
-    const d = new Uint16Array(n * n).fill(9999);
-    for (const p of points) d[p] = 0;
-    const relax = (i, j, cost) => { if (d[j] + cost < d[i]) d[i] = d[j] + cost; };
-    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-      const i = y * n + x;
-      if (x > 0) relax(i, i - 1, 3);
-      if (y > 0) { relax(i, i - n, 3); if (x > 0) relax(i, i - n - 1, 4); if (x < n - 1) relax(i, i - n + 1, 4); }
-    }
-    for (let y = n - 1; y >= 0; y--) for (let x = n - 1; x >= 0; x--) {
-      const i = y * n + x;
-      if (x < n - 1) relax(i, i + 1, 3);
-      if (y < n - 1) { relax(i, i + n, 3); if (x < n - 1) relax(i, i + n + 1, 4); if (x > 0) relax(i, i + n - 1, 4); }
-    }
-    return d;
-  }
-  /** The ink's connected pieces: an `x` with two dots has three. */
-  function pieces(ink, n) {
-    const seen = new Uint8Array(n * n);
-    let count = 0;
-    for (let s = 0; s < n * n; s++) {
-      if (!ink[s] || seen[s]) continue;
-      count++;
-      const stack = [s];
-      seen[s] = 1;
-      while (stack.length) {
-        const i = stack.pop(), x = i % n, y = (i - x) / n;
-        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-          const u = x + dx, v = y + dy, j = v * n + u;
-          if (u >= 0 && v >= 0 && u < n && v < n && ink[j] && !seen[j]) { seen[j] = 1; stack.push(j); }
-        }
-      }
-    }
-    return count;
-  }
-  /** How far apart two shapes' features are: 0 for the same outline. */
-  function apart([pa, da, aa, ka], [pb, db, ab, kb]) {
-    let ab_ = 0, ba = 0;
-    for (const p of pa) ab_ += db[p];
-    for (const p of pb) ba += da[p];
-    return (ab_ / pa.length + ba / pb.length) / 3 + DRAW.aspect * Math.abs(aa - ab) + DRAW.pieces * Math.min(3, Math.abs(ka - kb));
-  }
-  /** The symbol table, its fonts loaded only once a candidate drawn in them is wanted. */
-  async function symbolsLoad() {
-    drawTable ??= fetch(`${base}${manifest.symbols}`).then((r) => r.json()).then(({ fonts, rows }) => ({
-      fonts: fonts.map((url, i) => ({ family: `satex-sym-${i}`, url, ready: null })),
-      rows: rows.map(([code, name, cls, about, font, pkg]) => ({ ch: String.fromCodePoint(code), code, name, cls, about, font, pkg, f: undefined })),
-    })).catch(() => ({ fonts: [], rows: [] }));
-    return drawTable;
-  }
-  /** A font's glyphs drawn and measured, once: a character the font has no glyph for is left out. */
-  function fontReady(table, i) {
-    const font = table.fonts[i];
-    font.ready ??= (async () => {
-      const face = new FontFace(font.family, `url(${base}${font.url})`);
-      document.fonts.add(await face.load());
-      const g = Object.assign(document.createElement('canvas'), { width: DRAW.glyph, height: DRAW.glyph }), c = g.getContext('2d', { willReadFrequently: true });
-      c.font = `${DRAW.glyph * 0.7}px "${font.family}"`;
-      c.textAlign = 'center';
-      c.textBaseline = 'middle';
-      const draw = (ch) => { c.clearRect(0, 0, g.width, g.height); c.fillText(ch, g.width / 2, g.height / 2); return features(g); };
-      for (const s of table.rows) if (s.font === i) s.f = draw(s.ch);
-    })().catch(() => { for (const s of table.rows) if (s.font === i) s.f = null; });
-    return font.ready;
-  }
-  const drawKind = (s) => (s.cls === 'icon' ? 'symbol' : s.cls === 'alpha' ? 'letter' : 'symbol');
-  const drawMode = (s) => (s.cls === 'icon' ? 'text' : 'math');
-  async function drawMatch() {
-    const list = $('draw-list'), f = features(pad);
-    if (!f) { list.innerHTML = ''; return; }
-    const [table, names] = await Promise.all([symbolsLoad(), namesInForce(true)]);
-    const force = new Set(names.map((r) => r.name)), loaded = new Set(names.map(libSource));
-    const wanted = table.rows.filter((s) => (drawFilter.from === 'all' || force.has(s.name) || loaded.has(s.pkg))
-      && (!drawFilter.kind || drawKind(s) === drawFilter.kind) && (!drawFilter.mode || drawMode(s) === drawFilter.mode));
-    if (!table.rows.length) { list.innerHTML = '<li class="muted">This build has no symbol table.</li>'; return; }
-    await Promise.all([...new Set(wanted.map((s) => s.font))].map((i) => fontReady(table, i)));
-    const best = wanted.filter((s) => s.f).map((s) => [s, apart(f, s.f) * (force.has(s.name) ? 1 : DRAW.foreign)]).sort((a, b) => a[1] - b[1]);
-    const seen = new Set(), rows = [];
-    for (const [s] of best) {
-      if (rows.length >= DRAW.shown) break;
-      const key = `${s.font}|${s.ch}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const all = wanted.filter((x) => x.font === s.font && x.ch === s.ch).sort((a, b) => force.has(b.name) - force.has(a.name));
-      const pkgs = [...new Set(all.map((x) => x.pkg))];
-      const have = all.some((x) => force.has(x.name) || loaded.has(x.pkg));
-      rows.push(`<li><span class="draw-glyph" style="font-family: '${table.fonts[s.font].family}'">${escape(s.ch)}</span><span class="draw-names">${all.map((x) => force.has(x.name)
-        ? `<code class="cs-ref" data-cs="${escape(x.name)}" tabindex="0">${escape(x.name)}</code>`
-        : `<code class="draw-off" data-sym="${table.rows.indexOf(x)}" tabindex="0">${escape(x.name)}</code>`).join(' ')}</span>` +
-        `<span class="lib-pkg${have ? '' : ' draw-off'}" title="${have ? 'in force in this document' : 'not loaded in this document'}">${escape(pkgs.join(', '))}</span>` +
-        `<button type="button" class="small ghost draw-put" data-name="${escape(all[0].name)}" title="insert ${escape(all[0].name)} at the cursor">Insert</button></li>`);
-    }
-    list.innerHTML = rows.join('') || `<li class="muted">${drawFilter.from === 'loaded' ? 'No symbol of this document matches: try every package.' : 'No symbol matches.'}</li>`;
-  }
-  /** A name not in force: its card from the table, with the package that defines it. */
-  $('draw-list').addEventListener('mouseover', async (e) => {
-    const el = e.target.closest('[data-sym]');
-    if (!el) return;
-    const s = (await symbolsLoad()).rows[+el.dataset.sym];
-    const does = [s.about, `U+${s.code.toString(16).toUpperCase().padStart(4, '0')}`].filter(Boolean).join(' · ');
-    tips.card.show(el, cards.explain({ name: s.name, tag: s.cls === 'icon' ? 'icon' : `math ${s.cls}`, does, package: s.pkg }));
-  });
-  $('draw-list').addEventListener('mouseout', (e) => { if (e.target.closest('[data-sym]')) tips.card.hide(150); });
-  {
-    const clear = () => { pen.clearRect(0, 0, pad.width, pad.height); drawn = false; $('draw-list').innerHTML = ''; };
-    let last = null;
-    const at = (e) => { const b = pad.getBoundingClientRect(); return [(e.clientX - b.left) * pad.width / b.width, (e.clientY - b.top) * pad.height / b.height]; };
-    pad.addEventListener('pointerdown', (e) => { pad.setPointerCapture(e.pointerId); last = at(e); drawn = true; });
-    pad.addEventListener('pointermove', (e) => {
-      if (!last) return;
-      const p = at(e);
-      Object.assign(pen, { lineWidth: DRAW.pen, lineCap: 'round', lineJoin: 'round', strokeStyle: getComputedStyle(pad).color });
-      pen.beginPath(); pen.moveTo(...last); pen.lineTo(...p); pen.stroke();
-      last = p;
-    });
-    pad.addEventListener('pointerup', () => { last = null; if (drawn) drawMatch(); });
-    $('draw-clear').onclick = clear;
-    $('draw-open').onclick = () => { $('play-draw').showModal(); symbolsLoad(); };
-    $('draw-filters').addEventListener('click', (e) => {
-      const b = e.target.closest('[data-f]');
-      if (!b) return;
-      drawFilter[b.dataset.f] = b.dataset.v;
-      for (const x of $('draw-filters').querySelectorAll(`[data-f="${b.dataset.f}"]`)) x.setAttribute('aria-pressed', String(x === b));
-      if (drawn) drawMatch();
-    });
-    $('draw-list').addEventListener('click', (e) => {
-      const b = e.target.closest('.draw-put');
-      if (!b) return;
+  // draw.js matches; the playground gives it the names in force and inserts what is picked
+  const drawPicker = self.satexDraw({
+    root: $('play-draw'), base, symbols: manifest.symbols,
+    inForce: async () => (await namesInForce(true)).map((r) => [r.name, libSource(r)]),
+    pick: (name) => {
       const at = editor.position();
-      editor.apply([{ range: { start: at, end: at }, newText: b.dataset.name }]);
+      editor.apply([{ range: { start: at, end: at }, newText: name }]);
       $('play-draw').close();
-      toast(`${b.dataset.name} inserted`);
-    });
-  }
+      toast(`${name} inserted`);
+    },
+  });
+  $('draw-open').onclick = () => { $('play-draw').showModal(); drawPicker.load(); };
 
   // ---------------------------------------------------------------- trace: how one call expands
 
@@ -2373,6 +2364,8 @@
     return true;
   }
   /** Starts the language server again: another kernel, project or root. */
+  /** How long the language server may take to answer its first message. */
+  const START_MS = 90000;
   async function restart() {
     following = true;
     sync();
@@ -2385,7 +2378,21 @@
     pending.clear();
     worker.postMessage({ type: 'reset', args: [...flags(), '-f', state.root], cwd: state.dir });
     busy('Starting', 'Starting the language server…');
-    await lsp('initialize', { processId: null, rootUri: `file://${state.dir}`, capabilities: {} });
+    try { localStorage.setItem('satex-start', JSON.stringify(configSet)); } catch {}
+    // a server that does not answer, or stops, never leaves the page starting: it says so and offers another try
+    const started = await Promise.race([lsp('initialize', { processId: null, rootUri: `file://${state.dir}`, capabilities: {} }),
+      new Promise((done) => setTimeout(() => done(null), START_MS))]);
+    if (!started) {
+      following = false;
+      idle();
+      status.innerHTML = `The language server did not start${lspStatus.textContent ? `: ${escape(lspStatus.textContent)}` : ''}. <button type="button" class="small ghost" id="play-retry">Try again</button>` +
+        (Object.keys(configSet).length ? ` <button type="button" class="small ghost" id="play-defaults">Start with the default settings</button>` : '');
+      status.dataset.done = 'error';
+      $('play-retry').onclick = () => restart();
+      $('play-defaults')?.addEventListener('click', () => { configKeep({}); restart(); });
+      return;
+    }
+    try { localStorage.removeItem('satex-start'); } catch {}
     lsp('initialized', {}, true);
     open(state.root);
     open(state.file);
@@ -2825,12 +2832,15 @@
       return rows.length ? `<h4>${title}</h4>${rows.map((r) => `<div class="rp-bar" style="--p:${(100 * r[1] / most).toFixed(1)}%"${r[3] ?? ''}><span>${label(r)}</span><span>${value(r)}</span></div>`).join('')}` : '';
     };
     const top = [...lines].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([l, n]) => [l, n, 0, ` data-line="${l}" title="go to line ${l}"`]);
-    $('t-heat').innerHTML = bars(top, `busiest lines of ${escape(file.split('/').pop())}`, ([l]) => `line ${l}`, ([, n]) => `${short(n)} tokens`);
+    $('t-heat').innerHTML = (top.length ? `<label class="ts-toggle t-heatgutter"><span>heat in the gutter</span><input type="checkbox" role="switch"${heatShown ? ' checked' : ''}></label>` : '') +
+      bars(top, `busiest lines of ${escape(file.split('/').pop())}`, ([l]) => `line ${l}`, ([, n]) => `${short(n)} tokens`);
     const rules = texts.map((t) => t.match(/^rule (\S+) (\d+) (\d+)$/)).filter(Boolean).map(([, code, us, n]) => [code, +us, +n]);
     $('t-rules').innerHTML = bars(rules.slice(0, 8), `lint rules: ${secs(rules.reduce((s, r) => s + r[1], 0) / 1000)} in all`,
       ([code]) => escape(code), ([, us, n]) => `${secs(us / 1000)} · ${plural(n, 'finding')}`);
   }
-  const heatDraw = () => editor?.heat?.(heat && heat.file.endsWith(`/${state.file}`) ? heat.lines : null);
+  let heatShown = false;
+  const heatDraw = () => editor?.heat?.(heatShown && heat && heat.file.endsWith(`/${state.file}`) ? heat.lines : null);
+  $('t-heat').addEventListener('change', (e) => { if (e.target.closest('.t-heatgutter')) { heatShown = e.target.checked; heatDraw(); } });
   $('t-heat').addEventListener('click', (e) => { const b = e.target.closest('[data-line]'); if (b) { const at = { line: +b.dataset.line - 1, character: 0 }; editor.focus({ start: at, end: at }); } });
   /** The cache entries the worker keeps (worker.js), each with what it stands for; dropping one
    * restarts the language server, so the next check analyses that part again. */
@@ -3158,7 +3168,9 @@
   }
   /** A shared project: its settings, kernel, files, open file, command and cursor. */
   async function openLink(link) {
-    if (link.s) configKeep(link.s);
+    const refused = link.s && await configRefused(link.s);
+    if (refused) toast(`The link's settings were not applied: ${refused}`);
+    else if (link.s) configKeep(link.s);
     const k = manifest.kernels.findIndex((x) => x.id === link.k);
     if (k >= 0 && k !== state.kernel) { manualKernel = true; await kernel(k); }
     if (!link.x) {
@@ -3318,6 +3330,15 @@
     state.texts = { ...sampleTexts, ...(link?.x ? link.p : {}) };
     const k = manifest.kernels.findIndex((x) => x.id === link?.k);
     if (link?.s) configKeep(link.s);
+    // stored settings satex refuses, or with which the last start failed, are set aside: the page starts with the defaults
+    let failed = null;
+    try { failed = localStorage.getItem('satex-start'); } catch {}
+    const refused = await configRefused(configSet) ?? (failed === JSON.stringify(configSet) && Object.keys(configSet).length ? 'the last start failed with them' : null);
+    if (refused) {
+      configRejected = { set: configSet, why: refused };
+      configKeep({});
+      toast(`Reset ${plural(Object.keys(configRejected.set).length, 'setting')} (${Object.entries(configRejected.set).map(([k, v]) => `${k}: ${yamlValue(v)}`).join(', ')}): ${refused}. Settings shows them.`);
+    }
     if (k >= 0) { manualKernel = true; if (k > 0) await kernel(k); }
     kernelBox.value = String(state.kernel);
     // packages.txt's first section, fetched while the editor loads
