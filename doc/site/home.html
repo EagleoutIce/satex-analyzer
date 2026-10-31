@@ -54,7 +54,7 @@ a | b \gdef\Maybe{}</code></pre>
     <tbody>
       <tr><th scope="row">Source of its knowledge</th><td class="yes">executing the code (abstract interpretation)</td><td>the text, expl3 naming conventions, flow analysis</td><td>the text and a command database</td><td>package sources and hand-written tag files</td><td>regular expressions</td></tr>
       <tr><th scope="row">Names made at run time (<code>\csname</code>, variants, keys, …)</th><td class="yes">seen as the run makes them</td><td class="no">not seen<sup><a href="#ref-dynamic">1</a></sup></td><td class="no">not seen</td><td class="no">not seen</td><td class="no">not seen</td></tr>
-      <tr><th scope="row">Languages</th><td class="yes">expl3, LaTeX2e and plain TeX in one run</td><td>expl3</td><td>LaTeX</td><td>LaTeX, ConTeXt, plain TeX, Texinfo</td><td>LaTeX</td></tr>
+      <tr><th scope="row">Languages</th><td class="yes">expl3, LaTeX2e and plain TeX in one run, on pdfTeX, XeTeX or LuaTeX (with its Lua). ConTeXt and Texinfo are experimental</td><td>expl3</td><td>LaTeX</td><td>LaTeX, ConTeXt, plain TeX, Texinfo</td><td>LaTeX</td></tr>
       <tr><th scope="row">Values (catcodes, registers, lengths, token lists, …)</th><td class="yes">tracked, unknown ones as typed ranges</td><td class="no">—</td><td class="no">—</td><td class="no">—</td><td class="no">—</td></tr>
       <tr><th scope="row">Conditionals it cannot decide</th><td class="yes">follows both arms and joins them</td><td>marks edges as maybe</td><td>—</td><td>—</td><td>—</td></tr>
       <tr><th scope="row">Reruns (<code>.aux</code>, <code>.toc</code>, <code>.bbl</code>, …)</th><td class="yes">repeats the runs like latexmk, in memory</td><td>—</td><td>reads the files a build left</td><td>—</td><td>—</td></tr>
@@ -63,7 +63,7 @@ a | b \gdef\Maybe{}</code></pre>
       <tr><th scope="row">Build and PDF</th><td>builds with latexmk and explains the log</td><td>—</td><td class="yes">build, forward and inverse search</td><td>—</td><td>—</td></tr>
       <tr><th scope="row">Fixes</th><td class="yes">quick fixes, e.g. load the package that defines a name</td><td>—</td><td>formatting (latexindent)</td><td>—</td><td>—</td></tr>
       <tr><th scope="row">Scope</th><td class="no">the files a document loads</td><td class="yes">all of TeX Live, with a public report</td><td class="yes">any file</td><td class="yes">any file</td><td class="yes">any file</td></tr>
-      <tr><th scope="row">Speed</th><td class="no">seconds with warm caches, a long thesis can take minutes</td><td class="yes">fast</td><td class="yes">fast</td><td class="yes">fast</td><td class="yes">fast</td></tr>
+      <tr><th scope="row">Speed</th><td class="no">seconds per document with warm caches, a long thesis can take minutes</td><td class="yes">fast: reads the text, runs nothing</td><td class="yes">as you type: reads the text</td><td class="yes">as you type: reads the text</td><td class="yes">milliseconds: line by line</td></tr>
     </tbody>
   </table></div>
   <ol class="refs">
