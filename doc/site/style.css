@@ -1056,3 +1056,4 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .draw-bmp:hover { background: currentColor; }
 .claim-cc code { letter-spacing: .05em; } .claim-cc .cc { display: inline-flex; flex-direction: column; align-items: center; line-height: 1.1; margin: 0 .04em; }
 .claim-cc .cc sub { font-size: .6rem; color: var(--muted); }
+.tr-bar { position: sticky; top: 0; z-index: 2; background: var(--panel); padding: .3rem 0; } #trace-step { font-variant-numeric: tabular-nums; min-width: 9ch; }
