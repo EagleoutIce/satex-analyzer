@@ -912,7 +912,7 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .draw-more { grid-column: 2 / -1; margin: 0 0 .3rem; padding: 0; list-style: none; font-size: .76rem; } .draw-more li { display: flex; gap: .5rem; align-items: center; } .draw-more .draw-acts { margin-left: auto; }
 .draw-acts { display: flex; gap: .25rem; } .draw-acts .pill { padding: .15rem .35rem; } .draw-acts .pill svg { width: .85rem; height: .85rem; }
 .draw-put.done svg { display: none; } .draw-put.done::before { content: "✓"; color: var(--safe); }
-.draw-glyph { transition: transform .15s var(--ease); transform-origin: left center; } .draw-glyph:hover { transform: scale(2.4); position: relative; z-index: 3; background: var(--panel); color: var(--fg); border-radius: 4px; }
+.draw-glyph { transition: transform .15s var(--ease); transform-origin: left top; } .draw-glyph:hover { transform: scale(2.4); position: relative; z-index: 3; background: var(--panel); color: var(--fg); border-radius: 4px; }
 .draw-row-more { text-align: center; padding: .4rem; list-style: none; }
 
 .draw-glyph { flex: none; width: 2rem; text-align: center; font-size: 1.4rem; line-height: 1; }
@@ -1054,7 +1054,8 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 
 /* Draw alone: tools and search on top, the pad left and the results right at every width */
 .draw-top { display: flex; gap: .5rem; align-items: center; margin: .5rem 1rem 0; } .draw-top .search { flex: 1 1 auto; }
-.draw-top .search input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.draw-top .search input { padding: .4rem .9rem .4rem 2rem; border: 1px solid var(--border); border-radius: 999px; background: var(--sunk); color: var(--fg); font-size: .9rem; transition: border-color var(--quick), background-color var(--quick); }
+.draw-top .search input:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); background: var(--panel); }
 .draw-box { flex-wrap: nowrap; } .draw-pad { flex: none; width: min(16rem, 42vw); } #draw-pad { width: 100%; }
 .draw-results { flex: 1 1 0; } .draw-solo .draw-box > .draw-results { max-height: none; }
 .draw-pad .draw-meta { flex: none; margin: 0; }
@@ -1064,3 +1065,10 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .tr-bar { position: sticky; top: 0; z-index: 2; background: var(--panel); padding: .3rem 0; } #trace-step { font-variant-numeric: tabular-nums; min-width: 9ch; }
 .tip-more > summary { cursor: pointer; color: var(--muted); font-size: .78rem; margin: .3rem 0 0; }
 .loc-file { color: var(--muted); font-weight: 400; margin-right: .1rem; }
+.cm-swatch { display: inline-block; width: .8em; height: .8em; margin: 0 .2em -.05em 0; border: 1px solid var(--border); border-radius: 2px; vertical-align: baseline; }
+/* completion rows: the label, then what it draws in a column of its own, then where it comes from */
+.cm-tooltip-autocomplete ul li { display: flex; align-items: center; gap: .6em; }
+.cm-tooltip-autocomplete .cm-completionDetail { margin-left: auto; font-style: normal; font-size: .85em; color: var(--muted); display: inline-flex; align-items: center; gap: .6em; }
+.cm-preview { flex: none; width: 3.4em; height: 1.1em; object-fit: contain; object-position: left center; filter: var(--preview-filter, none); }
+:root[data-theme=dark] .cm-preview { --preview-filter: invert(.9); }
+.draw-px { flex: none; font: 600 .6rem ui-monospace, Menlo, monospace; color: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 0 .2rem; margin-left: -.3rem; } .draw-total { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .draw-top .draw-filters { margin: 0; flex-wrap: nowrap; gap: .4rem; } .draw-top { flex-wrap: wrap; }

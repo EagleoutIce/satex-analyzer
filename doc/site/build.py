@@ -1070,9 +1070,12 @@ def symbols(satex, project, env):
     if table and math_font:
         found = re.findall(r'\\UnicodeMathSymbol\{"([0-9A-Fa-f]+)\}\{(\\[A-Za-z]+)\s*\}\{\\math(\w+)\}\{([^}]*)\}', Path(table).read_text())
         math = [[int(c, 16), name, cls, about] for c, name, cls, about in found]
-        # unicode-math's upright Greek (`\mupalpha`) is what the kernel's `\alpha` names
+        # the kernel's `\alpha` is math italic, as TeX sets a small Greek letter (`\mitalpha`), a capital
+        # `\Gamma` upright (`\mupGamma`)
         names = {n for _, n, *_ in math}
-        math += [[c, "\\" + n[4:], cls, about] for c, n, cls, about in list(math) if n.startswith("\\mup") and cls == "alpha" and "\\" + n[4:] not in names]
+        italic = {n[4:]: c for c, n, cls, _ in math if n.startswith("\\mit") and cls == "alpha"}
+        math += [[italic.get(n[4:], c) if "small" in about else c, "\\" + n[4:], cls, about] for c, n, cls, about in list(math)
+                 if n.startswith("\\mup") and cls == "alpha" and "\\" + n[4:] not in names]
         request = json.dumps({"file": SAMPLE, "queries": [{"type": "providers", "names": sorted({n for _, n, *_ in math})}]})
         done = subprocess.run([str(satex), "query", "--request", "-", "-f", SAMPLE], input=request, cwd=project, env=env, capture_output=True, text=True)
         try:
@@ -1095,8 +1098,10 @@ def symbols(satex, project, env):
     known, taken, glyphs = {}, {(r[1], r[5]) for r in rows}, {}
     for r in rows:
         known.setdefault(r[1], r)
+    # a cell of these tables shows a sample (an accent on letters, `\arg` as a word), not a symbol to draw
+    sample = re.compile(r"(?<!Musical )Accents|Log-like|Alphabets")
     for name, pkg, kind, title, bitmap in comprehensive(dist):
-        if (name, pkg) in taken:
+        if (name, pkg) in taken or sample.search(title):
             continue
         taken.add((name, pkg))
         base = known.get(name)

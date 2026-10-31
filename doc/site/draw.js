@@ -17,7 +17,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   const $ = (id) => root.querySelector(`#${id}`), escape = esc;
   const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
   let drawTable = null, drawn = false;
-  const drawFilter = { from: 'all', kind: '', mode: '' };
+  const drawFilter = { from: 'all', kind: '', mode: '', shape: '' };
   // the packages in use, as this viewer last chose them; those of DRAW.off (emoji) are left out until chosen
   let chosen = {};
   try { chosen = JSON.parse(localStorage.getItem('satex-draw-pkgs') ?? '{}'); } catch {}
@@ -254,7 +254,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
         })),
       };
     }).then((t) => {
-      totals(t);
+      totals(t, t.rows.length, false);
       send({ type: 'init', fonts: t.fonts.map((f) => ({ family: f.family, url: f.bitmaps ? null : new URL(`${base}${f.url}`, location.href).href })), rows: t.rows.map((s) => [s.font, s.ch, s.bm]), bitmaps: t.bitmaps });
       return t;
     }).catch((e) => ({ fonts: [], rows: [], error: String(e?.message ?? e) }));
@@ -297,7 +297,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   function packagesShow(table) {
     const counts = new Map();
     for (const s of table.rows) counts.set(s.pkg, (counts.get(s.pkg) ?? 0) + 1);
-    const list = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    const list = [...counts].sort((a, b) => a[0].localeCompare(b[0], 'en', { sensitivity: 'base' }));
     $('draw-pkgs').textContent = `packages ${list.filter(([p]) => used(p)).length}/${list.length}`;
     $('draw-pkg-list').innerHTML = `<div class="draw-pkg-all"><button type="button" class="ghost small" data-all="1">all</button><button type="button" class="ghost small" data-all="0">none</button></div>` +
       list.map(([p, n]) => `<label><input type="checkbox" data-pkg="${escape(p)}"${used(p) ? ' checked' : ''}> ${escape(p)} <b>${n.toLocaleString('en')}</b></label>`).join('');
@@ -307,10 +307,12 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   const total = $('draw-total');
   const metaShow = () => { total.textContent = [...meta, took].filter(Boolean).join(' · '); };
   /** The table's size, and how many symbols the filters leave. */
-  function totals(table, shown = null) {
+  function totals(table, shown, searched) {
     packagesShow(table);
-    const pkgs = new Set(table.rows.map((s) => s.pkg)).size;
-    meta = [`${table.rows.length.toLocaleString('en')} symbols from ${pkgs} packages`, shown == null ? '' : `${shown.toLocaleString('en')} ${shown === 1 ? 'match' : 'matches'}`];
+    const pkgs = new Set(table.rows.map((s) => s.pkg)), on = [...pkgs].filter(used).length;
+    const short = (n) => (n >= 1e4 ? `${Math.round(n / 1e3)}k` : n.toLocaleString('en'));
+    const of = shown < table.rows.length ? `${short(shown)} of ${short(table.rows.length)}` : short(table.rows.length);
+    meta = [`${of} symbols · ${on < pkgs.size ? `${on} of ${pkgs.size}` : pkgs.size} packages`, searched ? `${short(shown)} ${shown === 1 ? 'match' : 'matches'}` : ''];
     metaShow();
   }
   let matching = 0, started = 0, limit = DRAW.shown, current = null, result = null;
@@ -320,7 +322,6 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     const mine = fresh ? ++matching : matching, list = $('draw-list'), f = features(pad);
     const words = $('draw-search').value.trim().toLowerCase().replace(/^\\/, '').split(/[\s\-_]+/).filter(Boolean);
     if (fresh) { started = performance.now(); limit = DRAW.more; }
-    if (!f && !words.length) { current = result = null; list.innerHTML = ''; took = ''; metaShow(); return; }
     const [table, names] = await Promise.all([symbolsLoad(), inForce()]);
     if (mine !== matching) return;
     if (!table.rows.length) { list.innerHTML = `<li class="muted">The symbols did not load${table.error ? `: ${escape(table.error)}` : ''}. Reload the page to try again.</li>`; return; }
@@ -331,12 +332,14 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       if (drawFilter.from !== 'all' && !force.has(s.name)) return false;
       if (!used(s.pkg)) return false;
       if ((drawFilter.kind && drawKind(s) !== drawFilter.kind) || (drawFilter.mode && drawMode(s) !== drawFilter.mode)) return false;
-      const r = words.length ? named(s, words) ?? (packageNamed(s.pkg, words) ? 3 : null) : 0;
+      if (drawFilter.shape && (drawFilter.shape === 'pixel') !== !!s.bitmap) return false;
+      // nothing drawn or searched: the most relied-on packages' symbols first, to browse
+      const r = words.length ? named(s, words) ?? (packageNamed(s.pkg, words) ? 3 : null) : f ? 0 : 1 - (table.weight?.[s.pkg] ?? 0);
       if (r == null) return false;
       ranked.set(s, r);
       return true;
     });
-    totals(table, words.length ? wanted.length : null);
+    totals(table, wanted.length, words.length > 0);
     current = { id: mine, table, wanted, ranked, source, force, words, f };
     result = null;
     if (!f) { render(); return; }
@@ -378,12 +381,14 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       if (glyphs++ >= limit) continue;
       // one row per glyph however many packages set it: its first command, in force first, with every package
       // that defines that name; other names for the glyph on request
-      const chs = new Set([s, ...twins.get(i) ?? []].map((x) => x.ch)), all = wanted.filter((x) => chs.has(x.ch)).sort((a, b) => force.has(b.name) - force.has(a.name));
+      // the name a document has, else the one of the most relied-on package, leads
+      const chs = new Set([s, ...twins.get(i) ?? []].map((x) => x.ch)), all = wanted.filter((x) => chs.has(x.ch))
+        .sort((a, b) => force.has(b.name) - force.has(a.name) || (table.weight?.[b.pkg] ?? 0) - (table.weight?.[a.pkg] ?? 0));
       const byName = [...Map.groupBy(all, (x) => x.name).values()];
       const [[main, ...same], ...others] = byName, have = force.has(main.name), pkg = from(main);
       const use = `\\usepackage{${pkg.replace(/\.cls$/, '')}}`;
       const act = (title, icon, extra = '', x = main, xp = pkg) => `<button type="button" class="pill draw-put" data-name="${escape(x.name)}" data-pkg="${escape(xp)}"${extra} title="${escape(title)}" aria-label="${escape(title)}">${icon}</button>`;
-      rows.push(`<li class="draw-row">${glyph(s, table)}` +
+      rows.push(`<li class="draw-row">${glyph(s, table)}${s.bitmap ? '<span class="draw-px" title="a picture from the symbol list: no font sets it">px</span>' : ''}` +
         `<span class="draw-what">${chip(main)}<span class="lib-pkg${doc && !have ? ' draw-off' : ''}" title="${doc && !have ? `not loaded: ${escape(use)}` : escape([main, ...same].map(from).join(', '))}">${pkgs([main, ...same])}</span>` +
         (others.length ? `<button type="button" class="draw-more-pill" aria-expanded="false" title="other commands that set it">+${plural(others.length, 'alias')}</button>` : '') + '</span>' +
         `<span class="draw-acts">${act(`${label} ${main.name}`, ICON[label] ?? ICON.Insert)}` +
@@ -459,8 +464,14 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       pop.innerHTML = html;
       pop.togglePopover();
     };
+    // the filters as dropdowns in the bar beside the search: kind, mode, glyph source, then the packages
+    const FILTERS = [['kind', 'all kinds', [['symbol', 'symbols'], ['letter', 'letters']]], ['mode', 'math and text', [['math', 'math'], ['text', 'text']]],
+      ['shape', 'fonts and pictures', [['font', 'set by a font'], ['pixel', 'pictures only']]]];
+    $('draw-filters').innerHTML = FILTERS.map(([f, all, options]) => `<select class="dropdown" data-f="${f}" aria-label="${all}"><option value="">${all}</option>` +
+      options.map(([v, label]) => `<option value="${v}">${label}</option>`).join('') + '</select>').join('');
+    root.querySelector('.draw-top')?.append($('draw-filters'));
     // the package filter: a button with a list under it
-    $('draw-filters').insertAdjacentHTML('beforeend', '<span class="sep"></span><span class="draw-pkg-wrap"><button type="button" class="lib-kind" id="draw-pkgs" aria-expanded="false" aria-controls="draw-pkg-list">packages</button><div id="draw-pkg-list" class="draw-pkg-list" hidden></div></span>');
+    $('draw-filters').insertAdjacentHTML('beforeend', '<span class="draw-pkg-wrap"><button type="button" class="lib-kind" id="draw-pkgs" aria-expanded="false" aria-controls="draw-pkg-list">packages</button><div id="draw-pkg-list" class="draw-pkg-list" hidden></div></span>');
     const packagesOpen = (open) => { $('draw-pkg-list').hidden = !open; $('draw-pkgs').setAttribute('aria-expanded', String(open)); };
     $('draw-pkgs').addEventListener('click', () => packagesOpen($('draw-pkg-list').hidden));
     document.addEventListener('click', (e) => { if (!e.target.closest('.draw-pkg-wrap')) packagesOpen(false); });
@@ -479,11 +490,10 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       drawMatch();
       packagesShow(table);
     });
-    $('draw-filters').addEventListener('click', (e) => {
-      const b = e.target.closest('[data-f]');
-      if (!b) return;
-      drawFilter[b.dataset.f] = b.dataset.v;
-      for (const x of $('draw-filters').querySelectorAll(`[data-f="${b.dataset.f}"]`)) x.setAttribute('aria-pressed', String(x === b));
+    $('draw-filters').addEventListener('change', (e) => {
+      const f = e.target.dataset?.f;
+      if (!f) return;
+      drawFilter[f] = e.target.value;
       drawMatch();
     });
     $('draw-list').addEventListener('click', (e) => {
@@ -505,5 +515,6 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   }
   symbolsLoad();
   const tune = (cfg) => { Object.assign(DRAW, cfg); send({ type: 'tune', draw: cfg }); };
-  return { load: symbolsLoad, match: drawMatch, filter: drawFilter, tune };
+  // the list is never empty: once loaded, it shows the symbols to browse
+  return { load: () => symbolsLoad().then((t) => { drawMatch(); return t; }), match: drawMatch, filter: drawFilter, tune };
 };
