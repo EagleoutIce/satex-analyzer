@@ -1550,7 +1550,7 @@
     // a value of a few names or a pattern (`clock`: now, unknown or a date) completes from the names and today
     const suggest = k.suggest?.length ? [...k.suggest, ...(k.pattern?.includes('\\d{4}') ? [new Date().toISOString().slice(0, 10)] : [])] : [];
     const list = suggest.length ? `<datalist id="cfg-dl-${escape(k.key)}">${suggest.map((o) => `<option value="${escape(o)}">`).join('')}</datalist>` : '';
-    return `<input type="${['integer', 'number'].includes(k.type) ? 'number' : 'text'}" data-cfg="${escape(k.key)}" value="${escape(text)}" spellcheck="false"${list ? ` list="cfg-dl-${escape(k.key)}"` : ''}${k.pattern ? ` pattern="${escape(k.suggest?.length ? `(${k.suggest.join('|')})|${k.pattern.replace(/^\^|\$$/g, '')}` : k.pattern)}"` : ''}>${list}`;
+    return `<input type="${['integer', 'number'].includes(k.type) ? 'number' : 'text'}" data-cfg="${escape(k.key)}" value="${escape(text)}" spellcheck="false"${list ? ` list="cfg-dl-${escape(k.key)}"` : ''}${k.pattern ? ` pattern="${escape((k.suggest?.length ? `(${k.suggest.join('|')})|${k.pattern.replace(/^\^|\$$/g, '')}` : k.pattern).replace(/-\]/g, '\\-]'))}"` : ''}>${list}`;
   }
   /** The search: words that a key or its description holds, and filters: `@changed`, `@group:limits`, `@affects:precision`. */
   function configMatch(k, q) {
@@ -1565,7 +1565,7 @@
     const set = own.filter(([, ks]) => ks.length).map(([p, ks]) => section(p.name, p.name, p.about, ks, !!q || !closed.has(p.name)));
     const plain = own.filter(([p, ks]) => !ks.length && !q && p.about)
       .map(([p]) => `<li class="cfg-plain" title="${escape(p.about.replaceAll('`', ''))}"><b>${escape(p.name)}</b><span>${inline(p.about)}</span></li>`);
-    return set.join('') + (plain.length ? `<li class="cfg-group"><p class="cfg-plain-head">Without settings, always on</p><ul>${plain.join('')}</ul></li>` : '');
+    return [...set, ...(plain.length ? [`<li class="cfg-group"><p class="cfg-plain-head">Without settings, always on</p><ul>${plain.join('')}</ul></li>`] : [])];
   }
   /** A setting's value an example line spells: `- field: v` items of a list, or `name: v` with the key's own name. */
   function exampleValue(k, line) {

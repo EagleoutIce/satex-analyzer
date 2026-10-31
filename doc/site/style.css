@@ -1045,3 +1045,4 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 /* in the playground a ligature is marked, not animated: that is the landing page's */
 :is(.play-split, #lib-out) .show-ligs .ts-lig::before, #lib-out .ts-lig::before { content: none; animation: none; }
 :is(.play-split, #lib-out) .show-ligs .ts-lig-to, #lib-out .ts-lig-to { max-width: none; opacity: 1; animation: none; }
+.tree #play-outline > .grip, .tree #play-outline .grip { display: none; }
