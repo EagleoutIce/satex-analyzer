@@ -534,7 +534,7 @@ Paths join between two commands where they stand alike: same input, conditionals
 
 #### Code a join makes unknown
 
-Joining pending code into unknown text keeps what it may do (`may_run`): undefined names after `\def`/`\let` there may now be defined (as fresh names), registers it names may hold any value. Reported as `joined-code-may-define`.
+Joining pending code into unknown text keeps what it may do (`may_run`): undefined names after `\def`/`\let` there may now be defined (as fresh names), registers it names may hold any value. A defined name that code gives a new meaning holds the join of both. `\let` to a known name joins that name's meaning, so `\let\if@tempswa\iffalse` leaves the switch undecided. Any other definition joins an unknown meaning. A definition inside a group the code opens and closes is left out, a `\global` one is not. Reached macros are followed three levels deep. Reported as `joined-code-may-define`.
 
 - Differing input joins as shared text around one token for either part. Each part must be whole: balanced braces, conditionals closed (`whole`).
 - Only data joins that way. Paths whose pending code differs never join until a common point. Code differs only between passes of one loop.
@@ -543,20 +543,20 @@ Joining pending code into unknown text keeps what it may do (`may_run`): undefin
 
 ## `limits`: where the domains stop being precise
 
-The knobs that trade precision for a bounded search ([`src/config.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/config.rs), details in [Configuration](Configuration#what-a-run-may-use)). Past each, the value moves up the lattice and a diagnostic says so. Time, memory and thread limits never coarsen a result: they only stop a run.
+The knobs that trade precision for a bounded search ([`src/config.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/config.rs), details in [Configuration](Configuration#configurable-limits-for-the-analysis)). Past each, the value moves up the lattice and a diagnostic says so. Time, memory and thread limits never coarsen a result: they only stop a run.
 
 | setting | default | what it bounds |
 | --- | --- | --- |
-| [`limits.choices`](Configuration#what-a-run-may-use) | 8 | How many undecided `\if` one command may split into paths. Past them the command's result is unknown text, reported as an `assumption`. Higher keeps more combinations apart and costs time. |
-| [`limits.site_forks`](Configuration#what-a-run-may-use) | 64 | How many paths one place in a source line may start, counted over all paths. Past them an `\if` there is no longer followed both ways: the run takes the effects either branch may have (`site-forks-widened`). Lower finishes a `\foreach` with unknown bounds sooner but knows less. 0 turns it off. |
-| [`limits.paths`](Configuration#what-a-run-may-use) | 16 | How many alternative paths satex keeps at once. Past them the two oldest at one place are merged into one. Higher is more precise, slower and takes more memory. |
-| [`limits.meaning_splits`](Configuration#what-a-run-may-use) | 4 | How often one command may split the run per meaning of a name that has several, such as `\x` defined differently in two branches. Past them, and with 0, the name reads as unknown. |
-| [`limits.widen_after`](Configuration#what-a-run-may-use) | 3 | How many rounds a loop is followed exactly before values that still change become ranges (SEMANTICS [§ 14](Configuration#what-a-run-may-use)). A `\loop` counting to an unknown bound has its counter as a range after these rounds. |
-| [`limits.recursion_depth`](Configuration#what-a-run-may-use) | 100 | How deep a macro that calls itself while an `\if` is undecided is followed before the recursion is assumed to end there. |
-| [`limits.loop_heads`](Configuration#what-a-run-may-use) | 512 | How many loops one run remembers with their merged states. Past them the oldest is forgotten, and summarized when it comes back. |
-| [`limits.call_summary_after`](Configuration#what-a-run-may-use) | 2 | After this many runs of one call at one place, a call with unknown arguments reuses their merged result instead of running again. `\pgfmathparse{\x}` with an unknown `\x` is then one step. 0 never does. |
-| [`limits.meaning_set`](Configuration#what-a-run-may-use) | 8 | How many possible meanings a name keeps after branches merge. Past them its meaning is unknown. |
-| [`limits.value_set`](Configuration#what-a-run-may-use) | 8 | How many exact values a count or length keeps after branches merge. Past them only its range is kept, so `{1, 5}` becomes `1..5`. |
+| [`limits.choices`](Configuration#configurable-limits-for-the-analysis) | 8 | How many undecided `\if` one command may split into paths. Past them the command's result is unknown text, reported as an `assumption`. Higher keeps more combinations apart and costs time. |
+| [`limits.site_forks`](Configuration#configurable-limits-for-the-analysis) | 64 | How many paths one place in a source line may start, counted over all paths. Past them an `\if` there is no longer followed both ways: the run takes the effects either branch may have (`site-forks-widened`). Lower finishes a `\foreach` with unknown bounds sooner but knows less. 0 turns it off. |
+| [`limits.paths`](Configuration#configurable-limits-for-the-analysis) | 16 | How many alternative paths satex keeps at once. Past them the two oldest at one place are merged into one. Higher is more precise, slower and takes more memory. |
+| [`limits.meaning_splits`](Configuration#configurable-limits-for-the-analysis) | 4 | How often one command may split the run per meaning of a name that has several, such as `\x` defined differently in two branches. Past them, and with 0, the name reads as unknown. |
+| [`limits.widen_after`](Configuration#configurable-limits-for-the-analysis) | 3 | How many rounds a loop is followed exactly before values that still change become ranges (SEMANTICS [§ 14](Configuration#configurable-limits-for-the-analysis)). A `\loop` counting to an unknown bound has its counter as a range after these rounds. |
+| [`limits.recursion_depth`](Configuration#configurable-limits-for-the-analysis) | 100 | How deep a macro that calls itself while an `\if` is undecided is followed before the recursion is assumed to end there. |
+| [`limits.loop_heads`](Configuration#configurable-limits-for-the-analysis) | 512 | How many loops one run remembers with their merged states. Past them the oldest is forgotten, and summarized when it comes back. |
+| [`limits.call_summary_after`](Configuration#configurable-limits-for-the-analysis) | 2 | After this many runs of one call at one place, a call with unknown arguments reuses their merged result instead of running again. `\pgfmathparse{\x}` with an unknown `\x` is then one step. 0 never does. |
+| [`limits.meaning_set`](Configuration#configurable-limits-for-the-analysis) | 8 | How many possible meanings a name keeps after branches merge. Past them its meaning is unknown. |
+| [`limits.value_set`](Configuration#configurable-limits-for-the-analysis) | 8 | How many exact values a count or length keeps after branches merge. Past them only its range is kept, so `{1, 5}` becomes `1..5`. |
 
 ## Writes through an unknown index
 

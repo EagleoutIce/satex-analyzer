@@ -8,7 +8,7 @@ tex.web parts 24-49 define TeX82's primitives. The [eTeX manual](https://mirrors
 
 `src/builtins.rs` maps every one of these names to a `Primitive`, and `builtins::verdict` judges each `Primitive` from what `src/exec.rs`, `src/mode.rs` and `src/commands.rs` do with it. This page is generated from both, so it cannot drift from the interpreter. Every **modeled as** cell links to the arm of `builtins::verdict` that judges the primitive, built from `file!()` and `line!()` at that arm rather than from a table typed by hand. See [Domains](Domains) for the values a primitive's operands and results are tracked as, and [Lints](Lints) and [Chktex-Coverage](Chktex-Coverage) for what a lint rule builds on top of a primitive's real effect.
 
-Every primitive gets one of three verdicts:
+Each primitive is modeled with one of three fidelities:
 
 - **exact**: satex reproduces the engine's behavior.
 - **approximated**: a sound over-approximation. The table says how.
@@ -22,6 +22,6 @@ Five answers in the **how** column repeat over many rows. They are written out o
 - **scanned, answer unknown**: operands are scanned per the manual. The answer needs state satex does not build (regex captures, PDF pages, the page builder's marks, a clock, an RNG), so it widens to Unknown.
 - **the font's real tables**: read from a loaded font's real TFM or OpenType tables. Unknown once the font or its tables aren't resolved.
 
-A primitive that scans its operands and drops their effect with neither of the last two is a bug, not a fourth verdict. satex never rests at "unsupported" silently ([Domains § Soundness invariant](Domains#soundness-invariant)). Any found this way are fixed, not documented as sound, and listed separately below until they are.
+A primitive that scans its operands and drops their effect with neither of the last two is a bug, not a fourth kind. satex never rests at "unsupported" silently ([Domains § Soundness invariant](Domains#soundness-invariant)). Any found this way are fixed, not documented as sound, and listed separately below until they are.
 
 {{primitives}}

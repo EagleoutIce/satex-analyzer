@@ -402,7 +402,7 @@ Joining pending code into unknown text keeps what it may do (`may_run`): undefin
 
 ## `limits`: where the domains stop being precise
 
-The knobs that trade precision for a bounded search ([`src/config.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/config.rs), details in [Configuration](Configuration#what-a-run-may-use)). Past each, the value moves up the lattice and a diagnostic says so. Time, memory and thread limits never coarsen a result: they only stop a run.
+The knobs that trade precision for a bounded search ([`src/config.rs`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/config.rs), details in [Configuration](Configuration#configurable-limits-for-the-analysis)). Past each, the value moves up the lattice and a diagnostic says so. Time, memory and thread limits never coarsen a result: they only stop a run.
 
 {{limits}}
 

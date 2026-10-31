@@ -64,7 +64,7 @@ Source: [ChkTeX 1.7.9 manual, § 8](https://www.nongnu.org/chktex/).
 | 48 | Solo `'%s'` found (ConTeXt). | on | — | — |
 | 49 | Expected math mode to be in another state here. | on | [`math-mode-mismatch`](Lints#math-mode-mismatch) | yes |
 
-## What satex does not cover
+## Not covered
 
 * chktex's own parser limits, such as warning 14, do not arise in an interpreter that reads across lines.
 * ConTeXt warnings 47 and 48 are out of scope. satex interprets LaTeX and plain TeX.

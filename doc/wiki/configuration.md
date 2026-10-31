@@ -258,10 +258,14 @@ cache:
   index:  # packages `satex cache build` prepares, or, when
                             # empty, whatever ordinary runs already found
                             # expensive to interpret (measured, not a hand-picked list)
-    packages: []
+    packages: []  # the packages satex cache build prepares. Empty: the ones runs found slow
+      #! affects: speed
+      #! example: packages: [tikz, pgfplots]
     common: [microtype, cleveref, zref-clever, savetrees, tabularray, xurl, glossaries,
       enumitem, nowidow, silence, adjustbox, pdfpages, pgfplotstable, memoize,
       classicthesis]  # prepared first while packages is empty, where installed
+      #! affects: speed
+      #! example: a first run with cleveref starts from its prepared cache
     engines: []  # engines to prepare for. Empty: the engine in use
       #! affects: speed
       #! example: engines: [pdftex, luatex]
@@ -408,6 +412,9 @@ limits:
   site_expansions: 16384  # how often one place may expand without reading further before it is given up
     #! affects: precision, speed
     #! example: a loop that never consumes input stops here
+  line_steps: 100000000  # how long one source line may run before what it does is approximated and reading goes on. 0 = no limit
+    #! affects: precision, speed
+    #! example: a line whose \foreach runs forever is cut, and the next line is read
   replay_steps: 1000000  # how long satex may rerun a line the document wrote to a file, to learn the labels in it
     #! affects: precision, speed
     #! example: a huge \write to the .aux is read without its labels past this
@@ -498,7 +505,7 @@ limits:
     #! example: a trace of a long run shows only its start
 ```
 
-## What plugins decide
+## Plugins
 
 A plugin picks a default from the machine, the installation and the build files. `satex.yaml` can override each. `satex query plugins -f FILE` shows what was chosen and why.
 
@@ -643,7 +650,7 @@ stubs:
 
 `args`: `s` star, `o` optional, `m` mandatory, or `until` a delimiter. `result` is an element of the [unknown-text lattice](Domains#unknown-text-the-textclass-lattice): `nothing`, `number` / `{ number: [lo, hi] }`, `dimen`, `text` / `{ text: digits | number | dimension | cs-free | any }`, `box` / `{ box: { width, height, depth } }`. `sets` names what it assigns (`sets: { \pgfmathresult: number }`). A document that redefines the name gets its own definition.
 
-## What a run may use
+## Configurable limits for the analysis
 
 | Key | Default | Effect |
 | --- | --- | --- |

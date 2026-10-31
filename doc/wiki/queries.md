@@ -26,6 +26,7 @@
 - [pgfkeys](#pgfkeys)
 - [options](#options)
 - [typeset](#typeset)
+- [previews](#previews)
 
 ## definitions
 
@@ -59,7 +60,7 @@ name         count  package         file
 
 ## dependencies
 
-The files, packages and classes the document reads, and what loaded each. Lua modules loaded by `\directlua` chunks appear with kind `lua`. `texlive` names each file's TeX Live package (see [configuration](configuration.md#what-plugins-decide)).
+The files, packages and classes the document reads, and what loaded each. Lua modules loaded by `\directlua` chunks appear with kind `lua`. `texlive` names each file's TeX Live package (see [configuration](configuration.md#plugins)).
 
 ```text
 $ satex query dependencies -f samples/paper.tex --filter 'kind=package'

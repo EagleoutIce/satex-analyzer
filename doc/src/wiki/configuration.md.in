@@ -16,7 +16,7 @@ Mappings merge recursively. A list replaces the outer one unless its key ends in
 
 {{file: satex.yaml}}
 
-## What plugins decide
+## Plugins
 
 A plugin picks a default from the machine, the installation and the build files. `satex.yaml` can override each. `satex query plugins -f FILE` shows what was chosen and why.
 
@@ -137,7 +137,7 @@ stubs:
 
 `args`: `s` star, `o` optional, `m` mandatory, or `until` a delimiter. `result` is an element of the [unknown-text lattice](Domains#unknown-text-the-textclass-lattice): `nothing`, `number` / `{ number: [lo, hi] }`, `dimen`, `text` / `{ text: digits | number | dimension | cs-free | any }`, `box` / `{ box: { width, height, depth } }`. `sets` names what it assigns (`sets: { \pgfmathresult: number }`). A document that redefines the name gets its own definition.
 
-## What a run may use
+## Configurable limits for the analysis
 
 | Key | Default | Effect |
 | --- | --- | --- |

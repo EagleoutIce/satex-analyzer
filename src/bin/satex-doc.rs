@@ -1145,21 +1145,30 @@ fn fix_kinds(rule: &serde_json::Value) -> Option<String> {
         .as_array()?
         .iter()
         .filter_map(|k| k.as_str())
-        .map(|k| format!("<span class=\"fix fix-{k}\">{k}</span>"))
+        .map(|k| {
+            let (short, about) = match k {
+                "safe" => ("S", "safe: the fix keeps the document's meaning, --fix applies it"),
+                _ => ("U", "unsafe: the fix changes the meaning, only --unsafe-fixes applies it"),
+            };
+            format!("<span class=\"fix fix-{k}\" title=\"{about}\">{short}</span>")
+        })
         .collect();
     (!kinds.is_empty()).then(|| kinds.join(" "))
 }
 
 /// The rules whose findings carry a quick fix, with its kinds.
 fn fixes_list() -> Result<String, String> {
-    let mut out = String::new();
+    let mut items = String::new();
+    let mut count = 0;
     for rule in lint_json(&["--rules", "--format", "json"])? {
         if let Some(kinds) = fix_kinds(&rule) {
-            let code = rule["code"].as_str().unwrap_or("");
-            let _ = writeln!(out, "* [`{code}`](#{code}) {kinds} {}", rule["message"].as_str().unwrap_or(""));
+            let (code, number) = (rule["code"].as_str().unwrap_or(""), rule["number"].as_str().unwrap_or(""));
+            let _ =
+                writeln!(items, "* {number} [`{code}`](#{code}) {kinds} {}", rule["message"].as_str().unwrap_or(""));
+            count += 1;
         }
     }
-    Ok(out)
+    Ok(format!("<details><summary>{count} rules with quick fixes</summary>\n\n{items}\n</details>\n"))
 }
 
 /// The JSON `satex lint ARGS` prints.
@@ -1210,7 +1219,7 @@ fn explanations() -> Result<String, String> {
             }
             let count = rules.iter().filter(|r| r["category"].as_str() == Some(category)).count();
             let plural = if count == 1 { "rule" } else { "rules" };
-            let _ = writeln!(out, "<details>");
+            let _ = writeln!(out, "<details id=\"category-{category}\">");
             // GitHub renders markdown inside `<details>` only when a blank
             // line follows the `<summary>`, so the headings below need it.
             let _ = writeln!(out, "<summary><b>{category}</b> ({count} {plural})</summary>\n");
@@ -1529,20 +1538,20 @@ fn primitives_table() -> Result<String, String> {
         ("LuaTeX extensions", "the LuaTeX manual", &luatex_extra),
     ];
     for (heading, source, map) in sections {
-        let _ = writeln!(out, "### {heading}\n");
-        let _ = writeln!(out, "Source: {source}.\n");
-        let _ = writeln!(out, "| primitive | modeled as | verdict | how |");
-        let _ = writeln!(out, "| --- | --- | --- | --- |");
+        let mut rows = String::new();
+        let (mut sound, mut exact) = (0usize, 0usize);
         for (name, p) in map {
             total += 1;
             let display = display_primitive(name);
             if let Some(reason) = bugs.get(name.as_str()) {
                 bug_notes.push((name.clone(), (*reason).to_string()));
-                let _ = writeln!(out, "| {display} | `{p:?}` | known bug | not modeled soundly, see below |");
+                let _ = writeln!(rows, "| {display} | `{p:?}` | known bug | Not modeled soundly, see below |");
                 continue;
             }
             modeled += 1;
+            sound += 1;
             let (verdict, detail, site) = builtins::verdict(*p);
+            exact += usize::from(verdict == Verdict::Exact);
             let verdict = match verdict {
                 Verdict::Exact => "exact",
                 Verdict::Approximated => "approximated",
@@ -1550,8 +1559,21 @@ fn primitives_table() -> Result<String, String> {
             };
             let label = source_ref(&site);
             sites.insert(label.clone(), source_url(&site));
-            let _ = writeln!(out, "| {display} | [`{p:?}`][{label}] | {verdict} | {} |", detail.replace('|', "\\|"));
+            let _ = writeln!(
+                rows,
+                "| {display} | [`{p:?}`][{label}] | {verdict} | {} |",
+                sentence(&detail).replace('|', "\\|")
+            );
         }
+        let status = match sound == map.len() {
+            true => format!("**Fully modeled**: all {} primitives, {exact} of them exactly.", map.len()),
+            false => format!("{sound} of {} primitives modeled soundly, {exact} of them exactly.", map.len()),
+        };
+        let _ = writeln!(out, "## {heading}{}\n", if sound == map.len() { " ✓" } else { "" });
+        let _ = writeln!(out, "{status} Source: {source}.\n");
+        let _ = writeln!(out, "| primitive | modeled as | fidelity | how |");
+        let _ = writeln!(out, "| --- | --- | --- | --- |");
+        out.push_str(&rows);
         out.push('\n');
     }
 
@@ -1567,6 +1589,13 @@ fn primitives_table() -> Result<String, String> {
         let _ = writeln!(out, "[{label}]: {url}");
     }
     Ok(out)
+}
+
+/// A table cell as a sentence: no leading article, a capital first letter.
+fn sentence(text: &str) -> String {
+    let rest = ["a ", "an ", "the "].iter().find_map(|a| text.strip_prefix(a)).unwrap_or(text);
+    let mut chars = rest.chars();
+    chars.next().map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
 }
 
 /// The reference-link label for a [`Site`]: the file's stem and the line.
@@ -1629,7 +1658,7 @@ fn limits_table() -> Result<String, String> {
         };
         let _ = writeln!(
             out,
-            "| [`limits.{name}`](Configuration#what-a-run-may-use) | {value} | {} |",
+            "| [`limits.{name}`](Configuration#configurable-limits-for-the-analysis) | {value} | {} |",
             doc.replace('|', "\\|")
         );
     }

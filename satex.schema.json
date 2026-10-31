@@ -153,7 +153,11 @@
               "items": {
                 "type": "string"
               },
-              "type": "array"
+              "type": "array",
+              "x-affects": [
+                "speed"
+              ],
+              "x-example": "a first run with cleveref starts from its prepared cache"
             },
             "engines": {
               "default": [],
@@ -169,10 +173,15 @@
             },
             "packages": {
               "default": [],
+              "description": "the packages satex cache build prepares. Empty: the ones runs found slow",
               "items": {
                 "type": "string"
               },
-              "type": "array"
+              "type": "array",
+              "x-affects": [
+                "speed"
+              ],
+              "x-example": "packages: [tikz, pgfplots]"
             }
           },
           "type": "object"
@@ -568,8 +577,14 @@
         },
         "line_steps": {
           "default": 100000000,
+          "description": "how long one source line may run before what it does is approximated and reading goes on. 0 = no limit",
           "minimum": 0,
-          "type": "integer"
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "a line whose \\foreach runs forever is cut, and the next line is read"
         },
         "loop_heads": {
           "default": 512,
@@ -1158,6 +1173,10 @@
     "lsp": {
       "description": "how satex lsp serves an editor",
       "properties": {
+        "color_previews": {
+          "default": true,
+          "type": "boolean"
+        },
         "debounce_ms": {
           "default": 300,
           "description": "how long to wait after an edit before analyzing again. Lower answers sooner but runs more often",

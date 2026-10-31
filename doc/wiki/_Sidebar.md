@@ -14,7 +14,7 @@
 
 **[⚙️ Configuration](Configuration)**
 - [Profiles](Configuration#profiles)
-- [What plugins decide](Configuration#what-plugins-decide)
+- [Plugins](Configuration#plugins)
 
 **[🧩 Language server](Lsp)**
 - [Editor setup](Lsp#editor-setup)
