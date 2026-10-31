@@ -133,7 +133,7 @@ def files_read(satex, flags, doc, cwd, env, config=b""):
     if key not in LISTINGS:
         done = subprocess.run([str(satex), *flags, "query", "files", "-f", str(doc), "--format", "json"],
                               cwd=cwd, env=env, capture_output=True, text=True)
-        LISTINGS[key] = [entry["path"] for entry in json.loads(done.stdout or "[]")]
+        LISTINGS[key] = [entry["path"] for entry in json.loads(done.stdout or "[]") if "path" in entry]
     return LISTINGS[key]
 
 
