@@ -381,7 +381,7 @@ fn typeset_covers(stem: &str) {
     // One at a time: racing cold runs on one kernel cache lose the kernel.
     static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _one = ONE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let out = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let out = crate::support::satex()
         .current_dir(&dir)
         // No wall clock: a busy runner must not cut the kernel build short
         // and turn the comparison into `⟨?⟩`.
@@ -404,7 +404,7 @@ fn typeset_covers(stem: &str) {
 #[test]
 fn a_kernel_cut_short_typesets_unknown_text() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("doc/src/wiki/challenges");
-    let out = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let out = crate::support::satex()
         .current_dir(&dir)
         .args(["query", "typeset", "-f", "05-packages.tex", "--format", "json"])
         .args(["--set", "limits.seconds=0", "--set", "limits.format_steps=20000", "--set", "cache.enabled=false"])
@@ -430,7 +430,7 @@ fn rules_are_typeset_between_the_text() {
         "\\documentclass{article}\n\\begin{document}\nA\\strut B\n\n\\begin{tabular}{|l|c|}\\hline a & b \\\\ \\hline\\end{tabular}\n\nRule \\rule{1cm}{2pt} here.\n\\end{document}\n",
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let out = crate::support::satex()
         .current_dir(&dir)
         .args(["query", "typeset", "-f", "r.tex", "--format", "json", "--set", "limits.seconds=0"])
         .output()
@@ -458,7 +458,7 @@ fn hyphenation_points_match_showhyphens() {
         format!("\\documentclass{{article}}\n\\begin{{document}}\n\\hsize=1cm\n{words}\n\\end{{document}}\n"),
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let out = crate::support::satex()
         .current_dir(&dir)
         .args(["query", "typeset", "-f", "h.tex", "--format", "json", "--set", "limits.seconds=0"])
         .output()

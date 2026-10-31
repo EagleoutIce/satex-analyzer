@@ -29,7 +29,7 @@ fn bounded(mut cfg: Config) -> Config {
     // The suite's own caches, never the user's: what one run records is
     // what the next reads, here and nowhere else.
     if cfg.cache.dir.is_none() {
-        cfg.cache.dir = Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/test-cache"));
+        cfg.cache.dir = Some(test_cache());
     }
     // One fixed clock: runs a second apart, cached or not, agree.
     cfg.clock = satex::config::Clock::At(time::OffsetDateTime::from_unix_timestamp(1_767_268_800).expect("a date"));
@@ -95,6 +95,19 @@ pub fn tmp_root() -> PathBuf {
 /// Windows reads them too (a `\` would start a control sequence).
 pub fn tex_path(path: &Path) -> String {
     path.display().to_string().replace('\\', "/")
+}
+
+/// The suite's one cache: every test that does not measure caching shares it,
+/// so a changed interpreter builds the format and each package once.
+pub fn test_cache() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/test-cache")
+}
+
+/// The `satex` binary, on the suite's cache.
+pub fn satex() -> std::process::Command {
+    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_satex"));
+    command.env("SATEX_CACHE", test_cache());
+    command
 }
 
 /// Recreate `dir` empty. Used to give each test its own scratch directory.

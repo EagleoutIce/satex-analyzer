@@ -4,7 +4,6 @@
 //! document writes itself, like the `../template/` a class is kept in.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::support::{defined, installed};
 use satex::config::{Config, Load};
@@ -82,7 +81,7 @@ fn set_paths_texinputs_reaches_a_configured_directory() {
 fn environment_variable_outranks_latexmkrc() {
     let dir = fixture("env");
     std::fs::write(dir.join("latexmkrc"), "ensure_path('TEXINPUTS', './other//');\n").unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let output = crate::support::satex()
         .args(["--version", "--format", "json"])
         .current_dir(&dir)
         .env("TEXINPUTS", "./libs//")

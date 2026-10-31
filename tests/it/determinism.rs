@@ -5,7 +5,6 @@
 //! compares whole rows in order, so a reordering fails too.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 use crate::support::installed;
 use satex::machine::{Analysis, Machine};
@@ -137,7 +136,7 @@ fn two_processes_agree() {
     std::fs::write(dir.join("d.tex"), EXPL3).expect("write document");
     let cache = dir.join("cache");
     let run = |query: &str| {
-        let output = Command::new(env!("CARGO_BIN_EXE_satex"))
+        let output = crate::support::satex()
             .args([
                 "query",
                 query,

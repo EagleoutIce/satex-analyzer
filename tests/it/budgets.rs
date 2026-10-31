@@ -240,7 +240,7 @@ fn a_growing_document_stays_under_its_memory_limit() {
         "\\catcode`\\{{=1 \\catcode`\\}}=2 \\catcode`\\#=6\n\\def\\b{{{seed}}}\n\\def\\l{{\\advance\\count1 1 \\expandafter\\edef\\csname m\\the\\count1\\endcsname{{\\b}}\\l}}\\l\n"
     );
     std::fs::write(dir.join("grow.tex"), source).expect("write document");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_satex"))
+    let output = crate::support::satex()
         .args(["lint", "--no-config", "--stats", "-f", "grow.tex", "--max-memory", "64M"])
         .args(["--set", "load.format=false", "--set", "limits.seconds=0"])
         .current_dir(&dir)
@@ -309,7 +309,7 @@ fn stats_hotspots_show_the_loop_line() {
     let dir = fresh("hotspots");
     let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6\n\\count1=0\n\\def\\l{\\advance\\count1 1 \\ifnum\\count1<500 \\expandafter\\l\\fi}\\l\n";
     std::fs::write(dir.join("loop.tex"), source).expect("write document");
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_satex"))
+    let output = crate::support::satex()
         .args(["lint", "--no-config", "--stats", "-f", "loop.tex", "--set", "load.format=false"])
         .current_dir(&dir)
         .output()

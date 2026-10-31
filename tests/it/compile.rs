@@ -1,8 +1,6 @@
 //! `satex compile`: the build's errors and warnings, each where TeX says it
 //! arose and explained by satex's finding there.
 
-use std::process::Command;
-
 #[test]
 fn the_build_log_is_explained_where_it_arose() {
     if !crate::support::installed() || satex::paths::which("pdflatex").is_err() {
@@ -16,7 +14,7 @@ fn the_build_log_is_explained_where_it_arose() {
     )
     .unwrap();
     std::fs::write(dir.join("part.tex"), "Some \\foo text.\n").unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let out = crate::support::satex()
         .args(["compile", "-f", "doc.tex", "--format", "json", "--set", "limits.seconds=0"])
         .current_dir(&dir)
         .env_remove("DISPLAY")

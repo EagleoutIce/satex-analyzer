@@ -4,7 +4,6 @@
 
 use crate::support::installed;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// A project with its own empty cache directory.
 fn project(name: &str) -> PathBuf {
@@ -16,7 +15,7 @@ fn project(name: &str) -> PathBuf {
 
 /// `satex query diagnostics` on `source`, as JSON, against `dir`'s cache.
 fn run(dir: &Path, source: &str) -> std::process::Child {
-    Command::new(env!("CARGO_BIN_EXE_satex"))
+    crate::support::satex()
         .args([
             "query",
             "diagnostics",

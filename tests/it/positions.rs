@@ -2,10 +2,8 @@
 //! the way `trace --from` does: a subfile by a trailing part of its path,
 //! with or without `.tex`.
 
-use std::process::Command;
-
 fn run(dir: &std::path::Path, args: &[&str]) -> Result<Vec<serde_json::Value>, String> {
-    let out = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let out = crate::support::satex()
         .args(["--no-config", "--no-classes", "--no-packages", "--set", "limits.seconds=0"])
         .args(args)
         .arg("-f")

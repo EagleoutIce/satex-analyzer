@@ -4,14 +4,10 @@
 //! on `lint`, say) must fail clearly rather than silently falling back to
 //! text.
 
-use std::process::{Command, Output};
-
-fn bin() -> &'static str {
-    env!("CARGO_BIN_EXE_satex")
-}
+use std::process::Output;
 
 fn run(args: &[&str]) -> Output {
-    Command::new(bin())
+    crate::support::satex()
         .args(args)
         .args(["--set", "limits.seconds=0"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))

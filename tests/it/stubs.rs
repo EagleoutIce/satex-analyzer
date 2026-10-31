@@ -31,7 +31,6 @@ fn run(name: &str, stubs: Vec<(&str, Stub)>, source: &str) -> Option<Analysis> {
         search_paths: vec![dir.clone()],
         ..crate::support::config()
     };
-    cfg.cache.dir = Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/stubs-cache"));
     cfg.stubs = stubs.into_iter().map(|(n, s)| (n.to_string(), s)).collect();
     let source = format!(
         "\\documentclass{{article}}\\usepackage{{graphicx,stubpkg}}\n\\begin{{document}}\n{source}\n\\end{{document}}\n"

@@ -5,7 +5,7 @@
 //! waiting on `latex.ltx`.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -48,7 +48,7 @@ impl Server {
     /// texmf.kpsewhich=false` (a test of `\usepackage`/`\documentclass`
     /// goto-definition needs the real kernel and a real search).
     fn start_with(cache: &std::path::Path, cwd: &std::path::Path, args: &[&str]) -> Server {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_satex"))
+        let mut child = crate::support::satex()
             .args(["lsp"])
             .args(args)
             .current_dir(cwd)
@@ -728,10 +728,7 @@ fn open_loaded(tag: &str, text: &str) -> (Server, String, Value, std::path::Path
 /// packages when `loaded`, else plain TeX only.
 fn serve(dir: &std::path::Path, loaded: bool) -> Server {
     let mut server = match loaded {
-        true => {
-            let cache = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("lsp-cache");
-            Server::start_with(&cache, dir, &["--set", "limits.seconds=0"])
-        }
+        true => Server::start_with(&crate::support::test_cache(), dir, &["--set", "limits.seconds=0"]),
         false => Server::start(dir),
     };
     let id = server.request("initialize", json!({ "processId": null, "rootUri": null, "capabilities": {} }));

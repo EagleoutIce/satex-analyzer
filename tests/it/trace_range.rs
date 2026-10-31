@@ -2,10 +2,10 @@
 //! range are recorded, a line range keeps what the calls on its lines do,
 //! and a malformed range is an error.
 
-use std::process::{Command, Output};
+use std::process::Output;
 
 fn trace(dir: &std::path::Path, range: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_satex"))
+    crate::support::satex()
         .args(["--no-config", "--no-classes", "--no-packages", "--set", "limits.seconds=0", "trace", "-f"])
         .arg(dir.join("main.tex"))
         .args(range)
@@ -86,7 +86,7 @@ fn stepped(dir: &std::path::Path, input: &str) -> Vec<(u64, String)> {
 
 fn stepped_with(dir: &std::path::Path, args: &[&str], input: &str) -> Vec<(u64, String)> {
     use std::io::Write;
-    let mut child = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let mut child = crate::support::satex()
         .args(["--no-config", "--no-classes", "--no-packages", "--set", "limits.seconds=0", "trace", "-i", "-f"])
         .arg(dir.join("main.tex"))
         .args(args)
@@ -184,7 +184,7 @@ fn interactive_reports_skipped_internal_steps_and_the_output_of_a_range() {
     std::fs::write(dir.join("main.tex"), "\\documentclass{article}\n\\def\\a{world}\nhello \\a\n").unwrap();
     let text = |args: &[&str]| -> String {
         use std::io::Write;
-        let mut child = Command::new(env!("CARGO_BIN_EXE_satex"))
+        let mut child = crate::support::satex()
             .args(["--no-config", "--no-classes", "--no-packages", "--set", "limits.seconds=0", "trace", "-i", "-f"])
             .arg(dir.join("main.tex"))
             .args(args)
@@ -229,7 +229,7 @@ fn an_injected_text_is_traced_where_it_is_put() {
 
 fn request(dir: &std::path::Path, body: serde_json::Value) -> serde_json::Value {
     use std::io::Write;
-    let mut child = Command::new(env!("CARGO_BIN_EXE_satex"))
+    let mut child = crate::support::satex()
         .args(["--no-config", "--no-classes", "--no-packages", "--set", "limits.seconds=0", "query", "--request", "-"])
         .current_dir(dir)
         .stdin(std::process::Stdio::piped())
