@@ -1126,6 +1126,8 @@ impl Machine<'_> {
             settings.profiles = defaults.profiles.clone();
             settings.depp = defaults.depp.clone();
             settings.lsp = defaults.lsp.clone();
+            // kept call arguments are a report (completion reads them), not interpretation
+            settings.record_arguments = false;
             settings.engine = None;
             // Where the trees are is no part of what a package does: each
             // segment checks its lookups and file contents itself.

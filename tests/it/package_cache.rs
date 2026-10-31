@@ -754,8 +754,9 @@ fn a_case_mismatch_survives_a_package_cache_round_trip() {
 }
 
 /// A cache is keyed by what changes the interpretation only: a run that
-/// reports, lints or traces differently, has other resource limits, or
-/// names the engine it would pick anyway reads the same cache.
+/// reports, lints or traces differently, keeps call arguments (the
+/// language server does), has other resource limits, or names the engine
+/// it would pick anyway reads the same cache.
 #[test]
 fn settings_that_do_not_change_the_interpretation_share_a_cache() {
     let dir = project("key");
@@ -768,6 +769,7 @@ fn settings_that_do_not_change_the_interpretation_share_a_cache() {
     other.engine = Some(first.plugins.engine);
     other.limits.memory = bytesize::ByteSize::gib(3);
     other.limits.degrade_at_percent = 90;
+    other.record_arguments = true;
     let second = analyze(&dir, DOCUMENT, &other);
     assert_eq!(served(&second, "outer"), Some(true), "{:?}", second.package_caches);
 }
