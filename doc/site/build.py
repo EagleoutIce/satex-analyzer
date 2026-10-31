@@ -995,6 +995,11 @@ def main():
     # Draw alone, to embed: its own page without the site's chrome
     (out / "draw").mkdir(exist_ok=True)
     (out / "draw/index.html").write_text(fill((SITE / "draw.html").read_text(), {**assets, "root": "../", "symbols": manifest["symbols"]}))
+    data = SITE / "bench/data.json"
+    if data.exists():
+        (out / "bench").mkdir(exist_ok=True)
+        shutil.copy2(data, out / "bench/data.json")
+        page("bench/index.html", "Benchmarks", fill((SITE / "bench.html").read_text(), {"root": "../", "repository": repo}), side=False)
     (out / ".nojekyll").write_text("")
     if args.precompress:
         precompress(out)

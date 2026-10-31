@@ -1,0 +1,11 @@
+samples/paper.tex
+samples/keys.tex
+doc/site/examples/chapter.tex
+doc/site/examples/leapyear.tex
+tests/fixtures/documents/call_summary_cells/main.tex
+tests/fixtures/documents/tikz_fit_b/main.tex
+tests/fixtures/documents/tikz_shapes_ma/mwe.tex
+tests/fixtures/documents/forest_savebox/mwe.tex
+benches/docs/pgfmath_loop.tex
+benches/docs/tikz_loop.tex
+benches/docs/macro_loop.tex

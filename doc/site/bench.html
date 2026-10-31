@@ -1,0 +1,63 @@
+<section class="band" id="bench">
+  <h1>Benchmarks</h1>
+  <p class="sub">Warm wall time, peak memory, steps and forks of <code>satex lint</code> on the benchmark documents, per release and kernel. The documents are listed in <a href="{{repository}}/blob/main/benches/docs.txt"><code>benches/docs.txt</code></a>.</p>
+  <p class="bench-ctl">
+    <label>Metric <select id="b-metric"></select></label>
+    <label>Kernel <select id="b-kernel"></select></label>
+    <label>Document <select id="b-doc"></select></label>
+  </p>
+  <svg id="b-chart" class="bench-chart" role="img" aria-label="metric per release"></svg>
+  <p id="b-legend" class="bench-legend"></p>
+  <p id="b-note" class="muted small"></p>
+</section>
+<style>
+.bench-ctl { display: flex; flex-wrap: wrap; gap: 1rem; }
+.bench-ctl select { font: inherit; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: .2rem .4rem; }
+.bench-chart { width: 100%; height: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+.bench-chart text { fill: var(--muted); font-size: 11px; font-family: inherit; }
+.bench-chart .grid { stroke: var(--border); stroke-width: 1; }
+.bench-chart .line { fill: none; stroke-width: 2; }
+.bench-legend { display: flex; flex-wrap: wrap; gap: .3rem 1rem; font-size: .85rem; }
+.bench-legend i { display: inline-block; width: .8rem; height: .8rem; border-radius: 2px; margin-right: .3rem; vertical-align: -1px; }
+</style>
+<script>
+(async () => {
+  const $ = id => document.getElementById(id);
+  const METRICS = { wall: ["Wall time (s)", "wall"], peak: ["Peak memory (MiB)", "peak"], steps: ["Steps", "steps"],
+                    forks: ["Forks", "forks"], end: ["Reached the end (runs)", "end"], findings: ["Findings", "findings"] };
+  const COLORS = ["#0b3d91", "#c2410c", "#15803d", "#a21caf", "#0e7490", "#b45309", "#be123c", "#4d7c0f", "#6d28d9", "#475569"];
+  let data;
+  try { data = await (await fetch("{{root}}bench/data.json")).json(); } catch { data = []; }
+  if (!data.length) { $("b-note").textContent = "No results yet."; return; }
+  const fill = (id, items) => { $(id).replaceChildren(...items.map(([v, t]) => Object.assign(document.createElement("option"), { value: v, textContent: t }))); };
+  const runs = data.flatMap(e => e.runs);
+  const kernels = [...new Set(runs.map(r => r.kernel))], docs = [...new Set(runs.map(r => r.doc))];
+  fill("b-metric", Object.entries(METRICS).map(([k, [t]]) => [k, t]));
+  fill("b-kernel", kernels.map(k => [k, k]));
+  fill("b-doc", [["", "all documents"], ...docs.map(d => [d, d.replace(/^.*\/(?=[^/]+\/[^/]+$)/, "")])]);
+  const value = (r, m) => m === "end" ? (r.end ? 1 : 0) : r[m];
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (n, a, t) => { const e = document.createElementNS(NS, n); for (const k in a) e.setAttribute(k, a[k]); if (t != null) e.textContent = t; return e; };
+  function draw() {
+    const m = $("b-metric").value, kernel = $("b-kernel").value, only = $("b-doc").value;
+    const series = (only ? [only] : docs).map(d => ({ d, pts: data.map(e => { const r = e.runs.find(r => r.doc === d && r.kernel === kernel); return r == null ? null : value(r, m); }) }));
+    const all = series.flatMap(s => s.pts).filter(v => v != null);
+    const W = 760, H = 320, L = 56, R = 12, T = 12, B = 44, svg = $("b-chart");
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.replaceChildren();
+    const max = Math.max(...all, m === "end" ? 1 : 1e-9) * 1.05, x = i => L + (data.length < 2 ? (W - L - R) / 2 : i * (W - L - R) / (data.length - 1)), y = v => T + (H - T - B) * (1 - v / max);
+    const fmt = v => v >= 1e6 ? (v / 1e6).toPrecision(3) + "M" : v >= 1e3 ? (v / 1e3).toPrecision(3) + "k" : +v.toPrecision(3);
+    for (let i = 0; i <= 4; i++) { const v = max * i / 4; svg.append(el("line", { class: "grid", x1: L, x2: W - R, y1: y(v), y2: y(v) }), el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, fmt(v))); }
+    data.forEach((e, i) => svg.append(el("text", { x: x(i), y: H - 24, "text-anchor": "middle" }, e.version), el("text", { x: x(i), y: H - 10, "text-anchor": "middle" }, e.date)));
+    series.forEach((s, k) => {
+      const c = COLORS[k % COLORS.length], pts = s.pts.map((v, i) => v == null ? null : [x(i), y(v), v]);
+      const path = pts.map((p, i) => p ? `${pts[i - 1] ? "L" : "M"}${p[0]},${p[1]}` : "").join("");
+      svg.append(el("path", { class: "line", d: path, stroke: c }));
+      for (const p of pts) if (p) { const dot = el("circle", { cx: p[0], cy: p[1], r: 3, fill: c }); dot.append(el("title", {}, `${s.d}: ${fmt(p[2])}`)); svg.append(dot); }
+    });
+    $("b-legend").replaceChildren(...series.map((s, k) => { const span = document.createElement("span"); const i = document.createElement("i"); i.style.background = COLORS[k % COLORS.length]; span.append(i, s.d); return span; }));
+    $("b-note").textContent = `${data.length} version${data.length === 1 ? "" : "s"}, ${series.length} document${series.length === 1 ? "" : "s"}, kernel ${kernel}. Runs that did not reach the end still count with what they cost.`;
+  }
+  for (const id of ["b-metric", "b-kernel", "b-doc"]) $(id).addEventListener("change", draw);
+  draw();
+})();
+</script>
