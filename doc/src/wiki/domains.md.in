@@ -393,7 +393,7 @@ Paths join between two commands where they stand alike: same input, conditionals
 
 #### Code a join makes unknown
 
-Joining pending code into unknown text keeps what it may do (`may_run`): undefined names after `\def`/`\let` there may now be defined (as fresh names), registers it names may hold any value. Reported as `joined-code-may-define`.
+Joining pending code into unknown text keeps what it may do (`may_run`): undefined names after `\def`/`\let` there may now be defined (as fresh names), registers it names may hold any value. A defined name that code gives a new meaning holds the join of both. `\let` to a known name joins that name's meaning, so `\let\if@tempswa\iffalse` leaves the switch undecided. Any other definition joins an unknown meaning. A definition inside a group the code opens and closes is left out, a `\global` one is not. Reached macros are followed three levels deep. Reported as `joined-code-may-define`.
 
 - Differing input joins as shared text around one token for either part. Each part must be whole: balanced braces, conditionals closed (`whole`).
 - Only data joins that way. Paths whose pending code differs never join until a common point. Code differs only between passes of one loop.
