@@ -3286,28 +3286,17 @@ fn uses_in(analysis: &Analysis, sym: Sym, window: Window) -> u32 {
         .sum()
 }
 
-/// The other names the document's call that made `def` defined: the names a
-/// `\newcounter{x}` (`\c@x`, `\thex`, …) or a `\newenvironment` makes
-/// together. The call is the document's expansion last begun before the
-/// definition, as `new_redefines` finds it.
+/// The other names the call that made `def` defined: the names a
+/// `\newcounter{x}` (`\c@x`, `\thex`, …) or a `\newtcolorbox` makes
+/// together. Package code's definitions stand at the document's call that
+/// ran it, so they share its place; the document's own `\def`s each stand
+/// where they are written.
 fn defined_together(analysis: &Analysis, def: &crate::facts::Definition) -> Vec<String> {
-    let mut calls: Vec<(crate::env::NodeId, Span)> = analysis
-        .facts
-        .expansions
-        .iter()
-        .filter(|e| origin(analysis, e.span.file) == "document")
-        .filter_map(|e| Some((e.node?, e.span)))
-        .collect();
-    calls.sort_by_key(|c| c.0);
-    let call = |node| calls.get(calls.partition_point(|c| c.0 <= node).wrapping_sub(1)).map(|c| c.1);
-    // a definition the document's own text makes is no call's
-    let made = |d: &crate::facts::Definition| origin(analysis, d.span.file) != "document";
-    let Some(mine) = call(def.node).filter(|_| made(def)) else { return Vec::new() };
     let mut out: Vec<String> = analysis
         .facts
         .defs
         .iter()
-        .filter(|d| d.name != def.name && made(d) && call(d.node) == Some(mine))
+        .filter(|d| d.name != def.name && d.span == def.span)
         .map(|d| analysis.interner.cs(d.name))
         .collect();
     out.sort();
