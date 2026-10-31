@@ -12,7 +12,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   // compare alike. Two outlines are as far apart as the mean distance of each one's points to the
   // other (chamfer distance), plus how much their aspects and their numbers of dots differ. Strokes
   // drawn apart are no dots: a `⇒` drawn in three strokes is one shape, `÷` has two dots.
-  const DRAW = { side: 32, glyph: 96, pen: 9, shown: 14, foreign: 1.12, aspect: 0.6, dots: 0.5, dot: 6 };
+  const DRAW = { side: 32, glyph: 96, pen: 9, shown: 14, foreign: 1.12, aspect: 0.6, dots: 0.8, dot: 4 };
   const $ = (id) => root.querySelector(`#${id}`), escape = esc;
   const pad = $('draw-pad'), pen = pad.getContext('2d', { willReadFrequently: true });
   let drawTable = null, drawn = false;
@@ -31,7 +31,12 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     const on = (x, y) => x >= 0 && y >= 0 && x < n && y < n && ink[y * n + x];
     const points = [];
     for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (on(x, y) && !(on(x - 1, y) && on(x + 1, y) && on(x, y - 1) && on(x, y + 1))) points.push(y * n + x);
-    return points.length ? [Uint16Array.from(points), distances(points, n), Math.log(bw / bh), dots(ink, n)] : null;
+    // dots by their size on the whole canvas, not after the cut: a glyph of two dots (`¨`) keeps them
+    const whole = Object.assign(document.createElement('canvas'), { width: n, height: n }), wc = whole.getContext('2d', { willReadFrequently: true });
+    wc.drawImage(canvas, 0, 0, w, h, 0, 0, n, n);
+    const wp = wc.getImageData(0, 0, n, n).data, wink = new Uint8Array(n * n);
+    for (let i = 0; i < n * n; i++) wink[i] = wp[i * 4 + 3] > 40 ? 1 : 0;
+    return points.length ? [Uint16Array.from(points), distances(points, n), Math.log(bw / bh), dots(wink, n)] : null;
   }
   /** Each cell's distance to the nearest point, by two chamfer passes (3 along, 4 across). */
   function distances(points, n) {
@@ -50,7 +55,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
     }
     return d;
   }
-  /** The ink's pieces no wider or taller than `DRAW.dot` cells: an `x` with two dots has two. */
+  /** The ink's pieces no wider or taller than `DRAW.dot` cells of the whole canvas: an `x` with two dots has two. */
   function dots(ink, n) {
     const seen = new Uint8Array(n * n);
     let count = 0;
@@ -102,8 +107,10 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
   }
   const drawKind = (s) => (s.cls === 'icon' ? 'symbol' : s.cls === 'alpha' ? 'letter' : 'symbol');
   const drawMode = (s) => (s.cls === 'icon' ? 'text' : 'math');
+  let matching = 0;
   async function drawMatch() {
-    const list = $('draw-list'), f = features(pad);
+    // a later stroke's match supersedes one still running
+    const mine = ++matching, list = $('draw-list'), f = features(pad);
     if (!f) { list.innerHTML = ''; return; }
     const [table, names] = await Promise.all([symbolsLoad(), inForce()]);
     // "this document": the names in force in its run, nothing a package it does not load defines
@@ -112,6 +119,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
       && (!drawFilter.kind || drawKind(s) === drawFilter.kind) && (!drawFilter.mode || drawMode(s) === drawFilter.mode));
     if (!table.rows.length) { list.innerHTML = `<li class="muted">The symbols did not load${table.error ? `: ${escape(table.error)}` : ''}. Reload the page to try again.</li>`; return; }
     await Promise.all([...new Set(wanted.map((s) => s.font))].map((i) => fontReady(table, i)));
+    if (mine !== matching) return;
     const best = wanted.filter((s) => s.f).map((s) => [s, apart(f, s.f) * (force.has(s.name) ? 1 : DRAW.foreign)]).sort((a, b) => a[1] - b[1]);
     // the package a name needs: where the run has it from when in force, else the table's
     const from = (x) => source.get(x.name) ?? x.pkg;
@@ -134,6 +142,7 @@ self.satexDraw = ({ root, base, symbols, inForce = async () => [], pick = () => 
         (usepackage && from(main) !== 'kernel'
           ? `<button type="button" class="small ghost draw-put" data-name="\\usepackage{${escape(from(main).replace(/\.cls$/, ''))}}" data-pkg="${escape(from(main))}" title="${escape(label)} the package line">\\usepackage</button>` : '') + '</li>');
     }
+    list.dataset.strokes = String(mine);
     list.innerHTML = rows.join('') || `<li class="muted">${drawFilter.from === 'loaded' ? 'No symbol of this document matches: try every package.' : 'No symbol matches.'}</li>`;
   }
   /** A name not in force: its card from the table, with the package that defines it. */

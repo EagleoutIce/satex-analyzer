@@ -631,6 +631,30 @@ fn text_of_parted_paths_stays_alternatives() {
     assert!(matches!(text[..], ["Z{By|Ax}Q"] | ["Z{Ax|By}Q"]), "{text:?}");
 }
 
+/// Capability: typesetting feedback. The ligatures the font's program
+/// sets (tex.web § 1035) are marked where they stand: what it joined and
+/// the glyph, so a view can show the join.
+#[test]
+fn ligatures_are_marked_where_they_stand() {
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-ligatures");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("l.tex"), "\\documentclass{article}\n\\begin{document}\nA fine 10--12.\n\\end{document}\n")
+        .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["query", "typeset", "-f", "l.tex", "--format", "json", "--set", "limits.seconds=0"])
+        .output()
+        .expect("satex runs");
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).expect("json");
+    let ligatures: Vec<(String, String)> = rows
+        .iter()
+        .flat_map(|r| r["ligatures"].as_array().cloned().unwrap_or_default())
+        .map(|l| (l["from"].as_str().unwrap_or_default().to_string(), l["to"].as_str().unwrap_or_default().to_string()))
+        .collect();
+    assert!(ligatures.contains(&("fi".into(), "fi".into())), "{ligatures:?}");
+    assert!(ligatures.contains(&("--".into(), "–".into())), "{ligatures:?}");
+}
+
 /// At a use, a name paths defined differently holds one of their texts:
 /// `explain --at` lists each definition the use read.
 #[test]

@@ -152,9 +152,9 @@ button:disabled { opacity: .55; cursor: progress; }
 .examples > .tabs { flex-wrap: wrap; overflow: visible; } .examples > .tabs [role=tab] { padding: .4rem .7rem; }
 [role=tabpanel] { animation: fade .3s var(--ease); }
 @keyframes fade { from { opacity: 0; transform: translate3d(0, 4px, 0); } }
-.example { margin: .9rem 0 0; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: .7rem; }
+.example { margin: .9rem 0 0; display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: .7rem; }
 .example figcaption { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .5rem; font-size: .9rem; }
-.example pre { margin: 0; font-size: 13px; }
+.example pre { margin: 0; font-size: 13px; overflow-x: auto; }
 .example pre:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 .ln { display: inline-block; min-width: 100%; }
 .output { white-space: pre-wrap; }
@@ -454,9 +454,18 @@ main td .badges, main td .cat { white-space: nowrap; }
 .typeset .ts-bf { font-weight: 700; } .typeset .ts-it { font-style: italic; } .typeset .ts-sl { font-style: oblique; } .typeset .ts-sc { font-variant: small-caps; }
 .x-from { color: var(--muted); font-size: .85em; font-style: italic; }
 .tok-magic { color: var(--c5); font-weight: 600; } .tok-magicv { color: var(--c2); }
+.rp-more summary { cursor: pointer; font-size: .74rem; color: var(--muted); }
+.tip-note:has(.ty-chip) { pointer-events: auto; } .ty-chip { border-bottom: 0; padding: 0 .3rem; border-radius: 999px; background: var(--sunk); }
 .cm-heat { width: 4px; } .cm-heat .cm-gutterElement { padding: 0; }
 .cm-heat-mark { display: block; width: 4px; height: 100%; background: color-mix(in srgb, var(--warning) calc(var(--heat) * 100%), transparent); }
 #t-heat [data-line] { cursor: pointer; }
+.ts-lig-from { display: none; }
+.show-ligs .ts-lig { border-radius: 3px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.show-ligs .ts-lig-from, .show-ligs .ts-lig-to { display: inline-block; overflow: hidden; vertical-align: bottom; white-space: nowrap; }
+.show-ligs .ts-lig-from { letter-spacing: .15em; animation: lig-split 1.6s var(--ease) forwards; }
+.show-ligs .ts-lig-to { max-width: 0; opacity: 0; animation: lig-join 1.6s var(--ease) forwards; }
+@keyframes lig-split { 0%, 60% { max-width: 3em; opacity: 1; } 100% { max-width: 0; opacity: 0; } }
+@keyframes lig-join { 0%, 60% { max-width: 0; opacity: 0; } 100% { max-width: 3em; opacity: 1; } }
 .typeset .ts-table { display: table; border-collapse: collapse; margin: .2rem 0; } .typeset .ts-tr { display: table-row; }
 .typeset .ts-td { display: table-cell; padding: 0 .7em; } .typeset .ts-ruled > .ts-td { border-top: 1px solid currentColor; }
 .typeset .ts-tr.ts-ruled:empty { display: block; border-top: 1px solid currentColor; }
@@ -840,7 +849,8 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .cfg-value { margin: 0; } .cfg-value :is(input[type=text], input[type=number], select) { width: 12rem; padding: .2rem .5rem; border: 1px solid var(--border); border-radius: 6px; background-color: var(--sunk); color: var(--fg); font-size: .8rem; }
 .cache-dialog.ask-dialog { height: fit-content; width: min(32rem, calc(100vw - 2rem)); }
 .ask-foot { display: flex; justify-content: flex-end; gap: .5rem; margin: .8rem 0 0; padding: .6rem 1rem; border-top: 1px solid var(--border); }
-.cache-dialog.draw-dialog { height: fit-content; width: min(46rem, calc(100vw - 2rem)); }
+/* a fixed size: the pad never moves under the pen while the results fill in */
+.cache-dialog.draw-dialog { height: min(86vh, 44rem); width: min(46rem, calc(100vw - 2rem)); } .draw-dialog .draw-box { flex: 1; min-height: 0; } .draw-dialog .draw-list { max-height: 100%; overflow: auto; }
 .draw-about { font-size: .76rem; } .draw-aliases { font-size: .74rem; } .draw-aliases summary { cursor: pointer; color: var(--muted); } .draw-aliases ul { margin: .2rem 0; padding-left: 1rem; } .draw-about summary { cursor: pointer; }
 .draw-page { margin: 0; background: var(--bg); color: var(--fg); } .draw-solo { max-width: 46rem; margin: 0 auto; padding: .5rem 0; }
 .draw-solo footer { padding: 0 1rem .8rem; }
@@ -869,6 +879,13 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .claim-rot > span.typing::after { content: ""; display: inline-block; width: 2px; height: 1.05em; margin-left: 2px; vertical-align: -.15em; background: currentColor; animation: caret 1s steps(1) infinite; }
 .claim-rot > span.typing code { text-decoration: underline wavy transparent; text-underline-offset: .22em; transition: text-decoration-color .5s; }
 .claim-rot > span.typing.linted code { text-decoration-color: var(--warning); }
+.claim-rot > span { position: relative; }
+.claim-complete { position: absolute; left: 50%; top: 100%; z-index: 2; margin: .2rem 0 0; padding: .2rem; list-style: none; text-align: left; white-space: nowrap;
+  font: 400 .78rem system-ui, sans-serif; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow);
+  animation: claim-complete 3s var(--ease) forwards; }
+.claim-complete li { display: flex; gap: .8rem; justify-content: space-between; padding: .1rem .5rem; border-radius: 6px; } .claim-complete li:first-child { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.claim-complete span { color: var(--muted); font-size: .72rem; }
+@keyframes claim-complete { 0% { opacity: 0; transform: translateY(-.2rem); } 12%, 80% { opacity: 1; transform: none; } 100% { opacity: 0; } }
 @keyframes caret { 50% { opacity: 0; } }
 .band { margin: 0; padding: 2.4rem clamp(0rem, 3vw, 2rem) 2rem; border-top: 1px solid var(--border); }
 .band.alt { background: color-mix(in srgb, var(--accent) 4%, transparent); border-radius: 18px; border-top-color: transparent; }
@@ -887,7 +904,7 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .compare td:nth-child(2), .compare th:nth-child(2) { background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .compare td.yes { color: var(--fg); font-weight: 500; } .compare td.no { color: var(--muted); }
 .compare tbody tr { transition: background-color var(--quick); } .compare tbody tr:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
-.refs { font-size: .8rem; color: var(--muted); padding-left: 1.2rem; margin-top: .8rem; } .refs li { white-space: normal; overflow: visible; background: none; border: 0; box-shadow: none; padding: 0; }
+ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7rem 1rem .7rem 2.2rem; border-radius: 8px; } ol.refs li { white-space: normal; overflow: visible; background: none; border: 0; box-shadow: none; padding: 0; }
 .more { margin-top: 1rem; } .more > summary { cursor: pointer; color: var(--accent); }
 /* the trace's current step: what it is, what it inserts, what the input still holds */
 .tr-now { border: 1px solid var(--border); border-radius: 10px; padding: .6rem .8rem; margin: 0 0 .6rem; background: var(--panel); display: grid; gap: .35rem; }
@@ -959,6 +976,7 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .tr-tip-mean { margin: 0 0 .4rem; font-size: .8rem; } .tr-tip-mean code { white-space: pre-wrap; overflow-wrap: anywhere; } .tr-tip-pin { margin: 0 0 .3rem; font-size: .72rem; }
 #trace-stream span { font-family: inherit; font-size: inherit; } .tr-chips .tr-rest { align-self: flex-start; }
 /* the landing page's live box: source left, what it typesets right */
+.ex-acts { display: flex; gap: .4rem; align-items: center; }
 .live-src { min-width: 0; min-height: 20rem; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--panel); font-size: 13px; }
 .live-src .cm-editor { height: 100%; } .live-status progress { width: 7rem; height: .4rem; vertical-align: middle; } .live-bad { color: var(--error); }
 .tr-tok { position: relative; } .tr-tok .tr-cc { font-size: .55em; line-height: 1; vertical-align: -.35em; margin-left: .1em; opacity: .75; }

@@ -122,7 +122,8 @@ def installation_stamp():
 
 def files_read(satex, flags, doc, cwd, env, config=b""):
     """The paths `satex query files` lists for `doc`, reused while nothing it depends on changed."""
-    key = digest(json.dumps([flags, doc.read_bytes().decode(errors="replace"), config.decode(errors="replace"),
+    # the paths it lists are absolute: another checkout's listing names another checkout's files
+    key = digest(json.dumps([flags, str(doc), str(cwd), doc.read_bytes().decode(errors="replace"), config.decode(errors="replace"),
                              LISTINGS.get("@stamp", "")]).encode())
     if key not in LISTINGS:
         done = subprocess.run([str(satex), *flags, "query", "files", "-f", str(doc), "--format", "json"],
@@ -692,7 +693,7 @@ def typeset(satex, project, env, name, source):
             rows = json.loads(done.stdout or "[]")
         except json.JSONDecodeError:
             return []
-        keep = ("line", "marked", "detail", "keys", "fonts", "align", "heading", "cut")
+        keep = ("line", "marked", "detail", "keys", "fonts", "align", "ligatures", "heading", "cut")
         # the project's own files: an \\input chapter's text too, not a package's
         own = lambda path: not Path(path).is_absolute() or Path(path).resolve().is_relative_to(project.resolve())
         return [{k: r[k] for k in keep if k in r} for r in rows if r.get("kind") == "paragraph" and own(str(r.get("path", "")))]
@@ -714,18 +715,37 @@ def examples(satex, work, project):
         cs = explained(satex, project, env, name, used, dist)
         called = {x for rs in cs.values() for r in rs for x in r.get("expands", []) + [r.get("by")] if x and x not in cs}
         cs |= explained(satex, project, env, name, called, dist)
-        data = json.dumps({"cs": cs, "lints": lints, "ts": typeset(satex, project, env, name, source)}).replace("</", "<\\/")
+        data = json.dumps({"name": name, "source": source, "cs": cs, "lints": lints, "ts": typeset(satex, project, env, name, source)}).replace("</", "<\\/")
         # a finding's marker at the end of the line it starts on: its severity and rule
-        ends = lambda n: "".join(f'<span class="eol f-{d["severity"]}" data-lint="{k}">{html.escape(d["code"])}</span>' for k, d in enumerate(lints) if d["start"][0] == n)
+        # a finding's marker at the end of its line: its rule's number, the name on hover; one rule met on
+        # lines in a row is one marker on the first, with how often
+        marks = {}
+        for k, d in enumerate(lints):
+            n = d["start"][0]
+            run = next((m for m in marks.get(n - 1, []) if m[0] == d["code"]), None)
+            if run:
+                run[1].append(k)
+                marks.setdefault(n, []).append(run)
+            else:
+                marks.setdefault(n, []).append([d["code"], [k], d, n])
+        def ends(n):
+            out = []
+            for code, ks, d, first in marks.get(n, []):
+                if first != n:
+                    continue
+                times = f" ×{len(ks)}" if len(ks) > 1 else ""
+                out.append(f'<span class="eol f-{d["severity"]}" data-lint="{" ".join(map(str, ks))}" title="{html.escape(code)}{times}">{html.escape(d.get("number") or code)}{times}</span>')
+            return "".join(out)
         lines = "\n".join(f'<span class="ln" data-l="{n + 1}">{tex_html(l, n, lints)}{ends(n)}</span>' for n, l in enumerate(source.splitlines()))
         sel = "true" if i == 0 else "false"
         tab = (f'<button role="tab" aria-selected="{sel}" aria-controls="ex-{i}" id="ex-tab-{i}">{html.escape(name)}</button>')
         return tab, (
             f'<figure class="example" role="tabpanel" id="ex-{i}" aria-labelledby="ex-tab-{i}"{"" if i == 0 else " hidden"}>\n'
-            f'<figcaption><span class="muted">Hover a command to explain it, an underline or a marker to see its finding.</span>'
-            f'<a class="button ghost small" href="play/index.html#{name}">open in the playground →</a></figcaption>\n'
+            f'<figcaption><span class="muted live-status" aria-live="polite">Hover a command to explain it, an underline or a marker to see its finding. Click into the source to edit it.</span>'
+            f'<span class="ex-acts"><button type="button" class="ghost small ex-reset" hidden>reset</button>'
+            f'<a class="button ghost small" href="play/index.html#{name}">open in the playground →</a></span></figcaption>\n'
             f'<pre class="src"><code>{lines}</code></pre>\n'
-            f'<div class="ex-side typeset" aria-label="what SaTeX computes it typesets"></div>\n'
+            f'<div class="ex-side typeset live-ts" aria-label="what SaTeX computes it typesets"></div>\n'
             f'<script type="application/json" class="ex-data">{data}</script></figure>')
     jobs = list(enumerate(roots(EXAMPLES)))
     tabs, panels = zip(*parallel("[4/4] examples", jobs, one))

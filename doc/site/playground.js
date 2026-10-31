@@ -92,11 +92,14 @@
       if (to) { e.preventDefault(); place(to); keep(); }
     });
 
-    // each section of the side pane: a grip under its body
+    // each section of the side pane: a grip under its body, and open or folded as the reader left it
     kept.heights ??= {};
+    kept.open ??= {};
     for (const sect of document.querySelectorAll('.side-pane > details.sect, .tree > details.sect')) {
       const body = sect.querySelector('.grow');
       if (!body) continue;
+      if (sect.id in kept.open) sect.open = kept.open[sect.id];
+      sect.addEventListener('toggle', () => { kept.open[sect.id] = sect.open; keep(); });
       const grip = Object.assign(document.createElement('div'), { className: 'grip', title: 'drag to resize, down to nothing to close; double-click: fit' });
       grip.setAttribute('role', 'separator');
       grip.setAttribute('aria-orientation', 'horizontal');
@@ -760,7 +763,7 @@
   const typesetBody = $('typeset-body');
   const notation = self.satexCards.notation;
   // in the section's header: a click flips a switch, never the section's fold; kept across visits
-  for (const [id, cls, store] of [['typeset-boxes', 'show-boxes', 'satex-typeset-boxes'], ['typeset-keys', 'show-keys', 'satex-typeset-keys']]) {
+  for (const [id, cls, store] of [['typeset-boxes', 'show-boxes', 'satex-typeset-boxes'], ['typeset-keys', 'show-keys', 'satex-typeset-keys'], ['typeset-ligs', 'show-ligs', 'satex-typeset-ligs']]) {
     const box = $(id), apply = () => typesetBody.classList.toggle(cls, box.checked);
     // the switch itself flips natively; its text flips it here
     box.closest('label').addEventListener('click', (e) => { if (e.target === box) return; e.preventDefault(); box.checked = !box.checked; box.dispatchEvent(new Event('change')); });
@@ -857,7 +860,7 @@
     const rows = await lsp('satex/typeset', { textDocument: { uri: target } }).catch(() => null);
     if (!rows || target !== uri()) return;
     const paragraphs = rows.filter((r) => r.kind === 'paragraph');
-    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align))}</span></p>`;
+    const row = (r) => `<p class="ts${r.heading ? ` ts-h ts-${escape(r.heading)}` : ''}" data-path="${escape(r.path ?? '')}" data-line="${r.line}" data-col="${r.col}"><span class="ts-at">${r.line}</span><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', r.keys, r.fonts, r.align, r.ligatures))}</span></p>`;
     // the whole document in order: this file's paragraphs as they are, a run from another file folded into one line
     const html = [];
     for (let i = 0; i < paragraphs.length;) {
@@ -894,7 +897,9 @@
     // waits until typing moves on: it is about text that is not finished.
     const typing = target === uri() && performance.now() - typedAt < 4000 && editor?.position?.();
     const unfinished = (d) => typing && d.range.start.line === typing.line && d.range.start.character <= typing.character && typing.character <= d.range.end.character + 1;
-    diagnostics[target] = ds.filter((d) => !unfinished(d)).map((d) => ({ ...d, fixes: by.get(key(d)) ?? [] }));
+    // a file the build writes (.aux, .toc …) is no source of the reader's: its lines are never marked
+    const generated = writtenFiles.some((f) => target.endsWith(`/${f.name}`));
+    diagnostics[target] = generated ? [] : ds.filter((d) => !unfinished(d)).map((d) => ({ ...d, fixes: by.get(key(d)) ?? [] }));
     if (target === uri()) render();
     drawTree();
   }
@@ -1452,7 +1457,7 @@
     const found = (ds?.records ?? []).filter(mine);
     const top = (tr?.records ?? []).filter((r) => mine(r) && r.inserts != null).slice(0, 12);
     $('try-status').textContent = `typeset in ${secs(performance.now() - t0)} · ${plural(set.length, 'paragraph')}${found.length ? ` · ${plural(found.length, 'finding')}` : ''}`;
-    out.innerHTML = `<div class="typeset">${set.map((r) => `<p class="ts"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', [], r.fonts, r.align))}</span></p>`).join('') || '<p class="muted">It sets no text.</p>'}</div>` +
+    out.innerHTML = `<div class="typeset">${set.map((r) => `<p class="ts"><span class="ts-text">${notation(withKeys(r.marked ?? r.detail ?? '', [], r.fonts, r.align, r.ligatures))}</span></p>`).join('') || '<p class="muted">It sets no text.</p>'}</div>` +
       (found.length ? `<ul class="lib-found">${found.map((d) => `<li><b>${escape(d.severity)}</b> ${escape(d.message)}</li>`).join('')}</ul>` : '') +
       (top.length ? `<details class="lib-steps"><summary>${plural(top.length, 'expansion')}</summary><ul>${top.map((r) => `<li><code class="cs-ref" data-cs="${escape(r.name)}">${escape(r.name)}</code> → <code>${escape(String(r.inserts).slice(0, 160))}</code></li>`).join('')}</ul></details>` : '');
   }
@@ -2803,8 +2808,8 @@
         return `<span title="${escape(num(n))} ${escape(label)}"><b>${escape(Number(n) >= 1e4 ? short(n) : num(n))}</b>${escape(label)}</span>`;
       }).join('') + ($('t-time-text').textContent ? `<span title="the whole check"><b>${escape($('t-time-text').textContent)}</b>total</span>` : '');
       const slow = texts.map((t) => t.match(/^slow (\d+) (\d+) (.*)$/)).filter(Boolean);
-      $('t-slow').innerHTML = slow.length ? `<h4>slowest files</h4>${slow.map(([, ms, pct, name]) =>
-        `<div class="rp-bar" style="--p:${pct}%" title="${escape(name)}"><span>${escape(name.split('/').pop())}</span><span>${secs(Number(ms))} · ${pct}%</span></div>`).join('')}` : '';
+      $('t-slow').innerHTML = rpBars(slow.map(([, ms, pct, name]) => [name, +ms, pct, ` title="${escape(name)}"`]), 'slowest files',
+        ([name]) => escape(name.split('/').pop()), ([, ms, pct]) => `${secs(ms)} · ${pct}%`);
       $('t-limits').innerHTML = texts.filter((t) => t.startsWith('limit ')).map((t) => `<p>reached ${escape(t.slice(6))}</p>`).join('');
       heatShow(texts);
     }
@@ -2820,25 +2825,30 @@
     return `${reused.length + segments} cached${fresh.length ? ` · fresh: ${fresh.map((f) => f.split(' ')[0]).join(', ')}` : ''}`;
   }
   /** The main file's tokens per line, as a strip in the editor's gutter and its costliest lines in the
-   * pop-up; each lint rule's time and findings, slowest first. A bar's share is of the largest one. */
+   * pop-up; each lint rule's time and findings, slowest first. */
   let heat = null;
   function heatShow(texts) {
     const file = texts.find((t) => t.startsWith('heat '))?.slice(5) ?? '';
     const lines = texts.map((t) => t.match(/^line (\d+) (\d+)$/)).filter(Boolean).map(([, l, n]) => [+l, +n]);
     heat = { file, lines: new Map(lines) };
     heatDraw();
-    const bars = (rows, title, label, value) => {
-      const most = Math.max(1, ...rows.map((r) => r.at(1)));
-      return rows.length ? `<h4>${title}</h4>${rows.map((r) => `<div class="rp-bar" style="--p:${(100 * r[1] / most).toFixed(1)}%"${r[3] ?? ''}><span>${label(r)}</span><span>${value(r)}</span></div>`).join('')}` : '';
-    };
-    const top = [...lines].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([l, n]) => [l, n, 0, ` data-line="${l}" title="go to line ${l}"`]);
+    const top = [...lines].sort((a, b) => b[1] - a[1]).map(([l, n]) => [l, n, 0, ` data-line="${l}" title="go to line ${l}"`]);
     $('t-heat').innerHTML = (top.length ? `<label class="ts-toggle t-heatgutter"><span>heat in the gutter</span><input type="checkbox" role="switch"${heatShown ? ' checked' : ''}></label>` : '') +
-      bars(top, `busiest lines of ${escape(file.split('/').pop())}`, ([l]) => `line ${l}`, ([, n]) => `${short(n)} tokens`);
+      rpBars(top, `busiest lines of ${escape(file.split('/').pop())}`, ([l]) => `line ${l}`, ([, n]) => `${short(n)} tokens`);
     const rules = texts.map((t) => t.match(/^rule (\S+) (\d+) (\d+)$/)).filter(Boolean).map(([, code, us, n]) => [code, +us, +n]);
-    $('t-rules').innerHTML = bars(rules.slice(0, 8), `lint rules: ${secs(rules.reduce((s, r) => s + r[1], 0) / 1000)} in all`,
+    $('t-rules').innerHTML = rpBars(rules, `lint rules: ${secs(rules.reduce((s, r) => s + r[1], 0) / 1000)} in all`,
       ([code]) => escape(code), ([, us, n]) => `${secs(us / 1000)} · ${plural(n, 'finding')}`);
   }
   let heatShown = false;
+  /** The pop-up's bars, `[label, value, _, attributes]` rows largest first: the first three, the rest folded.
+   * A bar's share is of the largest one. */
+  const RP_SHOWN = 3;
+  function rpBars(rows, title, label, value) {
+    const most = Math.max(1, ...rows.map((r) => r[1]));
+    const bar = (r) => `<div class="rp-bar" style="--p:${(100 * r[1] / most).toFixed(1)}%"${r[3] ?? ''}><span>${label(r)}</span><span>${value(r)}</span></div>`;
+    const rest = rows.slice(RP_SHOWN);
+    return rows.length ? `<h4>${title}</h4>${rows.slice(0, RP_SHOWN).map(bar).join('')}${rest.length ? `<details class="rp-more"><summary>show all ${rows.length}</summary>${rest.map(bar).join('')}</details>` : ''}` : '';
+  }
   const heatDraw = () => editor?.heat?.(heatShown && heat && heat.file.endsWith(`/${state.file}`) ? heat.lines : null);
   $('t-heat').addEventListener('change', (e) => { if (e.target.closest('.t-heatgutter')) { heatShown = e.target.checked; heatDraw(); } });
   $('t-heat').addEventListener('click', (e) => { const b = e.target.closest('[data-line]'); if (b) { const at = { line: +b.dataset.line - 1, character: 0 }; editor.focus({ start: at, end: at }); } });

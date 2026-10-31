@@ -471,7 +471,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let mut style = "";
     let mut keys: std::collections::VecDeque<(&str, &str)> = Default::default();
     let mut next_key: std::collections::HashMap<FileId, usize> = Default::default();
-    let glyphs = glyphs(analysis);
+    let (glyphs, joined) = glyphs(analysis);
     let mut boxes = drawn_boxes(analysis).into_iter().peekable();
     for (i, (c, spot)) in text.chars.chars().zip(&text.at).enumerate() {
         let site = Span {
@@ -555,6 +555,10 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
                     style = now;
                     line.push(KEY);
                     keys.push_back((FONT, now));
+                }
+                if let Some(lig) = &joined[i] {
+                    line.push(KEY);
+                    keys.push_back((LIG, lig.as_str()));
                 }
                 line.push_str(&piece);
             }
@@ -709,8 +713,9 @@ fn drawn_boxes(analysis: &Analysis) -> Vec<(Span, String)> {
 
 /// Each character as set: one a font's ligature program joins to the one
 /// before (tex.web § 1035) is empty, and that one shows the ligature, as
-/// TeX's text conventions write it in Unicode (`--` an en dash).
-fn glyphs(analysis: &Analysis) -> Vec<String> {
+/// TeX's text conventions write it in Unicode (`--` an en dash). Second, at
+/// each ligature's first character, what the font joined and the glyph set.
+fn glyphs(analysis: &Analysis) -> (Vec<String>, Vec<Option<String>>) {
     let text = &analysis.facts.text;
     let mut fonts = crate::lint::italics::Fonts::of(analysis);
     let mut out: Vec<String> = text.chars.chars().map(public).collect();
@@ -746,7 +751,9 @@ fn glyphs(analysis: &Analysis) -> Vec<String> {
         }
         held = Some((i, c as u32));
     }
-    out
+    // each ligature: the characters the font joined and the glyph it set, at its first character
+    let joined = seq.iter().zip(&out).map(|(s, o)| (s.chars().count() > 1).then(|| format!("{s}\u{1}{o}"))).collect();
+    (out, joined)
 }
 
 /// The names allocated to each register, by the register as [`step_name`]
@@ -816,6 +823,9 @@ const FONT: &str = "font";
 /// The kind of a [`KEY`] that marks an alignment's part, not a key.
 const ALIGN: &str = "align";
 
+/// The kind of a [`KEY`] before a ligature: what the font joined, `\u{1}`, the glyph set.
+const LIG: &str = "lig";
+
 /// Each row of [`Analysis::font_states`] as its family, series and shape
 /// among the kernel's defaults (`\sfdefault`, `\ttdefault`, `\bfdefault`,
 /// `\itdefault`, `\sldefault`, `\scdefault`, fntguide § 2.5): `sf`, `tt`,
@@ -866,7 +876,8 @@ fn paragraph(
     keys: &mut std::collections::VecDeque<(&str, &str)>,
 ) -> Record {
     let marked = tidy(marked);
-    let (mut placed, mut fonts, mut aligned, mut offset) = (Vec::new(), Vec::new(), Vec::new(), 0);
+    let (mut placed, mut fonts, mut aligned, mut ligatures, mut offset) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0);
     for c in unmarked(&marked).chars() {
         if c != KEY {
             offset += 1;
@@ -875,6 +886,9 @@ fn paragraph(
                 fonts.push(json!({ "style": key, "at": offset }));
             } else if kind == ALIGN {
                 aligned.push(json!({ "mark": key, "at": offset }));
+            } else if kind == LIG {
+                let (from, to) = key.split_once('\u{1}').unwrap_or((key, key));
+                ligatures.push(json!({ "from": from, "to": to, "at": offset }));
             } else {
                 placed.push(json!({ "kind": kind, "key": key, "at": offset }));
             }
@@ -890,6 +904,9 @@ fn paragraph(
     }
     if !aligned.is_empty() {
         record.insert("align".into(), json!(aligned));
+    }
+    if !ligatures.is_empty() {
+        record.insert("ligatures".into(), json!(ligatures));
     }
     record.insert("kind".into(), json!("paragraph"));
     record.insert("detail".into(), json!(unmarked(&marked)));
