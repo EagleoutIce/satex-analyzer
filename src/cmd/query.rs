@@ -496,6 +496,8 @@ fn answer(analysis: &crate::machine::Analysis, source: &str, entry: &Json) -> Js
             None => return error("`produces` needs `text`".into()),
         },
         "pgfkeys" => query::pgfkeys(analysis, entry.get("prefix").and_then(Json::as_str)),
+        "providers" => query::providers(analysis, &strings("names")),
+        "docs" => query::docs(analysis),
         other => match Query::parse(other) {
             Some(query) => query::run(analysis, query, &query::Filter::Always),
             None => return error(format!("unknown query type `{other}`")),

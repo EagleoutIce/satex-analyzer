@@ -450,11 +450,13 @@ $ satex controls my@draft my@wide -f samples/mypackage.sty
 
 * `file`: the document to analyze. Falls back to `-f` when omitted.
 * `config`: optional overrides, the same dotted paths `--set` takes: `{"limits.memory": "1GiB", "load.packages": false}`.
-* `queries`: an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, or `options`, with their own arguments:
+* `queries`: an array of query objects, each with a `type`: any name from the query list above (`definitions`, `pgfkeys`, `gaps`, …, with `text`/`prefix`/`name`/`filter` as that query takes them), or `explain`, `controls`, `slice`, `options`, `providers`, or `docs`, with their own arguments:
   * `explain`: `names` (array), `all` (bool).
   * `controls`: `names` (array), `all` (bool).
   * `slice`: `names` (array), `at` (`"[FILE:]LINE:COL"`), `forward` (bool).
   * `options`: `name`.
+  * `providers`: `names` (array). For each name, the installed package or class that defines it while loading the fewest files.
+  * `docs`: no arguments. What the manuals of the packages and classes the run read say about their commands, one record per command with the directory it was mined from.
 
 Each answer is `{"type": …, "records": […]}`, or `{"type": …, "error": …}` for a query that named something wrong. One bad query in the batch does not stop the rest of it.
 

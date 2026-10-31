@@ -8,6 +8,7 @@
 mod l3doc;
 mod ltxdoc;
 mod markup;
+pub mod mined;
 mod texdoc;
 
 use std::collections::HashMap;
@@ -53,10 +54,10 @@ pub trait DocPlugin: Sync {
 }
 
 /// The doc conventions, in order: a new one is one more line.
-pub const PLUGINS: &[&dyn DocPlugin] = &[&ltxdoc::Ltxdoc, &l3doc::L3doc, &texdoc::Texdoc];
+pub const PLUGINS: &[&dyn DocPlugin] = &[&ltxdoc::Ltxdoc, &l3doc::L3doc, &texdoc::Texdoc, &mined::Mined];
 
 /// The extensions of the files mined.
-const MINED: [&str; 2] = ["dtx", "tex"];
+const MINED: [&str; 3] = ["dtx", "tex", mined::EXTENSION];
 
 impl Dirs {
     /// The documented sources of the package `file` belongs to: for

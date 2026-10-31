@@ -441,6 +441,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
     let mut rules = text.rules.iter().peekable();
+    let mut aligns = text.align.iter().peekable();
     let mut out = Vec::new();
     let (mut line, mut first, mut choice) = (String::new(), None, None::<(crate::env::NodeId, [String; 2])>);
     let mut causes: Vec<Cause> = Vec::new();
@@ -532,6 +533,10 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
         if !piece.trim().is_empty() {
             first.get_or_insert(site);
         }
+        while let Some(&(_, mark)) = aligns.next_if(|a| a.0 as usize <= i) {
+            line.push(KEY);
+            keys.push_back((ALIGN, mark.name()));
+        }
         while let Some(&(_, rule)) = rules.next_if(|r| r.0 as usize <= i) {
             line.push_str(&note(rule.glyph()));
         }
@@ -558,6 +563,10 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     close(&mut line, &mut choice, &mut causes);
     for (_, label) in boxes {
         line.push_str(&note(&format!("▢ {label}")));
+    }
+    for &(_, mark) in aligns {
+        line.push(KEY);
+        keys.push_back((ALIGN, mark.name()));
     }
     for &(_, rule) in rules {
         line.push_str(&note(rule.glyph()));
@@ -787,6 +796,9 @@ const KEY: char = '\u{E002}';
 /// The kind of a [`KEY`] that marks a font change, not a key.
 const FONT: &str = "font";
 
+/// The kind of a [`KEY`] that marks an alignment's part, not a key.
+const ALIGN: &str = "align";
+
 /// Each row of [`Analysis::font_states`] as its family, series and shape
 /// among the kernel's defaults (`\sfdefault`, `\ttdefault`, `\bfdefault`,
 /// `\itdefault`, `\sldefault`, `\scdefault`, fntguide § 2.5): `sf`, `tt`,
@@ -837,13 +849,15 @@ fn paragraph(
     keys: &mut std::collections::VecDeque<(&str, &str)>,
 ) -> Record {
     let marked = tidy(marked);
-    let (mut placed, mut fonts, mut offset) = (Vec::new(), Vec::new(), 0);
+    let (mut placed, mut fonts, mut aligned, mut offset) = (Vec::new(), Vec::new(), Vec::new(), 0);
     for c in unmarked(&marked).chars() {
         if c != KEY {
             offset += 1;
         } else if let Some((kind, key)) = keys.pop_front() {
             if kind == FONT {
                 fonts.push(json!({ "style": key, "at": offset }));
+            } else if kind == ALIGN {
+                aligned.push(json!({ "mark": key, "at": offset }));
             } else {
                 placed.push(json!({ "kind": kind, "key": key, "at": offset }));
             }
@@ -856,6 +870,9 @@ fn paragraph(
     }
     if fonts.iter().any(|f| f["style"] != "") {
         record.insert("fonts".into(), json!(fonts));
+    }
+    if !aligned.is_empty() {
+        record.insert("align".into(), json!(aligned));
     }
     record.insert("kind".into(), json!("paragraph"));
     record.insert("detail".into(), json!(unmarked(&marked)));
@@ -4012,6 +4029,57 @@ fn excerpt(text: &str) -> String {
         Some((at, _)) => format!("{}…", &flat[..at]),
         None => flat,
     }
+}
+
+/// What the documentation of each package and class the run read says
+/// about its commands ([`crate::plugin::docs`]): a record per entry, `dir`
+/// the documentation directory mined for `package_file`. The playground's build keeps them as
+/// `.satex-docs` files there, for a bundle without the sources.
+pub fn docs(analysis: &Analysis) -> Vec<Record> {
+    use crate::plugin::docs::{Dirs, PLUGINS, mine, mined};
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for file in &analysis.files {
+        let path = Path::new(&file.path);
+        if !path.extension().is_some_and(|e| e == "sty" || e == "cls") {
+            continue;
+        }
+        let Some(dirs) = Dirs::of(path).filter(|d| seen.insert(d.clone())) else { continue };
+        let Some(dir) = dirs.doc.clone().or_else(|| dirs.source.clone()) else { continue };
+        for entry in mine(PLUGINS, &dirs).values() {
+            let Json::Object(mut record) = mined::row(entry) else { continue };
+            record.insert("dir".into(), json!(dir.display().to_string()));
+            record.insert("package_file".into(), json!(file.path));
+            out.push(record);
+        }
+    }
+    let key = |r: &Record| {
+        (r["dir"].as_str().unwrap_or_default().to_string(), r["name"].as_str().unwrap_or_default().to_string())
+    };
+    out.sort_by_key(key);
+    out
+}
+
+/// Each name (with or without its backslash) and the package or class of the
+/// installation that defines it loading the fewest files
+/// ([`crate::exports::Exports::providers`]); a name no file defines is left out.
+pub fn providers(analysis: &Analysis, names: &[String]) -> Vec<Record> {
+    let exports = crate::exports::Exports::of(
+        &analysis.distribution.roots,
+        crate::format::default_cache_dir().as_deref(),
+        &crate::exports::definers(analysis, &[]),
+    );
+    names
+        .iter()
+        .filter_map(|name| {
+            let bare = name.trim_start_matches('\\').to_string();
+            let (file, _) = exports.providers(std::slice::from_ref(&bare)).into_iter().next()?;
+            let mut record = Record::new();
+            record.insert("name".into(), json!(format!("\\{bare}")));
+            record.insert("package".into(), json!(file.trim_end_matches(".sty")));
+            Some(record)
+        })
+        .collect()
 }
 
 /// Everything that can produce a piece of text, whatever it takes to get
