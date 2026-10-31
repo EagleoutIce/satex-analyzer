@@ -527,6 +527,25 @@ fn noexpand_of_a_name_joined_to_a_character_tests_each_meaning() {
     }
 }
 
+/// A name joined to a glue parameter and to a macro of dimension text,
+/// first in a dimension scan: each path reads its own member, the
+/// parameter whole (tex.web § 449), never as an integer wanting a unit.
+#[test]
+fn a_name_joined_to_a_register_and_a_macro_scans_as_each_dimension() {
+    let analysis = analyze(&format!(
+        r"\baselineskip=12pt {PICK2}\let\h=\baselineskip\else\def\h{{2pt-1sp}}\fi
+          \dimen5=\dimexpr 1pt+\h\relax
+          \ifdim\dimen5>5pt \def\tall{{}}\else\def\short{{}}\fi"
+    ));
+    for code in ["illegal-unit", "missing-number"] {
+        assert!(with_code(&analysis, code).is_empty(), "{code}: {:?}", with_code(&analysis, code));
+    }
+    let defined = names(&analysis);
+    for name in ["tall", "short"] {
+        assert!(defined.contains(&name.to_string()), "{name}: {defined:?}");
+    }
+}
+
 /// One-of texts whose first tokens all agree decide `\if`, `\ifcat`
 /// (behind `\noexpand` too) and `\ifx` on one path.
 #[test]

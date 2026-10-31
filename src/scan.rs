@@ -254,6 +254,10 @@ impl Machine<'_> {
                         Token::new(Tok::Chr(crate::tex::UNKNOWN_DIGIT, Catcode::Other), token.span),
                     ));
                 }
+                // A name of several meanings parts before the scan asks
+                // whether it is an internal quantity: each path reads its
+                // member, a register whole (tex.web § 449).
+                _ if self.split_scanned(token) => {}
                 _ => return Some((negative, token)),
             }
         }
