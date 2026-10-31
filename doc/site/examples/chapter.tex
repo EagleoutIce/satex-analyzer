@@ -1,3 +1,13 @@
 \section{Background}\label{sec:background}
 Literate programming~\cite{knuth84} and the \TeX book~\cite{knuth86}
-come first; Section~\ref{sec:background} says why.
+come first; Section~\ref{sec:background} says why and
+Section~\ref{sec:listings} shows code.
+
+\subsection{Listings}\label{sec:listings}
+Inside \texttt{lstlisting} every character is read verbatim, so percent
+signs and braces need no escapes:
+\begin{lstlisting}[language=TeX]
+\def\twice#1{#1#1} % braces { and } stay text
+\twice{ab}
+\end{lstlisting}
+The same, inline: \lstinline|\section{x} 100% & $|.

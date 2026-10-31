@@ -11,6 +11,9 @@ tikz listings minted scrartcl.cls scrreprt.cls scrbook.cls scrlayer-scrpage
 amsmath amssymb amsthm graphicx hyperref geometry xcolor babel fontenc inputenc
 booktabs float caption subcaption natbib multirow siunitx fancyhdr
 
+# slides
+beamer.cls
+
 # often next to them
 biblatex csquotes mathtools bm tabularx longtable makecell array url xspace
 setspace lipsum todonotes algorithm2e algpseudocode wrapfig titlesec parskip
