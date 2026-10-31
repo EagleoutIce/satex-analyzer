@@ -98,6 +98,13 @@ pub fn trace(
             event.is_some_and(|e| user_code(analysis, e))
         });
     }
+    // A table has no room for a call's definition; `--interactive` and JSON show it.
+    if context.format != crate::plugin::format::Format::Json {
+        for record in &mut records {
+            record.remove("parameters");
+            record.remove("body");
+        }
+    }
     Ok(Output::Records(records))
 }
 
