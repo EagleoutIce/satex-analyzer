@@ -710,7 +710,12 @@ fn new_redefines(report: &mut Report) {
         .collect();
     calls.sort_by_key(|c| c.0);
     let mut seen = std::collections::BTreeSet::new();
-    for def in analysis.facts.defs.iter().filter(|d| d.redefines && d.spelled && d.certain) {
+    // A declaration run again (captured into a cache, then run live) meets
+    // only its own earlier definition: no other meaning is lost.
+    let rerun = |def: &crate::facts::Definition| {
+        analysis.facts.defs.iter().any(|d| d.name == def.name && d.node < def.node && d.span == def.span)
+    };
+    for def in analysis.facts.defs.iter().filter(|d| d.redefines && d.spelled && d.certain && !rerun(d)) {
         let Some(&(_, span, call)) = calls.get(calls.partition_point(|c| c.0 <= def.node).wrapping_sub(1)) else {
             continue;
         };

@@ -2528,7 +2528,13 @@ impl Machine<'_> {
 
     /// Whether defining `name` redefines it, decided by initial state (no read; replay re-decides).
     pub(crate) fn redefines(&self, name: Sym) -> (bool, bool) {
-        let defined = self.env.slot(name).is_some_and(|b| b.meaning.latex_defined());
+        // Certainly defined only: a join that left it undefined or `\relax`
+        // on some path, or an unknown meaning, redefines nothing for sure.
+        let defined = self.env.slot(name).is_some_and(|b| match (&b.meaning, &b.may) {
+            (_, Some(may)) => may.iter().all(crate::tex::Meaning::latex_defined),
+            (crate::tex::Meaning::Unknown, None) => false,
+            (meaning, None) => meaning.latex_defined(),
+        });
         if self.package_capture.is_some() && !self.env.meaning_written(name) {
             return (defined, true);
         }
