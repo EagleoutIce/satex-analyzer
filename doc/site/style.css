@@ -1076,3 +1076,4 @@ ol.refs { font-size: .8rem; color: var(--muted); margin-top: .8rem; padding: .7r
 .claim-rot .claim-lint { text-decoration: underline wavy transparent; text-underline-offset: .22em; text-decoration-thickness: 2px; transition: text-decoration-color .5s var(--ease); }
 .claim-rot > span.shows .claim-lint { text-decoration-color: var(--error); }
 .claim-rot > span.shows .claim-lint.fixed { text-decoration-color: transparent; background: color-mix(in srgb, var(--safe, #3a3) 22%, transparent); border-radius: 3px; transition: background-color .6s var(--ease), text-decoration-color .3s; }
+.claim-rot > span:has(.claim-complete)::after { display: none; }
