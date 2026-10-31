@@ -289,10 +289,8 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
             let manual = m.link.as_ref().and_then(|(l, _)| l.strip_prefix("texdoc ")).unwrap_or(&m.from);
             markdown.push_str(&format!("{does} {}\n\n", extracted(&format!("from the {manual} manual"))));
         }
-        if n == 0
-            && let Some((at, set)) = typesets(analysis, name)
-        {
-            markdown.push_str(&format!("Typesets {set} at line {}\n\n", at.line));
+        if n == 0 {
+            markdown.push_str(&typesets(analysis, name));
         }
         if let Some(sig) = text("signature").filter(|s| !s.is_empty()) {
             markdown.push_str(&format!("`\\{name}{}`\n\n", usage(sig)));
@@ -350,8 +348,9 @@ fn command_hover(analysis: &Analysis, name: &str, active: Option<Record>) -> Opt
 
 /// What the document's first call of `name` that sets text typesets, and
 /// where that call stands.
-fn typesets(analysis: &Analysis, name: &str) -> Option<(crate::tex::Span, String)> {
-    let sym = analysis.interner.lookup(name)?;
+fn typesets(analysis: &Analysis, name: &str) -> String {
+    const SHOWN: usize = 4;
+    let Some(sym) = analysis.interner.lookup(name) else { return String::new() };
     let mut calls: Vec<crate::tex::Span> = analysis
         .facts
         .expansions
@@ -360,7 +359,34 @@ fn typesets(analysis: &Analysis, name: &str) -> Option<(crate::tex::Span, String
         .map(|e| e.span)
         .collect();
     calls.sort_by_key(|s| (s.file, s.line, s.col));
-    calls.into_iter().take(16).find_map(|at| Some((at, query::typeset_by(analysis, at)?)))
+    calls.dedup();
+    // each call that sets text, with the lines that set the same text together
+    let mut sets: Vec<(String, Vec<u32>)> = Vec::new();
+    for at in &calls {
+        let Some(set) = query::typeset_by(analysis, *at) else { continue };
+        match sets.iter_mut().find(|(s, _)| *s == set) {
+            Some((_, lines)) => lines.push(at.line),
+            None => sets.push((set, vec![at.line])),
+        }
+    }
+    let lines = |ls: &[u32]| {
+        let named = ls.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
+        format!("line{} {named}", if ls.len() > 1 { "s" } else { "" })
+    };
+    match sets.as_slice() {
+        [] => String::new(),
+        [(set, ls)] => format!("Typesets {set} at {}\n\n", lines(ls)),
+        _ => {
+            let mut out = format!("Typesets, by call ({} calls):\n\n", calls.len());
+            for (set, ls) in sets.iter().take(SHOWN) {
+                out.push_str(&format!("- {set} at {}\n", lines(ls)));
+            }
+            if sets.len() > SHOWN {
+                out.push_str(&format!("- and {} more\n", sets.len() - SHOWN));
+            }
+            out + "\n"
+        }
+    }
 }
 
 /// The knowledge-base topics a command's hover touches: the types of its

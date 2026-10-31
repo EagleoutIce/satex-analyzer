@@ -1189,10 +1189,11 @@ fn hover_and_signature_help_show_argument_types() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A command's hover says what its first call in the document typesets.
+/// A command's hover says what its calls in the document typeset, each
+/// different text once with the lines that set it.
 #[test]
 fn hover_shows_what_the_call_typesets() {
-    let text = "\\documentclass{article}\n\\newcommand\\hi[1]{Hello #1}\n\\begin{document}\nGar\\c{c}on \\hi{you}.\n\\end{document}\n";
+    let text = "\\documentclass{article}\n\\newcommand\\hi[1]{Hello #1}\n\\begin{document}\nGar\\c{c}on \\hi{you}.\n\\hi{me} \\hi{you}\n\\end{document}\n";
     let (mut server, uri, _, dir) = open_loaded("typesets", text);
     let hover = |server: &mut Server, character: u32| {
         let id = server.request(
@@ -1202,7 +1203,7 @@ fn hover_shows_what_the_call_typesets() {
         server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string()
     };
     let hi = hover(&mut server, 12);
-    assert!(hi.contains("Typesets `Hello you` at line 4"), "{hi}");
+    assert!(hi.contains("- `Hello you` at lines 4, 5") && hi.contains("- `Hello me` at line 5"), "{hi}");
     let c = hover(&mut server, 4);
     assert!(c.contains("Typesets `") && c.contains("at line 4"), "{c}");
     server.shutdown();
