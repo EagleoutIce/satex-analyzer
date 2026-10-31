@@ -510,7 +510,21 @@ def bundle(satex, work):
     if (tree / "release-texlive.txt").is_file():
         tables[0]["/texmf.bundle/release-texlive.txt"] = (tree / "release-texlive.txt").read_bytes()
     tables[0]["/work/satex.yaml"] = config.replace(str(tree), "/texmf.bundle").encode()
+    tables[0]["/cache/previews.json"] = previews(satex, work, tree)
     return tables, packages, [p.name for p in docs], project
+
+
+def previews(satex, work, tree):
+    """Completion's pictures of the arrow tips and patterns the bundled TikZ libraries declare,
+    drawn by TeX here (`satex query previews`): the browser has no TeX to draw them."""
+    libs = sorted(p.name.removeprefix("tikzlibrary").removesuffix(".code.tex") for p in tree.rglob("tikzlibrary*.code.tex"))
+    doc = work / "previews" / "previews.tex"
+    doc.parent.mkdir(parents=True, exist_ok=True)
+    doc.write_text("\\documentclass{article}\n\\usepackage{tikz}\n" + "".join(f"\\usetikzlibrary{{{l}}}\n" for l in libs)
+                   + "\\begin{document}\n\\end{document}\n")
+    env = dict(os.environ, SATEX_CACHE=str(work / "cache-previews"))
+    rows = json.loads(run(str(satex), "--format", "json", "query", "previews", "-f", str(doc), cwd=doc.parent, env=env))
+    return json.dumps({r["name"]: r["svg"] for r in rows if r["svg"]}).encode()
 
 
 def manuals(satex, work, tables, packages):

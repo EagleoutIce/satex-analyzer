@@ -526,7 +526,7 @@
       return {
         from, to: edit ? Math.max(at(ctx.state.doc, edit.range.end), ctx.pos) : ctx.pos, filter: false,
         options: rank(items, typed).slice(0, 200).map((i) => ({
-          label: i.label, usage: i.detail, type: KIND[i.kind] ?? 'text',
+          label: i.label, usage: i.detail, preview: i.data?.preview, type: KIND[i.kind] ?? 'text',
           apply: i.insertTextFormat === 2 ? ac.snippet((i.insertText ?? i.textEdit?.newText ?? i.label).replace(/\$\{?(\d+)\}?/g, '#{$1}')) : i.textEdit?.newText ?? i.insertText ?? i.label,
         })),
       };
@@ -639,6 +639,8 @@
         const span = Object.assign(document.createElement('span'), { className: 'cm-completionDetail' });
         const [, use, from] = (c.usage ?? '').match(/^(.*?)(?:\s+(\([^)]*\)))?$/) ?? [];
         span.innerHTML = (use ? cards.usage(use).html : '') + (from ? ` <span class="muted">${escape(from)}</span>` : '');
+        // what the item draws (a line width, dash pattern, arrow tip or pattern), from the server
+        if (c.preview) span.prepend(Object.assign(document.createElement('img'), { src: `data:image/svg+xml;utf8,${encodeURIComponent(c.preview)}`, alt: '', style: 'vertical-align:middle;margin-right:.5em' }));
         return span;
       } }] }),
         linkField, markField, linkedField, heatField, heatGutter, mirror, st.Prec.high(closeEnvironment), view.keymap.of([{ key: 'F2', run: () => { renameBox(); return true; } }]),
