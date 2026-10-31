@@ -2046,6 +2046,58 @@ pub fn diagnostics_json(records: &[Record]) -> Vec<Json> {
     serde_json::from_str(&text).unwrap_or_default()
 }
 
+/// `textDocument/documentColor`: each color name the document's color
+/// commands use in `path`, with the value the run gave it (xcolor and the
+/// packages built on it, as defined by the run).
+pub fn document_colors(analysis: &Analysis, doc: &Text, path: &str) -> Vec<lsp_types::ColorInformation> {
+    let file = |i: u16| analysis.files.get(usize::from(i)).is_some_and(|f| f.path == path);
+    let value = |name: &str| {
+        analysis.facts.colors.iter().rev().find(|c| c.name == name).and_then(|c| c.value.as_ref()).and_then(rgba)
+    };
+    let mut out = Vec::new();
+    for u in analysis.facts.color_uses.iter().filter(|u| file(u.span.file)) {
+        let Some(color) = value(&u.name) else { continue };
+        let line = u.span.line.saturating_sub(1);
+        let text = doc.line(line);
+        let from = (u.span.col as usize).min(text.len());
+        let Some(at) = text[from..].find(&u.name).map(|i| from + i) else { continue };
+        let range = Range::new(Position::new(line, at as u32), Position::new(line, (at + u.name.len()) as u32));
+        if !out.iter().any(|c: &lsp_types::ColorInformation| c.range == range) {
+            out.push(lsp_types::ColorInformation { range, color });
+        }
+    }
+    out
+}
+
+/// A color xcolor holds exactly, as red, green and blue (xcolor § 6.3's
+/// conversions from its core models).
+fn rgba(colors: &crate::value::Colors) -> Option<lsp_types::Color> {
+    use crate::value::Model;
+    let color = &colors.hull;
+    let c: Vec<f32> = color.exact()?.iter().map(|&v| v as f32 / crate::value::UNIT as f32).collect();
+    let (r, g, b) = match (color.model.core(), &c[..]) {
+        (Model::Rgb, [r, g, b]) => (*r, *g, *b),
+        (Model::Cmy, [cy, m, y]) => (1.0 - cy, 1.0 - m, 1.0 - y),
+        (Model::Cmyk, [cy, m, y, k]) => ((1.0 - cy) * (1.0 - k), (1.0 - m) * (1.0 - k), (1.0 - y) * (1.0 - k)),
+        (Model::Gray, [g]) => (*g, *g, *g),
+        (Model::Hsb, [h, s, v]) => {
+            let i = (h * 6.0).floor();
+            let f = h * 6.0 - i;
+            let (p, q, t) = (v * (1.0 - s), v * (1.0 - s * f), v * (1.0 - s * (1.0 - f)));
+            match i as i32 % 6 {
+                0 => (*v, t, p),
+                1 => (q, *v, p),
+                2 => (p, *v, t),
+                3 => (p, q, *v),
+                4 => (t, p, *v),
+                _ => (*v, p, q),
+            }
+        }
+        _ => return None,
+    };
+    Some(lsp_types::Color { red: r, green: g, blue: b, alpha: 1.0 })
+}
+
 #[cfg(test)]
 mod signature_tests {
     use super::argument_of;

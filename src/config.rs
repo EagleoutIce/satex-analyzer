@@ -400,11 +400,14 @@ pub struct LspConfig {
     /// How long an edit waits with no further edits before it is
     /// re-analyzed, so fast typing coalesces into one run.
     pub debounce_ms: u64,
+    /// Shows a color swatch next to each color name a color command uses,
+    /// with the value the run gave it (xcolor and packages built on it).
+    pub color_previews: bool,
 }
 
 impl Default for LspConfig {
     fn default() -> LspConfig {
-        LspConfig { port: None, host: "127.0.0.1".into(), debounce_ms: 300 }
+        LspConfig { port: None, host: "127.0.0.1".into(), debounce_ms: 300, color_previews: true }
     }
 }
 

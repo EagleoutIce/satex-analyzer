@@ -149,6 +149,7 @@ fn server_capabilities() -> ServerCapabilities {
         references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
+        color_provider: Some(lsp_types::ColorProviderCapability::Simple(true)),
         linked_editing_range_provider: Some(lsp_types::LinkedEditingRangeServerCapabilities::Simple(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
@@ -442,6 +443,23 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             let out = ask(engine_tx, |reply| EngineMsg::Highlight(uri, pos, reply))?;
             Ok(serde_json::to_value(out).unwrap())
         }
+        "textDocument/documentColor" => {
+            let p: lsp_types::DocumentColorParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let out = ask(engine_tx, |reply| EngineMsg::Colors(p.text_document.uri, reply))?;
+            Ok(serde_json::to_value(out).unwrap())
+        }
+        "textDocument/colorPresentation" => {
+            let p: lsp_types::ColorPresentationParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            let c = p.color;
+            let hex = |v: f32| format!("{:02X}", (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+            let label = format!("[HTML]{{{}{}{}}}", hex(c.red), hex(c.green), hex(c.blue));
+            Ok(serde_json::to_value(vec![lsp_types::ColorPresentation {
+                label,
+                text_edit: None,
+                additional_text_edits: None,
+            }])
+            .unwrap())
+        }
         "textDocument/prepareRename" => {
             let p: lsp_types::TextDocumentPositionParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
             let out = ask(engine_tx, |reply| EngineMsg::PrepareRename(p.text_document.uri, p.position, reply))?;
@@ -556,6 +574,7 @@ enum EngineMsg {
     SignatureHelp(Uri, Position, Sender<Option<lsp_types::SignatureHelp>>),
     DocumentSymbol(Uri, Sender<Option<lsp_types::DocumentSymbolResponse>>),
     Highlight(Uri, Position, Sender<Option<Vec<lsp_types::DocumentHighlight>>>),
+    Colors(Uri, Sender<Vec<lsp_types::ColorInformation>>),
     PrepareRename(Uri, Position, Sender<Option<lsp_types::PrepareRenameResponse>>),
     Rename(Uri, Position, String, Sender<Result<lsp_types::WorkspaceEdit, String>>),
     WorkspaceSymbol(String, Sender<Vec<lsp_types::SymbolInformation>>),
@@ -1113,6 +1132,18 @@ impl Engine {
                 let result =
                     with_doc(&self.docs, &uri, |analysis, text| handlers::highlights(analysis, text, &path, pos));
                 let _ = reply.send(result.flatten());
+            }
+            EngineMsg::Colors(uri, reply) => {
+                let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
+                let result = self
+                    .cfg
+                    .lsp
+                    .color_previews
+                    .then(|| {
+                        with_doc(&self.docs, &uri, |analysis, text| handlers::document_colors(analysis, text, &path))
+                    })
+                    .flatten();
+                let _ = reply.send(result.unwrap_or_default());
             }
             EngineMsg::PrepareRename(uri, pos, reply) => {
                 self.fresh(&uri);
