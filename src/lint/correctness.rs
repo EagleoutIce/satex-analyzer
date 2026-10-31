@@ -476,18 +476,9 @@ fn undefined_control_sequences(report: &mut Report) {
         } else {
             (Severity::Warning, format!("`{name}` is undefined on a path satex could not decide"))
         };
-        // A package of the installation that defines it is offered as the fix.
-        let package =
-            (severity == Severity::Error).then(|| super::shared::providing_package(report.analysis, raw)).flatten();
-        match package.and_then(|p| Some((report.edits().ensure_package(&p)?, p))) {
-            Some((edits, package)) => {
-                let fix = super::fix::Fix::new(
-                    format!("load `{package}`, which defines it"),
-                    super::fix::Applicability::Unsafe,
-                    Some(edits),
-                );
-                report.add_fix_as(severity, expansion.span, &name, message, fix);
-            }
+        let fix = if severity == Severity::Error { load_fix(report, raw) } else { None };
+        match fix {
+            Some(fix) => report.add_fix_as(severity, expansion.span, &name, message, fix),
             None => {
                 let known = known.get_or_insert_with(|| scope_names(report.analysis));
                 let help = match (severity == Severity::Error).then(|| closest(raw, known)).flatten() {
@@ -498,6 +489,14 @@ fn undefined_control_sequences(report: &mut Report) {
             }
         }
     }
+}
+
+/// Loading the installed package that defines `name`, offered, never applied
+/// on its own.
+fn load_fix(report: &Report, name: &str) -> Option<Fix> {
+    let package = super::shared::providing_package(report.analysis, name)?;
+    let edits = report.edits().ensure_package(&package)?;
+    Some(Fix::new(format!("load `{package}`, which defines it"), Applicability::Unsafe, Some(edits)))
 }
 
 /// The names that are defined at the end of the run.
@@ -580,18 +579,14 @@ fn raised_errors(report: &mut Report) {
         };
         // A pgf or TikZ error about a name a library declares (`Unknown arrow tip kind 'Kite'`,
         // a key `/tikz/x`): the library's load is the fix.
-        let named = regex_quoted(&message).map(|q| q.rsplit('/').next().unwrap_or(q).to_string());
+        let named = single_quoted(&message).map(|q| q.rsplit('/').next().unwrap_or(q).to_string());
         let library = named.as_deref().and_then(|n| crate::lint::shared::providing_library(analysis, n));
         match (crate::lint::shared::doubt(analysis, i), library) {
             (Some(cause), _) => report.add_doubted(span, "", message, &cause),
             (None, Some(load)) => {
                 let edits =
                     report.edits().insert_before(crate::lint::shared::document_start(analysis).unwrap_or(span), &load);
-                let fix = super::fix::Fix::new(
-                    format!("add `{load}`, which declares it"),
-                    super::fix::Applicability::Safe,
-                    edits,
-                );
+                let fix = Fix::new(format!("add `{load}`, which declares it"), Applicability::Safe, edits);
                 report.add_fix(span, "", format!("{message} `{load}` declares it"), fix);
             }
             (None, None) => report.add(span, "", message, None),
@@ -603,7 +598,7 @@ fn raised_errors(report: &mut Report) {
 }
 
 /// The word an error quotes in `'…'`.
-fn regex_quoted(message: &str) -> Option<&str> {
+fn single_quoted(message: &str) -> Option<&str> {
     let (_, rest) = message.split_once('\'')?;
     rest.split_once('\'').map(|(q, _)| q).filter(|q| !q.is_empty() && !q.contains(' '))
 }
@@ -678,16 +673,8 @@ fn undefined_environments(report: &mut Report) {
             report.add_doubted(span, &name, message, &cause);
             continue;
         }
-        let package = super::shared::providing_package(report.analysis, &name);
-        match package.and_then(|p| Some((report.edits().ensure_package(&p)?, p))) {
-            Some((edits, package)) => {
-                let fix = super::fix::Fix::new(
-                    format!("load `{package}`, which defines it"),
-                    super::fix::Applicability::Unsafe,
-                    Some(edits),
-                );
-                report.add_fix(span, &name, message, fix);
-            }
+        match load_fix(report, &name) {
+            Some(fix) => report.add_fix(span, &name, message, fix),
             None => report.add(span, &name, message, Some(format!("`\\newenvironment{{{name}}}{{…}}{{…}}`"))),
         }
     }

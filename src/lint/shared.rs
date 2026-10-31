@@ -432,7 +432,7 @@ pub fn own_runaway(analysis: &Analysis, d: &crate::facts::Diagnostic) -> Option<
 /// The installed package that, with what it loads, defines `name` (no
 /// backslash), by the cached index of what each file defines
 /// ([`crate::exports`]): a proposal for a fix the user accepts, never applied
-/// on its own. The index is read once per process, and only when cached.
+/// on its own. The index is built once per process and kept in the cache.
 pub fn providing_package(analysis: &Analysis, name: &str) -> Option<String> {
     exports(analysis)?
         .providers(&[name.to_string()])
@@ -448,12 +448,11 @@ pub fn providing_library(analysis: &Analysis, name: &str) -> Option<String> {
     let tikz = loaded(analysis, "tikz");
     index.providers(&[name.to_string()]).into_iter().find_map(|(file, _)| {
         let stem = file.strip_suffix(".code.tex")?;
-        match (stem.strip_prefix("tikzlibrary"), stem.strip_prefix("pgflibrary")) {
-            (Some(lib), _) => Some(format!("\\usetikzlibrary{{{lib}}}")),
-            (_, Some(lib)) if tikz => Some(format!("\\usetikzlibrary{{{lib}}}")),
-            (_, Some(lib)) => Some(format!("\\usepgflibrary{{{lib}}}")),
-            _ => None,
-        }
+        let (lib, pgf) = match stem.strip_prefix("tikzlibrary") {
+            Some(lib) => (lib, false),
+            None => (stem.strip_prefix("pgflibrary")?, !tikz),
+        };
+        Some(format!("\\use{}library{{{lib}}}", if pgf { "pgf" } else { "tikz" }))
     })
 }
 
@@ -462,24 +461,14 @@ fn exports(analysis: &Analysis) -> Option<std::sync::Arc<crate::exports::Exports
     static INDEX: std::sync::Mutex<Option<(Vec<std::path::PathBuf>, std::sync::Arc<crate::exports::Exports>)>> =
         std::sync::Mutex::new(None);
     let roots = &analysis.distribution.roots;
-    let exports = {
-        let mut held = INDEX.lock().ok()?;
-        match held.as_ref().filter(|(r, _)| r == roots) {
-            Some((_, exports)) => exports.clone(),
-            None => {
-                let cfg = &analysis.settings;
-                let cache = cfg
-                    .cache
-                    .enabled
-                    .then(|| cfg.cache.dir.clone().or_else(crate::format::default_cache_dir))
-                    .flatten();
-                let definers = crate::exports::definers(analysis, &cfg.conventions.definers);
-                // Built once and kept in the cache: later runs read it back.
-                let exports = std::sync::Arc::new(crate::exports::Exports::of(roots, cache.as_deref(), &definers));
-                *held = Some((roots.clone(), exports.clone()));
-                exports
-            }
-        }
-    };
+    let mut held = INDEX.lock().ok()?;
+    if let Some((_, exports)) = held.as_ref().filter(|(r, _)| r == roots) {
+        return Some(exports.clone());
+    }
+    let cfg = &analysis.settings;
+    let definers = crate::exports::definers(analysis, &cfg.conventions.definers);
+    let cache = crate::format::enabled_cache_dir(cfg);
+    let exports = std::sync::Arc::new(crate::exports::Exports::of(roots, cache.as_deref(), &definers));
+    *held = Some((roots.clone(), exports.clone()));
     Some(exports)
 }

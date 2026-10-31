@@ -165,21 +165,14 @@ fn types_chart() -> String {
     }
     let mut clustered: Vec<Ty> = Vec::new();
     for &parent in &all {
-        let mut families: Vec<&str> = Vec::new();
+        let mut families: Vec<(&str, Vec<Ty>)> = Vec::new();
         for &c in all.iter().filter(|c| **c != Ty::Top && c.parent() == parent && leaf(**c)) {
-            if !families.contains(&c.family()) {
-                families.push(c.family());
+            match families.iter_mut().find(|(f, _)| *f == c.family()) {
+                Some((_, leaves)) => leaves.push(c),
+                None => families.push((c.family(), vec![c])),
             }
         }
-        for family in families {
-            let leaves: Vec<Ty> = all
-                .iter()
-                .copied()
-                .filter(|c| *c != Ty::Top && c.parent() == parent && leaf(*c) && c.family() == family)
-                .collect();
-            if leaves.len() < 3 {
-                continue;
-            }
+        for (family, leaves) in families.into_iter().filter(|(_, leaves)| leaves.len() >= 3) {
             // In an LR chart a cluster laid out LR stacks its unlinked nodes.
             let _ = writeln!(out, "  subgraph g{}_{family}[\" \"]\n    direction LR", id(parent)); // not prose
             for c in &leaves {

@@ -1114,6 +1114,7 @@ fn quantity_wanted(analysis: &Analysis, arg: &Arg) -> Option<crate::roles::Ty> {
 /// more of the name is typed.
 const COMMANDS_SHOWN: usize = 300;
 
+/// A control sequence being typed at the end of the text.
 pub(super) fn cs_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"\\[A-Za-z@]*$").unwrap())
@@ -1373,7 +1374,7 @@ fn takes_value(r: &Record) -> bool {
 /// A key's completion: the key, then `=` with the cursor after it where it takes a value.
 fn key_item(analysis: &Analysis, mut it: CompletionItem, key: &str, r: &Record) -> CompletionItem {
     if let Some(path) = r.get("key").and_then(Json::as_str) {
-        it = pictured(analysis, it, path, None);
+        it = with_preview(it, crate::preview::of_key(analysis, path, None));
     }
     if takes_value(r) {
         it.insert_text = Some(format!("{}=$1", key.replace('$', "\\$")));
@@ -1382,12 +1383,8 @@ fn key_item(analysis: &Analysis, mut it: CompletionItem, key: &str, r: &Record) 
     it
 }
 
-/// `it` with the picture of setting `path` to `value` ([`crate::preview`]):
-/// as documentation for an editor, as `data.preview` for the playground.
-fn pictured(analysis: &Analysis, it: CompletionItem, path: &str, value: Option<&str>) -> CompletionItem {
-    with_preview(it, crate::preview::of_key(analysis, path, value))
-}
-
+/// `it` with its picture ([`crate::preview`]): as documentation for an
+/// editor, as `data.preview` for the playground.
 fn with_preview(mut it: CompletionItem, preview: Option<crate::preview::Preview>) -> CompletionItem {
     if let Some(p) = preview {
         it.documentation = Some(lsp_types::Documentation::MarkupContent(lsp_types::MarkupContent {

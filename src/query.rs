@@ -677,8 +677,6 @@ enum Cause {
     Unknown(Span),
 }
 
-/// A character as typeset text: satex's private-use sentinels become their
-/// public notation or vanish.
 /// What the document's own files set that holds no character the run saw:
 /// an environment with none between its `\begin` and `\end` (a
 /// `tikzpicture`), a graphic. Each where it begins, in reading order.
@@ -686,9 +684,10 @@ fn drawn_boxes(analysis: &Analysis) -> Vec<(Span, String)> {
     let text = &analysis.facts.text;
     let mut sites: Vec<(FileId, u32, u32)> = text.site.iter().map(|s| (s.file, s.line, s.col)).collect();
     sites.sort_unstable();
+    let key = |s: Span| (s.file, s.line, s.col);
     let empty = |from: Span, to: Span| {
-        let i = sites.partition_point(|s| *s < (from.file, from.line, from.col));
-        sites.get(i).is_none_or(|s| *s > (to.file, to.line, to.col))
+        let i = sites.partition_point(|s| *s < key(from));
+        sites.get(i).is_none_or(|s| *s > key(to))
     };
     let mut out = Vec::new();
     let mut open: Vec<(&str, Span)> = Vec::new();
@@ -700,7 +699,6 @@ fn drawn_boxes(analysis: &Analysis) -> Vec<(Span, String)> {
                     let (name, from) = open.remove(k);
                     if from.file == o.span.file && empty(from, o.span) {
                         // An empty one holding others (a figure of one picture) stands for them.
-                        let key = |s: Span| (s.file, s.line, s.col);
                         out.retain(|(f, _, t): &(Span, String, Span)| !(key(*f) > key(from) && key(*t) < key(o.span)));
                         out.push((from, name.to_string(), o.span));
                     }
@@ -711,7 +709,7 @@ fn drawn_boxes(analysis: &Analysis) -> Vec<(Span, String)> {
         }
     }
     let mut out: Vec<(Span, String)> = out.into_iter().map(|(f, name, _)| (f, name)).collect();
-    out.sort_by_key(|(s, _)| (s.file, s.line, s.col));
+    out.sort_by_key(|(s, _)| key(*s));
     out.dedup();
     out
 }
@@ -845,6 +843,7 @@ fn encoding_slots(analysis: &Analysis) -> HashMap<String, HashMap<u32, char>> {
     out
 }
 
+/// A character as typeset text: satex's private-use sentinels vanish.
 fn public(c: char) -> String {
     match c {
         '\u{10FF00}'..='\u{10FFFF}' | '\u{E000}'..='\u{F8FF}' => String::new(),
