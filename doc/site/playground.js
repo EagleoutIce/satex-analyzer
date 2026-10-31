@@ -575,7 +575,10 @@
       if (!value && !found.length) return null;
       const range = result?.range, [from, to] = range ? [at(v.state.doc, range.start), at(v.state.doc, range.end)]
         : found.length ? span(found[0][0].range) : [pos, pos];
-      return { from, to, html: found.map(([d]) => findingCard(d) + explanation(d)).join('') + (value ? `<div class="hover">${card(value)}</div>` : '') };
+      // over a finding its rule and the command's own card fold away: the finding says it first
+      const fold = (head, body) => body && found.length ? `<details class="tip-more"><summary>${head}</summary>${body}</details>` : body;
+      return { from, to, html: found.map(([d]) => findingCard(d) + fold(`about ${escape(d.number ?? '')} ${escape(d.code)}`, explanation(d))).join('') +
+        (value ? fold(`about ${escape(word?.[2] ? `\\${word[2]}` : 'this')}`, `<div class="hover">${card(value)}</div>`) : '') };
     }
     // Ctrl (Cmd) held over a command underlines it as a link to its definition.
     const link = st.StateEffect.define();
