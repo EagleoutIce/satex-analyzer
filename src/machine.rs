@@ -59,6 +59,7 @@ pub(crate) mod classes;
 pub(crate) use classes::decide;
 mod calls;
 mod checkpoint;
+pub(crate) mod directive;
 pub use checkpoint::Checkpoints;
 pub(crate) mod explore;
 #[path = "package_cache.rs"]
@@ -1291,7 +1292,14 @@ pub(crate) struct Scratch {
 /// records what it saw into [`Analysis`].
 #[derive(Clone)]
 pub struct Machine<'a> {
-    pub cfg: &'a Config,
+    /// The settings in force: the run's, or what a `%\satex@configure`
+    /// changed of them ([`Machine::settings_scopes`]).
+    pub cfg: std::borrow::Cow<'a, Config>,
+    /// The run's settings, before any `%\satex@configure`.
+    pub(crate) base_cfg: &'a Config,
+    /// The settings and limits each group a `%\satex@configure` changed
+    /// them in restores at its end, with that group's depth.
+    pub(crate) settings_scopes: Vec<(usize, std::borrow::Cow<'a, Config>, crate::config::Limits)>,
     /// What a load changes that its cache carries.
     pub(crate) carried: Carried,
     /// What every cacheable load forgets at its end.
@@ -2151,7 +2159,9 @@ impl<'a> Machine<'a> {
         let mut catcodes = CatcodeTable::initex();
         catcodes.at_letter(cfg.at_letter);
         Self {
-            cfg,
+            cfg: std::borrow::Cow::Borrowed(cfg),
+            base_cfg: cfg,
+            settings_scopes: Vec::new(),
             carried: Carried::default(),
             scratch: Scratch::default(),
             limits: cfg.limits.clone(),
@@ -2769,12 +2779,12 @@ impl<'a> Machine<'a> {
         if m.cfg.plugins.discovery {
             m.out.plugins.discovery = crate::plugin::discovery::scan_with(&m.base, m.cfg.limits.thread_count());
         }
-        m.out.plugins.read_build(m.cfg, &m.out.project, path);
+        m.out.plugins.read_build(&m.cfg, &m.out.project, path);
         if m.cfg.plugins.magic {
             m.out.plugins.read_magic(source);
         }
-        m.out.plugins.read_shell_escape(m.cfg, &m.out.project);
-        m.out.plugins.read_kernel(m.cfg, source);
+        m.out.plugins.read_shell_escape(&m.cfg, &m.out.project);
+        m.out.plugins.read_kernel(&m.cfg, source);
         // `Plugins::resolve` ran before the source was read, so a magic
         // comment may have named a different engine than the table installed
         // in `Machine::new` assumed.
@@ -2848,7 +2858,7 @@ impl<'a> Machine<'a> {
             m.run_tokens(toks);
             m.out.steps = 0;
         }
-        let cfg = m.cfg;
+        let cfg = m.base_cfg;
         if !cfg.pretex.is_empty() {
             let toks = m.tokenize(&cfg.pretex);
             m.push_tokens(toks.into());
@@ -3135,7 +3145,7 @@ impl<'a> Machine<'a> {
             self.env.set_value(sym, crate::value::Value::Int(value), true);
         }
         if self.out.plugins.engine.has_luatex()
-            && let Some(version) = crate::plugin::lua::engine_version(self.cfg)
+            && let Some(version) = crate::plugin::lua::engine_version(&self.cfg)
         {
             let sym = self.intern("luatexversion");
             self.env.set_value(sym, crate::value::Value::Int(version), true);
@@ -4232,6 +4242,9 @@ will look undefined",
                                 }
                             }
                         }
+                        if self.scanner == Scanner::Skipping {
+                            self.skip_directives();
+                        }
                         let Some(Frame::File { mouth, .. }) = self.input.last_mut() else { return Some(t) };
                         let here = mouth.here();
                         // The character an unknown-text token stood for, so
@@ -4404,7 +4417,8 @@ will look undefined",
                 }
             }
             Some(Frame::Pseudo { .. }) => self.bump_expanding(self.pseudo_file, -1),
-            Some(Frame::File { mouth, package, depth, conds, .. }) => {
+            Some(Frame::File { mut mouth, package, depth, conds, .. }) => {
+                self.pass_directives_on(&mut mouth);
                 self.out.timings.leave_file();
                 self.out.lines += u64::from(mouth.here().line);
                 self.balance_file(mouth.file, depth);
@@ -6690,6 +6704,9 @@ will look undefined",
         let token = self.read(true);
         self.reading_command = false;
         let Some(token) = token else { return false };
+        if command && self.run_directives(token) {
+            return true;
+        }
         self.out.heat(|h| &mut h.steps, token.span);
         if self.probe_reached(token) {
             return false;

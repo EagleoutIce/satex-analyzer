@@ -75,6 +75,7 @@
       },
     });
     // a control symbol (`\ `, `\-`, `\'`) is one token, as for TeX; stex leaves some of them split
+    // a `%\satex@assert{…}` directive is a keyword with TeX after it, not a comment
     // a magic comment's key (`% !TeX program =`, `% arara:`) and its value, apart from a plain comment
     const MAGIC = /^%\s*(?:!T[eE]X\s+(?:TS-)?[\w-]+\s*=?|arara:)/;
     const tex = {
@@ -85,6 +86,7 @@
         if (s.sol()) st.magic = false;
         if (st.magic) { s.skipToEnd(); return 'attributeValue'; }
         if (s.sol() && s.match(MAGIC)) { st.magic = true; return 'meta'; }
+        if (s.match(/^%\s*\\satex@[A-Za-z]+/)) return 'keyword';
         return s.match(/^\\[^A-Za-z@\xc0-\uffff]/) ? 'tag' : stex.token(s, st);
       },
     };

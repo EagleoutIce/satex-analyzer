@@ -1818,35 +1818,40 @@ impl Machine<'_> {
         // testing it. A mode test splits the modes between its arms.
         let refine = self.mode_parts(cond).map(|(yes, no)| if negate { (no, yes) } else { (yes, no) });
         // What the test teaches each arm of the register it read.
-        let narrow = narrowing.map(|(sym, quantity, num, exact, relation, bound)| {
-            // While a join left the register a set of values or intervals,
-            // each arm keeps each member's part that still satisfies the
-            // test, not just the hull's (the set lift narrows too).
-            let members = self.members_of(sym, exact.as_deref(), num);
-            let arm = |holds: bool| {
-                let holds = holds != negate;
-                let bound = if holds { bound.0 } else { bound.1 };
-                if let Some(members) = &members {
-                    let kept: Vec<Value> = members
-                        .iter()
-                        .filter_map(|m| m.narrow(relation, bound, holds))
-                        .map(|n| Value::from_num(quantity, n))
-                        .collect();
-                    if !kept.is_empty() {
-                        return match kept.len() {
-                            1 => kept.into_iter().next(),
-                            _ => Some(Value::OneOf(kept.into())),
-                        };
-                    }
-                }
-                num.narrow(relation, bound, holds).map(|n| Value::from_num(quantity, n))
-            };
-            (sym, arm(true), arm(false))
-        });
+        let narrow = narrowing.map(|n| self.narrowed(n, negate));
         match taken {
             Some(holds) => self.enter_arm(holds, by, span, base, kind, None),
             None => self.undecided(by, span, base, kind, Some((refine, narrow))),
         }
+    }
+
+    /// What an undecided test teaches each arm, holding and failing, of
+    /// the register it read ([`Machine::narrowing`]).
+    pub(crate) fn narrowed(&self, narrowing: Narrowing, negate: bool) -> (Sym, Option<Value>, Option<Value>) {
+        let (sym, quantity, num, exact, relation, bound) = narrowing;
+        // While a join left the register a set of values or intervals,
+        // each arm keeps each member's part that still satisfies the
+        // test, not just the hull's (the set lift narrows too).
+        let members = self.members_of(sym, exact.as_deref(), num);
+        let arm = |holds: bool| {
+            let holds = holds != negate;
+            let bound = if holds { bound.0 } else { bound.1 };
+            if let Some(members) = &members {
+                let kept: Vec<Value> = members
+                    .iter()
+                    .filter_map(|m| m.narrow(relation, bound, holds))
+                    .map(|n| Value::from_num(quantity, n))
+                    .collect();
+                if !kept.is_empty() {
+                    return match kept.len() {
+                        1 => kept.into_iter().next(),
+                        _ => Some(Value::OneOf(kept.into())),
+                    };
+                }
+            }
+            num.narrow(relation, bound, holds).map(|n| Value::from_num(quantity, n))
+        };
+        (sym, arm(true), arm(false))
     }
 
     /// tex.web § 507 for one member meaning of each `\ifx` operand:

@@ -1097,7 +1097,7 @@ fn tex_index<'r, 'a>(run: &RefCell<Run<'r, 'a>>, lua: &State, args: MultiValue) 
     let run = run.borrow_mut();
     match key.as_str() {
         "inputlineno" => ret(lua, known(lua, run.m.input_line())?),
-        "luatexversion" => ret(lua, known(lua, super::lua::engine_version(run.m.cfg))?),
+        "luatexversion" => ret(lua, known(lua, super::lua::engine_version(&run.m.cfg))?),
         _ => ret(lua, marker(lua)?),
     }
 }

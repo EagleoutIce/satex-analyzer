@@ -1194,7 +1194,21 @@ pub struct Mouth {
     /// stands for ([`written_unknown`]).
     pub written: Option<(TextClass, bool)>,
     pub file: FileId,
+    /// The `%\satex@…` directives of comments read since the reader last
+    /// took them ([`Directive`]).
+    pub directives: Vec<Directive>,
 }
+
+/// A comment `%\satex@<kind><text>`: TeX skips it, satex runs it where it
+/// stands. `text` is the rest of the comment after `\satex@`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Directive {
+    pub span: Span,
+    pub text: std::rc::Rc<str>,
+}
+
+/// The prefix that makes a comment a [`Directive`].
+pub const DIRECTIVE: &str = "\\satex@";
 
 /// A position a [`Mouth`] can be resumed at: the start of a line, or the
 /// end of the file.
@@ -1257,6 +1271,7 @@ impl Mouth {
             undecided: None,
             written: None,
             file,
+            directives: Vec::new(),
         }
     }
 
@@ -1423,6 +1438,18 @@ impl Mouth {
             self.col += 1;
         }
         Some(c)
+    }
+
+    /// The comment from `start` to here, when it is a [`Directive`].
+    fn note_directive(&mut self, comment: Span, start: usize) {
+        let body = &self.src[start..self.pos];
+        let lead = body.iter().take_while(|c| **c == ' ' || **c == '\t').count();
+        let rest = &body[lead..];
+        if rest.len() >= DIRECTIVE.len() && rest.iter().zip(DIRECTIVE.chars()).all(|(a, b)| *a == b) {
+            let col = comment.col + 1 + u32::try_from(lead).unwrap_or(0);
+            let text = rest[DIRECTIVE.len()..].iter().collect::<String>();
+            self.directives.push(Directive { span: Span::new(self.file, comment.line, col), text: text.into() });
+        }
     }
 
     fn peek_at(&self, k: usize) -> Option<char> {
@@ -1631,12 +1658,14 @@ impl Mouth {
             match cat {
                 Catcode::Ignored | Catcode::Invalid => continue,
                 Catcode::Comment => {
+                    let start = self.pos;
                     while let Some(n) = self.peek_at(0) {
                         if n == '\n' || n == '\r' {
                             break;
                         }
                         self.bump();
                     }
+                    self.note_directive(span, start);
                     self.end_line();
                     self.state = LineState::New;
                     continue;

@@ -60,7 +60,9 @@ fn imprecision(report: &mut Report) {
     let mut order: Vec<(crate::tex::Span, &'static str, String)> = Vec::new();
     let mut counts: HashMap<(&'static str, String), usize> = HashMap::default();
     for diagnostic in &report.analysis.facts.diagnostics {
-        if matches!(diagnostic.code, "undefined-environment" | "already-defined" | "environment-mismatch") {
+        if matches!(diagnostic.code, "undefined-environment" | "already-defined" | "environment-mismatch")
+            || crate::machine::directive::CODES.contains(&diagnostic.code)
+        {
             continue;
         }
         let key = (diagnostic.code, diagnostic.message.clone());

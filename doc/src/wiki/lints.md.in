@@ -25,6 +25,22 @@ They apply to every output format and to `--fix`. An unknown code is reported as
 
 `satex lint --style` lists the rules the project breaks so often that they may be its style, as an editor asks about them (`style_prompt` in `satex.yaml`).
 
+## Assertions
+
+A comment can state a property for satex to check. TeX skips the comment. satex runs it where it reads it, on every path.
+
+```latex
+%\satex@assert{\thepage < 5}
+%\satex@assume{\value{section} <= 3 and \ifdefined\mymacro}
+%\satex@configure{limits.site_forks=8, opaque_conditionals=[ifdraft]}
+```
+
+* `\satex@assert{cond}` checks `cond`. It is `assertion-proved` when it holds on every path that reads it. It is `assertion-refuted`, an error, when it fails on a path that approximated nothing. The message names what the operands are there. Otherwise it is `assertion-unknown`, with the reason: a value the run does not know, a path that approximated, or no path that reads it.
+* `\satex@assume{cond}` drops the paths where `cond` fails. On the others it narrows the registers a conjunction of comparisons reads, as an `\ifnum` arm does. It is listed as `assumption-made`.
+* `\satex@configure{key=value, …}` changes settings of `satex.yaml` until the current TeX group ends. Keys are dotted, or written with `/`. A setting the run reads only at its start keeps its value.
+
+A condition compares two TeX numbers with `<`, `<=`, `=`, `!=`, `>=` or `>`. `\value{page}`, `\c@page`, `\numexpr…` and box dimensions all work. When one side has a unit, as in `\wd0 < 3cm`, both are dimensions. A condition may also be a TeX conditional such as `\ifdefined\x` or `\ifx\a\b`. `and`, `or` and `not` combine tests, `and` binding tighter. `\the<counter>` stands for the counter's value. So `\thepage < 5` compares the page number whether `\pagenumbering` prints it in arabic or roman numerals. Only the document's own files are read for directives. A package's comments and text a conditional skips are not. A directive that cannot be read is `invalid-directive`.
+
 ## Rules
 
 Every rule, with a link to its explanation below. The shape gives the severity: ◆ error, ▲ warning, ● info. The badge gives the category. The engine column names the engines a rule is about, when not all of them. The origin names the [chktex](Chktex-Coverage) warnings a rule follows. On the site the table comes in pages, and the columns icon in its header hides columns or wraps long summaries. Hovering a rule's name anywhere on the site shows its card.

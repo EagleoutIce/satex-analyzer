@@ -1109,7 +1109,7 @@ impl Machine<'_> {
             let mut hash = Fnv::new();
             hash.put(&(crate::format::cache_key(), self.out.plugins.engine.as_str()));
             parts.push(("engine".into(), std::mem::replace(&mut hash, Fnv::new()).0));
-            let mut settings = self.cfg.clone();
+            let mut settings = self.cfg.clone().into_owned();
             settings.source = None;
             settings.cache = crate::config::Cache::default();
             // Only what changes the interpretation keys a cache: not how a
@@ -1256,6 +1256,8 @@ impl Machine<'_> {
             scratch: _,
             // Same throughout a load.
             cfg: _,
+            settings_scopes: _,
+            base_cfg: _,
             checkpoints: _,
             limits: _,
             load_start: _,

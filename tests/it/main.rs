@@ -7,6 +7,7 @@ static ALLOCATOR: satex::budget::Counted = satex::budget::Counted;
 // tests/ before the merge into one binary, so libtest schedules every
 // test across all cores and cargo links one test binary instead of 49.
 
+mod assertions;
 mod budgets;
 mod build_lints;
 mod cache_agreement;

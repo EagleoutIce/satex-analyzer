@@ -105,3 +105,8 @@ P004 recursive-macro
 P005 unused-dependency
 P006 unused-package
 A001 analysis-imprecision
+C043 assertion-refuted
+C044 assertion-proved
+C045 assumption-made
+C046 invalid-directive
+A002 assertion-unknown

@@ -632,7 +632,7 @@ impl Machine<'_> {
             // Unlike the other engines' version primitives, LuaTeX's varies
             // meaningfully across installs, so it is read from the real
             // `luatex --version` for this run rather than a constant.
-            L::LuatexVersion => crate::plugin::lua::engine_version(self.cfg).map(Value::Int),
+            L::LuatexVersion => crate::plugin::lua::engine_version(&self.cfg).map(Value::Int),
             L::PdfPageCount => {
                 self.read_file_name();
                 None

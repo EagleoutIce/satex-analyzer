@@ -134,6 +134,9 @@ fn record_location(record: &Record, sources: &Sources) -> Option<Location> {
 /// meanings when preamble and document differ, and where it comes from.
 pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> Option<Hover> {
     let pos = to_pos(doc, position);
+    if let Some(markdown) = directive_hover(analysis, path, pos) {
+        return Some(markdown_hover(markdown));
+    }
     if let Some(markdown) = cite_hover(analysis, doc.line(pos.line), pos.col) {
         return Some(markdown_hover(markdown));
     }
@@ -144,6 +147,17 @@ pub fn hover(analysis: &Analysis, doc: &Text, path: &str, position: Position) ->
         load_hover(analysis, path, pos, &name).or_else(|| bib_style_hover(analysis, path, pos, &name))?
     };
     Some(markdown_hover(markdown))
+}
+
+/// The outcome of the `%\satex@` directive the cursor is on, from its
+/// `\satex@` to the end of its line.
+fn directive_hover(analysis: &Analysis, path: &str, pos: Pos) -> Option<String> {
+    let found: Vec<String> = crate::lint::assertions::verdicts(analysis)
+        .into_iter()
+        .filter(|(span, ..)| span.line == pos.line && span.col <= pos.col && analysis.file_name(span.file) == path)
+        .map(|(_, code, message)| format!("**{}** {message}", crate::lint::label(code)))
+        .collect();
+    (!found.is_empty()).then(|| found.join("\n\n"))
 }
 
 /// The database entry of the key under column `col` of `line`, in an

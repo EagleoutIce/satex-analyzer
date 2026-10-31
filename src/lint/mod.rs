@@ -1,6 +1,7 @@
 //! Lint rules: each carries its documentation and implementation.
 
 pub mod apply;
+pub mod assertions;
 pub mod bibliography;
 pub mod build;
 pub mod chktex;
@@ -55,6 +56,7 @@ pub fn all() -> impl Iterator<Item = &'static Rule> {
         .chain(units::RULES)
         .chain(performance::RULES)
         .chain(precision::RULES)
+        .chain(assertions::RULES)
         .chain(build::RULES)
         .chain(suppress::RULES)
         .chain(colors::RULES)
