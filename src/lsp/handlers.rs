@@ -33,7 +33,7 @@ pub fn to_pos(doc: &Text, position: Position) -> Pos {
 /// The reverse of [`to_pos`], through [`Text::utf16`]; falls back to a
 /// 0-based, byte-counted guess when `pos` is out of range (a stale position
 /// from a definition site an edit has since moved).
-fn to_lsp(doc: &Text, pos: Pos) -> Position {
+pub(super) fn to_lsp(doc: &Text, pos: Pos) -> Position {
     match doc.utf16(pos) {
         Some((line, character)) => Position { line, character },
         None => Position { line: pos.line.saturating_sub(1), character: pos.col.saturating_sub(1) },
@@ -627,18 +627,9 @@ fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Opt
     let (what, ext, topic) = if bibtex { ("BibTeX", "bst", "bst") } else { ("biblatex", "bbx", "biblatex style") };
     let mut md = format!("### `{word}`: {what} style\n\n");
     let file = format!("{word}.{ext}");
-    let dirs = crate::paths::effective(
-        "BSTINPUTS",
-        &analysis.project,
-        &analysis.settings.paths.bstinputs,
-        &analysis.project.root,
-    );
-    let beside = Path::new(path).parent().map(|d| d.join(&file));
     let shipped =
         load.and_then(|l| l.path.as_deref()).and_then(|p| Path::new(p).parent()).map(|d| d.join("bbx").join(&file));
-    if let Some(found) =
-        beside.into_iter().chain(shipped).chain(dirs.dirs.iter().map(|d| d.join(&file))).find(|p| p.is_file())
-    {
+    if let Some(found) = style_file(analysis, path, &file, shipped) {
         md.push_str(&format!("`{}`\n\n", found.display()));
     }
     let databases: Vec<&str> = analysis
@@ -658,6 +649,19 @@ fn bib_style_hover(analysis: &Analysis, path: &str, pos: Pos, word: &str) -> Opt
     }
     md.push_str(&super::knowledge::about(&[format!("{topic} {word}")]));
     Some(md)
+}
+
+/// The style file `file`: beside the document `path`, in `shipped`, on BSTINPUTS, else in the installation's styles.
+pub(super) fn style_file(analysis: &Analysis, path: &str, file: &str, shipped: Option<PathBuf>) -> Option<PathBuf> {
+    let dirs = crate::paths::effective(
+        "BSTINPUTS",
+        &analysis.project,
+        &analysis.settings.paths.bstinputs,
+        &analysis.project.root,
+    );
+    let beside = Path::new(path).parent().map(|d| d.join(file));
+    let found = beside.into_iter().chain(shipped).chain(dirs.dirs.iter().map(|d| d.join(file))).find(|p| p.is_file());
+    found.or_else(|| crate::distribution::file_under(&analysis.distribution.roots, "bibtex/bst", file))
 }
 
 /// A package or class name in `\usepackage`, `\RequirePackage` or
@@ -1092,7 +1096,7 @@ fn quantity_wanted(analysis: &Analysis, arg: &Arg) -> Option<crate::roles::Ty> {
 /// more of the name is typed.
 const COMMANDS_SHOWN: usize = 300;
 
-fn cs_re() -> &'static Regex {
+pub(super) fn cs_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"\\[A-Za-z@]*$").unwrap())
 }

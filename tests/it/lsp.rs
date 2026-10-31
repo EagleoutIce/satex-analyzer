@@ -1210,6 +1210,45 @@ fn hover_shows_what_the_call_typesets() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+const BIB: &str = "@book{lamport94,\n  title = {{\\LaTeX}: A System},\n  year = 1994,\n}\n\n@\n\n@article{k,\n  \n  title = {x \\},\n}\n";
+
+/// A `.bib` file the document reads, opened beside it.
+fn open_bib(tag: &str) -> (Server, String, std::path::PathBuf) {
+    let text = "\\documentclass{article}\n\\begin{document}\nSee \\cite{lamport94}.\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n";
+    let (mut server, _, _, dir) = open_loaded(tag, text);
+    std::fs::write(dir.join("refs.bib"), BIB).unwrap();
+    let (uri, _) = open_file(&mut server, &dir, "refs.bib");
+    (server, uri, dir)
+}
+
+/// A command in a `.bib` field hovers as it does in a `.tex` file.
+#[test]
+fn hover_works_in_a_bib_field() {
+    let (mut server, uri, dir) = open_bib("bibhover");
+    let id = server.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 1, "character": 14 } }),
+    );
+    let hover = server.response(id)["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    assert!(hover.contains("LaTeX"), "{hover}");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// After `@` the entry types of the bibliography style, inside an entry its fields.
+#[test]
+fn completion_in_a_bib_file_offers_types_and_fields() {
+    let (mut server, uri, dir) = open_bib("bibcomplete");
+    let types = complete(&mut server, &uri, 5, 1);
+    assert!(["article", "book", "inproceedings"].iter().all(|t| labels(&types).contains(t)), "{:?}", labels(&types));
+    let fields = complete(&mut server, &uri, 8, 2);
+    assert!(["author", "title", "year"].iter().all(|t| labels(&fields).contains(t)), "{:?}", labels(&fields));
+    let commands = complete(&mut server, &uri, 9, 14);
+    assert!(labels(&commands).contains(&"cite"), "{:?}", labels(&commands));
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A command with several definitions shows the one in force at the cursor,
 /// the others folded under a heading; each usage line carries its own types.
 #[test]

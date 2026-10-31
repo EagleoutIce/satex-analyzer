@@ -121,6 +121,15 @@ pub fn names_with(roots: &[PathBuf], dir: &str, ext: &str) -> Vec<String> {
     names
 }
 
+/// Where the first of `roots` has the file `name` under `dir`.
+pub fn file_under(roots: &[PathBuf], dir: &str, name: &str) -> Option<PathBuf> {
+    roots.iter().find_map(|root| {
+        let mut tree = HashMap::default();
+        walk(&root.join(dir), &mut tree);
+        tree.remove(name).map(|(_, path)| path)
+    })
+}
+
 /// The installation's files ending in `ext` with where the first tree has
 /// each, sorted by name.
 pub fn files_with(roots: &[PathBuf], ext: &str) -> Vec<(String, PathBuf)> {

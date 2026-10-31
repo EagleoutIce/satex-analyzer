@@ -25,6 +25,7 @@
 // lsp_types::Uri's interior mutability is a cache with no bearing on Eq/Hash; safe as a map key.
 #![allow(clippy::mutable_key_type)]
 
+mod bib;
 mod doccomment;
 mod handlers;
 pub mod knowledge;
@@ -1229,8 +1230,14 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, msg: EngineMsg) -> Option<E
             let _ = reply.send(result.flatten());
         }
         EngineMsg::Completion(uri, pos, reply) => {
+            let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
             let result = crate::progress::because("completion", || {
-                with_doc(docs, &uri, |analysis, text| handlers::completion(analysis, text, pos))
+                with_doc(docs, &uri, |analysis, text| {
+                    match bib::completion(analysis, text, &path, handlers::to_pos(text, pos)) {
+                        Some(items) => lsp_types::CompletionResponse::Array(items),
+                        None => handlers::completion(analysis, text, pos),
+                    }
+                })
             });
             // Each item says which document it came from, for its resolve.
             let mut result = result.unwrap_or(lsp_types::CompletionResponse::Array(Vec::new()));
