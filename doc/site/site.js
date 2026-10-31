@@ -952,14 +952,15 @@
     // `<template>` as a sketch under it, or its `data-effect` on its own words (completion, category codes, ligatures)
     const mocks = knows.map((k) => k.querySelector('template')?.innerHTML ?? null), effects = knows.map((k) => k.dataset.effect ?? '');
     const parts = knows.map((k) => [...k.childNodes].filter((n) => n.nodeName !== 'TEMPLATE')
-      .map((n) => ({ text: n.textContent, code: n.nodeName === 'CODE', lint: n.nodeName === 'U', href: n.nodeName === 'A' ? n.getAttribute('href') : null })));
+      .map((n) => ({ text: n.textContent, code: n.nodeName === 'CODE', lint: n.nodeName === 'U', fix: n.dataset?.fix ?? null, href: n.nodeName === 'A' ? n.getAttribute('href') : null })));
     const typed = (i, n) => {
       let left = n;
       // a `<u>` is what a linter would mark there: its squiggle comes once the claim stands
-      return parts[i].map(({ text, code, lint, href }) => {
+      // one with `data-fix` is then fixed as a quick fix would: the right text takes its place
+      return parts[i].map(({ text, code, lint, fix, href }) => {
         const shown = text.slice(0, Math.max(0, left));
         left -= text.length;
-        return shown && (code ? `<code>${esc(shown)}</code>` : lint ? `<u class="claim-lint">${esc(shown)}</u>` : href ? `<a href="${esc(href)}">${esc(shown)}</a>` : esc(shown));
+        return shown && (code ? `<code>${esc(shown)}</code>` : lint ? `<u class="claim-lint"${fix == null ? '' : ` data-fix="${esc(fix)}"`}>${esc(shown)}</u>` : href ? `<a href="${esc(href)}">${esc(shown)}</a>` : esc(shown));
       }).join('');
     };
     const length = (i) => parts[i].reduce((sum, p) => sum + p.text.length, 0);
@@ -1006,6 +1007,9 @@
     const settle = () => {
       timer = setTimeout(() => {
         if (effect() || line.querySelector('.claim-lint')) requestAnimationFrame(() => line.classList.add('shows'));
+        setTimeout(() => {
+          for (const u of line.querySelectorAll('.claim-lint[data-fix]')) { u.textContent = u.dataset.fix; u.classList.add('fixed'); }
+        }, 1300);
         timer = setTimeout(() => paused || show((shown + 1) % knows.length), 3400);
       }, 700);
     };
